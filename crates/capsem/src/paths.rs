@@ -14,12 +14,8 @@ pub fn capsem_home() -> Result<PathBuf> {
 /// Resolved paths for capsem binaries and assets.
 #[derive(Debug)]
 pub struct CapsemPaths {
-    pub cli_bin: PathBuf,
     pub service_bin: PathBuf,
     pub process_bin: PathBuf,
-    pub mcp_bin: PathBuf,
-    pub mcp_aggregator_bin: PathBuf,
-    pub mcp_builtin_bin: PathBuf,
     pub gateway_bin: PathBuf,
     pub tray_bin: PathBuf,
     pub assets_dir: PathBuf,
@@ -30,45 +26,18 @@ pub struct CapsemPaths {
 /// Binaries: current_exe() parent -> sibling capsem-service, capsem-process.
 /// Assets: `<capsem_home>/assets/` via [`capsem_core::paths::capsem_assets_dir`].
 pub fn discover_paths() -> Result<CapsemPaths> {
-    let exe_path = invoked_executable_path()
-        .or_else(|| std::env::current_exe().ok())
-        .context("cannot determine executable path")?;
+    let exe_path = std::env::current_exe().context("cannot determine executable path")?;
     let bin_dir = exe_path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("executable path has no parent: {}", exe_path.display()))?;
 
     Ok(CapsemPaths {
-        cli_bin: bin_dir.join("capsem"),
         service_bin: bin_dir.join("capsem-service"),
         process_bin: bin_dir.join("capsem-process"),
-        mcp_bin: bin_dir.join("capsem-mcp"),
-        mcp_aggregator_bin: bin_dir.join("capsem-mcp-aggregator"),
-        mcp_builtin_bin: bin_dir.join("capsem-mcp-builtin"),
         gateway_bin: bin_dir.join("capsem-gateway"),
         tray_bin: bin_dir.join("capsem-tray"),
         assets_dir: capsem_core::paths::capsem_assets_dir(),
     })
-}
-
-fn invoked_executable_path() -> Option<PathBuf> {
-    let argv0 = std::env::args_os().next()?;
-    invoked_executable_path_from_argv0(PathBuf::from(argv0), std::env::current_dir().ok()?)
-}
-
-fn invoked_executable_path_from_argv0(path: PathBuf, cwd: PathBuf) -> Option<PathBuf> {
-    if path.is_absolute() {
-        return Some(path);
-    }
-    if path
-        .parent()
-        .is_some_and(|parent| parent.as_os_str().is_empty())
-    {
-        return None;
-    }
-    if path.parent().is_some() {
-        return Some(cwd.join(path));
-    }
-    None
 }
 
 /// Build the assets dir path from HOME. Test-only: production paths go through
@@ -88,9 +57,10 @@ pub async fn try_start_via_service_manager() -> Result<bool> {
             .map(|p| p.exists())
             .unwrap_or(false)
         {
-            let mut command = tokio::process::Command::new("systemctl");
-            command.args(["--user", "start", "--no-block", "capsem"]);
-            let status = command_status_quiet(command).await?;
+            let status = tokio::process::Command::new("systemctl")
+                .args(["--user", "start", "capsem"])
+                .status()
+                .await?;
             if status.success() {
                 return Ok(true);
             }
@@ -104,9 +74,10 @@ pub async fn try_start_via_service_manager() -> Result<bool> {
             .unwrap_or(false)
         {
             let uid = nix::unistd::getuid();
-            let mut command = tokio::process::Command::new("launchctl");
-            command.args(["kickstart", &format!("gui/{}/com.capsem.service", uid)]);
-            let status = command_status_quiet(command).await?;
+            let status = tokio::process::Command::new("launchctl")
+                .args(["kickstart", &format!("gui/{}/com.capsem.service", uid)])
+                .status()
+                .await?;
             if status.success() {
                 return Ok(true);
             }
@@ -114,18 +85,6 @@ pub async fn try_start_via_service_manager() -> Result<bool> {
     }
 
     Ok(false)
-}
-
-async fn command_status_quiet(
-    mut command: tokio::process::Command,
-) -> std::io::Result<std::process::ExitStatus> {
-    command
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .kill_on_drop(true)
-        .status()
-        .await
 }
 
 #[cfg(test)]
@@ -151,36 +110,6 @@ mod tests {
         assert_eq!(
             assets_dir_from_home("/Users/elie"),
             PathBuf::from("/Users/elie/.capsem/assets")
-        );
-    }
-
-    #[test]
-    fn invoked_path_preserves_absolute_symlink_entrypoint() {
-        assert_eq!(
-            invoked_executable_path_from_argv0(
-                PathBuf::from("/home/user/.capsem/bin/capsem"),
-                PathBuf::from("/work")
-            ),
-            Some(PathBuf::from("/home/user/.capsem/bin/capsem"))
-        );
-    }
-
-    #[test]
-    fn invoked_path_resolves_relative_entrypoint_with_slash() {
-        assert_eq!(
-            invoked_executable_path_from_argv0(
-                PathBuf::from("target/debug/capsem"),
-                PathBuf::from("/work")
-            ),
-            Some(PathBuf::from("/work/target/debug/capsem"))
-        );
-    }
-
-    #[test]
-    fn invoked_path_ignores_path_lookup_entrypoint() {
-        assert_eq!(
-            invoked_executable_path_from_argv0(PathBuf::from("capsem"), PathBuf::from("/work")),
-            None
         );
     }
 
@@ -235,15 +164,22 @@ mod tests {
         let exe_dir = exe.parent().unwrap();
         assert_eq!(paths.service_bin.parent().unwrap(), exe_dir);
         assert_eq!(paths.process_bin.parent().unwrap(), exe_dir);
-        assert_eq!(paths.mcp_bin.parent().unwrap(), exe_dir);
-        assert_eq!(paths.mcp_aggregator_bin.parent().unwrap(), exe_dir);
-        assert_eq!(paths.mcp_builtin_bin.parent().unwrap(), exe_dir);
     }
 
     #[test]
     fn discover_paths_assets_always_under_home() {
         let paths = discover_paths().unwrap();
-        assert_eq!(paths.assets_dir, capsem_core::paths::capsem_assets_dir());
+        let expected = match std::env::var("CAPSEM_HOME") {
+            Ok(v) if !v.is_empty() => PathBuf::from(v).join("assets"),
+            _ => PathBuf::from(std::env::var("HOME").unwrap()).join(".capsem/assets"),
+        };
+        // CAPSEM_ASSETS_DIR may override further; honor the same priority
+        // the helper itself uses.
+        let expected = match std::env::var("CAPSEM_ASSETS_DIR") {
+            Ok(v) if !v.is_empty() => PathBuf::from(v),
+            _ => expected,
+        };
+        assert_eq!(paths.assets_dir, expected);
     }
 
     #[test]
@@ -264,43 +200,20 @@ mod tests {
         );
     }
 
-    #[test]
-    fn discover_paths_mcp_helper_bin_names() {
-        let paths = discover_paths().unwrap();
-        assert_eq!(
-            paths.mcp_bin.file_name().unwrap().to_str().unwrap(),
-            "capsem-mcp"
-        );
-        assert_eq!(
-            paths
-                .mcp_aggregator_bin
-                .file_name()
-                .unwrap()
-                .to_str()
-                .unwrap(),
-            "capsem-mcp-aggregator"
-        );
-        assert_eq!(
-            paths.mcp_builtin_bin.file_name().unwrap().to_str().unwrap(),
-            "capsem-mcp-builtin"
-        );
-    }
-
     // -----------------------------------------------------------------------
     // Installed layout contract: what simulate-install.sh produces
     // must be what discover_paths + service startup consume.
     //
     // Layout:
-    //   ~/.capsem/bin/capsem{,-service,-process,-mcp,-mcp-aggregator,-mcp-builtin,-gateway,-tray}
+    //   ~/.capsem/bin/capsem{,-service,-process,-mcp,-gateway,-tray}
     //   ~/.capsem/assets/manifest.json
-    //   ~/.capsem/assets/manifest.json.minisig
-    //   ~/.capsem/assets/{arch}/{vmlinuz-<hash16>,initrd-<hash16>.img,rootfs-<hash16>.squashfs}
+    //   ~/.capsem/assets/v{VERSION}/{vmlinuz,initrd.img,rootfs.erofs}
     //   ~/.capsem/run/                     (created at runtime)
     //
     // Service reads:
     //   --assets-dir  -> ~/.capsem/assets/
     //   manifest.json -> assets_dir/manifest.json
-    //   rootfs        -> manifest-selected hash-named asset under assets_dir/{arch}/
+    //   rootfs        -> assets_dir/v{CARGO_PKG_VERSION}/rootfs.erofs
     // -----------------------------------------------------------------------
 
     #[test]
@@ -317,22 +230,15 @@ mod tests {
     }
 
     #[test]
-    fn service_hash_named_assets_path_matches_install_layout() {
-        // Service resolves hash-named files from manifest entries.
-        // simulate-install.sh copies to: ~/.capsem/assets/{arch}/{hash-named file}
+    fn service_versioned_assets_path_matches_install_layout() {
+        // Service looks for: assets_dir/v{version}/rootfs.erofs
+        // simulate-install.sh copies to: ~/.capsem/assets/v{VERSION}/rootfs.erofs
         let home = "/home/test";
         let assets_dir = assets_dir_from_home(home);
-        let rootfs = assets_dir
-            .join("arm64")
-            .join(capsem_core::asset_manager::hash_filename(
-                "rootfs.squashfs",
-                "b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee",
-            ));
-        assert!(rootfs.to_str().unwrap().contains("/assets/arm64/"));
-        assert!(rootfs
-            .to_str()
-            .unwrap()
-            .ends_with("rootfs-b8199dc4a83069b9.squashfs"));
+        let version = env!("CARGO_PKG_VERSION");
+        let rootfs = assets_dir.join(format!("v{version}")).join("rootfs.erofs");
+        assert!(rootfs.to_str().unwrap().contains(&format!("v{version}")));
+        assert!(rootfs.to_str().unwrap().ends_with("rootfs.erofs"));
     }
 
     // -----------------------------------------------------------------------

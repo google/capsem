@@ -13,7 +13,7 @@ import uuid
 
 import pytest
 
-from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_TIMEOUT_SECS, HTTP_TIMEOUT
+from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_TIMEOUT_SECS, HTTP_TIMEOUT
 
 pytestmark = pytest.mark.integration
 
@@ -26,17 +26,25 @@ class TestExecImmediatelyAfterProvision:
     """Provision a VM, then immediately call endpoints without polling."""
 
     def test_exec_immediately_after_provision(self, service_env):
-        """POST /exec/{id} must succeed right after POST /provision."""
+        """POST /vms/{id}/exec must succeed right after POST /vms/create."""
         client = service_env.client()
         name = vm_name("ei")
-        resp = client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        resp = client.post(
+            "/vms/create",
+            {
+                "name": name,
+                "profile_id": CODE_PROFILE_ID,
+                "ram_mb": DEFAULT_RAM_MB,
+                "cpus": DEFAULT_CPUS,
+            },
+        )
         assert resp is not None, "provision failed"
         vm_id = resp.get("id", name)
 
         # Immediately exec -- no wait_exec_ready, no sleep.
         # The server must internally wait for the VM to be ready.
         exec_resp = client.post(
-            f"/exec/{vm_id}",
+            f"/vms/{vm_id}/exec",
             {"command": "echo ready-no-wait", "timeout_secs": EXEC_TIMEOUT_SECS},
             timeout=HTTP_TIMEOUT,
         )
@@ -46,74 +54,92 @@ class TestExecImmediatelyAfterProvision:
         )
         assert exec_resp.get("exit_code") == 0
 
-        client.delete(f"/delete/{vm_id}")
+        client.delete(f"/vms/{vm_id}/delete")
 
     def test_write_file_immediately_after_provision(self, service_env):
-        """POST /files/{id}/content must succeed right after POST /provision."""
+        """POST /vms/{id}/files/write must succeed right after POST /vms/create."""
         client = service_env.client()
         name = vm_name("wi")
-        resp = client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        resp = client.post(
+            "/vms/create",
+            {
+                "name": name,
+                "profile_id": CODE_PROFILE_ID,
+                "ram_mb": DEFAULT_RAM_MB,
+                "cpus": DEFAULT_CPUS,
+            },
+        )
         assert resp is not None
         vm_id = resp.get("id", name)
 
         # Immediately write -- server must wait for VM readiness.
-        write_resp = client.write_file(
-            vm_id,
-            "/root/race-test.txt",
-            "race-check",
+        write_resp = client.post(
+            f"/vms/{vm_id}/files/write",
+            {"path": "/root/race-test.txt", "content": "race-check"},
             timeout=HTTP_TIMEOUT,
         )
         assert write_resp is not None, "write_file returned None"
         assert write_resp.get("success") is True, f"write_file failed: {write_resp}"
 
-        client.delete(f"/delete/{vm_id}")
+        client.delete(f"/vms/{vm_id}/delete")
 
     def test_read_file_immediately_after_provision(self, service_env):
-        """POST+GET /files/{id}/content must succeed right after POST /provision."""
+        """POST /write_file + /read_file must succeed right after POST /vms/create."""
         client = service_env.client()
         name = vm_name("ri")
-        resp = client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        resp = client.post(
+            "/vms/create",
+            {
+                "name": name,
+                "profile_id": CODE_PROFILE_ID,
+                "ram_mb": DEFAULT_RAM_MB,
+                "cpus": DEFAULT_CPUS,
+            },
+        )
         assert resp is not None
         vm_id = resp.get("id", name)
 
         # Immediately write then read -- server must wait for VM readiness.
-        write_resp = client.write_file(
-            vm_id,
-            "/root/read-probe.txt",
-            "probe-data",
+        write_resp = client.post(
+            f"/vms/{vm_id}/files/write",
+            {"path": "/root/read-probe.txt", "content": "probe-data"},
             timeout=HTTP_TIMEOUT,
         )
         assert write_resp is not None, "write_file returned None"
 
-        read_resp = client.read_file(
-            vm_id,
-            "/root/read-probe.txt",
+        read_resp = client.post(
+            f"/vms/{vm_id}/files/read",
+            {"path": "/root/read-probe.txt"},
             timeout=HTTP_TIMEOUT,
         )
         assert read_resp is not None, "read_file returned None"
         assert "content" in read_resp, f"read_file missing content: {read_resp}"
 
-        client.delete(f"/delete/{vm_id}")
+        client.delete(f"/vms/{vm_id}/delete")
 
 
 class TestExecImmediatelyAfterResume:
     """Stop a persistent VM, resume it, then immediately exec."""
 
     def test_exec_immediately_after_resume(self, service_env):
-        """POST /exec/{name} must succeed right after POST /resume/{name}."""
+        """POST /vms/{id}/exec must succeed right after POST /vms/{id}/resume."""
         client = service_env.client()
         name = vm_name("rs")
 
         # 1. Provision a persistent VM. Server-side wait means this
         #    exec will block until VM is ready (no client poll needed).
-        prov_resp = client.post("/provision", {
-            "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS, "persistent": True,
+        prov_resp = client.post("/vms/create", {
+            "name": name,
+            "profile_id": CODE_PROFILE_ID,
+            "ram_mb": DEFAULT_RAM_MB,
+            "cpus": DEFAULT_CPUS,
+            "persistent": True,
         })
         assert prov_resp is not None and "error" not in prov_resp, (
             f"provision persistent VM failed: {prov_resp}"
         )
         setup_resp = client.post(
-            f"/exec/{name}",
+            f"/vms/{name}/exec",
             {"command": "echo setup-ok", "timeout_secs": EXEC_TIMEOUT_SECS},
             timeout=HTTP_TIMEOUT,
         )
@@ -122,15 +148,15 @@ class TestExecImmediatelyAfterResume:
         )
 
         # 2. Stop it.
-        client.post(f"/stop/{name}", {})
+        client.post(f"/vms/{name}/stop", {})
 
         # 3. Resume -- returns immediately, process not yet listening.
-        resume_resp = client.post(f"/resume/{name}", {})
+        resume_resp = client.post(f"/vms/{name}/resume", {})
         assert resume_resp is not None, "resume failed"
 
         # 4. Immediately exec -- no wait_exec_ready, no sleep.
         exec_resp = client.post(
-            f"/exec/{name}",
+            f"/vms/{name}/exec",
             {"command": "echo resumed-no-wait", "timeout_secs": EXEC_TIMEOUT_SECS},
             timeout=HTTP_TIMEOUT,
         )
@@ -140,4 +166,4 @@ class TestExecImmediatelyAfterResume:
         )
         assert exec_resp.get("exit_code") == 0
 
-        client.delete(f"/delete/{name}")
+        client.delete(f"/vms/{name}/delete")

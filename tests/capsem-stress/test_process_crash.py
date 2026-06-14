@@ -7,7 +7,7 @@ import uuid
 
 import pytest
 
-from helpers.service import ServiceInstance, wait_exec_ready
+from helpers.service import ServiceInstance
 
 pytestmark = pytest.mark.stress
 
@@ -21,10 +21,10 @@ def test_service_survives_process_kill():
     try:
         # Create a VM
         name = f"crash-{uuid.uuid4().hex[:8]}"
-        client.post("/provision", {"name": name, "ram_mb": 1024, "cpus": 1})
+        client.post("/vms/create", {"name": name, "ram_mb": 1024, "cpus": 1})
 
         # Get its PID from info
-        info = client.get(f"/info/{name}")
+        info = client.get(f"/vms/{name}/info")
         pid = info.get("pid", 0) if info else 0
 
         if pid > 0:
@@ -36,20 +36,20 @@ def test_service_survives_process_kill():
                 pass
 
         # Service should still be alive
-        list_resp = client.get("/list")
+        list_resp = client.get("/vms/list")
         assert list_resp is not None, "Service died after process kill"
 
         # Clean up the dead VM
         try:
-            client.delete(f"/delete/{name}")
+            client.delete(f"/vms/{name}/delete")
         except Exception:
             pass
 
         # Should be able to create a new VM
         name2 = f"after-crash-{uuid.uuid4().hex[:8]}"
-        resp = client.post("/provision", {"name": name2, "ram_mb": 1024, "cpus": 1})
+        resp = client.post("/vms/create", {"name": name2, "ram_mb": 1024, "cpus": 1})
         assert resp is not None, "Could not create VM after process crash"
-        client.delete(f"/delete/{name2}")
+        client.delete(f"/vms/{name2}/delete")
 
     finally:
         svc.stop()

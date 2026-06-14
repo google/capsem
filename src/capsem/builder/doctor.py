@@ -1,4 +1,4 @@
-"""Composable build prerequisite checks for Capsem admin/build tooling.
+"""Composable build prerequisite checks for capsem-builder.
 
 Each check returns a CheckResult with pass/fail status, detail, and
 optional fix instructions. Checks are pure functions that can be called
@@ -9,6 +9,7 @@ run_all_checks() for the doctor CLI command.
 from __future__ import annotations
 
 import datetime
+import json
 import shutil
 import subprocess
 import sys
@@ -102,7 +103,7 @@ def check_container_resources() -> CheckResult | None:
             cpus = data.get("NCPU", 0)
             memory_mb = memory_bytes // (1024 * 1024)
             return _check_resources("Colima", memory_mb, cpus,
-                fix=f"colima stop && colima start --memory 8 --cpu 8")
+                fix="colima stop && colima start --memory 8 --cpu 8")
     except Exception:
         pass
 
@@ -250,77 +251,76 @@ def check_b3sum() -> CheckResult:
     return CheckResult(name="b3sum", passed=True, detail=version)
 
 
-def check_guest_config(guest_dir: Path) -> CheckResult:
-    """Check that guest config directory has a valid build.toml."""
-    config_dir = guest_dir / "config"
-    build_toml = config_dir / "build.toml"
+def check_profile_contract(profile_path: Path, config_root: Path) -> CheckResult:
+    """Validate the profile ledger through capsem-admin.
 
-    if not config_dir.is_dir():
+    The Python builder doctor is a prerequisite checker, not a second profile
+    parser. `capsem-admin profile check` owns profile files, hash pins, rule
+    compilation, and asset pin validation; doctor only reports its result.
+    """
+    if not profile_path.is_file():
         return CheckResult(
-            name="guest-config",
+            name="profile-contract",
             passed=False,
-            detail=f"config directory not found: {config_dir}",
-            fix=(
-                "restore the typed guest config bridge or generate profiles with "
-                f"capsem-admin profile init-builtins --guest-dir {guest_dir}"
-            ),
+            detail=f"profile not found: {profile_path}",
+            fix="check the profile id and ensure config/profiles/<id>/profile.toml exists",
         )
-
-    if not build_toml.is_file():
-        return CheckResult(
-            name="guest-config",
-            passed=False,
-            detail=f"build.toml not found in {config_dir}",
-            fix=(
-                "restore the typed guest config bridge or generate profiles with "
-                f"capsem-admin profile init-builtins --guest-dir {guest_dir}"
-            ),
+    try:
+        result = subprocess.run(
+            [
+                "cargo",
+                "run",
+                "-p",
+                "capsem-admin",
+                "--",
+                "profile",
+                "check",
+                str(profile_path),
+                "--config-root",
+                str(config_root),
+                "--json",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
         )
-
-    try:
-        import tomllib
-    except ModuleNotFoundError:
-        import tomli as tomllib  # type: ignore[no-redef]
-
-    try:
-        with open(build_toml, "rb") as f:
-            data = tomllib.load(f)
     except Exception as e:
         return CheckResult(
-            name="guest-config",
+            name="profile-contract",
             passed=False,
-            detail=f"invalid build.toml: {e}",
+            detail=f"failed to run capsem-admin profile check: {e}",
         )
-
-    build = data.get("build", {})
-    arches = build.get("architectures", {})
-    count = len(arches)
-    return CheckResult(
-        name="guest-config",
-        passed=True,
-        detail=f"{guest_dir}/config/build.toml ({count} architecture{'s' if count != 1 else ''})",
-    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "capsem-admin profile check failed").strip()
+        return CheckResult(name="profile-contract", passed=False, detail=detail)
+    try:
+        payload = json.loads(result.stdout)
+        profile_id = payload.get("profile_id") or payload.get("validation", {}).get("profile_id")
+        compiled = payload.get("validation", {}).get("compiled_rules")
+        if profile_id and compiled is not None:
+            detail = f"profile {profile_id} ({compiled} compiled rules)"
+        elif profile_id:
+            detail = f"profile {profile_id}"
+        else:
+            detail = "profile check passed"
+    except Exception:
+        detail = "profile check passed"
+    return CheckResult(name="profile-contract", passed=True, detail=detail)
 
 
 def check_source_files(repo_root: Path) -> CheckResult:
     """Check that required source files exist for build context assembly."""
-    from capsem.builder.docker import (
-        ROOTFS_SCRIPTS,
-        ROOTFS_SCRIPT_DIRS,
-        ROOTFS_SUPPORT_FILES,
-    )
-
-    artifacts = repo_root / "guest" / "artifacts"
     required = {
-        **{
-            f"guest/artifacts/{name}": artifacts / name
-            for name in ["capsem-init", *ROOTFS_SUPPORT_FILES, *ROOTFS_SCRIPTS]
-        },
-        **{
-            f"guest/artifacts/{name}/": artifacts / name
-            for name in ROOTFS_SCRIPT_DIRS
-        },
-        "config/capsem-ca.crt": repo_root / "config" / "capsem-ca.crt",
+        "guest/artifacts/capsem-init": repo_root / "guest" / "artifacts" / "capsem-init",
+        "guest/artifacts/capsem-bashrc": repo_root / "guest" / "artifacts" / "capsem-bashrc",
+        "guest/artifacts/banner.txt": repo_root / "guest" / "artifacts" / "banner.txt",
+        "guest/artifacts/tips.txt": repo_root / "guest" / "artifacts" / "tips.txt",
+        "guest/artifacts/capsem-doctor": repo_root / "guest" / "artifacts" / "capsem-doctor",
+        "guest/artifacts/capsem-bench": repo_root / "guest" / "artifacts" / "capsem-bench",
+        "guest/artifacts/snapshots": repo_root / "guest" / "artifacts" / "snapshots",
+        "guest/artifacts/capsem_bench/": repo_root / "guest" / "artifacts" / "capsem_bench",
+        "guest/artifacts/diagnostics/": repo_root / "guest" / "artifacts" / "diagnostics",
+        "security/keys/capsem-ca.crt": repo_root / "security" / "keys" / "capsem-ca.crt",
     }
 
     missing = []
@@ -337,7 +337,7 @@ def check_source_files(repo_root: Path) -> CheckResult:
             name="source-files",
             passed=False,
             detail=f"missing: {', '.join(missing)}",
-            fix="files missing from guest/artifacts/ or config/ -- check your checkout",
+            fix="files missing from guest/artifacts/ or security/keys/ -- check your checkout",
         )
 
     total = len(required)
@@ -353,7 +353,7 @@ def check_source_files(repo_root: Path) -> CheckResult:
 # ---------------------------------------------------------------------------
 
 
-def run_all_checks(guest_dir: Path, repo_root: Path) -> list[CheckResult]:
+def run_all_checks(repo_root: Path, *, profile_id: str = "code", config_root: Path | None = None) -> list[CheckResult]:
     """Run all prerequisite checks and return results."""
     results: list[CheckResult] = []
     results.append(check_container_runtime())
@@ -367,7 +367,9 @@ def run_all_checks(guest_dir: Path, repo_root: Path) -> list[CheckResult]:
     results.append(check_cross_target("aarch64-unknown-linux-musl"))
     results.append(check_cross_target("x86_64-unknown-linux-musl"))
     results.append(check_b3sum())
-    results.append(check_guest_config(guest_dir))
+    config_root = config_root or (repo_root / "config")
+    profile_path = config_root / "profiles" / profile_id / "profile.toml"
+    results.append(check_profile_contract(profile_path, config_root))
     results.append(check_source_files(repo_root))
     return results
 
@@ -380,8 +382,8 @@ def run_all_checks(guest_dir: Path, repo_root: Path) -> list[CheckResult]:
 def format_results(results: list[CheckResult]) -> str:
     """Format check results as human-readable output."""
     lines: list[str] = []
-    lines.append("capsem-admin doctor")
-    lines.append("=" * 20)
+    lines.append("capsem-builder doctor")
+    lines.append("=" * 21)
 
     # Group by category based on check name
     categories: dict[str, list[CheckResult]] = {}
@@ -392,8 +394,8 @@ def format_results(results: list[CheckResult]) -> str:
             cat = "Rust Toolchain"
         elif r.name == "b3sum":
             cat = "Build Tools"
-        elif r.name == "guest-config":
-            cat = "Guest Config"
+        elif r.name == "profile-contract":
+            cat = "Profile Contract"
         elif r.name == "source-files":
             cat = "Source Files"
         else:

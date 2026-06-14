@@ -7,7 +7,18 @@ import time
 
 from .helpers import console
 
-VALID_MODES = ("disk", "rootfs", "storage", "startup", "http", "throughput", "snapshot", "mitm-load", "mcp-load", "dns-load", "all")
+VALID_MODES = (
+    "disk", "rootfs", "storage", "startup", "http", "throughput", "snapshot",
+    "protocol", "mitm-load", "mcp-load", "dns-load", "all",
+)
+
+MITM_LOCAL_BASE_URL_ENV = "CAPSEM_MOCK_SERVER_BASE_URL"
+
+
+def _should_run_local_mitm(mode):
+    if mode == "protocol":
+        return True
+    return mode == "all" and bool(os.environ.get(MITM_LOCAL_BASE_URL_ENV))
 
 
 def main():
@@ -15,7 +26,11 @@ def main():
     mode = args[0] if args else "all"
 
     if mode in ("-h", "--help"):
-        console.print("Usage: capsem-bench [disk|rootfs|storage|startup|http|throughput|snapshot|all] [OPTIONS]")
+        console.print(
+            "Usage: capsem-bench "
+            "[disk|rootfs|storage|startup|http|throughput|snapshot|protocol|all] "
+            "[OPTIONS]"
+        )
         console.print()
         console.print("Commands:")
         console.print("  disk                Scratch disk I/O benchmarks")
@@ -25,14 +40,20 @@ def main():
         console.print("  http [URL] [N] [C]  HTTP benchmarks (ab-style)")
         console.print("  throughput          100 MB download through MITM proxy")
         console.print("  snapshot            Snapshot ops (create/list/revert/delete via MCP)")
-        console.print("  mitm-load           MITM proxy load test at 1/10/50/200 concurrency")
-        console.print("  mcp-load            MCP path load test (echo tool) at 1/10/50/200 concurrency")
-        console.print("  dns-load            DNS proxy load test at 1/10/50/200 concurrency")
-        console.print("  all                 Run standard benchmarks, including storage split diagnostics")
+        console.print("  protocol            Local mock-server protocol benchmark")
+        console.print("  mitm-load [C[,C]] [SECONDS]  MITM proxy load test")
+        console.print("  mcp-load [C[,C]] [SECONDS]   MCP path load test")
+        console.print("  dns-load [C[,C]] [SECONDS]   DNS proxy load test")
+        console.print("  all                 Run all benchmarks (default)")
         console.print()
         console.print("Environment:")
-        console.print("  CAPSEM_BENCH_DIR                Test directory (default: /root)")
-        console.print("  CAPSEM_BENCH_SIZE_MB            Write test size in MB (default: 256)")
+        console.print("  CAPSEM_BENCH_DIR      Test directory (default: /root)")
+        console.print("  CAPSEM_BENCH_SIZE_MB  Write test size in MB (default: 256)")
+        console.print("  CAPSEM_MOCK_SERVER_BASE_URL  Base URL for protocol scenarios")
+        console.print("  CAPSEM_BENCH_CONCURRENCY          Load concurrency, e.g. 64 or 1,64")
+        console.print("  CAPSEM_BENCH_DURATION_S           Seconds per load level")
+        console.print("  CAPSEM_BENCH_TOTAL_REQUESTS       Total requests per count scenario")
+        console.print("  CAPSEM_BENCH_SCENARIOS            Comma-separated local MITM scenarios")
         console.print("  CAPSEM_STORAGE_BENCH_PATHS      Storage paths for split diagnostics")
         console.print("  CAPSEM_STORAGE_BENCH_SIZE_MB    Storage split write size in MB")
         console.print("  CAPSEM_STORAGE_IO_PROFILE_SIZE_MB    Storage IOPS profile size")
@@ -81,23 +102,45 @@ def main():
         from .snapshot import snapshot_bench
         output["snapshot"] = snapshot_bench()
 
+    # Local protocol scenarios are part of the standard `all` benchmark when
+    # the shared doctor/mock server is configured, and are also available as a
+    # first-class `protocol` benchmark for release-scale network numbers.
+    if _should_run_local_mitm(mode):
+        from .mitm_local import mitm_local_bench
+        output["mitm_local"] = mitm_local_bench()
+
     # mitm-load runs only when explicitly requested -- it's a long-running
     # proxy stress test (default 10s per concurrency level x 4 levels = ~40s
     # of pure proxy load) and would dominate `capsem-bench all`.
     if mode == "mitm-load":
         from .mitm_load import mitm_load_bench
-        output["mitm_load"] = mitm_load_bench()
+        from .load_harness import parse_concurrency_levels
+        c = parse_concurrency_levels(args[1]) if len(args) > 1 else None
+        duration = float(args[2]) if len(args) > 2 else None
+        output["mitm_load"] = mitm_load_bench(
+            concurrency_levels=c, duration_s=duration
+        )
 
     if mode == "mcp-load":
         from .mcp_load import mcp_load_bench
-        output["mcp_load"] = mcp_load_bench()
+        from .load_harness import parse_concurrency_levels
+        c = parse_concurrency_levels(args[1]) if len(args) > 1 else None
+        duration = float(args[2]) if len(args) > 2 else None
+        output["mcp_load"] = mcp_load_bench(
+            concurrency_levels=c, duration_s=duration
+        )
 
     # dns-load runs only when explicitly requested -- same rationale
     # as mitm-load: ~40s of pure proxy stress per invocation, would
     # dominate `capsem-bench all`.
     if mode == "dns-load":
         from .dns_load import dns_load_bench
-        output["dns_load"] = dns_load_bench()
+        from .load_harness import parse_concurrency_levels
+        c = parse_concurrency_levels(args[1]) if len(args) > 1 else None
+        duration = float(args[2]) if len(args) > 2 else None
+        output["dns_load"] = dns_load_bench(
+            concurrency_levels=c, duration_s=duration
+        )
 
     # JSON to file (machine-readable)
     json_path = "/tmp/capsem-benchmark.json"

@@ -1,13 +1,11 @@
 ---
 title: AI Agent Skills
-description: How Capsem organizes shared AI coding agent skills for Claude Code, Gemini CLI, Codex, and Cursor.
+description: How Capsem organizes shared AI coding agent skills for Claude Code, Codex, and Gemini CLI.
 sidebar:
   order: 20
 ---
 
-Capsem uses a shared `skills/` directory that Claude Code, Gemini CLI, Codex,
-and Cursor discover via symlinks. One set of files, every agent client, zero
-duplication.
+Capsem uses a shared `skills/` directory as the canonical checked-in skill library. Agent-specific discovery and guest injection copy or mount from this path explicitly. Root dot-dir symlinks are not part of the product contract.
 
 ## Directory structure
 
@@ -17,17 +15,7 @@ skills/
     SKILL.md                     The skill (required)
     references/                  Large docs loaded on demand (optional)
     scripts/                     Executable helpers (optional)
-
-.claude/skills -> ../skills      Claude Code symlink
-.agents/skills -> ../skills      Gemini CLI compatibility symlink
-.gemini/skills -> ../skills      Gemini CLI project symlink
-.codex/skills -> ../skills       Codex project symlink
-.cursor/skills -> ../skills      Cursor project symlink
 ```
-
-`bootstrap.sh` creates or repairs those symlinks during developer setup. If a
-path already exists and is not a symlink, bootstrap leaves it alone and prints a
-skip message instead of deleting local agent state.
 
 Skills are flat (one level). Nested directories are **not** discovered. Use prefix-based naming for categories.
 
@@ -84,7 +72,7 @@ Prefix-based grouping:
 - `dev-skills` -- how skills work (for building Capsem's own skills system)
 
 ### Build
-- `build-images` -- capsem-builder CLI, guest config
+- `build-images` -- profile-derived image builds, rootfs, OBOM
 - `build-initrd` -- guest binary repack, fast iteration
 
 ### Release
@@ -113,12 +101,6 @@ Keep SKILL.md lean. Put wire formats, API docs, and community references in `ref
 mkdir skills/<prefix-name>
 # Write skills/<prefix-name>/SKILL.md with frontmatter
 # Available immediately (live reload, no restart)
-```
-
-Run bootstrap after adding project-wide agent clients or from a fresh checkout:
-
-```bash
-sh bootstrap.sh --yes
 ```
 
 ## Community skills

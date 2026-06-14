@@ -1,3 +1,6 @@
+# TODO(WB7): update for native installer -- .pkg (macOS) + tar.gz (Linux) paths,
+# find_asset_url() patterns, install_linux() tar.gz extraction, and swap
+# simulate-install.sh for the real install.sh in conftest fixtures.
 """Tests for site/public/install.sh -- OS/arch detection and asset URL selection.
 
 Sources the install script with __INSTALL_SH_SOURCED=1 to access functions
@@ -11,7 +14,6 @@ import subprocess
 import textwrap
 from pathlib import Path
 
-import pytest
 
 INSTALL_SH = Path(__file__).parent.parent / "site" / "public" / "install.sh"
 
@@ -136,24 +138,16 @@ FAKE_RELEASE_JSON = r"""
 {
   "assets": [
     {
-      "name": "Capsem-1.1.1778542197.pkg",
-      "browser_download_url": "https://github.com/google/capsem/releases/download/v1.1.1778542197/Capsem-1.1.1778542197.pkg"
+      "name": "Capsem_1.0.0_aarch64.pkg",
+      "browser_download_url": "https://github.com/google/capsem/releases/download/v1.0.0/Capsem_1.0.0_aarch64.pkg"
     },
     {
-      "name": "Capsem_1.1.1778542197_amd64.deb",
-      "browser_download_url": "https://github.com/google/capsem/releases/download/v1.1.1778542197/Capsem_1.1.1778542197_amd64.deb"
+      "name": "Capsem_1.0.0_amd64.deb",
+      "browser_download_url": "https://github.com/google/capsem/releases/download/v1.0.0/Capsem_1.0.0_amd64.deb"
     },
     {
-      "name": "Capsem_1.1.1778542197_arm64.deb",
-      "browser_download_url": "https://github.com/google/capsem/releases/download/v1.1.1778542197/Capsem_1.1.1778542197_arm64.deb"
-    },
-    {
-      "name": "manifest.json",
-      "browser_download_url": "https://github.com/google/capsem/releases/download/v1.1.1778542197/manifest.json"
-    },
-    {
-      "name": "manifest.json.minisig",
-      "browser_download_url": "https://github.com/google/capsem/releases/download/v1.1.1778542197/manifest.json.minisig"
+      "name": "Capsem_1.0.0_arm64.deb",
+      "browser_download_url": "https://github.com/google/capsem/releases/download/v1.0.0/Capsem_1.0.0_arm64.deb"
     }
   ]
 }
@@ -179,7 +173,7 @@ ENDJSON
         """macOS installer downloads the signed/notarized .pkg (DMG dropped)."""
         r = self._run("darwin", "arm64")
         assert r.returncode == 0
-        assert r.stdout.strip().endswith("Capsem-1.1.1778542197.pkg")
+        assert r.stdout.strip().endswith("_aarch64.pkg")
 
     def test_linux_amd64_deb(self):
         r = self._run("linux", "amd64")
@@ -195,49 +189,3 @@ ENDJSON
         r = self._run("linux", "s390x")
         assert r.returncode != 0
         assert "no matching asset" in r.stderr
-
-    def test_finds_signed_manifest_assets(self):
-        script = textwrap.dedent(f"""\
-            __INSTALL_SH_SOURCED=1
-            . "{INSTALL_SH}"
-            RELEASE_JSON=$(cat <<'ENDJSON'
-{FAKE_RELEASE_JSON}
-ENDJSON
-            )
-            find_named_asset_url "$RELEASE_JSON" "manifest.json"
-            echo "$ASSET_URL"
-            find_named_asset_url "$RELEASE_JSON" "manifest.json.minisig"
-            echo "$ASSET_URL"
-        """)
-        r = _run_shell(script)
-
-        assert r.returncode == 0
-        lines = r.stdout.strip().splitlines()
-        assert lines[0].endswith("/manifest.json")
-        assert lines[1].endswith("/manifest.json.minisig")
-
-    def test_manifest_expected_sha_reads_v2_binary_entry(self, tmp_path):
-        manifest = tmp_path / "manifest.json"
-        manifest.write_text(
-            """{
-              "binaries": {
-                "current": "1.1.1778542197",
-                "releases": {
-                  "1.1.1778542197": {
-                    "files": [
-                      {
-                        "name": "Capsem-1.1.1778542197.pkg",
-                        "sha256": "abc123"
-                      }
-                    ]
-                  }
-                }
-              }
-            }"""
-        )
-        r = _source_and_run(
-            f'manifest_expected_sha "{manifest}" "Capsem-1.1.1778542197.pkg"'
-        )
-
-        assert r.returncode == 0
-        assert r.stdout.strip() == "abc123"

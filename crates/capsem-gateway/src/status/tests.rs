@@ -8,7 +8,12 @@ fn status_response_serializes() {
         service: "running".into(),
         gateway_version: "0.1.0".into(),
         vm_count: 1,
-        vms: vec![test_vm("abc123", Some("dev"), "running", true)],
+        vms: vec![test_vm(
+            "abc123",
+            Some("dev"),
+            VmLifecycleState::Running,
+            true,
+        )],
         resource_summary: Some(ResourceSummary {
             total_ram_mb: 2048,
             total_cpus: 2,
@@ -17,6 +22,7 @@ fn status_response_serializes() {
             suspended_count: 0,
         }),
         assets: None,
+        profiles: None,
     };
 
     let json = serde_json::to_value(&resp).unwrap();
@@ -35,6 +41,7 @@ fn unavailable_response_shape() {
         vms: vec![],
         resource_summary: None,
         assets: None,
+        profiles: None,
     };
 
     let json = serde_json::to_value(&resp).unwrap();
@@ -50,9 +57,9 @@ fn status_response_multiple_vms_resource_aggregation() {
         gateway_version: "0.1.0".into(),
         vm_count: 3,
         vms: vec![
-            test_vm("a", Some("dev"), "running", true),
-            test_vm("b", None, "running", false),
-            test_vm("c", Some("ci"), "stopped", true),
+            test_vm("a", Some("dev"), VmLifecycleState::Running, true),
+            test_vm("b", None, VmLifecycleState::Running, false),
+            test_vm("c", Some("ci"), VmLifecycleState::Stopped, true),
         ],
         resource_summary: Some(ResourceSummary {
             total_ram_mb: 6144,
@@ -62,6 +69,7 @@ fn status_response_multiple_vms_resource_aggregation() {
             suspended_count: 0,
         }),
         assets: None,
+        profiles: None,
     };
 
     let json = serde_json::to_value(&resp).unwrap();
@@ -75,7 +83,7 @@ fn status_response_multiple_vms_resource_aggregation() {
 
 #[test]
 fn vm_summary_name_null_when_absent() {
-    let vm = test_vm("x", None, "running", false);
+    let vm = test_vm("x", None, VmLifecycleState::Running, false);
     let json = serde_json::to_value(&vm).unwrap();
     assert!(json["name"].is_null());
     assert!(!json["persistent"].as_bool().unwrap());
@@ -83,21 +91,58 @@ fn vm_summary_name_null_when_absent() {
 
 #[test]
 fn list_response_deserializes() {
-    let json = r#"{"sandboxes":[{"id":"abc","pid":123,"status":"Running","persistent":true,"ram_mb":2048,"cpus":2}]}"#;
+    let json = r#"{"sandboxes":[{"id":"abc","profile_id":"code","pid":123,"status":"Running","persistent":true,"ram_mb":2048,"cpus":2,"available_actions":["pause","stop","fork","delete"]}]}"#;
     let list: ListResponse = serde_json::from_str(json).unwrap();
     assert_eq!(list.sessions.len(), 1);
     assert_eq!(list.sessions[0].id, "abc");
+    assert_eq!(list.sessions[0].profile_id, "code");
     assert!(list.sessions[0].persistent);
     assert_eq!(list.sessions[0].ram_mb, Some(2048));
 }
 
 #[test]
 fn list_response_handles_missing_optional_fields() {
-    let json = r#"{"sandboxes":[{"id":"abc","pid":123}]}"#;
+    let json = r#"{"sandboxes":[{"id":"abc","profile_id":"code","pid":123,"status":"Stopped","available_actions":["fork","delete"]}]}"#;
     let list: ListResponse = serde_json::from_str(json).unwrap();
+    assert_eq!(list.sessions[0].profile_id, "code");
     assert_eq!(list.sessions[0].ram_mb, None);
     assert_eq!(list.sessions[0].cpus, None);
     assert!(!list.sessions[0].persistent);
+}
+
+#[tokio::test]
+async fn fetch_status_preserves_session_available_actions() {
+    let mock = axum::Router::new().route(
+        "/vms/list",
+        axum::routing::get(|| async {
+            axum::Json(serde_json::json!({
+                "sandboxes": [
+                    {
+                        "id": "bad-vm",
+                        "profile_id": "code",
+                        "pid": 0,
+                        "status": "Incompatible",
+                        "persistent": true,
+                        "available_actions": ["delete"]
+                    }
+                ]
+            }))
+        }),
+    );
+    let (path, handle, _dir) = mock_uds(mock).await;
+    let state = test_app_state(&path);
+
+    let status = fetch_status(&state).await;
+    assert_eq!(status.vms[0].available_actions, vec![VmAction::Delete]);
+
+    handle.abort();
+}
+
+#[test]
+fn list_response_rejects_missing_lifecycle_state() {
+    let json = r#"{"sandboxes":[{"id":"abc","profile_id":"code","pid":123}]}"#;
+    let err = serde_json::from_str::<ListResponse>(json).err().unwrap();
+    assert!(err.to_string().contains("status"));
 }
 
 #[tokio::test]
@@ -110,6 +155,7 @@ async fn cache_returns_fresh_data() {
         vms: vec![],
         resource_summary: None,
         assets: None,
+        profiles: None,
     };
 
     // Populate cache
@@ -138,6 +184,7 @@ async fn cache_expires_after_ttl() {
         vms: vec![],
         resource_summary: None,
         assets: None,
+        profiles: None,
     };
 
     // Populate cache with a timestamp beyond the 1s TTL
@@ -165,15 +212,13 @@ async fn cache_starts_empty() {
 
 use crate::AppState;
 
-fn test_vm(id: &str, name: Option<&str>, status: &str, persistent: bool) -> VmSummary {
+fn test_vm(id: &str, name: Option<&str>, status: VmLifecycleState, persistent: bool) -> VmSummary {
     VmSummary {
         id: id.into(),
         name: name.map(|s| s.into()),
-        status: status.into(),
+        status,
         persistent,
-        profile_id: None,
-        profile_revision: None,
-        profile_status: None,
+        profile_id: "code".into(),
         uptime_secs: None,
         total_input_tokens: None,
         total_output_tokens: None,
@@ -185,6 +230,20 @@ fn test_vm(id: &str, name: Option<&str>, status: &str, persistent: bool) -> VmSu
         denied_requests: None,
         total_file_events: None,
         model_call_count: None,
+        can_resume: false,
+        resume_blocked_reason: None,
+        available_actions: match status {
+            VmLifecycleState::Running => vec![
+                VmAction::Pause,
+                VmAction::Stop,
+                VmAction::Fork,
+                VmAction::Delete,
+            ],
+            VmLifecycleState::Stopped | VmLifecycleState::Suspended => {
+                vec![VmAction::Fork, VmAction::Delete]
+            }
+            VmLifecycleState::Defunct | VmLifecycleState::Incompatible => vec![VmAction::Delete],
+        },
     }
 }
 
@@ -213,7 +272,7 @@ async fn mock_uds(app: axum::Router) -> (String, tokio::task::JoinHandle<()>, te
 #[tokio::test]
 async fn fetch_status_empty_vm_list() {
     let mock = axum::Router::new().route(
-        "/list",
+        "/vms/list",
         axum::routing::get(|| async { axum::Json(serde_json::json!({"sandboxes": []})) }),
     );
     let (path, h, _d) = mock_uds(mock).await;
@@ -232,14 +291,99 @@ async fn fetch_status_empty_vm_list() {
 }
 
 #[tokio::test]
+async fn fetch_status_preserves_profile_catalog_and_manifest_provenance() {
+    let mock = axum::Router::new()
+        .route(
+            "/vms/list",
+            axum::routing::get(|| async { axum::Json(serde_json::json!({"sandboxes": []})) }),
+        )
+        .route(
+            "/profiles/status",
+            axum::routing::get(|| async {
+                axum::Json(serde_json::json!({
+                    "source": "directory",
+                    "profile_count": 2,
+                    "ready_count": 1,
+                    "asset_manifest": {
+                        "origin": "package",
+                        "path": "/Users/test/.capsem/assets/manifest.json",
+                        "origin_path": "/Users/test/.capsem/assets/manifest-origin.json",
+                        "origin_source": "file:///tmp/corp/manifest.json",
+                        "packaged_at": "2026-06-13T00:00:00Z",
+                        "blake3": "0123456789abcdef",
+                        "validation_status": "valid",
+                        "refresh_policy": "24h",
+                        "assets_current": "2026.0613.1",
+                        "binaries_current": "1.3.0"
+                    },
+                    "profiles": [
+                        {
+                            "id": "code",
+                            "name": "Code",
+                            "description": "Optimized for coding and long-running agents.",
+                            "ready": true,
+                            "current_arch": "arm64",
+                            "missing_assets": [],
+                            "invalid_assets": [],
+                            "invalid_files": [],
+                            "errors": [],
+                            "asset_count": 3
+                        },
+                        {
+                            "id": "co-work",
+                            "name": "Co-work",
+                            "description": "Shared profile for collaborative agent sessions.",
+                            "ready": false,
+                            "current_arch": "arm64",
+                            "missing_assets": [{"kind": "rootfs", "path": "/missing/rootfs.erofs", "valid": false}],
+                            "invalid_assets": [],
+                            "invalid_files": [],
+                            "errors": ["missing rootfs"],
+                            "asset_count": 3
+                        }
+                    ]
+                }))
+            }),
+        );
+    let (path, h, _d) = mock_uds(mock).await;
+
+    let state = test_app_state(&path);
+    let resp = fetch_status(&state).await;
+
+    assert_eq!(resp.service, "running");
+    let profiles = resp
+        .profiles
+        .expect("gateway status must include profile status");
+    assert_eq!(profiles["source"], "directory");
+    assert_eq!(profiles["profile_count"], 2);
+    assert_eq!(profiles["ready_count"], 1);
+    assert_eq!(profiles["asset_manifest"]["origin"], "package");
+    assert_eq!(
+        profiles["asset_manifest"]["origin_source"],
+        "file:///tmp/corp/manifest.json"
+    );
+    assert_eq!(profiles["asset_manifest"]["blake3"], "0123456789abcdef");
+    assert_eq!(profiles["asset_manifest"]["validation_status"], "valid");
+    assert_eq!(profiles["asset_manifest"]["refresh_policy"], "24h");
+    assert_eq!(profiles["profiles"][0]["id"], "code");
+    assert_eq!(profiles["profiles"][0]["ready"], true);
+    assert_eq!(profiles["profiles"][1]["id"], "co-work");
+    assert_eq!(
+        profiles["profiles"][1]["missing_assets"][0]["kind"],
+        "rootfs"
+    );
+    h.abort();
+}
+
+#[tokio::test]
 async fn fetch_status_multiple_vms() {
     let mock = axum::Router::new()
-        .route("/list", axum::routing::get(|| async {
+        .route("/vms/list", axum::routing::get(|| async {
             axum::Json(serde_json::json!({
                 "sandboxes": [
-                    {"id": "vm1", "name": "dev", "pid": 100, "status": "Running", "persistent": true, "ram_mb": 2048, "cpus": 2},
-                    {"id": "vm2", "pid": 200, "status": "Running", "persistent": false, "ram_mb": 4096, "cpus": 4},
-                    {"id": "vm3", "name": "ci", "pid": 300, "status": "Stopped", "persistent": true, "ram_mb": 1024, "cpus": 1},
+                    {"id": "vm1", "profile_id": "code", "name": "dev", "pid": 100, "status": "Running", "persistent": true, "ram_mb": 2048, "cpus": 2, "available_actions": ["pause", "stop", "fork", "delete"]},
+                    {"id": "vm2", "profile_id": "code", "pid": 200, "status": "Running", "persistent": false, "ram_mb": 4096, "cpus": 4, "available_actions": ["pause", "stop", "fork", "delete"]},
+                    {"id": "vm3", "profile_id": "code", "name": "ci", "pid": 300, "status": "Stopped", "persistent": true, "ram_mb": 1024, "cpus": 1, "available_actions": ["fork", "delete"]},
                 ]
             }))
         }));
@@ -250,129 +394,13 @@ async fn fetch_status_multiple_vms() {
     assert_eq!(resp.service, "running");
     assert_eq!(resp.vm_count, 3);
     assert_eq!(resp.vms[0].name, Some("dev".into()));
-    assert_eq!(resp.vms[1].name, None); // no name in /list response
+    assert_eq!(resp.vms[1].name, None); // no name in /vms/list response
     assert_eq!(resp.vms[2].name, Some("ci".into()));
     let rs = resp.resource_summary.unwrap();
     assert_eq!(rs.total_ram_mb, 7168);
     assert_eq!(rs.total_cpus, 7);
     assert_eq!(rs.running_count, 2);
     assert_eq!(rs.stopped_count, 1);
-    h.abort();
-}
-
-#[tokio::test]
-async fn fetch_status_preserves_service_asset_state() {
-    let mock = axum::Router::new().route(
-        "/list",
-        axum::routing::get(|| async {
-            axum::Json(serde_json::json!({
-                "sandboxes": [],
-                "asset_health": {
-                    "ready": false,
-                    "state": "updating",
-                    "profile_id": "everyday-work",
-                    "profile_revision": "2026.0520.1",
-                    "profile_payload_hash": "blake3:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-                    "profile_assets": [{
-                        "logical_name": "rootfs.squashfs",
-                        "hash": "blake3:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-                        "source_url": "https://assets.example.test/rootfs.squashfs",
-                        "size": 24,
-                        "content_type": "application/vnd.squashfs"
-                    }],
-                    "version": "2026.0513.1",
-                    "arch": "arm64",
-                    "missing": ["rootfs.squashfs"],
-                    "progress": {
-                        "logical_name": "rootfs.squashfs",
-                        "bytes_done": 12,
-                        "bytes_total": 24,
-                        "done": false
-                    },
-                    "retry_count": 2,
-                    "retryable": true,
-                    "error": "GET fixture returned 503",
-                    "saved_vm_dependencies": [{
-                        "vm": "saved-old",
-                        "asset_version": "2026.0415.1",
-                        "arch": "arm64",
-                        "missing": ["rootfs.squashfs"],
-                        "recovery_hint": "restore assets"
-                    }]
-                }
-            }))
-        }),
-    );
-    let (path, h, _d) = mock_uds(mock).await;
-
-    let state = test_app_state(&path);
-    let resp = fetch_status(&state).await;
-    let assets = resp.assets.expect("gateway should preserve asset health");
-    assert_eq!(assets.state, "updating");
-    assert!(!assets.ready);
-    assert_eq!(assets.version.as_deref(), Some("2026.0513.1"));
-    assert_eq!(assets.profile_id.as_deref(), Some("everyday-work"));
-    assert_eq!(assets.profile_revision.as_deref(), Some("2026.0520.1"));
-    assert_eq!(
-        assets.profile_payload_hash.as_deref(),
-        Some("blake3:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")
-    );
-    assert_eq!(assets.profile_assets.len(), 1);
-    assert_eq!(assets.profile_assets[0].logical_name, "rootfs.squashfs");
-    assert_eq!(
-        assets.profile_assets[0].source_url,
-        "https://assets.example.test/rootfs.squashfs"
-    );
-    assert_eq!(assets.arch.as_deref(), Some("arm64"));
-    assert_eq!(assets.missing, vec!["rootfs.squashfs"]);
-    assert_eq!(assets.retry_count, 2);
-    assert!(assets.retryable);
-    assert_eq!(assets.error.as_deref(), Some("GET fixture returned 503"));
-    assert_eq!(assets.saved_vm_dependencies.len(), 1);
-    assert_eq!(assets.saved_vm_dependencies[0].vm, "saved-old");
-    assert_eq!(
-        assets.saved_vm_dependencies[0].missing,
-        vec!["rootfs.squashfs"]
-    );
-    let progress = assets.progress.expect("progress should pass through");
-    assert_eq!(progress.logical_name, "rootfs.squashfs");
-    assert_eq!(progress.bytes_done, 12);
-    assert_eq!(progress.bytes_total, Some(24));
-    assert!(!progress.done);
-    h.abort();
-}
-
-#[tokio::test]
-async fn fetch_status_preserves_vm_profile_identity() {
-    let mock = axum::Router::new().route(
-        "/list",
-        axum::routing::get(|| async {
-            axum::Json(serde_json::json!({
-                "sandboxes": [{
-                    "id": "vm-profiled",
-                    "name": "profiled",
-                    "status": "Running",
-                    "persistent": true,
-                    "ram_mb": 2048,
-                    "cpus": 2,
-                    "profile_id": "everyday-work",
-                    "profile_revision": "2026.0520.1",
-                    "profile_status": "current"
-                }]
-            }))
-        }),
-    );
-    let (path, h, _d) = mock_uds(mock).await;
-
-    let state = test_app_state(&path);
-    let resp = fetch_status(&state).await;
-    assert_eq!(resp.service, "running");
-    assert_eq!(resp.vms.len(), 1);
-    assert_eq!(resp.vms[0].profile_id.as_deref(), Some("everyday-work"));
-    assert_eq!(resp.vms[0].profile_revision.as_deref(), Some("2026.0520.1"));
-    assert_eq!(resp.vms[0].profile_status.as_deref(), Some("current"));
-    let json = serde_json::to_value(&resp).unwrap();
-    assert_eq!(json["vms"][0]["profile_status"], "current");
     h.abort();
 }
 
@@ -387,8 +415,10 @@ async fn fetch_status_service_unavailable() {
 
 #[tokio::test]
 async fn fetch_status_malformed_list_json() {
-    let mock =
-        axum::Router::new().route("/list", axum::routing::get(|| async { "not json at all" }));
+    let mock = axum::Router::new().route(
+        "/vms/list",
+        axum::routing::get(|| async { "not json at all" }),
+    );
     let (path, h, _d) = mock_uds(mock).await;
 
     let state = test_app_state(&path);
@@ -404,7 +434,7 @@ async fn cache_prevents_duplicate_fetches() {
     let counter = Arc::new(AtomicUsize::new(0));
     let c = counter.clone();
     let mock = axum::Router::new().route(
-        "/list",
+        "/vms/list",
         axum::routing::get(move || {
             let c = c.clone();
             async move {
@@ -442,12 +472,12 @@ async fn cache_prevents_duplicate_fetches() {
 #[tokio::test]
 async fn fetch_status_counts_suspended_vms() {
     let mock = axum::Router::new()
-        .route("/list", axum::routing::get(|| async {
+        .route("/vms/list", axum::routing::get(|| async {
             axum::Json(serde_json::json!({
                 "sandboxes": [
-                    {"id": "vm1", "pid": 100, "status": "Running", "persistent": true, "ram_mb": 2048, "cpus": 2},
-                    {"id": "vm2", "pid": 0, "status": "Suspended", "persistent": true, "ram_mb": 2048, "cpus": 2},
-                    {"id": "vm3", "pid": 0, "status": "Stopped", "persistent": true, "ram_mb": 1024, "cpus": 1},
+                    {"id": "vm1", "profile_id": "code", "pid": 100, "status": "Running", "persistent": true, "ram_mb": 2048, "cpus": 2, "available_actions": ["pause", "stop", "fork", "delete"]},
+                    {"id": "vm2", "profile_id": "code", "pid": 0, "status": "Suspended", "persistent": true, "ram_mb": 2048, "cpus": 2, "available_actions": ["resume", "fork", "delete"]},
+                    {"id": "vm3", "profile_id": "code", "pid": 0, "status": "Stopped", "persistent": true, "ram_mb": 1024, "cpus": 1, "available_actions": ["fork", "delete"]},
                 ]
             }))
         }));
@@ -480,7 +510,7 @@ fn suspended_count_serializes_in_json() {
 
 #[test]
 fn vm_summary_includes_telemetry_when_present() {
-    let mut vm = test_vm("t1", None, "running", false);
+    let mut vm = test_vm("t1", None, VmLifecycleState::Running, false);
     vm.uptime_secs = Some(300);
     vm.total_input_tokens = Some(5000);
     vm.total_estimated_cost = Some(1.23);
@@ -492,7 +522,7 @@ fn vm_summary_includes_telemetry_when_present() {
 
 #[test]
 fn vm_summary_omits_absent_telemetry() {
-    let vm = test_vm("t2", None, "stopped", true);
+    let vm = test_vm("t2", None, VmLifecycleState::Stopped, true);
     let json = serde_json::to_value(&vm).unwrap();
     assert!(json.get("uptime_secs").is_none());
     assert!(json.get("total_input_tokens").is_none());
@@ -501,8 +531,9 @@ fn vm_summary_omits_absent_telemetry() {
 
 #[test]
 fn list_response_deserializes_telemetry() {
-    let json = r#"{"sandboxes":[{"id":"vm1","pid":100,"status":"Running","persistent":false,"ram_mb":2048,"cpus":2,"uptime_secs":60,"total_input_tokens":1000,"total_output_tokens":500,"total_estimated_cost":0.42}]}"#;
+    let json = r#"{"sandboxes":[{"id":"vm1","profile_id":"code","pid":100,"status":"Running","persistent":false,"ram_mb":2048,"cpus":2,"uptime_secs":60,"total_input_tokens":1000,"total_output_tokens":500,"total_estimated_cost":0.42,"available_actions":["pause","stop","fork","delete"]}]}"#;
     let list: ListResponse = serde_json::from_str(json).unwrap();
+    assert_eq!(list.sessions[0].profile_id, "code");
     assert_eq!(list.sessions[0].uptime_secs, Some(60));
     assert_eq!(list.sessions[0].total_input_tokens, Some(1000));
     assert_eq!(list.sessions[0].total_output_tokens, Some(500));
@@ -512,15 +543,16 @@ fn list_response_deserializes_telemetry() {
 #[tokio::test]
 async fn fetch_status_passes_through_telemetry() {
     let mock = axum::Router::new().route(
-        "/list",
+        "/vms/list",
         axum::routing::get(|| async {
             axum::Json(serde_json::json!({
                 "sandboxes": [{
-                    "id": "vm1", "pid": 100, "status": "Running", "persistent": false,
+                    "id": "vm1", "profile_id": "code", "pid": 100, "status": "Running", "persistent": false,
                     "ram_mb": 2048, "cpus": 2,
                     "uptime_secs": 120, "total_input_tokens": 3000,
                     "total_output_tokens": 1000, "total_estimated_cost": 0.99,
-                    "total_tool_calls": 10, "model_call_count": 5
+                    "total_tool_calls": 10, "model_call_count": 5,
+                    "available_actions": ["pause", "stop", "fork", "delete"]
                 }]
             }))
         }),

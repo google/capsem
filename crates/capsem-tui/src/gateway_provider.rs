@@ -172,7 +172,7 @@ async fn fetch_profiles(
     token: &str,
 ) -> Result<Vec<ProfileOption>> {
     let response: ProfilesResponse = client
-        .get(format!("{base_url}/profiles"))
+        .get(format!("{base_url}/profiles/list"))
         .bearer_auth(token)
         .send()
         .await
@@ -268,6 +268,8 @@ fn vm_response_to_summary(vm: VmSummary) -> SessionSummary {
             .or_else(|| vm.profile_status.clone())
             .unwrap_or_else(|| "default".to_string()),
         profile_status: vm.profile_status,
+        can_resume: vm.can_resume,
+        resume_blocked_reason: vm.resume_blocked_reason,
         branch: vm.profile_revision,
         persistent: vm.persistent,
         lifecycle,
@@ -350,7 +352,7 @@ async fn invoke_action(
         ControlAction::StartService => start_service().await,
         ControlAction::CreateSession { name, profile_id } => {
             let response = client
-                .post(join_url(base_url, &["provision"])?)
+                .post(join_url(base_url, &["vms", "create"])?)
                 .bearer_auth(token)
                 .json(&serde_json::json!({
                     "name": name,
@@ -372,7 +374,7 @@ async fn invoke_action(
         }
         ControlAction::Fork { id, name } => {
             let response = client
-                .post(join_url(base_url, &["fork", id])?)
+                .post(join_url(base_url, &["vms", id, "fork"])?)
                 .bearer_auth(token)
                 .json(&serde_json::json!({ "name": name }))
                 .send()
@@ -389,28 +391,28 @@ async fn invoke_action(
             })
         }
         ControlAction::Resume { name } => {
-            post_empty(client, base_url, token, &["resume", name]).await?;
+            post_empty(client, base_url, token, &["vms", name, "resume"]).await?;
             Ok(ActionOutcome {
                 message: format!("resumed {name}"),
                 focus_session: Some(name.clone()),
             })
         }
         ControlAction::Checkpoint { id } => {
-            post_empty(client, base_url, token, &["suspend", id]).await?;
+            post_empty(client, base_url, token, &["vms", id, "pause"]).await?;
             Ok(ActionOutcome {
                 message: format!("checkpointed {id}"),
                 focus_session: Some(id.clone()),
             })
         }
         ControlAction::Suspend { id } => {
-            post_empty(client, base_url, token, &["suspend", id]).await?;
+            post_empty(client, base_url, token, &["vms", id, "pause"]).await?;
             Ok(ActionOutcome {
                 message: format!("suspended {id}"),
                 focus_session: Some(id.clone()),
             })
         }
         ControlAction::Stop { id } => {
-            post_empty(client, base_url, token, &["stop", id]).await?;
+            post_empty(client, base_url, token, &["vms", id, "stop"]).await?;
             Ok(ActionOutcome {
                 message: format!("stopped {id}"),
                 focus_session: Some(id.clone()),
@@ -418,7 +420,7 @@ async fn invoke_action(
         }
         ControlAction::Delete { id } => {
             let response = client
-                .delete(join_url(base_url, &["delete", id])?)
+                .delete(join_url(base_url, &["vms", id, "delete"])?)
                 .bearer_auth(token)
                 .send()
                 .await
@@ -566,6 +568,10 @@ struct VmSummary {
     #[serde(default)]
     profile_status: Option<String>,
     #[serde(default)]
+    can_resume: bool,
+    #[serde(default)]
+    resume_blocked_reason: Option<String>,
+    #[serde(default)]
     uptime_secs: Option<u64>,
     #[serde(default)]
     total_input_tokens: Option<u64>,
@@ -586,25 +592,22 @@ struct VmSummary {
 #[derive(Debug, Deserialize)]
 struct ProfilesResponse {
     #[serde(default)]
-    default_profile: Option<String>,
-    #[serde(default)]
     profiles: Vec<ProfileRecordResponse>,
 }
 
 impl ProfilesResponse {
     fn into_options(self) -> Vec<ProfileOption> {
-        let default = self.default_profile.unwrap_or_default();
         self.profiles
             .into_iter()
-            .filter_map(|record| {
-                let id = record.profile.id?;
-                let name = record.profile.name.unwrap_or_else(|| id.clone());
-                Some(ProfileOption {
-                    is_default: id == default,
+            .filter(ProfileRecordResponse::is_tui_launchable)
+            .map(|record| {
+                let id = record.id;
+                ProfileOption {
+                    is_default: false,
                     id,
-                    name,
-                    description: record.profile.best_for,
-                })
+                    name: record.name,
+                    description: Some(record.description),
+                }
             })
             .collect()
     }
@@ -612,17 +615,21 @@ impl ProfilesResponse {
 
 #[derive(Debug, Deserialize)]
 struct ProfileRecordResponse {
-    profile: ProfileResponse,
+    id: String,
+    name: String,
+    description: String,
+    availability: ProfileAvailabilityResponse,
+}
+
+impl ProfileRecordResponse {
+    fn is_tui_launchable(&self) -> bool {
+        self.availability.shell
+    }
 }
 
 #[derive(Debug, Deserialize)]
-struct ProfileResponse {
-    #[serde(default)]
-    id: Option<String>,
-    #[serde(default)]
-    name: Option<String>,
-    #[serde(default)]
-    best_for: Option<String>,
+struct ProfileAvailabilityResponse {
+    shell: bool,
 }
 
 #[cfg(test)]

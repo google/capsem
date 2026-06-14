@@ -1,0 +1,95 @@
+# Capsem code profile.
+#
+# This is the canonical profile for coding agents. The UI, TUI, CLI, and
+# service status must reflect this contract instead of inventing names,
+# descriptions, assets, rules, MCP servers, or plugin copy.
+
+id = "code"
+name = "Code"
+description = "Optimized for coding and long-running agents."
+icon_svg = "<svg viewBox=\"0 0 16 16\" aria-hidden=\"true\"><path d=\"M5.5 3 1.5 8l4 5 1.2-1-3.2-4 3.2-4L5.5 3Zm5 0-1.2 1 3.2 4-3.2 4 1.2 1 4-5-4-5Z\"/></svg>"
+revision = "2026.06.08.7"
+refresh_policy = "24h"
+
+[availability]
+web = true
+shell = true
+mobile = true
+
+[vm]
+cpu_count = 4
+ram_gb = 12
+scratch_disk_size_gb = 64
+
+[assets]
+format = "profile-assets.v1"
+refresh_policy = "on_profile_refresh"
+
+[assets.arch.arm64.kernel]
+name = "vmlinuz"
+url = "https://github.com/google/capsem/releases/download/v1.0.1780954707/arm64-vmlinuz"
+
+[assets.arch.arm64.initrd]
+name = "initrd.img"
+url = "https://github.com/google/capsem/releases/download/v1.0.1780954707/arm64-initrd.img"
+
+[assets.arch.arm64.rootfs]
+name = "rootfs.erofs"
+url = "https://github.com/google/capsem/releases/download/v1.0.1780954707/arm64-rootfs.erofs"
+
+[assets.arch.x86_64.kernel]
+name = "vmlinuz"
+url = "https://github.com/google/capsem/releases/download/v1.0.1780763638/x86_64-vmlinuz"
+
+[assets.arch.x86_64.initrd]
+name = "initrd.img"
+url = "https://github.com/google/capsem/releases/download/v1.0.1780763638/x86_64-initrd.img"
+
+[assets.arch.x86_64.rootfs]
+name = "rootfs.erofs"
+url = "https://github.com/google/capsem/releases/download/v1.0.1780763638/x86_64-rootfs.erofs"
+
+[rule_files]
+enforcement = "profiles/code/enforcement.toml"
+sigma = "profiles/code/detection.yaml"
+
+[files.enforcement]
+path = "profiles/code/enforcement.toml"
+
+[files.detection]
+path = "profiles/code/detection.yaml"
+
+[files.mcp]
+path = "profiles/code/mcp.json"
+
+[files.apt_packages]
+path = "profiles/code/apt-packages.txt"
+
+[files.python_requirements]
+path = "profiles/code/python-requirements.txt"
+
+[files.npm_packages]
+path = "profiles/code/npm-packages.txt"
+
+[files.build]
+path = "profiles/code/build.sh"
+
+[files.tips]
+path = "profiles/code/tips.txt"
+
+[files.root_manifest]
+path = "profiles/code/root.manifest.json"
+
+[plugins.credential_broker]
+mode = "rewrite"
+detection_level = "informational"
+
+[plugins.log_sanitizer]
+mode = "rewrite"
+detection_level = "informational"
+
+[mcp]
+health_check_interval_secs = 60
+
+[mcp.server_enabled]
+local = true

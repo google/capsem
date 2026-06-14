@@ -25,6 +25,14 @@ fn route_openai_chat_completions() {
 }
 
 #[test]
+fn route_ollama_native_chat() {
+    let (kind, provider) = route_provider("/api/chat").unwrap();
+    assert_eq!(kind, ProviderKind::Ollama);
+    assert_eq!(provider.kind(), ProviderKind::Ollama);
+    assert_eq!(provider.upstream_base_url(), "http://127.0.0.1:11434");
+}
+
+#[test]
 fn route_google_gemini() {
     let (kind, _) = route_provider("/v1beta/models/gemini-2.5-pro:streamGenerateContent").unwrap();
     assert_eq!(kind, ProviderKind::Google);
@@ -48,6 +56,38 @@ fn provider_kind_as_str() {
     assert_eq!(ProviderKind::Anthropic.as_str(), "anthropic");
     assert_eq!(ProviderKind::OpenAi.as_str(), "openai");
     assert_eq!(ProviderKind::Google.as_str(), "google");
+    assert_eq!(ModelProtocol::Ollama.as_str(), "ollama");
+}
+
+#[test]
+fn model_protocol_accepts_openai_compatible_without_new_provider_variant() {
+    assert_eq!(
+        ModelProtocol::try_from("openai-compatible").unwrap(),
+        ModelProtocol::OpenAi
+    );
+    assert_eq!(
+        ModelProtocol::try_from("openai_compatible").unwrap(),
+        ModelProtocol::OpenAi
+    );
+    assert_eq!(
+        ModelProtocol::try_from("gemini").unwrap(),
+        ModelProtocol::Google
+    );
+    assert_eq!(
+        ModelProtocol::try_from("ollama").unwrap(),
+        ModelProtocol::Ollama
+    );
+    assert!(ModelProtocol::try_from("private-vendor").is_err());
+}
+
+#[test]
+fn native_ollama_protocol_does_not_borrow_openai_sse_parser() {
+    let mut parser = ModelProtocol::Ollama.create_parser();
+    let events = parser.parse_event(&crate::net::parsers::sse_parser::SseEvent {
+        event_type: Some("message".into()),
+        data: r#"{"choices":[{"delta":{"content":"not ollama"}}]}"#.into(),
+    });
+    assert!(events.is_empty());
 }
 
 // -- extract_model_from_path --

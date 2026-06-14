@@ -5,7 +5,6 @@ the justfile (dev/shell/run/test/smoke/bench/...), so flaking here would
 silently re-enable the concurrent-just-test race it exists to prevent.
 """
 
-import os
 import subprocess
 from pathlib import Path
 
@@ -13,10 +12,10 @@ REPO_ROOT = Path(__file__).parent.parent
 HELPER = REPO_ROOT / "scripts/lib/exec_lock.sh"
 
 
-def _spawn_holder(lock_path, hold_seconds, env=None):
+def _spawn_holder(lock_path, hold_seconds):
     """Spawn a bash subshell that sources the helper, acquires the lock, and holds.
 
-    Prints HELD on stdout once the advisory lock is taken; that's the sync point
+    Prints HELD on stdout once the flock is taken; that's the sync point
     the test uses to know the lock is definitely held before probing.
     """
     cmd = [
@@ -25,24 +24,18 @@ def _spawn_holder(lock_path, hold_seconds, env=None):
         f"echo HELD && sleep {hold_seconds}",
     ]
     return subprocess.Popen(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
 
 
-def _try_acquire(lock_path, timeout=5, env=None):
+def _try_acquire(lock_path, timeout=5):
     """Synchronously try to take the lock; return (returncode, stderr)."""
     result = subprocess.run(
         ["bash", "-c",
          f"source '{HELPER}' && acquire_exec_lock '{lock_path}' && echo OK"],
-        capture_output=True, text=True, timeout=timeout, env=env,
+        capture_output=True, text=True, timeout=timeout,
     )
     return result.returncode, result.stderr
-
-
-def _force_python_lock_env():
-    env = os.environ.copy()
-    env["CAPSEM_EXEC_LOCK_FORCE_PYTHON"] = "1"
-    return env
 
 
 def test_acquire_blocks_concurrent_holder(tmp_path):
@@ -63,20 +56,6 @@ def test_acquire_blocks_concurrent_holder(tmp_path):
         assert str(lock) in err, (
             f"stderr should include the lock path, got: {err!r}"
         )
-        holder.wait(timeout=5)
-
-
-def test_python_fallback_blocks_concurrent_holder(tmp_path):
-    """macOS runners without flock still need the same non-blocking lock."""
-    lock = tmp_path / "python-fallback.lock"
-    env = _force_python_lock_env()
-    with _spawn_holder(lock, hold_seconds=2, env=env) as holder:
-        assert holder.stdout.readline().strip() == "HELD", (
-            "python fallback holder failed to acquire before probe"
-        )
-        rc, err = _try_acquire(lock, env=env)
-        assert rc != 0, "fallback concurrent acquire should fail"
-        assert "another agent holds" in err
         holder.wait(timeout=5)
 
 

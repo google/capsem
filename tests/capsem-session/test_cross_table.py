@@ -38,17 +38,9 @@ def test_mcp_tool_calls_reference_mcp_calls(session_db):
     assert len(orphans) == 0, f"MCP tool_calls with invalid mcp_call_id: {orphans}"
 
 
-def test_snapshot_event_fs_range_valid(session_db):
-    """snapshot_events fs_event_id range should reference valid fs_events."""
-    rows = session_db.execute("""
-        SELECT se.id, se.start_fs_event_id, se.stop_fs_event_id
-        FROM snapshot_events se
-        WHERE se.stop_fs_event_id IS NOT NULL
-    """).fetchall()
-    for row in rows:
-        start = row["start_fs_event_id"]
-        stop = row["stop_fs_event_id"]
-        if start is not None and stop is not None:
-            assert stop >= start, (
-                f"snapshot_event {row['id']}: stop ({stop}) < start ({start})"
-            )
+def test_snapshots_are_not_cross_table_activity(session_db):
+    """Snapshots are exposed through VM snapshot routes, not session.db joins."""
+    rows = session_db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='snapshot_events'"
+    ).fetchall()
+    assert rows == []

@@ -1,6 +1,6 @@
 ---
 title: Snapshots
-description: How Capsem's automatic workspace snapshotting works -- APFS clonefile, dual-pool scheduler, revert telemetry, and session DB integration.
+description: How Capsem's automatic workspace snapshotting works -- APFS clonefile, dual-pool scheduler, route-backed status, and session ledger boundaries.
 sidebar:
   order: 15
 ---
@@ -16,8 +16,9 @@ flowchart TB
     MCP["MITM MCP endpoint<br/>framed vsock:5002"]
     Sched["AutoSnapshotScheduler"]
     FS["Session dir<br/>auto_snapshots/{slot}/"]
-    DB["session.db"]
+    IPC["capsem-process IPC<br/>snapshot status/list"]
     FM["FsMonitor<br/>(FSEvents / inotify)"]
+    DB["session.db<br/>activity ledger"]
     WS["workspace/"]
   end
 
@@ -29,7 +30,8 @@ flowchart TB
   MCP --> Sched
   Timer --> Sched
   Sched -- "clonefile / reflink" --> FS
-  Sched -- "snapshot_events" --> DB
+  Sched -- "in-memory status" --> IPC
+  MCP -- "explicit tool call" --> DB
   MCP -- "FileEvent (restored)" --> DB
   FM -- "FileEvent (created/modified/deleted)" --> DB
   Agent -- "file I/O via VirtioFS" --> WS
@@ -115,9 +117,26 @@ Key properties:
 - Path validation uses `canonicalize()` to prevent symlink escape (see [Symlink Safety](#symlink-safety))
 - File permissions are restored from the snapshot metadata
 
-## Session database integration
+## Session ledger boundary
 
-Every snapshot writes a row to the `snapshot_events` table. Every file change (including reverts) writes to `fs_events`. This decouples the stats UI from the MCP endpoint -- the frontend queries SQL directly.
+Snapshots are host recovery state, not user/security activity. The automatic
+snapshot scheduler does **not** write snapshot lifecycle rows to `session.db`,
+and `snapshot.event` is not a security-event type.
+
+Snapshot state is exposed through VM routes:
+
+| Route | Source |
+|-------|--------|
+| `GET /vms/{id}/snapshots/status` | Running VM: `capsem-process` in-memory scheduler over IPC. Stopped VM: that VM's snapshot metadata loaded on demand. |
+| `GET /vms/{id}/snapshots/list` | Same source as status, returned as a compact list. |
+
+The session ledger still records real user/security activity around snapshots:
+
+- Explicit MCP snapshot tool calls are `mcp_calls`.
+- File changes caused by `snapshots_revert` are `fs_events` with action
+  `restored`.
+- Automatic background snapshot captures emit structured process logs, not
+  session DB rows.
 
 ### fs_events schema
 
@@ -141,52 +160,6 @@ The `action` field has four values:
 | `restored` | MITM MCP endpoint | File reverted from a snapshot checkpoint |
 
 For `restored` events, the `path` field includes the source checkpoint: `"src/main.py (from cp-3)"`. This makes it easy to trace which snapshot was used for recovery.
-
-### snapshot_events schema
-
-```sql
-CREATE TABLE snapshot_events (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp TEXT NOT NULL,
-    slot INTEGER NOT NULL,
-    origin TEXT NOT NULL,
-    name TEXT,
-    files_count INTEGER DEFAULT 0,
-    start_fs_event_id INTEGER DEFAULT 0,
-    stop_fs_event_id INTEGER DEFAULT 0
-);
-```
-
-### Cross-reference with fs_events
-
-Each snapshot stores a self-contained file event range `(start_fs_event_id, stop_fs_event_id]`:
-
-- `stop_fs_event_id` = `MAX(fs_events.id)` at snapshot time
-- `start_fs_event_id` = previous snapshot's `stop_fs_event_id` (or 0 for the first)
-
-**Manual snapshots always use `start_fs_event_id = 0`.** Unlike auto snapshots which form a sequential chain, manual checkpoints are point-in-time forks. Setting start to 0 means they carry the full session's change history, which is essential when forking a session from a manual checkpoint.
-
-The frontend computes per-snapshot change counts with a single query:
-
-```sql
-SELECT
-  (SELECT COUNT(*) FROM fs_events
-   WHERE id > s.start_fs_event_id AND id <= s.stop_fs_event_id
-   AND action = 'created') as created,
-  (SELECT COUNT(*) FROM fs_events
-   WHERE id > s.start_fs_event_id AND id <= s.stop_fs_event_id
-   AND action = 'modified') as modified,
-  (SELECT COUNT(*) FROM fs_events
-   WHERE id > s.start_fs_event_id AND id <= s.stop_fs_event_id
-   AND action = 'deleted') as deleted,
-  (SELECT COUNT(*) FROM fs_events
-   WHERE id > s.start_fs_event_id AND id <= s.stop_fs_event_id
-   AND action = 'restored') as restored
-FROM snapshot_events s
-WHERE s.id IN (SELECT MAX(id) FROM snapshot_events GROUP BY slot)
-```
-
-The `MAX(id) GROUP BY slot` filter deduplicates the ring buffer -- when slot 0 is overwritten, only the latest row is returned.
 
 ## Cloning backends
 

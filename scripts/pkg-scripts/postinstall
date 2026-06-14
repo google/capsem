@@ -3,7 +3,7 @@
 #
 # The .pkg installs files to /usr/local/share/capsem/. This script copies
 # them to the user's ~/.capsem/ directory, codesigns for Virtualization.framework,
-# registers the LaunchAgent, and runs initial setup.
+# registers the LaunchAgent, and waits for service readiness.
 #
 # macOS Installer.app runs postinstall as root with $USER set to the
 # installing user. When called via `sudo installer -pkg`, $USER may be
@@ -16,111 +16,92 @@ fi
 if [ "$USER" = "root" ] || [ -z "${USER:-}" ]; then
     USER=$(stat -f '%Su' /dev/console 2>/dev/null || echo "")
     if [ -z "$USER" ] || [ "$USER" = "root" ]; then
-        echo "capsem: could not determine installing user; cannot complete per-user setup" >&2
-        exit 1
+        echo "capsem: could not determine installing user, skipping per-user install" >&2
+        exit 0
     fi
 fi
 
 PKG_SHARE="/usr/local/share/capsem"
 USER_HOME=$(eval echo "~$USER")
 CAPSEM_DIR="$USER_HOME/.capsem"
+INSTALL_LOG="$CAPSEM_DIR/logs/install.log"
+mkdir -p "$CAPSEM_DIR/logs"
+INSTALL_RUN_FILE="$CAPSEM_DIR/logs/install-current-run"
+INSTALL_RUN_ID=$(cat "$INSTALL_RUN_FILE" 2>/dev/null || date -u '+%Y%m%dT%H%M%SZ')
+INSTALL_RUN_LOG="$CAPSEM_DIR/logs/install-$INSTALL_RUN_ID.log"
+touch "$INSTALL_LOG" "$INSTALL_RUN_LOG"
+ln -sf "$(basename "$INSTALL_RUN_LOG")" "$CAPSEM_DIR/logs/install-latest.log"
+chown -R "$USER" "$CAPSEM_DIR/logs"
+exec > >(tee -a "$INSTALL_LOG" "$INSTALL_RUN_LOG") 2>&1
+echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=start user=$USER pkg_share=$PKG_SHARE install_run_id=$INSTALL_RUN_ID install_run_log=$INSTALL_RUN_LOG"
 
-seed_assets() {
-    for asset in manifest.json manifest.json.minisig; do
-        src="$PKG_SHARE/assets/$asset"
-        if [ ! -f "$src" ]; then
-            echo "capsem: required package asset missing: $src" >&2
-            exit 1
-        fi
-        install -m 0644 "$src" "$CAPSEM_DIR/assets/$asset"
-    done
-    if [ -f "$PKG_SHARE/assets/manifest-sign.dev.pub" ]; then
-        install -m 0644 "$PKG_SHARE/assets/manifest-sign.dev.pub" \
-            "$CAPSEM_DIR/assets/manifest-sign.dev.pub"
-    fi
-}
-
-seed_base_profiles() {
-    src="$PKG_SHARE/profiles/base"
-    dst="$CAPSEM_DIR/profiles/base"
-    if [ ! -d "$src" ]; then
-        echo "capsem: required base profiles missing: $src" >&2
-        exit 1
-    fi
-    mkdir -p "$dst"
-    find "$dst" -maxdepth 1 -type f -name '*.profile.toml' -delete
-    install -m 0644 "$src/"*.profile.toml "$dst/"
-}
-
-install_app_bundle() {
-    src="$PKG_SHARE/Capsem.app"
-    dst="/Applications/Capsem.app"
-    if [ ! -d "$src" ]; then
-        echo "capsem: required app bundle missing: $src" >&2
-        exit 1
-    fi
-    mkdir -p /Applications
-    rm -rf "$dst"
-    ditto "$src" "$dst"
-    chmod -R a+rX "$dst"
-}
-
-wait_for_ui_ready() {
-    su "$USER" -c "$CAPSEM_DIR/bin/capsem start" >/dev/null
-    for _ in $(seq 1 60); do
-        if [ -S "$CAPSEM_DIR/run/service.sock" ] \
-            && curl -fsS --unix-socket "$CAPSEM_DIR/run/service.sock" --max-time 2 http://localhost/list >/dev/null 2>&1 \
-            && [ -f "$CAPSEM_DIR/run/gateway.port" ]; then
-            port=$(tr -d '[:space:]' < "$CAPSEM_DIR/run/gateway.port")
-            if echo "$port" | grep -Eq '^[0-9]+$' \
-                && curl -fsS --max-time 2 "http://127.0.0.1:$port/health" >/dev/null 2>&1; then
-                return 0
-            fi
-        fi
-        sleep 0.5
-    done
-    echo "capsem: service or gateway did not become ready; refusing to open UI early" >&2
-    return 1
-}
-
-# Create user-level directory layout. Local dev installs may have
-# ~/.capsem/assets as a symlink into the repo; never seed package assets
-# through that link as root, or the repo's generated manifest files become
-# root-owned and later dev gates cannot re-sign them.
-mkdir -p "$CAPSEM_DIR/bin" "$CAPSEM_DIR/profiles/base" "$CAPSEM_DIR/run"
+# Create user-level directory layout. Remove stale asset symlinks from dev
+# installs so this package never writes through to an old worktree.
+mkdir -p "$CAPSEM_DIR/bin" "$CAPSEM_DIR/run"
 if [ -L "$CAPSEM_DIR/assets" ]; then
     rm "$CAPSEM_DIR/assets"
+elif [ -e "$CAPSEM_DIR/assets" ] && [ ! -d "$CAPSEM_DIR/assets" ]; then
+    rm -f "$CAPSEM_DIR/assets"
 fi
 mkdir -p "$CAPSEM_DIR/assets"
 chown -R "$USER" "$CAPSEM_DIR"
-
-# Ensure the GUI app exists in the canonical macOS Applications folder. The
-# component payload also contains /Applications/Capsem.app, but this explicit
-# materialization makes the postinstall health contract match the installer UI.
-install_app_bundle
+echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=layout_ready capsem_dir=$CAPSEM_DIR"
 
 # Copy companion binaries from pkg payload
-for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-tui capsem-admin; do
+for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin; do
     src="$PKG_SHARE/bin/$bin"
     if [ -f "$src" ]; then
         cp "$src" "$CAPSEM_DIR/bin/$bin"
         chmod 755 "$CAPSEM_DIR/bin/$bin"
     fi
 done
+echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=binaries_copied"
 
 # Codesign all binaries with virtualization entitlements
 if [ -f "$PKG_SHARE/entitlements.plist" ]; then
     for bin in "$CAPSEM_DIR/bin"/capsem*; do
         codesign --sign - --entitlements "$PKG_SHARE/entitlements.plist" --force "$bin" 2>/dev/null || true
     done
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=binaries_codesigned"
 fi
 
-# Copy asset metadata. Heavy VM payloads stay on the profile asset channel.
-seed_assets
-seed_base_profiles
+# Copy the package-selected manifest and provenance. VM asset payloads are
+# external to the package and are reconciled by the service from this manifest.
+if [ -f "$PKG_SHARE/assets/manifest.json" ]; then
+    install -m 0644 "$PKG_SHARE/assets/manifest.json" "$CAPSEM_DIR/assets/manifest.json"
+    if [ -f "$PKG_SHARE/assets/manifest-origin.json" ]; then
+        install -m 0644 "$PKG_SHARE/assets/manifest-origin.json" "$CAPSEM_DIR/assets/manifest-origin.json"
+    fi
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=manifest_copied"
+    MANIFEST_REPORT=$("$CAPSEM_DIR/bin/capsem-admin" manifest check --json "$CAPSEM_DIR/assets/manifest.json" | tr '\n' ' ')
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=manifest_report $MANIFEST_REPORT"
+    if [ -f "$CAPSEM_DIR/assets/manifest-origin.json" ]; then
+        MANIFEST_ORIGIN=$(tr '\n' ' ' < "$CAPSEM_DIR/assets/manifest-origin.json")
+        echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=manifest_origin $MANIFEST_ORIGIN"
+    fi
+fi
+
+# Copy the materialized profile catalog and its rule files. Profiles pin the
+# asset hashes the service boots, so they must be installed atomically with the
+# package assets instead of falling back to compiled source defaults.
+if [ -d "$PKG_SHARE/profiles" ]; then
+    rm -rf "$CAPSEM_DIR/profiles"
+    mkdir -p "$CAPSEM_DIR/profiles"
+    cp -R "$PKG_SHARE/profiles/." "$CAPSEM_DIR/profiles/"
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=profiles_copied"
+fi
 
 # Fix ownership (we ran as root)
 chown -R "$USER" "$CAPSEM_DIR"
+
+if [ -f "$CAPSEM_DIR/assets/manifest.json" ] && [ -x "$CAPSEM_DIR/bin/capsem" ]; then
+    if ! su "$USER" -c "CAPSEM_HOME=\"$CAPSEM_DIR\" CAPSEM_RUN_DIR=\"$CAPSEM_DIR/run\" \"$CAPSEM_DIR/bin/capsem\" update --assets"; then
+        echo "capsem: asset hydration failed" >&2
+        echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=asset_hydration_failed"
+        exit 1
+    fi
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=assets_hydrated"
+fi
 
 # Add ~/.capsem/bin to PATH in shell profile
 CAPSEM_BIN="$CAPSEM_DIR/bin"
@@ -134,28 +115,59 @@ for PROFILE in "$USER_HOME/.zshrc" "$USER_HOME/.bash_profile" "$USER_HOME/.bashr
     fi
 done
 
-# Register LaunchAgent and run setup as the installing user. These are
-# release-critical: if either fails, Installer must report failure instead of
-# leaving a package that looks installed but cannot boot.
-su "$USER" -c "$CAPSEM_DIR/bin/capsem install"
-seed_assets
-seed_base_profiles
-chown -R "$USER" "$CAPSEM_DIR/assets" "$CAPSEM_DIR/profiles"
-su "$USER" -c "$CAPSEM_DIR/bin/capsem setup --non-interactive --accept-detected"
-wait_for_ui_ready
+FISH_CONFIG="$USER_HOME/.config/fish/config.fish"
+mkdir -p "$(dirname "$FISH_CONFIG")"
+touch "$FISH_CONFIG"
+if ! grep -qF 'fish_add_path --path "$HOME/.capsem/bin"' "$FISH_CONFIG"; then
+    echo 'fish_add_path --path "$HOME/.capsem/bin"' >> "$FISH_CONFIG"
+fi
+chown -R "$USER" "$USER_HOME/.config/fish"
+
+# Register LaunchAgent as the installing user. Do not hide readiness: the GUI
+# should only launch after the service and gateway are ready. Asset readiness is
+# exposed through the service/UI rather than a setup side effect.
+if ! su "$USER" -c "$CAPSEM_DIR/bin/capsem install" 2>/dev/null; then
+    echo "capsem: service registration failed" >&2
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=service_registration_failed"
+    exit 1
+fi
+echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=service_registered"
+
+READY=0
+STATUS_OUTPUT=""
+for attempt in $(seq 1 30); do
+    STATUS_OUTPUT=$(su "$USER" -c "$CAPSEM_DIR/bin/capsem status" 2>/dev/null || true)
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=readiness_poll attempt=$attempt"
+    if echo "$STATUS_OUTPUT" | grep -q "Service:   ok" \
+        && echo "$STATUS_OUTPUT" | grep -q "Gateway:   ok"; then
+        READY=1
+        break
+    fi
+    sleep 1
+done
 
 # --- GUI detection and app launch ---
-# Open the desktop app for interactive onboarding if a GUI is available.
-# The app detects first launch (onboarding_completed=false) and shows the wizard.
-if [ "$(uname)" = "Darwin" ] && [ -d "/Applications/Capsem.app" ]; then
+# Open the desktop app only when the daemon and gateway are up. Assets may
+# still be downloading; the UI can show that state once it has a live service.
+if [ "$READY" -eq 1 ] && [ "$(uname)" = "Darwin" ] && [ -d "/Applications/Capsem.app" ]; then
+    # Kill stale pre-install GUI instances so Installer.app cannot leave a
+    # skipped or cached frontend talking to the freshly installed daemon.
+    pkill -x capsem-app 2>/dev/null || true
     su "$USER" -c "open /Applications/Capsem.app" 2>/dev/null || true
-elif [ "$(uname)" = "Linux" ]; then
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=gui_opened"
+elif [ "$READY" -eq 1 ] && [ "$(uname)" = "Linux" ]; then
     if [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; then
         if command -v capsem-app >/dev/null 2>&1; then
             su "$USER" -c "capsem-app &" 2>/dev/null || true
         fi
     fi
-    # headless Linux: terminal setup already ran, nothing more to do
+    # headless Linux: service is registered; UI launch is not available.
+elif [ "$READY" -ne 1 ]; then
+    echo "capsem: service is not ready after install" >&2
+    echo "$STATUS_OUTPUT" >&2
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=service_not_ready"
+    exit 1
 fi
 
+echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=complete"
 exit 0

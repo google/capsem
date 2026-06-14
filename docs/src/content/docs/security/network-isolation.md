@@ -5,10 +5,7 @@ sidebar:
   order: 20
 ---
 
-The guest VM has no real network interface. DNS and HTTPS are redirected to
-guest-side proxy binaries, forwarded to host handlers over vsock, lifted into
-typed Security Events, checked by the Security Engine, and logged through the
-resolved-event path.
+The guest VM has no real network interface. DNS and HTTPS are redirected to guest-side proxy binaries, forwarded to host handlers over vsock, checked against policy, and logged to the session database.
 
 ## Air-gapped architecture
 
@@ -22,8 +19,8 @@ graph LR
     end
 
     subgraph "Host"
-        HDNS["DNS Proxy<br/>SecurityEvent + upstream resolver"]
-        MITM["MITM Proxy<br/>TLS termination + SecurityEvent"]
+        HDNS["DNS Proxy<br/>security rule evaluation + upstream resolver"]
+        MITM["MITM Proxy<br/>TLS termination + security rule evaluation"]
         UP["Upstream server"]
     end
 
@@ -48,12 +45,17 @@ No packets leave the VM through a NIC. DNS reaches the host only through vsock p
 | 2. Dummy NIC | `ip link add dummy0 type dummy` | Create fake interface |
 | 3. Assign IP | `ip addr add 10.0.0.1/24 dev dummy0` | Give it a local address |
 | 4. Default route | `ip route add default dev dummy0` | All traffic routes to dummy0 |
-| 5. DNS redirect | `iptables -t nat -A OUTPUT -p udp --dport 53 -j REDIRECT --to-port 1053` plus TCP | Send DNS to `capsem-dns-proxy` |
-| 6. HTTPS redirect | `iptables -t nat -A OUTPUT -p tcp --dport 443 -j REDIRECT --to-port 10443` | Redirect HTTPS to proxy |
-| 7. Net proxy | `capsem-net-proxy` | TCP:10443 to vsock:5002 bridge |
-| 8. DNS proxy | `capsem-dns-proxy` | UDP/TCP :1053 to vsock:5007 bridge |
+| 5. DNS redirect | `iptables-nft -t nat -A OUTPUT -p udp --dport 53 -j REDIRECT --to-port 1053` plus TCP | Send DNS to `capsem-dns-proxy` |
+| 6. HTTPS redirect | `iptables-nft -t nat -A OUTPUT -p tcp --dport 443 -j REDIRECT --to-port 10443` | Redirect HTTPS to the TLS proxy listener |
+| 7. Plain HTTP redirect | `iptables-nft -t nat -A OUTPUT -p tcp --dport 80 -j REDIRECT --to-port 10080` plus 3128/3713/8080/11434 | Redirect HTTP/dev proxy ports to the plain-HTTP listener |
+| 8. Net proxy | `capsem-net-proxy` | TCP listeners to vsock:5002 bridge |
+| 9. DNS proxy | `capsem-dns-proxy` | UDP/TCP :1053 to vsock:5007 bridge |
 
-The result: when an application resolves `github.com`, the query is captured on port 53, handled by `capsem-dns-proxy`, and resolved or denied by the host DNS handler. When an application connects to `github.com:443`, iptables redirects the socket to `127.0.0.1:10443`; `capsem-net-proxy` bridges the TCP connection to the host over vsock port 5002.
+The result: when an application resolves `github.com`, the query is captured on
+port 53, handled by `capsem-dns-proxy`, and resolved or denied by the host DNS
+handler. When an application connects to `github.com:443`, `iptables-nft`
+redirects the socket to `127.0.0.1:10443`; `capsem-net-proxy` bridges the TCP
+connection to the host over vsock port 5002.
 
 ## MITM proxy overview
 
@@ -62,16 +64,16 @@ The host MITM proxy receives each connection on vsock:5002 and runs a full inspe
 ```mermaid
 graph TD
     A["vsock:5002 connection"] --> B["TLS ClientHello<br/>extract SNI domain"]
-    B --> C["Complete TLS handshake<br/>mint leaf cert for domain"]
-    C --> D["Parse HTTP request<br/>method + path + headers"]
-    D --> E["Build http.request SecurityEvent"]
-    E --> F{"Security Engine decision"}
-    F -->|block/ask| G["Return denial<br/>emit resolved event"]
-    F -->|rewrite| H["Validate/apply mutation"]
-    F -->|allow| I["Forward to upstream<br/>real TLS connection"]
-    H --> I
+    B --> E["Complete TLS handshake<br/>mint leaf cert for domain"]
+    E --> F["Parse HTTP request<br/>method + path + headers + body preview"]
+    F --> S["Build SecurityEvent<br/>HTTP + optional model roots"]
+    S --> P["Preprocess plugins"]
+    P --> G{"SecurityRuleSet<br/>CEL over SecurityEvent"}
+    G -->|Denied or unresolved ask| H["Return 403<br/>ledger-safe log"]
+    G -->|Allowed| I["Runtime materialization<br/>forward to upstream TLS"]
     I --> J["Stream response<br/>to guest"]
-    J --> K["Emit resolved event<br/>and telemetry projections"]
+    J --> K["Logging plugins<br/>ledger projection"]
+    K --> L["Log telemetry<br/>domain, method, path, status, bytes, latency"]
 ```
 
 The proxy mints per-domain TLS certificates signed by a static Capsem CA (ECDSA P-256, 24-hour validity). The CA is baked into the guest rootfs and trusted by the system certificate store, Python certifi, and Node.js. See [MITM Proxy Architecture](/architecture/mitm-proxy/) for implementation details.
@@ -86,56 +88,65 @@ The proxy mints per-domain TLS certificates signed by a static Capsem CA (ECDSA 
 | curl/wget | `SSL_CERT_FILE` env var |
 | pip/requests | `REQUESTS_CA_BUNDLE` env var |
 
-## Profile-Owned Enforcement
+## HTTP And DNS Rule Evaluation
 
-Users customize network behavior through Profile V2 capabilities and
-profile-owned enforcement rules, not standalone network allow/block files:
+Domains are not governed by a separate allow/block engine. DNS and HTTP parsing
+produce `SecurityEvent` fields (`dns.*` and `http.*`), then the same CEL rule
+rail decides allow, ask, block, preprocess, postprocess, and detection.
 
-```toml
-[security.rules.http.allow_internal]
-on = "http.request"
-if = 'http.request.host.endsWith(".internal.corp.com")'
-decision = "allow"
-priority = 10
+### Evaluation order
 
-[security.rules.http.block_bad]
-on = "http.request"
-if = 'http.request.host == "malware.bad.com"'
-decision = "block"
-priority = 10
+```mermaid
+graph TD
+    A["DNS or HTTP event parsed"] --> B["Build SecurityEvent"]
+    B --> C["Configured preprocess plugins"]
+    C --> D["Evaluate SecurityRuleSet by priority"]
+    D --> E{"Final decision"}
+    E -->|Block| F["Deny boundary<br/>log rule rows"]
+    E -->|Ask| G["Wait for approval<br/>log ask state"]
+    E -->|Allow| H["Materialize request<br/>log telemetry"]
 ```
 
-Corporate profiles can lock the relevant profile sections so user profile forks
-cannot weaken network enforcement.
+### Profile And Corp Rules
 
-There is no migrated default allow/block list. Hosts that should be reachable
-must be represented by explicit profile rules, generated package/provider
-rules, or system catch-alls derived from profile capabilities.
-
-## HTTP and DNS Enforcement
-
-The Network Engine lifts HTTP and DNS activity into Security Events. The
-Security Engine evaluates profile-owned enforcement rules over canonical roots.
+Users customize policy with profile rules; organizations add constraints with
+corp rules or referenced enforcement/Sigma files.
 
 ```toml
-[security.rules.http.block_repo_writes]
-on = "http.request"
-if = 'http.request.host == "github.com" && http.request.method == "POST" && http.request.path.startsWith("/openai/")'
-decision = "block"
-priority = 10
+[profiles.rules.allow_internal_http]
+name = "allow_internal_http"
+action = "allow"
+match = 'http.host.matches("(^|.*\\.)internal\\.corp$")'
 
-[security.rules.dns.block_ai_provider]
-on = "dns.request"
-if = 'dns.request.qname == "api.openai.com" && dns.request.qtype == "A"'
-decision = "block"
-priority = 10
+[profiles.rules.block_malware_dns]
+name = "block_malware_dns"
+action = "block"
+match = 'dns.qname.matches("(^|.*\\.)malware\\.bad$")'
 ```
 
-HTTP `rewrite` rules can strip request or response headers before they leave
-the boundary or appear in telemetry. DNS `rewrite` rules synthesize configured
-answers without upstream resolution.
+Corporate policy in `/etc/capsem/corp.toml` supplies locked negative-priority
+rules and can reference shared enforcement TOML or Sigma YAML rule files.
 
-See [Rule Authoring](/security/rules/) for the full rule reference.
+## HTTP and DNS Security Rules
+
+For allowed domains, security-event rules add method, path, body, model, file,
+process, and DNS controls through the same CEL rail. HTTP and DNS parsers
+attach first-party `http.*` and `dns.*` fields to `SecurityEvent`; enforcement
+and detection then use the shared rule engine.
+
+```toml
+[profiles.rules.block_repo_writes]
+name = "block_repo_writes"
+action = "block"
+match = 'http.host == "github.com" && http.method == "POST" && http.path.matches("^/openai/")'
+
+[profiles.rules.block_ai_provider_dns]
+name = "block_ai_provider_dns"
+action = "block"
+match = 'dns.qname == "api.openai.com" && dns.qtype == "A"'
+```
+
+See [Policy](/security/policy/) for the full rule reference.
 
 ## Telemetry
 
@@ -147,13 +158,13 @@ Every proxied request is logged to the per-VM `session.db`:
 | `method` | HTTP method |
 | `path` | Request path |
 | `status_code` | Upstream response status |
-| `decision` | `allowed`, `denied`, or `error` |
+| `decision` | Final security decision recorded by the ledger |
 | `bytes_sent` | Request body size |
 | `bytes_received` | Response body size |
 | `duration_ms` | End-to-end latency |
 | `request_body_preview` | First 4 KB of request body |
 | `response_body_preview` | First 4 KB of response body |
-| `matched_rule` | Which Security Engine rule matched |
+| `matched_rule` | The security rule id that matched |
 
 For AI provider traffic (Anthropic, OpenAI, Google), the proxy also parses SSE streams to extract model calls, token usage, tool calls, and estimated cost. See [Session Telemetry](/architecture/session-telemetry/) for the full schema.
 
@@ -164,12 +175,11 @@ DNS queries are logged separately in `dns_events` with `qname`, `qtype`,
 
 | Scenario | Outcome | Why |
 |----------|---------|-----|
-| HTTPS to a domain with no allowing rule (`example.com`) | 403 Forbidden | Profile catch-all denies the event |
-| HTTPS to blocked domain (`api.openai.com`) | 403 Forbidden | Profile enforcement rule blocks |
+| HTTPS to blocked domain (`api.openai.com`) | 403 Forbidden | Matching `block` rule |
 | HTTP port 80 (`http://google.com`) | Connection refused | Only port 443 is redirected |
 | Non-standard port (`https://google.com:8443`) | Connection refused | Only port 443 is redirected |
 | Direct IP (`https://1.1.1.1`) | Connection refused | No real NIC; dummy0 has no real route |
-| POST to allowed domain with block rule | 403 Forbidden | Security Engine rule blocks the method |
+| POST to allowed domain with block rule | 403 Forbidden | HTTP-level rule blocks the method |
 
 ## capsem-doctor validation
 
@@ -182,7 +192,7 @@ Network isolation is validated by `test_network.py` across 7 layers. Tests are o
 | **L3: TLS handshake** | `test_tls_handshake_completes`, `test_tls_cert_from_capsem_ca` | Full TLS to allowed domain succeeds, MITM proxy presents Capsem CA cert |
 | **L4: HTTP over MITM** | `test_curl_https_with_skip_verify`, `test_curl_verbose_diagnostics` | curl -k gets HTTP response, full handshake trace captured |
 | **L5: CA trust** | `test_mitm_ca_cert_file_exists`, `test_mitm_ca_in_system_bundle`, `test_certifi_includes_capsem_ca`, `test_curl_allowed_domain_ca_trusted`, `test_python_urllib_https_trusted`, `test_ca_env_var_set` | CA cert file exists, in system bundle, in Python certifi, curl works without -k, Python TLS works, `SSL_CERT_FILE`/`REQUESTS_CA_BUNDLE`/`NODE_EXTRA_CA_CERTS` set |
-| **L6: Enforcement** | `test_denied_domain_rejected`, `test_post_to_random_domain_denied`, `test_ai_provider_domain_blocked`, `test_http_port_80_not_proxied`, `test_non_standard_port_fails`, `test_direct_ip_no_route` | Denied domains get 403, port 80 fails, non-443 ports fail, direct IP fails |
+| **L6: Policy enforcement** | `test_denied_domain_rejected`, `test_post_to_random_domain_denied`, `test_ai_provider_domain_blocked`, `test_http_port_80_not_proxied`, `test_non_standard_port_fails`, `test_direct_ip_no_route` | Denied domains get 403, port 80 fails, non-443 ports fail, direct IP fails |
 | **L7: Throughput** | `test_proxy_download_throughput` | 100 MB download through MITM meets minimum speed threshold |
 
 Additional network tests in `test_sandbox.py`:
@@ -194,7 +204,7 @@ Additional network tests in `test_sandbox.py`:
 | `test_iptables_redirect` | REDIRECT rule active |
 | `test_net_proxy_running` | capsem-net-proxy process alive |
 | `test_dns_proxy_running` | capsem-dns-proxy process alive |
-| legacy DNS daemon check | Retired DNS service is absent |
+| `test_dnsmasq_not_running` | Legacy dnsmasq is absent |
 | `test_no_real_nics` | Only `lo` and `dummy0` in `/sys/class/net/` |
 | `test_allowed_domain` | End-to-end HTTPS to allowed domain (5-step diagnostic) |
 | `test_denied_domain` | HTTPS to denied domain returns 403 or refused |

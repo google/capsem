@@ -1,56 +1,152 @@
 #!/bin/bash
 # build-pkg.sh -- Build a macOS .pkg installer from Tauri output + companion binaries.
 #
-# Usage: build-pkg.sh <app_path> <bin_dir> <assets_dir> <version> [signing_identity]
+# Usage: build-pkg.sh [--manifest manifest.json|file://...|http://...|https://...] <app_path> <bin_dir> <assets_dir> <config_root> <version> [signing_identity]
 #
 # Arguments:
 #   app_path          Path to signed Capsem.app (from Tauri build)
 #   bin_dir           Directory containing companion binaries (capsem, capsem-service, etc.)
-#   assets_dir        Directory containing VM assets (manifest.json, vmlinuz, initrd.img, etc.)
+#   assets_dir        Directory containing manifest.json when --manifest is omitted.
+#   config_root       Materialized runtime config root (usually target/config)
 #   version           Version string (e.g. "0.16.1")
 #   signing_identity  Optional: Developer ID Installer identity for productsign
+#   --manifest        Optional local/remote manifest to package instead of <assets_dir>/manifest.json.
 #
 # Output: Capsem-<version>.pkg in the current directory
 #
 # The .pkg installs:
 #   /Applications/Capsem.app           -- Tauri GUI
-#   /usr/local/share/capsem/bin/       -- companion binaries
-#   /usr/local/share/capsem/admin-python/ -- capsem-admin Python payload
-#   /usr/local/share/capsem/profiles/base/ -- Profile V2 base profiles
-#   /usr/local/share/capsem/assets/    -- signed manifest only
+#   /usr/local/share/capsem/bin/       -- 6 companion binaries
+#   /usr/local/share/capsem/assets/    -- selected manifest.json
+#   /usr/local/share/capsem/profiles/  -- materialized profile catalog + rule files
 #   /usr/local/share/capsem/entitlements.plist
 #
 # A postinstall script copies binaries to ~/.capsem/bin/, codesigns them,
-# registers the LaunchAgent, and runs capsem setup (which downloads VM assets).
+# registers the LaunchAgent, and waits for service readiness.
 set -euo pipefail
+export COPYFILE_DISABLE=1
 
-APP_PATH="${1:?usage: build-pkg.sh <app_path> <bin_dir> <assets_dir> <version> [signing_identity]}"
-BIN_DIR="${2:?usage: build-pkg.sh <app_path> <bin_dir> <assets_dir> <version> [signing_identity]}"
-ASSETS_DIR="${3:?usage: build-pkg.sh <app_path> <bin_dir> <assets_dir> <version> [signing_identity]}"
-VERSION="${4:?usage: build-pkg.sh <app_path> <bin_dir> <assets_dir> <version> [signing_identity]}"
-SIGNING_IDENTITY="${5:-}"
-CODE_SIGNING_IDENTITY="${APPLE_SIGNING_IDENTITY:-}"
+usage() {
+    echo "usage: build-pkg.sh [--manifest manifest.json|file://...|http://...|https://...] <app_path> <bin_dir> <assets_dir> <config_root> <version> [signing_identity]" >&2
+}
+
+MANIFEST_PATH=""
+SIGNING_IDENTITY=""
+POSITIONAL=()
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --manifest)
+            MANIFEST_PATH="${2:?--manifest requires a path}"
+            shift 2
+            ;;
+        --signing-identity)
+            SIGNING_IDENTITY="${2:?--signing-identity requires a value}"
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        --)
+            shift
+            while [ "$#" -gt 0 ]; do
+                POSITIONAL+=("$1")
+                shift
+            done
+            ;;
+        --*)
+            echo "ERROR: unknown option $1" >&2
+            usage
+            exit 2
+            ;;
+        *)
+            POSITIONAL+=("$1")
+            shift
+            ;;
+    esac
+done
+
+if [ "${#POSITIONAL[@]}" -lt 5 ] || [ "${#POSITIONAL[@]}" -gt 6 ]; then
+    usage
+    exit 2
+fi
+
+APP_PATH="${POSITIONAL[0]}"
+BIN_DIR="${POSITIONAL[1]}"
+ASSETS_DIR="${POSITIONAL[2]}"
+CONFIG_ROOT="${POSITIONAL[3]}"
+VERSION="${POSITIONAL[4]}"
+if [ -z "$SIGNING_IDENTITY" ] && [ "${#POSITIONAL[@]}" -eq 6 ]; then
+    SIGNING_IDENTITY="${POSITIONAL[5]}"
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 WORK_DIR=$(mktemp -d)
 trap 'rm -rf "$WORK_DIR"' EXIT
 
-sign_macho_tree() {
-    local root="$1"
-    local identity="$2"
-    if [ -z "$identity" ] || [ ! -d "$root" ]; then
-        return 0
+copy_tree_clean() {
+    local src="${1:?copy_tree_clean <src> <dst>}"
+    local dst="${2:?copy_tree_clean <src> <dst>}"
+    mkdir -p "$dst"
+    if command -v ditto >/dev/null 2>&1; then
+        ditto --norsrc --noextattr "$src" "$dst"
+    else
+        COPYFILE_DISABLE=1 cp -R "$src/." "$dst/"
     fi
-    while IFS= read -r -d '' file_path; do
-        if file "$file_path" | grep -q 'Mach-O'; then
-            codesign \
-                --sign "$identity" \
-                --options runtime \
-                --timestamp \
-                --force \
-                "$file_path"
-        fi
-    done < <(find "$root" -type f -print0)
+}
+
+write_manifest_origin() {
+    local manifest_source="${1:?write_manifest_origin <manifest_source> <dst>}"
+    local dst="${2:?write_manifest_origin <manifest_source> <dst>}"
+    python3 - "$manifest_source" "$dst" <<'PY'
+import datetime
+import json
+import pathlib
+import sys
+import urllib.parse
+import urllib.request
+
+raw_source = sys.argv[1]
+dst = pathlib.Path(sys.argv[2])
+parsed = urllib.parse.urlparse(raw_source)
+if parsed.scheme in ("http", "https"):
+    source = raw_source
+elif parsed.scheme == "file":
+    source = str(pathlib.Path(urllib.request.url2pathname(parsed.path)).resolve())
+else:
+    source = str(pathlib.Path(raw_source).resolve())
+dst.write_text(json.dumps({
+    "schema": "capsem.manifest_origin.v1",
+    "origin": "package",
+    "source": source,
+    "packaged_at": datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+}, sort_keys=True) + "\n")
+PY
+}
+
+materialize_manifest_input() {
+    local manifest_source="${1:?materialize_manifest_input <manifest_source> <dst>}"
+    local dst="${2:?materialize_manifest_input <manifest_source> <dst>}"
+    python3 - "$manifest_source" "$dst" <<'PY'
+import pathlib
+import sys
+import urllib.parse
+import urllib.request
+
+source = sys.argv[1]
+dst = pathlib.Path(sys.argv[2])
+parsed = urllib.parse.urlparse(source)
+
+if parsed.scheme in ("http", "https"):
+    with urllib.request.urlopen(source, timeout=60) as response:
+        dst.write_bytes(response.read())
+elif parsed.scheme == "file":
+    dst.write_bytes(pathlib.Path(urllib.request.url2pathname(parsed.path)).read_bytes())
+elif parsed.scheme:
+    raise SystemExit(f"unsupported manifest URL scheme: {parsed.scheme}")
+else:
+    dst.write_bytes(pathlib.Path(source).read_bytes())
+PY
 }
 
 echo "=== Assembling .pkg payload ==="
@@ -62,7 +158,7 @@ cp -R "$APP_PATH" "$WORK_DIR/payload/Applications/Capsem.app"
 # Companion binaries
 SHARE_DIR="$WORK_DIR/payload/usr/local/share/capsem"
 mkdir -p "$SHARE_DIR/bin"
-for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-tui capsem-admin; do
+for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin; do
     src="$BIN_DIR/$bin"
     if [ -f "$src" ]; then
         cp "$src" "$SHARE_DIR/bin/$bin"
@@ -73,63 +169,64 @@ for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator
     fi
 done
 
-ADMIN_PYTHON_DIR="$BIN_DIR/capsem-admin-python"
-if [ -d "$ADMIN_PYTHON_DIR" ]; then
-    cp -R "$ADMIN_PYTHON_DIR" "$SHARE_DIR/admin-python"
-    sign_macho_tree "$SHARE_DIR/admin-python" "$CODE_SIGNING_IDENTITY"
-else
-    echo "ERROR: capsem-admin Python payload not found: $ADMIN_PYTHON_DIR" >&2
-    echo "       Run scripts/prepare-admin-cli.sh $BIN_DIR before packaging." >&2
-    exit 1
-fi
-
-PROFILE_SRC="$SCRIPT_DIR/../config/profiles/base"
-if [ -d "$PROFILE_SRC" ]; then
-    mkdir -p "$SHARE_DIR/profiles/base"
-    python3 "$SCRIPT_DIR/materialize-install-profiles.py" \
-        "$PROFILE_SRC" \
-        "$ASSETS_DIR" \
-        "$SHARE_DIR/profiles/base" \
-        "${CAPSEM_INSTALL_PROFILE_ASSET_ROOT:-https://assets.capsem.dev/vm}"
-else
-    echo "ERROR: base profiles not found: $PROFILE_SRC" >&2
-    exit 1
-fi
-
-# Fallback app copy used by postinstall. The package payload also installs
-# /Applications/Capsem.app directly, but postinstall verifies/materializes the
-# app from this copy so a successful install cannot leave the GUI missing.
-cp -R "$APP_PATH" "$SHARE_DIR/Capsem.app"
-
 # Entitlements (needed by postinstall for codesigning)
 if [ -f "$SCRIPT_DIR/../entitlements.plist" ]; then
     cp "$SCRIPT_DIR/../entitlements.plist" "$SHARE_DIR/"
 fi
 
-# VM assets: only bundle the signed manifest. Heavy assets stay on the asset
-# channel; profiles may point at https:// or a local file:// mirror.
+# VM manifest. The package carries only the selected manifest and provenance.
+# VM asset payloads stay external and are resolved by the daemon from the
+# installed manifest, whether the URLs are local file:// dev assets or remote
+# corp/release assets.
 mkdir -p "$SHARE_DIR/assets"
-for asset in manifest.json manifest.json.minisig; do
-    src="$ASSETS_DIR/$asset"
-    if [ -f "$src" ]; then
-        cp "$src" "$SHARE_DIR/assets/"
-    else
-        echo "ERROR: signed manifest file not found: $src" >&2
-        exit 1
-    fi
-done
-if [ -f "$ASSETS_DIR/manifest-sign.dev.pub" ]; then
-    cp "$ASSETS_DIR/manifest-sign.dev.pub" "$SHARE_DIR/assets/"
+ASSETS_VIEW="$ASSETS_DIR"
+SELECTED_MANIFEST_SOURCE="$ASSETS_DIR/manifest.json"
+if [ -n "$MANIFEST_PATH" ]; then
+    SELECTED_MANIFEST_SOURCE="$MANIFEST_PATH"
+    ASSETS_VIEW="$WORK_DIR/assets-view"
+    mkdir -p "$ASSETS_VIEW"
+    materialize_manifest_input "$MANIFEST_PATH" "$ASSETS_VIEW/manifest.json"
 fi
+if [ ! -f "$ASSETS_VIEW/manifest.json" ]; then
+    echo "ERROR: manifest not found: $ASSETS_VIEW/manifest.json" >&2
+    exit 1
+fi
+install -m 0644 "$ASSETS_VIEW/manifest.json" "$SHARE_DIR/assets/manifest.json"
+write_manifest_origin "$SELECTED_MANIFEST_SOURCE" "$SHARE_DIR/assets/manifest-origin.json"
+
+# Materialized profile catalog. Profiles pin the asset hashes the daemon boots;
+# the package installs the profile ledger and the manifest ledger together, but
+# never embeds the VM asset blobs themselves.
+if [ ! -d "$CONFIG_ROOT/profiles" ]; then
+    echo "ERROR: materialized profiles not found: $CONFIG_ROOT/profiles" >&2
+    echo "Run: just _materialize-config" >&2
+    exit 1
+fi
+mkdir -p "$SHARE_DIR/profiles"
+copy_tree_clean "$CONFIG_ROOT/profiles" "$SHARE_DIR/profiles"
 
 echo "=== Building component package ==="
 
-# Build the component .pkg with postinstall script
+PKG_SCRIPTS="$WORK_DIR/pkg-scripts"
+mkdir -p "$PKG_SCRIPTS"
+install -m 0755 "$SCRIPT_DIR/pkg-scripts/preinstall" "$PKG_SCRIPTS/preinstall"
+install -m 0755 "$SCRIPT_DIR/pkg-scripts/postinstall" "$PKG_SCRIPTS/postinstall"
+
+# Strip macOS extended attributes in the temporary staging area. Otherwise
+# pkgbuild serializes AppleDouble `._*` sidecars into Payload/Scripts.
+if command -v xattr >/dev/null 2>&1; then
+    xattr -rc "$WORK_DIR/payload" "$PKG_SCRIPTS" 2>/dev/null || true
+fi
+find "$WORK_DIR/payload" "$PKG_SCRIPTS" -name '._*' -delete
+
+# Build the component .pkg with package-owned preinstall/postinstall scripts.
 pkgbuild \
     --root "$WORK_DIR/payload" \
-    --scripts "$SCRIPT_DIR/pkg-scripts" \
+    --scripts "$PKG_SCRIPTS" \
     --identifier "com.capsem.pkg" \
     --version "$VERSION" \
+    --filter '/\._[^/]*$' \
+    --filter '\.DS_Store$' \
     "$WORK_DIR/capsem.pkg"
 
 echo "=== Building distribution package ==="
@@ -152,9 +249,7 @@ cat > "$WORK_DIR/welcome.html" <<'WELCOME_EOF'
 </html>
 WELCOME_EOF
 
-# Keep the package metadata aligned with the immutable release tag. Local
-# install paths stamp a fresh version before packaging when they need upgrade
-# ordering.
+# Stamp version into distribution XML.
 sed "s/__VERSION__/$VERSION/g" "$SCRIPT_DIR/pkg-distribution.xml" > "$WORK_DIR/pkg-distribution.xml"
 
 # Build the distribution .pkg (wraps component with UI)

@@ -1,14 +1,15 @@
-"""Capsem build configuration models -- Pydantic models for guest image config.
+"""Capsem build configuration models -- Pydantic backend image spec models.
 
-These models define the structure of the TOML config files in guest/config/.
-Distinct from schema.py which defines the settings interchange format.
+These models define the structure of the admin-materialized backend image
+workspace. Distinct from schema.py which defines the settings interchange
+format.
 """
 
 from __future__ import annotations
 
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from capsem.builder.schema import McpTransport
 
@@ -19,12 +20,20 @@ from capsem.builder.schema import McpTransport
 
 
 class Compression(str, Enum):
-    """Compression algorithm for squashfs rootfs."""
+    """Historical non-EROFS compression values retained for config parsing."""
 
     ZSTD = "zstd"
     GZIP = "gzip"
     LZO = "lzo"
     XZ = "xz"
+
+
+class ErofsCompression(str, Enum):
+    """Compression algorithm for EROFS rootfs assets."""
+
+    LZ4 = "lz4"
+    LZ4HC = "lz4hc"
+    ZSTD = "zstd"
 
 
 class PackageManager(str, Enum):
@@ -57,6 +66,38 @@ class ArchConfig(BaseModel):
     node_major: int = 24
 
 
+class ErofsConfig(BaseModel):
+    """EROFS rootfs asset settings.
+
+    EROFS is the 1.3 rootfs asset path and defaults to lz4hc level 12 based on
+    macOS/Linux benchmarks.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    enabled: bool = True
+    compression: ErofsCompression = ErofsCompression.LZ4HC
+    compression_level: int | None = 12
+    cluster_size: int | None = None
+
+    @model_validator(mode="after")
+    def _compression_level_valid(self):
+        if self.compression is ErofsCompression.LZ4:
+            if self.compression_level is not None:
+                raise ValueError("lz4 EROFS compression does not accept a level")
+        elif self.compression is ErofsCompression.LZ4HC:
+            if self.compression_level is None:
+                raise ValueError("lz4hc EROFS compression requires a level")
+            if not 0 <= self.compression_level <= 12:
+                raise ValueError("lz4hc EROFS compression level must be between 0 and 12")
+        elif self.compression is ErofsCompression.ZSTD:
+            if self.compression_level is None:
+                raise ValueError("zstd EROFS compression requires a level")
+            if not 0 <= self.compression_level <= 22:
+                raise ValueError("zstd EROFS compression level must be between 0 and 22")
+        return self
+
+
 class BuildConfig(BaseModel):
     """Top-level build settings from build.toml."""
 
@@ -64,109 +105,15 @@ class BuildConfig(BaseModel):
 
     compression: Compression = Compression.ZSTD
     compression_level: int = Field(default=15, ge=1, le=22)
-    squashfs_block_size: str = "128K"
+    erofs: ErofsConfig = Field(default_factory=ErofsConfig)
     architectures: dict[str, ArchConfig]
     version_commands: dict[str, str] = Field(default_factory=dict)
-
-    @field_validator("squashfs_block_size")
-    @classmethod
-    def _valid_squashfs_block_size(cls, value: str) -> str:
-        valid = {"4K", "8K", "16K", "32K", "64K", "128K", "256K", "512K", "1M"}
-        if value not in valid:
-            raise ValueError(
-                "squashfs_block_size must be one of "
-                "4K, 8K, 16K, 32K, 64K, 128K, 256K, 512K, 1M"
-            )
-        return value
 
     @model_validator(mode="after")
     def _architectures_non_empty(self):
         if not self.architectures:
             raise ValueError("architectures must have at least one entry")
         return self
-
-
-# ---------------------------------------------------------------------------
-# AI provider configuration
-# ---------------------------------------------------------------------------
-
-
-class ApiKeyConfig(BaseModel):
-    """API key definition for an AI provider."""
-
-    model_config = ConfigDict(frozen=True)
-
-    name: str
-    env_vars: list[str]
-    prefix: str = ""
-    docs_url: str | None = None
-
-    @model_validator(mode="after")
-    def _env_vars_non_empty(self):
-        if not self.env_vars:
-            raise ValueError("env_vars must have at least one entry")
-        return self
-
-
-class NetworkConfig(BaseModel):
-    """Network access config for an AI provider or package set."""
-
-    model_config = ConfigDict(frozen=True)
-
-    domains: list[str]
-    allow_get: bool = False
-    allow_post: bool = False
-
-    @model_validator(mode="after")
-    def _domains_non_empty(self):
-        if not self.domains:
-            raise ValueError("domains must have at least one entry")
-        return self
-
-
-class InstallConfig(BaseModel):
-    """Installation config for an AI provider's CLI tools."""
-
-    model_config = ConfigDict(frozen=True)
-
-    manager: PackageManager
-    prefix: str = ""
-    packages: list[str]
-
-
-class FileConfig(BaseModel):
-    """A file to write to the guest filesystem."""
-
-    model_config = ConfigDict(frozen=True)
-
-    path: str
-    content: str
-
-
-class CliToolConfig(BaseModel):
-    """CLI tool sub-group for an AI provider (e.g., Claude Code, Gemini CLI)."""
-
-    model_config = ConfigDict(frozen=True)
-
-    key: str
-    name: str
-    description: str = ""
-    version_command: str | None = None
-
-
-class AiProviderConfig(BaseModel):
-    """AI provider definition from ai/{provider}.toml."""
-
-    model_config = ConfigDict(frozen=True)
-
-    name: str
-    description: str = ""
-    enabled: bool = True
-    api_key: ApiKeyConfig
-    network: NetworkConfig
-    install: InstallConfig | None = None
-    cli: CliToolConfig | None = None
-    files: dict[str, FileConfig] = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -202,12 +149,7 @@ class PackageSetConfig(BaseModel):
             raise ValueError("packages must have at least one entry")
         if not self.install_cmd:
             raise ValueError("install_cmd must not be empty")
-        package_keys = set(self.packages)
-        if self.manager is PackageManager.CURL:
-            package_keys.update(
-                spec.split("=", 1)[0] for spec in self.packages if "=" in spec
-            )
-        bad = set(self.version_commands) - package_keys
+        bad = set(self.version_commands) - set(self.packages)
         if bad:
             raise ValueError(
                 f"version_commands keys not in packages: {sorted(bad)}"
@@ -265,12 +207,11 @@ class WebServiceConfig(BaseModel):
 class WebSecurityConfig(BaseModel):
     """Web security config from security/web.toml."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
-    allow_read: bool = False
-    allow_write: bool = False
-    custom_allow: list[str] = Field(default_factory=list)
-    custom_block: list[str] = Field(default_factory=list)
+    http_upstream_ports: list[int] = Field(
+        default_factory=lambda: [80, 3128, 3713, 8080, 11434]
+    )
     search: dict[str, WebServiceConfig] = Field(default_factory=dict)
     registry: dict[str, WebServiceConfig] = Field(default_factory=dict)
     repository: dict[str, WebServiceConfig] = Field(default_factory=dict)
@@ -287,7 +228,7 @@ class VmResourcesConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     cpu_count: int = Field(default=4, ge=1, le=8)
-    ram_gb: int = Field(default=8, ge=1, le=16)
+    ram_gb: int = Field(default=4, ge=1, le=16)
     scratch_disk_size_gb: int = Field(default=16, ge=1, le=128)
     log_bodies: bool = False
     max_body_capture: int = Field(default=4096, ge=0, le=1048576)
@@ -369,18 +310,22 @@ class ImageManifestConfig(BaseModel):
 
 
 class GuestImageConfig(BaseModel):
-    """Top-level config combining all TOML files for a guest image.
+    """Top-level config combining the generated backend image workspace.
 
-    Produced by load_guest_config() which walks a guest/config/ directory.
+    Produced by load_guest_config() after capsem-admin materializes a profile.
     """
 
     model_config = ConfigDict(frozen=True)
 
     build: BuildConfig
     manifest: ImageManifestConfig | None = None
-    ai_providers: dict[str, AiProviderConfig] = Field(default_factory=dict)
+    guest_dir_path: str | None = None
     package_sets: dict[str, PackageSetConfig] = Field(default_factory=dict)
     mcp_servers: dict[str, McpServerConfig] = Field(default_factory=dict)
     web_security: WebSecurityConfig = Field(default_factory=WebSecurityConfig)
     vm_resources: VmResourcesConfig = Field(default_factory=VmResourcesConfig)
     vm_environment: VmEnvironmentConfig = Field(default_factory=VmEnvironmentConfig)
+    profile_root_seed: bool = False
+    profile_root_seed_path: str | None = None
+    profile_build_script: bool = False
+    profile_build_script_path: str | None = None

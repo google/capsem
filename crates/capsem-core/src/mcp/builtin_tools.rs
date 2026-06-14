@@ -1,10 +1,11 @@
 //! Built-in MCP tools that run on the host.
 //!
-//! Three HTTP tools checked against DomainPolicy:
+//! Three HTTP tools checked against the unified security engine:
 //! - `fetch_http`: fetch a URL and return text content
 //! - `grep_http`: fetch a URL and search for a regex pattern
 //! - `http_headers`: return HTTP headers for a URL
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Instant, SystemTime};
 
@@ -13,7 +14,12 @@ use serde_json::Value;
 
 use capsem_logger::{DbWriter, Decision, NetEvent, WriteOp};
 
-use capsem_network_engine::domain_policy::{Action, DomainPolicy};
+use crate::net::policy_config::{SecurityPluginConfig, SecurityRuleSet};
+use crate::security_engine::{
+    evaluate_security_boundary, HttpRequestSecurityEvent, HttpSecurityEvent,
+    RuntimeSecurityEventType, SecurityEnforcementAction, SecurityEnforcementDecision,
+    SecurityEvent,
+};
 
 use super::types::{JsonRpcResponse, McpToolDef, ToolAnnotations};
 
@@ -190,15 +196,44 @@ pub async fn call_builtin_tool(
     local_name: &str,
     arguments: &Value,
     client: &Client,
-    domain_policy: &DomainPolicy,
+    security_rules: &SecurityRuleSet,
+    plugin_policy: &BTreeMap<String, SecurityPluginConfig>,
     request_id: Option<Value>,
     db: &Arc<DbWriter>,
 ) -> JsonRpcResponse {
     match local_name {
-        "fetch_http" => handle_fetch_http(arguments, client, domain_policy, request_id, db).await,
-        "grep_http" => handle_grep_http(arguments, client, domain_policy, request_id, db).await,
+        "fetch_http" => {
+            handle_fetch_http(
+                arguments,
+                client,
+                security_rules,
+                plugin_policy,
+                request_id,
+                db,
+            )
+            .await
+        }
+        "grep_http" => {
+            handle_grep_http(
+                arguments,
+                client,
+                security_rules,
+                plugin_policy,
+                request_id,
+                db,
+            )
+            .await
+        }
         "http_headers" => {
-            handle_http_headers(arguments, client, domain_policy, request_id, db).await
+            handle_http_headers(
+                arguments,
+                client,
+                security_rules,
+                plugin_policy,
+                request_id,
+                db,
+            )
+            .await
         }
         _ => JsonRpcResponse::err(
             request_id,
@@ -220,33 +255,39 @@ async fn emit_net_event(
     bytes_sent: u64,
     bytes_received: u64,
     duration_ms: u64,
+    enforcement: &SecurityEnforcementDecision,
 ) {
-    db.write(WriteOp::NetEvent(NetEvent {
-        timestamp: SystemTime::now(),
-        domain: domain.to_string(),
-        port: 443,
-        decision,
-        process_name: Some(BUILTIN_PROCESS_NAME.to_string()),
-        pid: None,
-        method: Some(method.to_string()),
-        path: Some(path.to_string()),
-        query: None,
-        status_code,
-        bytes_sent,
-        bytes_received,
-        duration_ms,
-        matched_rule: None,
-        request_headers: None,
-        response_headers: None,
-        request_body_preview: None,
-        response_body_preview: None,
-        conn_type: Some(BUILTIN_PROCESS_NAME.to_string()),
-        policy_mode: None,
-        policy_action: None,
-        policy_rule: None,
-        policy_reason: None,
-        trace_id: crate::telemetry::ambient_capsem_trace_id(),
-    }))
+    crate::security_engine::emit_security_write(
+        db,
+        WriteOp::NetEvent(NetEvent {
+            event_id: None,
+            timestamp: SystemTime::now(),
+            domain: domain.to_string(),
+            port: 443,
+            decision,
+            process_name: Some(BUILTIN_PROCESS_NAME.to_string()),
+            pid: None,
+            method: Some(method.to_string()),
+            path: Some(path.to_string()),
+            query: None,
+            status_code,
+            bytes_sent,
+            bytes_received,
+            duration_ms,
+            matched_rule: None,
+            request_headers: None,
+            response_headers: None,
+            request_body_preview: None,
+            response_body_preview: None,
+            conn_type: Some(BUILTIN_PROCESS_NAME.to_string()),
+            policy_mode: Some("security_event".to_string()),
+            policy_action: Some(enforcement.action.as_str().to_string()),
+            policy_rule: enforcement.rule_id.clone(),
+            policy_reason: enforcement.reason.clone(),
+            trace_id: crate::telemetry::ambient_capsem_trace_id(),
+            credential_ref: None,
+        }),
+    )
     .await;
 }
 
@@ -257,7 +298,8 @@ async fn emit_net_event(
 async fn handle_fetch_http(
     args: &Value,
     client: &Client,
-    policy: &DomainPolicy,
+    security_rules: &SecurityRuleSet,
+    plugin_policy: &BTreeMap<String, SecurityPluginConfig>,
     id: Option<Value>,
     db: &Arc<DbWriter>,
 ) -> JsonRpcResponse {
@@ -266,9 +308,10 @@ async fn handle_fetch_http(
         None => return tool_error(id, "missing required parameter: url"),
     };
 
-    let domain = match check_domain_policy(url, policy) {
-        Ok(d) => d,
+    let checked = match evaluate_builtin_http_request(url, "GET", security_rules, plugin_policy) {
+        Ok(checked) => checked,
         Err(e) => {
+            let blocked = blocked_decision(e.clone());
             let path = reqwest::Url::parse(url)
                 .map(|u| u.path().to_string())
                 .unwrap_or_default();
@@ -282,11 +325,13 @@ async fn handle_fetch_http(
                 0,
                 0,
                 0,
+                &blocked,
             )
             .await;
             return tool_error(id, &e);
         }
     };
+    let domain = checked.domain.clone();
 
     let format = args
         .get("format")
@@ -340,6 +385,7 @@ async fn handle_fetch_http(
         0,
         bytes_received,
         duration_ms,
+        &checked.decision,
     )
     .await;
 
@@ -377,7 +423,8 @@ async fn handle_fetch_http(
 async fn handle_grep_http(
     args: &Value,
     client: &Client,
-    policy: &DomainPolicy,
+    security_rules: &SecurityRuleSet,
+    plugin_policy: &BTreeMap<String, SecurityPluginConfig>,
     id: Option<Value>,
     db: &Arc<DbWriter>,
 ) -> JsonRpcResponse {
@@ -390,24 +437,29 @@ async fn handle_grep_http(
         None => return tool_error(id, "missing required parameter: pattern"),
     };
 
-    if let Err(e) = check_domain_policy(url, policy) {
-        let path = reqwest::Url::parse(url)
-            .map(|u| u.path().to_string())
-            .unwrap_or_default();
-        emit_net_event(
-            db,
-            &extract_domain(url),
-            "GET",
-            &path,
-            Decision::Denied,
-            None,
-            0,
-            0,
-            0,
-        )
-        .await;
-        return tool_error(id, &e);
-    }
+    let checked = match evaluate_builtin_http_request(url, "GET", security_rules, plugin_policy) {
+        Ok(checked) => checked,
+        Err(e) => {
+            let blocked = blocked_decision(e.clone());
+            let path = reqwest::Url::parse(url)
+                .map(|u| u.path().to_string())
+                .unwrap_or_default();
+            emit_net_event(
+                db,
+                &extract_domain(url),
+                "GET",
+                &path,
+                Decision::Denied,
+                None,
+                0,
+                0,
+                0,
+                &blocked,
+            )
+            .await;
+            return tool_error(id, &e);
+        }
+    };
 
     let context_lines = args
         .get("context_lines")
@@ -478,6 +530,7 @@ async fn handle_grep_http(
         0,
         bytes_received,
         duration_ms,
+        &checked.decision,
     )
     .await;
 
@@ -540,7 +593,8 @@ async fn handle_grep_http(
 async fn handle_http_headers(
     args: &Value,
     client: &Client,
-    policy: &DomainPolicy,
+    security_rules: &SecurityRuleSet,
+    plugin_policy: &BTreeMap<String, SecurityPluginConfig>,
     id: Option<Value>,
     db: &Arc<DbWriter>,
 ) -> JsonRpcResponse {
@@ -549,29 +603,34 @@ async fn handle_http_headers(
         None => return tool_error(id, "missing required parameter: url"),
     };
 
-    if let Err(e) = check_domain_policy(url, policy) {
-        let path = reqwest::Url::parse(url)
-            .map(|u| u.path().to_string())
-            .unwrap_or_default();
-        emit_net_event(
-            db,
-            &extract_domain(url),
-            "HEAD",
-            &path,
-            Decision::Denied,
-            None,
-            0,
-            0,
-            0,
-        )
-        .await;
-        return tool_error(id, &e);
-    }
-
     let method = args
         .get("method")
         .and_then(|v| v.as_str())
         .unwrap_or("HEAD");
+
+    let checked = match evaluate_builtin_http_request(url, method, security_rules, plugin_policy) {
+        Ok(checked) => checked,
+        Err(e) => {
+            let blocked = blocked_decision(e.clone());
+            let path = reqwest::Url::parse(url)
+                .map(|u| u.path().to_string())
+                .unwrap_or_default();
+            emit_net_event(
+                db,
+                &extract_domain(url),
+                "HEAD",
+                &path,
+                Decision::Denied,
+                None,
+                0,
+                0,
+                0,
+                &blocked,
+            )
+            .await;
+            return tool_error(id, &e);
+        }
+    };
     let start_index = args
         .get("start_index")
         .and_then(|v| v.as_u64())
@@ -615,6 +674,7 @@ async fn handle_http_headers(
         0,
         output.len() as u64,
         duration_ms,
+        &checked.decision,
     )
     .await;
 
@@ -675,8 +735,28 @@ fn extract_domain(url: &str) -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
-/// Check if the URL's domain is allowed by policy. Returns domain on success.
-fn check_domain_policy(url: &str, policy: &DomainPolicy) -> Result<String, String> {
+#[derive(Debug, Clone)]
+struct BuiltinHttpDecision {
+    domain: String,
+    decision: SecurityEnforcementDecision,
+}
+
+fn blocked_decision(reason: String) -> SecurityEnforcementDecision {
+    SecurityEnforcementDecision {
+        action: SecurityEnforcementAction::Block,
+        rule_id: None,
+        rule_name: None,
+        reason: Some(reason),
+        ask_id: None,
+    }
+}
+
+fn evaluate_builtin_http_request(
+    url: &str,
+    method: &str,
+    security_rules: &SecurityRuleSet,
+    plugin_policy: &BTreeMap<String, SecurityPluginConfig>,
+) -> Result<BuiltinHttpDecision, String> {
     let parsed = reqwest::Url::parse(url).map_err(|e| format!("invalid URL: {e}"))?;
     match parsed.scheme() {
         "http" | "https" => {}
@@ -690,11 +770,37 @@ fn check_domain_policy(url: &str, policy: &DomainPolicy) -> Result<String, Strin
         .host_str()
         .ok_or_else(|| "URL has no host".to_string())?
         .to_string();
-    let (action, reason) = policy.evaluate(&domain);
-    if action == Action::Deny {
-        return Err(format!("domain blocked by policy: {domain} ({reason})"));
+    let mut event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
+        .with_http(HttpSecurityEvent {
+            host: Some(domain.clone()),
+            method: Some(method.to_string()),
+            path: Some(parsed.path().to_string()),
+            status: None,
+            body: None,
+        })
+        .with_http_request(HttpRequestSecurityEvent::new(
+            domain.clone(),
+            None,
+            http::HeaderMap::new(),
+            parsed.query().map(str::to_string),
+        ));
+    if let Some(trace_id) = crate::telemetry::ambient_capsem_trace_id() {
+        event = event.with_trace_id(trace_id);
     }
-    Ok(domain)
+    let evaluated = evaluate_security_boundary(security_rules, plugin_policy.clone(), event)
+        .map_err(|error| format!("security engine failed: {error}"))?;
+    if !evaluated.enforcement.is_allowed() {
+        let reason = evaluated
+            .enforcement
+            .reason
+            .as_deref()
+            .unwrap_or("security rule blocked request");
+        return Err(format!("HTTP request blocked: {domain} ({reason})"));
+    }
+    Ok(BuiltinHttpDecision {
+        domain,
+        decision: evaluated.enforcement,
+    })
 }
 
 /// Extract visible text from HTML using scraper (html5ever).
@@ -1033,6 +1139,92 @@ mod tests {
             .expect("reqwest client")
     }
 
+    async fn spawn_builtin_http_fixture() -> crate::test_support::http::LocalHttpRecorder {
+        crate::test_support::http::spawn_static_http_recorder(vec![
+            (
+                "/",
+                crate::test_support::http::RecordedHttpResponse::html(
+                    r#"
+                    <!doctype html>
+                    <html>
+                      <head><title>Local Capsem HTTP Fixture</title></head>
+                      <body>
+                        <h1>Local Elie Test Page</h1>
+                        <p>elie local deterministic page for builtin HTTP tests.</p>
+                        <p>aaaaab proves regex safety without remote dependencies.</p>
+                      </body>
+                    </html>
+                    "#,
+                )
+                .with_header("x-capsem-fixture", "home"),
+            ),
+            (
+                "/about",
+                crate::test_support::http::RecordedHttpResponse::html(about_fixture_html()),
+            ),
+            (
+                "/wiki/Alan_Turing",
+                crate::test_support::http::RecordedHttpResponse::html(
+                    "<html><body><h1>Alan Turing</h1><p>Turing proved useful local content.</p></body></html>",
+                ),
+            ),
+            (
+                "/wiki/Rust_(programming_language)",
+                crate::test_support::http::RecordedHttpResponse::html(
+                    "<html><body><h1>Rust</h1><p>Mozilla sponsored early Rust work.</p></body></html>",
+                ),
+            ),
+            (
+                "/wiki/Unicode",
+                crate::test_support::http::RecordedHttpResponse::html(
+                    "<html><body><h1>Unicode</h1><p>Unicode keeps café, 東京, and emoji safe.</p></body></html>",
+                ),
+            ),
+        ])
+        .await
+        .expect("local HTTP fixture should start")
+    }
+
+    fn about_fixture_html() -> String {
+        let repeated = "<p>Elie Bursztein works on Google security research, AI safety, and abuse prevention. <a href=\"/papers\">Read more</a>.</p>\n".repeat(80);
+        format!(
+            r#"<!doctype html>
+            <html>
+              <head>
+                <title>Elie Bursztein - Local Fixture</title>
+                <script>window.secret = "not content";</script>
+              </head>
+              <body>
+                <main>
+                  <h1>Elie Bursztein</h1>
+                  <h2>About</h2>
+                  {repeated}
+                  <div>Google DeepMind AI Cybersecurity local fixture.</div>
+                </main>
+              </body>
+            </html>"#
+        )
+    }
+
+    fn default_dev_security_rules() -> SecurityRuleSet {
+        crate::net::policy_config::SecurityRuleProfile::parse_toml(
+            r#"
+            [profiles.rules.block_evil_unknown_domain]
+            name = "block_evil_unknown_domain"
+            action = "block"
+            reason = "test domain blocked"
+            match = 'http.host == "evil-unknown-domain.xyz"'
+            "#,
+        )
+        .and_then(|profile| {
+            SecurityRuleSet::compile_profile(
+                &profile,
+                crate::net::policy_config::SecurityRuleSource::User,
+            )
+        })
+        .expect("test security rules compile")
+    }
+
     #[test]
     fn builtin_tool_defs_returns_three_tools() {
         let defs = builtin_tool_defs();
@@ -1121,25 +1313,36 @@ mod tests {
     }
 
     #[test]
-    fn check_domain_policy_allows_github() {
-        let policy = DomainPolicy::default_dev();
-        let result = check_domain_policy("https://github.com/foo/bar", &policy);
+    fn builtin_http_security_allows_when_no_rule_matches() {
+        let rules = default_dev_security_rules();
+        let result = evaluate_builtin_http_request(
+            "https://github.com/foo/bar",
+            "GET",
+            &rules,
+            &BTreeMap::new(),
+        );
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "github.com");
+        assert_eq!(result.unwrap().domain, "github.com");
     }
 
     #[test]
-    fn check_domain_policy_denies_unknown() {
-        let policy = DomainPolicy::default_dev();
-        let result = check_domain_policy("https://evil-unknown-domain.xyz/hack", &policy);
+    fn builtin_http_security_blocks_matching_rule() {
+        let rules = default_dev_security_rules();
+        let result = evaluate_builtin_http_request(
+            "https://evil-unknown-domain.xyz/hack",
+            "GET",
+            &rules,
+            &BTreeMap::new(),
+        );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("blocked"));
     }
 
     #[test]
-    fn check_domain_policy_rejects_invalid_url() {
-        let policy = DomainPolicy::default_dev();
-        let result = check_domain_policy("not a url at all", &policy);
+    fn builtin_http_security_rejects_invalid_url() {
+        let rules = default_dev_security_rules();
+        let result =
+            evaluate_builtin_http_request("not a url at all", "GET", &rules, &BTreeMap::new());
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("invalid URL"));
     }
@@ -1221,12 +1424,13 @@ mod tests {
     #[tokio::test]
     async fn call_unknown_builtin_returns_error() {
         let client = test_client();
-        let policy = DomainPolicy::default_dev();
+        let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "nonexistent",
             &serde_json::json!({}),
             &client,
-            &policy,
+            &rules,
+            &BTreeMap::new(),
             Some(serde_json::json!(1)),
             &test_db(),
         )
@@ -1238,12 +1442,13 @@ mod tests {
     #[tokio::test]
     async fn fetch_http_missing_url_returns_error() {
         let client = test_client();
-        let policy = DomainPolicy::default_dev();
+        let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "fetch_http",
             &serde_json::json!({}),
             &client,
-            &policy,
+            &rules,
+            &BTreeMap::new(),
             Some(serde_json::json!(1)),
             &test_db(),
         )
@@ -1260,12 +1465,13 @@ mod tests {
     #[tokio::test]
     async fn fetch_http_blocked_domain() {
         let client = test_client();
-        let policy = DomainPolicy::default_dev();
+        let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "fetch_http",
             &serde_json::json!({"url": "https://evil-unknown-domain.xyz/"}),
             &client,
-            &policy,
+            &rules,
+            &BTreeMap::new(),
             Some(serde_json::json!(1)),
             &test_db(),
         )
@@ -1281,12 +1487,13 @@ mod tests {
     #[tokio::test]
     async fn grep_http_missing_pattern_returns_error() {
         let client = test_client();
-        let policy = DomainPolicy::default_dev();
+        let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "grep_http",
             &serde_json::json!({"url": "https://example.com"}),
             &client,
-            &policy,
+            &rules,
+            &BTreeMap::new(),
             Some(serde_json::json!(1)),
             &test_db(),
         )
@@ -1302,12 +1509,13 @@ mod tests {
     #[tokio::test]
     async fn grep_http_invalid_regex() {
         let client = test_client();
-        let policy = DomainPolicy::default_dev();
+        let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "grep_http",
             &serde_json::json!({"url": "https://github.com", "pattern": "[invalid"}),
             &client,
-            &policy,
+            &rules,
+            &BTreeMap::new(),
             Some(serde_json::json!(1)),
             &test_db(),
         )
@@ -1390,46 +1598,58 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // check_domain_policy scheme rejection tests
+    // Built-in HTTP security boundary scheme rejection tests
     // -----------------------------------------------------------------------
 
     #[test]
-    fn check_domain_policy_rejects_ftp() {
-        let policy = DomainPolicy::default_dev();
-        let result = check_domain_policy("ftp://example.com/file", &policy);
+    fn builtin_http_security_rejects_ftp() {
+        let rules = default_dev_security_rules();
+        let result = evaluate_builtin_http_request(
+            "ftp://example.com/file",
+            "GET",
+            &rules,
+            &BTreeMap::new(),
+        );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("only http"));
     }
 
     #[test]
-    fn check_domain_policy_rejects_file() {
-        let policy = DomainPolicy::default_dev();
-        let result = check_domain_policy("file:///etc/passwd", &policy);
+    fn builtin_http_security_rejects_file() {
+        let rules = default_dev_security_rules();
+        let result =
+            evaluate_builtin_http_request("file:///etc/passwd", "GET", &rules, &BTreeMap::new());
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("only http"));
     }
 
     #[test]
-    fn check_domain_policy_rejects_data_uri() {
-        let policy = DomainPolicy::default_dev();
-        let result = check_domain_policy("data:text/html,<h1>hi</h1>", &policy);
+    fn builtin_http_security_rejects_data_uri() {
+        let rules = default_dev_security_rules();
+        let result = evaluate_builtin_http_request(
+            "data:text/html,<h1>hi</h1>",
+            "GET",
+            &rules,
+            &BTreeMap::new(),
+        );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("only http"));
     }
 
     #[test]
-    fn check_domain_policy_rejects_javascript() {
-        let policy = DomainPolicy::default_dev();
-        let result = check_domain_policy("javascript:alert(1)", &policy);
+    fn builtin_http_security_rejects_javascript() {
+        let rules = default_dev_security_rules();
+        let result =
+            evaluate_builtin_http_request("javascript:alert(1)", "GET", &rules, &BTreeMap::new());
         assert!(result.is_err());
         // reqwest::Url::parse may reject this as invalid, either way it errors
         assert!(result.is_err());
     }
 
     #[test]
-    fn check_domain_policy_empty_url() {
-        let policy = DomainPolicy::default_dev();
-        let result = check_domain_policy("", &policy);
+    fn builtin_http_security_rejects_empty_url() {
+        let rules = default_dev_security_rules();
+        let result = evaluate_builtin_http_request("", "GET", &rules, &BTreeMap::new());
         assert!(result.is_err());
     }
 
@@ -1535,12 +1755,13 @@ mod tests {
     #[tokio::test]
     async fn fetch_http_rejects_ftp_scheme() {
         let client = test_client();
-        let policy = DomainPolicy::default_dev();
+        let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "fetch_http",
             &serde_json::json!({"url": "ftp://example.com/file"}),
             &client,
-            &policy,
+            &rules,
+            &BTreeMap::new(),
             Some(serde_json::json!(1)),
             &test_db(),
         )
@@ -1556,12 +1777,13 @@ mod tests {
     #[tokio::test]
     async fn fetch_http_rejects_file_scheme() {
         let client = test_client();
-        let policy = DomainPolicy::default_dev();
+        let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "fetch_http",
             &serde_json::json!({"url": "file:///etc/passwd"}),
             &client,
-            &policy,
+            &rules,
+            &BTreeMap::new(),
             Some(serde_json::json!(1)),
             &test_db(),
         )
@@ -1577,12 +1799,13 @@ mod tests {
     #[tokio::test]
     async fn fetch_http_rejects_data_uri() {
         let client = test_client();
-        let policy = DomainPolicy::default_dev();
+        let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "fetch_http",
             &serde_json::json!({"url": "data:text/plain,hello"}),
             &client,
-            &policy,
+            &rules,
+            &BTreeMap::new(),
             Some(serde_json::json!(1)),
             &test_db(),
         )
@@ -1593,12 +1816,13 @@ mod tests {
     #[tokio::test]
     async fn fetch_http_url_is_number_not_string() {
         let client = test_client();
-        let policy = DomainPolicy::default_dev();
+        let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "fetch_http",
             &serde_json::json!({"url": 42}),
             &client,
-            &policy,
+            &rules,
+            &BTreeMap::new(),
             Some(serde_json::json!(1)),
             &test_db(),
         )
@@ -1611,12 +1835,13 @@ mod tests {
     #[tokio::test]
     async fn fetch_http_url_is_null() {
         let client = test_client();
-        let policy = DomainPolicy::default_dev();
+        let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "fetch_http",
             &serde_json::json!({"url": null}),
             &client,
-            &policy,
+            &rules,
+            &BTreeMap::new(),
             Some(serde_json::json!(1)),
             &test_db(),
         )
@@ -1629,16 +1854,19 @@ mod tests {
     #[tokio::test]
     async fn fetch_http_start_index_negative_defaults_to_zero() {
         // as_u64() returns None for -1, so it should default to 0
+        let fixture = spawn_builtin_http_fixture().await;
         let client = test_client();
-        let policy = DomainPolicy::default_dev();
+        let rules = default_dev_security_rules();
+        let url = format!("{}/", fixture.base_url);
         let resp = call_builtin_tool(
             "fetch_http",
             &serde_json::json!({
-                "url": "https://elie.net",
+                "url": url,
                 "start_index": -1
             }),
             &client,
-            &policy,
+            &rules,
+            &BTreeMap::new(),
             Some(serde_json::json!(1)),
             &test_db(),
         )
@@ -1649,7 +1877,10 @@ mod tests {
             "should succeed with default start_index=0"
         );
         let text = extract_tool_text(&resp);
-        assert!(text.contains("URL: https://elie.net"), "got: {text}");
+        assert!(
+            text.contains(&format!("URL: {}/", fixture.base_url)),
+            "got: {text}"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1659,12 +1890,13 @@ mod tests {
     #[tokio::test]
     async fn grep_http_empty_pattern_rejected() {
         let client = test_client();
-        let policy = DomainPolicy::default_dev();
+        let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "grep_http",
             &serde_json::json!({"url": "https://github.com", "pattern": ""}),
             &client,
-            &policy,
+            &rules,
+            &BTreeMap::new(),
             Some(serde_json::json!(1)),
             &test_db(),
         )
@@ -1677,12 +1909,13 @@ mod tests {
     #[tokio::test]
     async fn grep_http_missing_url_returns_error() {
         let client = test_client();
-        let policy = DomainPolicy::default_dev();
+        let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "grep_http",
             &serde_json::json!({"pattern": "test"}),
             &client,
-            &policy,
+            &rules,
+            &BTreeMap::new(),
             Some(serde_json::json!(1)),
             &test_db(),
         )
@@ -1695,12 +1928,13 @@ mod tests {
     #[tokio::test]
     async fn grep_http_url_is_number() {
         let client = test_client();
-        let policy = DomainPolicy::default_dev();
+        let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "grep_http",
             &serde_json::json!({"url": 123, "pattern": "test"}),
             &client,
-            &policy,
+            &rules,
+            &BTreeMap::new(),
             Some(serde_json::json!(1)),
             &test_db(),
         )
@@ -1713,12 +1947,13 @@ mod tests {
     #[tokio::test]
     async fn grep_http_rejects_ftp_scheme() {
         let client = test_client();
-        let policy = DomainPolicy::default_dev();
+        let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "grep_http",
             &serde_json::json!({"url": "ftp://example.com", "pattern": "test"}),
             &client,
-            &policy,
+            &rules,
+            &BTreeMap::new(),
             Some(serde_json::json!(1)),
             &test_db(),
         )
@@ -1732,16 +1967,18 @@ mod tests {
     async fn grep_http_regex_catastrophic_backtracking_safe() {
         // Rust regex crate uses finite automaton, no catastrophic backtracking.
         // This test ensures (a+)+$ doesn't hang on an allowed domain.
+        let fixture = spawn_builtin_http_fixture().await;
         let client = test_client();
-        let policy = DomainPolicy::default_dev();
+        let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "grep_http",
             &serde_json::json!({
-                "url": "https://elie.net",
+                "url": format!("{}/", fixture.base_url),
                 "pattern": "(a+)+$"
             }),
             &client,
-            &policy,
+            &rules,
+            &BTreeMap::new(),
             Some(serde_json::json!(1)),
             &test_db(),
         )
@@ -1761,12 +1998,13 @@ mod tests {
     #[tokio::test]
     async fn http_headers_missing_url() {
         let client = test_client();
-        let policy = DomainPolicy::default_dev();
+        let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "http_headers",
             &serde_json::json!({}),
             &client,
-            &policy,
+            &rules,
+            &BTreeMap::new(),
             Some(serde_json::json!(1)),
             &test_db(),
         )
@@ -1779,12 +2017,13 @@ mod tests {
     #[tokio::test]
     async fn http_headers_rejects_ftp_scheme() {
         let client = test_client();
-        let policy = DomainPolicy::default_dev();
+        let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "http_headers",
             &serde_json::json!({"url": "ftp://example.com"}),
             &client,
-            &policy,
+            &rules,
+            &BTreeMap::new(),
             Some(serde_json::json!(1)),
             &test_db(),
         )
@@ -1797,13 +2036,15 @@ mod tests {
     #[tokio::test]
     async fn http_headers_invalid_method_falls_back_to_head() {
         // Any method other than "GET" falls through to HEAD
+        let fixture = spawn_builtin_http_fixture().await;
         let client = test_client();
-        let policy = DomainPolicy::default_dev();
+        let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "http_headers",
-            &serde_json::json!({"url": "https://elie.net", "method": "POST"}),
+            &serde_json::json!({"url": format!("{}/", fixture.base_url), "method": "POST"}),
             &client,
-            &policy,
+            &rules,
+            &BTreeMap::new(),
             Some(serde_json::json!(1)),
             &test_db(),
         )
@@ -1812,23 +2053,27 @@ mod tests {
         assert!(!is_tool_error(&resp), "should succeed with HEAD fallback");
         let text = extract_tool_text(&resp);
         assert!(text.contains("Status:"), "got: {text}");
+        assert_eq!(fixture.state.requests()[0].method, http::Method::HEAD);
     }
 
     #[tokio::test]
     async fn http_headers_method_case_sensitive() {
         // "get" (lowercase) is not "GET", so falls through to HEAD
+        let fixture = spawn_builtin_http_fixture().await;
         let client = test_client();
-        let policy = DomainPolicy::default_dev();
+        let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "http_headers",
-            &serde_json::json!({"url": "https://elie.net", "method": "get"}),
+            &serde_json::json!({"url": format!("{}/", fixture.base_url), "method": "get"}),
             &client,
-            &policy,
+            &rules,
+            &BTreeMap::new(),
             Some(serde_json::json!(1)),
             &test_db(),
         )
         .await;
         assert!(!is_tool_error(&resp), "should succeed with HEAD fallback");
+        assert_eq!(fixture.state.requests()[0].method, http::Method::HEAD);
     }
 
     // -----------------------------------------------------------------------
@@ -1939,7 +2184,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Integration tests -- require network access
+    // Integration tests -- use local HTTP fixtures only
     // -----------------------------------------------------------------------
 
     /// Helper to extract the text content from a tool response.
@@ -1957,14 +2202,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn integration_fetch_http_elie_net() {
+    async fn integration_fetch_http_local_fixture() {
+        let fixture = spawn_builtin_http_fixture().await;
         let client = test_client();
-        let policy = DomainPolicy::default_dev();
+        let rules = default_dev_security_rules();
+        let url = format!("{}/", fixture.base_url);
         let resp = call_builtin_tool(
             "fetch_http",
-            &serde_json::json!({"url": "https://elie.net"}),
+            &serde_json::json!({"url": url}),
             &client,
-            &policy,
+            &rules,
+            &BTreeMap::new(),
             Some(serde_json::json!(1)),
             &test_db(),
         )
@@ -1972,7 +2220,7 @@ mod tests {
         assert!(!is_tool_error(&resp), "fetch should succeed");
         let text = extract_tool_text(&resp);
         assert!(
-            text.contains("elie.net"),
+            text.contains(&fixture.base_url),
             "response must reference the domain"
         );
         // The extracted content must contain real text from the page
@@ -1983,14 +2231,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn integration_grep_http_elie_net_finds_matches() {
+    async fn integration_grep_http_local_fixture_finds_matches() {
+        let fixture = spawn_builtin_http_fixture().await;
         let client = test_client();
-        let policy = DomainPolicy::default_dev();
+        let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "grep_http",
-            &serde_json::json!({"url": "https://elie.net", "pattern": "elie"}),
+            &serde_json::json!({"url": format!("{}/", fixture.base_url), "pattern": "elie"}),
             &client,
-            &policy,
+            &rules,
+            &BTreeMap::new(),
             Some(serde_json::json!(1)),
             &test_db(),
         )
@@ -2000,7 +2250,7 @@ mod tests {
         // Must NOT say "Matches found: 0"
         assert!(
             !text.contains("Matches found: 0"),
-            "grep_http must find 'elie' on elie.net but got 0 matches: {text}"
+            "grep_http must find 'elie' on the local fixture but got 0 matches: {text}"
         );
         assert!(
             text.contains("Match 1"),
@@ -2011,7 +2261,7 @@ mod tests {
     #[tokio::test]
     async fn integration_grep_http_blocked_domain() {
         let client = test_client();
-        let policy = DomainPolicy::default_dev();
+        let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "grep_http",
             &serde_json::json!({
@@ -2019,7 +2269,8 @@ mod tests {
                 "pattern": "test"
             }),
             &client,
-            &policy,
+            &rules,
+            &BTreeMap::new(),
             Some(serde_json::json!(1)),
             &test_db(),
         )
@@ -2033,14 +2284,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn integration_http_headers_elie_net() {
+    async fn integration_http_headers_local_fixture() {
+        let fixture = spawn_builtin_http_fixture().await;
         let client = test_client();
-        let policy = DomainPolicy::default_dev();
+        let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "http_headers",
-            &serde_json::json!({"url": "https://elie.net"}),
+            &serde_json::json!({"url": format!("{}/", fixture.base_url)}),
             &client,
-            &policy,
+            &rules,
+            &BTreeMap::new(),
             Some(serde_json::json!(1)),
             &test_db(),
         )
@@ -2048,26 +2301,26 @@ mod tests {
         assert!(!is_tool_error(&resp), "http_headers should succeed");
         let text = extract_tool_text(&resp);
         assert!(
-            text.contains("Status: 200")
-                || text.contains("Status: 301")
-                || text.contains("Status: 302"),
+            text.contains("Status: 200"),
             "must return a valid HTTP status: {text}"
         );
         assert!(
             text.to_lowercase().contains("content-type"),
             "must include content-type header: {text}"
         );
+        assert_eq!(fixture.state.requests()[0].method, http::Method::HEAD);
     }
 
     #[tokio::test]
     async fn integration_fetch_http_blocked_domain() {
         let client = test_client();
-        let policy = DomainPolicy::default_dev();
+        let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "fetch_http",
             &serde_json::json!({"url": "https://evil-unknown-domain.xyz"}),
             &client,
-            &policy,
+            &rules,
+            &BTreeMap::new(),
             Some(serde_json::json!(1)),
             &test_db(),
         )
@@ -2083,12 +2336,13 @@ mod tests {
     #[tokio::test]
     async fn integration_http_headers_blocked_domain() {
         let client = test_client();
-        let policy = DomainPolicy::default_dev();
+        let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "http_headers",
             &serde_json::json!({"url": "https://evil-unknown-domain.xyz"}),
             &client,
-            &policy,
+            &rules,
+            &BTreeMap::new(),
             Some(serde_json::json!(1)),
             &test_db(),
         )
@@ -2486,19 +2740,21 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Integration tests -- elie.net/about (network)
+    // Integration tests -- local /about fixture
     // -----------------------------------------------------------------------
 
     #[tokio::test]
-    async fn integration_fetch_http_elie_net_about() {
+    async fn integration_fetch_http_local_about() {
         // Default format is markdown
+        let fixture = spawn_builtin_http_fixture().await;
         let client = test_client();
-        let policy = DomainPolicy::default_dev();
+        let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "fetch_http",
-            &serde_json::json!({"url": "https://elie.net/about"}),
+            &serde_json::json!({"url": format!("{}/about", fixture.base_url)}),
             &client,
-            &policy,
+            &rules,
+            &BTreeMap::new(),
             Some(serde_json::json!(1)),
             &test_db(),
         )
@@ -2528,14 +2784,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn integration_fetch_http_elie_net_about_content_mode() {
+    async fn integration_fetch_http_local_about_content_mode() {
+        let fixture = spawn_builtin_http_fixture().await;
         let client = test_client();
-        let policy = DomainPolicy::default_dev();
+        let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "fetch_http",
-            &serde_json::json!({"url": "https://elie.net/about", "format": "content"}),
+            &serde_json::json!({"url": format!("{}/about", fixture.base_url), "format": "content"}),
             &client,
-            &policy,
+            &rules,
+            &BTreeMap::new(),
             Some(serde_json::json!(1)),
             &test_db(),
         )
@@ -2555,14 +2813,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn integration_fetch_http_elie_net_about_raw() {
+    async fn integration_fetch_http_local_about_raw() {
+        let fixture = spawn_builtin_http_fixture().await;
         let client = test_client();
-        let policy = DomainPolicy::default_dev();
+        let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "fetch_http",
-            &serde_json::json!({"url": "https://elie.net/about", "format": "raw", "max_length": 50000}),
+            &serde_json::json!({"url": format!("{}/about", fixture.base_url), "format": "raw", "max_length": 50000}),
             &client,
-            &policy,
+            &rules,
+            &BTreeMap::new(),
             Some(serde_json::json!(1)),
             &test_db(),
         )
@@ -2577,14 +2837,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn integration_grep_http_elie_net_about() {
+    async fn integration_grep_http_local_about() {
+        let fixture = spawn_builtin_http_fixture().await;
         let client = test_client();
-        let policy = DomainPolicy::default_dev();
+        let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "grep_http",
-            &serde_json::json!({"url": "https://elie.net/about", "pattern": "Bursztein"}),
+            &serde_json::json!({"url": format!("{}/about", fixture.base_url), "pattern": "Bursztein"}),
             &client,
-            &policy,
+            &rules,
+            &BTreeMap::new(),
             Some(serde_json::json!(1)),
             &test_db(),
         )
@@ -2602,14 +2864,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn integration_fetch_http_elie_net_about_pagination() {
+    async fn integration_fetch_http_local_about_pagination() {
+        let fixture = spawn_builtin_http_fixture().await;
         let client = test_client();
-        let policy = DomainPolicy::default_dev();
+        let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "fetch_http",
-            &serde_json::json!({"url": "https://elie.net/about", "max_length": 500}),
+            &serde_json::json!({"url": format!("{}/about", fixture.base_url), "max_length": 500}),
             &client,
-            &policy,
+            &rules,
+            &BTreeMap::new(),
             Some(serde_json::json!(1)),
             &test_db(),
         )
@@ -2623,14 +2887,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn integration_http_headers_elie_net_about() {
+    async fn integration_http_headers_local_about() {
+        let fixture = spawn_builtin_http_fixture().await;
         let client = test_client();
-        let policy = DomainPolicy::default_dev();
+        let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "http_headers",
-            &serde_json::json!({"url": "https://elie.net/about"}),
+            &serde_json::json!({"url": format!("{}/about", fixture.base_url)}),
             &client,
-            &policy,
+            &rules,
+            &BTreeMap::new(),
             Some(serde_json::json!(1)),
             &test_db(),
         )
@@ -2642,24 +2908,27 @@ mod tests {
             text.to_lowercase().contains("content-type"),
             "must include content-type"
         );
+        assert_eq!(fixture.state.requests()[0].method, http::Method::HEAD);
     }
 
     // -----------------------------------------------------------------------
-    // Integration tests -- Wikipedia (network)
+    // Integration tests -- local wiki-shaped fixtures
     // -----------------------------------------------------------------------
 
     #[tokio::test]
-    async fn integration_fetch_http_wiki_turing() {
+    async fn integration_fetch_http_local_wiki_turing() {
+        let fixture = spawn_builtin_http_fixture().await;
         let client = test_client();
-        let policy = DomainPolicy::default_dev();
+        let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "fetch_http",
             &serde_json::json!({
-                "url": "https://en.wikipedia.org/wiki/Alan_Turing",
+                "url": format!("{}/wiki/Alan_Turing", fixture.base_url),
                 "max_length": 5000
             }),
             &client,
-            &policy,
+            &rules,
+            &BTreeMap::new(),
             Some(serde_json::json!(1)),
             &test_db(),
         )
@@ -2670,17 +2939,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn integration_grep_http_wiki_rust_finds_mozilla() {
+    async fn integration_grep_http_local_wiki_rust_finds_mozilla() {
+        let fixture = spawn_builtin_http_fixture().await;
         let client = test_client();
-        let policy = DomainPolicy::default_dev();
+        let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "grep_http",
             &serde_json::json!({
-                "url": "https://en.wikipedia.org/wiki/Rust_(programming_language)",
+                "url": format!("{}/wiki/Rust_(programming_language)", fixture.base_url),
                 "pattern": "Mozilla"
             }),
             &client,
-            &policy,
+            &rules,
+            &BTreeMap::new(),
             Some(serde_json::json!(1)),
             &test_db(),
         )
@@ -2694,17 +2965,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn integration_fetch_http_wiki_unicode_multibyte() {
+    async fn integration_fetch_http_local_wiki_unicode_multibyte() {
+        let fixture = spawn_builtin_http_fixture().await;
         let client = test_client();
-        let policy = DomainPolicy::default_dev();
+        let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "fetch_http",
             &serde_json::json!({
-                "url": "https://en.wikipedia.org/wiki/Unicode",
+                "url": format!("{}/wiki/Unicode", fixture.base_url),
                 "max_length": 5000
             }),
             &client,
-            &policy,
+            &rules,
+            &BTreeMap::new(),
             Some(serde_json::json!(1)),
             &test_db(),
         )

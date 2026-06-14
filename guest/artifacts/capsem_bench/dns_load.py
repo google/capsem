@@ -9,7 +9,7 @@ Measures DNS resolution rps + tail latency through the full path:
     -> vsock 5007 framed envelope
     -> capsem-process serve_dns_session (T3.2 + T3.3)
     -> DnsHandler::handle (T3.1 / T3.d)
-    -> NetworkPolicy::is_fully_blocked OR find_dns_redirect OR
+    -> SecurityRuleSet evaluation OR find_dns_redirect OR
        UdpSocket forward to 1.1.1.1:53
     -> response wire bytes back over the same path
 
@@ -38,20 +38,24 @@ share machinery:
     ]
   }
 
-Default qname is `api.openai.com` -- a fully-blocked domain in the
-dev policy, so every query hits the NXDOMAIN short-circuit path
-and we measure the proxy's per-query cost without depending on a
-real upstream resolver. Override via `CAPSEM_BENCH_DNS_QNAME` to
-benchmark the upstream-forward path (e.g. `elie.net`).
+Default qname is `api.openai.com` so the benchmark exercises the
+security-rule evaluation path. Override via `CAPSEM_BENCH_DNS_QNAME`
+to benchmark another domain or the upstream-forward path (e.g. `elie.net`).
 """
 
 import os
 import random
-import resource
 import socket
 import struct
 import time
+import unittest
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+from .load_harness import (
+    DurationLoadConfig,
+    render_load_table,
+    summarize_load_level,
+)
 
 # `rich` and `.helpers` are imported lazily inside `dns_load_bench`
 # so the encoder helpers + their unittest module-level tests can run
@@ -185,20 +189,7 @@ def _drive_at_concurrency(qname, qtype, concurrency, duration_s, timeout_s):
 
 
 def _summarize(results, concurrency, duration_s):
-    if not results:
-        return {
-            "concurrency": concurrency,
-            "duration_s": duration_s,
-            "total_requests": 0,
-            "errors": 0,
-            "rps": 0.0,
-            "p50_ms": 0.0,
-            "p95_ms": 0.0,
-            "p99_ms": 0.0,
-            "p999_ms": 0.0,
-            "decision_distribution": {},
-        }
-    latencies = sorted(r[0] for r in results)
+    latencies = [r[0] for r in results]
     errors = sum(1 for r in results if r[2] is not None)
     decisions = {}
     for _lat, rcode, err in results:
@@ -207,53 +198,45 @@ def _summarize(results, concurrency, duration_s):
         else:
             label = _RCODE_DECISION.get(rcode, f"rcode_{rcode}")
             decisions[label] = decisions.get(label, 0) + 1
-    return {
-        "concurrency": concurrency,
-        "duration_s": duration_s,
-        "total_requests": len(results),
-        "errors": errors,
-        "rps": len(results) / duration_s,
-        "p50_ms": _percentile(latencies, 50),
-        "p95_ms": _percentile(latencies, 95),
-        "p99_ms": _percentile(latencies, 99),
-        "p999_ms": _percentile(latencies, 99.9),
-        "decision_distribution": decisions,
-    }
-
-
-def _peak_rss_mb():
-    ru = resource.getrusage(resource.RUSAGE_SELF)
-    return ru.ru_maxrss / 1024.0
+    return summarize_load_level(
+        latencies,
+        errors,
+        concurrency,
+        duration_s,
+        extra={"decision_distribution": decisions},
+    )
 
 
 def dns_load_bench(qname=None, qtype=None, concurrency_levels=None, duration_s=None):
     """Drive the DNS proxy at each concurrency level; return result dict."""
     # Lazy imports -- only the bench entry point needs rich + helpers.
     # Keeps `python3 -m unittest dns_load` working host-side.
-    from rich.table import Table
     from .helpers import console
 
     qname = qname or os.environ.get("CAPSEM_BENCH_DNS_QNAME", DEFAULT_QNAME)
     qtype = qtype or int(os.environ.get("CAPSEM_BENCH_DNS_QTYPE", DEFAULT_QTYPE))
-    concurrency_levels = concurrency_levels or DEFAULT_CONCURRENCY
-    duration_s = duration_s or float(
-        os.environ.get("CAPSEM_BENCH_DNS_DURATION", DEFAULT_DURATION_S)
+    config = DurationLoadConfig.from_inputs(
+        "dns-load",
+        default_concurrency=DEFAULT_CONCURRENCY,
+        default_duration_s=DEFAULT_DURATION_S,
+        concurrency_levels=concurrency_levels,
+        duration_s=duration_s,
     )
     timeout_s = float(
         os.environ.get("CAPSEM_BENCH_DNS_TIMEOUT", DEFAULT_TIMEOUT_S)
     )
 
     console.print(
-        f"[bold]dns-load[/bold] qname={qname} qtype={qtype} duration={duration_s}s"
+        f"[bold]dns-load[/bold] qname={qname} qtype={qtype} "
+        f"duration={config.duration_s}s "
+        f"concurrency={','.join(str(c) for c in config.concurrency_levels)}"
     )
 
     rows = []
-    for c in concurrency_levels:
+    for c in config.concurrency_levels:
         console.print(f"  concurrency={c} ...")
-        results = _drive_at_concurrency(qname, qtype, c, duration_s, timeout_s)
-        row = _summarize(results, c, duration_s)
-        row["rss_peak_mb"] = _peak_rss_mb()
-        rows.append(row)
+        results = _drive_at_concurrency(qname, qtype, c, config.duration_s, timeout_s)
+        rows.append(_summarize(results, c, config.duration_s))
 
     out = {
         "version": "1.0",
@@ -262,32 +245,15 @@ def dns_load_bench(qname=None, qtype=None, concurrency_levels=None, duration_s=N
         "concurrency_levels": rows,
     }
 
-    table = Table(
-        title=f"dns-load (qname={qname}, qtype={qtype}, {duration_s}s per level)"
+    render_load_table(
+        f"dns-load (qname={qname}, qtype={qtype}, {config.duration_s}s per level)",
+        rows,
+        extra_columns=[
+            ("decisions", lambda row: ",".join(
+                f"{k}={v}" for k, v in row["decision_distribution"].items()
+            )),
+        ],
     )
-    table.add_column("concurrency", justify="right")
-    table.add_column("rps", justify="right")
-    table.add_column("p50_ms", justify="right")
-    table.add_column("p95_ms", justify="right")
-    table.add_column("p99_ms", justify="right")
-    table.add_column("p999_ms", justify="right")
-    table.add_column("errors", justify="right")
-    table.add_column("decisions", justify="left")
-    for row in rows:
-        decisions_str = ",".join(
-            f"{k}={v}" for k, v in row["decision_distribution"].items()
-        )
-        table.add_row(
-            str(row["concurrency"]),
-            f"{row['rps']:.1f}",
-            f"{row['p50_ms']:.1f}",
-            f"{row['p95_ms']:.1f}",
-            f"{row['p99_ms']:.1f}",
-            f"{row['p999_ms']:.1f}",
-            str(row["errors"]),
-            decisions_str,
-        )
-    console.print(table)
 
     return out
 
@@ -298,10 +264,6 @@ def dns_load_bench(qname=None, qtype=None, concurrency_levels=None, duration_s=N
 # Run via:
 #   python -m unittest guest.artifacts.capsem_bench.dns_load
 # -------------------------------------------------------------------
-
-import unittest
-
-
 class DnsLoadEncodingTests(unittest.TestCase):
     def test_encode_qname_simple(self):
         self.assertEqual(

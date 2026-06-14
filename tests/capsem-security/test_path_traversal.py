@@ -13,7 +13,7 @@ def test_virtiofs_path_traversal(client):
     vm_name = f"traversal-{uuid.uuid4().hex[:8]}"
     
     # Provision VM
-    resp = client.post("/provision", {"name": vm_name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+    resp = client.post("/vms/create", {"name": vm_name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
     assert resp is not None
     
     try:
@@ -30,7 +30,7 @@ def test_virtiofs_path_traversal(client):
         
         traversal_path = "/root/../session.db"
         
-        resp = client.post(f"/exec/{vm_name}", {"command": f"cat {traversal_path} 2>&1"})
+        resp = client.post(f"/vms/{vm_name}/exec", {"command": f"cat {traversal_path} 2>&1"})
         stdout = resp.get("stdout", "") if resp else ""
         
         # If it leaked, we might see SQLite header or content.
@@ -45,6 +45,6 @@ def test_virtiofs_path_traversal(client):
     finally:
         # Cleanup
         try:
-            client.delete(f"/delete/{vm_name}")
+            client.delete(f"/vms/{vm_name}/delete")
         except Exception:
             pass

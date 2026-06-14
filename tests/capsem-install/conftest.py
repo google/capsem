@@ -11,13 +11,12 @@ Tests are split into two tiers:
 from __future__ import annotations
 
 import atexit
-import filecmp
-import json
+from contextlib import contextmanager
 import os
-import platform
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import tempfile
 import time
@@ -38,8 +37,8 @@ def pytest_collection_modifyitems(config, items):
     if os.environ.get("CAPSEM_DEB_INSTALLED") == "1":
         reason = "live_system test skipped in Docker packaging harness (no VM assets)"
     elif not os.environ.get("CAPSEM_ALLOW_DESTRUCTIVE"):
-        # live_system tests call `capsem setup` / `capsem uninstall`, which
-        # write to ~/Library/LaunchAgents/com.capsem.service.plist or
+        # live_system tests call service install/uninstall paths, which write
+        # to ~/Library/LaunchAgents/com.capsem.service.plist or
         # ~/.config/systemd/user/capsem.service -- these paths can't be
         # redirected by CAPSEM_HOME, so running them bare-metal would overwrite
         # the developer's actual installed service. Opt in with
@@ -60,8 +59,9 @@ def _resolve_capsem_home() -> Path:
     """Pick the CAPSEM_HOME these tests operate on.
 
     Running bare-metal, the suite used to clobber the developer's real
-    ``~/.capsem`` -- uninstall tests and `simulate-install.sh` mutate the
-    installed runtime. We isolate under a dedicated temp dir so bare-metal
+    ``~/.capsem`` -- `test_full_uninstall` literally asserts it got removed,
+    and `simulate-install.sh` would overwrite binaries the developer had
+    just installed. We isolate under a dedicated temp dir so bare-metal
     `pytest tests/capsem-install/` is always safe.
 
     Exceptions:
@@ -84,20 +84,6 @@ def _resolve_capsem_home() -> Path:
     return d
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_BIN_SRC = PROJECT_ROOT / "target" / "debug"
-HOST_CRATES = [
-    "capsem-service",
-    "capsem-process",
-    "capsem",
-    "capsem-mcp",
-    "capsem-mcp-aggregator",
-    "capsem-mcp-builtin",
-    "capsem-gateway",
-    "capsem-tray",
-    "capsem-tui",
-]
-
 CAPSEM_DIR = _resolve_capsem_home()
 INSTALL_DIR = CAPSEM_DIR / "bin"
 ASSETS_DIR = CAPSEM_DIR / "assets"
@@ -107,15 +93,15 @@ BINARIES = [
     "capsem",
     "capsem-service",
     "capsem-process",
+    "capsem-tui",
     "capsem-mcp",
     "capsem-mcp-aggregator",
     "capsem-mcp-builtin",
     "capsem-gateway",
     "capsem-tray",
-    "capsem-tui",
+    "capsem-admin",
 ]
 DEFAULT_TIMEOUT = 30
-_LOCAL_BUILD_DONE = False
 
 
 def run_capsem(*args: str, timeout: int = DEFAULT_TIMEOUT) -> subprocess.CompletedProcess[str]:
@@ -126,6 +112,65 @@ def run_capsem(*args: str, timeout: int = DEFAULT_TIMEOUT) -> subprocess.Complet
         text=True,
         timeout=timeout,
     )
+
+
+def installed_binary_path(name: str) -> Path:
+    """Return the real installed binary path, following postinstall symlinks."""
+    binary = INSTALL_DIR / name
+    return binary.resolve(strict=True)
+
+
+def _sudo_install(src: Path, dest: Path, mode: int) -> None:
+    subprocess.run(
+        ["sudo", "install", "-m", f"{mode:o}", str(src), str(dest)],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+
+
+@contextmanager
+def temporarily_replace_installed_binary(name: str, content: bytes, mode: int = 0o755):
+    """Replace a real installed binary and restore it after the test.
+
+    Debian packages symlink ~/.capsem/bin/* to /usr/bin/* and the systemd
+    unit executes the resolved /usr/bin path. Tests that validate a broken
+    service binary must therefore mutate the resolved target, not replace the
+    symlink with a private file that production never executes.
+    """
+    _kill_service()
+    binary = installed_binary_path(name)
+    original = binary.read_bytes()
+    original_mode = stat.S_IMODE(binary.stat().st_mode)
+    tmp_dir = Path(tempfile.mkdtemp(prefix="capsem-binary-replace-"))
+    replacement = tmp_dir / name
+    restored = tmp_dir / f"{name}.original"
+    replacement.write_bytes(content)
+    replacement.chmod(mode)
+    restored.write_bytes(original)
+    restored.chmod(original_mode)
+
+    writable = os.access(binary.parent, os.W_OK) and os.access(binary, os.W_OK)
+    try:
+        if writable:
+            binary.unlink()
+            binary.write_bytes(content)
+            binary.chmod(mode)
+        else:
+            _sudo_install(replacement, binary, mode)
+        yield binary
+    finally:
+        try:
+            _kill_service()
+            if writable:
+                binary.unlink(missing_ok=True)
+                binary.write_bytes(original)
+                binary.chmod(original_mode)
+            else:
+                _sudo_install(restored, binary, original_mode)
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def get_build_hash() -> str:
@@ -183,7 +228,14 @@ def _kill_service() -> None:
         except subprocess.TimeoutExpired:
             pass
 
-    for proc_name in ["capsem-service", "capsem-gateway", "capsem-tray", "capsem-process"]:
+    for proc_name in [
+        "capsem-service",
+        "capsem-gateway",
+        "capsem-tray",
+        "capsem-process",
+        "capsem-mcp-aggregator",
+        "capsem-mcp-builtin",
+    ]:
         subprocess.run(
             ["pkill", "-f", f"{install_prefix}{proc_name}"],
             capture_output=True,
@@ -194,111 +246,25 @@ def _kill_service() -> None:
     sock.unlink(missing_ok=True)
 
 
-def _binary_is_current(name: str, bin_src: Path, install_dir: Path) -> bool:
-    """Return true when the simulated installed binary matches its source."""
-    src = bin_src / name
-    dst = install_dir / name
-    if not src.is_file() or not dst.is_file():
-        return False
-    return filecmp.cmp(src, dst, shallow=False)
-
-
-def _installed_binaries_current(bin_src: Path, install_dir: Path) -> bool:
-    return all(_binary_is_current(name, bin_src, install_dir) for name in BINARIES)
-
-
-def _resolve_bin_src() -> Path:
-    env_src = os.environ.get("CAPSEM_BIN_SRC")
-    if env_src:
-        path = Path(env_src).expanduser()
-    elif os.environ.get("CAPSEM_DEB_INSTALLED") == "1":
-        # The Docker packaging harness builds host crates with
-        # CARGO_TARGET_DIR=/cargo-target. Using /src/target/debug here can pick
-        # up macOS host binaries from the bind mount and trigger Exec format
-        # errors when simulate-install refreshes the fixture.
-        cargo_target_debug = Path("/cargo-target/debug")
-        if cargo_target_debug.exists():
-            path = cargo_target_debug
-        else:
-            path = DEFAULT_BIN_SRC
-    else:
-        path = DEFAULT_BIN_SRC
-
-    if not path.is_absolute():
-        path = PROJECT_ROOT / path
-    return path
-
-
-def _resolve_assets_src() -> Path:
-    path = Path(os.environ.get("CAPSEM_ASSETS_SRC", "assets")).expanduser()
-    if not path.is_absolute():
-        path = PROJECT_ROOT / path
-    return path
-
-
-def _should_build_default_bin_src(bin_src: Path) -> bool:
-    if os.environ.get("CAPSEM_INSTALL_SKIP_BUILD") == "1":
-        return False
-    try:
-        return bin_src.resolve() == DEFAULT_BIN_SRC.resolve()
-    except FileNotFoundError:
-        return bin_src.absolute() == DEFAULT_BIN_SRC.absolute()
-
-
-def _ensure_local_binaries_built(bin_src: Path) -> None:
-    global _LOCAL_BUILD_DONE
-    if _LOCAL_BUILD_DONE or not _should_build_default_bin_src(bin_src):
-        return
-
-    cmd = ["cargo", "build"]
-    for crate in HOST_CRATES:
-        cmd.extend(["-p", crate])
-    result = subprocess.run(
-        cmd,
-        cwd=PROJECT_ROOT,
-        capture_output=True,
-        text=True,
-        timeout=600,
-    )
-    assert result.returncode == 0, (
-        f"cargo build for install-test binaries failed:\n"
-        f"stdout: {result.stdout}\nstderr: {result.stderr}"
-    )
-    _LOCAL_BUILD_DONE = True
-
-
 def _ensure_installed() -> None:
-    """Build and (re)run simulate-install.sh when installed binaries are stale."""
-    bin_src = _resolve_bin_src()
-    assets_src = _resolve_assets_src()
-
+    """(Re)run simulate-install.sh if any expected binary is missing."""
     if os.environ.get("CAPSEM_DEB_INSTALLED") == "1":
         for name in BINARIES:
             binary = INSTALL_DIR / name
             assert binary.exists(), f"binary not installed by dpkg: {binary}"
             assert os.access(binary, os.X_OK), f"binary not executable: {binary}"
-        if _installed_binaries_current(bin_src, INSTALL_DIR) and _installed_assets_ready():
-            return
-    else:
-        _ensure_local_binaries_built(bin_src)
-        if _installed_binaries_current(bin_src, INSTALL_DIR):
-            return
+        return
 
-    if not bin_src.exists():
-        raise AssertionError(
-            f"capsem binary source directory not found: {bin_src}\n"
-            "Set CAPSEM_BIN_SRC to a valid built binary directory."
-        )
-    if not assets_src.exists():
-        raise AssertionError(
-            f"capsem assets source directory not found: {assets_src}\n"
-            "Set CAPSEM_ASSETS_SRC to a valid assets directory."
-        )
+    if all((INSTALL_DIR / name).exists() for name in BINARIES):
+        return
 
-    script = PROJECT_ROOT / "scripts" / "simulate-install.sh"
+    bin_src = os.environ.get("CAPSEM_BIN_SRC", "target/debug")
+    assets_src = os.environ.get("CAPSEM_ASSETS_SRC", "assets")
+    config_src = os.environ.get("CAPSEM_CONFIG_SRC", "target/config")
+    script = Path(__file__).parent.parent.parent / "scripts" / "simulate-install.sh"
     assert script.exists(), f"simulate-install.sh not found at {script}"
     result = subprocess.run(
-        ["bash", str(script), str(bin_src), str(assets_src)],
+        ["bash", str(script), bin_src, assets_src, config_src],
         capture_output=True, text=True, timeout=60,
     )
     assert result.returncode == 0, (
@@ -310,51 +276,14 @@ def _ensure_installed() -> None:
         assert os.access(binary, os.X_OK), f"binary not executable: {binary}"
 
 
-def _installed_assets_ready() -> bool:
-    manifest = ASSETS_DIR / "manifest.json"
-    if not manifest.is_file():
-        return False
-
-    try:
-        data = json.loads(manifest.read_text(encoding="utf-8"))
-        current = data["assets"]["current"]
-        arch = _host_manifest_arch()
-        arch_assets = data["assets"]["releases"][current]["arches"][arch]
-    except (OSError, ValueError, KeyError, TypeError):
-        return False
-
-    for logical in ("vmlinuz", "initrd.img", "rootfs.squashfs"):
-        entry = arch_assets.get(logical)
-        if not isinstance(entry, dict):
-            return False
-        h = entry.get("hash")
-        if not isinstance(h, str) or len(h) < 16:
-            return False
-        stem, dot, suffix = logical.partition(".")
-        hashed = f"{stem}-{h[:16]}"
-        if dot:
-            hashed += f".{suffix}"
-        if not (ASSETS_DIR / arch / hashed).is_file():
-            return False
-    return True
-
-
-def _host_manifest_arch() -> str:
-    machine = platform.machine().lower()
-    if machine in ("aarch64", "arm64"):
-        return "arm64"
-    return "x86_64"
-
-
 @pytest.fixture
 def installed_layout() -> Path:
     """Self-healing installed layout fixture.
 
     Function-scoped (not session-scoped) so destructive tests like
-    uninstall tests don't poison the rest of the suite. Local runs build the
-    default host binaries once, then re-run simulate-install.sh when binaries
-    are missing or differ from CAPSEM_BIN_SRC so tests cannot silently use
-    stale helpers.
+    test_full_uninstall don't poison the rest of the suite. Re-runs
+    simulate-install.sh only when binaries are missing, so the per-test
+    overhead is one stat() per binary in the common case.
     """
     _ensure_installed()
     return INSTALL_DIR

@@ -6,13 +6,18 @@ Exercises:
   1. fs_events   -- create, modify, and delete files inside the VM
   2. net_events   -- curl an allowed domain + a denied domain (policy enforcement)
   3. mcp_calls    -- run capsem-doctor MCP tests (init, tools/list, fetch, grep)
-  4. model_calls  -- ask Gemini to write a poem (verifies cost estimation)
-  5. tool_calls   -- Gemini tool use (write_file) with origin tracking
+  4. model_calls  -- call the local OpenAI-compatible mock fixture
+  5. tool_calls   -- validate tool-call ledger shape when model fixtures emit it
   6. main.db      -- rollup counters match session.db actuals
 
 Usage:
     python3 scripts/integration_test.py              # uses target/debug/capsem
     python3 scripts/integration_test.py --binary ./capsem --assets ./assets
+
+Ironbank note: this is black-box product proof. Do not close a release gate
+with status-only replay, row-exists checks, skipped/slow cases, public
+services, or expectations copied from Rust internals. The ledger contract is
+client result + parsed facts + security rows + protocol rows + logs + routes.
 """
 
 import argparse
@@ -20,12 +25,37 @@ import json
 import os
 import re
 import signal
+import shutil
+import shlex
 import sqlite3
 import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Optional
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from mock_server import local_fixture_env, start_mock_server, stop_process  # noqa: E402
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _integration_home() -> Path:
+    """Return the per-run integration home.
+
+    `just test` can invoke focused and full integration probes back-to-back.
+    A fixed service socket lets a cleanly exiting singleton peer race the
+    harness before readiness is observable, so each invocation owns its own
+    CAPSEM_HOME by default. The override keeps manual debugging reproducible.
+    """
+    if env := os.environ.get("CAPSEM_INTEGRATION_HOME"):
+        return Path(env)
+    return PROJECT_ROOT / "target" / f"integration-capsem-home-{os.getpid()}"
+
+
+INTEGRATION_HOME = _integration_home()
 
 BOLD = "\033[1m"
 DIM = "\033[2m"
@@ -54,52 +84,61 @@ def _run_dir() -> Path:
     return _capsem_home() / "run"
 
 
-CAPSEM_HOME = _capsem_home()
-SESSIONS_DIR = _run_dir() / "sessions"
-MAIN_DB = CAPSEM_HOME / "sessions" / "main.db"
-SERVICE_SOCKET = _run_dir() / "service.sock"
-SERVICE_PIDFILE = _run_dir() / "service.pid"
-
-def _gemini_api_key() -> Optional[str]:
-    """Find a Gemini API key for the optional live model telemetry probe."""
-    google_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-    if google_key:
-        return google_key
-    return None
+CAPSEM_HOME = INTEGRATION_HOME
+SESSIONS_DIR = INTEGRATION_HOME / "run" / "sessions"
+MAIN_DB = INTEGRATION_HOME / "sessions" / "main.db"
+SERVICE_SOCKET = INTEGRATION_HOME / "run" / "service.sock"
+SERVICE_PIDFILE = INTEGRATION_HOME / "run" / "service.pid"
 
 
-INTEGRATION_PROFILE_ID = "everyday-work"
+def default_materialized_profiles_dir() -> str:
+    """Return the generated profile catalog used by packages, CI, and install."""
+    return str(PROJECT_ROOT / "target" / "config" / "profiles")
 
 
-def _install_integration_profile() -> dict[Path, Optional[bytes]]:
-    """Snapshot any harness-owned profile state for restore.
+def _profile_env() -> dict[str, str]:
+    return {"CAPSEM_PROFILES_DIR": default_materialized_profiles_dir()}
 
-    Smoke runs against the installed signed everyday-work profile. The harness
-    deliberately does not write a transient unsigned profile or replace
-    service.toml, because service.toml carries the corp profile roots used to
-    resolve profile-owned VM assets.
+
+def _test_isolation_env() -> dict[str, str]:
+    """Environment that keeps black-box integration tests hermetic.
+
+    The credential broker must not touch the developer's native keychain during
+    release gates. Native storage belongs to installed/manual runs; tests use
+    an isolated JSON store inside CAPSEM_HOME so captured credentials can be
+    asserted without host prompts or hidden state.
     """
-    return {}
+    return {
+        "CAPSEM_CREDENTIAL_BROKER_TEST_STORE": str(
+            INTEGRATION_HOME / "run" / "credential-broker-test-store.json"
+        )
+    }
 
 
-def _restore_integration_profile(snapshot: dict[Path, Optional[bytes]]) -> None:
-    for path, previous in snapshot.items():
-        if previous is None:
-            try:
-                path.unlink()
-            except FileNotFoundError:
-                pass
-        else:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(previous)
+def _integration_runtime_env() -> dict[str, str]:
+    """Pin every integration subprocess to the same home and run directory."""
+    return {
+        "CAPSEM_HOME": str(INTEGRATION_HOME),
+        "CAPSEM_RUN_DIR": str(INTEGRATION_HOME / "run"),
+    }
 
 
-def _vm_command(include_gemini_probe: bool) -> str:
+def _vm_command(local_base_url: str) -> str:
     """Build the compound command executed inside the VM.
 
-    Semicolons ensure every step runs even if an earlier one fails -- the
-    host-side assertions decide pass/fail.
+    Required steps are chained with `&&` so a broken fixture stops immediately.
+    The denied-domain probe is the only intentionally non-fatal command.
     """
+    tiny_url = shlex.quote(f"{local_base_url.rstrip('/')}/tiny")
+    bytes_url = shlex.quote(f"{local_base_url.rstrip('/')}/bytes/10mb")
+    deny_url = shlex.quote(f"{local_base_url.rstrip('/')}/deny-target")
+    model_url = shlex.quote(f"{local_base_url.rstrip('/')}/v1/chat/completions")
+    model_payload = shlex.quote(json.dumps({
+        "model": "mock-openai",
+        "messages": [{"role": "user", "content": "say capsem"}],
+        "stream": False,
+    }))
+
     commands = [
     # -- fs_events: create, modify, and delete files --
     "echo 'integration-test-data' > /root/integration_test.txt",
@@ -109,53 +148,46 @@ def _vm_command(include_gemini_probe: bool) -> str:
     "sleep 0.2",  # let debouncer see the create before we delete
     "rm /root/delete_me.txt",
 
-    # -- net_events: HTTPS fetch to allowed + denied domains --
-    "curl -sf https://elie.net -o /dev/null",
-    "curl -sf -X POST https://example.com/ -o /dev/null || true",  # denied by policy
+    # -- net_events: local allowed fetch + denied domain --
+    f"curl -sf {tiny_url} -o /dev/null",
+    f"curl -sf {deny_url} -o /dev/null || true",  # denied by corp rule
 
-    # -- throughput: ~10MB PDF through the full MITM proxy pipeline --
-    # cdn.elie.net 301-redirects to elie.net; -L proves the proxy handles
-    # cross-host redirects too. The previous target (ash-speed.hetzner.com/
-    # 1MB.bin) 404'd silently -- curl reported 146 bytes of nginx error page
-    # while the test asserted only "request logged" + "decision=allowed",
-    # so throughput was untested for months.
+    # -- throughput: deterministic 10MB fixture through the full MITM proxy pipeline --
     (
         "curl -sL -o /dev/null"
         " -w 'throughput: %{speed_download} B/s in %{time_total}s\\n'"
         " --connect-timeout 5 -m 30"
-        " https://cdn.elie.net/static/files/i-am-a-legend/i-am-a-legend-slides.pdf"
+        f" {bytes_url}"
     ),
 
     # -- mcp_calls: capsem-doctor MCP test subset --
     "capsem-doctor -k mcp",
-    ]
 
-    if include_gemini_probe:
-        commands.extend([
-            # -- model_calls + tool_calls: ask Gemini to write a poem into a file --
-            (
-                "gemini --yolo -p "
-                "'Use the write_file tool to write a four line poem about sandboxes"
-                " to the file /root/gemini_poem.txt'"
-            ),
-            # Fallback: if Gemini printed instead of using write_file, create the
-            # file so the fs_events assertion doesn't flake on nondeterministic LLM behavior.
-            "test -f /root/gemini_poem.txt || echo 'sandboxes hold the grains of time' > /root/gemini_poem.txt",
-        ])
-    else:
-        commands.extend([
-            "echo CAPSEM_INTEGRATION_GEMINI_SKIPPED",
-            "echo 'sandboxes hold the grains of time' > /root/gemini_poem.txt",
-        ])
+    # -- model_calls: deterministic local OpenAI-compatible fixture --
+    (
+        "curl -sf -X POST"
+        " --connect-timeout 5 -m 30"
+        " -H 'content-type: application/json'"
+        " -H 'authorization: Bearer capsem_test_openai_api_key'"
+        f" --data {model_payload}"
+        f" {model_url}"
+        " -o /root/model_fixture.json"
+    ),
+    "test -s /root/model_fixture.json",
+    (
+        "python3 -c \"import json;"
+        " data=json.load(open('/root/model_fixture.json'));"
+        " print('model-fixture:', data.get('choices',[{}])[0].get('message',{}).get('content',''))\""
+    ),
+    "echo 'sandboxes hold the grains of time' > /root/model_fixture_poem.txt",
 
-    commands.extend([
         # -- debouncer flush: fs_events uses a 100ms debouncer --
         "sleep 2",
 
         # -- sentinel so the host can confirm full execution --
         "echo CAPSEM_INTEGRATION_DONE",
-    ])
-    return "; ".join(commands)
+    ]
+    return " && ".join(commands)
 
 
 def _kill_dev_service() -> None:
@@ -193,58 +225,114 @@ def _kill_dev_service() -> None:
         pass
 
 
-def _start_service_with_test_config(assets_dir: str) -> subprocess.Popen:
-    """Spawn `capsem-service --foreground` against the temporary V2 profile."""
-    project_root = Path(__file__).resolve().parent.parent
+def _wait_for_service_ready(
+    proc: subprocess.Popen,
+    *,
+    service_socket: Path,
+    log_path: Path,
+    timeout_secs: float = 15.0,
+    poll_interval: float = 0.2,
+    run_cmd=subprocess.run,
+    sleep=time.sleep,
+    monotonic=time.monotonic,
+) -> None:
+    """Wait for the service socket to answer, honoring idempotent startup.
+
+    `capsem-service` intentionally exits 0 when a compatible peer wins a
+    startup race. The integration harness must keep probing the socket in that
+    case instead of treating a clean early exit as failure.
+    """
+    deadline = monotonic() + timeout_secs
+    clean_early_exit = False
+    while monotonic() < deadline:
+        if service_socket.exists():
+            # Socket alone isn't enough -- wait for /list to respond.
+            r = run_cmd(
+                [
+                    "curl",
+                    "-s",
+                    "--unix-socket",
+                    str(service_socket),
+                    "--max-time",
+                    "2",
+                    "http://localhost/list",
+                ],
+                capture_output=True,
+            )
+            if r.returncode == 0:
+                return
+        if proc.poll() is not None:
+            if proc.returncode != 0:
+                raise RuntimeError(
+                    f"capsem-service exited early (code {proc.returncode}); "
+                    f"see {log_path}"
+                )
+            clean_early_exit = True
+        sleep(poll_interval)
+
+    if clean_early_exit:
+        raise RuntimeError(
+            f"capsem-service exited 0 before the service socket became ready; "
+            f"see {log_path}"
+        )
+    raise RuntimeError(f"capsem-service did not become ready in {timeout_secs:g}s; see {log_path}")
+
+
+def _start_service_with_test_config(
+    assets_dir: str, settings_config: str, corp_config: str
+) -> subprocess.Popen:
+    """Spawn `capsem-service --foreground` with test config env vars.
+
+    The service and each `capsem-process` share CAPSEM_HOME, so the per-VM
+    runtime policy picks up `example.com` and the other overrides from
+    `tests/fixtures/config/integration/settings.toml`.
+    """
+    project_root = PROJECT_ROOT
     service_bin = project_root / "target/debug/capsem-service"
     process_bin = project_root / "target/debug/capsem-process"
+    test_home = INTEGRATION_HOME
+    test_home.mkdir(parents=True, exist_ok=True)
+    SERVICE_PIDFILE.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(project_root / settings_config, test_home / "settings.toml")
 
     env = {
         **os.environ,
+        **_profile_env(),
+        **_test_isolation_env(),
+        **_integration_runtime_env(),
+        "CAPSEM_CORP_CONFIG": str(project_root / corp_config),
         "RUST_LOG": "capsem=info",
     }
 
     log_path = project_root / "target/integration-test-service.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_file = open(log_path, "w")
 
-    log_fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
     try:
         proc = subprocess.Popen(
             [
                 str(service_bin),
-                "--assets-dir", f"{assets_dir}/arm64" if (Path(assets_dir) / "arm64").exists() else assets_dir,
-                "--process-binary", str(process_bin),
+                "--assets-dir",
+                f"{assets_dir}/arm64" if (Path(assets_dir) / "arm64").exists() else assets_dir,
+                "--process-binary",
+                str(process_bin),
+                "--uds-path",
+                str(SERVICE_SOCKET),
                 "--foreground",
             ],
             env=env,
-            stdout=log_fd,
+            stdout=log_file,
             stderr=subprocess.STDOUT,
         )
     finally:
-        os.close(log_fd)
+        log_file.close()
     SERVICE_PIDFILE.write_text(str(proc.pid))
 
-    deadline = time.monotonic() + 15.0
-    while time.monotonic() < deadline:
-        if SERVICE_SOCKET.exists():
-            # Socket alone isn't enough -- wait for /list to respond.
-            r = subprocess.run(
-                ["curl", "-s", "--unix-socket", str(SERVICE_SOCKET),
-                 "--max-time", "2", "http://localhost/list"],
-                capture_output=True,
-            )
-            if r.returncode == 0:
-                return proc
-        if proc.poll() is not None:
-            raise RuntimeError(
-                f"capsem-service exited early (code {proc.returncode}); "
-                f"see {log_path}"
-            )
-        time.sleep(0.2)
-    raise RuntimeError(f"capsem-service did not become ready in 15s; see {log_path}")
+    _wait_for_service_ready(proc, service_socket=SERVICE_SOCKET, log_path=log_path)
+    return proc
 
 
-def run_vm(binary: str, assets_dir: str) -> tuple[str, int, bool]:
+def run_vm(binary: str, assets_dir: str) -> tuple[str, int]:
     """Boot a temp VM via `capsem run`, return (session_id, exit_code).
 
     The service preserves the session dir after `run` completes, so we
@@ -253,37 +341,55 @@ def run_vm(binary: str, assets_dir: str) -> tuple[str, int, bool]:
     """
     env = {
         **os.environ,
+        **_profile_env(),
+        **_test_isolation_env(),
+        **_integration_runtime_env(),
         "CAPSEM_ASSETS_DIR": assets_dir,
         "RUST_LOG": "capsem=warn",
+        "CAPSEM_CORP_CONFIG": "tests/fixtures/config/integration/corp.toml",
     }
 
-    google_key = _gemini_api_key()
+    mock_proc = None
 
-    # Restart the dev service, then request the installed signed profile per VM.
+    # Restart the dev service with CAPSEM_HOME/CAPSEM_CORP_CONFIG in its env so
+    # the policy rules from `tests/fixtures/config/integration/settings.toml` actually
+    # reach the VM. Without this, the service inherits whatever env
+    # `_ensure-service` was launched with (usually nothing), and the
+    # per-VM policy falls back to the developer's real CAPSEM_HOME instead of
+    # the isolated test config.
     _kill_dev_service()
-    profile_snapshot = _install_integration_profile()
-    try:
-        service_proc = _start_service_with_test_config(assets_dir)
-    except Exception:
-        _restore_integration_profile(profile_snapshot)
-        raise
+    service_proc = _start_service_with_test_config(
+        assets_dir,
+        "tests/fixtures/config/integration/settings.toml",
+        "tests/fixtures/config/integration/corp.toml",
+    )
 
     # Snapshot session dirs before so we can find the new one after.
     existing = set(p.name for p in SESSIONS_DIR.iterdir()) if SESSIONS_DIR.exists() else set()
 
-    # Pass API key via --env so it reaches the VM through the service.
-    cmd = [binary, "run", "--profile", INTEGRATION_PROFILE_ID, "--timeout", "300"]
-    if google_key:
-        cmd.extend(["--env", f"GEMINI_API_KEY={google_key}"])
-    cmd.append(_vm_command(include_gemini_probe=google_key is not None))
-
-    print(f"{BOLD}Booting VM with test command ...{RESET}")
     try:
+        mock_proc, ready = start_mock_server()
+        mock_base_url = ready["base_url"]
+        print(f"{BOLD}Local mock server:{RESET} {mock_base_url}")
+
+        # Pass deterministic local fixture settings via --env so they reach the
+        # VM through the service. Do not inject proxy variables: guest traffic
+        # must prove the iptables-nft redirect rail.
+        cmd = [binary, "run", "--timeout", "300"]
+        for key, value in local_fixture_env(
+            mock_base_url,
+            ready.get("https_base_url"),
+        ).items():
+            cmd.extend(["--env", f"{key}={value}"])
+        cmd.append(_vm_command(local_base_url=mock_base_url))
+
+        print(f"{BOLD}Booting VM with test command ...{RESET}")
         proc = subprocess.run(
             cmd,
             env=env, capture_output=True, text=True, timeout=300,
         )
     finally:
+        stop_process(mock_proc)
         # Always tear down the test service. Subsequent smoke steps spawn
         # their own fixtures, and leaving this one around would shadow any
         # default-config service the pipeline expects next.
@@ -296,7 +402,6 @@ def run_vm(binary: str, assets_dir: str) -> tuple[str, int, bool]:
             SERVICE_PIDFILE.unlink()
         except FileNotFoundError:
             pass
-        _restore_integration_profile(profile_snapshot)
     exit_code = proc.returncode
     if proc.stdout.strip():
         print(proc.stdout.strip())
@@ -319,7 +424,7 @@ def run_vm(binary: str, assets_dir: str) -> tuple[str, int, bool]:
 
     session_id = new_sessions[0].name
     print(f"  session: {CYAN}{session_id}{RESET}  exit_code: {exit_code}")
-    return session_id, exit_code, google_key is not None
+    return session_id, exit_code
 
 
 # ── assertions ───────────────────────────────────────────────────────────
@@ -356,7 +461,7 @@ class Results:
         return len(self.failed) == 0
 
 
-def verify_session(session_id: str, expect_model_calls: bool) -> bool:
+def verify_session(session_id: str) -> bool:
     """Open the session DB, run all assertions, return True on success."""
     db_path = SESSIONS_DIR / session_id / "session.db"
     gz_path = SESSIONS_DIR / session_id / "session.db.gz"
@@ -407,48 +512,32 @@ def verify_session(session_id: str, expect_model_calls: bool) -> bool:
         "no net_events recorded",
     )
 
-    # elie.net from the curl.
-    elie = conn.execute(
-        "SELECT * FROM net_events WHERE domain = 'elie.net'"
+    # Local fixture /tiny from the curl.
+    local_tiny = conn.execute(
+        "SELECT * FROM net_events WHERE domain = '127.0.0.1' AND path = '/tiny'"
     ).fetchone()
     r.check(
-        elie is not None,
-        "elie.net request logged (curl)",
-        "elie.net NOT found in net_events (curl may have failed)",
+        local_tiny is not None,
+        "local debug /tiny request logged (curl)",
+        "local debug /tiny NOT found in net_events (curl may have failed)",
     )
 
     # Allowed decision.
-    if elie:
+    if local_tiny:
         r.check(
-            elie["decision"] == "allowed",
-            "elie.net decision = allowed",
-            f"elie.net decision = {elie['decision']} (expected allowed)",
+            local_tiny["decision"] == "allowed",
+            "local debug /tiny decision = allowed",
+            f"local debug /tiny decision = {local_tiny['decision']} (expected allowed)",
         )
 
-    # Google/Gemini API requests are live-credential dependent. Smoke must pass
-    # on clean machines without API keys; deterministic parser/policy behavior is
-    # covered by offline Rust and e2e suites.
-    google_net = conn.execute(
-        "SELECT COUNT(*) FROM net_events WHERE domain LIKE '%.googleapis.com'"
-    ).fetchone()[0]
-    if expect_model_calls:
-        r.check(
-            google_net > 0,
-            f"{google_net} googleapis.com net_events (Gemini API calls)",
-            "no googleapis.com net_events (Gemini API call not captured)",
-        )
-    else:
-        r.warn("Gemini live model probe skipped (no GEMINI_API_KEY/GOOGLE_API_KEY)")
-
-    # cdn.elie.net / elie.net throughput download (~10MB PDF, -L follows
-    # 301 to elie.net, so both hosts should appear in net_events).
+    # Local deterministic 10MB fixture throughput download.
     throughput_rows = conn.execute(
-        "SELECT * FROM net_events WHERE domain IN ('cdn.elie.net', 'elie.net')"
+        "SELECT * FROM net_events WHERE domain = '127.0.0.1' AND path = '/bytes/10mb'"
     ).fetchall()
     r.check(
         len(throughput_rows) > 0,
-        f"{len(throughput_rows)} throughput net_events recorded (cdn.elie.net/elie.net)",
-        "no throughput net_events found (10MB download may have failed through MITM)",
+        f"{len(throughput_rows)} local throughput net_events recorded (/bytes/10mb)",
+        "no local throughput net_events found (10MB fixture may have failed through MITM)",
     )
     if throughput_rows:
         allowed = sum(1 for row in throughput_rows if row["decision"] == "allowed")
@@ -475,16 +564,20 @@ def verify_session(session_id: str, expect_model_calls: bool) -> bool:
         "no net_events with HTTP status codes (MITM proxy may not be recording)",
     )
 
-    # Denied HTTP event from the installed profile's example.com POST block.
-    deny_domain = "example.com"
-    http_denied_count = conn.execute(
-        "SELECT COUNT(*) FROM net_events WHERE decision = 'denied' AND domain = ?",
-        (deny_domain,),
+    # Denied local HTTP event from the corp-owned integration rule.
+    denied_target_count = conn.execute(
+        """
+        SELECT COUNT(*)
+        FROM net_events
+        WHERE decision = 'denied'
+          AND domain = '127.0.0.1'
+          AND path = '/deny-target'
+        """
     ).fetchone()[0]
     r.check(
-        http_denied_count >= 1,
-        f"{http_denied_count} denied net_events for {deny_domain} (policy enforcement working)",
-        f"no denied net_events for {deny_domain} (curl POST to blocked domain may have failed silently)",
+        denied_target_count >= 1,
+        f"{denied_target_count} denied local /deny-target net_events (corp enforcement working)",
+        "no denied local /deny-target net_events (corp rule may not have applied)",
     )
 
     denied_count = conn.execute(
@@ -606,61 +699,41 @@ def verify_session(session_id: str, expect_model_calls: bool) -> bool:
     # ── model_calls ──────────────────────────────────────────────────
     print(f"\n{BOLD}model_calls{RESET}")
     model_count = conn.execute("SELECT COUNT(*) FROM model_calls").fetchone()[0]
-    if expect_model_calls:
-        r.check(
-            model_count > 0,
-            f"{model_count} model_calls recorded",
-            "no model_calls recorded (Gemini API parsing may have failed)",
-        )
-    elif model_count > 0:
-        r.ok(f"{model_count} model_calls recorded")
-    else:
-        r.warn("model_calls live assertion skipped (no Gemini API key)")
+    r.check(
+        model_count > 0,
+        f"{model_count} model_calls recorded",
+        "no model_calls recorded for local OpenAI-compatible fixture",
+    )
 
-    if model_count > 0:
-        # Provider should be google.
-        google_calls = conn.execute(
-            "SELECT * FROM model_calls WHERE provider = 'google'"
-        ).fetchone()
+    fixture_call = conn.execute(
+        """
+        SELECT *
+        FROM model_calls
+        WHERE path = '/v1/chat/completions'
+        ORDER BY id LIMIT 1
+        """
+    ).fetchone()
+    r.check(
+        fixture_call is not None,
+        "local OpenAI-compatible model_call recorded",
+        "no model_call for local /v1/chat/completions fixture",
+    )
+    if fixture_call:
         r.check(
-            google_calls is not None,
-            "Gemini model_call has provider = google",
-            "no model_call with provider = google",
+            fixture_call["status_code"] == 200,
+            "local model_call status_code = 200",
+            f"local model_call status_code = {fixture_call['status_code']}",
         )
-
-        # Token counts should be non-zero.  The first model_call may be a
-        # preflight with no model/tokens, so query for one that has a model.
-        google_with_model = conn.execute(
-            "SELECT * FROM model_calls"
-            " WHERE provider = 'google' AND model IS NOT NULL"
-            " ORDER BY id LIMIT 1"
-        ).fetchone()
-        if google_with_model:
-            in_tok = google_with_model["input_tokens"] or 0
-            out_tok = google_with_model["output_tokens"] or 0
-            model_name = google_with_model["model"]
-            r.check(
-                in_tok > 0 and out_tok > 0,
-                f"Gemini tokens: {in_tok} in / {out_tok} out (model={model_name})",
-                f"Gemini token counts are zero: {in_tok} in / {out_tok} out (API key may be invalid)",
-            )
-        else:
-            r.fail("no Gemini model_call with a model name (stream parsing incomplete)")
-
-    # Cost estimation -- at least one model_call should have a positive cost.
-    with_cost = conn.execute(
-        "SELECT COUNT(*) FROM model_calls WHERE estimated_cost_usd > 0"
-    ).fetchone()[0]
-    if expect_model_calls:
         r.check(
-            with_cost >= 1,
-            f"{with_cost} model_calls with positive estimated_cost_usd",
-            "no model_calls with positive cost (API may have returned an error)",
+            bool(fixture_call["provider"]) and bool(fixture_call["model"]),
+            f"local model_call provider/model = {fixture_call['provider']}/{fixture_call['model']}",
+            "local model_call missing provider or model",
         )
-    elif with_cost > 0:
-        r.ok(f"{with_cost} model_calls with positive estimated_cost_usd")
-    else:
-        r.warn("model cost assertion skipped (no Gemini API key)")
+        r.check(
+            (fixture_call["response_bytes"] or 0) > 0,
+            f"local model_call response_bytes = {fixture_call['response_bytes']}",
+            "local model_call response_bytes is zero",
+        )
 
     # ── tool_calls / tool_responses ──────────────────────────────────
     print(f"\n{BOLD}tool_calls / tool_responses{RESET}")
@@ -678,12 +751,11 @@ def verify_session(session_id: str, expect_model_calls: bool) -> bool:
             f"DUPLICATE tool_responses: {tr_count} total but only {unique_tr} unique",
         )
 
-    # Gemini may or may not use tools -- it's non-deterministic.
     # We validate tool_calls metadata when present, but don't fail on 0.
     if tc_count > 0:
-        r.ok(f"{tc_count} tool_calls recorded (Gemini used tools)")
+        r.ok(f"{tc_count} tool_calls recorded")
     else:
-        r.ok("0 tool_calls (Gemini printed instead of using tools -- non-deterministic)")
+        r.ok("0 tool_calls recorded for this deterministic fixture")
 
     if tc_count > 0:
         # Origin column should be populated on all tool_calls.
@@ -696,14 +768,14 @@ def verify_session(session_id: str, expect_model_calls: bool) -> bool:
             f"only {with_origin}/{tc_count} tool_calls have origin",
         )
 
-        # Gemini's streaming format does not always produce a parseable
+        # Some streaming formats do not always produce a parseable
         # tool_response turn, so tool_responses may lag behind tool_calls.
         if tr_count >= tc_count:
             r.ok(f"{tr_count} tool_responses match {tc_count} tool_calls")
         else:
             r.ok(
                 f"tool_responses ({tr_count}) < tool_calls ({tc_count})"
-                " -- Gemini stream parser limitation (non-blocking)"
+                " -- stream parser limitation (non-blocking)"
             )
 
     conn.close()
@@ -779,7 +851,7 @@ def verify_session(session_id: str, expect_model_calls: bool) -> bool:
 
     if vm_log_path.exists():
         vm_log_content = vm_log_path.read_text()
-        vm_log_lines = [l for l in vm_log_content.splitlines() if l.strip()]
+        vm_log_lines = [line for line in vm_log_content.splitlines() if line.strip()]
         r.check(
             len(vm_log_lines) >= 3,
             f"{len(vm_log_lines)} entries in process.log",
@@ -876,26 +948,25 @@ def verify_session(session_id: str, expect_model_calls: bool) -> bool:
         jsonl_files = sorted(launch_log_dir.glob("*.jsonl"), key=lambda p: p.name, reverse=True)
         if jsonl_files:
             latest = jsonl_files[0]
-            latest_lines = [l for l in latest.read_text().splitlines() if l.strip()]
-            if len(latest_lines) >= 5:
-                r.ok(f"latest launch log {latest.name} has {len(latest_lines)} entries")
-            else:
-                r.warn(
-                    f"latest launch log {latest.name} has only {len(latest_lines)} entries "
-                    "(desktop app not launched by this integration test)"
-                )
+            latest_lines = [line for line in latest.read_text().splitlines() if line.strip()]
+            r.check(
+                len(latest_lines) >= 5,
+                f"latest launch log {latest.name} has {len(latest_lines)} entries",
+                f"latest launch log {latest.name} has only {len(latest_lines)} entries (expected >= 5)",
+            )
             fname_match = re.match(r"\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}", latest.stem)
-            if fname_match is not None:
-                r.ok(f"launch log filename {latest.name} has valid timestamp format")
-            else:
-                r.warn(f"launch log filename {latest.name} does not match expected format")
+            r.check(
+                fname_match is not None,
+                f"launch log filename {latest.name} has valid timestamp format",
+                f"launch log filename {latest.name} does not match expected format",
+            )
 
     # ── auto-snapshots ────────────────────────────────────────────────
     print(f"\n{BOLD}auto-snapshots{RESET}")
     snap_dir = SESSIONS_DIR / session_id / "auto_snapshots"
     r.check(
         snap_dir.exists(),
-        f"auto_snapshots directory exists",
+        "auto_snapshots directory exists",
         f"auto_snapshots directory NOT found at {snap_dir}",
     )
     if snap_dir.exists():
@@ -946,21 +1017,23 @@ def check_persistence(binary: str, assets_dir: str) -> bool:
     print(f"\n{BOLD}=== Ephemeral model check ==={RESET}")
     env = {
         **os.environ,
+        **_profile_env(),
+        **_integration_runtime_env(),
         "CAPSEM_ASSETS_DIR": assets_dir,
         "RUST_LOG": "capsem=warn",
+        "CAPSEM_CORP_CONFIG": "tests/fixtures/config/integration/corp.toml",
     }
 
     _kill_dev_service()
-    profile_snapshot = _install_integration_profile()
-    try:
-        service_proc = _start_service_with_test_config(assets_dir)
-    except Exception:
-        _restore_integration_profile(profile_snapshot)
-        raise
+    service_proc = _start_service_with_test_config(
+        assets_dir,
+        "tests/fixtures/config/integration/settings.toml",
+        "tests/fixtures/config/integration/corp.toml",
+    )
     try:
         print("  Invocation 1: writing sentinel file...")
         proc1 = subprocess.run(
-            [binary, "run", "--profile", INTEGRATION_PROFILE_ID, PERSISTENCE_WRITE_CMD],
+            [binary, "run", PERSISTENCE_WRITE_CMD],
             env=env, capture_output=True, text=True, timeout=120,
         )
         output1 = proc1.stdout + "\n" + proc1.stderr
@@ -972,7 +1045,7 @@ def check_persistence(binary: str, assets_dir: str) -> bool:
 
         print("  Invocation 2: checking sentinel is absent...")
         proc2 = subprocess.run(
-            [binary, "run", "--profile", INTEGRATION_PROFILE_ID, PERSISTENCE_CHECK_CMD],
+            [binary, "run", PERSISTENCE_CHECK_CMD],
             env=env, capture_output=True, text=True, timeout=120,
         )
         output2 = proc2.stdout + "\n" + proc2.stderr
@@ -996,7 +1069,6 @@ def check_persistence(binary: str, assets_dir: str) -> bool:
             SERVICE_PIDFILE.unlink()
         except FileNotFoundError:
             pass
-        _restore_integration_profile(profile_snapshot)
 
 
 def main():
@@ -1015,14 +1087,13 @@ def main():
     )
     args = parser.parse_args()
 
-    session_id, exit_code, expect_model_calls = run_vm(args.binary, args.assets)
+    session_id, exit_code = run_vm(args.binary, args.assets)
 
-    # The VM command uses semicolons so individual failures don't abort.
-    # We don't fail on a non-zero exit code -- the DB assertions decide.
     if exit_code != 0:
-        print(f"{YELLOW}VM exited with code {exit_code} (non-fatal, checking DB){RESET}")
+        print(f"{RED}FAIL: VM integration workload exited with code {exit_code}{RESET}")
+        sys.exit(1)
 
-    telemetry_ok = verify_session(session_id, expect_model_calls)
+    telemetry_ok = verify_session(session_id)
     ephemeral_ok = check_persistence(args.binary, args.assets)
     sys.exit(0 if (telemetry_ok and ephemeral_ok) else 1)
 

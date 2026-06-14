@@ -3,12 +3,11 @@
 Profiles individual operations: provision, exec-ready wait, exec, delete,
 fork, boot-from-image. Reports per-operation timings as a Rich table + JSON.
 
-Fork gates: fork < 500ms, image size < 128MB, boot-from-image verifies data.
+Fork gates: fork < 500ms, image size <= 14MB, boot-from-image verifies data.
 """
 
 import json
-import os
-import platform
+import math
 import re
 import time
 import uuid
@@ -16,15 +15,15 @@ from pathlib import Path
 
 import pytest
 
-from helpers.benchmark_artifacts import (
-    benchmark_arch,
-    benchmark_output_path,
-    enrich_benchmark_artifact,
-)
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
+from helpers.package_probe import (
+    FORK_PROBE_COMMAND,
+    FORK_PROBE_OUTPUT,
+    install_fork_probe_with_service_client,
+)
 from helpers.service import ServiceInstance, wait_exec_ready
 
-pytestmark = [pytest.mark.serial, pytest.mark.benchmark]
+pytestmark = pytest.mark.serial
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
@@ -36,40 +35,45 @@ def _project_version():
     return m.group(1) if m else "unknown"
 
 
-def _save_benchmark(category, data, command):
-    """Save benchmark JSON to an arch-scoped artifact path."""
+def _save_benchmark(category, data):
+    """Save benchmark JSON to benchmarks/{category}/data_{version}.json."""
     version = _project_version()
-    arch = benchmark_arch()
-    out_path = benchmark_output_path(PROJECT_ROOT, category, version, arch)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    data = enrich_benchmark_artifact(
-        data,
-        project_root=PROJECT_ROOT,
-        project_version=version,
-        arch=arch,
-        command=command,
-    )
+    out_dir = PROJECT_ROOT / "benchmarks" / category
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"data_{version}.json"
     with open(out_path, "w") as f:
         json.dump(data, f, indent=2)
     print(f"Benchmark saved to {out_path}")
 
 RUNS = 3
-PROVISION_GATE_MS = 3500 if platform.system() == "Linux" else 1200
-OP_GATE_MS = 1200  # steady-state operations must complete under this
+OP_GATE_MS = 1200  # every individual operation must complete under this
 FORK_GATE_MS = 500
-# The fork workload intentionally runs apt-get update/install, so current
-# package-manager metadata plus the installed jq overlay lands around 105MB on
-# the Linux KVM x86_64 image even after cleaning transient apt index/cache data.
-# Keep the gate workload-aware while still far below a sparse 2GB logical-size
-# regression; the lower-level disk-usage unit test covers sparse accounting.
-IMAGE_SIZE_GATE_MB = 128
+IMAGE_SIZE_GATE_MB = 14
 
 
-def _gate_env_ms(name, default):
-    try:
-        return float(os.environ.get(name, default))
-    except ValueError:
-        return default
+def _percentile(values, pct):
+    """Compute the pct-th percentile from an unsorted list."""
+    sorted_values = sorted(values)
+    if not sorted_values:
+        return 0.0
+    k = (len(sorted_values) - 1) * pct / 100.0
+    f = math.floor(k)
+    c = math.ceil(k)
+    if f == c:
+        return sorted_values[int(k)]
+    return sorted_values[f] * (c - k) + sorted_values[c] * (k - f)
+
+
+def _summary(values):
+    return {
+        "min": round(min(values), 1),
+        "mean": round(sum(values) / len(values), 1),
+        "p50": round(_percentile(values, 50), 1),
+        "p95": round(_percentile(values, 95), 1),
+        "p99": round(_percentile(values, 99), 1),
+        "max": round(max(values), 1),
+        "values": values,
+    }
 
 
 def _run_lifecycle(client):
@@ -80,7 +84,7 @@ def _run_lifecycle(client):
     name = f"bench-{uuid.uuid4().hex[:8]}"
 
     t0 = time.monotonic()
-    client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+    client.post("/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
     provision_ms = (time.monotonic() - t0) * 1000
 
     t0 = time.monotonic()
@@ -89,12 +93,12 @@ def _run_lifecycle(client):
     assert ready, f"VM {name} never became exec-ready"
 
     t0 = time.monotonic()
-    resp = client.post(f"/exec/{name}", {"command": "echo ok", "timeout_secs": 10}, timeout=15)
+    resp = client.post(f"/vms/{name}/exec", {"command": "echo ok", "timeout_secs": 10}, timeout=15)
     exec_ms = (time.monotonic() - t0) * 1000
     assert resp is not None and "ok" in resp.get("stdout", "")
 
     t0 = time.monotonic()
-    client.delete(f"/delete/{name}")
+    client.delete(f"/vms/{name}/delete")
     delete_ms = (time.monotonic() - t0) * 1000
 
     return {
@@ -107,7 +111,7 @@ def _run_lifecycle(client):
 
 
 def _run_fork_benchmark(client):
-    """Provision VM -> install packages -> write workspace -> fork -> verify.
+    """Provision VM -> install package -> write workspace -> fork -> verify.
 
     Returns dict with fork timing, image size, and boot-from-image timing.
     """
@@ -117,26 +121,21 @@ def _run_fork_benchmark(client):
 
     try:
         # Provision source VM and wait for exec
-        client.post("/provision", {"name": src, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        client.post("/vms/create", {"name": src, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
         assert wait_exec_ready(client, src, timeout=EXEC_READY_TIMEOUT), f"{src} not ready"
 
-        # Install a package (rootfs overlay change)
-        resp = client.post(f"/exec/{src}", {
-            "command": (
-                "apt-get update -qq && "
-                "apt-get install -y -qq jq && "
-                "rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb"
-            ),
-            "timeout_secs": 120,
-        }, timeout=130)
-        assert resp and resp.get("exit_code") == 0, f"apt-get failed: {resp}"
+        # Install a hermetic local package (rootfs overlay change)
+        install_fork_probe_with_service_client(client, src)
 
         # Write workspace file
-        client.write_file(src, "/root/bench.txt", "fork-benchmark-marker")
+        client.post(f"/vms/{src}/files/write", {
+            "path": "/root/bench.txt",
+            "content": "fork-benchmark-marker",
+        })
 
         # Fork -- time it
         t0 = time.monotonic()
-        fork_resp = client.post(f"/fork/{src}", {"name": img})
+        fork_resp = client.post(f"/vms/{src}/fork", {"name": img})
         fork_ms = (time.monotonic() - t0) * 1000
 
         size_bytes = fork_resp.get("size_bytes", 0)
@@ -144,7 +143,7 @@ def _run_fork_benchmark(client):
 
         # Boot from fork -- time provision + exec-ready
         t0 = time.monotonic()
-        client.post("/provision", {
+        client.post("/vms/create", {
             "name": dst, "from": img,
             "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
         })
@@ -154,12 +153,20 @@ def _run_fork_benchmark(client):
         assert wait_exec_ready(client, dst, timeout=EXEC_READY_TIMEOUT), f"{dst} not ready"
         boot_ready_ms = (time.monotonic() - t0) * 1000
 
-        # Verify packages survived (rootfs overlay)
-        resp = client.post(f"/exec/{dst}", {"command": "which jq", "timeout_secs": 10}, timeout=15)
-        pkg_survived = resp is not None and resp.get("exit_code") == 0
+        # Verify package survived (rootfs overlay)
+        resp = client.post(
+            f"/vms/{dst}/exec",
+            {"command": FORK_PROBE_COMMAND, "timeout_secs": 10},
+            timeout=15,
+        )
+        pkg_survived = (
+            resp is not None
+            and resp.get("exit_code") == 0
+            and resp.get("stdout", "").strip() == FORK_PROBE_OUTPUT
+        )
 
         # Verify workspace survived
-        resp = client.post(f"/exec/{dst}", {
+        resp = client.post(f"/vms/{dst}/exec", {
             "command": "cat /root/bench.txt", "timeout_secs": 10,
         }, timeout=15)
         ws_survived = resp is not None and "fork-benchmark-marker" in resp.get("stdout", "")
@@ -175,7 +182,7 @@ def _run_fork_benchmark(client):
     finally:
         for v in [dst, src, img]:
             try:
-                client.delete(f"/delete/{v}")
+                client.delete(f"/vms/{v}/delete")
             except Exception:
                 pass
 
@@ -207,45 +214,34 @@ def test_lifecycle_benchmark():
     finally:
         svc.stop()
 
-    def avg(key):
-        return round(sum(r[key] for r in runs) / len(runs), 1)
-
-    def mn(key):
-        return round(min(r[key] for r in runs), 1)
-
-    def mx(key):
-        return round(max(r[key] for r in runs), 1)
-
     summary = {
-        "version": "0.1.0",
+        "version": "0.2.0",
         "timestamp": time.time(),
         "runs": RUNS,
         "operations": {},
+        "launch_span_contract": [
+            "capsem.launch.service",
+            "capsem.launch.gateway",
+            "capsem.launch.process_spawn",
+            "capsem.launch.vm_boot",
+            "capsem.launch.vsock_ready",
+            "capsem.launch.first_network_ready",
+        ],
     }
     for op in ("provision_ms", "exec_ready_ms", "exec_ms", "delete_ms"):
-        summary["operations"][op] = {
-            "min": mn(op),
-            "mean": avg(op),
-            "max": mx(op),
-            "values": [r[op] for r in runs],
-        }
+        summary["operations"][op] = _summary([r[op] for r in runs])
 
     total_values = [
         r["provision_ms"] + r["exec_ready_ms"] + r["exec_ms"] + r["delete_ms"]
         for r in runs
     ]
-    summary["operations"]["total_ms"] = {
-        "min": round(min(total_values), 1),
-        "mean": round(sum(total_values) / len(total_values), 1),
-        "max": round(max(total_values), 1),
-        "values": [round(v, 1) for v in total_values],
-    }
+    summary["operations"]["total_ms"] = _summary([round(v, 1) for v in total_values])
 
     # Rich table
     print()
     print(f"VM Lifecycle Benchmark  [{RUNS} runs]")
-    print(f"{'Operation':<16} {'Min':>10} {'Mean':>10} {'Max':>10}")
-    print("-" * 50)
+    print(f"{'Operation':<16} {'Min':>10} {'Mean':>10} {'P95':>10} {'Max':>10}")
+    print("-" * 62)
     for op, label in [
         ("provision_ms", "provision"),
         ("exec_ready_ms", "exec_ready"),
@@ -254,22 +250,15 @@ def test_lifecycle_benchmark():
         ("total_ms", "TOTAL"),
     ]:
         s = summary["operations"][op]
-        print(f"{label:<16} {s['min']:>9.0f}ms {s['mean']:>9.0f}ms {s['max']:>9.0f}ms")
+        print(
+            f"{label:<16} {s['min']:>9.0f}ms {s['mean']:>9.0f}ms "
+            f"{s['p95']:>9.0f}ms {s['max']:>9.0f}ms"
+        )
 
     # JSON output
-    _save_benchmark(
-        "lifecycle",
-        summary,
-        "uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py::test_lifecycle_benchmark -xvs",
-    )
+    _save_benchmark("lifecycle", summary)
 
-    # Gate: provision is host/backend dependent; steady-state ops stay tight.
-    gates = {
-        "provision_ms": _gate_env_ms("CAPSEM_PROVISION_GATE_MS", PROVISION_GATE_MS),
-        "exec_ready_ms": _gate_env_ms("CAPSEM_EXEC_READY_GATE_MS", OP_GATE_MS),
-        "exec_ms": _gate_env_ms("CAPSEM_EXEC_GATE_MS", OP_GATE_MS),
-        "delete_ms": _gate_env_ms("CAPSEM_DELETE_GATE_MS", OP_GATE_MS),
-    }
+    # Gate: every operation mean must be under OP_GATE_MS
     for op, label in [
         ("provision_ms", "provision"),
         ("exec_ready_ms", "exec_ready"),
@@ -277,9 +266,8 @@ def test_lifecycle_benchmark():
         ("delete_ms", "delete"),
     ]:
         mean = summary["operations"][op]["mean"]
-        gate = gates[op]
-        assert mean < gate, (
-            f"{label} mean {mean:.0f}ms exceeds {gate:.0f}ms gate"
+        assert mean < OP_GATE_MS, (
+            f"{label} mean {mean:.0f}ms exceeds {OP_GATE_MS}ms gate"
         )
 
 
@@ -336,20 +324,14 @@ def test_fork_benchmark():
     s = summary["fork"]["fork_ms"]
     print(f"{'fork':<20} {s['min']:>9.0f}ms {s['mean']:>9.0f}ms {s['max']:>9.0f}ms {FORK_GATE_MS:>9}ms")
     s = summary["fork"]["image_size_mb"]
-    image_size_gate_mb = _gate_env_ms("CAPSEM_FORK_IMAGE_SIZE_GATE_MB", IMAGE_SIZE_GATE_MB)
-    print(f"{'image_size':<20} {s['min']:>9.1f}MB {s['mean']:>9.1f}MB {s['max']:>9.1f}MB {image_size_gate_mb:>9.0f}MB")
+    print(f"{'image_size':<20} {s['min']:>9.1f}MB {s['mean']:>9.1f}MB {s['max']:>9.1f}MB {IMAGE_SIZE_GATE_MB:>9}MB")
     s = summary["fork"]["boot_provision_ms"]
-    boot_gate_ms = _gate_env_ms("CAPSEM_FORK_BOOT_PROVISION_GATE_MS", PROVISION_GATE_MS)
-    print(f"{'boot_provision':<20} {s['min']:>9.0f}ms {s['mean']:>9.0f}ms {s['max']:>9.0f}ms {boot_gate_ms:>9.0f}ms")
+    print(f"{'boot_provision':<20} {s['min']:>9.0f}ms {s['mean']:>9.0f}ms {s['max']:>9.0f}ms {OP_GATE_MS:>9}ms")
     s = summary["fork"]["boot_ready_ms"]
     print(f"{'boot_ready':<20} {s['min']:>9.0f}ms {s['mean']:>9.0f}ms {s['max']:>9.0f}ms {OP_GATE_MS:>9}ms")
 
     # JSON output
-    _save_benchmark(
-        "fork",
-        summary,
-        "uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py::test_fork_benchmark -xvs",
-    )
+    _save_benchmark("fork", summary)
 
     # Gate: fork speed
     fork_mean = summary["fork"]["fork_ms"]["mean"]
@@ -359,14 +341,14 @@ def test_fork_benchmark():
 
     # Gate: image size (not a bloated 2GB sparse lie)
     size_max = summary["fork"]["image_size_mb"]["max"]
-    assert size_max < image_size_gate_mb, (
-        f"image size {size_max:.1f}MB exceeds {image_size_gate_mb:.0f}MB gate"
+    assert size_max <= IMAGE_SIZE_GATE_MB, (
+        f"image size {size_max:.1f}MB exceeds {IMAGE_SIZE_GATE_MB}MB gate"
     )
 
     # Gate: boot-from-image speed
     boot_mean = summary["fork"]["boot_provision_ms"]["mean"]
-    assert boot_mean < boot_gate_ms, (
-        f"boot_provision mean {boot_mean:.0f}ms exceeds {boot_gate_ms:.0f}ms gate"
+    assert boot_mean < OP_GATE_MS, (
+        f"boot_provision mean {boot_mean:.0f}ms exceeds {OP_GATE_MS}ms gate"
     )
 
     # Gate: data survival (every run must preserve both rootfs and workspace)

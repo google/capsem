@@ -9,7 +9,7 @@ The MCP aggregator (`capsem-mcp-aggregator`) is a low-privilege subprocess that 
 
 ## Why a separate process
 
-External MCP servers require network access, bearer tokens, and custom HTTP headers. The main per-VM process (`capsem-process`) has extensive privileges: VM control, session database, VirtioFS workspace, service IPC. Running external server connections inside capsem-process would expose all of those privileges to any vulnerability in an MCP server connection or the HTTP/SSE transport layer.
+External MCP servers require network access, broker-resolved auth material, and custom HTTP headers. The main per-VM process (`capsem-process`) has extensive privileges: VM control, session database, VirtioFS workspace, service IPC. Running external server connections inside capsem-process would expose all of those privileges to any vulnerability in an MCP server connection or the HTTP/SSE transport layer.
 
 The aggregator subprocess enforces a hard privilege boundary:
 
@@ -20,9 +20,9 @@ The aggregator subprocess enforces a hard privilege boundary:
 | VirtioFS workspace | Yes | No |
 | Service IPC | Yes | No |
 | Network (external MCP servers) | No | Yes |
-| Bearer tokens / API keys | No | Yes |
+| Broker-resolved auth material | No | Yes |
 
-If the aggregator is compromised, the attacker has network access and MCP server credentials -- but cannot reach the VM, read telemetry, or modify files.
+If the aggregator is compromised, the attacker has network access and short-lived MCP auth material resolved by the broker -- but cannot reach the VM, read telemetry, or modify files.
 
 ## Architecture
 
@@ -79,9 +79,7 @@ Four layers handle the flow:
 
 ### Spawn
 
-capsem-process spawns the aggregator during VM startup, after resolving the
-VM-effective Profile V2 `mcpServers` list from built-in, corp, and user profile
-layers.
+capsem-process spawns the aggregator during VM startup, after loading MCP server definitions from user and corp config files.
 
 ```mermaid
 sequenceDiagram
@@ -90,7 +88,7 @@ sequenceDiagram
     participant Ext as External MCP servers
 
     Proc->>Agg: spawn (stdin/stdout piped, stderr inherited)
-    Proc->>Agg: [{"name":"github","url":"...","bearer_token":"..."}]\n (first line)
+    Proc->>Agg: [{"name":"github","url":"...","auth":{"kind":"oauth","credential_ref":"credential:blake3:..."}}]\n (first line)
     Agg->>Ext: HTTP MCP initialize (per enabled server)
     Ext-->>Agg: tools/list, resources/list, prompts/list
     Note over Agg: Build unified catalogs
@@ -128,13 +126,21 @@ The first line on stdin is a JSON array of server definitions:
     "name": "github",
     "url": "https://api.githubcopilot.com/mcp/",
     "headers": {},
-    "bearer_token": "ghp_xxxx",
+    "auth": {
+      "kind": "oauth",
+      "credential_ref": "credential:blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
     "enabled": true,
     "source": "claude",
     "unsupported_stdio": false
   }
 ]
 ```
+
+Raw API keys, OAuth access tokens, refresh tokens, and `Authorization` headers
+are never serialized into MCP config. Remote MCP auth is broker-owned: the
+server definition carries only an opaque `credential:blake3:*` reference and
+the connector resolves it at the HTTP transport boundary.
 
 Servers marked `unsupported_stdio: true` are stdio-only servers that cannot be connected over HTTP -- the aggregator skips them. Disabled servers are also skipped.
 
@@ -205,39 +211,40 @@ The aggregator splits on the first `__` when routing, so tool names containing `
 
 ## Server definition sources
 
-MCP server definitions are resolved from profile layers with the same
-provenance and lock semantics as the rest of Profile V2. The effective list is
-processed in trust order so locked corp entries cannot be shadowed by user or
-auto-detected entries:
+MCP server definitions are profile-owned and filtered by corp constraints. The
+list is processed in trust order so corp constraints cannot be shadowed by a
+profile entry:
 
-1. **Corp profile entries** from signed corp profile payloads. They can lock
-   providers, tool lists, and rule ownership.
-2. **User profile entries** when the profile marks the MCP section editable.
-3. **Auto-detected entries** from host AI CLI configs
-   (`~/.claude/settings.json`, `~/.gemini/settings.json`) when import into the
-   selected profile is permitted.
+1. **Corp constraints** from corp config and referenced rule files
+2. **Profile MCP servers** from the active profile
+3. **Registry/builtin server descriptors** owned by Capsem
 
 Names containing `__` or matching `builtin` are rejected. Empty names are rejected.
 
 ## Hot reload
 
-`POST /reload-config` allows live reconfiguration without restarting the VM:
+The `refresh` operation allows live reconfiguration without restarting the VM:
 
-1. Service receives `POST /reload-config`
-2. Service sends `ReloadConfig` IPC to capsem-process
-3. capsem-process reads the session-effective Profile V2 state and rebuilds MCP server definitions
-4. capsem-process sends `refresh` with new definitions to the aggregator
+1. Service receives `POST /profiles/{profile_id}/mcp/servers/{server_id}/refresh`
+2. Service sends `McpRefreshTools` IPC to capsem-process
+3. capsem-process reads fresh profile/corp MCP config
+4. Client sends `refresh` with new definitions to the aggregator
 5. Aggregator disconnects all servers, replaces definitions, reconnects
 
 This supports adding, removing, or reconfiguring MCP servers while a VM is running.
 
 ## Service API integration
 
-The service management API is Profile V2 connector based. `GET /mcp/connectors`
-lists effective connectors, `POST /mcp/connectors` adds a direct connector to a
-user profile, and `DELETE /mcp/connectors/{id}` removes a direct user connector.
-Tool calls are not exposed through the service management API; guest MCP calls
-flow through the framed MITM endpoint and aggregator runtime.
+The service exposes MCP operations through its HTTP API, which capsem-process handles by delegating to the aggregator:
+
+| Service IPC message | capsem-process action |
+|---|---|
+| `McpListServers` | `aggregator.list_servers()` |
+| `McpListTools` | `aggregator.list_tools()` |
+| `McpRefreshTools` | Read settings, `aggregator.refresh(new_servers)` |
+| `McpCallTool` | `aggregator.call_tool(name, args)` |
+
+These IPC messages let the CLI, gateway, and frontend query and control MCP servers through the standard service API path.
 
 ## Error handling
 

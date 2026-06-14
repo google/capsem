@@ -5,6 +5,9 @@ description: Capsem testing policy and workflow. Use whenever running tests, wri
 
 # Testing
 
+Read `tests/README.md` before adding or moving test fixtures. Test-only config
+belongs under `tests/fixtures/`, not root `config/`.
+
 ## Test tiers
 
 Three tiers, fast to thorough. Every change must pass all three before it ships.
@@ -43,6 +46,45 @@ If a category is genuinely impossible or deliberately deferred, record it as mis
 
 For policy, MITM, MCP, telemetry, networking, filesystem, process lifecycle, or sandbox-boundary work, the functional slice matrix is mandatory. The tests should prove not only that the happy path succeeds, but also that enforcement happens at the intended boundary: a blocked MCP tool does not dispatch, a blocked return does not leak, a denied URL does not reach the network, a malformed frame does not poison the stream, and telemetry records the truth.
 
+## Ironbank ledger tests
+
+Use `/ironbank` for release-critical VM, network, model, MCP, credential
+broker, package-manager, doctor, benchmark, and security acceptance proof.
+Ironbank lives in `tests/ironbank/` and is full black-box: tests are written
+from public contracts, CLI help, docs, generated schemas, hermetic fixtures,
+route responses, logs, DB rows, and installed package metadata. Do not inspect
+Rust/product internals to decide expected behavior.
+
+Ironbank cannot use:
+- `skip`, `skipif`, `slow`, optional markers, or public-network dependencies
+- status-code-only replay
+- row-exists checks
+- parser-only assertions
+- manual OAuth/client runs as release proof
+
+One deterministic stimulus must prove the whole ledger path: client result,
+parsed facts, CEL/security decision, detection/enforcement rows, protocol DB
+rows, structured logs, status counters, UDS route, HTTP route, and UI-facing
+JSON. Every emitted DB/log/route field is exact-value asserted, covered by a
+typed invariant, or explicitly marked not applicable. Unknown fields fail the
+test until the field ledger is updated.
+
+Package-manager tests prove function. Installing `zstd`, for example, means
+compressing known bytes, decompressing them, and comparing the exact output;
+not just checking dpkg output.
+
+## Mock server boundary
+
+`scripts/mock_server_runtime.py` is the single reusable local fixture server for
+benchmarks, doctor, protocol recording/replay, gateway/integration tests, and
+Ironbank. It owns mock protocol responses and deterministic local upstream
+behavior. Tests may contract it through `scripts/mock_server.py`,
+`tests/helpers/mock_server.py`, or `CAPSEM_MOCK_SERVER_BASE_URL`.
+
+Do not add another local HTTP/MCP/OAuth/model mock server for a feature. Extend
+the shared mock server and its fixtures instead, then assert the route through
+the relevant black-box test.
+
 ## Parallel tests as dogfooding (n=4 is non-negotiable)
 
 `just test` runs the python suite under `pytest -n 4 --dist=loadfile`. Four real VMs boot simultaneously. **This is the canary, not just a speed-up.** We ship Capsem as a multi-VM sandbox for AI agents -- if our own test suite cannot safely boot 4 concurrent VMs, real users running an agent farm will hit the exact same bug. Treat any concurrency flake as a Capsem-side bug, not a test-tuning problem:
@@ -57,6 +99,12 @@ Anti-patterns when a test flakes under `-n 4`:
 - Bumping the per-test timeout -- buying time for a real bug to manifest in prod instead of CI
 - Marking the test `serial` so it runs alone -- defeating the dogfooding signal
 
+The exception is a true timing or benchmark probe whose assertion is the
+measured number. Those tests must already be marked `serial` and `just test`
+runs them immediately after the `-n 4` canary. That is not a flake escape
+hatch: it prevents another benchmark file from stealing the same Apple VZ
+launch budget and corrupting the number we are trying to publish.
+
 The host has plenty of headroom (48 GB RAM, 14 cores; 4 VMs at 2 GB / 2 CPU each = 8 GB / 8 cores). If concurrency surfaces a flake, fix the product, then re-run. Bumping `-n` higher (8, 12) is the natural follow-on once n=4 is stable -- real users will run more.
 
 ### Orphan processes across runs are a product bug (not a test bug)
@@ -65,13 +113,23 @@ If a previous `just test -n 4` run was interrupted (ctrl-C, pytest-xdist worker 
 
 **Never `pkill -f capsem-` with a broad pattern** during test debugging: `capsem-` matches `--crate-name capsem-core` in running rustc/cargo invocations and will SIGKILL the compiler mid-build. Use a binary-path pattern like `pkill -f "target/debug/capsem-(service|process|gateway|tray|mcp)"` instead.
 
-### When `-n 1` is actually the right answer: multi-service-only gotchas
+### Apple VZ lifecycle serialization is part of the product
 
-One narrow class of concurrency bug belongs at `-n 1`, not `-n 4`: **bugs that only exist when two `capsem-service` processes run on the same host**. Apple's Virtualization.framework does not tolerate overlapping `saveMachineStateToURL` / `restoreMachineStateFromURL` calls on sibling VMs, and we serialize with a per-service `tokio::sync::Mutex` (`ServiceState::save_restore_lock`). That lock is in-process, so it only serializes VMs inside one service. Production always has exactly one service per host per user, so the lock is sufficient in real deployments.
+Apple's Virtualization.framework does not tolerate overlapping checkpoint
+lifecycle operations (`saveMachineStateToURL` and `restoreMachineStateFromURL`)
+on sibling VMs, and teardown must not cross those checkpoint edges. Capsem uses
+`ServiceState::save_restore_lock` plus the host-wide `VzHostLock` flock:
+cold starts and teardown take shared/read guards, save and restore take
+exclusive/write guards. The rail holds even when pytest-xdist spawns one
+`capsem-service` per worker, while independent cold starts can still run
+together for the boot-latency gate.
 
-`tests/capsem-mcp/test_stress_suspend_resume.py` runs under pytest-xdist, which spawns one `capsem-service` per worker. At `-n 2+`, worker A's service can't see worker B's lock, and you re-expose the bug that never happens in production. This is the one case where the "n=4 dogfoods concurrency" rule doesn't apply -- the concurrency being tested would never happen outside the test harness. Keep this harness at `-n 1`. Full context and the failure signature live in `docs/src/content/docs/gotchas/concurrent-suspend-resume.md`.
-
-This is NOT a blanket license to run any flaky test at `-n 1`. If you're tempted to demote another test, first ask: *"Would this failure occur in production with one capsem-service and N VMs?"* If yes, it belongs at `-n 4`; fix the product.
+Do not demote suspend/resume, lifecycle, provisioning, or teardown tests to
+`-n 1` to sidestep VZ races. `just test` at `-n 4` is the contract; if a
+concurrent run sees restore permission errors, loop-device corruption,
+connection-refused startup races, or readiness misses, fix the lifecycle rail.
+Full context and failure signatures live in
+`docs/src/content/docs/gotchas/concurrent-suspend-resume.md`.
 
 ## Adversarial testing
 
@@ -100,7 +158,7 @@ When touching security-relevant code, check these invariants have test coverage:
 | CORS rejects external origins | Only localhost/127.0.0.1/tauri allowed | `capsem-gateway::tests` |
 | Body size limit | 413 for >10MB payloads | `capsem-gateway::proxy::tests` |
 | VM ID validation | Path traversal (`../`), dots, spaces, null bytes rejected | `capsem-gateway::terminal::tests` |
-| Rootfs read-only | squashfs mounted ro, guest binaries 555 | `capsem-doctor` in-VM tests |
+| Rootfs read-only | profile rootfs asset mounted ro, guest binaries 555 | `capsem-doctor` in-VM tests |
 | Suspend reports errors | IPC failure and timeout both return 500, not silent success | `capsem-service` tests |
 
 ## Test fixture anti-pattern: masking races with polling
@@ -136,6 +194,8 @@ See `tests/capsem-service/test_svc_exec_ready.py` for the regression tests that 
 - Frontend: `frontend/src/lib/__tests__/` (see dev-testing-frontend)
 - Python (builder): `tests/test_*.py`
 - Python integration (service daemon): `tests/capsem-*/` directories, each with its own conftest.py and pytest marker
+- Ironbank release ledger: `tests/ironbank/` (black-box only; no Rust
+  implementation-derived expectations)
 
 ### Rust unit tests: sibling `tests.rs` pattern
 
@@ -202,7 +262,7 @@ All Python integration tests live under `tests/capsem-*/` and use pytest markers
 | Recovery | `capsem-recovery/` | `recovery` | Yes | Stale socket/instances, orphaned process, double service |
 | Rootfs artifacts | `capsem-rootfs-artifacts/` | `rootfs` | No | Artifact files, build context, doctor consistency |
 | Session exhaustive | `capsem-session-exhaustive/` | `session_exhaustive` | Yes | Per-table data validation, cross-table FK integrity |
-| Install | `capsem-install/` | `install` | No | Native installer: layout, auto-launch, service install, setup wizard, update, uninstall, lifecycle, reinstall, error paths |
+| Install | `capsem-install/` | `install` | No | Native package installer: layout, auto-launch, service install, manifest placement, update, uninstall, lifecycle, reinstall, error paths |
 
 Composite recipe: `just test-vm` runs build-chain + guest + cleanup + codesign + serial + session-lifecycle + config-runtime + recovery. `just test-install` runs the install suite in Docker with systemd. `just test` runs everything.
 

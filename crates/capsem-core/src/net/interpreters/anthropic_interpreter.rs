@@ -8,9 +8,9 @@
 /// tracking.
 use std::collections::{BTreeMap, HashMap};
 
+use crate::net::ai_traffic::events::{LlmEvent, ProviderStreamParser, StopReason};
 use crate::net::ai_traffic::provider::{Provider, ProviderKind};
-use capsem_network_engine::model_stream::{LlmEvent, ProviderStreamParser, StopReason};
-use capsem_network_engine::sse_parser::SseEvent;
+use crate::net::parsers::sse_parser::SseEvent;
 
 pub struct AnthropicProvider;
 

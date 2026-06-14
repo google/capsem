@@ -1,5 +1,4 @@
 use super::*;
-use std::os::unix::io::RawFd;
 
 // -----------------------------------------------------------------------
 // Vsock port classification
@@ -46,6 +45,22 @@ fn classify_lifecycle_port() {
 }
 
 #[test]
+fn classify_audit_port() {
+    assert_eq!(
+        classify_vsock_port(capsem_proto::VSOCK_PORT_AUDIT),
+        VsockPortKind::Audit
+    );
+}
+
+#[test]
+fn classify_dns_proxy_port() {
+    assert_eq!(
+        classify_vsock_port(capsem_proto::VSOCK_PORT_DNS_PROXY),
+        VsockPortKind::DnsProxy
+    );
+}
+
+#[test]
 fn classify_unknown_port() {
     assert_eq!(classify_vsock_port(99999), VsockPortKind::Unknown);
 }
@@ -60,13 +75,91 @@ fn classify_port_zero_unknown() {
 // -----------------------------------------------------------------------
 
 fn make_conn(port: u32) -> VsockConnection {
-    make_conn_with_fd(port, -1)
-}
-
-fn make_conn_with_fd(port: u32, fd: RawFd) -> VsockConnection {
     // Dummy fd value (-1) is fine: these tests never read/write the fd,
     // they only exercise the collection and classification logic.
-    VsockConnection::new(fd, port, Box::new(()))
+    VsockConnection::new(-1, port, Box::new(()))
+}
+
+fn empty_plugin_policy() -> PluginPolicyHandle {
+    Arc::new(std::sync::RwLock::new(std::collections::BTreeMap::new()))
+}
+
+fn file_import_event_with_content(content: &str) -> capsem_core::security_engine::SecurityEvent {
+    capsem_core::security_engine::SecurityEvent::new(
+        capsem_core::security_engine::RuntimeSecurityEventType::FileImport,
+    )
+    .with_file(capsem_core::security_engine::FileSecurityEvent {
+        import_content: Some(content.to_string()),
+        ..Default::default()
+    })
+}
+
+fn add_plugin_rewrite_marker(
+    event: &mut capsem_core::security_engine::SecurityEvent,
+    plugin_id: &str,
+    stage: capsem_core::security_engine::SecurityPluginStage,
+) {
+    event.record_plugin_execution(capsem_core::security_engine::SecurityPluginExecution {
+        plugin_id: plugin_id.to_string(),
+        stage,
+        applied: true,
+        duration_us: 7,
+    });
+    event.record_detection(capsem_core::security_engine::SecurityDetectionEvent {
+        source: capsem_core::security_engine::SecurityDetectionSource::Plugin,
+        detection_level: capsem_core::net::policy_config::DetectionLevel::Informational,
+        rule_id: None,
+        plugin_id: Some(plugin_id.to_string()),
+        action: None,
+        plugin_mode: Some(capsem_core::net::policy_config::SecurityPluginMode::Rewrite),
+        reason: None,
+    });
+}
+
+#[test]
+fn file_boundary_preview_is_not_rewrite_data() {
+    let preview = b"x".repeat(FILE_SECURITY_CONTENT_PREVIEW_MAX);
+    let preview_text = String::from_utf8(preview.clone()).unwrap();
+    let event = file_import_event_with_content(&preview_text);
+
+    assert_eq!(
+        rewritten_file_content(&preview, 100_000, &event),
+        None,
+        "file boundary previews must not truncate larger data-plane payloads"
+    );
+}
+
+#[test]
+fn file_boundary_logging_rewrite_is_not_data_plane_rewrite() {
+    let original = b"token=secret";
+    let mut event = file_import_event_with_content("token=hash:abc123");
+    add_plugin_rewrite_marker(
+        &mut event,
+        "log_sanitizer",
+        capsem_core::security_engine::SecurityPluginStage::Logging,
+    );
+
+    assert_eq!(
+        rewritten_file_content(original, original.len() as u64, &event),
+        None,
+        "logging plugins sanitize the ledger and must not rewrite guest bytes"
+    );
+}
+
+#[test]
+fn file_boundary_preprocess_rewrite_changes_complete_payload() {
+    let original = b"EICAR";
+    let mut event = file_import_event_with_content("CAPSEM_REWRITTEN_EICAR");
+    add_plugin_rewrite_marker(
+        &mut event,
+        "dummy_pre_eicar",
+        capsem_core::security_engine::SecurityPluginStage::Preprocess,
+    );
+
+    assert_eq!(
+        rewritten_file_content(original, original.len() as u64, &event),
+        Some(b"CAPSEM_REWRITTEN_EICAR".to_vec())
+    );
 }
 
 #[test]
@@ -111,14 +204,6 @@ fn not_found_not_retryable() {
     assert!(!is_retryable_handshake_error(&err));
 }
 
-#[test]
-fn suspend_reconnect_grace_covers_guest_snapshot_delay() {
-    assert!(
-        SUSPEND_RECONNECT_GRACE >= std::time::Duration::from_secs(2),
-        "guest agent sleeps for SNAPSHOT_RECONNECT_DELAY before reconnecting after SnapshotReady"
-    );
-}
-
 // -----------------------------------------------------------------------
 // collect_terminal_control_pair
 // -----------------------------------------------------------------------
@@ -136,44 +221,6 @@ async fn collect_returns_terminal_and_control_in_any_order() {
         .expect("pair collected");
     assert_eq!(terminal.port, capsem_core::VSOCK_PORT_TERMINAL);
     assert_eq!(control.port, capsem_core::VSOCK_PORT_CONTROL);
-    assert!(deferred.is_empty());
-}
-
-#[tokio::test]
-async fn collect_keeps_first_terminal_when_duplicates_arrive_before_control() {
-    let (tx, mut rx) = mpsc::unbounded_channel();
-    tx.send(make_conn_with_fd(capsem_core::VSOCK_PORT_TERMINAL, 101))
-        .unwrap();
-    tx.send(make_conn_with_fd(capsem_core::VSOCK_PORT_TERMINAL, 102))
-        .unwrap();
-    tx.send(make_conn_with_fd(capsem_core::VSOCK_PORT_CONTROL, 201))
-        .unwrap();
-
-    let mut deferred = Vec::new();
-    let (terminal, control) = collect_terminal_control_pair(&mut rx, &mut deferred)
-        .await
-        .expect("pair collected");
-    assert_eq!(terminal.fd, 101);
-    assert_eq!(control.fd, 201);
-    assert!(deferred.is_empty());
-}
-
-#[tokio::test]
-async fn collect_keeps_first_control_when_duplicates_arrive_before_terminal() {
-    let (tx, mut rx) = mpsc::unbounded_channel();
-    tx.send(make_conn_with_fd(capsem_core::VSOCK_PORT_CONTROL, 201))
-        .unwrap();
-    tx.send(make_conn_with_fd(capsem_core::VSOCK_PORT_CONTROL, 202))
-        .unwrap();
-    tx.send(make_conn_with_fd(capsem_core::VSOCK_PORT_TERMINAL, 101))
-        .unwrap();
-
-    let mut deferred = Vec::new();
-    let (terminal, control) = collect_terminal_control_pair(&mut rx, &mut deferred)
-        .await
-        .expect("pair collected");
-    assert_eq!(terminal.fd, 101);
-    assert_eq!(control.fd, 201);
     assert!(deferred.is_empty());
 }
 
@@ -231,6 +278,10 @@ async fn exec_done_with_empty_stdout_resolves_without_500ms_stall() {
 
     let js = Arc::new(JobStore::new());
     let db = Arc::new(capsem_logger::DbWriter::open_in_memory(16).unwrap());
+    let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(
+        capsem_core::net::policy_config::SecurityRuleSet::new(Vec::new()),
+    )));
+    let plugin_policy = empty_plugin_policy();
 
     let id: u64 = 42;
     let (tx, rx) = oneshot::channel::<JobResult>();
@@ -245,7 +296,14 @@ async fn exec_done_with_empty_stdout_resolves_without_500ms_stall() {
     *js.active_exec.lock().unwrap() = Some(active);
 
     let start = std::time::Instant::now();
-    handle_guest_msg(GuestToHost::ExecDone { id, exit_code: 0 }, &js, &db).await;
+    handle_guest_msg(
+        GuestToHost::ExecDone { id, exit_code: 0 },
+        &js,
+        &db,
+        &security_rules,
+        &plugin_policy,
+    )
+    .await;
     let elapsed_ms = start.elapsed().as_millis();
 
     assert!(
@@ -269,143 +327,149 @@ async fn exec_done_with_empty_stdout_resolves_without_500ms_stall() {
 }
 
 #[tokio::test]
-async fn blocked_exec_resolves_job_without_guest_dispatch_state() {
-    use crate::job_store::{ActiveExec, JobResult, JobStore};
+async fn read_file_content_emits_file_export_before_job_result() {
+    use capsem_proto::GuestToHost;
     use std::sync::Arc;
     use tokio::sync::oneshot;
 
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("session.db");
+    let db = Arc::new(capsem_logger::DbWriter::open(&db_path, 16).unwrap());
+    let profile = capsem_core::net::policy_config::SecurityRuleProfile::parse_toml(
+        r#"
+[profiles.rules.file_export_seen]
+name = "file_export_seen"
+action = "allow"
+detection_level = "informational"
+match = 'file.export.path == "/workspace/out.txt" && file.export.content.contains("guest export")'
+"#,
+    )
+    .expect("rules parse");
+    let rules = capsem_core::net::policy_config::SecurityRuleSet::compile_profile(
+        &profile,
+        capsem_core::net::policy_config::SecurityRuleSource::User,
+    )
+    .expect("rules compile");
+    let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(rules)));
+    let plugin_policy = empty_plugin_policy();
     let js = Arc::new(JobStore::new());
     let id: u64 = 77;
+    js.active_file_ops.lock().unwrap().insert(
+        id,
+        ActiveFileOp::Read {
+            path: "/workspace/out.txt".to_string(),
+        },
+    );
     let (tx, rx) = oneshot::channel::<JobResult>();
     js.jobs.lock().unwrap().insert(id, tx);
-    *js.active_exec.lock().unwrap() = Some(ActiveExec::new(id));
 
-    resolve_blocked_exec_job(&js, id, "blocked by process rule".into());
+    handle_guest_msg(
+        GuestToHost::FileContent {
+            id,
+            path: "/ignored/guest/path.txt".to_string(),
+            data: b"guest export bytes".to_vec(),
+        },
+        &js,
+        &db,
+        &security_rules,
+        &plugin_policy,
+    )
+    .await;
 
-    assert!(js.active_exec.lock().unwrap().is_none());
-    assert!(js.jobs.lock().unwrap().is_empty());
-    let result = rx.await.expect("blocked exec must resolve job");
+    let result = rx.await.expect("read job must resolve");
     match result {
-        JobResult::Error { message } => assert_eq!(message, "blocked by process rule"),
-        other => panic!("expected blocked exec error, got {other:?}"),
+        JobResult::ReadFile {
+            data: Some(data), ..
+        } => assert_eq!(data, b"guest export bytes"),
+        other => panic!("expected read file result with data, got {other:?}"),
     }
+    db.shutdown_blocking();
+
+    let reader = capsem_logger::DbReader::open(&db_path).unwrap();
+    let fs_rows: serde_json::Value = serde_json::from_str(
+        &reader
+            .query_raw("SELECT action FROM fs_events WHERE path = '/workspace/out.txt'")
+            .expect("file event should be written"),
+    )
+    .unwrap();
+    assert_eq!(fs_rows["rows"][0][0].as_str(), Some("export"));
+    let rule_rows: serde_json::Value = serde_json::from_str(
+        &reader
+            .query_raw(
+                "SELECT rule_id, event_type FROM security_rule_events WHERE rule_id = 'profiles.rules.file_export_seen'",
+            )
+            .expect("file export rule event should be written"),
+    )
+    .unwrap();
+    assert_eq!(
+        rule_rows["rows"][0][0].as_str(),
+        Some("profiles.rules.file_export_seen")
+    );
+    assert_eq!(rule_rows["rows"][0][1].as_str(), Some("file.export"));
 }
 
-fn blocked_process_exec_evaluation() -> capsem_process_engine::ProcessExecSecurityEvaluation {
-    use capsem_logger::ExecEvent;
-    use capsem_security_engine::{
-        CelEnforcementEvaluator, CelEnforcementRule, SecurityDecisionAction, SecurityEngine,
+#[tokio::test]
+async fn dns_security_write_emits_joined_rule_ledger_row() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("session.db");
+    let db = Arc::new(capsem_logger::DbWriter::open(&db_path, 16).unwrap());
+    let profile = capsem_core::net::policy_config::SecurityRuleProfile::parse_toml(
+        r#"
+[profiles.rules.openai_dns_seen]
+name = "openai_dns_seen"
+action = "allow"
+detection_level = "informational"
+match = 'dns.qname == "api.openai.com" && dns.qtype == "1"'
+"#,
+    )
+    .expect("rules parse");
+    let rules = capsem_core::net::policy_config::SecurityRuleSet::compile_profile(
+        &profile,
+        capsem_core::net::policy_config::SecurityRuleSource::User,
+    )
+    .expect("rules compile");
+    let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(rules)));
+    let event = capsem_logger::DnsEvent {
+        event_id: None,
+        timestamp: std::time::SystemTime::now(),
+        qname: "api.openai.com".to_string(),
+        qtype: 1,
+        qclass: 1,
+        rcode: 0,
+        answer_ip: Some("93.184.216.34".to_string()),
+        decision: "allowed".to_string(),
+        matched_rule: None,
+        source_proto: Some("udp".to_string()),
+        process_name: Some("curl".to_string()),
+        upstream_resolver_ms: 0,
+        trace_id: Some("trace_dns".to_string()),
+        policy_mode: None,
+        policy_action: None,
+        policy_rule: None,
+        policy_reason: None,
+        credential_ref: None,
     };
-    use std::time::SystemTime;
 
-    let event = ExecEvent {
-        timestamp: SystemTime::UNIX_EPOCH,
-        exec_id: 88,
-        command: "bash -lc 'echo blocked'".into(),
-        source: "api".into(),
-        mcp_call_id: Some(12),
-        trace_id: Some("trace-process-log".into()),
-        process_name: Some("capsem-agent".into()),
-    };
-    let mut engine = SecurityEngine::default();
-    engine.set_enforcement(Box::new(
-        CelEnforcementEvaluator::compile(vec![CelEnforcementRule {
-            id: "runtime.block-shell".into(),
-            pack_id: Some("runtime-pack".into()),
-            condition:
-                "process.activity.operation == 'exec' && process.activity.command_class == 'shell'"
-                    .into(),
-            decision: SecurityDecisionAction::Block,
-            reason: Some("shell exec blocked".into()),
-            mutations: Vec::new(),
-        }])
-        .unwrap(),
-    ));
-    let engine = std::sync::Mutex::new(engine);
+    let event_id = emit_dns_security_write_and_rules(&db, &security_rules, event)
+        .await
+        .expect("event id allocated");
 
-    capsem_process_engine::evaluate_exec_security_event(&event, Some(&engine))
-}
+    let reader = capsem_logger::DbReader::open(&db_path).unwrap();
+    let rows: serde_json::Value = serde_json::from_str(
+        &reader
+            .query_raw(
+                "SELECT dns_events.event_id AS dns_event_id, security_rule_events.event_id AS rule_event_id, security_rule_events.rule_id, security_rule_events.detection_level
+             FROM dns_events
+             JOIN security_rule_events ON security_rule_events.event_id = dns_events.event_id
+             WHERE dns_events.qname = 'api.openai.com'",
+            )
+            .expect("joined DNS rule ledger row"),
+    )
+    .unwrap();
+    let row = rows["rows"][0].as_array().expect("one joined row");
 
-#[test]
-fn process_exec_security_log_record_carries_attribution_rule_and_reason() {
-    let evaluation = blocked_process_exec_evaluation();
-    let record = process_exec_security_log_record(&evaluation.resolved_event);
-
-    assert_eq!(record.event_type, "process.exec");
-    assert_eq!(record.event_family, "process");
-    assert_eq!(record.source_engine, "process");
-    assert_eq!(record.final_action, "block");
-    assert_eq!(record.enforceability, "inline_blockable");
-    assert_eq!(record.attribution_scope, "vm");
-    assert_eq!(record.origin_kind, "host_service");
-    assert_eq!(record.trace_id, Some("trace-process-log"));
-    assert_eq!(record.exec_id, Some("88"));
-    assert_eq!(record.mcp_call_id, Some("12"));
-    assert_eq!(record.operation, Some("exec"));
-    assert_eq!(record.command_class, Some("shell"));
-    assert_eq!(record.rule_id, Some("runtime.block-shell"));
-    assert_eq!(record.pack_id, Some("runtime-pack"));
-    assert_eq!(record.reason, Some("shell exec blocked"));
-    assert_eq!(record.finding_count, 0);
-}
-
-#[test]
-fn process_exec_security_decision_tracing_line_serializes_debug_fields() {
-    use std::io::{Result as IoResult, Write};
-    use std::sync::{Arc, Mutex};
-
-    #[derive(Clone)]
-    struct SharedWriter(Arc<Mutex<Vec<u8>>>);
-
-    impl Write for SharedWriter {
-        fn write(&mut self, buf: &[u8]) -> IoResult<usize> {
-            self.0.lock().unwrap().extend_from_slice(buf);
-            Ok(buf.len())
-        }
-
-        fn flush(&mut self) -> IoResult<()> {
-            Ok(())
-        }
-    }
-
-    let log_bytes = Arc::new(Mutex::new(Vec::new()));
-    let writer_bytes = log_bytes.clone();
-    let subscriber = tracing_subscriber::fmt()
-        .json()
-        .with_max_level(tracing::Level::INFO)
-        .with_writer(move || SharedWriter(writer_bytes.clone()))
-        .finish();
-    let dispatch = tracing::Dispatch::new(subscriber);
-    let evaluation = blocked_process_exec_evaluation();
-
-    tracing::dispatcher::with_default(&dispatch, || {
-        log_process_exec_security_decision(&evaluation.resolved_event);
-    });
-
-    let output = String::from_utf8(log_bytes.lock().unwrap().clone()).unwrap();
-    let line = output
-        .lines()
-        .find(|line| line.contains("process_exec_security_decision"))
-        .expect("structured process security decision log line");
-    let json: serde_json::Value = serde_json::from_str(line).unwrap();
-    let fields = &json["fields"];
-
-    assert_eq!(json["target"], "security.process");
-    assert_eq!(fields["message"], "process_exec_security_decision");
-    assert_eq!(fields["event_type"], "process.exec");
-    assert_eq!(fields["event_family"], "process");
-    assert_eq!(fields["source_engine"], "process");
-    assert_eq!(fields["final_action"], "block");
-    assert_eq!(fields["enforceability"], "inline_blockable");
-    assert_eq!(fields["attribution_scope"], "vm");
-    assert_eq!(fields["origin_kind"], "host_service");
-    assert_eq!(fields["trace_id"], "trace-process-log");
-    assert_eq!(fields["exec_id"], "88");
-    assert_eq!(fields["mcp_call_id"], "12");
-    assert_eq!(fields["operation"], "exec");
-    assert_eq!(fields["command_class"], "shell");
-    assert_eq!(fields["rule_id"], "runtime.block-shell");
-    assert_eq!(fields["pack_id"], "runtime-pack");
-    assert_eq!(fields["reason"], "shell exec blocked");
-    assert_eq!(fields["finding_count"], serde_json::json!(0));
+    assert_eq!(row[0].as_str(), Some(event_id.as_str()));
+    assert_eq!(row[1].as_str(), Some(event_id.as_str()));
+    assert_eq!(row[2].as_str(), Some("profiles.rules.openai_dns_seen"));
+    assert_eq!(row[3].as_str(), Some("informational"));
 }

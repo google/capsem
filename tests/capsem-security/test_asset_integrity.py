@@ -57,14 +57,22 @@ def _check(filename):
     )
 
 
+def _rootfs_filename():
+    arch = _host_arch()
+    entries = _arch_manifest(arch)
+    if "rootfs.erofs" in entries:
+        return "rootfs.erofs"
+    pytest.fail(f"manifest has no rootfs.erofs entry for {arch}: {sorted(entries)}")
+
+
 def test_manifest_hash_matches_kernel():
     """b3sum of vmlinuz matches hash in manifest.json."""
     _check("vmlinuz")
 
 
 def test_manifest_hash_matches_rootfs():
-    """b3sum of rootfs.squashfs matches hash in manifest.json."""
-    _check("rootfs.squashfs")
+    """b3sum of the canonical rootfs matches hash in manifest.json."""
+    _check(_rootfs_filename())
 
 
 def test_manifest_hash_matches_initrd():

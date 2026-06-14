@@ -8,9 +8,9 @@ pytestmark = pytest.mark.serial
 class TestSerialLog:
 
     def test_logs_endpoint_returns_data(self, serial_env):
-        """GET /logs/{id} returns non-empty content."""
+        """GET /vms/{id}/logs returns non-empty content."""
         client, name = serial_env
-        resp = client.get(f"/logs/{name}")
+        resp = client.get(f"/vms/{name}/logs")
         assert resp is not None, "Logs endpoint returned None"
         logs = resp.get("logs", "")
         assert len(logs) > 0, "Expected non-empty serial console logs"
@@ -18,12 +18,10 @@ class TestSerialLog:
     def test_logs_contain_kernel_output(self, serial_env):
         """Serial logs contain Linux kernel boot messages."""
         client, name = serial_env
-        resp = client.get(f"/logs/{name}")
+        resp = client.get(f"/vms/{name}/logs")
         logs = resp.get("logs", "") if resp else ""
-        normalized = logs.lower()
-        # Early KVM logs can start after the "Linux version" line; ACPI/PCI
-        # diagnostics and the guest banner still prove serial boot capture.
-        assert any(kw in normalized for kw in ["linux", "console", "init", "acpi", "pci", "welcome to"]), (
+        # Kernel boot should mention Linux, console, or capsem
+        assert any(kw in logs for kw in ["Linux", "console", "capsem", "init"]), (
             f"Expected kernel boot output in logs, got first 200 chars: {logs[:200]}"
         )
 
@@ -31,8 +29,8 @@ class TestSerialLog:
         """Logs can be retrieved while VM is running (before delete)."""
         client, name = serial_env
         # Retrieve logs twice to ensure they're consistently available
-        resp1 = client.get(f"/logs/{name}")
-        resp2 = client.get(f"/logs/{name}")
+        resp1 = client.get(f"/vms/{name}/logs")
+        resp2 = client.get(f"/vms/{name}/logs")
         assert resp1 is not None
         assert resp2 is not None
         logs1 = resp1.get("logs", "")

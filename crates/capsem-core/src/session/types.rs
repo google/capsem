@@ -66,7 +66,7 @@ pub struct SessionRecord {
     pub vacuumed_at: Option<String>,
     /// "block" (legacy) or "virtiofs" (VirtioFS overlay).
     pub storage_mode: String,
-    /// BLAKE3 hash of the rootfs squashfs used by this session.
+    /// BLAKE3 hash of the rootfs asset used by this session.
     pub rootfs_hash: Option<String>,
     /// Version string of the rootfs (e.g., "0.9.1").
     pub rootfs_version: Option<String>,

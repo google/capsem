@@ -1,0 +1,11 @@
+{
+  "colorScheme": "dark",
+  "trustedWorkspaces": [
+    "/root"
+  ],
+  "statusLine": {
+    "enabled": true,
+    "type": "",
+    "command": ""
+  }
+}

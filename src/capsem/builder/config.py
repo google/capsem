@@ -1,9 +1,8 @@
-"""Config loader plus generated frontend settings fixtures.
+"""Backend image config loader and settings UI metadata generator.
 
-Loads TOML configs from guest/config/ into Pydantic models, and transforms
-them into the JSON fixture used to keep frontend mock settings aligned with
-the guest image build inputs. Runtime Profile V2 settings are resolved by the
-Rust settings_profiles module, not by this generated fixture.
+Loads the admin-materialized backend image workspace into Pydantic models, and
+transforms settings metadata into the UI metadata format consumed by Rust at
+compile time.
 """
 
 from __future__ import annotations
@@ -13,7 +12,6 @@ from pathlib import Path
 from typing import Any
 
 from capsem.builder.models import (
-    AiProviderConfig,
     BuildConfig,
     GuestImageConfig,
     ImageManifestConfig,
@@ -43,17 +41,6 @@ def _load_manifest(config_dir: Path) -> ImageManifestConfig | None:
         return None
     data = parse_toml(manifest_path)
     return ImageManifestConfig.model_validate(data["image"])
-
-
-def _load_ai_providers(config_dir: Path) -> dict[str, AiProviderConfig]:
-    ai_dir = config_dir / "ai"
-    providers: dict[str, AiProviderConfig] = {}
-    if ai_dir.is_dir():
-        for path in sorted(ai_dir.glob("*.toml")):
-            data = parse_toml(path)
-            for key, value in data.items():
-                providers[key] = AiProviderConfig.model_validate(value)
-    return providers
 
 
 def _load_package_sets(config_dir: Path) -> dict[str, PackageSetConfig]:
@@ -103,33 +90,39 @@ def _load_vm_environment(config_dir: Path) -> VmEnvironmentConfig:
 
 
 def load_guest_config(guest_dir: Path) -> GuestImageConfig:
-    """Walk a guest/config/ directory, parse all TOML files, return GuestImageConfig.
+    """Parse an admin-materialized backend image workspace.
 
     Args:
-        guest_dir: Path to the guest directory (contains config/ subdirectory).
+        guest_dir: Path to the generated workspace containing config/.
 
     Returns:
         GuestImageConfig with all parsed and validated config.
 
     Raises:
-        FileNotFoundError: If guest_dir/config/build.toml is missing (required).
+        FileNotFoundError: If config/build.toml is missing (required).
         pydantic.ValidationError: If any TOML file fails validation.
     """
     config_dir = guest_dir / "config"
+    profile_root = guest_dir / "profile-root"
+    profile_build = guest_dir / "profile-build.sh"
     return GuestImageConfig(
         build=_load_build(config_dir),
         manifest=_load_manifest(config_dir),
-        ai_providers=_load_ai_providers(config_dir),
+        guest_dir_path=str(guest_dir),
         package_sets=_load_package_sets(config_dir),
         mcp_servers=_load_mcp_servers(config_dir),
         web_security=_load_web_security(config_dir),
         vm_resources=_load_vm_resources(config_dir),
         vm_environment=_load_vm_environment(config_dir),
+        profile_root_seed=profile_root.is_dir(),
+        profile_root_seed_path=str(profile_root) if profile_root.is_dir() else None,
+        profile_build_script=profile_build.is_file(),
+        profile_build_script_path=str(profile_build) if profile_build.is_file() else None,
     )
 
 
 # ---------------------------------------------------------------------------
-# defaults.json generator
+# settings UI metadata generator
 # ---------------------------------------------------------------------------
 
 # Repository token metadata -- static data not in TOML configs.
@@ -159,92 +152,6 @@ def _http_rules(allow_get: bool, allow_post: bool) -> dict:
     if allow_post:
         rule["post"] = True
     return {"default": rule} if rule else {}
-
-
-def _ai_provider_section(key: str, prov: AiProviderConfig) -> dict:
-    """Build the JSON object for one AI provider under settings.ai."""
-    section: dict[str, Any] = {
-        "name": prov.name,
-        "description": prov.description,
-        "enabled_by": f"ai.{key}.allow",
-        "collapsed": False,
-        "allow": {
-            "name": f"Allow {prov.name}",
-            "description": f"Enable API access to {prov.name} ({prov.network.domains[0]}).",
-            "type": "bool",
-            "default": prov.enabled,
-            "meta": {"rules": _http_rules(prov.network.allow_get, prov.network.allow_post)},
-        },
-        "api_key": {
-            "name": prov.api_key.name,
-            "description": f"API key for {prov.name}. Injected as {prov.api_key.env_vars[0]} env var.",
-            "type": "apikey",
-            "default": "",
-            "meta": {
-                "env_vars": prov.api_key.env_vars,
-                **({"docs_url": prov.api_key.docs_url} if prov.api_key.docs_url else {}),
-                **({"prefix": prov.api_key.prefix} if prov.api_key.prefix else {}),
-            },
-        },
-        "domains": {
-            "name": f"{prov.name} Domains",
-            "description": "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains.",
-            "type": "text",
-            "default": ", ".join(prov.network.domains),
-        },
-    }
-
-    # CLI sub-group for files
-    if prov.files and prov.cli:
-        cli_group: dict[str, Any] = {
-            "name": prov.cli.name,
-            "description": prov.cli.description,
-        }
-        for file_key, file_cfg in prov.files.items():
-            file_entry: dict[str, Any] = {
-                "name": _file_display_name(prov.cli.name, file_key),
-                "description": _file_description(prov.cli.name, file_key, file_cfg.path),
-                "type": "file",
-                "default": {"path": file_cfg.path, "content": file_cfg.content},
-            }
-            filetype = _infer_filetype(file_cfg.path)
-            if filetype:
-                file_entry["meta"] = {"filetype": filetype}
-            cli_group[file_key] = file_entry
-        section[prov.cli.key] = cli_group
-
-    return section
-
-
-def _file_display_name(cli_name: str, file_key: str) -> str:
-    """Derive display name for a file setting."""
-    # Map common file keys to human-readable names
-    key_names = {
-        "settings_json": f"{cli_name} settings.json",
-        "state_json": f"{cli_name} state (.claude.json)",
-        "credentials_json": f"{cli_name} OAuth credentials",
-        "config_toml": f"{cli_name} config.toml",
-        "projects_json": f"{cli_name} projects.json",
-        "trusted_folders_json": f"{cli_name} trustedFolders.json",
-        "installation_id": f"{cli_name} installation_id",
-        "google_adc_json": "Google Cloud ADC",
-    }
-    return key_names.get(file_key, f"{cli_name} {file_key}")
-
-
-def _file_description(cli_name: str, file_key: str, path: str) -> str:
-    """Derive description for a file setting."""
-    descs = {
-        "settings_json": f"Content for {path}. Bypass permissions, disable telemetry/updates for sandboxed execution.",
-        "state_json": f"Content for {path}. Skips onboarding, trust dialogs, and keybinding prompts.",
-        "credentials_json": f"Content for {path}. OAuth tokens for subscription-based auth (Pro/Max). Injected from host when detected.",
-        "config_toml": f"Content for {path}. MCP servers, auth, etc.",
-        "projects_json": f"Content for {path}. Project directory mappings.",
-        "trusted_folders_json": f"Content for {path}. Pre-trusted workspace dirs.",
-        "installation_id": f"Content for {path}. Stable UUID avoids first-run prompts.",
-        "google_adc_json": f"Content for {path}. OAuth credentials for Google Cloud auth. Injected from host when detected.",
-    }
-    return descs.get(file_key, f"Content for {path}.")
 
 
 def _infer_filetype(path: str) -> str | None:
@@ -311,10 +218,10 @@ def _repo_provider_entry(
 
 
 def generate_defaults_json(config: GuestImageConfig) -> dict:
-    """Transform GuestImageConfig into the generated frontend defaults dict.
+    """Transform GuestImageConfig into the settings UI metadata dict.
 
-    Combines guest image TOML data with host/frontend-only settings so mocks
-    and schema fixtures stay aligned with the image build configuration.
+    Produces the hierarchical JSON consumed by Rust at compile time.
+    Combines data from TOML configs with hardcoded host-only settings.
     """
     settings: dict[str, Any] = {}
 
@@ -323,17 +230,18 @@ def generate_defaults_json(config: GuestImageConfig) -> dict:
         "name": "App",
         "description": "Application settings",
         "collapsed": False,
+        "auto_update": {
+            "name": "Auto-check for updates",
+            "description": "Check for new Capsem versions on launch",
+            "type": "bool",
+            "default": True,
+        },
+        "check_update": {
+            "name": "Check for updates",
+            "description": "Manually check if a new version is available",
+            "action": "check_update",
+        },
     }
-
-    # -- ai (from TOML configs) --
-    ai_section: dict[str, Any] = {
-        "name": "AI Providers",
-        "description": "AI model provider configuration",
-        "collapsed": False,
-    }
-    for key, prov in config.ai_providers.items():
-        ai_section[key] = _ai_provider_section(key, prov)
-    settings["ai"] = ai_section
 
     # -- repository (git identity host-only + providers from web.toml) --
     repo_provs: dict[str, Any] = {
@@ -369,7 +277,7 @@ def generate_defaults_json(config: GuestImageConfig) -> dict:
         "providers": repo_provs,
     }
 
-    # -- security (preset action + web defaults + services from web.toml) --
+    # -- security (network mechanics + services from web.toml) --
     search_section: dict[str, Any] = {
         "name": "Search Engines",
         "description": "Web search engine access",
@@ -391,41 +299,16 @@ def generate_defaults_json(config: GuestImageConfig) -> dict:
     ws = config.web_security
     settings["security"] = {
         "name": "Security",
-        "description": "Network access control, web services, and security presets",
+        "description": "Network mechanics and service access controls",
         "collapsed": False,
-        "preset": {
-            "name": "Security Preset",
-            "description": "Predefined security configurations",
-            "action": "preset_select",
-        },
         "web": {
-            "name": "Web",
-            "description": "Default actions for unknown domains",
-            "allow_read": {
-                "name": "Allow read requests",
-                "description": "Allow GET/HEAD/OPTIONS for domains not in any allow/block list.",
-                "type": "bool",
-                "default": ws.allow_read,
-            },
-            "allow_write": {
-                "name": "Allow write requests",
-                "description": "Allow POST/PUT/DELETE/PATCH for domains not in any allow/block list.",
-                "type": "bool",
-                "default": ws.allow_write,
-            },
-            "custom_allow": {
-                "name": "Allowed domains",
-                "description": "Comma-separated domain patterns to allow. Wildcards supported (*.example.com).",
-                "type": "text",
-                "default": ", ".join(ws.custom_allow),
-                "meta": {"format": "domain_list"},
-            },
-            "custom_block": {
-                "name": "Blocked domains",
-                "description": "Comma-separated domain patterns to block. Takes priority over custom allow list.",
-                "type": "text",
-                "default": ", ".join(ws.custom_block) if ws.custom_block else "",
-                "meta": {"format": "domain_list"},
+            "name": "Network Mechanics",
+            "description": "Network engine mechanics. HTTP/DNS decisions are profile security rules.",
+            "http_upstream_ports": {
+                "name": "Allowed plain HTTP upstream ports",
+                "description": "Plain HTTP upstream ports the MITM may dial after guest traffic reaches the local proxy.",
+                "type": "int_list",
+                "default": ws.http_upstream_ports,
             },
         },
         "services": {
@@ -492,11 +375,6 @@ def generate_defaults_json(config: GuestImageConfig) -> dict:
         "name": "VM",
         "description": "Virtual machine configuration",
         "collapsed": False,
-        "rerun_wizard": {
-            "name": "Setup Wizard",
-            "description": "Re-run the first-time setup wizard to reconfigure providers, repositories, and security.",
-            "action": "rerun_wizard",
-        },
         "snapshots": {
             "name": "Snapshots",
             "description": "Automatic and manual workspace snapshot settings",
@@ -670,7 +548,7 @@ def _ts_meta(meta: dict) -> str:
 def _collect_mock_settings(
     table: dict, path: str, parent_category: str, parent_enabled_by: str | None,
 ) -> list[dict[str, Any]]:
-    """Walk the generated defaults hierarchy, collecting leaf mock entries."""
+    """Walk settings UI metadata hierarchy, collect leaf settings as mock entries."""
     # Skip action nodes
     if "action" in table:
         return []
@@ -746,7 +624,7 @@ def _collect_mock_settings(
 def _build_mock_tree_ts(
     table: dict, path: str, parent_enabled_by: str | None, indent: int,
 ) -> list[str]:
-    """Walk the generated defaults hierarchy and emit TypeScript tree nodes."""
+    """Walk settings UI metadata hierarchy, produce TypeScript tree node lines."""
     pad = "  " * indent
 
     # Action node
@@ -814,14 +692,12 @@ def _build_mock_tree_ts(
 def generate_mock_ts(
     defaults: dict, *, mcp_tools: list[dict] | None = None,
 ) -> str:
-    """Generate frontend/src/lib/mock-settings.generated.ts from builder fixtures.
+    """Generate frontend/src/lib/mock-settings.generated.ts from settings metadata.
 
     Produces:
     - mockSettings: flat array of ResolvedSetting objects
     - buildMockTree(): returns the SettingsNode tree
-    - MOCK_MCP_SERVERS: from the generated MCP section
-    - MOCK_MCP_TOOLS: from mcp-tools.json (Rust-exported tool defs)
-    - MOCK_MCP_POLICY: default allow policy
+    - empty MCP mock placeholders; real MCP data comes from profile routes
     """
     settings_obj = defaults.get("settings", {})
 
@@ -831,12 +707,12 @@ def generate_mock_ts(
     # Build mockSettings array
     lines = [
         "// AUTO-GENERATED by scripts/generate_schema.py -- DO NOT EDIT",
-        "// Source: generated builder settings fixture from guest/config/*.toml",
+        "// Source: config/settings/ui-metadata.generated.json",
         "//",
         "// Regenerate: just run (or just test)",
         "",
-        "import type { ResolvedSetting, SettingsNode } from './types/settings';",
-        "import type { McpServerInfo, McpToolInfo, McpPolicyInfo } from './types';",
+        "import type { ResolvedSetting, SettingsNode, McpServerInfo,"
+        " McpToolInfo } from './types';",
         "",
         "// Helper: creates a mock setting with sensible defaults for empty fields.",
         "function ms(overrides: Partial<ResolvedSetting> & {"
@@ -935,12 +811,10 @@ def generate_mock_ts(
     lines.append("}")
     lines.append("")
 
-    # -- MCP mock data --
-    mcp_servers = defaults.get("mcp", {})
     tools = mcp_tools or []
 
     lines.append("// ---------------------------------------------------------------------------")
-    lines.append("// MCP mock data (derived from builder settings + config/mcp-tools.json)")
+    lines.append("// MCP mock data (profile routes are authoritative)")
     lines.append("// ---------------------------------------------------------------------------")
     lines.append("")
 
@@ -975,20 +849,13 @@ def generate_mock_ts(
         lines.append(f"    description: {_ts_value(desc)},")
         lines.append(f"    server_name: {_ts_value(tool.get('server_name', 'builtin'))},")
         lines.append(f"    annotations: {ann_ts},")
-        lines.append(f"    pin_hash: null,")
-        lines.append(f"    approved: true,")
-        lines.append(f"    pin_changed: false,")
+        lines.append("    pin_hash: null,")
+        lines.append("    approved: true,")
+        lines.append("    pin_changed: false,")
+        lines.append("    permission_action: 'allow',")
+        lines.append("    permission_source: 'default',")
         lines.append("  },")
     lines.append("];")
-    lines.append("")
-
-    # MOCK_MCP_POLICY
-    lines.append("export const MOCK_MCP_POLICY: McpPolicyInfo = {")
-    lines.append("  global_policy: 'allow',")
-    lines.append("  default_tool_permission: 'allow',")
-    lines.append("  blocked_servers: [],")
-    lines.append("  tool_permissions: {},")
-    lines.append("};")
     lines.append("")
 
     return "\n".join(lines)

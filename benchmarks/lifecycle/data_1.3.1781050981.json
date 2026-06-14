@@ -1,0 +1,80 @@
+{
+  "version": "0.2.0",
+  "timestamp": 1781107660.29217,
+  "runs": 3,
+  "operations": {
+    "provision_ms": {
+      "min": 1018.4,
+      "mean": 1053.2,
+      "p50": 1067.1,
+      "p95": 1073.4,
+      "p99": 1074.0,
+      "max": 1074.1,
+      "values": [
+        1074.1,
+        1018.4,
+        1067.1
+      ]
+    },
+    "exec_ready_ms": {
+      "min": 10.3,
+      "mean": 12.6,
+      "p50": 13.4,
+      "p95": 14.1,
+      "p99": 14.2,
+      "max": 14.2,
+      "values": [
+        14.2,
+        13.4,
+        10.3
+      ]
+    },
+    "exec_ms": {
+      "min": 11.9,
+      "mean": 12.3,
+      "p50": 12.3,
+      "p95": 12.8,
+      "p99": 12.8,
+      "max": 12.8,
+      "values": [
+        11.9,
+        12.3,
+        12.8
+      ]
+    },
+    "delete_ms": {
+      "min": 60.0,
+      "mean": 61.5,
+      "p50": 61.7,
+      "p95": 62.7,
+      "p99": 62.8,
+      "max": 62.8,
+      "values": [
+        61.7,
+        62.8,
+        60.0
+      ]
+    },
+    "total_ms": {
+      "min": 1106.9,
+      "mean": 1139.7,
+      "p50": 1150.2,
+      "p95": 1160.7,
+      "p99": 1161.7,
+      "max": 1161.9,
+      "values": [
+        1161.9,
+        1106.9,
+        1150.2
+      ]
+    }
+  },
+  "launch_span_contract": [
+    "capsem.launch.service",
+    "capsem.launch.gateway",
+    "capsem.launch.process_spawn",
+    "capsem.launch.vm_boot",
+    "capsem.launch.vsock_ready",
+    "capsem.launch.first_network_ready"
+  ]
+}

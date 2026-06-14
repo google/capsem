@@ -7,25 +7,61 @@ vsock:5002 and writes `mcp_calls` from the MITM frame layer.
 
 import base64
 import json
-import os
+import shutil
 import shlex
 import sqlite3
 import subprocess
-import sys
-import textwrap
+import threading
 import time
 import uuid
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import blake3
 import pytest
 
-from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
-from helpers.service import ServiceInstance, select_editable_profile, wait_exec_ready
+from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
+from helpers.mock_server import start_mock_server, stop_process
+from helpers.service import PROFILES_DIR, ServiceInstance, wait_exec_ready
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 CLI_BINARY = PROJECT_ROOT / "target/debug/capsem"
 
 pytestmark = pytest.mark.e2e
+
+
+class _BuiltinHttpFixture(BaseHTTPRequestHandler):
+    def do_HEAD(self):
+        self.send_response(200)
+        self.send_header("content-type", "text/plain; charset=utf-8")
+        self.send_header("x-capsem-fixture", "builtin-http")
+        self.end_headers()
+
+    def do_GET(self):
+        body = b"capsem local builtin HTTP fixture\n"
+        self.send_response(200)
+        self.send_header("content-type", "text/plain; charset=utf-8")
+        self.send_header("content-length", str(len(body)))
+        self.send_header("x-capsem-fixture", "builtin-http")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format, *args):
+        return
+
+
+@contextmanager
+def _local_builtin_http_fixture():
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _BuiltinHttpFixture)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}"
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
 
 
 def _guest_python(script: str) -> str:
@@ -37,16 +73,100 @@ def _guest_python(script: str) -> str:
 def _start_service():
     svc = ServiceInstance()
     svc.start()
-    select_editable_profile(svc.client(), prefix="framed-policy")
     return svc
+
+
+def _install_profile_mcp_servers(svc: ServiceInstance, mcp_servers: dict[str, dict]) -> None:
+    profiles_dir = svc.tmp_dir / "config" / "profiles"
+    shutil.copytree(PROFILES_DIR, profiles_dir)
+    mcp_path = profiles_dir / CODE_PROFILE_ID / "mcp.json"
+    payload = {
+        "mcpServers": {
+            "capsem": {"command": "/run/capsem-mcp-server"},
+            **mcp_servers,
+        }
+    }
+    data = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    mcp_path.write_text(data, encoding="utf-8")
+    digest = blake3.blake3(data.encode("utf-8")).hexdigest()
+    size = len(data.encode("utf-8"))
+
+    profile_path = profiles_dir / CODE_PROFILE_ID / "profile.toml"
+    lines = profile_path.read_text(encoding="utf-8").splitlines()
+    in_mcp = False
+    rewritten = []
+    for line in lines:
+        if line.startswith("[files."):
+            in_mcp = line == "[files.mcp]"
+        if in_mcp and line.startswith("hash = "):
+            rewritten.append(f'hash = "blake3:{digest}"')
+        elif in_mcp and line.startswith("size = "):
+            rewritten.append(f"size = {size}")
+        else:
+            rewritten.append(line)
+    text = "\n".join(rewritten) + "\n"
+    inline_server_blocks = []
+    for name, server in mcp_servers.items():
+        url = server.get("url")
+        if not url:
+            continue
+        inline_server_blocks.append(
+            "\n".join(
+                [
+                    "[[mcp.servers]]",
+                    f'name = "{name}"',
+                    f'url = "{url}"',
+                    f'enabled = {str(server.get("enabled", True)).lower()}',
+                ]
+            )
+        )
+    if inline_server_blocks:
+        text = text.replace("servers = []\n", "")
+        text = text.replace("[mcp.server_enabled]\n", "\n".join(inline_server_blocks) + "\n\n[mcp.server_enabled]\n")
+    profile_path.write_text(text, encoding="utf-8")
+    svc.profiles_dir = profiles_dir
+
+
+def _start_mock_mcp_profile_service(server_name: str = "fixture"):
+    mock_proc, ready = start_mock_server()
+    svc = ServiceInstance()
+    _install_profile_mcp_servers(
+        svc,
+        {server_name: {"url": ready["base_url"].rstrip("/") + "/mcp"}},
+    )
+    svc.start()
+    return svc, mock_proc, server_name
+
+
+def _upsert_profile_enforcement_rule(
+    svc: ServiceInstance,
+    rule_id: str,
+    *,
+    match: str,
+    action: str = "block",
+    reason: str = "test rule",
+) -> None:
+    response = svc.client().put(
+        f"/profiles/{CODE_PROFILE_ID}/enforcement/rules/{rule_id}/edit",
+        {
+            "name": rule_id,
+            "action": action,
+            "priority": 10,
+            "match": match,
+            "reason": reason,
+        },
+        timeout=15,
+    )
+    assert response["compiled_rule_id"] == f"profiles.rules.{rule_id}", response
 
 
 def _create_vm(svc: ServiceInstance, prefix: str, *, persistent: bool = False) -> str:
     vm = f"{prefix}-{uuid.uuid4().hex[:8]}"
     svc.client().post(
-        "/provision",
+        "/vms/create",
         {
             "name": vm,
+            "profile_id": CODE_PROFILE_ID,
             "ram_mb": DEFAULT_RAM_MB,
             "cpus": DEFAULT_CPUS,
             "persistent": persistent,
@@ -60,7 +180,7 @@ def _create_vm(svc: ServiceInstance, prefix: str, *, persistent: bool = False) -
 
 def _delete_vm(svc: ServiceInstance, vm: str) -> None:
     try:
-        svc.client().delete(f"/delete/{vm}", timeout=60)
+        svc.client().delete(f"/vms/{vm}/delete", timeout=60)
     except Exception:
         pass
 
@@ -163,35 +283,6 @@ def _wait_for_net_row(db_path: Path, predicate, timeout: float = 20.0):
         time.sleep(0.2)
     rows = [dict(row) for row in _query_net_rows(db_path)]
     pytest.fail(f"timed out waiting for net_events row; rows={rows}")
-
-
-def _timeline_rows(svc: ServiceInstance, vm: str, *, layers: str, limit: int = 50):
-    response = svc.client().get(
-        f"/timeline/{vm}?layers={layers}&limit={limit}",
-        timeout=15,
-    )
-    columns = response.get("columns", [])
-    return [dict(zip(columns, row)) for row in response.get("rows", [])]
-
-
-def _wait_for_timeline_row(
-    svc: ServiceInstance,
-    vm: str,
-    *,
-    layers: str,
-    predicate,
-    timeout: float = 20.0,
-):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        rows = _timeline_rows(svc, vm, layers=layers)
-        for row in rows:
-            if predicate(row):
-                return row
-        time.sleep(0.2)
-    pytest.fail(
-        f"timed out waiting for timeline row; rows={_timeline_rows(svc, vm, layers=layers)}"
-    )
 
 
 def _responses_by_id(stdout: str) -> dict[object, dict]:
@@ -299,12 +390,18 @@ sys.exit(proc.returncode)
             assert row["method"] == method
             assert row["decision"] == "allowed"
             assert row["process_name"] == "python3"
-            assert row["policy_mode"] == "enforce"
+            assert row["policy_mode"] == "security_event"
             assert row["policy_action"] == "allow"
 
         rows = _query_mcp_rows(db_path)
+        notifications = [
+            row for row in rows if row["request_id"] is None and row["method"] == "notifications/initialized"
+        ]
+        assert len(notifications) == 1
         counts = {}
         for row in rows:
+            if row["request_id"] is None:
+                continue
             counts[row["request_id"]] = counts.get(row["request_id"], 0) + 1
         assert counts == {"1": 1, "2": 1, "3": 1, "4": 1, "5": 1}
         echo = [r for r in rows if r["request_id"] == "3"][0]
@@ -376,14 +473,14 @@ sys.exit(proc.returncode)
         assert init["method"] == "initialize"
         assert tools["method"] == "tools/list"
         rows = _query_mcp_rows(db_path)
-        request_ids = {row["request_id"] for row in rows}
-        assert request_ids == {"init-string", "tools-list-string", None}
-        denied_notification = [
-            row for row in rows if row["request_id"] is None and row["method"] == "$/progress"
+        assert {row["request_id"] for row in rows if row["request_id"] is not None} == {
+            "init-string",
+            "tools-list-string",
+        }
+        notifications = [
+            row for row in rows if row["request_id"] is None and row["method"] == "notifications/initialized"
         ]
-        assert len(denied_notification) == 1
-        assert denied_notification[0]["decision"] == "denied"
-        assert denied_notification[0]["policy_rule"] == "mcp.notification.disallowed"
+        assert len(notifications) == 1
     finally:
         if vm is not None:
             _delete_vm(svc, vm)
@@ -464,24 +561,6 @@ import struct
 MCP_FRAME_VERSION = 1
 MCP_FRAME_HEADER_LEN = 16
 MCP_FRAME_MAGIC = 0x4D43
-CAPSEM_LOGICAL_PORT_MIN = 5000
-CAPSEM_LOGICAL_PORT_MAX = 5007
-
-def host_vsock_port(logical_port):
-    if not CAPSEM_LOGICAL_PORT_MIN <= logical_port <= CAPSEM_LOGICAL_PORT_MAX:
-        return logical_port
-    try:
-        cmdline = open("/proc/cmdline", encoding="utf-8").read().split()
-    except OSError:
-        return logical_port
-    for part in cmdline:
-        prefix = "capsem.vsock_port_offset="
-        if part.startswith(prefix):
-            try:
-                return logical_port + int(part[len(prefix):])
-            except ValueError:
-                return logical_port
-    return logical_port
 
 def encode_frame(stream_id, process_name, payload, *, magic=MCP_FRAME_MAGIC):
     process_bytes = process_name.encode()
@@ -521,7 +600,7 @@ def read_frame(sock):
 
 sock = socket.socket(socket.AF_VSOCK, socket.SOCK_STREAM)
 sock.settimeout(10)
-sock.connect((socket.VMADDR_CID_HOST, host_vsock_port(5002)))
+sock.connect((socket.VMADDR_CID_HOST, 5002))
 sock.sendall(b"\0CAPSEM_META:raw-corruptor\n")
 
 initial_payload = json.dumps({"jsonrpc": "2.0", "id": "before-corrupt", "method": "initialize", "params": {
@@ -633,50 +712,30 @@ print(json.dumps({"responses": responses, "stderr": proc.stderr.read()}))
             lambda r: r["request_id"] == "2" and r["decision"] == "allowed",
         )
 
-        saved = svc.client().post(
-            "/settings",
-            {
-                "policy.mcp.block_live_reload_echo": {
-                    "on": "mcp.request",
-                    "if": 'method == "tools/call" && tool.name == "local__echo" && arguments.text == "after-reload"',
-                    "decision": "block",
-                    "priority": 10,
-                    "reason": "Live reload block from settings API",
-                }
-            },
-            timeout=15,
+        _upsert_profile_enforcement_rule(
+            svc,
+            "block_local_echo",
+            match='mcp.tool_call.name == "local__echo"',
+            reason="test blocks local echo through security rules",
         )
-        assert saved["effective_rules"]["mcp"]["block_live_reload_echo"]["decision"] == "block"
-        reload_response = svc.client().post("/reload-config", {}, timeout=15)
+        reload_response = svc.client().post(f"/profiles/{CODE_PROFILE_ID}/reload", {}, timeout=15)
         assert reload_response["success"] is True
-        assert reload_response["reloaded"] >= 1
 
         stdout, stderr = proc.communicate(timeout=60)
         assert proc.returncode == 0, stderr
         responses = _responses_by_id(stdout)
         assert "error" not in responses[2]
-        assert responses[3]["error"]["message"].startswith("MCP request blocked by policy")
+        assert responses[3]["error"]["message"].startswith(
+            "MCP request blocked by security rule"
+        )
 
         denied = _wait_for_mcp_row(
             db_path,
             lambda r: r["request_id"] == "3" and r["decision"] == "denied",
         )
         assert denied["policy_action"] == "block"
-        assert denied["policy_rule"] == "policy.mcp.block_live_reload_echo"
-        assert denied["policy_reason"] == "Live reload block from settings API"
-        assert "redacted_by_policy" in (denied["request_preview"] or "")
-        assert "after-reload" not in (denied["request_preview"] or "")
-
-        timeline_row = _wait_for_timeline_row(
-            svc,
-            vm,
-            layers="mcp",
-            predicate=lambda r: (
-                r["layer"] == "mcp"
-                and "policy=block/policy.mcp.block_live_reload_echo" in r["summary"]
-            ),
-        )
-        assert timeline_row["status"] is None
+        assert denied["policy_rule"] == "profiles.rules.block_local_echo"
+        assert "after-reload" in denied["request_preview"]
     finally:
         if proc is not None and proc.poll() is None:
             proc.kill()
@@ -686,280 +745,25 @@ print(json.dumps({"responses": responses, "stderr": proc.stderr.read()}))
         svc.stop()
 
 
-def test_framed_guest_mcp_policy_v2_argument_block_from_settings_no_leak():
-    svc = _start_service()
-    vm = None
-    try:
-        saved = svc.client().post(
-            "/settings",
-            {
-                "policy.mcp.block_prod_token": {
-                    "on": "mcp.request",
-                    "if": 'method == "tools/call" && tool.name == "local__echo" && has(arguments.prod_token)',
-                    "decision": "block",
-                    "priority": 10,
-                    "reason": "Do not send production tokens to MCP tools",
-                }
-            },
-            timeout=15,
-        )
-        rule = saved["effective_rules"]["mcp"]["block_prod_token"]
-        assert rule["decision"] == "block"
-        assert rule["priority"] == 10
-        reload_response = svc.client().post("/reload-config", {}, timeout=15)
-        assert reload_response["success"] is True
-
-        vm = _create_vm(svc, "framed-policy-v2")
-        script = r'''
-import json
-import subprocess
-import sys
-
-messages = [
-    {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
-        "protocolVersion": "2024-11-05",
-        "capabilities": {},
-        "clientInfo": {"name": "policy-v2-e2e", "version": "1.0"},
-    }},
-    {"jsonrpc": "2.0", "method": "notifications/initialized"},
-    {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
-        "name": "local__echo",
-        "arguments": {
-            "text": "should-not-run",
-            "prod_token": "mcp-e2e-secret"
-        },
-    }},
-]
-
-proc = subprocess.run(
-    ["/run/capsem-mcp-server"],
-    input="\n".join(json.dumps(m) for m in messages) + "\n",
-    capture_output=True,
-    text=True,
-    timeout=30,
-)
-responses = [json.loads(line) for line in proc.stdout.splitlines() if line.strip()]
-print(json.dumps({
-    "returncode": proc.returncode,
-    "stderr": proc.stderr,
-    "responses": responses,
-}))
-sys.exit(proc.returncode)
-'''
-        result = _exec_cli(svc, vm, _guest_python(script), timeout=90)
-        assert result.returncode == 0, result.stderr
-        assert "mcp-e2e-secret" not in result.stdout
-        responses = _responses_by_id(result.stdout)
-        assert responses[2]["error"]["message"].startswith(
-            "MCP request blocked by policy"
-        )
-        assert "mcp-e2e-secret" not in responses[2]["error"]["message"]
-
-        db_path = _session_db(svc, vm)
-        denied = _wait_for_mcp_row(
-            db_path,
-            lambda r: r["request_id"] == "2" and r["decision"] == "denied",
-        )
-        assert denied["method"] == "tools/call"
-        assert denied["server_name"] == "local"
-        assert denied["tool_name"] == "local__echo"
-        assert denied["process_name"] == "python3"
-        assert denied["policy_mode"] == "enforce"
-        assert denied["policy_action"] == "block"
-        assert denied["policy_rule"] == "policy.mcp.block_prod_token"
-        assert (
-            denied["policy_reason"]
-            == "Do not send production tokens to MCP tools"
-        )
-        assert denied["response_preview"] is None
-        preview = denied["request_preview"] or ""
-        assert "redacted_by_policy" in preview
-        assert "mcp-e2e-secret" not in preview
-        assert "should-not-run" not in preview
-    finally:
-        if vm is not None:
-            _delete_vm(svc, vm)
-        svc.stop()
-
-
-def test_framed_guest_mcp_policy_v2_ask_and_request_rewrite_from_settings():
-    svc = _start_service()
-    vm = None
-    try:
-        saved = svc.client().post(
-            "/settings",
-            {
-                "policy.mcp.ask_sensitive_echo": {
-                    "on": "mcp.request",
-                    "if": 'method == "tools/call" && tool.name == "local__echo" && arguments.text == "ask-secret-value"',
-                    "decision": "ask",
-                    "priority": 10,
-                    "reason": "Sensitive echo needs approval",
-                },
-                "policy.mcp.rewrite_echo_token": {
-                    "on": "mcp.request",
-                    "if": 'method == "tools/call" && tool.name == "local__echo" && arguments.text.contains("prod-token-")',
-                    "decision": "rewrite",
-                    "priority": 20,
-                    "reason": "Redact production token before local echo",
-                    "rewrite_target": 'arguments.text =~ "prod-token-[A-Za-z0-9]+"',
-                    "rewrite_value": "[redacted-token]",
-                },
-            },
-            timeout=15,
-        )
-        assert saved["effective_rules"]["mcp"]["ask_sensitive_echo"]["decision"] == "ask"
-        assert saved["effective_rules"]["mcp"]["rewrite_echo_token"]["decision"] == "rewrite"
-        reload_response = svc.client().post("/reload-config", {}, timeout=15)
-        assert reload_response["success"] is True
-
-        vm = _create_vm(svc, "framed-mcp-local-policy")
-        script = r'''
-import json
-import subprocess
-import sys
-
-messages = [
-    {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
-        "protocolVersion": "2024-11-05",
-        "capabilities": {},
-        "clientInfo": {"name": "policy-v2-local-e2e", "version": "1.0"},
-    }},
-    {"jsonrpc": "2.0", "method": "notifications/initialized"},
-    {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
-        "name": "local__echo",
-        "arguments": {"text": "ask-secret-value"},
-    }},
-    {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
-        "name": "local__echo",
-        "arguments": {"text": "before prod-token-ABC123 after"},
-    }},
-]
-
-proc = subprocess.run(
-    ["/run/capsem-mcp-server"],
-    input="\n".join(json.dumps(m) for m in messages) + "\n",
-    capture_output=True,
-    text=True,
-    timeout=30,
-)
-responses = [json.loads(line) for line in proc.stdout.splitlines() if line.strip()]
-print(json.dumps({
-    "returncode": proc.returncode,
-    "stderr": proc.stderr,
-    "responses": responses,
-}))
-sys.exit(proc.returncode)
-'''
-        result = _exec_cli(svc, vm, _guest_python(script), timeout=90)
-        assert result.returncode == 0, result.stderr
-        responses = _responses_by_id(result.stdout)
-        assert "error" not in responses[2]
-        assert "ask-secret-value" in json.dumps(responses[2]["result"])
-        rewrite_response = json.dumps(responses[3]["result"])
-        assert "[redacted-token]" in rewrite_response
-        assert "prod-token-ABC123" not in rewrite_response
-        assert "prod-token-ABC123" not in result.stdout
-
-        db_path = _session_db(svc, vm)
-        asked = _wait_for_mcp_row(
-            db_path,
-            lambda r: r["request_id"] == "2" and r["decision"] == "allowed",
-        )
-        assert asked["policy_action"] == "allow"
-        assert asked["policy_rule"] == "policy.mcp.ask_sensitive_echo"
-        assert asked["policy_reason"] == "Sensitive echo needs approval"
-        assert "ask-secret-value" in (asked["response_preview"] or "")
-        asked_preview = asked["request_preview"] or ""
-        assert "ask-secret-value" in asked_preview
-
-        rewritten = _wait_for_mcp_row(
-            db_path,
-            lambda r: r["request_id"] == "3" and r["decision"] == "allowed",
-        )
-        assert rewritten["policy_action"] == "rewrite"
-        assert rewritten["policy_rule"] == "policy.mcp.rewrite_echo_token"
-        assert "[redacted-token]" in (rewritten["request_preview"] or "")
-        assert "[redacted-token]" in (rewritten["response_preview"] or "")
-        assert "prod-token-ABC123" not in (rewritten["request_preview"] or "")
-        assert "prod-token-ABC123" not in (rewritten["response_preview"] or "")
-    finally:
-        if vm is not None:
-            _delete_vm(svc, vm)
-        svc.stop()
-
 
 def test_framed_guest_mcp_builtin_http_policy_writes_mcp_and_net_rows():
-    svc = _start_service()
-    vm = None
-    try:
-        vm = _create_vm(svc, "framed-builtin-http")
+    with _local_builtin_http_fixture() as allowed_url:
+        svc = _start_service()
+        vm = None
+        try:
+            _upsert_profile_enforcement_rule(
+                svc,
+                "block_builtin_http",
+                match='http.host == "blocked-builtin-http.invalid"',
+                reason="test blocks builtin HTTP through security rules",
+            )
+            reload_response = svc.client().post(
+                f"/profiles/{CODE_PROFILE_ID}/reload", {}, timeout=15
+            )
+            assert reload_response["success"] is True
 
-        warmup_script = r'''
-import json
-import subprocess
-import sys
-
-messages = [
-    {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
-        "protocolVersion": "2024-11-05",
-        "capabilities": {},
-        "clientInfo": {"name": "builtin-http-warmup", "version": "1.0"},
-    }},
-    {"jsonrpc": "2.0", "method": "notifications/initialized"},
-    {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
-        "name": "local__http_headers",
-        "arguments": {"url": "https://example.com/", "method": "HEAD"},
-    }},
-]
-
-proc = subprocess.run(
-    ["/run/capsem-mcp-server"],
-    input="\n".join(json.dumps(m) for m in messages) + "\n",
-    capture_output=True,
-    text=True,
-    timeout=45,
-)
-responses = [json.loads(line) for line in proc.stdout.splitlines() if line.strip()]
-print(json.dumps({
-    "returncode": proc.returncode,
-    "stderr": proc.stderr,
-    "responses": responses,
-}))
-sys.exit(proc.returncode)
-'''
-        warmup = _exec_cli(svc, vm, _guest_python(warmup_script), timeout=120)
-        assert warmup.returncode == 0, warmup.stderr
-        assert "domain blocked by policy: example.com" in json.dumps(
-            _responses_by_id(warmup.stdout)[2]["result"]
-        )
-
-        saved = svc.client().post(
-            "/settings",
-            {
-                "policy.http.allow_builtin_example_com": {
-                    "on": "http.request",
-                    "if": 'request.host == "example.com"',
-                    "decision": "allow",
-                    "priority": 900,
-                    "reason": "Allow builtin MCP HTTP fixture domain",
-                },
-                "policy.http.block_builtin_invalid": {
-                    "on": "http.request",
-                    "if": 'request.host == "blocked-builtin-http.invalid"',
-                    "decision": "block",
-                    "priority": 10,
-                    "reason": "Block builtin MCP HTTP fixture domain",
-                },
-            },
-            timeout=15,
-        )
-        assert "error" not in saved, saved
-        reload_response = svc.client().post("/reload-config", {}, timeout=15)
-        assert reload_response["success"] is True
-        assert reload_response["reloaded"] >= 1
-
-        script = r'''
+            vm = _create_vm(svc, "framed-builtin-http")
+            script = r'''
 import json
 import subprocess
 import sys
@@ -973,7 +777,7 @@ messages = [
     {"jsonrpc": "2.0", "method": "notifications/initialized"},
     {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
         "name": "local__http_headers",
-        "arguments": {"url": "https://example.com/", "method": "HEAD"},
+        "arguments": {"url": "__ALLOWED_URL__", "method": "HEAD"},
     }},
     {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
         "name": "local__http_headers",
@@ -995,62 +799,53 @@ print(json.dumps({
     "responses": responses,
 }))
 sys.exit(proc.returncode)
-'''
-        result = _exec_cli(svc, vm, _guest_python(script), timeout=120)
-        assert result.returncode == 0, result.stderr
-        responses = _responses_by_id(result.stdout)
-        assert "Status:" in json.dumps(responses[2]["result"])
-        assert "domain blocked by policy: blocked-builtin-http.invalid" in json.dumps(
-            responses[3]["result"]
-        )
+'''.replace("__ALLOWED_URL__", allowed_url + "/")
+            result = _exec_cli(svc, vm, _guest_python(script), timeout=120)
+            assert result.returncode == 0, result.stderr
+            responses = _responses_by_id(result.stdout)
+            assert "Status:" in json.dumps(responses[2]["result"])
+            assert "HTTP request blocked: blocked-builtin-http.invalid" in json.dumps(
+                responses[3]["result"]
+            )
 
-        db_path = _session_db(svc, vm)
-        warmup_denied_net = _wait_for_net_row(
-            db_path,
-            lambda r: r["domain"] == "example.com"
-            and r["method"] == "HEAD"
-            and r["decision"] == "denied",
-        )
-        assert warmup_denied_net["process_name"] == "mcp_builtin"
+            db_path = _session_db(svc, vm)
+            allowed_mcp = _wait_for_mcp_row(
+                db_path,
+                lambda r: r["request_id"] == "2" and r["tool_name"] == "local__http_headers",
+            )
+            assert allowed_mcp["decision"] == "allowed"
+            blocked_mcp = _wait_for_mcp_row(
+                db_path,
+                lambda r: r["request_id"] == "3" and r["tool_name"] == "local__http_headers",
+            )
+            assert blocked_mcp["decision"] == "allowed"
+            assert "blocked-builtin-http.invalid" in (blocked_mcp["response_preview"] or "")
 
-        allowed_mcp = _wait_for_mcp_row(
-            db_path,
-            lambda r: r["request_id"] == "2" and r["tool_name"] == "local__http_headers",
-        )
-        assert allowed_mcp["decision"] == "allowed"
-        blocked_mcp = _wait_for_mcp_row(
-            db_path,
-            lambda r: r["request_id"] == "3" and r["tool_name"] == "local__http_headers",
-        )
-        assert blocked_mcp["decision"] == "allowed"
-        assert "blocked-builtin-http.invalid" in (blocked_mcp["response_preview"] or "")
+            allowed_net = _wait_for_net_row(
+                db_path,
+                lambda r: r["domain"] == "127.0.0.1" and r["method"] == "HEAD",
+            )
+            assert allowed_net["decision"] == "allowed"
+            assert allowed_net["path"] == "/"
+            assert allowed_net["process_name"] == "mcp_builtin"
+            assert allowed_net["conn_type"] == "mcp_builtin"
+            assert allowed_net["status_code"] is not None
 
-        allowed_net = _wait_for_net_row(
-            db_path,
-            lambda r: r["domain"] == "example.com"
-            and r["method"] == "HEAD"
-            and r["decision"] == "allowed",
-        )
-        assert allowed_net["decision"] == "allowed"
-        assert allowed_net["process_name"] == "mcp_builtin"
-        assert allowed_net["conn_type"] == "mcp_builtin"
-        assert allowed_net["status_code"] is not None
-
-        blocked_net = _wait_for_net_row(
-            db_path,
-            lambda r: r["domain"] == "blocked-builtin-http.invalid",
-        )
-        assert blocked_net["decision"] == "denied"
-        assert blocked_net["method"] == "HEAD"
-        assert blocked_net["path"] == "/no-upstream"
-        assert blocked_net["process_name"] == "mcp_builtin"
-        assert blocked_net["bytes_sent"] == 0
-        assert blocked_net["bytes_received"] == 0
-        assert blocked_net["status_code"] is None
-    finally:
-        if vm is not None:
-            _delete_vm(svc, vm)
-        svc.stop()
+            blocked_net = _wait_for_net_row(
+                db_path,
+                lambda r: r["domain"] == "blocked-builtin-http.invalid",
+            )
+            assert blocked_net["decision"] == "denied"
+            assert blocked_net["method"] == "HEAD"
+            assert blocked_net["path"] == "/no-upstream"
+            assert blocked_net["process_name"] == "mcp_builtin"
+            assert blocked_net["bytes_sent"] == 0
+            assert blocked_net["bytes_received"] == 0
+            assert blocked_net["status_code"] is None
+        finally:
+            if vm is not None:
+                _delete_vm(svc, vm)
+            svc.stop()
 
 
 def test_framed_guest_mcp_concurrent_process_attribution():
@@ -1126,527 +921,154 @@ print(json.dumps({"results": results}))
         svc.stop()
 
 
-def test_framed_guest_mcp_external_stdio_tool_and_session_db_row():
-    svc = _start_service()
+def test_framed_guest_mcp_remote_http_tool_and_session_db_row():
+    svc, mock_proc, server_name = _start_mock_mcp_profile_service("fixture")
     vm = None
     try:
-        fast_server = svc.tmp_dir / "fast_mcp.py"
-        fast_server.write_text(
-            textwrap.dedent(
-                """\
-                import json
-                import sys
-
-                def respond(req, result=None, error=None):
-                    msg = {"jsonrpc": "2.0", "id": req.get("id")}
-                    if error is not None:
-                        msg["error"] = {"code": -32000, "message": error}
-                    else:
-                        msg["result"] = result
-                    print(json.dumps(msg), flush=True)
-
-                for line in sys.stdin:
-                    req = json.loads(line)
-                    if "id" not in req:
-                        continue
-                    method = req.get("method")
-                    if method == "initialize":
-                        respond(req, {
-                            "protocolVersion": "2024-11-05",
-                            "capabilities": {"tools": {}},
-                            "serverInfo": {"name": "fast-mcp", "version": "1.0"},
-                        })
-                    elif method == "tools/list":
-                        respond(req, {"tools": [{
-                            "name": "ping",
-                            "description": "Return the input text.",
-                            "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}}},
-                        }]})
-                    elif method == "tools/call":
-                        text = req.get("params", {}).get("arguments", {}).get("text", "")
-                        respond(req, {"content": [{"type": "text", "text": f"fast:{text}"}], "isError": False})
-                    else:
-                        respond(req, error=f"unknown method: {method}")
-                """
-            ),
-            encoding="utf-8",
-        )
-        claude_dir = svc.tmp_dir / ".claude"
-        claude_dir.mkdir(parents=True, exist_ok=True)
-        (claude_dir / "settings.json").write_text(
-            json.dumps(
-                {
-                    "mcpServers": {
-                        "fast": {
-                            "command": sys.executable,
-                            "args": [str(fast_server)],
-                        }
-                    }
-                }
-            ),
-            encoding="utf-8",
-        )
-
-        vm = _create_vm(svc, "framed-external")
-        script = r'''
+        vm = _create_vm(svc, "framed-remote")
+        script = f'''
 import json
 import subprocess
 import sys
 
 messages = [
-    {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+    {{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {{
         "protocolVersion": "2024-11-05",
-        "capabilities": {},
-        "clientInfo": {"name": "external-e2e", "version": "1.0"},
-    }},
-    {"jsonrpc": "2.0", "method": "notifications/initialized"},
-    {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
-    {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
-        "name": "fast__ping",
-        "arguments": {"text": "external-ok"},
-    }},
+        "capabilities": {{}},
+        "clientInfo": {{"name": "remote-e2e", "version": "1.0"}},
+    }}}},
+    {{"jsonrpc": "2.0", "method": "notifications/initialized"}},
+    {{"jsonrpc": "2.0", "id": 2, "method": "tools/list"}},
+    {{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {{
+        "name": "{server_name}__fixture_lookup",
+        "arguments": {{"query": "external-ok"}},
+    }}}},
 ]
 
 proc = subprocess.run(
     ["/run/capsem-mcp-server"],
-    input="\n".join(json.dumps(m) for m in messages) + "\n",
+    input="\\n".join(json.dumps(m) for m in messages) + "\\n",
     capture_output=True,
     text=True,
     timeout=30,
 )
 responses = [json.loads(line) for line in proc.stdout.splitlines() if line.strip()]
-print(json.dumps({"returncode": proc.returncode, "stderr": proc.stderr, "responses": responses}))
+print(json.dumps({{"returncode": proc.returncode, "stderr": proc.stderr, "responses": responses}}))
 sys.exit(proc.returncode)
 '''
         result = _exec_cli(svc, vm, _guest_python(script), timeout=90)
         assert result.returncode == 0, result.stderr
         responses = _responses_by_id(result.stdout)
-        assert "fast__ping" in json.dumps(responses[2]["result"])
-        assert "fast:external-ok" in json.dumps(responses[3]["result"])
+        assert f"{server_name}__fixture_lookup" in json.dumps(responses[2]["result"])
+        assert "capsem-mock-server:mcp:fixture_lookup" in json.dumps(responses[3]["result"])
 
         row = _wait_for_mcp_row(
             _session_db(svc, vm),
             lambda r: r["request_id"] == "3" and r["decision"] == "allowed",
         )
-        assert row["server_name"] == "fast"
-        assert row["tool_name"] == "fast__ping"
+        assert row["server_name"] == server_name
+        assert row["tool_name"] == f"{server_name}__fixture_lookup"
         assert "external-ok" in row["request_preview"]
-        assert "fast:external-ok" in row["response_preview"]
+        assert "capsem-mock-server:mcp:fixture_lookup" in row["response_preview"]
     finally:
         if vm is not None:
             _delete_vm(svc, vm)
         svc.stop()
-
-
-def test_framed_guest_mcp_policy_v2_controls_external_stdio_tool_from_settings():
-    svc = _start_service()
-    vm = None
-    try:
-        call_log = svc.tmp_dir / "fast_policy_calls.jsonl"
-        fast_server = svc.tmp_dir / "fast_policy_mcp.py"
-        fast_server.write_text(
-            textwrap.dedent(
-                f"""\
-                import json
-                import sys
-
-                call_log = {str(call_log)!r}
-
-                def respond(req, result=None, error=None):
-                    msg = {{"jsonrpc": "2.0", "id": req.get("id")}}
-                    if error is not None:
-                        msg["error"] = {{"code": -32000, "message": error}}
-                    else:
-                        msg["result"] = result
-                    print(json.dumps(msg), flush=True)
-
-                for line in sys.stdin:
-                    req = json.loads(line)
-                    if "id" not in req:
-                        continue
-                    method = req.get("method")
-                    if method == "initialize":
-                        respond(req, {{
-                            "protocolVersion": "2024-11-05",
-                            "capabilities": {{"tools": {{}}}},
-                            "serverInfo": {{"name": "fast-policy-mcp", "version": "1.0"}},
-                        }})
-                    elif method == "tools/list":
-                        respond(req, {{"tools": [{{
-                            "name": "ping",
-                            "description": "Return the input text.",
-                            "inputSchema": {{"type": "object", "properties": {{"text": {{"type": "string"}}}}}},
-                        }}]}})
-                    elif method == "tools/call":
-                        text = req.get("params", {{}}).get("arguments", {{}}).get("text", "")
-                        with open(call_log, "a", encoding="utf-8") as f:
-                            f.write(json.dumps({{"text": text}}) + "\\n")
-                        if text == "external-return":
-                            result_text = "fast-return-secret"
-                        else:
-                            result_text = f"fast:{{text}}"
-                        respond(req, {{"content": [{{"type": "text", "text": result_text}}], "isError": False}})
-                    else:
-                        respond(req, error=f"unknown method: {{method}}")
-                """
-            ),
-            encoding="utf-8",
-        )
-        claude_dir = svc.tmp_dir / ".claude"
-        claude_dir.mkdir(parents=True, exist_ok=True)
-        (claude_dir / "settings.json").write_text(
-            json.dumps(
-                {
-                    "mcpServers": {
-                        "fast": {
-                            "command": sys.executable,
-                            "args": [str(fast_server)],
-                        }
-                    }
-                }
-            ),
-            encoding="utf-8",
-        )
-        saved = svc.client().post(
-            "/settings",
-            {
-                "policy.mcp.block_external_deny_text": {
-                    "on": "mcp.request",
-                    "if": 'method == "tools/call" && tool.name == "fast__ping" && arguments.text == "external-deny"',
-                    "decision": "block",
-                    "priority": 10,
-                    "reason": "Block external MCP deny marker",
-                },
-                "policy.mcp.block_external_secret_return": {
-                    "on": "mcp.response",
-                    "if": 'method == "tools/call" && tool.name == "fast__ping" && response.text.contains("fast-return-secret")',
-                    "decision": "block",
-                    "priority": 20,
-                    "reason": "Do not return external MCP secrets",
-                },
-            },
-            timeout=15,
-        )
-        assert (
-            saved["effective_rules"]["mcp"]["block_external_deny_text"]["decision"]
-            == "block"
-        )
-        assert (
-            saved["effective_rules"]["mcp"]["block_external_secret_return"]["on"]
-            == "mcp.response"
-        )
-        reload_response = svc.client().post("/reload-config", {}, timeout=15)
-        assert reload_response["success"] is True
-
-        vm = _create_vm(svc, "framed-external-policy")
-        script = r'''
-import json
-import subprocess
-import sys
-
-messages = [
-    {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
-        "protocolVersion": "2024-11-05",
-        "capabilities": {},
-        "clientInfo": {"name": "external-policy-e2e", "version": "1.0"},
-    }},
-    {"jsonrpc": "2.0", "method": "notifications/initialized"},
-    {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
-    {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
-        "name": "fast__ping",
-        "arguments": {"text": "external-deny"},
-    }},
-    {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {
-        "name": "fast__ping",
-        "arguments": {"text": "external-return"},
-    }},
-]
-
-proc = subprocess.run(
-    ["/run/capsem-mcp-server"],
-    input="\n".join(json.dumps(m) for m in messages) + "\n",
-    capture_output=True,
-    text=True,
-    timeout=30,
-)
-responses = [json.loads(line) for line in proc.stdout.splitlines() if line.strip()]
-print(json.dumps({"returncode": proc.returncode, "stderr": proc.stderr, "responses": responses}))
-sys.exit(proc.returncode)
-'''
-        result = _exec_cli(svc, vm, _guest_python(script), timeout=90)
-        assert result.returncode == 0, result.stderr
-        assert "external-deny" not in result.stdout
-        assert "fast-return-secret" not in result.stdout
-        responses = _responses_by_id(result.stdout)
-        assert "fast__ping" in json.dumps(responses[2]["result"])
-        assert responses[3]["error"]["message"].startswith(
-            "MCP request blocked by policy"
-        )
-        assert responses[4]["error"]["message"].startswith(
-            "MCP response blocked by policy"
-        )
-
-        logged_calls = []
-        if call_log.exists():
-            logged_calls = [
-                json.loads(line)["text"]
-                for line in call_log.read_text(encoding="utf-8").splitlines()
-            ]
-        assert logged_calls == ["external-return"]
-
-        db_path = _session_db(svc, vm)
-        blocked_request = _wait_for_mcp_row(
-            db_path,
-            lambda r: r["request_id"] == "3" and r["decision"] == "denied",
-        )
-        assert blocked_request["server_name"] == "fast"
-        assert blocked_request["tool_name"] == "fast__ping"
-        assert blocked_request["policy_mode"] == "enforce"
-        assert blocked_request["policy_action"] == "block"
-        assert (
-            blocked_request["policy_rule"]
-            == "policy.mcp.block_external_deny_text"
-        )
-        assert "redacted_by_policy" in (blocked_request["request_preview"] or "")
-        assert "external-deny" not in (blocked_request["request_preview"] or "")
-        assert blocked_request["response_preview"] is None
-
-        blocked_response = _wait_for_mcp_row(
-            db_path,
-            lambda r: r["request_id"] == "4" and r["decision"] == "denied",
-        )
-        assert blocked_response["server_name"] == "fast"
-        assert blocked_response["tool_name"] == "fast__ping"
-        assert blocked_response["policy_mode"] == "enforce"
-        assert blocked_response["policy_action"] == "block"
-        assert (
-            blocked_response["policy_rule"]
-            == "policy.mcp.block_external_secret_return"
-        )
-        assert "external-return" in (blocked_response["request_preview"] or "")
-        assert "fast-return-secret" not in (
-            blocked_response["response_preview"] or ""
-        )
-        assert blocked_response["response_preview"] is None
-    finally:
-        if vm is not None:
-            _delete_vm(svc, vm)
-        svc.stop()
+        stop_process(mock_proc)
 
 
 def test_framed_guest_mcp_tool_timeout_records_terminal_error(monkeypatch):
     monkeypatch.setenv("CAPSEM_MCP_TOOL_CALL_TIMEOUT_SECS", "1")
     monkeypatch.setenv("CAPSEM_MCP_TOOL_CALL_TIMEOUT_CEILING_SECS", "1")
 
-    svc = _start_service()
+    svc, mock_proc, server_name = _start_mock_mcp_profile_service("slow")
     vm = None
     try:
-        slow_server = svc.tmp_dir / "slow_mcp.py"
-        slow_server.write_text(
-            textwrap.dedent(
-                """\
-                import json
-                import sys
-                import time
-
-                def respond(req, result=None, error=None):
-                    msg = {"jsonrpc": "2.0", "id": req.get("id")}
-                    if error is not None:
-                        msg["error"] = {"code": -32000, "message": error}
-                    else:
-                        msg["result"] = result
-                    print(json.dumps(msg), flush=True)
-
-                for line in sys.stdin:
-                    req = json.loads(line)
-                    if "id" not in req:
-                        continue
-                    method = req.get("method")
-                    if method == "initialize":
-                        respond(req, {
-                            "protocolVersion": "2024-11-05",
-                            "capabilities": {"tools": {}},
-                            "serverInfo": {"name": "slow-mcp", "version": "1.0"},
-                        })
-                    elif method == "tools/list":
-                        respond(req, {"tools": [{
-                            "name": "sleep",
-                            "description": "Sleep before responding.",
-                            "inputSchema": {"type": "object", "properties": {}},
-                        }]})
-                    elif method == "tools/call":
-                        time.sleep(3)
-                        respond(req, {"content": [{"type": "text", "text": "done"}], "isError": False})
-                    else:
-                        respond(req, error=f"unknown method: {method}")
-                """
-            ),
-            encoding="utf-8",
-        )
-        claude_dir = svc.tmp_dir / ".claude"
-        claude_dir.mkdir(parents=True, exist_ok=True)
-        (claude_dir / "settings.json").write_text(
-            json.dumps({
-                "mcpServers": {
-                    "slow": {
-                        "command": sys.executable,
-                        "args": [str(slow_server)],
-                    }
-                }
-            }),
-            encoding="utf-8",
-        )
-
         vm = _create_vm(svc, "framed-timeout")
-        script = r'''
+        script = f'''
 import json
 import subprocess
 import sys
 
 messages = [
-    {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+    {{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {{
         "protocolVersion": "2024-11-05",
-        "capabilities": {},
-        "clientInfo": {"name": "timeout-e2e", "version": "1.0"},
-    }},
-    {"jsonrpc": "2.0", "method": "notifications/initialized"},
-    {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
-    {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
-        "name": "slow__sleep",
-        "arguments": {},
-    }},
+        "capabilities": {{}},
+        "clientInfo": {{"name": "timeout-e2e", "version": "1.0"}},
+    }}}},
+    {{"jsonrpc": "2.0", "method": "notifications/initialized"}},
+    {{"jsonrpc": "2.0", "id": 2, "method": "tools/list"}},
+    {{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {{
+        "name": "{server_name}__slow_sleep",
+        "arguments": {{}},
+    }}}},
 ]
 
 proc = subprocess.run(
     ["/run/capsem-mcp-server"],
-    input="\n".join(json.dumps(m) for m in messages) + "\n",
+    input="\\n".join(json.dumps(m) for m in messages) + "\\n",
     capture_output=True,
     text=True,
     timeout=20,
 )
 responses = [json.loads(line) for line in proc.stdout.splitlines() if line.strip()]
-print(json.dumps({"returncode": proc.returncode, "stderr": proc.stderr, "responses": responses}))
+print(json.dumps({{"returncode": proc.returncode, "stderr": proc.stderr, "responses": responses}}))
 sys.exit(proc.returncode)
 '''
         result = _exec_cli(svc, vm, _guest_python(script), timeout=30)
         assert result.returncode == 0, result.stderr
         responses = _responses_by_id(result.stdout)
-        assert "slow__sleep" in json.dumps(responses[2]["result"])
+        assert f"{server_name}__slow_sleep" in json.dumps(responses[2]["result"])
         assert responses[3]["error"]["message"].startswith("MCP request timed out")
 
         timeout_row = _wait_for_mcp_row(
             _session_db(svc, vm),
             lambda r: r["request_id"] == "3" and r["decision"] == "error",
         )
-        assert timeout_row["tool_name"] == "slow__sleep"
+        assert timeout_row["server_name"] == server_name
+        assert timeout_row["tool_name"] == f"{server_name}__slow_sleep"
         assert timeout_row["policy_action"] == "allow"
         assert "timed out" in timeout_row["error_message"]
     finally:
         if vm is not None:
             _delete_vm(svc, vm)
         svc.stop()
+        stop_process(mock_proc)
 
 
 def test_framed_guest_mcp_non_tool_timeout_records_terminal_error(monkeypatch):
     monkeypatch.setenv("CAPSEM_MCP_DEFAULT_TIMEOUT_SECS", "1")
 
-    svc = _start_service()
+    svc, mock_proc, server_name = _start_mock_mcp_profile_service("slowlist")
     vm = None
     try:
-        slow_server = svc.tmp_dir / "slow_list_mcp.py"
-        slow_server.write_text(
-            textwrap.dedent(
-                """\
-                import json
-                import sys
-                import time
-
-                def respond(req, result=None, error=None):
-                    msg = {"jsonrpc": "2.0", "id": req.get("id")}
-                    if error is not None:
-                        msg["error"] = {"code": -32000, "message": error}
-                    else:
-                        msg["result"] = result
-                    print(json.dumps(msg), flush=True)
-
-                for line in sys.stdin:
-                    req = json.loads(line)
-                    if "id" not in req:
-                        continue
-                    method = req.get("method")
-                    if method == "initialize":
-                        respond(req, {
-                            "protocolVersion": "2024-11-05",
-                            "capabilities": {"tools": {}},
-                            "serverInfo": {"name": "slow-list-mcp", "version": "1.0"},
-                        })
-                    elif method == "tools/list":
-                        respond(req, {"tools": []})
-                    elif method == "resources/list":
-                        respond(req, {"resources": [{
-                            "uri": "doc://slow",
-                            "name": "slow-doc",
-                            "description": "Slow resource",
-                            "mimeType": "text/plain",
-                        }]})
-                    elif method == "resources/read":
-                        time.sleep(3)
-                        respond(req, {"contents": [{
-                            "uri": "doc://slow",
-                            "mimeType": "text/plain",
-                            "text": "too late",
-                        }]})
-                    elif method == "prompts/list":
-                        respond(req, {"prompts": []})
-                    elif method == "prompts/get":
-                        respond(req, {"tools": []})
-                    else:
-                        respond(req, error=f"unknown method: {method}")
-                """
-            ),
-            encoding="utf-8",
-        )
-        claude_dir = svc.tmp_dir / ".claude"
-        claude_dir.mkdir(parents=True, exist_ok=True)
-        (claude_dir / "settings.json").write_text(
-            json.dumps({
-                "mcpServers": {
-                    "slowlist": {
-                        "command": sys.executable,
-                        "args": [str(slow_server)],
-                    }
-                }
-            }),
-            encoding="utf-8",
-        )
-
         vm = _create_vm(svc, "framed-non-tool-timeout")
-        script = r'''
+        script = f'''
 import json
 import subprocess
 import sys
 
 messages = [
-    {"jsonrpc": "2.0", "id": "slow-resource-init", "method": "initialize", "params": {
+    {{"jsonrpc": "2.0", "id": "slow-resource-init", "method": "initialize", "params": {{
         "protocolVersion": "2024-11-05",
-        "capabilities": {},
-        "clientInfo": {"name": "non-tool-timeout-e2e", "version": "1.0"},
-    }},
-    {"jsonrpc": "2.0", "method": "notifications/initialized"},
-    {"jsonrpc": "2.0", "id": "slow-resource-request", "method": "resources/read", "params": {
-        "uri": "capsem://slowlist/doc://slow",
-    }},
+        "capabilities": {{}},
+        "clientInfo": {{"name": "non-tool-timeout-e2e", "version": "1.0"}},
+    }}}},
+    {{"jsonrpc": "2.0", "method": "notifications/initialized"}},
+    {{"jsonrpc": "2.0", "id": "slow-resource-request", "method": "resources/read", "params": {{
+        "uri": "capsem://{server_name}/doc://slow",
+    }}}},
 ]
 
 proc = subprocess.run(
     ["/run/capsem-mcp-server"],
-    input="\n".join(json.dumps(m) for m in messages) + "\n",
+    input="\\n".join(json.dumps(m) for m in messages) + "\\n",
     capture_output=True,
     text=True,
     timeout=20,
 )
 responses = [json.loads(line) for line in proc.stdout.splitlines() if line.strip()]
-print(json.dumps({"returncode": proc.returncode, "stderr": proc.stderr, "responses": responses}))
+print(json.dumps({{"returncode": proc.returncode, "stderr": proc.stderr, "responses": responses}}))
 sys.exit(proc.returncode)
 '''
         result = _exec_cli(svc, vm, _guest_python(script), timeout=30)
@@ -1662,6 +1084,7 @@ sys.exit(proc.returncode)
                 r["request_id"] == "slow-resource-request" and r["decision"] == "error"
             ),
         )
+        assert timeout_row["server_name"] == server_name
         assert timeout_row["method"] == "resources/read"
         assert timeout_row["policy_action"] == "allow"
         assert "timed out" in timeout_row["error_message"]
@@ -1669,6 +1092,7 @@ sys.exit(proc.returncode)
         if vm is not None:
             _delete_vm(svc, vm)
         svc.stop()
+        stop_process(mock_proc)
 
 
 def test_framed_guest_mcp_reconnects_after_persistent_resume():
@@ -1685,9 +1109,9 @@ def test_framed_guest_mcp_reconnects_after_persistent_resume():
         assert first.returncode == 0, first.stderr
         assert "local__echo" in json.dumps(_responses_by_id(first.stdout)["before-resume-list"])
 
-        stop_response = svc.client().post(f"/stop/{vm}", {}, timeout=90)
+        stop_response = svc.client().post(f"/vms/{vm}/stop", {}, timeout=90)
         assert stop_response["success"] is True
-        resume_response = svc.client().post(f"/resume/{vm}", {}, timeout=120)
+        resume_response = svc.client().post(f"/vms/{vm}/resume", {}, timeout=120)
         assert resume_response["id"] == vm
         if not wait_exec_ready(svc.client(), vm):
             pytest.fail(f"VM {vm} never became exec-ready after resume")

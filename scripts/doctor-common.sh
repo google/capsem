@@ -32,6 +32,15 @@ FIX_NEEDED=()
 
 _reg() { FIX_IDS+=("$1"); FIX_CMDS+=("$2"); FIX_DESCS+=("$3"); FIX_NEEDED+=(0); }
 
+_doctor_build_assets_all_profiles() {
+    local arch
+    arch="$(uname -m | sed 's/aarch64/arm64/;s/arm64/arm64/;s/x86_64/x86_64/')"
+    local profile
+    for profile in config/profiles/*/profile.toml; do
+        just build-assets "$(basename "$(dirname "$profile")")" "$arch"
+    done
+}
+
 # Order matters: tools before builds, builds before assets
 _reg rustup-targets   "rustup target add aarch64-unknown-linux-musl x86_64-unknown-linux-musl" \
                       "Install Rust cross-compile targets"
@@ -45,8 +54,6 @@ _reg b3sum            "cargo install b3sum --locked" \
                       "Install b3sum"
 _reg cargo-tauri      "cargo install tauri-cli --locked" \
                       "Install cargo-tauri (tauri-cli crate)"
-_reg minisign         "case \"$(uname -s)\" in Darwin) brew install minisign ;; Linux) if command -v apt-get >/dev/null 2>&1; then sudo apt-get update && sudo apt-get install -y minisign; elif command -v dnf >/dev/null 2>&1; then sudo dnf install -y minisign; else echo 'install minisign via your OS package manager' >&2; exit 1; fi ;; *) echo 'install minisign via your OS package manager' >&2; exit 1 ;; esac" \
-                      "Install minisign"
 _reg entitlements     "git checkout entitlements.plist" \
                       "Restore entitlements.plist"
 _reg cargo-config     "git checkout .cargo/config.toml" \
@@ -57,14 +64,8 @@ _reg run-signed-chmod "chmod +x scripts/run_signed.sh" \
                       "Make scripts/run_signed.sh executable"
 _reg pnpm-install     "cd frontend && pnpm install --frozen-lockfile" \
                       "Install frontend deps"
-_reg linux-host-build-deps "case \"\$(uname -s)\" in Linux) if command -v apt-get >/dev/null 2>&1; then sudo apt-get update && sudo apt-get install -y --no-install-recommends pkg-config libssl-dev libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev; elif command -v dnf >/dev/null 2>&1; then sudo dnf install -y pkgconf-pkg-config openssl-devel gtk3-devel webkit2gtk4.1-devel libappindicator-gtk3-devel librsvg2-devel libxdo-devel; else echo 'install pkg-config, OpenSSL, GTK, WebKitGTK, appindicator, librsvg, and xdo development headers via your OS package manager' >&2; exit 1; fi ;; *) exit 0 ;; esac" \
-                      "Install Linux host-build dependencies"
-_reg python-deps     "uv sync" \
-                      "Install Python dependencies"
-_reg linux-kvm-devices "scripts/fix-linux-kvm-devices.sh" \
-                      "Repair Linux KVM and vhost-vsock device access"
-_reg build-assets     "HOST_ARCH=\$(uname -m | sed 's/aarch64/arm64/;s/amd64/x86_64/'); [[ \"\$HOST_ARCH\" == \"arm64\" ]] || HOST_ARCH=x86_64; touch .dev-setup && CAPSEM_SKIP_ASSET_CHECK=1 just build-assets \"\$HOST_ARCH\"" \
-                      "Build host-arch VM assets (kernel + rootfs)"
+_reg build-assets     "touch .dev-setup && CAPSEM_SKIP_ASSET_CHECK=1 _doctor_build_assets_all_profiles" \
+                      "Build VM assets (kernel + rootfs)"
 _reg pack-initrd      "touch .dev-setup && CAPSEM_SKIP_ASSET_CHECK=1 just _pack-initrd" \
                       "Cross-compile guest binaries + repack initrd"
 
@@ -149,7 +150,7 @@ echo -e "${BOLD}Capsem Doctor${NC}"
 echo "============================================"
 
 section "System Tools"
-for tool in cargo rustup node python3 uv pnpm sqlite3 git b3sum; do
+for tool in cargo rustup node python3 uv pnpm sqlite3 git b3sum flock; do
     if command -v "$tool" &>/dev/null; then
         pass "$tool"
     else
@@ -157,27 +158,6 @@ for tool in cargo rustup node python3 uv pnpm sqlite3 git b3sum; do
         fail "$tool not found -- install: $_hint"
     fi
 done
-
-section "Python Environment"
-if command -v uv >/dev/null 2>&1; then
-    if uv run python3 - <<'PY' >/dev/null 2>&1
-import blake3
-import click
-import jinja2
-import psutil
-import pydantic
-import rich
-import yaml
-import zstandard
-PY
-    then
-        pass "uv Python dependencies"
-    else
-        fixable python-deps "uv Python dependencies missing"
-    fi
-else
-    fail "uv Python dependencies unavailable"
-fi
 
 section "Rust Toolchain"
 for target in aarch64-unknown-linux-musl x86_64-unknown-linux-musl; do
@@ -206,13 +186,6 @@ _check_cargo_tool cargo-llvm-cov cargo-llvm-cov
 _check_cargo_tool cargo-audit    cargo-audit
 _check_cargo_tool b3sum          b3sum
 _check_cargo_tool cargo-tauri    cargo-tauri
-
-section "Manifest Signing Tools"
-if command -v minisign &>/dev/null; then
-    pass "minisign"
-else
-    fixable minisign "minisign not found -- install: $(tool_hint minisign)"
-fi
 
 section "Container Tools"
 if command -v docker &>/dev/null; then
@@ -258,19 +231,6 @@ if [[ -z "${CAPSEM_SKIP_ASSET_CHECK:-}" ]]; then
                 fixable build-assets "asset integrity check failed"
             fi
         fi
-
-        if [[ -f "$ASSETS_DIR/manifest.json.minisig" ]]; then
-            _manifest_sig_result=$(bash scripts/verify-local-manifest-signature.sh "$ASSETS_DIR" config/manifest-sign.pub 2>&1 || true)
-            if [[ "$_manifest_sig_result" == *"verifies with"* ]]; then
-                pass "local asset manifest signature ($_manifest_sig_result)"
-            elif [[ "$_manifest_sig_result" == *"minisign not found"* ]]; then
-                fixable minisign "minisign not found -- install: $(tool_hint minisign)"
-            else
-                fixable pack-initrd "local asset manifest signature invalid -- $_manifest_sig_result"
-            fi
-        else
-            fixable pack-initrd "local asset manifest signature missing"
-        fi
     else
         fixable build-assets "manifest.json missing"
     fi
@@ -282,26 +242,7 @@ section "Guest Binaries"
 if [[ -z "${CAPSEM_SKIP_ASSET_CHECK:-}" ]]; then
     arch=$(uname -m | sed 's/aarch64/arm64/')
     release_dir="target/linux-agent/$arch"
-    if command -v uv >/dev/null 2>&1; then
-        guest_bins=()
-        while IFS= read -r b; do
-            guest_bins+=("$b")
-        done < <(PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}" uv run python3 - <<'PY'
-from capsem.builder.docker import GUEST_BINARIES
-print("\n".join(GUEST_BINARIES))
-PY
-)
-    else
-        guest_bins=()
-        while IFS= read -r b; do
-            guest_bins+=("$b")
-        done < <(PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}" python3 - <<'PY'
-from capsem.builder.docker import GUEST_BINARIES
-print("\n".join(GUEST_BINARIES))
-PY
-)
-    fi
-    for b in "${guest_bins[@]}"; do
+    for b in capsem-pty-agent capsem-net-proxy capsem-mcp-server; do
         if [[ -f "$release_dir/$b" ]]; then
             if file "$release_dir/$b" 2>/dev/null | grep -E -q "ELF 64-bit"; then
                 pass "$b (Linux ELF)"
@@ -317,7 +258,7 @@ else
 fi
 
 section "Release Tools"
-for tool in gh openssl minisign cargo-sbom; do
+for tool in gh openssl cargo-sbom cdxgen; do
     if command -v "$tool" &>/dev/null; then
         pass "$tool"
     else
@@ -398,7 +339,7 @@ if [[ "$_needed_count" -gt 0 ]]; then
         exec "$0"
     else
         echo ""
-        echo -e "Run ${BOLD}just doctor fix${NC} to auto-fix these issues."
+        echo -e "Run ${BOLD}just doctor-fix${NC} to auto-fix these issues."
     fi
 fi
 

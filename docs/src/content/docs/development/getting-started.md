@@ -14,7 +14,7 @@ sidebar:
 | **macOS 13+** (Ventura) | Required for Virtualization.framework |
 | **Apple Silicon** (arm64) | Intel Macs are not supported |
 | **Xcode Command Line Tools** | Provides `codesign`, `cc`, and system headers. Install: `xcode-select --install` |
-| **Docker (via Colima on macOS)** | Needed for `just build-assets` (kernel + rootfs builds) |
+| **Docker (via Colima on macOS)** | Needed for `just build-assets code` (kernel + rootfs builds) |
 
 ### Linux
 
@@ -23,7 +23,7 @@ sidebar:
 | **Debian/Ubuntu** | apt-based distro (for .deb install) |
 | **x86_64 or arm64** | Both architectures supported |
 | **KVM** | `/dev/kvm` must be accessible. Load `kvm-intel` or `kvm-amd` module. |
-| **Docker** | Needed for `just build-assets` (kernel + rootfs builds) |
+| **Docker** | Needed for `just build-assets code` (kernel + rootfs builds) |
 
 ## Clone and bootstrap
 
@@ -42,27 +42,34 @@ git clone https://github.com/google/capsem.git && cd capsem
 | 1 (hard prereqs) | `bash`, `git`, `curl` | system package manager (you install) | Without curl we can't fetch any installer |
 | 1 | `rustup` (stable, minimal profile) | `sh.rustup.rs` official installer | Source of `cargo` |
 | 1 | `just` | `just.systems` installer → `~/.local/bin` | Recipe runner — used by every other build step |
-| 2 | `uv` | `astral.sh/uv` installer → `~/.local/bin` | Python deps for `capsem-builder` and `capsem-admin` |
-| 2 | Python deps and admin CLI | `uv sync`, then `uv run capsem-admin --version` | Locked via `uv.lock`; proves the editable developer `capsem-admin` entrypoint is installed |
-| 2 (macOS) | `flock`, `minisign`, `pnpm` | `brew` | flock = multi-agent recipe lock; minisign = local asset manifest signatures; pnpm = frontend deps |
-| 2 (macOS) | `colima`, `docker`, `docker-buildx` | `brew` + symlink into `~/.docker/cli-plugins` | Container runtime for `just build-assets` |
+| 2 | `uv` | `astral.sh/uv` installer → `~/.local/bin` | Python deps for `capsem-builder` |
+| 2 | Python deps | `uv sync` | Locked via `uv.lock` |
+| 2 (macOS) | `flock`, `pnpm` | `brew` | flock = multi-agent recipe lock; pnpm = frontend deps |
+| 2 (macOS) | `colima`, `docker`, `docker-buildx` | `brew` + symlink into `~/.docker/cli-plugins` | Container runtime for `just build-assets code` |
 | 2 (macOS) | Colima VM | `colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8` | Runs Docker; Rosetta enables x86_64 cross-builds |
 | 2 | Frontend deps | `pnpm install --frozen-lockfile` (in `frontend/`) | Tauri UI dependencies |
-| 3 | Doctor `--fix` | `scripts/doctor-common.sh --fix` | Installs Rust targets, `cargo-llvm-cov`, `cargo-audit`, `b3sum`, `cargo-tauri` (= `tauri-cli` crate), `minisign`, builds VM assets, packs initrd |
+| 3 | Doctor `--fix` | `scripts/doctor-common.sh --fix` | Installs Rust targets, `cargo-llvm-cov`, `cargo-audit`, `b3sum`, `cargo-tauri` (= `tauri-cli` crate), `cargo-sbom`, builds VM assets, packs initrd |
 
 Pressing **Enter** at any prompt accepts the install (Y is the default). Type `n` to skip — bootstrap continues and surfaces the missing tool in the doctor report at the end.
 
 ## Build VM assets
 
 ```bash
-just build-assets
+just build-assets code
 ```
 
-Builds the Linux kernel and rootfs via Docker (~10 min on first run). Image
-inputs are derived from Profile V2 payloads; repo-local `guest/config/build.toml`
-is only the developer input used for built-in profile generation. Assets are
-gitignored and must be built locally. See [Life of a Build > Container
-runtime](./stack#container-runtime) if you need to retune Colima resources.
+Builds the Linux kernel and rootfs via Docker (~10 min on first run). The code
+profile currently builds against the stable 7.0 kernel lane and EROFS/LZ4HC
+rootfs contract. Kernel branch changes are backend image-spec changes made
+through the profile-derived build rail, then verified by `capsem-admin image
+build` and the Linux handoff gate. Assets are gitignored and must be built
+locally. See [Life of a Build > Container runtime](./stack#container-runtime)
+if you need to retune Colima resources.
+
+The build is profile-derived. `code` is the default coding-agent profile, and
+the runtime profile for the current local build is generated under
+`target/config/` by `capsem-admin profile materialize` during `just shell`,
+`just exec`, `just smoke`, `just test`, and release packaging.
 
 ## Verify
 
@@ -98,49 +105,32 @@ On macOS, the compiled binary must be codesigned with Apple's `com.apple.securit
 |-------|-------------------|-----------------|
 | Xcode CLTools | `xcode-select -p` returns a path | `xcode-select --install` |
 | `codesign` binary | The tool exists in PATH | Install Xcode CLTools (see above) |
-| `entitlements.plist` | The file exists and is readable | `just doctor fix` (auto-restores from git) |
-| `.cargo/config.toml` | Cargo runner configured | `just doctor fix` (auto-restores from git) |
-| `run_signed.sh` | Script exists and is executable | `just doctor fix` (auto-restores from git) |
+| `entitlements.plist` | The file exists and is readable | `just doctor-fix` (auto-restores from git) |
+| `.cargo/config.toml` | Cargo runner configured | `just doctor-fix` (auto-restores from git) |
+| `run_signed.sh` | Script exists and is executable | `just doctor-fix` (auto-restores from git) |
 | Test sign | Compiles a tiny binary + signs it with entitlements | See [troubleshooting](#codesign-fails) below |
 
 No Apple Developer ID certificate is needed for local development -- ad-hoc signing (`--sign -`) is sufficient.
 
 ## Customizing the VM image
 
-To add packages, MCP servers, AI providers, VM assets, enforcement packs, or
-detection packs, edit a Profile V2 payload and use `uv run capsem-admin` to
-validate and derive the build artifacts. The old hand-edited `guest/config`
-workflow is only a transitional generation input for built-in profiles, not
-the release authority.
-
-```bash
-uv run capsem-admin profile validate config/profiles/base/coding.profile.toml --json
-uv run capsem-admin image build config/profiles/base/coding.profile.toml --dry-run --json
-uv run capsem-admin detection compile corp-detections.yml --out detection.ir.json --json
-```
-
-See [Admin CLI](/usage/admin-cli/) and [Development Custom Images](./custom-images)
-for the workflow.
+To add packages or guest tools, edit the profile-owned files under
+`config/profiles/code/` and rebuild through `just build-assets code`.
+Profile/corp files own security rules and provider access. See
+[Customizing VM Images](./custom-images) for the workflow.
 
 ## API keys (optional)
 
-Needed for `just full-test` (integration tests exercise real AI API calls) and interactive AI sessions inside the VM.
-
-Create `~/.capsem/user.toml`:
-
-```toml
-[ai.anthropic]
-api_key = "sk-ant-..."
-
-[ai.google]
-api_key = "AIza..."
-```
+Interactive AI sessions can configure credentials inside the VM or let the
+credential broker capture/materialize them at a supported boundary. Raw API keys
+are not settings-owned boot secrets; logs and profile state use BLAKE3
+references.
 
 ## Troubleshooting
 
 ### `just doctor` fails
 
-Run `just doctor fix` to auto-fix all fixable issues. Fixes run in dependency order (Rust targets, cargo tools, `minisign`, config files, build assets, guest binaries). Non-fixable issues (system tools like node, docker) show platform-specific install hints.
+Run `just doctor-fix` to auto-fix all fixable issues. Fixes run in dependency order (Rust targets, cargo tools, config files, build assets, guest binaries). Non-fixable issues (system tools like node, docker) show platform-specific install hints.
 
 ### Codesign fails
 
@@ -153,11 +143,11 @@ If `just run` or `just doctor` reports a codesign failure:
    - Check SIP status: `csrutil status` (should be "enabled")
    - Verify `cc` works: `echo 'int main(){return 0;}' | cc -x c -o /tmp/test -` -- if this fails, reinstall CLTools: `sudo rm -rf /Library/Developer/CommandLineTools && xcode-select --install`
 
-### `just build-assets` or `just test-install` fails with exit 137 (or 143 mid-cargo-build)
+### `just build-assets code` or `just test-install` fails with exit 137 (or 143 mid-cargo-build)
 
 The container runtime ran out of memory. The Tauri install-test cold build needs >12GB. See [Life of a Build > Container runtime](./stack#container-runtime) for how to bump Colima to 16GB.
 
-### `just build-assets` fails with "Release file not valid yet"
+### `just build-assets code` fails with "Release file not valid yet"
 
 The container VM's clock has drifted:
 - Colima: `colima stop && colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8`
@@ -165,6 +155,6 @@ The container VM's clock has drifted:
 
 ### `just run` fails with "assets not found"
 
-Run `just build-assets` first. Assets are gitignored and must be built locally.
+Run `just build-assets code` first. Assets are gitignored and must be built locally.
 
 For runtime issues (disk full, boot hangs, cross-compile errors, network problems), see [Troubleshooting](/debugging/troubleshooting/).

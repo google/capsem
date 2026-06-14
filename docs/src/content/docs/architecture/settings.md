@@ -1,215 +1,344 @@
 ---
-title: Settings Architecture
-description: Profile V2 service settings, profile discovery, and effective VM settings.
+title: Settings System
+description: How Capsem loads, merges, and applies UI/application preferences from defaults, user, and enterprise sources.
 ---
 
-# Settings Architecture
+Capsem's settings system controls UI/application preferences: appearance,
+notifications, local app behavior, and other service-level preferences that are
+not profile runtime truth. VM resources, assets, MCP, provider access,
+enforcement, detections, and credential brokerage are owned by profile/corp
+contracts plus plugins, not by settings-owned AI provider toggles. Settings are
+declared in TOML, merged from defaults, user, and enterprise sources with
+enterprise override, and rendered in a dynamic UI.
 
-Capsem settings are Profile V2-only. Host state lives in `service.toml` and
-profile TOML files; VM runtime state is a resolved, session-local
-`vm-effective-settings.toml` attachment.
+## File Sources
 
-There are two different contracts:
+Three TOML files feed the settings system, merged with a strict priority order:
 
-| Contract | Scope | Owned by |
+```mermaid
+flowchart LR
+  DT["defaults.toml\n(compile-time embedded)"] --> R[Resolver]
+  UT["settings.toml\n(~/.capsem/settings.toml)"] --> R
+  CT["corp.toml\n(/etc/capsem/corp.toml)"] --> R
+  R --> RS["Resolved Settings"]
+  RS --> TB[Tree Builder]
+  TB --> SR["Settings Response\n{tree, issues}"]
+```
+
+| File | Location | Purpose | Editable |
+|---|---|---|---|
+| `defaults.toml` | Embedded at compile time | All built-in settings with types and defaults | No (source code) |
+| `settings.toml` | `~/.capsem/settings.toml` | User UI/app preference overrides | Yes (UI + manual) |
+| `corp.toml` | `/etc/capsem/corp.toml` | Enterprise lockdown (MDM-distributed) | IT admin only |
+
+Environment variables can override the default settings and corp paths for testing.
+
+## Settings Grammar
+
+The settings TOML uses a formal grammar with four node types, distinguished by key presence:
+
+| Discriminant | Node type | Purpose |
 |---|---|---|
-| Service settings | App/service control plane: profile roots, default profile, catalog source, telemetry export, remote policy plugin config, credential references, and asset/cache locations. | `service.toml` plus `capsem.service-settings.v2` schema |
-| Profiles | VM/session product policy: package and tool assumptions, VM resources, AI providers, MCP servers, skills, security capabilities, and enforcement rules. | Profile V2 payloads plus signed profile catalog |
+| has `type` key | **Leaf** | Setting with a stored value |
+| has `action` key | **Action** | UI button/widget, no stored value |
+| neither | **Group** | Container that organizes children |
 
-Do not put VM/session policy into service settings. Do not put service-wide
-profile roots, telemetry endpoints, or credential backend configuration into a
-profile.
+MCP server configuration is profile-owned and may be reflected in profile UI,
+but it is not a settings node type.
 
-## Sources
+### Setting types
+
+| Type | Value format | Default widget |
+|---|---|---|
+| `text` | String | Text input (select if `choices` set) |
+| `number` | Integer | Number input with min/max |
+| `bool` | Boolean | Toggle switch |
+| `password` | String | Masked input with reveal |
+| `apikey` | String | Masked input + prefix hint |
+| `file` | `{ path, content }` | File editor with syntax highlighting |
+| `string_list` | `["a", "b"]` | Chip/tag editor |
+| `int_list` | `[1, 2, 3]` | Number list |
+| `float_list` | `[1.0, 2.5]` | Number list |
+
+### Action nodes
+
+Action nodes declare UI elements directly in the TOML grammar instead of hardcoding them in the frontend:
+
+```toml
+[settings.app.check_update]
+name = "Check for updates"
+action = "check_update"
+
+```
+
+The UI renders these via a finite `ActionKind` enum -- not string comparison.
+
+### Metadata
+
+Each leaf setting can have a `.meta` sub-table with extra fields:
+
+```toml
+[settings.appearance.dark_mode.meta]
+widget = "toggle"
+side_effect = "toggle_theme"
+```
+
+Key metadata fields: `widget` (override default UI widget), `side_effect`
+(frontend action on change), `hidden` (exclude from UI but still active for
+settings resolution), and `builtin` (non-removable). Static API-key metadata and
+provider network policy metadata are retired from settings; credentials are
+broker/plugin-owned and network enforcement is rule-owned.
+
+## Value Resolution
+
+Settings are resolved per-key with corp taking highest priority:
 
 ```mermaid
 flowchart TD
-  S["service.toml"] --> R["Profile V2 resolver"]
-  B["Built-in profiles"] --> R
-  C["Corp profile dirs"] --> R
-  U["User profile dirs"] --> R
-  CD["corp_directives"] --> R
-  R --> E["vm-effective-settings.toml"]
-  E --> P["capsem-process policy and guest boot config"]
+  D["Default value\n(defaults.toml)"] -->|"user has override?"| U
+  U["User value\n(settings.toml)"] -->|"corp has override?"| C
+  C["Corp value\n(corp.toml)"] --> E["Effective value"]
+  style C fill:#7c3aed,color:#fff
+  style U fill:#3b82f6,color:#fff
+  style D fill:#6b7280,color:#fff
 ```
 
-`service.toml` selects the default profile, declares profile roots, stores
-credential references, and carries corp directives. Profile files describe
-capabilities, AI providers, standard MCP servers, VM resources, and policy
-rules.
+**Corp override is final.** When corp.toml sets a value, it becomes `corp_locked: true`. The user cannot change it via the UI.
 
-Profiles also carry an `editable` block for section-level governance. Each
-boolean marks whether user-facing mutation routes may change that section after
-the profile is selected or forked. For example, a corp profile can allow
-`editable.skills = true` and `editable.mcpServers = true` while keeping
-`editable.ai = false` and `editable.security_rules = false`. Forks preserve the
-same editability map, and profile update routes cannot mutate the map itself.
+### Enabled resolution
 
-## Service Settings V2
+Settings can be conditionally enabled via a parent toggle:
 
-Service settings use schema id `capsem.service-settings.v2`. The committed
-schema artifact is:
-
-```text
-schemas/capsem.service-settings.v2.schema.json
+```
+effective_enabled = explicit_enabled AND enabled_by_result
 ```
 
-The Python admin model is `ServiceSettingsV2` in
-`src/capsem/builder/service_settings.py`. JSON enters through Pydantic
-`model_validate_json()` and JSON leaves through `model_dump_json()`. TOML is
-parsed once and immediately validated through the same Pydantic model.
+- **explicit_enabled**: corp `enabled` field > user `enabled` > defaults `enabled` > `true`
+- **enabled_by_result**: if no `enabled_by` pointer, `true`. Otherwise, look up the parent toggle's effective boolean value.
 
-The supported admin commands are:
+Example: when `repository.providers.github.allow` is `false` (corp-locked off),
+child settings such as the repository token field are `enabled: false` and
+greyed out in the UI. Provider allow/block behavior is not represented this
+way; it is expressed as profile/corp security rules.
 
-```bash
-capsem-admin settings init --out service.toml
-capsem-admin settings schema
-capsem-admin settings validate service.toml
-capsem-admin settings validate service.toml --json
-capsem-admin settings doctor service.toml
-capsem-admin settings doctor service.toml --json
+### Hidden resolution
+
+Any setting can be hidden from the UI while remaining active for policy:
+
+```
+effective_hidden = corp_hidden OR user_hidden OR defaults_hidden
 ```
 
-`settings init` writes a valid JSON or TOML draft from the typed
-`ServiceSettingsV2` model. Use `--base-dir`, `--corp-dir`, `--user-dir`,
-`--default-profile`, and `--assets-dir` to seed the service control plane
-without hand-authoring the initial shape.
+Hidden settings are filtered from the tree sent to the frontend but still participate in policy building.
 
-`settings doctor` reports the schema id, default profile, profile-catalog
-configuration, telemetry state, remote-policy state, and credential backend
-without printing credential values.
+After settings edits, resolution re-runs across the current settings file and
+corp locks. Retired behavior bundles and policy maps are no longer settings-owned
+objects.
 
-Profile V2 admin commands currently include:
+## IPC Protocol
 
-```bash
-capsem-admin profile init corp-dev --out corp-dev.profile.json
-capsem-admin profile init corp-dev --out corp-dev.profile.toml
-capsem-admin profile schema
-capsem-admin profile validate corp-dev.profile.json
-capsem-admin profile validate corp-dev.profile.json --json
-capsem-admin image plan corp-dev.profile.toml --json
-capsem-admin image build-workspace corp-dev.profile.toml --out build/corp-dev-image --arch all --json
-capsem-admin image build corp-dev.profile.toml --out assets/ --arch all --template rootfs --json
-capsem-admin image verify corp-dev.profile.toml --assets-dir assets/ --json
-capsem-admin image sbom corp-dev.profile.toml --assets-dir assets/ --out-dir sboms/
-capsem-admin image verify corp-dev.profile.toml --assets-dir assets/ --arch arm64 --inventory assets/arm64/image-inventory.json --json
-capsem-admin image verify corp-dev.profile.toml --assets-dir assets/ --doctor-bundle doctor-bundle.tar --json
-capsem-admin manifest generate --profiles profiles/ --base-url https://profiles.example.com/catalog/ --out manifest.json
-capsem-admin manifest check manifest.json --fast --json
-capsem-admin manifest check manifest.json --download --download-dir downloaded/ --pubkey profile-sign.pub --json
-capsem-admin manifest sign manifest.json --key manifest-sign.key --out manifest.json.minisig
-capsem-admin manifest verify-signature manifest.json --signature manifest.json.minisig --pubkey manifest-sign.pub --json
-capsem-admin enforcement schema
-capsem-admin enforcement validate corp-enforcement.toml --json
-capsem-admin enforcement compile corp-enforcement.toml --json
-capsem-admin enforcement backtest corp-enforcement.toml --events policy-contexts.jsonl --json
-capsem-admin detection schema
-capsem-admin detection validate corp-detections.yml --json
-capsem-admin detection compile corp-detections.yml --out detection.ir.json --json
-capsem-admin detection backtest corp-detections.yml --events policy-contexts.jsonl --json
+The frontend communicates with the backend via HTTP through capsem-gateway (TCP port 19222), which proxies requests to capsem-service over UDS. Two logical operations handle all settings I/O:
+
+```mermaid
+sequenceDiagram
+  participant UI as Frontend Store
+  participant M as SettingsModel
+  participant GW as capsem-gateway
+  participant SVC as capsem-service
+
+  Note over UI: Page load
+  UI->>GW: GET /settings/info
+  GW->>SVC: GET /settings/info (UDS)
+  SVC->>SVC: resolve + build tree + lint
+  SVC-->>GW: SettingsResponse
+  GW-->>UI: {tree, issues}
+  UI->>M: new SettingsModel(response)
+
+  Note over UI: User edits a text field
+  UI->>M: stage(id, value)
+  Note over M: Accumulated locally
+
+  Note over UI: User clicks Save
+  UI->>GW: PATCH /settings/edit {id: value, ...}
+  GW->>SVC: PATCH /settings/edit (UDS)
+  SVC->>SVC: validate ALL then write settings.toml
+  SVC-->>GW: SettingsResponse (fresh state)
+  GW-->>UI: response
+  UI->>M: new SettingsModel(response)
 ```
 
-`profile init` writes a valid JSON or TOML draft for the selected profile id.
-The draft uses Profile V2 defaults, includes both release architectures, and
-should be edited before signing or publishing. `image plan` derives a typed
-build plan from the profile's package/tool contract, VM resources, and declared
-per-architecture assets; it defaults to all supported release architectures and
-can be narrowed with `--arch arm64` or `--arch x86_64`. `image build-workspace`
-materializes a generated build workspace from the same profile contract, so the
-profile is the source of truth and generated `guest/config` TOML is only an
-intermediate for the current Docker templates. `image verify` consumes
-the derived plan and checks local assets under
-`<assets-dir>/<arch>/<asset filename>` for existence, declared byte size, and
-BLAKE3 hash before a manifest or release workflow trusts them. Verification
-also checks the profile's apt, Python, node, and required-tool contract through
-`<assets-dir>/<arch>/image-inventory.json`; missing inventory for any selected
-architecture fails verification. Passing `--inventory` is only needed for a
-non-standard single-arch inventory file or alternate inventory directory.
-Passing `--doctor-bundle` attaches the result of an in-VM
-`capsem-doctor --bundle` probe so release checks can prove the image boots and
-keeps Capsem's runtime invariants, not only that the built files hash correctly.
-`image sbom` turns the same typed inventories into per-architecture SPDX 2.3
-guest-image SBOMs tied to the profile id, revision, and package-contract hash.
+### load_settings
 
-`manifest check --fast` validates the signed profile-catalog manifest shape and
-performs cheap reachability checks. Local `file://` profile payloads are hashed
-and validated against their manifest profile id and revision; HTTP(S) profile
-payload and signature URLs are checked with `HEAD` without downloading bytes.
-`manifest check --download` fetches every referenced profile payload, profile
-signature, VM asset, and VM asset signature, then verifies profile payload
-hashes plus profile-declared VM asset sizes and BLAKE3 hashes. With `--pubkey`,
-it also verifies downloaded profile and VM asset `.minisig` files with
-`minisign`.
+Returns the full `SettingsResponse` in one call:
 
-`manifest generate` creates the Profile V2 catalog manifest from local JSON or
-TOML profile payloads. It hashes the exact payload bytes that will be published,
-derives `.minisig` URLs, chooses the newest active revision as current unless
-overridden with `--current profile=revision`, and supports
-`--status profile@revision=deprecated|revoked` for lifecycle planning.
+| Field | Type | Content |
+|---|---|---|
+| `tree` | `SettingsNode[]` | Hierarchical tree: groups, leaves, actions, MCP servers |
+| `issues` | `ConfigIssue[]` | Validation warnings (invalid JSON, invalid paths, blocked setting writes, etc.) |
 
-`manifest sign` and `manifest verify-signature` use the standard `minisign`
-tool. Linux admins should install the distro package named `minisign` before
-using signing or signature-verification commands.
+`SettingsResponse` intentionally does not include behavior bundles, provider status, MCP
+policy, security rules, plugins, credentials, or VM behavior. Those belong to
+profile/corp contracts, runtime plugin status, or service/VM runtime endpoints.
 
-Enforcement packs and detection packs are profile-owned security contracts. Policy
-packs are enforcement rules and detection packs are finding rules. Detection
-packs may contain Sigma YAML, but `capsem-admin detection compile` validates
-that YAML with pySigma and emits `capsem.detection.ir.v1` before Rust runtime
-code consumes it. See [Enforcement](/security/enforcement/) and
-[Detection Format](/security/detection/).
+### save_settings
 
-Service settings accept only the V2 shape. Legacy defaults JSON, old v1 policy
-config, asset-manifest settings, and ad hoc builder settings are not runtime
-compatibility inputs.
+Accepts a batch of changes as `{ setting_id: value, ... }`. Behavior:
 
-## Resolution
+1. **Validate ALL changes upfront** (atomic -- all or nothing)
+2. **Reject entire batch** if any change targets a corp-locked setting, uses an unknown ID, or fails validation
+3. **Write to settings.toml** in a single file operation
+4. **Return fresh `SettingsResponse`** reflecting the new state
 
-1. Load `service.toml`, defaulting missing fields.
-2. Discover built-in, corp, and user profiles from the configured roots.
-3. Resolve the selected profile inheritance chain.
-4. Merge profile values from base to leaf.
-5. Apply corp directives after profile inheritance.
-6. Emit `vm-effective-settings.toml` into the session directory.
+Bool toggles use `save_settings` immediately. Text, number, file, and list
+changes accumulate locally and are sent as a batch when the user clicks Save.
 
-The VM process reads only the session attachment. It does not reopen host
-settings files at runtime.
-
-## Enforcement
-
-Enforcement rules are authored in Profile V2 sections such as:
+Security rules are stored under `profiles.rules`, `corp.rules`, or referenced
+rule files. A profile can point at shared rule packs:
 
 ```toml
-[security.rules.http.block_secret]
-on = "http.request"
-if = "request.data.contains_secret"
-decision = "block"
-priority = 10
+[rule_files]
+enforcement = "profiles/base/enforcement.toml"
+sigma = "profiles/base/detection.yaml"
 ```
 
-Provider and MCP server toggles can also emit derived rules. Corp profiles
-may author corp-priority rules; user profiles are limited to user-priority
-ranges.
+Profile rule edits use the profile enforcement endpoints, not the settings save
+endpoint.
 
-## MCP
+## Frontend Architecture
 
-MCP runtime configuration is projected from the effective profile:
+The frontend separates logic from rendering through three layers:
 
-- server configuration comes from the profile's standard `mcpServers` map;
-- default tool behavior comes from the `mcp_tools` capability;
-- per-tool rules come from `mcp.request` rules.
+```mermaid
+flowchart TD
+  API["api.ts\nloadSettings() / saveSettings()"]
+  STORE["settings.svelte.ts\nSvelte 5 reactive store"]
+  MODEL["SettingsModel\nPure TypeScript class"]
+  ENUM["settings-enums.ts\nWidget, SideEffect, ActionKind"]
+  VIEW["SettingsSection.svelte\nRecursive tree renderer"]
+  MOCK["mock.ts\nBrowser-only dev data"]
 
-`mcpServers` uses the same top-level shape as common MCP client configs:
-stdio servers define `command`, `args`, and `env`; remote servers define `url`,
-`headers`, and `bearerToken`. Capsem-only governance belongs under the adjacent
-`capsem` object, for example `mcpServers.github.capsem.allowed_tools`.
+  API -->|"SettingsResponse"| STORE
+  STORE -->|"delegates to"| MODEL
+  MODEL -->|"uses"| ENUM
+  VIEW -->|"reads from"| STORE
+  VIEW -->|"getWidget(), getSideEffect()"| MODEL
+  MOCK -.->|"when no gateway"| API
+```
 
-No standalone MCP settings file is loaded by the VM process.
+| Layer | File | Responsibility |
+|---|---|---|
+| **Enums** | `settings-enums.ts` | Typed enums matching Rust serde output (Widget, SideEffect, ActionKind, SettingType) |
+| **Model** | `settings-model.ts` | Pure TypeScript -- parsing, indexing, widget resolution, pending changes, validation. No Svelte dependency. Fully unit-tested. |
+| **Store** | `settings.svelte.ts` | Thin Svelte 5 wrapper -- reactive state, IPC calls, delegates to SettingsModel |
+| **View** | `SettingsSection.svelte` | Recursive renderer -- dispatches on `node.kind` (group/leaf/action/mcp_server) and `Widget` enum |
 
-## Operational Rules
+The model class is independently testable (43 vitest tests) and works identically whether talking to the gateway or using mock data.
 
-- Setup writes `service.toml` and installs corp profiles under configured
-  corp profile roots.
-- Support bundles redact `service.toml` and profile TOML.
-- Runtime uninstall preserves `service.toml`, profile roots, assets, logs,
-  sessions, and persistent VM state.
-- Product purge removes the entire Capsem home.
+## Boot-Time Config Materialization
+
+At VM boot, resolved settings are translated into the limited non-secret
+environment variables and files that are allowed to enter the guest:
+
+```mermaid
+sequenceDiagram
+  participant Proc as capsem-process
+  participant Core as capsem-core
+  participant VM as Guest VM
+
+  Proc->>Core: load_merged_guest_config()
+  Core->>Core: Resolve settings (corp > user > defaults)
+  Core->>Core: Collect explicit non-secret guest env settings
+  Core->>Core: Collect boot files (type=file settings with content)
+  Proc->>VM: send_boot_config()
+  loop Each env var
+    Proc->>VM: SetEnv { key, value }
+  end
+  loop Each boot file
+    Proc->>VM: FileWrite { path, content, mode=0o600 }
+  end
+  Proc->>VM: BootConfigDone
+```
+
+Key behaviors:
+
+- **API keys and provider credentials are never settings materialized boot
+  secrets.** They are detected, substituted, and audited by the credential
+  broker plugin using opaque BLAKE3 references.
+- **Profile/corp rules control network access.** HTTP, DNS, MCP, model, file,
+  and process events are blocked or allowed by `SecurityRuleSet` over canonical
+  `SecurityEvent` fields.
+- **File permissions** default to `0o600` (owner-only) for sensitive explicit
+  boot files such as SSH keys.
+- **Static AI CLI config-file injection is retired.** Tool/provider
+  observations belong to runtime plugin/security-ledger evidence, not
+  settings-owned provider files.
+
+## MCP Server Definitions
+
+MCP servers are profile configuration. The settings UI may display MCP profile
+config, but settings do not own or merge MCP runtime truth:
+
+```mermaid
+flowchart LR
+  P["profile.toml\n[mcp]"] --> MR[MCP Resolver]
+  C["corp.toml\nlocks/constraints"] --> MR
+  MR --> MS["Resolved profile MCP servers"]
+  MS --> ROUTE["MCP runtime routing"]
+  MS --> TOOLS["Per-server tool inventory"]
+  MS --> TREE["Profile UI"]
+```
+
+Resolution is profile-first with corp constraints. Example profile entry:
+
+```toml
+[mcp.capsem]
+name = "Capsem"
+description = "Built-in Capsem MCP server for file and snapshot tools"
+transport = "stdio"
+command = "/run/capsem-mcp-server"
+builtin = true
+```
+
+Enterprises can add MCP servers via corp-owned profile configuration:
+
+```toml
+[mcp.internal_tools]
+name = "Internal Tools"
+transport = "stdio"
+command = "/opt/acme/mcp-server"
+args = ["--config", "/etc/acme.json"]
+```
+
+## Security Rules
+
+Security rules live outside ordinary `settings` leaves. They are resolved from
+profile/corp enforcement TOML and Sigma detection YAML. Corp rules keep
+corporate priority and lock semantics; profile/user rules run after corp rules,
+and built-in default rules run last.
+
+See [Policy](/security/policy/) for rule syntax, first-party `SecurityEvent`
+fields, actions, priorities, Sigma import, examples, and telemetry.
+
+## Corp Lockdown
+
+Enterprise administrators distribute `corp.toml` via MDM. It controls:
+
+| Capability | How |
+|---|---|
+| **Force a value** | Set the key in corp.toml -- user cannot override |
+| **Disable provider traffic** | Add a corp/profile enforcement rule that matches the provider boundary and uses `action = "block"` |
+| **Hide a setting** | Set `hidden = true` on the override entry |
+| **Add MCP servers** | Add entries to `[mcp]` section -- user cannot remove |
+| **Disable MCP servers** | Set `enabled = false` on a server definition |
+
+Enforcement is **exclusively in the backend**. The frontend disables controls for visual feedback but never validates corp locks itself. The `save_settings` command rejects any batch containing a corp-locked change.
+
+## Gateway API
+
+The desktop frontend talks to `capsem-gateway`, which proxies HTTP requests to
+`capsem-service` over UDS:
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /settings/info` | Returns `SettingsResponse` with `tree` and `issues`. |
+| `PATCH /settings/edit` | Accepts a batch of settings-only changes and returns fresh `SettingsResponse`. |

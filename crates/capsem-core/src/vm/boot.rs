@@ -16,27 +16,41 @@ use crate::hypervisor::apple_vz::AppleVzHypervisor;
 use crate::hypervisor::kvm::KvmHypervisor;
 use crate::net::cert_authority::CertAuthority;
 use crate::net::mitm_proxy;
-use crate::vm::guest_config::GuestConfig;
+use crate::net::policy_config;
 use crate::{
     decode_guest_msg, encode_host_msg, GuestToHost, HostToGuest, VirtioFsShare, MAX_FRAME_SIZE,
-    VSOCK_PORT_CONTROL, VSOCK_PORT_EXEC, VSOCK_PORT_LIFECYCLE, VSOCK_PORT_SNI_PROXY,
-    VSOCK_PORT_TERMINAL,
 };
 use capsem_logger::DbWriter;
-use capsem_proto::{VSOCK_PORT_AUDIT, VSOCK_PORT_DNS_PROXY};
 
 use super::registry::SandboxNetworkState;
 
 /// Static CA keypair embedded at compile time.
-pub const CA_KEY_PEM: &str = include_str!("../../../../config/capsem-ca.key");
-pub const CA_CERT_PEM: &str = include_str!("../../../../config/capsem-ca.crt");
+pub const CA_KEY_PEM: &str = include_str!("../../../../security/keys/capsem-ca.key");
+pub const CA_CERT_PEM: &str = include_str!("../../../../security/keys/capsem-ca.crt");
 
-/// Create per-sandbox network state (CA + telemetry DB + upstream TLS config).
+/// Create per-sandbox network state (CA + policy for MITM proxy).
 pub fn create_net_state(vm_id: &str, db: Arc<DbWriter>) -> Result<SandboxNetworkState> {
+    let policy = policy_config::load_merged_network_policy();
+    create_net_state_with_policy(vm_id, db, policy)
+}
+
+/// Create per-sandbox network state with a pre-loaded policy (avoids redundant disk reads).
+pub fn create_net_state_with_policy(
+    vm_id: &str,
+    db: Arc<DbWriter>,
+    policy: crate::net::policy::NetworkPolicy,
+) -> Result<SandboxNetworkState> {
     let ca = CertAuthority::load(CA_KEY_PEM, CA_CERT_PEM).context("failed to load MITM CA")?;
     info!(vm_id, "loaded MITM CA");
+    info!(
+        vm_id,
+        http_upstream_ports = ?policy.http_upstream_ports,
+        dns_redirects = policy.dns_redirects.len(),
+        "loaded network mechanics"
+    );
 
     Ok(SandboxNetworkState {
+        policy: Arc::new(std::sync::RwLock::new(Arc::new(policy))),
         db,
         ca: Arc::new(ca),
         upstream_tls: mitm_proxy::make_upstream_tls_config(),
@@ -48,9 +62,6 @@ pub struct BootOptions<'a> {
     pub kernel_override: Option<&'a Path>,
     pub initrd_override: Option<&'a Path>,
     pub rootfs_override: Option<&'a Path>,
-    pub expected_kernel_hash: Option<&'a str>,
-    pub expected_initrd_hash: Option<&'a str>,
-    pub expected_rootfs_hash: Option<&'a str>,
     pub cmdline: &'a str,
     /// Path to a sparse host file attached as the second virtio-blk device
     /// (`/dev/vdb` in the guest). In VirtioFS mode this is the system-overlay
@@ -86,9 +97,6 @@ pub fn boot_vm(
         kernel_override,
         initrd_override,
         rootfs_override,
-        expected_kernel_hash,
-        expected_initrd_hash,
-        expected_rootfs_hash,
         cmdline,
         system_overlay_disk,
         virtiofs_shares,
@@ -102,22 +110,15 @@ pub fn boot_vm(
     let mut sm = HostStateMachine::new_host();
 
     info!(
-        event_name = "vm.boot.start",
-        cpu_count,
-        ram_bytes,
-        virtiofs_shares = virtiofs_shares.len(),
         "[boot-audit] boot_vm: cpu={cpu_count} ram_bytes={ram_bytes} virtiofs_shares={}",
         virtiofs_shares.len()
     );
 
-    let effective_cmdline = effective_cmdline_for_storage(cmdline, !virtiofs_shares.is_empty());
+    let effective_cmdline = effective_kernel_cmdline(cmdline, virtiofs_shares, rootfs_override);
 
     let config = {
         let _span = debug_span!("config_build").entered();
-        info!(
-            event_name = "vm.boot.config_build_start",
-            "[boot-audit] building VmConfig"
-        );
+        info!("[boot-audit] building VmConfig");
 
         let kernel_path = kernel_override
             .map(|p| p.to_path_buf())
@@ -146,23 +147,27 @@ pub fn boot_vm(
             builder = builder.serial_log_path(slp);
         }
 
-        if let (Some(kernel), Some(initrd), Some(rootfs)) = (
-            expected_kernel_hash,
-            expected_initrd_hash,
-            expected_rootfs_hash,
-        ) {
-            info!(
-                "[boot-audit] profile asset hash verification enabled (kernel={}, initrd={}, rootfs={})",
-                &kernel[..16.min(kernel.len())],
-                &initrd[..16.min(initrd.len())],
-                &rootfs[..16.min(rootfs.len())],
-            );
-        } else {
-            info!("[boot-audit] asset hash verification disabled (development assets)");
+        // Load expected asset hashes from the manifest on disk. The manifest is
+        // metadata, not an authority root: profile-selected asset hashes and
+        // corp/profile-controlled asset URLs are the runtime contract.
+        let manifest = crate::asset_manager::load_manifest_for_assets(assets);
+        let expected_hashes = manifest
+            .and_then(|m| m.expected_hashes_current(crate::asset_manager::host_manifest_arch()));
+        match expected_hashes {
+            Some(ref h) => info!(
+                "[boot-audit] asset hash verification enabled (kernel={}, initrd={}, rootfs={})",
+                &h.kernel[..16],
+                &h.initrd[..16],
+                &h.rootfs[..16],
+            ),
+            None => info!(
+                "[boot-audit] asset hash verification disabled (no manifest match for arch={})",
+                crate::asset_manager::host_manifest_arch()
+            ),
         }
 
-        if let Some(hash) = expected_kernel_hash {
-            builder = builder.expected_kernel_hash(hash);
+        if let Some(ref h) = expected_hashes {
+            builder = builder.expected_kernel_hash(&h.kernel);
         }
 
         let initrd_path = initrd_override
@@ -174,8 +179,8 @@ pub fn boot_vm(
                 initrd_path.display()
             );
             builder = builder.initrd_path(initrd_path);
-            if let Some(hash) = expected_initrd_hash {
-                builder = builder.expected_initrd_hash(hash);
+            if let Some(ref h) = expected_hashes {
+                builder = builder.expected_initrd_hash(&h.initrd);
             }
         } else {
             info!(
@@ -185,10 +190,10 @@ pub fn boot_vm(
         }
 
         // Use explicit rootfs override if provided (e.g. from ~/.capsem/assets/),
-        // otherwise check bundled assets dir for both squashfs and legacy img.
+        // otherwise use the release EROFS rootfs contract.
         let rootfs_path = rootfs_override
             .map(|p| p.to_path_buf())
-            .or_else(|| Some(assets.join("rootfs.squashfs")).filter(|p| p.exists()));
+            .or_else(|| Some(assets.join("rootfs.erofs")).filter(|p| p.exists()));
 
         if let Some(ref rootfs) = rootfs_path {
             info!(
@@ -197,8 +202,8 @@ pub fn boot_vm(
                 rootfs.exists()
             );
             builder = builder.disk_path(rootfs);
-            if let Some(hash) = expected_rootfs_hash {
-                builder = builder.expected_disk_hash(hash);
+            if let Some(ref h) = expected_hashes {
+                builder = builder.expected_disk_hash(&h.rootfs);
             }
         } else {
             info!("[boot-audit] rootfs: none");
@@ -218,72 +223,77 @@ pub fn boot_vm(
             builder = builder.virtio_fs_share(&share.tag, &share.host_path, share.read_only);
         }
 
-        info!(
-            event_name = "vm.boot.config_build_call",
-            "[boot-audit] calling VmConfig::build()"
-        );
+        info!("[boot-audit] calling VmConfig::build()");
         builder.build().context("failed to build VmConfig")?
     };
-    info!(
-        event_name = "vm.boot.config_build_ok",
-        "[boot-audit] VmConfig built successfully"
-    );
+    info!("[boot-audit] VmConfig built successfully");
 
-    let vsock_ports = [
-        VSOCK_PORT_CONTROL,
-        VSOCK_PORT_TERMINAL,
-        VSOCK_PORT_SNI_PROXY,
-        VSOCK_PORT_LIFECYCLE,
-        VSOCK_PORT_EXEC,
-        VSOCK_PORT_AUDIT,
-        // T3.2 -- DNS proxy. capsem-dns-proxy in the guest opens a
-        // fresh vsock conn to (HOST_CID, 5007) per query. Without
-        // this entry the host has no listener; the kernel rejects
-        // the connect, which surfaces as "Connection reset by peer
-        // (os error 104)" in the agent's forward_query_blocking.
-        VSOCK_PORT_DNS_PROXY,
-    ];
-
-    #[cfg(target_os = "linux")]
-    let hypervisor_name = "kvm";
-    #[cfg(target_os = "macos")]
-    let hypervisor_name = "apple_vz";
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    let hypervisor_name = "unsupported";
-
-    info!(
-        event_name = "vm.boot.hypervisor_start",
-        hypervisor = hypervisor_name,
-        "[boot-audit] calling hypervisor boot"
+    info!("[boot-audit] calling hypervisor boot");
+    let boot_span = debug_span!(
+        target: "capsem.launch",
+        crate::telemetry::LAUNCH_VM_BOOT_SPAN,
+        status = tracing::field::Empty,
     );
     let (vm, vsock_rx) = {
-        let _span = debug_span!("hypervisor_boot").entered();
+        let _span = boot_span.clone().entered();
         #[cfg(target_os = "macos")]
-        let result = AppleVzHypervisor.boot(&config, &vsock_ports);
+        let result = AppleVzHypervisor.boot(&config, capsem_proto::host_vsock_ports());
         #[cfg(target_os = "linux")]
-        let result = KvmHypervisor.boot(&config, &vsock_ports);
-        result.context("failed to boot VM")?
+        let result = KvmHypervisor.boot(&config, capsem_proto::host_vsock_ports());
+        match result {
+            Ok(value) => {
+                boot_span.record("status", "ok");
+                value
+            }
+            Err(error) => {
+                boot_span.record("status", "error");
+                return Err(error).context("failed to boot VM");
+            }
+        }
     };
-    info!(
-        event_name = "vm.boot.hypervisor_ok",
-        "[boot-audit] hypervisor boot returned OK"
-    );
+    info!("[boot-audit] hypervisor boot returned OK");
 
     sm.transition(HostState::Booting, "vm_started")?;
 
     Ok((vm, vsock_rx, sm))
 }
 
-fn effective_cmdline_for_storage(cmdline: &str, has_virtiofs: bool) -> String {
-    if !has_virtiofs
-        || cmdline
-            .split_whitespace()
-            .any(|arg| arg == "capsem.storage=virtiofs")
-    {
-        cmdline.to_string()
-    } else {
-        format!("{cmdline} capsem.storage=virtiofs")
+fn effective_kernel_cmdline(
+    base: &str,
+    virtiofs_shares: &[VirtioFsShare],
+    rootfs_override: Option<&Path>,
+) -> String {
+    effective_kernel_cmdline_with_erofs_mode(
+        base,
+        virtiofs_shares,
+        rootfs_override,
+        std::env::var("CAPSEM_EXPERIMENTAL_EROFS_DAX")
+            .ok()
+            .is_some_and(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "on")),
+    )
+}
+
+fn effective_kernel_cmdline_with_erofs_mode(
+    base: &str,
+    virtiofs_shares: &[VirtioFsShare],
+    rootfs_override: Option<&Path>,
+    erofs_dax: bool,
+) -> String {
+    let mut cmdline = base.to_string();
+    if !virtiofs_shares.is_empty() {
+        cmdline.push_str(" capsem.storage=virtiofs");
     }
+    if rootfs_override
+        .and_then(|p| p.extension())
+        .is_some_and(|ext| ext == "erofs")
+    {
+        if erofs_dax {
+            cmdline.push_str(" capsem.rootfs=erofs-dax");
+        } else {
+            cmdline.push_str(" capsem.rootfs=erofs");
+        }
+    }
+    cmdline
 }
 
 /// Read one guest-to-host control message from an fd (blocking).
@@ -321,7 +331,7 @@ fn detect_host_timezone() -> Option<String> {
 pub fn send_boot_config(
     file: &mut std::fs::File,
     cli_env: &[(String, String)],
-    preloaded_guest_config: Option<GuestConfig>,
+    preloaded_guest_config: Option<policy_config::GuestConfig>,
 ) -> Result<()> {
     use crate::capsem_proto::{
         validate_env_key, validate_env_value, validate_file_path, MAX_BOOT_ENV_VARS,
@@ -366,8 +376,9 @@ pub fn send_boot_config(
         }
     }
 
-    // 2. Send metadata-driven env vars from settings registry.
-    let guest_config = preloaded_guest_config.unwrap_or_default();
+    // 2. Send metadata-driven env vars from settings UI metadata.
+    let guest_config =
+        preloaded_guest_config.unwrap_or_else(policy_config::load_merged_guest_config);
     let mut env_count: usize = 0;
 
     // Track what we actually send for the injection test manifest.
@@ -573,29 +584,35 @@ mod tests {
             host_path: "/tmp/session".into(),
             read_only: false,
         }];
-        let effective = effective_cmdline_for_storage(base, !shares.is_empty());
+        let effective = effective_kernel_cmdline(base, &shares, None);
         assert!(effective.contains("capsem.storage=virtiofs"));
-    }
-
-    #[test]
-    fn virtiofs_cmdline_does_not_duplicate_storage_arg() {
-        let base = "console=hvc0 ro capsem.storage=virtiofs";
-        let effective = effective_cmdline_for_storage(base, true);
-
-        assert_eq!(
-            effective
-                .split_whitespace()
-                .filter(|arg| *arg == "capsem.storage=virtiofs")
-                .count(),
-            1
-        );
     }
 
     #[test]
     fn virtiofs_cmdline_no_shares() {
         let base = "console=hvc0 ro loglevel=1";
         let shares: Vec<VirtioFsShare> = vec![];
-        let effective = effective_cmdline_for_storage(base, !shares.is_empty());
+        let effective = effective_kernel_cmdline(base, &shares, None);
         assert!(!effective.contains("capsem.storage=virtiofs"));
+    }
+
+    #[test]
+    fn erofs_rootfs_override_appends_cmdline_flag() {
+        let base = "console=hvc0 ro loglevel=1";
+        let shares: Vec<VirtioFsShare> = vec![];
+        let rootfs = Path::new("/tmp/rootfs.erofs");
+        let effective =
+            effective_kernel_cmdline_with_erofs_mode(base, &shares, Some(rootfs), false);
+        assert!(effective.contains("capsem.rootfs=erofs"));
+    }
+
+    #[test]
+    fn erofs_dax_mode_appends_distinct_cmdline_flag() {
+        let base = "console=hvc0 ro loglevel=1";
+        let shares: Vec<VirtioFsShare> = vec![];
+        let rootfs = Path::new("/tmp/rootfs.erofs");
+        let effective = effective_kernel_cmdline_with_erofs_mode(base, &shares, Some(rootfs), true);
+        assert!(effective.contains("capsem.rootfs=erofs-dax"));
+        assert!(!effective.contains("capsem.rootfs=erofs "));
     }
 }

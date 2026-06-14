@@ -80,7 +80,7 @@ capsem_inspect { id: "vm-1", sql: "SELECT server_name, tool_name, decision, dura
 capsem_inspect { id: "vm-1", sql: "SELECT COUNT(*) as n, operation FROM fs_events GROUP BY operation" }
 ```
 
-**Read guest config/state:**
+**Read guest runtime state:**
 ```
 capsem_read_file { id: "vm-1", path: "/etc/resolv.conf" }
 capsem_read_file { id: "vm-1", path: "/tmp/capsem-init.log" }
@@ -216,18 +216,23 @@ The endpoint parses the namespace to route to the correct server.
 | `prompts/list` | Return prompt catalog |
 | `prompts/get` | Lookup name -> get via rmcp |
 
-### Policy evaluation
+### Security evaluation
 
 ```
-1. Blocked servers list (highest priority)
-2. Allowed servers whitelist (if non-empty)
-3. Per-tool decision map
-4. Default fallback (Allow/Warn/Block)
+1. Parse MCP frame into typed `SecurityEvent` MCP fields.
+2. Apply the shared security engine plugin/rule rail.
+3. Dispatch only if the effective action allows it.
+4. Log MCP protocol row plus matched security rule rows.
 ```
 
-Config hierarchy: corp.toml > user.toml > auto-detected from AI CLI settings.
+Config hierarchy: corp config constrains profile config. Profile config owns
+MCP servers, tools, resources, default rules, and plugin policy. There is no
+MCP-specific decision provider or `user.toml` override rail.
 
-Decisions: `Allow`, `Warn` (log + continue), `Block` (error -32600).
+Decisions use the shared security action enum: `allow`, `ask`, `block`,
+`rewrite`, `preprocess`, and `postprocess`. `ask` waits for an approval or
+denial before dispatch; `block` returns a policy JSON-RPC error without calling
+the tool.
 
 ### Built-in tools
 

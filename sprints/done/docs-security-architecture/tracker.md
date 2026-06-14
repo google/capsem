@@ -28,7 +28,7 @@
 - [x] SBOM section (cargo-sbom, SPDX 2.3 format)
 - [x] SLSA attestation section (build provenance for DMG/deb/rootfs)
 - [x] Asset integrity section (BLAKE3 hashes, manifest.json, compile-time embedding, runtime verification)
-- [x] Manifest signing section (minisign)
+- [x] Asset release evidence section
 - [x] Supply chain section (pinned toolchains, cargo-audit, Docker base images)
 
 ## S2: Architecture Deep Dives

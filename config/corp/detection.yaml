@@ -1,0 +1,12 @@
+title: corp_example_destination_seen
+level: informational
+logsource:
+  product: capsem
+  service: security_event
+detection:
+  selection:
+    http.host: example.com
+  condition: selection
+capsem:
+  action: allow
+  reason: Example corp Sigma detection proving destination logging.

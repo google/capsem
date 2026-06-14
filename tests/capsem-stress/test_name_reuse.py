@@ -19,7 +19,7 @@ def test_create_delete_reuse_name():
 
     try:
         for cycle in range(3):
-            resp = client.post("/provision", {
+            resp = client.post("/vms/create", {
                 "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
             })
             assert resp is not None, f"Cycle {cycle}: provision failed"
@@ -27,27 +27,27 @@ def test_create_delete_reuse_name():
             assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT), \
                 f"Cycle {cycle}: VM never exec-ready"
 
-            exec_resp = client.post(f"/exec/{name}", {"command": f"echo cycle-{cycle}"})
+            exec_resp = client.post(f"/vms/{name}/exec", {"command": f"echo cycle-{cycle}"})
             assert f"cycle-{cycle}" in exec_resp.get("stdout", ""), \
                 f"Cycle {cycle}: exec output wrong"
 
-            client.delete(f"/delete/{name}")
+            client.delete(f"/vms/{name}/delete")
 
         # After all cycles, name should not appear in list
-        list_resp = client.get("/list")
+        list_resp = client.get("/vms/list")
         ids = [s["id"] for s in list_resp.get("sandboxes", [])]
         assert name not in ids, f"VM {name} still in list after final delete"
 
     finally:
         try:
-            client.delete(f"/delete/{name}")
+            client.delete(f"/vms/{name}/delete")
         except Exception:
             pass
         svc.stop()
 
 
 def test_service_healthy_after_mass_delete():
-    """Create 5 VMs, delete all, service still responds to /list."""
+    """Create 5 VMs, delete all, service still responds to /vms/list."""
     svc = ServiceInstance()
     svc.start()
     client = svc.client()
@@ -56,15 +56,15 @@ def test_service_healthy_after_mass_delete():
     try:
         for i in range(5):
             name = f"mass-{i}-{uuid.uuid4().hex[:6]}"
-            client.post("/provision", {"name": name, "ram_mb": 512, "cpus": 1})
+            client.post("/vms/create", {"name": name, "ram_mb": 512, "cpus": 1})
             vms.append(name)
 
         # Delete all
         for name in vms:
-            client.delete(f"/delete/{name}")
+            client.delete(f"/vms/{name}/delete")
 
         # Service should still be healthy
-        resp = client.get("/list")
+        resp = client.get("/vms/list")
         assert resp is not None, "Service should respond after mass delete"
         ids = [s["id"] for s in resp.get("sandboxes", [])]
         mass_ids = [i for i in ids if i.startswith("mass-")]
@@ -73,7 +73,7 @@ def test_service_healthy_after_mass_delete():
     finally:
         for name in vms:
             try:
-                client.delete(f"/delete/{name}")
+                client.delete(f"/vms/{name}/delete")
             except Exception:
                 pass
         svc.stop()

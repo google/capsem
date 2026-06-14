@@ -48,9 +48,6 @@ pub(crate) fn menu_spec(status: &StatusResponse) -> Vec<MenuEntry> {
         label: format!("Connected -- {}ms", status.latency_ms.unwrap_or(0)),
         enabled: false,
     });
-    if let Some(asset_entry) = asset_status_entry(status) {
-        entries.push(asset_entry);
-    }
     entries.push(MenuEntry::Separator);
 
     if !status.vms.is_empty() {
@@ -68,7 +65,7 @@ pub(crate) fn menu_spec(status: &StatusResponse) -> Vec<MenuEntry> {
     entries.push(MenuEntry::Item {
         id: "new-session".into(),
         label: "New Session".into(),
-        enabled: assets_ready(status),
+        enabled: true,
     });
     entries.push(MenuEntry::Item {
         id: "open".into(),
@@ -83,54 +80,6 @@ pub(crate) fn menu_spec(status: &StatusResponse) -> Vec<MenuEntry> {
     });
 
     entries
-}
-
-fn assets_ready(status: &StatusResponse) -> bool {
-    status.assets.as_ref().map(|a| a.ready).unwrap_or(true)
-}
-
-fn asset_status_entry(status: &StatusResponse) -> Option<MenuEntry> {
-    let assets = status.assets.as_ref()?;
-    if assets.ready && assets.saved_vm_dependencies.is_empty() {
-        return None;
-    }
-    let saved_vm_gap_label = || {
-        format!(
-            "Saved VM assets missing: {}",
-            assets
-                .saved_vm_dependencies
-                .iter()
-                .map(|issue| issue.vm.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
-    };
-    let label = if assets.ready && !assets.saved_vm_dependencies.is_empty() {
-        saved_vm_gap_label()
-    } else {
-        match assets.state.as_str() {
-            "checking" => "Assets checking".to_string(),
-            "updating" => assets
-                .progress
-                .as_ref()
-                .map(|p| format!("Assets updating: {}", p.logical_name))
-                .unwrap_or_else(|| "Assets updating".to_string()),
-            "error" => assets
-                .error
-                .as_ref()
-                .map(|e| format!("Assets error: {e}"))
-                .unwrap_or_else(|| "Assets error".to_string()),
-            _ if !assets.missing.is_empty() => {
-                format!("Assets missing: {}", assets.missing.join(", "))
-            }
-            _ => "Assets not ready".to_string(),
-        }
-    };
-    Some(MenuEntry::Item {
-        id: "assets".into(),
-        label,
-        enabled: false,
-    })
 }
 
 fn vm_submenu_spec(vm: &VmSummary) -> MenuEntry {
@@ -296,7 +245,6 @@ pub(crate) fn vm_label(vm: &VmSummary) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gateway::{AssetHealth, AssetProgress, SavedVmAssetDependency};
     use muda::MenuId;
 
     fn make_status(vms: Vec<VmSummary>) -> StatusResponse {
@@ -305,55 +253,7 @@ mod tests {
             service: "running".into(),
             vm_count,
             vms,
-            assets: None,
             latency_ms: Some(5),
-        }
-    }
-
-    fn make_status_with_assets(vms: Vec<VmSummary>, assets: AssetHealth) -> StatusResponse {
-        let mut status = make_status(vms);
-        status.assets = Some(assets);
-        status
-    }
-
-    fn updating_assets() -> AssetHealth {
-        AssetHealth {
-            ready: false,
-            state: "updating".into(),
-            version: Some("2026.0513.1".into()),
-            arch: Some("arm64".into()),
-            missing: vec!["rootfs.squashfs".into()],
-            progress: Some(AssetProgress {
-                logical_name: "rootfs.squashfs".into(),
-                bytes_done: 12,
-                bytes_total: Some(24),
-                done: false,
-            }),
-            error: None,
-            retry_count: 0,
-            retryable: false,
-            saved_vm_dependencies: Vec::new(),
-        }
-    }
-
-    fn ready_assets_with_saved_vm_gap() -> AssetHealth {
-        AssetHealth {
-            ready: true,
-            state: "ready".into(),
-            version: Some("2026.0513.1".into()),
-            arch: Some("arm64".into()),
-            missing: Vec::new(),
-            progress: None,
-            error: None,
-            retry_count: 0,
-            retryable: false,
-            saved_vm_dependencies: vec![SavedVmAssetDependency {
-                vm: "saved-old".into(),
-                asset_version: "2026.0415.1".into(),
-                arch: "arm64".into(),
-                missing: vec!["rootfs.squashfs".into()],
-                recovery_hint: "restore assets".into(),
-            }],
         }
     }
 
@@ -534,73 +434,6 @@ mod tests {
         assert!(ids.contains(&"new-session".into()));
         assert!(ids.contains(&"open".into()));
         assert!(ids.contains(&"quit".into()));
-    }
-
-    #[test]
-    fn spec_preserves_asset_updating_state_and_disables_new_session() {
-        let spec = menu_spec(&make_status_with_assets(vec![], updating_assets()));
-        let ids = collect_ids(&spec);
-        assert!(ids.contains(&"assets".into()));
-
-        let asset_entry = spec
-            .iter()
-            .find(|entry| matches!(entry, MenuEntry::Item { id, .. } if id == "assets"))
-            .unwrap();
-        assert_eq!(
-            asset_entry,
-            &MenuEntry::Item {
-                id: "assets".into(),
-                label: "Assets updating: rootfs.squashfs".into(),
-                enabled: false,
-            }
-        );
-
-        let new_session = spec
-            .iter()
-            .find(|entry| matches!(entry, MenuEntry::Item { id, .. } if id == "new-session"))
-            .unwrap();
-        assert_eq!(
-            new_session,
-            &MenuEntry::Item {
-                id: "new-session".into(),
-                label: "New Session".into(),
-                enabled: false,
-            }
-        );
-    }
-
-    #[test]
-    fn spec_shows_saved_vm_asset_gap_without_blocking_new_session() {
-        let spec = menu_spec(&make_status_with_assets(
-            vec![],
-            ready_assets_with_saved_vm_gap(),
-        ));
-
-        let asset_entry = spec
-            .iter()
-            .find(|entry| matches!(entry, MenuEntry::Item { id, .. } if id == "assets"))
-            .unwrap();
-        assert_eq!(
-            asset_entry,
-            &MenuEntry::Item {
-                id: "assets".into(),
-                label: "Saved VM assets missing: saved-old".into(),
-                enabled: false,
-            }
-        );
-
-        let new_session = spec
-            .iter()
-            .find(|entry| matches!(entry, MenuEntry::Item { id, .. } if id == "new-session"))
-            .unwrap();
-        assert_eq!(
-            new_session,
-            &MenuEntry::Item {
-                id: "new-session".into(),
-                label: "New Session".into(),
-                enabled: true,
-            }
-        );
     }
 
     #[test]

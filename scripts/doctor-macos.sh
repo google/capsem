@@ -14,7 +14,7 @@ tool_hint() {
         sqlite3)       echo "brew install sqlite" ;;
         git)           echo "brew install git" ;;
         b3sum)         echo "cargo install b3sum --locked" ;;
-        minisign)      echo "brew install minisign" ;;
+        flock)         echo "brew install flock (multi-agent lock on ~/.capsem/run/execution.lock)" ;;
         docker)        echo "brew install colima docker (CLI + Colima backend) && colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8" ;;
         docker-daemon) echo "start Colima: colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8" ;;
         docker-buildx) echo "brew install docker-buildx && ln -sf \$(brew --prefix docker-buildx)/bin/docker-buildx ~/.docker/cli-plugins/docker-buildx" ;;
@@ -27,8 +27,8 @@ check_platform() {
     # Colima
     if command -v colima &>/dev/null; then
         local colima_status
-        colima_status="$(colima status 2>&1 || true)"
-        if grep -qi "running" <<< "$colima_status"; then
+        colima_status=$(colima status 2>&1 || true)
+        if printf '%s\n' "$colima_status" | grep -qi "running"; then
             pass "colima (running)"
         else
             fail "colima not running -- start: colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8"
@@ -48,11 +48,10 @@ check_platform() {
 
         # Resources
         if command -v docker &>/dev/null; then
-            local docker_json mem_mb cpus
-            docker_json=$(docker info --format json 2>/dev/null || true)
-            if [[ -n "$docker_json" ]]; then
-                mem_mb=$(printf '%s' "$docker_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('MemTotal',0) // 1024 // 1024)" 2>/dev/null || echo 0)
-                cpus=$(printf '%s' "$docker_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('NCPU',0))" 2>/dev/null || echo 0)
+            local mem_mb cpus
+            mem_mb=$(docker info --format json 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('MemTotal',0) // 1024 // 1024)" 2>/dev/null || echo 0)
+            cpus=$(docker info --format json 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('NCPU',0))" 2>/dev/null || echo 0)
+            if [[ "$mem_mb" -gt 0 ]]; then
                 if [[ "$mem_mb" -lt 4096 ]]; then
                     fail "Colima: ${mem_mb}MB RAM, ${cpus} CPUs (minimum 4096MB)"
                 elif [[ "$mem_mb" -lt 8192 ]]; then

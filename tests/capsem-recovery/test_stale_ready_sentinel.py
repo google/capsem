@@ -24,7 +24,7 @@ def test_stale_ready_sentinels_ignored():
 
     try:
         client = svc.client()
-        resp = client.get("/list")
+        resp = client.get("/vms/list")
         assert resp is not None, "Service should start despite stale sentinels"
         # Stale sentinels should not appear as running VMs
         ids = [s["id"] for s in resp.get("sandboxes", [])]

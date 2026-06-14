@@ -1,0 +1,45 @@
+# Code profile enforcement rules.
+#
+# These are visible rules compiled into the single SecurityRuleSet/CEL rail.
+
+[default.http]
+name = "http"
+action = "allow"
+priority = "default"
+reason = "Default allow for HTTP requests."
+match = "has(http.host)"
+
+[default.dns]
+name = "dns"
+action = "allow"
+priority = "default"
+reason = "Default allow for DNS queries."
+match = "has(dns.qname)"
+
+[default.mcp]
+name = "mcp"
+action = "allow"
+priority = "default"
+reason = "Default allow for MCP server activity and tool calls."
+match = "has(mcp.method) || has(mcp.server.name) || has(mcp.tool_call.name) || has(mcp.tool_list)"
+
+[default.model]
+name = "model"
+action = "allow"
+priority = "default"
+reason = "Default allow for model calls."
+match = "has(model.provider) || has(model.name) || has(model.request.body) || has(model.response.body) || has(model.request.tool_calls)"
+
+[default.file]
+name = "file"
+action = "allow"
+priority = "default"
+reason = "Default allow for file reads, writes, creates, deletes, imports, and exports."
+match = "has(file.read.path) || has(file.write.path) || has(file.create.path) || has(file.delete.path) || has(file.import.path) || has(file.export.path) || has(file.content)"
+
+[default.process]
+name = "process"
+action = "allow"
+priority = "default"
+reason = "Default allow for process execution and audit activity."
+match = "has(process.exec.path) || has(process.command) || has(process.exec.id)"

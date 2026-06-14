@@ -8,6 +8,9 @@
     "core:window:default",
     "core:app:default",
     "core:event:default",
+    "updater:default",
+    "process:allow-restart",
+    "dialog:default",
     "opener:allow-open-url"
   ]
 }

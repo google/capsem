@@ -81,13 +81,9 @@ fn parse_version_body(response: &[u8]) -> Option<String> {
 /// serialization reaches across sibling `capsem-service` processes (e.g.
 /// pytest-xdist `-n 4` workers).
 ///
-/// The existing `ServiceState::save_restore_lock` (`tokio::sync::Mutex<()>`)
-/// only serializes inside one service -- that's fine for production because
-/// a deployed host always runs exactly one service per user. Under the test
-/// harness four services coexist, each with its own tokio mutex, so a
-/// sibling worker's save_state can still overlap ours. Apple's VZ framework
-/// does not tolerate that overlap; the victim VM comes back corrupted
-/// ("susp-... never became exec-ready after warm resume"). See
+/// Cold starts and teardown take a shared lock; save/restore take an exclusive
+/// lock. Apple's VZ framework does not tolerate crossing checkpoint lifecycle
+/// edges, but it does tolerate sibling cold starts. See
 /// docs/src/content/docs/gotchas/concurrent-suspend-resume.mdx.
 ///
 /// Lock file lives at `/tmp/capsem-vz-save-restore-<uid>.lock` -- outside
@@ -99,18 +95,28 @@ pub struct VzHostLock {
     _flock: Flock<std::fs::File>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VzHostLockMode {
+    Shared,
+    Exclusive,
+}
+
 impl VzHostLock {
     fn lock_path() -> std::path::PathBuf {
         let uid = unsafe { nix::libc::getuid() };
         std::path::PathBuf::from(format!("/tmp/capsem-vz-save-restore-{uid}.lock"))
     }
 
-    /// Acquire the host-wide lock, waiting up to `timeout` for a sibling
-    /// service to release it. Returns `Ok(Some(lock))` on success,
-    /// `Ok(None)` on timeout (caller decides whether to fail or proceed).
-    pub fn acquire(timeout: Duration) -> Result<Option<Self>> {
+    /// Acquire the host-wide lock, waiting up to `timeout` for a compatible
+    /// sibling lifecycle operation to release it. Returns `Ok(Some(lock))`
+    /// on success, `Ok(None)` on timeout (caller decides whether to fail).
+    pub fn acquire(mode: VzHostLockMode, timeout: Duration) -> Result<Option<Self>> {
         let path = Self::lock_path();
         let deadline = Instant::now() + timeout;
+        let arg = match mode {
+            VzHostLockMode::Shared => FlockArg::LockSharedNonblock,
+            VzHostLockMode::Exclusive => FlockArg::LockExclusiveNonblock,
+        };
         loop {
             let file = OpenOptions::new()
                 .create(true)
@@ -119,7 +125,7 @@ impl VzHostLock {
                 .truncate(false)
                 .open(&path)
                 .with_context(|| format!("failed to open vz host lock {}", path.display()))?;
-            match Flock::lock(file, FlockArg::LockExclusiveNonblock) {
+            match Flock::lock(file, arg) {
                 Ok(flock) => return Ok(Some(Self { _flock: flock })),
                 Err((_file, nix::errno::Errno::EWOULDBLOCK)) => {
                     if Instant::now() >= deadline {
@@ -190,6 +196,8 @@ impl StartupLock {
 mod tests {
     use super::*;
 
+    static VZ_HOST_LOCK_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn parse_version_body_extracts_version() {
         let resp =
@@ -229,5 +237,66 @@ mod tests {
             .unwrap()
             .expect("reacquire after drop");
         drop(c);
+    }
+
+    #[test]
+    fn vz_host_lock_is_mutually_exclusive() {
+        let _test_guard = VZ_HOST_LOCK_TEST_MUTEX.lock().unwrap();
+        let a = VzHostLock::acquire(VzHostLockMode::Exclusive, Duration::from_millis(50))
+            .unwrap()
+            .expect("first acquisition");
+        let b = VzHostLock::acquire(VzHostLockMode::Exclusive, Duration::from_millis(50)).unwrap();
+        assert!(
+            b.is_none(),
+            "second VZ host lock acquisition must wait while first is held"
+        );
+
+        drop(a);
+
+        let c = VzHostLock::acquire(VzHostLockMode::Exclusive, Duration::from_millis(500))
+            .unwrap()
+            .expect("reacquire after drop");
+        drop(c);
+    }
+
+    #[test]
+    fn vz_host_lock_allows_shared_lifecycle_starts() {
+        let _test_guard = VZ_HOST_LOCK_TEST_MUTEX.lock().unwrap();
+        let a = VzHostLock::acquire(VzHostLockMode::Shared, Duration::from_millis(50))
+            .unwrap()
+            .expect("first shared acquisition");
+        let b = VzHostLock::acquire(VzHostLockMode::Shared, Duration::from_millis(50))
+            .unwrap()
+            .expect("second shared acquisition");
+        drop(b);
+        drop(a);
+    }
+
+    #[test]
+    fn vz_host_lock_exclusive_blocks_shared() {
+        let _test_guard = VZ_HOST_LOCK_TEST_MUTEX.lock().unwrap();
+        let a = VzHostLock::acquire(VzHostLockMode::Exclusive, Duration::from_millis(50))
+            .unwrap()
+            .expect("exclusive acquisition");
+        let b = VzHostLock::acquire(VzHostLockMode::Shared, Duration::from_millis(50)).unwrap();
+        assert!(
+            b.is_none(),
+            "shared VZ host lock acquisition must wait while exclusive is held"
+        );
+        drop(a);
+    }
+
+    #[test]
+    fn vz_host_lock_shared_blocks_exclusive() {
+        let _test_guard = VZ_HOST_LOCK_TEST_MUTEX.lock().unwrap();
+        let a = VzHostLock::acquire(VzHostLockMode::Shared, Duration::from_millis(50))
+            .unwrap()
+            .expect("shared acquisition");
+        let b = VzHostLock::acquire(VzHostLockMode::Exclusive, Duration::from_millis(50)).unwrap();
+        assert!(
+            b.is_none(),
+            "exclusive VZ host lock acquisition must wait while shared is held"
+        );
+        drop(a);
     }
 }

@@ -35,8 +35,6 @@ export enum SideEffect {
 
 export enum ActionKind {
   CheckUpdate = 'check_update',
-  PresetSelect = 'preset_select',
-  RerunWizard = 'rerun_wizard',
 }
 
 export enum McpTransport {

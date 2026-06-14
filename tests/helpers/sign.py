@@ -6,7 +6,6 @@ Skips on Linux (KVM doesn't need entitlements).
 
 import os
 import subprocess
-import sys
 
 from pathlib import Path
 

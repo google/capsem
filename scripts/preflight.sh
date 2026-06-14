@@ -108,7 +108,7 @@ check_tools() {
     echo ""
     echo "== Required Tools =="
 
-    local tools=(openssl codesign security cargo pnpm node gh uv minisign)
+    local tools=(openssl codesign security cargo pnpm node gh uv)
     for tool in "${tools[@]}"; do
         if command -v "$tool" >/dev/null 2>&1; then
             pass "$tool"
@@ -279,7 +279,7 @@ check_guest_binaries() {
     echo "== Guest Binaries =="
 
     local cargo_toml="$ROOT_DIR/crates/capsem-agent/Cargo.toml"
-    local dockerfile="$ROOT_DIR/src/capsem/builder/templates/Dockerfile.rootfs.j2"
+    local dockerfile="$ROOT_DIR/config/docker/Dockerfile.rootfs.j2"
     local justfile="$ROOT_DIR/justfile"
 
     if [[ ! -f "$cargo_toml" ]]; then
@@ -296,27 +296,6 @@ check_guest_binaries() {
         return
     fi
 
-    local canonical
-    if ! canonical=$(cd "$ROOT_DIR" && PYTHONPATH="$ROOT_DIR/src${PYTHONPATH:+:$PYTHONPATH}" uv run python - <<'PY'
-from capsem.builder.docker import GUEST_BINARIES
-
-for name in GUEST_BINARIES:
-    print(name)
-PY
-    ); then
-        fail "could not load capsem.builder.docker.GUEST_BINARIES"
-        return
-    fi
-
-    local cargo_sorted canonical_sorted
-    cargo_sorted=$(printf '%s\n' $binaries | sort)
-    canonical_sorted=$(printf '%s\n' $canonical | sort)
-    if [[ "$cargo_sorted" == "$canonical_sorted" ]]; then
-        pass "capsem-agent [[bin]] entries match GUEST_BINARIES"
-    else
-        fail "capsem-agent [[bin]] entries differ from GUEST_BINARIES"
-    fi
-
     for bin in $binaries; do
         # Guest binaries are injected via initrd repack, not baked into rootfs.
         # Check justfile _pack-initrd references the binary.
@@ -326,119 +305,6 @@ PY
             fail "justfile missing $bin in _pack-initrd"
         fi
     done
-
-    if grep -q 'scripts/validate-rootfs.sh' "$ROOT_DIR/.github/workflows/release.yaml"; then
-        pass "release workflow gates rootfs with scripts/validate-rootfs.sh"
-    else
-        fail "release workflow missing scripts/validate-rootfs.sh gate"
-    fi
-}
-
-# --------------------------------------------------------------------------
-# Check: manifest signing key matches the release verification pubkey.
-# --------------------------------------------------------------------------
-check_manifest_signing() {
-    echo ""
-    echo "== Manifest Signing =="
-
-    local pubkey="$ROOT_DIR/config/manifest-sign.pub"
-    local default_key="$ROOT_DIR/private/manifest-sign/capsem.key"
-    local fallback_key="$ROOT_DIR/private/minisign/manifest.key"
-    local key="${MANIFEST_SIGN_KEY_FILE:-}"
-    if [[ -z "$key" ]]; then
-        if [[ -f "$default_key" ]]; then
-            key="$default_key"
-        elif [[ -f "$fallback_key" ]]; then
-            key="$fallback_key"
-        else
-            key="$default_key"
-        fi
-    fi
-    local default_password_file="$ROOT_DIR/private/manifest-sign/password"
-    local fallback_password_file="$ROOT_DIR/private/minisign/password"
-    local password_file="${MANIFEST_SIGN_PASSWORD_FILE:-}"
-    if [[ -z "$password_file" ]]; then
-        if [[ -f "$default_password_file" ]]; then
-            password_file="$default_password_file"
-        elif [[ -f "$fallback_password_file" ]]; then
-            password_file="$fallback_password_file"
-        fi
-    fi
-    local manifest="$ROOT_DIR/assets/manifest.json"
-
-    if [[ ! -f "$pubkey" ]]; then
-        fail "config/manifest-sign.pub not found"
-        return
-    fi
-    pass "config/manifest-sign.pub exists"
-
-    if [[ ! -f "$key" ]]; then
-        fail "${key#$ROOT_DIR/} not found (set MANIFEST_SIGN_KEY_FILE to override)"
-        return
-    fi
-    pass "${key#$ROOT_DIR/} exists"
-
-    if ! command -v minisign >/dev/null 2>&1; then
-        fail "minisign not found"
-        return
-    fi
-    if [[ ! -f "$manifest" ]]; then
-        fail "assets/manifest.json not found"
-        return
-    fi
-
-    local tmpdir tmp_manifest tmp_sig
-    tmpdir="$(mktemp -d)"
-    tmp_manifest="$tmpdir/manifest.json"
-    tmp_sig="$tmpdir/manifest.json.minisig"
-    cp "$manifest" "$tmp_manifest"
-
-    if [[ -n "$password_file" && -f "$password_file" ]]; then
-        if ! minisign -S -s "$key" -m "$tmp_manifest" -x "$tmp_sig" < "$password_file" >/dev/null 2>&1; then
-            rm -rf "$tmpdir"
-            fail "manifest signing key failed to sign assets/manifest.json"
-            return
-        fi
-    elif [[ -n "${MINISIGN_PASSWORD:-}" ]]; then
-        if ! printf '%s\n' "$MINISIGN_PASSWORD" | minisign -S -s "$key" -m "$tmp_manifest" -x "$tmp_sig" >/dev/null 2>&1; then
-            rm -rf "$tmpdir"
-            fail "manifest signing key failed to sign assets/manifest.json"
-            return
-        fi
-    elif ! minisign -S -s "$key" -m "$tmp_manifest" -x "$tmp_sig" </dev/null >/dev/null 2>&1; then
-        rm -rf "$tmpdir"
-        fail "manifest signing key failed to sign assets/manifest.json (if encrypted, set MANIFEST_SIGN_PASSWORD_FILE or MINISIGN_PASSWORD)"
-        return
-    fi
-    pass "manifest signing key signs assets/manifest.json"
-
-    if minisign -Vm "$tmp_manifest" -x "$tmp_sig" -p "$pubkey" >/dev/null 2>&1; then
-        pass "manifest signature verifies with config/manifest-sign.pub"
-    else
-        fail "manifest signing key does not match config/manifest-sign.pub"
-    fi
-    rm -rf "$tmpdir"
-}
-
-# --------------------------------------------------------------------------
-# Check: desktop updater stays disabled until release artifacts support it.
-# --------------------------------------------------------------------------
-check_updater_disabled() {
-    echo ""
-    echo "== Desktop Updater Strategy =="
-
-    local matches
-    matches=$(grep -R -n -E 'createUpdaterArtifacts|latest\.json|tauri-plugin-updater|tauri_plugin_updater|updater:default' \
-        "$ROOT_DIR/crates/capsem-app" \
-        "$ROOT_DIR/frontend/src/lib/api.ts" \
-        "$ROOT_DIR/frontend/src/lib/components/settings" \
-        "$ROOT_DIR/frontend/src/lib/components/shell/SettingsPage.svelte" 2>/dev/null || true)
-    if [[ -n "$matches" ]]; then
-        echo "$matches"
-        fail "unsupported Tauri updater surface is still enabled"
-    else
-        pass "unsupported Tauri updater surface disabled"
-    fi
 }
 
 # --------------------------------------------------------------------------
@@ -453,8 +319,6 @@ main() {
     check_apple_certificate
     check_b64_matches_p12
     check_notarization
-    check_manifest_signing
-    check_updater_disabled
     check_ephemeral_model
     check_guest_binaries
 

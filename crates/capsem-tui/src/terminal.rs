@@ -460,17 +460,12 @@ pub struct TerminalStyle {
     pub inverse: bool,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum TerminalColor {
+    #[default]
     Default,
     Indexed(u8),
     Rgb(u8, u8, u8),
-}
-
-impl Default for TerminalColor {
-    fn default() -> Self {
-        Self::Default
-    }
 }
 
 fn line_from_screen_row(screen: &vt100::Screen, row: u16, cols: u16) -> TerminalLine {

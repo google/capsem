@@ -2,6 +2,28 @@ use super::*;
 use crate::mcp::policy::{McpManualServer, McpUserConfig};
 use std::io::Write;
 
+struct EnvVarGuard {
+    key: &'static str,
+    old: Option<String>,
+}
+
+impl EnvVarGuard {
+    fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+        let old = std::env::var(key).ok();
+        std::env::set_var(key, value);
+        Self { key, old }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        match &self.old {
+            Some(value) => std::env::set_var(self.key, value),
+            None => std::env::remove_var(self.key),
+        }
+    }
+}
+
 fn make_tool(ns_name: &str, orig_name: &str, server: &str, desc: Option<&str>) -> McpToolDef {
     McpToolDef {
         namespaced_name: ns_name.into(),
@@ -240,8 +262,9 @@ fn tool_cache_roundtrip() {
 
 #[test]
 fn tool_cache_missing_file_returns_empty() {
+    let _lock = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
     // load_tool_cache with nonexistent HOME
-    std::env::set_var("HOME", "/nonexistent_test_dir_xyz");
+    let _home_guard = EnvVarGuard::set("HOME", "/nonexistent_test_dir_xyz");
     let cache = load_tool_cache();
     assert!(cache.is_empty());
 }
@@ -264,13 +287,8 @@ fn build_server_list_manual_servers() {
         servers: vec![McpManualServer {
             name: "myserver".into(),
             url: "https://mcp.example.com/v1".into(),
-            command: None,
-            args: vec![],
-            env: HashMap::new(),
             headers: HashMap::new(),
-            bearer_token: None,
-            pool_size: Some(2),
-            pool_safe_tools: vec!["search".to_string()],
+            auth: None,
             enabled: true,
         }],
         ..Default::default()
@@ -280,9 +298,6 @@ fn build_server_list_manual_servers() {
     assert!(list
         .iter()
         .any(|s| s.name == "myserver" && s.source == "manual"));
-    let myserver = list.iter().find(|s| s.name == "myserver").unwrap();
-    assert_eq!(myserver.pool_size, Some(2));
-    assert_eq!(myserver.pool_safe_tools, vec!["search".to_string()]);
 }
 
 #[test]
@@ -292,13 +307,8 @@ fn build_server_list_corp_servers_added() {
         servers: vec![McpManualServer {
             name: "corp-server".into(),
             url: "https://corp.internal/mcp".into(),
-            command: None,
-            args: vec![],
-            env: HashMap::new(),
             headers: HashMap::new(),
-            bearer_token: None,
-            pool_size: None,
-            pool_safe_tools: Vec::new(),
+            auth: None,
             enabled: true,
         }],
         ..Default::default()
@@ -315,13 +325,8 @@ fn build_server_list_reject_builtin_name() {
         servers: vec![McpManualServer {
             name: "builtin".into(),
             url: "https://evil.com/mcp".into(),
-            command: None,
-            args: vec![],
-            env: HashMap::new(),
             headers: HashMap::new(),
-            bearer_token: None,
-            pool_size: None,
-            pool_safe_tools: Vec::new(),
+            auth: None,
             enabled: true,
         }],
         ..Default::default()
@@ -337,13 +342,8 @@ fn build_server_list_empty_name_rejected() {
         servers: vec![McpManualServer {
             name: "".into(),
             url: "https://test.com/mcp".into(),
-            command: None,
-            args: vec![],
-            env: HashMap::new(),
             headers: HashMap::new(),
-            bearer_token: None,
-            pool_size: None,
-            pool_safe_tools: Vec::new(),
+            auth: None,
             enabled: true,
         }],
         ..Default::default()
@@ -354,22 +354,100 @@ fn build_server_list_empty_name_rejected() {
 }
 
 #[test]
+fn mcp_config_rejects_raw_bearer_token_field() {
+    let err = toml::from_str::<McpUserConfig>(
+        r#"
+[[servers]]
+name = "remote"
+url = "https://mcp.example.com/v1"
+bearer_token = "tok_raw"
+"#,
+    )
+    .expect_err("raw bearer_token must not be accepted in MCP config");
+    assert!(err.to_string().contains("bearer_token"), "{err}");
+}
+
+#[test]
+fn mcp_config_rejects_secret_bearing_headers() {
+    let cfg: McpUserConfig = toml::from_str(
+        r#"
+[[servers]]
+name = "remote"
+url = "https://mcp.example.com/v1"
+[servers.headers]
+Authorization = "Bearer raw"
+"#,
+    )
+    .unwrap();
+    let err = cfg
+        .validate("profile")
+        .expect_err("Authorization headers must be brokered, not stored in TOML");
+    assert!(err.contains("credential broker"), "{err}");
+}
+
+#[test]
+fn mcp_config_accepts_oauth_broker_reference() {
+    let cfg: McpUserConfig = toml::from_str(&format!(
+        r#"
+[[servers]]
+name = "remote"
+url = "https://mcp.example.com/v1"
+
+[servers.auth]
+kind = "oauth"
+credential_ref = "credential:blake3:{}"
+"#,
+        "a".repeat(64)
+    ))
+    .unwrap();
+    cfg.validate("profile")
+        .expect("brokered OAuth auth must validate");
+    assert_eq!(
+        cfg.servers[0].auth.as_ref().unwrap().kind,
+        crate::mcp::types::McpAuthKind::OAuth
+    );
+}
+
+#[test]
+fn credential_broker_resolves_mcp_oauth_material_by_reference() {
+    let _lock = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
+    let dir = tempfile::tempdir().unwrap();
+    let _store_guard = EnvVarGuard::set(
+        crate::credential_broker::TEST_STORE_ENV,
+        dir.path().join("store.json"),
+    );
+    let observation = crate::credential_broker::CredentialObservation {
+        provider: crate::credential_broker::CredentialProvider::Mcp,
+        raw_value: "oauth-access-token".to_string(),
+        source: "mcp.auth.remote".to_string(),
+        event_type: None,
+        trace_id: None,
+        context_json: None,
+    };
+    let brokered = crate::credential_broker::broker_observed_credential(&observation).unwrap();
+    let resolved = crate::credential_broker::resolve_broker_reference_for_provider(
+        crate::credential_broker::CredentialProvider::Mcp,
+        &brokered.credential_ref,
+    )
+    .unwrap();
+    assert_eq!(resolved.as_deref(), Some("oauth-access-token"));
+}
+
+#[test]
 fn build_server_list_corp_shadows_user_on_same_name() {
     // AB-002: user manual servers must not shadow corp-defined servers with
-    // the same name. Corp Profile policy is the highest-trust layer; if a
+    // the same name. The corp.toml policy is the highest-trust layer; if a
     // user defines `github` and corp also defines `github`, the corp URL,
-    // headers, and bearer token must be the surviving definition.
+    // headers, and brokered auth ref must be the surviving definition.
     let user = McpUserConfig {
         servers: vec![McpManualServer {
             name: "github".into(),
             url: "https://user.example/mcp".into(),
-            command: None,
-            args: vec![],
-            env: HashMap::new(),
             headers: HashMap::new(),
-            bearer_token: Some("user-token".into()),
-            pool_size: None,
-            pool_safe_tools: Vec::new(),
+            auth: Some(crate::mcp::types::McpAuthConfig {
+                kind: crate::mcp::types::McpAuthKind::OAuth,
+                credential_ref: format!("credential:blake3:{}", "1".repeat(64)),
+            }),
             enabled: true,
         }],
         ..Default::default()
@@ -378,13 +456,11 @@ fn build_server_list_corp_shadows_user_on_same_name() {
         servers: vec![McpManualServer {
             name: "github".into(),
             url: "https://corp.internal/mcp".into(),
-            command: None,
-            args: vec![],
-            env: HashMap::new(),
             headers: HashMap::new(),
-            bearer_token: Some("corp-token".into()),
-            pool_size: None,
-            pool_safe_tools: Vec::new(),
+            auth: Some(crate::mcp::types::McpAuthConfig {
+                kind: crate::mcp::types::McpAuthKind::OAuth,
+                credential_ref: format!("credential:blake3:{}", "2".repeat(64)),
+            }),
             enabled: true,
         }],
         ..Default::default()
@@ -399,7 +475,14 @@ fn build_server_list_corp_shadows_user_on_same_name() {
         "corp definition must win over same-name user"
     );
     assert_eq!(github.url, "https://corp.internal/mcp");
-    assert_eq!(github.bearer_token.as_deref(), Some("corp-token"));
+    let corp_ref = format!("credential:blake3:{}", "2".repeat(64));
+    assert_eq!(
+        github
+            .auth
+            .as_ref()
+            .map(|auth| auth.credential_ref.as_str()),
+        Some(corp_ref.as_str())
+    );
     // Only one entry, not two.
     assert_eq!(list.iter().filter(|s| s.name == "github").count(), 1);
 }
@@ -412,13 +495,8 @@ fn build_server_list_unique_user_server_survives_with_corp_present() {
         servers: vec![McpManualServer {
             name: "user-only".into(),
             url: "https://user.example/mcp".into(),
-            command: None,
-            args: vec![],
-            env: HashMap::new(),
             headers: HashMap::new(),
-            bearer_token: None,
-            pool_size: None,
-            pool_safe_tools: Vec::new(),
+            auth: None,
             enabled: true,
         }],
         ..Default::default()
@@ -427,13 +505,8 @@ fn build_server_list_unique_user_server_survives_with_corp_present() {
         servers: vec![McpManualServer {
             name: "corp-only".into(),
             url: "https://corp.internal/mcp".into(),
-            command: None,
-            args: vec![],
-            env: HashMap::new(),
             headers: HashMap::new(),
-            bearer_token: None,
-            pool_size: None,
-            pool_safe_tools: Vec::new(),
+            auth: None,
             enabled: true,
         }],
         ..Default::default()
@@ -456,13 +529,8 @@ fn build_server_list_corp_enabled_override_on_user_server() {
         servers: vec![McpManualServer {
             name: "user-server".into(),
             url: "https://user.example/mcp".into(),
-            command: None,
-            args: vec![],
-            env: HashMap::new(),
             headers: HashMap::new(),
-            bearer_token: None,
-            pool_size: None,
-            pool_safe_tools: Vec::new(),
+            auth: None,
             enabled: true,
         }],
         ..Default::default()
@@ -489,13 +557,8 @@ fn build_server_list_enabled_override() {
         servers: vec![McpManualServer {
             name: "myserver".into(),
             url: "https://mcp.example.com/v1".into(),
-            command: None,
-            args: vec![],
-            env: HashMap::new(),
             headers: HashMap::new(),
-            bearer_token: None,
-            pool_size: None,
-            pool_safe_tools: Vec::new(),
+            auth: None,
             enabled: true,
         }],
         server_enabled: {
@@ -512,56 +575,43 @@ fn build_server_list_enabled_override() {
 }
 
 #[test]
-fn build_server_list_builtin_local_honors_enabled_override() {
-    let dir = tempfile::tempdir().unwrap();
-    let builtin = dir.path().join("capsem-mcp-builtin");
-    std::fs::write(&builtin, "#!/bin/sh\n").unwrap();
-    let user = McpUserConfig {
-        server_enabled: {
-            let mut m = HashMap::new();
-            m.insert("local".into(), false);
-            m
-        },
+fn build_profile_server_list_uses_profile_manual_servers_only() {
+    let profile = McpUserConfig {
+        servers: vec![McpManualServer {
+            name: "profile-api".into(),
+            url: "https://profile.example/mcp".into(),
+            headers: HashMap::new(),
+            auth: None,
+            enabled: true,
+        }],
         ..Default::default()
     };
-    let corp = McpUserConfig::default();
 
-    let list = build_server_list_with_builtin(&user, &corp, Some(&builtin), HashMap::new());
-    let local = list.iter().find(|s| s.name == "local").unwrap();
-    assert!(
-        !local.enabled,
-        "mcp.servers.local.enabled=false must disable the built-in local MCP server"
-    );
+    let list = build_profile_server_list(&profile, None, HashMap::new());
+
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].name, "profile-api");
+    assert_eq!(list[0].source, "profile");
 }
 
 #[test]
-fn build_server_list_builtin_local_corp_override_wins() {
+fn build_profile_server_list_respects_local_builtin_enablement() {
     let dir = tempfile::tempdir().unwrap();
     let builtin = dir.path().join("capsem-mcp-builtin");
     std::fs::write(&builtin, "#!/bin/sh\n").unwrap();
-    let user = McpUserConfig {
-        server_enabled: {
-            let mut m = HashMap::new();
-            m.insert("local".into(), true);
-            m
-        },
-        ..Default::default()
-    };
-    let corp = McpUserConfig {
-        server_enabled: {
-            let mut m = HashMap::new();
-            m.insert("local".into(), false);
-            m
-        },
+
+    let mut enabled = HashMap::new();
+    enabled.insert("local".to_string(), false);
+    let profile = McpUserConfig {
+        server_enabled: enabled,
         ..Default::default()
     };
 
-    let list = build_server_list_with_builtin(&user, &corp, Some(&builtin), HashMap::new());
-    let local = list.iter().find(|s| s.name == "local").unwrap();
-    assert!(
-        !local.enabled,
-        "corp mcp.servers.local.enabled=false must override user local=true"
-    );
+    let list = build_profile_server_list(&profile, Some(&builtin), HashMap::new());
+
+    let local = list.iter().find(|server| server.name == "local").unwrap();
+    assert_eq!(local.source, "builtin");
+    assert!(!local.enabled);
 }
 
 // ── original parse tests ────────────────────────────────────────
@@ -607,11 +657,10 @@ fn parse_http_server_from_settings() {
     .unwrap();
 
     let defs = parse_mcp_servers_from_file(&path, "claude").unwrap();
-    assert_eq!(defs.len(), 1);
-    assert_eq!(defs[0].name, "api");
-    assert_eq!(defs[0].url, "https://mcp.example.com/v1");
-    assert_eq!(defs[0].bearer_token.as_deref(), Some("tok_123"));
-    assert!(!defs[0].is_stdio());
+    assert!(
+        defs.is_empty(),
+        "auto-detected MCP configs with raw bearerToken must not be imported; credentials must be brokered first"
+    );
 }
 
 #[test]
@@ -665,25 +714,15 @@ fn build_server_list_rejects_names_with_separator() {
     user.servers.push(crate::mcp::policy::McpManualServer {
         name: "bad__name".to_string(),
         url: "http://localhost".to_string(),
-        command: None,
-        args: vec![],
-        env: HashMap::new(),
         headers: HashMap::new(),
-        bearer_token: None,
-        pool_size: None,
-        pool_safe_tools: Vec::new(),
+        auth: None,
         enabled: true,
     });
     user.servers.push(crate::mcp::policy::McpManualServer {
         name: "goodname".to_string(),
         url: "http://localhost".to_string(),
-        command: None,
-        args: vec![],
-        env: HashMap::new(),
         headers: HashMap::new(),
-        bearer_token: None,
-        pool_size: None,
-        pool_safe_tools: Vec::new(),
+        auth: None,
         enabled: true,
     });
 
@@ -691,13 +730,8 @@ fn build_server_list_rejects_names_with_separator() {
     corp.servers.push(crate::mcp::policy::McpManualServer {
         name: "corp__bad".to_string(),
         url: "http://localhost".to_string(),
-        command: None,
-        args: vec![],
-        env: HashMap::new(),
         headers: HashMap::new(),
-        bearer_token: None,
-        pool_size: None,
-        pool_safe_tools: Vec::new(),
+        auth: None,
         enabled: true,
     });
 
@@ -743,9 +777,8 @@ fn all_guest_binaries_in_dockerfile_rootfs() {
     let bins = parse_cargo_bin_names(&root.join("crates/capsem-agent/Cargo.toml"));
     assert!(!bins.is_empty(), "no [[bin]] entries found in capsem-agent");
 
-    let template =
-        std::fs::read_to_string(root.join("src/capsem/builder/templates/Dockerfile.rootfs.j2"))
-            .expect("cannot read Dockerfile.rootfs.j2");
+    let template = std::fs::read_to_string(root.join("config/docker/Dockerfile.rootfs.j2"))
+        .expect("cannot read Dockerfile.rootfs.j2");
 
     // The Jinja template uses a loop over guest_binaries to COPY each binary.
     // Verify the loop pattern exists -- the Python build context test

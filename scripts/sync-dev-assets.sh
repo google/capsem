@@ -26,74 +26,76 @@ if [[ ! -d "$SRC/$ARCH" ]]; then
     exit 1
 fi
 
-mkdir -p "$DST/$ARCH"
-
-# Dev-key signing for the locally built manifest. Release binaries refuse
-# to boot when manifest.json has no sibling manifest.json.minisig (see
-# crates/capsem-core/src/asset_manager.rs::load_verified_manifest_for_assets).
-# `just install` ships release binaries, so without a dev-side signature
-# every locally built sandbox fails to boot with "manifest signature
-# missing". The binary additionally trusts a sibling manifest-sign.dev.pub
-# via verify_manifest_with_baked_or_dev_key; this block generates that
-# key on first install, signs the local manifest, and deploys the pubkey
-# next to the manifest so dev boots succeed.
-sign_manifest_with_dev_key() {
-    local manifest="$1"
-    local dst_dir="$2"
-    if ! command -v minisign >/dev/null 2>&1; then
-        echo "ERROR: minisign not installed; cannot sign local asset manifest." >&2
-        echo "       Fix: brew install minisign (macOS) or apt install minisign (Linux)." >&2
-        return 1
-    fi
-    local key_dir="$HOME/.capsem/dev-keys"
-    local priv="$key_dir/manifest-sign.dev.key"
-    local pub="$key_dir/manifest-sign.dev.pub"
-    mkdir -p "$key_dir"
-    chmod 700 "$key_dir"
-    if [[ ! -f "$priv" || ! -f "$pub" ]]; then
-        echo "Generating dev minisign keypair at $key_dir (first install)"
-        # -W: no password, so sync-dev-assets can run unattended.
-        minisign -G -f -W -p "$pub" -s "$priv" >/dev/null
-        chmod 600 "$priv"
-    fi
-    # Sign the manifest as a sibling .minisig. -f overwrites a stale sig
-    # from a previous run. No comment so stdin prompting is skipped.
-    minisign -S -f -s "$priv" -m "$manifest" -t "capsem dev key" >/dev/null
-    # Deploy pubkey next to manifest -- capsem-core reads it from there.
-    cp -f "$pub" "$dst_dir/manifest-sign.dev.pub"
-}
-
-# Short-circuit when ~/.capsem/assets is a symlink back to the repo's
-# assets/ (the dev-loop convenience set up by `just install` for the
-# hot-iteration flow). cp would otherwise exit 1 on every "identical
-# (not copied)" pair and kill the recipe under `set -e`.
-if [[ "$SRC" -ef "$DST" ]]; then
+# Short-circuit when ~/.capsem/assets is a symlink back to this repo's assets/.
+# Remove a stale symlink to another worktree before copying; otherwise mkdir/cp
+# silently populate the wrong tree and the installed service reports missing
+# hash-named assets.
+if [[ -e "$DST" && "$SRC" -ef "$DST" ]]; then
     echo "Skipped sync: $DST resolves to $SRC (symlinked dev layout)"
-    # Still sign the (shared) manifest in-place -- the release binary
-    # reads it from $DST, which here points at $SRC, so signing either
-    # lands the .minisig where the binary looks.
-    sign_manifest_with_dev_key "$DST/manifest.json" "$DST"
     exit 0
 fi
+
+if [[ -L "$DST" ]]; then
+    echo "Removing stale asset symlink: $DST -> $(readlink "$DST")"
+    rm "$DST"
+fi
+
+mkdir -p "$DST/$ARCH"
 
 cp "$SRC/manifest.json" "$DST/manifest.json.tmp"
 mv "$DST/manifest.json.tmp" "$DST/manifest.json"
 
-# Per-file copy so one "identical" pair doesn't kill the loop. Same-inode
-# pairs happen when individual files are hardlinked (APFS clonefile from a
-# prior `just install` run) or when the src/dst arch dir is symlinked.
-for src_file in "$SRC/$ARCH"/*; do
-    [[ -e "$src_file" ]] || continue
-    [[ -f "$src_file" ]] || continue
-    dst_file="$DST/$ARCH/$(basename "$src_file")"
-    if [[ "$src_file" -ef "$dst_file" ]]; then
-        continue
-    fi
-    cp -f "$src_file" "$dst_file"
-done
+# Materialize the installed layout from the manifest. Local build output may
+# be literal (`rootfs.erofs`) while downloaded/reconciled output is
+# hash-prefixed (`rootfs-<hash16>.erofs`); the installed tree is always
+# hash-prefixed so ManifestV2::resolve and profile boot pins use one shape.
+python3 - "$SRC" "$DST" "$ARCH" <<'PY'
+import json
+import shutil
+import sys
+from pathlib import Path
 
-# Sign the freshly copied manifest and deploy the dev pubkey next to it.
-sign_manifest_with_dev_key "$DST/manifest.json" "$DST"
+src = Path(sys.argv[1])
+dst = Path(sys.argv[2])
+arch = sys.argv[3]
+
+manifest = json.loads((src / "manifest.json").read_text())
+asset_version = manifest["assets"]["current"]
+assets = manifest["assets"]["releases"][asset_version]["arches"][arch]
+
+def hash_filename(logical_name: str, digest: str) -> str:
+    prefix = digest[:16]
+    if "." in logical_name:
+        stem, ext = logical_name.split(".", 1)
+        return f"{stem}-{prefix}.{ext}"
+    return f"{logical_name}-{prefix}"
+
+for logical_name, meta in sorted(assets.items()):
+    hashed_name = hash_filename(logical_name, meta["hash"])
+    candidates = [src / arch / hashed_name, src / arch / logical_name]
+    source = next((p for p in candidates if p.is_file()), None)
+    if source is None:
+        searched = ", ".join(str(p) for p in candidates)
+        raise SystemExit(f"ERROR: missing source asset for {logical_name}; checked {searched}")
+    target = dst / arch / hashed_name
+    if target.exists() and source.samefile(target):
+        continue
+    tmp = target.with_suffix(target.suffix + ".tmp")
+    shutil.copy2(source, tmp)
+    tmp.replace(target)
+
+expected = {hash_filename(name, meta["hash"]) for name, meta in assets.items()}
+for candidate in (dst / arch).iterdir():
+    if not candidate.is_file():
+        continue
+    name = candidate.name
+    if "-" not in name or name in expected:
+        continue
+    stem = name.split("-", 1)[0]
+    if stem not in {logical.split(".", 1)[0] for logical in assets}:
+        continue
+    candidate.unlink()
+PY
 
 # Drop legacy v1 layout directories that ManifestV2::resolve() no longer reads.
 # They would otherwise keep occupying ~450MB/install.
@@ -105,10 +107,25 @@ done
 
 # Surface any hash drift between the manifest and the file on disk.
 if command -v b3sum >/dev/null 2>&1; then
-    EXPECTED=$(python3 -c "import json,sys;m=json.load(open('$SRC/manifest.json'));v=m['assets']['current'];print(m['assets']['releases'][v]['arches']['$ARCH']['rootfs.squashfs']['hash'])" 2>/dev/null || true)
-    ACTUAL=$(b3sum --no-names "$DST/$ARCH/rootfs.squashfs" 2>/dev/null | awk '{print $1}')
+    ROOTFS=$(python3 -c "import json,sys;m=json.load(open('$SRC/manifest.json'));v=m['assets']['current'];a=m['assets']['releases'][v]['arches']['$ARCH'];print('rootfs.erofs' if 'rootfs.erofs' in a else '')" 2>/dev/null || true)
+    EXPECTED=$(python3 -c "import json,sys;m=json.load(open('$SRC/manifest.json'));v=m['assets']['current'];a=m['assets']['releases'][v]['arches']['$ARCH'];r='$ROOTFS';print(a[r]['hash'])" 2>/dev/null || true)
+    HASHED=""
+    if [[ -n "$ROOTFS" && -n "$EXPECTED" ]]; then
+        prefix="${EXPECTED:0:16}"
+        stem="${ROOTFS%.*}"
+        ext="${ROOTFS#*.}"
+        HASHED="$stem-$prefix.$ext"
+    fi
+    CHECK_PATH="$DST/$ARCH/$HASHED"
+    if [[ ! -f "$CHECK_PATH" ]]; then
+        CHECK_PATH="$DST/$ARCH/$ROOTFS"
+    fi
+    ACTUAL=""
+    if [[ -f "$CHECK_PATH" ]]; then
+        ACTUAL=$(b3sum --no-names "$CHECK_PATH" 2>/dev/null | awk '{print $1}')
+    fi
     if [[ -n "$EXPECTED" && -n "$ACTUAL" && "$EXPECTED" != "$ACTUAL" ]]; then
-        echo "WARNING: rootfs.squashfs hash does not match manifest"
+        echo "WARNING: $ROOTFS hash does not match manifest"
         echo "  expected: $EXPECTED"
         echo "  actual:   $ACTUAL"
     fi

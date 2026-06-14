@@ -81,7 +81,7 @@ All guest-host communication uses vsock (virtio socket), with dedicated ports:
 | 5000 | Control messages (resize, heartbeat, exec, file I/O) | capsem-pty-agent |
 | 5001 | Terminal data (PTY I/O) | capsem-pty-agent |
 | 5002 | MITM proxy and framed guest MCP endpoint | capsem-net-proxy, capsem-mcp-server |
-| 5004 | Lifecycle commands (suspend; shutdown frames ignored for compatibility) | capsem-sysutil |
+| 5004 | Lifecycle commands (shutdown/suspend) | capsem-sysutil |
 | 5005 | Exec output (direct child stdout) | capsem-pty-agent |
 | 5006 | Kernel audit stream | capsem-pty-agent |
 | 5007 | DNS proxy queries | capsem-dns-proxy |
@@ -137,7 +137,7 @@ The KVM backend generates an aarch64 Flattened Device Tree at boot. The FDT cont
 | Slot | Device | IRQ (SPI) | Purpose |
 |------|--------|-----------|---------|
 | 0 | virtio-console | 48 | Serial console (boot logs, terminal fallback) |
-| 1 | virtio-blk | 49 | Root filesystem (squashfs, read-only) |
+| 1 | virtio-blk | 49 | Root filesystem (EROFS, read-only) |
 | 2 | virtio-blk | 50 | Scratch disk (optional) |
 | 3 | virtio-vsock | 51 | Guest-host vsock communication |
 | 4+ | virtio-fs | 52+ | VirtioFS shared directories |

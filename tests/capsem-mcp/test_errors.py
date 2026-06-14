@@ -1,12 +1,11 @@
 """Error handling: operations on deleted/invalid VMs, concurrent VMs."""
 
-import time
 import uuid
 
 import pytest
 
 from helpers.constants import EXEC_READY_TIMEOUT
-from helpers.mcp import content_text, parse_content, wait_exec_ready
+from helpers.mcp import parse_content, wait_exec_ready
 
 pytestmark = pytest.mark.mcp
 

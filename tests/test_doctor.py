@@ -6,21 +6,17 @@ All subprocess/shutil calls are mocked -- no real tools needed to run tests.
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from capsem.builder.doctor import (
-    MAX_CLOCK_SKEW_SECONDS,
     CheckResult,
     check_b3sum,
     check_container_clock,
-    check_container_resources,
     check_container_runtime,
     check_cross_target,
-    check_guest_config,
+    check_profile_contract,
     check_rust_toolchain,
     check_source_files,
     format_results,
@@ -241,46 +237,55 @@ class TestCheckContainerClock:
 
 
 # ---------------------------------------------------------------------------
-# Guest config check
+# Profile/profile-derived build rail check
 # ---------------------------------------------------------------------------
 
 
-class TestCheckGuestConfig:
-    def test_valid_config(self, tmp_path):
-        config = tmp_path / "config"
-        config.mkdir()
-        (config / "build.toml").write_text(
-            '[build]\ncompression = "zstd"\ncompression_level = 15\n'
-            "[build.architectures.arm64]\n"
-            'base_image = "debian:bookworm-slim"\n'
-            'docker_platform = "linux/arm64"\n'
-            'rust_target = "aarch64-unknown-linux-musl"\n'
-            'kernel_branch = "6.6"\n'
-            'kernel_image = "arch/arm64/boot/Image"\n'
-            'defconfig = "kernel/defconfig.arm64"\n'
-            "node_major = 24\n"
-        )
-        result = check_guest_config(tmp_path)
+class TestCheckProfileContract:
+    @patch("capsem.builder.doctor.subprocess.run")
+    def test_profile_contract_uses_capsem_admin_profile_check(self, mock_run, tmp_path):
+        config_root = tmp_path / "config"
+        profile = config_root / "profiles" / "code" / "profile.toml"
+        profile.parent.mkdir(parents=True)
+        profile.write_text('id = "code"\n')
+        mock_run.return_value = MagicMock(stdout='{"ok":true,"profile_id":"code"}', returncode=0)
+
+        result = check_profile_contract(profile, config_root)
+
         assert result.passed is True
-        assert "1 architecture" in result.detail
+        assert "code" in result.detail
+        mock_run.assert_called_once()
+        argv = mock_run.call_args.args[0]
+        assert argv[:6] == [
+            "cargo",
+            "run",
+            "-p",
+            "capsem-admin",
+            "--",
+            "profile",
+        ]
+        assert "check" in argv
+        assert str(profile) in argv
+        assert "--config-root" in argv
+        assert str(config_root) in argv
+        assert "--json" in argv
 
-    def test_missing_build_toml(self, tmp_path):
-        config = tmp_path / "config"
-        config.mkdir()
-        result = check_guest_config(tmp_path)
-        assert result.passed is False
-        assert "build.toml" in result.detail
+    @patch("capsem.builder.doctor.subprocess.run")
+    def test_profile_contract_reports_capsem_admin_failure(self, mock_run, tmp_path):
+        config_root = tmp_path / "config"
+        profile = config_root / "profiles" / "code" / "profile.toml"
+        profile.parent.mkdir(parents=True)
+        profile.write_text('id = "code"\n')
+        mock_run.return_value = MagicMock(
+            stdout="",
+            stderr="profile payload file pin check failed",
+            returncode=1,
+        )
 
-    def test_no_config_dir(self, tmp_path):
-        result = check_guest_config(tmp_path)
-        assert result.passed is False
+        result = check_profile_contract(profile, config_root)
 
-    def test_invalid_toml(self, tmp_path):
-        config = tmp_path / "config"
-        config.mkdir()
-        (config / "build.toml").write_text("invalid [[ toml")
-        result = check_guest_config(tmp_path)
         assert result.passed is False
+        assert "profile payload file pin check failed" in result.detail
 
 
 # ---------------------------------------------------------------------------
@@ -298,8 +303,8 @@ def _create_all_source_files(tmp_path, *, skip=None):
     )
     artifacts = tmp_path / "guest" / "artifacts"
     artifacts.mkdir(parents=True, exist_ok=True)
-    config = tmp_path / "config"
-    config.mkdir(exist_ok=True)
+    security_keys = tmp_path / "security" / "keys"
+    security_keys.mkdir(parents=True, exist_ok=True)
     # Individual files
     all_files = ["capsem-init"] + list(ROOTFS_SUPPORT_FILES) + list(ROOTFS_SCRIPTS)
     for name in all_files:
@@ -315,15 +320,15 @@ def _create_all_source_files(tmp_path, *, skip=None):
         (bench_pkg / "__main__.py").write_text("stub")
     # CA cert
     if skip != "capsem-ca.crt":
-        (config / "capsem-ca.crt").write_text("stub cert")
+        (security_keys / "capsem-ca.crt").write_text("stub cert")
 
 
 class TestCheckSourceFiles:
     def test_all_present(self, tmp_path):
         artifacts = tmp_path / "guest" / "artifacts"
         artifacts.mkdir(parents=True)
-        config = tmp_path / "config"
-        config.mkdir()
+        security_keys = tmp_path / "security" / "keys"
+        security_keys.mkdir(parents=True)
         # Create all required files
         for name in [
             "capsem-init", "capsem-bashrc", "banner.txt", "tips.txt",
@@ -334,15 +339,15 @@ class TestCheckSourceFiles:
         bench_pkg = artifacts / "capsem_bench"
         bench_pkg.mkdir()
         (bench_pkg / "__main__.py").write_text("stub")
-        (config / "capsem-ca.crt").write_text("stub cert")
+        (security_keys / "capsem-ca.crt").write_text("stub cert")
         result = check_source_files(tmp_path)
         assert result.passed is True
 
     def test_missing_capsem_init(self, tmp_path):
         artifacts = tmp_path / "guest" / "artifacts"
         artifacts.mkdir(parents=True)
-        config = tmp_path / "config"
-        config.mkdir()
+        security_keys = tmp_path / "security" / "keys"
+        security_keys.mkdir(parents=True)
         for name in [
             "capsem-bashrc", "banner.txt", "tips.txt",
             "capsem-doctor", "capsem-bench", "snapshots",
@@ -352,16 +357,16 @@ class TestCheckSourceFiles:
         bench_pkg = artifacts / "capsem_bench"
         bench_pkg.mkdir()
         (bench_pkg / "__main__.py").write_text("stub")
-        (config / "capsem-ca.crt").write_text("stub cert")
+        (security_keys / "capsem-ca.crt").write_text("stub cert")
         result = check_source_files(tmp_path)
         assert result.passed is False
         assert "capsem-init" in result.detail
 
-    def test_missing_snapshots(self, tmp_path):
+    def test_missing_snapshots_with_helper_fixture(self, tmp_path):
         artifacts = tmp_path / "guest" / "artifacts"
         artifacts.mkdir(parents=True)
-        config = tmp_path / "config"
-        config.mkdir()
+        security_keys = tmp_path / "security" / "keys"
+        security_keys.mkdir(parents=True)
         for name in [
             "capsem-init", "capsem-bashrc", "banner.txt", "tips.txt",
             "capsem-doctor", "capsem-bench",
@@ -371,7 +376,7 @@ class TestCheckSourceFiles:
         bench_pkg = artifacts / "capsem_bench"
         bench_pkg.mkdir()
         (bench_pkg / "__main__.py").write_text("stub")
-        (config / "capsem-ca.crt").write_text("stub cert")
+        (security_keys / "capsem-ca.crt").write_text("stub cert")
         result = check_source_files(tmp_path)
         assert result.passed is False
         assert "snapshots" in result.detail
@@ -379,8 +384,8 @@ class TestCheckSourceFiles:
     def test_missing_diagnostics_dir(self, tmp_path):
         artifacts = tmp_path / "guest" / "artifacts"
         artifacts.mkdir(parents=True)
-        config = tmp_path / "config"
-        config.mkdir()
+        security_keys = tmp_path / "security" / "keys"
+        security_keys.mkdir(parents=True)
         for name in [
             "capsem-init", "capsem-bashrc", "banner.txt", "tips.txt",
             "capsem-doctor", "capsem-bench", "snapshots",
@@ -390,7 +395,7 @@ class TestCheckSourceFiles:
         bench_pkg = artifacts / "capsem_bench"
         bench_pkg.mkdir()
         (bench_pkg / "__main__.py").write_text("stub")
-        (config / "capsem-ca.crt").write_text("stub cert")
+        (security_keys / "capsem-ca.crt").write_text("stub cert")
         result = check_source_files(tmp_path)
         assert result.passed is False
         assert "diagnostics" in result.detail
@@ -398,8 +403,8 @@ class TestCheckSourceFiles:
     def test_missing_bench_pkg_dir(self, tmp_path):
         artifacts = tmp_path / "guest" / "artifacts"
         artifacts.mkdir(parents=True)
-        config = tmp_path / "config"
-        config.mkdir()
+        security_keys = tmp_path / "security" / "keys"
+        security_keys.mkdir(parents=True)
         for name in [
             "capsem-init", "capsem-bashrc", "banner.txt", "tips.txt",
             "capsem-doctor", "capsem-bench", "snapshots",
@@ -407,7 +412,7 @@ class TestCheckSourceFiles:
             (artifacts / name).write_text("stub")
         (artifacts / "diagnostics").mkdir()
         # No capsem_bench/ dir
-        (config / "capsem-ca.crt").write_text("stub cert")
+        (security_keys / "capsem-ca.crt").write_text("stub cert")
         result = check_source_files(tmp_path)
         assert result.passed is False
         assert "capsem_bench" in result.detail
@@ -435,7 +440,7 @@ class TestCheckSourceFiles:
         bench_pkg = artifacts / "capsem_bench"
         bench_pkg.mkdir()
         (bench_pkg / "__main__.py").write_text("stub")
-        # No config/capsem-ca.crt
+        # No security/keys/capsem-ca.crt
         result = check_source_files(tmp_path)
         assert result.passed is False
         assert "capsem-ca.crt" in result.detail
@@ -459,21 +464,22 @@ class TestRunAllChecks:
     @patch("capsem.builder.doctor.check_rust_toolchain")
     @patch("capsem.builder.doctor.check_cross_target")
     @patch("capsem.builder.doctor.check_b3sum")
-    @patch("capsem.builder.doctor.check_guest_config")
+    @patch("capsem.builder.doctor.check_profile_contract")
     @patch("capsem.builder.doctor.check_source_files")
     def test_composes_all(
-        self, mock_src, mock_guest, mock_b3, mock_cross, mock_rust,
+        self, mock_src, mock_profile, mock_b3, mock_cross, mock_rust,
         mock_clock, mock_resources, mock_runtime,
     ):
-        for mock in [mock_src, mock_guest, mock_b3, mock_rust, mock_runtime]:
+        for mock in [mock_src, mock_profile, mock_b3, mock_rust, mock_runtime]:
             mock.return_value = CheckResult(name="x", passed=True, detail="ok")
         mock_cross.return_value = CheckResult(name="x", passed=True, detail="ok")
         mock_resources.return_value = None
         mock_clock.return_value = None
-        results = run_all_checks(Path("guest"), Path("."))
+        results = run_all_checks(Path("."), profile_id="code")
         # At minimum: runtime + rust + arm64 target + x86_64 target + b3sum + config + source
         assert len(results) >= 7
         assert all(r.passed for r in results)
+        mock_profile.assert_called_once()
 
     @patch("capsem.builder.doctor.check_container_runtime")
     @patch("capsem.builder.doctor.check_container_resources")
@@ -481,21 +487,21 @@ class TestRunAllChecks:
     @patch("capsem.builder.doctor.check_rust_toolchain")
     @patch("capsem.builder.doctor.check_cross_target")
     @patch("capsem.builder.doctor.check_b3sum")
-    @patch("capsem.builder.doctor.check_guest_config")
+    @patch("capsem.builder.doctor.check_profile_contract")
     @patch("capsem.builder.doctor.check_source_files")
     def test_counts_failures(
-        self, mock_src, mock_guest, mock_b3, mock_cross, mock_rust,
+        self, mock_src, mock_profile, mock_b3, mock_cross, mock_rust,
         mock_clock, mock_resources, mock_runtime,
     ):
         mock_runtime.return_value = CheckResult(
             name="container-runtime", passed=False, detail="missing", fix="install"
         )
-        for mock in [mock_src, mock_guest, mock_b3, mock_rust]:
+        for mock in [mock_src, mock_profile, mock_b3, mock_rust]:
             mock.return_value = CheckResult(name="x", passed=True, detail="ok")
         mock_cross.return_value = CheckResult(name="x", passed=True, detail="ok")
         mock_resources.return_value = None
         mock_clock.return_value = None
-        results = run_all_checks(Path("guest"), Path("."))
+        results = run_all_checks(Path("."), profile_id="code")
         failures = [r for r in results if not r.passed]
         assert len(failures) >= 1
 
@@ -512,7 +518,6 @@ class TestFormatResults:
             CheckResult(name="cargo", passed=True, detail="cargo 1.82.0"),
         ]
         output = format_results(results)
-        assert "capsem-admin doctor" in output
         assert "PASS" in output
         assert "2 passed" in output
         assert "0 failed" in output

@@ -7,7 +7,7 @@ import pytest
 import subprocess
 from pathlib import Path
 
-from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
+from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.service import wait_exec_ready
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -30,10 +30,15 @@ def _provision_vm(uds_path, name, persistent=False):
     """Provision a VM via the service API (non-blocking, for test setup)."""
     from helpers.uds_client import UdsHttpClient
     client = UdsHttpClient(uds_path)
-    body = {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS}
+    body = {
+        "name": name,
+        "profile_id": CODE_PROFILE_ID,
+        "ram_mb": DEFAULT_RAM_MB,
+        "cpus": DEFAULT_CPUS,
+    }
     if persistent:
         body["persistent"] = True
-    return client.post("/provision", body)
+    return client.post("/vms/create", body)
 
 
 class TestRun:
@@ -122,32 +127,28 @@ class TestDelete:
         assert rc != 0
 
 
-class TestRemovedAliases:
+class TestAliases:
 
     def test_rm_alias(self, uds_path):
-        """capsem rm is intentionally not a compatibility alias for delete."""
+        """capsem rm <id> deletes a VM (alias for delete)."""
         name = f"rmal-{uuid.uuid4().hex[:4]}"
         _provision_vm(uds_path, name)
-        try:
-            _stdout, stderr, rc = run_cli("rm", name, uds_path=uds_path)
-            assert rc != 0
-            assert "unrecognized subcommand" in stderr
-            list_out, _, _ = run_cli("list", uds_path=uds_path)
-            assert name in list_out
-        finally:
-            run_cli("delete", name, uds_path=uds_path)
+        stdout, stderr, rc = run_cli("rm", name, uds_path=uds_path)
+        assert rc == 0, f"rm alias failed: {stderr}"
+        list_out, _, _ = run_cli("list", uds_path=uds_path)
+        assert name not in list_out
 
     def test_ls_alias(self, uds_path):
-        """capsem ls is intentionally not a compatibility alias for list."""
+        """capsem ls returns same data as capsem list."""
         name = f"lsal-{uuid.uuid4().hex[:4]}"
         _provision_vm(uds_path, name)
         try:
             list_out, _, list_rc = run_cli("list", uds_path=uds_path)
-            _ls_out, ls_err, ls_rc = run_cli("ls", uds_path=uds_path)
+            ls_out, _, ls_rc = run_cli("ls", uds_path=uds_path)
             assert list_rc == 0
-            assert ls_rc != 0
-            assert "unrecognized subcommand" in ls_err
+            assert ls_rc == 0
             assert name in list_out
+            assert name in ls_out
         finally:
             run_cli("delete", name, uds_path=uds_path)
 
@@ -176,11 +177,11 @@ class TestPurge:
         # VM should still exist
         from helpers.uds_client import UdsHttpClient
         client = UdsHttpClient(uds_path)
-        listing = client.get("/list")
+        listing = client.get("/vms/list")
         ids = [s["id"] for s in listing["sandboxes"]]
         assert name in ids, f"Persistent VM {name} was destroyed despite user saying 'n'"
         # Cleanup
-        client.delete(f"/delete/{name}")
+        client.delete(f"/vms/{name}/delete")
 
     def test_purge_all_confirmed_destroys(self, uds_path):
         """capsem purge --all with 'y' should destroy persistent VMs."""
@@ -193,7 +194,7 @@ class TestPurge:
         # VM should be gone
         from helpers.uds_client import UdsHttpClient
         client = UdsHttpClient(uds_path)
-        listing = client.get("/list")
+        listing = client.get("/vms/list")
         ids = [s["id"] for s in listing["sandboxes"]]
         assert name not in ids, f"Persistent VM {name} survived purge --all with 'y'"
 
@@ -255,8 +256,9 @@ class TestEnv:
         # Use the service API directly to provision with env
         from helpers.uds_client import UdsHttpClient
         client = UdsHttpClient(uds_path)
-        resp = client.post("/provision", {
-            "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
+        resp = client.post("/vms/create", {
+            "name": name, "profile_id": CODE_PROFILE_ID,
+            "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
             "persistent": True, "env": {"CAPSEM_TEST_VAR": "hello_from_host"}
         })
         assert resp is not None, "provision with env failed"

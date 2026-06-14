@@ -4,7 +4,7 @@
   import Icon from "./Icon.svelte";
   import { FAQS, SITE } from "$lib/data";
 
-  let openIndex = $state<number | null>(0);
+  let openIndex = $state<number | null>(1);
 
   function toggle(i: number) {
     openIndex = openIndex === i ? null : i;

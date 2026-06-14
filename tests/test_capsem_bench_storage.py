@@ -1,9 +1,41 @@
 import sys
 import struct
+import types
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "guest" / "artifacts"))
+
+class _StubConsole:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def print(self, *args, **kwargs):
+        pass
+
+
+class _StubTable:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def add_column(self, *args, **kwargs):
+        pass
+
+    def add_row(self, *args, **kwargs):
+        pass
+
+
+rich_module = types.ModuleType("rich")
+rich_table = types.ModuleType("rich.table")
+rich_text = types.ModuleType("rich.text")
+rich_console = types.ModuleType("rich.console")
+rich_table.Table = _StubTable
+rich_text.Text = str
+rich_console.Console = _StubConsole
+sys.modules.setdefault("rich", rich_module)
+sys.modules.setdefault("rich.table", rich_table)
+sys.modules.setdefault("rich.text", rich_text)
+sys.modules.setdefault("rich.console", rich_console)
 
 from capsem_bench.storage import (  # noqa: E402
     find_mount_for_path,

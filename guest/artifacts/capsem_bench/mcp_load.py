@@ -21,14 +21,17 @@ Sister bench to `mitm-load` (which isolates the proxy hot path).
 
 import asyncio
 import os
-import resource
 import time
 
 from fastmcp import Client
 from fastmcp.client.transports import StdioTransport
-from rich.table import Table
 
-from .helpers import console, percentile
+from .helpers import console
+from .load_harness import (
+    DurationLoadConfig,
+    render_load_table,
+    summarize_load_level,
+)
 
 MCP_SERVER = "/run/capsem-mcp-server"
 DEFAULT_CONCURRENCY = (1, 10, 50, 200)
@@ -65,35 +68,7 @@ async def _drive_at_concurrency(client, concurrency, duration_s, payload):
 
 
 def _summarize(latencies, errors, concurrency, duration_s):
-    if not latencies:
-        return {
-            "concurrency": concurrency,
-            "duration_s": duration_s,
-            "total_requests": 0,
-            "errors": errors,
-            "rps": 0.0,
-            "p50_ms": 0.0,
-            "p95_ms": 0.0,
-            "p99_ms": 0.0,
-            "p999_ms": 0.0,
-        }
-    sorted_latencies = sorted(latencies)
-    return {
-        "concurrency": concurrency,
-        "duration_s": duration_s,
-        "total_requests": len(latencies),
-        "errors": errors,
-        "rps": len(latencies) / duration_s,
-        "p50_ms": percentile(sorted_latencies, 50),
-        "p95_ms": percentile(sorted_latencies, 95),
-        "p99_ms": percentile(sorted_latencies, 99),
-        "p999_ms": percentile(sorted_latencies, 99.9),
-    }
-
-
-def _peak_rss_mb():
-    ru = resource.getrusage(resource.RUSAGE_SELF)
-    return ru.ru_maxrss / 1024.0
+    return summarize_load_level(latencies, errors, concurrency, duration_s)
 
 
 async def _run_async(concurrency_levels, duration_s, payload):
@@ -113,26 +88,28 @@ async def _run_async(concurrency_levels, duration_s, payload):
             latencies, errors = await _drive_at_concurrency(
                 client, c, duration_s, payload
             )
-            row = _summarize(latencies, errors, c, duration_s)
-            row["rss_peak_mb"] = _peak_rss_mb()
-            rows.append(row)
+            rows.append(_summarize(latencies, errors, c, duration_s))
     return rows
 
 
 def mcp_load_bench(concurrency_levels=None, duration_s=None, payload=None):
     """Drive local__echo at each concurrency level; return the result dict."""
-    concurrency_levels = concurrency_levels or DEFAULT_CONCURRENCY
-    duration_s = duration_s or float(
-        os.environ.get("CAPSEM_BENCH_MCP_DURATION", DEFAULT_DURATION_S)
+    config = DurationLoadConfig.from_inputs(
+        "mcp-load",
+        default_concurrency=DEFAULT_CONCURRENCY,
+        default_duration_s=DEFAULT_DURATION_S,
+        concurrency_levels=concurrency_levels,
+        duration_s=duration_s,
     )
     payload = payload or os.environ.get("CAPSEM_BENCH_MCP_PAYLOAD", DEFAULT_PAYLOAD)
 
     console.print(
         f"[bold]mcp-load[/bold] tool=local__echo "
-        f"payload_bytes={len(payload)} duration={duration_s}s"
+        f"payload_bytes={len(payload)} duration={config.duration_s}s "
+        f"concurrency={','.join(str(c) for c in config.concurrency_levels)}"
     )
 
-    rows = asyncio.run(_run_async(concurrency_levels, duration_s, payload))
+    rows = asyncio.run(_run_async(config.concurrency_levels, config.duration_s, payload))
 
     out = {
         "version": "1.0",
@@ -141,24 +118,9 @@ def mcp_load_bench(concurrency_levels=None, duration_s=None, payload=None):
         "concurrency_levels": rows,
     }
 
-    table = Table(title=f"mcp-load (tool=local__echo, {duration_s}s per level)")
-    table.add_column("concurrency", justify="right")
-    table.add_column("rps", justify="right")
-    table.add_column("p50_ms", justify="right")
-    table.add_column("p95_ms", justify="right")
-    table.add_column("p99_ms", justify="right")
-    table.add_column("p999_ms", justify="right")
-    table.add_column("errors", justify="right")
-    for row in rows:
-        table.add_row(
-            str(row["concurrency"]),
-            f"{row['rps']:.1f}",
-            f"{row['p50_ms']:.1f}",
-            f"{row['p95_ms']:.1f}",
-            f"{row['p99_ms']:.1f}",
-            f"{row['p999_ms']:.1f}",
-            str(row["errors"]),
-        )
-    console.print(table)
+    render_load_table(
+        f"mcp-load (tool=local__echo, {config.duration_s}s per level)",
+        rows,
+    )
 
     return out

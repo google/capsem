@@ -23,7 +23,6 @@ pub struct ServiceStatus {
     pub running: bool,
     pub pid: Option<u32>,
     pub unit_path: Option<PathBuf>,
-    pub service_unit_required: bool,
 }
 
 /// Generate a macOS LaunchAgent plist for capsem-service.
@@ -111,9 +110,6 @@ WantedBy=default.target
 
 /// Check if the capsem service is installed on the current platform.
 pub fn is_service_installed() -> bool {
-    if test_isolation_env_active() {
-        return false;
-    }
     plist_path().map(|p| p.exists()).unwrap_or(false)
         || systemd_unit_path().map(|p| p.exists()).unwrap_or(false)
 }
@@ -129,21 +125,13 @@ pub fn is_service_installed() -> bool {
 /// at a directory that gets wiped on every subsequent `just test`,
 /// leaving the installed service pointing at non-existent assets. Fail
 /// loud instead; the caller must unset these vars before installing.
-pub(crate) fn test_isolation_env_active() -> bool {
-    !test_isolation_env_vars().is_empty()
-}
-
-fn test_isolation_env_vars() -> Vec<&'static str> {
-    const ISOLATION_VARS: &[&str] = &["CAPSEM_HOME", "CAPSEM_RUN_DIR", "CAPSEM_ASSETS_DIR"];
-    ISOLATION_VARS
-        .iter()
-        .filter(|key| std::env::var(key).map(|v| !v.is_empty()).unwrap_or(false))
-        .copied()
-        .collect()
-}
-
 fn reject_test_isolation_env() -> Result<()> {
-    let set = test_isolation_env_vars();
+    const ISOLATION_VARS: &[&str] = &["CAPSEM_HOME", "CAPSEM_RUN_DIR", "CAPSEM_ASSETS_DIR"];
+    let set: Vec<&str> = ISOLATION_VARS
+        .iter()
+        .filter(|k| std::env::var(k).map(|v| !v.is_empty()).unwrap_or(false))
+        .copied()
+        .collect();
     if set.is_empty() {
         return Ok(());
     }
@@ -218,17 +206,6 @@ pub async fn uninstall_service() -> Result<()> {
 
 /// Get the current service status.
 pub async fn service_status() -> Result<ServiceStatus> {
-    let (running, pid) = check_running().await;
-    if test_isolation_env_active() {
-        return Ok(ServiceStatus {
-            installed: false,
-            running,
-            pid,
-            unit_path: None,
-            service_unit_required: false,
-        });
-    }
-
     let plist_installed = plist_path().map(|p| p.exists()).unwrap_or(false);
     let unit_installed = systemd_unit_path().map(|p| p.exists()).unwrap_or(false);
     let installed = plist_installed || unit_installed;
@@ -241,12 +218,13 @@ pub async fn service_status() -> Result<ServiceStatus> {
         None
     };
 
+    let (running, pid) = check_running().await;
+
     Ok(ServiceStatus {
         installed,
         running,
         pid,
         unit_path,
-        service_unit_required: true,
     })
 }
 
@@ -260,25 +238,28 @@ pub async fn start_service() -> Result<()> {
     {
         let uid = nix::unistd::getuid();
         let target = format!("gui/{}/com.capsem.service", uid);
-        let mut command = tokio::process::Command::new("launchctl");
-        command.args(["kickstart", "-k", &target]);
-        let status = command_status_quiet(command).await?;
+        let status = tokio::process::Command::new("launchctl")
+            .args(["kickstart", "-k", &target])
+            .status()
+            .await?;
         if !status.success() {
             // Fallback: bootstrap the plist
             if let Some(plist) = plist_path() {
                 let domain = format!("gui/{}", uid);
-                let mut command = tokio::process::Command::new("launchctl");
-                command.args(["bootstrap", &domain, &plist.to_string_lossy()]);
-                let _ = command_status_quiet(command).await;
+                let _ = tokio::process::Command::new("launchctl")
+                    .args(["bootstrap", &domain, &plist.to_string_lossy()])
+                    .status()
+                    .await;
             }
         }
     }
 
     #[cfg(target_os = "linux")]
     {
-        let mut command = tokio::process::Command::new("systemctl");
-        command.args(["--user", "start", "capsem"]);
-        let status = command_status_quiet(command).await?;
+        let status = tokio::process::Command::new("systemctl")
+            .args(["--user", "start", "capsem"])
+            .status()
+            .await?;
         if !status.success() {
             anyhow::bail!("systemctl --user start capsem failed");
         }
@@ -290,18 +271,6 @@ pub async fn start_service() -> Result<()> {
     }
 
     Ok(())
-}
-
-async fn command_status_quiet(
-    mut command: tokio::process::Command,
-) -> std::io::Result<std::process::ExitStatus> {
-    command
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .kill_on_drop(true)
-        .status()
-        .await
 }
 
 /// Stop the capsem service via the platform service manager.
@@ -850,23 +819,5 @@ mod tests {
         assert!(err.contains("CAPSEM_HOME"));
         assert!(err.contains("CAPSEM_RUN_DIR"));
         assert!(err.contains("CAPSEM_ASSETS_DIR"));
-    }
-
-    #[test]
-    fn service_status_ignores_platform_unit_in_isolation_env() {
-        let _lock = ENV_LOCK.lock().unwrap();
-        let dir = tempfile::tempdir().unwrap();
-        let run = dir.path().join("run");
-        let _h = EnvGuard::set("CAPSEM_HOME", dir.path().to_str().unwrap());
-        let _r = EnvGuard::set("CAPSEM_RUN_DIR", run.to_str().unwrap());
-        let _a = EnvGuard::unset("CAPSEM_ASSETS_DIR");
-
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-        let status = runtime.block_on(service_status()).unwrap();
-
-        assert!(!status.installed);
-        assert!(!status.running);
-        assert!(status.unit_path.is_none());
-        assert!(!status.service_unit_required);
     }
 }

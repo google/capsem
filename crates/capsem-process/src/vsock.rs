@@ -1,22 +1,21 @@
 use anyhow::{Context, Result};
-use capsem_core::net::mitm_proxy::RuntimeSecurityEngine as _;
-use capsem_core::vm::guest_config::GuestConfig;
 use capsem_core::{read_control_msg, write_control_msg, VsockConnection};
-use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
-use capsem_proto::{GuestToHost, HostToGuest};
-use capsem_security_engine::{
-    AiAttributionScope, AiOriginKind, Enforceability, ResolvedSecurityEvent, SecurityAction,
-    SecurityEventSubject, SourceEngine,
-};
+use capsem_proto::ipc::{FileBoundaryAction, ProcessToService, ServiceToProcess};
+use capsem_proto::{GuestToHost, HostToGuest, HostVsockService};
+use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use tokio::sync::{broadcast, mpsc};
 use tracing::{error, info, warn};
 
 use crate::helpers::clone_fd;
-use crate::job_store::{with_quiescence, JobResult, JobStore};
+use crate::job_store::{with_quiescence, ActiveFileOp, JobResult, JobStore};
+
+type SecurityRulesHandle = Arc<RwLock<Arc<capsem_core::net::policy_config::SecurityRuleSet>>>;
+type PluginPolicyHandle =
+    Arc<RwLock<BTreeMap<String, capsem_core::net::policy_config::SecurityPluginConfig>>>;
 
 /// Maximum attempts for the initial handshake before giving up.
 ///
@@ -28,7 +27,15 @@ use crate::job_store::{with_quiescence, JobResult, JobStore};
 /// guest. Post-initial handshakes (on re-keyed connections) do not
 /// retry: the guest drives retry at the transport layer.
 const HANDSHAKE_RETRY_MAX: usize = 3;
-const SUSPEND_RECONNECT_GRACE: std::time::Duration = std::time::Duration::from_millis(2500);
+
+fn checkpoint_complete_path(checkpoint_path: &std::path::Path) -> PathBuf {
+    let marker_name = checkpoint_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| format!("{name}.complete"))
+        .unwrap_or_else(|| "checkpoint.vzsave.complete".to_string());
+    checkpoint_path.with_file_name(marker_name)
+}
 
 pub(crate) struct VsockOptions {
     pub(crate) vm_id: String,
@@ -41,11 +48,14 @@ pub(crate) struct VsockOptions {
     pub(crate) job_store: Arc<JobStore>,
     pub(crate) session_dir: PathBuf,
     pub(crate) cli_env: Vec<(String, String)>,
-    pub(crate) guest_config: GuestConfig,
+    pub(crate) guest_config: capsem_core::net::policy_config::GuestConfig,
     pub(crate) mitm_config: Arc<capsem_core::net::mitm_proxy::MitmProxyConfig>,
-    /// Handler for DNS queries forwarded over vsock port 5007. Shared by-Arc
-    /// with main.rs so the same Policy handle drives MITM and DNS.
+    /// Handler for DNS queries forwarded over vsock port 5007. DNS
+    /// NXDOMAIN decisions come from the shared security rules; the network
+    /// policy handle remains for resolver mechanics such as redirects/cache.
     pub(crate) dns_handler: Arc<capsem_core::net::dns::DnsHandler>,
+    pub(crate) security_rules: SecurityRulesHandle,
+    pub(crate) plugin_policy: PluginPolicyHandle,
     pub(crate) _net_state: Arc<capsem_core::SandboxNetworkState>,
     pub(crate) is_restore: bool,
     pub(crate) vm_ready: Arc<AtomicBool>,
@@ -70,6 +80,8 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
         guest_config,
         mitm_config,
         dns_handler,
+        security_rules,
+        plugin_policy,
         is_restore,
         vm_ready,
         uds_path,
@@ -250,6 +262,8 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
     let (ctrl_out_tx, mut ctrl_out_rx) = mpsc::channel::<HostToGuest>(128);
     let js = Arc::clone(&job_store);
     let db_ctrl = Arc::clone(&db);
+    let security_rules_ctrl = Arc::clone(&security_rules);
+    let plugin_policy_ctrl = Arc::clone(&plugin_policy);
     let mut control_rekey_rx_inner = control_rekey_rx;
 
     let js_for_teardown = Arc::clone(&job_store);
@@ -361,7 +375,14 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                                         break;
                                     }
                                 }
-                                handle_guest_msg(msg, &js, &db_ctrl).await
+                                handle_guest_msg(
+                                    msg,
+                                    &js,
+                                    &db_ctrl,
+                                    &security_rules_ctrl,
+                                    &plugin_policy_ctrl,
+                                )
+                                .await
                             }
                             _ => break, // Error or closed, wait for rekey
                         }
@@ -400,8 +421,8 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
     let vm_id_for_cmd = vm_id_original;
     let vm_handle_for_cmd = vm_handle_original;
     let db_for_cmd = Arc::clone(&db);
+    let security_rules_for_cmd = Arc::clone(&security_rules);
     let pty_log_for_cmd = pty_log.clone();
-    let mitm_config_for_cmd = Arc::clone(&mitm_config);
     let mut ctrl_rx = ctrl_rx;
 
     tokio::spawn(async move {
@@ -424,38 +445,34 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     // creates the capture slot *before* sending here. The
                     // control bridge owns delivery/replay, so this layer just
                     // forwards without replacing the active_exec slot.
-                    let event = capsem_logger::ExecEvent {
-                        timestamp: std::time::SystemTime::now(),
-                        exec_id: id,
-                        command: command.clone(),
-                        source: "api".into(),
-                        mcp_call_id: None,
-                        trace_id: None,
-                        process_name: None,
-                    };
-                    let runtime_engine: Option<
-                        &dyn capsem_core::net::mitm_proxy::RuntimeSecurityEngine,
-                    > = if mitm_config_for_cmd.security_engine.has_engine() {
-                        Some(mitm_config_for_cmd.security_engine.as_ref())
-                    } else {
-                        None
-                    };
-                    let evaluation =
-                        capsem_process_engine::evaluate_exec_security_event(&event, runtime_engine);
-                    log_process_exec_security_decision(&evaluation.resolved_event);
-                    db_for_cmd.try_write(capsem_logger::WriteOp::ExecEvent(event));
-                    db_for_cmd.try_write(capsem_logger::WriteOp::ResolvedSecurityEvent(
-                        evaluation.resolved_event,
-                    ));
-                    if !evaluation.allow_guest_exec {
-                        resolve_blocked_exec_job(
-                            &js_for_cmd,
-                            id,
-                            evaluation.denial_message.unwrap_or_else(|| {
-                                "process exec blocked by security engine".into()
-                            }),
-                        );
-                        continue;
+                    let rules = security_rules_for_cmd.read().unwrap().clone();
+                    let event_id =
+                        capsem_core::security_engine::emit_process_exec_security_write_and_rules(
+                            &db_for_cmd,
+                            &rules,
+                            capsem_logger::ExecEvent {
+                                event_id: None,
+                                timestamp: std::time::SystemTime::now(),
+                                exec_id: id,
+                                command: command.clone(),
+                                source: "api".into(),
+                                mcp_call_id: None,
+                                trace_id: None,
+                                process_name: None,
+                                credential_ref: None,
+                            },
+                        )
+                        .await;
+                    if let Some(event_id) = event_id {
+                        if let Some(active) = js_for_cmd
+                            .active_exec
+                            .lock()
+                            .unwrap()
+                            .as_mut()
+                            .filter(|active| active.id == id)
+                        {
+                            active.event_id = Some(event_id);
+                        }
                     }
                     capsem_core::try_send!(
                         "hub_exec",
@@ -463,6 +480,13 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     );
                 }
                 ServiceToProcess::WriteFile { id, path, data } => {
+                    js_for_cmd.active_file_ops.lock().unwrap().insert(
+                        id,
+                        ActiveFileOp::Write {
+                            path: path.clone(),
+                            data: data.clone(),
+                        },
+                    );
                     capsem_core::try_send!(
                         "hub_file_write",
                         hub_tx
@@ -476,13 +500,76 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     );
                 }
                 ServiceToProcess::ReadFile { id, path } => {
+                    js_for_cmd
+                        .active_file_ops
+                        .lock()
+                        .unwrap()
+                        .insert(id, ActiveFileOp::Read { path: path.clone() });
                     capsem_core::try_send!(
                         "hub_file_read",
                         hub_tx.send(HostToGuest::FileRead { id, path }).await
                     );
                 }
+                ServiceToProcess::LogFileBoundary {
+                    id,
+                    action,
+                    path,
+                    data,
+                    size,
+                    mime_type,
+                } => {
+                    let file_action = match action {
+                        FileBoundaryAction::Import => capsem_logger::FileAction::Imported,
+                        FileBoundaryAction::Export => capsem_logger::FileAction::Exported,
+                    };
+                    let event_id = emit_explicit_file_security_event(
+                        &db_for_cmd,
+                        &security_rules_for_cmd,
+                        &plugin_policy,
+                        FileSecurityBoundary {
+                            action: file_action,
+                            path,
+                            size: Some(size),
+                            content: Some(file_content_preview(&data)),
+                            mime_type,
+                        },
+                    )
+                    .await;
+                    let (success, data, error) = match event_id {
+                        Ok(Some(emission)) if emission.enforcement.is_allowed() => (
+                            true,
+                            rewritten_file_content(&data, size, &emission.event),
+                            None,
+                        ),
+                        Ok(Some(emission)) => (
+                            false,
+                            None,
+                            Some(emission.enforcement.reason.unwrap_or_else(|| {
+                                "file boundary blocked by security policy".into()
+                            })),
+                        ),
+                        Ok(None) => (
+                            false,
+                            None,
+                            Some("failed to write file boundary security event".into()),
+                        ),
+                        Err(error) => (false, None, Some(error)),
+                    };
+                    if let Some(tx) = js_for_cmd.jobs.lock().unwrap().remove(&id) {
+                        capsem_core::try_send!(
+                            "job_result_log_file_boundary",
+                            tx.send(JobResult::LogFileBoundary {
+                                success,
+                                data,
+                                error
+                            })
+                        );
+                    }
+                }
                 ServiceToProcess::Suspend { checkpoint_path } => {
                     let full_path = session_dir.join(checkpoint_path);
+                    let complete_path = checkpoint_complete_path(&full_path);
+                    let _ = std::fs::remove_file(&complete_path);
                     let checkpoint_path_for_save = full_path.clone();
                     let rootfs_img = session_dir.join("guest").join("system").join("rootfs.img");
                     let h_tx = hub_tx.clone();
@@ -497,9 +584,6 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                         // attribution.
                         let suspend_start = std::time::Instant::now();
                         let mut suspend_result = with_quiescence(&h_tx, &j_s, std::time::Duration::from_secs(10), || async {
-                            let grace_start = std::time::Instant::now();
-                            tokio::time::sleep(SUSPEND_RECONNECT_GRACE).await;
-                            info!(target: "suspend", op = "snapshot_reconnect_grace", duration_ms = grace_start.elapsed().as_millis() as u64, "stage complete");
                             let pause_save_start = std::time::Instant::now();
                             let r = tokio::task::spawn_blocking(move || {
                                 #[cfg(target_os = "macos")]
@@ -540,6 +624,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                         if suspend_result.is_ok() {
                             let fsync_start = std::time::Instant::now();
                             let checkpoint_path = full_path.clone();
+                            let complete_marker_path = complete_path.clone();
                             if let Err(e) =
                                 tokio::task::spawn_blocking(move || -> std::io::Result<()> {
                                     let checkpoint_file = std::fs::OpenOptions::new()
@@ -552,6 +637,11 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                                         .write(true)
                                         .open(&rootfs_img)?;
                                     f.sync_all()?;
+                                    std::fs::write(&complete_marker_path, b"ok\n")?;
+                                    let complete_file = std::fs::OpenOptions::new()
+                                        .read(true)
+                                        .open(&complete_marker_path)?;
+                                    complete_file.sync_all()?;
                                     Ok(())
                                 })
                                 .await
@@ -564,7 +654,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                                     "failed to fsync checkpoint/rootfs after save_state: {e}"
                                 ));
                             } else {
-                                info!(target: "fs", op = "fsync", path = "checkpoint.vzsave+rootfs.img", duration_ms = fsync_start.elapsed().as_millis() as u64, "host_fsync_checkpoint_and_rootfs ok");
+                                info!(target: "fs", op = "fsync", path = "checkpoint.vzsave+rootfs.img", marker = %complete_path.display(), duration_ms = fsync_start.elapsed().as_millis() as u64, "host_fsync_checkpoint_and_rootfs ok");
                             }
                         } else if let Err(ref e) = suspend_result {
                             error!(target: "suspend", error = %e, "suspend failed");
@@ -590,6 +680,8 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                         // service notices and can re-spawn cleanly; but DO NOT claim
                         // Suspended -- service treats process death without "Suspended"
                         // as crash and will not write a checkpoint marker.
+                        let _ = std::fs::remove_file(&complete_path);
+                        let _ = std::fs::remove_file(&full_path);
                         warn!("suspend did not complete; exiting without Suspended marker");
                         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                         std::process::exit(1);
@@ -638,6 +730,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
     // -----------------------------------------------------------------------
     let mitm_config_loop = Arc::clone(&mitm_config);
     let dns_handler_loop = Arc::clone(&dns_handler);
+    let security_rules_loop = Arc::clone(&security_rules);
     let db_for_audit = Arc::clone(&db);
     let ipc_tx_lifecycle = ipc_tx.clone();
     let ctrl_tx_lifecycle = options._ctrl_tx.clone();
@@ -656,6 +749,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                 conn,
                 &mitm_config_loop,
                 &dns_handler_loop,
+                &security_rules_loop,
                 &job_store_vsock,
                 &db_for_audit,
                 &ipc_tx_lifecycle,
@@ -703,6 +797,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                                     aux_conn,
                                     &mitm_config_loop,
                                     &dns_handler_loop,
+                                    &security_rules_loop,
                                     &job_store_vsock,
                                     &db_for_audit,
                                     &ipc_tx_lifecycle,
@@ -745,6 +840,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                             conn,
                             &mitm_config_loop,
                             &dns_handler_loop,
+                            &security_rules_loop,
                             &job_store_vsock,
                             &db_for_audit,
                             &ipc_tx_lifecycle,
@@ -768,21 +864,22 @@ fn dispatch_aux_connection(
     conn: VsockConnection,
     mitm_config: &Arc<capsem_core::net::mitm_proxy::MitmProxyConfig>,
     dns_handler: &Arc<capsem_core::net::dns::DnsHandler>,
+    security_rules: &Arc<std::sync::RwLock<Arc<capsem_core::net::policy_config::SecurityRuleSet>>>,
     job_store: &Arc<JobStore>,
     db: &Arc<capsem_logger::DbWriter>,
     ipc_tx: &broadcast::Sender<ProcessToService>,
     ctrl_tx: &mpsc::Sender<ServiceToProcess>,
     vm_id: &str,
 ) {
-    match conn.port {
-        capsem_core::VSOCK_PORT_SNI_PROXY => {
+    match HostVsockService::from_port(conn.port) {
+        Some(HostVsockService::SniProxy) => {
             let config = Arc::clone(mitm_config);
             tokio::spawn(async move {
                 capsem_core::net::mitm_proxy::handle_connection(conn.fd, config).await;
                 drop(conn);
             });
         }
-        capsem_proto::VSOCK_PORT_DNS_PROXY => {
+        Some(HostVsockService::DnsProxy) => {
             // T3.2 -- one envelope round-trip per vsock connection.
             // The agent opens a fresh conn per query (UDP datagram or
             // TCP DNS query), writes a length-framed `DnsRequest`,
@@ -797,12 +894,12 @@ fn dispatch_aux_connection(
             // and `net_events`.
             let handler = Arc::clone(dns_handler);
             let db_for_dns = Arc::clone(db);
-            let security_engine = Arc::clone(&mitm_config.security_engine);
+            let security_rules = Arc::clone(security_rules);
             tokio::spawn(async move {
-                serve_dns_session(conn, handler, db_for_dns, security_engine).await;
+                serve_dns_session(conn, handler, db_for_dns, security_rules).await;
             });
         }
-        capsem_core::VSOCK_PORT_EXEC => {
+        Some(HostVsockService::Exec) => {
             let js = Arc::clone(job_store);
             std::thread::spawn(move || {
                 let mut file = match clone_fd(conn.fd) {
@@ -846,8 +943,9 @@ fn dispatch_aux_connection(
                 drop(conn);
             });
         }
-        capsem_proto::VSOCK_PORT_AUDIT => {
+        Some(HostVsockService::Audit) => {
             let db_clone = Arc::clone(db);
+            let security_rules = security_rules.read().unwrap().clone();
             std::thread::spawn(move || {
                 let mut file = match clone_fd(conn.fd) {
                     Ok(f) => f,
@@ -873,8 +971,11 @@ fn dispatch_aux_connection(
                     if let Ok(record) = capsem_proto::decode_audit_record(&payload) {
                         let timestamp = std::time::SystemTime::UNIX_EPOCH
                             + std::time::Duration::from_micros(record.timestamp_us);
-                        db_clone.try_write(capsem_logger::WriteOp::AuditEvent(
+                        capsem_core::security_engine::emit_process_audit_security_write_and_rules_blocking(
+                            &db_clone,
+                            &security_rules,
                             capsem_logger::AuditEvent {
+                                event_id: None,
                                 timestamp,
                                 pid: record.pid,
                                 ppid: record.ppid,
@@ -889,14 +990,15 @@ fn dispatch_aux_connection(
                                 exec_event_id: None,
                                 parent_exe: record.parent_exe,
                                 trace_id: capsem_core::telemetry::ambient_capsem_trace_id(),
+                                credential_ref: None,
                             },
-                        ));
+                        );
                     }
                 }
                 drop(conn);
             });
         }
-        capsem_core::VSOCK_PORT_LIFECYCLE => {
+        Some(HostVsockService::Lifecycle) => {
             let itx = ipc_tx.clone();
             let ctx = ctrl_tx.clone();
             let id = vm_id.to_string();
@@ -907,9 +1009,14 @@ fn dispatch_aux_connection(
                 };
                 match read_control_msg(&mut f) {
                     Ok(GuestToHost::ShutdownRequest) => {
-                        warn!(
-                            target: "ipc",
-                            "guest shutdown requests are disabled; ignoring lifecycle shutdown frame"
+                        info!("guest requested shutdown via lifecycle port");
+                        capsem_core::try_send!(
+                            "ipc_lifecycle_shutdown",
+                            itx.send(ProcessToService::ShutdownRequested { id })
+                        );
+                        capsem_core::try_send!(
+                            "ctrl_lifecycle_shutdown",
+                            ctx.blocking_send(ServiceToProcess::Shutdown)
                         );
                     }
                     Ok(GuestToHost::SuspendRequest) => {
@@ -934,8 +1041,21 @@ fn dispatch_aux_connection(
                 drop(conn);
             });
         }
+        Some(HostVsockService::Control | HostVsockService::Terminal) => {
+            warn!(
+                target: "ipc",
+                port = conn.port,
+                service = HostVsockService::from_port(conn.port).map(HostVsockService::as_str),
+                "vsock dispatch: control/terminal service reached auxiliary dispatcher; connection ignored"
+            );
+        }
         other => {
-            warn!(target: "ipc", port = other, "vsock dispatch: unknown port; auxiliary connection ignored");
+            warn!(
+                target: "ipc",
+                port = conn.port,
+                service = ?other.map(HostVsockService::as_str),
+                "vsock dispatch: unknown port; auxiliary connection ignored"
+            );
         }
     }
 }
@@ -955,7 +1075,7 @@ async fn serve_dns_session(
     conn: VsockConnection,
     handler: Arc<capsem_core::net::dns::DnsHandler>,
     db: Arc<capsem_logger::DbWriter>,
-    security_engine: Arc<capsem_core::net::mitm_proxy::RuntimeSecurityEngineSlot>,
+    security_rules: Arc<std::sync::RwLock<Arc<capsem_core::net::policy_config::SecurityRuleSet>>>,
 ) {
     use std::io::{Read as _, Write as _};
 
@@ -1003,91 +1123,19 @@ async fn serve_dns_session(
         }
     };
 
-    let trace_id = capsem_core::telemetry::ambient_capsem_trace_id();
-    let mut runtime_resolved_event: Option<ResolvedSecurityEvent> = None;
-    let result = if security_engine.has_engine() {
-        match capsem_network_engine::dns_parser::parse_query(&req.raw) {
-            Ok(query) => {
-                let event =
-                    capsem_network_engine::dns_security::build_dns_security_event_from_query(
-                        &query,
-                        trace_id.clone(),
-                    );
-                match security_engine.evaluate(event) {
-                    Ok(runtime_result) => {
-                        if !capsem_network_engine::dns_security::dns_security_result_rewrite_answers(
-                            &runtime_result,
-                        )
-                        .is_empty()
-                        {
-                            let rewritten =
-                                capsem_network_engine::dns_security::build_dns_runtime_rewrite_result(
-                                    &req.raw,
-                                    query,
-                                    &runtime_result,
-                                );
-                            runtime_resolved_event = Some(runtime_result.resolved_event);
-                            rewritten
-                        } else if capsem_network_engine::dns_security::dns_security_result_allows_transport(
-                            &runtime_result,
-                        ) {
-                            runtime_resolved_event = Some(runtime_result.resolved_event);
-                            handler.handle(&req.raw).await
-                        } else {
-                            let denied = capsem_network_engine::dns_security::build_dns_runtime_denied_result(
-                                &req.raw,
-                                query,
-                                &runtime_result,
-                            );
-                            runtime_resolved_event = Some(runtime_result.resolved_event);
-                            denied
-                        }
-                    }
-                    Err(error) => {
-                        let reason = format!("security engine error: {error}");
-                        warn!(error = %error, "DNS runtime security engine failed closed");
-                        capsem_network_engine::dns_transport::DnsHandlerResult {
-                            answer_bytes: capsem_network_engine::dns_parser::build_nxdomain(
-                                &req.raw,
-                            )
-                            .unwrap_or_default(),
-                            query: Some(query),
-                            decision: capsem_logger::events::Decision::Denied,
-                            matched_rule: Some(reason.clone()),
-                            upstream_resolver_ms: 0,
-                            rcode: 3,
-                            policy_mode: Some("runtime".into()),
-                            policy_action: Some("error".into()),
-                            policy_rule: None,
-                            policy_reason: Some(reason),
-                        }
-                    }
-                }
-            }
-            Err(_) => handler.handle(&req.raw).await,
-        }
-    } else {
-        handler.handle(&req.raw).await
-    };
+    let result = handler.handle(&req.raw).await;
 
     // T3.3 -- record one `dns_events` row per query. trace_id ties it
     // back to the agent action; source_proto distinguishes UDP from
-    // TCP DNS at the source side. Don't await the channel send to
-    // keep the DNS path non-blocking under back-pressure on the
-    // writer queue (matches the audit-event try_write pattern).
-    let event = capsem_network_engine::dns_security::build_dns_event(
+    // TCP DNS at the source side. Await the security emitter so DNS audit
+    // rows are durable instead of lossy under writer back-pressure.
+    let event = capsem_core::net::dns::build_dns_event(
         &result,
         Some(req.proto.as_str()),
         req.process_name.clone(),
-        trace_id,
+        capsem_core::telemetry::ambient_capsem_trace_id(),
     );
-    let resolved_event = runtime_resolved_event.unwrap_or_else(|| {
-        capsem_network_engine::dns_security::build_dns_resolved_security_event(&event)
-    });
-    db.try_write(capsem_logger::WriteOp::DnsEvent(event));
-    db.try_write(capsem_logger::WriteOp::ResolvedSecurityEvent(
-        resolved_event,
-    ));
+    emit_dns_security_write_and_rules(&db, &security_rules, event).await;
 
     let response = capsem_proto::DnsResponse {
         raw: result.answer_bytes,
@@ -1113,6 +1161,40 @@ async fn serve_dns_session(
     .await;
 
     drop(conn);
+}
+
+async fn emit_dns_security_write_and_rules(
+    db: &Arc<capsem_logger::DbWriter>,
+    security_rules: &Arc<std::sync::RwLock<Arc<capsem_core::net::policy_config::SecurityRuleSet>>>,
+    event: capsem_logger::DnsEvent,
+) -> Option<capsem_core::security_engine::SecurityEventId> {
+    let security_event = capsem_core::net::dns::security_event_from_dns_event(&event);
+    let event_id = capsem_core::security_engine::emit_security_write(
+        db,
+        capsem_logger::WriteOp::DnsEvent(event),
+    )
+    .await?;
+    let rules = security_rules.read().unwrap().clone();
+    if let Err(error) = capsem_core::security_engine::emit_matching_security_rules(
+        db,
+        event_id.clone(),
+        capsem_core::security_engine::RuntimeSecurityEventType::DnsQuery,
+        &rules,
+        &security_event,
+        current_unix_ms(),
+    )
+    .await
+    {
+        warn!(error = %error, "failed to emit DNS security rule ledger rows");
+    }
+    Some(event_id)
+}
+
+fn current_unix_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64
 }
 
 /// Returns `Some(id)` for HostToGuest variants whose delivery the host
@@ -1146,206 +1228,92 @@ fn ackable_response_id(msg: &GuestToHost) -> Option<u64> {
     }
 }
 
-fn resolve_blocked_exec_job(job_store: &Arc<JobStore>, id: u64, message: String) {
-    let active = {
-        let mut guard = job_store.active_exec.lock().unwrap();
-        if guard.as_ref().is_some_and(|active| active.id == id) {
-            guard.take()
-        } else {
-            None
-        }
-    };
-    if let Some(active) = active {
-        active.deposited.notify_waiters();
-    }
+const FILE_SECURITY_CONTENT_PREVIEW_MAX: usize = 64 * 1024;
 
-    if let Some(tx) = job_store.jobs.lock().unwrap().remove(&id) {
-        capsem_core::try_send!(
-            "job_result_exec_blocked",
-            tx.send(JobResult::Error { message })
-        );
-    }
+struct FileSecurityBoundary {
+    action: capsem_logger::FileAction,
+    path: String,
+    size: Option<u64>,
+    content: Option<String>,
+    mime_type: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ProcessExecSecurityLogRecord<'a> {
-    event_id: &'a str,
-    event_family: &'static str,
-    event_type: &'a str,
-    source_engine: &'static str,
-    final_action: &'static str,
-    enforceability: &'static str,
-    attribution_scope: &'static str,
-    origin_kind: &'static str,
-    trace_id: Option<&'a str>,
-    vm_id: Option<&'a str>,
-    session_id: Option<&'a str>,
-    profile_id: Option<&'a str>,
-    profile_revision: Option<&'a str>,
-    user_id: Option<&'a str>,
-    exec_id: Option<&'a str>,
-    mcp_call_id: Option<&'a str>,
-    operation: Option<&'a str>,
-    command_class: Option<&'a str>,
-    rule_id: Option<&'a str>,
-    pack_id: Option<&'a str>,
-    reason: Option<&'a str>,
-    finding_count: usize,
+fn file_content_preview(data: &[u8]) -> String {
+    String::from_utf8_lossy(&data[..data.len().min(FILE_SECURITY_CONTENT_PREVIEW_MAX)]).into_owned()
 }
 
-fn process_exec_security_log_record(
-    resolved: &ResolvedSecurityEvent,
-) -> ProcessExecSecurityLogRecord<'_> {
-    let common = &resolved.event.common;
-    let decision = resolved.event.decision.as_ref();
-    let matched_step = resolved
-        .steps
-        .iter()
-        .find(|step| step.rule_id.is_some() || step.message.is_some());
-    let (event_family, operation, command_class) = match &resolved.event.subject {
-        SecurityEventSubject::Process(subject) => (
-            "process",
-            Some(subject.operation.as_str()),
-            subject.command_class.as_deref(),
-        ),
-        _ => ("unknown", None, None),
-    };
-    ProcessExecSecurityLogRecord {
-        event_id: &common.event_id,
-        event_family,
-        event_type: &common.event_type,
-        source_engine: source_engine_log_label(common.source_engine),
-        final_action: security_action_log_label(&resolved.final_action),
-        enforceability: enforceability_log_label(common.enforceability),
-        attribution_scope: attribution_scope_log_label(common.attribution_scope),
-        origin_kind: origin_kind_log_label(common.origin_kind),
-        trace_id: common.trace_id.as_deref(),
-        vm_id: common.vm_id.as_deref(),
-        session_id: common.session_id.as_deref(),
-        profile_id: common.profile_id.as_deref(),
-        profile_revision: common.profile_revision.as_deref(),
-        user_id: common.user_id.as_deref(),
-        exec_id: common.exec_id.as_deref(),
-        mcp_call_id: common.mcp_call_id.as_deref(),
-        operation,
-        command_class,
-        rule_id: decision
-            .and_then(|decision| decision.rule.as_deref())
-            .or_else(|| matched_step.and_then(|step| step.rule_id.as_deref())),
-        pack_id: decision
-            .and_then(|decision| decision.pack_id.as_deref())
-            .or_else(|| matched_step.and_then(|step| step.pack_id.as_deref())),
-        reason: decision
-            .and_then(|decision| decision.reason.as_deref())
-            .or_else(|| matched_step.and_then(|step| step.message.as_deref()))
-            .or_else(|| security_action_reason(&resolved.final_action)),
-        finding_count: resolved.event.findings.len() + resolved.detection_findings.len(),
+async fn emit_explicit_file_security_event(
+    db: &Arc<capsem_logger::DbWriter>,
+    security_rules: &SecurityRulesHandle,
+    plugin_policy: &PluginPolicyHandle,
+    boundary: FileSecurityBoundary,
+) -> Result<Option<capsem_core::security_engine::SecurityRuleEmission>, String> {
+    let rules = security_rules.read().unwrap().clone();
+    let plugins = plugin_policy.read().unwrap().clone();
+    capsem_core::security_engine::emit_explicit_file_security_write_and_rules_with_plugins(
+        db,
+        &rules,
+        plugins,
+        capsem_core::security_engine::ExplicitFileSecurityEvent {
+            action: boundary.action,
+            path: boundary.path,
+            size: boundary.size,
+            content: boundary.content,
+            mime_type: boundary.mime_type,
+            trace_id: None,
+            credential_ref: None,
+        },
+    )
+    .await
+}
+
+fn rewritten_file_content(
+    original_preview: &[u8],
+    original_size: u64,
+    event: &capsem_core::security_engine::SecurityEvent,
+) -> Option<Vec<u8>> {
+    if original_preview.len() as u64 != original_size {
+        return None;
+    }
+    let mutating_rewrite = event.plugin_executions.iter().any(|execution| {
+        execution.applied
+            && !matches!(
+                execution.stage,
+                capsem_core::security_engine::SecurityPluginStage::Logging
+            )
+            && event.detections.iter().any(|detection| {
+                detection.plugin_id.as_deref() == Some(execution.plugin_id.as_str())
+                    && detection.plugin_mode
+                        == Some(capsem_core::net::policy_config::SecurityPluginMode::Rewrite)
+            })
+    });
+    if !mutating_rewrite {
+        return None;
+    }
+    let file = event.file.as_ref()?;
+    let content = file
+        .import_content
+        .as_deref()
+        .or(file.export_content.as_deref())
+        .or(file.read_content.as_deref())
+        .or(file.write_content.as_deref())
+        .or(file.create_content.as_deref())
+        .or(file.delete_content.as_deref())
+        .or(file.content.as_deref())?;
+    if content.as_bytes() == original_preview {
+        None
+    } else {
+        Some(content.as_bytes().to_vec())
     }
 }
 
-fn log_process_exec_security_decision(resolved: &ResolvedSecurityEvent) {
-    let record = process_exec_security_log_record(resolved);
-    info!(
-        target: "security.process",
-        event_id = record.event_id,
-        event_family = record.event_family,
-        event_type = record.event_type,
-        source_engine = record.source_engine,
-        final_action = record.final_action,
-        enforceability = record.enforceability,
-        attribution_scope = record.attribution_scope,
-        origin_kind = record.origin_kind,
-        trace_id = record.trace_id.unwrap_or(""),
-        vm_id = record.vm_id.unwrap_or(""),
-        session_id = record.session_id.unwrap_or(""),
-        profile_id = record.profile_id.unwrap_or(""),
-        profile_revision = record.profile_revision.unwrap_or(""),
-        user_id = record.user_id.unwrap_or(""),
-        exec_id = record.exec_id.unwrap_or(""),
-        mcp_call_id = record.mcp_call_id.unwrap_or(""),
-        operation = record.operation.unwrap_or(""),
-        command_class = record.command_class.unwrap_or(""),
-        rule_id = record.rule_id.unwrap_or(""),
-        pack_id = record.pack_id.unwrap_or(""),
-        reason = record.reason.unwrap_or(""),
-        finding_count = record.finding_count,
-        "process_exec_security_decision"
-    );
-}
-
-fn source_engine_log_label(source: SourceEngine) -> &'static str {
-    match source {
-        SourceEngine::Network => "network",
-        SourceEngine::File => "file",
-        SourceEngine::Process => "process",
-        SourceEngine::Conversation => "conversation",
-        SourceEngine::Security => "security",
-        SourceEngine::Vm => "vm",
-        SourceEngine::Profile => "profile",
-        SourceEngine::HostAi => "host_ai",
-    }
-}
-
-fn security_action_log_label(action: &SecurityAction) -> &'static str {
-    match action {
-        SecurityAction::Continue => "continue",
-        SecurityAction::Ask(_) => "ask",
-        SecurityAction::Rewrite(_) => "rewrite",
-        SecurityAction::Block(_) => "block",
-        SecurityAction::Throttle(_) => "throttle",
-        SecurityAction::Quarantine(_) => "quarantine",
-        SecurityAction::Restore(_) => "restore",
-        SecurityAction::DropConnection(_) => "drop_connection",
-        SecurityAction::ObserveOnly => "observe_only",
-        SecurityAction::Error(_) => "error",
-    }
-}
-
-fn security_action_reason(action: &SecurityAction) -> Option<&str> {
-    match action {
-        SecurityAction::Ask(plan) => Some(plan.reason_code.as_str()),
-        SecurityAction::Block(block) => Some(block.reason_code.as_str()),
-        SecurityAction::Throttle(plan) => Some(plan.reason_code.as_str()),
-        SecurityAction::Restore(plan) => Some(plan.reason_code.as_str()),
-        SecurityAction::DropConnection(reason) => Some(reason.reason_code.as_str()),
-        SecurityAction::Error(error) => Some(error.message.as_str()),
-        SecurityAction::Continue
-        | SecurityAction::Rewrite(_)
-        | SecurityAction::Quarantine(_)
-        | SecurityAction::ObserveOnly => None,
-    }
-}
-
-fn enforceability_log_label(enforceability: Enforceability) -> &'static str {
-    match enforceability {
-        Enforceability::InlineBlockable => "inline_blockable",
-        Enforceability::ObserveOnly => "observe_only",
-        Enforceability::RemediationOnly => "remediation_only",
-    }
-}
-
-fn attribution_scope_log_label(scope: AiAttributionScope) -> &'static str {
-    match scope {
-        AiAttributionScope::Host => "host",
-        AiAttributionScope::Vm => "vm",
-        AiAttributionScope::Profile => "profile",
-        AiAttributionScope::Session => "session",
-        AiAttributionScope::Unknown => "unknown",
-    }
-}
-
-fn origin_kind_log_label(origin: AiOriginKind) -> &'static str {
-    match origin {
-        AiOriginKind::GuestNetwork => "guest_network",
-        AiOriginKind::HostService => "host_service",
-        AiOriginKind::HostAdmin => "host_admin",
-        AiOriginKind::HostWorkbench => "host_workbench",
-        AiOriginKind::TestFixture => "test_fixture",
-        AiOriginKind::Unknown => "unknown",
-    }
-}
-
-async fn handle_guest_msg(msg: GuestToHost, js: &Arc<JobStore>, db: &Arc<capsem_logger::DbWriter>) {
+async fn handle_guest_msg(
+    msg: GuestToHost,
+    js: &Arc<JobStore>,
+    db: &Arc<capsem_logger::DbWriter>,
+    security_rules: &SecurityRulesHandle,
+    plugin_policy: &PluginPolicyHandle,
+) {
     match msg {
         GuestToHost::ExecDone { id, exit_code } => {
             // The guest closes the EXEC socket before sending ExecDone, and
@@ -1365,29 +1333,42 @@ async fn handle_guest_msg(msg: GuestToHost, js: &Arc<JobStore>, db: &Arc<capsem_
                 let _ =
                     tokio::time::timeout(std::time::Duration::from_millis(100), n.notified()).await;
             }
-            let stdout = js
-                .active_exec
-                .lock()
-                .unwrap()
-                .take()
-                .filter(|a| a.id == id)
-                .map(|a| a.captured)
+            let active_exec = js.active_exec.lock().unwrap().take().filter(|a| a.id == id);
+            let event_id = active_exec
+                .as_ref()
+                .and_then(|active| active.event_id.clone());
+            let stdout = active_exec
+                .map(|active| active.captured)
                 .unwrap_or_default();
 
-            db.try_write(capsem_logger::WriteOp::ExecEventComplete(
-                capsem_logger::ExecEventComplete {
-                    exec_id: id,
-                    exit_code,
-                    duration_ms: 0,
-                    stdout_preview: Some(
-                        String::from_utf8_lossy(&stdout[..stdout.len().min(1024)]).into(),
-                    ),
-                    stderr_preview: None,
-                    stdout_bytes: stdout.len() as u64,
-                    stderr_bytes: 0,
-                    pid: None,
-                },
-            ));
+            let complete = capsem_logger::ExecEventComplete {
+                exec_id: id,
+                exit_code,
+                duration_ms: 0,
+                stdout_preview: Some(
+                    String::from_utf8_lossy(&stdout[..stdout.len().min(1024)]).into(),
+                ),
+                stderr_preview: None,
+                stdout_bytes: stdout.len() as u64,
+                stderr_bytes: 0,
+                pid: None,
+            };
+            if let Some(event_id) = event_id {
+                let rules = security_rules.read().unwrap().clone();
+                capsem_core::security_engine::emit_process_complete_security_write_and_rules(
+                    db, &rules, event_id, complete,
+                )
+                .await;
+            } else {
+                warn!(
+                    exec_id = id,
+                    "exec completion arrived without a primary security event id; updating exec row without rule ledger match"
+                );
+                capsem_core::security_engine::emit_process_complete_security_write_only(
+                    db, complete,
+                )
+                .await;
+            }
             if let Some(tx) = js.jobs.lock().unwrap().remove(&id) {
                 capsem_core::try_send!(
                     "job_result_exec",
@@ -1399,7 +1380,62 @@ async fn handle_guest_msg(msg: GuestToHost, js: &Arc<JobStore>, db: &Arc<capsem_
                 );
             }
         }
-        GuestToHost::FileContent { id, data, .. } => {
+        GuestToHost::FileContent { id, path, data } => {
+            let context = {
+                let mut active_file_ops = js.active_file_ops.lock().unwrap();
+                active_file_ops.remove(&id)
+            };
+            let (path, action) = match context {
+                Some(ActiveFileOp::Read { path }) => (path, capsem_logger::FileAction::Exported),
+                Some(ActiveFileOp::Write { path, .. }) => (path, capsem_logger::FileAction::Read),
+                None => (path, capsem_logger::FileAction::Read),
+            };
+            let boundary = emit_explicit_file_security_event(
+                db,
+                security_rules,
+                plugin_policy,
+                FileSecurityBoundary {
+                    action,
+                    path,
+                    size: Some(data.len() as u64),
+                    content: Some(file_content_preview(&data)),
+                    mime_type: None,
+                },
+            )
+            .await;
+            match boundary {
+                Ok(Some(emission)) if emission.enforcement.is_allowed() => {}
+                Ok(Some(emission)) if action == capsem_logger::FileAction::Exported => {
+                    let error = emission
+                        .enforcement
+                        .reason
+                        .unwrap_or_else(|| "file export blocked by security policy".into());
+                    if let Some(tx) = js.jobs.lock().unwrap().remove(&id) {
+                        capsem_core::try_send!(
+                            "job_result_read_file_blocked",
+                            tx.send(JobResult::ReadFile {
+                                data: None,
+                                error: Some(error)
+                            })
+                        );
+                    }
+                    return;
+                }
+                Ok(Some(emission)) => {
+                    warn!(
+                        id,
+                        action = ?action,
+                        decision = ?emission.enforcement.action,
+                        "file boundary emitted non-allow decision after data was already local"
+                    );
+                }
+                Ok(None) => {
+                    warn!(id, action = ?action, "failed to write file boundary security event");
+                }
+                Err(error) => {
+                    warn!(id, action = ?action, error, "failed to evaluate file boundary");
+                }
+            }
             if let Some(tx) = js.jobs.lock().unwrap().remove(&id) {
                 capsem_core::try_send!(
                     "job_result_read_file",
@@ -1411,6 +1447,47 @@ async fn handle_guest_msg(msg: GuestToHost, js: &Arc<JobStore>, db: &Arc<capsem_
             }
         }
         GuestToHost::FileOpDone { id } => {
+            let context = {
+                let mut active_file_ops = js.active_file_ops.lock().unwrap();
+                active_file_ops.remove(&id)
+            };
+            if let Some(context) = context {
+                match context {
+                    ActiveFileOp::Write { path, data } => {
+                        if let Err(error) = emit_explicit_file_security_event(
+                            db,
+                            security_rules,
+                            plugin_policy,
+                            FileSecurityBoundary {
+                                action: capsem_logger::FileAction::Modified,
+                                path,
+                                size: Some(data.len() as u64),
+                                content: Some(file_content_preview(&data)),
+                                mime_type: None,
+                            },
+                        )
+                        .await
+                        {
+                            warn!(
+                                id,
+                                error, "failed to evaluate file write completion boundary"
+                            );
+                        }
+                    }
+                    ActiveFileOp::Read { path } => {
+                        warn!(
+                            id,
+                            path,
+                            "FileOpDone received for read context; skipping explicit file security event"
+                        );
+                    }
+                }
+            } else {
+                warn!(
+                    id,
+                    "FileOpDone arrived without active file context; skipping explicit file security event"
+                );
+            }
             if let Some(tx) = js.jobs.lock().unwrap().remove(&id) {
                 capsem_core::try_send!(
                     "job_result_write_file",
@@ -1450,7 +1527,7 @@ fn perform_handshake(
     fd: &mut std::fs::File,
     is_restore: bool,
     env: &[(String, String)],
-    conf: Option<GuestConfig>,
+    conf: Option<capsem_core::net::policy_config::GuestConfig>,
 ) -> Result<()> {
     read_control_msg(fd).context("initial Ready read failed")?;
     if is_restore {
@@ -1520,20 +1597,8 @@ async fn collect_terminal_control_pair(
             anyhow::bail!("vsock channel closed before terminal/control pair arrived");
         };
         match conn.port {
-            capsem_core::VSOCK_PORT_TERMINAL => {
-                if terminal.is_none() {
-                    terminal = Some(conn);
-                } else {
-                    warn!("duplicate terminal vsock connection before control; dropping extra fd");
-                }
-            }
-            capsem_core::VSOCK_PORT_CONTROL => {
-                if control.is_none() {
-                    control = Some(conn);
-                } else {
-                    warn!("duplicate control vsock connection before terminal; dropping extra fd");
-                }
-            }
+            capsem_core::VSOCK_PORT_TERMINAL => terminal = Some(conn),
+            capsem_core::VSOCK_PORT_CONTROL => control = Some(conn),
             capsem_core::VSOCK_PORT_SNI_PROXY
             | capsem_proto::VSOCK_PORT_AUDIT
             | capsem_proto::VSOCK_PORT_DNS_PROXY => {
@@ -1580,20 +1645,22 @@ enum VsockPortKind {
     SniProxy,
     Exec,
     Lifecycle,
+    Audit,
     DnsProxy,
     Unknown,
 }
 
 #[cfg(test)]
 fn classify_vsock_port(port: u32) -> VsockPortKind {
-    match port {
-        capsem_core::VSOCK_PORT_TERMINAL => VsockPortKind::Terminal,
-        capsem_core::VSOCK_PORT_CONTROL => VsockPortKind::Control,
-        capsem_core::VSOCK_PORT_SNI_PROXY => VsockPortKind::SniProxy,
-        capsem_core::VSOCK_PORT_EXEC => VsockPortKind::Exec,
-        capsem_core::VSOCK_PORT_LIFECYCLE => VsockPortKind::Lifecycle,
-        capsem_proto::VSOCK_PORT_DNS_PROXY => VsockPortKind::DnsProxy,
-        _ => VsockPortKind::Unknown,
+    match HostVsockService::from_port(port) {
+        Some(HostVsockService::Terminal) => VsockPortKind::Terminal,
+        Some(HostVsockService::Control) => VsockPortKind::Control,
+        Some(HostVsockService::SniProxy) => VsockPortKind::SniProxy,
+        Some(HostVsockService::Exec) => VsockPortKind::Exec,
+        Some(HostVsockService::Lifecycle) => VsockPortKind::Lifecycle,
+        Some(HostVsockService::Audit) => VsockPortKind::Audit,
+        Some(HostVsockService::DnsProxy) => VsockPortKind::DnsProxy,
+        None => VsockPortKind::Unknown,
     }
 }
 

@@ -40,7 +40,7 @@ pub fn redact_line(line: &str) -> String {
 /// whose key matches a secret-name regex with `"<redacted>"`. Operates
 /// at line granularity (TOML/JSON one-key-per-line conventions); pretty
 /// blobs of multi-line nested values may slip through. Adequate for
-/// the Profile V2 `service.toml` and profile TOML shapes we ship.
+/// the settings.toml/corp.toml shapes we ship.
 pub fn redact_config_text(text: &str) -> String {
     let key_re = RE_SECRET_KEY.get_or_init(secret_key_re);
     text.lines()

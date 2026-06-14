@@ -1,11 +1,10 @@
 use super::super::body::BodyStats;
 use super::super::hooks::{ChunkCtx, ChunkHook, ConnMeta, HookState};
 use super::*;
-use capsem_logger::Decision;
-use capsem_security_engine::{
-    BlockResponse, ResolvedEventStep, ResolvedEventStepKind, SecurityAction, StepStatus,
-    RESOLVED_EVENT_SCHEMA_VERSION,
-};
+use crate::credential_broker::{CredentialInjection, CredentialObservation, CredentialProvider};
+use crate::net::policy_config::{SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource};
+use capsem_logger::{credential_reference, Decision};
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -34,13 +33,77 @@ fn any_conn() -> ConnMeta {
     }
 }
 
+struct EnvGuard {
+    old_home_override: Option<String>,
+    old_home: Option<String>,
+    old_store: Option<String>,
+    old_trace: Option<String>,
+}
+
+impl EnvGuard {
+    fn install(
+        capsem_home: &std::path::Path,
+        home: &std::path::Path,
+        test_store: &std::path::Path,
+    ) -> Self {
+        let old_home_override = std::env::var("CAPSEM_HOME").ok();
+        let old_home = std::env::var("HOME").ok();
+        let old_store = std::env::var(crate::credential_broker::TEST_STORE_ENV).ok();
+        let old_trace = std::env::var("CAPSEM_TRACE_ID").ok();
+        std::env::set_var("CAPSEM_HOME", capsem_home);
+        std::env::set_var("HOME", home);
+        std::env::set_var(crate::credential_broker::TEST_STORE_ENV, test_store);
+        Self {
+            old_home_override,
+            old_home,
+            old_store,
+            old_trace,
+        }
+    }
+
+    fn trace_only(trace_id: &str) -> Self {
+        let old_home_override = std::env::var("CAPSEM_HOME").ok();
+        let old_home = std::env::var("HOME").ok();
+        let old_store = std::env::var(crate::credential_broker::TEST_STORE_ENV).ok();
+        let old_trace = std::env::var("CAPSEM_TRACE_ID").ok();
+        std::env::set_var("CAPSEM_TRACE_ID", trace_id);
+        Self {
+            old_home_override,
+            old_home,
+            old_store,
+            old_trace,
+        }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        match &self.old_home_override {
+            Some(v) => std::env::set_var("CAPSEM_HOME", v),
+            None => std::env::remove_var("CAPSEM_HOME"),
+        }
+        match &self.old_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        match &self.old_store {
+            Some(v) => std::env::set_var(crate::credential_broker::TEST_STORE_ENV, v),
+            None => std::env::remove_var(crate::credential_broker::TEST_STORE_ENV),
+        }
+        match &self.old_trace {
+            Some(v) => std::env::set_var("CAPSEM_TRACE_ID", v),
+            None => std::env::remove_var("CAPSEM_TRACE_ID"),
+        }
+    }
+}
+
 /// Returns a generic request context for an allowed Anthropic POST.
 fn anthropic_req_ctx() -> TelemetryRequestContext {
     TelemetryRequestContext {
-        event_id_seed: "test-request-seed".into(),
         domain: "api.anthropic.com".into(),
         process_name: Some("agent".into()),
         ai_provider: Some(ProviderKind::Anthropic),
+        model_traffic: true,
         method: "POST".into(),
         path: "/v1/messages".into(),
         query: None,
@@ -54,132 +117,18 @@ fn anthropic_req_ctx() -> TelemetryRequestContext {
         max_response_preview: 4096,
         port: 443,
         conn_type: "https-mitm",
-        identity: TelemetryIdentityContext::default(),
         policy_mode: None,
         policy_action: None,
         policy_rule: None,
         policy_reason: None,
-        runtime_security_results: Vec::new(),
+        credential_ref: None,
+        credential_observations: Vec::new(),
+        credential_injections: Vec::new(),
     }
 }
 
 fn empty_resp_stats() -> TelemetryResponseStats {
     TelemetryResponseStats::default()
-}
-
-#[test]
-fn http_event_id_seed_prevents_same_millisecond_collisions() {
-    let timestamp_unix_ms = 1779544024000;
-    let mut first = anthropic_req_ctx();
-    let mut second = anthropic_req_ctx();
-    first.event_id_seed = "same-ms-request-1".into();
-    second.event_id_seed = "same-ms-request-2".into();
-
-    let first_event = build_http_security_event(
-        &first,
-        timestamp_unix_ms,
-        Some("trace-winterfell".into()),
-        None,
-        None,
-    );
-    let second_event = build_http_security_event(
-        &second,
-        timestamp_unix_ms,
-        Some("trace-winterfell".into()),
-        None,
-        None,
-    );
-
-    assert_ne!(first_event.common.event_id, second_event.common.event_id);
-}
-
-#[tokio::test]
-async fn same_millisecond_http_events_are_not_collapsed_in_session_db() {
-    let dir = tempfile::tempdir().unwrap();
-    let db_path = dir.path().join("session.db");
-    let db = DbWriter::open(&db_path, 64).expect("db writer");
-    let timestamp_unix_ms = 1779544024000;
-
-    let mut first = anthropic_req_ctx();
-    first.event_id_seed = "same-ms-request-1".into();
-    first.decision = Decision::Denied;
-    first.status_code = Some(403);
-    first.policy_rule = Some("runtime.block_same_ms".into());
-    first.policy_reason = Some("same millisecond regression".into());
-
-    let mut second = first.clone();
-    second.event_id_seed = "same-ms-request-2".into();
-
-    for req_ctx in [&first, &second] {
-        let event = build_http_security_event(
-            req_ctx,
-            timestamp_unix_ms,
-            Some("trace-winterfell".into()),
-            Some(0),
-            None,
-        );
-        let event_id = event.common.event_id.clone();
-        db.write(WriteOp::ResolvedSecurityEvent(ResolvedSecurityEvent {
-            schema_version: RESOLVED_EVENT_SCHEMA_VERSION,
-            event,
-            steps: vec![ResolvedEventStep {
-                kind: ResolvedEventStepKind::EnforcementMatch,
-                status: StepStatus::Matched,
-                rule_id: Some("runtime.block_same_ms".into()),
-                pack_id: None,
-                message: Some("same millisecond regression".into()),
-            }],
-            plugin_transforms: Vec::new(),
-            detection_findings: Vec::new(),
-            final_action: SecurityAction::Block(BlockResponse {
-                reason_code: "same millisecond regression".into(),
-                rule_id: Some("runtime.block_same_ms".into()),
-            }),
-            emitter_results: Vec::new(),
-        }))
-        .await;
-        assert!(event_id.starts_with("net-http-"));
-    }
-    db.shutdown_blocking();
-
-    let conn = rusqlite::Connection::open(&db_path).unwrap();
-    let row: (i64, i64) = conn
-        .query_row(
-            "SELECT COUNT(*), COUNT(DISTINCT event_id) FROM security_events",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .unwrap();
-    assert_eq!(row, (2, 2));
-}
-
-#[tokio::test]
-async fn synthetic_http_response_emits_without_body_finalization() {
-    let dir = tempfile::tempdir().unwrap();
-    let db_path = dir.path().join("session.db");
-    let db = Arc::new(DbWriter::open(&db_path, 64).expect("db writer"));
-    let deps = deps_with_db(Arc::clone(&db));
-    let mut req_ctx = anthropic_req_ctx();
-    req_ctx.event_id_seed = "synthetic-deny".into();
-    req_ctx.decision = Decision::Denied;
-    req_ctx.status_code = Some(403);
-    req_ctx.policy_rule = Some("runtime.block_synthetic".into());
-    req_ctx.policy_reason = Some("synthetic response regression".into());
-
-    emit_synthetic_http_response(&deps, req_ctx, b"blocked").await;
-    db.shutdown_blocking();
-
-    let conn = rusqlite::Connection::open(&db_path).unwrap();
-    let row: (i64, i64) = conn
-        .query_row(
-            "SELECT COUNT(*), COUNT(*) FROM security_events se \
-             JOIN security_event_steps steps ON steps.event_id = se.event_id \
-             WHERE steps.rule_id = 'runtime.block_synthetic'",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .unwrap();
-    assert_eq!(row, (1, 1));
 }
 
 /// `build_net_event` populates the basic fields straight from the
@@ -204,118 +153,35 @@ fn build_net_event_carries_request_fields() {
 }
 
 #[test]
-fn build_http_resolved_security_event_carries_http_subject_and_allow_action() {
-    let req_ctx = anthropic_req_ctx();
-    let mut resp_stats = empty_resp_stats();
-    resp_stats.bytes = 4567;
-    resp_stats.preview = b"chunk-preview".to_vec();
-    let net_event = build_net_event(&req_ctx, &resp_stats);
-
-    let resolved = build_http_resolved_security_event(&req_ctx, &resp_stats, &net_event);
-
-    assert_eq!(resolved.event.common.event_type, "http.request");
-    assert_eq!(
-        resolved.event.common.trace_id.as_deref(),
-        net_event.trace_id.as_deref()
-    );
-    assert_eq!(resolved.event.common.source_engine, SourceEngine::Network);
-    assert_eq!(
-        resolved.event.common.attribution_scope,
-        AiAttributionScope::Vm
-    );
-    assert!(matches!(
-        resolved.final_action,
-        capsem_security_engine::SecurityAction::Continue
-    ));
-    let capsem_security_engine::SecurityEventSubject::Http(subject) = &resolved.event.subject
-    else {
-        panic!("expected http subject");
-    };
-    assert_eq!(subject.method, "POST");
-    assert_eq!(subject.host, "api.anthropic.com");
-    assert_eq!(subject.port, Some(443));
-    assert_eq!(subject.path.as_deref(), Some("/v1/messages"));
-    assert_eq!(
-        subject.url.as_deref(),
-        Some("https://api.anthropic.com/v1/messages")
-    );
-    assert_eq!(subject.request_bytes, 37);
-    assert_eq!(subject.response_status, Some(200));
-    assert_eq!(subject.response_bytes, Some(4567));
-    assert_eq!(
-        subject
-            .response_body
-            .as_ref()
-            .and_then(|body| body.text.as_deref()),
-        Some("chunk-preview")
-    );
-}
-
-#[test]
-fn build_http_resolved_security_event_carries_vm_profile_and_user_identity() {
+fn build_net_event_and_model_call_carry_credential_ref() {
+    let credential_ref = credential_reference("anthropic", "sk-ant-test");
     let mut req_ctx = anthropic_req_ctx();
-    req_ctx.identity = TelemetryIdentityContext {
-        vm_id: Some("vm-winterfell".into()),
-        session_id: Some("session-winterfell".into()),
-        profile_id: Some("coding".into()),
-        profile_revision: Some("2026.0522.1".into()),
-        user_id: Some("arya".into()),
-    };
-    let resp_stats = empty_resp_stats();
-    let net_event = build_net_event(&req_ctx, &resp_stats);
+    req_ctx.credential_ref = Some(credential_ref.clone());
+    req_ctx.credential_observations = vec![CredentialObservation {
+        provider: CredentialProvider::Anthropic,
+        raw_value: "sk-ant-test".to_string(),
+        source: "http.header.x-api-key".to_string(),
+        event_type: Some("http.request".to_string()),
+        trace_id: None,
+        context_json: None,
+    }];
+    let pricing = Arc::new(PricingTable::load());
+    let trace = Arc::new(Mutex::new(TraceState::new()));
 
-    let resolved = build_http_resolved_security_event(&req_ctx, &resp_stats, &net_event);
+    let net = build_net_event(&req_ctx, &empty_resp_stats());
+    let model = maybe_build_model_call(&req_ctx, &empty_resp_stats(), &[], &pricing, &trace)
+        .expect("AI POST to /v1/messages must produce a model call");
 
+    assert_eq!(net.credential_ref.as_deref(), Some(credential_ref.as_str()));
     assert_eq!(
-        resolved.event.common.vm_id.as_deref(),
-        Some("vm-winterfell")
+        model.credential_ref.as_deref(),
+        Some(credential_ref.as_str())
     );
-    assert_eq!(
-        resolved.event.common.session_id.as_deref(),
-        Some("session-winterfell")
-    );
-    assert_eq!(resolved.event.common.profile_id.as_deref(), Some("coding"));
-    assert_eq!(
-        resolved.event.common.profile_revision.as_deref(),
-        Some("2026.0522.1")
-    );
-    assert_eq!(resolved.event.common.user_id.as_deref(), Some("arya"));
-}
-
-#[test]
-fn build_http_resolved_security_event_maps_denied_network_decision_to_block() {
-    let mut req_ctx = anthropic_req_ctx();
-    req_ctx.decision = Decision::Denied;
-    req_ctx.status_code = Some(403);
-    req_ctx.matched_rule = Some("runtime.block_metadata".into());
-    req_ctx.policy_rule = Some("policy.http.block_metadata".into());
-    req_ctx.policy_reason = Some("metadata access".into());
-    let resp_stats = empty_resp_stats();
-    let net_event = build_net_event(&req_ctx, &resp_stats);
-
-    let resolved = build_http_resolved_security_event(&req_ctx, &resp_stats, &net_event);
-
-    assert!(matches!(
-        resolved.final_action,
-        capsem_security_engine::SecurityAction::Block(_)
-    ));
-    assert_eq!(
-        resolved
-            .event
-            .decision
-            .as_ref()
-            .and_then(|d| d.rule.as_deref()),
-        Some("policy.http.block_metadata")
-    );
-    assert_eq!(resolved.steps.len(), 1);
-    assert_eq!(
-        resolved.steps[0].kind,
-        capsem_security_engine::ResolvedEventStepKind::EnforcementMatch
-    );
-    assert_eq!(
-        resolved.steps[0].status,
-        capsem_security_engine::StepStatus::Matched
-    );
+    assert!(!net
+        .credential_ref
+        .as_deref()
+        .unwrap()
+        .contains("sk-ant-test"));
 }
 
 /// HEAD request to an AI domain is *not* a model call (probe).
@@ -335,11 +201,197 @@ fn head_request_is_not_a_model_call() {
 fn non_llm_path_is_not_a_model_call() {
     let mut req_ctx = anthropic_req_ctx();
     req_ctx.path = "/v1/models".into();
+    req_ctx.model_traffic = false;
     let pricing = Arc::new(PricingTable::load());
     let trace = Arc::new(Mutex::new(TraceState::new()));
 
     let mc = maybe_build_model_call(&req_ctx, &empty_resp_stats(), &[], &pricing, &trace);
     assert!(mc.is_none());
+}
+
+#[test]
+fn agy_cloudcode_stream_generate_content_is_a_model_call() {
+    let mut req_ctx = anthropic_req_ctx();
+    req_ctx.domain = "daily-cloudcode-pa.googleapis.com".into();
+    req_ctx.process_name = Some("agy".into());
+    req_ctx.ai_provider = Some(ProviderKind::Google);
+    req_ctx.path = "/v1internal:streamGenerateContent".into();
+    req_ctx.request_body_stats = req_stats(b"");
+    let pricing = Arc::new(PricingTable::load());
+    let trace = Arc::new(Mutex::new(TraceState::new()));
+
+    let mc = maybe_build_model_call(&req_ctx, &empty_resp_stats(), &[], &pricing, &trace)
+        .expect("AGY Cloud Code streamGenerateContent should produce model telemetry");
+
+    assert_eq!(mc.provider, "google");
+    assert_eq!(mc.process_name.as_deref(), Some("agy"));
+    assert_eq!(mc.path, "/v1internal:streamGenerateContent");
+    assert!(mc.stream);
+}
+
+#[test]
+fn google_non_streaming_function_call_is_logged_as_model_tool_call() {
+    let mut req_ctx = anthropic_req_ctx();
+    req_ctx.domain = "daily-cloudcode-pa.googleapis.com".into();
+    req_ctx.process_name = Some("agy".into());
+    req_ctx.ai_provider = Some(ProviderKind::Google);
+    req_ctx.path = "/v1internal:generateContent".into();
+    req_ctx.request_body_stats =
+        req_stats(br#"{"contents":[{"role":"user","parts":[{"text":"search"}]}]}"#);
+    let response = br#"{
+        "candidates": [{
+            "content": {"parts": [{"functionCall": {"name": "search_web", "args": {"query": "capsem"}}}]},
+            "finishReason": "STOP"
+        }],
+        "modelVersion": "gemini-3.1-pro-preview-customtools",
+        "usageMetadata": {"promptTokenCount": 7, "candidatesTokenCount": 3}
+    }"#;
+    let resp_stats = TelemetryResponseStats {
+        bytes: response.len() as u64,
+        preview: response.to_vec(),
+        max_preview: response.len(),
+    };
+    let pricing = Arc::new(PricingTable::load());
+    let trace = Arc::new(Mutex::new(TraceState::new()));
+
+    let mc = maybe_build_model_call(&req_ctx, &resp_stats, &[], &pricing, &trace)
+        .expect("Google generateContent should produce model telemetry");
+
+    assert_eq!(mc.provider, "google");
+    assert_eq!(
+        mc.model.as_deref(),
+        Some("gemini-3.1-pro-preview-customtools")
+    );
+    assert_eq!(mc.tool_calls.len(), 1);
+    assert_eq!(mc.tool_calls[0].call_id, "gemini_search_web_0");
+    assert_eq!(mc.tool_calls[0].tool_name, "search_web");
+    assert_eq!(
+        mc.tool_calls[0].arguments.as_deref(),
+        Some(r#"{"query":"capsem"}"#)
+    );
+}
+
+#[test]
+fn agy_google_tool_call_survives_into_session_stats() {
+    let mut req_ctx = anthropic_req_ctx();
+    req_ctx.domain = "daily-cloudcode-pa.googleapis.com".into();
+    req_ctx.process_name = Some("agy".into());
+    req_ctx.ai_provider = Some(ProviderKind::Google);
+    req_ctx.path = "/v1internal:generateContent".into();
+    req_ctx.request_body_stats =
+        req_stats(br#"{"contents":[{"role":"user","parts":[{"text":"search"}]}]}"#);
+    let response = br#"{
+        "candidates": [{
+            "content": {"parts": [{"functionCall": {"name": "search_web", "args": {"query": "capsem"}}}]},
+            "finishReason": "STOP"
+        }],
+        "modelVersion": "gemini-3.1-pro-preview-customtools",
+        "usageMetadata": {"promptTokenCount": 7, "candidatesTokenCount": 3}
+    }"#;
+    let resp_stats = TelemetryResponseStats {
+        bytes: response.len() as u64,
+        preview: response.to_vec(),
+        max_preview: response.len(),
+    };
+    let pricing = Arc::new(PricingTable::load());
+    let trace = Arc::new(Mutex::new(TraceState::new()));
+    let model_call = maybe_build_model_call(&req_ctx, &resp_stats, &[], &pricing, &trace)
+        .expect("AGY Google generateContent should produce model telemetry");
+
+    let tmp = tempfile::tempdir().unwrap();
+    let db_path = tmp.path().join("session.db");
+    let writer = capsem_logger::DbWriter::open(&db_path, 8).unwrap();
+    writer.write_blocking(capsem_logger::WriteOp::ModelCall(model_call));
+    writer.shutdown_blocking();
+
+    let reader = capsem_logger::DbReader::open(&db_path).unwrap();
+    let stats = reader.session_stats().unwrap();
+    assert_eq!(stats.model_call_count, 1);
+    assert_eq!(stats.total_tool_calls, 1);
+
+    let usage = reader.tool_usage_frequency(10).unwrap();
+    assert_eq!(usage.len(), 1);
+    assert_eq!(usage[0].tool_name, "search_web");
+    assert_eq!(usage[0].count, 1);
+
+    let calls = reader.recent_model_calls(1).unwrap();
+    assert_eq!(calls.len(), 1);
+    let tool_rows = reader.tool_calls_for(calls[0].0).unwrap();
+    assert_eq!(tool_rows.len(), 1);
+    assert_eq!(tool_rows[0].call_id, "gemini_search_web_0");
+    assert_eq!(tool_rows[0].tool_name, "search_web");
+    assert_eq!(
+        tool_rows[0].arguments.as_deref(),
+        Some(r#"{"query":"capsem"}"#)
+    );
+}
+
+#[test]
+fn openai_non_streaming_tool_call_carries_request_trace() {
+    let _trace_guard = EnvGuard::trace_only("feedfacecafebeef");
+    let mut req_ctx = anthropic_req_ctx();
+    req_ctx.domain = "127.0.0.1".into();
+    req_ctx.ai_provider = Some(ProviderKind::OpenAi);
+    req_ctx.path = "/v1/chat/completions".into();
+    req_ctx.request_body_stats =
+        req_stats(br#"{"model":"mock-local","messages":[{"role":"user","content":"hello"}]}"#);
+    let response = br#"{
+        "id": "chatcmpl-mock-local",
+        "object": "chat.completion",
+        "model": "mock-local",
+        "choices": [{
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": "hello from capsem-mock-server",
+                "tool_calls": [{
+                    "id": "tool_0001",
+                    "type": "function",
+                    "function": {
+                        "name": "fixture_lookup",
+                        "arguments": "{\"query\":\"capsem\"}"
+                    }
+                }]
+            },
+            "finish_reason": "tool_calls"
+        }],
+        "usage": {
+            "prompt_tokens": 7,
+            "completion_tokens": 5,
+            "total_tokens": 12
+        }
+    }"#;
+    let resp_stats = TelemetryResponseStats {
+        bytes: response.len() as u64,
+        preview: response.to_vec(),
+        max_preview: response.len(),
+    };
+    let pricing = Arc::new(PricingTable::load());
+    let trace = Arc::new(Mutex::new(TraceState::new()));
+    let model_call = maybe_build_model_call(&req_ctx, &resp_stats, &[], &pricing, &trace)
+        .expect("OpenAI-compatible chat completion should produce model telemetry");
+
+    assert_eq!(model_call.trace_id.as_deref(), Some("feedfacecafebeef"));
+    assert_eq!(model_call.provider, "openai");
+    assert_eq!(model_call.model.as_deref(), Some("mock-local"));
+    assert_eq!(
+        model_call.text_content.as_deref(),
+        Some("hello from capsem-mock-server")
+    );
+    assert_eq!(model_call.stop_reason.as_deref(), Some("tool_use"));
+    assert_eq!(model_call.input_tokens, Some(7));
+    assert_eq!(model_call.output_tokens, Some(5));
+    assert_eq!(model_call.tool_calls.len(), 1);
+    assert_eq!(model_call.tool_calls[0].call_id, "tool_0001");
+    assert_eq!(model_call.tool_calls[0].tool_name, "fixture_lookup");
+    assert_eq!(
+        model_call.tool_calls[0].arguments.as_deref(),
+        Some(r#"{"query":"capsem"}"#)
+    );
+    assert_eq!(
+        model_call.tool_calls[0].trace_id.as_deref(),
+        Some("feedfacecafebeef")
+    );
 }
 
 /// Non-AI provider returns no model call.
@@ -359,16 +411,9 @@ fn non_ai_provider_is_not_a_model_call() {
 /// `text_content` / `tool_calls` / `stop_reason`.
 #[test]
 fn llm_events_flow_into_model_call() {
-    use capsem_network_engine::model_stream::{LlmEvent, StopReason};
+    use crate::net::ai_traffic::events::{LlmEvent, StopReason};
 
-    let mut req_ctx = anthropic_req_ctx();
-    req_ctx.identity = TelemetryIdentityContext {
-        vm_id: Some("vm-ai".into()),
-        session_id: Some("session-ai".into()),
-        profile_id: Some("coding".into()),
-        profile_revision: Some("2026.0522.1".into()),
-        user_id: Some("bran".into()),
-    };
+    let req_ctx = anthropic_req_ctx();
     let pricing = Arc::new(PricingTable::load());
     let trace = Arc::new(Mutex::new(TraceState::new()));
     let events = vec![
@@ -391,27 +436,6 @@ fn llm_events_flow_into_model_call() {
     assert_eq!(mc.text_content.as_deref(), Some("hello"));
     assert_eq!(mc.stop_reason.as_deref(), Some("end_turn"));
     assert_eq!(mc.message_id.as_deref(), Some("msg_1"));
-    let evidence = mc.ai_evidence.as_ref().expect("canonical AI evidence");
-    assert_eq!(evidence.trace_id, mc.trace_id.as_deref().unwrap());
-    assert_eq!(evidence.provider.as_str(), "anthropic");
-    assert!(evidence
-        .request
-        .request_id
-        .starts_with(&format!("request:{}:", evidence.trace_id)));
-    assert_eq!(evidence.source_engine, SourceEngine::Network);
-    assert_eq!(evidence.attribution_scope, AiAttributionScope::Vm);
-    assert_eq!(evidence.origin_kind, AiOriginKind::GuestNetwork);
-    assert_eq!(evidence.vm_id.as_deref(), Some("vm-ai"));
-    assert_eq!(evidence.session_id.as_deref(), Some("session-ai"));
-    assert_eq!(evidence.profile_id.as_deref(), Some("coding"));
-    assert_eq!(evidence.user_id.as_deref(), Some("bran"));
-    assert_eq!(
-        evidence
-            .response
-            .as_ref()
-            .and_then(|r| r.text_preview.as_deref()),
-        Some("hello")
-    );
 }
 
 /// Tool-use stop reason registers tool_call IDs in the trace state so
@@ -419,7 +443,7 @@ fn llm_events_flow_into_model_call() {
 /// trace_id.
 #[test]
 fn tool_use_chains_traces_across_requests() {
-    use capsem_network_engine::model_stream::{LlmEvent, StopReason};
+    use crate::net::ai_traffic::events::{LlmEvent, StopReason};
     let pricing = Arc::new(PricingTable::load());
     let trace = Arc::new(Mutex::new(TraceState::new()));
 
@@ -467,15 +491,15 @@ fn fake_deps() -> Arc<TelemetryDeps> {
         db,
         pricing: Arc::new(PricingTable::load()),
         trace_state: Arc::new(Mutex::new(TraceState::new())),
+        security_rules: empty_security_rules(),
+        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new())),
     })
 }
 
-fn deps_with_db(db: Arc<DbWriter>) -> Arc<TelemetryDeps> {
-    Arc::new(TelemetryDeps {
-        db,
-        pricing: Arc::new(PricingTable::load()),
-        trace_state: Arc::new(Mutex::new(TraceState::new())),
-    })
+fn empty_security_rules() -> Arc<std::sync::RwLock<Arc<SecurityRuleSet>>> {
+    Arc::new(std::sync::RwLock::new(Arc::new(SecurityRuleSet::new(
+        Vec::new(),
+    ))))
 }
 
 /// Without a seeded request context, the hook is shadow-mode: it
@@ -537,55 +561,393 @@ async fn chunk_counting_with_seeded_context() {
 }
 
 #[tokio::test]
-async fn response_end_writes_net_event_and_resolved_security_event() {
+async fn hook_writes_substitution_event_and_shared_credential_ref() {
+    let _lock = crate::credential_broker::TEST_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("session.db");
-    let db = Arc::new(DbWriter::open(&db_path, 64).expect("db writer"));
-    let hook = TelemetryHook::new(deps_with_db(Arc::clone(&db)));
+    let capsem_home = dir.path().join("capsem-home");
+    let test_store = dir.path().join("credential-store.json");
+    let _guard = EnvGuard::install(&capsem_home, dir.path(), &test_store);
+
+    let db = Arc::new(DbWriter::open(&db_path, 64).expect("test db"));
+    let deps = Arc::new(TelemetryDeps {
+        db: Arc::clone(&db),
+        pricing: Arc::new(PricingTable::load()),
+        trace_state: Arc::new(Mutex::new(TraceState::new())),
+        security_rules: empty_security_rules(),
+        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new())),
+    });
+    let hook = TelemetryHook::new(deps);
+    let raw = "sk-ant-hook-test";
+    let credential_ref = credential_reference("anthropic", raw);
+    let mut req_ctx = anthropic_req_ctx();
+    req_ctx.credential_ref = Some(credential_ref.clone());
+    let observation = CredentialObservation {
+        provider: CredentialProvider::Anthropic,
+        raw_value: raw.to_string(),
+        source: "http.header.x-api-key".to_string(),
+        event_type: Some("http.request".to_string()),
+        trace_id: Some("trace-hook".to_string()),
+        context_json: Some(r#"{"domain":"api.anthropic.com"}"#.to_string()),
+    };
+    req_ctx.credential_observations = vec![observation.clone(), observation];
+
     let mut state = HookState::default();
     let conn = any_conn();
-
     {
-        let mut c = ChunkCtx {
-            state: &mut state,
-            conn: &conn,
-            trace_id: None,
-        };
-        let slot = c.state::<Option<TelemetryRequestContext>>(|| None);
-        *slot = Some(anthropic_req_ctx());
+        let mut c = ctx_for(&mut state, &conn);
+        *c.state::<Option<TelemetryRequestContext>>(|| None) = Some(req_ctx);
+    }
+    {
+        let mut c = ctx_for(&mut state, &conn);
+        hook.on_response_end(&mut c);
     }
 
-    let mut chunk = Bytes::from_static(b"ok");
-    {
-        let mut ctx = ctx_for(&mut state, &conn);
-        hook.on_response_chunk(&mut chunk, &mut ctx);
+    let mut seen = false;
+    for _ in 0..50 {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let net_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM net_events WHERE credential_ref = ?1",
+                [&credential_ref],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let captured_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM substitution_events WHERE substitution_ref = ?1 AND outcome = 'captured'",
+                [&credential_ref],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let brokered_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM substitution_events WHERE substitution_ref = ?1 AND outcome = 'brokered'",
+                [&credential_ref],
+                |row| row.get(0),
+            )
+            .unwrap();
+        if net_count == 1 && captured_count == 1 && brokered_count == 1 {
+            seen = true;
+            break;
+        }
     }
-    {
-        let mut ctx = ctx_for(&mut state, &conn);
-        hook.on_response_end(&mut ctx);
-    }
-    tokio::task::yield_now().await;
+
+    assert!(
+        seen,
+        "expected net and substitution rows with shared credential_ref"
+    );
     db.shutdown_blocking();
+    let db_bytes = std::fs::read(&db_path).unwrap();
+    assert!(
+        !String::from_utf8_lossy(&db_bytes).contains(raw),
+        "raw credential leaked into session db"
+    );
+}
 
-    let conn = rusqlite::Connection::open(&db_path).unwrap();
-    let net_count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM net_events", [], |row| row.get(0))
-        .unwrap();
-    assert_eq!(net_count, 1);
-    let security_row: (String, String, String, String) = conn
-        .query_row(
-            "SELECT event_family, event_type, source_engine, final_action FROM security_events",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-        )
-        .unwrap();
-    assert_eq!(
-        security_row,
-        (
-            "http".to_string(),
-            "http.request".to_string(),
-            "network".to_string(),
-            "continue".to_string(),
-        )
+#[tokio::test]
+async fn hook_writes_security_rule_ledger_for_matching_http_event() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("session.db");
+    let rules_profile = SecurityRuleProfile::parse_toml(
+        r#"
+[profiles.rules.anthropic_http_seen]
+name = "anthropic_http_seen"
+action = "allow"
+detection_level = "informational"
+match = 'http.host == "api.anthropic.com" && http.path == "/v1/messages"'
+"#,
+    )
+    .expect("rules parse");
+    let rules = SecurityRuleSet::compile_profile(&rules_profile, SecurityRuleSource::User)
+        .expect("rules compile");
+    let db = Arc::new(DbWriter::open(&db_path, 64).expect("test db"));
+    let deps = Arc::new(TelemetryDeps {
+        db: Arc::clone(&db),
+        pricing: Arc::new(PricingTable::load()),
+        trace_state: Arc::new(Mutex::new(TraceState::new())),
+        security_rules: Arc::new(std::sync::RwLock::new(Arc::new(rules))),
+        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new())),
+    });
+    let hook = TelemetryHook::new(deps);
+
+    let mut state = HookState::default();
+    let conn = any_conn();
+    {
+        let mut c = ctx_for(&mut state, &conn);
+        *c.state::<Option<TelemetryRequestContext>>(|| None) = Some(anthropic_req_ctx());
+    }
+    {
+        let mut c = ctx_for(&mut state, &conn);
+        hook.on_response_end(&mut c);
+    }
+
+    let mut seen = false;
+    for _ in 0..50 {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let joined: Option<(String, String, String)> = conn
+            .query_row(
+                "SELECT net_events.event_id, security_rule_events.rule_id, security_rule_events.detection_level
+                 FROM net_events
+                 JOIN security_rule_events ON security_rule_events.event_id = net_events.event_id
+                 WHERE net_events.domain = 'api.anthropic.com'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .ok();
+        let Some((event_id, rule_id, detection_level)) = joined else {
+            continue;
+        };
+        assert_eq!(event_id.len(), 12);
+        assert!(event_id
+            .chars()
+            .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)));
+        assert_eq!(rule_id, "profiles.rules.anthropic_http_seen");
+        assert_eq!(detection_level, "informational");
+        seen = true;
+        break;
+    }
+
+    assert!(
+        seen,
+        "expected HTTP telemetry to write a joined rule ledger row"
+    );
+}
+
+#[tokio::test]
+async fn hook_writes_security_rule_ledger_for_matching_model_event() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("session.db");
+    let rules_profile = SecurityRuleProfile::parse_toml(
+        r#"
+[profiles.rules.anthropic_model_seen]
+name = "anthropic_model_seen"
+action = "allow"
+detection_level = "informational"
+match = 'model.provider == "anthropic" && model.name == "claude-test"'
+"#,
+    )
+    .expect("rules parse");
+    let rules = SecurityRuleSet::compile_profile(&rules_profile, SecurityRuleSource::User)
+        .expect("rules compile");
+    let db = Arc::new(DbWriter::open(&db_path, 64).expect("test db"));
+    let deps = Arc::new(TelemetryDeps {
+        db: Arc::clone(&db),
+        pricing: Arc::new(PricingTable::load()),
+        trace_state: Arc::new(Mutex::new(TraceState::new())),
+        security_rules: Arc::new(std::sync::RwLock::new(Arc::new(rules))),
+        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new())),
+    });
+    let hook = TelemetryHook::new(deps);
+
+    let mut state = HookState::default();
+    let conn = any_conn();
+    {
+        let mut c = ctx_for(&mut state, &conn);
+        *c.state::<Option<TelemetryRequestContext>>(|| None) = Some(anthropic_req_ctx());
+    }
+    {
+        let mut c = ctx_for(&mut state, &conn);
+        hook.on_response_end(&mut c);
+    }
+
+    let mut seen = false;
+    for _ in 0..50 {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let joined: Option<(String, String, String)> = conn
+            .query_row(
+                "SELECT model_calls.event_id, security_rule_events.rule_id, security_rule_events.detection_level
+                 FROM model_calls
+                 JOIN security_rule_events ON security_rule_events.event_id = model_calls.event_id
+                 WHERE model_calls.provider = 'anthropic'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .ok();
+        let Some((event_id, rule_id, detection_level)) = joined else {
+            continue;
+        };
+        assert_eq!(event_id.len(), 12);
+        assert!(event_id
+            .chars()
+            .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)));
+        assert_eq!(rule_id, "profiles.rules.anthropic_model_seen");
+        assert_eq!(detection_level, "informational");
+        seen = true;
+        break;
+    }
+
+    assert!(
+        seen,
+        "expected model telemetry to write a joined rule ledger row"
+    );
+}
+
+#[tokio::test]
+async fn hook_writes_injected_substitution_event_for_broker_ref_replay() {
+    let _lock = crate::credential_broker::TEST_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("session.db");
+    let capsem_home = dir.path().join("capsem-home");
+    let test_store = dir.path().join("credential-store.json");
+    let _guard = EnvGuard::install(&capsem_home, dir.path(), &test_store);
+
+    let db = Arc::new(DbWriter::open(&db_path, 64).expect("test db"));
+    let deps = Arc::new(TelemetryDeps {
+        db: Arc::clone(&db),
+        pricing: Arc::new(PricingTable::load()),
+        trace_state: Arc::new(Mutex::new(TraceState::new())),
+        security_rules: empty_security_rules(),
+        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new())),
+    });
+    let hook = TelemetryHook::new(deps);
+    let raw = "sk-ant-replayed-hook-test";
+    let credential_ref = credential_reference("anthropic", raw);
+    let mut req_ctx = anthropic_req_ctx();
+    req_ctx.credential_ref = Some(credential_ref.clone());
+    req_ctx.request_headers = Some(format!("authorization: Bearer {credential_ref}"));
+    req_ctx.credential_injections = vec![CredentialInjection {
+        provider: Some(CredentialProvider::Anthropic),
+        credential_ref: credential_ref.clone(),
+        source: "http.header.authorization".to_string(),
+        event_type: Some("http.request".to_string()),
+        trace_id: Some("trace-injected-hook".to_string()),
+        context_json: Some(r#"{"domain":"api.anthropic.com"}"#.to_string()),
+    }];
+
+    let mut state = HookState::default();
+    let conn = any_conn();
+    {
+        let mut c = ctx_for(&mut state, &conn);
+        *c.state::<Option<TelemetryRequestContext>>(|| None) = Some(req_ctx);
+    }
+    {
+        let mut c = ctx_for(&mut state, &conn);
+        hook.on_response_end(&mut c);
+    }
+
+    let mut seen = false;
+    for _ in 0..50 {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let injected_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM substitution_events WHERE substitution_ref = ?1 AND outcome = 'injected'",
+                [&credential_ref],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let net_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM net_events WHERE credential_ref = ?1",
+                [&credential_ref],
+                |row| row.get(0),
+            )
+            .unwrap();
+        if injected_count == 1 && net_count == 1 {
+            seen = true;
+            break;
+        }
+    }
+
+    assert!(
+        seen,
+        "expected injected substitution row with shared net credential_ref"
+    );
+    let db_bytes = std::fs::read(&db_path).unwrap();
+    assert!(
+        !String::from_utf8_lossy(&db_bytes).contains(raw),
+        "raw credential leaked into session db"
+    );
+}
+
+#[tokio::test]
+async fn hook_detects_response_body_token_exchange_and_redacts_preview() {
+    let _lock = crate::credential_broker::TEST_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("session.db");
+    let capsem_home = dir.path().join("capsem-home");
+    let test_store = dir.path().join("credential-store.json");
+    let _guard = EnvGuard::install(&capsem_home, dir.path(), &test_store);
+
+    let db = Arc::new(DbWriter::open(&db_path, 64).expect("test db"));
+    let deps = Arc::new(TelemetryDeps {
+        db: Arc::clone(&db),
+        pricing: Arc::new(PricingTable::load()),
+        trace_state: Arc::new(Mutex::new(TraceState::new())),
+        security_rules: empty_security_rules(),
+        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new())),
+    });
+    let hook = TelemetryHook::new(deps);
+    let raw = "github_pat_exchange_secret";
+
+    let mut req_ctx = anthropic_req_ctx();
+    req_ctx.domain = "api.github.com".to_string();
+    req_ctx.ai_provider = None;
+    req_ctx.path = "/login/oauth/access_token".to_string();
+    req_ctx.request_headers = Some("host: api.github.com".to_string());
+    req_ctx.response_headers = Some("content-type: application/json".to_string());
+
+    let mut state = HookState::default();
+    let conn = ConnMeta {
+        domain: "api.github.com".to_string(),
+        port: 443,
+        process_name: None,
+        ..Default::default()
+    };
+    {
+        let mut c = ctx_for(&mut state, &conn);
+        *c.state::<Option<TelemetryRequestContext>>(|| None) = Some(req_ctx);
+        *c.state::<TelemetryResponseStats>(TelemetryResponseStats::default) =
+            TelemetryResponseStats {
+                bytes: raw.len() as u64,
+                preview: format!(r#"{{"access_token":"{raw}","token_type":"bearer"}}"#)
+                    .into_bytes(),
+                max_preview: 4096,
+            };
+    }
+    {
+        let mut c = ctx_for(&mut state, &conn);
+        hook.on_response_end(&mut c);
+    }
+
+    let mut seen = false;
+    for _ in 0..50 {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let row: Option<(String, String)> = conn
+            .query_row(
+                "SELECT credential_ref, response_body_preview FROM net_events WHERE domain = 'api.github.com'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .ok();
+        let Some((credential_ref, preview)) = row else {
+            continue;
+        };
+        let outcomes: Vec<String> = conn
+            .prepare(
+                "SELECT outcome FROM substitution_events WHERE substitution_ref = ?1 AND source = 'http.body.response.$.access_token' ORDER BY outcome",
+            )
+            .unwrap()
+            .query_map([&credential_ref], |row| row.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        assert!(credential_ref.starts_with("credential:blake3:"));
+        assert!(preview.contains("credential:blake3:"));
+        assert!(!preview.contains(raw));
+        if outcomes == ["brokered", "captured"] {
+            seen = true;
+            break;
+        }
+    }
+
+    assert!(
+        seen,
+        "expected token exchange response to be brokered and redacted"
     );
 }

@@ -9,9 +9,9 @@
 
 use std::collections::BTreeMap;
 
+use crate::net::ai_traffic::events::{LlmEvent, ProviderStreamParser, StopReason};
 use crate::net::ai_traffic::provider::{Provider, ProviderKind};
-use capsem_network_engine::model_stream::{LlmEvent, ProviderStreamParser, StopReason};
-use capsem_network_engine::sse_parser::SseEvent;
+use crate::net::parsers::sse_parser::SseEvent;
 
 pub struct GoogleProvider;
 
@@ -174,9 +174,6 @@ impl ProviderStreamParser for GoogleStreamParser {
                             // Function call (complete, not streamed)
                             if let Some(fc) = &part.function_call {
                                 let name = fc.name.clone().unwrap_or_default();
-                                // Gemini doesn't return tool call IDs, so we use the name as the call_id
-                                // to link the tool_response later (which also only has the name).
-                                let call_id = name.clone();
                                 let arguments = fc
                                     .args
                                     .as_ref()
@@ -185,6 +182,10 @@ impl ProviderStreamParser for GoogleStreamParser {
 
                                 let idx = self.block_index;
                                 self.block_index += 1;
+                                // Gemini doesn't return tool call IDs. Use the same deterministic
+                                // synthetic id shape as Google request parsing so follow-up
+                                // functionResponse rows can correlate with the model tool call.
+                                let call_id = format!("gemini_{}_{}", name, idx);
                                 events.push(LlmEvent::ToolCallStart {
                                     index: idx,
                                     call_id: call_id.clone(),

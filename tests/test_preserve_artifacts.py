@@ -8,7 +8,6 @@ so a future "helpful" loosening that reintroduces the bloat surfaces
 in CI rather than on the next `just test` run.
 """
 
-import os
 from pathlib import Path
 
 import pytest

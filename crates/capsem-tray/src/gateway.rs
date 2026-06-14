@@ -9,59 +9,9 @@ pub struct StatusResponse {
     pub service: String,
     pub vm_count: u32,
     pub vms: Vec<VmSummary>,
-    #[serde(default)]
-    pub assets: Option<AssetHealth>,
     /// Client-side measured latency (not from gateway). Set by the tray poller.
     #[serde(skip)]
     pub latency_ms: Option<u32>,
-}
-
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-#[allow(dead_code)]
-pub struct AssetHealth {
-    pub ready: bool,
-    #[serde(default = "default_asset_state")]
-    pub state: String,
-    #[serde(default)]
-    pub version: Option<String>,
-    #[serde(default)]
-    pub arch: Option<String>,
-    #[serde(default)]
-    pub missing: Vec<String>,
-    #[serde(default)]
-    pub progress: Option<AssetProgress>,
-    #[serde(default)]
-    pub error: Option<String>,
-    #[serde(default)]
-    pub retry_count: u32,
-    #[serde(default)]
-    pub retryable: bool,
-    #[serde(default)]
-    pub saved_vm_dependencies: Vec<SavedVmAssetDependency>,
-}
-
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-#[allow(dead_code)]
-pub struct SavedVmAssetDependency {
-    pub vm: String,
-    pub asset_version: String,
-    pub arch: String,
-    pub missing: Vec<String>,
-    pub recovery_hint: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-#[allow(dead_code)]
-pub struct AssetProgress {
-    pub logical_name: String,
-    pub bytes_done: u64,
-    #[serde(default)]
-    pub bytes_total: Option<u64>,
-    pub done: bool,
-}
-
-fn default_asset_state() -> String {
-    "unknown".to_string()
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -207,32 +157,32 @@ impl GatewayClient {
     }
 
     pub async fn stop_vm(&self, id: &str) -> Result<()> {
-        self.post(&format!("/stop/{id}")).await?;
+        self.post(&format!("/vms/{id}/stop")).await?;
         Ok(())
     }
 
     pub async fn delete_vm(&self, id: &str) -> Result<()> {
-        self.delete_req(&format!("/delete/{id}")).await?;
+        self.delete_req(&format!("/vms/{id}/delete")).await?;
         Ok(())
     }
 
     pub async fn suspend_vm(&self, id: &str) -> Result<()> {
-        self.post(&format!("/suspend/{id}")).await?;
+        self.post(&format!("/vms/{id}/pause")).await?;
         Ok(())
     }
 
     pub async fn resume_vm(&self, id: &str) -> Result<()> {
-        self.post(&format!("/resume/{id}")).await?;
+        self.post(&format!("/vms/{id}/resume")).await?;
         Ok(())
     }
 
     /// Provision a temporary (ephemeral) VM. Returns the new VM id.
     pub async fn provision_temp(&self) -> Result<String> {
-        // Gateway requires Content-Type: application/json on POST /provision
+        // Gateway requires Content-Type: application/json on POST /vms/create
         // (returns 415 otherwise). Empty object == default ephemeral VM.
         let resp = self
             .client
-            .post(format!("{}/provision", self.base_url()))
+            .post(format!("{}/vms/create", self.base_url()))
             .header(AUTHORIZATION, self.auth_header())
             // Empty body == ephemeral VM with user's configured defaults
             // (vm.resources.ram_gb, vm.resources.cpu_count). The service
@@ -462,46 +412,49 @@ mod tests {
 
     #[tokio::test]
     async fn stop_vm_sends_post() {
-        let (base, captures, handle) = spawn_http_probe("POST", "/stop/vm-42", 200, "{}").await;
+        let (base, captures, handle) = spawn_http_probe("POST", "/vms/vm-42/stop", 200, "{}").await;
         let client = GatewayClient::new_with_base_url(base, "tok".into());
         client.stop_vm("vm-42").await.unwrap();
         handle.await.unwrap();
         let req = captures.lock().unwrap().first().cloned().unwrap();
-        assert!(req.starts_with("POST /stop/vm-42 "));
+        assert!(req.starts_with("POST /vms/vm-42/stop "));
     }
 
     #[tokio::test]
     async fn delete_vm_sends_delete() {
-        let (base, captures, handle) = spawn_http_probe("DELETE", "/delete/vm-42", 200, "{}").await;
+        let (base, captures, handle) =
+            spawn_http_probe("DELETE", "/vms/vm-42/delete", 200, "{}").await;
         let client = GatewayClient::new_with_base_url(base, "tok".into());
         client.delete_vm("vm-42").await.unwrap();
         handle.await.unwrap();
         let req = captures.lock().unwrap().first().cloned().unwrap();
-        assert!(req.starts_with("DELETE /delete/vm-42 "));
+        assert!(req.starts_with("DELETE /vms/vm-42/delete "));
     }
 
     #[tokio::test]
     async fn suspend_vm_sends_post() {
-        let (base, captures, handle) = spawn_http_probe("POST", "/suspend/vm-42", 200, "{}").await;
+        let (base, captures, handle) =
+            spawn_http_probe("POST", "/vms/vm-42/pause", 200, "{}").await;
         let client = GatewayClient::new_with_base_url(base, "tok".into());
         client.suspend_vm("vm-42").await.unwrap();
         handle.await.unwrap();
-        assert!(captures.lock().unwrap()[0].starts_with("POST /suspend/vm-42 "));
+        assert!(captures.lock().unwrap()[0].starts_with("POST /vms/vm-42/pause "));
     }
 
     #[tokio::test]
     async fn resume_vm_sends_post() {
-        let (base, captures, handle) = spawn_http_probe("POST", "/resume/vm-42", 200, "{}").await;
+        let (base, captures, handle) =
+            spawn_http_probe("POST", "/vms/vm-42/resume", 200, "{}").await;
         let client = GatewayClient::new_with_base_url(base, "tok".into());
         client.resume_vm("vm-42").await.unwrap();
         handle.await.unwrap();
-        assert!(captures.lock().unwrap()[0].starts_with("POST /resume/vm-42 "));
+        assert!(captures.lock().unwrap()[0].starts_with("POST /vms/vm-42/resume "));
     }
 
     #[tokio::test]
     async fn provision_temp_returns_id() {
         let (base, _, handle) =
-            spawn_http_probe("POST", "/provision", 200, r#"{"id":"vm-new"}"#).await;
+            spawn_http_probe("POST", "/vms/create", 200, r#"{"id":"vm-new"}"#).await;
         let client = GatewayClient::new_with_base_url(base, "tok".into());
         let id = client.provision_temp().await.unwrap();
         handle.await.unwrap();
@@ -511,7 +464,7 @@ mod tests {
     #[tokio::test]
     async fn provision_temp_errors_on_missing_id() {
         let (base, _, handle) =
-            spawn_http_probe("POST", "/provision", 200, r#"{"status":"ok"}"#).await;
+            spawn_http_probe("POST", "/vms/create", 200, r#"{"status":"ok"}"#).await;
         let client = GatewayClient::new_with_base_url(base, "tok".into());
         let err = client.provision_temp().await.unwrap_err();
         handle.await.unwrap();
@@ -521,7 +474,7 @@ mod tests {
     #[tokio::test]
     async fn provision_temp_errors_on_http_error_status() {
         let (base, _, handle) =
-            spawn_http_probe("POST", "/provision", 415, "unsupported media").await;
+            spawn_http_probe("POST", "/vms/create", 415, "unsupported media").await;
         let client = GatewayClient::new_with_base_url(base, "tok".into());
         let err = client.provision_temp().await.unwrap_err();
         handle.await.unwrap();
@@ -530,7 +483,7 @@ mod tests {
 
     #[tokio::test]
     async fn stop_vm_errors_on_http_error_status() {
-        let (base, _, handle) = spawn_http_probe("POST", "/stop/vm-x", 404, "not found").await;
+        let (base, _, handle) = spawn_http_probe("POST", "/vms/vm-x/stop", 404, "not found").await;
         let client = GatewayClient::new_with_base_url(base, "tok".into());
         let err = client.stop_vm("vm-x").await.unwrap_err();
         handle.await.unwrap();

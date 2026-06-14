@@ -63,6 +63,8 @@ pub struct SessionSummary {
     pub repo_path: Option<String>,
     pub profile: String,
     pub profile_status: Option<String>,
+    pub can_resume: bool,
+    pub resume_blocked_reason: Option<String>,
     pub branch: Option<String>,
     pub persistent: bool,
     pub lifecycle: SessionLifecycle,

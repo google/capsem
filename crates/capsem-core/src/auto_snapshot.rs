@@ -102,6 +102,50 @@ impl AutoSnapshotScheduler {
         self.session_dir.join("system")
     }
 
+    fn ensure_snapshot_storage_outside_workspace(&self) -> anyhow::Result<()> {
+        let workspace = self
+            .workspace_dir()
+            .canonicalize()
+            .context("failed to resolve workspace directory for snapshot safety check")?;
+        self.ensure_existing_path_outside_workspace(
+            &self.snapshots_dir(),
+            &workspace,
+            "snapshot storage",
+        )
+    }
+
+    fn ensure_snapshot_path_outside_workspace(
+        &self,
+        path: &Path,
+        label: &str,
+    ) -> anyhow::Result<()> {
+        let workspace = self
+            .workspace_dir()
+            .canonicalize()
+            .context("failed to resolve workspace directory for snapshot safety check")?;
+        self.ensure_existing_path_outside_workspace(path, &workspace, label)
+    }
+
+    fn ensure_existing_path_outside_workspace(
+        &self,
+        path: &Path,
+        workspace: &Path,
+        label: &str,
+    ) -> anyhow::Result<()> {
+        if path.exists() {
+            let resolved = path
+                .canonicalize()
+                .with_context(|| format!("failed to resolve {label} path {}", path.display()))?;
+            anyhow::ensure!(
+                !resolved.starts_with(workspace),
+                "{label} resolves inside live workspace: {} -> {}",
+                path.display(),
+                resolved.display()
+            );
+        }
+        Ok(())
+    }
+
     /// Absolute slot index for auto pool.
     fn auto_slot(&self, idx: usize) -> usize {
         idx
@@ -158,6 +202,8 @@ impl AutoSnapshotScheduler {
     ) -> anyhow::Result<SnapshotSlot> {
         let t0 = std::time::Instant::now();
         let slot_dir = self.slot_dir(slot);
+        self.ensure_snapshot_storage_outside_workspace()?;
+        self.ensure_snapshot_path_outside_workspace(&slot_dir, "snapshot slot")?;
 
         if slot_dir.exists() {
             std::fs::remove_dir_all(&slot_dir)?;
@@ -295,6 +341,7 @@ impl AutoSnapshotScheduler {
         anyhow::ensure!(slot < self.total_slots(), "slot {slot} out of range");
         let dir = self.slot_dir(slot);
         anyhow::ensure!(dir.exists(), "slot {slot} is empty");
+        self.ensure_snapshot_path_outside_workspace(&dir, "snapshot slot")?;
         std::fs::remove_dir_all(&dir)?;
         debug!(slot, "snapshot deleted");
         Ok(())
@@ -322,6 +369,12 @@ impl AutoSnapshotScheduler {
             .collect();
         if let Some(oldest) = auto_slots.last() {
             let dir = self.slot_dir(oldest.slot);
+            if self
+                .ensure_snapshot_path_outside_workspace(&dir, "snapshot slot")
+                .is_err()
+            {
+                return false;
+            }
             if std::fs::remove_dir_all(&dir).is_ok() {
                 debug!(slot = oldest.slot, "evicted oldest auto-snapshot");
                 return true;
@@ -340,6 +393,7 @@ impl AutoSnapshotScheduler {
         name: &str,
     ) -> anyhow::Result<SnapshotSlot> {
         let t0 = std::time::Instant::now();
+        self.ensure_snapshot_storage_outside_workspace()?;
         anyhow::ensure!(!slots.is_empty(), "no snapshots to compact");
         anyhow::ensure!(
             self.available_manual_slots() > 0,
@@ -367,6 +421,7 @@ impl AutoSnapshotScheduler {
 
         // Build merged workspace in a temp dir within snapshots dir.
         let tmp_dir = self.snapshots_dir().join("_compact_tmp");
+        self.ensure_snapshot_path_outside_workspace(&tmp_dir, "snapshot compact temp")?;
         if tmp_dir.exists() {
             std::fs::remove_dir_all(&tmp_dir)?;
         }
@@ -419,6 +474,7 @@ impl AutoSnapshotScheduler {
 
         // Create the new snapshot slot.
         let slot_dir = self.slot_dir(target_slot);
+        self.ensure_snapshot_path_outside_workspace(&slot_dir, "snapshot slot")?;
         if slot_dir.exists() {
             std::fs::remove_dir_all(&slot_dir)?;
         }
@@ -455,6 +511,7 @@ impl AutoSnapshotScheduler {
         for &(slot, _) in &metas {
             let dir = self.slot_dir(slot);
             if dir.exists() {
+                self.ensure_snapshot_path_outside_workspace(&dir, "snapshot slot")?;
                 let _ = std::fs::remove_dir_all(&dir);
             }
         }
@@ -571,7 +628,7 @@ impl SnapshotBackend for ApfsSnapshot {
 /// Walks the source directory and attempts `ioctl(dst_fd, FICLONE, src_fd)`
 /// for each file. On CoW filesystems (Btrfs, XFS) this is instant and
 /// zero-copy. On filesystems that don't support reflinks (ext4), falls back
-/// to a sparse-preserving copy per file.
+/// to a standard byte copy per file.
 #[cfg(target_os = "linux")]
 pub struct ReflinkSnapshot;
 
@@ -664,19 +721,19 @@ impl SnapshotBackend for ReflinkSnapshot {
                         if !reflink_failed_logged {
                             info!(
                                 path = %entry.path().display(),
-                                "FICLONE not supported on this filesystem, falling back to sparse copy"
+                                "FICLONE not supported on this filesystem, falling back to byte copy"
                             );
                             reflink_failed_logged = true;
                         }
-                        copy_sparse_file(entry.path(), &target)?;
+                        std::fs::copy(entry.path(), &target)?;
                     }
                     Err(e) => {
                         warn!(
                             path = %entry.path().display(),
                             error = %e,
-                            "FICLONE ioctl failed unexpectedly, falling back to sparse copy"
+                            "FICLONE ioctl failed unexpectedly, falling back to byte copy"
                         );
-                        copy_sparse_file(entry.path(), &target)?;
+                        std::fs::copy(entry.path(), &target)?;
                     }
                 }
             }
@@ -685,7 +742,7 @@ impl SnapshotBackend for ReflinkSnapshot {
         if reflink_supported.load(Ordering::Relaxed) {
             debug!("snapshot completed using reflinks (FICLONE)");
         } else {
-            debug!("snapshot completed using sparse copy (FICLONE not available)");
+            debug!("snapshot completed using byte copy (FICLONE not available)");
         }
 
         Ok(())
@@ -712,7 +769,7 @@ pub fn clone_directory(src: &Path, dst: &Path) -> anyhow::Result<()> {
 /// Clone a single file using platform-appropriate copy-on-write.
 ///
 /// On macOS: uses `cp -c` (APFS clonefile) with fallback to regular copy.
-/// On Linux: uses FICLONE ioctl with fallback to sparse-preserving copy.
+/// On Linux: uses FICLONE ioctl with fallback to `std::fs::copy`.
 pub fn clone_file(src: &Path, dst: &Path) -> anyhow::Result<()> {
     #[cfg(target_os = "macos")]
     {
@@ -735,10 +792,10 @@ pub fn clone_file(src: &Path, dst: &Path) -> anyhow::Result<()> {
     #[cfg(target_os = "linux")]
     {
         match ReflinkSnapshot::try_reflink(src, dst) {
-            Ok(true) => Ok(()),
+            Ok(true) => return Ok(()),
             Ok(false) | Err(_) => {
-                copy_sparse_file(src, dst)?;
-                Ok(())
+                std::fs::copy(src, dst)?;
+                return Ok(());
             }
         }
     }
@@ -747,114 +804,6 @@ pub fn clone_file(src: &Path, dst: &Path) -> anyhow::Result<()> {
         std::fs::copy(src, dst)?;
         Ok(())
     }
-}
-
-#[cfg(target_os = "linux")]
-fn copy_sparse_file(src: &Path, dst: &Path) -> std::io::Result<u64> {
-    use std::io::{Read, Seek, SeekFrom, Write};
-    use std::os::unix::fs::PermissionsExt;
-    use std::os::unix::io::AsRawFd;
-
-    fn copy_data_range(
-        src_file: &mut std::fs::File,
-        dst_file: &mut std::fs::File,
-        start: u64,
-        end: u64,
-    ) -> std::io::Result<()> {
-        let mut remaining = end.saturating_sub(start);
-        src_file.seek(SeekFrom::Start(start))?;
-        dst_file.seek(SeekFrom::Start(start))?;
-        let mut buf = vec![0_u8; 1024 * 1024];
-        while remaining > 0 {
-            let limit = buf.len().min(remaining as usize);
-            let n = src_file.read(&mut buf[..limit])?;
-            if n == 0 {
-                break;
-            }
-            dst_file.write_all(&buf[..n])?;
-            remaining -= n as u64;
-        }
-        Ok(())
-    }
-
-    fn copy_with_holes(
-        src_file: &mut std::fs::File,
-        dst_file: &mut std::fs::File,
-        len: u64,
-    ) -> std::io::Result<bool> {
-        let src_fd = src_file.as_raw_fd();
-        let mut offset = 0_u64;
-        let mut copied_any_range = false;
-
-        while offset < len {
-            let data = unsafe { libc::lseek(src_fd, offset as libc::off_t, libc::SEEK_DATA) };
-            if data < 0 {
-                let err = std::io::Error::last_os_error();
-                return match err.raw_os_error() {
-                    // No more data ranges: the remainder is a hole.
-                    Some(libc::ENXIO) => Ok(true),
-                    // Filesystem does not understand SEEK_DATA/SEEK_HOLE.
-                    Some(libc::EINVAL) => Ok(false),
-                    _ => Err(err),
-                };
-            }
-            let data = data as u64;
-            let hole = unsafe { libc::lseek(src_fd, data as libc::off_t, libc::SEEK_HOLE) };
-            let hole = if hole < 0 {
-                len
-            } else {
-                (hole as u64).min(len)
-            };
-            copy_data_range(src_file, dst_file, data, hole)?;
-            copied_any_range = true;
-            offset = hole;
-        }
-
-        Ok(copied_any_range || len == 0)
-    }
-
-    fn copy_zero_scan(
-        src_file: &mut std::fs::File,
-        dst_file: &mut std::fs::File,
-        len: u64,
-    ) -> std::io::Result<()> {
-        src_file.seek(SeekFrom::Start(0))?;
-        dst_file.seek(SeekFrom::Start(0))?;
-        let mut buf = vec![0_u8; 1024 * 1024];
-        let mut copied = 0_u64;
-        while copied < len {
-            let n = src_file.read(&mut buf)?;
-            if n == 0 {
-                break;
-            }
-            if buf[..n].iter().all(|b| *b == 0) {
-                dst_file.seek(SeekFrom::Current(n as i64))?;
-            } else {
-                dst_file.write_all(&buf[..n])?;
-            }
-            copied += n as u64;
-        }
-        Ok(())
-    }
-
-    let mut src_file = std::fs::File::open(src)?;
-    let meta = src_file.metadata()?;
-    let len = meta.len();
-    let mut dst_file = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(dst)?;
-
-    match copy_with_holes(&mut src_file, &mut dst_file, len) {
-        Ok(true) => {}
-        Ok(false) => copy_zero_scan(&mut src_file, &mut dst_file, len)?,
-        Err(error) => return Err(error),
-    }
-
-    dst_file.set_len(len)?;
-    dst_file.set_permissions(std::fs::Permissions::from_mode(meta.permissions().mode()))?;
-    Ok(len)
 }
 
 /// Calculate the physical disk usage (allocated blocks) of a sandbox session directory.
@@ -933,21 +882,63 @@ pub fn clone_sandbox_state(src_session_dir: &Path, dst_session_dir: &Path) -> an
         }
     }
 
-    // Clone host-only session-root artifacts. These do not belong in the
-    // guest share, but they are part of the VM's durable identity/provenance.
-    for name in [
-        "session.db",
-        crate::settings_profiles::VM_EFFECTIVE_SETTINGS_FILENAME,
-        crate::settings_profiles::VM_EFFECTIVE_TRACE_FILENAME,
-    ] {
-        let src = src_session_dir.join(name);
-        if src.exists() {
-            let dst = dst_session_dir.join(name);
-            clone_file(&src, &dst).with_context(|| format!("failed to clone {name}"))?;
-        }
+    // Snapshot session.db at session root (host-only, not in guest/).
+    //
+    // session.db may be in WAL mode while the VM is running. Copying only the
+    // main database file can produce a malformed or stale fork because the
+    // committed pages may still live in session.db-wal. Ask SQLite to write a
+    // coherent standalone image instead.
+    let db_src = src_session_dir.join("session.db");
+    if db_src.exists() {
+        let db_dst = dst_session_dir.join("session.db");
+        clone_session_db_snapshot(&db_src, &db_dst).context("failed to snapshot session.db")?;
     }
 
     Ok(crate::session::disk_usage_bytes(dst_session_dir))
+}
+
+fn clone_session_db_snapshot(src: &Path, dst: &Path) -> anyhow::Result<()> {
+    if dst.exists() {
+        std::fs::remove_file(dst)
+            .with_context(|| format!("failed to remove existing {}", dst.display()))?;
+    }
+    if let Some(parent) = dst.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+
+    let src_conn = rusqlite::Connection::open_with_flags(
+        src,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+            | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX
+            | rusqlite::OpenFlags::SQLITE_OPEN_URI,
+    )
+    .with_context(|| format!("failed to open source session db {}", src.display()))?;
+
+    let escaped = dst
+        .to_string_lossy()
+        .replace('\\', "\\\\")
+        .replace('\'', "''");
+    src_conn
+        .execute_batch(&format!("VACUUM INTO '{}';", escaped))
+        .with_context(|| format!("failed to vacuum session db into {}", dst.display()))?;
+
+    let dst_conn = rusqlite::Connection::open_with_flags(
+        dst,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .with_context(|| format!("failed to open cloned session db {}", dst.display()))?;
+    dst_conn
+        .pragma_query_value(None, "quick_check", |row| row.get::<_, String>(0))
+        .and_then(|result| {
+            if result == "ok" {
+                Ok(())
+            } else {
+                Err(rusqlite::Error::InvalidQuery)
+            }
+        })
+        .context("cloned session db failed quick_check")?;
+    Ok(())
 }
 
 /// Simple ISO 8601 timestamp from epoch seconds (no chrono dependency).

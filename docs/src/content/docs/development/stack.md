@@ -39,13 +39,13 @@ flowchart TD
     end
 
     subgraph stage0["0. VM images (first-time only)"]
-        PROFILE["Profile V2 payload"]
-        ADMIN["capsem-admin\nimage plan/build"]
-        BUILDER["capsem-builder\n(Python build engine)"]
+        PROFILE["config/profiles/<id>/profile.toml\n+ referenced sibling files"]
+        ADMIN["capsem-admin image build"]
+        BUILDER["capsem-builder\nbackend"]
         DOCKER["Docker (via Colima)"]
         PROFILE --> ADMIN --> BUILDER --> DOCKER
         DOCKER --> VMLINUZ["vmlinuz"]
-        DOCKER --> ROOTFS["rootfs.squashfs"]
+        DOCKER --> ROOTFS["rootfs.erofs"]
         DOCKER --> INITRD_BASE["initrd.img (base)"]
     end
 
@@ -69,7 +69,7 @@ The guest agent crate (`crates/capsem-agent/`) produces four binaries that run i
 | `capsem-pty-agent` | Bridges terminal I/O over vsock | `aarch64-unknown-linux-musl` / `x86_64-unknown-linux-musl` |
 | `capsem-net-proxy` | Relays HTTPS to host MITM proxy over vsock | same |
 | `capsem-mcp-server` | MCP tool relay over vsock | same |
-| `capsem-sysutil` | Guest suspend helper; in-VM shutdown commands disabled | same |
+| `capsem-sysutil` | Lifecycle multi-call (shutdown/halt/poweroff/reboot/suspend) | same |
 
 On **macOS**, `cross_compile_agent()` delegates to `container_compile_agent()` which builds natively inside a Linux container (docker). Per-arch named volumes (`capsem-agent-target-{arch}`) cache build artifacts. No host cross-compile toolchain needed.
 
@@ -96,11 +96,13 @@ just cross-compile x86_64    # Build x86_64 deb
 
 The initrd is a gzipped cpio archive that the kernel unpacks into RAM at boot. The `_pack-initrd` recipe:
 
-1. Extracts the base initrd (produced by `just build-assets`)
+1. Extracts the base initrd (produced by `just build-assets code`)
 2. Copies in the freshly cross-compiled guest binaries (chmod 555, read-only)
 3. Copies in shell scripts: `capsem-init` (PID 1), `capsem-doctor`, `capsem-bench`, `snapshots`
 4. Repacks with `cpio + gzip`
 5. Regenerates BLAKE3 checksums (`B3SUMS` + `manifest.json`)
+6. `_materialize-config` uses the updated manifest to generate
+   `target/config/profiles/code/profile.toml`
 
 This is why `just run` is fast (~10s) -- it only rebuilds what changed, not the full rootfs.
 
@@ -150,25 +152,29 @@ On macOS, all binaries must be codesigned with the `com.apple.security.virtualiz
 
 ## Stage 4: Boot
 
-The service loads three boot assets from a signed manifest. Installed layouts use hash-named files in `~/.capsem/assets/{arch}/`; development layouts use `assets/{arch}/` plus hash aliases created by `scripts/create_hash_assets.py`:
+The service loads the selected profile from `target/config/profiles` in
+development and the installed profile directory in packaged builds. That
+profile selects three assets from `~/.capsem/assets/` (installed) or
+`assets/{arch}/` (development):
 
 | Asset | Produced by | What it is |
 |-------|-------------|------------|
-| `vmlinuz` | `just build-assets` | Custom Linux kernel (no modules, no IP stack, 7MB) |
+| `vmlinuz` | `just build-assets code [arch]` | Custom Linux kernel |
 | `initrd.img` | `just run` (repacked each time) | Guest binaries + init scripts |
-| `rootfs.squashfs` | `just build-assets` | Debian bookworm base + AI CLIs + tools |
+| `rootfs.erofs` | `just build-assets code [arch]` | Debian bookworm base + AI CLIs + tools, EROFS/LZ4HC |
 
-Boot sequence: capsem-service spawns capsem-process, which loads the kernel + initrd into a VM. `capsem-init` (PID 1) sets up overlayfs, air-gapped networking, and launches the PTY agent, network proxy, DNS proxy, MCP server, and sysutil. The host connects over vsock.
+Boot sequence: capsem-service spawns capsem-process, which loads the kernel + initrd into a VM. `capsem-init` (PID 1) sets up overlayfs, air-gapped networking, and launches the PTY agent + net proxy + MCP server + sysutil. The host connects over vsock.
 
-## VM image builds (`just build-assets`)
+## VM image builds (`just build-assets code`)
 
-The slow path (~10 min, first-time only). `capsem-admin image build` reads a
-Profile V2 payload, materializes a generated build workspace, and produces
-kernel + rootfs via Docker.
+The slow path (~10 min, first-time only). The
+[capsem-admin image rail](/architecture/build-system/) validates the selected
+profile, materializes a backend image workspace, and then uses the Python
+builder to produce kernel + rootfs via Docker.
 
 ```bash
-uv run capsem-admin image build config/profiles/base/coding.profile.toml --arch arm64
-uv run capsem-admin image build config/profiles/base/coding.profile.toml --dry-run --json
+cargo run -p capsem-admin -- image build --profile config/profiles/code/profile.toml --config-root config --arch arm64
+uv run capsem-builder doctor --profile code --config-root config # check prerequisites and profile
 ```
 
 ### Container runtime
@@ -214,17 +220,16 @@ flowchart LR
 | Job | Runner | Produces |
 |-----|--------|----------|
 | `preflight` | macos-14 | Validates Apple cert, Tauri key, notarization creds |
-| `build-assets` | ubuntu arm64 + x86_64 | vmlinuz, initrd.img, rootfs.squashfs per arch |
+| `build-assets` | ubuntu arm64 + x86_64 | vmlinuz, initrd.img, rootfs.erofs per arch |
 | `test` | macos-14 | Unit tests + coverage, frontend check, audit |
-| `build-app-macos` | macos-14 | `.pkg` package, host binaries, signed manifest payload |
-| `build-app-linux` | ubuntu arm64 + x86_64 | `.deb` packages for both arches |
-| `create-release` | ubuntu | Signs manifest, verifies package payloads, creates GitHub release |
+| `build-app-macos` | macos-14 | DMG (codesigned + notarized), host binaries, latest.json |
+| `build-app-linux` | ubuntu arm64 + x86_64 | deb (both arches), latest.json |
+| `create-release` | ubuntu | Merges latest.json, signs manifest, creates GitHub release |
 
 **Key design decisions:**
 - `test` runs in parallel with `build-assets` and app builds -- it gates `create-release` but doesn't block compilation
 - arm64 Linux produces `.deb` only
-- The desktop auto-updater is disabled for this release line unless a future
-  release ships a verified full-package updater feed
+- Each platform's `latest.json` is merged in `create-release` for the Tauri auto-updater
 
 ### Local vs CI
 

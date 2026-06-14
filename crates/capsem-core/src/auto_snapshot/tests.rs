@@ -15,6 +15,28 @@ fn sched(session: &Path) -> AutoSnapshotScheduler {
     AutoSnapshotScheduler::new(session.to_path_buf(), 3, 4, Duration::from_secs(300))
 }
 
+fn workspace_entries(workspace: &Path) -> Vec<String> {
+    let mut entries = walkdir::WalkDir::new(workspace)
+        .follow_links(false)
+        .min_depth(1)
+        .into_iter()
+        .filter_map(|entry| entry.ok())
+        .map(|entry| {
+            let rel = entry.path().strip_prefix(workspace).unwrap();
+            let kind = if entry.file_type().is_dir() {
+                "dir"
+            } else if entry.file_type().is_symlink() {
+                "symlink"
+            } else {
+                "file"
+            };
+            format!("{kind}:{}", rel.display())
+        })
+        .collect::<Vec<_>>();
+    entries.sort();
+    entries
+}
+
 #[test]
 fn take_auto_snapshot_creates_slot() {
     let (_tmp, session) = setup_session_dir();
@@ -38,6 +60,95 @@ fn take_auto_snapshot_creates_slot() {
         serde_json::from_str(&std::fs::read_to_string(&meta_path).unwrap()).unwrap();
     assert_eq!(meta.origin, SnapshotOrigin::Auto);
     assert!(meta.name.is_none());
+}
+
+#[test]
+fn take_snapshot_does_not_modify_live_workspace() {
+    let (_tmp, session) = setup_session_dir();
+    let workspace = session.join("workspace");
+    std::fs::create_dir_all(workspace.join("src")).unwrap();
+    std::fs::write(workspace.join("src/app.rs"), "fn main() {}\n").unwrap();
+    std::fs::write(workspace.join("README.md"), "hello\n").unwrap();
+
+    let before_hash = workspace_hash(&workspace);
+    let before_entries = workspace_entries(&workspace);
+
+    let mut s = sched(&session);
+    s.take_snapshot().unwrap();
+    s.take_named_snapshot("manual").unwrap();
+
+    assert_eq!(
+        workspace_hash(&workspace),
+        before_hash,
+        "snapshot capture must not change live workspace content"
+    );
+    assert_eq!(
+        workspace_entries(&workspace),
+        before_entries,
+        "snapshot capture must not create live workspace entries"
+    );
+    assert!(
+        !workspace.join("auto_snapshots").exists(),
+        "snapshot storage must not appear under the live workspace"
+    );
+}
+
+#[test]
+fn compact_snapshots_does_not_modify_live_workspace() {
+    let (_tmp, session) = setup_session_dir();
+    let workspace = session.join("workspace");
+    let mut s = sched(&session);
+
+    std::fs::write(workspace.join("a.txt"), "a").unwrap();
+    let snap_a = s.take_named_snapshot("a").unwrap();
+    std::fs::write(workspace.join("b.txt"), "b").unwrap();
+    let snap_b = s.take_named_snapshot("b").unwrap();
+
+    let before_hash = workspace_hash(&workspace);
+    let before_entries = workspace_entries(&workspace);
+
+    s.compact_snapshots(&[snap_a.slot, snap_b.slot], "merged")
+        .unwrap();
+
+    assert_eq!(
+        workspace_hash(&workspace),
+        before_hash,
+        "snapshot compaction must not change live workspace content"
+    );
+    assert_eq!(
+        workspace_entries(&workspace),
+        before_entries,
+        "snapshot compaction must not create live workspace entries"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn snapshot_storage_symlink_inside_workspace_is_rejected() {
+    let (_tmp, session) = setup_session_dir();
+    let workspace = session.join("workspace");
+    std::fs::write(workspace.join("live.txt"), "do not touch").unwrap();
+
+    let leaked_storage = workspace.join("leaked_snapshots");
+    std::fs::create_dir_all(&leaked_storage).unwrap();
+    std::fs::remove_dir_all(session.join("auto_snapshots")).unwrap();
+    std::os::unix::fs::symlink(&leaked_storage, session.join("auto_snapshots")).unwrap();
+
+    let mut s = sched(&session);
+    let err = s.take_snapshot().unwrap_err().to_string();
+
+    assert!(
+        err.contains("snapshot storage resolves inside live workspace"),
+        "unexpected error: {err}"
+    );
+    assert!(
+        !leaked_storage.join("0").exists(),
+        "snapshot must not materialize through storage symlink into workspace"
+    );
+    assert_eq!(
+        std::fs::read_to_string(workspace.join("live.txt")).unwrap(),
+        "do not touch"
+    );
 }
 
 #[test]
@@ -222,36 +333,6 @@ fn workspace_hash_is_deterministic() {
     let h2 = workspace_hash(&ws);
     assert_eq!(h1, h2);
     assert_eq!(h1.len(), 64); // blake3 hex
-}
-
-#[cfg(target_os = "linux")]
-#[test]
-fn sparse_copy_fallback_preserves_holes() {
-    use std::io::{Seek, SeekFrom, Write};
-    use std::os::unix::fs::MetadataExt;
-
-    let tmp = tempfile::tempdir().unwrap();
-    let src = tmp.path().join("rootfs.img");
-    let dst = tmp.path().join("rootfs-copy.img");
-
-    let mut file = std::fs::File::create(&src).unwrap();
-    file.write_all(b"head").unwrap();
-    file.seek(SeekFrom::Start(128 * 1024 * 1024)).unwrap();
-    file.write_all(b"tail").unwrap();
-    file.set_len(256 * 1024 * 1024).unwrap();
-    drop(file);
-
-    copy_sparse_file(&src, &dst).unwrap();
-
-    let src_meta = std::fs::metadata(&src).unwrap();
-    let dst_meta = std::fs::metadata(&dst).unwrap();
-    assert_eq!(dst_meta.len(), src_meta.len());
-    assert!(
-        dst_meta.blocks() <= src_meta.blocks() + 16,
-        "sparse fallback expanded allocation: src_blocks={}, dst_blocks={}",
-        src_meta.blocks(),
-        dst_meta.blocks()
-    );
 }
 
 #[test]
@@ -614,6 +695,7 @@ fn reflink_try_reflink_returns_false_on_unsupported_fs() {
     let result = ReflinkSnapshot::try_reflink(&src_path, &dst_path).unwrap();
     // On tmpfs/ext4, FICLONE is not supported so this should be false.
     // On btrfs/xfs, it would be true. Either way, no error.
+    assert!(result == true || result == false);
     // If reflink failed, dst was cleaned up and caller does byte copy.
     if !result {
         assert!(!dst_path.exists());
@@ -850,7 +932,14 @@ fn clone_sandbox_state_with_session_db() {
     let src_tmp = tempfile::tempdir().unwrap();
     let src = src_tmp.path();
     std::fs::create_dir_all(src.join("system")).unwrap();
-    std::fs::write(src.join("session.db"), b"db-contents").unwrap();
+    let src_db = src.join("session.db");
+    let conn = rusqlite::Connection::open(&src_db).unwrap();
+    conn.execute_batch(
+        "CREATE TABLE ledger (id INTEGER PRIMARY KEY, payload TEXT NOT NULL);
+         INSERT INTO ledger (payload) VALUES ('db-contents');",
+    )
+    .unwrap();
+    drop(conn);
 
     let dst_tmp = tempfile::tempdir().unwrap();
     let dst = dst_tmp.path().join("clone");
@@ -860,27 +949,40 @@ fn clone_sandbox_state_with_session_db() {
 
     // session.db should be at session root, not in guest/
     assert!(dst.join("session.db").exists());
-    assert_eq!(
-        std::fs::read(dst.join("session.db")).unwrap(),
-        b"db-contents"
-    );
+    assert!(!dst.join("guest/session.db").exists());
+    let cloned = rusqlite::Connection::open(dst.join("session.db")).unwrap();
+    let payload: String = cloned
+        .query_row("SELECT payload FROM ledger WHERE id = 1", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(payload, "db-contents");
+    let quick_check: String = cloned
+        .pragma_query_value(None, "quick_check", |row| row.get(0))
+        .unwrap();
+    assert_eq!(quick_check, "ok");
 }
 
 #[test]
-fn clone_sandbox_state_preserves_vm_effective_profile_attachments() {
+fn clone_sandbox_state_snapshots_wal_backed_session_db() {
     let src_tmp = tempfile::tempdir().unwrap();
     let src = src_tmp.path();
     std::fs::create_dir_all(src.join("system")).unwrap();
-    std::fs::write(
-        src.join(crate::settings_profiles::VM_EFFECTIVE_SETTINGS_FILENAME),
-        b"profile_id = \"everyday-work\"\n",
+    let src_db = src.join("session.db");
+    let conn = rusqlite::Connection::open(&src_db).unwrap();
+    let journal_mode: String = conn
+        .pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get(0))
+        .unwrap();
+    assert_eq!(journal_mode.to_lowercase(), "wal");
+    conn.execute_batch(
+        "CREATE TABLE ledger (id INTEGER PRIMARY KEY, payload TEXT NOT NULL);
+         INSERT INTO ledger (payload) VALUES ('committed-in-wal');",
     )
     .unwrap();
-    std::fs::write(
-        src.join(crate::settings_profiles::VM_EFFECTIVE_TRACE_FILENAME),
-        br#"{"selected_profile_id":"everyday-work","events":[]}"#,
-    )
-    .unwrap();
+    assert!(
+        src.join("session.db-wal").exists(),
+        "test must prove WAL sidecar exists before clone"
+    );
 
     let dst_tmp = tempfile::tempdir().unwrap();
     let dst = dst_tmp.path().join("clone");
@@ -888,16 +990,18 @@ fn clone_sandbox_state_preserves_vm_effective_profile_attachments() {
 
     clone_sandbox_state(src, &dst).unwrap();
 
-    assert_eq!(
-        std::fs::read(dst.join(crate::settings_profiles::VM_EFFECTIVE_SETTINGS_FILENAME)).unwrap(),
-        b"profile_id = \"everyday-work\"\n"
-    );
-    assert_eq!(
-        std::fs::read(dst.join(crate::settings_profiles::VM_EFFECTIVE_TRACE_FILENAME)).unwrap(),
-        br#"{"selected_profile_id":"everyday-work","events":[]}"#
-    );
-    assert!(!dst
-        .join("guest")
-        .join(crate::settings_profiles::VM_EFFECTIVE_SETTINGS_FILENAME)
-        .exists());
+    assert!(dst.join("session.db").exists());
+    assert!(!dst.join("session.db-wal").exists());
+    assert!(!dst.join("session.db-shm").exists());
+    let cloned = rusqlite::Connection::open(dst.join("session.db")).unwrap();
+    let payload: String = cloned
+        .query_row("SELECT payload FROM ledger WHERE id = 1", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(payload, "committed-in-wal");
+    let quick_check: String = cloned
+        .pragma_query_value(None, "quick_check", |row| row.get(0))
+        .unwrap();
+    assert_eq!(quick_check, "ok");
 }

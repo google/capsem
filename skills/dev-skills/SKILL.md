@@ -36,6 +36,44 @@ guest AI agents.
 - Files named anything other than `SKILL.md` in a directory are not discovered as skills
 - Files directly in the skills root (not in a subdirectory) are not discovered
 
+### No Escape-Hatch Skill Paths
+
+Do not add alternate skill/bootstrap validation modes such as `--fast`,
+`--check`, or `--dry-run`. Forked verification paths are how projects lose the
+real contract. The shared skill rail must be fast, hermetic, and complete
+enough to run every time; if it is not, fix the rail instead of adding a bypass.
+
+### Bank of Iron Feature Tribute
+
+Every feature owes a pure black-box ledger test. The test must exercise the
+public path end to end and account for the exact input and output: client-visible
+result, parsed event facts, security decision, detection/enforcement records,
+protocol rows, structured logs, counters, and route/UI JSON when those surfaces
+exist. No feature is done with a single-entry proof. What goes in must come out
+exactly, and every transformation must be accounted for.
+
+### Profile Build Hook Memory
+
+When image-build work touches `config/profiles/<profile_id>/build.sh`, load the
+`build-images` skill. `build.sh` is not an installer, setup step, boot hook, or
+runtime customization rail. It is the profile-owned rootfs build hook executed
+by the admin/just image pipeline before EROFS assets are produced. The profile
+ledger owns the file descriptor, and the change is only real in a VM after the
+profile assets are rebuilt through that same pipeline.
+
+Use `build.sh` only for rootfs construction work that cannot live in the boring
+profile package files: vendor shell installers, binary tarball installs,
+system-path wrappers, and build-time cleanup. Do not put credentials, corp
+policy, provider state, MCP decisions, runtime settings, or user repair logic
+there. After changing it, run `capsem-admin profile check`, rebuild assets,
+boot a fresh VM, and pay the Ironbank proof for the user-visible behavior.
+Never hand-edit profile payload hashes or sizes; if validation fails, fix the
+source contract or the materialization rail with tests.
+
+`config/skills` is not a development skill location. Read `config/README.md`
+before adding any profile-owned skill payload, and keep repository development
+skills in top-level `skills/`.
+
 ## SKILL.md format
 
 ```yaml

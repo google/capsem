@@ -7,13 +7,11 @@ installed layout detection, and update cache management.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 
 from .conftest import (
     CAPSEM_DIR,
-    INSTALL_DIR,
     run_capsem,
     get_build_hash,
 )
@@ -81,7 +79,7 @@ class TestSelfUpdate:
         original_hash = get_build_hash()
 
         # Try to update (will fail if no network or no newer version)
-        result = run_capsem("update", "--yes", timeout=30)
+        run_capsem("update", "--yes", timeout=30)
         # Regardless of outcome, the installed binary should be unchanged
         current_hash = get_build_hash()
         assert current_hash == original_hash, (

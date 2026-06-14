@@ -76,8 +76,8 @@ class TestGatewayLifecycle:
             client1 = TcpHttpClient(gw1.base_url, gw1.token)
             client2 = TcpHttpClient(gw2.base_url, gw2.token)
 
-            r1 = client1.get("/list")
-            r2 = client2.get("/list")
+            r1 = client1.get("/vms/list")
+            r2 = client2.get("/vms/list")
             assert r1 is not None
             assert r2 is not None
             assert "sandboxes" in r1
@@ -95,7 +95,7 @@ class TestGatewayLifecycle:
             client = TcpHttpClient(gw.base_url, gw.token)
 
             # Should get 502 (no service)
-            status = client.get_raw("/list")
+            status = client.get_raw("/vms/list")
             assert status == 502
 
             # Now point won't help since the UDS path is baked in,
@@ -133,7 +133,7 @@ class TestGatewayLifecycle:
         try:
             # Use gw1's token against gw2
             wrong_client = TcpHttpClient(gw2.base_url, gw1.token)
-            status = wrong_client.get_raw("/list")
+            status = wrong_client.get_raw("/vms/list")
             assert status == 401, f"cross-token should be rejected, got {status}"
         finally:
             gw1.stop()

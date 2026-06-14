@@ -70,145 +70,6 @@
     },
     {
       "kind": "group",
-      "key": "test_ai",
-      "name": "Test AI",
-      "description": "AI provider configuration",
-      "enabled": true,
-      "collapsed": false,
-      "children": [
-        {
-          "kind": "group",
-          "key": "test_ai.provider",
-          "name": "Test Provider",
-          "description": "A test AI provider",
-          "enabled_by": "test_ai.provider.allow",
-          "enabled": true,
-          "collapsed": false,
-          "children": [
-            {
-              "kind": "setting",
-              "key": "test_ai.provider.allow",
-              "name": "Allow Provider",
-              "description": "Enable API access to this provider",
-              "setting_type": "bool",
-              "default_value": true,
-              "effective_value": true,
-              "source": "default",
-              "corp_locked": false,
-              "enabled": true,
-              "collapsed": false,
-              "metadata": {
-                "domains": [],
-                "choices": [],
-                "rules": {
-                  "default": {
-                    "domains": [],
-                    "get": true,
-                    "post": true,
-                    "put": false,
-                    "delete": false,
-                    "other": false
-                  }
-                },
-                "hidden": false,
-                "builtin": false
-              }
-            },
-            {
-              "kind": "setting",
-              "key": "test_ai.provider.api_key",
-              "name": "API Key",
-              "description": "API key for the provider",
-              "setting_type": "apikey",
-              "default_value": "",
-              "effective_value": "",
-              "source": "default",
-              "corp_locked": false,
-              "enabled_by": "test_ai.provider.allow",
-              "enabled": true,
-              "collapsed": false,
-              "metadata": {
-                "domains": [],
-                "choices": [],
-                "rules": {},
-                "env_vars": ["TEST_API_KEY"],
-                "docs_url": "https://docs.example.com/keys",
-                "prefix": "sk-test-",
-                "hidden": false,
-                "builtin": false
-              }
-            },
-            {
-              "kind": "setting",
-              "key": "test_ai.provider.domains",
-              "name": "Provider Domains",
-              "description": "Comma-separated domain patterns",
-              "setting_type": "text",
-              "default_value": "*.example.com",
-              "effective_value": "*.example.com",
-              "source": "default",
-              "corp_locked": false,
-              "enabled_by": "test_ai.provider.allow",
-              "enabled": true,
-              "collapsed": false,
-              "metadata": {
-                "domains": ["*.example.com"],
-                "choices": [],
-                "rules": {},
-                "format": "domain_list",
-                "hidden": false,
-                "builtin": false
-              }
-            },
-            {
-              "kind": "setting",
-              "key": "test_ai.provider.settings_json",
-              "name": "Provider settings.json",
-              "description": "Configuration file content",
-              "setting_type": "file",
-              "default_value": {
-                "path": "/root/.provider/settings.json",
-                "content": "{\"mode\": \"sandbox\"}"
-              },
-              "effective_value": {
-                "path": "/root/.provider/settings.json",
-                "content": "{\"mode\": \"sandbox\"}"
-              },
-              "source": "default",
-              "corp_locked": false,
-              "enabled_by": "test_ai.provider.allow",
-              "enabled": true,
-              "collapsed": true,
-              "metadata": {
-                "domains": [],
-                "choices": [],
-                "rules": {},
-                "filetype": "json",
-                "hidden": false,
-                "builtin": false
-              }
-            },
-            {
-              "kind": "setting",
-              "key": "test_ai.provider.rerun",
-              "name": "Rerun wizard",
-              "description": "Re-run the setup wizard",
-              "setting_type": "action",
-              "metadata": {
-                "domains": [],
-                "choices": [],
-                "rules": {},
-                "action": "rerun_wizard",
-                "hidden": false,
-                "builtin": false
-              }
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "kind": "group",
       "key": "test_security",
       "name": "Test Security",
       "description": "Security and misc settings",
@@ -229,7 +90,11 @@
           "collapsed": false,
           "metadata": {
             "domains": [],
-            "choices": ["option_a", "option_b", "option_c"],
+            "choices": [
+              "option_a",
+              "option_b",
+              "option_c"
+            ],
             "rules": {},
             "hidden": false,
             "builtin": false,
@@ -282,8 +147,14 @@
           "name": "Tags",
           "description": "A list of string tags",
           "setting_type": "string_list",
-          "default_value": ["security", "network"],
-          "effective_value": ["security", "network"],
+          "default_value": [
+            "security",
+            "network"
+          ],
+          "effective_value": [
+            "security",
+            "network"
+          ],
           "source": "default",
           "corp_locked": false,
           "enabled": true,
@@ -303,8 +174,16 @@
           "name": "Ports",
           "description": "A list of port numbers",
           "setting_type": "int_list",
-          "default_value": [80, 443, 8080],
-          "effective_value": [80, 443, 8080],
+          "default_value": [
+            80,
+            443,
+            8080
+          ],
+          "effective_value": [
+            80,
+            443,
+            8080
+          ],
           "source": "default",
           "corp_locked": false,
           "enabled": true,
@@ -323,8 +202,16 @@
           "name": "Weights",
           "description": "A list of float weights",
           "setting_type": "float_list",
-          "default_value": [0.5, 1.0, 2.5],
-          "effective_value": [0.5, 1.0, 2.5],
+          "default_value": [
+            0.5,
+            1.0,
+            2.5
+          ],
+          "effective_value": [
+            0.5,
+            1.0,
+            2.5
+          ],
           "source": "default",
           "corp_locked": false,
           "enabled": true,
@@ -380,27 +267,16 @@
         },
         {
           "kind": "setting",
-          "key": "test_security.preset",
-          "name": "Security Preset",
-          "description": "Apply a security preset",
-          "setting_type": "action",
-          "metadata": {
-            "domains": [],
-            "choices": [],
-            "rules": {},
-            "action": "preset_select",
-            "hidden": false,
-            "builtin": false
-          }
-        },
-        {
-          "kind": "setting",
           "key": "test_security.env_vars",
           "name": "Environment Variables",
           "description": "Key-value environment variables",
           "setting_type": "kv_map",
-          "default_value": {"DEBUG": "1"},
-          "effective_value": {"DEBUG": "1"},
+          "default_value": {
+            "DEBUG": "1"
+          },
+          "effective_value": {
+            "DEBUG": "1"
+          },
           "source": "default",
           "corp_locked": false,
           "enabled": true,
@@ -440,7 +316,11 @@
           "collapsed": false,
           "metadata": {
             "domains": [],
-            "choices": ["light", "dark", "system"],
+            "choices": [
+              "light",
+              "dark",
+              "system"
+            ],
             "rules": {},
             "widget": "select",
             "hidden": false,
@@ -479,7 +359,10 @@
               "collapsed": false,
               "metadata": {
                 "domains": [],
-                "choices": ["stdio", "sse"],
+                "choices": [
+                  "stdio",
+                  "sse"
+                ],
                 "rules": {},
                 "hidden": false,
                 "builtin": true

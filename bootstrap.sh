@@ -19,6 +19,33 @@ for arg in "$@"; do
     esac
 done
 
+check_bootstrap_shape() {
+    cd "$SCRIPT_DIR"
+    for link in .agents/skills .claude/skills .codex/skills .cursor/skills .gemini/skills; do
+        [ "$(readlink "$link" 2>/dev/null || true)" = "../skills" ] || {
+            printf "  [FAIL] %s must be a symlink to ../skills\n" "$link" >&2
+            exit 1
+        }
+    done
+    for file in \
+        skills/dev-sprint/SKILL.md \
+        skills/dev-testing/SKILL.md \
+        skills/dev-capsem/SKILL.md \
+        skills/ironbank/SKILL.md \
+        skills/frontend-design/SKILL.md \
+        site/package.json \
+        site/astro.config.mjs \
+        site/src/components/FAQ.svelte \
+        site/src/lib/data.ts; do
+        [ -f "$file" ] || { printf "  [FAIL] missing %s\n" "$file" >&2; exit 1; }
+    done
+    SKILL_COUNT=$(find skills -mindepth 2 -name SKILL.md | wc -l | tr -d ' ')
+    [ "$SKILL_COUNT" -ge 25 ] || { printf "  [FAIL] expected at least 25 project skills, found %s\n" "$SKILL_COUNT" >&2; exit 1; }
+    printf "  [ok]   project skills symlinks, key skills, and site surface\n"
+}
+
+check_bootstrap_shape
+
 # Ask the developer "Install <tool>? [Y/n]". Returns 0 on yes, 1 on no.
 # Default is YES (just press enter). Auto-yes when -y is set; auto-yes when
 # stdin isn't a tty either (CI/pipelines should bootstrap fully -- pass an
@@ -64,26 +91,6 @@ fi
 # script -- both installers drop binaries there but don't reload PATH.
 export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
 
-install_agent_skill_links() {
-    echo ""
-    echo "== Agent skills =="
-    for dir in .claude .agents .gemini .codex .cursor; do
-        mkdir -p "$SCRIPT_DIR/$dir"
-        skill_link="$SCRIPT_DIR/$dir/skills"
-        if [ -e "$skill_link" ] && [ ! -L "$skill_link" ]; then
-            printf "  [SKIP] %s/skills exists and is not a symlink\n" "$dir"
-            continue
-        fi
-        if [ -L "$skill_link" ]; then
-            rm "$skill_link"
-        fi
-        ln -s ../skills "$skill_link"
-        printf "  [ok]   %s/skills -> ../skills\n" "$dir"
-    done
-}
-
-install_agent_skill_links
-
 if command -v rustup >/dev/null 2>&1; then
     printf "  [ok]   rustup\n"
 elif confirm "rustup (Rust toolchain manager, via sh.rustup.rs)"; then
@@ -113,34 +120,6 @@ done
 echo ""
 echo "== Installing dependencies =="
 
-if [ "$(uname -s)" = "Linux" ] && command -v apt-get >/dev/null 2>&1; then
-    _apt_packages=""
-    command -v cc >/dev/null 2>&1 || _apt_packages="$_apt_packages build-essential"
-    command -v node >/dev/null 2>&1 || _apt_packages="$_apt_packages nodejs npm"
-    command -v sqlite3 >/dev/null 2>&1 || _apt_packages="$_apt_packages sqlite3"
-    command -v pkg-config >/dev/null 2>&1 || _apt_packages="$_apt_packages pkg-config"
-    if ! command -v pkg-config >/dev/null 2>&1 ||
-        ! pkg-config --exists openssl gtk+-3.0 webkit2gtk-4.1 ayatana-appindicator3-0.1 librsvg-2.0 2>/dev/null ||
-        [ ! -f /usr/include/xdo.h ]; then
-        _apt_packages="$_apt_packages libssl-dev libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev"
-    fi
-    if [ -n "$_apt_packages" ]; then
-        if confirm "Linux development packages via apt ($_apt_packages)"; then
-            sudo apt-get update
-            # shellcheck disable=SC2086
-            sudo apt-get install -y $_apt_packages
-        fi
-    fi
-fi
-
-if [ "$(uname -s)" = "Linux" ] && grep -Eq '(^flags|^Features)[[:space:]]*:.*\b(vmx|svm)\b' /proc/cpuinfo; then
-    if [ ! -r /dev/kvm ] || [ ! -w /dev/kvm ] || [ ! -r /dev/vhost-vsock ] || [ ! -w /dev/vhost-vsock ]; then
-        if confirm "Linux KVM/vhost-vsock device access (requires sudo)"; then
-            "$SCRIPT_DIR/scripts/fix-linux-kvm-devices.sh"
-        fi
-    fi
-fi
-
 if ! command -v uv >/dev/null 2>&1; then
     if confirm "uv (Python package manager, via astral.sh -> ~/.local/bin)"; then
         curl --proto '=https' --tlsv1.2 -LsSf https://astral.sh/uv/install.sh \
@@ -150,8 +129,6 @@ fi
 if command -v uv >/dev/null 2>&1; then
     printf "  Python deps (uv sync)...\n"
     uv sync
-    printf "  Python admin CLI (capsem-admin)...\n"
-    uv run capsem-admin --version >/dev/null
 else
     printf "  [SKIP] Python deps (uv not installed -- some just recipes will fail)\n"
 fi
@@ -173,38 +150,9 @@ if ! command -v flock >/dev/null 2>&1; then
     esac
 fi
 
-# minisign is required for the local dev manifest signature. `just exec`
-# repacks assets/manifest.json and the service refuses unsigned manifests, so
-# bootstrap must install it before doctor or VM recipes can honestly pass.
-if ! command -v minisign >/dev/null 2>&1; then
-    case "$(uname -s)" in
-        Darwin)
-            if command -v brew >/dev/null 2>&1; then
-                if confirm "minisign (local asset manifest signing, via brew)"; then
-                    brew install minisign
-                fi
-            else
-                printf "  [SKIP] minisign (Homebrew not installed -- install brew, then: brew install minisign)\n"
-            fi ;;
-        Linux)
-            if command -v apt-get >/dev/null 2>&1; then
-                if confirm "minisign (local asset manifest signing, via apt)"; then
-                    sudo apt-get update
-                    sudo apt-get install -y minisign
-                fi
-            elif command -v dnf >/dev/null 2>&1; then
-                if confirm "minisign (local asset manifest signing, via dnf)"; then
-                    sudo dnf install -y minisign
-                fi
-            else
-                printf "  [SKIP] minisign (install minisign via your OS package manager)\n"
-            fi ;;
-    esac
-fi
-
 if command -v pnpm >/dev/null 2>&1; then
     printf "  Frontend deps (pnpm install)...\n"
-    (cd frontend && pnpm install --frozen-lockfile)
+    (cd frontend && CI=true pnpm install --frozen-lockfile)
 else
     case "$(uname -s)" in
         Darwin)
@@ -215,14 +163,14 @@ else
             # Official installer; no npm or sudo required. Drops to ~/.local/share/pnpm.
             if confirm "pnpm (Node package manager, via get.pnpm.io)"; then
                 curl --proto '=https' --tlsv1.2 -fsSL https://get.pnpm.io/install.sh \
-                    | env SHELL=/bin/bash PNPM_VERSION=10.33.4 PNPM_HOME="$HOME/.local/share/pnpm" sh -
+                    | env SHELL=/bin/sh ENV="" PNPM_HOME="$HOME/.local/share/pnpm" sh -
                 export PNPM_HOME="$HOME/.local/share/pnpm"
-                export PATH="$PNPM_HOME:$PNPM_HOME/bin:$PATH"
+                export PATH="$PNPM_HOME:$PATH"
             fi ;;
     esac
     if command -v pnpm >/dev/null 2>&1; then
         printf "  Frontend deps (pnpm install)...\n"
-        (cd frontend && pnpm install --frozen-lockfile)
+        (cd frontend && CI=true pnpm install --frozen-lockfile)
     else
         printf "  [SKIP] Frontend deps (pnpm not installed -- doctor will catch this)\n"
     fi
@@ -250,10 +198,15 @@ case "$(uname -s)" in
             fi
             # Start Colima if installed but not running. Doctor's fix can't
             # do this -- it would just print the suggestion and fail.
-            if command -v colima >/dev/null 2>&1 && ! colima status >/dev/null 2>&1; then
+            if command -v colima >/dev/null 2>&1 && ! colima status 2>&1 | grep -qi "running"; then
                 if confirm "start Colima now (vz, 16 GB, 8 CPU -- needed for build-assets + tauri install-test)"; then
                     colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8
                 fi
+            fi
+            if command -v docker >/dev/null 2>&1; then
+                docker info >/dev/null
+                docker run --rm --pull=missing alpine:3.20 true >/dev/null
+                printf "  [ok]   docker VM probe (info + pull/run)\n"
             fi
         fi ;;
     Linux)

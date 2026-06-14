@@ -1,13 +1,14 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::Mutex;
 
 use crate::mcp::aggregator::{
     AggregatorMethod, AggregatorRequest, AggregatorResponse, AggregatorResult,
 };
-use crate::mcp::policy::McpPolicy;
 use crate::mcp::types::{JsonRpcRequest, McpPromptDef, McpResourceDef, McpToolDef};
+use crate::net::policy_config::SecurityRuleSet;
 
 use super::*;
 
@@ -55,8 +56,10 @@ where
     (
         Arc::new(McpEndpointState::new(
             aggregator,
-            Arc::new(RwLock::new(Arc::new(McpPolicy::new()))),
-            Arc::new(super::super::RuntimeSecurityEngineSlot::new(None)),
+            Arc::new(std::sync::RwLock::new(Arc::new(SecurityRuleSet::new(
+                Vec::new(),
+            )))),
+            Arc::new(std::sync::RwLock::new(BTreeMap::new())),
             Arc::new(tokio::sync::Semaphore::new(
                 crate::mcp::default_inflight_cap(),
             )),

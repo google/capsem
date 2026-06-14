@@ -3,6 +3,8 @@
 
 // -- Stats bar (polled every 2s) ------------------------------------------
 
+export const MCP_USER_TOOL_CALL_WHERE = "method = 'tools/call' AND tool_name IS NOT NULL AND tool_name NOT LIKE 'local__snapshots_%'";
+
 export const MODEL_STATS_SQL = `
   SELECT
     COALESCE(SUM(input_tokens), 0) as total_input_tokens,
@@ -15,7 +17,7 @@ export const MODEL_STATS_SQL = `
 export const TOOL_COUNT_SQL = `
   SELECT
     (SELECT COUNT(*) FROM tool_calls WHERE origin = 'native')
-  + (SELECT COUNT(*) FROM mcp_calls WHERE tool_name IS NOT NULL) as cnt
+  + (SELECT COUNT(*) FROM mcp_calls WHERE ${MCP_USER_TOOL_CALL_WHERE}) as cnt
 `;
 
 // -- Models tab (trace viewer) --------------------------------------------
@@ -46,7 +48,6 @@ export const TRACES_SQL = `
   FROM top_traces t
   JOIN model_calls mc ON mc.trace_id = t.trace_id
   GROUP BY t.trace_id
-  HAVING total_input_tokens + total_output_tokens > 0
   ORDER BY t.max_id DESC
 `;
 
@@ -60,13 +61,9 @@ export const TRACE_DETAIL_SQL = `
 `;
 
 export const TRACE_TOOL_CALLS_SQL = `
-  SELECT tc.id, tc.model_call_id, tc.call_index, tc.call_id, tc.tool_name,
-         tc.arguments, tc.origin, tc.mcp_call_id, tc.trace_id,
-         mcalls.decision, mcalls.policy_mode, mcalls.policy_action,
-         mcalls.policy_rule, mcalls.policy_reason
+  SELECT tc.id, tc.model_call_id, tc.call_index, tc.call_id, tc.tool_name, tc.arguments, tc.origin
   FROM tool_calls tc
   JOIN model_calls mc ON tc.model_call_id = mc.id
-  LEFT JOIN mcp_calls mcalls ON tc.mcp_call_id = mcalls.id
   WHERE mc.trace_id = ?
   ORDER BY tc.model_call_id, tc.call_index
 `;
@@ -82,11 +79,11 @@ export const TRACE_TOOL_RESPONSES_SQL = `
 
 export const TOOLS_STATS_SQL = `
   SELECT
-    (SELECT COUNT(*) FROM tool_calls WHERE origin = 'native') + (SELECT COUNT(*) FROM mcp_calls) as total,
+    (SELECT COUNT(*) FROM tool_calls WHERE origin = 'native') + (SELECT COUNT(*) FROM mcp_calls WHERE ${MCP_USER_TOOL_CALL_WHERE}) as total,
     (SELECT COUNT(*) FROM tool_calls WHERE origin = 'native') as native,
-    (SELECT COUNT(*) FROM mcp_calls) as mcp,
-    (SELECT COUNT(*) FROM mcp_calls WHERE decision = 'allowed') as allowed,
-    (SELECT COUNT(*) FROM mcp_calls WHERE decision != 'allowed') as denied
+    (SELECT COUNT(*) FROM mcp_calls WHERE ${MCP_USER_TOOL_CALL_WHERE}) as mcp,
+    (SELECT COUNT(*) FROM mcp_calls WHERE ${MCP_USER_TOOL_CALL_WHERE} AND decision = 'allowed') as allowed,
+    (SELECT COUNT(*) FROM mcp_calls WHERE ${MCP_USER_TOOL_CALL_WHERE} AND decision != 'allowed') as denied
 `;
 
 export const TOOLS_TOP_TOOLS_SQL = `
@@ -98,7 +95,7 @@ export const TOOLS_TOP_TOOLS_SQL = `
     UNION ALL
     SELECT tool_name, COUNT(*) as cnt, 'mcp' as source
     FROM mcp_calls
-    WHERE tool_name IS NOT NULL
+    WHERE ${MCP_USER_TOOL_CALL_WHERE}
     GROUP BY tool_name
   )
   ORDER BY cnt DESC
@@ -108,6 +105,7 @@ export const TOOLS_TOP_TOOLS_SQL = `
 export const TOOLS_TOP_SERVERS_SQL = `
   SELECT server_name, COUNT(*) as cnt
   FROM mcp_calls
+  WHERE ${MCP_USER_TOOL_CALL_WHERE}
   GROUP BY server_name
   ORDER BY cnt DESC
   LIMIT 8
@@ -122,6 +120,7 @@ export const TOOLS_OVER_TIME_SQL = `
     UNION ALL
     SELECT timestamp, 'mcp' as source
     FROM mcp_calls
+    WHERE ${MCP_USER_TOOL_CALL_WHERE}
   ),
   numbered AS (
     SELECT source,
@@ -141,18 +140,14 @@ export const TOOLS_OVER_TIME_SQL = `
 export const TOOLS_UNIFIED_SQL = `
   SELECT timestamp, process_name, server_name, tool_name, method,
          decision, duration_ms, bytes, arguments, response_preview,
-         error_message, source, mcp_call_id, trace_id, policy_mode,
-         policy_action, policy_rule, policy_reason
+         error_message, source
   FROM (
     SELECT mc.timestamp, NULL as process_name, 'local' as server_name,
            tc.tool_name, NULL as method, 'allowed' as decision,
            mc.duration_ms,
            COALESCE(LENGTH(tc.arguments), 0) as bytes,
            tc.arguments, tr.content_preview as response_preview,
-           NULL as error_message, 'native' as source, tc.mcp_call_id,
-           COALESCE(tc.trace_id, mc.trace_id) as trace_id,
-           NULL as policy_mode, NULL as policy_action,
-           NULL as policy_rule, NULL as policy_reason
+           NULL as error_message, 'native' as source
     FROM tool_calls tc
     JOIN model_calls mc ON tc.model_call_id = mc.id
     LEFT JOIN tool_responses tr ON tc.call_id = tr.call_id
@@ -162,9 +157,9 @@ export const TOOLS_UNIFIED_SQL = `
            decision, duration_ms,
            COALESCE(LENGTH(request_preview), 0) + COALESCE(LENGTH(response_preview), 0) as bytes,
            request_preview as arguments, response_preview,
-           error_message, 'mcp' as source, id as mcp_call_id, trace_id,
-           policy_mode, policy_action, policy_rule, policy_reason
+           error_message, 'mcp' as source
     FROM mcp_calls
+    WHERE ${MCP_USER_TOOL_CALL_WHERE}
   )
   ORDER BY timestamp DESC
 `;
@@ -172,18 +167,14 @@ export const TOOLS_UNIFIED_SQL = `
 export const TOOLS_UNIFIED_SEARCH_SQL = `
   SELECT timestamp, process_name, server_name, tool_name, method,
          decision, duration_ms, bytes, arguments, response_preview,
-         error_message, source, mcp_call_id, trace_id, policy_mode,
-         policy_action, policy_rule, policy_reason
+         error_message, source
   FROM (
     SELECT mc.timestamp, NULL as process_name, 'local' as server_name,
            tc.tool_name, NULL as method, 'allowed' as decision,
            mc.duration_ms,
            COALESCE(LENGTH(tc.arguments), 0) as bytes,
            tc.arguments, tr.content_preview as response_preview,
-           NULL as error_message, 'native' as source, tc.mcp_call_id,
-           COALESCE(tc.trace_id, mc.trace_id) as trace_id,
-           NULL as policy_mode, NULL as policy_action,
-           NULL as policy_rule, NULL as policy_reason
+           NULL as error_message, 'native' as source
     FROM tool_calls tc
     JOIN model_calls mc ON tc.model_call_id = mc.id
     LEFT JOIN tool_responses tr ON tc.call_id = tr.call_id
@@ -193,9 +184,9 @@ export const TOOLS_UNIFIED_SEARCH_SQL = `
            decision, duration_ms,
            COALESCE(LENGTH(request_preview), 0) + COALESCE(LENGTH(response_preview), 0) as bytes,
            request_preview as arguments, response_preview,
-           error_message, 'mcp' as source, id as mcp_call_id, trace_id,
-           policy_mode, policy_action, policy_rule, policy_reason
+           error_message, 'mcp' as source
     FROM mcp_calls
+    WHERE ${MCP_USER_TOOL_CALL_WHERE}
   )
   WHERE tool_name LIKE ? OR method LIKE ? OR server_name LIKE ? OR process_name LIKE ?
   ORDER BY timestamp DESC
@@ -310,9 +301,7 @@ export const NET_TOP_DOMAINS_SQL = `
 export const NET_EVENTS_ALL_SQL = `
   SELECT id, timestamp, domain, port, decision, method, path, query,
          status_code, bytes_sent, bytes_received, duration_ms, matched_rule,
-         request_headers, response_headers, request_body_preview,
-         response_body_preview, policy_mode, policy_action, policy_rule,
-         policy_reason, trace_id
+         request_headers, response_headers, request_body_preview, response_body_preview
   FROM net_events
   ORDER BY id DESC
 `;
@@ -320,9 +309,7 @@ export const NET_EVENTS_ALL_SQL = `
 export const NET_EVENTS_SEARCH_SQL = `
   SELECT id, timestamp, domain, port, decision, method, path, query,
          status_code, bytes_sent, bytes_received, duration_ms, matched_rule,
-         request_headers, response_headers, request_body_preview,
-         response_body_preview, policy_mode, policy_action, policy_rule,
-         policy_reason, trace_id
+         request_headers, response_headers, request_body_preview, response_body_preview
   FROM net_events
   WHERE domain LIKE ? OR path LIKE ? OR method LIKE ?
   ORDER BY id DESC
@@ -373,46 +360,19 @@ export const FILE_EVENTS_SEARCH_SQL = `
   ORDER BY id DESC
 `;
 
-// -- Snapshots tab -----------------------------------------------------------
-
-export const SNAPSHOT_STATS_SQL = `
-  SELECT
-    COUNT(*) as total,
-    SUM(CASE WHEN origin = 'auto' THEN 1 ELSE 0 END) as auto_count,
-    SUM(CASE WHEN origin = 'manual' THEN 1 ELSE 0 END) as manual_count
-  FROM snapshot_events
-  WHERE id IN (SELECT MAX(id) FROM snapshot_events GROUP BY slot)
-`;
-
-export const SNAPSHOT_LIST_SQL = `
-  SELECT s.id, s.timestamp, s.slot, s.origin, s.name, s.files_count,
-    s.start_fs_event_id, s.stop_fs_event_id,
-    (SELECT COUNT(*) FROM fs_events
-     WHERE id > s.start_fs_event_id AND id <= s.stop_fs_event_id
-     AND action = 'created') as created,
-    (SELECT COUNT(*) FROM fs_events
-     WHERE id > s.start_fs_event_id AND id <= s.stop_fs_event_id
-     AND action = 'modified') as modified,
-    (SELECT COUNT(*) FROM fs_events
-     WHERE id > s.start_fs_event_id AND id <= s.stop_fs_event_id
-     AND action = 'deleted') as deleted
-  FROM snapshot_events s
-  WHERE s.id IN (
-    SELECT MAX(id) FROM snapshot_events GROUP BY slot
-  )
-  ORDER BY s.timestamp DESC
-`;
-
 // -- Inspector preset queries -----------------------------------------------
 
 import type { PresetQuery } from './types';
 
 export const PRESET_QUERIES: PresetQuery[] = [
-  { label: 'Recent events', sql: 'SELECT timestamp, event_type, summary FROM event_log ORDER BY timestamp DESC LIMIT 20' },
-  { label: 'HTTP requests', sql: 'SELECT method, url, status_code, decision, duration_ms FROM http_requests ORDER BY timestamp DESC LIMIT 20' },
-  { label: 'Tool calls', sql: 'SELECT tool_name, server, duration_ms, timestamp FROM tool_calls ORDER BY timestamp DESC LIMIT 20' },
-  { label: 'Model calls', sql: 'SELECT provider, model, input_tokens, output_tokens, estimated_cost_usd FROM model_calls ORDER BY timestamp DESC' },
-  { label: 'File events', sql: 'SELECT path, operation, size_bytes, timestamp FROM file_events ORDER BY timestamp DESC LIMIT 20' },
+  { label: 'Security ledger', sql: 'SELECT timestamp_unix_ms, event_id, event_type, rule_id, rule_action, detection_level, trace_id FROM security_rule_events ORDER BY timestamp_unix_ms DESC LIMIT 50' },
+  { label: 'HTTP requests', sql: 'SELECT timestamp, event_id, method, domain, path, status_code, decision, duration_ms, matched_rule FROM net_events ORDER BY id DESC LIMIT 50' },
+  { label: 'DNS queries', sql: 'SELECT timestamp, event_id, qname, qtype, rcode, decision, matched_rule, policy_rule FROM dns_events ORDER BY id DESC LIMIT 50' },
+  { label: 'MCP calls', sql: 'SELECT timestamp, event_id, server_name, method, tool_name, decision, duration_ms, policy_rule FROM mcp_calls ORDER BY id DESC LIMIT 50' },
+  { label: 'Model calls', sql: 'SELECT timestamp, event_id, provider, model, input_tokens, output_tokens, estimated_cost_usd, trace_id FROM model_calls ORDER BY id DESC LIMIT 50' },
+  { label: 'File events', sql: 'SELECT timestamp, event_id, action, path, size, trace_id FROM fs_events ORDER BY id DESC LIMIT 50' },
+  { label: 'Process exec', sql: 'SELECT timestamp, event_id, source, command, exit_code, duration_ms, trace_id FROM exec_events ORDER BY id DESC LIMIT 50' },
+  { label: 'Credential substitutions', sql: 'SELECT timestamp, event_id, material_class, source, event_type, substitution_ref, outcome, provider FROM substitution_events ORDER BY id DESC LIMIT 50' },
 ];
 
 /**

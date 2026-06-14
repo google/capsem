@@ -2,7 +2,7 @@
 
 import pytest
 
-from helpers.service import ServiceInstance, wait_exec_ready, vm_name
+from helpers.service import ServiceInstance
 
 pytestmark = pytest.mark.integration
 

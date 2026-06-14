@@ -1,13 +1,25 @@
 """AI CLI installation and sandbox enforcement tests."""
 
+import json
 import os
+import re
 
 import pytest
 
 from conftest import run
 
+PUBLIC_NETWORK_SMOKE_ENV = "CAPSEM_RUN_PUBLIC_NETWORK_SMOKE"
+SECRET_PATTERN = re.compile(
+    r"(sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9_]{20,}|AIza[0-9A-Za-z_-]{20,})"
+)
 
-@pytest.mark.parametrize("cli", ["claude", "gemini", "codex", "agy"])
+
+def _require_public_network_smoke(reason):
+    if os.environ.get(PUBLIC_NETWORK_SMOKE_ENV) != "1":
+        pytest.skip(f"{reason}; set {PUBLIC_NETWORK_SMOKE_ENV}=1")
+
+
+@pytest.mark.parametrize("cli", ["claude", "gemini", "codex"])
 def test_ai_cli_installed(cli):
     """AI CLI binary must be in PATH."""
     result = run(f"command -v {cli}")
@@ -39,7 +51,7 @@ def test_npm_prefix_is_opt_ai_clis():
     )
 
 
-@pytest.mark.parametrize("cli", ["claude", "gemini", "codex", "agy"])
+@pytest.mark.parametrize("cli", ["claude", "gemini", "codex"])
 def test_ai_cli_in_login_shell(cli):
     """AI CLI must be findable from a login shell (what the user actually sees)."""
     result = run(f"bash -lc 'which {cli}'", timeout=10)
@@ -48,7 +60,7 @@ def test_ai_cli_in_login_shell(cli):
     )
 
 
-@pytest.mark.parametrize("cli", ["gemini", "claude", "codex", "agy"])
+@pytest.mark.parametrize("cli", ["gemini", "claude", "codex"])
 def test_ai_cli_help(cli):
     """AI CLI --help must execute without runtime errors."""
     result = run(f"{cli} --help 2>&1", timeout=15)
@@ -76,49 +88,47 @@ def test_gemini_api_key_no_duplicate():
         )
 
 
-def test_gemini_noninteractive_wrapper_defaults_to_yolo():
-    """Non-interactive exec must get Gemini YOLO mode without relying on bash aliases."""
-    result = run("command -v gemini")
-    assert result.returncode == 0, f"gemini not on PATH: {result.stderr}"
-    assert result.stdout.strip() == "/root/.local/bin/gemini", (
-        f"gemini wrapper must win on PATH, got {result.stdout!r}"
-    )
-    wrapper = run("grep -F -- '--yolo' /root/.local/bin/gemini")
-    assert wrapper.returncode == 0, "Gemini wrapper does not inject --yolo"
+def _read_json(path):
+    result = run(f"cat {path}")
+    assert result.returncode == 0, f"missing profile-owned JSON {path}: {result.stderr}"
+    assert not SECRET_PATTERN.search(result.stdout), f"secret-like value found in {path}"
+    return json.loads(result.stdout)
 
 
-def test_gemini_settings_exist():
-    """Gemini CLI settings.json must be seeded with valid config."""
-    result = run("cat /root/.gemini/settings.json 2>&1")
-    assert result.returncode == 0, "~/.gemini/settings.json missing"
-    assert "homeDirectoryWarningDismissed" in result.stdout
-    assert "sessionRetention" in result.stdout
-    assert "gemini-api-key" in result.stdout
+def test_gemini_profile_config_seeded_without_credentials():
+    """Profile-owned Gemini config must be projected at boot without secrets."""
+    settings = _read_json("/root/.gemini/settings.json")
+    assert settings["general"]["enableAutoUpdate"] is False
+    assert settings["general"]["enableAutoUpdateNotification"] is False
+    assert settings["privacy"]["usageStatisticsEnabled"] is False
+    assert settings["privacy"]["sessionRetention"] == "none"
+    assert settings["telemetry"]["enabled"] is False
+    assert settings["security"]["auth"]["selectedType"] == "gemini-api-key"
+    assert settings["security"]["folderTrust.enabled"] is False
+
+    projects = _read_json("/root/.gemini/projects.json")
+    assert projects["projects"]["/root"] == "root"
+
+    trusted = _read_json("/root/.gemini/trustedFolders.json")
+    assert trusted["/root"] == "TRUST_FOLDER"
+
+    installation_id = run("cat /root/.gemini/installation_id")
+    assert installation_id.returncode == 0
+    assert installation_id.stdout.strip()
+    assert not SECRET_PATTERN.search(installation_id.stdout)
 
 
-def test_gemini_projects_exist():
-    """Gemini CLI projects.json must register /root as a project."""
-    result = run("cat /root/.gemini/projects.json 2>&1")
-    assert result.returncode == 0, "~/.gemini/projects.json missing"
-    assert "/root" in result.stdout
-
-
-def test_gemini_trusted_folders_exist():
-    """Gemini CLI trustedFolders.json must trust /root."""
-    result = run("cat /root/.gemini/trustedFolders.json 2>&1")
-    assert result.returncode == 0, "~/.gemini/trustedFolders.json missing"
-    assert "TRUST_FOLDER" in result.stdout
-
-
-def test_gemini_installation_id_exist():
-    """Gemini CLI installation_id must be present."""
-    result = run("cat /root/.gemini/installation_id 2>&1")
-    assert result.returncode == 0, "~/.gemini/installation_id missing"
-    assert len(result.stdout.strip()) > 0, "installation_id is empty"
+def test_antigravity_profile_config_seeded_without_credentials():
+    """Profile-owned Antigravity config must be projected at boot without secrets."""
+    settings = _read_json("/root/.antigravity/settings.json")
+    assert settings["colorScheme"] == "dark"
+    assert "/root" in settings["trustedWorkspaces"]
+    assert not SECRET_PATTERN.search(json.dumps(settings, sort_keys=True))
 
 
 def test_google_ai_domain_allowed():
     """Google AI domain must be reachable through the MITM proxy."""
+    _require_public_network_smoke("public Google AI domain smoke")
     result = run(
         "curl -sI --connect-timeout 10 https://generativelanguage.googleapis.com 2>&1",
         timeout=20,

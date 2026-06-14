@@ -7,6 +7,12 @@ description: The capsem-doctor in-VM diagnostic suite. Use when writing, running
 
 capsem-doctor is a pytest-based diagnostic suite that runs inside the guest VM. It verifies sandbox integrity, network isolation, runtime environment, and AI agent functionality. It's the smoke test gate -- every change must pass it before shipping.
 
+Doctor is also an Ironbank input. When doctor is used to close a
+release-critical VM/security/protocol/package-manager gate, load `/ironbank`
+and assert the full ledger through `tests/ironbank/`: client result, DB rows,
+structured logs, UDS/HTTP route output, counters, and UI-facing JSON. A doctor
+exit code or "row exists" check is not enough.
+
 ## Running
 
 ```bash
@@ -72,3 +78,7 @@ def output_dir():
 - Set reasonable timeouts (default 10s). Network tests may need longer.
 - Think adversarially: test what should be blocked, not just what should work
 - For VirtioFS tests, skip gracefully in block mode: `pytest.mark.skipif`
+- For Ironbank/release gates, do not skip. If a package manager, protocol, or
+  diagnostic dependency is unavailable, the product or harness is broken.
+- Package-manager diagnostics must prove function, not installation presence:
+  run the installed binary/module and verify deterministic behavior.

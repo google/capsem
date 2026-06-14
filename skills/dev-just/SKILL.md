@@ -20,8 +20,8 @@ All workflows use `just` (not make). The justfile is the single entry point.
 | `just dev-frontend` | Frontend-only dev server on :5173 (no Tauri, no VM, mock data) |
 | `just build-ui [release]` | **Frontend build + `cargo build -p capsem-app` in lockstep.** Use after any frontend change when running the Tauri binary directly. |
 | `just run-ui -- [args]` | `build-ui` then launch `./target/debug/capsem-app` with args (e.g. `--connect <id>`) |
-| `just build-assets [arch]` | Full VM asset rebuild via capsem-builder (kernel + rootfs). Default: both arches. |
-| `just smoke` | Fast path: audit + doctor --fast + injection + integration + parallel pytest groups (~30s) |
+| `just build-assets [arch]` | Full VM asset rebuild through capsem-admin/profile materialization and the private Python builder backend. Default: both arches. |
+| `just smoke` | Hermetic smoke gate: audit + doctor + injection + integration + parallel pytest groups |
 | `just test` | ALL tests: unit (warnings-as-errors) + cov + cross-compile + frontend + python + injection + integration + bench + install e2e |
 | `just test-gateway` | Gateway unit + Python mock-UDS tests (no VM needed) |
 | `just test-gateway-e2e` | Gateway E2E tests (real service + VMs) |
@@ -53,7 +53,7 @@ All workflows use `just` (not make). The justfile is the single entry point.
 | Guest binary (agent, net-proxy, mcp-server) | `just smoke` (auto-repacks initrd) |
 | `capsem-init` | `just smoke` (auto-repacks) |
 | In-VM diagnostics (`guest/artifacts/diagnostics/`) | `just smoke` |
-| Guest config (`guest/config/`) or rootfs packages | `just build-assets` then `just shell` |
+| Profile payloads (`config/profiles/<id>/`) or rootfs packages | `just build-assets` then `just shell` |
 | Frontend components | `just ui` (iterate) then `just test` (validate) |
 | Frontend standalone (no VM) | `just dev-frontend` |
 | Tauri binary (not dev) | `just build-ui` then `just run-ui` |
@@ -71,7 +71,7 @@ shell            -> _check-assets + _pack-initrd + _ensure-service (_sign + buil
 ui               -> _ensure-setup + _pnpm-install + run-service
 run-service      -> _check-assets + _pack-initrd + _ensure-service
 exec             -> run-service
-build-assets     -> _install-tools + _clean-stale (inline: doctor, capsem-builder kernel + rootfs)
+build-assets     -> _install-tools + _clean-stale (inline: doctor, capsem-admin image build)
 build-ui         -> _frontend-dist (pnpm build + cargo build -p capsem-app)
 smoke            -> _install-tools + _frontend-dist + _check-assets + _pack-initrd + _ensure-service
 test             -> _install-tools + _clean-stale + _frontend-dist + _generate-settings
@@ -142,15 +142,22 @@ sh bootstrap.sh   # Installs deps + runs doctor fix
 
 ## Builder CLI
 
-The capsem-builder Python package provides config-driven image building:
+The capsem-builder Python package is the backend implementation. Product image
+truth enters through `capsem-admin` and profile-owned config, not direct
+builder authoring commands:
 
 ```bash
-uv run capsem-builder doctor guest/       # Check build prerequisites
-uv run capsem-builder validate guest/     # Lint guest config
-uv run capsem-builder build guest/ --dry-run   # Preview rendered Dockerfiles
-uv run capsem-builder build guest/ --arch arm64 # Build for arm64
-uv run capsem-builder inspect guest/      # Show config summary
+capsem-admin profile check --profile config/profiles/<profile-id>/profile.toml --config-root config
+just build-assets              # Build profile-owned VM assets through the profile-derived build rail
+just _materialize-config       # Materialize generated runtime profile config
 ```
+
+The only public `capsem-builder` helper commands are backend support commands
+used by just/CI: `doctor`, `validate-skills`, `agent`, and `audit`.
+There is no public `capsem-builder build`, `validate`, `inspect`, `--dry-run`,
+`mcp`, or render-only rail. If the product contract needs a new image input,
+add it to the profile/corp/settings config model and the `capsem-admin`
+validation path.
 
 ## Cross-compilation
 

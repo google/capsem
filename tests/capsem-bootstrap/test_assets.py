@@ -88,7 +88,7 @@ class TestAssetFiles:
 
     def test_rootfs_exists(self):
         arch = _host_arch()
-        rootfs = ASSETS_DIR / arch / "rootfs.squashfs"
+        rootfs = ASSETS_DIR / arch / "rootfs.erofs"
         assert rootfs.exists(), f"Rootfs not found: {rootfs}"
 
     def test_initrd_valid_gzip(self):

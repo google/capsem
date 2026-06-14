@@ -11,14 +11,14 @@ sidebar:
 
 | Recipe | What it does | Time |
 |--------|-------------|------|
-| `just shell` | Build/sign as needed, start or reuse the service, and open the TUI | ~10s after first build |
-| `just exec "CMD"` | Run a command in a fresh temporary VM, then destroy it | ~10s after first build |
+| `just shell` | Build/sign as needed, boot a VM, and attach a shell | ~10s after first build |
+| `just exec "CMD"` | Run a command in a fresh disposable VM, then destroy it | ~10s after first build |
 | `just run-service` | Start or reuse the daemon service | continuous |
 | `just ui` | Tauri desktop app with hot reload and the service path | continuous |
 | `just dev-frontend` | Frontend-only dev server with mock data on port 5173 | continuous |
 | `just build-ui [release]` | Frontend build plus `cargo build -p capsem-app` | build dependent |
 
-`just shell` is the daily TUI driver. `just exec "CMD"` is the one-shot path for
+`just shell` is the daily VM driver. `just exec "CMD"` is the one-shot path for
 quick checks. After frontend changes intended for the desktop app, use
 `just build-ui`; the Tauri binary embeds `frontend/dist` at cargo build time.
 
@@ -31,8 +31,7 @@ quick checks. After frontend changes intended for the desktop app, use
 | `just test-gateway` | Gateway unit and mock-UDS tests | No |
 | `just test-gateway-e2e` | Gateway E2E tests with real service and VMs | Yes |
 | `just test-install` | Installer E2E in Docker/systemd | No host VM |
-| `just benchmark` | Standard artifact-recording benchmark suite | Yes |
-| `just bench` | Alias for `just benchmark` | Yes |
+| `just bench` | In-VM and host lifecycle benchmarks | Yes |
 
 `just test` is the source of truth. Targeted commands are for iteration, not
 for declaring a sprint done.
@@ -44,7 +43,7 @@ and telemetry. Use this sequence for focused iteration:
 
 | Step | Command |
 |---|---|
-| Rust Security Engine contracts | `cargo test -p capsem-security-engine` |
+| Rust policy contracts | `cargo test -p capsem-core policy_config --lib` |
 | Framed MCP policy | `cargo test -p capsem-core net::mitm_proxy::mcp_frame --lib` |
 | Frontend policy UI/model | `pnpm -C frontend test -- settings-model settings-export api settings-store` |
 | Frontend type/check gate | `pnpm -C frontend run check` |
@@ -58,28 +57,29 @@ Useful policy audit queries:
 
 ```bash
 just query-session "
-SELECT tool_name, policy_action, policy_rule, policy_reason
-FROM mcp_calls
-WHERE policy_rule IS NOT NULL
-ORDER BY id DESC
+SELECT event_id, event_type, rule_id, rule_action, detection_level
+FROM security_rule_events
+ORDER BY timestamp_unix_ms DESC
 LIMIT 20;"
 ```
 
 ```bash
 just query-session "
-SELECT domain, method, path, decision, matched_rule
-FROM net_events
-WHERE matched_rule IS NOT NULL
-ORDER BY id DESC
+SELECT m.event_id, m.server_name, m.method, m.tool_name, m.decision,
+       s.rule_id, s.rule_action, s.detection_level
+FROM mcp_calls m
+JOIN security_rule_events s ON s.event_id = m.event_id
+ORDER BY m.id DESC
 LIMIT 20;"
 ```
 
 ```bash
 just query-session "
-SELECT qname, qtype, rcode, decision, matched_rule
-FROM dns_events
-WHERE matched_rule IS NOT NULL OR decision != 'allowed'
-ORDER BY id DESC
+SELECT n.event_id, n.domain, n.method, n.path, n.decision,
+       s.rule_id, s.rule_action, s.detection_level
+FROM net_events n
+JOIN security_rule_events s ON s.event_id = n.event_id
+ORDER BY n.id DESC
 LIMIT 20;"
 ```
 
@@ -87,16 +87,25 @@ LIMIT 20;"
 
 | Recipe | What it does | Time |
 |--------|-------------|------|
-| `just build-assets` | Full rebuild: kernel + rootfs via Profile V2 (needs Docker) | ~10 min |
-| `just build-kernel <arch>` | Kernel only | ~5 min |
-| `just build-rootfs <arch>` | Rootfs only | ~8 min |
-| `just cross-compile [arch]` | Full Linux build in container: agent binaries + `.deb` package | ~15 min |
+| `just build-assets code [arch]` | Full profile-derived rebuild: kernel + rootfs via `capsem-admin` (needs Docker) | ~10 min |
+| `just build-kernel <arch> code` | Kernel only through the profile-derived profile-derived build rail | ~5 min |
+| `just build-rootfs <arch> code` | Rootfs only through the profile-derived profile-derived build rail | ~8 min |
+| `just cross-compile [arch]` | Full Linux build in container: agent binaries + deb + AppImage | ~15 min |
 
-You only need `just build-assets` on first setup or when profile-derived image
-inputs change rootfs packages, kernel inputs, or base image assets. Repo-local
-`guest/config/` edits matter for built-in profile development only.
+You only need `just build-assets code` on first setup or when profile-owned
+package/root/install inputs or backend image templates change rootfs contents.
 Day-to-day, `just shell` and `just exec` repack the initrd without rebuilding
 rootfs images.
+
+Runtime recipes run the shared generated-config path:
+
+```text
+_check-assets -> _pack-initrd -> _materialize-config -> _ensure-service
+```
+
+`_materialize-config` invokes `capsem-admin profile materialize`, which writes
+the current-build runtime profile under `target/config/` from checked-in
+`config/` source files and `assets/manifest.json`.
 
 ## Session inspection
 
@@ -121,18 +130,9 @@ rootfs images.
 
 | Recipe | What it does |
 |--------|-------------|
-| `just cut-release` | Run tests, bump version, stamp changelog, commit, and create a local release tag |
+| `just cut-release` | Run tests, bump version, stamp changelog, tag, push, wait for CI |
 | `just release [tag]` | Wait for CI to build + publish an existing tag |
 | `just install` | Build release package and install locally |
-
-`just cut-release` intentionally does not push. After inspecting the generated
-release commit and local tag, publish deliberately:
-
-```bash
-git push origin HEAD:main
-git push origin vX.Y.Z
-just release vX.Y.Z
-```
 
 ## Cleanup
 
@@ -167,5 +167,5 @@ cut-release      -> test + _stamp-version
 | `_pack-initrd` | Cross-compiles guest agent + repacks initrd with latest binaries |
 | `_sign` | Codesigns the binary with virtualization entitlement |
 | `_check-assets` | Verifies VM assets exist, tells you to run `build-assets` if not |
-| `_generate-settings` | Exports MCP tool defs + generates schema/defaults/mock data |
+| `_generate-settings` | Generates settings schema, UI metadata, and frontend mock data |
 | `_ensure-service` | Builds/signs host binaries and starts or reuses the service |

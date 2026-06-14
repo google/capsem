@@ -13,7 +13,6 @@ import sys
 import threading
 import time
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import psutil
 import pytest
@@ -36,14 +35,13 @@ class _FakeProc:
     def __init__(self, pid, name, cmdline_impl):
         self.pid = pid
         self.info = {"pid": pid, "name": name}
-        self._name = name
         self._cmdline_impl = cmdline_impl
-
-    def name(self):
-        return self._name
 
     def cmdline(self):
         return self._cmdline_impl()
+
+    def name(self):
+        return self.info["name"]
 
 
 @pytest.fixture
@@ -55,18 +53,6 @@ def patch_iter(monkeypatch):
             lambda attrs=None: iter(procs),
         )
     return _patch
-
-
-def test_process_scan_does_not_request_attr_prefetch(monkeypatch):
-    """Attr prefetch can fail before per-proc handling on macOS."""
-    def process_iter(attrs=None):
-        assert attrs is None
-        return iter([_FakeProc(42, "capsem-process", lambda: ["capsem-process"])])
-
-    monkeypatch.setattr(psutil, "process_iter", process_iter)
-
-    got = get_capsem_processes()
-    assert got[42]["name"] == "capsem-process"
 
 
 def test_ignores_non_capsem_cmdline_errors(patch_iter):
@@ -270,16 +256,6 @@ def test_required_artifacts_manifest_path_is_flat():
     assert (
         _REQUIRED_ARTIFACTS["assets/manifest.json"]
         == _PROJECT_ROOT / "assets" / "manifest.json"
-    )
-
-
-def test_required_artifacts_include_host_arch_image_inventory():
-    from tests.conftest import _ARCH, _PROJECT_ROOT, _REQUIRED_ARTIFACTS
-
-    assert "assets/<arch>/image-inventory.json" in _REQUIRED_ARTIFACTS
-    assert (
-        _REQUIRED_ARTIFACTS["assets/<arch>/image-inventory.json"]
-        == _PROJECT_ROOT / "assets" / _ARCH / "image-inventory.json"
     )
 
 

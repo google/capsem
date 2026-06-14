@@ -5,11 +5,10 @@ sidebar:
   order: 15
 ---
 
-The MITM proxy is Capsem's HTTPS inspection layer. The Network Engine
-terminates TLS from the guest, parses HTTP/DNS/model traffic, lifts it into
-typed Security Events, asks the Security Engine for a decision, applies
-validated rewrites or blocks, forwards allowed traffic to the real upstream,
-and records resolved telemetry to the session database.
+The MITM proxy is Capsem's HTTPS inspection layer. It terminates TLS from the
+guest, normalizes protocol details into `SecurityEvent`, evaluates the shared
+security rule rail, forwards allowed requests to the real upstream, and logs
+telemetry plus matched rule rows to the session database.
 
 ## Connection pipeline
 
@@ -20,16 +19,17 @@ graph TD
     A["Guest connection<br/>vsock:5002"] --> B["Read metadata prefix<br/>(optional process name)"]
     B --> C["TLS handshake<br/>MitmCertResolver captures SNI"]
     C --> D["Read HTTP request<br/>method, path, headers, body"]
-    D --> E["Build http.request SecurityEvent"]
-    E --> F{"Security Engine decision"}
-    F -->|block| X["403 Forbidden<br/>+ resolved event"]
-    F -->|ask| X
-    F -->|rewrite| R["Validate/apply mutations"]
-    F -->|allow| H["Upstream TLS connection<br/>(cached per-connection)"]
-    R --> H
-    H --> I["Forward request"]
-    I --> J["Stream response to guest<br/>(inline SSE parsing for AI traffic)"]
-    J --> K["Emit resolved telemetry<br/>SecurityEvent + projections"]
+    D --> E["Build SecurityEvent<br/>http + optional model roots"]
+    E --> P["Preprocess plugins<br/>credential broker, scanners"]
+    P --> F{"Security rules<br/>CEL over SecurityEvent"}
+    F -->|Block or unresolved ask| G["403 Forbidden<br/>+ ledger projection"]
+    F -->|Allow| Q["Postprocess plugins"]
+    Q --> I["Runtime materialization<br/>upstream-safe bytes"]
+    I --> J["Upstream TLS connection<br/>(cached per-connection)"]
+    J --> K["Forward request"]
+    K --> L["Stream response to guest<br/>(inline SSE parsing for AI traffic)"]
+    L --> M["Logging plugins<br/>ledger-safe projection"]
+    M --> N["Emit telemetry<br/>primary row + security_rule_events"]
 ```
 
 The proxy uses hyper for HTTP parsing and tokio-rustls for TLS. Each vsock connection can carry multiple HTTP requests via keep-alive -- upstream connections are cached per-connection to avoid re-establishing TLS for each request.
@@ -39,14 +39,14 @@ The proxy uses hyper for HTTP parsing and tokio-rustls for TLS. Each vsock conne
 ```mermaid
 graph LR
     CA["CertAuthority<br/>(static CA keypair)"]
-    SEC["Security Engine<br/>(rules + detections + ask)"]
+    POL["Network mechanics<br/>(hot-swappable via RwLock)"]
     DB["DbWriter<br/>(async telemetry)"]
     TLS["Upstream TLS config<br/>(webpki roots)"]
     PRICE["PricingTable<br/>(embedded JSON)"]
     TRACE["TraceState<br/>(multi-turn linking)"]
 
     CA --> CFG["MitmProxyConfig"]
-    SEC --> CFG
+    POL --> CFG
     DB --> CFG
     TLS --> CFG
     PRICE --> CFG
@@ -56,11 +56,12 @@ graph LR
 | Field | Type | Purpose |
 |-------|------|---------|
 | `ca` | `Arc<CertAuthority>` | Static Capsem CA for leaf cert minting |
+| `policy` | `Arc<RwLock<Arc<NetworkPolicy>>>` | Hot-swappable network mechanics such as body capture and upstream port handling |
 | `db` | `Arc<DbWriter>` | Async telemetry writer to session.db |
 | `upstream_tls` | `Arc<rustls::ClientConfig>` | Shared TLS config with webpki root CAs |
-| `telemetry` | `TelemetryDeps` | Pricing, trace state, and canonical evidence writers |
-| `pipeline` | `Arc<Pipeline>` | Transport chunk processing and telemetry hooks |
-| `mcp_endpoint` | `Option<Arc<McpEndpointState>>` | Framed MCP endpoint for guest traffic |
+| `pricing` | `PricingTable` | Embedded model pricing for cost estimation |
+| `trace_state` | `Mutex<TraceState>` | Links multi-turn tool-use conversations by trace_id |
+| security rules | `Arc<RwLock<Arc<SecurityRuleSet>>>` | Hot-swappable CEL rules over `SecurityEvent` roots |
 
 ## Certificate authority
 
@@ -97,7 +98,7 @@ sequenceDiagram
 | SAN | DNS name of the target domain |
 | Extended key usage | ServerAuth |
 | Chain | `[leaf, CA]` (2 certificates) |
-| CA key source | `config/capsem-ca.key` (committed, compile-time `include_str!`) |
+| CA key source | `security/keys/capsem-ca.key` (committed, compile-time `include_str!`) |
 
 ### Cache behavior
 
@@ -107,64 +108,62 @@ The cache uses double-checked locking: read lock for hits, write lock only on mi
 
 The MITM proxy CA private key is committed to the repository. This is intentional -- the CA is only trusted inside Capsem's own air-gapped VMs and has zero trust outside them. A public key provides transparency: anyone can verify there is no hidden interception. Per-installation key generation would reduce auditability.
 
-## Security Engine boundary
+## Network Mechanics And Security Rules
 
-The Network Engine owns parsing and transmission. It does not own policy
-semantics. For each synchronous decision point it builds a typed SecurityEvent
-and expects one of four final actions from the Security Engine:
+See [Network Isolation](/security/network-isolation/) for the full security rule
+reference. Key properties:
 
-| Action | Network behavior |
-|---|---|
-| `allow` | Forward the request or response unchanged. |
-| `ask` | Pause/fail closed until the confirm path resolves the decision. |
-| `block` | Stop transmission and return the protocol-appropriate denial. |
-| `rewrite` | Apply only validated declarative mutations to allowlisted fields. |
+| Property | Behavior |
+|----------|----------|
+| Network mechanics | Port routing, body capture, decompression, provider metadata, and cache behavior |
+| Security authority | `SecurityRuleSet` over normalized `SecurityEvent` fields |
+| Default behavior | Profile defaults compile into normal late-priority rules |
+| Conflict resolution | Earlier/lower priority enforcement wins; `block` is absolute once effective |
 
-The resolved event records the input, matched rule/finding ids, final decision,
-allowed mutations, and attribution before telemetry/log projections are written.
+Network mechanics are hot-swappable via `RwLock`. Each HTTP request snapshots
+the `Arc<NetworkPolicy>` for mechanical settings, then builds a normalized
+`SecurityEvent`. The shared `SecurityRuleSet` and plugin rail are the only
+security decision path.
 
-## HTTP enforcement
+Runtime and ledger materialization are intentionally separate. Runtime
+materialization preserves allowed protocol bytes for upstream, including
+resolving broker refs when a real credential is required. Ledger materialization
+runs through logging plugins and writes only broker refs, hashes, bounded
+previews, typed detections, and plugin execution evidence to `session.db`,
+structured logs, service routes, and UI stats.
 
-Profile-owned enforcement rules provide request and response control. Rules use
-canonical policy roots such as `http.request.host`, `http.request.url`,
-`http.request.path`, `http.request.header("authorization").exists()`, and
-`http.request.body.text.contains("secret")`. Authored rules do not target
-internal `event.*` fields.
+## HTTP Security Rules
 
-| Subject field | Example use |
-|---|---|
-| `http.request.host` | Block a specific host or suffix. |
-| `http.request.method` | Block write methods such as `POST` or `DELETE`. |
-| `http.request.path` | Match repository, API, or organization paths. |
-| `http.request.url` | Match the full normalized URL. |
-| `http.request.header(name)` | Match, require, or strip request headers. |
-| `http.response.status` | Match upstream status on response policy. |
+The MITM proxy creates a normalized `SecurityEvent` and evaluates the shared
+rule rail. HTTP rules use first-party fields such as `http.host`,
+`http.method`, `http.path`, `http.status`, and `http.body`. They can also match
+other roots attached to the same event, such as `model.provider`, without
+creating a second callback-specific rule.
 
 Example:
 
 ```toml
-[security.rules.http.block_openai_github]
-on = "http.request"
-if = 'http.request.host == "github.com" && http.request.path.startsWith("/openai")'
-decision = "block"
-priority = 10
+[profiles.rules.block_openai_github]
+name = "block_openai_github"
+action = "block"
+reason = "Block OpenAI organization GitHub writes"
+match = 'http.host == "github.com" && http.method == "POST" && http.path.matches("^/openai(/|$)")'
 ```
 
-Header stripping is a `rewrite` rule and runs before the stripped headers are
-forwarded or captured in telemetry:
-
-```toml
-[security.rules.http.strip_auth]
-on = "http.request"
-if = 'http.request.host == "api.example.com"'
-decision = "rewrite"
-priority = 20
-strip_request_headers = ["authorization", "x-api-key"]
-```
+Plugin behavior is configured through profile/corp plugin descriptors, not by
+calling plugins from CEL rules. Rules decide enforcement and detection over the
+typed `SecurityEvent`; plugins run at their declared stages, own their private
+filtering/scope, and may mutate the event or ledger payload according to their
+contract. For example, credential brokering can capture and materialize
+`credential:blake3:*` references without exposing raw credential fields as CEL
+roots.
 
 ## AI traffic handling
 
-For AI provider domains, the proxy parses SSE response streams inline to extract structured telemetry.
+For AI provider domains, the proxy parses SSE response streams inline to extract
+structured telemetry. The parser preserves response bytes for the guest and
+emits typed model facts into the same security-event rail used by HTTP, DNS,
+MCP, file, and process events.
 
 ### Provider detection
 
@@ -213,7 +212,7 @@ Parsing runs inline during `poll_frame()` -- response bytes pass through unchang
 
 ### Cost estimation
 
-Model pricing is loaded from `config/genai-prices.json` (embedded at compile time via `include_str!`). Cost = `(input_tokens * input_price + output_tokens * output_price)`. Updated via `just update_prices`.
+Model pricing is loaded from `config/data/genai-prices.json` (embedded at compile time via `include_str!`). Cost = `(input_tokens * input_price + output_tokens * output_price)`. Updated via `just update_prices`.
 
 ## Trace state correlation
 
@@ -250,9 +249,8 @@ Telemetry is emitted asynchronously after the response body completes (not durin
 
 | Event type | When | Data |
 |-----------|------|------|
-| `SecurityEvent` | Every enforced HTTP/model decision | Event family/type, subject, context, findings, decision, mutations, attribution |
-| `NetEvent` projection | Every HTTP request | Domain, method, path, status, bytes, latency, final decision, body previews |
-| `ModelCall` projection | AI provider requests only | Provider, model, tokens, cost, tool calls, text content, trace_id |
+| `NetEvent` | Every HTTP request | Domain, method, path, status, bytes, latency, decision, body previews |
+| `ModelCall` | AI provider requests only | Provider, model, tokens, cost, tool calls, text content, trace_id |
 
 The `TelemetryBody` wrapper around the hyper response body triggers `tokio::spawn(emitter.emit())` when the body stream reaches EOF.
 
@@ -265,16 +263,17 @@ The `TelemetryBody` wrapper around the hyper response body triggers `tokio::spaw
 | Cert caching | Double-checked locking; each domain minted once |
 | Inline parsing | SSE parsing runs in `poll_frame()`, zero-copy passthrough |
 | Async telemetry | DB writes happen on a dedicated thread; never blocks the proxy |
-| Compiled rule snapshots | `Arc` clone per request avoids holding registry locks during I/O |
+| Policy snapshots | `Arc` clone per request avoids holding the `RwLock` during I/O |
 
 ## Key source files
 
 | File | Purpose |
 |------|---------|
-| `capsem-core/src/net/mitm_proxy.rs` | Connection handling, HTTP forwarding, telemetry emission |
+| `capsem-core/src/net/mitm_proxy/` | Connection handling, HTTP forwarding, telemetry hooks, and proxy pipeline |
 | `capsem-core/src/net/cert_authority.rs` | CA loading, leaf cert minting, cache |
-| `crates/capsem-security-engine/` | SecurityEvent decisions, CEL/Sigma matching, resolved-event evidence |
-| `capsem-core/src/net/mitm_proxy/` | HTTP/model SecurityEvent projection and proxy pipeline |
+| `capsem-core/src/net/policy.rs` | Network mechanics: ports, capture, decompression, routing, cache settings |
+| `capsem-core/src/net/policy_config/` | Profile/corp config parsing into network mechanics and `SecurityRuleSet` |
+| `capsem-core/src/security_engine/` | `SecurityEvent`, `SecurityRuleSet`/CEL evaluation, plugins, endpoint DTOs |
 | `capsem-core/src/net/ai_traffic/` | SSE parsing, provider parsers, events, pricing |
 | `capsem-core/src/net/ai_traffic/mod.rs` | TraceState for multi-turn linking |
-| `config/capsem-ca.key`, `config/capsem-ca.crt` | Static ECDSA P-256 CA keypair |
+| `security/keys/capsem-ca.key`, `security/keys/capsem-ca.crt` | Static ECDSA P-256 CA keypair |

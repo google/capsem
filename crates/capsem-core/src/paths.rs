@@ -29,29 +29,29 @@ pub fn capsem_home() -> PathBuf {
 /// when `HOME` is unset (rare: CI without `HOME`, bare container entrypoints).
 pub fn capsem_home_opt() -> Option<PathBuf> {
     if let Some(h) = env_nonempty("CAPSEM_HOME") {
-        return Some(normalize_existing_path(PathBuf::from(h)));
+        return Some(PathBuf::from(h));
     }
     let home = std::env::var("HOME").ok()?;
     if home.is_empty() {
         return None;
     }
-    Some(normalize_existing_path(PathBuf::from(home).join(".capsem")))
+    Some(PathBuf::from(home).join(".capsem"))
 }
 
 /// Return `$CAPSEM_RUN_DIR` or `<capsem_home>/run`.
 pub fn capsem_run_dir() -> PathBuf {
     if let Some(d) = env_nonempty("CAPSEM_RUN_DIR") {
-        return normalize_existing_path(PathBuf::from(d));
+        return PathBuf::from(d);
     }
-    normalize_existing_path(capsem_home().join("run"))
+    capsem_home().join("run")
 }
 
 /// Return `$CAPSEM_ASSETS_DIR` or `<capsem_home>/assets`.
 pub fn capsem_assets_dir() -> PathBuf {
     if let Some(d) = env_nonempty("CAPSEM_ASSETS_DIR") {
-        return normalize_existing_path(PathBuf::from(d));
+        return PathBuf::from(d);
     }
-    normalize_existing_path(capsem_home().join("assets"))
+    capsem_home().join("assets")
 }
 
 /// Return `<capsem_home>/sessions` (main.db + historical session rollups).
@@ -84,10 +84,6 @@ fn env_nonempty(key: &str) -> Option<String> {
         Ok(v) if !v.is_empty() => Some(v),
         _ => None,
     }
-}
-
-fn normalize_existing_path(path: PathBuf) -> PathBuf {
-    path.canonicalize().unwrap_or(path)
 }
 
 #[cfg(test)]
@@ -168,34 +164,6 @@ mod tests {
         let _h = EnvGuard::set("CAPSEM_HOME", "/tmp/isolated");
         let _a = EnvGuard::set("CAPSEM_ASSETS_DIR", "/repo/assets");
         assert_eq!(capsem_assets_dir(), PathBuf::from("/repo/assets"));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn env_overrides_canonicalize_existing_symlink_paths() {
-        let _lock = ENV_LOCK.lock().unwrap();
-        let dir = tempfile::tempdir().unwrap();
-        let real_home = dir.path().join("real-home");
-        let link_home = dir.path().join("link-home");
-        std::fs::create_dir_all(real_home.join("run")).unwrap();
-        std::os::unix::fs::symlink(&real_home, &link_home).unwrap();
-
-        let _h = EnvGuard::set("CAPSEM_HOME", link_home.to_str().unwrap());
-        let _r = EnvGuard::set("CAPSEM_RUN_DIR", link_home.join("run").to_str().unwrap());
-
-        assert_eq!(capsem_home(), real_home.canonicalize().unwrap());
-        assert_eq!(
-            capsem_run_dir(),
-            real_home.join("run").canonicalize().unwrap()
-        );
-        assert_eq!(
-            service_socket_path(),
-            real_home
-                .join("run")
-                .canonicalize()
-                .unwrap()
-                .join("service.sock")
-        );
     }
 
     #[test]

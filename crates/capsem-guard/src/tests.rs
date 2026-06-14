@@ -410,24 +410,6 @@ fn singleton_path_accessor_returns_original_path() {
 }
 
 #[test]
-fn lockfile_stamped_pid_dead_check_uses_pid_stamp() {
-    let dir = tempfile::tempdir().unwrap();
-    let lock = dir.path().join("stale.lock");
-
-    std::fs::write(&lock, format!("{}\n", std::process::id())).unwrap();
-    assert!(
-        !super::lockfile_stamped_pid_is_dead(&lock),
-        "current process pid must not be considered stale"
-    );
-
-    std::fs::write(&lock, "4194303\n").unwrap();
-    assert!(
-        super::lockfile_stamped_pid_is_dead(&lock),
-        "very high non-existent pid should be considered stale"
-    );
-}
-
-#[test]
 fn is_alive_reports_pid_one_as_alive() {
     // PID 1 (launchd on macOS, init/systemd on Linux) is always running
     // in any POSIX system the test could run on, and is owned by root.

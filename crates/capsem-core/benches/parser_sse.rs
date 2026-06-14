@@ -5,7 +5,7 @@
 //! Pre-rewrite baseline lives at `benches/baselines/parser_sse-pre.txt`
 //! (regenerate with `cargo bench -p capsem-core --bench parser_sse`).
 
-use capsem_network_engine::sse_parser::SseParser;
+use capsem_core::net::parsers::sse_parser::SseParser;
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 

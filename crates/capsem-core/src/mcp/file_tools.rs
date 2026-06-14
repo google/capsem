@@ -10,6 +10,7 @@
 //! The guest sees changes immediately via VirtioFS.
 
 use std::collections::HashMap;
+use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -100,6 +101,10 @@ pub fn file_tool_defs() -> Vec<McpToolDef> {
                         "type": "string",
                         "enum": ["text", "json"],
                         "description": "Output format: 'text' (default) for a compact table, 'json' for machine-readable JSON."
+                    },
+                    "include_changes": {
+                        "type": "boolean",
+                        "description": "Include full per-file change arrays. Defaults to false; compact created/edited/deleted counts are always returned."
                     }
                 }
             }),
@@ -295,6 +300,77 @@ fn parse_checkpoint(cp: &str) -> Result<usize, String> {
     cp.strip_prefix("cp-")
         .and_then(|s| s.parse::<usize>().ok())
         .ok_or_else(|| format!("invalid checkpoint ID: {cp:?}"))
+}
+
+fn checked_child_path(
+    root: &Path,
+    relative_path: &str,
+    label: &str,
+) -> Result<std::path::PathBuf, String> {
+    let root = root
+        .canonicalize()
+        .map_err(|e| format!("failed to resolve {label} root: {e}"))?;
+    let rel = Path::new(relative_path);
+    if let Some(parent) = rel.parent() {
+        let mut current = root.clone();
+        for component in parent.components() {
+            let std::path::Component::Normal(name) = component else {
+                return Err(format!("{label} path has invalid component"));
+            };
+            current.push(name);
+            match std::fs::symlink_metadata(&current) {
+                Ok(meta) if meta.file_type().is_symlink() => {
+                    return Err(format!(
+                        "{label} parent contains symlink: {}",
+                        current.display()
+                    ));
+                }
+                Ok(meta) if !meta.is_dir() => {
+                    return Err(format!(
+                        "{label} parent is not a directory: {}",
+                        current.display()
+                    ));
+                }
+                Ok(_) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => break,
+                Err(e) => {
+                    return Err(format!(
+                        "failed to inspect {label} parent {}: {e}",
+                        current.display()
+                    ));
+                }
+            }
+        }
+    }
+    Ok(root.join(rel))
+}
+
+fn read_regular_file_no_follow(path: &Path, label: &str) -> Result<Vec<u8>, String> {
+    let meta =
+        std::fs::symlink_metadata(path).map_err(|e| format!("failed to inspect {label}: {e}"))?;
+    if meta.file_type().is_symlink() {
+        return Err(format!("{label} is a symlink"));
+    }
+    if !meta.is_file() {
+        return Err(format!("{label} is not a regular file"));
+    }
+
+    #[cfg(unix)]
+    let mut file = {
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(path)
+            .map_err(|e| format!("failed to open {label} without following symlinks: {e}"))?
+    };
+    #[cfg(not(unix))]
+    let mut file = std::fs::File::open(path).map_err(|e| format!("failed to open {label}: {e}"))?;
+
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|e| format!("failed to read {label}: {e}"))?;
+    Ok(bytes)
 }
 
 /// Validate a snapshot name: alphanumeric + underscore + hyphen, 1-64 chars.
@@ -610,71 +686,111 @@ pub fn handle_revert_file(
     request_id: Option<Value>,
     db: Option<&Arc<capsem_logger::DbWriter>>,
 ) -> JsonRpcResponse {
+    handle_revert_file_with_rules(arguments, scheduler, workspace_root, request_id, db, None)
+}
+
+pub fn handle_revert_file_with_rules(
+    arguments: &Value,
+    scheduler: &AutoSnapshotScheduler,
+    workspace_root: &Path,
+    request_id: Option<Value>,
+    db: Option<&Arc<capsem_logger::DbWriter>>,
+    security_rules: Option<&crate::net::policy_config::SecurityRuleSet>,
+) -> JsonRpcResponse {
+    let (resp, file_event) =
+        handle_revert_file_with_security_event(arguments, scheduler, workspace_root, request_id);
+    if let (Some(db), Some(file_event)) = (db, file_event) {
+        let empty_rules;
+        let rules = match security_rules {
+            Some(rules) => rules,
+            None => {
+                empty_rules = crate::net::policy_config::SecurityRuleSet::new(Vec::new());
+                &empty_rules
+            }
+        };
+        crate::security_engine::emit_file_security_write_and_rules_blocking(db, rules, file_event);
+    }
+    resp
+}
+
+pub fn handle_revert_file_with_security_event(
+    arguments: &Value,
+    scheduler: &AutoSnapshotScheduler,
+    workspace_root: &Path,
+    request_id: Option<Value>,
+) -> (JsonRpcResponse, Option<capsem_logger::FileEvent>) {
     let raw_path = match arguments.get("path").and_then(|v| v.as_str()) {
         Some(p) => p,
-        None => return JsonRpcResponse::err(request_id, -32602, "missing 'path' argument"),
+        None => {
+            return (
+                JsonRpcResponse::err(request_id, -32602, "missing 'path' argument"),
+                None,
+            );
+        }
     };
 
     // Normalize and validate path (strips /root/ prefix if present).
     let path_str = match normalize_path(raw_path) {
         Ok(p) => p,
-        Err(e) => return JsonRpcResponse::err(request_id, -32602, format!("invalid path: {e}")),
+        Err(e) => {
+            return (
+                JsonRpcResponse::err(request_id, -32602, format!("invalid path: {e}")),
+                None,
+            );
+        }
     };
 
     // Resolve checkpoint: explicit or auto-select newest containing the file.
-    let (slot, cp_str_owned) = if let Some(cp_str) =
-        arguments.get("checkpoint").and_then(|v| v.as_str())
-    {
-        let slot = match parse_checkpoint(cp_str) {
-            Ok(s) => s,
-            Err(e) => return JsonRpcResponse::err(request_id, -32602, e),
-        };
-        (slot, cp_str.to_string())
-    } else {
-        // Auto-select: scan snapshots newest-first, find first containing the file.
-        let snapshots = scheduler.list_snapshots();
-        let found = snapshots
-            .iter()
-            .find(|s| s.workspace_path.join(&path_str).symlink_metadata().is_ok());
-        match found {
-            Some(s) => (s.slot, format!("cp-{}", s.slot)),
-            None => {
-                return JsonRpcResponse::err(request_id, -32602, "no snapshot contains this file");
+    let (slot, cp_str_owned) =
+        if let Some(cp_str) = arguments.get("checkpoint").and_then(|v| v.as_str()) {
+            let slot = match parse_checkpoint(cp_str) {
+                Ok(s) => s,
+                Err(e) => return (JsonRpcResponse::err(request_id, -32602, e), None),
+            };
+            (slot, cp_str.to_string())
+        } else {
+            // Auto-select: scan snapshots newest-first, find first containing the file.
+            let snapshots = scheduler.list_snapshots();
+            let found = snapshots.iter().find(|s| {
+                checked_child_path(&s.workspace_path, &path_str, "snapshot source")
+                    .ok()
+                    .and_then(|p| p.symlink_metadata().ok())
+                    .is_some()
+            });
+            match found {
+                Some(s) => (s.slot, format!("cp-{}", s.slot)),
+                None => {
+                    return (
+                        JsonRpcResponse::err(request_id, -32602, "no snapshot contains this file"),
+                        None,
+                    );
+                }
             }
-        }
-    };
+        };
 
     // Get snapshot.
     let snap = match scheduler.get_snapshot(slot) {
         Some(s) => s,
         None => {
-            return JsonRpcResponse::err(
-                request_id,
-                -32602,
-                format!("checkpoint {} not found", cp_str_owned),
+            return (
+                JsonRpcResponse::err(
+                    request_id,
+                    -32602,
+                    format!("checkpoint {} not found", cp_str_owned),
+                ),
+                None,
             )
         }
     };
 
-    let snap_file = snap.workspace_path.clone().join(&path_str);
-    let current_file = workspace_root.join(&path_str);
-
-    // Check for path escape: verify the target path stays within the workspace.
-    // Use the parent dir (which must exist) for canonicalization since the file
-    // itself may not exist yet (deleted file being restored).
-    if let Some(parent) = current_file.parent() {
-        if let (Ok(resolved_parent), Ok(resolved_root)) =
-            (parent.canonicalize(), workspace_root.canonicalize())
-        {
-            if !resolved_parent.starts_with(&resolved_root) {
-                return JsonRpcResponse::err(
-                    request_id,
-                    -32602,
-                    "path resolves outside workspace (symlink escape)",
-                );
-            }
-        }
-    }
+    let snap_file = match checked_child_path(&snap.workspace_path, &path_str, "snapshot source") {
+        Ok(path) => path,
+        Err(e) => return (JsonRpcResponse::err(request_id, -32602, e), None),
+    };
+    let current_file = match checked_child_path(workspace_root, &path_str, "workspace target") {
+        Ok(path) => path,
+        Err(e) => return (JsonRpcResponse::err(request_id, -32602, e), None),
+    };
 
     // Use symlink_metadata to detect presence without following symlinks.
     let snap_exists = snap_file.symlink_metadata().is_ok();
@@ -683,14 +799,19 @@ pub fn handle_revert_file(
         .symlink_metadata()
         .map(|m| m.file_type().is_symlink())
         .unwrap_or(false);
+    let current_is_symlink = current_file
+        .symlink_metadata()
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false);
 
     let action;
     // Check if file already matches snapshot (no-op): same content AND same permissions.
-    // Skip no-op check for symlinks (comparing link targets is handled below).
-    if snap_exists && current_exists && !snap_is_symlink {
-        if let (Ok(snap_bytes), Ok(cur_bytes)) =
-            (std::fs::read(&snap_file), std::fs::read(&current_file))
-        {
+    // Skip no-op check for symlinks so comparisons never follow a link target.
+    if snap_exists && current_exists && !snap_is_symlink && !current_is_symlink {
+        if let (Ok(snap_bytes), Ok(cur_bytes)) = (
+            read_regular_file_no_follow(&snap_file, "snapshot source"),
+            read_regular_file_no_follow(&current_file, "workspace target"),
+        ) {
             let same_perms = match (snap_file.metadata(), current_file.metadata()) {
                 (Ok(sm), Ok(cm)) => {
                     use std::os::unix::fs::PermissionsExt;
@@ -699,18 +820,24 @@ pub fn handle_revert_file(
                 _ => true, // can't read metadata, assume same
             };
             if snap_bytes == cur_bytes && same_perms {
-                return JsonRpcResponse::err(
-                    request_id,
-                    -32602,
-                    "file already matches snapshot (already current)",
+                return (
+                    JsonRpcResponse::err(
+                        request_id,
+                        -32602,
+                        "file already matches snapshot (already current)",
+                    ),
+                    None,
                 );
             }
         }
     } else if !snap_exists && !current_exists {
-        return JsonRpcResponse::err(
-            request_id,
-            -32602,
-            "file does not exist in snapshot or workspace",
+        return (
+            JsonRpcResponse::err(
+                request_id,
+                -32602,
+                "file does not exist in snapshot or workspace",
+            ),
+            None,
         );
     }
 
@@ -719,10 +846,13 @@ pub fn handle_revert_file(
         action = "restored";
         if let Some(parent) = current_file.parent() {
             if let Err(e) = std::fs::create_dir_all(parent) {
-                return JsonRpcResponse::err(
-                    request_id,
-                    -32603,
-                    format!("failed to create parent directory: {e}"),
+                return (
+                    JsonRpcResponse::err(
+                        request_id,
+                        -32603,
+                        format!("failed to create parent directory: {e}"),
+                    ),
+                    None,
                 );
             }
         }
@@ -738,18 +868,24 @@ pub fn handle_revert_file(
             match std::fs::read_link(&snap_file) {
                 Ok(link_target) => {
                     if let Err(e) = std::os::unix::fs::symlink(&link_target, &current_file) {
-                        return JsonRpcResponse::err(
-                            request_id,
-                            -32603,
-                            format!("failed to restore symlink: {e}"),
+                        return (
+                            JsonRpcResponse::err(
+                                request_id,
+                                -32603,
+                                format!("failed to restore symlink: {e}"),
+                            ),
+                            None,
                         );
                     }
                 }
                 Err(e) => {
-                    return JsonRpcResponse::err(
-                        request_id,
-                        -32603,
-                        format!("failed to read symlink from snapshot: {e}"),
+                    return (
+                        JsonRpcResponse::err(
+                            request_id,
+                            -32603,
+                            format!("failed to read symlink from snapshot: {e}"),
+                        ),
+                        None,
                     );
                 }
             }
@@ -761,13 +897,16 @@ pub fn handle_revert_file(
             // fsync on the new file and its parent dir flushes metadata to
             // the VirtioFS host so the guest sees the correct size.
             let _ = std::fs::remove_file(&current_file);
-            let snap_data = match std::fs::read(&snap_file) {
+            let snap_data = match read_regular_file_no_follow(&snap_file, "snapshot source") {
                 Ok(d) => d,
                 Err(e) => {
-                    return JsonRpcResponse::err(
-                        request_id,
-                        -32603,
-                        format!("failed to read snapshot file: {e}"),
+                    return (
+                        JsonRpcResponse::err(
+                            request_id,
+                            -32603,
+                            format!("failed to read snapshot file safely: {e}"),
+                        ),
+                        None,
                     );
                 }
             };
@@ -776,18 +915,24 @@ pub fn handle_revert_file(
                 let mut f = match std::fs::File::create(&current_file) {
                     Ok(f) => f,
                     Err(e) => {
-                        return JsonRpcResponse::err(
-                            request_id,
-                            -32603,
-                            format!("failed to create restored file: {e}"),
+                        return (
+                            JsonRpcResponse::err(
+                                request_id,
+                                -32603,
+                                format!("failed to create restored file: {e}"),
+                            ),
+                            None,
                         );
                     }
                 };
                 if let Err(e) = f.write_all(&snap_data) {
-                    return JsonRpcResponse::err(
-                        request_id,
-                        -32603,
-                        format!("failed to write restored file: {e}"),
+                    return (
+                        JsonRpcResponse::err(
+                            request_id,
+                            -32603,
+                            format!("failed to write restored file: {e}"),
+                        ),
+                        None,
                     );
                 }
                 let _ = f.sync_all();
@@ -808,74 +953,53 @@ pub fn handle_revert_file(
         action = "deleted";
         if current_file.exists() {
             if let Err(e) = std::fs::remove_file(&current_file) {
-                return JsonRpcResponse::err(
-                    request_id,
-                    -32603,
-                    format!("failed to delete file: {e}"),
+                return (
+                    JsonRpcResponse::err(request_id, -32603, format!("failed to delete file: {e}")),
+                    None,
                 );
             }
         }
     }
 
-    // Log the revert as a file event in the session DB.
-    if let Some(db) = db {
-        let file_action = if action == "restored" {
-            capsem_logger::FileAction::Restored
-        } else {
-            capsem_logger::FileAction::Deleted
-        };
-        let size = if action == "restored" {
-            std::fs::symlink_metadata(&current_file)
-                .ok()
-                .map(|m| m.len())
-        } else {
-            None
-        };
-        let event = capsem_logger::FileEvent {
-            timestamp: SystemTime::now(),
-            action: file_action,
-            path: format!("{} (from {})", path_str, cp_str_owned),
-            size,
-            trace_id: crate::telemetry::ambient_capsem_trace_id(),
-        };
-        let resolved_event = capsem_file_engine::build_file_resolved_security_event(
-            &event,
-            &capsem_file_engine::FileEngineIdentity {
-                vm_id: non_empty_env(crate::telemetry::CAPSEM_VM_ID_ENV),
-                session_id: non_empty_env(crate::telemetry::CAPSEM_SESSION_ID_ENV),
-                profile_id: non_empty_env(crate::telemetry::CAPSEM_PROFILE_ID_ENV),
-                profile_revision: non_empty_env(crate::telemetry::CAPSEM_PROFILE_REVISION_ENV),
-                user_id: non_empty_env(crate::telemetry::CAPSEM_USER_ID_ENV),
-            },
-        );
-        db.try_write(capsem_logger::WriteOp::FileEvent(event));
-        db.try_write(capsem_logger::WriteOp::ResolvedSecurityEvent(
-            resolved_event,
-        ));
-    }
+    let file_action = if action == "restored" {
+        capsem_logger::FileAction::Restored
+    } else {
+        capsem_logger::FileAction::Deleted
+    };
+    let size = if action == "restored" {
+        std::fs::symlink_metadata(&current_file)
+            .ok()
+            .map(|m| m.len())
+    } else {
+        None
+    };
+    let file_event = capsem_logger::FileEvent {
+        event_id: None,
+        timestamp: SystemTime::now(),
+        action: file_action,
+        path: format!("{} (from {})", path_str, cp_str_owned),
+        size,
+        trace_id: crate::telemetry::ambient_capsem_trace_id(),
+        credential_ref: None,
+    };
 
-    JsonRpcResponse::ok(
-        request_id,
-        serde_json::json!({
-            "content": [{"type": "text", "text": serde_json::json!({
-                "reverted": true,
-                "path": path_str,
-                "action": action,
-                "checkpoint": cp_str_owned,
-            }).to_string()}]
-        }),
+    (
+        JsonRpcResponse::ok(
+            request_id,
+            serde_json::json!({
+                "content": [{"type": "text", "text": serde_json::json!({
+                    "reverted": true,
+                    "path": path_str,
+                    "action": action,
+                    "checkpoint": cp_str_owned,
+                }).to_string()}]
+            }),
+        ),
+        Some(file_event),
     )
 }
 
-fn non_empty_env(key: &str) -> Option<String> {
-    std::env::var(key)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-}
-
-/// Summarize changes as compact "+N, ~N, -N" string.
-fn format_change_summary(changes: &[Value]) -> String {
+fn change_counts(changes: &[Value]) -> (u32, u32, u32) {
     let mut created = 0u32;
     let mut modified = 0u32;
     let mut deleted = 0u32;
@@ -887,21 +1011,17 @@ fn format_change_summary(changes: &[Value]) -> String {
             _ => {}
         }
     }
-    let mut parts = Vec::new();
-    if created > 0 {
-        parts.push(format!("+{created}"));
-    }
-    if modified > 0 {
-        parts.push(format!("~{modified}"));
-    }
-    if deleted > 0 {
-        parts.push(format!("-{deleted}"));
-    }
-    if parts.is_empty() {
-        "(none)".into()
-    } else {
-        parts.join(", ")
-    }
+    (created, modified, deleted)
+}
+
+fn change_summary_value(changes: &[Value]) -> Value {
+    let (created, edited, deleted) = change_counts(changes);
+    serde_json::json!({
+        "created": created,
+        "edited": edited,
+        "deleted": deleted,
+        "total": created + edited + deleted,
+    })
 }
 
 /// Render snapshot list as a text table.
@@ -911,8 +1031,8 @@ fn render_snapshots_table(entries: &[serde_json::Value], manual_available: usize
         entries.len(),
         manual_available,
     );
-    out.push_str("Checkpoint  Origin  Name            Age          Hash          Files  Changes\n");
-    out.push_str("----------------------------------------------------------------------------\n");
+    out.push_str("Checkpoint  Origin  Name            Age          Hash          Files  Created  Edited  Deleted\n");
+    out.push_str("----------------------------------------------------------------------------------------------\n");
     for e in entries {
         let cp = e["checkpoint"].as_str().unwrap_or("-");
         let origin = e["origin"].as_str().unwrap_or("-");
@@ -923,24 +1043,28 @@ fn render_snapshots_table(entries: &[serde_json::Value], manual_available: usize
             .map(|h| &h[..h.len().min(12)])
             .unwrap_or("-");
         let files = e["files_count"].as_u64().unwrap_or(0);
-        let changes = e["changes"].as_array().map(|a| a.as_slice()).unwrap_or(&[]);
-        let summary = format_change_summary(changes);
+        let summary = &e["changes_summary"];
         out.push_str(&format!(
-            "{:<12}{:<8}{:<16}{:<13}{:<14}{:<7}{}\n",
+            "{:<12}{:<8}{:<16}{:<13}{:<14}{:<7}{:<9}{:<8}{}\n",
             cp,
             origin,
             truncate_path(name, 15),
             age,
             hash,
             files,
-            summary,
+            summary["created"].as_u64().unwrap_or(0),
+            summary["edited"].as_u64().unwrap_or(0),
+            summary["deleted"].as_u64().unwrap_or(0),
         ));
     }
     out
 }
 
 /// Collect snapshot entries as JSON values (for both text and json rendering).
-fn collect_snapshot_entries(scheduler: &AutoSnapshotScheduler) -> Vec<serde_json::Value> {
+fn collect_snapshot_entries(
+    scheduler: &AutoSnapshotScheduler,
+    include_changes: bool,
+) -> Vec<serde_json::Value> {
     let mut snapshots = scheduler.list_snapshots();
     // list_snapshots returns newest-first; reverse to walk oldest-first.
     snapshots.reverse();
@@ -957,7 +1081,7 @@ fn collect_snapshot_entries(scheduler: &AutoSnapshotScheduler) -> Vec<serde_json
 
         let changes = compute_changes_vs_previous(&snap_files, &prev_files);
 
-        entries.push(serde_json::json!({
+        let mut entry = serde_json::json!({
             "checkpoint": format!("cp-{}", s.slot),
             "slot": s.slot,
             "origin": origin,
@@ -965,8 +1089,12 @@ fn collect_snapshot_entries(scheduler: &AutoSnapshotScheduler) -> Vec<serde_json
             "hash": s.hash,
             "age": age_string(s.timestamp),
             "files_count": snap_files.len(),
-            "changes": changes,
-        }));
+            "changes_summary": change_summary_value(&changes),
+        });
+        if include_changes {
+            entry["changes"] = Value::Array(changes);
+        }
+        entries.push(entry);
 
         prev_files = snap_files;
     }
@@ -986,21 +1114,24 @@ pub fn handle_list_snapshots(
     _workspace_root: &Path,
     request_id: Option<Value>,
 ) -> JsonRpcResponse {
-    let entries = collect_snapshot_entries(scheduler);
+    let include_changes = arguments
+        .get("include_changes")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let entries = collect_snapshot_entries(scheduler, include_changes);
     let (start_index, max_length, format) = extract_pagination_params(arguments);
 
-    let text = if format == "json" {
+    if format == "json" {
         let summary = serde_json::json!({
             "snapshots": entries,
             "auto_max": scheduler.max_auto(),
             "manual_max": scheduler.max_manual(),
             "manual_available": scheduler.available_manual_slots(),
         });
-        summary.to_string()
-    } else {
-        render_snapshots_table(&entries, scheduler.available_manual_slots())
-    };
+        return tool_ok(request_id, &summary.to_string());
+    }
 
+    let text = render_snapshots_table(&entries, scheduler.available_manual_slots());
     paginated_response(&text, start_index, max_length, request_id)
 }
 

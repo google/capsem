@@ -12,19 +12,19 @@
       Download {SITE.name}
     </h2>
     <p class="mt-6 text-lg text-body-dark max-w-xl mx-auto">
-      Open source, native packages for macOS and Linux.
+      Open source, native macOS, boots in under 10 seconds.
     </p>
 
     <div class="mt-10 mx-auto max-w-lg">
       <InstallCommand dark />
     </div>
 
-    <p class="mt-4 text-sm text-muted-dark">or download a package directly</p>
+    <p class="mt-4 text-sm text-muted-dark">or download the DMG directly</p>
 
     <div class="mt-4 flex flex-wrap justify-center gap-4">
       <a href={SITE.releases} target="_blank" rel="noopener noreferrer" class="btn-primary">
         <Icon name="downloadAlt" />
-        Download packages
+        Download DMG
         <span class="sr-only">(opens in new tab)</span>
       </a>
       <a href={SITE.github} target="_blank" rel="noopener noreferrer" class="btn-outline-dark">
@@ -34,7 +34,7 @@
     </div>
 
     <p class="mt-8 text-xs text-muted-dark">
-      Requires {SITE.platform}. Capsem uses Apple Virtualization.framework on macOS and KVM on Linux.
+      Requires {SITE.platform}. Capsem uses Apple Virtualization.framework.
     </p>
   </div>
 </section>

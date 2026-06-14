@@ -6,7 +6,7 @@ service startup expect. Works with both installation paths:
   - simulate-install.sh (standalone pytest): fallback
 
 Layout contract:
-  ~/.capsem/bin/capsem{,-service,-process,-mcp,-mcp-aggregator,-mcp-builtin,-gateway,-tray}  (executables or symlinks)
+  ~/.capsem/bin/capsem* host tools                           (executables or symlinks)
   ~/.capsem/assets/manifest.json                                (service reads this)
   ~/.capsem/assets/{arch}/{logical}-{hash16}.{ext}              (resolver target)
   ~/.capsem/run/                                                (created at runtime)
@@ -21,7 +21,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-from pathlib import Path
+import tomllib
 
 import pytest
 
@@ -32,7 +32,6 @@ from .conftest import (
     INSTALL_DIR,
     RUN_DIR,
     run_capsem,
-    get_build_hash,
 )
 
 
@@ -42,7 +41,7 @@ class TestInstalledLayoutContract:
     # -- Binaries --
 
     def test_all_binaries_exist(self, installed_layout):
-        """All host binaries present in ~/.capsem/bin/."""
+        """All host binaries are present in ~/.capsem/bin/."""
         for name in BINARIES:
             binary = INSTALL_DIR / name
             assert binary.exists(), f"missing: {binary}"
@@ -66,11 +65,24 @@ class TestInstalledLayoutContract:
         assert result.returncode == 0
         assert "build" in result.stdout, f"no build hash: {result.stdout}"
 
+    def test_capsem_admin_help_works(self, installed_layout):
+        """capsem-admin is installed and runnable without a service."""
+        result = subprocess.run(
+            [str(INSTALL_DIR / "capsem-admin"), "--help"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        assert result.returncode == 0
+        assert "capsem-admin" in result.stdout
+
     # -- Assets --
 
     def test_manifest_json_exists(self, installed_layout):
         """manifest.json present at ~/.capsem/assets/manifest.json."""
         manifest = ASSETS_DIR / "manifest.json"
+        if os.environ.get("CAPSEM_DEB_INSTALLED") == "1" and not manifest.exists():
+            pytest.skip("assets downloaded on first use, not bundled in .deb")
         assert manifest.exists(), (
             f"manifest.json missing at {manifest} -- service will fail to start"
         )
@@ -93,6 +105,8 @@ class TestInstalledLayoutContract:
         arch = "arm64" if machine in ("arm64", "aarch64") else "x86_64"
 
         manifest_path = ASSETS_DIR / "manifest.json"
+        if os.environ.get("CAPSEM_DEB_INSTALLED") == "1" and not manifest_path.exists():
+            pytest.skip("assets downloaded on first use, not bundled in .deb")
         assert manifest_path.exists(), f"manifest missing: {manifest_path}"
 
         data = json.loads(manifest_path.read_text())
@@ -102,12 +116,13 @@ class TestInstalledLayoutContract:
             pytest.skip(f"no {arch} entry in manifest (cross-arch install)")
 
         arch_dir = ASSETS_DIR / arch
+        if os.environ.get("CAPSEM_DEB_INSTALLED") == "1" and not arch_dir.exists():
+            pytest.skip("assets downloaded on first use, not bundled in .deb")
         assert arch_dir.is_dir(), (
             f"arch dir missing: {arch_dir}\n"
             f"resolver will fail: ManifestV2::resolve() checks $ASSETS/{arch}/<hash>"
         )
 
-        missing = []
         for logical, meta in arch_assets.items():
             prefix = meta["hash"][:16]
             if "." in logical:
@@ -116,14 +131,10 @@ class TestInstalledLayoutContract:
             else:
                 hashed = f"{logical}-{prefix}"
             target = arch_dir / hashed
-            if not target.exists():
-                missing.append((logical, meta["hash"], target, hashed))
-
-        assert not missing, "\n".join(
-            f"asset missing: {target}\n"
-            f"manifest says {logical} hash={hash_}, expected file name {hashed}"
-            for logical, hash_, target, hashed in missing
-        )
+            assert target.exists(), (
+                f"asset missing: {target}\n"
+                f"manifest says {logical} hash={meta['hash']}, expected file name {hashed}"
+            )
 
     def test_no_legacy_version_dirs(self, installed_layout):
         """Reject leftover ~/.capsem/assets/v1.0.* dirs -- resolver doesn't read them."""
@@ -161,20 +172,47 @@ class TestInstalledLayoutContract:
         assert CAPSEM_DIR.exists()
         assert (CAPSEM_DIR / "bin").is_dir()
         assert (CAPSEM_DIR / "assets").is_dir()
+        assert (CAPSEM_DIR / "profiles").is_dir()
         assert (CAPSEM_DIR / "run").is_dir()
 
-    def test_installed_base_profiles_use_real_asset_sources(self, installed_layout):
-        """Seeded base profiles must not point at draft placeholder asset URLs."""
-        profiles_dir = CAPSEM_DIR / "profiles" / "base"
-        profiles = sorted(profiles_dir.glob("*.profile.toml"))
-        assert profiles, f"no base profiles found in {profiles_dir}"
-        for profile in profiles:
-            text = profile.read_text()
-            assert "assets.example.invalid" not in text, (
-                f"{profile} still points at the draft asset host"
-            )
-            assert "https://assets.capsem.dev/vm/" in text or "file://" in text, (
-                f"{profile} should be materialized to release or local asset files"
+    def test_installed_profile_catalog_exists(self, installed_layout):
+        """Installed service must load materialized profiles, not compiled source fallback."""
+        profile = CAPSEM_DIR / "profiles" / "code" / "profile.toml"
+        assert profile.exists(), (
+            f"materialized profile missing: {profile}\n"
+            "without this, installed service falls back to compiled source profile pins"
+        )
+        assert (CAPSEM_DIR / "profiles" / "code" / "enforcement.toml").exists()
+
+    def test_installed_profile_asset_pins_match_manifest(self, installed_layout):
+        """Profile-owned asset pins must match the installed asset manifest."""
+        import platform
+
+        profile_path = CAPSEM_DIR / "profiles" / "code" / "profile.toml"
+        manifest_path = ASSETS_DIR / "manifest.json"
+        if not manifest_path.exists():
+            pytest.skip("no manifest.json")
+        assert profile_path.exists(), f"profile missing: {profile_path}"
+
+        machine = platform.machine().lower()
+        arch = "arm64" if machine in ("arm64", "aarch64") else "x86_64"
+        manifest = json.loads(manifest_path.read_text())
+        current = manifest["assets"]["current"]
+        manifest_assets = manifest["assets"]["releases"][current]["arches"].get(arch)
+        if manifest_assets is None:
+            pytest.skip(f"no {arch} entry in manifest")
+
+        profile = tomllib.loads(profile_path.read_text())
+        profile_assets = profile["assets"]["arch"][arch]
+        for kind, logical in [
+            ("kernel", "vmlinuz"),
+            ("initrd", "initrd.img"),
+            ("rootfs", "rootfs.erofs"),
+        ]:
+            expected = manifest_assets[logical]["hash"]
+            actual = profile_assets[kind]["hash"].removeprefix("blake3:")
+            assert actual == expected, (
+                f"profile {kind} pin drift: profile={actual} manifest={expected}"
             )
 
     # -- Service spawn contract --
@@ -182,7 +220,7 @@ class TestInstalledLayoutContract:
     #   capsem-service --foreground --assets-dir ~/.capsem/assets/ --process-binary ~/.capsem/bin/capsem-process
     # The service then:
     #   1. Reads manifest.json from --assets-dir
-    #   2. Resolves hash-named rootfs from --assets-dir/{arch}/
+    #   2. Resolves rootfs from --assets-dir/v{VERSION}/
     #   3. Spawns --process-binary for each VM
 
     def test_service_binary_is_sibling_of_capsem(self, installed_layout):

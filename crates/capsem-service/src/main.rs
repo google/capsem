@@ -2,38 +2,80 @@ use anyhow::{anyhow, Context, Result};
 use axum::{
     extract::{Path, Query, State},
     response::IntoResponse,
-    routing::{delete, get, post, put},
+    routing::{delete, get, patch, post, put},
     Json, Router,
 };
 use capsem_core::poll::{poll_until, PollOpts};
-use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
-use capsem_proto::metrics::VmMetricsSnapshot;
-use capsem_security_engine as seceng;
+use capsem_core::{
+    mcp::policy::{McpManualServer, McpUserConfig},
+    net::policy_config::{
+        skill_id_for_path, CompiledSecurityRule, DetectionLevel, Profile, ProfileAssetDescriptor,
+        ProfileCatalog, ProfileCatalogSource, ProfileConfigFile, ProviderRuleProfile,
+        SecurityPluginConfig, SecurityPluginMode, SecurityRule, SecurityRuleAction,
+        SecurityRuleGroup, SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource, SettingsFile,
+    },
+    security_engine::{
+        FileSecurityEvent, RuntimeSecurityEventType, SecurityActionRegistry, SecurityEmitError,
+        SecurityEvent, SecurityEventEmitter, SecurityEventEngine, SerializableSecurityEvent,
+    },
+};
+use capsem_proto::ipc::{FileBoundaryAction, ProcessToService, ServiceToProcess};
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::collections::{HashMap, HashSet};
-use std::path::{Path as FsPath, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::{Path as StdPath, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::net::UnixListener;
 use tokio_unix_ipc::{channel_from_std, Receiver, Sender};
 use tower_http::trace::TraceLayer;
-use tracing::{error, info, warn};
+use tracing::{error, info, warn, Instrument};
 
 mod startup;
 
+const RESUME_CHECKPOINT_NAME: &str = "checkpoint.vzsave";
+const RESUME_CHECKPOINT_COMPLETE_NAME: &str = "checkpoint.vzsave.complete";
+
+fn checkpoint_complete_path(checkpoint_path: &StdPath) -> PathBuf {
+    let marker_name = checkpoint_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| format!("{name}.complete"))
+        .unwrap_or_else(|| RESUME_CHECKPOINT_COMPLETE_NAME.to_string());
+    checkpoint_path.with_file_name(marker_name)
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_PROFILE_DIR_OVERRIDE: std::cell::RefCell<Option<PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn test_profile_dir_override() -> Option<PathBuf> {
+    TEST_PROFILE_DIR_OVERRIDE.with(|cell| {
+        let path = cell.borrow().clone();
+        if path.as_ref().is_some_and(|path| !path.exists()) {
+            cell.replace(None);
+            None
+        } else {
+            path
+        }
+    })
+}
+
+#[cfg(test)]
+fn set_test_profile_dir_override(path: Option<PathBuf>) -> Option<PathBuf> {
+    TEST_PROFILE_DIR_OVERRIDE.with(|cell| cell.replace(path))
+}
+
 use capsem_service::api;
 use capsem_service::api::*;
-use capsem_service::asset_supervisor::{
-    host_asset_arch, AssetRequirement, AssetSupervisor, ProfileAssetRequirement,
-};
-use capsem_service::debug_report;
 use capsem_service::naming::{generate_tmp_name, validate_vm_name};
 use capsem_service::registry::{
-    PersistentRegistry, PersistentVmEntry, SavedVmBaseAssets, SavedVmProfilePin,
+    BootAssetPin, BootAssetPins, PersistentRegistry, PersistentVmEntry,
 };
-use capsem_service::saved_vm_assets;
 use capsem_service::triage;
 
 #[derive(Parser, Debug)]
@@ -67,6 +109,10 @@ const PROCESS_ENV_ALLOWLIST: &[&str] = &[
     "USER",
     "TMPDIR",
     "CAPSEM_HOME",
+    "CAPSEM_CORP_CONFIG",
+    // Hermetic integration/Ironbank rail: keeps credential broker tests out of
+    // the user's macOS Keychain while exercising the real broker path.
+    "CAPSEM_CREDENTIAL_BROKER_TEST_STORE",
     // Tunable: bounded MITM MCP endpoint in-flight handler cap.
     "CAPSEM_MCP_INFLIGHT",
     // Tunable: pool size for the local builtin MCP server (rmcp stdio funnel).
@@ -75,15 +121,13 @@ const PROCESS_ENV_ALLOWLIST: &[&str] = &[
     "CAPSEM_MCP_DEFAULT_TIMEOUT_SECS",
     "CAPSEM_MCP_TOOL_CALL_TIMEOUT_SECS",
     "CAPSEM_MCP_TOOL_CALL_TIMEOUT_CEILING_SECS",
-    // E2E-only: lets capsem-process dial a local fixture while preserving
-    // the guest-visible upstream host for MITM policy/provider detection.
-    "CAPSEM_TEST_UPSTREAM_OVERRIDES",
-    // Debug-build-only: allows targeted kernel boot diagnostics without
-    // making release boots noisy.
-    "CAPSEM_DEV_KERNEL_CMDLINE_APPEND",
+    // Experimental rootfs benchmark lane: capsem-process appends
+    // capsem.rootfs=erofs-dax when booting a .erofs rootfs.
+    "CAPSEM_EXPERIMENTAL_EROFS_DAX",
 ];
 
-const SUSPEND_CONFIRM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
+const RUNTIME_PROFILE_CONFIG_DIR: &str = "runtime-config";
+const RUNTIME_OVERLAY_FILE: &str = "runtime-overlay.toml";
 
 // ---------------------------------------------------------------------------
 // Service state
@@ -96,35 +140,28 @@ struct ServiceState {
     persistent_registry: Mutex<PersistentRegistry>,
     process_binary: PathBuf,
     assets_dir: PathBuf,
-    asset_locations: capsem_core::settings_profiles::ResolvedServiceAssetLocations,
-    service_settings: capsem_core::settings_profiles::ServiceSettings,
-    service_settings_path: PathBuf,
     run_dir: PathBuf,
     job_counter: AtomicU64,
-    /// Service-owned asset state machine and background reconciler.
-    asset_supervisor: Arc<AssetSupervisor>,
-    /// Runtime CEL enforcement rules installed through the service API.
-    enforcement_registry: Arc<Mutex<seceng::RuntimeRuleRegistry>>,
-    /// Runtime CEL/Sigma-lowered detection rules installed through the service API.
-    detection_registry: Arc<Mutex<seceng::RuntimeRuleRegistry>>,
-    /// Typed persisted runtime overlay store. Profile-seeded rules are rebuilt
-    /// from profiles and are never written here.
-    runtime_rules_store_path: Option<PathBuf>,
-    /// Serializes runtime overlay store rewrites so concurrent rule mutations
-    /// cannot collide on the atomic temp file.
-    runtime_rules_store_lock: Mutex<()>,
+    /// v2 manifest (None in dev mode where assets use logical names)
+    manifest: Option<Arc<capsem_core::asset_manager::ManifestV2>>,
     current_version: String,
+    /// In-memory asset reconciliation progress. Service startup and explicit
+    /// /profiles/{profile_id}/assets/ensure shares this single rail with
+    /// status so status can explain both.
+    asset_reconcile: Mutex<AssetReconcileState>,
+    asset_reconcile_inflight: AtomicBool,
+    asset_status_path: PathBuf,
     /// Magika file-type detection session (thread-safe, shared)
     magika: Mutex<magika::Session>,
-    /// Serializes Apple VZ save_state and restore_state calls across all VMs
-    /// managed by this service. Apple's Virtualization.framework does not
-    /// tolerate concurrent save/restore on sibling VMs: when two VZ instances
-    /// each call saveMachineStateToURL (or one calls save_state while another
-    /// is mid-restore), one of them can come back with ext4 overlay I/O
-    /// errors after resume. Held for the full suspend IPC + child-exit wait,
-    /// and for the resume spawn + wait_for_vm_ready window. See
-    /// docs/src/content/docs/gotchas/concurrent-suspend-resume.mdx.
-    save_restore_lock: tokio::sync::Mutex<()>,
+    /// Profile-owned plugin policy overrides. Effective policy is built-in
+    /// plugin defaults plus overrides for the profile executing the VM.
+    plugin_policy_by_profile: Mutex<HashMap<String, BTreeMap<String, SecurityPluginConfig>>>,
+    /// Guards Apple VZ lifecycle edges across all VMs managed by this
+    /// service. Cold starts and teardown take a read guard; save/restore take
+    /// a write guard. That keeps checkpoint edges exclusive without
+    /// serializing independent cold boots and breaking the boot latency gate.
+    /// See docs/src/content/docs/gotchas/concurrent-suspend-resume.mdx.
+    save_restore_lock: tokio::sync::RwLock<()>,
     /// Serializes VM teardown (delete / stop / purge per-VM / handle_run)
     /// across all VMs managed by this service. N concurrent shutdowns starve
     /// each other of the resources each capsem-process needs to (a) let VZ
@@ -140,99 +177,28 @@ struct ServiceState {
     shutdown_lock: tokio::sync::Mutex<()>,
 }
 
-fn startup_asset_requirement(
-    service_settings: &capsem_core::settings_profiles::ServiceSettings,
-    arch: &str,
-    allow_dev_logical_assets: bool,
-) -> Result<AssetRequirement> {
-    profile_asset_requirement_for_selection(
-        service_settings,
-        None,
-        None,
-        arch,
-        allow_dev_logical_assets,
-    )
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct AssetReconcileState {
+    #[serde(default)]
+    in_progress: bool,
+    #[serde(default)]
+    current_asset: Option<String>,
+    #[serde(default)]
+    bytes_done: u64,
+    #[serde(default)]
+    bytes_total: Option<u64>,
+    #[serde(default)]
+    last_error: Option<String>,
+    #[serde(default)]
+    last_downloaded: Option<usize>,
 }
 
-fn profile_asset_requirement_for_selection(
-    service_settings: &capsem_core::settings_profiles::ServiceSettings,
-    profile_id: Option<&str>,
-    profile_revision: Option<&str>,
-    arch: &str,
-    allow_dev_logical_assets: bool,
-) -> Result<AssetRequirement> {
-    let (effective, _) = capsem_core::settings_profiles::resolve_effective_vm_settings_with_corp(
-        service_settings,
-        profile_id,
-    )
-    .with_context(|| {
-        format!(
-            "resolve {}profile for VM assets",
-            profile_id.unwrap_or("default ")
-        )
-    })?;
-    match ProfileAssetRequirement::from_effective(&effective, arch) {
-        Ok(required) => {
-            let selected_profile_requires_catalog = profile_id.is_some() || profile_revision.is_some();
-            let installed_revision = if selected_profile_requires_catalog {
-                capsem_core::settings_profiles::load_complete_installed_profile_revision(
-                    &service_settings.profiles,
-                    &effective.profile_id,
-                )
-                .context("load complete installed profile revision for asset provenance")?
-                .map(|record| (record.revision, record.payload_hash))
-            } else {
-                capsem_core::settings_profiles::load_installed_profile_revision(
-                    &service_settings.profiles,
-                    &effective.profile_id,
-                )
-                .context("load installed profile revision for asset provenance")?
-                .map(|record| (record.revision, record.payload_hash))
-            };
-            let required = match installed_revision {
-                Some((revision, payload_hash)) => {
-                    if let Some(requested) = profile_revision {
-                        if revision != requested {
-                            anyhow::bail!(
-                                "profile '{}' installed revision '{}' does not match requested revision '{}'",
-                                effective.profile_id,
-                                revision,
-                                requested
-                            );
-                        }
-                    }
-                    required.with_installed_revision(Some(revision), Some(payload_hash))
-                }
-                None if selected_profile_requires_catalog => {
-                    anyhow::bail!(
-                        "profile '{}' has no installed signed catalog revision; install it before creating a VM",
-                        effective.profile_id
-                    );
-                }
-                None => required,
-            };
-            Ok(AssetRequirement::Profile(Box::new(required)))
-        }
-        Err(err) if allow_dev_logical_assets => {
-            warn!(
-                error = %err,
-                arch,
-                profile_id = %effective.profile_id,
-                "profile has no VM asset declarations; using explicit development assets"
-            );
-            Ok(AssetRequirement::DevLogical {
-                arch: arch.to_string(),
-            })
-        }
-        Err(err) => Err(err).context(
-            "release startup requires profile VM assets; old asset manifests are not runtime authority",
-        ),
-    }
-}
-
-#[derive(Clone)]
 struct InstanceInfo {
     id: String,
+    profile_id: String,
+    profile_revision: String,
+    profile_payload_hash: String,
+    asset_pins: BootAssetPins,
     pid: u32,
     uds_path: PathBuf,
     session_dir: PathBuf,
@@ -248,23 +214,255 @@ struct InstanceInfo {
     env: Option<std::collections::HashMap<String, String>>,
     /// Sandbox this VM was cloned from, if any
     forked_from: Option<String>,
-    /// Exact boot-asset identity this VM's root overlay depends on.
-    base_assets: Option<SavedVmBaseAssets>,
-    /// Exact profile/package/asset identity this VM was created with.
-    profile_pin: Option<SavedVmProfilePin>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum PluginScopeKind {
+    Profile,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct PluginScope {
+    kind: PluginScopeKind,
+    profile_id: String,
+}
+
+#[derive(Debug, Serialize)]
+struct PluginListResponse {
+    scope: PluginScope,
+    plugins: Vec<PluginInfo>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum PluginStage {
+    Preprocess,
+    Postprocess,
+    Logging,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct PluginRuntimeStatus {
+    enabled: bool,
+    event_count: u64,
+    execution_count: u64,
+    applied_count: u64,
+    skipped_count: u64,
+    total_duration_us: u64,
+    max_duration_us: u64,
+    detection_count: u64,
+    block_count: u64,
+    rewrite_count: u64,
+    last_error: Option<String>,
+    brokered_credentials: Vec<BrokeredCredentialStatus>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct PluginCapabilities {
+    event_families: Vec<&'static str>,
+    credential_providers: Vec<&'static str>,
+    credential_sources: Vec<&'static str>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct BrokeredCredentialStatus {
+    provider: Option<String>,
+    credential_ref: String,
+    observed_count: u64,
+    injected_count: u64,
+    replay_available: bool,
+    last_seen: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum PluginDetailRouteKind {
+    CredentialBroker,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct PluginDetailRoute {
+    id: &'static str,
+    label: &'static str,
+    kind: PluginDetailRouteKind,
+    path: String,
+}
+
+#[derive(Debug, Serialize)]
+struct PluginInfo {
+    id: String,
+    config: SecurityPluginConfig,
+    default_config: SecurityPluginConfig,
+    overridden: bool,
+    scope: PluginScope,
+    description: &'static str,
+    stage: PluginStage,
+    version: &'static str,
+    capabilities: PluginCapabilities,
+    runtime: PluginRuntimeStatus,
+    detail_routes: Vec<PluginDetailRoute>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum CredentialBrokerForkGrantDefault {
+    InheritProfile,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct CredentialBrokerVmGrant {
+    vm_id: String,
+    enabled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct CredentialBrokerGrantStatus {
+    profile_enabled: bool,
+    vm_grants: Vec<CredentialBrokerVmGrant>,
+    fork_default: CredentialBrokerForkGrantDefault,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct CredentialBrokerCorpConstraint {
+    id: String,
+    description: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct CredentialBrokerDetailResponse {
+    scope: PluginScope,
+    plugin_id: &'static str,
+    store: capsem_core::credential_broker::CredentialStoreStatus,
+    inventory: Vec<BrokeredCredentialStatus>,
+    grants: CredentialBrokerGrantStatus,
+    corp_constraints: Vec<CredentialBrokerCorpConstraint>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PluginUpdate {
+    #[serde(default)]
+    mode: Option<SecurityPluginMode>,
+    #[serde(default)]
+    detection_level: Option<DetectionLevel>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct McpToolEditRequest {
+    pub action: SecurityRuleAction,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct McpServerEditRequest {
+    #[serde(default)]
+    url: Option<String>,
+    #[serde(default)]
+    headers: HashMap<String, String>,
+    #[serde(default)]
+    enabled: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProfileSkillAddRequest {
+    path: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProfileSkillEditRequest {
+    path: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct EnforcementEvaluateRequest {
+    rules_toml: String,
+    event: EnforcementEventInput,
+}
+
+impl EnforcementEvaluateRequest {
+    #[cfg(test)]
+    fn eicar_fixture() -> Self {
+        Self {
+            rules_toml: r#"
+[profiles.rules.eicar]
+name = "eicar_rewrite_scan"
+action = "allow"
+detection_level = "high"
+match = 'file.import.content.contains("EICAR")'
+"#
+            .to_string(),
+            event: EnforcementEventInput {
+                event_type: "file.import".to_string(),
+                file_import_content: Some(
+                    capsem_core::security_engine::DUMMY_EICAR_TEST_STRING.to_string(),
+                ),
+                http_host: None,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct EnforcementEventInput {
+    event_type: String,
+    #[serde(default)]
+    file_import_content: Option<String>,
+    #[serde(default)]
+    http_host: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct EnforcementEvaluateResponse {
+    event: SerializableSecurityEvent,
+}
+
+#[derive(Debug, Serialize)]
+struct EnforcementRuleResponse {
+    rule_id: String,
+    compiled_rule_id: String,
+    rule: SecurityRule,
+}
+
+#[derive(Debug, Serialize)]
+struct EnforcementRuleDeleteResponse {
+    rule_id: String,
+    deleted: bool,
 }
 
 pub struct ProvisionOptions<'a> {
     pub id: &'a str,
+    pub profile_id: String,
     pub ram_mb: u64,
     pub cpus: u32,
+    pub scratch_disk_size_gb: u32,
     pub version_override: Option<String>,
     pub persistent: bool,
     pub env: Option<std::collections::HashMap<String, String>>,
     pub from: Option<String>,
-    pub profile_id: Option<String>,
-    pub profile_revision: Option<String>,
     pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ResolvedVmResources {
+    ram_mb: u64,
+    cpus: u32,
+    scratch_disk_size_gb: u32,
+}
+
+fn resolve_profile_vm_resources(
+    profile: &ProfileConfigFile,
+    requested_ram_mb: Option<u64>,
+    requested_cpus: Option<u32>,
+) -> ResolvedVmResources {
+    ResolvedVmResources {
+        ram_mb: requested_ram_mb.unwrap_or(profile.vm.ram_gb as u64 * 1024),
+        cpus: requested_cpus.unwrap_or(profile.vm.cpu_count),
+        scratch_disk_size_gb: profile.vm.scratch_disk_size_gb,
+    }
 }
 
 /// Maximum number of `-failed-*` session dirs preserved across crashes /
@@ -278,37 +476,6 @@ pub struct ProvisionOptions<'a> {
 /// span a 10-iteration stress suite that creates 1-3 VMs per iteration
 /// without losing earlier failures to the cull.
 const MAX_FAILED_SESSIONS: usize = 32;
-
-const DEFAULT_MAX_CONCURRENT_VMS: usize = 8;
-
-#[derive(Debug, Clone, Copy)]
-struct VmRuntimeDefaults {
-    ram_mb: u64,
-    cpus: u32,
-    max_concurrent_vms: usize,
-}
-
-/// Result of [`ServiceState::preserve_failed_session_dir_outcome`].
-///
-/// AB-008: pulled out so callers can distinguish "already preserved by an
-/// earlier pass" (idempotent no-op) from real failures that should warn.
-#[derive(Debug)]
-pub(crate) enum PreserveOutcome {
-    /// Renamed to a `-failed-*` sibling.
-    Preserved(PathBuf),
-    /// The session dir was already gone (handled by a prior call, or never
-    /// there). Idempotent no-op.
-    AlreadyAbsent,
-    /// Rename failed for a real reason; the fallback `remove_dir_all`
-    /// reclaimed disk.
-    FailedAndRemoved { rename_error: std::io::Error },
-    /// Rename failed AND remove failed (other than `NotFound`); the dir is
-    /// orphaned on disk.
-    FailedAndOrphaned {
-        rename_error: std::io::Error,
-        remove_error: std::io::Error,
-    },
-}
 
 impl ServiceState {
     /// Build the Unix socket path for a VM instance.
@@ -338,222 +505,6 @@ impl ServiceState {
 
     fn next_job_id(&self) -> u64 {
         self.job_counter.fetch_add(1, Ordering::Relaxed)
-    }
-
-    /// Ensure a session directory has coherent Profile V2 effective-settings
-    /// and resolver-trace attachments. Existing readable pairs are preserved
-    /// for fork/resume provenance; missing or corrupt pairs are regenerated.
-    fn ensure_vm_effective_settings(&self, session_dir: &FsPath) -> Result<()> {
-        let effective_path =
-            capsem_core::settings_profiles::vm_effective_settings_path(session_dir);
-        let trace_path = capsem_core::settings_profiles::vm_effective_trace_path(session_dir);
-
-        let settings_ok = effective_path.is_file()
-            && match capsem_core::settings_profiles::load_vm_effective_settings(session_dir) {
-                Ok(_) => true,
-                Err(error) => {
-                    warn!(
-                        path = %effective_path.display(),
-                        error = %error,
-                        "existing vm-effective settings unreadable, regenerating"
-                    );
-                    false
-                }
-            };
-        let trace_ok = trace_path.is_file()
-            && match capsem_core::settings_profiles::load_vm_effective_trace(session_dir) {
-                Ok(_) => true,
-                Err(error) => {
-                    warn!(
-                        path = %trace_path.display(),
-                        error = %error,
-                        "existing vm-effective trace unreadable, regenerating"
-                    );
-                    false
-                }
-            };
-
-        if settings_ok && trace_ok {
-            return Ok(());
-        }
-
-        self.refresh_vm_effective_settings_for_profile(session_dir, None)
-    }
-
-    fn current_service_settings(&self) -> capsem_core::settings_profiles::ServiceSettings {
-        let settings_path = &self.service_settings_path;
-        if !settings_path.exists() {
-            return self.service_settings.clone();
-        }
-        capsem_core::settings_profiles::load_service_settings(settings_path).unwrap_or_else(
-            |error| {
-                warn!(
-                    error = %error,
-                    "failed to reload service settings from disk, using startup snapshot"
-                );
-                self.service_settings.clone()
-            },
-        )
-    }
-
-    fn refresh_vm_effective_settings_for_profile(
-        &self,
-        session_dir: &FsPath,
-        profile_id: Option<&str>,
-    ) -> Result<()> {
-        let settings = self.current_service_settings();
-        let (effective, trace) =
-            capsem_core::settings_profiles::resolve_effective_vm_settings_with_corp(
-                &settings, profile_id,
-            )?;
-        capsem_core::settings_profiles::write_vm_effective_settings(session_dir, &effective)
-            .context("persist vm-effective settings")?;
-        capsem_core::settings_profiles::write_vm_effective_trace(session_dir, &trace)
-            .context("persist vm-effective trace")?;
-        Ok(())
-    }
-
-    fn refresh_vm_effective_settings(&self, session_dir: &FsPath) -> Result<()> {
-        self.refresh_vm_effective_settings_for_profile(session_dir, None)
-    }
-
-    fn telemetry_identity_env(
-        &self,
-        vm_id: &str,
-        session_dir: &FsPath,
-    ) -> Result<Vec<(String, String)>> {
-        let settings = self.current_service_settings();
-        let effective = capsem_core::settings_profiles::load_vm_effective_settings(session_dir)
-            .context("load vm-effective settings for telemetry identity")?;
-        let profile_revision = capsem_core::settings_profiles::load_installed_profile_revision(
-            &settings.profiles,
-            &effective.profile_id,
-        )
-        .context("load installed profile revision for telemetry identity")?
-        .map(|record| record.revision);
-        Ok(capsem_core::telemetry::child_identity_env_with_revision(
-            vm_id,
-            &effective.profile_id,
-            profile_revision.as_deref(),
-            &capsem_core::telemetry::host_user_id(),
-        ))
-    }
-
-    fn vm_profile_pin(
-        &self,
-        session_dir: &FsPath,
-        profile_revision: Option<String>,
-        profile_payload_hash: Option<String>,
-        base_assets: Option<SavedVmBaseAssets>,
-    ) -> Result<SavedVmProfilePin> {
-        let effective = capsem_core::settings_profiles::load_vm_effective_settings(session_dir)
-            .context("load vm-effective settings for profile pin")?;
-        let package_json = serde_json::to_vec(&effective.packages.value)
-            .context("serialize package contract for profile pin")?;
-        let settings = self.current_service_settings();
-        let mut installed_revision =
-            capsem_core::settings_profiles::load_complete_installed_profile_revision(
-                &settings.profiles,
-                &effective.profile_id,
-            )
-            .context("load complete installed profile revision for profile pin")?;
-        if installed_revision.is_none() && settings.profiles != self.service_settings.profiles {
-            installed_revision =
-                capsem_core::settings_profiles::load_complete_installed_profile_revision(
-                    &self.service_settings.profiles,
-                    &effective.profile_id,
-                )
-                .context("load startup installed profile revision for profile pin")?;
-        }
-        let has_explicit_pin_identity = profile_revision
-            .as_deref()
-            .is_some_and(|revision| !revision.trim().is_empty())
-            && profile_payload_hash
-                .as_deref()
-                .is_some_and(|hash| !hash.trim().is_empty());
-        if installed_revision.is_none() && !has_explicit_pin_identity {
-            let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles)
-                .context("discover profiles for inherited profile pin")?;
-            let chain = capsem_core::settings_profiles::resolve_ancestor_chain(
-                &catalog,
-                &effective.profile_id,
-            )
-            .context("resolve profile inheritance chain for inherited profile pin")?;
-            for ancestor in chain.iter().rev().skip(1) {
-                if let Some(record) =
-                    capsem_core::settings_profiles::load_complete_installed_profile_revision(
-                        &settings.profiles,
-                        &ancestor.profile.id,
-                    )
-                    .with_context(|| {
-                        format!(
-                            "load inherited installed profile revision '{}' for profile pin",
-                            ancestor.profile.id
-                        )
-                    })?
-                {
-                    installed_revision = Some(record);
-                    break;
-                }
-            }
-        }
-        let (profile_revision, profile_payload_hash) = installed_revision
-            .map(|record| (Some(record.revision), Some(record.payload_hash)))
-            .unwrap_or((profile_revision, profile_payload_hash));
-        let profile_revision = profile_revision
-            .filter(|revision| !revision.trim().is_empty())
-            .ok_or_else(|| {
-                anyhow!(
-                    "VM profile pin requires a signed profile catalog revision; reconcile the profile catalog before creating VMs"
-                )
-            })?;
-        let profile_payload_hash = profile_payload_hash
-            .filter(|hash| !hash.trim().is_empty())
-            .ok_or_else(|| {
-                anyhow!(
-                    "VM profile pin requires a signed profile payload hash; reconcile the profile catalog before creating VMs"
-                )
-            })?;
-        let base_assets = base_assets.ok_or_else(|| {
-            anyhow!("VM profile pin requires pinned asset identity from the signed profile catalog")
-        })?;
-        Ok(SavedVmProfilePin {
-            profile_id: effective.profile_id,
-            profile_revision: Some(profile_revision),
-            profile_payload_hash: Some(profile_payload_hash),
-            package_contract_hash: format!("blake3:{}", blake3::hash(&package_json).to_hex()),
-            base_assets: Some(base_assets),
-        })
-    }
-
-    fn resolve_vm_runtime_defaults(&self) -> VmRuntimeDefaults {
-        self.resolve_vm_runtime_defaults_for(None)
-    }
-
-    fn resolve_vm_runtime_defaults_for(&self, profile_id: Option<&str>) -> VmRuntimeDefaults {
-        let fallback_vm = capsem_core::settings_profiles::VmProfileSettings::default();
-        let settings = self.current_service_settings();
-        match capsem_core::settings_profiles::resolve_effective_vm_settings_with_corp(
-            &settings, profile_id,
-        ) {
-            Ok((effective, _trace)) => VmRuntimeDefaults {
-                ram_mb: effective.vm.value.memory_mib as u64,
-                cpus: effective.vm.value.cpus as u32,
-                max_concurrent_vms: DEFAULT_MAX_CONCURRENT_VMS,
-            },
-            Err(error) => {
-                warn!(
-                    error = %error,
-                    profile_id,
-                    "failed to resolve vm-effective defaults, using built-in profile defaults"
-                );
-                VmRuntimeDefaults {
-                    ram_mb: fallback_vm.memory_mib as u64,
-                    cpus: fallback_vm.cpus as u32,
-                    max_concurrent_vms: DEFAULT_MAX_CONCURRENT_VMS,
-                }
-            }
-        }
     }
 
     /// Probe instance PIDs and evict entries whose process is gone.
@@ -627,8 +578,14 @@ impl ServiceState {
     /// `remove_dir_all` so disk isn't leaked when the filesystem is
     /// already unhappy.
     fn preserve_failed_session_dir(&self, session_dir: &std::path::Path, id: &str) {
-        match self.preserve_failed_session_dir_outcome(session_dir, id) {
-            PreserveOutcome::Preserved(failed_dir) => {
+        let failed_id = format!(
+            "{}-failed-{}",
+            id,
+            capsem_core::session::generate_session_id(),
+        );
+        let failed_dir = self.run_dir.join("sessions").join(&failed_id);
+        match std::fs::rename(session_dir, &failed_dir) {
+            Ok(()) => {
                 info!(
                     id,
                     path = %failed_dir.display(),
@@ -641,67 +598,23 @@ impl ServiceState {
                     );
                 }
             }
-            // AB-008: idempotent. An earlier preservation pass already
-            // renamed or removed this dir, or the source was never there.
-            // No log -- the previous code emitted two scary WARN lines
-            // ("logs lost" + "orphaned on disk") that misrepresented an
-            // already-handled case as a fresh failure. Multiple cleanup
-            // paths (scrub_dead_process, the spawn-completion handler,
-            // handle_run cleanup) can race for the same session dir.
-            PreserveOutcome::AlreadyAbsent => {}
-            PreserveOutcome::FailedAndRemoved { rename_error } => {
+            Err(e) => {
                 warn!(
                     id,
                     from = %session_dir.display(),
-                    error = %rename_error,
-                    "failed to preserve session dir for post-mortem -- logs lost; removed to reclaim disk"
+                    to = %failed_dir.display(),
+                    error = %e,
+                    "failed to preserve session dir for post-mortem -- logs lost; removing to reclaim disk"
                 );
-            }
-            PreserveOutcome::FailedAndOrphaned {
-                rename_error,
-                remove_error,
-            } => {
-                warn!(
-                    id,
-                    from = %session_dir.display(),
-                    rename_error = %rename_error,
-                    error = %remove_error,
-                    "failed to preserve and failed to remove session dir -- orphaned on disk"
-                );
-            }
-        }
-    }
-
-    /// Pure FS-effect classifier for [`Self::preserve_failed_session_dir`].
-    ///
-    /// Returns the outcome so tests can assert on it without capturing
-    /// tracing output. Maps `ErrorKind::NotFound` from both the rename and
-    /// the fallback `remove_dir_all` to [`PreserveOutcome::AlreadyAbsent`]
-    /// so duplicate calls are idempotent. AB-008.
-    pub(crate) fn preserve_failed_session_dir_outcome(
-        &self,
-        session_dir: &std::path::Path,
-        id: &str,
-    ) -> PreserveOutcome {
-        let failed_id = format!(
-            "{}-failed-{}",
-            id,
-            capsem_core::session::generate_session_id(),
-        );
-        let failed_dir = self.run_dir.join("sessions").join(&failed_id);
-        match std::fs::rename(session_dir, &failed_dir) {
-            Ok(()) => PreserveOutcome::Preserved(failed_dir),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => PreserveOutcome::AlreadyAbsent,
-            Err(rename_error) => match std::fs::remove_dir_all(session_dir) {
-                Ok(()) => PreserveOutcome::FailedAndRemoved { rename_error },
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    PreserveOutcome::AlreadyAbsent
+                if let Err(e) = std::fs::remove_dir_all(session_dir) {
+                    warn!(
+                        id,
+                        path = %session_dir.display(),
+                        error = %e,
+                        "also failed to remove session dir -- orphaned on disk"
+                    );
                 }
-                Err(remove_error) => PreserveOutcome::FailedAndOrphaned {
-                    rename_error,
-                    remove_error,
-                },
-            },
+            }
         }
     }
 
@@ -748,19 +661,21 @@ impl ServiceState {
     fn provision_sandbox(self: &Arc<Self>, options: ProvisionOptions) -> Result<()> {
         let ProvisionOptions {
             id,
+            profile_id,
             ram_mb,
             cpus,
+            scratch_disk_size_gb,
             version_override,
             persistent,
             env,
             from,
-            profile_id,
-            profile_revision,
             description,
         } = options;
+        validate_profile_route_id(profile_id.clone())
+            .map_err(|error| anyhow!("invalid profile_id: {}", error.1))?;
 
-        let vm_defaults = self.resolve_vm_runtime_defaults();
-        let max_concurrent_vms = vm_defaults.max_concurrent_vms;
+        let vm_settings = capsem_core::net::policy_config::load_merged_vm_settings();
+        let max_concurrent_vms = vm_settings.max_concurrent_vms.unwrap_or(10) as usize;
 
         if !(1..=8).contains(&cpus) {
             return Err(anyhow!("cpus must be between 1 and 8"));
@@ -809,31 +724,24 @@ impl ServiceState {
         }
 
         // Validate source sandbox if --from provided
-        if from.is_some() && (profile_id.is_some() || profile_revision.is_some()) {
-            return Err(anyhow!(
-                "profile selection is only valid for fresh VM create; source clones inherit the source VM profile pin"
-            ));
-        }
         let source_entry = if let Some(ref from_name) = from {
             let registry = self.persistent_registry.lock().unwrap();
             let entry = registry
                 .get(from_name)
                 .ok_or_else(|| anyhow!("source sandbox '{}' not found", from_name))?
                 .clone();
+            if entry.profile_id != profile_id {
+                return Err(anyhow!(
+                    "source sandbox '{}' uses profile '{}', not '{}'",
+                    from_name,
+                    entry.profile_id,
+                    profile_id
+                ));
+            }
             Some(entry)
         } else {
             None
         };
-        if let Some(ref entry) = source_entry {
-            ensure_required_vm_profile_pin(
-                entry.profile_pin.as_ref(),
-                &format!("source VM \"{}\"", entry.name),
-            )?;
-        }
-        let source_base_assets = source_entry
-            .as_ref()
-            .map(source_vm_base_assets)
-            .transpose()?;
 
         // If cloning from a source sandbox, inherit its base_version.
         let version = if let Some(ref entry) = source_entry {
@@ -841,100 +749,6 @@ impl ServiceState {
         } else {
             version_override.unwrap_or_else(|| self.current_version.clone())
         };
-        let base_assets = if let Some(source_base_assets) = source_base_assets.clone() {
-            Some(source_base_assets)
-        } else if profile_id.is_some() || profile_revision.is_some() {
-            let settings = self.current_service_settings();
-            match profile_asset_requirement_for_selection(
-                &settings,
-                profile_id.as_deref(),
-                profile_revision.as_deref(),
-                host_asset_arch(),
-                false,
-            )? {
-                AssetRequirement::Profile(required) => Some(required.base_assets()),
-                AssetRequirement::DevLogical { .. } => None,
-            }
-        } else {
-            self.current_base_assets()?
-        };
-        let inherited_profile_revision = source_entry
-            .as_ref()
-            .and_then(|entry| entry.profile_pin.as_ref())
-            .and_then(|pin| pin.profile_revision.clone());
-        let inherited_profile_payload_hash = source_entry
-            .as_ref()
-            .and_then(|entry| entry.profile_pin.as_ref())
-            .and_then(|pin| pin.profile_payload_hash.clone());
-
-        let resolved = if let (Some(entry), Some(base_assets)) =
-            (source_entry.as_ref(), source_base_assets.as_ref())
-        {
-            saved_vm_assets::ensure_saved_base_assets_available(
-                &entry.name,
-                &self.assets_dir,
-                base_assets,
-            )?
-        } else if profile_id.is_some() || profile_revision.is_some() {
-            let settings = self.current_service_settings();
-            match profile_asset_requirement_for_selection(
-                &settings,
-                profile_id.as_deref(),
-                profile_revision.as_deref(),
-                host_asset_arch(),
-                false,
-            )? {
-                AssetRequirement::Profile(required) => {
-                    let resolved = required.resolved_assets(&self.assets_dir);
-                    let missing = [
-                        ("vmlinuz", &resolved.kernel),
-                        ("initrd.img", &resolved.initrd),
-                        ("rootfs.squashfs", &resolved.rootfs),
-                    ]
-                    .into_iter()
-                    .filter_map(|(name, path)| (!path.exists()).then_some(name))
-                    .collect::<Vec<_>>();
-                    if !missing.is_empty() {
-                        return Err(anyhow!(
-                            "selected profile VM assets are not ready (profile={}, revision={:?}, missing={missing:?})",
-                            profile_id.as_deref().unwrap_or("default"),
-                            profile_revision
-                        ));
-                    }
-                    resolved
-                }
-                AssetRequirement::DevLogical { .. } => {
-                    return Err(anyhow!(
-                        "selected profile VM assets must come from a signed profile catalog"
-                    ));
-                }
-            }
-        } else {
-            let health = self.asset_supervisor.snapshot();
-            if !health.ready {
-                return Err(anyhow!(
-                    "VM assets are not ready (state={}, missing={:?}, error={})",
-                    health.state.as_str(),
-                    health.missing,
-                    health.error.unwrap_or_else(|| "none".to_string())
-                ));
-            }
-            self.resolve_asset_paths()?
-        };
-        for (name, path) in [
-            ("vmlinuz", &resolved.kernel),
-            ("initrd.img", &resolved.initrd),
-            ("rootfs.squashfs", &resolved.rootfs),
-        ] {
-            if !path.exists() {
-                error!(asset = name, path = %path.display(), "asset NOT FOUND after ready check");
-                return Err(anyhow!(
-                    "{} not found at {}; service asset state is stale",
-                    name,
-                    path.display()
-                ));
-            }
-        }
 
         info!(id, version, persistent, from, "provision_sandbox called");
 
@@ -959,37 +773,21 @@ impl ServiceState {
             capsem_core::auto_snapshot::clone_sandbox_state(&entry.session_dir, &session_dir)
                 .context("failed to clone sandbox state")?;
         }
-        self.refresh_vm_effective_settings_for_profile(&session_dir, profile_id.as_deref())
-            .context("attach vm-effective settings to session")?;
-        let profile_pin = self
-            .vm_profile_pin(
-                &session_dir,
-                inherited_profile_revision,
-                inherited_profile_payload_hash,
-                base_assets.clone(),
-            )
-            .context("pin VM profile/package/assets")?;
-        if let Some(expected_profile_id) = profile_id.as_deref() {
-            if profile_pin.profile_id != expected_profile_id {
-                return Err(anyhow!(
-                    "selected profile '{}' resolved to pinned profile '{}'",
-                    expected_profile_id,
-                    profile_pin.profile_id
-                ));
-            }
-        }
-        if let Some(expected_revision) = profile_revision.as_deref() {
-            if profile_pin.profile_revision.as_deref() != Some(expected_revision) {
-                return Err(anyhow!(
-                    "selected profile revision '{}' resolved to pinned revision {:?}",
-                    expected_revision,
-                    profile_pin.profile_revision
-                ));
-            }
-        }
-        let telemetry_env = self
-            .telemetry_identity_env(id, &session_dir)
-            .context("derive process telemetry identity")?;
+
+        let runtime_profile = self.profile_for_runtime(&profile_id)?;
+        let runtime_profile_dir =
+            self.materialize_runtime_profile_dir(&runtime_profile, &session_dir)?;
+        let profile = runtime_profile.config();
+        let profile_revision = profile.revision.clone();
+        let profile_payload_hash = profile_payload_hash(profile)?;
+        let asset_pins = profile_asset_pins(profile)?;
+        self.validate_profile_pins(
+            profile,
+            &profile_revision,
+            &profile_payload_hash,
+            &asset_pins,
+        )?;
+        let resolved = self.resolve_profile_asset_paths(profile)?;
 
         info!(process_binary = %self.process_binary.display(), exists = self.process_binary.exists(), "checking process_binary");
 
@@ -997,9 +795,7 @@ impl ServiceState {
 
         let mut child_cmd = tokio::process::Command::new(&self.process_binary);
         if !self.process_binary.exists() {
-            info!(
-                "process_binary does not exist at absolute path, trying target/debug/capsem-process"
-            );
+            info!("process_binary does not exist at absolute path, trying target/debug/capsem-process");
             child_cmd = tokio::process::Command::new("target/debug/capsem-process");
         }
 
@@ -1023,58 +819,69 @@ impl ServiceState {
 
         // Clear inherited env to prevent API key/token leakage, then
         // re-add only the minimal set needed for the process to function.
-        // Profile V2 effective settings are attached to the session; no
-        // host config file is forwarded into the VM process.
+        // CAPSEM_HOME and CAPSEM_CORP_CONFIG are forwarded so the child loads
+        // the same settings/corp contract as the service.
         child_cmd.env_clear();
         for key in PROCESS_ENV_ALLOWLIST {
             if let Ok(val) = std::env::var(key) {
                 child_cmd.env(key, val);
             }
         }
-        // W4/S07a: propagate trace context plus VM/profile/user identity.
-        for (k, v) in telemetry_env {
+        // W4: propagate trace context to the child process.
+        // CAPSEM_VM_ID, CAPSEM_TRACE_ID, TRACEPARENT, TRACESTATE.
+        for (k, v) in capsem_core::telemetry::child_trace_env(id) {
             child_cmd.env(k, v);
         }
 
-        if let Some(expected) = self.asset_supervisor.expected_hashes() {
+        let process_spawn_span = tracing::debug_span!(
+            target: "capsem.launch",
+            capsem_core::telemetry::LAUNCH_PROCESS_SPAWN_SPAN,
+            boot_mode = "provision",
+            status = tracing::field::Empty,
+        );
+        let mut child = match process_spawn_span.in_scope(|| {
             child_cmd
-                .arg("--expected-kernel-hash")
-                .arg(expected.kernel)
-                .arg("--expected-initrd-hash")
-                .arg(expected.initrd)
-                .arg("--expected-rootfs-hash")
-                .arg(expected.rootfs);
-        }
-
-        let mut child = child_cmd
-            .env(
-                "RUST_LOG",
-                std::env::var("RUST_LOG")
-                    .map(|filter| capsem_core::telemetry::with_subsys_targets(&filter))
-                    .unwrap_or_else(|_| capsem_core::telemetry::with_subsys_targets("capsem=info")),
-            )
-            .arg("--id")
-            .arg(id)
-            .arg("--assets-dir")
-            .arg(&self.assets_dir)
-            .arg("--rootfs")
-            .arg(&resolved.rootfs)
-            .arg("--kernel")
-            .arg(&resolved.kernel)
-            .arg("--initrd")
-            .arg(&resolved.initrd)
-            .arg("--session-dir")
-            .arg(&session_dir)
-            .arg("--cpus")
-            .arg(cpus.to_string())
-            .arg("--ram-mb")
-            .arg(ram_mb.to_string())
-            .arg("--uds-path")
-            .arg(&uds_path)
-            .stdout(std::process::Stdio::from(process_log_file.try_clone()?))
-            .stderr(std::process::Stdio::from(process_log_file))
-            .spawn()
-            .context("failed to spawn capsem-process")?;
+                .env(
+                    "RUST_LOG",
+                    std::env::var("RUST_LOG").unwrap_or_else(|_| {
+                        capsem_core::telemetry::with_subsys_targets("capsem=info")
+                    }),
+                )
+                .arg("--id")
+                .arg(id)
+                .arg("--assets-dir")
+                .arg(&self.assets_dir)
+                .arg("--rootfs")
+                .arg(&resolved.rootfs)
+                .arg("--kernel")
+                .arg(&resolved.kernel)
+                .arg("--initrd")
+                .arg(&resolved.initrd)
+                .arg("--session-dir")
+                .arg(&session_dir)
+                .arg("--profile-dir")
+                .arg(&runtime_profile_dir)
+                .arg("--cpus")
+                .arg(cpus.to_string())
+                .arg("--ram-mb")
+                .arg(ram_mb.to_string())
+                .arg("--scratch-disk-size-gb")
+                .arg(scratch_disk_size_gb.to_string())
+                .arg("--uds-path")
+                .arg(&uds_path)
+                .stdout(std::process::Stdio::from(process_log_file.try_clone()?))
+                .stderr(std::process::Stdio::from(process_log_file))
+                .spawn()
+        }) {
+            Ok(child) => {
+                process_spawn_span.record("status", "ok");
+                child
+            }
+            Err(error) => {
+                process_spawn_span.record("status", "error");
+                return Err(anyhow::Error::new(error).context("failed to spawn capsem-process"));
+            }
+        };
 
         let pid = child.id().unwrap_or(0);
         info!(id, pid, version, asset_version = %resolved.asset_version, "capsem-process spawned");
@@ -1092,27 +899,36 @@ impl ServiceState {
             // is Some, the child exited without an explicit
             // capsem-service-side shutdown removing it first.
             //
+            // BUT: a guest-initiated shutdown via `capsem-sysutil
+            // shutdown` (vsock:5004 -> ProcessToService::Shutdown
+            // Requested) also leaves the instance in the map -- the
+            // service has no listener for ShutdownRequested, the
+            // process just sends Shutdown to itself and exits cleanly
+            // with code 0. Treating that as "unexpected" flips the
+            // persistent registry to `defunct` so `capsem list` shows
+            // the VM as Defunct instead of Stopped, and the next
+            // `capsem resume` is misleadingly blocked.
+            //
             // Distinguish: a clean exit (code 0) from the process is a
-            // graceful shutdown. Any non-zero exit code or signal-kill
-            // is a crash.
+            // graceful shutdown regardless of who initiated it. Any
+            // non-zero exit code or signal-kill is a crash.
             let removed = state_clone.instances.lock().unwrap().remove(&id_clone);
             let clean_exit = exit_status.as_ref().is_some_and(|s| s.success());
             let unexpected_exit = removed.is_some() && !clean_exit;
 
-            // Persistent-VM registry bookkeeping. Checkpoint takes
-            // precedence: a graceful suspend writes checkpoint.vzsave
-            // which we must honor regardless of whether the exit looked
-            // "unexpected". `defunct` only fires when the process died
-            // WITHOUT writing a checkpoint AND without an explicit
-            // shutdown handler removing the instance first.
+            // Persistent-VM registry bookkeeping. A checkpoint only takes
+            // precedence when the process wrote the completion marker after
+            // save_state + fsync. A bare checkpoint file can be a partial
+            // failed suspend and must never become registry truth.
             {
                 let mut registry = state_clone.persistent_registry.lock().unwrap();
                 if let Some(entry) = registry.data.vms.get_mut(&id_clone) {
-                    let checkpoint_path = session_dir_clone.join("checkpoint.vzsave");
-                    if checkpoint_path.exists() {
+                    let checkpoint_path = session_dir_clone.join(RESUME_CHECKPOINT_NAME);
+                    let checkpoint_complete_path = checkpoint_complete_path(&checkpoint_path);
+                    if checkpoint_path.exists() && checkpoint_complete_path.exists() {
                         info!(id_clone, "Checkpoint file found, marking VM as suspended");
                         entry.suspended = true;
-                        entry.checkpoint_path = Some("checkpoint.vzsave".to_string());
+                        entry.checkpoint_path = Some(RESUME_CHECKPOINT_NAME.to_string());
                         entry.defunct = false;
                         entry.last_error = None;
                     } else {
@@ -1148,27 +964,7 @@ impl ServiceState {
                         state_clone.preserve_failed_session_dir(&info.session_dir, &id_clone);
                     }
                 } else {
-                    tracing::info!(id_clone, "child exited cleanly");
-                    if !info.persistent {
-                        let session_dir = info.session_dir.clone();
-                        let cleanup_path = session_dir.clone();
-                        let cleanup = tokio::task::spawn_blocking(move || {
-                            std::fs::remove_dir_all(&cleanup_path)
-                        })
-                        .await;
-                        if let Err(e) = cleanup.unwrap_or_else(|join_err| {
-                            Err(std::io::Error::other(format!(
-                                "cleanup task failed: {join_err}"
-                            )))
-                        }) {
-                            tracing::warn!(
-                                id_clone,
-                                path = %session_dir.display(),
-                                error = %e,
-                                "failed to remove clean ephemeral session dir"
-                            );
-                        }
-                    }
+                    tracing::info!(id_clone, "child exited cleanly (guest-initiated shutdown)");
                 }
             } else {
                 tracing::debug!(
@@ -1184,6 +980,10 @@ impl ServiceState {
             let mut registry = self.persistent_registry.lock().unwrap();
             registry.register(PersistentVmEntry {
                 name: id.to_string(),
+                profile_id: profile_id.clone(),
+                profile_revision: profile_revision.clone(),
+                profile_payload_hash: profile_payload_hash.clone(),
+                asset_pins: asset_pins.clone(),
                 ram_mb,
                 cpus,
                 base_version: version.clone(),
@@ -1202,8 +1002,6 @@ impl ServiceState {
                 last_error: None,
                 checkpoint_path: None,
                 env: env.clone(),
-                base_assets: base_assets.clone(),
-                profile_pin: Some(profile_pin.clone()),
             })?;
         }
 
@@ -1212,6 +1010,10 @@ impl ServiceState {
             id.to_string(),
             InstanceInfo {
                 id: id.to_string(),
+                profile_id,
+                profile_revision,
+                profile_payload_hash,
+                asset_pins,
                 pid,
                 uds_path,
                 session_dir: session_dir.clone(),
@@ -1222,8 +1024,6 @@ impl ServiceState {
                 persistent,
                 env,
                 forked_from: from.clone(),
-                base_assets,
-                profile_pin: Some(profile_pin),
             },
         );
 
@@ -1259,26 +1059,10 @@ impl ServiceState {
         if !entry.session_dir.exists() {
             return Err(anyhow!("session directory for \"{}\" is missing", name));
         }
-        if entry.profile_pin.is_none() {
-            return Err(anyhow!(
-                "persistent VM \"{name}\" is missing required profile pin; recreate the VM from a signed profile"
-            ));
-        }
-        ensure_required_vm_profile_pin(
-            entry.profile_pin.as_ref(),
-            &format!("persistent VM \"{name}\""),
-        )?;
-        if entry.base_assets.is_none() {
-            return Err(anyhow!(
-                "persistent VM \"{name}\" is missing required pinned asset identity; recreate the VM from a signed profile"
-            ));
-        }
 
         let ram_mb = ram_mb_override.unwrap_or(entry.ram_mb);
         let cpus = cpus_override.unwrap_or(entry.cpus);
         let version = entry.base_version.clone();
-        let base_assets = entry.base_assets.clone();
-        let profile_pin = entry.profile_pin.clone();
 
         info!(name, version, "resume_sandbox: re-spawning process");
 
@@ -1291,32 +1075,17 @@ impl ServiceState {
         let _ = std::fs::remove_file(&uds_path);
         let _ = std::fs::remove_file(uds_path.with_extension("ready"));
 
-        let resolved = if let Some(ref base_assets) = entry.base_assets {
-            saved_vm_assets::ensure_saved_base_assets_available(
-                name,
-                &self.assets_dir,
-                base_assets,
-            )?
-        } else {
-            let health = self.asset_supervisor.snapshot();
-            if !health.ready {
-                return Err(anyhow!(
-                    "VM assets are not ready (state={}, missing={:?}, error={})",
-                    health.state.as_str(),
-                    health.missing,
-                    health.error.unwrap_or_else(|| "none".to_string())
-                ));
-            }
-            self.resolve_asset_paths()?
-        };
-        if !resolved.rootfs.exists() {
-            return Err(anyhow!("rootfs not found at {}", resolved.rootfs.display()));
-        }
-        self.ensure_vm_effective_settings(&entry.session_dir)
-            .context("attach vm-effective settings to resumed session")?;
-        let telemetry_env = self
-            .telemetry_identity_env(name, &entry.session_dir)
-            .context("derive resumed process telemetry identity")?;
+        let runtime_profile = self.profile_for_runtime(&entry.profile_id)?;
+        let runtime_profile_dir =
+            self.materialize_runtime_profile_dir(&runtime_profile, &entry.session_dir)?;
+        let profile = runtime_profile.config();
+        self.validate_profile_pins(
+            profile,
+            &entry.profile_revision,
+            &entry.profile_payload_hash,
+            &entry.asset_pins,
+        )?;
+        let resolved = self.resolve_profile_asset_paths(profile)?;
 
         let process_log_path = entry.session_dir.join("process.log");
         let process_log_file = std::fs::OpenOptions::new()
@@ -1343,73 +1112,83 @@ impl ServiceState {
             }
         }
 
-        // Pass checkpoint path for warm restore from suspended state
+        // Pass checkpoint path for warm restore from suspended state only
+        // when the completion marker proves save_state + fsync finished.
         if entry.suspended {
             if let Some(ref cp) = entry.checkpoint_path {
                 let full_checkpoint = entry.session_dir.join(cp);
-                if full_checkpoint.exists() {
+                let complete = checkpoint_complete_path(&full_checkpoint);
+                if full_checkpoint.exists() && complete.exists() {
                     child_cmd.arg("--checkpoint-path").arg(&full_checkpoint);
                     info!(name, checkpoint = %full_checkpoint.display(), "warm restore from checkpoint");
                 } else {
-                    tracing::warn!(name, checkpoint = %full_checkpoint.display(), "checkpoint file missing, cold booting");
+                    tracing::warn!(name, checkpoint = %full_checkpoint.display(), complete = %complete.display(), "checkpoint incomplete, cold booting");
                 }
             }
         }
 
         // Clear inherited env to prevent API key/token leakage, then
         // re-add only the minimal set needed for the process to function.
-        // Profile V2 effective settings are attached to the session; no
-        // host config file is forwarded into the VM process.
+        // CAPSEM_HOME and CAPSEM_CORP_CONFIG are forwarded so the child loads
+        // the same settings/corp contract as the service.
         child_cmd.env_clear();
         for key in PROCESS_ENV_ALLOWLIST {
             if let Ok(val) = std::env::var(key) {
                 child_cmd.env(key, val);
             }
         }
-        // W4/S07a: propagate trace context plus VM/profile/user identity.
-        for (k, v) in telemetry_env {
+        // W4: propagate trace context (resume path).
+        for (k, v) in capsem_core::telemetry::child_trace_env(name) {
             child_cmd.env(k, v);
         }
 
-        if let Some(expected) = self.asset_supervisor.expected_hashes() {
+        let process_spawn_span = tracing::debug_span!(
+            target: "capsem.launch",
+            capsem_core::telemetry::LAUNCH_PROCESS_SPAWN_SPAN,
+            boot_mode = "resume",
+            status = tracing::field::Empty,
+        );
+        let mut child = match process_spawn_span.in_scope(|| {
             child_cmd
-                .arg("--expected-kernel-hash")
-                .arg(expected.kernel)
-                .arg("--expected-initrd-hash")
-                .arg(expected.initrd)
-                .arg("--expected-rootfs-hash")
-                .arg(expected.rootfs);
-        }
-
-        let mut child = child_cmd
-            .env(
-                "RUST_LOG",
-                std::env::var("RUST_LOG")
-                    .map(|filter| capsem_core::telemetry::with_subsys_targets(&filter))
-                    .unwrap_or_else(|_| capsem_core::telemetry::with_subsys_targets("capsem=info")),
-            )
-            .arg("--id")
-            .arg(name)
-            .arg("--assets-dir")
-            .arg(&self.assets_dir)
-            .arg("--rootfs")
-            .arg(&resolved.rootfs)
-            .arg("--kernel")
-            .arg(&resolved.kernel)
-            .arg("--initrd")
-            .arg(&resolved.initrd)
-            .arg("--session-dir")
-            .arg(&entry.session_dir)
-            .arg("--cpus")
-            .arg(cpus.to_string())
-            .arg("--ram-mb")
-            .arg(ram_mb.to_string())
-            .arg("--uds-path")
-            .arg(&uds_path)
-            .stdout(std::process::Stdio::from(process_log_file.try_clone()?))
-            .stderr(std::process::Stdio::from(process_log_file))
-            .spawn()
-            .context("failed to spawn capsem-process")?;
+                .env(
+                    "RUST_LOG",
+                    std::env::var("RUST_LOG").unwrap_or_else(|_| {
+                        capsem_core::telemetry::with_subsys_targets("capsem=info")
+                    }),
+                )
+                .arg("--id")
+                .arg(name)
+                .arg("--assets-dir")
+                .arg(&self.assets_dir)
+                .arg("--rootfs")
+                .arg(&resolved.rootfs)
+                .arg("--kernel")
+                .arg(&resolved.kernel)
+                .arg("--initrd")
+                .arg(&resolved.initrd)
+                .arg("--session-dir")
+                .arg(&entry.session_dir)
+                .arg("--profile-dir")
+                .arg(&runtime_profile_dir)
+                .arg("--cpus")
+                .arg(cpus.to_string())
+                .arg("--ram-mb")
+                .arg(ram_mb.to_string())
+                .arg("--uds-path")
+                .arg(&uds_path)
+                .stdout(std::process::Stdio::from(process_log_file.try_clone()?))
+                .stderr(std::process::Stdio::from(process_log_file))
+                .spawn()
+        }) {
+            Ok(child) => {
+                process_spawn_span.record("status", "ok");
+                child
+            }
+            Err(error) => {
+                process_spawn_span.record("status", "error");
+                return Err(anyhow::Error::new(error).context("failed to spawn capsem-process"));
+            }
+        };
 
         let pid = child.id().unwrap_or(0);
         info!(name, pid, "capsem-process resumed");
@@ -1432,6 +1211,10 @@ impl ServiceState {
             name.to_string(),
             InstanceInfo {
                 id: name.to_string(),
+                profile_id: entry.profile_id.clone(),
+                profile_revision: entry.profile_revision.clone(),
+                profile_payload_hash: entry.profile_payload_hash.clone(),
+                asset_pins: entry.asset_pins.clone(),
                 pid,
                 uds_path,
                 session_dir: entry.session_dir.clone(),
@@ -1442,8 +1225,6 @@ impl ServiceState {
                 persistent: true,
                 env: None,
                 forked_from: entry.forked_from.clone(),
-                base_assets,
-                profile_pin,
             },
         );
 
@@ -1454,10 +1235,10 @@ impl ServiceState {
         let registry = self.persistent_registry.lock().unwrap();
         registry.get(name).is_some_and(|entry| {
             entry.suspended
-                && entry
-                    .checkpoint_path
-                    .as_ref()
-                    .is_some_and(|cp| entry.session_dir.join(cp).exists())
+                && entry.checkpoint_path.as_ref().is_some_and(|cp| {
+                    let checkpoint = entry.session_dir.join(cp);
+                    checkpoint.exists() && checkpoint_complete_path(&checkpoint).exists()
+                })
         })
     }
 
@@ -1473,6 +1254,7 @@ impl ServiceState {
         if !checkpoint_path.exists() {
             return None;
         }
+        let complete_path = checkpoint_complete_path(&checkpoint_path);
 
         let epoch_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1483,6 +1265,17 @@ impl ServiceState {
 
         match std::fs::rename(&checkpoint_path, &archived_path) {
             Ok(()) => {
+                if complete_path.exists() {
+                    let archived_complete_path = checkpoint_complete_path(&archived_path);
+                    if let Err(e) = std::fs::rename(&complete_path, &archived_complete_path) {
+                        warn!(
+                            name,
+                            complete = %complete_path.display(),
+                            archived = %archived_complete_path.display(),
+                            "failed to archive restore checkpoint completion marker: {e}"
+                        );
+                    }
+                }
                 warn!(
                     name,
                     checkpoint = %checkpoint_path.display(),
@@ -1506,6 +1299,10 @@ impl ServiceState {
     fn clear_resume_checkpoint(&self, id: &str) {
         let mut registry = self.persistent_registry.lock().unwrap();
         if let Some(entry) = registry.get_mut(id) {
+            if let Some(checkpoint_name) = entry.checkpoint_path.as_ref() {
+                let checkpoint_path = entry.session_dir.join(checkpoint_name);
+                let _ = std::fs::remove_file(checkpoint_complete_path(&checkpoint_path));
+            }
             entry.suspended = false;
             entry.checkpoint_path = None;
             entry.defunct = false;
@@ -1521,71 +1318,515 @@ impl ServiceState {
     /// In v2 mode (manifest present): resolves hash-based filenames from manifest.
     /// In dev mode (no manifest): finds assets by logical name in arch subdirs.
     fn resolve_asset_paths(&self) -> Result<capsem_core::asset_manager::ResolvedAssets> {
-        self.asset_supervisor.resolve_asset_paths()
-    }
-
-    fn current_base_assets(&self) -> Result<Option<SavedVmBaseAssets>> {
-        Ok(self.asset_supervisor.current_base_assets())
-    }
-
-    async fn ensure_current_profile_assets_ready(&self) -> Result<AssetHealth> {
-        self.asset_supervisor.ensure_assets_once().await;
-        let health = self.asset_supervisor.snapshot();
-        if !health.ready {
-            return Err(anyhow!(
-                "VM assets are not ready (state={}, missing={:?}, error={})",
-                health.state.as_str(),
-                health.missing,
-                health.error.unwrap_or_else(|| "none".to_string())
-            ));
-        }
-        Ok(health)
-    }
-
-    async fn ensure_selected_profile_assets_ready(
-        &self,
-        profile_id: Option<&str>,
-        profile_revision: Option<&str>,
-    ) -> Result<AssetHealth> {
-        if profile_id.is_none() && profile_revision.is_none() {
-            return self.ensure_current_profile_assets_ready().await;
-        }
-        let settings = self.current_service_settings();
-        let requirement = profile_asset_requirement_for_selection(
-            &settings,
-            profile_id,
-            profile_revision,
-            host_asset_arch(),
-            false,
-        )?;
-        let supervisor = AssetSupervisor::new(
-            self.assets_dir.clone(),
-            requirement,
-            std::time::Duration::from_secs(60),
-        );
-        supervisor.ensure_assets_once().await;
-        let health = supervisor.snapshot();
-        if !health.ready {
-            return Err(anyhow!(
-                "selected profile VM assets are not ready after reconcile (profile={:?}, revision={:?}, state={}, missing={:?}, error={})",
-                health.profile_id,
-                health.profile_revision,
-                health.state.as_str(),
-                health.missing,
-                health.error.unwrap_or_else(|| "none".to_string())
-            ));
-        }
-        Ok(health)
-    }
-
-    fn asset_health_snapshot(&self) -> AssetHealth {
-        let mut health = self.asset_supervisor.snapshot();
-        health.saved_vm_dependencies = {
-            let registry = self.persistent_registry.lock().unwrap();
-            saved_vm_assets::saved_vm_dependency_issues(&registry, &self.assets_dir)
+        let arch = if cfg!(target_arch = "aarch64") {
+            "arm64"
+        } else {
+            "x86_64"
         };
-        health
+
+        // Resolve from v2 manifest (works for both dev and installed --
+        // dev creates hash-named symlinks, installed has hash-named files)
+        if let Some(ref manifest) = self.manifest {
+            return manifest.resolve(&self.current_version, arch, &self.assets_dir);
+        }
+
+        // No manifest: use logical EROFS names so callers report missing
+        // assets rather than accepting an obsolete rootfs format.
+        let base = if self.assets_dir.join(arch).join("rootfs.erofs").exists() {
+            self.assets_dir.join(arch)
+        } else {
+            self.assets_dir.clone()
+        };
+        let rootfs = base.join("rootfs.erofs");
+        Ok(capsem_core::asset_manager::ResolvedAssets {
+            kernel: base.join("vmlinuz"),
+            initrd: base.join("initrd.img"),
+            rootfs,
+            asset_version: "dev".to_string(),
+        })
     }
+
+    fn profile_config(&self, profile_id: &str) -> Result<ProfileConfigFile> {
+        #[cfg(test)]
+        let catalog = if let Some(path) = test_profile_dir_override() {
+            ProfileCatalog::load_from_dir(&path)
+                .map_err(|e| anyhow!("load profile catalog: {e}"))?
+        } else {
+            ProfileCatalog::builtin()
+        };
+        #[cfg(not(test))]
+        let catalog =
+            ProfileCatalog::load_default().map_err(|e| anyhow!("load profile catalog: {e}"))?;
+        catalog
+            .get(profile_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("profile not found: {profile_id}"))
+    }
+
+    fn profile_for_runtime(&self, profile_id: &str) -> Result<Profile> {
+        #[cfg(test)]
+        let catalog = if let Some(path) = test_profile_dir_override() {
+            ProfileCatalog::load_from_dir(&path)
+                .map_err(|e| anyhow!("load profile catalog: {e}"))?
+        } else {
+            ProfileCatalog::builtin()
+        };
+        #[cfg(not(test))]
+        let catalog =
+            ProfileCatalog::load_default().map_err(|e| anyhow!("load profile catalog: {e}"))?;
+        let profile = catalog
+            .get(profile_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("profile not found: {profile_id}"))?;
+        match catalog.source() {
+            ProfileCatalogSource::BuiltIn => {
+                let config_root = builtin_profile_config_root();
+                let profile_dir = config_root.join("profiles").join(&profile.id);
+                Profile::from_config(config_root, profile_dir, profile)
+                    .map_err(|e| anyhow!("load builtin profile {profile_id}: {e}"))
+            }
+            ProfileCatalogSource::Directory(profiles_dir) => {
+                Profile::load_from_dir(profiles_dir.join(profile_id))
+                    .map_err(|e| anyhow!("load profile {profile_id}: {e}"))
+            }
+        }
+    }
+
+    fn materialize_runtime_profile_dir(
+        &self,
+        profile: &Profile,
+        session_dir: &StdPath,
+    ) -> Result<PathBuf> {
+        let config = profile.config();
+        let runtime_config_root = session_dir.join(RUNTIME_PROFILE_CONFIG_DIR);
+        let runtime_profile_dir = runtime_config_root.join("profiles").join(&config.id);
+        if runtime_config_root.exists() {
+            std::fs::remove_dir_all(&runtime_config_root).with_context(|| {
+                format!(
+                    "remove stale runtime profile config {}",
+                    runtime_config_root.display()
+                )
+            })?;
+        }
+        copy_dir_recursive(profile.profile_dir(), &runtime_profile_dir).with_context(|| {
+            format!(
+                "copy profile runtime {} to {}",
+                profile.profile_dir().display(),
+                runtime_profile_dir.display()
+            )
+        })?;
+
+        let (_, corp) = capsem_core::net::policy_config::load_settings_and_corp_files();
+        let mut plugins = self
+            .plugin_policy_by_profile
+            .lock()
+            .unwrap()
+            .get(&config.id)
+            .cloned()
+            .unwrap_or_default();
+        for (plugin_id, plugin) in &corp.plugins {
+            plugins.insert(plugin_id.clone(), *plugin);
+        }
+        let runtime_overlay = SettingsFile {
+            rule_files: corp.rule_files.clone(),
+            default: corp.default.clone(),
+            profiles: corp.profiles.clone(),
+            corp: corp.corp.clone(),
+            corp_rule_files: corp.corp_rule_files.clone(),
+            ai: corp.ai.clone(),
+            plugins,
+            mcp: corp.mcp.clone(),
+            ..SettingsFile::default()
+        };
+        if !runtime_overlay_is_empty(&runtime_overlay) {
+            std::fs::write(
+                runtime_profile_dir.join(RUNTIME_OVERLAY_FILE),
+                toml::to_string_pretty(&runtime_overlay)
+                    .context("serialize runtime profile overlay")?,
+            )
+            .with_context(|| {
+                format!(
+                    "write runtime profile overlay {}",
+                    runtime_profile_dir.join(RUNTIME_OVERLAY_FILE).display()
+                )
+            })?;
+        }
+        Ok(runtime_profile_dir)
+    }
+
+    fn refresh_runtime_profile_dirs(&self, profile_filter: Option<&str>) -> Result<usize> {
+        let targets = {
+            let instances = self.instances.lock().unwrap();
+            instances
+                .iter()
+                .filter(|(_, info)| {
+                    profile_filter
+                        .map(|profile_id| info.profile_id == profile_id)
+                        .unwrap_or(true)
+                })
+                .map(|(id, info)| {
+                    (
+                        id.clone(),
+                        info.profile_id.clone(),
+                        info.session_dir.clone(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+
+        for (id, profile_id, session_dir) in &targets {
+            let runtime_profile = self
+                .profile_for_runtime(profile_id)
+                .with_context(|| format!("load runtime profile {profile_id} for {id}"))?;
+            self.materialize_runtime_profile_dir(&runtime_profile, session_dir)
+                .with_context(|| {
+                    format!(
+                        "refresh runtime profile config for {id} ({profile_id}) in {}",
+                        session_dir.display()
+                    )
+                })?;
+        }
+
+        Ok(targets.len())
+    }
+
+    fn resolve_profile_asset_paths(
+        &self,
+        profile: &ProfileConfigFile,
+    ) -> Result<capsem_core::asset_manager::ResolvedAssets> {
+        let arch = capsem_core::net::policy_config::current_profile_arch();
+        let arch_assets = profile.assets.current_arch_assets().ok_or_else(|| {
+            anyhow!(
+                "profile {} has no assets for architecture {arch}",
+                profile.id
+            )
+        })?;
+
+        Ok(capsem_core::asset_manager::ResolvedAssets {
+            kernel: profile_asset_descriptor_path(&self.assets_dir, arch, &arch_assets.kernel)?,
+            initrd: profile_asset_descriptor_path(&self.assets_dir, arch, &arch_assets.initrd)?,
+            rootfs: profile_asset_descriptor_path(&self.assets_dir, arch, &arch_assets.rootfs)?,
+            asset_version: format!("profile:{}@{}", profile.id, profile.revision),
+        })
+    }
+
+    fn validate_profile_pins(
+        &self,
+        profile: &ProfileConfigFile,
+        profile_revision: &str,
+        pinned_profile_payload_hash: &str,
+        pins: &BootAssetPins,
+    ) -> Result<()> {
+        self.validate_profile_identity_and_pins(
+            profile,
+            profile_revision,
+            pinned_profile_payload_hash,
+            pins,
+        )?;
+        self.validate_profile_asset_files(profile, pins)
+    }
+
+    fn validate_profile_identity_and_pins(
+        &self,
+        profile: &ProfileConfigFile,
+        profile_revision: &str,
+        pinned_profile_payload_hash: &str,
+        pins: &BootAssetPins,
+    ) -> Result<()> {
+        if profile.revision != profile_revision {
+            return Err(anyhow!(
+                "profile '{}' revision mismatch: VM pinned '{}', current '{}'",
+                profile.id,
+                profile_revision,
+                profile.revision
+            ));
+        }
+        let current_payload_hash = profile_payload_hash(profile)?;
+        if current_payload_hash != pinned_profile_payload_hash {
+            return Err(anyhow!(
+                "profile '{}' payload hash mismatch: VM pinned '{}', current '{}'",
+                profile.id,
+                pinned_profile_payload_hash,
+                current_payload_hash
+            ));
+        }
+        let current = profile_asset_pins(profile)?;
+        if &current != pins {
+            return Err(anyhow!(
+                "profile '{}' asset pins changed: VM pinned {:?}, current {:?}",
+                profile.id,
+                pins,
+                current
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_profile_asset_files(
+        &self,
+        profile: &ProfileConfigFile,
+        pins: &BootAssetPins,
+    ) -> Result<()> {
+        let resolved = self.resolve_profile_asset_paths(profile)?;
+        validate_asset_file_pin("kernel", &resolved.kernel, &pins.kernel)?;
+        validate_asset_file_pin("initrd", &resolved.initrd, &pins.initrd)?;
+        validate_asset_file_pin("rootfs", &resolved.rootfs, &pins.rootfs)?;
+        Ok(())
+    }
+
+    fn persistent_entry_resume_state(
+        &self,
+        entry: &PersistentVmEntry,
+    ) -> (VmLifecycleState, bool, Option<String>) {
+        if entry.defunct {
+            return (VmLifecycleState::Defunct, false, entry.last_error.clone());
+        }
+
+        let profile = match self.profile_config(&entry.profile_id) {
+            Ok(profile) => profile,
+            Err(err) => {
+                return (
+                    VmLifecycleState::Incompatible,
+                    false,
+                    Some(format!(
+                        "profile '{}' unavailable for VM '{}': {err}",
+                        entry.profile_id, entry.name
+                    )),
+                );
+            }
+        };
+
+        if let Err(err) = self.validate_profile_identity_and_pins(
+            &profile,
+            &entry.profile_revision,
+            &entry.profile_payload_hash,
+            &entry.asset_pins,
+        ) {
+            return (VmLifecycleState::Incompatible, false, Some(err.to_string()));
+        }
+        if let Err(err) = validate_session_rootfs_size(&profile, entry) {
+            return (VmLifecycleState::Incompatible, false, Some(err.to_string()));
+        }
+
+        let status = if entry.suspended {
+            VmLifecycleState::Suspended
+        } else {
+            VmLifecycleState::Stopped
+        };
+
+        match self.validate_profile_asset_files(&profile, &entry.asset_pins) {
+            Ok(()) => (status, true, None),
+            Err(err) => (status, false, Some(err.to_string())),
+        }
+    }
+}
+
+fn runtime_overlay_is_empty(overlay: &SettingsFile) -> bool {
+    overlay.rule_files.is_empty()
+        && overlay.default.is_empty()
+        && overlay.profiles.is_empty()
+        && overlay.corp.is_empty()
+        && overlay.corp_rule_files.is_empty()
+        && overlay.ai.is_empty()
+        && overlay.plugins.is_empty()
+        && overlay.mcp.is_none()
+}
+
+fn gib(bytes: u64) -> u64 {
+    bytes / 1024 / 1024 / 1024
+}
+
+fn copy_dir_recursive(src: &StdPath, dst: &StdPath) -> Result<()> {
+    std::fs::create_dir_all(dst).with_context(|| format!("create directory {}", dst.display()))?;
+    for entry in
+        std::fs::read_dir(src).with_context(|| format!("read directory {}", src.display()))?
+    {
+        let entry = entry.with_context(|| format!("read entry in {}", src.display()))?;
+        let source_path = entry.path();
+        let target_path = dst.join(entry.file_name());
+        let file_type = entry
+            .file_type()
+            .with_context(|| format!("stat {}", source_path.display()))?;
+        if file_type.is_dir() {
+            copy_dir_recursive(&source_path, &target_path)?;
+        } else if file_type.is_file() {
+            if let Some(parent) = target_path.parent() {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("create directory {}", parent.display()))?;
+            }
+            std::fs::copy(&source_path, &target_path).with_context(|| {
+                format!(
+                    "copy runtime profile file {} to {}",
+                    source_path.display(),
+                    target_path.display()
+                )
+            })?;
+        } else {
+            return Err(anyhow!(
+                "runtime profile source {} must contain only directories and regular files",
+                source_path.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_session_rootfs_size(
+    profile: &ProfileConfigFile,
+    entry: &PersistentVmEntry,
+) -> Result<()> {
+    let expected_bytes = profile.vm.scratch_disk_size_gb as u64 * 1024 * 1024 * 1024;
+    let rootfs = capsem_core::guest_share_dir(&entry.session_dir).join("system/rootfs.img");
+    let metadata = std::fs::metadata(&rootfs).with_context(|| {
+        format!(
+            "VM '{}' rootfs.img unavailable at {}",
+            entry.name,
+            rootfs.display()
+        )
+    })?;
+    if metadata.len() != expected_bytes {
+        return Err(anyhow!(
+            "VM '{}' rootfs.img logical size mismatch: current {} GiB, profile '{}' requires {} GiB",
+            entry.name,
+            gib(metadata.len()),
+            profile.id,
+            profile.vm.scratch_disk_size_gb
+        ));
+    }
+    Ok(())
+}
+
+fn profile_asset_pins(profile: &ProfileConfigFile) -> Result<BootAssetPins> {
+    let arch = capsem_core::net::policy_config::current_profile_arch();
+    let arch_assets = profile.assets.current_arch_assets().ok_or_else(|| {
+        anyhow!(
+            "profile {} has no assets for architecture {arch}",
+            profile.id
+        )
+    })?;
+    Ok(BootAssetPins {
+        kernel: descriptor_pin(&arch_assets.kernel)?,
+        initrd: descriptor_pin(&arch_assets.initrd)?,
+        rootfs: descriptor_pin(&arch_assets.rootfs)?,
+    })
+}
+
+fn profile_payload_hash(profile: &ProfileConfigFile) -> Result<String> {
+    let bytes = serde_json::to_vec(profile).context("serialize profile payload for hash")?;
+    Ok(format!("blake3:{}", blake3::hash(&bytes).to_hex()))
+}
+
+fn descriptor_pin(asset: &ProfileAssetDescriptor) -> Result<BootAssetPin> {
+    Ok(BootAssetPin {
+        name: asset.name.clone(),
+        hash: required_profile_asset_hash(asset)?.to_string(),
+    })
+}
+
+fn validate_asset_file_pin(kind: &str, path: &StdPath, pin: &BootAssetPin) -> Result<()> {
+    if !path.exists() {
+        return Err(anyhow!(
+            "{kind} asset '{}' is missing at {}",
+            pin.name,
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+fn profile_asset_descriptor_path(
+    assets_dir: &StdPath,
+    arch: &str,
+    asset: &ProfileAssetDescriptor,
+) -> Result<PathBuf> {
+    let hash_name = profile_asset_hash_name(asset)?;
+    let bases = [assets_dir.join(arch), assets_dir.to_path_buf()];
+
+    for base in &bases {
+        let path = base.join(&hash_name);
+        if path.exists() {
+            return Ok(path);
+        }
+    }
+    for base in &bases {
+        let path = base.join(&asset.name);
+        if path.exists() {
+            return Ok(path);
+        }
+    }
+
+    Ok(bases[0].join(&asset.name))
+}
+
+fn required_profile_asset_hash(asset: &ProfileAssetDescriptor) -> Result<&str> {
+    asset.hash.as_deref().ok_or_else(|| {
+        anyhow!(
+            "profile asset '{}' is missing a materialized hash",
+            asset.name
+        )
+    })
+}
+
+fn required_profile_asset_size(asset: &ProfileAssetDescriptor) -> Result<u64> {
+    asset.size.ok_or_else(|| {
+        anyhow!(
+            "profile asset '{}' is missing a materialized size",
+            asset.name
+        )
+    })
+}
+
+fn profile_asset_hash_hex(asset: &ProfileAssetDescriptor) -> Result<&str> {
+    let hash = required_profile_asset_hash(asset)?;
+    Ok(hash.strip_prefix("blake3:").unwrap_or(hash))
+}
+
+fn profile_asset_hash_name(asset: &ProfileAssetDescriptor) -> Result<String> {
+    Ok(capsem_core::asset_manager::hash_filename(
+        &asset.name,
+        profile_asset_hash_hex(asset)?,
+    ))
+}
+
+fn boot_asset_pin_hash_name(pin: &BootAssetPin) -> String {
+    let hash = pin.hash.strip_prefix("blake3:").unwrap_or(&pin.hash);
+    capsem_core::asset_manager::hash_filename(&pin.name, hash)
+}
+
+fn profile_catalog_asset_filenames(catalog: &ProfileCatalog) -> HashSet<String> {
+    let mut filenames = HashSet::new();
+    for profile in catalog.profiles() {
+        for assets in profile.assets.arch.values() {
+            if let Ok(name) = profile_asset_hash_name(&assets.kernel) {
+                filenames.insert(name);
+            }
+            if let Ok(name) = profile_asset_hash_name(&assets.initrd) {
+                filenames.insert(name);
+            }
+            if let Ok(name) = profile_asset_hash_name(&assets.rootfs) {
+                filenames.insert(name);
+            }
+        }
+    }
+    filenames
+}
+
+fn persistent_registry_asset_filenames(registry: &PersistentRegistry) -> HashSet<String> {
+    let mut filenames = HashSet::new();
+    for entry in registry.list() {
+        filenames.insert(boot_asset_pin_hash_name(&entry.asset_pins.kernel));
+        filenames.insert(boot_asset_pin_hash_name(&entry.asset_pins.initrd));
+        filenames.insert(boot_asset_pin_hash_name(&entry.asset_pins.rootfs));
+    }
+    filenames
+}
+
+fn profile_asset_download_target(
+    assets_dir: &StdPath,
+    arch: &str,
+    asset: &ProfileAssetDescriptor,
+) -> Result<PathBuf> {
+    Ok(assets_dir.join(arch).join(profile_asset_hash_name(asset)?))
 }
 
 /// Identify the launchd-cleanup-saturation transient that masquerades
@@ -1674,29 +1915,29 @@ use capsem_service::fs_utils::{identify_file_sync, sanitize_file_path};
 /// Resolve a sanitized relative path to an absolute workspace path on the host.
 /// Returns (workspace_root, resolved_path). Verifies the resolved path is
 /// inside the workspace via canonicalize + starts_with.
-fn resolve_session_dir_for_workspace(state: &ServiceState, id: &str) -> Result<PathBuf, AppError> {
-    let instances = state.instances.lock().unwrap();
-    if let Some(info) = instances.get(id) {
-        return Ok(info.session_dir.clone());
-    }
-    drop(instances);
-
-    // Check persistent registry for stopped VMs.
-    let reg = state.persistent_registry.lock().unwrap();
-    reg.data
-        .vms
-        .get(id)
-        .or_else(|| reg.data.vms.values().find(|e| e.name == id))
-        .map(|e| e.session_dir.clone())
-        .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))
-}
-
 fn resolve_workspace_path(
     state: &ServiceState,
     id: &str,
     sanitized: &str,
 ) -> Result<(PathBuf, PathBuf), AppError> {
-    let session_dir = resolve_session_dir_for_workspace(state, id)?;
+    let session_dir = {
+        let instances = state.instances.lock().unwrap();
+        if let Some(info) = instances.get(id) {
+            info.session_dir.clone()
+        } else {
+            drop(instances);
+            // Check persistent registry for stopped VMs
+            let reg = state.persistent_registry.lock().unwrap();
+            reg.data
+                .vms
+                .get(id)
+                .or_else(|| reg.data.vms.values().find(|e| e.name == id))
+                .map(|e| e.session_dir.clone())
+                .ok_or_else(|| {
+                    AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}"))
+                })?
+        }
+    };
     let workspace_root = capsem_core::guest_share_dir(&session_dir).join("workspace");
     let target = workspace_root.join(sanitized);
 
@@ -1751,60 +1992,6 @@ fn resolve_workspace_path(
         ));
     }
     Ok((workspace_root, canonical))
-}
-
-async fn record_api_file_event(
-    state: &ServiceState,
-    id: &str,
-    sanitized: &str,
-    size: u64,
-    existed_before: bool,
-) {
-    let session_dir = match resolve_session_dir_for_workspace(state, id) {
-        Ok(path) => path,
-        Err(error) => {
-            tracing::warn!(id, error = %error.1, "failed to resolve session dir for file event");
-            return;
-        }
-    };
-    let db_path = session_dir.join("session.db");
-    let path = sanitized.trim_start_matches('/').to_string();
-    let trace_id = capsem_core::telemetry::ambient_capsem_trace_id();
-    let action = if existed_before {
-        capsem_logger::FileAction::Modified
-    } else {
-        capsem_logger::FileAction::Created
-    };
-
-    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-        let writer = capsem_logger::DbWriter::open(&db_path, 16)?;
-        let event = capsem_logger::FileEvent {
-            timestamp: std::time::SystemTime::now(),
-            action,
-            path,
-            size: Some(size),
-            trace_id,
-        };
-        if !writer.try_write(capsem_logger::WriteOp::FileEvent(event)) {
-            tracing::warn!(
-                path = %db_path.display(),
-                "file event writer queue was closed before API upload event was recorded"
-            );
-        }
-        writer.shutdown_blocking();
-        Ok(())
-    })
-    .await;
-
-    match result {
-        Ok(Ok(())) => {}
-        Ok(Err(error)) => {
-            tracing::warn!(id, path = %sanitized, error = %error, "failed to record API file event");
-        }
-        Err(error) => {
-            tracing::warn!(id, path = %sanitized, error = %error, "file event task failed");
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1983,6 +2170,71 @@ async fn handle_list_files(
 }
 
 const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024; // 10MB
+const FILE_SECURITY_CONTENT_PREVIEW_MAX: usize = 64 * 1024;
+
+fn file_security_preview_bytes(data: &[u8]) -> Vec<u8> {
+    data[..data.len().min(FILE_SECURITY_CONTENT_PREVIEW_MAX)].to_vec()
+}
+
+fn active_instance_uds_path(state: &Arc<ServiceState>, id: &str) -> Result<PathBuf, AppError> {
+    let instances = state.instances.lock().unwrap();
+    instances
+        .get(id)
+        .map(|i| i.uds_path.clone())
+        .ok_or_else(|| {
+            AppError(
+                StatusCode::CONFLICT,
+                "file import/export requires a running sandbox security ledger".into(),
+            )
+        })
+}
+
+async fn log_file_boundary(
+    state: &Arc<ServiceState>,
+    sandbox_id: &str,
+    action: FileBoundaryAction,
+    path: String,
+    data_preview: Vec<u8>,
+    size: u64,
+    mime_type: Option<String>,
+) -> Result<Option<Vec<u8>>, AppError> {
+    let uds_path = active_instance_uds_path(state, sandbox_id)?;
+    wait_for_vm_ready(&uds_path, 30, Some(state), Some(sandbox_id))
+        .await
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    let id = state.next_job_id();
+    let res = send_ipc_command(
+        &uds_path,
+        ServiceToProcess::LogFileBoundary {
+            id,
+            action,
+            path,
+            data: data_preview,
+            size,
+            mime_type,
+        },
+        Some(5),
+    )
+    .await
+    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    match res {
+        ProcessToService::LogFileBoundaryResult {
+            success: true,
+            data,
+            ..
+        } => Ok(data),
+        ProcessToService::LogFileBoundaryResult { error, .. } => Err(AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error.unwrap_or_else(|| "failed to log file boundary".into()),
+        )),
+        _ => Err(AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "unexpected IPC response for file boundary log".into(),
+        )),
+    }
+}
 
 async fn handle_download_file(
     State(state): State<Arc<ServiceState>>,
@@ -2030,6 +2282,18 @@ async fn handle_download_file(
     .await
     .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("task: {e}")))??;
 
+    let rewritten = log_file_boundary(
+        &state,
+        &id,
+        FileBoundaryAction::Export,
+        sanitized,
+        file_security_preview_bytes(&data),
+        data.len() as u64,
+        Some(mime.clone()),
+    )
+    .await?;
+    let data = rewritten.unwrap_or(data);
+
     use axum::response::IntoResponse;
     Ok((
         StatusCode::OK,
@@ -2055,12 +2319,29 @@ async fn handle_upload_file(
     let sanitized = sanitize_file_path(&params.path)?;
     let (_ws_root, target) = resolve_workspace_path(&state, &id, &sanitized)?;
 
-    let size = body.len() as u64;
-    let existed_before = target.exists();
+    let mut data = body.to_vec();
+    let size = data.len() as u64;
+    let preview = file_security_preview_bytes(&data);
+    let target_for_write = target.clone();
+
+    if let Some(rewritten) = log_file_boundary(
+        &state,
+        &id,
+        FileBoundaryAction::Import,
+        sanitized,
+        preview,
+        size,
+        None,
+    )
+    .await?
+    {
+        data = rewritten;
+    }
+    let written_size = data.len() as u64;
 
     // Write file in spawn_blocking (blocking I/O)
     tokio::task::spawn_blocking(move || {
-        if let Some(parent) = target.parent() {
+        if let Some(parent) = target_for_write.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("mkdir: {e}")))?;
         }
@@ -2070,11 +2351,11 @@ async fn handle_upload_file(
             .create(true)
             .truncate(true)
             .mode(0o644)
-            .open(&target)
+            .open(&target_for_write)
             .and_then(|f| {
                 use std::io::Write;
                 let mut f = f;
-                f.write_all(&body)?;
+                f.write_all(&data)?;
                 Ok(())
             })
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("write: {e}")))?;
@@ -2083,11 +2364,9 @@ async fn handle_upload_file(
     .await
     .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("task: {e}")))??;
 
-    record_api_file_event(&state, &id, &sanitized, size, existed_before).await;
-
     Ok(Json(UploadResponse {
         success: true,
-        size,
+        size: written_size,
     }))
 }
 
@@ -2115,16 +2394,28 @@ async fn handle_fork(
     }
 
     // Find source: running instance or stopped persistent VM
-    let (session_dir, ram_mb, cpus, base_version, base_assets, source_profile_pin, uds_path) = {
+    let (
+        session_dir,
+        profile_id,
+        profile_revision,
+        profile_payload_hash,
+        asset_pins,
+        ram_mb,
+        cpus,
+        base_version,
+        uds_path,
+    ) = {
         let instances = state.instances.lock().unwrap();
         if let Some(i) = instances.get(&id) {
             (
                 i.session_dir.clone(),
+                i.profile_id.clone(),
+                i.profile_revision.clone(),
+                i.profile_payload_hash.clone(),
+                i.asset_pins.clone(),
                 i.ram_mb,
                 i.cpus,
                 i.base_version.clone(),
-                i.base_assets.clone(),
-                i.profile_pin.clone(),
                 Some(i.uds_path.clone()),
             )
         } else {
@@ -2133,11 +2424,13 @@ async fn handle_fork(
             if let Some(p) = registry.get(&id) {
                 (
                     p.session_dir.clone(),
+                    p.profile_id.clone(),
+                    p.profile_revision.clone(),
+                    p.profile_payload_hash.clone(),
+                    p.asset_pins.clone(),
                     p.ram_mb,
                     p.cpus,
                     p.base_version.clone(),
-                    p.base_assets.clone(),
-                    p.profile_pin.clone(),
                     None,
                 )
             } else {
@@ -2148,12 +2441,17 @@ async fn handle_fork(
             }
         }
     };
-    ensure_required_vm_profile_pin(source_profile_pin.as_ref(), &format!("source VM \"{id}\""))
-        .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
-    let base_assets =
-        source_pin_base_assets(&id, source_profile_pin.as_ref(), base_assets.as_ref())
-            .map(Some)
-            .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
+    let profile = state
+        .profile_config(&profile_id)
+        .map_err(|e| AppError(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
+    state
+        .validate_profile_pins(
+            &profile,
+            &profile_revision,
+            &profile_payload_hash,
+            &asset_pins,
+        )
+        .map_err(|e| AppError(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
 
     // Freeze + thaw the guest root filesystem so the ext4 system overlay
     // (/dev/vdb backed by rootfs.img) is fully flushed before fork clone.
@@ -2163,7 +2461,8 @@ async fn handle_fork(
             uds,
             ServiceToProcess::Exec {
                 id: freeze_id,
-                command: pre_fork_guest_flush_command().to_string(),
+                command: "fsfreeze -f / 2>/dev/null; sync; fsfreeze -u / 2>/dev/null; true"
+                    .to_string(),
             },
             Some(10),
         )
@@ -2201,46 +2500,16 @@ async fn handle_fork(
         )
     })?;
 
-    state
-        .ensure_vm_effective_settings(&new_session_dir)
-        .map_err(|e| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("fork: failed to attach vm-effective settings: {e:#}"),
-            )
-        })?;
-    let profile_pin = state
-        .vm_profile_pin(
-            &new_session_dir,
-            source_profile_pin
-                .as_ref()
-                .and_then(|pin| pin.profile_revision.clone()),
-            source_profile_pin
-                .as_ref()
-                .and_then(|pin| pin.profile_payload_hash.clone()),
-            base_assets.clone(),
-        )
-        .map_err(|e| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("fork: failed to pin profile: {e:#}"),
-            )
-        })?;
-    ensure_fork_profile_pin_matches_source(
-        &profile_pin,
-        source_profile_pin
-            .as_ref()
-            .expect("source pin was validated above"),
-        &id,
-    )
-    .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
-
     // Register as persistent VM
     {
         let mut registry = state.persistent_registry.lock().unwrap();
         registry
             .register(PersistentVmEntry {
                 name: name.clone(),
+                profile_id,
+                profile_revision,
+                profile_payload_hash,
+                asset_pins,
                 ram_mb,
                 cpus,
                 base_version,
@@ -2259,8 +2528,6 @@ async fn handle_fork(
                 last_error: None,
                 checkpoint_path: None,
                 env: None,
-                base_assets,
-                profile_pin: Some(profile_pin),
             })
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
@@ -2271,131 +2538,16 @@ async fn handle_fork(
     }))
 }
 
-fn pre_fork_guest_flush_command() -> &'static str {
-    "fsfreeze -f / 2>/dev/null; sync; fsfreeze -u / 2>/dev/null; true"
-}
-
-fn ensure_required_vm_profile_pin(pin: Option<&SavedVmProfilePin>, subject: &str) -> Result<()> {
-    let Some(pin) = pin else {
-        return Err(anyhow!(
-            "{subject} is missing required profile pin; required profile revision pin must come from a signed profile"
-        ));
-    };
-    if pin
-        .profile_revision
-        .as_deref()
-        .is_none_or(|revision| revision.trim().is_empty())
-    {
-        return Err(anyhow!(
-            "{subject} is missing required profile revision pin; recreate the VM from a signed profile"
-        ));
-    }
-    if pin
-        .profile_payload_hash
-        .as_deref()
-        .is_none_or(|hash| hash.trim().is_empty())
-    {
-        return Err(anyhow!(
-            "{subject} is missing required profile payload hash; recreate the VM from a signed profile"
-        ));
-    }
-    if pin.base_assets.is_none() {
-        return Err(anyhow!(
-            "{subject} is missing required pinned asset identity; recreate the VM from a signed profile"
-        ));
-    }
-    Ok(())
-}
-
-fn source_pin_base_assets(
-    source_id: &str,
-    pin: Option<&SavedVmProfilePin>,
-    stored_assets: Option<&SavedVmBaseAssets>,
-) -> Result<SavedVmBaseAssets> {
-    let pin = pin.ok_or_else(|| {
-        anyhow!(
-            "source VM \"{source_id}\" is missing required profile pin; required profile revision pin must come from a signed profile"
-        )
-    })?;
-    let pinned_assets = pin.base_assets.as_ref().ok_or_else(|| {
-        anyhow!(
-            "source VM \"{source_id}\" is missing required pinned asset identity; recreate the VM from a signed profile"
-        )
-    })?;
-    if let Some(stored_assets) = stored_assets {
-        if stored_assets != pinned_assets {
-            return Err(anyhow!(
-                "source VM \"{source_id}\" has conflicting pinned asset identity; profile pin and VM registry base assets must match"
-            ));
-        }
-    }
-    Ok(pinned_assets.clone())
-}
-
-fn source_vm_base_assets(entry: &PersistentVmEntry) -> Result<SavedVmBaseAssets> {
-    source_pin_base_assets(
-        &entry.name,
-        entry.profile_pin.as_ref(),
-        entry.base_assets.as_ref(),
-    )
-}
-
-fn ensure_fork_profile_pin_matches_source(
-    fork_pin: &SavedVmProfilePin,
-    source_pin: &SavedVmProfilePin,
-    source_id: &str,
-) -> Result<()> {
-    if fork_pin.profile_id != source_pin.profile_id {
-        return Err(anyhow!(
-            "profile drift detected while forking source VM \"{source_id}\": cloned profile id '{}' does not match pinned profile id '{}'",
-            fork_pin.profile_id,
-            source_pin.profile_id
-        ));
-    }
-    if fork_pin.profile_revision != source_pin.profile_revision {
-        return Err(anyhow!(
-            "profile drift detected while forking source VM \"{source_id}\": cloned profile revision {:?} does not match pinned profile revision {:?}",
-            fork_pin.profile_revision,
-            source_pin.profile_revision
-        ));
-    }
-    if fork_pin.profile_payload_hash != source_pin.profile_payload_hash {
-        return Err(anyhow!(
-            "profile drift detected while forking source VM \"{source_id}\": cloned profile payload hash does not match pinned profile payload hash"
-        ));
-    }
-    if fork_pin.package_contract_hash != source_pin.package_contract_hash {
-        return Err(anyhow!(
-            "profile drift detected while forking source VM \"{source_id}\": cloned package contract does not match pinned package contract"
-        ));
-    }
-    if fork_pin.base_assets != source_pin.base_assets {
-        return Err(anyhow!(
-            "profile drift detected while forking source VM \"{source_id}\": cloned asset identity does not match pinned asset identity"
-        ));
-    }
-    Ok(())
-}
-
 /// Outcome of a single provision attempt inside `handle_provision`.
 /// `LaunchdTransient` is the recoverable case: VZ rejected the fresh
 /// VM with the misleading entitlement string while launchd's
 /// PETRIFIED-cleanup queue was draining. The poll_until loop retries
 /// on this; everything else (incl. `Other`) bubbles up unchanged.
-#[derive(Debug)]
 enum ProvisionAttemptOutcome {
-    Ready {
-        uds_path: PathBuf,
-        asset_health: AssetHealth,
-    },
-    StillBootingTimedOut {
-        uds_path: PathBuf,
-        asset_health: AssetHealth,
-    }, // 5s envelope hit; treat as success per pre-existing contract
+    Ready { uds_path: PathBuf },
+    StillBootingTimedOut { uds_path: PathBuf }, // 5s envelope hit; treat as success per pre-existing contract
     LaunchdTransient,
-    BootCrash {
-        tail: String,
-    },
+    BootCrash { tail: String },
     ProvisionError(anyhow::Error),
 }
 
@@ -2404,10 +2556,7 @@ enum ProvisionAttemptOutcome {
 /// retry-routing can be unit-tested without spawning a real VM.
 #[derive(Debug)]
 enum AttemptDecision {
-    Succeed {
-        uds_path: PathBuf,
-        asset_health: Box<AssetHealth>,
-    },
+    Succeed(PathBuf),
     BailWithError(AppError),
     RetryAfterCleanup,
 }
@@ -2418,17 +2567,10 @@ enum AttemptDecision {
 /// match the pre-refactor handle_provision response shape.
 fn classify_attempt_decision(outcome: ProvisionAttemptOutcome, id: &str) -> AttemptDecision {
     match outcome {
-        ProvisionAttemptOutcome::Ready {
-            uds_path,
-            asset_health,
+        ProvisionAttemptOutcome::Ready { uds_path }
+        | ProvisionAttemptOutcome::StillBootingTimedOut { uds_path } => {
+            AttemptDecision::Succeed(uds_path)
         }
-        | ProvisionAttemptOutcome::StillBootingTimedOut {
-            uds_path,
-            asset_health,
-        } => AttemptDecision::Succeed {
-            uds_path,
-            asset_health: Box::new(asset_health),
-        },
         ProvisionAttemptOutcome::LaunchdTransient => AttemptDecision::RetryAfterCleanup,
         ProvisionAttemptOutcome::BootCrash { tail } => AttemptDecision::BailWithError(AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -2452,15 +2594,23 @@ async fn handle_provision(
     State(state): State<Arc<ServiceState>>,
     Json(payload): Json<ProvisionRequest>,
 ) -> Result<Json<ProvisionResponse>, AppError> {
+    let profile_id = validate_profile_route_id(payload.profile_id.clone())?;
+    if let Some(reason) = vm_asset_block_reason(&state, &profile_id) {
+        return Err(AppError(StatusCode::PRECONDITION_FAILED, reason));
+    }
+
     let id = payload.name.clone().unwrap_or_else(|| {
         let existing: Vec<String> = state.instances.lock().unwrap().keys().cloned().collect();
         generate_tmp_name(existing.iter().map(|s| s.as_str()))
     });
 
-    // Missing ram_mb/cpus fall back to the selected profile VM settings.
-    let vm_defaults = state.resolve_vm_runtime_defaults_for(payload.profile_id.as_deref());
-    let ram_mb = payload.ram_mb.unwrap_or(vm_defaults.ram_mb);
-    let cpus = payload.cpus.unwrap_or(vm_defaults.cpus);
+    let profile = state
+        .profile_config(&profile_id)
+        .map_err(|e| AppError(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
+    let resources = resolve_profile_vm_resources(&profile, payload.ram_mb, payload.cpus);
+    let ram_mb = resources.ram_mb;
+    let cpus = resources.cpus;
+    let scratch_disk_size_gb = resources.scratch_disk_size_gb;
 
     // Retry budget for the launchd-cleanup transient. Failed attempts
     // fast-fail in ~500ms (capsem-process spawn -> validateWithError
@@ -2484,8 +2634,7 @@ async fn handle_provision(
         let id = id_for_loop.clone();
         let payload_env = payload.env.clone();
         let payload_from = payload.from.clone();
-        let payload_profile_id = payload.profile_id.clone();
-        let payload_profile_revision = payload.profile_revision.clone();
+        let payload_profile_id = profile_id.clone();
         let payload_persistent = payload.persistent;
         let attempt = attempt_num.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
         async move {
@@ -2512,11 +2661,11 @@ async fn handle_provision(
                 &id,
                 ram_mb,
                 cpus,
+                scratch_disk_size_gb,
+                payload_profile_id,
                 payload_persistent,
                 payload_env,
                 payload_from,
-                payload_profile_id,
-                payload_profile_revision,
             )
             .await;
             // Log structured context BEFORE losing the outcome to classify_*.
@@ -2529,10 +2678,7 @@ async fn handle_provision(
                 error!(id, "provision failed: {e}");
             }
             match classify_attempt_decision(outcome, &id) {
-                AttemptDecision::Succeed {
-                    uds_path,
-                    asset_health,
-                } => Some(Ok((uds_path, *asset_health))),
+                AttemptDecision::Succeed(uds_path) => Some(Ok(uds_path)),
                 AttemptDecision::RetryAfterCleanup => None, // poll_until retries
                 AttemptDecision::BailWithError(err) => Some(Err(err)),
             }
@@ -2541,12 +2687,10 @@ async fn handle_provision(
     .await;
 
     match result {
-        Ok(Ok((uds_path, asset_health))) => Ok(Json(provision_response_for_instance(
-            &state,
+        Ok(Ok(uds_path)) => Ok(Json(ProvisionResponse {
             id,
-            uds_path,
-            Some(asset_health),
-        ))),
+            uds_path: Some(uds_path),
+        })),
         Ok(Err(app_err)) => Err(app_err),
         Err(timed_out) => {
             // Exhausted retries on launchd transient. Surface the most
@@ -2574,39 +2718,6 @@ async fn handle_provision(
     }
 }
 
-fn provision_response_for_instance(
-    state: &Arc<ServiceState>,
-    id: String,
-    uds_path: PathBuf,
-    asset_health: Option<AssetHealth>,
-) -> ProvisionResponse {
-    let profile_pin = {
-        let instances = state.instances.lock().unwrap();
-        instances
-            .get(&id)
-            .and_then(|instance| instance.profile_pin.clone())
-    };
-    let profile_id = profile_pin.as_ref().map(|pin| pin.profile_id.clone());
-    let profile_revision = profile_pin
-        .as_ref()
-        .and_then(|pin| pin.profile_revision.clone());
-    let profile_status = {
-        let settings = state.current_service_settings();
-        let catalog = load_vm_profile_catalog_snapshot(&settings);
-        Some(vm_profile_status(profile_pin.as_ref(), &catalog))
-    };
-
-    ProvisionResponse {
-        id,
-        uds_path: Some(uds_path),
-        profile_id,
-        profile_revision,
-        profile_status,
-        profile_pin,
-        asset_health: asset_health.or_else(|| Some(state.asset_health_snapshot())),
-    }
-}
-
 /// Run one provision attempt: spawn capsem-process, then poll up to 5s
 /// for either the `.ready` sentinel or a crash-before-ready signal.
 /// Pure bookkeeping; no retry logic here -- caller drives the retry
@@ -2617,40 +2728,40 @@ async fn provision_attempt(
     id: &str,
     ram_mb: u64,
     cpus: u32,
+    scratch_disk_size_gb: u32,
+    profile_id: String,
     persistent: bool,
     env: Option<std::collections::HashMap<String, String>>,
     from: Option<String>,
-    profile_id: Option<String>,
-    profile_revision: Option<String>,
 ) -> ProvisionAttemptOutcome {
-    let asset_health = if from.is_none() {
-        match state
-            .ensure_selected_profile_assets_ready(
-                profile_id.as_deref(),
-                profile_revision.as_deref(),
-            )
-            .await
-        {
-            Ok(health) => health,
-            Err(e) => return ProvisionAttemptOutcome::ProvisionError(e),
+    // Creating/starting a VM is an Apple VZ lifecycle operation too. Cold
+    // starts take the shared rail so independent boots can overlap, but they
+    // still wait behind any in-flight save/restore checkpoint edge.
+    let _vz_guard = state.save_restore_lock.read().await;
+    let _vz_host_guard = match acquire_vz_host_lock(startup::VzHostLockMode::Shared).await {
+        Ok(guard) => guard,
+        Err(e) => {
+            return ProvisionAttemptOutcome::ProvisionError(anyhow::anyhow!(
+                "vz lifecycle lock acquire failed: {}",
+                e.1
+            ))
         }
-    } else {
-        state.asset_health_snapshot()
     };
+
     let state_clone = Arc::clone(state);
     let id_owned = id.to_string();
     let version = state.current_version.clone();
     let provision_result = match tokio::task::spawn_blocking(move || {
         state_clone.provision_sandbox(ProvisionOptions {
             id: &id_owned,
+            profile_id,
             ram_mb,
             cpus,
+            scratch_disk_size_gb,
             version_override: Some(version),
             persistent,
             env,
             from,
-            profile_id,
-            profile_revision,
             description: None,
         })
     })
@@ -2658,7 +2769,7 @@ async fn provision_attempt(
     {
         Ok(r) => r,
         Err(e) => {
-            return ProvisionAttemptOutcome::ProvisionError(anyhow::anyhow!("provision task: {e}"));
+            return ProvisionAttemptOutcome::ProvisionError(anyhow::anyhow!("provision task: {e}"))
         }
     };
 
@@ -2678,10 +2789,7 @@ async fn provision_attempt(
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
         if ready_path.exists() {
-            return ProvisionAttemptOutcome::Ready {
-                uds_path,
-                asset_health,
-            };
+            return ProvisionAttemptOutcome::Ready { uds_path };
         }
         let still_alive = state.instances.lock().unwrap().contains_key(id);
         if !still_alive {
@@ -2700,38 +2808,24 @@ async fn provision_attempt(
                     None => "(no preserved log found)".to_string(),
                 });
             return if is_launchd_cleanup_transient(&tail) {
-                warn!(
-                    id,
-                    "provision: detected launchd-cleanup transient (misleading 'entitlement' error)"
-                );
+                warn!(id, "provision: detected launchd-cleanup transient (misleading 'entitlement' error)");
                 ProvisionAttemptOutcome::LaunchdTransient
             } else {
                 ProvisionAttemptOutcome::BootCrash { tail }
             };
         }
         if tokio::time::Instant::now() >= deadline {
-            return ProvisionAttemptOutcome::StillBootingTimedOut {
-                uds_path,
-                asset_health,
-            };
+            return ProvisionAttemptOutcome::StillBootingTimedOut { uds_path };
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
 }
 
-/// Attach durable telemetry from session.db to a SandboxInfo.
-///
-/// Used by single-VM detail paths only. `/list` is a hot status path and must
-/// not scan per-VM SQLite files; live counters belong in capsem-process and
-/// should arrive through typed IPC snapshots.
-fn enrich_telemetry_from_session_db(info: &mut SandboxInfo, session_dir: &std::path::Path) {
+/// Attach live telemetry from session.db to a SandboxInfo.
+/// Shared by handle_list (all VMs) and handle_info (single VM).
+fn enrich_telemetry(info: &mut SandboxInfo, session_dir: &std::path::Path) {
     let db_path = session_dir.join("session.db");
     if let Ok(reader) = capsem_logger::DbReader::open(&db_path) {
-        if let Ok(Some(identity)) = reader.session_identity() {
-            info.vm_id = Some(identity.vm_id);
-            info.profile_id = Some(identity.profile_id);
-            info.user_id = Some(identity.user_id);
-        }
         if let Ok(stats) = reader.session_stats() {
             info.total_input_tokens = Some(stats.total_input_tokens);
             info.total_output_tokens = Some(stats.total_output_tokens);
@@ -2751,207 +2845,50 @@ fn enrich_telemetry_from_session_db(info: &mut SandboxInfo, session_dir: &std::p
     }
 }
 
-fn attach_metrics_snapshot(info: &mut SandboxInfo, snapshot: &VmMetricsSnapshot) {
-    info.total_requests = Some(snapshot.http.http_requests_total);
-    info.allowed_requests = Some(snapshot.http.http_requests_allowed_total);
-    info.denied_requests = Some(snapshot.http.http_requests_denied_total);
-    info.total_dns_queries = Some(snapshot.dns.dns_queries_total);
-    info.denied_dns_queries = Some(snapshot.dns.dns_queries_denied_total);
-    info.total_input_tokens = Some(snapshot.model.model_input_tokens_total);
-    info.total_output_tokens = Some(snapshot.model.model_output_tokens_total);
-    info.total_estimated_cost =
-        Some(snapshot.model.model_estimated_cost_micros_total as f64 / 1_000_000.0);
-    info.model_call_count = Some(snapshot.model.model_requests_total);
-    info.total_mcp_calls = Some(snapshot.mcp.mcp_tool_invocations_total);
-    info.total_file_events = Some(
-        snapshot.filesystem.fs_reads_total
-            + snapshot.filesystem.fs_writes_total
-            + snapshot.filesystem.fs_creates_total
-            + snapshot.filesystem.fs_deletes_total
-            + snapshot.filesystem.fs_restores_total,
-    );
-    info.process_event_count = Some(snapshot.process.process_events_total);
-    info.process_exec_count = Some(snapshot.process.process_exec_total);
-    info.security_events_total = Some(snapshot.security.security_events_total);
-    info.enforcement_decisions_total = Some(snapshot.security.enforcement_decisions_total);
-    info.detection_findings_total = Some(snapshot.security.detection_findings_total);
-    info.blocks_total = Some(snapshot.security.blocks_total);
-    info.latest_block_event_id = snapshot.security.latest_block_event_id.clone();
-    info.latest_block_rule_id = snapshot.security.latest_block_rule_id.clone();
-    info.latest_block_reason = snapshot.security.latest_block_reason.clone();
-    info.latest_detection_event_id = snapshot.security.latest_detection_event_id.clone();
-    info.latest_detection_rule_id = snapshot.security.latest_detection_rule_id.clone();
-    info.latest_detection_title = snapshot.security.latest_detection_title.clone();
-    info.latest_detection_severity = snapshot.security.latest_detection_severity.clone();
+#[cfg(unix)]
+fn physical_bytes(metadata: &std::fs::Metadata) -> u64 {
+    use std::os::unix::fs::MetadataExt;
+    metadata.blocks() * 512
 }
 
-async fn live_metrics_snapshot_for_vm(
-    state: &Arc<ServiceState>,
-    id: &str,
-    uds_path: &std::path::Path,
-) -> Option<VmMetricsSnapshot> {
-    let request_id = state.next_job_id();
-    match send_ipc_command(
-        uds_path,
-        ServiceToProcess::GetMetricsSnapshot { id: request_id },
-        Some(2),
-    )
-    .await
-    {
-        Ok(ProcessToService::MetricsSnapshot {
-            id: snapshot_id,
-            snapshot,
-        }) if snapshot_id == request_id => Some(*snapshot),
-        Ok(ProcessToService::MetricsSnapshot {
-            id: snapshot_id, ..
-        }) => {
-            warn!(
-                vm_id = %id,
-                expected = request_id,
-                got = snapshot_id,
-                "metrics snapshot id mismatch"
-            );
-            None
-        }
-        Ok(other) => {
-            warn!(vm_id = %id, response = ?other, "unexpected metrics snapshot response");
-            None
-        }
-        Err(error) => {
-            warn!(vm_id = %id, error = %error, "failed to collect live VM metrics snapshot");
-            None
-        }
-    }
+#[cfg(not(unix))]
+fn physical_bytes(metadata: &std::fs::Metadata) -> u64 {
+    metadata.len()
 }
 
-struct VmProfileCatalogSnapshot {
-    roots: capsem_core::settings_profiles::ProfileRootSettings,
-    manifest: Option<capsem_core::profile_manifest::ProfileManifest>,
-}
+fn storage_diagnostics(session_dir: &StdPath) -> Option<api::StorageDiagnostics> {
+    let rootfs_image_path = capsem_core::guest_share_dir(session_dir).join("system/rootfs.img");
+    let metadata = std::fs::metadata(&rootfs_image_path).ok()?;
+    let stat = nix::sys::statvfs::statvfs(session_dir).ok()?;
+    let block_size = stat.block_size();
+    let fs_bytes = |blocks| u64::from(blocks).saturating_mul(block_size);
 
-fn profile_catalog_manifest_path(
-    settings: &capsem_core::settings_profiles::ServiceSettings,
-) -> Option<PathBuf> {
-    settings
-        .profiles
-        .corp_dirs
-        .first()
-        .map(|corp_dir| corp_dir.join(".catalog").join("profile-manifest.json"))
-}
-
-fn load_vm_profile_catalog_snapshot(
-    settings: &capsem_core::settings_profiles::ServiceSettings,
-) -> VmProfileCatalogSnapshot {
-    let manifest = profile_catalog_manifest_path(settings)
-        .and_then(|path| std::fs::read_to_string(path).ok())
-        .and_then(|content| {
-            capsem_core::profile_manifest::ProfileManifest::from_json(&content).ok()
-        });
-    VmProfileCatalogSnapshot {
-        roots: settings.profiles.clone(),
-        manifest,
-    }
-}
-
-fn persist_profile_catalog_manifest(
-    settings: &capsem_core::settings_profiles::ServiceSettings,
-    manifest_json: &str,
-) -> Result<(), AppError> {
-    let path = profile_catalog_manifest_path(settings).ok_or_else(|| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "no corp profile directory is configured".into(),
-        )
-    })?;
-    let parent = path.parent().ok_or_else(|| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!(
-                "profile catalog manifest path has no parent: {}",
-                path.display()
-            ),
-        )
-    })?;
-    std::fs::create_dir_all(parent).map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("create profile catalog manifest directory: {error}"),
-        )
-    })?;
-    std::fs::write(&path, manifest_json).map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("write profile catalog manifest {}: {error}", path.display()),
-        )
+    Some(api::StorageDiagnostics {
+        rootfs_image_path: rootfs_image_path.to_string_lossy().to_string(),
+        rootfs_image_logical_bytes: metadata.len(),
+        rootfs_image_physical_bytes: physical_bytes(&metadata),
+        host_total_bytes: fs_bytes(stat.blocks()),
+        host_free_bytes: fs_bytes(stat.blocks_free()),
+        host_available_bytes: fs_bytes(stat.blocks_available()),
+        guest_overlay_device: "/dev/vdb".into(),
+        guest_overlay_mount: "/".into(),
     })
-}
-
-fn vm_profile_status(
-    pin: Option<&SavedVmProfilePin>,
-    catalog: &VmProfileCatalogSnapshot,
-) -> VmProfileStatus {
-    let Some(pin) = pin else {
-        return VmProfileStatus::Corrupted;
-    };
-    let Some(revision) = pin.profile_revision.as_deref() else {
-        return VmProfileStatus::Corrupted;
-    };
-
-    if let Some(manifest) = &catalog.manifest {
-        let Ok(record) = manifest.revision(&pin.profile_id, revision) else {
-            return VmProfileStatus::Corrupted;
-        };
-        return match record.record.status {
-            capsem_core::profile_manifest::ProfileRevisionStatus::Deprecated => {
-                VmProfileStatus::Deprecated
-            }
-            capsem_core::profile_manifest::ProfileRevisionStatus::Revoked => {
-                VmProfileStatus::Revoked
-            }
-            capsem_core::profile_manifest::ProfileRevisionStatus::Active => {
-                match manifest.current_revision(&pin.profile_id) {
-                    Ok(current) if current.revision == revision => VmProfileStatus::Current,
-                    Ok(_) => VmProfileStatus::NeedsUpdate,
-                    Err(_) => VmProfileStatus::Corrupted,
-                }
-            }
-        };
-    }
-
-    match capsem_core::settings_profiles::load_installed_profile_revision(
-        &catalog.roots,
-        &pin.profile_id,
-    ) {
-        Ok(Some(installed)) if installed.revision == revision => VmProfileStatus::Current,
-        Ok(Some(_)) => VmProfileStatus::NeedsUpdate,
-        Ok(None) => VmProfileStatus::Unknown,
-        Err(_) => VmProfileStatus::Unknown,
-    }
-}
-
-fn attach_vm_profile_status(
-    info: &mut SandboxInfo,
-    pin: Option<&SavedVmProfilePin>,
-    catalog: &VmProfileCatalogSnapshot,
-) {
-    info.profile_status = Some(vm_profile_status(pin, catalog));
-    if let Some(pin) = pin {
-        info.profile_id = Some(pin.profile_id.clone());
-        info.profile_revision = pin.profile_revision.clone();
-    }
 }
 
 async fn handle_list(State(state): State<Arc<ServiceState>>) -> Json<ListResponse> {
     let mut sandboxes: Vec<SandboxInfo> = Vec::new();
-    let profile_catalog = load_vm_profile_catalog_snapshot(&state.service_settings);
 
-    // Running instances. Keep this path in-memory only; durable session.db
-    // telemetry is intentionally reserved for single-VM/detail paths.
+    // Running instances (with live telemetry)
     {
-        let running: Vec<InstanceInfo> =
-            state.instances.lock().unwrap().values().cloned().collect();
-        for i in running {
-            let mut info = SandboxInfo::new(i.id.clone(), i.pid, "Running".into(), i.persistent);
+        let instances = state.instances.lock().unwrap();
+        for i in instances.values() {
+            let mut info = SandboxInfo::new(
+                i.id.clone(),
+                i.profile_id.clone(),
+                i.pid,
+                VmLifecycleState::Running,
+                i.persistent,
+            );
             info.name = if i.persistent {
                 Some(i.id.clone())
             } else {
@@ -2960,11 +2897,11 @@ async fn handle_list(State(state): State<Arc<ServiceState>>) -> Json<ListRespons
             info.ram_mb = Some(i.ram_mb);
             info.cpus = Some(i.cpus);
             info.version = Some(i.base_version.clone());
-            info.base_assets = i.base_assets.clone();
-            info.profile_pin = i.profile_pin.clone();
-            attach_vm_profile_status(&mut info, i.profile_pin.as_ref(), &profile_catalog);
             info.forked_from = i.forked_from.clone();
             info.uptime_secs = Some(i.start_time.elapsed().as_secs());
+            info.can_resume = false;
+            info.refresh_available_actions();
+            enrich_telemetry(&mut info, &i.session_dir);
             sandboxes.push(info);
         }
     }
@@ -2973,37 +2910,70 @@ async fn handle_list(State(state): State<Arc<ServiceState>>) -> Json<ListRespons
     // `Defunct` surfaces a boot failure so users see the problem in
     // `capsem list` instead of a misleading "Stopped" -- last_error
     // carries the tail of process.log for one-line diagnosis.
-    {
+    let inactive_persistent: Vec<PersistentVmEntry> = {
         let registry = state.persistent_registry.lock().unwrap();
         let instances = state.instances.lock().unwrap();
-        for entry in registry.list() {
-            if !instances.contains_key(&entry.name) {
-                let status = if entry.defunct {
-                    "Defunct"
-                } else if entry.suspended {
-                    "Suspended"
-                } else {
-                    "Stopped"
-                };
-                let mut info = SandboxInfo::new(entry.name.clone(), 0, status.into(), true);
-                info.name = Some(entry.name.clone());
-                info.ram_mb = Some(entry.ram_mb);
-                info.cpus = Some(entry.cpus);
-                info.version = Some(entry.base_version.clone());
-                info.base_assets = entry.base_assets.clone();
-                info.profile_pin = entry.profile_pin.clone();
-                attach_vm_profile_status(&mut info, entry.profile_pin.as_ref(), &profile_catalog);
-                info.forked_from = entry.forked_from.clone();
-                info.description = entry.description.clone();
-                if entry.defunct {
-                    info.last_error = entry.last_error.clone();
-                }
-                sandboxes.push(info);
-            }
+        registry
+            .list()
+            .filter(|entry| !instances.contains_key(&entry.name))
+            .cloned()
+            .collect()
+    };
+    for entry in inactive_persistent {
+        let (status, can_resume, blocked_reason) = state.persistent_entry_resume_state(&entry);
+        let mut info = SandboxInfo::new(
+            entry.name.clone(),
+            entry.profile_id.clone(),
+            0,
+            status,
+            true,
+        );
+        info.name = Some(entry.name.clone());
+        info.ram_mb = Some(entry.ram_mb);
+        info.cpus = Some(entry.cpus);
+        info.version = Some(entry.base_version.clone());
+        info.forked_from = entry.forked_from.clone();
+        info.description = entry.description.clone();
+        info.can_resume = can_resume;
+        if can_resume {
+            info.resume_blocked_reason = None;
+        } else if entry.defunct {
+            info.last_error = blocked_reason;
+        } else {
+            info.resume_blocked_reason = blocked_reason;
         }
+        info.refresh_available_actions();
+        sandboxes.push(info);
     }
 
-    let asset_health = Some(state.asset_health_snapshot());
+    // Check asset health
+    let asset_health = match state.resolve_asset_paths() {
+        Ok(resolved) => {
+            let mut missing = Vec::new();
+            if !resolved.kernel.exists() {
+                missing.push("vmlinuz".to_string());
+            }
+            if !resolved.initrd.exists() {
+                missing.push("initrd.img".to_string());
+            }
+            if !resolved.rootfs.exists() {
+                missing.push(
+                    resolved
+                        .rootfs
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("rootfs")
+                        .to_string(),
+                );
+            }
+            Some(AssetHealth {
+                ready: missing.is_empty(),
+                version: Some(resolved.asset_version),
+                missing,
+            })
+        }
+        Err(_) => None,
+    };
 
     Json(ListResponse {
         sandboxes,
@@ -3011,134 +2981,23 @@ async fn handle_list(State(state): State<Arc<ServiceState>>) -> Json<ListRespons
     })
 }
 
-async fn handle_debug_report(
-    State(state): State<Arc<ServiceState>>,
-) -> Result<Json<debug_report::DebugReport>, AppError> {
-    let (running_vm_count, total_vm_count, defunct_sessions) = {
-        let instances = state.instances.lock().unwrap();
-        let running_ids: HashSet<String> = instances.keys().cloned().collect();
-        let running = running_ids.len();
-        drop(instances);
-
-        let registry = state.persistent_registry.lock().unwrap();
-        let stopped_or_suspended = registry
-            .list()
-            .filter(|entry| !running_ids.contains(&entry.name))
-            .count();
-        let defunct_sessions: Vec<debug_report::DefunctSessionReport> = registry
-            .list()
-            .filter(|entry| entry.defunct)
-            .map(|entry| debug_report::DefunctSessionReport {
-                name: entry.name.clone(),
-                last_error: entry.last_error.clone(),
-            })
-            .collect();
-        (running, running + stopped_or_suspended, defunct_sessions)
-    };
-    let resolved_assets = state
-        .resolve_asset_paths()
-        .map(|resolved| debug_report::StatusResolvedAssets {
-            kernel: resolved.kernel,
-            initrd: resolved.initrd,
-            rootfs: resolved.rootfs,
-        })
-        .map_err(|e| e.to_string());
-    let status_issues = debug_report::status_issues(debug_report::StatusIssuesInput {
-        gateway_port_file_exists: state.run_dir.join("gateway.port").exists(),
-        gateway_token_file_exists: state.run_dir.join("gateway.token").exists(),
-        assets_dir_exists: state.assets_dir.exists(),
-        resolved_assets,
-        defunct_session_count: defunct_sessions.len(),
-    });
-
-    let generated_at = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| secs_to_rfc3339(d.as_secs()))
-        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".into());
-    let install = debug_report::default_install_report_input();
-    let current_exe = install
-        .as_ref()
-        .map(|input| input.current_exe.clone())
-        .or_else(|| std::env::current_exe().ok())
-        .unwrap_or_else(|| PathBuf::from("capsem-service"));
-    let process_pids = debug_report::default_process_report_inputs(&state.run_dir, &current_exe);
-    let capsem_home = capsem_core::paths::capsem_home();
-    let settings_profiles = build_settings_profiles_debug_snapshot(&capsem_home);
-    let runtime_security = runtime_security_debug_report_input(&state)?;
-
-    let report = debug_report::build_debug_report(debug_report::DebugReportInput {
-        generated_at,
-        version: state.current_version.clone(),
-        build_hash: option_env!("CAPSEM_BUILD_HASH")
-            .unwrap_or("dev")
-            .to_string(),
-        build_ts: option_env!("CAPSEM_BUILD_TS").unwrap_or("dev").to_string(),
-        platform: format!("{}/{}", std::env::consts::OS, std::env::consts::ARCH),
-        capsem_home,
-        run_dir: state.run_dir.clone(),
-        assets_dir: state.assets_dir.clone(),
-        asset_locations: Some(state.asset_locations.clone()),
-        asset_health: Some(state.asset_health_snapshot()),
-        running_vm_count,
-        total_vm_count,
-        status_issues,
-        defunct_sessions,
-        install,
-        process_pids,
-        settings_profiles: Some(settings_profiles),
-        runtime_security: Some(runtime_security),
-    })
-    .map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to build debug report: {e:#}"),
-        )
-    })?;
-
-    Ok(Json(report))
-}
-
-fn build_settings_profiles_debug_snapshot(
-    capsem_home: &FsPath,
-) -> capsem_core::settings_profiles::SettingsProfilesDebugSnapshot {
-    let service_settings_path = capsem_home.join("service.toml");
-    let result = (|| {
-        let settings = capsem_core::settings_profiles::load_service_settings_or_default(
-            &service_settings_path,
-        )?;
-        let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles)?;
-        let (effective, trace) =
-            capsem_core::settings_profiles::resolve_effective_vm_settings_with_corp(
-                &settings, None,
-            )?;
-        Ok::<_, capsem_core::settings_profiles::SettingsProfilesError>(
-            capsem_core::settings_profiles::SettingsProfilesDebugSnapshot::from_parts_with_trace(
-                &settings,
-                &catalog,
-                Some(&effective),
-                Some(&trace),
-            ),
-        )
-    })();
-
-    result.unwrap_or_else(|error| {
-        capsem_core::settings_profiles::SettingsProfilesDebugSnapshot::from_error(error.to_string())
-    })
-}
-
 async fn handle_info(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Result<Json<SandboxInfo>, AppError> {
-    let profile_catalog = load_vm_profile_catalog_snapshot(&state.service_settings);
     // Check running instances first
     {
-        let (instance_data, session_dir, uds_path) = {
+        let (instance_data, session_dir) = {
             let instances = state.instances.lock().unwrap();
             match instances.get(&id) {
                 Some(i) => {
-                    let mut info =
-                        SandboxInfo::new(i.id.clone(), i.pid, "Running".into(), i.persistent);
+                    let mut info = SandboxInfo::new(
+                        i.id.clone(),
+                        i.profile_id.clone(),
+                        i.pid,
+                        VmLifecycleState::Running,
+                        i.persistent,
+                    );
                     info.name = if i.persistent {
                         Some(i.id.clone())
                     } else {
@@ -3147,27 +3006,18 @@ async fn handle_info(
                     info.ram_mb = Some(i.ram_mb);
                     info.cpus = Some(i.cpus);
                     info.version = Some(i.base_version.clone());
-                    info.base_assets = i.base_assets.clone();
-                    info.profile_pin = i.profile_pin.clone();
-                    attach_vm_profile_status(&mut info, i.profile_pin.as_ref(), &profile_catalog);
                     info.forked_from = i.forked_from.clone();
                     info.uptime_secs = Some(i.start_time.elapsed().as_secs());
-                    (
-                        Some(info),
-                        Some(i.session_dir.clone()),
-                        Some(i.uds_path.clone()),
-                    )
+                    info.can_resume = false;
+                    info.refresh_available_actions();
+                    (Some(info), Some(i.session_dir.clone()))
                 }
-                None => (None, None, None),
+                None => (None, None),
             }
         };
         if let (Some(mut info), Some(dir)) = (instance_data, session_dir) {
-            enrich_telemetry_from_session_db(&mut info, &dir);
-            if let Some(uds_path) = uds_path {
-                if let Some(snapshot) = live_metrics_snapshot_for_vm(&state, &id, &uds_path).await {
-                    attach_metrics_snapshot(&mut info, &snapshot);
-                }
-            }
+            enrich_telemetry(&mut info, &dir);
+            info.storage = storage_diagnostics(&dir);
             return Ok(Json(info));
         }
     }
@@ -3175,30 +3025,34 @@ async fn handle_info(
     // Check stopped/suspended/defunct persistent VMs
     {
         let registry = state.persistent_registry.lock().unwrap();
-        if let Some(entry) = registry.get(&id) {
-            let status = if entry.defunct {
-                "Defunct"
-            } else if entry.suspended {
-                "Suspended"
-            } else {
-                "Stopped"
-            };
-            let mut info = SandboxInfo::new(entry.name.clone(), 0, status.into(), true);
+        if let Some(entry) = registry.get(&id).cloned() {
+            drop(registry);
+            let (status, can_resume, blocked_reason) = state.persistent_entry_resume_state(&entry);
+            let mut info = SandboxInfo::new(
+                entry.name.clone(),
+                entry.profile_id.clone(),
+                0,
+                status,
+                true,
+            );
             info.name = Some(entry.name.clone());
             info.ram_mb = Some(entry.ram_mb);
             info.cpus = Some(entry.cpus);
             info.version = Some(entry.base_version.clone());
-            info.base_assets = entry.base_assets.clone();
-            info.profile_pin = entry.profile_pin.clone();
-            attach_vm_profile_status(&mut info, entry.profile_pin.as_ref(), &profile_catalog);
             info.forked_from = entry.forked_from.clone();
             info.description = entry.description.clone();
-            if entry.defunct {
-                info.last_error = entry.last_error.clone();
+            info.can_resume = can_resume;
+            if can_resume {
+                info.resume_blocked_reason = None;
+            } else if entry.defunct {
+                info.last_error = blocked_reason;
+            } else {
+                info.resume_blocked_reason = blocked_reason;
             }
+            info.refresh_available_actions();
             info.size_bytes =
                 capsem_core::auto_snapshot::sandbox_disk_usage(&entry.session_dir).ok();
-            enrich_telemetry_from_session_db(&mut info, &entry.session_dir);
+            info.storage = storage_diagnostics(&entry.session_dir);
             return Ok(Json(info));
         }
     }
@@ -3209,15 +3063,181 @@ async fn handle_info(
     ))
 }
 
+async fn handle_vm_status(
+    State(state): State<Arc<ServiceState>>,
+    Path(id): Path<String>,
+) -> Result<Json<api::VmStatusResponse>, AppError> {
+    {
+        let instances = state.instances.lock().unwrap();
+        if let Some(i) = instances.get(&id) {
+            return Ok(Json(api::VmStatusResponse {
+                id: i.id.clone(),
+                status: VmLifecycleState::Running,
+                pid: Some(i.pid),
+                persistent: i.persistent,
+                uptime_secs: Some(i.start_time.elapsed().as_secs()),
+                created_at: None,
+                last_error: None,
+                can_resume: false,
+                resume_blocked_reason: None,
+                storage: storage_diagnostics(&i.session_dir),
+                available_actions: VmLifecycleState::Running.available_actions(false),
+            }));
+        }
+    }
+
+    {
+        let registry = state.persistent_registry.lock().unwrap();
+        if let Some(entry) = registry.get(&id).cloned() {
+            drop(registry);
+            let (status, can_resume, blocked_reason) = state.persistent_entry_resume_state(&entry);
+            return Ok(Json(api::VmStatusResponse {
+                id: entry.name.clone(),
+                status,
+                pid: None,
+                persistent: true,
+                uptime_secs: None,
+                created_at: Some(entry.created_at.clone()),
+                last_error: if entry.defunct {
+                    blocked_reason.clone()
+                } else {
+                    entry.last_error.clone()
+                },
+                can_resume,
+                resume_blocked_reason: if can_resume || entry.defunct {
+                    None
+                } else {
+                    blocked_reason
+                },
+                storage: storage_diagnostics(&entry.session_dir),
+                available_actions: status.available_actions(can_resume),
+            }));
+        }
+    }
+
+    Err(AppError(
+        StatusCode::NOT_FOUND,
+        format!("sandbox not found: {id}"),
+    ))
+}
+
+async fn handle_vm_snapshots_status(
+    State(state): State<Arc<ServiceState>>,
+    Path(id): Path<String>,
+) -> Result<Json<capsem_proto::ipc::SnapshotStatus>, AppError> {
+    if let Some(uds_path) = {
+        let instances = state.instances.lock().unwrap();
+        instances.get(&id).map(|instance| instance.uds_path.clone())
+    } {
+        let request_id = state.job_counter.fetch_add(1, Ordering::SeqCst);
+        let response = send_ipc_command(
+            &uds_path,
+            ServiceToProcess::SnapshotStatus { id: request_id },
+            Some(5),
+        )
+        .await
+        .map_err(|error| AppError(StatusCode::BAD_GATEWAY, error))?;
+        return match response {
+            ProcessToService::SnapshotStatusResult {
+                id: response_id,
+                status,
+            } if response_id == request_id => Ok(Json(status)),
+            other => Err(AppError(
+                StatusCode::BAD_GATEWAY,
+                format!("unexpected snapshot status IPC response: {other:?}"),
+            )),
+        };
+    }
+
+    let session_dir = resolve_session_dir(&state, &id)?;
+    Ok(Json(snapshot_status_from_session_dir(&session_dir)))
+}
+
+async fn handle_vm_snapshots_list(
+    State(state): State<Arc<ServiceState>>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let Json(status) = handle_vm_snapshots_status(State(state), Path(id)).await?;
+    Ok(Json(serde_json::json!({
+        "total": status.total,
+        "snapshots": status.snapshots,
+    })))
+}
+
+fn snapshot_status_from_session_dir(
+    session_dir: &std::path::Path,
+) -> capsem_proto::ipc::SnapshotStatus {
+    let scheduler = capsem_core::auto_snapshot::AutoSnapshotScheduler::new(
+        session_dir.to_path_buf(),
+        10,
+        12,
+        std::time::Duration::from_secs(300),
+    );
+    let snapshots = scheduler.list_snapshots();
+    let auto_count = snapshots
+        .iter()
+        .filter(|slot| slot.origin == capsem_core::auto_snapshot::SnapshotOrigin::Auto)
+        .count();
+    let manual_count = snapshots.len().saturating_sub(auto_count);
+    let snapshots = snapshots
+        .into_iter()
+        .map(|slot| capsem_proto::ipc::SnapshotSlotStatus {
+            checkpoint: format!("cp-{}", slot.slot),
+            slot: slot.slot,
+            origin: match slot.origin {
+                capsem_core::auto_snapshot::SnapshotOrigin::Auto => "auto",
+                capsem_core::auto_snapshot::SnapshotOrigin::Manual => "manual",
+            }
+            .to_string(),
+            name: slot.name,
+            timestamp: humantime::format_rfc3339(slot.timestamp).to_string(),
+            hash: slot.hash,
+        })
+        .collect();
+    capsem_proto::ipc::SnapshotStatus {
+        total: auto_count + manual_count,
+        auto_count,
+        manual_count,
+        manual_available: scheduler.available_manual_slots(),
+        snapshots,
+    }
+}
+
+async fn vm_operation_status(
+    state: Arc<ServiceState>,
+    id: String,
+    operation: &'static str,
+) -> Result<Json<api::VmOperationStatusResponse>, AppError> {
+    let _ = handle_vm_status(State(Arc::clone(&state)), Path(id.clone())).await?;
+    Ok(Json(api::VmOperationStatusResponse {
+        vm_id: id,
+        operation: operation.into(),
+        status: "idle".into(),
+        in_progress: false,
+        message: Some("operation progress is not asynchronous in this build".into()),
+    }))
+}
+
+async fn handle_vm_save_status(
+    State(state): State<Arc<ServiceState>>,
+    Path(id): Path<String>,
+) -> Result<Json<api::VmOperationStatusResponse>, AppError> {
+    vm_operation_status(state, id, "save").await
+}
+
+async fn handle_vm_fork_status(
+    State(state): State<Arc<ServiceState>>,
+    Path(id): Path<String>,
+) -> Result<Json<api::VmOperationStatusResponse>, AppError> {
+    vm_operation_status(state, id, "fork").await
+}
+
 /// GET /stats -- return full main.db aggregation in one response.
 async fn handle_stats(
     State(state): State<Arc<ServiceState>>,
 ) -> Result<Json<StatsResponse>, AppError> {
     let db_path = state.main_db_path();
-    if !db_path.exists() {
-        return Ok(Json(empty_stats_response()));
-    }
-    let index = capsem_core::session::SessionIndex::open_readonly(&db_path).map_err(|e| {
+    let index = capsem_core::session::SessionIndex::open(&db_path).map_err(|e| {
         AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("failed to open main.db: {e}"),
@@ -3258,27 +3278,6 @@ async fn handle_stats(
     }))
 }
 
-fn empty_stats_response() -> StatsResponse {
-    StatsResponse {
-        global: capsem_core::session::GlobalStats {
-            total_sessions: 0,
-            total_input_tokens: 0,
-            total_output_tokens: 0,
-            total_estimated_cost: 0.0,
-            total_tool_calls: 0,
-            total_mcp_calls: 0,
-            total_file_events: 0,
-            total_requests: 0,
-            total_allowed: 0,
-            total_denied: 0,
-        },
-        sessions: Vec::new(),
-        top_providers: Vec::new(),
-        top_tools: Vec::new(),
-        top_mcp_tools: Vec::new(),
-    }
-}
-
 async fn handle_logs(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
@@ -3304,7 +3303,7 @@ async fn handle_logs(
                             return Err(AppError(
                                 StatusCode::NOT_FOUND,
                                 format!("sandbox not found: {id}"),
-                            ));
+                            ))
                         }
                     }
                 }
@@ -3314,7 +3313,6 @@ async fn handle_logs(
 
     let serial_log_path = session_dir.join("serial.log");
     let process_log_path = session_dir.join("process.log");
-    let security_logs = read_security_logs_from_session_db(&session_dir)?;
 
     let (serial_logs, process_logs) = tokio::task::spawn_blocking(move || {
         let serial = std::fs::read_to_string(&serial_log_path).ok();
@@ -3333,310 +3331,7 @@ async fn handle_logs(
         logs: serial_logs.as_deref().unwrap_or("").to_string(),
         serial_logs,
         process_logs,
-        security_logs,
     }))
-}
-
-fn read_security_logs_from_session_db(session_dir: &FsPath) -> Result<Option<String>, AppError> {
-    let db_path = session_dir.join("session.db");
-    if !db_path.exists() {
-        return Ok(None);
-    }
-    let reader = capsem_logger::DbReader::open(&db_path).map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("open session security log db: {error}"),
-        )
-    })?;
-    if !session_has_security_events(&reader)? {
-        return Ok(None);
-    }
-    let json_str = reader
-        .query_raw(
-            "SELECT
-                se.timestamp, se.event_id, se.event_family, se.event_type,
-                se.source_engine, se.final_action, se.enforceability,
-                se.attribution_scope, se.origin_kind, se.accounting_owner,
-                se.trace_id, se.span_id, se.parent_event_id, se.stream_id,
-                se.activity_id, se.sequence_no, se.vm_id, se.session_id,
-                se.profile_id, se.profile_revision, se.user_id, se.process_id,
-                se.parent_process_id, se.exec_id, se.turn_id, se.message_id,
-                se.tool_call_id, se.mcp_call_id, se.redaction_state,
-                se.label_count, se.mutation_count, se.finding_count,
-                (
-                    SELECT step.rule_id
-                    FROM security_event_steps step
-                    WHERE step.event_id = se.event_id
-                      AND step.rule_id IS NOT NULL
-                    ORDER BY step.step_index ASC
-                    LIMIT 1
-                ) AS rule_id,
-                (
-                    SELECT step.pack_id
-                    FROM security_event_steps step
-                    WHERE step.event_id = se.event_id
-                      AND step.pack_id IS NOT NULL
-                    ORDER BY step.step_index ASC
-                    LIMIT 1
-                ) AS pack_id,
-                (
-                    SELECT step.message
-                    FROM security_event_steps step
-                    WHERE step.event_id = se.event_id
-                      AND step.message IS NOT NULL
-                    ORDER BY step.step_index ASC
-                    LIMIT 1
-                ) AS reason,
-                (
-                    SELECT group_concat(df.rule_id, ',')
-                    FROM detection_findings df
-                    WHERE df.event_id = se.event_id
-                ) AS detection_rule_ids,
-                (
-                    SELECT d.qname
-                    FROM dns_events d
-                    WHERE d.trace_id = se.trace_id
-                      AND se.event_family = 'dns'
-                    ORDER BY d.id ASC
-                    LIMIT 1
-                ) AS dns_qname,
-                (
-                    SELECT n.domain
-                    FROM net_events n
-                    WHERE n.trace_id = se.trace_id
-                      AND se.event_family = 'http'
-                    ORDER BY n.id ASC
-                    LIMIT 1
-                ) AS http_host,
-                (
-                    SELECT n.path
-                    FROM net_events n
-                    WHERE n.trace_id = se.trace_id
-                      AND se.event_family = 'http'
-                    ORDER BY n.id ASC
-                    LIMIT 1
-                ) AS http_path,
-                (
-                    SELECT m.server_name
-                    FROM mcp_calls m
-                    WHERE m.trace_id = se.trace_id
-                      AND se.event_family = 'mcp'
-                      AND (se.mcp_call_id IS NULL OR m.request_id = se.mcp_call_id)
-                    ORDER BY m.id ASC
-                    LIMIT 1
-                ) AS mcp_server_id,
-                (
-                    SELECT m.tool_name
-                    FROM mcp_calls m
-                    WHERE m.trace_id = se.trace_id
-                      AND se.event_family = 'mcp'
-                      AND (se.mcp_call_id IS NULL OR m.request_id = se.mcp_call_id)
-                    ORDER BY m.id ASC
-                    LIMIT 1
-                ) AS mcp_tool_name,
-                (
-                    SELECT mc.provider
-                    FROM model_calls mc
-                    WHERE mc.trace_id = se.trace_id
-                      AND se.event_family = 'model'
-                    ORDER BY mc.id ASC
-                    LIMIT 1
-                ) AS model_provider,
-                (
-                    SELECT mc.model
-                    FROM model_calls mc
-                    WHERE mc.trace_id = se.trace_id
-                      AND se.event_family = 'model'
-                    ORDER BY mc.id ASC
-                    LIMIT 1
-                ) AS model_name,
-                (
-                    SELECT f.path
-                    FROM fs_events f
-                    WHERE f.trace_id = se.trace_id
-                      AND se.event_family = 'file'
-                    ORDER BY f.id ASC
-                    LIMIT 1
-                ) AS file_path,
-                se.process_operation,
-                se.process_command_class
-             FROM security_events se
-             WHERE se.id IN (
-                SELECT latest.id
-                FROM security_events latest
-                ORDER BY latest.timestamp_unix_ms DESC, latest.id DESC
-                LIMIT 1000
-             )
-             ORDER BY se.timestamp_unix_ms ASC, se.id ASC",
-        )
-        .map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("query session security logs: {error}"),
-            )
-        })?;
-    let value: serde_json::Value = serde_json::from_str(&json_str).map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("parse session security logs: {error}"),
-        )
-    })?;
-    let rows = value
-        .get("rows")
-        .and_then(|rows| rows.as_array())
-        .cloned()
-        .unwrap_or_default();
-    if rows.is_empty() {
-        return Ok(None);
-    }
-
-    let mut lines = Vec::with_capacity(rows.len());
-    for row in rows {
-        lines.push(security_log_line_from_row(&row)?);
-    }
-    Ok(Some(lines.join("\n")))
-}
-
-fn session_has_security_events(reader: &capsem_logger::DbReader) -> Result<bool, AppError> {
-    let json_str = reader
-        .query_raw("SELECT 1 FROM security_events LIMIT 1")
-        .map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("query session security event presence: {error}"),
-            )
-        })?;
-    let value: serde_json::Value = serde_json::from_str(&json_str).map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("parse session security event presence: {error}"),
-        )
-    })?;
-    Ok(value
-        .get("rows")
-        .and_then(|rows| rows.as_array())
-        .map(|rows| !rows.is_empty())
-        .unwrap_or(false))
-}
-
-fn security_log_cell(
-    row: &serde_json::Value,
-    index: usize,
-) -> Result<&serde_json::Value, AppError> {
-    row.as_array()
-        .and_then(|cells| cells.get(index))
-        .ok_or_else(|| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("session security log row missing column {index}"),
-            )
-        })
-}
-
-fn security_log_string(row: &serde_json::Value, index: usize) -> Result<String, AppError> {
-    security_log_cell(row, index)?
-        .as_str()
-        .map(str::to_owned)
-        .ok_or_else(|| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("session security log column {index} was not a string"),
-            )
-        })
-}
-
-fn security_log_optional_value(
-    row: &serde_json::Value,
-    index: usize,
-) -> Result<Option<serde_json::Value>, AppError> {
-    let value = security_log_cell(row, index)?;
-    if value.is_null() {
-        Ok(None)
-    } else {
-        Ok(Some(value.clone()))
-    }
-}
-
-fn insert_security_log_value(
-    fields: &mut serde_json::Map<String, serde_json::Value>,
-    key: &str,
-    row: &serde_json::Value,
-    index: usize,
-) -> Result<(), AppError> {
-    if let Some(value) = security_log_optional_value(row, index)? {
-        fields.insert(key.to_owned(), value);
-    }
-    Ok(())
-}
-
-fn security_log_line_from_row(row: &serde_json::Value) -> Result<String, AppError> {
-    let mut fields = serde_json::Map::new();
-    fields.insert(
-        "message".into(),
-        serde_json::Value::String("resolved_security_event".into()),
-    );
-    for (key, index) in [
-        ("event_id", 1),
-        ("event_family", 2),
-        ("event_type", 3),
-        ("source_engine", 4),
-        ("final_action", 5),
-        ("enforceability", 6),
-        ("attribution_scope", 7),
-        ("origin_kind", 8),
-        ("accounting_owner", 9),
-        ("trace_id", 10),
-        ("span_id", 11),
-        ("parent_event_id", 12),
-        ("stream_id", 13),
-        ("activity_id", 14),
-        ("sequence_no", 15),
-        ("vm_id", 16),
-        ("session_id", 17),
-        ("profile_id", 18),
-        ("profile_revision", 19),
-        ("user_id", 20),
-        ("process_id", 21),
-        ("parent_process_id", 22),
-        ("exec_id", 23),
-        ("turn_id", 24),
-        ("message_id", 25),
-        ("tool_call_id", 26),
-        ("mcp_call_id", 27),
-        ("redaction_state", 28),
-        ("label_count", 29),
-        ("mutation_count", 30),
-        ("finding_count", 31),
-        ("rule_id", 32),
-        ("pack_id", 33),
-        ("reason", 34),
-        ("detection_rule_ids", 35),
-        ("dns_qname", 36),
-        ("http_host", 37),
-        ("http_path", 38),
-        ("mcp_server_id", 39),
-        ("mcp_tool_name", 40),
-        ("model_provider", 41),
-        ("model_name", 42),
-        ("file_path", 43),
-        ("process_operation", 44),
-        ("process_command_class", 45),
-    ] {
-        insert_security_log_value(&mut fields, key, row, index)?;
-    }
-
-    let line = json!({
-        "timestamp": security_log_string(row, 0)?,
-        "level": "INFO",
-        "target": "security.event",
-        "fields": fields,
-    });
-    serde_json::to_string(&line).map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("serialize session security log line: {error}"),
-        )
-    })
 }
 
 /// `GET /panics?since=30m&limit=20` -- structured panic + backtrace
@@ -3724,13 +3419,17 @@ async fn handle_triage(
     errors.truncate(limit);
     slow_ops.truncate(limit);
 
-    // F6/T6: when `id` is set, query session.db for session-scoped error
+    // F6: when `id` is set, query session.db for session-scoped error
     // signals. Best-effort -- a missing or vacuumed DB just leaves the
-    // session block empty, the host-side triage still returns. Persistent
-    // stopped sessions are supported through the registry resolver.
+    // session block empty, the host-side triage still returns.
     let session_block = if let Some(ref vm_id) = params.id {
-        if let Ok(session_dir) = resolve_session_dir(&state, vm_id) {
-            let path = session_dir.join("session.db");
+        let db_path = {
+            let instances = state.instances.lock().unwrap();
+            instances
+                .get(vm_id)
+                .map(|i| i.session_dir.join("session.db"))
+        };
+        if let Some(path) = db_path {
             session_db_triage(&path, limit).unwrap_or_else(|e| {
                 tracing::warn!(target: "service", vm = %vm_id, error = %e, "session-db triage skipped");
                 serde_json::json!({})
@@ -3795,48 +3494,20 @@ async fn handle_triage(
 fn session_db_triage(db_path: &std::path::Path, limit: usize) -> anyhow::Result<serde_json::Value> {
     let reader = capsem_logger::DbReader::open(db_path)?;
     let denied_net_sql = format!(
-        "SELECT timestamp, domain, decision, status_code, duration_ms, \
-                policy_mode, policy_action, policy_rule, policy_reason, trace_id \
+        "SELECT timestamp, domain, decision, status_code, duration_ms \
          FROM net_events WHERE decision = 'denied' OR status_code >= 500 \
          ORDER BY timestamp DESC LIMIT {limit}"
     );
     let mcp_errors_sql = format!(
         "SELECT timestamp, server_name, method, decision, policy_mode, policy_action, \
-                policy_rule, policy_reason, error_message, duration_ms, trace_id \
+                policy_rule, policy_reason, error_message, duration_ms \
          FROM mcp_calls WHERE decision IN ('denied','error') OR error_message IS NOT NULL \
          ORDER BY timestamp DESC LIMIT {limit}"
     );
     let exec_failures_sql = format!(
-        "SELECT timestamp, exec_id, command, exit_code, duration_ms, trace_id \
+        "SELECT timestamp, exec_id, command, exit_code, duration_ms \
          FROM exec_events WHERE exit_code IS NOT NULL AND exit_code != 0 \
          ORDER BY timestamp DESC LIMIT {limit}"
-    );
-    let dns_issues_sql = format!(
-        "SELECT timestamp, qname, rcode, decision, matched_rule, policy_mode, \
-                policy_action, policy_rule, policy_reason, trace_id \
-         FROM dns_events WHERE decision != 'allowed' OR rcode != 0 \
-         ORDER BY timestamp DESC LIMIT {limit}"
-    );
-    let audit_failures_sql = format!(
-        "SELECT a.timestamp, a.pid, a.ppid, a.uid, a.exe, a.comm, a.argv, \
-                COALESCE(a.exit_code, e.exit_code) AS exit_code, a.audit_id, \
-                a.exec_event_id, a.trace_id \
-         FROM audit_events a \
-         LEFT JOIN exec_events e ON a.exec_event_id = e.exec_id \
-         WHERE COALESCE(a.exit_code, e.exit_code) IS NOT NULL \
-           AND COALESCE(a.exit_code, e.exit_code) != 0 \
-         ORDER BY a.timestamp DESC LIMIT {limit}"
-    );
-    let security_decisions_sql = format!(
-        "SELECT se.timestamp, se.event_id, se.event_type, se.final_action, \
-                se.finding_count, se.trace_id, steps.kind, steps.status, \
-                steps.rule_id, steps.pack_id, steps.message \
-         FROM security_events se \
-         LEFT JOIN security_event_steps steps ON steps.event_id = se.event_id \
-         WHERE se.final_action != 'continue' \
-            OR se.finding_count > 0 \
-            OR steps.status = 'error' \
-         ORDER BY se.timestamp DESC, steps.step_index ASC LIMIT {limit}"
     );
 
     let denied_net = reader
@@ -3848,33 +3519,16 @@ fn session_db_triage(db_path: &std::path::Path, limit: usize) -> anyhow::Result<
     let exec_failures = reader
         .query_raw(&exec_failures_sql)
         .unwrap_or_else(|_| "[]".into());
-    let dns_issues = reader
-        .query_raw(&dns_issues_sql)
-        .unwrap_or_else(|_| "[]".into());
-    let audit_failures = reader
-        .query_raw(&audit_failures_sql)
-        .unwrap_or_else(|_| "[]".into());
-    let security_decisions = reader
-        .query_raw(&security_decisions_sql)
-        .unwrap_or_else(|_| "[]".into());
 
     let denied_net_v: serde_json::Value = serde_json::from_str(&denied_net).unwrap_or_default();
     let mcp_errors_v: serde_json::Value = serde_json::from_str(&mcp_errors).unwrap_or_default();
     let exec_failures_v: serde_json::Value =
         serde_json::from_str(&exec_failures).unwrap_or_default();
-    let dns_issues_v: serde_json::Value = serde_json::from_str(&dns_issues).unwrap_or_default();
-    let audit_failures_v: serde_json::Value =
-        serde_json::from_str(&audit_failures).unwrap_or_default();
-    let security_decisions_v: serde_json::Value =
-        serde_json::from_str(&security_decisions).unwrap_or_default();
 
     Ok(serde_json::json!({
         "denied_net": denied_net_v,
-        "dns_issues": dns_issues_v,
         "mcp_errors": mcp_errors_v,
         "exec_failures": exec_failures_v,
-        "audit_failures": audit_failures_v,
-        "security_decisions": security_decisions_v,
     }))
 }
 
@@ -3885,7 +3539,7 @@ struct TriageQuery {
     since: Option<String>,
     /// Max items per category. Default 20, capped at 200.
     limit: Option<usize>,
-    /// Optional session id for session.db cross-reference.
+    /// Optional session id (reserved for the future session.db query).
     id: Option<String>,
 }
 
@@ -4044,29 +3698,8 @@ async fn send_ipc_command(
 
         match msg {
             ProcessToService::Pong => {
-                if matches!(
-                    cmd,
-                    ServiceToProcess::Ping | ServiceToProcess::ReloadConfig { .. }
-                ) {
+                if matches!(cmd, ServiceToProcess::Ping | ServiceToProcess::ReloadConfig) {
                     return Ok(ProcessToService::Pong);
-                }
-                continue;
-            }
-            ProcessToService::ReloadConfigResult { success, error } => {
-                if matches!(cmd, ServiceToProcess::ReloadConfig { .. }) {
-                    return Ok(ProcessToService::ReloadConfigResult { success, error });
-                }
-                continue;
-            }
-            ProcessToService::RuntimeRuleMatches { id, matches } => {
-                if matches!(cmd, ServiceToProcess::DrainRuntimeRuleMatches { .. }) {
-                    return Ok(ProcessToService::RuntimeRuleMatches { id, matches });
-                }
-                continue;
-            }
-            ProcessToService::MetricsSnapshot { id, snapshot } => {
-                if matches!(cmd, ServiceToProcess::GetMetricsSnapshot { .. }) {
-                    return Ok(ProcessToService::MetricsSnapshot { id, snapshot });
                 }
                 continue;
             }
@@ -4094,6 +3727,11 @@ async fn wait_for_vm_ready(
     state: Option<&Arc<ServiceState>>,
     id: Option<&str>,
 ) -> Result<(), String> {
+    let ready_span = tracing::debug_span!(
+        target: "capsem.launch",
+        capsem_core::telemetry::LAUNCH_VSOCK_READY_SPAN,
+        status = tracing::field::Empty,
+    );
     let ready_path = uds_path.with_extension("ready");
     // Override the PollOpts::new defaults (50ms / 500ms): VM ready-time is
     // sub-second in the common case and the sentinel check is a single stat,
@@ -4128,11 +3766,22 @@ async fn wait_for_vm_ready(
             None
         }
     })
+    .instrument(ready_span.clone())
     .await;
     if died.load(std::sync::atomic::Ordering::Acquire) {
+        ready_span.record("status", "error");
         return Err("capsem-process exited before signalling ready".into());
     }
-    res.map_err(|e| format!("{e}"))
+    match res {
+        Ok(()) => {
+            ready_span.record("status", "ok");
+            Ok(())
+        }
+        Err(error) => {
+            ready_span.record("status", "error");
+            Err(format!("{error}"))
+        }
+    }
 }
 
 async fn handle_exec(
@@ -4184,6188 +3833,1033 @@ async fn handle_exec(
     }
 }
 
+async fn handle_write_file(
+    State(state): State<Arc<ServiceState>>,
+    Path(id): Path<String>,
+    Json(payload): Json<WriteFileRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let uds_path = {
+        let instances = state.instances.lock().unwrap();
+        let i = instances
+            .get(&id)
+            .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
+        i.uds_path.clone()
+    };
+
+    let mut data = payload.content.into_bytes();
+    let path = payload.path;
+    let size = data.len() as u64;
+    if let Some(rewritten) = log_file_boundary(
+        &state,
+        &id,
+        FileBoundaryAction::Import,
+        path.clone(),
+        file_security_preview_bytes(&data),
+        size,
+        None,
+    )
+    .await?
+    {
+        data = rewritten;
+    }
+
+    let id_val = state.next_job_id();
+    let res = send_ipc_command(
+        &uds_path,
+        ServiceToProcess::WriteFile {
+            id: id_val,
+            path,
+            data,
+        },
+        Some(30),
+    )
+    .await
+    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    match res {
+        ProcessToService::WriteFileResult { success, error, .. } => {
+            if success {
+                Ok(Json(json!({ "success": true })))
+            } else {
+                Err(AppError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    error.unwrap_or_else(|| "unknown write error".into()),
+                ))
+            }
+        }
+        _ => Err(AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "unexpected IPC response for write_file".to_string(),
+        )),
+    }
+}
+
+async fn handle_read_file(
+    State(state): State<Arc<ServiceState>>,
+    Path(id): Path<String>,
+    Json(payload): Json<ReadFileRequest>,
+) -> Result<Json<ReadFileResponse>, AppError> {
+    let path = &payload.path;
+    let uds_path = {
+        let instances = state.instances.lock().unwrap();
+        let i = instances
+            .get(&id)
+            .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
+        i.uds_path.clone()
+    };
+
+    wait_for_vm_ready(&uds_path, 30, Some(&state), Some(&id))
+        .await
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    let id_val = state.next_job_id();
+    let res = send_ipc_command(
+        &uds_path,
+        ServiceToProcess::ReadFile {
+            id: id_val,
+            path: path.clone(),
+        },
+        Some(30),
+    )
+    .await
+    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    match res {
+        ProcessToService::ReadFileResult { data, error, .. } => {
+            if let Some(d) = data {
+                Ok(Json(ReadFileResponse {
+                    content: String::from_utf8(d)
+                        .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
+                }))
+            } else {
+                Err(AppError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    error.unwrap_or_else(|| "unknown read error".into()),
+                ))
+            }
+        }
+        _ => Err(AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "unexpected IPC response for read_file".to_string(),
+        )),
+    }
+}
+
 async fn handle_reload_config(
     State(state): State<Arc<ServiceState>>,
-) -> Result<(StatusCode, Json<serde_json::Value>), AppError> {
-    let runtime_rules = runtime_security_rules_snapshot_from_registries(&state)?;
+) -> Result<Json<serde_json::Value>, AppError> {
+    handle_reload_config_for_profile(state, None).await
+}
+
+async fn handle_reload_config_for_profile(
+    state: Arc<ServiceState>,
+    profile_filter: Option<&str>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    state
+        .refresh_runtime_profile_dirs(profile_filter)
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
     // Collect paths to broadcast to.
-    let reload_targets = {
+    let uds_paths = {
         let instances = state.instances.lock().unwrap();
         instances
             .iter()
-            .map(|(id, info)| (id.clone(), info.uds_path.clone(), info.session_dir.clone()))
+            .filter(|(_, info)| {
+                profile_filter
+                    .map(|profile_id| info.profile_id == profile_id)
+                    .unwrap_or(true)
+            })
+            .map(|(id, info)| (id.clone(), info.uds_path.clone()))
             .collect::<Vec<_>>()
     };
 
-    let results =
-        futures::future::join_all(reload_targets.iter().map(|(id, uds_path, session_dir)| {
-            let id = id.clone();
-            let session_dir = session_dir.clone();
-            let state = state.clone();
-            let runtime_rules = runtime_rules.clone();
-            async move {
-                if let Err(error) = state.refresh_vm_effective_settings(&session_dir) {
-                    return Some(ReloadConfigFailure {
-                        session_id: id,
-                        message: format!("refresh vm-effective settings: {error}"),
-                    });
-                }
-                match send_ipc_command(
-                    uds_path,
-                    ServiceToProcess::ReloadConfig {
-                        runtime_rules: Some(runtime_rules),
-                    },
-                    Some(5),
-                )
-                .await
-                {
-                    Ok(ProcessToService::ReloadConfigResult {
-                        success: true,
-                        error: _,
-                    }) => None,
-                    Ok(ProcessToService::ReloadConfigResult {
-                        success: false,
-                        error,
-                    }) => Some(ReloadConfigFailure {
-                        session_id: id,
-                        message: error.unwrap_or_else(|| "reload failed".to_string()),
-                    }),
-                    Ok(ProcessToService::Pong) => None,
-                    Ok(_) => Some(ReloadConfigFailure {
-                        session_id: id,
-                        message: "unexpected response".to_string(),
-                    }),
-                    Err(e) => Some(ReloadConfigFailure {
-                        session_id: id,
-                        message: e,
-                    }),
-                }
+    let results = futures::future::join_all(uds_paths.iter().map(|(id, uds_path)| {
+        let id = id.clone();
+        async move {
+            match send_ipc_command(uds_path, ServiceToProcess::ReloadConfig, Some(5)).await {
+                Ok(ProcessToService::Pong) => None,
+                Ok(_) => Some(format!("{id}: unexpected response")),
+                Err(e) => Some(format!("{id}: {e}")),
             }
-        }))
-        .await;
-    let failures: Vec<ReloadConfigFailure> = results.into_iter().flatten().collect();
-    let failed_session_ids: Vec<String> = failures
-        .iter()
-        .map(|failure| failure.session_id.clone())
-        .collect();
-    let reloaded = reload_targets.len().saturating_sub(failures.len());
+        }
+    }))
+    .await;
+    let failures: Vec<String> = results.into_iter().flatten().collect();
 
     if failures.is_empty() {
-        Ok((
-            StatusCode::OK,
-            Json(serde_json::json!({
-                "success": true,
-                "reloaded": reload_targets.len(),
-                "failed_session_count": 0,
-                "failed_session_ids": [],
-                "failures": [],
-                "message": null,
-            })),
+        Ok(Json(
+            serde_json::json!({ "success": true, "reloaded": uds_paths.len() }),
         ))
     } else {
-        let message = format!(
-            "failed to reload config in {} running session{}",
-            failures.len(),
-            if failures.len() == 1 { "" } else { "s" }
-        );
-        Ok((
+        Err(AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({
-                "success": false,
-                "reloaded": reloaded,
-                "failed_session_count": failures.len(),
-                "failed_session_ids": failed_session_ids,
-                "failures": failures,
-                "message": message,
-            })),
+            format!(
+                "failed to reload config in some instances: {}",
+                failures.join(", ")
+            ),
         ))
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
-struct ReloadConfigFailure {
-    session_id: String,
-    message: String,
+async fn handle_profile_reload(
+    State(state): State<Arc<ServiceState>>,
+    Path(profile_id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let profile_id = validate_profile_route_id(profile_id)?;
+    handle_reload_config_for_profile(state, Some(&profile_id)).await
 }
 
 // ---------------------------------------------------------------------------
 // Settings endpoints
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize)]
-struct SettingsIssue {
-    path: String,
-    severity: String,
-    message: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PolicyRuleUpdate {
-    #[serde(rename = "on")]
-    callback: String,
-    #[serde(rename = "if")]
-    condition: String,
-    decision: capsem_core::settings_profiles::RuleDecision,
-    #[serde(default = "default_profile_rule_priority")]
-    priority: i32,
-    #[serde(default)]
-    reason: Option<String>,
-    #[serde(default)]
-    rewrite_target: Option<String>,
-    #[serde(default)]
-    rewrite_value: Option<String>,
-    #[serde(default)]
-    strip_request_headers: Vec<String>,
-    #[serde(default)]
-    strip_response_headers: Vec<String>,
-}
-
-fn default_profile_rule_priority() -> i32 {
-    1
-}
-
-fn service_settings_path() -> PathBuf {
-    capsem_core::paths::capsem_home().join("service.toml")
-}
-
-fn load_service_profiles_state() -> Result<
-    (
-        capsem_core::settings_profiles::ServiceSettings,
-        capsem_core::settings_profiles::ProfileCatalog,
-        capsem_core::settings_profiles::EffectiveVmSettings,
-        capsem_core::settings_profiles::ResolverTrace,
-    ),
-    String,
-> {
-    let settings_path = service_settings_path();
-    let settings = capsem_core::settings_profiles::load_service_settings_or_default(&settings_path)
-        .map_err(|e| format!("load {}: {e}", settings_path.display()))?;
-    let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles)
-        .map_err(|e| format!("discover profiles: {e}"))?;
-    let (effective, trace) =
-        capsem_core::settings_profiles::resolve_effective_vm_settings_with_corp(
-            &settings,
-            Some(&settings.profiles.default_profile),
-        )
-        .map_err(|e| {
-            format!(
-                "resolve effective profile '{}': {e}",
-                settings.profiles.default_profile
-            )
-        })?;
-    Ok((settings, catalog, effective, trace))
-}
-
-fn rule_type_from_callback(callback: &str) -> Option<&'static str> {
-    match callback {
-        "mcp.request" | "mcp.response" => Some("mcp"),
-        "http.request" | "http.read" | "http.write" | "http.response" => Some("http"),
-        "dns.request" | "dns.response" => Some("dns"),
-        "model.request" | "model.response" | "model.tool_call" | "model.tool_response" => {
-            Some("model")
-        }
-        "hook.decision" => Some("hook"),
-        _ => None,
-    }
-}
-
-fn split_policy_key(key: &str) -> Result<(String, String), String> {
-    let mut parts = key.split('.');
-    let prefix = parts.next();
-    let rule_type = parts.next();
-    let rule_name = parts.next();
-    if prefix != Some("policy")
-        || rule_type.is_none()
-        || rule_name.is_none()
-        || parts.next().is_some()
-    {
-        return Err(format!(
-            "unsupported settings key '{key}'; only policy.<type>.<rule_name> is accepted"
-        ));
-    }
-    let rule_type = rule_type.unwrap_or_default();
-    if !matches!(rule_type, "mcp" | "http" | "dns" | "model" | "hook") {
-        return Err(format!("unsupported policy rule type in key '{key}'"));
-    }
-    let rule_name = rule_name.unwrap_or_default();
-    if rule_name.is_empty()
-        || !rule_name
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_'))
-    {
-        return Err(format!("invalid policy rule name in key '{key}'"));
-    }
-    Ok((rule_type.to_string(), rule_name.to_string()))
-}
-
-fn profile_rule_from_update(
-    update: PolicyRuleUpdate,
-) -> capsem_core::settings_profiles::ProfileRule {
-    capsem_core::settings_profiles::ProfileRule {
-        callback: update.callback,
-        condition: update.condition,
-        decision: update.decision,
-        priority: update.priority,
-        reason: update.reason,
-        rewrite_target: update.rewrite_target,
-        rewrite_value: update.rewrite_value,
-        strip_request_headers: normalize_header_names(update.strip_request_headers),
-        strip_response_headers: normalize_header_names(update.strip_response_headers),
-    }
-}
-
-fn normalize_header_names(headers: Vec<String>) -> Vec<String> {
-    let mut seen = HashSet::new();
-    let mut normalized = Vec::new();
-    for header in headers {
-        let trimmed = header.trim();
-        let Ok(name) = axum::http::header::HeaderName::from_bytes(trimmed.as_bytes()) else {
-            continue;
-        };
-        let name = name.as_str().to_string();
-        if seen.insert(name.clone()) {
-            normalized.push(name);
-        }
-    }
-    normalized
-}
-
-fn validate_policy_rule_update(
-    rule_type: &str,
-    rule_name: &str,
-    update: &PolicyRuleUpdate,
-) -> Result<(), String> {
-    let Some(callback_type) = rule_type_from_callback(&update.callback) else {
-        return Err(format!("unsupported policy callback '{}'", update.callback));
-    };
-    if callback_type != rule_type {
-        return Err(format!(
-            "policy rule 'policy.{rule_type}.{rule_name}' uses callback for a different policy type"
-        ));
-    }
-    if update.condition.trim().is_empty() {
-        return Err(format!(
-            "invalid policy rule policy.{rule_type}.{rule_name}: condition cannot be empty"
-        ));
-    }
-    validate_policy_condition_terms(rule_type, rule_name, &update.condition)?;
-    Ok(())
-}
-
-fn validate_policy_condition_terms(
-    rule_type: &str,
-    rule_name: &str,
-    condition: &str,
-) -> Result<(), String> {
-    if condition.contains(".match(") {
-        return Err(format!(
-            "invalid policy rule policy.{rule_type}.{rule_name}: unsupported CEL condition term '.match('; use '.matches(' for regular-expression predicates"
-        ));
-    }
-    Ok(())
-}
-
-fn upsert_profile_rule(
-    profile: &mut capsem_core::settings_profiles::Profile,
-    rule_type: &str,
-    rule_name: String,
-    rule: capsem_core::settings_profiles::ProfileRule,
-) {
-    match rule_type {
-        "mcp" => {
-            profile.security.rules.mcp.insert(rule_name, rule);
-        }
-        "http" => {
-            profile.security.rules.http.insert(rule_name, rule);
-        }
-        "dns" => {
-            profile.security.rules.dns.insert(rule_name, rule);
-        }
-        "model" => {
-            profile.security.rules.model.insert(rule_name, rule);
-        }
-        "hook" => {
-            profile.security.rules.hook.insert(rule_name, rule);
-        }
-        _ => {}
-    }
-}
-
-fn remove_profile_rule(
-    profile: &mut capsem_core::settings_profiles::Profile,
-    rule_type: &str,
-    rule_name: &str,
-) {
-    match rule_type {
-        "mcp" => {
-            profile.security.rules.mcp.remove(rule_name);
-        }
-        "http" => {
-            profile.security.rules.http.remove(rule_name);
-        }
-        "dns" => {
-            profile.security.rules.dns.remove(rule_name);
-        }
-        "model" => {
-            profile.security.rules.model.remove(rule_name);
-        }
-        "hook" => {
-            profile.security.rules.hook.remove(rule_name);
-        }
-        _ => {}
-    }
-}
-
-fn policy_json_from_effective(
-    effective: &capsem_core::settings_profiles::EffectiveVmSettings,
-) -> serde_json::Value {
-    let mut policy = serde_json::Map::new();
-    for rule in &effective.rules {
-        if rule.derived {
-            continue;
-        }
-        let Some(rule_type) = rule_type_from_callback(&rule.callback) else {
-            continue;
-        };
-        let rule_name = rule
-            .id
-            .split_once('.')
-            .map(|(_, name)| name)
-            .filter(|name| !name.is_empty())
-            .unwrap_or(rule.id.as_str())
-            .to_string();
-
-        let rule_json = json!({
-            "on": rule.callback,
-            "if": rule.condition,
-            "decision": rule.decision,
-            "priority": rule.priority,
-            "reason": rule.reason,
-            "rewrite_target": rule.rewrite_target,
-            "rewrite_value": rule.rewrite_value,
-            "strip_request_headers": rule.strip_request_headers,
-            "strip_response_headers": rule.strip_response_headers,
-        });
-        let entry = policy
-            .entry(rule_type.to_string())
-            .or_insert_with(|| json!({}));
-        if let Some(map) = entry.as_object_mut() {
-            map.insert(rule_name, rule_json);
-        }
-    }
-    serde_json::Value::Object(policy)
-}
-
-fn profile_presets_json(
-    catalog: &capsem_core::settings_profiles::ProfileCatalog,
-) -> serde_json::Value {
-    let mut presets = catalog
-        .list()
-        .map(|record| {
-            json!({
-                "id": record.profile.id,
-                "name": record.profile.name,
-                "description": record.profile.description,
-                "settings": {
-                    "profiles.default_profile": record.profile.id,
-                },
-            })
-        })
-        .collect::<Vec<_>>();
-    presets.sort_by(|left, right| {
-        left["name"]
-            .as_str()
-            .unwrap_or_default()
-            .cmp(right["name"].as_str().unwrap_or_default())
-    });
-    serde_json::Value::Array(presets)
-}
-
-fn profile_record_json(
-    record: &capsem_core::settings_profiles::ProfileRecord,
-) -> serde_json::Value {
-    json!({
-        "profile": record.profile,
-        "source": record.source.as_str(),
-        "path": record.path.as_ref().map(|path| path.display().to_string()),
-        "locked": record.locked,
-    })
-}
-
-fn profile_record_json_with_asset_status(
-    record: &capsem_core::settings_profiles::ProfileRecord,
-    settings: &capsem_core::settings_profiles::ServiceSettings,
-    assets_dir: &FsPath,
-) -> serde_json::Value {
-    let mut value = profile_record_json(record);
-    if let Some(object) = value.as_object_mut() {
-        object.insert(
-            "asset_status".to_string(),
-            profile_asset_status_for_profile(settings, assets_dir, &record.profile.id),
-        );
-    }
-    value
-}
-
-fn profile_asset_requirement_for_status(
-    settings: &capsem_core::settings_profiles::ServiceSettings,
-    profile_id: &str,
-    arch: &str,
-) -> Result<ProfileAssetRequirement> {
-    let (effective, _) = capsem_core::settings_profiles::resolve_effective_vm_settings_with_corp(
-        settings,
-        Some(profile_id),
-    )
-    .with_context(|| format!("resolve profile '{profile_id}' for VM asset status"))?;
-    let mut required = ProfileAssetRequirement::from_effective(&effective, arch)?;
-    let installed = capsem_core::settings_profiles::load_complete_installed_profile_revision(
-        &settings.profiles,
-        profile_id,
-    )
-    .with_context(|| format!("load installed profile revision for '{profile_id}'"))?
-    .ok_or_else(|| {
-        anyhow::anyhow!(
-            "profile '{profile_id}' has no installed signed catalog revision; install it before creating a VM"
-        )
-    })?;
-    required =
-        required.with_installed_revision(Some(installed.revision), Some(installed.payload_hash));
-    Ok(required)
-}
-
-fn profile_asset_status_for_profile(
-    settings: &capsem_core::settings_profiles::ServiceSettings,
-    assets_dir: &FsPath,
-    profile_id: &str,
-) -> serde_json::Value {
-    match profile_asset_requirement_for_status(settings, profile_id, host_asset_arch()) {
-        Ok(required) => profile_asset_status_json(&required, assets_dir),
-        Err(error) => {
-            warn!(
-                event = "profile_asset_discovery_failed",
-                profile_id,
-                error = %error,
-                "profile asset discovery failed"
-            );
-            json!({
-                "state": "error",
-                "ready": false,
-                "usable_for_vm": false,
-                "profile_id": profile_id,
-                "arch": host_asset_arch(),
-                "error": error.to_string(),
-                "assets": [],
-                "missing": [],
-                "missing_assets": [],
-            })
-        }
-    }
-}
-
-fn profile_asset_status_json(
-    required: &ProfileAssetRequirement,
-    assets_dir: &FsPath,
-) -> serde_json::Value {
-    let rows = required.local_asset_statuses(assets_dir);
-    let missing = rows
-        .iter()
-        .filter(|row| !row.present)
-        .map(|row| row.logical_name.to_string())
-        .collect::<Vec<_>>();
-    let missing_assets = rows
-        .iter()
-        .filter(|row| !row.present)
-        .map(|row| {
-            json!({
-                "name": row.logical_name,
-                "path": row.path.display().to_string(),
-                "source_url": row.source_url,
-            })
-        })
-        .collect::<Vec<_>>();
-    let assets = rows
-        .iter()
-        .map(|row| {
-            json!({
-                "name": row.logical_name,
-                "path": row.path.display().to_string(),
-                "status": if row.present { "present" } else { "missing" },
-                "source_url": row.source_url,
-                "hash": row.hash,
-                "size": row.size,
-                "content_type": row.content_type,
-            })
-        })
-        .collect::<Vec<_>>();
-    let ready = missing.is_empty();
-    let state = if ready { "ready" } else { "missing" };
-    if ready {
-        info!(
-            event = "profile_asset_discovery",
-            profile_id = required.profile_id(),
-            revision = required.revision().unwrap_or(""),
-            profile_payload_hash = required.profile_payload_hash().unwrap_or(""),
-            arch = required.arch(),
-            asset_state = state,
-            "profile asset discovery succeeded"
-        );
-    } else {
-        let missing_paths = rows
-            .iter()
-            .filter(|row| !row.present)
-            .map(|row| row.path.display().to_string())
-            .collect::<Vec<_>>();
-        warn!(
-            event = "profile_asset_discovery_failed",
-            profile_id = required.profile_id(),
-            revision = required.revision().unwrap_or(""),
-            profile_payload_hash = required.profile_payload_hash().unwrap_or(""),
-            arch = required.arch(),
-            asset_state = state,
-            missing = ?missing,
-            missing_paths = ?missing_paths,
-            "profile asset discovery found missing local assets"
-        );
-    }
-    json!({
-        "state": state,
-        "ready": ready,
-        "usable_for_vm": ready,
-        "profile_id": required.profile_id(),
-        "profile_revision": required.revision(),
-        "profile_payload_hash": required.profile_payload_hash(),
-        "asset_version": required.asset_version(),
-        "arch": required.arch(),
-        "assets": assets,
-        "missing": missing,
-        "missing_assets": missing_assets,
-    })
-}
-
-#[derive(Debug, Deserialize)]
-struct ProfileForkRequest {
-    id: String,
-    name: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CredentialUpsertRequest {
-    value: String,
-    #[serde(default)]
-    description: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ProfileCatalogReconcileRequest {
-    manifest_json: String,
-    profile_payload_pubkey: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ProfileRevisionActionRequest {
-    #[serde(default)]
-    revision: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct RulesQuery {
-    #[serde(default)]
-    profile: Option<String>,
-    #[serde(default)]
-    callback: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct RulesMutationQuery {
-    #[serde(default)]
-    profile: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RuleCreateRequest {
-    #[serde(default, alias = "profile_id")]
-    profile: Option<String>,
-    id: String,
-    #[serde(flatten)]
-    update: PolicyRuleUpdate,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RuntimeEnforcementRuleRequest {
-    id: String,
-    #[serde(default)]
-    pack_id: Option<String>,
-    #[serde(default = "seceng::default_runtime_rule_priority")]
-    priority: i32,
-    condition: String,
-    decision: seceng::SecurityDecisionAction,
-    #[serde(default)]
-    reason: Option<String>,
-    #[serde(default = "default_true")]
-    enabled: bool,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RuntimeDetectionRuleRequest {
-    id: String,
-    pack_id: String,
-    #[serde(default = "seceng::default_runtime_rule_priority")]
-    priority: i32,
-    #[serde(default)]
-    sigma_id: Option<String>,
-    title: String,
-    condition: String,
-    severity: seceng::Severity,
-    confidence: seceng::Confidence,
-    #[serde(default)]
-    tags: Vec<String>,
-    #[serde(default = "default_true")]
-    enabled: bool,
-}
-
-const RUNTIME_SECURITY_RULES_STORE_SCHEMA: &str = "capsem.runtime-security-rules.v1";
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RuntimeSecurityRulesStore {
-    schema: String,
-    #[serde(default)]
-    enforcement: Vec<seceng::RuntimeRuleRecord>,
-    #[serde(default)]
-    detection: Vec<seceng::RuntimeRuleRecord>,
-}
-
-impl RuntimeSecurityRulesStore {
-    fn new() -> Self {
-        Self {
-            schema: RUNTIME_SECURITY_RULES_STORE_SCHEMA.to_owned(),
-            enforcement: Vec::new(),
-            detection: Vec::new(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RuntimeBacktestEvent {
-    #[serde(default)]
-    event_ref: Option<seceng::BacktestEventRef>,
-    event: seceng::SecurityEvent,
-    #[serde(default)]
-    expected: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RuntimeEnforcementBacktestRequest {
-    rule: RuntimeEnforcementRuleRequest,
-    events: Vec<RuntimeBacktestEvent>,
-    #[serde(default)]
-    limit: Option<usize>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RuntimeDetectionBacktestRequest {
-    rule: RuntimeDetectionRuleRequest,
-    events: Vec<RuntimeBacktestEvent>,
-    #[serde(default)]
-    limit: Option<usize>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RuntimeDetectionHuntRequest {
-    rules: Vec<RuntimeDetectionRuleRequest>,
-    events: Vec<RuntimeBacktestEvent>,
-    #[serde(default)]
-    limit: Option<usize>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RuntimeSessionDetectionHuntRequest {
-    rules: Vec<RuntimeDetectionRuleRequest>,
-    #[serde(default)]
-    limit: Option<usize>,
-}
-
-fn default_true() -> bool {
-    true
-}
-
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-enum SkillKind {
-    Group,
-    #[default]
-    Enabled,
-    Disabled,
-}
-
-impl SkillKind {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Group => "group",
-            Self::Enabled => "enabled",
-            Self::Disabled => "disabled",
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct SkillsQuery {
-    #[serde(default)]
-    profile: Option<String>,
-    #[serde(default)]
-    kind: Option<SkillKind>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SkillMutationRequest {
-    #[serde(default, alias = "profile_id")]
-    profile: Option<String>,
-    id: String,
-    #[serde(default)]
-    kind: SkillKind,
-}
-
-fn load_service_settings_for_profiles(
-) -> Result<capsem_core::settings_profiles::ServiceSettings, AppError> {
-    let settings_path = service_settings_path();
-    capsem_core::settings_profiles::load_service_settings_or_default(&settings_path).map_err(|e| {
-        AppError(
-            StatusCode::BAD_REQUEST,
-            format!("load {}: {e}", settings_path.display()),
-        )
-    })
-}
-
-fn resolved_asset_locations_for_profile_status(
-    settings: &capsem_core::settings_profiles::ServiceSettings,
-) -> Result<capsem_core::settings_profiles::ResolvedServiceAssetLocations, AppError> {
-    let settings_path = service_settings_path();
-    let fallback_assets_dir = settings_path
-        .parent()
-        .map(|path| path.join("assets"))
-        .unwrap_or_else(|| capsem_core::paths::capsem_home().join("assets"));
-    capsem_core::settings_profiles::resolve_service_asset_locations(
-        settings,
-        None,
-        None,
-        fallback_assets_dir,
-    )
-    .map_err(|error| {
-        AppError(
-            StatusCode::BAD_REQUEST,
-            format!("resolve profile asset locations: {error}"),
-        )
-    })
-}
-
-/// GET /profiles -- list typed Profile V2 profile records.
-async fn handle_list_profiles() -> Result<Json<serde_json::Value>, AppError> {
-    let settings = load_service_settings_for_profiles()?;
-    let asset_locations = resolved_asset_locations_for_profile_status(&settings)?;
-    let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles)
-        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("discover profiles: {e}")))?;
-
-    let mut profiles = catalog
-        .list()
-        .map(|record| {
-            profile_record_json_with_asset_status(record, &settings, &asset_locations.assets_dir)
-        })
-        .collect::<Vec<_>>();
-    profiles.sort_by(|left, right| {
-        left["profile"]["id"]
-            .as_str()
-            .unwrap_or_default()
-            .cmp(right["profile"]["id"].as_str().unwrap_or_default())
-    });
-
-    Ok(Json(json!({
-        "mode": "settings_profiles_v2",
-        "default_profile": settings.profiles.default_profile,
-        "asset_locations": asset_locations_status_json(&asset_locations),
-        "profiles": profiles,
-    })))
-}
-
-/// GET /profiles/catalog -- show signed catalog and installed revision state.
-async fn handle_profile_catalog() -> Result<Json<serde_json::Value>, AppError> {
-    let settings = load_service_settings_for_profiles()?;
-    Ok(Json(profile_catalog_status_json(&settings)?))
-}
-
-fn load_persisted_profile_manifest(
-    settings: &capsem_core::settings_profiles::ServiceSettings,
-) -> Result<
-    (
-        Option<PathBuf>,
-        Option<capsem_core::profile_manifest::ProfileManifest>,
-    ),
-    AppError,
-> {
-    let manifest_path = profile_catalog_manifest_path(settings);
-    let manifest_json = match manifest_path.as_ref() {
-        Some(path) => match std::fs::read_to_string(path) {
-            Ok(content) => Some(content),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-            Err(error) => {
-                return Err(AppError(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("read profile catalog manifest {}: {error}", path.display()),
-                ));
-            }
-        },
-        None => None,
-    };
-    let manifest = match manifest_json.as_deref() {
-        Some(content) => Some(
-            capsem_core::profile_manifest::ProfileManifest::from_json(content).map_err(
-                |error| {
-                    AppError(
-                        StatusCode::BAD_REQUEST,
-                        format!("parse persisted profile catalog manifest: {error}"),
-                    )
-                },
-            )?,
-        ),
-        None => None,
-    };
-
-    Ok((manifest_path, manifest))
-}
-
-fn profile_revision_records_json(
-    profile: &capsem_core::profile_manifest::ManifestProfile,
-    installed: Option<&capsem_core::settings_profiles::InstalledProfileRevisionRecord>,
-) -> Vec<serde_json::Value> {
-    let mut revisions = profile
-        .revisions
-        .iter()
-        .map(|(revision, record)| {
-            json!({
-                "revision": revision,
-                "status": record.status.as_str(),
-                "current": revision == &profile.current_revision,
-                "installed": installed
-                    .is_some_and(|installed| installed.revision == *revision),
-                "profile_hash": record.profile_hash,
-                "min_binary": record.min_binary,
-            })
-        })
-        .collect::<Vec<_>>();
-    revisions.sort_by(|left, right| {
-        left["revision"]
-            .as_str()
-            .unwrap_or_default()
-            .cmp(right["revision"].as_str().unwrap_or_default())
-    });
-    revisions
-}
-
-fn profile_catalog_status_json(
-    settings: &capsem_core::settings_profiles::ServiceSettings,
-) -> Result<serde_json::Value, AppError> {
-    let (manifest_path, manifest) = load_persisted_profile_manifest(settings)?;
-    let asset_locations = resolved_asset_locations_for_profile_status(settings)?;
-    let mut profiles = Vec::new();
-    if let Some(manifest) = &manifest {
-        for (profile_id, profile) in &manifest.profiles {
-            let installed = capsem_core::settings_profiles::load_installed_profile_revision(
-                &settings.profiles,
-                profile_id,
-            )
-            .map_err(|error| {
-                AppError(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("load installed profile revision '{profile_id}': {error}"),
-                )
-            })?;
-            profiles.push(json!({
-                "profile_id": profile_id,
-                "current_revision": profile.current_revision,
-                "installed_revision": installed.as_ref().map(|installed| installed.revision.clone()),
-                "installed_payload_hash": installed.as_ref().map(|installed| installed.payload_hash.clone()),
-                "revisions": profile_revision_records_json(profile, installed.as_ref()),
-                "asset_status": profile_asset_status_for_profile(
-                    settings,
-                    &asset_locations.assets_dir,
-                    profile_id,
-                ),
-            }));
-        }
-    }
-    profiles.sort_by(|left, right| {
-        left["profile_id"]
-            .as_str()
-            .unwrap_or_default()
-            .cmp(right["profile_id"].as_str().unwrap_or_default())
-    });
-
-    Ok(json!({
-        "mode": "settings_profiles_v2",
-        "configured": settings.profile_catalog.is_configured(),
-        "default_profile": settings.profiles.default_profile.clone(),
-        "manifest_url": settings.profile_catalog.manifest_url.clone(),
-        "check_interval_secs": settings.profile_catalog.check_interval_secs,
-        "manifest_path": manifest_path.map(|path| path.display().to_string()),
-        "manifest_present": manifest.is_some(),
-        "asset_locations": asset_locations_status_json(&asset_locations),
-        "profiles": profiles,
-    }))
-}
-
-/// GET /profiles/{id}/revisions -- show signed catalog revisions for one profile.
-async fn handle_profile_revisions(
-    Path(profile_id): Path<String>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let settings = load_service_settings_for_profiles()?;
-    let (_, manifest) = load_persisted_profile_manifest(&settings)?;
-    let manifest = manifest.ok_or_else(|| {
-        AppError(
-            StatusCode::NOT_FOUND,
-            "profile catalog manifest is not present".into(),
-        )
-    })?;
-    let profile = manifest.profiles.get(&profile_id).ok_or_else(|| {
-        AppError(
-            StatusCode::NOT_FOUND,
-            format!("profile catalog entry '{profile_id}' not found"),
-        )
-    })?;
-    let installed = capsem_core::settings_profiles::load_installed_profile_revision(
-        &settings.profiles,
-        &profile_id,
-    )
-    .map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("load installed profile revision '{profile_id}': {error}"),
-        )
-    })?;
-
-    Ok(Json(json!({
-        "mode": "settings_profiles_v2",
-        "profile_id": profile_id,
-        "current_revision": profile.current_revision,
-        "installed_revision": installed.as_ref().map(|installed| installed.revision.clone()),
-        "installed_payload_hash": installed.as_ref().map(|installed| installed.payload_hash.clone()),
-        "revisions": profile_revision_records_json(profile, installed.as_ref()),
-    })))
-}
-
-/// POST /profiles/{id}/revisions/install -- install an active signed catalog revision.
-async fn handle_install_profile_revision(
-    Path(profile_id): Path<String>,
-    Json(body): Json<ProfileRevisionActionRequest>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let settings = load_service_settings_for_profiles()?;
-    Ok(Json(
-        reconcile_selected_profile_revision(&settings, &profile_id, body.revision.as_deref(), true)
-            .await?,
-    ))
-}
-
-/// POST /profiles/{id}/revisions/update -- reconcile one signed catalog revision.
-async fn handle_update_profile_revision_lifecycle(
-    Path(profile_id): Path<String>,
-    Json(body): Json<ProfileRevisionActionRequest>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let settings = load_service_settings_for_profiles()?;
-    Ok(Json(
-        reconcile_selected_profile_revision(
-            &settings,
-            &profile_id,
-            body.revision.as_deref(),
-            false,
-        )
-        .await?,
-    ))
-}
-
-/// POST /profiles/{id}/revisions/remove -- remove local launchable state for one revision.
-async fn handle_remove_profile_revision(
-    Path(profile_id): Path<String>,
-    Json(body): Json<ProfileRevisionActionRequest>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let settings = load_service_settings_for_profiles()?;
-    let selected_revision = match body.revision.as_deref() {
-        Some(revision) => revision.to_string(),
-        None => capsem_core::settings_profiles::load_installed_profile_revision(
-            &settings.profiles,
-            &profile_id,
-        )
-        .map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("load installed profile revision '{profile_id}': {error}"),
-            )
-        })?
-        .map(|installed| installed.revision)
-        .ok_or_else(|| {
-            AppError(
-                StatusCode::NOT_FOUND,
-                format!("profile '{profile_id}' has no installed revision to remove"),
-            )
-        })?,
-    };
-    let removed = capsem_core::settings_profiles::remove_installed_profile_revision(
-        &settings.profiles,
-        &profile_id,
-        Some(&selected_revision),
-    )
-    .map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!(
-                "remove installed profile revision '{profile_id}@{selected_revision}': {error}"
-            ),
-        )
-    })?;
-
-    let outcome = match removed {
-        Some(record) => json!({
-            "profile_id": record.profile_id,
-            "revision": record.revision,
-            "payload_hash": record.payload_hash,
-            "outcome": "removed",
-        }),
-        None => json!({
-            "profile_id": profile_id,
-            "revision": selected_revision,
-            "outcome": "not_installed",
-        }),
-    };
-
-    Ok(Json(json!({
-        "mode": "settings_profiles_v2",
-        "action": "remove",
-        "profile_id": outcome["profile_id"],
-        "selected_revision": outcome["revision"],
-        "outcome": outcome,
-    })))
-}
-
-async fn reconcile_selected_profile_revision(
-    settings: &capsem_core::settings_profiles::ServiceSettings,
-    profile_id: &str,
-    requested_revision: Option<&str>,
-    install_only: bool,
-) -> Result<serde_json::Value, AppError> {
-    let (_, manifest) = load_persisted_profile_manifest(settings)?;
-    let manifest = manifest.ok_or_else(|| {
-        AppError(
-            StatusCode::NOT_FOUND,
-            "profile catalog manifest is not present".into(),
-        )
-    })?;
-    let revision = match requested_revision {
-        Some(revision) => manifest.revision(profile_id, revision).map_err(|error| {
-            AppError(
-                StatusCode::NOT_FOUND,
-                format!("resolve profile revision '{profile_id}@{revision}': {error}"),
-            )
-        })?,
-        None => manifest.current_revision(profile_id).map_err(|error| {
-            AppError(
-                StatusCode::NOT_FOUND,
-                format!("resolve current profile revision '{profile_id}': {error}"),
-            )
-        })?,
-    };
-    if install_only
-        && revision.record.status != capsem_core::profile_manifest::ProfileRevisionStatus::Active
-    {
-        return Err(AppError(
-            StatusCode::BAD_REQUEST,
-            format!(
-                "profile revision '{}@{}' has status {}; only active revisions can be installed",
-                revision.profile_id,
-                revision.revision,
-                revision.record.status.as_str()
-            ),
-        ));
-    }
-    let profile_payload_pubkey = settings
-        .profile_catalog
-        .profile_payload_pubkey
-        .as_deref()
-        .ok_or_else(|| {
-            AppError(
-                StatusCode::BAD_REQUEST,
-                "profile catalog profile_payload_pubkey is not configured".into(),
-            )
-        })?;
-    let selected_profile_id = revision.profile_id.to_string();
-    let selected_revision = revision.revision.to_string();
-    let action = if install_only { "install" } else { "update" };
-    let mut summary = ProfileCatalogReconcileSummary::default();
-    let outcome = capsem_core::settings_profiles::reconcile_profile_revision_from_manifest(
-        &settings.profiles,
-        revision,
-        profile_payload_pubkey,
-    )
-    .await
-    .map_err(|error| {
-        AppError(
-            StatusCode::BAD_REQUEST,
-            format!(
-                "reconcile profile revision '{selected_profile_id}@{selected_revision}': {error:#}"
-            ),
-        )
-    })
-    .map(|outcome| profile_reconcile_outcome_json(outcome, &mut summary))?;
-
-    Ok(json!({
-        "mode": "settings_profiles_v2",
-        "action": action,
-        "profile_id": selected_profile_id,
-        "selected_revision": selected_revision,
-        "requested_revision": requested_revision,
-        "summary": summary,
-        "outcome": outcome,
-    }))
-}
-
-/// GET /profiles/{id} -- fetch one typed Profile V2 profile record.
-async fn handle_get_profile(Path(id): Path<String>) -> Result<Json<serde_json::Value>, AppError> {
-    let settings = load_service_settings_for_profiles()?;
-    let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles)
-        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("discover profiles: {e}")))?;
-    let record = catalog
-        .get(&id)
-        .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("profile '{id}' not found")))?;
-
-    Ok(Json(profile_record_json(record)))
-}
-
-/// POST /profiles -- create a user-owned Profile V2 profile.
-async fn handle_create_profile(
-    Json(profile): Json<capsem_core::settings_profiles::Profile>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let settings = load_service_settings_for_profiles()?;
-    let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles)
-        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("discover profiles: {e}")))?;
-    if let Some(existing) = catalog.get(&profile.id) {
-        return Err(AppError(
-            StatusCode::BAD_REQUEST,
-            format!(
-                "profile '{}' already exists ({})",
-                profile.id,
-                existing.source.as_str()
-            ),
-        ));
-    }
-    let record = capsem_core::settings_profiles::create_user_profile(&settings.profiles, profile)
-        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("create profile: {e}")))?;
-    Ok(Json(profile_record_json(&record)))
-}
-
-/// POST /profiles/{id}/fork -- fork an existing profile into a user profile.
-async fn handle_fork_profile(
-    Path(source_id): Path<String>,
-    Json(body): Json<ProfileForkRequest>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let settings = load_service_settings_for_profiles()?;
-    let record = capsem_core::settings_profiles::fork_user_profile(
-        &settings.profiles,
-        &source_id,
-        &body.id,
-        &body.name,
-    )
-    .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("fork profile: {e}")))?;
-    Ok(Json(profile_record_json(&record)))
-}
-
-/// PUT /profiles/{id} -- update an existing user-owned Profile V2 profile.
-async fn handle_update_profile(
-    Path(id): Path<String>,
-    Json(profile): Json<capsem_core::settings_profiles::Profile>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    if profile.id != id {
-        return Err(AppError(
-            StatusCode::BAD_REQUEST,
-            format!(
-                "profile body id '{}' does not match route id '{id}'",
-                profile.id
-            ),
-        ));
-    }
-    let settings = load_service_settings_for_profiles()?;
-    let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles)
-        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("discover profiles: {e}")))?;
-    if let Some(record) = catalog.get(&id) {
-        if record.locked {
-            return Err(AppError(
-                StatusCode::BAD_REQUEST,
-                format!("profile '{id}' is locked ({})", record.source.as_str()),
-            ));
-        }
-        ensure_locked_profile_sections_unchanged(&record.profile, &profile)?;
-    }
-    let record = capsem_core::settings_profiles::update_user_profile(&settings.profiles, profile)
-        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("update profile: {e}")))?;
-    Ok(Json(profile_record_json(&record)))
-}
-
-/// DELETE /profiles/{id} -- delete an existing user-owned Profile V2 profile.
-async fn handle_delete_profile(
-    Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let settings = load_service_settings_for_profiles()?;
-    let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles)
-        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("discover profiles: {e}")))?;
-    if let Some(record) = catalog.get(&id) {
-        if record.locked {
-            return Err(AppError(
-                StatusCode::BAD_REQUEST,
-                format!("profile '{id}' is locked ({})", record.source.as_str()),
-            ));
-        }
-    }
-    capsem_core::settings_profiles::delete_user_profile(&settings.profiles, &id)
-        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("delete profile: {e}")))?;
-    Ok(Json(json!({
-        "mode": "settings_profiles_v2",
-        "deleted": id,
-    })))
-}
-
-/// GET /profiles/{id}/effective -- resolve one profile to VM-effective settings.
-async fn handle_resolve_profile(
-    Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let settings = load_service_settings_for_profiles()?;
-    let (effective, trace) =
-        capsem_core::settings_profiles::resolve_effective_vm_settings_with_corp(
-            &settings,
-            Some(&id),
-        )
-        .map_err(|e| {
-            AppError(
-                StatusCode::BAD_REQUEST,
-                format!("resolve effective profile '{id}': {e}"),
-            )
-        })?;
-
-    Ok(Json(json!({
-        "mode": "settings_profiles_v2",
-        "profile_id": effective.profile_id,
-        "effective": effective,
-        "resolver_trace": trace,
-    })))
-}
-
-/// POST /profiles/catalog/reconcile -- apply signed profile catalog lifecycle state.
-async fn handle_reconcile_profile_catalog(
-    Json(body): Json<ProfileCatalogReconcileRequest>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let settings = load_service_settings_for_profiles()?;
-    let result = reconcile_profile_catalog_manifest(
-        &settings,
-        &body.manifest_json,
-        &body.profile_payload_pubkey,
-    )
-    .await?;
-    Ok(Json(result))
-}
-
-async fn reconcile_configured_profile_catalog(
-    settings: &capsem_core::settings_profiles::ServiceSettings,
-) -> Result<serde_json::Value, AppError> {
-    let manifest_url = settings
-        .profile_catalog
-        .manifest_url
-        .as_deref()
-        .ok_or_else(|| {
-            AppError(
-                StatusCode::BAD_REQUEST,
-                "profile catalog manifest_url is not configured".into(),
-            )
-        })?;
-    let profile_payload_pubkey = settings
-        .profile_catalog
-        .profile_payload_pubkey
-        .as_deref()
-        .ok_or_else(|| {
-            AppError(
-                StatusCode::BAD_REQUEST,
-                "profile catalog profile_payload_pubkey is not configured".into(),
-            )
-        })?;
-    let url = capsem_core::profile_manifest::parse_profile_catalog_manifest_url(manifest_url)
-        .map_err(|error| {
-            AppError(
-                StatusCode::BAD_REQUEST,
-                format!("parse configured profile catalog manifest URL: {error}"),
-            )
-        })?;
-    let manifest_json = capsem_core::profile_manifest::fetch_profile_catalog_manifest_url(url)
-        .await
-        .map_err(|error| {
-            AppError(
-                StatusCode::BAD_GATEWAY,
-                format!("fetch configured profile catalog manifest: {error:#}"),
-            )
-        })?;
-    reconcile_profile_catalog_manifest(settings, &manifest_json, profile_payload_pubkey).await
-}
-
-fn spawn_profile_catalog_reconcile_task(
-    settings: capsem_core::settings_profiles::ServiceSettings,
-) -> Option<tokio::task::JoinHandle<()>> {
-    if !settings.profile_catalog.is_configured() {
-        return None;
-    }
-    let check_interval =
-        std::time::Duration::from_secs(settings.profile_catalog.check_interval_secs);
-    Some(tokio::spawn(async move {
-        loop {
-            match reconcile_configured_profile_catalog(&settings).await {
-                Ok(result) => {
-                    let summary = &result["summary"];
-                    info!(
-                        installed = summary["installed"].as_u64().unwrap_or_default(),
-                        unchanged = summary["unchanged"].as_u64().unwrap_or_default(),
-                        deprecated_kept = summary["deprecated_kept"].as_u64().unwrap_or_default(),
-                        revoked_removed = summary["revoked_removed"].as_u64().unwrap_or_default(),
-                        absent_removed = summary["absent_removed"].as_u64().unwrap_or_default(),
-                        errors = summary["errors"].as_u64().unwrap_or_default(),
-                        "profile catalog scheduled reconcile completed"
-                    );
-                }
-                Err(error) => {
-                    warn!(
-                        status = error.0.as_u16(),
-                        error = %error.1,
-                        "profile catalog scheduled reconcile failed"
-                    );
-                }
-            }
-            tokio::time::sleep(check_interval).await;
-        }
-    }))
-}
-
-async fn reconcile_profile_catalog_manifest(
-    settings: &capsem_core::settings_profiles::ServiceSettings,
-    manifest_json: &str,
-    profile_payload_pubkey: &str,
-) -> Result<serde_json::Value, AppError> {
-    let manifest = match capsem_core::profile_manifest::ProfileManifest::from_json(manifest_json) {
-        Ok(manifest) => manifest,
-        Err(error) => {
-            return Err(AppError(
-                StatusCode::BAD_REQUEST,
-                format!("parse profile catalog manifest: {error}"),
-            ));
-        }
-    };
-    persist_profile_catalog_manifest(settings, manifest_json)?;
-    let mut targets = Vec::new();
-    let mut seen = HashSet::new();
-    for profile_id in manifest.profiles.keys() {
-        let current = manifest.current_revision(profile_id).map_err(|e| {
-            AppError(
-                StatusCode::BAD_REQUEST,
-                format!("resolve current profile revision: {e}"),
-            )
-        })?;
-        if seen.insert((current.profile_id.to_string(), current.revision.to_string())) {
-            targets.push((current.profile_id.to_string(), current.revision.to_string()));
-        }
-        let Some(profile) = manifest.profiles.get(profile_id) else {
-            continue;
-        };
-        for (revision, record) in &profile.revisions {
-            if record.status == capsem_core::profile_manifest::ProfileRevisionStatus::Active {
-                continue;
-            }
-            if seen.insert((profile_id.clone(), revision.clone())) {
-                targets.push((profile_id.clone(), revision.clone()));
-            }
-        }
-    }
-    targets.sort();
-
-    let mut summary = ProfileCatalogReconcileSummary::default();
-    let mut outcomes = Vec::new();
-    for (profile_id, revision_id) in targets {
-        let revision = manifest.revision(&profile_id, &revision_id).map_err(|e| {
-            AppError(
-                StatusCode::BAD_REQUEST,
-                format!("resolve profile revision '{profile_id}@{revision_id}': {e}"),
-            )
-        })?;
-        match capsem_core::settings_profiles::reconcile_profile_revision_from_manifest(
-            &settings.profiles,
-            revision,
-            profile_payload_pubkey,
-        )
-        .await
-        {
-            Ok(outcome) => outcomes.push(profile_reconcile_outcome_json(outcome, &mut summary)),
-            Err(error) => {
-                summary.errors += 1;
-                outcomes.push(json!({
-                    "profile_id": profile_id,
-                    "revision": revision_id,
-                    "outcome": "error",
-                    "error": format!("{error:#}"),
-                }));
-            }
-        }
-    }
-    let absent_outcomes =
-        capsem_core::settings_profiles::reconcile_absent_installed_profiles_from_manifest(
-            &settings.profiles,
-            &manifest,
-        )
-        .map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("reconcile absent profile catalog entries: {error}"),
-            )
-        })?;
-    for outcome in absent_outcomes {
-        outcomes.push(profile_reconcile_outcome_json(outcome, &mut summary));
-    }
-
-    Ok(json!({
-        "mode": "settings_profiles_v2",
-        "summary": summary,
-        "outcomes": outcomes,
-    }))
-}
-
-#[derive(Debug, Default, Serialize)]
-struct ProfileCatalogReconcileSummary {
-    installed: usize,
-    unchanged: usize,
-    deprecated_kept: usize,
-    deprecated_not_installed: usize,
-    revoked_removed: usize,
-    revoked_not_installed: usize,
-    absent_removed: usize,
-    errors: usize,
-}
-
-fn profile_reconcile_outcome_json(
-    outcome: capsem_core::settings_profiles::ProfileRevisionReconcileOutcome,
-    summary: &mut ProfileCatalogReconcileSummary,
-) -> serde_json::Value {
-    match outcome {
-        capsem_core::settings_profiles::ProfileRevisionReconcileOutcome::Installed(installed) => {
-            summary.installed += 1;
-            json!({
-                "profile_id": installed.profile_id,
-                "revision": installed.revision,
-                "payload_hash": installed.payload_hash,
-                "outcome": "installed",
-                "runtime_profile_path": installed.runtime_profile_path.display().to_string(),
-                "payload_path": installed.payload_path.display().to_string(),
-                "current_record_path": installed.current_record_path.display().to_string(),
-            })
-        }
-        capsem_core::settings_profiles::ProfileRevisionReconcileOutcome::Unchanged(record) => {
-            summary.unchanged += 1;
-            json!({
-                "profile_id": record.profile_id,
-                "revision": record.revision,
-                "payload_hash": record.payload_hash,
-                "outcome": "unchanged",
-            })
-        }
-        capsem_core::settings_profiles::ProfileRevisionReconcileOutcome::DeprecatedKept(
-            record,
-        ) => {
-            summary.deprecated_kept += 1;
-            json!({
-                "profile_id": record.profile_id,
-                "revision": record.revision,
-                "payload_hash": record.payload_hash,
-                "outcome": "deprecated_kept",
-            })
-        }
-        capsem_core::settings_profiles::ProfileRevisionReconcileOutcome::DeprecatedNotInstalled {
-            profile_id,
-            revision,
-        } => {
-            summary.deprecated_not_installed += 1;
-            json!({
-                "profile_id": profile_id,
-                "revision": revision,
-                "outcome": "deprecated_not_installed",
-            })
-        }
-        capsem_core::settings_profiles::ProfileRevisionReconcileOutcome::RevokedRemoved {
-            profile_id,
-            revision,
-        } => {
-            summary.revoked_removed += 1;
-            json!({
-                "profile_id": profile_id,
-                "revision": revision,
-                "outcome": "revoked_removed",
-            })
-        }
-        capsem_core::settings_profiles::ProfileRevisionReconcileOutcome::RevokedNotInstalled {
-            profile_id,
-            revision,
-        } => {
-            summary.revoked_not_installed += 1;
-            json!({
-                "profile_id": profile_id,
-                "revision": revision,
-                "outcome": "revoked_not_installed",
-            })
-        }
-        capsem_core::settings_profiles::ProfileRevisionReconcileOutcome::AbsentRemoved {
-            profile_id,
-            revision,
-        } => {
-            summary.absent_removed += 1;
-            json!({
-                "profile_id": profile_id,
-                "revision": revision,
-                "outcome": "absent_removed",
-            })
-        }
-    }
-}
-
-fn canonical_rule_id(rule: &capsem_core::settings_profiles::EffectiveRule) -> String {
-    if rule.id.starts_with("security.rules.") {
-        return rule.id.clone();
-    }
-    let Some((rule_type, name)) = rule.id.split_once('.') else {
-        return format!("security.rules.{}", rule.id);
-    };
-    if matches!(rule_type, "mcp" | "http" | "dns" | "model" | "hook") && !name.is_empty() {
-        format!("security.rules.{rule_type}.{name}")
-    } else {
-        format!("security.rules.{}", rule.id)
-    }
-}
-
-fn rule_type_and_name_from_effective_id(id: &str) -> Option<(&str, &str)> {
-    let (rule_type, name) = id.split_once('.')?;
-    if matches!(rule_type, "mcp" | "http" | "dns" | "model" | "hook") && !name.is_empty() {
-        Some((rule_type, name))
-    } else {
-        None
-    }
-}
-
-fn rule_json_from_effective(
-    rule: &capsem_core::settings_profiles::EffectiveRule,
-) -> serde_json::Value {
-    let rule_type = rule_type_and_name_from_effective_id(&rule.id)
-        .map(|(rule_type, _)| rule_type.to_string())
-        .or_else(|| rule_type_from_callback(&rule.callback).map(ToOwned::to_owned));
-    json!({
-        "id": canonical_rule_id(rule),
-        "effective_id": rule.id,
-        "rule_type": rule_type,
-        "source_profile": rule.provenance.profile_id,
-        "callback": rule.callback,
-        "condition": rule.condition,
-        "decision": rule.decision,
-        "priority": rule.priority,
-        "derived": rule.derived,
-        "editable": rule.editable,
-        "owner_setting_path": rule.owner_setting_path,
-        "owner_setting_label": rule.owner_setting_label,
-        "provenance": rule.provenance,
-        "rule": {
-            "on": rule.callback,
-            "if": rule.condition,
-            "decision": rule.decision,
-            "priority": rule.priority,
-            "reason": rule.reason,
-            "rewrite_target": rule.rewrite_target,
-            "rewrite_value": rule.rewrite_value,
-            "strip_request_headers": rule.strip_request_headers,
-            "strip_response_headers": rule.strip_response_headers,
-        },
-    })
-}
-
-fn resolve_effective_for_rules(
-    profile: Option<String>,
-) -> Result<capsem_core::settings_profiles::EffectiveVmSettings, AppError> {
-    let settings = load_service_settings_for_profiles()?;
-    let profile_id = profile.unwrap_or_else(|| settings.profiles.default_profile.clone());
-    let (effective, _) = capsem_core::settings_profiles::resolve_effective_vm_settings_with_corp(
-        &settings,
-        Some(&profile_id),
-    )
-    .map_err(|e| {
-        AppError(
-            StatusCode::BAD_REQUEST,
-            format!("resolve effective profile '{profile_id}': {e}"),
-        )
-    })?;
-    Ok(effective)
-}
-
-fn find_effective_rule<'a>(
-    effective: &'a capsem_core::settings_profiles::EffectiveVmSettings,
-    rule_id: &str,
-) -> Option<&'a capsem_core::settings_profiles::EffectiveRule> {
-    effective.rules.iter().find(|rule| {
-        rule.id == rule_id
-            || canonical_rule_id(rule) == rule_id
-            || rule
-                .id
-                .strip_prefix("security.rules.")
-                .is_some_and(|stripped| stripped == rule_id)
-    })
-}
-
-fn parse_rule_resource_id(rule_id: &str) -> Result<(String, String), String> {
-    let stripped = rule_id.strip_prefix("security.rules.").unwrap_or(rule_id);
-    let mut parts = stripped.split('.');
-    let rule_type = parts.next();
-    let rule_name = parts.next();
-    if rule_type.is_none() || rule_name.is_none() || parts.next().is_some() {
-        return Err(format!(
-            "invalid rule id '{rule_id}'; expected security.rules.<type>.<name>"
-        ));
-    }
-    let rule_type = rule_type.unwrap_or_default();
-    if !matches!(rule_type, "mcp" | "http" | "dns" | "model" | "hook") {
-        return Err(format!(
-            "unsupported policy rule type in rule id '{rule_id}'"
-        ));
-    }
-    let rule_name = rule_name.unwrap_or_default();
-    if rule_name.is_empty()
-        || !rule_name
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_'))
-    {
-        return Err(format!("invalid policy rule name in rule id '{rule_id}'"));
-    }
-    Ok((rule_type.to_string(), rule_name.to_string()))
-}
-
-fn profile_has_rule(
-    profile: &capsem_core::settings_profiles::Profile,
-    rule_type: &str,
-    rule_name: &str,
-) -> bool {
-    match rule_type {
-        "mcp" => profile.security.rules.mcp.contains_key(rule_name),
-        "http" => profile.security.rules.http.contains_key(rule_name),
-        "dns" => profile.security.rules.dns.contains_key(rule_name),
-        "model" => profile.security.rules.model.contains_key(rule_name),
-        "hook" => profile.security.rules.hook.contains_key(rule_name),
-        _ => false,
-    }
-}
-
-fn skill_list(profile: &capsem_core::settings_profiles::Profile, kind: SkillKind) -> &[String] {
-    match kind {
-        SkillKind::Group => &profile.skills.groups,
-        SkillKind::Enabled => &profile.skills.enabled,
-        SkillKind::Disabled => &profile.skills.disabled,
-    }
-}
-
-fn skill_list_mut(
-    profile: &mut capsem_core::settings_profiles::Profile,
-    kind: SkillKind,
-) -> &mut Vec<String> {
-    match kind {
-        SkillKind::Group => &mut profile.skills.groups,
-        SkillKind::Enabled => &mut profile.skills.enabled,
-        SkillKind::Disabled => &mut profile.skills.disabled,
-    }
-}
-
-fn remove_skill_from(
-    profile: &mut capsem_core::settings_profiles::Profile,
-    kind: SkillKind,
-    id: &str,
-) {
-    skill_list_mut(profile, kind).retain(|candidate| candidate != id);
-}
-
-fn profile_has_skill(
-    profile: &capsem_core::settings_profiles::Profile,
-    kind: SkillKind,
-    id: &str,
-) -> bool {
-    skill_list(profile, kind)
-        .iter()
-        .any(|candidate| candidate == id)
-}
-
-fn skill_owner<'a>(
-    catalog: &'a capsem_core::settings_profiles::ProfileCatalog,
-    profile_id: &str,
-    kind: SkillKind,
-    id: &str,
-) -> Result<Option<&'a capsem_core::settings_profiles::ProfileRecord>, AppError> {
-    let chain = capsem_core::settings_profiles::resolve_ancestor_chain(catalog, profile_id)
-        .map_err(|e| {
-            AppError(
-                StatusCode::BAD_REQUEST,
-                format!("resolve profile chain: {e}"),
-            )
-        })?;
-    Ok(chain
-        .into_iter()
-        .rfind(|record| profile_has_skill(&record.profile, kind, id)))
-}
-
-fn skill_json(
-    id: &str,
-    kind: SkillKind,
-    owner: Option<&capsem_core::settings_profiles::ProfileRecord>,
-    selected_profile_id: &str,
-) -> serde_json::Value {
-    let source_profile = owner.map(|record| record.profile.id.as_str());
-    let source = owner.map(|record| record.source.as_str());
-    let direct = source_profile == Some(selected_profile_id);
-    let editable = direct
-        && owner
-            .map(|record| record.source == capsem_core::settings_profiles::ProfileSource::User)
-            .unwrap_or(false);
-    json!({
-        "id": id,
-        "kind": kind,
-        "source_profile": source_profile,
-        "source": source,
-        "direct": direct,
-        "editable": editable,
-    })
-}
-
-fn save_mutated_profile(
-    settings: &capsem_core::settings_profiles::ServiceSettings,
-    source: capsem_core::settings_profiles::ProfileSource,
-    profile: capsem_core::settings_profiles::Profile,
-) -> Result<(), AppError> {
-    match source {
-        capsem_core::settings_profiles::ProfileSource::User => {
-            capsem_core::settings_profiles::update_user_profile(&settings.profiles, profile)
-                .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("update profile: {e}")))?;
-        }
-        capsem_core::settings_profiles::ProfileSource::BuiltIn => {
-            capsem_core::settings_profiles::create_user_profile(&settings.profiles, profile)
-                .map_err(|e| {
-                    AppError(
-                        StatusCode::BAD_REQUEST,
-                        format!("create profile override: {e}"),
-                    )
-                })?;
-        }
-        capsem_core::settings_profiles::ProfileSource::Base
-        | capsem_core::settings_profiles::ProfileSource::Corp => {
-            return Err(AppError(
-                StatusCode::CONFLICT,
-                format!(
-                    "profile '{}' is locked ({source:?}); switch to a user-editable profile first",
-                    profile.id
-                ),
-            ));
-        }
-    }
-    Ok(())
-}
-
-#[derive(Debug, Clone, Copy)]
-enum ProfileEditableSection {
-    General,
-    Appearance,
-    Ai,
-    McpServers,
-    Skills,
-    Packages,
-    Tools,
-    Vm,
-    SecurityCapabilities,
-    SecurityRules,
-}
-
-impl ProfileEditableSection {
-    fn path(self) -> &'static str {
-        match self {
-            Self::General => "general",
-            Self::Appearance => "appearance",
-            Self::Ai => "ai",
-            Self::McpServers => "mcpServers",
-            Self::Skills => "skills",
-            Self::Packages => "packages",
-            Self::Tools => "tools",
-            Self::Vm => "vm",
-            Self::SecurityCapabilities => "security.capabilities",
-            Self::SecurityRules => "security.rules",
-        }
-    }
-
-    fn is_editable(self, profile: &capsem_core::settings_profiles::Profile) -> bool {
-        match self {
-            Self::General => profile.editable.general,
-            Self::Appearance => profile.editable.appearance,
-            Self::Ai => profile.editable.ai,
-            Self::McpServers => profile.editable.mcp_servers,
-            Self::Skills => profile.editable.skills,
-            Self::Packages => profile.editable.packages,
-            Self::Tools => profile.editable.tools,
-            Self::Vm => profile.editable.vm,
-            Self::SecurityCapabilities => profile.editable.security_capabilities,
-            Self::SecurityRules => profile.editable.security_rules,
-        }
-    }
-}
-
-fn ensure_profile_section_editable(
-    profile: &capsem_core::settings_profiles::Profile,
-    section: ProfileEditableSection,
-) -> Result<(), AppError> {
-    if section.is_editable(profile) {
-        return Ok(());
-    }
-    Err(AppError(
-        StatusCode::CONFLICT,
-        format!(
-            "profile_section_locked: profile '{}' section '{}' is not editable",
-            profile.id,
-            section.path()
-        ),
-    ))
-}
-
-fn ensure_locked_profile_sections_unchanged(
-    previous: &capsem_core::settings_profiles::Profile,
-    updated: &capsem_core::settings_profiles::Profile,
-) -> Result<(), AppError> {
-    if previous.editable != updated.editable {
-        return Err(AppError(
-            StatusCode::CONFLICT,
-            format!(
-                "profile_section_locked: profile '{}' section 'editable' is not editable",
-                previous.id
-            ),
-        ));
-    }
-
-    let checks = [
-        (
-            ProfileEditableSection::General,
-            previous.general == updated.general,
-        ),
-        (
-            ProfileEditableSection::Appearance,
-            previous.appearance == updated.appearance,
-        ),
-        (ProfileEditableSection::Ai, previous.ai == updated.ai),
-        (
-            ProfileEditableSection::McpServers,
-            previous.mcp == updated.mcp,
-        ),
-        (
-            ProfileEditableSection::Skills,
-            previous.skills == updated.skills,
-        ),
-        (
-            ProfileEditableSection::Packages,
-            previous.packages == updated.packages,
-        ),
-        (
-            ProfileEditableSection::Tools,
-            previous.tools == updated.tools,
-        ),
-        (ProfileEditableSection::Vm, previous.vm == updated.vm),
-        (
-            ProfileEditableSection::SecurityCapabilities,
-            previous.security.capabilities == updated.security.capabilities,
-        ),
-        (
-            ProfileEditableSection::SecurityRules,
-            previous.security.rules == updated.security.rules,
-        ),
-    ];
-    for (section, unchanged) in checks {
-        if !unchanged {
-            ensure_profile_section_editable(previous, section)?;
-        }
-    }
-    Ok(())
-}
-
-/// GET /rules -- list resolved Profile V2 rules for a profile.
-async fn handle_list_rules(
-    Query(query): Query<RulesQuery>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    if let Some(callback) = query.callback.as_deref() {
-        if rule_type_from_callback(callback).is_none() {
-            return Err(AppError(
-                StatusCode::BAD_REQUEST,
-                format!("unsupported policy callback '{callback}'"),
-            ));
-        }
-    }
-    let effective = resolve_effective_for_rules(query.profile)?;
-    let mut rules = effective
-        .rules
-        .iter()
-        .filter(|rule| {
-            query
-                .callback
-                .as_deref()
-                .map(|callback| rule.callback == callback)
-                .unwrap_or(true)
-        })
-        .map(rule_json_from_effective)
-        .collect::<Vec<_>>();
-    rules.sort_by(|left, right| {
-        left["id"]
-            .as_str()
-            .unwrap_or_default()
-            .cmp(right["id"].as_str().unwrap_or_default())
-    });
-
-    Ok(Json(json!({
-        "mode": "settings_profiles_v2",
-        "profile_id": effective.profile_id,
-        "rules": rules,
-    })))
-}
-
-/// GET /rules/{rule_id} -- fetch one resolved rule with provenance.
-async fn handle_get_rule(Path(rule_id): Path<String>) -> Result<Json<serde_json::Value>, AppError> {
-    let settings = load_service_settings_for_profiles()?;
-    let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles)
-        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("discover profiles: {e}")))?;
-    let mut profile_ids = vec![settings.profiles.default_profile.clone()];
-    let mut remaining = catalog
-        .list()
-        .map(|record| record.profile.id.clone())
-        .filter(|id| id != &settings.profiles.default_profile)
-        .collect::<Vec<_>>();
-    remaining.sort();
-    profile_ids.extend(remaining);
-
-    for profile_id in profile_ids {
-        let (effective, _) =
-            capsem_core::settings_profiles::resolve_effective_vm_settings_with_corp(
-                &settings,
-                Some(&profile_id),
-            )
-            .map_err(|e| {
-                AppError(
-                    StatusCode::BAD_REQUEST,
-                    format!("resolve effective profile '{profile_id}': {e}"),
-                )
-            })?;
-        if let Some(rule) = find_effective_rule(&effective, &rule_id) {
-            return Ok(Json(rule_json_from_effective(rule)));
-        }
-    }
-
-    Err(AppError(
-        StatusCode::NOT_FOUND,
-        format!("rule '{rule_id}' not found"),
-    ))
-}
-
-/// POST /rules -- create a user-editable Profile V2 rule.
-async fn handle_create_rule(
-    Json(request): Json<RuleCreateRequest>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let (rule_type, rule_name) =
-        parse_rule_resource_id(&request.id).map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
-    validate_policy_rule_update(&rule_type, &rule_name, &request.update)
-        .map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
-
-    let settings = load_service_settings_for_profiles()?;
-    let target_profile_id = request
-        .profile
-        .clone()
-        .unwrap_or_else(|| settings.profiles.default_profile.clone());
-    let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles)
-        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("discover profiles: {e}")))?;
-    let selected = catalog.get(&target_profile_id).ok_or_else(|| {
-        AppError(
-            StatusCode::NOT_FOUND,
-            format!("profile '{target_profile_id}' not found"),
-        )
-    })?;
-    ensure_profile_section_editable(&selected.profile, ProfileEditableSection::SecurityRules)?;
-    let mut profile = selected.profile.clone();
-    if profile_has_rule(&profile, &rule_type, &rule_name) {
-        return Err(AppError(
-            StatusCode::CONFLICT,
-            format!("rule_exists: security.rules.{rule_type}.{rule_name}"),
-        ));
-    }
-    upsert_profile_rule(
-        &mut profile,
-        &rule_type,
-        rule_name.clone(),
-        profile_rule_from_update(request.update),
-    );
-    profile.validate().map_err(|e| {
-        AppError(
-            StatusCode::BAD_REQUEST,
-            format!("profile validation failed: {e}"),
-        )
-    })?;
-    save_mutated_profile(&settings, selected.source, profile)?;
-
-    let effective = resolve_effective_for_rules(Some(target_profile_id.clone()))?;
-    let canonical = format!("security.rules.{rule_type}.{rule_name}");
-    let rule = find_effective_rule(&effective, &canonical).ok_or_else(|| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("created rule '{canonical}' was not visible after profile save"),
-        )
-    })?;
-    Ok(Json(rule_json_from_effective(rule)))
-}
-
-/// DELETE /rules/{rule_id} -- remove a user-authored Profile V2 rule.
-async fn handle_delete_rule(
-    Path(rule_id): Path<String>,
-    Query(query): Query<RulesMutationQuery>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let (rule_type, rule_name) =
-        parse_rule_resource_id(&rule_id).map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
-    let settings = load_service_settings_for_profiles()?;
-    let target_profile_id = query
-        .profile
-        .clone()
-        .unwrap_or_else(|| settings.profiles.default_profile.clone());
-    let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles)
-        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("discover profiles: {e}")))?;
-    let selected = catalog.get(&target_profile_id).ok_or_else(|| {
-        AppError(
-            StatusCode::NOT_FOUND,
-            format!("profile '{target_profile_id}' not found"),
-        )
-    })?;
-    ensure_profile_section_editable(&selected.profile, ProfileEditableSection::SecurityRules)?;
-    if selected.source != capsem_core::settings_profiles::ProfileSource::User {
-        return Err(AppError(
-            StatusCode::CONFLICT,
-            format!(
-                "rule_is_builtin: profile '{}' is locked ({:?})",
-                selected.profile.id, selected.source
-            ),
-        ));
-    }
-
-    let effective = resolve_effective_for_rules(Some(target_profile_id.clone()))?;
-    let effective_rule = find_effective_rule(&effective, &rule_id)
-        .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("rule '{rule_id}' not found")))?;
-    if effective_rule.provenance.profile_id != target_profile_id
-        || !profile_has_rule(&selected.profile, &rule_type, &rule_name)
-    {
-        return Err(AppError(
-            StatusCode::CONFLICT,
-            format!(
-                "rule_is_builtin: rule '{}' is inherited from profile '{}'",
-                canonical_rule_id(effective_rule),
-                effective_rule.provenance.profile_id
-            ),
-        ));
-    }
-    capsem_core::settings_profiles::ensure_rule_editable(effective_rule)
-        .map_err(|e| AppError(StatusCode::CONFLICT, format!("rule_is_builtin: {e}")))?;
-
-    let mut profile = selected.profile.clone();
-    remove_profile_rule(&mut profile, &rule_type, &rule_name);
-    profile.validate().map_err(|e| {
-        AppError(
-            StatusCode::BAD_REQUEST,
-            format!("profile validation failed: {e}"),
-        )
-    })?;
-    capsem_core::settings_profiles::update_user_profile(&settings.profiles, profile)
-        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("update profile: {e}")))?;
-
-    Ok(Json(json!({
-        "mode": "settings_profiles_v2",
-        "profile_id": target_profile_id,
-        "rule_id": format!("security.rules.{rule_type}.{rule_name}"),
-        "removed": true,
-    })))
-}
-
-fn validate_runtime_rule_id(id: &str) -> Result<(), AppError> {
-    if id.is_empty()
-        || !id
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | ':'))
-    {
-        return Err(AppError(
-            StatusCode::BAD_REQUEST,
-            format!("invalid runtime rule id '{id}'"),
-        ));
-    }
-    Ok(())
-}
-
-fn runtime_rule_plan_id(condition: &str) -> String {
-    format!("cel:{}", blake3::hash(condition.as_bytes()).to_hex())
-}
-
-fn compile_runtime_enforcement_rule(
-    request: &RuntimeEnforcementRuleRequest,
-) -> Result<String, seceng::SecurityEngineError> {
-    validate_runtime_enforcement_decision_supported(request.decision).map_err(|message| {
-        seceng::SecurityEngineError::CelCompileFailed {
-            rule_id: request.id.clone(),
-            message,
-        }
-    })?;
-    seceng::CelEnforcementEvaluator::compile(vec![seceng::CelEnforcementRule {
-        id: request.id.clone(),
-        pack_id: request.pack_id.clone(),
-        condition: request.condition.clone(),
-        decision: request.decision,
-        reason: request.reason.clone(),
-        mutations: Vec::new(),
-    }])?;
-    Ok(runtime_rule_plan_id(&request.condition))
-}
-
-fn compile_runtime_detection_rule(
-    request: &RuntimeDetectionRuleRequest,
-) -> Result<String, seceng::SecurityEngineError> {
-    seceng::CelDetectionEvaluator::compile(vec![seceng::CelDetectionRule {
-        id: request.id.clone(),
-        pack_id: request.pack_id.clone(),
-        sigma_id: request.sigma_id.clone(),
-        title: request.title.clone(),
-        condition: request.condition.clone(),
-        severity: request.severity,
-        confidence: request.confidence,
-        tags: request.tags.clone(),
-    }])?;
-    Ok(runtime_rule_plan_id(&request.condition))
-}
-
-fn compile_runtime_detection_record(
-    record: &seceng::RuntimeRuleRecord,
-) -> Result<String, seceng::SecurityEngineError> {
-    let seceng::RuntimeRuleDefinition::Detection {
-        sigma_id,
-        title,
-        severity,
-        confidence,
-        tags,
-    } = &record.definition
-    else {
-        return Err(seceng::SecurityEngineError::CelCompileFailed {
-            rule_id: record.metadata.id.clone(),
-            message: "expected detection rule definition".into(),
-        });
-    };
-    seceng::CelDetectionEvaluator::compile(vec![seceng::CelDetectionRule {
-        id: record.metadata.id.clone(),
-        pack_id: record
-            .metadata
-            .pack_id
-            .clone()
-            .unwrap_or_else(|| "runtime".into()),
-        sigma_id: sigma_id.clone(),
-        title: title.clone(),
-        condition: record.source.clone(),
-        severity: *severity,
-        confidence: *confidence,
-        tags: tags.clone(),
-    }])?;
-    Ok(runtime_rule_plan_id(&record.source))
-}
-
-fn runtime_enforcement_record(
-    request: &RuntimeEnforcementRuleRequest,
-) -> seceng::RuntimeRuleRecord {
-    seceng::RuntimeRuleRecord {
-        metadata: seceng::RuntimeRuleMetadata {
-            id: request.id.clone(),
-            pack_id: request.pack_id.clone(),
-            scope: seceng::RuleScope::Runtime,
-            origin: seceng::RuleOrigin::Runtime,
-            priority: request.priority,
-        },
-        definition: seceng::RuntimeRuleDefinition::Enforcement {
-            decision: request.decision,
-            reason: request.reason.clone(),
-        },
-        source: request.condition.clone(),
-        enabled: request.enabled,
-    }
-}
-
-fn runtime_detection_record(request: &RuntimeDetectionRuleRequest) -> seceng::RuntimeRuleRecord {
-    seceng::RuntimeRuleRecord {
-        metadata: seceng::RuntimeRuleMetadata {
-            id: request.id.clone(),
-            pack_id: Some(request.pack_id.clone()),
-            scope: seceng::RuleScope::Runtime,
-            origin: seceng::RuleOrigin::Runtime,
-            priority: request.priority,
-        },
-        definition: seceng::RuntimeRuleDefinition::Detection {
-            sigma_id: request.sigma_id.clone(),
-            title: request.title.clone(),
-            severity: request.severity,
-            confidence: request.confidence,
-            tags: request.tags.clone(),
-        },
-        source: request.condition.clone(),
-        enabled: request.enabled,
-    }
-}
-
-fn profile_rule_decision(
-    decision: capsem_core::settings_profiles::RuleDecision,
-) -> seceng::SecurityDecisionAction {
-    match decision {
-        capsem_core::settings_profiles::RuleDecision::Allow => {
-            seceng::SecurityDecisionAction::Allow
-        }
-        capsem_core::settings_profiles::RuleDecision::Ask => seceng::SecurityDecisionAction::Allow,
-        capsem_core::settings_profiles::RuleDecision::Block => {
-            seceng::SecurityDecisionAction::Block
-        }
-        capsem_core::settings_profiles::RuleDecision::Rewrite => {
-            seceng::SecurityDecisionAction::Rewrite
-        }
-    }
-}
-
-fn profile_rule_scope_origin(
-    source: capsem_core::settings_profiles::ProfileSource,
-) -> (seceng::RuleScope, seceng::RuleOrigin) {
-    match source {
-        capsem_core::settings_profiles::ProfileSource::Corp => {
-            (seceng::RuleScope::Corp, seceng::RuleOrigin::Corp)
-        }
-        capsem_core::settings_profiles::ProfileSource::User => {
-            (seceng::RuleScope::User, seceng::RuleOrigin::User)
-        }
-        capsem_core::settings_profiles::ProfileSource::BuiltIn
-        | capsem_core::settings_profiles::ProfileSource::Base => {
-            (seceng::RuleScope::Profile, seceng::RuleOrigin::Profile)
-        }
-    }
-}
-
-fn profile_rule_callback_guard(callback: &str) -> Result<&'static str, AppError> {
-    match callback {
-        "dns.request" => Ok("common.event_type == 'dns.request'"),
-        "dns.response" => Ok("common.event_type == 'dns.response'"),
-        "http.request" | "http.read" | "http.write" => Ok("common.event_type == 'http.request'"),
-        "http.response" => Ok("common.event_type == 'http.response'"),
-        "mcp.request" => Ok("common.event_type == 'mcp.request'"),
-        "mcp.response" => Ok("common.event_type == 'mcp.response'"),
-        "model.request" => Ok("common.event_type == 'model.request'"),
-        "model.response" => Ok("common.event_type == 'model.response'"),
-        "model.tool_call" => Ok("common.event_type == 'model.tool_call'"),
-        "model.tool_response" => Ok("common.event_type == 'model.tool_response'"),
-        "hook.decision" => Ok("common.event_type == 'hook.decision'"),
-        _ => Err(AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("profile rule callback '{callback}' cannot be seeded into runtime enforcement"),
-        )),
-    }
-}
-
-fn profile_rule_condition(
-    rule: &capsem_core::settings_profiles::EffectiveRule,
-) -> Result<String, AppError> {
-    let guard = profile_rule_callback_guard(&rule.callback)?;
-    Ok(format!(
-        "{guard} && ({})",
-        normalize_profile_runtime_condition(&rule.callback, &rule.condition)
-    ))
-}
-
-fn normalize_profile_runtime_condition(callback: &str, condition: &str) -> String {
-    let mut normalized = condition.to_string();
-    if callback == "dns.request" {
-        normalized = normalized.replace("qname", "dns.request.qname");
-        normalized = normalized.replace("dns.request.dns.request.qname", "dns.request.qname");
-    }
-    if matches!(
-        callback,
-        "http.request" | "http.read" | "http.write" | "http.response"
-    ) {
-        for (from, to) in [
-            ("request.host", "http.request.host"),
-            ("request.path", "http.request.path"),
-            ("request.query", "http.request.query"),
-            ("request.method", "http.request.method"),
-            ("response.text", "http.response.body.text"),
-        ] {
-            normalized = normalized.replace(from, to);
-        }
-        normalized = normalized.replace("http.http.request.", "http.request.");
-        normalized = normalized.replace("http.http.response.", "http.response.");
-    }
-    normalized
-}
-
-fn profile_seeded_enforcement_record(
-    rule: &capsem_core::settings_profiles::EffectiveRule,
-) -> Result<seceng::RuntimeRuleRecord, AppError> {
-    let (scope, origin) = profile_rule_scope_origin(rule.provenance.source);
-    let rule_id = format!("profile:{}:{}", rule.provenance.profile_id, rule.id);
-    validate_runtime_rule_id(&rule_id)?;
-    Ok(seceng::RuntimeRuleRecord {
-        metadata: seceng::RuntimeRuleMetadata {
-            id: rule_id,
-            pack_id: Some(format!("profile:{}", rule.provenance.profile_id)),
-            scope,
-            origin,
-            priority: rule.priority,
-        },
-        definition: seceng::RuntimeRuleDefinition::Enforcement {
-            decision: profile_rule_decision(rule.decision),
-            reason: rule.reason.clone(),
-        },
-        source: profile_rule_condition(rule)?,
-        enabled: true,
-    })
-}
-
-fn compile_runtime_enforcement_record(
-    record: &seceng::RuntimeRuleRecord,
-) -> Result<String, seceng::SecurityEngineError> {
-    let seceng::RuntimeRuleDefinition::Enforcement { decision, reason } = &record.definition else {
-        return Err(seceng::SecurityEngineError::CelCompileFailed {
-            rule_id: record.metadata.id.clone(),
-            message: "expected enforcement rule definition".into(),
-        });
-    };
-    if record.metadata.scope == seceng::RuleScope::Runtime {
-        validate_runtime_enforcement_decision_supported(*decision).map_err(|message| {
-            seceng::SecurityEngineError::CelCompileFailed {
-                rule_id: record.metadata.id.clone(),
-                message,
-            }
-        })?;
-    }
-    seceng::CelEnforcementEvaluator::compile(vec![seceng::CelEnforcementRule {
-        id: record.metadata.id.clone(),
-        pack_id: record.metadata.pack_id.clone(),
-        condition: record.source.clone(),
-        decision: *decision,
-        reason: reason.clone(),
-        mutations: Vec::new(),
-    }])?;
-    Ok(runtime_rule_plan_id(&record.source))
-}
-
-fn validate_runtime_enforcement_decision_supported(
-    decision: seceng::SecurityDecisionAction,
-) -> Result<(), String> {
-    if decision == seceng::SecurityDecisionAction::Ask {
-        return Err(
-            "ask decisions require S15-confirm-ux; runtime ask overlays are disabled until the confirm resolver is wired"
-                .into(),
-        );
-    }
-    Ok(())
-}
-
-fn seed_runtime_security_rules_from_profiles(state: &Arc<ServiceState>) -> Result<usize, AppError> {
-    let effective = capsem_core::settings_profiles::resolve_effective_vm_settings(
-        &state.service_settings.profiles,
-        None,
-    )
-    .map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("resolve default profile security rules: {error}"),
-        )
-    })?;
-
-    let mut registry = state.enforcement_registry.lock().map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("runtime enforcement registry lock poisoned: {error}"),
-        )
-    })?;
-    let mut seeded = 0usize;
-    for rule in &effective.rules {
-        if !profile_rule_supported_by_runtime_registry(rule) {
-            continue;
-        }
-        let record = profile_seeded_enforcement_record(rule)?;
-        let compiled_plan = compile_runtime_enforcement_record(&record).map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("compile profile rule '{}': {error}", record.metadata.id),
-            )
-        })?;
-        registry
-            .add_or_update(record, |_| Ok(compiled_plan.clone()))
-            .map_err(|error| {
-                AppError(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("install profile rule: {error}"),
-                )
-            })?;
-        seeded += 1;
-    }
-    info!(
-        profile_id = effective.profile_id,
-        rule_count = seeded,
-        "seeded profile enforcement rules into runtime registry"
-    );
-    Ok(seeded)
-}
-
-fn profile_rule_supported_by_runtime_registry(
-    rule: &capsem_core::settings_profiles::EffectiveRule,
-) -> bool {
-    matches!(
-        rule.callback.as_str(),
-        "dns.request" | "http.request" | "http.read" | "http.write" | "http.response"
-    )
-}
-
-fn runtime_security_rule_overlays_store(
-    state: &Arc<ServiceState>,
-) -> Result<RuntimeSecurityRulesStore, AppError> {
-    let mut store = RuntimeSecurityRulesStore::new();
-    {
-        let registry = state.enforcement_registry.lock().map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("runtime enforcement registry lock poisoned: {error}"),
-            )
-        })?;
-        store.enforcement = registry
-            .list()
-            .into_iter()
-            .filter(|entry| {
-                entry.metadata.scope == seceng::RuleScope::Runtime
-                    && entry.metadata.origin == seceng::RuleOrigin::Runtime
-            })
-            .map(|entry| seceng::RuntimeRuleRecord {
-                metadata: entry.metadata.clone(),
-                definition: entry.definition.clone(),
-                source: entry.source.clone(),
-                enabled: entry.enabled,
-            })
-            .collect();
-    }
-    {
-        let registry = state.detection_registry.lock().map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("runtime detection registry lock poisoned: {error}"),
-            )
-        })?;
-        store.detection = registry
-            .list()
-            .into_iter()
-            .filter(|entry| {
-                entry.metadata.scope == seceng::RuleScope::Runtime
-                    && entry.metadata.origin == seceng::RuleOrigin::Runtime
-            })
-            .map(|entry| seceng::RuntimeRuleRecord {
-                metadata: entry.metadata.clone(),
-                definition: entry.definition.clone(),
-                source: entry.source.clone(),
-                enabled: entry.enabled,
-            })
-            .collect();
-    }
-    Ok(store)
-}
-
-fn write_runtime_security_rules_store(
-    path: &FsPath,
-    store: &RuntimeSecurityRulesStore,
-) -> Result<(), AppError> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("create runtime rules store directory: {error}"),
-            )
-        })?;
-    }
-    let json = serde_json::to_vec_pretty(store).map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("serialize runtime rules store: {error}"),
-        )
-    })?;
-    let tmp_path = path.with_extension("json.tmp");
-    let mut file = std::fs::File::create(&tmp_path).map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("create runtime rules store temp file: {error}"),
-        )
-    })?;
-    std::io::Write::write_all(&mut file, &json).map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("write runtime rules store: {error}"),
-        )
-    })?;
-    file.sync_all().map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("sync runtime rules store: {error}"),
-        )
-    })?;
-    std::fs::rename(&tmp_path, path).map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("install runtime rules store: {error}"),
-        )
-    })?;
-    Ok(())
-}
-
-fn persist_runtime_security_rule_overlays(state: &Arc<ServiceState>) -> Result<(), AppError> {
-    let Some(path) = &state.runtime_rules_store_path else {
-        return Ok(());
-    };
-    let _store_guard = state.runtime_rules_store_lock.lock().map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("runtime rules store lock poisoned: {error}"),
-        )
-    })?;
-    let store = runtime_security_rule_overlays_store(state)?;
-    write_runtime_security_rules_store(path, &store)
-}
-
-fn restore_runtime_security_rule_overlays(state: &Arc<ServiceState>) -> Result<usize, AppError> {
-    let Some(path) = &state.runtime_rules_store_path else {
-        return Ok(0);
-    };
-    let _store_guard = state.runtime_rules_store_lock.lock().map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("runtime rules store lock poisoned: {error}"),
-        )
-    })?;
-    if !path.exists() {
-        return Ok(0);
-    }
-    let bytes = std::fs::read(path).map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("read runtime rules store {}: {error}", path.display()),
-        )
-    })?;
-    let store: RuntimeSecurityRulesStore = serde_json::from_slice(&bytes).map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("parse runtime rules store {}: {error}", path.display()),
-        )
-    })?;
-    if store.schema != RUNTIME_SECURITY_RULES_STORE_SCHEMA {
-        return Err(AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!(
-                "unsupported runtime rules store schema '{}' in {}",
-                store.schema,
-                path.display()
-            ),
-        ));
-    }
-
-    let mut restored = 0usize;
-    {
-        let mut registry = state.enforcement_registry.lock().map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("runtime enforcement registry lock poisoned: {error}"),
-            )
-        })?;
-        for record in store.enforcement {
-            validate_persisted_runtime_rule_record(&record, "enforcement")?;
-            let compiled_plan = compile_runtime_enforcement_record(&record).map_err(|error| {
-                AppError(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!(
-                        "compile persisted enforcement rule '{}': {error}",
-                        record.metadata.id
-                    ),
-                )
-            })?;
-            registry
-                .add_or_update(record, |_| Ok(compiled_plan.clone()))
-                .map_err(|error| {
-                    AppError(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        format!("restore persisted enforcement rule: {error}"),
-                    )
-                })?;
-            restored += 1;
-        }
-    }
-    {
-        let mut registry = state.detection_registry.lock().map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("runtime detection registry lock poisoned: {error}"),
-            )
-        })?;
-        for record in store.detection {
-            validate_persisted_runtime_rule_record(&record, "detection")?;
-            let compiled_plan = compile_runtime_detection_record(&record).map_err(|error| {
-                AppError(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!(
-                        "compile persisted detection rule '{}': {error}",
-                        record.metadata.id
-                    ),
-                )
-            })?;
-            registry
-                .add_or_update(record, |_| Ok(compiled_plan.clone()))
-                .map_err(|error| {
-                    AppError(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        format!("restore persisted detection rule: {error}"),
-                    )
-                })?;
-            restored += 1;
-        }
-    }
-    Ok(restored)
-}
-
-fn validate_persisted_runtime_rule_record(
-    record: &seceng::RuntimeRuleRecord,
-    expected_kind: &str,
-) -> Result<(), AppError> {
-    validate_runtime_rule_id(&record.metadata.id)?;
-    if record.metadata.scope != seceng::RuleScope::Runtime
-        || record.metadata.origin != seceng::RuleOrigin::Runtime
-    {
-        return Err(AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!(
-                "persisted {expected_kind} rule '{}' is not runtime scoped",
-                record.metadata.id
-            ),
-        ));
-    }
-    match (&record.definition, expected_kind) {
-        (seceng::RuntimeRuleDefinition::Enforcement { .. }, "enforcement")
-        | (seceng::RuntimeRuleDefinition::Detection { .. }, "detection") => Ok(()),
-        _ => Err(AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!(
-                "persisted {expected_kind} rule '{}' has mismatched definition kind",
-                record.metadata.id
-            ),
-        )),
-    }
-}
-
-fn runtime_rule_entry_json(entry: &seceng::RuntimeRuleEntry) -> serde_json::Value {
-    let compiled = matches!(&entry.compile_status, seceng::CompileStatus::Compiled);
-    json!({
-        "id": &entry.metadata.id,
-        "pack_id": &entry.metadata.pack_id,
-        "scope": entry.metadata.scope,
-        "origin": entry.metadata.origin,
-        "priority": entry.metadata.priority,
-        "definition": &entry.definition,
-        "enabled": entry.enabled,
-        "compiled": compiled,
-        "compile_status": &entry.compile_status,
-        "generation": entry.generation,
-        "condition": &entry.source,
-        "compiled_plan": &entry.compiled_plan,
-        "match_count": entry.stats.match_count,
-        "last_matched_event": &entry.stats.last_matched_event,
-        "last_matched_unix_ms": entry.stats.last_matched_unix_ms,
-    })
-}
-
-fn runtime_registry_rules_json(
-    registry: &Arc<Mutex<seceng::RuntimeRuleRegistry>>,
-) -> Result<Vec<serde_json::Value>, AppError> {
-    let registry = registry.lock().map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("runtime rule registry lock poisoned: {error}"),
-        )
-    })?;
-    Ok(registry
-        .list()
-        .into_iter()
-        .map(runtime_rule_entry_json)
-        .collect())
-}
-
-fn runtime_security_debug_report_input(
-    state: &ServiceState,
-) -> Result<debug_report::RuntimeSecurityReportInput, AppError> {
-    Ok(debug_report::RuntimeSecurityReportInput {
-        runtime_rules_store_path: state.runtime_rules_store_path.clone(),
-        enforcement_rules: runtime_registry_report_rules(&state.enforcement_registry)?,
-        detection_rules: runtime_registry_report_rules(&state.detection_registry)?,
-        confirm_resolver_available: false,
-        confirm_owner: Some("S15-confirm-ux".into()),
-    })
-}
-
-fn runtime_registry_report_rules(
-    registry: &Arc<Mutex<seceng::RuntimeRuleRegistry>>,
-) -> Result<Vec<debug_report::RuntimeSecurityRuleReportInput>, AppError> {
-    let registry = registry.lock().map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("runtime rule registry lock poisoned: {error}"),
-        )
-    })?;
-    Ok(registry
-        .list()
-        .into_iter()
-        .map(runtime_rule_report_input)
-        .collect())
-}
-
-fn runtime_rule_report_input(
-    entry: &seceng::RuntimeRuleEntry,
-) -> debug_report::RuntimeSecurityRuleReportInput {
-    let (action, severity, confidence) = match &entry.definition {
-        seceng::RuntimeRuleDefinition::Enforcement { decision, .. } => {
-            (Some(security_decision_action_report(*decision)), None, None)
-        }
-        seceng::RuntimeRuleDefinition::Detection {
-            severity,
-            confidence,
-            ..
-        } => (
-            None,
-            Some(severity_report(*severity)),
-            Some(confidence_report(*confidence)),
-        ),
-    };
-    debug_report::RuntimeSecurityRuleReportInput {
-        id: entry.metadata.id.clone(),
-        pack_id: entry.metadata.pack_id.clone(),
-        scope: rule_scope_report(entry.metadata.scope),
-        origin: rule_origin_report(entry.metadata.origin),
-        priority: entry.metadata.priority,
-        enabled: entry.enabled,
-        compiled: matches!(entry.compile_status, seceng::CompileStatus::Compiled),
-        generation: entry.generation,
-        action,
-        severity,
-        confidence,
-        match_count: entry.stats.match_count,
-        last_matched_event: entry.stats.last_matched_event.clone(),
-        last_matched_unix_ms: entry.stats.last_matched_unix_ms,
-    }
-}
-
-fn rule_scope_report(scope: seceng::RuleScope) -> debug_report::RuntimeSecurityRuleScopeReport {
-    match scope {
-        seceng::RuleScope::Profile => debug_report::RuntimeSecurityRuleScopeReport::Profile,
-        seceng::RuleScope::User => debug_report::RuntimeSecurityRuleScopeReport::User,
-        seceng::RuleScope::Corp => debug_report::RuntimeSecurityRuleScopeReport::Corp,
-        seceng::RuleScope::Runtime => debug_report::RuntimeSecurityRuleScopeReport::Runtime,
-    }
-}
-
-fn rule_origin_report(origin: seceng::RuleOrigin) -> debug_report::RuntimeSecurityRuleOriginReport {
-    match origin {
-        seceng::RuleOrigin::Profile => debug_report::RuntimeSecurityRuleOriginReport::Profile,
-        seceng::RuleOrigin::User => debug_report::RuntimeSecurityRuleOriginReport::User,
-        seceng::RuleOrigin::Corp => debug_report::RuntimeSecurityRuleOriginReport::Corp,
-        seceng::RuleOrigin::Runtime => debug_report::RuntimeSecurityRuleOriginReport::Runtime,
-    }
-}
-
-fn security_decision_action_report(
-    action: seceng::SecurityDecisionAction,
-) -> debug_report::RuntimeSecurityActionReport {
-    match action {
-        seceng::SecurityDecisionAction::Allow => debug_report::RuntimeSecurityActionReport::Allow,
-        seceng::SecurityDecisionAction::Ask => debug_report::RuntimeSecurityActionReport::Ask,
-        seceng::SecurityDecisionAction::Block => debug_report::RuntimeSecurityActionReport::Block,
-        seceng::SecurityDecisionAction::Rewrite => {
-            debug_report::RuntimeSecurityActionReport::Rewrite
-        }
-        seceng::SecurityDecisionAction::Throttle => {
-            debug_report::RuntimeSecurityActionReport::Throttle
-        }
-    }
-}
-
-fn severity_report(severity: seceng::Severity) -> debug_report::RuntimeSecuritySeverityReport {
-    match severity {
-        seceng::Severity::Info => debug_report::RuntimeSecuritySeverityReport::Info,
-        seceng::Severity::Low => debug_report::RuntimeSecuritySeverityReport::Low,
-        seceng::Severity::Medium => debug_report::RuntimeSecuritySeverityReport::Medium,
-        seceng::Severity::High => debug_report::RuntimeSecuritySeverityReport::High,
-        seceng::Severity::Critical => debug_report::RuntimeSecuritySeverityReport::Critical,
-    }
-}
-
-fn confidence_report(
-    confidence: seceng::Confidence,
-) -> debug_report::RuntimeSecurityConfidenceReport {
-    match confidence {
-        seceng::Confidence::Low => debug_report::RuntimeSecurityConfidenceReport::Low,
-        seceng::Confidence::Medium => debug_report::RuntimeSecurityConfidenceReport::Medium,
-        seceng::Confidence::High => debug_report::RuntimeSecurityConfidenceReport::High,
-    }
-}
-
-#[cfg(test)]
-struct RuntimeSecurityMatchRecorder {
-    enforcement_registry: Arc<Mutex<seceng::RuntimeRuleRegistry>>,
-    detection_registry: Arc<Mutex<seceng::RuntimeRuleRegistry>>,
-}
-
-#[cfg(test)]
-impl seceng::RuleMatchRecorder for RuntimeSecurityMatchRecorder {
-    fn record_rule_match(
-        &mut self,
-        rule_id: &str,
-        event_id: &str,
-        timestamp_unix_ms: u64,
-    ) -> Result<(), seceng::SecurityEngineError> {
-        let mut recorded = false;
-        record_runtime_rule_match_if_present(
-            &self.enforcement_registry,
-            rule_id,
-            event_id,
-            timestamp_unix_ms,
-            &mut recorded,
-        )?;
-        record_runtime_rule_match_if_present(
-            &self.detection_registry,
-            rule_id,
-            event_id,
-            timestamp_unix_ms,
-            &mut recorded,
-        )?;
-        if recorded {
-            Ok(())
-        } else {
-            Err(seceng::SecurityEngineError::PhaseFailed {
-                phase: seceng::SecurityEnginePhase::Detection,
-                message: format!("runtime rule not found while recording match: {rule_id}"),
-            })
-        }
-    }
-}
-
-fn record_runtime_rule_match_if_present(
-    registry: &Arc<Mutex<seceng::RuntimeRuleRegistry>>,
-    rule_id: &str,
-    event_id: &str,
-    timestamp_unix_ms: u64,
-    recorded: &mut bool,
-) -> Result<(), seceng::SecurityEngineError> {
-    let mut registry =
-        registry
-            .lock()
-            .map_err(|error| seceng::SecurityEngineError::PhaseFailed {
-                phase: seceng::SecurityEnginePhase::Detection,
-                message: format!("runtime rule registry lock poisoned: {error}"),
-            })?;
-    match registry.record_match(rule_id, event_id, timestamp_unix_ms) {
-        Ok(()) => {
-            *recorded = true;
-            Ok(())
-        }
-        Err(seceng::RuleRegistryError::NotFound(_)) => Ok(()),
-        Err(error) => Err(seceng::SecurityEngineError::PhaseFailed {
-            phase: seceng::SecurityEnginePhase::Detection,
-            message: error.to_string(),
-        }),
-    }
-}
-
-fn record_runtime_rule_match_count_if_present(
-    registry: &Arc<Mutex<seceng::RuntimeRuleRegistry>>,
-    rule_id: &str,
-    event_id: &str,
-    timestamp_unix_ms: u64,
-    count: u64,
-    recorded: &mut bool,
-) -> Result<(), seceng::SecurityEngineError> {
-    for _ in 0..count {
-        record_runtime_rule_match_if_present(
-            registry,
-            rule_id,
-            event_id,
-            timestamp_unix_ms,
-            recorded,
-        )?;
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-fn runtime_security_engine_from_registries(
-    state: &Arc<ServiceState>,
-) -> Result<seceng::SecurityEngine, AppError> {
-    let enforcement_rules = {
-        let registry = state.enforcement_registry.lock().map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("runtime enforcement registry lock poisoned: {error}"),
-            )
-        })?;
-        registry.enabled_enforcement_rules()
-    };
-    let detection_rules = {
-        let registry = state.detection_registry.lock().map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("runtime detection registry lock poisoned: {error}"),
-            )
-        })?;
-        registry.enabled_detection_rules()
-    };
-
-    let mut engine = seceng::SecurityEngine::default();
-    if !enforcement_rules.is_empty() {
-        engine.set_enforcement(Box::new(
-            seceng::CelEnforcementEvaluator::compile(enforcement_rules).map_err(|error| {
-                AppError(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("compile installed enforcement rules: {error}"),
-                )
-            })?,
-        ));
-    }
-    if !detection_rules.is_empty() {
-        engine.set_detection(Box::new(
-            seceng::CelDetectionEvaluator::compile(detection_rules).map_err(|error| {
-                AppError(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("compile installed detection rules: {error}"),
-                )
-            })?,
-        ));
-    }
-    engine.set_match_recorder(Box::new(RuntimeSecurityMatchRecorder {
-        enforcement_registry: state.enforcement_registry.clone(),
-        detection_registry: state.detection_registry.clone(),
-    }));
-    Ok(engine)
-}
-
-fn runtime_security_rules_snapshot_from_registries(
-    state: &Arc<ServiceState>,
-) -> Result<capsem_proto::ipc::RuntimeSecurityRulesSnapshot, AppError> {
-    let enforcement = {
-        let registry = state.enforcement_registry.lock().map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("runtime enforcement registry lock poisoned: {error}"),
-            )
-        })?;
-        runtime_registry_entries_by_priority(&registry)
-            .into_iter()
-            .filter(|entry| entry.metadata.scope == seceng::RuleScope::Runtime && entry.enabled)
-            .filter_map(runtime_enforcement_entry_snapshot)
-            .collect()
-    };
-    let detection = {
-        let registry = state.detection_registry.lock().map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("runtime detection registry lock poisoned: {error}"),
-            )
-        })?;
-        runtime_registry_entries_by_priority(&registry)
-            .into_iter()
-            .filter(|entry| entry.metadata.scope == seceng::RuleScope::Runtime && entry.enabled)
-            .filter_map(runtime_detection_entry_snapshot)
-            .collect()
-    };
-
-    Ok(capsem_proto::ipc::RuntimeSecurityRulesSnapshot {
-        enforcement,
-        detection,
-    })
-}
-
-fn runtime_registry_entries_by_priority(
-    registry: &seceng::RuntimeRuleRegistry,
-) -> Vec<&seceng::RuntimeRuleEntry> {
-    let mut entries = registry.list();
-    entries.sort_by(|left, right| {
-        left.metadata
-            .priority
-            .cmp(&right.metadata.priority)
-            .then_with(|| left.metadata.id.cmp(&right.metadata.id))
-    });
-    entries
-}
-
-fn runtime_enforcement_entry_snapshot(
-    entry: &seceng::RuntimeRuleEntry,
-) -> Option<capsem_proto::ipc::RuntimeEnforcementRuleSnapshot> {
-    let seceng::RuntimeRuleDefinition::Enforcement { decision, reason } = &entry.definition else {
-        return None;
-    };
-    Some(capsem_proto::ipc::RuntimeEnforcementRuleSnapshot {
-        id: entry.metadata.id.clone(),
-        pack_id: entry.metadata.pack_id.clone(),
-        condition: entry.source.clone(),
-        decision: runtime_decision_action_snapshot(*decision),
-        reason: reason.clone(),
-    })
-}
-
-fn runtime_detection_entry_snapshot(
-    entry: &seceng::RuntimeRuleEntry,
-) -> Option<capsem_proto::ipc::RuntimeDetectionRuleSnapshot> {
-    let seceng::RuntimeRuleDefinition::Detection {
-        sigma_id,
-        title,
-        severity,
-        confidence,
-        tags,
-    } = &entry.definition
-    else {
-        return None;
-    };
-    Some(capsem_proto::ipc::RuntimeDetectionRuleSnapshot {
-        id: entry.metadata.id.clone(),
-        pack_id: entry
-            .metadata
-            .pack_id
-            .clone()
-            .unwrap_or_else(|| "runtime".into()),
-        sigma_id: sigma_id.clone(),
-        title: title.clone(),
-        condition: entry.source.clone(),
-        severity: runtime_detection_severity_snapshot(*severity),
-        confidence: runtime_detection_confidence_snapshot(*confidence),
-        tags: tags.clone(),
-    })
-}
-
-fn runtime_decision_action_snapshot(
-    action: seceng::SecurityDecisionAction,
-) -> capsem_proto::ipc::RuntimeSecurityDecisionAction {
-    match action {
-        seceng::SecurityDecisionAction::Allow => {
-            capsem_proto::ipc::RuntimeSecurityDecisionAction::Allow
-        }
-        seceng::SecurityDecisionAction::Ask => {
-            capsem_proto::ipc::RuntimeSecurityDecisionAction::Ask
-        }
-        seceng::SecurityDecisionAction::Block => {
-            capsem_proto::ipc::RuntimeSecurityDecisionAction::Block
-        }
-        seceng::SecurityDecisionAction::Rewrite => {
-            capsem_proto::ipc::RuntimeSecurityDecisionAction::Rewrite
-        }
-        seceng::SecurityDecisionAction::Throttle => {
-            capsem_proto::ipc::RuntimeSecurityDecisionAction::Throttle
-        }
-    }
-}
-
-fn runtime_detection_severity_snapshot(
-    severity: seceng::Severity,
-) -> capsem_proto::ipc::RuntimeDetectionSeverity {
-    match severity {
-        seceng::Severity::Info => capsem_proto::ipc::RuntimeDetectionSeverity::Info,
-        seceng::Severity::Low => capsem_proto::ipc::RuntimeDetectionSeverity::Low,
-        seceng::Severity::Medium => capsem_proto::ipc::RuntimeDetectionSeverity::Medium,
-        seceng::Severity::High => capsem_proto::ipc::RuntimeDetectionSeverity::High,
-        seceng::Severity::Critical => capsem_proto::ipc::RuntimeDetectionSeverity::Critical,
-    }
-}
-
-fn runtime_detection_confidence_snapshot(
-    confidence: seceng::Confidence,
-) -> capsem_proto::ipc::RuntimeDetectionConfidence {
-    match confidence {
-        seceng::Confidence::Low => capsem_proto::ipc::RuntimeDetectionConfidence::Low,
-        seceng::Confidence::Medium => capsem_proto::ipc::RuntimeDetectionConfidence::Medium,
-        seceng::Confidence::High => capsem_proto::ipc::RuntimeDetectionConfidence::High,
-    }
-}
-
-#[derive(Debug, Clone)]
-struct RuntimeRulePropagationSummary {
-    target_count: usize,
-    failed_session_ids: Vec<String>,
-    failures: Vec<ReloadConfigFailure>,
-}
-
-impl RuntimeRulePropagationSummary {
-    fn json(&self) -> serde_json::Value {
-        json!({
-            "target_count": self.target_count,
-            "failed_session_count": self.failures.len(),
-            "failed_session_ids": self.failed_session_ids,
-            "failures": self.failures,
-        })
-    }
-}
-
-async fn broadcast_runtime_security_rules(
-    state: &Arc<ServiceState>,
-) -> Result<RuntimeRulePropagationSummary, AppError> {
-    let runtime_rules = runtime_security_rules_snapshot_from_registries(state)?;
-    let targets = {
-        let instances = state.instances.lock().unwrap();
-        instances
-            .iter()
-            .map(|(id, info)| (id.clone(), info.uds_path.clone()))
-            .collect::<Vec<_>>()
-    };
-
-    let results = futures::future::join_all(targets.iter().map(|(id, uds_path)| {
-        let id = id.clone();
-        let runtime_rules = runtime_rules.clone();
-        async move {
-            match send_ipc_command(
-                uds_path,
-                ServiceToProcess::ReloadConfig {
-                    runtime_rules: Some(runtime_rules),
-                },
-                Some(5),
-            )
-            .await
-            {
-                Ok(ProcessToService::ReloadConfigResult {
-                    success: true,
-                    error: _,
-                }) => None,
-                Ok(ProcessToService::ReloadConfigResult {
-                    success: false,
-                    error,
-                }) => Some(ReloadConfigFailure {
-                    session_id: id,
-                    message: error.unwrap_or_else(|| "runtime rule propagation failed".to_string()),
-                }),
-                Ok(ProcessToService::Pong) => None,
-                Ok(_) => Some(ReloadConfigFailure {
-                    session_id: id,
-                    message: "unexpected response".to_string(),
-                }),
-                Err(error) => Some(ReloadConfigFailure {
-                    session_id: id,
-                    message: error,
-                }),
-            }
-        }
-    }))
-    .await;
-    let failures: Vec<ReloadConfigFailure> = results.into_iter().flatten().collect();
-    let failed_session_ids = failures
-        .iter()
-        .map(|failure| failure.session_id.clone())
-        .collect();
-    Ok(RuntimeRulePropagationSummary {
-        target_count: targets.len(),
-        failed_session_ids,
-        failures,
-    })
-}
-
-async fn drain_runtime_rule_matches_from_processes(
-    state: &Arc<ServiceState>,
-) -> Result<RuntimeRulePropagationSummary, AppError> {
-    let targets = {
-        let instances = state.instances.lock().unwrap();
-        instances
-            .iter()
-            .map(|(id, info)| (id.clone(), info.uds_path.clone()))
-            .collect::<Vec<_>>()
-    };
-    let results = futures::future::join_all(targets.iter().map(|(session_id, uds_path)| {
-        let session_id = session_id.clone();
-        let uds_path = uds_path.clone();
-        let state = state.clone();
-        async move {
-            let drain_id = state.next_job_id();
-            match send_ipc_command(
-                &uds_path,
-                ServiceToProcess::DrainRuntimeRuleMatches { id: drain_id },
-                Some(5),
-            )
-            .await
-            {
-                Ok(ProcessToService::RuntimeRuleMatches { id, matches }) if id == drain_id => {
-                    for rule_match in matches {
-                        let mut recorded_any = false;
-                        let event_id = rule_match
-                            .last_matched_event
-                            .as_deref()
-                            .unwrap_or("unknown");
-                        let timestamp_unix_ms = rule_match.last_matched_unix_ms.unwrap_or_default();
-                        if let Err(error) = record_runtime_rule_match_count_if_present(
-                            &state.enforcement_registry,
-                            &rule_match.rule_id,
-                            event_id,
-                            timestamp_unix_ms,
-                            rule_match.match_count,
-                            &mut recorded_any,
-                        ) {
-                            return Some(ReloadConfigFailure {
-                                session_id,
-                                message: format!("record enforcement runtime match: {error}"),
-                            });
-                        }
-                        if let Err(error) = record_runtime_rule_match_count_if_present(
-                            &state.detection_registry,
-                            &rule_match.rule_id,
-                            event_id,
-                            timestamp_unix_ms,
-                            rule_match.match_count,
-                            &mut recorded_any,
-                        ) {
-                            return Some(ReloadConfigFailure {
-                                session_id,
-                                message: format!("record detection runtime match: {error}"),
-                            });
-                        }
-                        if !recorded_any && rule_match.match_count > 0 {
-                            tracing::debug!(
-                                rule_id = %rule_match.rule_id,
-                                "process reported runtime rule match for a rule no longer in the service registry"
-                            );
-                        }
-                    }
-                    None
-                }
-                Ok(ProcessToService::RuntimeRuleMatches { id, .. }) => Some(ReloadConfigFailure {
-                    session_id,
-                    message: format!(
-                        "runtime rule match drain id mismatch: expected {drain_id}, got {id}"
-                    ),
-                }),
-                Ok(_) => Some(ReloadConfigFailure {
-                    session_id,
-                    message: "unexpected response".to_string(),
-                }),
-                Err(error) => Some(ReloadConfigFailure {
-                    session_id,
-                    message: error,
-                }),
-            }
-        }
-    }))
-    .await;
-    let failures: Vec<ReloadConfigFailure> = results.into_iter().flatten().collect();
-    let failed_session_ids = failures
-        .iter()
-        .map(|failure| failure.session_id.clone())
-        .collect();
-    Ok(RuntimeRulePropagationSummary {
-        target_count: targets.len(),
-        failed_session_ids,
-        failures,
-    })
-}
-
-fn runtime_backtest_limit(limit: Option<usize>) -> usize {
-    limit.unwrap_or(seceng::DEFAULT_BACKTEST_MATCH_LIMIT)
-}
-
-fn inline_backtest_event_ref(input: &RuntimeBacktestEvent) -> seceng::BacktestEventRef {
-    input
-        .event_ref
-        .clone()
-        .unwrap_or_else(|| seceng::BacktestEventRef {
-            corpus: "inline".into(),
-            session_id: input.event.common.session_id.clone(),
-            event_id: input.event.common.event_id.clone(),
-            sequence_no: input.event.common.sequence_no,
-            timestamp_unix_ms: input.event.common.timestamp_unix_ms,
-        })
-}
-
-fn backtest_evidence_signature(event: &seceng::SecurityEvent) -> Result<String, AppError> {
-    let evidence = serde_json::json!({
-        "event_type": &event.common.event_type,
-        "subject": &event.subject,
-    });
-    let evidence = serde_json::to_vec(&evidence).map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("serialize backtest evidence: {error}"),
-        )
-    })?;
-    Ok(blake3::hash(&evidence).to_hex().to_string())
-}
-
-fn backtest_matched_fields(
-    event: &seceng::SecurityEvent,
-) -> Result<Vec<seceng::MatchedField>, AppError> {
-    let mut fields = Vec::new();
-    push_common_matched_fields(&mut fields, event)?;
-    match &event.subject {
-        seceng::SecurityEventSubject::Http(subject) => {
-            push_matched_field(&mut fields, "http.request.method", &subject.method)?;
-            push_matched_field(&mut fields, "http.request.host", &subject.host)?;
-            push_matched_field(&mut fields, "http.request.path_class", &subject.path_class)?;
-            push_matched_field(&mut fields, "http.request.bytes", subject.request_bytes)?;
-            for (name, values) in &subject.request_headers {
-                push_matched_field(&mut fields, &format!("http.request.headers.{name}"), values)?;
-            }
-            if let Some(body) = &subject.request_body {
-                push_http_body_matched_fields(&mut fields, "http.request.body", body)?;
-            }
-            if let Some(value) = &subject.scheme {
-                push_matched_field(&mut fields, "http.request.scheme", value)?;
-            }
-            if let Some(value) = subject.port {
-                push_matched_field(&mut fields, "http.request.port", value)?;
-            }
-            if let Some(value) = &subject.path {
-                push_matched_field(&mut fields, "http.request.path", value)?;
-            }
-            if let Some(value) = &subject.query {
-                push_matched_field(&mut fields, "http.request.query", value)?;
-            }
-            if let Some(value) = &subject.url {
-                push_matched_field(&mut fields, "http.request.url", value)?;
-            }
-            if let Some(value) = subject.response_status {
-                push_matched_field(&mut fields, "http.response.status", value)?;
-            }
-            if let Some(value) = subject.response_bytes {
-                push_matched_field(&mut fields, "http.response.bytes", value)?;
-            }
-            for (name, values) in &subject.response_headers {
-                push_matched_field(
-                    &mut fields,
-                    &format!("http.response.headers.{name}"),
-                    values,
-                )?;
-            }
-            if let Some(body) = &subject.response_body {
-                push_http_body_matched_fields(&mut fields, "http.response.body", body)?;
-            }
-        }
-        seceng::SecurityEventSubject::Dns(subject) => {
-            push_matched_field(&mut fields, "dns.request.qname", &subject.qname)?;
-            push_matched_field(
-                &mut fields,
-                "dns.request.domain_class",
-                &subject.domain_class,
-            )?;
-        }
-        seceng::SecurityEventSubject::Mcp(subject) => {
-            push_matched_field(&mut fields, "mcp.request.server_id", &subject.server_id)?;
-            push_matched_field(&mut fields, "mcp.request.tool_name", &subject.tool_name)?;
-            if let Some(evidence) = &subject.evidence {
-                push_matched_field(
-                    &mut fields,
-                    "mcp.request.arguments_status",
-                    mcp_arguments_status(evidence),
-                )?;
-                push_matched_field(
-                    &mut fields,
-                    "mcp.request.namespaced_tool_name",
-                    &evidence.namespaced_tool_name,
-                )?;
-                push_matched_field(&mut fields, "mcp.request.transport", &evidence.transport)?;
-                if let Some(value) = &evidence.request_arguments_raw {
-                    push_matched_field(&mut fields, "mcp.request.arguments_raw", value)?;
-                }
-                if let Some(value) = &evidence.request_arguments_json {
-                    push_matched_field(&mut fields, "mcp.request.arguments_json", value)?;
-                }
-                push_matched_field(&mut fields, "mcp.response.is_error", evidence.is_error)?;
-                push_matched_field(
-                    &mut fields,
-                    "mcp.response.result_status",
-                    if evidence.is_error { "error" } else { "ok" },
-                )?;
-                push_matched_field(
-                    &mut fields,
-                    "mcp.response.result_kind",
-                    evidence.result_kind,
-                )?;
-                if let Some(value) = &evidence.result_preview {
-                    push_matched_field(&mut fields, "mcp.response.result_preview", value)?;
-                }
-                if let Some(value) = &evidence.result_json {
-                    push_matched_field(&mut fields, "mcp.response.result_json", value)?;
-                }
-                push_matched_field(&mut fields, "mcp.response.latency_ms", evidence.latency_ms)?;
-                push_matched_field(&mut fields, "mcp.link.status", evidence.link_status)?;
-                if let Some(value) = &evidence.linked_model_interaction_id {
-                    push_matched_field(&mut fields, "mcp.link.model_interaction_id", value)?;
-                }
-                if let Some(value) = &evidence.linked_model_tool_call_id {
-                    push_matched_field(&mut fields, "mcp.link.model_tool_call_id", value)?;
-                }
-            }
-        }
-        seceng::SecurityEventSubject::Model(subject) => {
-            push_matched_field(&mut fields, "model.request.provider", &subject.provider)?;
-            push_matched_field(&mut fields, "model.request.model", &subject.model)?;
-            if let Some(value) = subject.estimated_input_tokens {
-                push_matched_field(&mut fields, "model.usage.input_tokens", value)?;
-            }
-            if let Some(value) = subject.estimated_output_tokens {
-                push_matched_field(&mut fields, "model.usage.output_tokens", value)?;
-            }
-            if let Some(value) = subject.estimated_cost_micros {
-                push_matched_field(&mut fields, "model.usage.estimated_cost_micros", value)?;
-            }
-            if let Some(evidence) = &subject.evidence {
-                push_matched_field(&mut fields, "model.request.api_family", evidence.api_family)?;
-                push_matched_field(&mut fields, "model.request.stream", evidence.request.stream)?;
-                push_matched_field(
-                    &mut fields,
-                    "model.request.message_count",
-                    evidence.request.message_count,
-                )?;
-                push_matched_field(
-                    &mut fields,
-                    "model.request.tools_declared_count",
-                    evidence.request.tools_declared_count,
-                )?;
-                push_matched_field(
-                    &mut fields,
-                    "model.request.unknown_fields_present",
-                    evidence.request.unknown_fields_present,
-                )?;
-                push_matched_field(
-                    &mut fields,
-                    "model.evidence.parse_status",
-                    evidence.parse_status,
-                )?;
-                push_matched_field(
-                    &mut fields,
-                    "model.evidence.status",
-                    evidence.evidence_status,
-                )?;
-                for (index, tool_call) in evidence.tool_calls.iter().enumerate() {
-                    let prefix = format!("model.request.tool_calls[{index}]");
-                    push_matched_field(
-                        &mut fields,
-                        &format!("{prefix}.tool_call_id"),
-                        &tool_call.tool_call_id,
-                    )?;
-                    if let Some(value) = &tool_call.provider_call_id {
-                        push_matched_field(
-                            &mut fields,
-                            &format!("{prefix}.provider_call_id"),
-                            value,
-                        )?;
-                    }
-                    push_matched_field(
-                        &mut fields,
-                        &format!("{prefix}.raw_name"),
-                        &tool_call.raw_name,
-                    )?;
-                    push_matched_field(
-                        &mut fields,
-                        &format!("{prefix}.name"),
-                        &tool_call.normalized_name,
-                    )?;
-                    push_matched_field(
-                        &mut fields,
-                        &format!("{prefix}.arguments_status"),
-                        tool_call.arguments_status,
-                    )?;
-                    push_matched_field(&mut fields, &format!("{prefix}.origin"), tool_call.origin)?;
-                    push_matched_field(&mut fields, &format!("{prefix}.status"), tool_call.status)?;
-                    push_matched_field(
-                        &mut fields,
-                        &format!("{prefix}.parse_confidence"),
-                        tool_call.parse_confidence,
-                    )?;
-                    if let Some(value) = &tool_call.linked_mcp_call_id {
-                        push_matched_field(
-                            &mut fields,
-                            &format!("{prefix}.linked_mcp_call_id"),
-                            value,
-                        )?;
-                    }
-                    if let Some(value) = &tool_call.arguments_raw {
-                        push_matched_field(&mut fields, &format!("{prefix}.arguments_raw"), value)?;
-                    }
-                    if let Some(value) = &tool_call.arguments_json {
-                        push_matched_field(
-                            &mut fields,
-                            &format!("{prefix}.arguments_json"),
-                            value,
-                        )?;
-                    }
-                }
-                if let Some(response) = &evidence.response {
-                    if let Some(value) = &response.stop_reason {
-                        push_matched_field(&mut fields, "model.response.stop_reason", value)?;
-                    }
-                    if let Some(value) = &response.provider_response_id {
-                        push_matched_field(
-                            &mut fields,
-                            "model.response.provider_response_id",
-                            value,
-                        )?;
-                    }
-                }
-                for (index, tool_result) in evidence.tool_results.iter().enumerate() {
-                    let prefix = format!("model.response.tool_results[{index}]");
-                    push_matched_field(
-                        &mut fields,
-                        &format!("{prefix}.tool_call_id"),
-                        &tool_result.tool_call_id,
-                    )?;
-                    if let Some(value) = &tool_result.linked_mcp_call_id {
-                        push_matched_field(
-                            &mut fields,
-                            &format!("{prefix}.linked_mcp_call_id"),
-                            value,
-                        )?;
-                    }
-                    push_matched_field(
-                        &mut fields,
-                        &format!("{prefix}.content_kind"),
-                        tool_result.content_kind,
-                    )?;
-                    if let Some(value) = &tool_result.content_preview {
-                        push_matched_field(
-                            &mut fields,
-                            &format!("{prefix}.content_preview"),
-                            value,
-                        )?;
-                    }
-                    if let Some(value) = &tool_result.content_json {
-                        push_matched_field(&mut fields, &format!("{prefix}.content_json"), value)?;
-                    }
-                    push_matched_field(
-                        &mut fields,
-                        &format!("{prefix}.is_error"),
-                        tool_result.is_error,
-                    )?;
-                    push_matched_field(
-                        &mut fields,
-                        &format!("{prefix}.result_status"),
-                        tool_result.result_status,
-                    )?;
-                    push_matched_field(
-                        &mut fields,
-                        &format!("{prefix}.returned_to_model"),
-                        tool_result.returned_to_model,
-                    )?;
-                    push_matched_field(
-                        &mut fields,
-                        &format!("{prefix}.parse_confidence"),
-                        tool_result.parse_confidence,
-                    )?;
-                }
-            }
-        }
-        seceng::SecurityEventSubject::File(subject) => {
-            push_matched_field(&mut fields, "file.activity.operation", &subject.operation)?;
-            push_matched_field(&mut fields, "file.activity.path_class", &subject.path_class)?;
-            if let Some(value) = &subject.path {
-                push_matched_field(&mut fields, "file.activity.path", value)?;
-            }
-            if let Some(value) = subject.byte_count {
-                push_matched_field(&mut fields, "file.activity.byte_count", value)?;
-            }
-        }
-        seceng::SecurityEventSubject::Process(subject) => {
-            push_matched_field(
-                &mut fields,
-                "process.activity.operation",
-                &subject.operation,
-            )?;
-            if let Some(value) = &subject.command_class {
-                push_matched_field(&mut fields, "process.activity.command_class", value)?;
-            }
-        }
-        seceng::SecurityEventSubject::Credential(subject) => {
-            push_matched_field(
-                &mut fields,
-                "credential.activity.operation",
-                &subject.operation,
-            )?;
-            push_matched_field(
-                &mut fields,
-                "credential.activity.credential_id",
-                &subject.credential_id,
-            )?;
-        }
-        seceng::SecurityEventSubject::VmLifecycle(subject) => {
-            push_matched_field(&mut fields, "vm.activity.operation", &subject.operation)?;
-        }
-        seceng::SecurityEventSubject::Profile(subject) => {
-            push_matched_field(
-                &mut fields,
-                "profile.activity.operation",
-                &subject.operation,
-            )?;
-            push_matched_field(
-                &mut fields,
-                "profile.activity.profile_id",
-                &subject.profile_id,
-            )?;
-            push_matched_field(
-                &mut fields,
-                "profile.activity.profile_revision",
-                &subject.profile_revision,
-            )?;
-            push_matched_field(&mut fields, "profile.id", &subject.profile_id)?;
-            push_matched_field(&mut fields, "profile.revision", &subject.profile_revision)?;
-        }
-        seceng::SecurityEventSubject::Conversation(subject) => {
-            push_matched_field(
-                &mut fields,
-                "conversation.activity.operation",
-                &subject.operation,
-            )?;
-            if let Some(value) = &subject.conversation_id {
-                push_matched_field(&mut fields, "conversation.id", value)?;
-            }
-        }
-        seceng::SecurityEventSubject::Snapshot(subject) => {
-            push_matched_field(
-                &mut fields,
-                "snapshot.activity.operation",
-                &subject.operation,
-            )?;
-            push_matched_field(&mut fields, "snapshot.id", &subject.snapshot_id)?;
-        }
-    }
-    Ok(fields)
-}
-
-fn push_common_matched_fields(
-    fields: &mut Vec<seceng::MatchedField>,
-    event: &seceng::SecurityEvent,
-) -> Result<(), AppError> {
-    push_matched_field(fields, "common.event_id", &event.common.event_id)?;
-    push_matched_field(fields, "common.event_type", &event.common.event_type)?;
-    push_matched_field(fields, "common.source_engine", event.common.source_engine)?;
-    push_matched_field(fields, "common.enforceability", event.common.enforceability)?;
-    push_matched_field(
-        fields,
-        "common.attribution_scope",
-        event.common.attribution_scope,
-    )?;
-    push_matched_field(fields, "common.origin_kind", event.common.origin_kind)?;
-    push_matched_field(
-        fields,
-        "common.timestamp_unix_ms",
-        event.common.timestamp_unix_ms,
-    )?;
-    if let Some(value) = &event.common.vm_id {
-        push_matched_field(fields, "common.vm_id", value)?;
-    }
-    if let Some(value) = &event.common.session_id {
-        push_matched_field(fields, "common.session_id", value)?;
-    }
-    if let Some(value) = &event.common.profile_id {
-        push_matched_field(fields, "common.profile_id", value)?;
-    }
-    if let Some(value) = &event.common.user_id {
-        push_matched_field(fields, "common.user_id", value)?;
-    }
-    if let Some(value) = &event.common.process_id {
-        push_matched_field(fields, "common.process_id", value)?;
-    }
-    if let Some(value) = &event.common.exec_id {
-        push_matched_field(fields, "common.exec_id", value)?;
-    }
-    if let Some(value) = &event.common.turn_id {
-        push_matched_field(fields, "common.turn_id", value)?;
-    }
-    if let Some(value) = &event.common.message_id {
-        push_matched_field(fields, "common.message_id", value)?;
-    }
-    if let Some(value) = &event.common.tool_call_id {
-        push_matched_field(fields, "common.tool_call_id", value)?;
-    }
-    if let Some(value) = &event.common.mcp_call_id {
-        push_matched_field(fields, "common.mcp_call_id", value)?;
-    }
-    if let Some(value) = &event.common.accounting_owner {
-        push_matched_field(fields, "common.accounting_owner", value)?;
-    }
-    Ok(())
-}
-
-fn push_http_body_matched_fields(
-    fields: &mut Vec<seceng::MatchedField>,
-    prefix: &str,
-    body: &seceng::HttpBodySecuritySubject,
-) -> Result<(), AppError> {
-    push_matched_field(fields, &format!("{prefix}.state"), body.state)?;
-    if let Some(value) = &body.text {
-        push_matched_field(fields, &format!("{prefix}.text"), value)?;
-    }
-    if let Some(value) = &body.content_type {
-        push_matched_field(fields, &format!("{prefix}.content_type"), value)?;
-    }
-    if let Some(value) = body.size {
-        push_matched_field(fields, &format!("{prefix}.size"), value)?;
-    }
-    push_matched_field(fields, &format!("{prefix}.truncated"), body.truncated)?;
-    if let Some(value) = &body.redaction_reason {
-        push_matched_field(fields, &format!("{prefix}.redaction_reason"), value)?;
-    }
-    Ok(())
-}
-
-fn mcp_arguments_status(evidence: &seceng::McpToolExecutionEvidence) -> &'static str {
-    if evidence.request_arguments_json.is_some() {
-        "valid_json"
-    } else if evidence.request_arguments_raw.is_some() {
-        "not_json"
-    } else {
-        "absent"
-    }
-}
-
-fn push_matched_field(
-    fields: &mut Vec<seceng::MatchedField>,
-    path: &str,
-    value: impl Serialize,
-) -> Result<(), AppError> {
-    fields.push(seceng::MatchedField {
-        path: path.to_owned(),
-        value: serde_json::to_value(value).map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("serialize backtest matched field {path}: {error}"),
-            )
-        })?,
-    });
-    Ok(())
-}
-
-fn backtest_outcome(expected: Option<&str>, actual: &str) -> seceng::BacktestOutcome {
-    match expected {
-        Some(expected) if expected != actual => seceng::BacktestOutcome::Mismatch {
-            expected: expected.to_owned(),
-            actual: actual.to_owned(),
-        },
-        _ => seceng::BacktestOutcome::Matched,
-    }
-}
-
-fn security_events_query_rows(
-    reader: &capsem_logger::DbReader,
-) -> Result<Vec<serde_json::Value>, AppError> {
-    let json_str = reader
-        .query_raw(
-            "SELECT
-                se.event_id, se.timestamp_unix_ms, se.event_family, se.event_type,
-                se.source_engine, se.enforceability, se.attribution_scope,
-                se.origin_kind, se.accounting_owner, se.trace_id, se.span_id,
-                se.parent_event_id, se.stream_id, se.activity_id, se.sequence_no,
-                se.vm_id, se.session_id, se.profile_id, se.profile_revision,
-                se.user_id, se.process_id, se.parent_process_id, se.exec_id,
-                se.turn_id, se.message_id, se.tool_call_id, se.mcp_call_id,
-                se.redaction_state,
-                n.domain, n.port, n.method, n.path, n.query, n.status_code,
-                n.bytes_sent, n.bytes_received,
-                d.qname,
-                m.server_name, m.tool_name,
-                mc.provider, mc.model, mc.input_tokens, mc.output_tokens,
-                f.action, f.path, f.size,
-                x.command, x.process_name,
-                s.slot, s.origin, s.name,
-                ami.interaction_id, ami.trace_id, ami.attribution_scope,
-                ami.source_engine, ami.origin_kind, ami.accounting_owner,
-                ami.profile_id, ami.vm_id, ami.session_id, ami.user_id,
-                ami.provider, ami.api_family, ami.model, ami.parse_status,
-                ami.evidence_status, ami.request_id, ami.request_model,
-                ami.request_stream, ami.request_system_prompt_preview,
-                ami.request_message_count, ami.request_tools_declared_count,
-                ami.request_raw_shape_version,
-                ami.request_unknown_fields_present,
-                ami.response_id, ami.response_provider_response_id,
-                ami.response_stop_reason, ami.response_text_preview,
-                ami.response_thinking_preview, ami.response_raw_shape_version,
-                ami.usage_input_tokens, ami.usage_output_tokens,
-                ami.usage_estimated_cost_micros,
-                ame.mcp_call_id, ame.server_id, ame.tool_name,
-                ame.namespaced_tool_name, ame.transport,
-                ame.request_arguments_raw, ame.request_arguments_json,
-                ame.result_kind, ame.result_preview, ame.result_json,
-                ame.is_error, ame.latency_ms,
-                ame.linked_model_interaction_id,
-                ame.linked_model_tool_call_id, ame.link_status,
-                se.process_operation, se.process_command_class
-             FROM security_events se
-             LEFT JOIN net_events n
-                ON n.trace_id = se.trace_id
-               AND se.event_family = 'http'
-             LEFT JOIN dns_events d
-                ON d.trace_id = se.trace_id
-               AND se.event_family = 'dns'
-             LEFT JOIN mcp_calls m
-                ON m.trace_id = se.trace_id
-               AND se.event_family = 'mcp'
-             LEFT JOIN model_calls mc
-                ON mc.trace_id = se.trace_id
-               AND se.event_family = 'model'
-             LEFT JOIN fs_events f
-                ON f.trace_id = se.trace_id
-               AND se.event_family = 'file'
-             LEFT JOIN exec_events x
-                ON x.trace_id = se.trace_id
-               AND se.event_family = 'process'
-             LEFT JOIN snapshot_events s
-                ON s.trace_id = se.trace_id
-               AND se.event_family = 'snapshot'
-             LEFT JOIN ai_model_interactions ami
-                ON ami.trace_id = se.trace_id
-               AND se.event_family = 'model'
-             LEFT JOIN ai_mcp_execution_evidence ame
-                ON (ame.mcp_call_id = se.mcp_call_id
-                    OR ame.mcp_call_id = m.request_id)
-               AND se.event_family = 'mcp'
-             GROUP BY se.id
-             ORDER BY se.timestamp_unix_ms ASC, se.id ASC
-             LIMIT 10000",
-        )
-        .map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("query session security events: {error}"),
-            )
-        })?;
-    let value: serde_json::Value = serde_json::from_str(&json_str).map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("parse session security events: {error}"),
-        )
-    })?;
-    Ok(value
-        .get("rows")
-        .and_then(|rows| rows.as_array())
-        .cloned()
-        .unwrap_or_default())
-}
-
-fn session_cell(row: &serde_json::Value, index: usize) -> Result<&serde_json::Value, AppError> {
-    row.as_array()
-        .and_then(|cells| cells.get(index))
-        .ok_or_else(|| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("session security event row missing column {index}"),
-            )
-        })
-}
-
-fn session_required_string(row: &serde_json::Value, index: usize) -> Result<String, AppError> {
-    session_cell(row, index)?
-        .as_str()
-        .map(str::to_owned)
-        .ok_or_else(|| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("session security event column {index} was not a string"),
-            )
-        })
-}
-
-fn session_optional_string(
-    row: &serde_json::Value,
-    index: usize,
-) -> Result<Option<String>, AppError> {
-    let value = session_cell(row, index)?;
-    if value.is_null() {
-        Ok(None)
-    } else {
-        value
-            .as_str()
-            .map(|value| Some(value.to_owned()))
-            .ok_or_else(|| {
-                AppError(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("session security event column {index} was not a nullable string"),
-                )
-            })
-    }
-}
-
-fn session_required_u64(row: &serde_json::Value, index: usize) -> Result<u64, AppError> {
-    let value = session_cell(row, index)?;
-    value
-        .as_u64()
-        .or_else(|| value.as_i64().and_then(|n| u64::try_from(n).ok()))
-        .ok_or_else(|| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("session security event column {index} was not an unsigned integer"),
-            )
-        })
-}
-
-fn session_optional_u64(row: &serde_json::Value, index: usize) -> Result<Option<u64>, AppError> {
-    let value = session_cell(row, index)?;
-    if value.is_null() {
-        Ok(None)
-    } else {
-        session_required_u64(row, index).map(Some)
-    }
-}
-
-fn session_optional_bool(row: &serde_json::Value, index: usize) -> Result<Option<bool>, AppError> {
-    let value = session_cell(row, index)?;
-    if value.is_null() {
-        return Ok(None);
-    }
-    if let Some(value) = value.as_bool() {
-        return Ok(Some(value));
-    }
-    if let Some(value) = value.as_i64() {
-        return Ok(Some(value != 0));
-    }
-    if let Some(value) = value.as_u64() {
-        return Ok(Some(value != 0));
-    }
-    Err(AppError(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        format!("session security event column {index} was not a nullable boolean"),
-    ))
-}
-
-fn parse_session_enum<T>(value: &str, label: &str) -> Result<T, AppError>
-where
-    T: serde::de::DeserializeOwned,
-{
-    serde_json::from_value(serde_json::Value::String(value.to_owned())).map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("unsupported session {label} '{value}': {error}"),
-        )
-    })
-}
-
-fn parse_session_source_engine(value: &str) -> Result<seceng::SourceEngine, AppError> {
-    match value {
-        "network" => Ok(seceng::SourceEngine::Network),
-        "file" => Ok(seceng::SourceEngine::File),
-        "process" => Ok(seceng::SourceEngine::Process),
-        "conversation" => Ok(seceng::SourceEngine::Conversation),
-        "security" => Ok(seceng::SourceEngine::Security),
-        "vm" => Ok(seceng::SourceEngine::Vm),
-        "profile" => Ok(seceng::SourceEngine::Profile),
-        "host_ai" => Ok(seceng::SourceEngine::HostAi),
-        _ => Err(AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("unsupported session source_engine '{value}'"),
-        )),
-    }
-}
-
-fn parse_session_attribution_scope(value: &str) -> Result<seceng::AiAttributionScope, AppError> {
-    match value {
-        "host" => Ok(seceng::AiAttributionScope::Host),
-        "vm" => Ok(seceng::AiAttributionScope::Vm),
-        "profile" => Ok(seceng::AiAttributionScope::Profile),
-        "session" => Ok(seceng::AiAttributionScope::Session),
-        "unknown" => Ok(seceng::AiAttributionScope::Unknown),
-        _ => Err(AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("unsupported session attribution_scope '{value}'"),
-        )),
-    }
-}
-
-fn parse_session_origin_kind(value: &str) -> Result<seceng::AiOriginKind, AppError> {
-    match value {
-        "guest_network" => Ok(seceng::AiOriginKind::GuestNetwork),
-        "host_service" => Ok(seceng::AiOriginKind::HostService),
-        "host_admin" => Ok(seceng::AiOriginKind::HostAdmin),
-        "host_workbench" => Ok(seceng::AiOriginKind::HostWorkbench),
-        "test_fixture" => Ok(seceng::AiOriginKind::TestFixture),
-        "unknown" => Ok(seceng::AiOriginKind::Unknown),
-        _ => Err(AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("unsupported session origin_kind '{value}'"),
-        )),
-    }
-}
-
-fn parse_session_enforceability(value: &str) -> Result<seceng::Enforceability, AppError> {
-    match value {
-        "inline_blockable" => Ok(seceng::Enforceability::InlineBlockable),
-        "observe_only" => Ok(seceng::Enforceability::ObserveOnly),
-        "remediation_only" => Ok(seceng::Enforceability::RemediationOnly),
-        _ => Err(AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("unsupported session enforceability '{value}'"),
-        )),
-    }
-}
-
-fn parse_session_redaction_state(value: &str) -> Result<seceng::RedactionState, AppError> {
-    match value {
-        "raw" => Ok(seceng::RedactionState::Raw),
-        "redacted" => Ok(seceng::RedactionState::Redacted),
-        "summary-only" => Ok(seceng::RedactionState::SummaryOnly),
-        _ => Err(AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("unsupported session redaction_state '{value}'"),
-        )),
-    }
-}
-
-const SESSION_COL_EVENT_ID: usize = 0;
-const SESSION_COL_TIMESTAMP_UNIX_MS: usize = 1;
-const SESSION_COL_EVENT_FAMILY: usize = 2;
-const SESSION_COL_EVENT_TYPE: usize = 3;
-const SESSION_COL_SOURCE_ENGINE: usize = 4;
-const SESSION_COL_ENFORCEABILITY: usize = 5;
-const SESSION_COL_ATTRIBUTION_SCOPE: usize = 6;
-const SESSION_COL_ORIGIN_KIND: usize = 7;
-const SESSION_COL_ACCOUNTING_OWNER: usize = 8;
-const SESSION_COL_TRACE_ID: usize = 9;
-const SESSION_COL_SPAN_ID: usize = 10;
-const SESSION_COL_PARENT_EVENT_ID: usize = 11;
-const SESSION_COL_STREAM_ID: usize = 12;
-const SESSION_COL_ACTIVITY_ID: usize = 13;
-const SESSION_COL_SEQUENCE_NO: usize = 14;
-const SESSION_COL_VM_ID: usize = 15;
-const SESSION_COL_SESSION_ID: usize = 16;
-const SESSION_COL_PROFILE_ID: usize = 17;
-const SESSION_COL_PROFILE_REVISION: usize = 18;
-const SESSION_COL_USER_ID: usize = 19;
-const SESSION_COL_PROCESS_ID: usize = 20;
-const SESSION_COL_PARENT_PROCESS_ID: usize = 21;
-const SESSION_COL_EXEC_ID: usize = 22;
-const SESSION_COL_TURN_ID: usize = 23;
-const SESSION_COL_MESSAGE_ID: usize = 24;
-const SESSION_COL_TOOL_CALL_ID: usize = 25;
-const SESSION_COL_MCP_CALL_ID: usize = 26;
-const SESSION_COL_REDACTION_STATE: usize = 27;
-const SESSION_COL_HTTP_HOST: usize = 28;
-const SESSION_COL_HTTP_PORT: usize = 29;
-const SESSION_COL_HTTP_METHOD: usize = 30;
-const SESSION_COL_HTTP_PATH: usize = 31;
-const SESSION_COL_HTTP_QUERY: usize = 32;
-const SESSION_COL_HTTP_STATUS: usize = 33;
-const SESSION_COL_HTTP_REQUEST_BYTES: usize = 34;
-const SESSION_COL_HTTP_RESPONSE_BYTES: usize = 35;
-const SESSION_COL_DNS_QNAME: usize = 36;
-const SESSION_COL_MCP_SERVER_ID: usize = 37;
-const SESSION_COL_MCP_TOOL_NAME: usize = 38;
-const SESSION_COL_MODEL_PROVIDER: usize = 39;
-const SESSION_COL_MODEL_NAME: usize = 40;
-const SESSION_COL_MODEL_INPUT_TOKENS: usize = 41;
-const SESSION_COL_MODEL_OUTPUT_TOKENS: usize = 42;
-const SESSION_COL_FILE_OPERATION: usize = 43;
-const SESSION_COL_FILE_PATH: usize = 44;
-const SESSION_COL_FILE_BYTE_COUNT: usize = 45;
-const SESSION_COL_PROCESS_COMMAND: usize = 46;
-const SESSION_COL_PROCESS_NAME: usize = 47;
-const SESSION_COL_SNAPSHOT_SLOT: usize = 48;
-const SESSION_COL_SNAPSHOT_NAME: usize = 50;
-const SESSION_COL_AI_INTERACTION_ID: usize = 51;
-const SESSION_COL_AI_TRACE_ID: usize = 52;
-const SESSION_COL_AI_ATTRIBUTION_SCOPE: usize = 53;
-const SESSION_COL_AI_SOURCE_ENGINE: usize = 54;
-const SESSION_COL_AI_ORIGIN_KIND: usize = 55;
-const SESSION_COL_AI_ACCOUNTING_OWNER: usize = 56;
-const SESSION_COL_AI_PROFILE_ID: usize = 57;
-const SESSION_COL_AI_VM_ID: usize = 58;
-const SESSION_COL_AI_SESSION_ID: usize = 59;
-const SESSION_COL_AI_USER_ID: usize = 60;
-const SESSION_COL_AI_PROVIDER: usize = 61;
-const SESSION_COL_AI_API_FAMILY: usize = 62;
-const SESSION_COL_AI_MODEL: usize = 63;
-const SESSION_COL_AI_PARSE_STATUS: usize = 64;
-const SESSION_COL_AI_EVIDENCE_STATUS: usize = 65;
-const SESSION_COL_AI_REQUEST_ID: usize = 66;
-const SESSION_COL_AI_REQUEST_MODEL: usize = 67;
-const SESSION_COL_AI_REQUEST_STREAM: usize = 68;
-const SESSION_COL_AI_REQUEST_SYSTEM_PROMPT: usize = 69;
-const SESSION_COL_AI_REQUEST_MESSAGE_COUNT: usize = 70;
-const SESSION_COL_AI_REQUEST_TOOLS_COUNT: usize = 71;
-const SESSION_COL_AI_REQUEST_RAW_SHAPE: usize = 72;
-const SESSION_COL_AI_REQUEST_UNKNOWN_FIELDS: usize = 73;
-const SESSION_COL_AI_RESPONSE_ID: usize = 74;
-const SESSION_COL_AI_RESPONSE_PROVIDER_ID: usize = 75;
-const SESSION_COL_AI_RESPONSE_STOP_REASON: usize = 76;
-const SESSION_COL_AI_RESPONSE_TEXT_PREVIEW: usize = 77;
-const SESSION_COL_AI_RESPONSE_THINKING_PREVIEW: usize = 78;
-const SESSION_COL_AI_RESPONSE_RAW_SHAPE: usize = 79;
-const SESSION_COL_AI_USAGE_INPUT_TOKENS: usize = 80;
-const SESSION_COL_AI_USAGE_OUTPUT_TOKENS: usize = 81;
-const SESSION_COL_AI_USAGE_COST_MICROS: usize = 82;
-const SESSION_COL_MCP_EVIDENCE_CALL_ID: usize = 83;
-const SESSION_COL_MCP_EVIDENCE_SERVER_ID: usize = 84;
-const SESSION_COL_MCP_EVIDENCE_TOOL_NAME: usize = 85;
-const SESSION_COL_MCP_EVIDENCE_NAMESPACED_TOOL: usize = 86;
-const SESSION_COL_MCP_EVIDENCE_TRANSPORT: usize = 87;
-const SESSION_COL_MCP_EVIDENCE_REQUEST_RAW: usize = 88;
-const SESSION_COL_MCP_EVIDENCE_REQUEST_JSON: usize = 89;
-const SESSION_COL_MCP_EVIDENCE_RESULT_KIND: usize = 90;
-const SESSION_COL_MCP_EVIDENCE_RESULT_PREVIEW: usize = 91;
-const SESSION_COL_MCP_EVIDENCE_RESULT_JSON: usize = 92;
-const SESSION_COL_MCP_EVIDENCE_IS_ERROR: usize = 93;
-const SESSION_COL_MCP_EVIDENCE_LATENCY_MS: usize = 94;
-const SESSION_COL_MCP_EVIDENCE_LINKED_INTERACTION: usize = 95;
-const SESSION_COL_MCP_EVIDENCE_LINKED_TOOL_CALL: usize = 96;
-const SESSION_COL_MCP_EVIDENCE_LINK_STATUS: usize = 97;
-const SESSION_COL_SECURITY_PROCESS_OPERATION: usize = 98;
-const SESSION_COL_SECURITY_PROCESS_COMMAND_CLASS: usize = 99;
-
-fn session_ai_usage_from_row(row: &serde_json::Value) -> Result<seceng::AiUsageEvidence, AppError> {
-    Ok(seceng::AiUsageEvidence {
-        input_tokens: session_optional_u64(row, SESSION_COL_AI_USAGE_INPUT_TOKENS)?,
-        output_tokens: session_optional_u64(row, SESSION_COL_AI_USAGE_OUTPUT_TOKENS)?,
-        estimated_cost_micros: session_optional_u64(row, SESSION_COL_AI_USAGE_COST_MICROS)?,
-        details: std::collections::BTreeMap::new(),
-    })
-}
-
-fn session_model_evidence_from_row(
-    reader: &capsem_logger::DbReader,
-    row: &serde_json::Value,
-) -> Result<Option<seceng::ModelInteractionEvidence>, AppError> {
-    let interaction_id = match session_optional_string(row, SESSION_COL_AI_INTERACTION_ID)? {
-        Some(interaction_id) => interaction_id,
-        None => return Ok(None),
-    };
-    let provider = parse_session_enum::<seceng::AiProvider>(
-        &session_required_string(row, SESSION_COL_AI_PROVIDER)?,
-        "AI provider",
-    )?;
-    let api_family = parse_session_enum::<seceng::AiApiFamily>(
-        &session_required_string(row, SESSION_COL_AI_API_FAMILY)?,
-        "AI API family",
-    )?;
-    let usage = session_ai_usage_from_row(row)?;
-    let response = match session_optional_string(row, SESSION_COL_AI_RESPONSE_ID)? {
-        Some(response_id) => Some(seceng::ModelResponseEvidence {
-            response_id,
-            provider_response_id: session_optional_string(
-                row,
-                SESSION_COL_AI_RESPONSE_PROVIDER_ID,
-            )?,
-            stop_reason: session_optional_string(row, SESSION_COL_AI_RESPONSE_STOP_REASON)?,
-            text_preview: session_optional_string(row, SESSION_COL_AI_RESPONSE_TEXT_PREVIEW)?,
-            thinking_preview: session_optional_string(
-                row,
-                SESSION_COL_AI_RESPONSE_THINKING_PREVIEW,
-            )?,
-            content_blocks: Vec::new(),
-            usage: usage.clone(),
-            raw_shape_version: session_optional_string(row, SESSION_COL_AI_RESPONSE_RAW_SHAPE)?
-                .unwrap_or_else(|| "unknown".into()),
-        }),
-        None => None,
-    };
-    let tool_calls = session_model_tool_calls(reader, &interaction_id)?;
-    let tool_results = session_model_tool_results(reader, &interaction_id)?;
-    Ok(Some(seceng::ModelInteractionEvidence {
-        interaction_id,
-        trace_id: session_required_string(row, SESSION_COL_AI_TRACE_ID)?,
-        attribution_scope: parse_session_attribution_scope(&session_required_string(
-            row,
-            SESSION_COL_AI_ATTRIBUTION_SCOPE,
-        )?)?,
-        source_engine: parse_session_source_engine(&session_required_string(
-            row,
-            SESSION_COL_AI_SOURCE_ENGINE,
-        )?)?,
-        origin_kind: parse_session_origin_kind(&session_required_string(
-            row,
-            SESSION_COL_AI_ORIGIN_KIND,
-        )?)?,
-        accounting_owner: session_optional_string(row, SESSION_COL_AI_ACCOUNTING_OWNER)?,
-        profile_id: session_optional_string(row, SESSION_COL_AI_PROFILE_ID)?,
-        vm_id: session_optional_string(row, SESSION_COL_AI_VM_ID)?,
-        session_id: session_optional_string(row, SESSION_COL_AI_SESSION_ID)?,
-        user_id: session_optional_string(row, SESSION_COL_AI_USER_ID)?,
-        provider,
-        api_family,
-        model: session_required_string(row, SESSION_COL_AI_MODEL)?,
-        request: seceng::ModelRequestEvidence {
-            request_id: session_required_string(row, SESSION_COL_AI_REQUEST_ID)?,
-            provider,
-            api_family,
-            model: session_optional_string(row, SESSION_COL_AI_REQUEST_MODEL)?,
-            stream: session_optional_bool(row, SESSION_COL_AI_REQUEST_STREAM)?.unwrap_or(false),
-            system_prompt_preview: session_optional_string(
-                row,
-                SESSION_COL_AI_REQUEST_SYSTEM_PROMPT,
-            )?,
-            message_count: session_optional_u64(row, SESSION_COL_AI_REQUEST_MESSAGE_COUNT)?
-                .unwrap_or_default(),
-            tools_declared_count: session_optional_u64(row, SESSION_COL_AI_REQUEST_TOOLS_COUNT)?
-                .unwrap_or_default(),
-            raw_shape_version: session_required_string(row, SESSION_COL_AI_REQUEST_RAW_SHAPE)?,
-            unknown_fields_present: session_optional_bool(
-                row,
-                SESSION_COL_AI_REQUEST_UNKNOWN_FIELDS,
-            )?
-            .unwrap_or(false),
-        },
-        response,
-        tool_calls,
-        tool_results,
-        mcp_executions: Vec::new(),
-        usage,
-        parse_status: parse_session_enum::<seceng::ParseStatus>(
-            &session_required_string(row, SESSION_COL_AI_PARSE_STATUS)?,
-            "AI parse status",
-        )?,
-        evidence_status: parse_session_enum::<seceng::EvidenceStatus>(
-            &session_required_string(row, SESSION_COL_AI_EVIDENCE_STATUS)?,
-            "AI evidence status",
-        )?,
-    }))
-}
-
-fn session_tool_call_row_string(row: &serde_json::Value, index: usize) -> Result<String, AppError> {
-    row.as_array()
-        .and_then(|cells| cells.get(index))
-        .and_then(|value| value.as_str())
-        .map(str::to_owned)
-        .ok_or_else(|| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("session model tool-call row missing string column {index}"),
-            )
-        })
-}
-
-fn session_tool_call_row_optional_string(
-    row: &serde_json::Value,
-    index: usize,
-) -> Result<Option<String>, AppError> {
-    let value = row
-        .as_array()
-        .and_then(|cells| cells.get(index))
-        .ok_or_else(|| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("session model tool-call row missing column {index}"),
-            )
-        })?;
-    if value.is_null() {
-        Ok(None)
-    } else {
-        value
-            .as_str()
-            .map(|value| Some(value.to_owned()))
-            .ok_or_else(|| {
-                AppError(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("session model tool-call column {index} was not a nullable string"),
-                )
-            })
-    }
-}
-
-fn session_tool_call_row_u64(row: &serde_json::Value, index: usize) -> Result<u64, AppError> {
-    let value = row
-        .as_array()
-        .and_then(|cells| cells.get(index))
-        .ok_or_else(|| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("session model tool-call row missing column {index}"),
-            )
-        })?;
-    value
-        .as_u64()
-        .or_else(|| value.as_i64().and_then(|n| u64::try_from(n).ok()))
-        .ok_or_else(|| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("session model tool-call column {index} was not an unsigned integer"),
-            )
-        })
-}
-
-fn session_model_tool_calls(
-    reader: &capsem_logger::DbReader,
-    interaction_id: &str,
-) -> Result<Vec<seceng::ModelToolCallEvidence>, AppError> {
-    let json_str = reader
-        .query_raw_with_params(
-            "SELECT
-                tc.tool_call_id, tc.call_index, tc.provider_call_id,
-                tc.raw_name, tc.normalized_name, tc.arguments_raw,
-                tc.arguments_json, tc.arguments_status, tc.origin,
-                tc.linked_mcp_call_id, tc.status, tc.parse_confidence
-             FROM ai_model_interactions ami
-             JOIN ai_model_tool_calls tc ON tc.interaction_id = ami.id
-             WHERE ami.interaction_id = ?
-             ORDER BY tc.call_index ASC, tc.id ASC",
-            &[serde_json::Value::String(interaction_id.to_owned())],
-        )
-        .map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("query session model tool calls: {error}"),
-            )
-        })?;
-    let value: serde_json::Value = serde_json::from_str(&json_str).map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("parse session model tool calls: {error}"),
-        )
-    })?;
-
-    let mut tool_calls = Vec::new();
-    for row in value
-        .get("rows")
-        .and_then(|rows| rows.as_array())
-        .cloned()
-        .unwrap_or_default()
-    {
-        tool_calls.push(seceng::ModelToolCallEvidence {
-            tool_call_id: session_tool_call_row_string(&row, 0)?,
-            index: session_tool_call_row_u64(&row, 1)?,
-            provider_call_id: session_tool_call_row_optional_string(&row, 2)?,
-            raw_name: session_tool_call_row_string(&row, 3)?,
-            normalized_name: session_tool_call_row_string(&row, 4)?,
-            arguments_raw: session_tool_call_row_optional_string(&row, 5)?,
-            arguments_json: session_tool_call_row_optional_string(&row, 6)?,
-            arguments_status: parse_session_enum::<seceng::ArgumentsStatus>(
-                &session_tool_call_row_string(&row, 7)?,
-                "model tool-call arguments status",
-            )?,
-            origin: parse_session_enum::<seceng::ToolOrigin>(
-                &session_tool_call_row_string(&row, 8)?,
-                "model tool-call origin",
-            )?,
-            linked_mcp_call_id: session_tool_call_row_optional_string(&row, 9)?,
-            status: parse_session_enum::<seceng::ToolCallStatus>(
-                &session_tool_call_row_string(&row, 10)?,
-                "model tool-call status",
-            )?,
-            parse_confidence: parse_session_enum::<seceng::Confidence>(
-                &session_tool_call_row_string(&row, 11)?,
-                "model tool-call parse confidence",
-            )?,
-        });
-    }
-    Ok(tool_calls)
-}
-
-fn session_model_tool_results(
-    reader: &capsem_logger::DbReader,
-    interaction_id: &str,
-) -> Result<Vec<seceng::ModelToolResultEvidence>, AppError> {
-    let json_str = reader
-        .query_raw_with_params(
-            "SELECT
-                tr.tool_call_id, tr.linked_mcp_call_id, tr.content_kind,
-                tr.content_preview, tr.content_json, tr.is_error,
-                tr.result_status, tr.returned_to_model, tr.parse_confidence
-             FROM ai_model_interactions ami
-             JOIN ai_model_tool_results tr ON tr.interaction_id = ami.id
-             WHERE ami.interaction_id = ?
-             ORDER BY tr.id ASC",
-            &[serde_json::Value::String(interaction_id.to_owned())],
-        )
-        .map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("query session model tool results: {error}"),
-            )
-        })?;
-    let value: serde_json::Value = serde_json::from_str(&json_str).map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("parse session model tool results: {error}"),
-        )
-    })?;
-
-    let mut tool_results = Vec::new();
-    for row in value
-        .get("rows")
-        .and_then(|rows| rows.as_array())
-        .cloned()
-        .unwrap_or_default()
-    {
-        tool_results.push(seceng::ModelToolResultEvidence {
-            tool_call_id: session_tool_call_row_string(&row, 0)?,
-            linked_mcp_call_id: session_tool_call_row_optional_string(&row, 1)?,
-            content_kind: parse_session_enum::<seceng::AiContentKind>(
-                &session_tool_call_row_string(&row, 2)?,
-                "model tool-result content kind",
-            )?,
-            content_preview: session_tool_call_row_optional_string(&row, 3)?,
-            content_json: session_tool_call_row_optional_string(&row, 4)?,
-            is_error: session_optional_bool(&row, 5)?.unwrap_or(false),
-            result_status: parse_session_enum::<seceng::ToolCallStatus>(
-                &session_tool_call_row_string(&row, 6)?,
-                "model tool-result status",
-            )?,
-            returned_to_model: session_optional_bool(&row, 7)?.unwrap_or(false),
-            parse_confidence: parse_session_enum::<seceng::Confidence>(
-                &session_tool_call_row_string(&row, 8)?,
-                "model tool-result parse confidence",
-            )?,
-        });
-    }
-    Ok(tool_results)
-}
-
-fn session_mcp_evidence_from_row(
-    row: &serde_json::Value,
-) -> Result<Option<seceng::McpToolExecutionEvidence>, AppError> {
-    let mcp_call_id = match session_optional_string(row, SESSION_COL_MCP_EVIDENCE_CALL_ID)? {
-        Some(mcp_call_id) => mcp_call_id,
-        None => return Ok(None),
-    };
-    Ok(Some(seceng::McpToolExecutionEvidence {
-        mcp_call_id,
-        server_id: session_required_string(row, SESSION_COL_MCP_EVIDENCE_SERVER_ID)?,
-        tool_name: session_required_string(row, SESSION_COL_MCP_EVIDENCE_TOOL_NAME)?,
-        namespaced_tool_name: session_required_string(
-            row,
-            SESSION_COL_MCP_EVIDENCE_NAMESPACED_TOOL,
-        )?,
-        transport: session_required_string(row, SESSION_COL_MCP_EVIDENCE_TRANSPORT)?,
-        request_arguments_raw: session_optional_string(row, SESSION_COL_MCP_EVIDENCE_REQUEST_RAW)?,
-        request_arguments_json: session_optional_string(
-            row,
-            SESSION_COL_MCP_EVIDENCE_REQUEST_JSON,
-        )?,
-        result_kind: parse_session_enum::<seceng::AiContentKind>(
-            &session_required_string(row, SESSION_COL_MCP_EVIDENCE_RESULT_KIND)?,
-            "MCP evidence result kind",
-        )?,
-        result_preview: session_optional_string(row, SESSION_COL_MCP_EVIDENCE_RESULT_PREVIEW)?,
-        result_json: session_optional_string(row, SESSION_COL_MCP_EVIDENCE_RESULT_JSON)?,
-        is_error: session_optional_bool(row, SESSION_COL_MCP_EVIDENCE_IS_ERROR)?.unwrap_or(false),
-        latency_ms: session_optional_u64(row, SESSION_COL_MCP_EVIDENCE_LATENCY_MS)?
-            .unwrap_or_default(),
-        linked_model_interaction_id: session_optional_string(
-            row,
-            SESSION_COL_MCP_EVIDENCE_LINKED_INTERACTION,
-        )?,
-        linked_model_tool_call_id: session_optional_string(
-            row,
-            SESSION_COL_MCP_EVIDENCE_LINKED_TOOL_CALL,
-        )?,
-        link_status: parse_session_enum::<seceng::LinkStatus>(
-            &session_required_string(row, SESSION_COL_MCP_EVIDENCE_LINK_STATUS)?,
-            "MCP evidence link status",
-        )?,
-    }))
-}
-
-fn session_security_event_common_from_row(
-    row: &serde_json::Value,
-) -> Result<seceng::SecurityEventCommon, AppError> {
-    Ok(seceng::SecurityEventCommon {
-        event_id: session_required_string(row, SESSION_COL_EVENT_ID)?,
-        parent_event_id: session_optional_string(row, SESSION_COL_PARENT_EVENT_ID)?,
-        stream_id: session_optional_string(row, SESSION_COL_STREAM_ID)?,
-        activity_id: session_optional_string(row, SESSION_COL_ACTIVITY_ID)?,
-        sequence_no: session_optional_u64(row, SESSION_COL_SEQUENCE_NO)?,
-        source_engine: parse_session_source_engine(&session_required_string(
-            row,
-            SESSION_COL_SOURCE_ENGINE,
-        )?)?,
-        attribution_scope: parse_session_attribution_scope(&session_required_string(
-            row,
-            SESSION_COL_ATTRIBUTION_SCOPE,
-        )?)?,
-        origin_kind: parse_session_origin_kind(&session_required_string(
-            row,
-            SESSION_COL_ORIGIN_KIND,
-        )?)?,
-        accounting_owner: session_optional_string(row, SESSION_COL_ACCOUNTING_OWNER)?,
-        enforceability: parse_session_enforceability(&session_required_string(
-            row,
-            SESSION_COL_ENFORCEABILITY,
-        )?)?,
-        trace_id: session_optional_string(row, SESSION_COL_TRACE_ID)?,
-        span_id: session_optional_string(row, SESSION_COL_SPAN_ID)?,
-        timestamp_unix_ms: session_required_u64(row, SESSION_COL_TIMESTAMP_UNIX_MS)?,
-        vm_id: session_optional_string(row, SESSION_COL_VM_ID)?,
-        session_id: session_optional_string(row, SESSION_COL_SESSION_ID)?,
-        profile_id: session_optional_string(row, SESSION_COL_PROFILE_ID)?,
-        profile_revision: session_optional_string(row, SESSION_COL_PROFILE_REVISION)?,
-        profile_pack_ids: Vec::new(),
-        enforcement_packs: Vec::new(),
-        detection_packs: Vec::new(),
-        user_id: session_optional_string(row, SESSION_COL_USER_ID)?,
-        process_id: session_optional_string(row, SESSION_COL_PROCESS_ID)?,
-        parent_process_id: session_optional_string(row, SESSION_COL_PARENT_PROCESS_ID)?,
-        exec_id: session_optional_string(row, SESSION_COL_EXEC_ID)?,
-        turn_id: session_optional_string(row, SESSION_COL_TURN_ID)?,
-        message_id: session_optional_string(row, SESSION_COL_MESSAGE_ID)?,
-        tool_call_id: session_optional_string(row, SESSION_COL_TOOL_CALL_ID)?,
-        mcp_call_id: session_optional_string(row, SESSION_COL_MCP_CALL_ID)?,
-        event_type: session_required_string(row, SESSION_COL_EVENT_TYPE)?,
-        redaction_state: parse_session_redaction_state(&session_required_string(
-            row,
-            SESSION_COL_REDACTION_STATE,
-        )?)?,
-    })
-}
-
-fn session_event_operation(event_type: &str, fallback: &str) -> String {
-    event_type
-        .split_once('.')
-        .map(|(_, operation)| operation)
-        .filter(|operation| !operation.is_empty())
-        .unwrap_or(fallback)
-        .to_owned()
-}
-
-fn session_domain_class(qname: &str) -> String {
-    if qname == "localhost"
-        || qname.ends_with(".localhost")
-        || qname.ends_with(".internal")
-        || qname.contains("metadata")
-    {
-        "internal".into()
-    } else {
-        "external".into()
-    }
-}
-
-fn session_file_path_class(path: &str) -> String {
-    if path == "/workspace" || path.starts_with("/workspace/") {
-        "workspace".into()
-    } else if path == "/tmp" || path.starts_with("/tmp/") || path.starts_with("/var/folders/") {
-        "temporary".into()
-    } else {
-        "unknown".into()
-    }
-}
-
-fn session_security_event_from_row(
-    reader: &capsem_logger::DbReader,
-    row: &serde_json::Value,
-) -> Result<Option<seceng::SecurityEvent>, AppError> {
-    let event_family = session_required_string(row, SESSION_COL_EVENT_FAMILY)?;
-    let common = session_security_event_common_from_row(row)?;
-    match event_family.as_str() {
-        "http" => {
-            let host = match session_optional_string(row, SESSION_COL_HTTP_HOST)? {
-                Some(host) => host,
-                None => return Ok(None),
-            };
-            let method = session_optional_string(row, SESSION_COL_HTTP_METHOD)?
-                .unwrap_or_else(|| "GET".into());
-            let path = session_optional_string(row, SESSION_COL_HTTP_PATH)?;
-            let query = session_optional_string(row, SESSION_COL_HTTP_QUERY)?;
-            let port = session_optional_u64(row, SESSION_COL_HTTP_PORT)?
-                .and_then(|value| u16::try_from(value).ok());
-            let status = session_optional_u64(row, SESSION_COL_HTTP_STATUS)?
-                .and_then(|value| u16::try_from(value).ok());
-            let request_bytes =
-                session_optional_u64(row, SESSION_COL_HTTP_REQUEST_BYTES)?.unwrap_or_default();
-            let response_bytes = session_optional_u64(row, SESSION_COL_HTTP_RESPONSE_BYTES)?;
-            let url = Some(match (&path, &query) {
-                (Some(path), Some(query)) if !query.is_empty() => {
-                    format!("https://{host}{path}?{query}")
-                }
-                (Some(path), _) => format!("https://{host}{path}"),
-                _ => format!("https://{host}"),
-            });
-            Ok(Some(seceng::SecurityEvent::http(
-                common,
-                seceng::HttpSecuritySubject {
-                    method,
-                    scheme: Some("https".into()),
-                    host,
-                    port,
-                    path_class: path.clone().unwrap_or_default(),
-                    path,
-                    query,
-                    url,
-                    request_bytes,
-                    request_headers: Default::default(),
-                    request_body: None,
-                    response_status: status,
-                    response_headers: Default::default(),
-                    response_bytes,
-                    response_body: None,
-                },
-            )))
-        }
-        "dns" => {
-            let qname = match session_optional_string(row, SESSION_COL_DNS_QNAME)? {
-                Some(qname) => qname,
-                None => return Ok(None),
-            };
-            let domain_class = session_domain_class(&qname);
-            Ok(Some(seceng::SecurityEvent::dns(
-                common,
-                seceng::DnsSecuritySubject {
-                    qname,
-                    domain_class,
-                },
-            )))
-        }
-        "mcp" => {
-            let evidence = session_mcp_evidence_from_row(row)?;
-            let server_id = evidence
-                .as_ref()
-                .map(|evidence| evidence.server_id.clone())
-                .or_else(|| {
-                    session_optional_string(row, SESSION_COL_MCP_SERVER_ID)
-                        .ok()
-                        .flatten()
-                });
-            let tool_name = evidence
-                .as_ref()
-                .map(|evidence| evidence.tool_name.clone())
-                .or_else(|| {
-                    session_optional_string(row, SESSION_COL_MCP_TOOL_NAME)
-                        .ok()
-                        .flatten()
-                });
-            let (Some(server_id), Some(tool_name)) = (server_id, tool_name) else {
-                return Ok(None);
-            };
-            Ok(Some(seceng::SecurityEvent::mcp(
-                common,
-                seceng::McpSecuritySubject {
-                    server_id,
-                    tool_name,
-                    evidence: evidence.map(Box::new),
-                },
-            )))
-        }
-        "model" => {
-            if let Some(evidence) = session_model_evidence_from_row(reader, row)? {
-                return Ok(Some(
-                    capsem_network_engine::model_security::build_model_security_event_from_evidence(
-                        common, evidence,
-                    ),
-                ));
-            }
-            let provider = match session_optional_string(row, SESSION_COL_MODEL_PROVIDER)? {
-                Some(provider) => provider,
-                None => return Ok(None),
-            };
-            let model = match session_optional_string(row, SESSION_COL_MODEL_NAME)? {
-                Some(model) => model,
-                None => return Ok(None),
-            };
-            Ok(Some(
-                capsem_network_engine::model_security::build_model_security_event(
-                    common,
-                    capsem_network_engine::model_security::ModelSecurityEventInput {
-                        provider,
-                        model,
-                        estimated_input_tokens: session_optional_u64(
-                            row,
-                            SESSION_COL_MODEL_INPUT_TOKENS,
-                        )?,
-                        estimated_output_tokens: session_optional_u64(
-                            row,
-                            SESSION_COL_MODEL_OUTPUT_TOKENS,
-                        )?,
-                        estimated_cost_micros: None,
-                        evidence: None,
-                    },
-                ),
-            ))
-        }
-        "file" => {
-            let operation = session_optional_string(row, SESSION_COL_FILE_OPERATION)?
-                .unwrap_or_else(|| session_event_operation(&common.event_type, "activity"));
-            let path = session_optional_string(row, SESSION_COL_FILE_PATH)?;
-            let path_class = path
-                .as_deref()
-                .map(session_file_path_class)
-                .unwrap_or_else(|| "unknown".into());
-            Ok(Some(seceng::SecurityEvent::file(
-                common,
-                seceng::FileSecuritySubject {
-                    operation,
-                    path,
-                    path_class,
-                    byte_count: session_optional_u64(row, SESSION_COL_FILE_BYTE_COUNT)?,
-                },
-            )))
-        }
-        "process" => {
-            let operation = session_optional_string(row, SESSION_COL_SECURITY_PROCESS_OPERATION)?
-                .unwrap_or_else(|| session_event_operation(&common.event_type, "activity"));
-            let command = session_optional_string(row, SESSION_COL_PROCESS_COMMAND)?;
-            let process_name = session_optional_string(row, SESSION_COL_PROCESS_NAME)?;
-            let command_class =
-                session_optional_string(row, SESSION_COL_SECURITY_PROCESS_COMMAND_CLASS)?
-                    .or_else(|| {
-                        command
-                            .as_deref()
-                            .and_then(capsem_process_engine::classify_command_class)
-                            .map(str::to_owned)
-                    })
-                    .or_else(|| {
-                        process_name
-                            .as_deref()
-                            .and_then(capsem_process_engine::classify_command_class)
-                            .map(str::to_owned)
-                    });
-            Ok(Some(seceng::SecurityEvent::process(
-                common,
-                seceng::ProcessSecuritySubject {
-                    operation,
-                    command_class,
-                },
-            )))
-        }
-        "snapshot" => {
-            let operation = session_event_operation(&common.event_type, "activity");
-            let snapshot_id = session_optional_string(row, SESSION_COL_SNAPSHOT_NAME)?
-                .or_else(|| {
-                    session_optional_u64(row, SESSION_COL_SNAPSHOT_SLOT)
-                        .ok()
-                        .flatten()
-                        .map(|slot| slot.to_string())
-                })
-                .unwrap_or_else(|| common.event_id.clone());
-            Ok(Some(seceng::SecurityEvent::snapshot(
-                common,
-                seceng::SnapshotSecuritySubject {
-                    operation,
-                    snapshot_id,
-                },
-            )))
-        }
-        "vm" => {
-            let operation = session_event_operation(&common.event_type, "activity");
-            Ok(Some(seceng::SecurityEvent::vm_lifecycle(
-                common,
-                seceng::VmLifecycleSecuritySubject { operation },
-            )))
-        }
-        "profile" => {
-            let operation = session_event_operation(&common.event_type, "activity");
-            let profile_id = common.profile_id.clone().unwrap_or_default();
-            let profile_revision = common.profile_revision.clone().unwrap_or_default();
-            Ok(Some(seceng::SecurityEvent::profile(
-                common,
-                seceng::ProfileSecuritySubject {
-                    operation,
-                    profile_id,
-                    profile_revision,
-                },
-            )))
-        }
-        "conversation" => {
-            let operation = session_event_operation(&common.event_type, "activity");
-            let conversation_id = common
-                .activity_id
-                .clone()
-                .or_else(|| common.turn_id.clone());
-            Ok(Some(seceng::SecurityEvent::conversation(
-                common,
-                seceng::ConversationSecuritySubject {
-                    operation,
-                    conversation_id,
-                },
-            )))
-        }
-        _ => Ok(None),
-    }
-}
-
-fn session_backtest_events(
-    session_id: &str,
-    reader: &capsem_logger::DbReader,
-) -> Result<Vec<RuntimeBacktestEvent>, AppError> {
-    let mut events = Vec::new();
-    for row in security_events_query_rows(reader)? {
-        if let Some(event) = session_security_event_from_row(reader, &row)? {
-            events.push(RuntimeBacktestEvent {
-                event_ref: Some(seceng::BacktestEventRef {
-                    corpus: "session_db".into(),
-                    session_id: event
-                        .common
-                        .session_id
-                        .clone()
-                        .or_else(|| Some(session_id.to_owned())),
-                    event_id: event.common.event_id.clone(),
-                    sequence_no: event.common.sequence_no,
-                    timestamp_unix_ms: event.common.timestamp_unix_ms,
-                }),
-                event,
-                expected: None,
-            });
-        }
-    }
-    Ok(events)
-}
-
-fn policy_context_fixture_json(
-    session_id: &str,
-    event: &RuntimeBacktestEvent,
-) -> Result<serde_json::Value, AppError> {
-    let fallback_ref = inline_backtest_event_ref(event);
-    let event_ref = event.event_ref.as_ref().unwrap_or(&fallback_ref);
-    let context = seceng::policy_context_from_event(&event.event);
-    let context_json = serde_json::to_value(context).map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("serialize policy context fixture: {error}"),
-        )
-    })?;
-    Ok(json!({
-        "schema": "capsem.policy-context-fixture.v1",
-        "event_ref": {
-            "corpus": event_ref.corpus,
-            "session_id": event_ref
-                .session_id
-                .clone()
-                .unwrap_or_else(|| session_id.to_owned()),
-            "event_id": event_ref.event_id,
-            "sequence": event_ref.sequence_no.unwrap_or(0),
-            "timestamp_unix_ms": event_ref.timestamp_unix_ms,
-        },
-        "expected_labels": [],
-        "context": context_json,
-    }))
-}
-
-fn session_policy_context_export_json(
-    session_id: &str,
-    reader: &capsem_logger::DbReader,
-) -> Result<serde_json::Value, AppError> {
-    if !session_has_security_events(reader)? {
-        return Ok(json!({
-            "schema": "capsem.policy-context-export.v1",
-            "session_id": session_id,
-            "fixture_count": 0,
-            "fixtures": [],
-        }));
-    }
-    let events = session_backtest_events(session_id, reader)?;
-    let fixtures = events
-        .iter()
-        .map(|event| policy_context_fixture_json(session_id, event))
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(json!({
-        "schema": "capsem.policy-context-export.v1",
-        "session_id": session_id,
-        "fixture_count": fixtures.len(),
-        "fixtures": fixtures,
-    }))
-}
-
-fn security_decision_action_text(
-    action: seceng::SecurityDecisionAction,
-) -> Result<String, AppError> {
-    serde_json::to_value(action)
-        .map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("serialize security decision action: {error}"),
-            )
-        })?
-        .as_str()
-        .map(str::to_owned)
-        .ok_or_else(|| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "security decision action did not serialize as a string".into(),
-            )
-        })
-}
-
-async fn handle_compile_enforcement_rule(
-    Json(request): Json<RuntimeEnforcementRuleRequest>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    validate_runtime_rule_id(&request.id)?;
-    let compiled_plan = compile_runtime_enforcement_rule(&request).map_err(|error| {
-        AppError(
-            StatusCode::BAD_REQUEST,
-            format!("compile enforcement rule: {error}"),
-        )
-    })?;
-    Ok(Json(json!({
-        "compiled": true,
-        "id": request.id,
-        "compiled_plan": compiled_plan,
-    })))
-}
-
-async fn handle_validate_enforcement_rule(
-    Json(request): Json<RuntimeEnforcementRuleRequest>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    handle_compile_enforcement_rule(Json(request)).await
-}
-
-async fn handle_create_enforcement_rule(
-    State(state): State<Arc<ServiceState>>,
-    Json(request): Json<RuntimeEnforcementRuleRequest>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    validate_runtime_rule_id(&request.id)?;
-    let compiled_plan = compile_runtime_enforcement_rule(&request).map_err(|error| {
-        AppError(
-            StatusCode::BAD_REQUEST,
-            format!("compile enforcement rule: {error}"),
-        )
-    })?;
-    let record = runtime_enforcement_record(&request);
-    let rule = {
-        let mut registry = state.enforcement_registry.lock().map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("runtime enforcement registry lock poisoned: {error}"),
-            )
-        })?;
-        registry
-            .add_or_update(record, |_| Ok(compiled_plan.clone()))
-            .map_err(|error| AppError(StatusCode::BAD_REQUEST, format!("install rule: {error}")))?;
-        registry
-            .list()
-            .into_iter()
-            .find(|entry| entry.metadata.id == request.id)
-            .map(runtime_rule_entry_json)
-            .ok_or_else(|| {
-                AppError(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!(
-                        "installed enforcement rule '{}' was not readable",
-                        request.id
-                    ),
-                )
-            })?
-    };
-    persist_runtime_security_rule_overlays(&state)?;
-    let propagation = broadcast_runtime_security_rules(&state).await?;
-    Ok(Json(json!({
-        "kind": "enforcement",
-        "rule": rule,
-        "propagation": propagation.json(),
-    })))
-}
-
-async fn handle_update_enforcement_rule(
-    Path(id): Path<String>,
-    State(state): State<Arc<ServiceState>>,
-    Json(request): Json<RuntimeEnforcementRuleRequest>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    if request.id != id {
-        return Err(AppError(
-            StatusCode::BAD_REQUEST,
-            "path rule id must match request id".into(),
-        ));
-    }
-    handle_create_enforcement_rule(State(state), Json(request)).await
-}
-
-async fn handle_delete_enforcement_rule(
-    Path(id): Path<String>,
-    State(state): State<Arc<ServiceState>>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    validate_runtime_rule_id(&id)?;
-    {
-        let mut registry = state.enforcement_registry.lock().map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("runtime enforcement registry lock poisoned: {error}"),
-            )
-        })?;
-        registry
-            .delete(&id)
-            .map_err(|error| AppError(StatusCode::NOT_FOUND, error.to_string()))?;
-    }
-    persist_runtime_security_rule_overlays(&state)?;
-    let propagation = broadcast_runtime_security_rules(&state).await?;
-    Ok(Json(json!({
-        "kind": "enforcement",
-        "id": id,
-        "removed": true,
-        "propagation": propagation.json(),
-    })))
-}
-
-async fn handle_list_enforcement_rules(
-    State(state): State<Arc<ServiceState>>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    Ok(Json(json!({
-        "kind": "enforcement",
-        "rules": runtime_registry_rules_json(&state.enforcement_registry)?,
-    })))
-}
-
-async fn handle_enforcement_stats(
-    State(state): State<Arc<ServiceState>>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let sync = drain_runtime_rule_matches_from_processes(&state).await?;
-    Ok(Json(json!({
-        "kind": "enforcement",
-        "rules": runtime_registry_rules_json(&state.enforcement_registry)?,
-        "sync": sync.json(),
-    })))
-}
-
-async fn handle_enforcement_backtest(
-    Json(request): Json<RuntimeEnforcementBacktestRequest>,
-) -> Result<Json<seceng::BacktestResult>, AppError> {
-    validate_runtime_rule_id(&request.rule.id)?;
-    validate_runtime_enforcement_decision_supported(request.rule.decision).map_err(|message| {
-        AppError(
-            StatusCode::BAD_REQUEST,
-            format!("backtest enforcement rule: {message}"),
-        )
-    })?;
-    let mut evaluator =
-        seceng::CelEnforcementEvaluator::compile(vec![seceng::CelEnforcementRule {
-            id: request.rule.id.clone(),
-            pack_id: request.rule.pack_id.clone(),
-            condition: request.rule.condition.clone(),
-            decision: request.rule.decision,
-            reason: request.rule.reason.clone(),
-            mutations: Vec::new(),
-        }])
-        .map_err(|error| {
-            AppError(
-                StatusCode::BAD_REQUEST,
-                format!("compile enforcement rule: {error}"),
-            )
-        })?;
-
-    let mut rows = Vec::new();
-    for input in &request.events {
-        if let Some(decision) = seceng::EnforcementEvaluator::evaluate(&mut evaluator, &input.event)
-            .map_err(|error| {
-                AppError(
-                    StatusCode::BAD_REQUEST,
-                    format!("backtest enforcement rule: {error}"),
-                )
-            })?
-        {
-            let actual = security_decision_action_text(decision.action)?;
-            rows.push(seceng::BacktestMatchRow {
-                event_ref: inline_backtest_event_ref(input),
-                rule_id: decision.rule.unwrap_or_else(|| request.rule.id.clone()),
-                pack_id: decision
-                    .pack_id
-                    .or_else(|| request.rule.pack_id.clone())
-                    .unwrap_or_else(|| "runtime".into()),
-                evidence_signature: backtest_evidence_signature(&input.event)?,
-                matched_fields: backtest_matched_fields(&input.event)?,
-                outcome: backtest_outcome(input.expected.as_deref(), &actual),
-            });
-        }
-    }
-
-    Ok(Json(seceng::dedupe_backtest_matches(
-        rows,
-        runtime_backtest_limit(request.limit),
-    )))
-}
-
-async fn handle_compile_detection_rule(
-    Json(request): Json<RuntimeDetectionRuleRequest>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    validate_runtime_rule_id(&request.id)?;
-    let compiled_plan = compile_runtime_detection_rule(&request).map_err(|error| {
-        AppError(
-            StatusCode::BAD_REQUEST,
-            format!("compile detection rule: {error}"),
-        )
-    })?;
-    Ok(Json(json!({
-        "compiled": true,
-        "id": request.id,
-        "compiled_plan": compiled_plan,
-    })))
-}
-
-async fn handle_validate_detection_rule(
-    Json(request): Json<RuntimeDetectionRuleRequest>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    handle_compile_detection_rule(Json(request)).await
-}
-
-async fn handle_create_detection_rule(
-    State(state): State<Arc<ServiceState>>,
-    Json(request): Json<RuntimeDetectionRuleRequest>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    validate_runtime_rule_id(&request.id)?;
-    let compiled_plan = compile_runtime_detection_rule(&request).map_err(|error| {
-        AppError(
-            StatusCode::BAD_REQUEST,
-            format!("compile detection rule: {error}"),
-        )
-    })?;
-    let record = runtime_detection_record(&request);
-    let rule = {
-        let mut registry = state.detection_registry.lock().map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("runtime detection registry lock poisoned: {error}"),
-            )
-        })?;
-        registry
-            .add_or_update(record, |_| Ok(compiled_plan.clone()))
-            .map_err(|error| AppError(StatusCode::BAD_REQUEST, format!("install rule: {error}")))?;
-        registry
-            .list()
-            .into_iter()
-            .find(|entry| entry.metadata.id == request.id)
-            .map(runtime_rule_entry_json)
-            .ok_or_else(|| {
-                AppError(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("installed detection rule '{}' was not readable", request.id),
-                )
-            })?
-    };
-    persist_runtime_security_rule_overlays(&state)?;
-    let propagation = broadcast_runtime_security_rules(&state).await?;
-    Ok(Json(json!({
-        "kind": "detection",
-        "rule": rule,
-        "propagation": propagation.json(),
-    })))
-}
-
-async fn handle_update_detection_rule(
-    Path(id): Path<String>,
-    State(state): State<Arc<ServiceState>>,
-    Json(request): Json<RuntimeDetectionRuleRequest>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    if request.id != id {
-        return Err(AppError(
-            StatusCode::BAD_REQUEST,
-            "path rule id must match request id".into(),
-        ));
-    }
-    handle_create_detection_rule(State(state), Json(request)).await
-}
-
-async fn handle_delete_detection_rule(
-    Path(id): Path<String>,
-    State(state): State<Arc<ServiceState>>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    validate_runtime_rule_id(&id)?;
-    {
-        let mut registry = state.detection_registry.lock().map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("runtime detection registry lock poisoned: {error}"),
-            )
-        })?;
-        registry
-            .delete(&id)
-            .map_err(|error| AppError(StatusCode::NOT_FOUND, error.to_string()))?;
-    }
-    persist_runtime_security_rule_overlays(&state)?;
-    let propagation = broadcast_runtime_security_rules(&state).await?;
-    Ok(Json(json!({
-        "kind": "detection",
-        "id": id,
-        "removed": true,
-        "propagation": propagation.json(),
-    })))
-}
-
-async fn handle_list_detection_rules(
-    State(state): State<Arc<ServiceState>>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    Ok(Json(json!({
-        "kind": "detection",
-        "rules": runtime_registry_rules_json(&state.detection_registry)?,
-    })))
-}
-
-async fn handle_detection_stats(
-    State(state): State<Arc<ServiceState>>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let sync = drain_runtime_rule_matches_from_processes(&state).await?;
-    Ok(Json(json!({
-        "kind": "detection",
-        "rules": runtime_registry_rules_json(&state.detection_registry)?,
-        "sync": sync.json(),
-    })))
-}
-
-async fn handle_detection_backtest(
-    Json(request): Json<RuntimeDetectionBacktestRequest>,
-) -> Result<Json<seceng::BacktestResult>, AppError> {
-    validate_runtime_rule_id(&request.rule.id)?;
-    let mut evaluator = seceng::CelDetectionEvaluator::compile(vec![seceng::CelDetectionRule {
-        id: request.rule.id.clone(),
-        pack_id: request.rule.pack_id.clone(),
-        sigma_id: request.rule.sigma_id.clone(),
-        title: request.rule.title.clone(),
-        condition: request.rule.condition.clone(),
-        severity: request.rule.severity,
-        confidence: request.rule.confidence,
-        tags: request.rule.tags.clone(),
-    }])
-    .map_err(|error| {
-        AppError(
-            StatusCode::BAD_REQUEST,
-            format!("compile detection rule: {error}"),
-        )
-    })?;
-
-    let mut rows = Vec::new();
-    for input in &request.events {
-        let findings = seceng::DetectionEvaluator::evaluate(&mut evaluator, &input.event).map_err(
-            |error| {
-                AppError(
-                    StatusCode::BAD_REQUEST,
-                    format!("backtest detection rule: {error}"),
-                )
-            },
-        )?;
-        for finding in findings {
-            rows.push(seceng::BacktestMatchRow {
-                event_ref: inline_backtest_event_ref(input),
-                rule_id: finding.rule_id,
-                pack_id: finding.pack_id,
-                evidence_signature: backtest_evidence_signature(&input.event)?,
-                matched_fields: backtest_matched_fields(&input.event)?,
-                outcome: backtest_outcome(input.expected.as_deref(), "finding"),
-            });
-        }
-    }
-
-    Ok(Json(seceng::dedupe_backtest_matches(
-        rows,
-        runtime_backtest_limit(request.limit),
-    )))
-}
-
-fn run_detection_hunt(
-    rules: &[RuntimeDetectionRuleRequest],
-    events: &[RuntimeBacktestEvent],
-    limit: Option<usize>,
-) -> Result<seceng::BacktestResult, AppError> {
-    if rules.is_empty() {
-        return Err(AppError(
-            StatusCode::BAD_REQUEST,
-            "detection hunt requires at least one rule".into(),
-        ));
-    }
-
-    let mut compiled_rules = Vec::with_capacity(rules.len());
-    for rule in rules {
-        validate_runtime_rule_id(&rule.id)?;
-        compiled_rules.push(seceng::CelDetectionRule {
-            id: rule.id.clone(),
-            pack_id: rule.pack_id.clone(),
-            sigma_id: rule.sigma_id.clone(),
-            title: rule.title.clone(),
-            condition: rule.condition.clone(),
-            severity: rule.severity,
-            confidence: rule.confidence,
-            tags: rule.tags.clone(),
-        });
-    }
-
-    let mut evaluator =
-        seceng::CelDetectionEvaluator::compile(compiled_rules).map_err(|error| {
-            AppError(
-                StatusCode::BAD_REQUEST,
-                format!("compile detection hunt rules: {error}"),
-            )
-        })?;
-
-    let mut rows = Vec::new();
-    for input in events {
-        let findings = seceng::DetectionEvaluator::evaluate(&mut evaluator, &input.event).map_err(
-            |error| {
-                AppError(
-                    StatusCode::BAD_REQUEST,
-                    format!("hunt detection rules: {error}"),
-                )
-            },
-        )?;
-        for finding in findings {
-            rows.push(seceng::BacktestMatchRow {
-                event_ref: inline_backtest_event_ref(input),
-                rule_id: finding.rule_id,
-                pack_id: finding.pack_id,
-                evidence_signature: backtest_evidence_signature(&input.event)?,
-                matched_fields: backtest_matched_fields(&input.event)?,
-                outcome: backtest_outcome(input.expected.as_deref(), "finding"),
-            });
-        }
-    }
-
-    Ok(seceng::dedupe_backtest_matches(
-        rows,
-        runtime_backtest_limit(limit),
-    ))
-}
-
-async fn handle_detection_hunt(
-    Json(request): Json<RuntimeDetectionHuntRequest>,
-) -> Result<Json<seceng::BacktestResult>, AppError> {
-    Ok(Json(run_detection_hunt(
-        &request.rules,
-        &request.events,
-        request.limit,
-    )?))
-}
-
-async fn handle_session_detection_hunt(
-    Path(id): Path<String>,
-    State(state): State<Arc<ServiceState>>,
-    Json(request): Json<RuntimeSessionDetectionHuntRequest>,
-) -> Result<Json<seceng::BacktestResult>, AppError> {
-    let db_path = resolve_session_dir(&state, &id)?.join("session.db");
-    let reader = capsem_logger::DbReader::open(&db_path).map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to open session DB for detection hunt: {error}"),
-        )
-    })?;
-    let events = session_backtest_events(&id, &reader)?;
-    Ok(Json(run_detection_hunt(
-        &request.rules,
-        &events,
-        request.limit,
-    )?))
-}
-
-async fn handle_session_policy_contexts(
-    Path(id): Path<String>,
-    State(state): State<Arc<ServiceState>>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let db_path = resolve_session_dir(&state, &id)?.join("session.db");
-    let reader = capsem_logger::DbReader::open(&db_path).map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to open session DB for policy-context export: {error}"),
-        )
-    })?;
-    Ok(Json(session_policy_context_export_json(&id, &reader)?))
-}
-
-/// GET /confirm/pending -- list pending S15 confirmation prompts.
-async fn handle_list_pending_confirms() -> Json<serde_json::Value> {
-    Json(json!({
-        "mode": "settings_profiles_v2",
-        "pending": [],
-        "pending_count": 0,
-        "resolve_available": false,
-        "resolve_owner": "S15-confirm-ux",
-    }))
-}
-
-/// GET /skills -- list resolved Profile V2 skills for a profile.
-async fn handle_list_skills(
-    Query(query): Query<SkillsQuery>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let settings = load_service_settings_for_profiles()?;
-    let target_profile_id = query
-        .profile
-        .clone()
-        .unwrap_or_else(|| settings.profiles.default_profile.clone());
-    let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles)
-        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("discover profiles: {e}")))?;
-    let (effective, _) = capsem_core::settings_profiles::resolve_effective_vm_settings_with_corp(
-        &settings,
-        Some(&target_profile_id),
-    )
-    .map_err(|e| {
-        AppError(
-            StatusCode::BAD_REQUEST,
-            format!("resolve effective profile '{target_profile_id}': {e}"),
-        )
-    })?;
-
-    let mut skills = Vec::new();
-    let kinds = [SkillKind::Group, SkillKind::Enabled, SkillKind::Disabled];
-    for kind in kinds {
-        if query.kind.is_some_and(|requested| requested != kind) {
-            continue;
-        }
-        let ids = match kind {
-            SkillKind::Group => &effective.skills.value.groups,
-            SkillKind::Enabled => &effective.skills.value.enabled,
-            SkillKind::Disabled => &effective.skills.value.disabled,
-        };
-        for id in ids {
-            let owner = skill_owner(&catalog, &effective.profile_id, kind, id)?;
-            skills.push(skill_json(id, kind, owner, &effective.profile_id));
-        }
-    }
-    skills.sort_by(|left, right| {
-        left["kind"]
-            .as_str()
-            .unwrap_or_default()
-            .cmp(right["kind"].as_str().unwrap_or_default())
-            .then_with(|| {
-                left["id"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .cmp(right["id"].as_str().unwrap_or_default())
-            })
-    });
-
-    Ok(Json(json!({
-        "mode": "settings_profiles_v2",
-        "profile_id": effective.profile_id,
-        "groups": effective.skills.value.groups,
-        "enabled": effective.skills.value.enabled,
-        "disabled": effective.skills.value.disabled,
-        "skills": skills,
-    })))
-}
-
-/// POST /skills -- add a direct Profile V2 skill entry to a user profile.
-async fn handle_create_skill(
-    Json(request): Json<SkillMutationRequest>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let settings = load_service_settings_for_profiles()?;
-    let target_profile_id = request
-        .profile
-        .clone()
-        .unwrap_or_else(|| settings.profiles.default_profile.clone());
-    let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles)
-        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("discover profiles: {e}")))?;
-    let selected = catalog.get(&target_profile_id).ok_or_else(|| {
-        AppError(
-            StatusCode::NOT_FOUND,
-            format!("profile '{target_profile_id}' not found"),
-        )
-    })?;
-    ensure_profile_section_editable(&selected.profile, ProfileEditableSection::Skills)?;
-    if profile_has_skill(&selected.profile, request.kind, &request.id) {
-        return Err(AppError(
-            StatusCode::CONFLICT,
-            format!(
-                "skill_exists: skills.{}.{}",
-                request.kind.as_str(),
-                request.id
-            ),
-        ));
-    }
-    if let Some(owner) = skill_owner(&catalog, &target_profile_id, request.kind, &request.id)? {
-        return Err(AppError(
-            StatusCode::CONFLICT,
-            format!(
-                "skill_exists: skills.{}.{} is inherited from profile '{}'",
-                request.kind.as_str(),
-                request.id,
-                owner.profile.id
-            ),
-        ));
-    }
-
-    let mut profile = selected.profile.clone();
-    if request.kind == SkillKind::Enabled {
-        remove_skill_from(&mut profile, SkillKind::Disabled, &request.id);
-    } else if request.kind == SkillKind::Disabled {
-        remove_skill_from(&mut profile, SkillKind::Enabled, &request.id);
-    }
-    skill_list_mut(&mut profile, request.kind).push(request.id.clone());
-    profile.validate().map_err(|e| {
-        AppError(
-            StatusCode::BAD_REQUEST,
-            format!("profile validation failed: {e}"),
-        )
-    })?;
-    save_mutated_profile(&settings, selected.source, profile)?;
-
-    let Json(listed) = handle_list_skills(Query(SkillsQuery {
-        profile: Some(target_profile_id),
-        kind: Some(request.kind),
-    }))
-    .await?;
-    let skill = listed["skills"]
-        .as_array()
-        .and_then(|skills| {
-            skills
-                .iter()
-                .find(|skill| skill["id"] == serde_json::json!(request.id))
-                .cloned()
-        })
-        .ok_or_else(|| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!(
-                    "created skill '{}' was not visible after profile save",
-                    request.id
-                ),
-            )
-        })?;
-    Ok(Json(skill))
-}
-
-/// DELETE /skills/{id} -- remove a direct user Profile V2 skill entry.
-async fn handle_delete_skill(
-    Path(skill_id): Path<String>,
-    Query(query): Query<SkillsQuery>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let kind = query.kind.unwrap_or_default();
-    let settings = load_service_settings_for_profiles()?;
-    let target_profile_id = query
-        .profile
-        .clone()
-        .unwrap_or_else(|| settings.profiles.default_profile.clone());
-    let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles)
-        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("discover profiles: {e}")))?;
-    let selected = catalog.get(&target_profile_id).ok_or_else(|| {
-        AppError(
-            StatusCode::NOT_FOUND,
-            format!("profile '{target_profile_id}' not found"),
-        )
-    })?;
-    ensure_profile_section_editable(&selected.profile, ProfileEditableSection::Skills)?;
-    if selected.source != capsem_core::settings_profiles::ProfileSource::User {
-        return Err(AppError(
-            StatusCode::CONFLICT,
-            format!(
-                "skill_is_locked: profile '{}' is locked ({:?})",
-                selected.profile.id, selected.source
-            ),
-        ));
-    }
-    if !profile_has_skill(&selected.profile, kind, &skill_id) {
-        let owner = skill_owner(&catalog, &target_profile_id, kind, &skill_id)?;
-        return match owner {
-            Some(owner) => Err(AppError(
-                StatusCode::CONFLICT,
-                format!(
-                    "skill_is_locked: skill '{}' is inherited from profile '{}'",
-                    skill_id, owner.profile.id
-                ),
-            )),
-            None => Err(AppError(
-                StatusCode::NOT_FOUND,
-                format!("skill '{skill_id}' not found"),
-            )),
-        };
-    }
-
-    let mut profile = selected.profile.clone();
-    remove_skill_from(&mut profile, kind, &skill_id);
-    profile.validate().map_err(|e| {
-        AppError(
-            StatusCode::BAD_REQUEST,
-            format!("profile validation failed: {e}"),
-        )
-    })?;
-    capsem_core::settings_profiles::update_user_profile(&settings.profiles, profile)
-        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("update profile: {e}")))?;
-
-    Ok(Json(json!({
-        "mode": "settings_profiles_v2",
-        "profile_id": target_profile_id,
-        "skill_id": skill_id,
-        "kind": kind,
-        "removed": true,
-    })))
-}
-
-fn settings_response_json() -> serde_json::Value {
-    match load_service_profiles_state() {
-        Ok((settings, catalog, effective, trace)) => {
-            let snapshot =
-                capsem_core::settings_profiles::SettingsProfilesDebugSnapshot::from_parts_with_trace(
-                    &settings,
-                    &catalog,
-                    Some(&effective),
-                    Some(&trace),
-                );
-            json!({
-                "profile_presets": profile_presets_json(&catalog),
-                "effective_rules": policy_json_from_effective(&effective),
-                "settings_profiles": snapshot,
-                "mode": "settings_profiles_v2",
-            })
-        }
-        Err(error) => json!({
-            "profile_presets": [],
-            "effective_rules": {},
-            "settings_profiles": capsem_core::settings_profiles::SettingsProfilesDebugSnapshot::from_error(error),
-            "mode": "settings_profiles_v2",
-        }),
-    }
-}
-
-/// GET /settings -- typed settings-profiles snapshot + rules/presets.
+/// GET /settings/info -- unified settings tree + issues.
 async fn handle_get_settings() -> Json<serde_json::Value> {
-    Json(settings_response_json())
+    let resp = capsem_core::net::policy_config::load_settings_response();
+    Json(serde_json::to_value(resp).unwrap_or_default())
 }
 
-fn known_profile_credential_description(id: &str) -> Option<&'static str> {
-    match id {
-        "anthropic-api-key" => Some("Anthropic API key"),
-        "openai-api-key" => Some("OpenAI API key"),
-        "google-api-key" => Some("Google AI API key"),
-        "github-token" => Some("GitHub token"),
-        "git-author-name" => Some("Git author name"),
-        "git-author-email" => Some("Git author email"),
-        "ssh-public-key" => Some("SSH public key"),
-        "claude-oauth-credentials-json" => Some("Claude OAuth credentials JSON"),
-        "google-adc-json" => Some("Google ADC JSON"),
-        _ => None,
-    }
-}
-
-/// POST /credentials/{id} -- write a known Profile V2 service credential.
-async fn handle_upsert_credential(
-    Path(id): Path<String>,
-    Json(request): Json<CredentialUpsertRequest>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let Some(default_description) = known_profile_credential_description(&id) else {
-        return Err(AppError(
-            StatusCode::BAD_REQUEST,
-            format!("unknown credential id: {id}"),
-        ));
-    };
-    let value = request.value.trim();
-    if value.is_empty() {
-        return Err(AppError(
-            StatusCode::BAD_REQUEST,
-            "credential value cannot be empty".into(),
-        ));
-    }
-
-    let settings_path = service_settings_path();
-    let mut settings = capsem_core::settings_profiles::load_service_settings_or_default(
-        &settings_path,
-    )
-    .map_err(|error| {
-        AppError(
-            StatusCode::BAD_REQUEST,
-            format!("load {}: {error}", settings_path.display()),
-        )
-    })?;
-    let description = request
-        .description
-        .filter(|description| !description.trim().is_empty())
-        .unwrap_or_else(|| default_description.to_string());
-    settings.credentials.items.insert(
-        id.clone(),
-        capsem_core::settings_profiles::TomlCredential {
-            description: Some(description),
-            value: value.to_string(),
-        },
-    );
-    capsem_core::settings_profiles::write_service_settings(&settings_path, &settings).map_err(
-        |error| {
-            AppError(
-                StatusCode::BAD_REQUEST,
-                format!("write {}: {error}", settings_path.display()),
-            )
-        },
-    )?;
-    Ok(Json(json!({
-        "mode": "settings_profiles_v2",
-        "credential_id": id,
-        "configured": true,
-    })))
-}
-
-/// POST /settings -- batch-update policy rules and return refreshed typed state.
+/// PATCH /settings/edit -- batch-update settings and return the refreshed tree.
 async fn handle_save_settings(
     Json(raw): Json<HashMap<String, serde_json::Value>>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let settings_path = service_settings_path();
-    let settings = capsem_core::settings_profiles::load_service_settings_or_default(&settings_path)
-        .map_err(|e| {
-            AppError(
-                StatusCode::BAD_REQUEST,
-                format!("load {}: {e}", settings_path.display()),
-            )
-        })?;
-    let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles)
-        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("discover profiles: {e}")))?;
-    let selected_id = settings.profiles.default_profile.clone();
-    let selected = catalog.get(&selected_id).ok_or_else(|| {
-        AppError(
-            StatusCode::BAD_REQUEST,
-            format!("default profile '{selected_id}' not found"),
-        )
-    })?;
-    ensure_profile_section_editable(&selected.profile, ProfileEditableSection::SecurityRules)?;
+    capsem_core::net::policy_config::batch_update_settings_json(&raw)
+        .map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
+    let resp = capsem_core::net::policy_config::load_settings_response();
+    Ok(Json(serde_json::to_value(resp).unwrap_or_default()))
+}
 
-    let mut profile = selected.profile.clone();
-    for (key, value) in raw {
-        let (rule_type, rule_name) =
-            split_policy_key(&key).map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
-        if value.is_null() {
-            remove_profile_rule(&mut profile, &rule_type, &rule_name);
-            continue;
+#[cfg(test)]
+fn profile_asset_status_value(
+    state: &ServiceState,
+    profile: &ProfileConfigFile,
+) -> serde_json::Value {
+    let reconcile = state
+        .asset_reconcile
+        .lock()
+        .map(|s| s.clone())
+        .unwrap_or_default();
+    let current_arch = capsem_core::net::policy_config::current_profile_arch();
+    let Some(arch_assets) = profile.assets.current_arch_assets() else {
+        let mut value = json!({
+            "profile_id": profile.id,
+            "revision": profile.revision,
+            "profile_payload_hash": profile_payload_hash(profile).ok(),
+            "manifest": asset_manifest_status_value(state),
+            "ready": false,
+            "downloading": reconcile.in_progress,
+            "current_arch": current_arch,
+            "error": format!("profile {} has no assets for architecture {current_arch}", profile.id),
+            "assets": [],
+        });
+        append_asset_reconcile_status(&mut value, &reconcile);
+        return value;
+    };
+
+    let assets = [
+        ("kernel", &arch_assets.kernel),
+        ("initrd", &arch_assets.initrd),
+        ("rootfs", &arch_assets.rootfs),
+    ]
+    .into_iter()
+    .map(|(kind, asset)| {
+        let (path, materialization_error) =
+            match profile_asset_descriptor_path(&state.assets_dir, current_arch, asset) {
+                Ok(path) => (path, None),
+                Err(error) => (
+                    state.assets_dir.join(current_arch).join(&asset.name),
+                    Some(error),
+                ),
+            };
+        let resolved_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(&asset.name);
+        let error = materialization_error.map(|error| error.to_string());
+        let status = if error.is_some() {
+            "error"
+        } else if path.exists() {
+            "present"
+        } else {
+            "missing"
+        };
+        json!({
+            "kind": kind,
+            "name": asset.name,
+            "logical_name": asset.name,
+            "resolved_name": resolved_name,
+            "path": path.display().to_string(),
+            "status": status,
+            "hash": asset.hash,
+            "size": asset.size,
+            "url": asset.url,
+            "error": error,
+        })
+    })
+    .collect::<Vec<_>>();
+    let all_ready = assets.iter().all(|asset| asset["status"] == "present");
+    let mut value = json!({
+        "profile_id": profile.id,
+        "revision": profile.revision,
+        "profile_payload_hash": profile_payload_hash(profile).ok(),
+        "manifest": asset_manifest_status_value(state),
+        "ready": all_ready,
+        "downloading": reconcile.in_progress,
+        "current_arch": current_arch,
+        "assets": assets,
+    });
+    append_asset_reconcile_status(&mut value, &reconcile);
+    value
+}
+
+fn profile_status_value(state: &ServiceState, profile: &Profile) -> serde_json::Value {
+    let reconcile = state
+        .asset_reconcile
+        .lock()
+        .map(|s| s.clone())
+        .unwrap_or_default();
+    let current_arch = capsem_core::net::policy_config::current_profile_arch();
+    let status = profile.status(&state.assets_dir, current_arch);
+    let config = profile.config();
+    let assets = status
+        .assets
+        .iter()
+        .map(|asset| {
+            json!({
+                "arch": asset.arch,
+                "kind": asset.kind,
+                "name": asset.path.file_name().and_then(|name| name.to_str()).unwrap_or("asset"),
+                "path": asset.path.display().to_string(),
+                "status": if !asset.present { "missing" } else if !asset.valid { "invalid" } else { "present" },
+                "present": asset.present,
+                "valid": asset.valid,
+                "expected_hash": asset.expected_hash,
+                "expected_size": asset.expected_size,
+                "actual_hash": asset.actual_hash,
+                "actual_size": asset.actual_size,
+            })
+        })
+        .collect::<Vec<_>>();
+    let files = status
+        .files
+        .iter()
+        .map(|file| {
+            json!({
+                "kind": file.kind,
+                "path": file.path.display().to_string(),
+                "status": if !file.present { "missing" } else if !file.valid { "invalid" } else { "present" },
+                "present": file.present,
+                "valid": file.valid,
+                "expected_hash": file.expected_hash,
+                "expected_size": file.expected_size,
+                "actual_hash": file.actual_hash,
+                "actual_size": file.actual_size,
+            })
+        })
+        .collect::<Vec<_>>();
+    let missing_assets = status
+        .assets
+        .iter()
+        .filter(|asset| !asset.present)
+        .map(|asset| json!({ "kind": asset.kind, "path": asset.path.display().to_string(), "valid": asset.valid }))
+        .collect::<Vec<_>>();
+    let invalid_assets = status
+        .assets
+        .iter()
+        .filter(|asset| !asset.valid)
+        .map(|asset| json!({ "kind": asset.kind, "path": asset.path.display().to_string(), "present": asset.present, "valid": asset.valid }))
+        .collect::<Vec<_>>();
+    let invalid_files = status
+        .files
+        .iter()
+        .filter(|file| !file.valid)
+        .map(|file| json!({ "kind": file.kind, "path": file.path.display().to_string(), "present": file.present, "valid": file.valid }))
+        .collect::<Vec<_>>();
+    let mut value = json!({
+        "profile_id": config.id,
+        "revision": config.revision,
+        "profile_payload_hash": profile_payload_hash(config).ok(),
+        "manifest": asset_manifest_status_value(state),
+        "ready": status.ready,
+        "downloading": reconcile.in_progress,
+        "current_arch": current_arch,
+        "files": files,
+        "invalid_files": invalid_files,
+        "assets": assets,
+        "missing_assets": missing_assets,
+        "invalid_assets": invalid_assets,
+        "errors": status.errors,
+    });
+    append_asset_reconcile_status(&mut value, &reconcile);
+    value
+}
+
+fn asset_manifest_status_value(state: &ServiceState) -> serde_json::Value {
+    let path = state.assets_dir.join("manifest.json");
+    let origin_path = state.assets_dir.join("manifest-origin.json");
+    let origin_metadata = std::fs::read_to_string(&origin_path)
+        .ok()
+        .and_then(|body| serde_json::from_str::<serde_json::Value>(&body).ok());
+    let refreshed_at = std::fs::metadata(&path)
+        .ok()
+        .and_then(|metadata| metadata.modified().ok())
+        .map(format_system_time_rfc3339);
+    let blake3 = if path.is_file() {
+        capsem_core::asset_manager::hash_file(&path).ok()
+    } else {
+        None
+    };
+    let manifest_validation = validate_asset_manifest_file(&path);
+    let origin = if let Some(origin) = origin_metadata
+        .as_ref()
+        .and_then(|value| value.get("origin"))
+        .and_then(|value| value.as_str())
+    {
+        origin
+    } else if path.is_file() {
+        "installed"
+    } else {
+        "missing"
+    };
+    let mut value = json!({
+        "origin": origin,
+        "path": path.display().to_string(),
+        "blake3": blake3,
+        "validation_status": manifest_validation.status,
+    });
+    if let Some(refreshed_at) = refreshed_at {
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert("refreshed_at".to_string(), json!(refreshed_at));
         }
-        let update: PolicyRuleUpdate = serde_json::from_value(value).map_err(|e| {
-            AppError(
-                StatusCode::BAD_REQUEST,
-                format!("invalid policy rule '{key}': {e}"),
-            )
-        })?;
-        validate_policy_rule_update(&rule_type, &rule_name, &update)
-            .map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
-        upsert_profile_rule(
-            &mut profile,
-            &rule_type,
-            rule_name,
-            profile_rule_from_update(update),
+    }
+    if let Some(error) = manifest_validation.error.as_ref() {
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert("validation_error".to_string(), json!(error));
+        }
+    }
+    if let (Some(metadata), Some(obj)) = (&origin_metadata, value.as_object_mut()) {
+        obj.insert(
+            "origin_path".to_string(),
+            json!(origin_path.display().to_string()),
+        );
+        if let Some(source) = metadata.get("source").and_then(|value| value.as_str()) {
+            obj.insert("origin_source".to_string(), json!(source));
+        }
+        if let Some(packaged_at) = metadata.get("packaged_at").and_then(|value| value.as_str()) {
+            obj.insert("packaged_at".to_string(), json!(packaged_at));
+        }
+    }
+    let manifest = manifest_validation.manifest.as_ref().or_else(|| {
+        if manifest_validation.status == "missing" {
+            state.manifest.as_deref()
+        } else {
+            None
+        }
+    });
+    if let (Some(manifest), Some(obj)) = (manifest, value.as_object_mut()) {
+        obj.insert("format".to_string(), json!(manifest.format));
+        obj.insert("refresh_policy".to_string(), json!(manifest.refresh_policy));
+        obj.insert("assets_current".to_string(), json!(manifest.assets.current));
+        obj.insert(
+            "binaries_current".to_string(),
+            json!(manifest.binaries.current),
         );
     }
-    profile.validate().map_err(|e| {
-        AppError(
-            StatusCode::BAD_REQUEST,
-            format!("profile validation failed: {e}"),
-        )
-    })?;
+    value
+}
 
-    match selected.source {
-        capsem_core::settings_profiles::ProfileSource::User => {
-            capsem_core::settings_profiles::update_user_profile(&settings.profiles, profile)
-                .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("update profile: {e}")))?;
-        }
-        capsem_core::settings_profiles::ProfileSource::BuiltIn => {
-            capsem_core::settings_profiles::create_user_profile(&settings.profiles, profile)
-                .map_err(|e| {
-                    AppError(
-                        StatusCode::BAD_REQUEST,
-                        format!("create profile override: {e}"),
-                    )
-                })?;
-        }
-        capsem_core::settings_profiles::ProfileSource::Base
-        | capsem_core::settings_profiles::ProfileSource::Corp => {
-            return Err(AppError(
-                StatusCode::BAD_REQUEST,
-                format!(
-                    "default profile '{}' is locked ({:?}); switch to a user-editable profile first",
-                    selected.profile.id, selected.source
-                ),
-            ));
-        }
+struct AssetManifestValidation {
+    status: &'static str,
+    manifest: Option<capsem_core::asset_manager::ManifestV2>,
+    error: Option<String>,
+}
+
+fn validate_asset_manifest_file(path: &std::path::Path) -> AssetManifestValidation {
+    if !path.is_file() {
+        return AssetManifestValidation {
+            status: "missing",
+            manifest: None,
+            error: None,
+        };
     }
-
-    Ok(Json(settings_response_json()))
-}
-
-/// GET /settings/presets -- list security presets.
-async fn handle_get_presets() -> Json<serde_json::Value> {
-    match load_service_profiles_state() {
-        Ok((_, catalog, _, _)) => Json(profile_presets_json(&catalog)),
-        Err(error) => Json(json!([{
-            "id": "settings-profiles-error",
-            "name": "Settings Profiles Error",
-            "description": error,
-            "settings": {},
-        }])),
-    }
-}
-
-/// POST /settings/presets/{id} -- select a default profile and return refreshed typed state.
-async fn handle_select_profile_preset(
-    Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    select_default_profile(id)?;
-    Ok(Json(settings_response_json()))
-}
-
-/// POST /profiles/{id}/select -- select a default profile and return refreshed catalog state.
-async fn handle_select_profile(
-    Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    select_default_profile(id)?;
-    let settings = load_service_settings_for_profiles()?;
-    Ok(Json(profile_catalog_status_json(&settings)?))
-}
-
-fn select_default_profile(id: String) -> Result<(), AppError> {
-    let settings_path = service_settings_path();
-    let mut settings = capsem_core::settings_profiles::load_service_settings_or_default(
-        &settings_path,
-    )
-    .map_err(|e| {
-        AppError(
-            StatusCode::BAD_REQUEST,
-            format!("load {}: {e}", settings_path.display()),
-        )
-    })?;
-    let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles)
-        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("discover profiles: {e}")))?;
-    if catalog.get(&id).is_none() {
-        return Err(AppError(
-            StatusCode::BAD_REQUEST,
-            format!("unknown profile preset '{id}'"),
-        ));
-    }
-    settings.profiles.default_profile = id;
-    capsem_core::settings_profiles::write_service_settings(&settings_path, &settings).map_err(
-        |e| {
-            AppError(
-                StatusCode::BAD_REQUEST,
-                format!("write {}: {e}", settings_path.display()),
-            )
+    match std::fs::read_to_string(path) {
+        Ok(content) => match capsem_core::asset_manager::ManifestV2::from_json(&content) {
+            Ok(manifest) => AssetManifestValidation {
+                status: "valid",
+                manifest: Some(manifest),
+                error: None,
+            },
+            Err(error) => AssetManifestValidation {
+                status: "invalid",
+                manifest: None,
+                error: Some(error.to_string()),
+            },
         },
-    )?;
+        Err(error) => AssetManifestValidation {
+            status: "invalid",
+            manifest: None,
+            error: Some(error.to_string()),
+        },
+    }
+}
+
+fn format_system_time_rfc3339(time: std::time::SystemTime) -> String {
+    humantime::format_rfc3339_seconds(time).to_string()
+}
+
+fn append_asset_reconcile_status(value: &mut serde_json::Value, reconcile: &AssetReconcileState) {
+    let Some(obj) = value.as_object_mut() else {
+        return;
+    };
+    if let Some(asset) = &reconcile.current_asset {
+        obj.insert("current_asset".to_string(), json!(asset));
+        obj.insert("bytes_done".to_string(), json!(reconcile.bytes_done));
+        if let Some(total) = reconcile.bytes_total {
+            obj.insert("bytes_total".to_string(), json!(total));
+        }
+    }
+    if let Some(downloaded) = reconcile.last_downloaded {
+        obj.insert("downloaded".to_string(), json!(downloaded));
+    }
+    if let Some(error) = &reconcile.last_error {
+        obj.insert("reconcile_error".to_string(), json!(error));
+    }
+}
+
+fn vm_asset_block_reason(state: &ServiceState, profile_id: &str) -> Option<String> {
+    let profile = match state.profile_config(profile_id) {
+        Ok(profile) => profile,
+        Err(error) => return Some(format!("VM assets are not ready: {error}")),
+    };
+    let resolved = match state.resolve_profile_asset_paths(&profile) {
+        Ok(resolved) => resolved,
+        Err(error) => return Some(format!("VM assets are not ready: {error}")),
+    };
+    let mut missing = Vec::new();
+    if !resolved.kernel.exists() {
+        missing.push("vmlinuz".to_string());
+    }
+    if !resolved.initrd.exists() {
+        missing.push("initrd.img".to_string());
+    }
+    if !resolved.rootfs.exists() {
+        missing.push(
+            resolved
+                .rootfs
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("rootfs")
+                .to_string(),
+        );
+    }
+    if missing.is_empty() {
+        return None;
+    }
+    let prefix = state
+        .asset_reconcile
+        .lock()
+        .ok()
+        .filter(|status| status.in_progress)
+        .map(|_| "VM assets are still downloading")
+        .unwrap_or("VM assets are not ready");
+    Some(format!("{prefix}: missing {}", missing.join(", ")))
+}
+
+fn asset_status_path_for_run_dir(run_dir: &StdPath) -> PathBuf {
+    run_dir
+        .parent()
+        .unwrap_or(run_dir)
+        .join("asset-status.json")
+}
+
+fn load_asset_reconcile_state(path: &StdPath) -> AssetReconcileState {
+    let Ok(contents) = std::fs::read_to_string(path) else {
+        return AssetReconcileState::default();
+    };
+    let mut status = match serde_json::from_str::<AssetReconcileState>(&contents) {
+        Ok(status) => status,
+        Err(error) => {
+            warn!(
+                path = %path.display(),
+                error = %error,
+                "failed to parse asset status"
+            );
+            return AssetReconcileState::default();
+        }
+    };
+    status.in_progress = false;
+    status.current_asset = None;
+    status.bytes_done = 0;
+    status.bytes_total = None;
+    status
+}
+
+fn persist_asset_reconcile_state(
+    path: &StdPath,
+    status: &AssetReconcileState,
+) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
+    }
+    let tmp = path.with_extension("json.tmp");
+    let json = serde_json::to_vec_pretty(status)
+        .map_err(|e| format!("serialize asset status {}: {e}", path.display()))?;
+    std::fs::write(&tmp, json).map_err(|e| format!("write {}: {e}", tmp.display()))?;
+    std::fs::rename(&tmp, path)
+        .map_err(|e| format!("rename {} -> {}: {e}", tmp.display(), path.display()))?;
     Ok(())
 }
 
-/// POST /settings/lint -- validate config and return issues.
-async fn handle_lint_config() -> Json<serde_json::Value> {
-    let mut issues: Vec<SettingsIssue> = Vec::new();
-    let settings_path = service_settings_path();
-    match capsem_core::settings_profiles::load_service_settings_or_default(&settings_path) {
-        Ok(settings) => {
-            if let Err(error) =
-                capsem_core::settings_profiles::discover_profiles(&settings.profiles)
+fn update_asset_reconcile_state<F>(
+    state: &ServiceState,
+    update: F,
+) -> Result<AssetReconcileState, String>
+where
+    F: FnOnce(&mut AssetReconcileState),
+{
+    let snapshot = {
+        let mut status = state
+            .asset_reconcile
+            .lock()
+            .map_err(|e| format!("asset reconcile lock poisoned: {e}"))?;
+        update(&mut status);
+        status.clone()
+    };
+    persist_asset_reconcile_state(&state.asset_status_path, &snapshot)?;
+    Ok(snapshot)
+}
+
+async fn ensure_assets_for_state(state: Arc<ServiceState>) -> Result<usize, String> {
+    if state
+        .asset_reconcile_inflight
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return Err("asset reconciliation already in progress".to_string());
+    }
+
+    let result: Result<usize, String> = async {
+        let Some(manifest) = state.manifest.as_ref().cloned() else {
+            return Ok(0);
+        };
+        update_asset_reconcile_state(&state, |status| {
+            *status = AssetReconcileState {
+                in_progress: true,
+                ..Default::default()
+            };
+        })?;
+        let arch = capsem_core::asset_manager::host_manifest_arch();
+        let downloaded = capsem_core::asset_manager::download_missing_assets(
+            &manifest,
+            &state.current_version,
+            arch,
+            &state.assets_dir,
             {
-                issues.push(SettingsIssue {
-                    path: "profiles".to_string(),
-                    severity: "error".to_string(),
-                    message: error.to_string(),
-                });
+                let state = Arc::clone(&state);
+                move |progress| {
+                    if let Ok(mut status) = state.asset_reconcile.lock() {
+                        status.in_progress = true;
+                        status.current_asset = Some(progress.logical_name.clone());
+                        status.bytes_done = progress.bytes_done;
+                        status.bytes_total = progress.bytes_total;
+                    }
+                    if progress.done {
+                        let snapshot = state
+                            .asset_reconcile
+                            .lock()
+                            .map(|status| status.clone())
+                            .ok();
+                        if let Some(snapshot) = snapshot {
+                            if let Err(error) =
+                                persist_asset_reconcile_state(&state.asset_status_path, &snapshot)
+                            {
+                                warn!(error = %error, "failed to persist asset progress");
+                            }
+                        }
+                        tracing::info!(
+                            asset = progress.logical_name.as_str(),
+                            bytes = progress.bytes_done,
+                            "asset ensure progress"
+                        );
+                    }
+                }
+            },
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(downloaded.len())
+    }
+    .await;
+
+    let final_status = update_asset_reconcile_state(&state, |status| {
+        status.in_progress = false;
+        status.current_asset = None;
+        status.bytes_done = 0;
+        status.bytes_total = None;
+        match &result {
+            Ok(downloaded) => {
+                status.last_downloaded = Some(*downloaded);
+                status.last_error = None;
             }
-            if let Err(error) = capsem_core::settings_profiles::resolve_effective_vm_settings(
-                &settings.profiles,
-                Some(&settings.profiles.default_profile),
-            ) {
-                issues.push(SettingsIssue {
-                    path: "profiles.default_profile".to_string(),
-                    severity: "error".to_string(),
-                    message: error.to_string(),
-                });
+            Err(error) => {
+                status.last_downloaded = Some(0);
+                status.last_error = Some(error.clone());
             }
         }
-        Err(error) => issues.push(SettingsIssue {
-            path: settings_path.display().to_string(),
-            severity: "error".to_string(),
-            message: error.to_string(),
-        }),
+    });
+    if let Err(error) = final_status {
+        warn!(error = %error, "failed to persist final asset status");
     }
-    Json(serde_json::to_value(issues).unwrap_or_default())
+    state
+        .asset_reconcile_inflight
+        .store(false, Ordering::Release);
+    result
 }
 
-/// POST /settings/validate-key -- validate an API key against a provider endpoint.
-async fn handle_validate_key(
-    Json(payload): Json<ValidateKeyRequest>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let result = capsem_core::host_config::validate_api_key(&payload.provider, &payload.key)
-        .await
-        .map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
-    Ok(Json(serde_json::to_value(result).unwrap_or_default()))
-}
-
-// ---------------------------------------------------------------------------
-// Setup / Onboarding API Handlers
-// ---------------------------------------------------------------------------
-
-/// GET /setup/state -- return onboarding state from setup-state.json.
-async fn handle_get_setup_state() -> Json<serde_json::Value> {
-    let state = match capsem_core::setup_state::default_state_path() {
-        Some(path) => capsem_core::setup_state::load_state(&path),
-        None => capsem_core::setup_state::SetupState::default(),
-    };
-    // `needs_onboarding` is computed server-side so the frontend never has to
-    // mirror the version constant. `install_completed` is surfaced so the app
-    // can render an "install incomplete" banner if the CLI setup never finished.
-    Json(json!({
-        "schema_version": state.schema_version,
-        "completed_steps": state.completed_steps,
-        "security_preset": state.security_preset,
-        "providers_done": state.providers_done,
-        "repositories_done": state.repositories_done,
-        "service_installed": state.service_installed,
-        "install_completed": state.install_completed,
-        "onboarding_completed": state.onboarding_completed,
-        "onboarding_version": state.onboarding_version,
-        "needs_onboarding": state.needs_onboarding(),
-        "corp_config_source": state.corp_config_source,
-    }))
-}
-
-/// GET /setup/detect -- detect host config, write to settings, return summary.
-async fn handle_detect_host_config() -> Json<serde_json::Value> {
-    // Detection involves blocking I/O (file reads, subprocess calls for gh token).
-    let summary =
-        tokio::task::spawn_blocking(capsem_core::host_config::detect_and_write_to_settings)
-            .await
-            .unwrap_or_else(|_| {
-                capsem_core::host_config::DetectedConfigSummary::from(
-                    &capsem_core::host_config::HostConfig::default(),
-                )
-            });
-    Json(serde_json::to_value(summary).unwrap_or_default())
-}
-
-/// POST /setup/retry -- re-run `capsem setup --non-interactive --accept-detected`.
-/// Used by the app when `install_completed=false` so the user can retry without
-/// a terminal. Invokes the installed capsem CLI as a subprocess rather than
-/// pulling setup logic into capsem-core (the CLI owns provider detection, corp
-/// config, asset download, etc.).
-async fn handle_setup_retry() -> Result<Json<serde_json::Value>, AppError> {
-    let home = capsem_core::paths::capsem_home_opt()
-        .ok_or_else(|| AppError(StatusCode::INTERNAL_SERVER_ERROR, "HOME not set".into()))?;
-    let capsem_bin = home.join("bin").join("capsem");
-    if !capsem_bin.exists() {
-        return Err(AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("capsem binary not found at {}", capsem_bin.display()),
-        ));
+async fn ensure_profile_assets_for_state(
+    state: Arc<ServiceState>,
+    profile: &ProfileConfigFile,
+) -> Result<usize, String> {
+    if state
+        .asset_reconcile_inflight
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return Err("asset reconciliation already in progress".to_string());
     }
-    let output = tokio::process::Command::new(&capsem_bin)
-        .args(["setup", "--non-interactive", "--accept-detected"])
-        .output()
-        .await
-        .map_err(|e| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to spawn capsem setup: {e}"),
+
+    let result: Result<usize, String> = async {
+        let arch = capsem_core::net::policy_config::current_profile_arch();
+        let arch_assets = profile.assets.current_arch_assets().ok_or_else(|| {
+            format!(
+                "profile {} has no assets for architecture {arch}",
+                profile.id
             )
         })?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        let code = output.status.code().unwrap_or(-1);
-        warn!(exit_code = code, stderr = %stderr, "capsem setup retry failed");
-        return Err(AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!(
-                "setup exited {code}: {}",
-                stderr.lines().last().unwrap_or("(no output)")
-            ),
-        ));
-    }
-    Ok(Json(json!({ "success": true })))
-}
-
-/// POST /setup/complete -- mark GUI onboarding as completed.
-async fn handle_complete_onboarding() -> Result<Json<serde_json::Value>, AppError> {
-    let path = capsem_core::setup_state::default_state_path()
-        .ok_or_else(|| AppError(StatusCode::INTERNAL_SERVER_ERROR, "HOME not set".into()))?;
-    let mut state = capsem_core::setup_state::load_state(&path);
-    state.onboarding_completed = true;
-    // Record which wizard version the user saw, so a future bump re-triggers it.
-    state.onboarding_version = capsem_core::setup_state::CURRENT_ONBOARDING_VERSION;
-    capsem_core::setup_state::save_state(&path, &state)
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    Ok(Json(json!({ "success": true })))
-}
-
-/// GET /setup/assets -- query asset download status.
-async fn handle_asset_status(State(state): State<Arc<ServiceState>>) -> Json<serde_json::Value> {
-    let health = state.asset_supervisor.snapshot();
-    match state.resolve_asset_paths() {
-        Ok(resolved) => {
-            let progress_name = health.progress.as_ref().map(|p| p.logical_name.as_str());
-            let status_for = |name: &str, path: &std::path::Path| {
-                if path.exists() {
-                    "present"
-                } else if health.state == AssetHealthState::Updating
-                    && (progress_name == Some(name) || health.missing.iter().any(|m| m == name))
-                {
-                    "downloading"
-                } else {
-                    "missing"
-                }
+        let assets = [
+            &arch_assets.kernel,
+            &arch_assets.initrd,
+            &arch_assets.rootfs,
+        ];
+        update_asset_reconcile_state(&state, |status| {
+            *status = AssetReconcileState {
+                in_progress: true,
+                ..Default::default()
             };
-            let assets = vec![
-                json!({ "name": "vmlinuz", "path": resolved.kernel.display().to_string(), "status": status_for("vmlinuz", &resolved.kernel) }),
-                json!({ "name": "initrd.img", "path": resolved.initrd.display().to_string(), "status": status_for("initrd.img", &resolved.initrd) }),
-                json!({ "name": "rootfs.squashfs", "path": resolved.rootfs.display().to_string(), "status": status_for("rootfs.squashfs", &resolved.rootfs) }),
-            ];
-            Json(json!({
-                "ready": health.ready,
-                "state": health.state,
-                "downloading": health.state == AssetHealthState::Updating,
-                "asset_locations": asset_locations_status_json(&state.asset_locations),
-                "asset_version": health.version.unwrap_or(resolved.asset_version),
-                "profile_id": health.profile_id,
-                "profile_revision": health.profile_revision,
-                "profile_payload_hash": health.profile_payload_hash,
-                "profile_assets": health.profile_assets,
-                "arch": health.arch,
-                "missing": health.missing,
-                "progress": health.progress,
-                "error": health.error,
-                "retry_count": health.retry_count,
-                "retryable": health.retryable,
-                "assets": assets,
-            }))
+        })?;
+
+        let mut downloaded = 0usize;
+        for asset in assets {
+            let resolved = profile_asset_descriptor_path(&state.assets_dir, arch, asset)
+                .map_err(|e| e.to_string())?;
+            let expected_hash = profile_asset_hash_hex(asset)
+                .map_err(|e| e.to_string())?
+                .to_string();
+            let expected_size = required_profile_asset_size(asset).map_err(|e| e.to_string())?;
+            if resolved.exists() {
+                match capsem_core::asset_manager::hash_file(&resolved) {
+                    Ok(hash) if hash == expected_hash => {
+                        update_asset_reconcile_state(&state, |status| {
+                            status.in_progress = true;
+                            status.current_asset = Some(asset.name.clone());
+                            status.bytes_done = expected_size;
+                            status.bytes_total = Some(expected_size);
+                        })?;
+                        continue;
+                    }
+                    Ok(_) | Err(_) => {
+                        let target = profile_asset_download_target(&state.assets_dir, arch, asset)
+                            .map_err(|e| e.to_string())?;
+                        if resolved == target {
+                            let _ = std::fs::remove_file(&resolved);
+                        }
+                    }
+                }
+            }
+
+            let target = profile_asset_download_target(&state.assets_dir, arch, asset)
+                .map_err(|e| e.to_string())?;
+            download_profile_asset(asset, &target, {
+                let state = Arc::clone(&state);
+                move |bytes_done, bytes_total, done| {
+                    if let Ok(mut status) = state.asset_reconcile.lock() {
+                        status.in_progress = true;
+                        status.current_asset = Some(asset.name.clone());
+                        status.bytes_done = bytes_done;
+                        status.bytes_total = bytes_total;
+                    }
+                    if done {
+                        let snapshot = state
+                            .asset_reconcile
+                            .lock()
+                            .map(|status| status.clone())
+                            .ok();
+                        if let Some(snapshot) = snapshot {
+                            if let Err(error) =
+                                persist_asset_reconcile_state(&state.asset_status_path, &snapshot)
+                            {
+                                warn!(error = %error, "failed to persist profile asset progress");
+                            }
+                        }
+                    }
+                }
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+            downloaded += 1;
         }
-        Err(e) => Json(json!({
-            "ready": false,
-            "state": "error",
-            "downloading": false,
-            "asset_locations": asset_locations_status_json(&state.asset_locations),
-            "error": e.to_string(),
-            "retryable": false,
-            "retry_count": health.retry_count,
-            "assets": [],
-        })),
+        Ok(downloaded)
     }
+    .await;
+
+    let final_status = update_asset_reconcile_state(&state, |status| {
+        status.in_progress = false;
+        status.current_asset = None;
+        status.bytes_done = 0;
+        status.bytes_total = None;
+        match &result {
+            Ok(downloaded) => {
+                status.last_downloaded = Some(*downloaded);
+                status.last_error = None;
+            }
+            Err(error) => {
+                status.last_downloaded = Some(0);
+                status.last_error = Some(error.clone());
+            }
+        }
+    });
+    if let Err(error) = final_status {
+        warn!(error = %error, "failed to persist final profile asset status");
+    }
+    state
+        .asset_reconcile_inflight
+        .store(false, Ordering::Release);
+    result
 }
 
-/// POST /setup/assets/reconcile -- force a Profile V2 asset check/download now.
-async fn handle_asset_reconcile(
-    State(state): State<Arc<ServiceState>>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let before = state.asset_supervisor.snapshot();
-    info!(
-        event = "profile_asset_check_start",
-        state = before.state.as_str(),
-        ready = before.ready,
-        missing = ?before.missing,
-        "profile asset reconcile requested"
-    );
+async fn download_profile_asset<F>(
+    asset: &ProfileAssetDescriptor,
+    target: &StdPath,
+    mut on_progress: F,
+) -> Result<()>
+where
+    F: FnMut(u64, Option<u64>, bool),
+{
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    state.asset_supervisor.ensure_assets_once().await;
-    let health = state.asset_supervisor.snapshot();
-    let outcome = if before.ready && health.ready {
-        "already_ready"
-    } else if health.ready {
-        "downloaded"
-    } else if health.state == AssetHealthState::Error {
-        "error"
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    let tmp = target.with_file_name(format!(
+        "{}.tmp",
+        target
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("asset")
+    ));
+    let _ = std::fs::remove_file(&tmp);
+    let mut output = tokio::fs::File::create(&tmp)
+        .await
+        .with_context(|| format!("create {}", tmp.display()))?;
+    let mut bytes_done = 0u64;
+    let expected_hash = profile_asset_hash_hex(asset)?.to_string();
+    let total = Some(required_profile_asset_size(asset)?);
+
+    if let Some(path) = asset.url.strip_prefix("file://") {
+        let mut input = tokio::fs::File::open(path)
+            .await
+            .with_context(|| format!("open profile asset source {path}"))?;
+        let mut buf = vec![0u8; 256 * 1024];
+        loop {
+            let n = input
+                .read(&mut buf)
+                .await
+                .with_context(|| format!("read profile asset source {path}"))?;
+            if n == 0 {
+                break;
+            }
+            output
+                .write_all(&buf[..n])
+                .await
+                .with_context(|| format!("write {}", tmp.display()))?;
+            bytes_done += n as u64;
+            on_progress(bytes_done, total, false);
+        }
     } else {
-        "checking"
-    };
-
-    info!(
-        event = "profile_asset_check_finish",
-        outcome,
-        state = health.state.as_str(),
-        ready = health.ready,
-        retryable = health.retryable,
-        error = health.error.as_deref().unwrap_or(""),
-        missing = ?health.missing,
-        "profile asset reconcile finished"
-    );
-
-    Ok(Json(json!({
-        "mode": "settings_profiles_v2",
-        "outcome": outcome,
-        "health": health,
-    })))
-}
-
-/// POST /setup/assets/cleanup -- remove unreferenced profile-era VM assets.
-async fn handle_asset_cleanup(
-    State(state): State<Arc<ServiceState>>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    state.asset_supervisor.refresh_local_state();
-    let health = state.asset_supervisor.snapshot();
-    if health.state != AssetHealthState::Ready {
-        return Err(AppError(
-            StatusCode::CONFLICT,
-            format!(
-                "asset cleanup is blocked while assets are {}; retry once assets are ready",
-                health.state.as_str()
-            ),
-        ));
+        use futures::StreamExt;
+        let client = reqwest::Client::builder()
+            .user_agent(concat!("capsem/", env!("CARGO_PKG_VERSION")))
+            .build()
+            .context("build reqwest client")?;
+        let resp = client
+            .get(&asset.url)
+            .send()
+            .await
+            .with_context(|| format!("GET {}", asset.url))?;
+        if !resp.status().is_success() {
+            anyhow::bail!("GET {} returned {}", asset.url, resp.status());
+        }
+        let total = resp.content_length().or(total);
+        let mut stream = resp.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.with_context(|| format!("stream {}", asset.url))?;
+            output
+                .write_all(&chunk)
+                .await
+                .with_context(|| format!("write {}", tmp.display()))?;
+            bytes_done += chunk.len() as u64;
+            on_progress(bytes_done, total, false);
+        }
     }
 
-    let retention = {
-        let registry = state.persistent_registry.lock().unwrap();
-        saved_vm_assets::cleanup_retention_asset_filenames(
-            &registry,
-            &state.service_settings.profiles,
-        )
-        .map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("derive asset cleanup retention set: {error:#}"),
-            )
-        })?
-    };
-    let removed = capsem_core::asset_manager::cleanup_unreferenced_assets_preserving(
-        &state.assets_dir,
-        retention.iter(),
-    )
-    .map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("cleanup unreferenced assets: {error:#}"),
-        )
-    })?;
-    let removed_paths = removed
-        .iter()
-        .map(|path| path.display().to_string())
-        .collect::<Vec<_>>();
+    output
+        .flush()
+        .await
+        .with_context(|| format!("flush {}", tmp.display()))?;
+    drop(output);
 
+    let actual = capsem_core::asset_manager::hash_file(&tmp)?;
+    if actual != expected_hash {
+        let _ = std::fs::remove_file(&tmp);
+        anyhow::bail!(
+            "{}: hash mismatch (expected {}, got {})",
+            asset.name,
+            expected_hash,
+            actual
+        );
+    }
+    std::fs::rename(&tmp, target)
+        .with_context(|| format!("rename {} -> {}", tmp.display(), target.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(target, std::fs::Permissions::from_mode(0o444));
+    }
+    on_progress(bytes_done, total, true);
+    Ok(())
+}
+
+/// GET /profiles/{profile_id}/assets/status -- query profile VM asset readiness.
+async fn handle_profile_assets_status(
+    Path(profile_id): Path<String>,
+    State(state): State<Arc<ServiceState>>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let profile = profile_for_route(profile_id)?;
+    Ok(Json(profile_status_value(&state, &profile)))
+}
+
+/// POST /profiles/{profile_id}/assets/ensure -- download missing/corrupt
+/// profile assets when a manifest is available, then return the refreshed
+/// status shape.
+async fn handle_profile_assets_ensure(
+    Path(profile_id): Path<String>,
+    State(state): State<Arc<ServiceState>>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let profile = profile_for_route(profile_id)?;
+    let ensure_result = ensure_profile_assets_for_state(Arc::clone(&state), profile.config()).await;
+    let mut status = profile_status_value(&state, &profile);
+    if let Some(obj) = status.as_object_mut() {
+        match ensure_result {
+            Ok(downloaded) => {
+                obj.insert("ensured".to_string(), json!(true));
+                obj.insert("downloaded".to_string(), json!(downloaded));
+            }
+            Err(error) => {
+                obj.insert("ensured".to_string(), json!(false));
+                obj.insert("downloaded".to_string(), json!(0));
+                obj.insert("error".to_string(), json!(error.to_string()));
+            }
+        }
+    }
+    Ok(Json(status))
+}
+
+async fn handle_profile_assets_info(
+    Path(profile_id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let manifest = profile_manifest_for_route(profile_id)?;
+    let current_arch = capsem_core::net::policy_config::current_profile_arch();
+    let current_assets = manifest.assets.current_arch_assets();
     Ok(Json(json!({
-        "mode": "settings_profiles_v2",
-        "skipped": false,
-        "asset_state": health.state,
-        "retained_count": retention.len(),
-        "removed_count": removed_paths.len(),
-        "removed": removed_paths,
+        "profile_id": manifest.id,
+        "format": manifest.assets.format,
+        "refresh_policy": manifest.assets.refresh_policy,
+        "current_arch": current_arch,
+        "current_arch_ready": current_assets.is_some(),
+        "current_assets": current_assets,
+        "arch": manifest.assets.arch,
     })))
 }
 
-fn asset_locations_status_json(
-    locations: &capsem_core::settings_profiles::ResolvedServiceAssetLocations,
-) -> serde_json::Value {
-    json!({
-        "assets_dir": locations.assets_dir.display().to_string(),
-        "assets_dir_origin": locations.assets_dir_origin.as_str(),
-        "image_roots": locations
-            .image_roots
-            .iter()
-            .map(|path| path.display().to_string())
-            .collect::<Vec<_>>(),
-        "image_roots_origin": locations.image_roots_origin.as_str(),
-        "download_base_url": locations.download_base_url,
-    })
-}
-
-/// POST /setup/corp-config -- apply corporate config from URL or inline TOML.
+/// PUT /corp/edit -- apply corporate config from URL or inline TOML.
 async fn handle_corp_config(
     Json(payload): Json<CorpConfigRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let capsem_dir = capsem_core::paths::capsem_home_opt()
-        .ok_or_else(|| AppError(StatusCode::INTERNAL_SERVER_ERROR, "HOME not set".into()))?;
+    use capsem_core::net::policy_config::corp_provision;
+
+    let capsem_dir = capsem_core::paths::capsem_home_opt().ok_or(AppError(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "HOME not set".into(),
+    ))?;
 
     if let Some(source) = &payload.source {
-        let response = reqwest::Client::new()
-            .get(source)
-            .header("User-Agent", "capsem")
-            .send()
+        // Use the existing provision function which handles fetch + install
+        corp_provision::provision_from_source(&capsem_dir, source)
             .await
-            .map_err(|e| {
-                AppError(
-                    StatusCode::BAD_REQUEST,
-                    format!("failed to fetch corp profile: {e}"),
-                )
-            })?;
-        if !response.status().is_success() {
-            return Err(AppError(
-                StatusCode::BAD_REQUEST,
-                format!(
-                    "corp profile fetch failed: HTTP {} for {source}",
-                    response.status()
-                ),
-            ));
-        }
-        let body = response.text().await.map_err(|e| {
-            AppError(
-                StatusCode::BAD_REQUEST,
-                format!("failed to read corp profile body: {e}"),
-            )
-        })?;
-        capsem_core::settings_profiles::install_corp_profile_toml(&capsem_dir, &body)
             .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
     } else if let Some(toml_content) = &payload.toml {
-        capsem_core::settings_profiles::install_corp_profile_toml(&capsem_dir, toml_content)
+        corp_provision::validate_corp_toml(toml_content)
+            .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
+        corp_provision::install_inline_corp_config(&capsem_dir, toml_content)
+            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    } else {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            "provide either 'source' (URL) or 'toml' (inline content)".into(),
+        ));
+    }
+
+    Ok(Json(json!({ "success": true })))
+}
+
+/// GET /corp/info -- summarize the installed corporate overlay without exposing TOML.
+async fn handle_corp_info() -> Result<Json<serde_json::Value>, AppError> {
+    use capsem_core::net::policy_config::{corp_config_paths, corp_provision};
+
+    let capsem_dir = capsem_core::paths::capsem_home_opt().ok_or(AppError(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "HOME not set".into(),
+    ))?;
+    let paths: Vec<_> = corp_config_paths()
+        .into_iter()
+        .map(|path| {
+            json!({
+                "path": path.display().to_string(),
+                "exists": path.exists(),
+            })
+        })
+        .collect();
+    let source = corp_provision::read_corp_source(&capsem_dir);
+    Ok(Json(json!({
+        "installed": paths.iter().any(|path| path["exists"].as_bool().unwrap_or(false)),
+        "paths": paths,
+        "source": source,
+    })))
+}
+
+/// POST /corp/validate -- validate corporate config from URL or inline TOML without installing it.
+async fn handle_corp_validate(
+    Json(payload): Json<CorpConfigRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    use capsem_core::net::policy_config::corp_provision;
+
+    if let Some(source) = &payload.source {
+        let client = reqwest::Client::new();
+        corp_provision::fetch_corp_config(&client, source)
+            .await
+            .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
+    } else if let Some(toml_content) = &payload.toml {
+        corp_provision::validate_corp_toml(toml_content)
             .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
     } else {
         return Err(AppError(
@@ -10377,267 +4871,1252 @@ async fn handle_corp_config(
     Ok(Json(json!({ "success": true })))
 }
 
-// ---------------------------------------------------------------------------
-// Profile V2 MCP server API handlers
-// ---------------------------------------------------------------------------
+/// POST /corp/reload -- refresh/re-read corp overlay and notify running VMs.
+async fn handle_corp_reload(
+    State(state): State<Arc<ServiceState>>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    use capsem_core::net::policy_config::corp_provision;
 
-#[derive(Debug, Deserialize)]
-struct McpConnectorsQuery {
-    #[serde(default)]
-    profile: Option<String>,
+    let capsem_dir = capsem_core::paths::capsem_home_opt().ok_or(AppError(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "HOME not set".into(),
+    ))?;
+    corp_provision::refresh_corp_config_if_stale(capsem_dir).await;
+    handle_reload_config(State(state)).await
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct McpConnectorMutationRequest {
-    #[serde(default, alias = "profile_id")]
-    profile: Option<String>,
-    id: String,
-    #[serde(flatten)]
-    connector: capsem_core::settings_profiles::McpConnectorConfig,
-}
+// ---------------------------------------------------------------------------
+// MCP API Handlers
+// ---------------------------------------------------------------------------
 
-fn validate_mcp_connector_id(id: &str) -> Result<(), String> {
-    if id.is_empty() {
-        return Err("MCP server id cannot be empty".to_string());
-    }
-    if id
-        .chars()
-        .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || matches!(ch, '-' | '_' | '.'))
+fn load_profile_catalog_for_service() -> Result<ProfileCatalog, AppError> {
+    #[cfg(test)]
     {
-        Ok(())
-    } else {
-        Err(
-            "MCP server id may only contain lowercase letters, digits, '-', '_', and '.'"
-                .to_string(),
-        )
+        if let Some(path) = test_profile_dir_override() {
+            return ProfileCatalog::load_from_dir(&path).map_err(|error| {
+                AppError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("failed to load profile catalog: {error}"),
+                )
+            });
+        }
+        Ok(ProfileCatalog::builtin())
+    }
+    #[cfg(not(test))]
+    {
+        ProfileCatalog::load_default().map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to load profile catalog: {error}"),
+            )
+        })
     }
 }
 
-fn profile_has_mcp_connector(
-    profile: &capsem_core::settings_profiles::Profile,
-    connector_id: &str,
-) -> bool {
-    profile.mcp.connectors.contains_key(connector_id)
+fn profile_catalog_source_label(source: &ProfileCatalogSource) -> String {
+    match source {
+        ProfileCatalogSource::BuiltIn => "built_in".to_string(),
+        ProfileCatalogSource::Directory(path) => format!("directory:{}", path.display()),
+    }
 }
 
-fn mcp_connector_owner<'a>(
-    catalog: &'a capsem_core::settings_profiles::ProfileCatalog,
-    profile_id: &str,
-    connector_id: &str,
-) -> Result<Option<&'a capsem_core::settings_profiles::ProfileRecord>, AppError> {
-    let chain = capsem_core::settings_profiles::resolve_ancestor_chain(catalog, profile_id)
-        .map_err(|e| {
-            AppError(
-                StatusCode::BAD_REQUEST,
-                format!("resolve profile chain: {e}"),
-            )
-        })?;
-    Ok(chain
-        .into_iter()
-        .rfind(|record| profile_has_mcp_connector(&record.profile, connector_id)))
+fn builtin_profile_config_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../config")
+        .components()
+        .collect()
 }
 
-fn mcp_connector_json(
-    id: &str,
-    connector: &capsem_core::settings_profiles::McpConnectorConfig,
-    owner: Option<&capsem_core::settings_profiles::ProfileRecord>,
-    selected_profile_id: &str,
-) -> serde_json::Value {
-    let source_profile = owner.map(|record| record.profile.id.as_str());
-    let source = owner.map(|record| record.source.as_str());
-    let direct = source_profile == Some(selected_profile_id);
-    let editable = direct
-        && owner
-            .map(|record| record.source == capsem_core::settings_profiles::ProfileSource::User)
-            .unwrap_or(false);
-    json!({
-        "id": id,
-        "source_profile": source_profile,
-        "source": source,
-        "direct": direct,
-        "editable": editable,
-        "server": connector,
+fn profile_from_catalog_entry(
+    profile: &ProfileConfigFile,
+    source: &ProfileCatalogSource,
+) -> Result<Profile, AppError> {
+    let (config_root, profile_dir) = match source {
+        ProfileCatalogSource::BuiltIn => {
+            let config_root = builtin_profile_config_root();
+            let profile_dir = config_root.join("profiles").join(&profile.id);
+            (config_root, profile_dir)
+        }
+        ProfileCatalogSource::Directory(profiles_dir) => {
+            let config_root = profiles_dir.parent().ok_or_else(|| {
+                AppError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!(
+                        "profile directory {} must be under a config root",
+                        profiles_dir.display()
+                    ),
+                )
+            })?;
+            (config_root.to_path_buf(), profiles_dir.join(&profile.id))
+        }
+    };
+    Profile::from_config(config_root, profile_dir, profile.clone()).map_err(|error| {
+        AppError(
+            StatusCode::BAD_REQUEST,
+            format!("invalid profile {}: {error}", profile.id),
+        )
     })
 }
 
-/// GET /mcp/connectors -- list effective Profile V2 MCP servers.
-async fn handle_mcp_connectors(
-    Query(query): Query<McpConnectorsQuery>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let settings = load_service_settings_for_profiles()?;
-    let target_profile_id = query
-        .profile
-        .clone()
-        .unwrap_or_else(|| settings.profiles.default_profile.clone());
-    let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles)
-        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("discover profiles: {e}")))?;
-    let (effective, _) = capsem_core::settings_profiles::resolve_effective_vm_settings_with_corp(
-        &settings,
-        Some(&target_profile_id),
-    )
-    .map_err(|e| {
+fn profile_for_route(profile_id: String) -> Result<Profile, AppError> {
+    let profile_id = validate_profile_route_id(profile_id)?;
+    let catalog = load_profile_catalog_for_service()?;
+    let profile = catalog.get(&profile_id).ok_or_else(|| {
         AppError(
-            StatusCode::BAD_REQUEST,
-            format!("resolve effective profile '{target_profile_id}': {e}"),
+            StatusCode::NOT_FOUND,
+            format!("profile not found: {profile_id}"),
         )
     })?;
+    match catalog.source() {
+        ProfileCatalogSource::Directory(profiles_dir) => {
+            Profile::load_from_dir(profiles_dir.join(&profile_id)).map_err(|error| {
+                AppError(
+                    StatusCode::BAD_REQUEST,
+                    format!("invalid profile {profile_id}: {error}"),
+                )
+            })
+        }
+        ProfileCatalogSource::BuiltIn => profile_from_catalog_entry(profile, catalog.source()),
+    }
+}
 
-    let mut servers = effective
-        .mcp
-        .value
-        .connectors
-        .iter()
-        .map(|(id, connector)| {
-            let owner = mcp_connector_owner(&catalog, &effective.profile_id, id)?;
-            Ok(mcp_connector_json(
-                id,
-                connector,
-                owner,
-                &effective.profile_id,
-            ))
+fn profile_catalog_status_value(
+    state: &ServiceState,
+    catalog: &ProfileCatalog,
+) -> serde_json::Value {
+    let profiles = catalog
+        .profiles()
+        .map(|profile| {
+            let status = profile_from_catalog_entry(profile, catalog.source())
+                .map(|profile| profile_status_value(state, &profile))
+                .unwrap_or_else(|error| {
+                    json!({
+                        "ready": false,
+                        "current_arch": capsem_core::net::policy_config::current_profile_arch(),
+                        "assets": [],
+                        "missing_assets": [],
+                        "invalid_assets": [],
+                        "invalid_files": [],
+                        "errors": [error.1],
+                    })
+                });
+            let missing = status["missing_assets"].clone();
+            json!({
+                "id": profile.id,
+                "name": profile.name,
+                "description": profile.description,
+                "revision": profile.revision,
+                "profile_payload_hash": profile_payload_hash(profile).ok(),
+                "ready": status["ready"].as_bool().unwrap_or(false),
+                "current_arch": status["current_arch"].clone(),
+                "missing_assets": missing,
+                "invalid_assets": status["invalid_assets"].clone(),
+                "invalid_files": status["invalid_files"].clone(),
+                "errors": status["errors"].clone(),
+                "asset_count": status["assets"].as_array().map_or(0, Vec::len),
+            })
         })
-        .collect::<Result<Vec<_>, AppError>>()?;
-    servers.sort_by(|left, right| {
-        left["id"]
-            .as_str()
-            .unwrap_or_default()
-            .cmp(right["id"].as_str().unwrap_or_default())
+        .collect::<Vec<_>>();
+    let ready_count = profiles
+        .iter()
+        .filter(|profile| profile["ready"].as_bool().unwrap_or(false))
+        .count();
+    json!({
+        "source": profile_catalog_source_label(catalog.source()),
+        "asset_manifest": asset_manifest_status_value(state),
+        "profile_count": profiles.len(),
+        "ready_count": ready_count,
+        "profiles": profiles,
+    })
+}
+
+fn validate_profile_route_id(profile_id: String) -> Result<String, AppError> {
+    if profile_id.is_empty() {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            "profile id must not be empty".to_string(),
+        ));
+    }
+    let catalog = load_profile_catalog_for_service()?;
+    if catalog.get(&profile_id).is_none() {
+        return Err(AppError(
+            StatusCode::NOT_FOUND,
+            format!("profile not found: {profile_id}"),
+        ));
+    }
+    Ok(profile_id)
+}
+
+fn security_rule_group_len(group: &SecurityRuleGroup) -> usize {
+    group.rules.len()
+}
+
+fn build_profile_summary(
+    manifest: &ProfileConfigFile,
+    source: &ProfileCatalogSource,
+    user: &SettingsFile,
+    corp: &SettingsFile,
+    plugin_count: usize,
+) -> api::ProfileSummary {
+    let default_rule_count = manifest.default.len()
+        + security_rule_group_len(&manifest.profiles)
+        + manifest
+            .ai
+            .values()
+            .map(|provider| provider.rules.len())
+            .sum::<usize>()
+        + user.default.len()
+        + corp.default.len();
+    let profile_rule_count = default_rule_count
+        + user.profiles.rules.len()
+        + corp.profiles.rules.len()
+        + corp.corp.rules.len()
+        + user
+            .ai
+            .values()
+            .map(|provider| provider.rules.len())
+            .sum::<usize>()
+        + corp
+            .ai
+            .values()
+            .map(|provider| provider.rules.len())
+            .sum::<usize>();
+    let mcp_server_count = manifest.mcp.as_ref().map_or(0, |mcp| {
+        mcp.servers.len() + usize::from(mcp.server_enabled.get("local").copied().unwrap_or(false))
     });
 
+    api::ProfileSummary {
+        id: manifest.id.clone(),
+        name: manifest.name.clone(),
+        description: manifest.description.clone(),
+        icon_svg: manifest.icon_svg.clone(),
+        availability: api::ProfileAvailabilitySummary {
+            web: manifest.availability.web,
+            shell: manifest.availability.shell,
+            mobile: manifest.availability.mobile,
+        },
+        source: profile_catalog_source_label(source),
+        rule_count: profile_rule_count,
+        default_rule_count,
+        plugin_count,
+        mcp_server_count,
+    }
+}
+
+async fn handle_profiles_list(
+    State(state): State<Arc<ServiceState>>,
+) -> Result<Json<api::ProfilesListResponse>, AppError> {
+    let catalog = load_profile_catalog_for_service()?;
+    let (user, corp) = capsem_core::net::policy_config::load_settings_and_corp_files();
+    let profiles = catalog
+        .profiles()
+        .map(|profile| {
+            build_profile_summary(
+                profile,
+                catalog.source(),
+                &user,
+                &corp,
+                effective_plugin_policy(&state, &profile.id).len(),
+            )
+        })
+        .collect();
+    Ok(Json(api::ProfilesListResponse { profiles }))
+}
+
+async fn handle_profiles_status(
+    State(state): State<Arc<ServiceState>>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let catalog = load_profile_catalog_for_service()?;
+    Ok(Json(profile_catalog_status_value(&state, &catalog)))
+}
+
+async fn handle_profiles_reload(
+    State(state): State<Arc<ServiceState>>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let catalog = load_profile_catalog_for_service()?;
     Ok(Json(json!({
-        "mode": "settings_profiles_v2",
-        "profile_id": effective.profile_id,
-        "servers": servers,
+        "reloaded": true,
+        "catalog": profile_catalog_status_value(&state, &catalog),
     })))
 }
 
-/// POST /mcp/connectors -- create a direct Profile V2 MCP server.
-async fn handle_create_mcp_connector(
-    Json(request): Json<McpConnectorMutationRequest>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    validate_mcp_connector_id(&request.id).map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
-    let settings = load_service_settings_for_profiles()?;
-    let target_profile_id = request
-        .profile
-        .clone()
-        .unwrap_or_else(|| settings.profiles.default_profile.clone());
-    let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles)
-        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("discover profiles: {e}")))?;
-    let selected = catalog.get(&target_profile_id).ok_or_else(|| {
+async fn handle_profile_info(
+    State(state): State<Arc<ServiceState>>,
+    Path(profile_id): Path<String>,
+) -> Result<Json<api::ProfileInfoResponse>, AppError> {
+    let catalog = load_profile_catalog_for_service()?;
+    let manifest = catalog.get(&profile_id).ok_or_else(|| {
         AppError(
             StatusCode::NOT_FOUND,
-            format!("profile '{target_profile_id}' not found"),
+            format!("profile not found: {profile_id}"),
         )
     })?;
-    ensure_profile_section_editable(&selected.profile, ProfileEditableSection::McpServers)?;
-    if profile_has_mcp_connector(&selected.profile, &request.id) {
-        return Err(AppError(
-            StatusCode::CONFLICT,
-            format!("server_exists: mcpServers.{}", request.id),
-        ));
-    }
-
-    let mut profile = selected.profile.clone();
-    profile
-        .mcp
-        .connectors
-        .insert(request.id.clone(), request.connector);
-    profile.validate().map_err(|e| {
-        AppError(
-            StatusCode::BAD_REQUEST,
-            format!("profile validation failed: {e}"),
-        )
-    })?;
-    save_mutated_profile(&settings, selected.source, profile)?;
-
-    let Json(listed) = handle_mcp_connectors(Query(McpConnectorsQuery {
-        profile: Some(target_profile_id),
+    let (user, corp) = capsem_core::net::policy_config::load_settings_and_corp_files();
+    Ok(Json(api::ProfileInfoResponse {
+        profile: build_profile_summary(
+            manifest,
+            catalog.source(),
+            &user,
+            &corp,
+            effective_plugin_policy(&state, &manifest.id).len(),
+        ),
+        obom: profile_obom_info(manifest),
     }))
-    .await?;
-    let connector = listed["servers"]
-        .as_array()
-        .and_then(|servers| {
-            servers
-                .iter()
-                .find(|connector| connector["id"] == serde_json::json!(request.id))
-                .cloned()
-        })
-        .ok_or_else(|| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!(
-                    "created MCP server '{}' was not visible after profile save",
-                    request.id
-                ),
-            )
-        })?;
-    Ok(Json(connector))
 }
 
-/// DELETE /mcp/connectors/{id} -- remove a direct user Profile V2 MCP server.
-async fn handle_delete_mcp_connector(
-    Path(connector_id): Path<String>,
-    Query(query): Query<McpConnectorsQuery>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    validate_mcp_connector_id(&connector_id).map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
-    let settings = load_service_settings_for_profiles()?;
-    let target_profile_id = query
-        .profile
-        .clone()
-        .unwrap_or_else(|| settings.profiles.default_profile.clone());
-    let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles)
-        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("discover profiles: {e}")))?;
-    let selected = catalog.get(&target_profile_id).ok_or_else(|| {
+fn profile_obom_info(profile: &ProfileConfigFile) -> Option<api::ProfileObomInfo> {
+    let obom = profile.obom.as_ref()?;
+    let current_arch = capsem_core::net::policy_config::current_profile_arch().to_string();
+    let descriptor = obom.current_arch_obom()?;
+    let rootfs_hash = profile
+        .assets
+        .current_arch_assets()
+        .and_then(|assets| assets.rootfs.hash.clone())?;
+    Some(api::ProfileObomInfo {
+        profile_id: profile.id.clone(),
+        current_arch,
+        scope: "base_image".to_string(),
+        format: obom.format.clone(),
+        name: descriptor.name.clone(),
+        url: descriptor.url.clone(),
+        hash: descriptor.hash.clone(),
+        size: descriptor.size,
+        generator: descriptor.generator.clone(),
+        generator_version: descriptor.generator_version.clone(),
+        rootfs_hash,
+        route: format!("/profiles/{}/obom", profile.id),
+    })
+}
+
+async fn handle_profile_obom(
+    Path(profile_id): Path<String>,
+) -> Result<Json<api::ProfileObomResponse>, AppError> {
+    let profile = profile_manifest_for_route(profile_id)?;
+    let obom = profile_obom_info(&profile).ok_or_else(|| {
         AppError(
             StatusCode::NOT_FOUND,
-            format!("profile '{target_profile_id}' not found"),
+            format!(
+                "profile {} has no OBOM for current architecture",
+                profile.id
+            ),
         )
     })?;
-    ensure_profile_section_editable(&selected.profile, ProfileEditableSection::McpServers)?;
-    if selected.source != capsem_core::settings_profiles::ProfileSource::User {
+    let document = if let Some(path) = obom.url.strip_prefix("file://") {
+        Some(read_local_profile_obom(StdPath::new(path), &obom)?)
+    } else {
+        None
+    };
+    Ok(Json(api::ProfileObomResponse {
+        profile_id: profile.id.clone(),
+        current_arch: obom.current_arch.clone(),
+        obom,
+        document,
+    }))
+}
+
+fn read_local_profile_obom(
+    path: &StdPath,
+    info: &api::ProfileObomInfo,
+) -> Result<serde_json::Value, AppError> {
+    let bytes = std::fs::read(path).map_err(|error| {
+        AppError(
+            StatusCode::NOT_FOUND,
+            format!("read profile OBOM {}: {error}", path.display()),
+        )
+    })?;
+    if bytes.len() as u64 != info.size {
         return Err(AppError(
-            StatusCode::CONFLICT,
+            StatusCode::PRECONDITION_FAILED,
             format!(
-                "server_is_locked: profile '{}' is locked ({:?})",
-                selected.profile.id, selected.source
+                "profile OBOM size mismatch for {}: expected {}, got {}",
+                path.display(),
+                info.size,
+                bytes.len()
             ),
         ));
     }
-    if !profile_has_mcp_connector(&selected.profile, &connector_id) {
-        let owner = mcp_connector_owner(&catalog, &target_profile_id, &connector_id)?;
-        return match owner {
-            Some(owner) => Err(AppError(
-                StatusCode::CONFLICT,
-                format!(
-                    "server_is_locked: MCP server '{}' is inherited from profile '{}'",
-                    connector_id, owner.profile.id
-                ),
-            )),
-            None => Err(AppError(
-                StatusCode::NOT_FOUND,
-                format!("MCP server '{connector_id}' not found"),
-            )),
-        };
-    }
-
-    let mut profile = selected.profile.clone();
-    profile.mcp.connectors.remove(&connector_id);
-    profile.validate().map_err(|e| {
+    let actual_hash = blake3::hash(&bytes).to_hex().to_string();
+    let expected_hash = info.hash.strip_prefix("blake3:").ok_or_else(|| {
         AppError(
-            StatusCode::BAD_REQUEST,
-            format!("profile validation failed: {e}"),
+            StatusCode::PRECONDITION_FAILED,
+            format!("profile OBOM hash must use blake3:<hex>, got {}", info.hash),
         )
     })?;
-    capsem_core::settings_profiles::update_user_profile(&settings.profiles, profile)
-        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("update profile: {e}")))?;
+    if actual_hash != expected_hash {
+        return Err(AppError(
+            StatusCode::PRECONDITION_FAILED,
+            format!(
+                "profile OBOM hash mismatch for {}: expected {}, got {}",
+                path.display(),
+                expected_hash,
+                actual_hash
+            ),
+        ));
+    }
+    serde_json::from_slice(&bytes).map_err(|error| {
+        AppError(
+            StatusCode::PRECONDITION_FAILED,
+            format!("parse profile OBOM {}: {error}", path.display()),
+        )
+    })
+}
 
+fn profile_manifest_for_route(profile_id: String) -> Result<ProfileConfigFile, AppError> {
+    let profile_id = validate_profile_route_id(profile_id)?;
+    let catalog = load_profile_catalog_for_service()?;
+    catalog.get(&profile_id).cloned().ok_or_else(|| {
+        AppError(
+            StatusCode::NOT_FOUND,
+            format!("profile not found: {profile_id}"),
+        )
+    })
+}
+
+async fn handle_profile_validate(
+    Path(profile_id): Path<String>,
+    Json(request): Json<api::ProfileValidateRequest>,
+) -> Result<Json<api::ProfileValidateResponse>, AppError> {
+    let route_profile_id = validate_profile_route_id(profile_id)?;
+    let profile = if let Some(toml) = request.toml {
+        toml::from_str::<ProfileConfigFile>(&toml).map_err(|error| {
+            AppError(
+                StatusCode::BAD_REQUEST,
+                format!("invalid profile TOML: {error}"),
+            )
+        })?
+    } else if let Some(profile) = request.profile {
+        profile
+    } else {
+        profile_manifest_for_route(route_profile_id.clone())?
+    };
+    profile
+        .validate()
+        .map_err(|error| AppError(StatusCode::BAD_REQUEST, format!("invalid profile: {error}")))?;
+    if profile.id != route_profile_id {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            format!(
+                "profile id mismatch: route has {route_profile_id}, payload has {}",
+                profile.id
+            ),
+        ));
+    }
+    Ok(Json(api::ProfileValidateResponse {
+        valid: true,
+        profile_id: profile.id,
+    }))
+}
+
+async fn handle_profile_skills_info(
+    Path(profile_id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let manifest = profile_manifest_for_route(profile_id)?;
     Ok(Json(json!({
-        "mode": "settings_profiles_v2",
-        "profile_id": target_profile_id,
-        "server_id": connector_id,
-        "removed": true,
+        "profile_id": manifest.id,
+        "skill_count": manifest.skills.paths.len(),
+        "paths": manifest.skills.paths,
     })))
+}
+
+async fn handle_profile_skills_list(
+    Path(profile_id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let manifest = profile_manifest_for_route(profile_id)?;
+    Ok(Json(json!({
+        "profile_id": manifest.id,
+        "skills": manifest.skills.paths.into_iter().map(|path| {
+            let id = skill_id_for_path(&path).unwrap_or_else(|_| path.clone());
+            json!({ "id": id, "path": path })
+        }).collect::<Vec<_>>(),
+    })))
+}
+
+async fn handle_profile_skill_add(
+    State(state): State<Arc<ServiceState>>,
+    Path(profile_id): Path<String>,
+    Json(request): Json<ProfileSkillAddRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    log_profile_mutation_route_request(
+        "profile_skill_add",
+        &profile_id,
+        "skill",
+        &request.path,
+        "add",
+    );
+    let mut profile = profile_for_route(profile_id.clone()).inspect_err(|error| {
+        log_profile_mutation_route_rejected(
+            "profile_skill_add",
+            &profile_id,
+            "skill",
+            &request.path,
+            "add",
+            &error.1,
+        );
+    })?;
+    let summary = profile
+        .add_skill_path(&request.path, "service-api")
+        .map_err(|error| {
+            log_profile_mutation_route_rejected(
+                "profile_skill_add",
+                &profile_id,
+                "skill",
+                &request.path,
+                "add",
+                &error,
+            );
+            AppError(StatusCode::BAD_REQUEST, error)
+        })?;
+    let event = write_profile_mutation_event(&state, summary).await?;
+    log_profile_mutation_applied("profile_skill_add", &event);
+    Ok(Json(json!({
+        "profile_id": event.profile_id,
+        "skill_id": event.target_key,
+        "path": request.path,
+        "mutation": event,
+    })))
+}
+
+async fn handle_profile_skill_edit(
+    State(state): State<Arc<ServiceState>>,
+    Path((profile_id, _skill_id)): Path<(String, String)>,
+    Json(request): Json<ProfileSkillEditRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    log_profile_mutation_route_request(
+        "profile_skill_edit",
+        &profile_id,
+        "skill",
+        &_skill_id,
+        "edit",
+    );
+    let mut profile = profile_for_route(profile_id.clone()).inspect_err(|error| {
+        log_profile_mutation_route_rejected(
+            "profile_skill_edit",
+            &profile_id,
+            "skill",
+            &_skill_id,
+            "edit",
+            &error.1,
+        );
+    })?;
+    let summary = profile
+        .edit_skill_path(&_skill_id, &request.path, "service-api")
+        .map_err(|error| {
+            log_profile_mutation_route_rejected(
+                "profile_skill_edit",
+                &profile_id,
+                "skill",
+                &_skill_id,
+                "edit",
+                &error,
+            );
+            AppError(StatusCode::BAD_REQUEST, error)
+        })?;
+    let event = write_profile_mutation_event(&state, summary).await?;
+    log_profile_mutation_applied("profile_skill_edit", &event);
+    Ok(Json(json!({
+        "profile_id": event.profile_id,
+        "skill_id": event.target_key,
+        "path": request.path,
+        "mutation": event,
+    })))
+}
+
+async fn handle_profile_skill_delete(
+    State(state): State<Arc<ServiceState>>,
+    Path((profile_id, _skill_id)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    log_profile_mutation_route_request(
+        "profile_skill_delete",
+        &profile_id,
+        "skill",
+        &_skill_id,
+        "delete",
+    );
+    let mut profile = profile_for_route(profile_id.clone()).inspect_err(|error| {
+        log_profile_mutation_route_rejected(
+            "profile_skill_delete",
+            &profile_id,
+            "skill",
+            &_skill_id,
+            "delete",
+            &error.1,
+        );
+    })?;
+    let summary = profile
+        .delete_skill(&_skill_id, "service-api")
+        .map_err(|error| {
+            log_profile_mutation_route_rejected(
+                "profile_skill_delete",
+                &profile_id,
+                "skill",
+                &_skill_id,
+                "delete",
+                &error,
+            );
+            AppError(StatusCode::BAD_REQUEST, error)
+        })?;
+    let event = write_profile_mutation_event(&state, summary).await?;
+    log_profile_mutation_applied("profile_skill_delete", &event);
+    Ok(Json(json!({
+        "profile_id": event.profile_id,
+        "skill_id": event.target_key,
+        "mutation": event,
+    })))
+}
+
+fn resolve_mcp_tool_id(server_id: &str, tool_id: &str) -> Result<String, AppError> {
+    if server_id.is_empty() || tool_id.is_empty() {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            "server id and tool id must not be empty".to_string(),
+        ));
+    }
+    if let Some((prefix, _)) = tool_id.split_once("__") {
+        if prefix != server_id {
+            return Err(AppError(
+                StatusCode::BAD_REQUEST,
+                format!("tool id {tool_id} does not belong to MCP server {server_id}"),
+            ));
+        }
+        Ok(tool_id.to_string())
+    } else {
+        Ok(format!("{server_id}__{tool_id}"))
+    }
+}
+
+/// GET /profiles/:profile_id/mcp/servers/list -- list profile MCP servers with status.
+async fn handle_profile_mcp_info(
+    Path(profile_id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let profile = profile_manifest_for_route(profile_id)?;
+    let mcp = profile.mcp.as_ref();
+    let builtin_local_enabled = mcp
+        .and_then(|mcp| mcp.server_enabled.get("local").copied())
+        .unwrap_or(false);
+    let manual_server_count = mcp.map_or(0, |mcp| mcp.servers.len());
+    Ok(Json(json!({
+        "profile_id": profile.id,
+        "server_count": manual_server_count + usize::from(builtin_local_enabled),
+        "manual_server_count": manual_server_count,
+        "builtin_local_enabled": builtin_local_enabled,
+    })))
+}
+
+fn profile_mcp_server_configured(profile: &ProfileConfigFile, server_id: &str) -> bool {
+    let Some(mcp) = profile.mcp.as_ref() else {
+        return false;
+    };
+    if server_id == "local" {
+        return mcp.server_enabled.get("local").copied().unwrap_or(false);
+    }
+    mcp.servers.iter().any(|server| server.name == server_id)
+}
+
+fn ensure_profile_mcp_server(
+    profile_id: String,
+    server_id: &str,
+) -> Result<ProfileConfigFile, AppError> {
+    let profile = profile_manifest_for_route(profile_id)?;
+    if profile_mcp_server_configured(&profile, server_id) {
+        Ok(profile)
+    } else {
+        Err(AppError(
+            StatusCode::NOT_FOUND,
+            format!(
+                "MCP server not found in profile {}: {server_id}",
+                profile.id
+            ),
+        ))
+    }
+}
+
+fn validate_mcp_server_id(server_id: &str) -> Result<(), AppError> {
+    if server_id.trim().is_empty() {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            "MCP server id must not be empty".to_string(),
+        ));
+    }
+    if server_id.contains(capsem_core::mcp::types::NS_SEP) {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            format!(
+                "MCP server id must not contain namespace separator {}",
+                capsem_core::mcp::types::NS_SEP
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_mcp_server_edit_request(
+    server_id: &str,
+    update: McpServerEditRequest,
+) -> Result<McpManualServer, AppError> {
+    validate_mcp_server_id(server_id)?;
+    let url = update.url.ok_or_else(|| {
+        AppError(
+            StatusCode::BAD_REQUEST,
+            "MCP server URL is required".to_string(),
+        )
+    })?;
+    if url.trim().is_empty() {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            "MCP server URL must not be empty".to_string(),
+        ));
+    }
+    let server = McpManualServer {
+        name: server_id.to_string(),
+        url,
+        headers: update.headers,
+        auth: None,
+        enabled: update.enabled.unwrap_or(true),
+    };
+    McpUserConfig {
+        servers: vec![server.clone()],
+        ..McpUserConfig::default()
+    }
+    .validate("profile")
+    .map_err(|error| AppError(StatusCode::BAD_REQUEST, error))?;
+    Ok(server)
+}
+
+fn unix_timestamp_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or_default()
+}
+
+async fn write_profile_mutation_event(
+    state: &ServiceState,
+    summary: capsem_core::net::policy_config::ProfileMutationSummary,
+) -> Result<capsem_logger::ProfileMutationEvent, AppError> {
+    let mutation_id = capsem_core::security_engine::SecurityEventId::new_uuid4()
+        .as_str()
+        .to_string();
+    let event = summary.into_logger_event(
+        unix_timestamp_ms(),
+        mutation_id,
+        capsem_logger::ProfileMutationStatus::Applied,
+        None,
+        None,
+    );
+    let writer = capsem_logger::DbWriter::open(&state.main_db_path(), 64).map_err(|error| {
+        error!(
+            target: "capsem.profile_mutation",
+            profile_id = %event.profile_id,
+            mutation_id = %event.mutation_id,
+            actor = %event.actor,
+            category = %event.category,
+            filename = %event.filename,
+            affected_path = %event.affected_path,
+            target_kind = %event.target_kind,
+            target_key = %event.target_key,
+            operation = %event.operation,
+            rule_id = event.rule_id.as_deref().unwrap_or(""),
+            status = %event.status.as_str(),
+            error = %error,
+            "profile mutation ledger open failed"
+        );
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("open profile mutation ledger: {error}"),
+        )
+    })?;
+    writer
+        .write(capsem_logger::WriteOp::ProfileMutationEvent(event.clone()))
+        .await;
+    writer.shutdown_blocking();
+    log_profile_mutation_applied("profile_mutation_ledger", &event);
+    Ok(event)
+}
+
+fn profile_mutation_log_fields(
+    route: &'static str,
+    event: &capsem_logger::ProfileMutationEvent,
+) -> serde_json::Value {
+    json!({
+        "route": route,
+        "mutation_id": event.mutation_id,
+        "profile_id": event.profile_id,
+        "actor": event.actor,
+        "category": event.category,
+        "filename": event.filename,
+        "affected_path": event.affected_path,
+        "target_kind": event.target_kind,
+        "target_key": event.target_key,
+        "operation": event.operation,
+        "rule_id": event.rule_id.as_deref().unwrap_or(""),
+        "old_hash": event.old_hash,
+        "old_size": event.old_size,
+        "new_hash": event.new_hash,
+        "new_size": event.new_size,
+        "status": event.status.as_str(),
+        "error": event.error.as_deref().unwrap_or(""),
+        "trace_id": event.trace_id.as_deref().unwrap_or(""),
+    })
+}
+
+fn log_profile_mutation_applied(route: &'static str, event: &capsem_logger::ProfileMutationEvent) {
+    info!(
+        target: "capsem.profile_mutation",
+        route,
+        mutation_id = %event.mutation_id,
+        profile_id = %event.profile_id,
+        actor = %event.actor,
+        category = %event.category,
+        filename = %event.filename,
+        affected_path = %event.affected_path,
+        target_kind = %event.target_kind,
+        target_key = %event.target_key,
+        operation = %event.operation,
+        rule_id = event.rule_id.as_deref().unwrap_or(""),
+        old_hash = %event.old_hash,
+        old_size = event.old_size,
+        new_hash = %event.new_hash,
+        new_size = event.new_size,
+        status = %event.status.as_str(),
+        trace_id = event.trace_id.as_deref().unwrap_or(""),
+        fields = %profile_mutation_log_fields(route, event),
+        "profile mutation applied"
+    );
+}
+
+fn log_profile_mutation_route_request(
+    route: &'static str,
+    profile_id: &str,
+    target_kind: &'static str,
+    target_key: &str,
+    operation: &'static str,
+) {
+    info!(
+        target: "capsem.profile_mutation",
+        route,
+        profile_id,
+        target_kind,
+        target_key,
+        operation,
+        actor = "service-api",
+        "profile mutation route requested"
+    );
+}
+
+fn log_profile_mutation_route_rejected(
+    route: &'static str,
+    profile_id: &str,
+    target_kind: &'static str,
+    target_key: &str,
+    operation: &'static str,
+    error: &str,
+) {
+    warn!(
+        target: "capsem.profile_mutation",
+        route,
+        profile_id,
+        target_kind,
+        target_key,
+        operation,
+        actor = "service-api",
+        error,
+        "profile mutation route rejected"
+    );
+}
+
+/// PUT /profiles/:profile_id/mcp/servers/:server_id/edit -- add or replace one MCP server.
+async fn handle_profile_mcp_server_edit(
+    State(state): State<Arc<ServiceState>>,
+    Path((profile_id, server_id)): Path<(String, String)>,
+    Json(update): Json<McpServerEditRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    log_profile_mutation_route_request(
+        "profile_mcp_server_edit",
+        &profile_id,
+        "mcp_server",
+        &server_id,
+        "upsert",
+    );
+    let server = validate_mcp_server_edit_request(&server_id, update).inspect_err(|error| {
+        log_profile_mutation_route_rejected(
+            "profile_mcp_server_edit",
+            &profile_id,
+            "mcp_server",
+            &server_id,
+            "upsert",
+            &error.1,
+        );
+    })?;
+    let mut profile = profile_for_route(profile_id.clone()).inspect_err(|error| {
+        log_profile_mutation_route_rejected(
+            "profile_mcp_server_edit",
+            &profile_id,
+            "mcp_server",
+            &server_id,
+            "upsert",
+            &error.1,
+        );
+    })?;
+    let summary = profile
+        .upsert_mcp_server(server.clone(), "service-api")
+        .map_err(|error| {
+            log_profile_mutation_route_rejected(
+                "profile_mcp_server_edit",
+                &profile_id,
+                "mcp_server",
+                &server_id,
+                "upsert",
+                &error,
+            );
+            AppError(StatusCode::BAD_REQUEST, error)
+        })?;
+    let event = write_profile_mutation_event(&state, summary).await?;
+    log_profile_mutation_applied("profile_mcp_server_edit", &event);
+    Ok(Json(json!({
+        "profile_id": event.profile_id,
+        "server_id": server_id,
+        "url": server.url,
+        "enabled": server.enabled,
+        "mutation": event,
+    })))
+}
+
+/// DELETE /profiles/:profile_id/mcp/servers/:server_id/delete -- remove one MCP server.
+async fn handle_profile_mcp_server_delete(
+    State(state): State<Arc<ServiceState>>,
+    Path((profile_id, server_id)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    log_profile_mutation_route_request(
+        "profile_mcp_server_delete",
+        &profile_id,
+        "mcp_server",
+        &server_id,
+        "delete",
+    );
+    validate_mcp_server_id(&server_id).inspect_err(|error| {
+        log_profile_mutation_route_rejected(
+            "profile_mcp_server_delete",
+            &profile_id,
+            "mcp_server",
+            &server_id,
+            "delete",
+            &error.1,
+        );
+    })?;
+    let mut profile = profile_for_route(profile_id.clone()).inspect_err(|error| {
+        log_profile_mutation_route_rejected(
+            "profile_mcp_server_delete",
+            &profile_id,
+            "mcp_server",
+            &server_id,
+            "delete",
+            &error.1,
+        );
+    })?;
+    let summary = profile
+        .delete_mcp_server(&server_id, "service-api")
+        .map_err(|error| {
+            log_profile_mutation_route_rejected(
+                "profile_mcp_server_delete",
+                &profile_id,
+                "mcp_server",
+                &server_id,
+                "delete",
+                &error,
+            );
+            AppError(StatusCode::BAD_REQUEST, error)
+        })?;
+    let event = write_profile_mutation_event(&state, summary).await?;
+    log_profile_mutation_applied("profile_mcp_server_delete", &event);
+    Ok(Json(json!({
+        "profile_id": event.profile_id,
+        "server_id": server_id,
+        "mutation": event,
+    })))
+}
+
+async fn handle_profile_mcp_servers(
+    Path(profile_id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let profile = profile_manifest_for_route(profile_id)?;
+    use capsem_core::mcp::{build_profile_server_list, load_tool_cache};
+
+    let profile_mcp = profile.mcp.clone().unwrap_or_default();
+
+    // Include the "local" builtin server if the binary exists.
+    let builtin_bin = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("capsem-mcp-builtin")));
+    let servers = build_profile_server_list(
+        &profile_mcp,
+        builtin_bin.as_deref(),
+        std::collections::HashMap::new(),
+    );
+    let cache = load_tool_cache();
+
+    let resp: Vec<api::McpServerInfoResponse> = servers
+        .iter()
+        .map(|s| {
+            let tool_count = cache.iter().filter(|t| t.server_name == s.name).count();
+            api::McpServerInfoResponse {
+                name: s.name.clone(),
+                url: s.url.clone(),
+                has_auth_credential: s.auth.is_some(),
+                custom_header_count: s.headers.len(),
+                source: s.source.clone(),
+                enabled: s.enabled,
+                running: false, // Config-level only; runtime status requires IPC.
+                tool_count,
+                is_stdio: s.is_stdio(),
+            }
+        })
+        .collect();
+    Ok(Json(serde_json::to_value(resp).unwrap_or_default()))
+}
+
+/// GET /profiles/:profile_id/mcp/default/info -- read the profile MCP default permission.
+async fn handle_profile_mcp_default_info(
+    Path(profile_id): Path<String>,
+) -> Result<Json<api::McpDefaultPermissionResponse>, AppError> {
+    let profile = profile_for_route(profile_id)?;
+    let permission = profile.mcp_default_permission().map_err(|error| {
+        AppError(
+            StatusCode::BAD_REQUEST,
+            format!("resolve MCP default permission: {error}"),
+        )
+    })?;
+    Ok(Json(api::McpDefaultPermissionResponse {
+        action: permission.action,
+        source: permission.source,
+        rule_id: permission.rule_id,
+    }))
+}
+
+/// GET /profiles/:profile_id/mcp/servers/:server_id/tools/list -- list one server's tools.
+async fn handle_profile_mcp_server_tools(
+    Path((profile_id, server_id)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    if server_id.is_empty() {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            "MCP server id must not be empty".to_string(),
+        ));
+    }
+    ensure_profile_mcp_server(profile_id.clone(), &server_id)?;
+    let profile = profile_for_route(profile_id)?;
+    use capsem_core::mcp::load_tool_cache;
+
+    let cache = load_tool_cache();
+    let resp: Result<Vec<api::McpToolInfoResponse>, AppError> = cache
+        .iter()
+        .filter(|entry| entry.server_name == server_id)
+        .map(|entry| {
+            let permission = profile
+                .mcp_tool_permission(&server_id, &entry.original_name)
+                .map_err(|error| {
+                    AppError(
+                        StatusCode::BAD_REQUEST,
+                        format!(
+                            "resolve MCP tool permission {}/{}: {error}",
+                            server_id, entry.original_name
+                        ),
+                    )
+                })?;
+            Ok(api::McpToolInfoResponse {
+                namespaced_name: entry.namespaced_name.clone(),
+                original_name: entry.original_name.clone(),
+                description: entry.description.clone(),
+                server_name: entry.server_name.clone(),
+                annotations: entry.annotations.as_ref().map(|a| a.to_mcp_json()),
+                pin_hash: Some(entry.pin_hash.clone()),
+                approved: entry.approved,
+                pin_changed: false, // Would need live catalog comparison.
+                permission_action: permission.action,
+                permission_source: permission.source,
+            })
+        })
+        .collect();
+    Ok(Json(serde_json::to_value(resp?).unwrap_or_default()))
+}
+
+/// POST /profiles/:profile_id/mcp/servers/:server_id/refresh -- refresh one server's tool discovery.
+async fn handle_profile_mcp_server_refresh(
+    State(state): State<Arc<ServiceState>>,
+    Path((profile_id, server_id)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    if server_id.is_empty() {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            "MCP server id must not be empty".to_string(),
+        ));
+    }
+    ensure_profile_mcp_server(profile_id, &server_id)?;
+    // Send McpRefreshTools to all running instances.
+    let uds_paths = {
+        let instances = state.instances.lock().unwrap();
+        instances
+            .values()
+            .map(|info| info.uds_path.clone())
+            .collect::<Vec<_>>()
+    };
+    for uds_path in &uds_paths {
+        let id = state.next_job_id();
+        let _ =
+            send_ipc_command(uds_path, ServiceToProcess::McpRefreshTools { id }, Some(30)).await;
+    }
+    Ok(Json(
+        serde_json::json!({"success": true, "server_id": server_id, "instances": uds_paths.len()}),
+    ))
+}
+
+/// PATCH /profiles/:profile_id/mcp/default/edit -- edit the default MCP permission rule.
+async fn handle_profile_mcp_default_edit(
+    State(state): State<Arc<ServiceState>>,
+    Path(profile_id): Path<String>,
+    Json(update): Json<McpToolEditRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    log_profile_mutation_route_request(
+        "profile_mcp_default_edit",
+        &profile_id,
+        "mcp_default",
+        "default.mcp",
+        "permission",
+    );
+    let mut profile = profile_for_route(profile_id.clone()).inspect_err(|error| {
+        log_profile_mutation_route_rejected(
+            "profile_mcp_default_edit",
+            &profile_id,
+            "mcp_default",
+            "default.mcp",
+            "permission",
+            &error.1,
+        );
+    })?;
+    let summary = profile
+        .set_mcp_default_permission(update.action, "service-api")
+        .map_err(|error| {
+            log_profile_mutation_route_rejected(
+                "profile_mcp_default_edit",
+                &profile_id,
+                "mcp_default",
+                "default.mcp",
+                "permission",
+                &error,
+            );
+            AppError(StatusCode::BAD_REQUEST, error)
+        })?;
+    let event = write_profile_mutation_event(&state, summary).await?;
+    log_profile_mutation_applied("profile_mcp_default_edit", &event);
+    Ok(Json(json!({
+        "profile_id": event.profile_id,
+        "action": update.action,
+        "mutation": event,
+    })))
+}
+
+/// PATCH /profiles/:profile_id/mcp/servers/:server_id/tools/:tool_id/edit -- edit tool mechanics.
+async fn handle_profile_mcp_tool_edit(
+    State(state): State<Arc<ServiceState>>,
+    Path((profile_id, server_id, tool_id)): Path<(String, String, String)>,
+    Json(update): Json<McpToolEditRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let target_key = format!("{server_id}/{tool_id}");
+    log_profile_mutation_route_request(
+        "profile_mcp_tool_edit",
+        &profile_id,
+        "mcp_tool",
+        &target_key,
+        "permission",
+    );
+    let mut profile = profile_for_route(profile_id.clone()).inspect_err(|error| {
+        log_profile_mutation_route_rejected(
+            "profile_mcp_tool_edit",
+            &profile_id,
+            "mcp_tool",
+            &target_key,
+            "permission",
+            &error.1,
+        );
+    })?;
+    let summary = profile
+        .set_mcp_tool_permission(&server_id, &tool_id, update.action, "service-api")
+        .map_err(|error| {
+            log_profile_mutation_route_rejected(
+                "profile_mcp_tool_edit",
+                &profile_id,
+                "mcp_tool",
+                &target_key,
+                "permission",
+                &error,
+            );
+            AppError(StatusCode::BAD_REQUEST, error)
+        })?;
+    let event = write_profile_mutation_event(&state, summary).await?;
+    log_profile_mutation_applied("profile_mcp_tool_edit", &event);
+    Ok(Json(json!({
+        "profile_id": event.profile_id,
+        "server_id": server_id,
+        "tool_id": tool_id,
+        "action": update.action,
+        "mutation": event,
+    })))
+}
+
+/// POST /profiles/:profile_id/mcp/servers/:server_id/tools/:tool_id/call -- call a tool via a VM aggregator.
+async fn handle_profile_mcp_tool_call(
+    State(state): State<Arc<ServiceState>>,
+    Path((profile_id, server_id, tool_id)): Path<(String, String, String)>,
+    Json(arguments): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    ensure_profile_mcp_server(profile_id, &server_id)?;
+    let namespaced_name = resolve_mcp_tool_id(&server_id, &tool_id)?;
+    // Find any running instance to route the call through.
+    let uds_path = {
+        let instances = state.instances.lock().unwrap();
+        instances.values().next().map(|i| i.uds_path.clone())
+    };
+    let uds_path = uds_path.ok_or_else(|| {
+        AppError(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "no running sessions".into(),
+        )
+    })?;
+
+    let arguments_json = serde_json::to_string(&arguments)
+        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("invalid arguments: {e}")))?;
+    let msg = ServiceToProcess::McpCallTool {
+        id: state.next_job_id(),
+        namespaced_name,
+        arguments_json,
+    };
+    let resp = send_ipc_command(&uds_path, msg, Some(60))
+        .await
+        .map_err(|e| AppError(StatusCode::BAD_GATEWAY, e))?;
+
+    match resp {
+        ProcessToService::McpCallToolResult {
+            result_json, error, ..
+        } => {
+            if let Some(err) = error {
+                Err(AppError(StatusCode::BAD_GATEWAY, err))
+            } else {
+                let result = match result_json {
+                    Some(s) => serde_json::from_str(&s).map_err(|e| {
+                        AppError(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            format!("bad result_json from process: {e}"),
+                        )
+                    })?,
+                    None => serde_json::Value::Null,
+                };
+                Ok(Json(result))
+            }
+        }
+        _ => Err(AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "unexpected IPC response".into(),
+        )),
+    }
 }
 
 async fn handle_inspect(
@@ -10696,217 +6175,26 @@ async fn handle_inspect(
     ))
 }
 
-/// `GET /timeline/{id}?trace_id=<X>&since=10m&limit=200&layers=mcp,exec,...`
+/// `GET /vms/{id}/timeline?trace_id=<X>&since=10m&limit=200&layers=mcp,exec,...`
 /// -- unified time-ordered event stream for one session, joining
-/// `exec_events`, `mcp_calls`, `net_events`, `dns_events`, `security_events`,
-/// `audit_events`, `snapshot_events`, `fs_events`, and `model_calls` via
-/// UNION ALL. Used by the `capsem_timeline` MCP tool.
+/// `exec_events`, `mcp_calls`, `net_events`, `fs_events`, and
+/// `model_calls` via UNION ALL. Used by the `capsem_timeline` MCP tool.
 ///
 /// W6 added `trace_id` to every layer; this handler filters with
 /// `WHERE trace_id = ? OR trace_id IS NULL` so rows that pre-date W4's
 /// trace propagation still surface for the user.
-const ALLOWED_TIMELINE_LAYERS: &[&str] = &[
-    "exec", "mcp", "net", "dns", "security", "audit", "snapshot", "fs", "model",
-];
-
-fn timeline_existing_tables(reader: &capsem_logger::DbReader) -> Result<HashSet<String>, AppError> {
-    let raw = reader
-        .query_raw("SELECT name FROM sqlite_master WHERE type='table'")
-        .map_err(|e| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to inspect DB schema: {e}"),
-            )
-        })?;
-    let val: serde_json::Value = serde_json::from_str(&raw).map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to parse DB schema: {e}"),
-        )
-    })?;
-    let mut out = HashSet::new();
-    if let Some(rows) = val.get("rows").and_then(|r| r.as_array()) {
-        for row in rows {
-            if let Some(name) = row
-                .as_array()
-                .and_then(|cells| cells.first())
-                .and_then(|cell| cell.as_str())
-            {
-                out.insert(name.to_string());
-            }
-        }
-    }
-    Ok(out)
-}
-
-fn timeline_table_columns(
-    reader: &capsem_logger::DbReader,
-    table: &str,
-) -> Result<HashSet<String>, AppError> {
-    let raw = reader
-        .query_raw(&format!("SELECT name FROM pragma_table_info('{table}')"))
-        .map_err(|e| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to inspect DB columns for {table}: {e}"),
-            )
-        })?;
-    let val: serde_json::Value = serde_json::from_str(&raw).map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to parse DB columns for {table}: {e}"),
-        )
-    })?;
-    let mut out = HashSet::new();
-    if let Some(rows) = val.get("rows").and_then(|r| r.as_array()) {
-        for row in rows {
-            if let Some(name) = row
-                .as_array()
-                .and_then(|cells| cells.first())
-                .and_then(|cell| cell.as_str())
-            {
-                out.insert(name.to_string());
-            }
-        }
-    }
-    Ok(out)
-}
-
-fn timeline_existing_columns(
-    reader: &capsem_logger::DbReader,
-    tables: &HashSet<String>,
-) -> Result<HashMap<String, HashSet<String>>, AppError> {
-    let mut out = HashMap::new();
-    for table in [
-        "exec_events",
-        "mcp_calls",
-        "net_events",
-        "dns_events",
-        "security_events",
-        "audit_events",
-        "snapshot_events",
-        "fs_events",
-        "model_calls",
-        "tool_calls",
-    ] {
-        if tables.contains(table) {
-            out.insert(table.to_string(), timeline_table_columns(reader, table)?);
-        }
-    }
-    Ok(out)
-}
-
-fn timeline_has_column(
-    columns: &HashMap<String, HashSet<String>>,
-    table: &str,
-    column: &str,
-) -> bool {
-    columns.get(table).is_some_and(|cols| cols.contains(column))
-}
-
-fn timeline_col(
-    columns: &HashMap<String, HashSet<String>>,
-    table: &str,
-    column: &str,
-    fallback: &str,
-) -> String {
-    if timeline_has_column(columns, table, column) {
-        column.to_string()
-    } else {
-        fallback.to_string()
-    }
-}
-
-fn timeline_alias_col(
-    columns: &HashMap<String, HashSet<String>>,
-    table: &str,
-    alias: &str,
-    column: &str,
-    fallback: &str,
-) -> String {
-    if timeline_has_column(columns, table, column) {
-        format!("{alias}.{column}")
-    } else {
-        fallback.to_string()
-    }
-}
-
-fn timeline_policy_suffix(
-    columns: &HashMap<String, HashSet<String>>,
-    table: &str,
-    qualifier: Option<&str>,
-) -> &'static str {
-    if timeline_has_column(columns, table, "policy_action")
-        && timeline_has_column(columns, table, "policy_rule")
-    {
-        match qualifier {
-            Some("m") => "COALESCE(' policy=' || m.policy_action || '/' || m.policy_rule, '')",
-            _ => "COALESCE(' policy=' || policy_action || '/' || policy_rule, '')",
-        }
-    } else {
-        "''"
-    }
-}
-
-fn timeline_security_summary_suffix(
-    tables: &HashSet<String>,
-    columns: &HashMap<String, HashSet<String>>,
-) -> String {
-    let mut suffix = String::new();
-    if tables.contains("security_event_steps") {
-        suffix.push_str(
-            " || COALESCE(' rule=' || (
-                SELECT step.rule_id
-                FROM security_event_steps step
-                WHERE step.event_id = security_events.event_id
-                  AND step.rule_id IS NOT NULL
-                ORDER BY step.step_index ASC
-                LIMIT 1
-             ), '')",
-        );
-        suffix.push_str(
-            " || COALESCE(' pack=' || (
-                SELECT step.pack_id
-                FROM security_event_steps step
-                WHERE step.event_id = security_events.event_id
-                  AND step.pack_id IS NOT NULL
-                ORDER BY step.step_index ASC
-                LIMIT 1
-             ), '')",
-        );
-    }
-    if timeline_has_column(columns, "security_events", "finding_count") {
-        suffix.push_str(
-            " || CASE WHEN finding_count > 0 THEN ' findings=' || finding_count ELSE '' END",
-        );
-    }
-    for (label, column) in [
-        ("vm", "vm_id"),
-        ("profile", "profile_id"),
-        ("user", "user_id"),
-        ("owner", "accounting_owner"),
-    ] {
-        if timeline_has_column(columns, "security_events", column) {
-            suffix.push_str(&format!(" || COALESCE(' {label}=' || {column}, '')"));
-        }
-    }
-    suffix
-}
-
 async fn handle_timeline(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
     axum::extract::Query(params): axum::extract::Query<TimelineQuery>,
 ) -> Result<impl IntoResponse, AppError> {
-    let db_path = resolve_session_dir(&state, &id)?.join("session.db");
-    let reader = capsem_logger::DbReader::open(&db_path).map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to open DB: {e}"),
-        )
-    })?;
-    let existing_tables = timeline_existing_tables(&reader)?;
-    let existing_columns = timeline_existing_columns(&reader, &existing_tables)?;
+    let db_path = {
+        let instances = state.instances.lock().unwrap();
+        let i = instances
+            .get(&id)
+            .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
+        i.session_dir.join("session.db")
+    };
 
     let limit = params.limit.unwrap_or(200).min(2000);
     let since_filter = params
@@ -10916,162 +6204,73 @@ async fn handle_timeline(
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_secs());
 
-    // Layers the caller wants. Default to all current layers. C1: filter against
+    // Layers the caller wants. Default to all five. C1: filter against
     // a hard allowlist BEFORE building SQL so even a future careless
     // copy-paste of this format!() can't leak attacker-supplied
     // tokens into the query string.
+    const ALLOWED_LAYERS: &[&str] = &["exec", "mcp", "net", "fs", "model"];
     let layers: Vec<&str> = params
         .layers
         .as_deref()
         .map(|s| {
             s.split(',')
                 .filter(|x| !x.is_empty())
-                .filter(|x| ALLOWED_TIMELINE_LAYERS.contains(x))
+                .filter(|x| ALLOWED_LAYERS.contains(x))
                 .collect()
         })
-        .unwrap_or_else(|| ALLOWED_TIMELINE_LAYERS.to_vec());
+        .unwrap_or_else(|| ALLOWED_LAYERS.to_vec());
 
     let mut parts: Vec<String> = Vec::new();
-    if layers.contains(&"exec") && existing_tables.contains("exec_events") {
-        let status = timeline_col(&existing_columns, "exec_events", "exit_code", "NULL");
-        let duration = timeline_col(&existing_columns, "exec_events", "duration_ms", "NULL");
-        let trace_id = timeline_col(&existing_columns, "exec_events", "trace_id", "NULL");
-        parts.push(format!(
+    if layers.contains(&"exec") {
+        parts.push(
             "SELECT timestamp, 'exec' AS layer, exec_id AS ref, command AS summary, \
-             {status} AS status, {duration} AS duration_ms, {trace_id} AS trace_id FROM exec_events"
-        ));
+             exit_code AS status, duration_ms, trace_id FROM exec_events"
+                .to_string(),
+        );
     }
-    if layers.contains(&"mcp") && existing_tables.contains("mcp_calls") {
+    if layers.contains(&"mcp") {
         // F7: include the originating model_call's tool_calls.call_id when
         // an mcp_call serviced a model tool_use, so the timeline shows
         // "model X tool_use Y -> mcp_call Z" inline. Best-effort LEFT JOIN
         // -- mcp_calls without a tool_calls peer just show NULL.
-        let tool_summary = if timeline_has_column(&existing_columns, "mcp_calls", "tool_name") {
-            "COALESCE(m.tool_name, m.method)"
-        } else {
-            "m.method"
-        };
-        let join_tool_calls = existing_tables.contains("tool_calls")
-            && timeline_has_column(&existing_columns, "tool_calls", "mcp_call_id")
-            && timeline_has_column(&existing_columns, "tool_calls", "call_id");
-        let join_sql = if join_tool_calls {
-            " LEFT JOIN tool_calls tc ON tc.mcp_call_id = m.id"
-        } else {
-            ""
-        };
-        let call_id_suffix = if join_tool_calls {
-            "COALESCE(' (call_id=' || tc.call_id || ')', '')"
-        } else {
-            "''"
-        };
-        let duration =
-            timeline_alias_col(&existing_columns, "mcp_calls", "m", "duration_ms", "NULL");
-        let trace_id = timeline_alias_col(&existing_columns, "mcp_calls", "m", "trace_id", "NULL");
-        let policy_suffix = timeline_policy_suffix(&existing_columns, "mcp_calls", Some("m"));
-        parts.push(format!(
+        parts.push(
             "SELECT m.timestamp AS timestamp, 'mcp' AS layer, m.id AS ref, \
-             m.server_name || '/' || {tool_summary} || {call_id_suffix} || {policy_suffix} AS summary, \
-             NULL AS status, {duration} AS duration_ms, {trace_id} AS trace_id \
-             FROM mcp_calls m{join_sql}"
-        ));
+             m.server_name || '/' || COALESCE(m.tool_name, m.method) || \
+                COALESCE(' (call_id=' || tc.call_id || ')', '') AS summary, \
+             NULL AS status, m.duration_ms AS duration_ms, m.trace_id AS trace_id \
+             FROM mcp_calls m \
+             LEFT JOIN tool_calls tc ON tc.mcp_call_id = m.id"
+                .to_string(),
+        );
     }
-    if layers.contains(&"net") && existing_tables.contains("net_events") {
-        let method = timeline_col(&existing_columns, "net_events", "method", "'GET'");
-        let path = timeline_col(&existing_columns, "net_events", "path", "''");
-        let status = timeline_col(&existing_columns, "net_events", "status_code", "NULL");
-        let duration = timeline_col(&existing_columns, "net_events", "duration_ms", "NULL");
-        let trace_id = timeline_col(&existing_columns, "net_events", "trace_id", "NULL");
-        let policy_suffix = timeline_policy_suffix(&existing_columns, "net_events", None);
-        parts.push(format!(
+    if layers.contains(&"net") {
+        parts.push(
             "SELECT timestamp, 'net' AS layer, id AS ref, \
-             COALESCE({method}, 'GET') || ' ' || domain || COALESCE({path}, '') || \
-                {policy_suffix} AS summary, \
-             {status} AS status, {duration} AS duration_ms, {trace_id} AS trace_id FROM net_events"
-        ));
-    }
-    if layers.contains(&"dns") && existing_tables.contains("dns_events") {
-        let duration = timeline_col(
-            &existing_columns,
-            "dns_events",
-            "upstream_resolver_ms",
-            "NULL",
+             COALESCE(method, 'GET') || ' ' || domain || COALESCE(path, '') AS summary, \
+             status_code AS status, duration_ms, trace_id FROM net_events"
+                .to_string(),
         );
-        let trace_id = timeline_col(&existing_columns, "dns_events", "trace_id", "NULL");
-        let policy_suffix = timeline_policy_suffix(&existing_columns, "dns_events", None);
-        parts.push(format!(
-            "SELECT timestamp, 'dns' AS layer, id AS ref, \
-             qname || ' rcode=' || rcode || {policy_suffix} AS summary, \
-             decision AS status, {duration} AS duration_ms, {trace_id} AS trace_id FROM dns_events"
-        ));
     }
-    if layers.contains(&"security") && existing_tables.contains("security_events") {
-        let trace_id = timeline_col(&existing_columns, "security_events", "trace_id", "NULL");
-        let event_ref = timeline_col(&existing_columns, "security_events", "event_id", "id");
-        let event_type = timeline_col(
-            &existing_columns,
-            "security_events",
-            "event_type",
-            "'security.event'",
-        );
-        let event_family = timeline_col(
-            &existing_columns,
-            "security_events",
-            "event_family",
-            "'security'",
-        );
-        let final_action = timeline_col(
-            &existing_columns,
-            "security_events",
-            "final_action",
-            "'continue'",
-        );
-        let security_suffix = timeline_security_summary_suffix(&existing_tables, &existing_columns);
-        parts.push(format!(
-            "SELECT timestamp, 'security' AS layer, {event_ref} AS ref, \
-             {event_family} || '/' || {event_type} || ' action=' || {final_action}{security_suffix} AS summary, \
-             {final_action} AS status, NULL AS duration_ms, {trace_id} AS trace_id FROM security_events"
-        ));
-    }
-    if layers.contains(&"audit") && existing_tables.contains("audit_events") {
-        let status = timeline_col(&existing_columns, "audit_events", "exit_code", "NULL");
-        let trace_id = timeline_col(&existing_columns, "audit_events", "trace_id", "NULL");
-        parts.push(format!(
-            "SELECT timestamp, 'audit' AS layer, id AS ref, \
-             COALESCE(comm, exe) || ' ' || argv AS summary, \
-             {status} AS status, NULL AS duration_ms, {trace_id} AS trace_id FROM audit_events"
-        ));
-    }
-    if layers.contains(&"snapshot") && existing_tables.contains("snapshot_events") {
-        let trace_id = timeline_col(&existing_columns, "snapshot_events", "trace_id", "NULL");
-        parts.push(format!(
-            "SELECT timestamp, 'snapshot' AS layer, id AS ref, \
-             origin || ' cp-' || slot || COALESCE(' ' || name, '') AS summary, \
-             NULL AS status, NULL AS duration_ms, {trace_id} AS trace_id FROM snapshot_events"
-        ));
-    }
-    if layers.contains(&"fs") && existing_tables.contains("fs_events") {
-        let trace_id = timeline_col(&existing_columns, "fs_events", "trace_id", "NULL");
-        parts.push(format!(
+    if layers.contains(&"fs") {
+        parts.push(
             "SELECT timestamp, 'fs' AS layer, id AS ref, action || ' ' || path AS summary, \
-             NULL AS status, NULL AS duration_ms, {trace_id} AS trace_id FROM fs_events"
-        ));
+             NULL AS status, NULL AS duration_ms, trace_id FROM fs_events"
+                .to_string(),
+        );
     }
-    if layers.contains(&"model") && existing_tables.contains("model_calls") {
-        let model = timeline_col(&existing_columns, "model_calls", "model", "'?'");
-        let status = timeline_col(&existing_columns, "model_calls", "status_code", "NULL");
-        let duration = timeline_col(&existing_columns, "model_calls", "duration_ms", "NULL");
-        let trace_id = timeline_col(&existing_columns, "model_calls", "trace_id", "NULL");
-        parts.push(format!(
+    if layers.contains(&"model") {
+        parts.push(
             "SELECT timestamp, 'model' AS layer, id AS ref, \
-             provider || '/' || COALESCE({model}, '?') AS summary, \
-             {status} AS status, {duration} AS duration_ms, {trace_id} AS trace_id FROM model_calls"
-        ));
+             provider || '/' || COALESCE(model, '?') AS summary, \
+             status_code AS status, duration_ms, trace_id FROM model_calls"
+                .to_string(),
+        );
     }
 
     if parts.is_empty() {
         return Err(AppError(
             StatusCode::BAD_REQUEST,
-            "no selected layers found in session DB".into(),
+            "no layers selected".into(),
         ));
     }
 
@@ -11093,6 +6292,12 @@ async fn handle_timeline(
     }
     sql.push_str(&format!(" ORDER BY timestamp ASC LIMIT {limit}"));
 
+    let reader = capsem_logger::DbReader::open(&db_path).map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to open DB: {e}"),
+        )
+    })?;
     let json_str = reader.query_raw(&sql).map_err(|e| {
         AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -11105,6 +6310,1306 @@ async fn handle_timeline(
         [(axum::http::header::CONTENT_TYPE, "application/json")],
         json_str,
     ))
+}
+
+#[derive(Deserialize, Debug, Default)]
+struct SecurityLedgerQuery {
+    /// Max rows. Default 100, capped at 2000.
+    limit: Option<usize>,
+}
+
+/// GET /vms/{id}/security/latest -- latest security rule ledger rows.
+///
+/// This is intentionally regenerated from the session DB. It returns the full
+/// stored row, including the rule snapshot and normalized SecurityEvent
+/// payload that matched, because active rules may have changed by the time a
+/// responder investigates the event.
+async fn handle_security_latest(
+    State(state): State<Arc<ServiceState>>,
+    Path(id): Path<String>,
+    Query(params): Query<SecurityLedgerQuery>,
+) -> Result<Json<Vec<capsem_logger::SecurityRuleEvent>>, AppError> {
+    let session_dir = resolve_session_dir(&state, &id)?;
+    let db_path = session_dir.join("session.db");
+    let limit = params.limit.unwrap_or(100).min(2000);
+
+    let reader = capsem_logger::DbReader::open(&db_path).map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to open DB: {e}"),
+        )
+    })?;
+    let items = reader.recent_security_rule_events(limit).map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("query failed: {e}"),
+        )
+    })?;
+
+    Ok(Json(items))
+}
+
+/// GET /vms/{id}/security/status -- security rule ledger aggregates.
+async fn handle_security_info(
+    State(state): State<Arc<ServiceState>>,
+    Path(id): Path<String>,
+) -> Result<Json<capsem_logger::SecurityRuleStats>, AppError> {
+    let session_dir = resolve_session_dir(&state, &id)?;
+    let db_path = session_dir.join("session.db");
+
+    let reader = capsem_logger::DbReader::open(&db_path).map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to open DB: {e}"),
+        )
+    })?;
+    let stats = reader.security_rule_stats().map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("query failed: {e}"),
+        )
+    })?;
+
+    Ok(Json(stats))
+}
+
+fn service_session_dirs(state: &ServiceState) -> Vec<(String, PathBuf)> {
+    let mut sessions = BTreeMap::new();
+    {
+        let instances = state.instances.lock().unwrap();
+        for (id, info) in instances.iter() {
+            sessions.insert(id.clone(), info.session_dir.clone());
+        }
+    }
+    {
+        let registry = state.persistent_registry.lock().unwrap();
+        for (id, entry) in registry.data.vms.iter() {
+            sessions
+                .entry(id.clone())
+                .or_insert_with(|| entry.session_dir.clone());
+        }
+    }
+    sessions.into_iter().collect()
+}
+
+fn profile_session_dirs(state: &ServiceState, profile_id: &str) -> Vec<(String, PathBuf)> {
+    let mut sessions = BTreeMap::new();
+    {
+        let instances = state.instances.lock().unwrap();
+        for (id, info) in instances
+            .iter()
+            .filter(|(_, info)| info.profile_id == profile_id)
+        {
+            sessions.insert(id.clone(), info.session_dir.clone());
+        }
+    }
+    {
+        let registry = state.persistent_registry.lock().unwrap();
+        for (id, entry) in registry
+            .data
+            .vms
+            .iter()
+            .filter(|(_, entry)| entry.profile_id == profile_id)
+        {
+            sessions
+                .entry(id.clone())
+                .or_insert_with(|| entry.session_dir.clone());
+        }
+    }
+    sessions.into_iter().collect()
+}
+
+fn is_detection_rule_event(event: &capsem_logger::SecurityRuleEvent) -> bool {
+    event.detection_level != capsem_logger::SecurityDetectionLevel::None
+}
+
+async fn handle_service_security_latest(
+    State(state): State<Arc<ServiceState>>,
+    Query(params): Query<SecurityLedgerQuery>,
+) -> Result<Json<Vec<serde_json::Value>>, AppError> {
+    let limit = params.limit.unwrap_or(100).min(2000);
+    let mut rows = Vec::new();
+    for (vm_id, session_dir) in service_session_dirs(&state) {
+        let db_path = session_dir.join("session.db");
+        if !db_path.exists() {
+            continue;
+        }
+        let reader = capsem_logger::DbReader::open(&db_path).map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to open DB for {vm_id}: {e}"),
+            )
+        })?;
+        for event in reader.recent_security_rule_events(limit).map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("query failed for {vm_id}: {e}"),
+            )
+        })? {
+            rows.push(json!({ "vm_id": vm_id, "event": event }));
+        }
+    }
+    rows.sort_by(|left, right| {
+        right["event"]["timestamp_unix_ms"]
+            .as_i64()
+            .cmp(&left["event"]["timestamp_unix_ms"].as_i64())
+    });
+    rows.truncate(limit);
+    Ok(Json(rows))
+}
+
+async fn handle_service_detection_latest(
+    State(state): State<Arc<ServiceState>>,
+    Query(params): Query<SecurityLedgerQuery>,
+) -> Result<Json<Vec<serde_json::Value>>, AppError> {
+    let limit = params.limit.unwrap_or(100).min(2000);
+    let mut rows = Vec::new();
+    for (vm_id, session_dir) in service_session_dirs(&state) {
+        let db_path = session_dir.join("session.db");
+        if !db_path.exists() {
+            continue;
+        }
+        let reader = capsem_logger::DbReader::open(&db_path).map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to open DB for {vm_id}: {e}"),
+            )
+        })?;
+        for event in reader.recent_security_rule_events(limit).map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("query failed for {vm_id}: {e}"),
+            )
+        })? {
+            if is_detection_rule_event(&event) {
+                rows.push(json!({ "vm_id": vm_id, "event": event }));
+            }
+        }
+    }
+    rows.sort_by(|left, right| {
+        right["event"]["timestamp_unix_ms"]
+            .as_i64()
+            .cmp(&left["event"]["timestamp_unix_ms"].as_i64())
+    });
+    rows.truncate(limit);
+    Ok(Json(rows))
+}
+
+async fn handle_service_security_status(
+    State(state): State<Arc<ServiceState>>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let mut total = 0_u64;
+    let mut sessions = Vec::new();
+    for (vm_id, session_dir) in service_session_dirs(&state) {
+        let db_path = session_dir.join("session.db");
+        if !db_path.exists() {
+            continue;
+        }
+        let reader = capsem_logger::DbReader::open(&db_path).map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to open DB for {vm_id}: {e}"),
+            )
+        })?;
+        let stats = reader.security_rule_stats().map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("query failed for {vm_id}: {e}"),
+            )
+        })?;
+        total += stats.total;
+        sessions.push(json!({ "vm_id": vm_id, "stats": stats }));
+    }
+    Ok(Json(json!({ "total": total, "sessions": sessions })))
+}
+
+async fn handle_service_detection_status(
+    State(state): State<Arc<ServiceState>>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let mut total = 0_u64;
+    let mut sessions = Vec::new();
+    for (vm_id, session_dir) in service_session_dirs(&state) {
+        let db_path = session_dir.join("session.db");
+        if !db_path.exists() {
+            continue;
+        }
+        let reader = capsem_logger::DbReader::open(&db_path).map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to open DB for {vm_id}: {e}"),
+            )
+        })?;
+        let events = reader.recent_security_rule_events(2000).map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("query failed for {vm_id}: {e}"),
+            )
+        })?;
+        let count = events
+            .iter()
+            .filter(|event| is_detection_rule_event(event))
+            .count() as u64;
+        total += count;
+        sessions.push(json!({ "vm_id": vm_id, "total": count }));
+    }
+    Ok(Json(json!({ "total": total, "sessions": sessions })))
+}
+
+fn default_plugin_config(mode: SecurityPluginMode) -> SecurityPluginConfig {
+    SecurityPluginConfig {
+        mode,
+        detection_level: DetectionLevel::Informational,
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PluginCatalogEntry {
+    description: &'static str,
+    default_config: SecurityPluginConfig,
+    stage: PluginStage,
+    version: &'static str,
+}
+
+fn plugin_catalog() -> BTreeMap<String, PluginCatalogEntry> {
+    BTreeMap::from([
+        (
+            "credential_broker".to_string(),
+            PluginCatalogEntry {
+                description: "captures observed credentials into brokered credential references",
+                default_config: default_plugin_config(SecurityPluginMode::Rewrite),
+                stage: PluginStage::Preprocess,
+                version: "1",
+            },
+        ),
+        (
+            "log_sanitizer".to_string(),
+            PluginCatalogEntry {
+                description: "sanitizes credential material before durable security ledger writes",
+                default_config: default_plugin_config(SecurityPluginMode::Rewrite),
+                stage: PluginStage::Logging,
+                version: "1",
+            },
+        ),
+        (
+            "dummy_pre_eicar".to_string(),
+            PluginCatalogEntry {
+                description: "debug preprocess plugin that blocks harmless EICAR test content",
+                default_config: default_plugin_config(SecurityPluginMode::Disable),
+                stage: PluginStage::Preprocess,
+                version: "1",
+            },
+        ),
+        (
+            "dummy_post_allow".to_string(),
+            PluginCatalogEntry {
+                description:
+                    "debug postprocess plugin that requests allow to prove block is absolute",
+                default_config: default_plugin_config(SecurityPluginMode::Disable),
+                stage: PluginStage::Postprocess,
+                version: "1",
+            },
+        ),
+    ])
+}
+
+fn profile_plugin_scope(profile_id: String) -> Result<PluginScope, AppError> {
+    Ok(PluginScope {
+        kind: PluginScopeKind::Profile,
+        profile_id: validate_profile_route_id(profile_id)?,
+    })
+}
+
+fn effective_plugin_policy(
+    state: &ServiceState,
+    profile_id: &str,
+) -> BTreeMap<String, SecurityPluginConfig> {
+    let mut policy: BTreeMap<_, _> = plugin_catalog()
+        .into_iter()
+        .map(|(id, entry)| (id, entry.default_config))
+        .collect();
+    if let Some(overrides) = state
+        .plugin_policy_by_profile
+        .lock()
+        .unwrap()
+        .get(profile_id)
+    {
+        for (id, config) in overrides {
+            policy.insert(id.clone(), *config);
+        }
+    }
+    policy
+}
+
+fn plugin_info_for(
+    state: &ServiceState,
+    plugin_id: &str,
+    scope: PluginScope,
+) -> Result<PluginInfo, AppError> {
+    let catalog = plugin_catalog();
+    let Some(catalog_entry) = catalog.get(plugin_id).copied() else {
+        return Err(AppError(
+            StatusCode::NOT_FOUND,
+            format!("unknown plugin: {plugin_id}"),
+        ));
+    };
+    let effective = effective_plugin_policy(state, &scope.profile_id);
+    let config = effective
+        .get(plugin_id)
+        .copied()
+        .unwrap_or(catalog_entry.default_config);
+    let overridden = state
+        .plugin_policy_by_profile
+        .lock()
+        .unwrap()
+        .get(&scope.profile_id)
+        .is_some_and(|policy| policy.contains_key(plugin_id));
+    let runtime = plugin_runtime_status(state, &scope.profile_id, plugin_id, config);
+    let detail_routes = plugin_detail_routes(plugin_id, &scope);
+    Ok(PluginInfo {
+        id: plugin_id.to_string(),
+        config,
+        default_config: catalog_entry.default_config,
+        overridden,
+        scope,
+        description: catalog_entry.description,
+        stage: catalog_entry.stage,
+        version: catalog_entry.version,
+        capabilities: plugin_capabilities(plugin_id),
+        runtime,
+        detail_routes,
+    })
+}
+
+fn plugin_capabilities(plugin_id: &str) -> PluginCapabilities {
+    match plugin_id {
+        "credential_broker" => PluginCapabilities {
+            event_families: vec!["http", "file", "mcp"],
+            credential_providers: capsem_core::credential_broker::CredentialProvider::all()
+                .iter()
+                .map(|provider| provider.as_str())
+                .collect(),
+            credential_sources: vec![
+                "http.authorization",
+                "http.body.oauth_token",
+                "file.env",
+                "mcp.auth_reference",
+            ],
+        },
+        "dummy_pre_eicar" => PluginCapabilities {
+            event_families: vec!["http", "model", "file", "mcp"],
+            credential_providers: Vec::new(),
+            credential_sources: Vec::new(),
+        },
+        "dummy_post_allow" => PluginCapabilities {
+            event_families: vec!["http", "model", "file", "mcp"],
+            credential_providers: Vec::new(),
+            credential_sources: Vec::new(),
+        },
+        "log_sanitizer" => PluginCapabilities {
+            event_families: vec!["http", "model", "file", "mcp"],
+            credential_providers: Vec::new(),
+            credential_sources: vec!["security_event.credential_observations"],
+        },
+        _ => PluginCapabilities {
+            event_families: Vec::new(),
+            credential_providers: Vec::new(),
+            credential_sources: Vec::new(),
+        },
+    }
+}
+
+fn plugin_detail_routes(plugin_id: &str, scope: &PluginScope) -> Vec<PluginDetailRoute> {
+    match plugin_id {
+        "credential_broker" => vec![
+            PluginDetailRoute {
+                id: "credential_broker_credentials",
+                label: "Credential Broker",
+                kind: PluginDetailRouteKind::CredentialBroker,
+                path: format!(
+                    "/profiles/{}/plugins/credential_broker/credentials/info",
+                    scope.profile_id
+                ),
+            },
+            PluginDetailRoute {
+                id: "credential_broker_credentials_reload",
+                label: "Retry Credential Store",
+                kind: PluginDetailRouteKind::CredentialBroker,
+                path: format!(
+                    "/profiles/{}/plugins/credential_broker/credentials/reload",
+                    scope.profile_id
+                ),
+            },
+        ],
+        _ => Vec::new(),
+    }
+}
+
+fn plugin_runtime_status(
+    state: &ServiceState,
+    profile_id: &str,
+    plugin_id: &str,
+    config: SecurityPluginConfig,
+) -> PluginRuntimeStatus {
+    let mut status = PluginRuntimeStatus {
+        enabled: config.mode != SecurityPluginMode::Disable,
+        event_count: 0,
+        execution_count: 0,
+        applied_count: 0,
+        skipped_count: 0,
+        total_duration_us: 0,
+        max_duration_us: 0,
+        detection_count: 0,
+        block_count: 0,
+        rewrite_count: 0,
+        last_error: None,
+        brokered_credentials: Vec::new(),
+    };
+    hydrate_plugin_execution_runtime(state, profile_id, plugin_id, &mut status);
+    if plugin_id == "credential_broker" {
+        hydrate_credential_broker_runtime(state, profile_id, &mut status);
+    }
+    status
+}
+
+fn hydrate_plugin_execution_runtime(
+    state: &ServiceState,
+    profile_id: &str,
+    plugin_id: &str,
+    status: &mut PluginRuntimeStatus,
+) {
+    let mut seen_executions = HashSet::<(String, String)>::new();
+    let mut seen_detections = HashSet::<(String, String)>::new();
+    for (vm_id, session_dir) in profile_session_dirs(state, profile_id) {
+        let db_path = session_dir.join("session.db");
+        if !db_path.exists() {
+            continue;
+        }
+        let reader = match capsem_logger::DbReader::open(&db_path) {
+            Ok(reader) => reader,
+            Err(error) => {
+                status.last_error = Some(format!("failed to open session DB for {vm_id}: {error}"));
+                continue;
+            }
+        };
+        let events = match reader.recent_security_rule_events(5000) {
+            Ok(events) => events,
+            Err(error) => {
+                status.last_error = Some(format!(
+                    "failed to read plugin execution rows for {vm_id}: {error}"
+                ));
+                continue;
+            }
+        };
+        for event in events {
+            let Ok(payload) = serde_json::from_str::<serde_json::Value>(&event.event_json) else {
+                status.last_error = Some(format!(
+                    "failed to parse plugin execution payload for {}",
+                    event.event_id
+                ));
+                continue;
+            };
+            if let Some(executions) = payload
+                .get("plugin_executions")
+                .and_then(serde_json::Value::as_array)
+            {
+                for execution in executions {
+                    if execution
+                        .get("plugin_id")
+                        .and_then(serde_json::Value::as_str)
+                        != Some(plugin_id)
+                    {
+                        continue;
+                    }
+                    let stage = execution
+                        .get("stage")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("unknown");
+                    if !seen_executions
+                        .insert((event.event_id.clone(), format!("{plugin_id}:{stage}")))
+                    {
+                        continue;
+                    }
+                    status.execution_count += 1;
+                    if execution
+                        .get("applied")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false)
+                    {
+                        status.applied_count += 1;
+                    } else {
+                        status.skipped_count += 1;
+                    }
+                    let duration_us = execution
+                        .get("duration_us")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(0);
+                    status.total_duration_us = status.total_duration_us.saturating_add(duration_us);
+                    status.max_duration_us = status.max_duration_us.max(duration_us);
+                }
+            }
+            if let Some(detections) = payload
+                .get("detections")
+                .and_then(serde_json::Value::as_array)
+            {
+                for detection in detections {
+                    if detection.get("source").and_then(serde_json::Value::as_str) != Some("plugin")
+                        || detection
+                            .get("plugin_id")
+                            .and_then(serde_json::Value::as_str)
+                            != Some(plugin_id)
+                    {
+                        continue;
+                    }
+                    if seen_detections.insert((event.event_id.clone(), plugin_id.to_string())) {
+                        status.detection_count += 1;
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn hydrate_credential_broker_runtime(
+    state: &ServiceState,
+    profile_id: &str,
+    status: &mut PluginRuntimeStatus,
+) {
+    let mut credentials: BTreeMap<(Option<String>, String), BrokeredCredentialStatus> =
+        BTreeMap::new();
+    for (vm_id, session_dir) in profile_session_dirs(state, profile_id) {
+        let db_path = session_dir.join("session.db");
+        if !db_path.exists() {
+            continue;
+        }
+        let reader = match capsem_logger::DbReader::open(&db_path) {
+            Ok(reader) => reader,
+            Err(error) => {
+                status.last_error = Some(format!("failed to open session DB for {vm_id}: {error}"));
+                continue;
+            }
+        };
+        let rows = match reader.brokered_credential_stats() {
+            Ok(rows) => rows,
+            Err(error) => {
+                status.last_error = Some(format!(
+                    "failed to read credential broker rows for {vm_id}: {error}"
+                ));
+                continue;
+            }
+        };
+        for row in rows {
+            status.event_count += row.observed_count;
+            status.rewrite_count += row.injected_count;
+            let key = (row.provider.clone(), row.credential_ref.clone());
+            let replay_available =
+                capsem_core::credential_broker::broker_reference_replay_available(
+                    row.provider.as_deref(),
+                    &row.credential_ref,
+                );
+            credentials
+                .entry(key)
+                .and_modify(|existing| {
+                    existing.observed_count += row.observed_count;
+                    existing.injected_count += row.injected_count;
+                    existing.replay_available |= replay_available;
+                    if row.last_seen.as_deref() > existing.last_seen.as_deref() {
+                        existing.last_seen = row.last_seen.clone();
+                    }
+                })
+                .or_insert(BrokeredCredentialStatus {
+                    provider: row.provider,
+                    credential_ref: row.credential_ref,
+                    observed_count: row.observed_count,
+                    injected_count: row.injected_count,
+                    replay_available,
+                    last_seen: row.last_seen,
+                });
+        }
+    }
+    let mut values: Vec<_> = credentials.into_values().collect();
+    values.sort_by(|left, right| right.last_seen.cmp(&left.last_seen));
+    status.brokered_credentials = values;
+}
+
+async fn handle_profile_plugins(
+    State(state): State<Arc<ServiceState>>,
+    Path(profile_id): Path<String>,
+) -> Result<Json<PluginListResponse>, AppError> {
+    list_plugins_for_scope(&state, profile_plugin_scope(profile_id)?)
+}
+
+async fn handle_profile_plugins_info(
+    State(state): State<Arc<ServiceState>>,
+    Path(profile_id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let scope = profile_plugin_scope(profile_id)?;
+    let plugins = effective_plugin_policy(&state, &scope.profile_id);
+    Ok(Json(json!({
+        "scope": scope,
+        "plugin_count": plugins.len(),
+        "enabled_count": plugins
+            .values()
+            .filter(|config| config.mode != SecurityPluginMode::Disable)
+            .count(),
+    })))
+}
+
+async fn handle_profile_credential_broker_credentials_info(
+    State(state): State<Arc<ServiceState>>,
+    Path(profile_id): Path<String>,
+) -> Result<Json<CredentialBrokerDetailResponse>, AppError> {
+    let scope = profile_plugin_scope(profile_id)?;
+    let config = effective_plugin_policy(&state, &scope.profile_id)
+        .get("credential_broker")
+        .copied()
+        .unwrap_or_else(|| default_plugin_config(SecurityPluginMode::Rewrite));
+    let runtime = plugin_runtime_status(&state, &scope.profile_id, "credential_broker", config);
+    Ok(Json(CredentialBrokerDetailResponse {
+        scope,
+        plugin_id: "credential_broker",
+        store: capsem_core::credential_broker::credential_store_status(),
+        inventory: runtime.brokered_credentials,
+        grants: CredentialBrokerGrantStatus {
+            profile_enabled: config.mode != SecurityPluginMode::Disable,
+            vm_grants: Vec::new(),
+            fork_default: CredentialBrokerForkGrantDefault::InheritProfile,
+        },
+        corp_constraints: Vec::new(),
+    }))
+}
+
+async fn handle_profile_credential_broker_credentials_reload(
+    State(state): State<Arc<ServiceState>>,
+    Path(profile_id): Path<String>,
+) -> Result<Json<CredentialBrokerDetailResponse>, AppError> {
+    let profile_id = validate_profile_route_id(profile_id)?;
+    match capsem_core::credential_broker::hydrate_credential_runtime_cache_from_durable_store() {
+        Ok(count) => info!(
+            component = "credential_store",
+            profile_id = profile_id.as_str(),
+            loaded_count = count,
+            status = "ready",
+            "credential store retry hydrated runtime cache"
+        ),
+        Err(error) => warn!(
+            component = "credential_store",
+            profile_id = profile_id.as_str(),
+            error = %error,
+            status = "degraded",
+            "credential store retry failed"
+        ),
+    }
+    handle_profile_credential_broker_credentials_info(State(state), Path(profile_id)).await
+}
+
+fn list_plugins_for_scope(
+    state: &Arc<ServiceState>,
+    scope: PluginScope,
+) -> Result<Json<PluginListResponse>, AppError> {
+    let mut plugins = Vec::new();
+    for plugin_id in plugin_catalog().keys() {
+        plugins.push(plugin_info_for(state, plugin_id, scope.clone())?);
+    }
+    Ok(Json(PluginListResponse { scope, plugins }))
+}
+
+async fn handle_profile_plugin_info(
+    State(state): State<Arc<ServiceState>>,
+    Path((profile_id, plugin_id)): Path<(String, String)>,
+) -> Result<Json<PluginInfo>, AppError> {
+    Ok(Json(plugin_info_for(
+        &state,
+        &plugin_id,
+        profile_plugin_scope(profile_id)?,
+    )?))
+}
+
+async fn handle_profile_plugin_update(
+    State(state): State<Arc<ServiceState>>,
+    Path((profile_id, plugin_id)): Path<(String, String)>,
+    Json(update): Json<PluginUpdate>,
+) -> Result<Json<PluginInfo>, AppError> {
+    let scope = profile_plugin_scope(profile_id)?;
+    let info = update_plugin_for_scope(&state, plugin_id, scope.clone(), update)?;
+    let _reload =
+        handle_reload_config_for_profile(Arc::clone(&state), Some(&scope.profile_id)).await?;
+    Ok(info)
+}
+
+fn update_plugin_for_scope(
+    state: &Arc<ServiceState>,
+    plugin_id: String,
+    scope: PluginScope,
+    update: PluginUpdate,
+) -> Result<Json<PluginInfo>, AppError> {
+    let catalog = plugin_catalog();
+    let Some(catalog_entry) = catalog.get(&plugin_id).copied() else {
+        return Err(AppError(
+            StatusCode::NOT_FOUND,
+            format!("unknown plugin: {plugin_id}"),
+        ));
+    };
+    let mut config = effective_plugin_policy(state, &scope.profile_id)
+        .get(&plugin_id)
+        .copied()
+        .unwrap_or(catalog_entry.default_config);
+    if let Some(mode) = update.mode {
+        config.mode = mode;
+    }
+    if let Some(detection_level) = update.detection_level {
+        config.detection_level = detection_level;
+    }
+    state
+        .plugin_policy_by_profile
+        .lock()
+        .unwrap()
+        .entry(scope.profile_id.clone())
+        .or_default()
+        .insert(plugin_id.clone(), config);
+    Ok(Json(plugin_info_for(state, &plugin_id, scope)?))
+}
+
+#[derive(Debug, Default)]
+struct ServiceEvaluateEmitter;
+
+impl SecurityEventEmitter for ServiceEvaluateEmitter {
+    fn emit(&self, _event: SecurityEvent) -> Result<(), SecurityEmitError> {
+        Ok(())
+    }
+}
+
+async fn handle_enforcement_evaluate(
+    State(state): State<Arc<ServiceState>>,
+    Path(profile_id): Path<String>,
+    Json(request): Json<EnforcementEvaluateRequest>,
+) -> Result<Json<EnforcementEvaluateResponse>, AppError> {
+    let profile_id = validate_profile_route_id(profile_id)?;
+    let profile = SecurityRuleProfile::parse_toml(&request.rules_toml).map_err(|error| {
+        AppError(
+            StatusCode::BAD_REQUEST,
+            format!("invalid enforcement rules: {error}"),
+        )
+    })?;
+    let rules =
+        SecurityRuleProfile::compile(&profile, SecurityRuleSource::User).map_err(|error| {
+            AppError(
+                StatusCode::BAD_REQUEST,
+                format!("invalid enforcement rules: {error}"),
+            )
+        })?;
+    let rule_set = SecurityRuleSet::new(rules);
+    let event = request.event.into_security_event()?;
+    let policy = effective_plugin_policy(&state, &profile_id);
+    let engine = SecurityEventEngine::new(
+        SecurityActionRegistry::with_builtin_actions().with_plugin_policy(policy),
+        Arc::new(ServiceEvaluateEmitter),
+    );
+    let event = engine
+        .apply_matching_rules_and_emit(&rule_set, event)
+        .map_err(|error| {
+            AppError(
+                StatusCode::BAD_REQUEST,
+                format!("enforcement evaluation failed: {error}"),
+            )
+        })?;
+    Ok(Json(EnforcementEvaluateResponse {
+        event: event.serializable(),
+    }))
+}
+
+async fn handle_detection_evaluate(
+    State(state): State<Arc<ServiceState>>,
+    Path(profile_id): Path<String>,
+    Json(request): Json<EnforcementEvaluateRequest>,
+) -> Result<Json<EnforcementEvaluateResponse>, AppError> {
+    handle_enforcement_evaluate(State(state), Path(profile_id), Json(request)).await
+}
+
+fn enforcement_rule_source(source: SecurityRuleSource) -> api::EnforcementRuleSource {
+    match source {
+        SecurityRuleSource::BuiltinDefault => api::EnforcementRuleSource::BuiltinDefault,
+        SecurityRuleSource::User => api::EnforcementRuleSource::Profile,
+        SecurityRuleSource::Corp => api::EnforcementRuleSource::Corp,
+    }
+}
+
+fn enforcement_rule_source_str(source: api::EnforcementRuleSource) -> &'static str {
+    match source {
+        api::EnforcementRuleSource::BuiltinDefault => "builtin_default",
+        api::EnforcementRuleSource::Profile => "profile",
+        api::EnforcementRuleSource::Corp => "corp",
+    }
+}
+
+fn enforcement_rule_info(
+    source: SecurityRuleSource,
+    rule: CompiledSecurityRule,
+) -> api::EnforcementRuleInfo {
+    api::EnforcementRuleInfo {
+        rule_id: rule.rule_id,
+        source: enforcement_rule_source(source),
+        provider: rule.provider,
+        namespace: rule.namespace,
+        rule_key: rule.rule_key,
+        default_rule: rule.default_rule,
+        enabled: rule.enabled,
+        name: rule.name,
+        action: rule.action,
+        condition: rule.condition,
+        detection_level: rule.detection_level,
+        priority: rule.priority,
+        corp_locked: rule.corp_locked,
+        reason: rule.reason,
+    }
+}
+
+fn append_compiled_rules(
+    output: &mut Vec<api::EnforcementRuleInfo>,
+    source: SecurityRuleSource,
+    profile: SecurityRuleProfile,
+) -> Result<(), AppError> {
+    let mut rules = profile.compile(source).map_err(|error| {
+        AppError(
+            StatusCode::BAD_REQUEST,
+            format!("invalid enforcement rules: {error}"),
+        )
+    })?;
+    output.extend(
+        rules
+            .drain(..)
+            .map(|rule| enforcement_rule_info(source, rule)),
+    );
+    Ok(())
+}
+
+fn profile_security_rule_profile_for_route(
+    profile_id: &str,
+) -> Result<SecurityRuleProfile, AppError> {
+    let profile = profile_for_route(profile_id.to_string())?;
+    profile
+        .config()
+        .security_rule_profile_from_files(profile.config_root())
+        .map_err(|error| {
+            AppError(
+                StatusCode::BAD_REQUEST,
+                format!("invalid profile rule files for {profile_id}: {error}"),
+            )
+        })
+}
+
+fn list_enforcement_rules_for_profile(
+    profile_id: &str,
+    corp: &SettingsFile,
+) -> Result<Vec<api::EnforcementRuleInfo>, AppError> {
+    let mut rules = Vec::new();
+    append_compiled_rules(
+        &mut rules,
+        SecurityRuleSource::BuiltinDefault,
+        ProviderRuleProfile::builtin_security_defaults(),
+    )?;
+    let profile_rules = profile_security_rule_profile_for_route(profile_id)?;
+    append_compiled_rules(&mut rules, SecurityRuleSource::User, profile_rules)?;
+    append_compiled_rules(
+        &mut rules,
+        SecurityRuleSource::Corp,
+        SecurityRuleProfile {
+            corp: corp.corp.clone(),
+            profiles: corp.profiles.clone(),
+            ai: corp.ai.clone(),
+            ..SecurityRuleProfile::default()
+        },
+    )?;
+    rules.sort_by(|left, right| {
+        left.priority
+            .cmp(&right.priority)
+            .then_with(|| left.rule_id.cmp(&right.rule_id))
+    });
+    Ok(rules)
+}
+
+fn list_detection_rules_for_profile(
+    profile_id: &str,
+    corp: &SettingsFile,
+) -> Result<Vec<api::DetectionRuleInfo>, AppError> {
+    Ok(list_enforcement_rules_for_profile(profile_id, corp)?
+        .into_iter()
+        .filter(|rule| rule.detection_level.is_some())
+        .collect())
+}
+
+fn enforcement_info_for_rules(
+    profile_id: String,
+    rules: &[api::EnforcementRuleInfo],
+) -> api::EnforcementInfoResponse {
+    let mut source_counts = BTreeMap::new();
+    let mut action_counts = BTreeMap::new();
+    for rule in rules {
+        *source_counts
+            .entry(enforcement_rule_source_str(rule.source).to_string())
+            .or_insert(0) += 1;
+        *action_counts
+            .entry(rule.action.as_str().to_string())
+            .or_insert(0) += 1;
+    }
+    api::EnforcementInfoResponse {
+        profile_id,
+        rule_count: rules.len(),
+        default_rule_count: rules.iter().filter(|rule| rule.default_rule).count(),
+        custom_rule_count: rules.iter().filter(|rule| !rule.default_rule).count(),
+        detection_rule_count: rules
+            .iter()
+            .filter(|rule| rule.detection_level.is_some())
+            .count(),
+        corp_locked_rule_count: rules.iter().filter(|rule| rule.corp_locked).count(),
+        source_counts,
+        action_counts,
+    }
+}
+
+async fn handle_enforcement_info(
+    Path(profile_id): Path<String>,
+) -> Result<Json<api::EnforcementInfoResponse>, AppError> {
+    let profile_id = validate_profile_route_id(profile_id)?;
+    let (_, corp) = capsem_core::net::policy_config::load_settings_and_corp_files();
+    let rules = list_enforcement_rules_for_profile(&profile_id, &corp)?;
+    Ok(Json(enforcement_info_for_rules(profile_id, &rules)))
+}
+
+async fn handle_detection_info(
+    Path(profile_id): Path<String>,
+) -> Result<Json<api::DetectionInfoResponse>, AppError> {
+    let profile_id = validate_profile_route_id(profile_id)?;
+    let (_, corp) = capsem_core::net::policy_config::load_settings_and_corp_files();
+    let rules = list_detection_rules_for_profile(&profile_id, &corp)?;
+    Ok(Json(enforcement_info_for_rules(profile_id, &rules)))
+}
+
+async fn handle_enforcement_rules_list(
+    Path(profile_id): Path<String>,
+) -> Result<Json<api::EnforcementRuleListResponse>, AppError> {
+    let profile_id = validate_profile_route_id(profile_id)?;
+    let (_, corp) = capsem_core::net::policy_config::load_settings_and_corp_files();
+    Ok(Json(api::EnforcementRuleListResponse {
+        rules: list_enforcement_rules_for_profile(&profile_id, &corp)?,
+        profile_id,
+    }))
+}
+
+async fn handle_detection_rules_list(
+    Path(profile_id): Path<String>,
+) -> Result<Json<api::DetectionRuleListResponse>, AppError> {
+    let profile_id = validate_profile_route_id(profile_id)?;
+    let (_, corp) = capsem_core::net::policy_config::load_settings_and_corp_files();
+    Ok(Json(api::DetectionRuleListResponse {
+        rules: list_detection_rules_for_profile(&profile_id, &corp)?,
+        profile_id,
+    }))
+}
+
+async fn handle_enforcement_rule_upsert(
+    State(state): State<Arc<ServiceState>>,
+    Path((profile_id, rule_id)): Path<(String, String)>,
+    Json(rule): Json<SecurityRule>,
+) -> Result<Json<EnforcementRuleResponse>, AppError> {
+    log_profile_mutation_route_request(
+        "enforcement_rule_upsert",
+        &profile_id,
+        "rule",
+        &rule_id,
+        "upsert",
+    );
+    if rule.corp_locked {
+        log_profile_mutation_route_rejected(
+            "enforcement_rule_upsert",
+            &profile_id,
+            "rule",
+            &rule_id,
+            "upsert",
+            "enforcement rule endpoint writes user profile rules only; corp_locked rules must come from corp config",
+        );
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            "enforcement rule endpoint writes user profile rules only; corp_locked rules must come from corp config"
+                .to_string(),
+        ));
+    }
+    let compiled = validate_single_user_profile_rule(&rule_id, &rule).inspect_err(|error| {
+        log_profile_mutation_route_rejected(
+            "enforcement_rule_upsert",
+            &profile_id,
+            "rule",
+            &rule_id,
+            "upsert",
+            &error.1,
+        );
+    })?;
+    let mut profile = profile_for_route(profile_id.clone()).inspect_err(|error| {
+        log_profile_mutation_route_rejected(
+            "enforcement_rule_upsert",
+            &profile_id,
+            "rule",
+            &rule_id,
+            "upsert",
+            &error.1,
+        );
+    })?;
+    let summary = profile
+        .upsert_profile_rule(&rule_id, rule.clone(), "service-api")
+        .map_err(|error| {
+            log_profile_mutation_route_rejected(
+                "enforcement_rule_upsert",
+                &profile_id,
+                "rule",
+                &rule_id,
+                "upsert",
+                &error,
+            );
+            AppError(StatusCode::BAD_REQUEST, error)
+        })?;
+    let event = write_profile_mutation_event(&state, summary).await?;
+    log_profile_mutation_applied("enforcement_rule_upsert", &event);
+    Ok(Json(EnforcementRuleResponse {
+        rule_id,
+        compiled_rule_id: compiled.rule_id,
+        rule,
+    }))
+}
+
+async fn handle_detection_rule_upsert(
+    State(state): State<Arc<ServiceState>>,
+    Path((profile_id, rule_id)): Path<(String, String)>,
+    Json(rule): Json<SecurityRule>,
+) -> Result<Json<EnforcementRuleResponse>, AppError> {
+    log_profile_mutation_route_request(
+        "detection_rule_upsert",
+        &profile_id,
+        "rule",
+        &rule_id,
+        "upsert",
+    );
+    if rule.detection_level.is_none() {
+        log_profile_mutation_route_rejected(
+            "detection_rule_upsert",
+            &profile_id,
+            "rule",
+            &rule_id,
+            "upsert",
+            "detection rule endpoint requires detection_level",
+        );
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            "detection rule endpoint requires detection_level".to_string(),
+        ));
+    }
+    if rule.corp_locked {
+        log_profile_mutation_route_rejected(
+            "detection_rule_upsert",
+            &profile_id,
+            "rule",
+            &rule_id,
+            "upsert",
+            "detection rule endpoint writes user profile rules only; corp_locked rules must come from corp config",
+        );
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            "detection rule endpoint writes user profile rules only; corp_locked rules must come from corp config"
+                .to_string(),
+        ));
+    }
+    let compiled = validate_single_user_profile_rule(&rule_id, &rule).inspect_err(|error| {
+        log_profile_mutation_route_rejected(
+            "detection_rule_upsert",
+            &profile_id,
+            "rule",
+            &rule_id,
+            "upsert",
+            &error.1,
+        );
+    })?;
+    let mut profile = profile_for_route(profile_id.clone()).inspect_err(|error| {
+        log_profile_mutation_route_rejected(
+            "detection_rule_upsert",
+            &profile_id,
+            "rule",
+            &rule_id,
+            "upsert",
+            &error.1,
+        );
+    })?;
+    let summary = profile
+        .upsert_profile_rule(&rule_id, rule.clone(), "service-api")
+        .map_err(|error| {
+            log_profile_mutation_route_rejected(
+                "detection_rule_upsert",
+                &profile_id,
+                "rule",
+                &rule_id,
+                "upsert",
+                &error,
+            );
+            AppError(StatusCode::BAD_REQUEST, error)
+        })?;
+    let event = write_profile_mutation_event(&state, summary).await?;
+    log_profile_mutation_applied("detection_rule_upsert", &event);
+    Ok(Json(EnforcementRuleResponse {
+        rule_id,
+        compiled_rule_id: compiled.rule_id,
+        rule,
+    }))
+}
+
+async fn handle_enforcement_rule_delete(
+    State(state): State<Arc<ServiceState>>,
+    Path((profile_id, rule_id)): Path<(String, String)>,
+) -> Result<Json<EnforcementRuleDeleteResponse>, AppError> {
+    log_profile_mutation_route_request(
+        "enforcement_rule_delete",
+        &profile_id,
+        "rule",
+        &rule_id,
+        "delete",
+    );
+    let mut profile = profile_for_route(profile_id.clone()).inspect_err(|error| {
+        log_profile_mutation_route_rejected(
+            "enforcement_rule_delete",
+            &profile_id,
+            "rule",
+            &rule_id,
+            "delete",
+            &error.1,
+        );
+    })?;
+    let summary = profile
+        .delete_profile_rule(&rule_id, "service-api")
+        .map_err(|error| {
+            let status = if error.contains("not found") {
+                StatusCode::NOT_FOUND
+            } else {
+                StatusCode::BAD_REQUEST
+            };
+            log_profile_mutation_route_rejected(
+                "enforcement_rule_delete",
+                &profile_id,
+                "rule",
+                &rule_id,
+                "delete",
+                &error,
+            );
+            AppError(status, error)
+        })?;
+    let event = write_profile_mutation_event(&state, summary).await?;
+    log_profile_mutation_applied("enforcement_rule_delete", &event);
+    Ok(Json(EnforcementRuleDeleteResponse {
+        rule_id,
+        deleted: true,
+    }))
+}
+
+async fn handle_detection_rule_delete(
+    State(state): State<Arc<ServiceState>>,
+    Path((profile_id, rule_id)): Path<(String, String)>,
+) -> Result<Json<EnforcementRuleDeleteResponse>, AppError> {
+    log_profile_mutation_route_request(
+        "detection_rule_delete",
+        &profile_id,
+        "rule",
+        &rule_id,
+        "delete",
+    );
+    let mut profile = profile_for_route(profile_id.clone()).inspect_err(|error| {
+        log_profile_mutation_route_rejected(
+            "detection_rule_delete",
+            &profile_id,
+            "rule",
+            &rule_id,
+            "delete",
+            &error.1,
+        );
+    })?;
+    let summary = profile
+        .delete_profile_rule(&rule_id, "service-api")
+        .map_err(|error| {
+            let status = if error.contains("not found") {
+                StatusCode::NOT_FOUND
+            } else {
+                StatusCode::BAD_REQUEST
+            };
+            log_profile_mutation_route_rejected(
+                "detection_rule_delete",
+                &profile_id,
+                "rule",
+                &rule_id,
+                "delete",
+                &error,
+            );
+            AppError(status, error)
+        })?;
+    let event = write_profile_mutation_event(&state, summary).await?;
+    log_profile_mutation_applied("detection_rule_delete", &event);
+    Ok(Json(EnforcementRuleDeleteResponse {
+        rule_id,
+        deleted: true,
+    }))
+}
+
+async fn handle_enforcement_reload(
+    State(state): State<Arc<ServiceState>>,
+    Path(profile_id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let _profile_id = validate_profile_route_id(profile_id)?;
+    handle_reload_config(State(state)).await
+}
+
+async fn handle_detection_reload(
+    State(state): State<Arc<ServiceState>>,
+    Path(profile_id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    handle_enforcement_reload(State(state), Path(profile_id)).await
+}
+
+fn validate_single_user_profile_rule(
+    rule_id: &str,
+    rule: &SecurityRule,
+) -> Result<capsem_core::net::policy_config::CompiledSecurityRule, AppError> {
+    let profile = SecurityRuleProfile {
+        profiles: SecurityRuleGroup {
+            rules: BTreeMap::from([(rule_id.to_string(), rule.clone())]),
+        },
+        ..SecurityRuleProfile::default()
+    };
+    let mut compiled = profile.compile(SecurityRuleSource::User).map_err(|error| {
+        AppError(
+            StatusCode::BAD_REQUEST,
+            format!("invalid enforcement rule: {error}"),
+        )
+    })?;
+    compiled.pop().ok_or_else(|| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "valid enforcement rule did not compile".to_string(),
+        )
+    })
+}
+
+impl EnforcementEventInput {
+    fn into_security_event(self) -> Result<SecurityEvent, AppError> {
+        match self.event_type.as_str() {
+            "file.import" => Ok(SecurityEvent::new(RuntimeSecurityEventType::FileImport)
+                .with_file(FileSecurityEvent {
+                    import_content: self.file_import_content,
+                    ..Default::default()
+                })),
+            "http.request" => Ok(SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
+                .with_http(capsem_core::security_engine::HttpSecurityEvent {
+                    host: self.http_host,
+                    ..Default::default()
+                })),
+            other => Err(AppError(
+                StatusCode::BAD_REQUEST,
+                format!("unsupported enforcement event_type: {other}"),
+            )),
+        }
+    }
 }
 
 #[derive(Deserialize, Debug, Default)]
@@ -11166,7 +7671,7 @@ fn resolve_session_dir(state: &ServiceState, id: &str) -> Result<PathBuf, AppErr
     ))
 }
 
-/// GET /history/{id} -- unified command history (exec + audit events).
+/// GET /vms/{id}/history -- unified command history (exec + audit events).
 async fn handle_history(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
@@ -11204,7 +7709,7 @@ async fn handle_history(
     }))
 }
 
-/// GET /history/{id}/processes -- process-centric view of audit events.
+/// GET /vms/{id}/history/processes -- process-centric view of audit events.
 async fn handle_history_processes(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
@@ -11229,7 +7734,7 @@ async fn handle_history_processes(
     Ok(Json(api::HistoryProcessesResponse { processes }))
 }
 
-/// GET /history/{id}/counts -- exec and audit event counts.
+/// GET /vms/{id}/history/counts -- exec and audit event counts.
 async fn handle_history_counts(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
@@ -11257,7 +7762,7 @@ async fn handle_history_counts(
     }))
 }
 
-/// GET /history/{id}/transcript -- raw PTY output (base64-encoded).
+/// GET /vms/{id}/history/transcript -- raw PTY output (base64-encoded).
 async fn handle_history_transcript(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
@@ -11288,7 +7793,7 @@ async fn handle_history_transcript(
     }))
 }
 
-/// Acquire the host-wide VZ save/restore flock (`startup::VzHostLock`)
+/// Acquire the host-wide VZ lifecycle flock (`startup::VzHostLock`)
 /// from an async context. The underlying `flock(2)` syscall is blocking
 /// and can wait on a sibling service; wrap in `spawn_blocking` so we
 /// don't stall a tokio worker.
@@ -11297,9 +7802,11 @@ async fn handle_history_transcript(
 /// test load observed is ~15s, so 60s absorbs the typical p99. Returning
 /// 503 on timeout tells the caller "try again" instead of blocking
 /// indefinitely.
-async fn acquire_vz_host_lock() -> Result<startup::VzHostLock, AppError> {
-    let result = tokio::task::spawn_blocking(|| {
-        startup::VzHostLock::acquire(std::time::Duration::from_secs(60))
+async fn acquire_vz_host_lock(
+    mode: startup::VzHostLockMode,
+) -> Result<startup::VzHostLock, AppError> {
+    let result = tokio::task::spawn_blocking(move || {
+        startup::VzHostLock::acquire(mode, std::time::Duration::from_secs(60))
     })
     .await
     .map_err(|e| {
@@ -11379,7 +7886,13 @@ async fn shutdown_vm_process(
     state: &ServiceState,
     id: &str,
     graceful: bool,
-) -> Option<(PathBuf, bool, u32)> {
+) -> Result<Option<(PathBuf, bool, u32)>, AppError> {
+    // Teardown must not overlap save_state/restore_state, but it does not
+    // need to block independent cold starts. Take the shared lifecycle rail
+    // before shutdown bookkeeping so save/restore still gets a clean edge.
+    let _vz_guard = state.save_restore_lock.read().await;
+    let _vz_host_guard = acquire_vz_host_lock(startup::VzHostLockMode::Shared).await?;
+
     // Serialize VM teardown across the service. Concurrent deletes under
     // load starve each other: VZ guest teardown + DbWriter WAL checkpoint +
     // socket cleanup all compete, and a single shutdown can exceed the 1s
@@ -11391,7 +7904,9 @@ async fn shutdown_vm_process(
 
     let (uds_path, session_dir, pid, persistent) = {
         let instances = state.instances.lock().unwrap();
-        let i = instances.get(id)?;
+        let Some(i) = instances.get(id) else {
+            return Ok(None);
+        };
         (
             i.uds_path.clone(),
             i.session_dir.clone(),
@@ -11457,7 +7972,7 @@ async fn shutdown_vm_process(
     let _ = std::fs::remove_file(&uds_path);
     let _ = std::fs::remove_file(uds_path.with_extension("ready"));
 
-    Some((session_dir, persistent, pid))
+    Ok(Some((session_dir, persistent, pid)))
 }
 
 #[tracing::instrument(skip_all, fields(vm_id = %id))]
@@ -11469,10 +7984,10 @@ async fn handle_suspend(
     // save_state / restore_state calls overlap. Serialize across all VMs
     // managed by this service. Held for the whole handler; released when
     // the child has exited and the checkpoint is durable.
-    let _vz_guard = state.save_restore_lock.lock().await;
+    let _vz_guard = state.save_restore_lock.write().await;
     // Plus a host-wide flock so serialization survives pytest-xdist's
     // per-worker `capsem-service` processes. See `VzHostLock`.
-    let _vz_host_guard = acquire_vz_host_lock().await?;
+    let _vz_host_guard = acquire_vz_host_lock(startup::VzHostLockMode::Exclusive).await?;
 
     let (uds_path, pid) = {
         let mut instances = state.instances.lock().unwrap();
@@ -11521,7 +8036,7 @@ async fn handle_suspend(
             )
         })?;
 
-    let checkpoint_path = "checkpoint.vzsave".to_string();
+    let checkpoint_path = RESUME_CHECKPOINT_NAME.to_string();
     tx.send(ServiceToProcess::Suspend { checkpoint_path })
         .await
         .map_err(|e| {
@@ -11536,7 +8051,7 @@ async fn handle_suspend(
     // a subsequent resume request fails with permission denied because the old process
     // hasn't released the checkpoint file yet.
     let mut suspended = false;
-    let _ = tokio::time::timeout(SUSPEND_CONFIRM_TIMEOUT, async {
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(15), async {
         while let Ok(msg) = rx.recv().await {
             if let ProcessToService::StateChanged { state, .. } = msg {
                 if state == "Suspended" {
@@ -11595,7 +8110,7 @@ async fn handle_suspend(
         let mut registry = state.persistent_registry.lock().unwrap();
         if let Some(entry) = registry.get_mut(&id) {
             entry.suspended = true;
-            entry.checkpoint_path = Some("checkpoint.vzsave".to_string());
+            entry.checkpoint_path = Some(RESUME_CHECKPOINT_NAME.to_string());
             if let Err(e) = registry.save() {
                 error!(id, "failed to save persistent registry: {e}");
             }
@@ -11613,7 +8128,7 @@ async fn handle_stop(
     // socket inline -- when it returns, resume can immediately reuse the
     // path without a SO_REUSEADDR-style race. Graceful so persistent VMs
     // get bash history + filesystem sync before teardown.
-    if let Some((session_dir, persistent, _pid)) = shutdown_vm_process(&state, &id, true).await {
+    if let Some((session_dir, persistent, _pid)) = shutdown_vm_process(&state, &id, true).await? {
         if !persistent {
             let dir = session_dir;
             tokio::task::spawn_blocking(move || {
@@ -11636,7 +8151,7 @@ async fn handle_delete(
     // Delete fast-paths through SIGTERM + 1s poll: session dir is about
     // to be removed, guest sync() and bash history don't matter.
     let session_dir =
-        if let Some((session_dir, _, _pid)) = shutdown_vm_process(&state, &id, false).await {
+        if let Some((session_dir, _, _pid)) = shutdown_vm_process(&state, &id, false).await? {
             session_dir
         } else {
             // Not running -- check persistent registry for stopped VM
@@ -11686,8 +8201,8 @@ async fn handle_resume(
     // freshly spawned capsem-process's boot, so the lock must bridge the
     // spawn and the readiness sentinel for a sibling save_state not to
     // overlap with the restoreMachineStateFromURL call.
-    let _vz_guard = state.save_restore_lock.lock().await;
-    let _vz_host_guard = acquire_vz_host_lock().await?;
+    let _vz_guard = state.save_restore_lock.write().await;
+    let _vz_host_guard = acquire_vz_host_lock(startup::VzHostLockMode::Exclusive).await?;
 
     let attempted_checkpoint = state.has_existing_resume_checkpoint(&name);
 
@@ -11722,12 +8237,10 @@ async fn handle_resume(
                                 ));
                             }
                             state.clear_resume_checkpoint(&cold_id);
-                            return Ok(Json(provision_response_for_instance(
-                                &state,
-                                cold_id,
-                                cold_uds_path,
-                                None,
-                            )));
+                            return Ok(Json(ProvisionResponse {
+                                id: cold_id,
+                                uds_path: Some(cold_uds_path),
+                            }));
                         }
                         Err(cold_e) => {
                             error!(
@@ -11749,9 +8262,10 @@ async fn handle_resume(
                 ));
             }
             state.clear_resume_checkpoint(&id);
-            Ok(Json(provision_response_for_instance(
-                &state, id, uds_path, None,
-            )))
+            Ok(Json(ProvisionResponse {
+                id,
+                uds_path: Some(uds_path),
+            }))
         }
         Err(e) => {
             error!(name, "resume failed: {e}");
@@ -11783,7 +8297,18 @@ async fn handle_persist(
     }
 
     // Find the running ephemeral instance
-    let (old_session_dir, ram_mb, cpus, base_version, forked_from, env, base_assets, profile_pin) = {
+    let (
+        old_session_dir,
+        profile_id,
+        profile_revision,
+        profile_payload_hash,
+        asset_pins,
+        ram_mb,
+        cpus,
+        base_version,
+        forked_from,
+        env,
+    ) = {
         let instances = state.instances.lock().unwrap();
         let i = instances
             .get(&id)
@@ -11796,20 +8321,28 @@ async fn handle_persist(
         }
         (
             i.session_dir.clone(),
+            i.profile_id.clone(),
+            i.profile_revision.clone(),
+            i.profile_payload_hash.clone(),
+            i.asset_pins.clone(),
             i.ram_mb,
             i.cpus,
             i.base_version.clone(),
             i.forked_from.clone(),
             i.env.clone(),
-            i.base_assets.clone(),
-            i.profile_pin.clone(),
         )
     };
-    ensure_required_vm_profile_pin(profile_pin.as_ref(), &format!("running VM \"{id}\""))
-        .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
-    let base_assets = source_pin_base_assets(&id, profile_pin.as_ref(), base_assets.as_ref())
-        .map(Some)
-        .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
+    let profile = state
+        .profile_config(&profile_id)
+        .map_err(|e| AppError(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
+    state
+        .validate_profile_pins(
+            &profile,
+            &profile_revision,
+            &profile_payload_hash,
+            &asset_pins,
+        )
+        .map_err(|e| AppError(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
 
     // Move session dir to persistent location
     let new_session_dir = state.run_dir.join("persistent").join(name);
@@ -11827,6 +8360,10 @@ async fn handle_persist(
         registry
             .register(PersistentVmEntry {
                 name: name.clone(),
+                profile_id: profile_id.clone(),
+                profile_revision: profile_revision.clone(),
+                profile_payload_hash: profile_payload_hash.clone(),
+                asset_pins: asset_pins.clone(),
                 ram_mb,
                 cpus,
                 base_version: base_version.clone(),
@@ -11845,8 +8382,6 @@ async fn handle_persist(
                 last_error: None,
                 checkpoint_path: None,
                 env: env.clone(),
-                base_assets: base_assets.clone(),
-                profile_pin: profile_pin.clone(),
             })
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
@@ -11859,6 +8394,10 @@ async fn handle_persist(
                 name.clone(),
                 InstanceInfo {
                     id: name.clone(),
+                    profile_id,
+                    profile_revision,
+                    profile_payload_hash,
+                    asset_pins,
                     pid: info.pid,
                     uds_path: info.uds_path,
                     session_dir: new_session_dir,
@@ -11869,8 +8408,6 @@ async fn handle_persist(
                     persistent: true,
                     env: info.env,
                     forked_from,
-                    base_assets,
-                    profile_pin,
                 },
             );
         }
@@ -11904,17 +8441,17 @@ async fn handle_purge(
             // Purge fast-paths for the same reason as delete: every VM
             // here is being destroyed, so the 2.5s graceful floor is pure
             // waste per VM. join_all still runs them concurrently.
-            if let Some((session_dir, _, _pid)) = shutdown_vm_process(state_ref, &id, false).await {
-                Some((id, session_dir, persistent))
-            } else {
-                None
-            }
+            shutdown_vm_process(state_ref, &id, false)
+                .await
+                .map(|result| result.map(|(session_dir, _, _pid)| (id, session_dir, persistent)))
         }
     }))
     .await;
 
-    for item in results.into_iter().flatten() {
-        let (id, session_dir, persistent) = item;
+    for result in results {
+        let Some((id, session_dir, persistent)) = result? else {
+            continue;
+        };
         if persistent {
             let mut registry = state.persistent_registry.lock().unwrap();
             let _ = registry.unregister(&id);
@@ -11930,40 +8467,29 @@ async fn handle_purge(
         }
     }
 
-    // `purge` must clear failed boot records even without `--all`; a
-    // defunct persistent VM cannot be resumed safely and otherwise stays
-    // visible forever after the user asks for cleanup.
-    {
-        let profile_catalog = load_vm_profile_catalog_snapshot(&state.service_settings);
-        let stopped_names: Vec<String> = {
+    // Default purge removes stopped defunct persistent VMs. `--all` broadens
+    // that to every stopped persistent VM after CLI confirmation.
+    let stopped_names: Vec<String> = {
+        let registry = state.persistent_registry.lock().unwrap();
+        let instances = state.instances.lock().unwrap();
+        registry
+            .list()
+            .filter(|e| !instances.contains_key(&e.name))
+            .filter(|e| payload.all || e.defunct)
+            .map(|e| e.name.clone())
+            .collect()
+    };
+    for name in &stopped_names {
+        let session_dir = {
             let registry = state.persistent_registry.lock().unwrap();
-            let instances = state.instances.lock().unwrap();
-            registry
-                .list()
-                .filter(|entry| {
-                    !instances.contains_key(&entry.name)
-                        && (payload.all
-                            || entry.defunct
-                            || vm_profile_status(entry.profile_pin.as_ref(), &profile_catalog)
-                                == VmProfileStatus::Corrupted)
-                })
-                .map(|e| e.name.clone())
-                .collect()
+            registry.get(name).map(|e| e.session_dir.clone())
         };
-        for name in &stopped_names {
-            let session_dir = {
-                let registry = state.persistent_registry.lock().unwrap();
-                registry.get(name).map(|e| e.session_dir.clone())
-            };
-            if let Some(dir) = session_dir {
-                tokio::task::spawn_blocking(move || {
-                    let _ = std::fs::remove_dir_all(&dir);
-                });
-            }
-            let mut registry = state.persistent_registry.lock().unwrap();
-            let _ = registry.unregister(name);
-            persistent_purged += 1;
+        if let Some(dir) = session_dir {
+            let _ = tokio::task::spawn_blocking(move || std::fs::remove_dir_all(&dir)).await;
         }
+        let mut registry = state.persistent_registry.lock().unwrap();
+        let _ = registry.unregister(name);
+        persistent_purged += 1;
     }
 
     let purged = ephemeral_purged + persistent_purged;
@@ -11979,15 +8505,23 @@ async fn handle_run(
     State(state): State<Arc<ServiceState>>,
     Json(payload): Json<RunRequest>,
 ) -> Result<Json<ExecResponse>, AppError> {
+    let profile_id = validate_profile_route_id(payload.profile_id.clone())?;
+    if let Some(reason) = vm_asset_block_reason(&state, &profile_id) {
+        return Err(AppError(StatusCode::PRECONDITION_FAILED, reason));
+    }
+
     let id = {
         let existing: Vec<String> = state.instances.lock().unwrap().keys().cloned().collect();
         generate_tmp_name(existing.iter().map(|s| s.as_str()))
     };
 
-    // Resolve ram/cpu from the selected profile VM settings if omitted.
-    let vm_defaults = state.resolve_vm_runtime_defaults_for(payload.profile_id.as_deref());
-    let ram_mb = payload.ram_mb.unwrap_or(vm_defaults.ram_mb);
-    let cpus = payload.cpus.unwrap_or(vm_defaults.cpus);
+    let profile = state
+        .profile_config(&profile_id)
+        .map_err(|e| AppError(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
+    let resources = resolve_profile_vm_resources(&profile, payload.ram_mb, payload.cpus);
+    let ram_mb = resources.ram_mb;
+    let cpus = resources.cpus;
+    let scratch_disk_size_gb = resources.scratch_disk_size_gb;
 
     let ram_bytes = ram_mb * 1024 * 1024;
     let session_dir = state.run_dir.join("sessions").join(&id);
@@ -11997,51 +8531,67 @@ async fn handle_run(
     // offload to the blocking pool, matching `handle_provision` -- the
     // tokio::process::Command::spawn inside still works because
     // spawn_blocking preserves the runtime handle via thread-locals.
-    state
-        .ensure_selected_profile_assets_ready(
-            payload.profile_id.as_deref(),
-            payload.profile_revision.as_deref(),
-        )
+    let state_clone = Arc::clone(&state);
+    let id_clone = id.clone();
+    let version = state.current_version.clone();
+    let env = payload.env.clone();
+    {
+        let _vz_guard = state.save_restore_lock.read().await;
+        let _vz_host_guard = acquire_vz_host_lock(startup::VzHostLockMode::Shared).await?;
+        let provision_result = tokio::task::spawn_blocking(move || {
+            state_clone.provision_sandbox(ProvisionOptions {
+                id: &id_clone,
+                profile_id,
+                ram_mb,
+                cpus,
+                scratch_disk_size_gb,
+                version_override: Some(version),
+                persistent: false,
+                env,
+                from: None,
+                description: None,
+            })
+        })
         .await
         .map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("provision task: {e}"),
+            )
+        })?;
+        provision_result.map_err(|e| {
             AppError(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("provision failed: {e}"),
             )
         })?;
-    let state_clone = Arc::clone(&state);
-    let id_clone = id.clone();
-    let version = state.current_version.clone();
-    let env = payload.env.clone();
-    let profile_id = payload.profile_id.clone();
-    let profile_revision = payload.profile_revision.clone();
-    let provision_result = tokio::task::spawn_blocking(move || {
-        state_clone.provision_sandbox(ProvisionOptions {
-            id: &id_clone,
-            ram_mb,
-            cpus,
-            version_override: Some(version),
-            persistent: false,
-            env,
-            from: None,
-            profile_id,
-            profile_revision,
-            description: None,
-        })
-    })
-    .await
-    .map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("provision task: {e}"),
-        )
-    })?;
-    provision_result.map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("provision failed: {e}"),
-        )
-    })?;
+
+        // 3. Wait for VM socket to appear while still holding the VZ
+        // lifecycle rail. The child does its Apple VZ start/restore before it
+        // writes the ready sentinel; releasing earlier reintroduces the
+        // sibling-service overlap this lock exists to prevent.
+        let uds_path = state.instance_socket_path(&id);
+        if let Err(e) = wait_for_vm_ready(&uds_path, 30, Some(&state), Some(&id)).await {
+            drop(_vz_host_guard);
+            drop(_vz_guard);
+            // Wait for the child to actually exit before renaming. Rename on
+            // an open-for-write dir is safe (fds survive) but any path-based
+            // reopens the child might do during shutdown (log rotation, db
+            // reopen) would ENOENT -- so we let it finish flushing first.
+            // shutdown_vm_process now blocks until exit (5s budget, SIGKILL
+            // fallback) and cleans the UDS socket inline. Graceful because
+            // preserve_failed_session_dir inspects session logs that capsem-process
+            // is still flushing.
+            let _ = shutdown_vm_process(&state, &id, true).await?;
+            let dir = session_dir;
+            let state_clone = Arc::clone(&state);
+            let id_owned = id.clone();
+            tokio::task::spawn_blocking(move || {
+                state_clone.preserve_failed_session_dir(&dir, &id_owned);
+            });
+            return Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, e));
+        }
+    }
 
     // 2. Register session in main.db
     let sessions_db_dir = state
@@ -12059,7 +8609,7 @@ async fn handle_run(
             status: "running".to_string(),
             created_at: capsem_core::session::now_iso(),
             stopped_at: None,
-            scratch_disk_size_gb: 0,
+            scratch_disk_size_gb,
             ram_bytes,
             total_requests: 0,
             allowed_requests: 0,
@@ -12085,26 +8635,7 @@ async fn handle_run(
         }
     }
 
-    // 3. Wait for VM socket to appear
     let uds_path = state.instance_socket_path(&id);
-    if let Err(e) = wait_for_vm_ready(&uds_path, 30, Some(&state), Some(&id)).await {
-        // Wait for the child to actually exit before renaming. Rename on
-        // an open-for-write dir is safe (fds survive) but any path-based
-        // reopens the child might do during shutdown (log rotation, db
-        // reopen) would ENOENT -- so we let it finish flushing first.
-        // shutdown_vm_process now blocks until exit (5s budget, SIGKILL
-        // fallback) and cleans the UDS socket inline. Graceful because
-        // preserve_failed_session_dir inspects session logs that capsem-process
-        // is still flushing.
-        let _ = shutdown_vm_process(&state, &id, true).await;
-        let dir = session_dir;
-        let state_clone = Arc::clone(&state);
-        let id_owned = id.clone();
-        tokio::task::spawn_blocking(move || {
-            state_clone.preserve_failed_session_dir(&dir, &id_owned);
-        });
-        return Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, e));
-    }
 
     // 4. Execute command
     let job_id = state.next_job_id();
@@ -12122,7 +8653,7 @@ async fn handle_run(
     // blocks until the process is actually gone -- the leak detector
     // (and downstream session-DB reads) need that guarantee. Graceful so
     // the DbWriter has a chance to flush before we read session.db at step 6.
-    let _ = shutdown_vm_process(&state, &id, true).await;
+    let _ = shutdown_vm_process(&state, &id, true).await?;
 
     let response = match exec_result {
         Ok(ProcessToService::ExecResult {
@@ -12163,7 +8694,7 @@ async fn handle_run(
                     );
                 }
                 let file_events = reader.file_event_count().unwrap_or(0);
-                let mcp_calls = reader.mcp_call_stats().map(|s| s.total).unwrap_or(0);
+                let mcp_calls = reader.raw_mcp_call_count().unwrap_or(0);
                 let _ = idx.update_session_summary(&id, 0, 0, 0.0, 0, mcp_calls, file_events);
             }
         }
@@ -12171,6 +8702,251 @@ async fn handle_run(
     }
 
     response
+}
+
+fn build_service_router(state: Arc<ServiceState>) -> Router {
+    Router::new()
+        .route("/status", get(handle_service_status))
+        .route(
+            "/version",
+            get(|| async { Json(serde_json::json!({ "version": env!("CARGO_PKG_VERSION") })) }),
+        )
+        .route("/vms/create", post(handle_provision))
+        .route("/vms/list", get(handle_list))
+        .route("/vms/{id}/info", get(handle_info))
+        .route("/vms/{id}/status", get(handle_vm_status))
+        .route(
+            "/vms/{id}/snapshots/status",
+            get(handle_vm_snapshots_status),
+        )
+        .route("/vms/{id}/snapshots/list", get(handle_vm_snapshots_list))
+        .route("/vms/{id}/logs", get(handle_logs))
+        .route("/vms/{id}/inspect", post(handle_inspect))
+        .route("/vms/{id}/exec", post(handle_exec))
+        .route("/vms/{id}/files/write", post(handle_write_file))
+        .route("/vms/{id}/files/read", post(handle_read_file))
+        .route("/vms/{id}/stop", post(handle_stop))
+        .route("/vms/{id}/pause", post(handle_suspend))
+        .route("/vms/{id}/delete", delete(handle_delete))
+        .route("/vms/{id}/start", post(handle_resume))
+        .route("/vms/{id}/resume", post(handle_resume))
+        .route("/vms/{id}/save", post(handle_persist))
+        .route("/vms/{id}/save/status", get(handle_vm_save_status))
+        .route("/vms/{id}/fork/status", get(handle_vm_fork_status))
+        .route("/purge", post(handle_purge))
+        .route("/run", post(handle_run))
+        .route("/stats", get(handle_stats))
+        .route("/service-logs", get(handle_service_logs))
+        .route("/triage", get(handle_triage))
+        .route("/panics", get(handle_panics))
+        .route("/host-logs/{name}", get(handle_host_logs))
+        .route("/vms/{id}/timeline", get(handle_timeline))
+        .route("/vms/{id}/security/latest", get(handle_security_latest))
+        .route("/vms/{id}/security/status", get(handle_security_info))
+        .route("/vms/{id}/detection/latest", get(handle_security_latest))
+        .route("/vms/{id}/detection/status", get(handle_security_info))
+        .route("/vms/{id}/enforcement/latest", get(handle_security_latest))
+        .route("/vms/{id}/enforcement/status", get(handle_security_info))
+        .route("/security/latest", get(handle_service_security_latest))
+        .route("/security/status", get(handle_service_security_status))
+        .route("/enforcement/latest", get(handle_service_security_latest))
+        .route("/enforcement/status", get(handle_service_security_status))
+        .route("/detection/latest", get(handle_service_detection_latest))
+        .route("/detection/status", get(handle_service_detection_status))
+        .route("/profiles/list", get(handle_profiles_list))
+        .route("/profiles/status", get(handle_profiles_status))
+        .route("/profiles/reload", post(handle_profiles_reload))
+        .route("/profiles/{profile_id}/info", get(handle_profile_info))
+        .route("/profiles/{profile_id}/obom", get(handle_profile_obom))
+        .route(
+            "/profiles/{profile_id}/validate",
+            post(handle_profile_validate),
+        )
+        .route(
+            "/profiles/{profile_id}/enforcement/evaluate",
+            post(handle_enforcement_evaluate),
+        )
+        .route(
+            "/profiles/{profile_id}/enforcement/info",
+            get(handle_enforcement_info),
+        )
+        .route(
+            "/profiles/{profile_id}/enforcement/rules/{rule_id}/edit",
+            put(handle_enforcement_rule_upsert),
+        )
+        .route(
+            "/profiles/{profile_id}/enforcement/rules/{rule_id}/delete",
+            delete(handle_enforcement_rule_delete),
+        )
+        .route(
+            "/profiles/{profile_id}/enforcement/reload",
+            post(handle_enforcement_reload),
+        )
+        .route(
+            "/profiles/{profile_id}/enforcement/rules/list",
+            get(handle_enforcement_rules_list),
+        )
+        .route(
+            "/profiles/{profile_id}/detection/evaluate",
+            post(handle_detection_evaluate),
+        )
+        .route(
+            "/profiles/{profile_id}/detection/info",
+            get(handle_detection_info),
+        )
+        .route(
+            "/profiles/{profile_id}/detection/rules/{rule_id}/edit",
+            put(handle_detection_rule_upsert),
+        )
+        .route(
+            "/profiles/{profile_id}/detection/rules/{rule_id}/delete",
+            delete(handle_detection_rule_delete),
+        )
+        .route(
+            "/profiles/{profile_id}/detection/reload",
+            post(handle_detection_reload),
+        )
+        .route(
+            "/profiles/{profile_id}/detection/rules/list",
+            get(handle_detection_rules_list),
+        )
+        .route(
+            "/profiles/{profile_id}/plugins/list",
+            get(handle_profile_plugins),
+        )
+        .route(
+            "/profiles/{profile_id}/plugins/info",
+            get(handle_profile_plugins_info),
+        )
+        .route(
+            "/profiles/{profile_id}/plugins/credential_broker/credentials/info",
+            get(handle_profile_credential_broker_credentials_info),
+        )
+        .route(
+            "/profiles/{profile_id}/plugins/credential_broker/credentials/reload",
+            post(handle_profile_credential_broker_credentials_reload),
+        )
+        .route(
+            "/profiles/{profile_id}/plugins/{plugin_id}/info",
+            get(handle_profile_plugin_info),
+        )
+        .route(
+            "/profiles/{profile_id}/plugins/{plugin_id}/edit",
+            patch(handle_profile_plugin_update),
+        )
+        .route("/profiles/{profile_id}/reload", post(handle_profile_reload))
+        .route("/vms/{id}/fork", post(handle_fork))
+        .route("/settings/info", get(handle_get_settings))
+        .route("/settings/edit", patch(handle_save_settings))
+        .route(
+            "/profiles/{profile_id}/assets/status",
+            get(handle_profile_assets_status),
+        )
+        .route(
+            "/profiles/{profile_id}/assets/info",
+            get(handle_profile_assets_info),
+        )
+        .route(
+            "/profiles/{profile_id}/assets/ensure",
+            post(handle_profile_assets_ensure),
+        )
+        .route(
+            "/profiles/{profile_id}/skills/info",
+            get(handle_profile_skills_info),
+        )
+        .route(
+            "/profiles/{profile_id}/skills/list",
+            get(handle_profile_skills_list),
+        )
+        .route(
+            "/profiles/{profile_id}/skills/add",
+            post(handle_profile_skill_add),
+        )
+        .route(
+            "/profiles/{profile_id}/skills/{skill_id}/edit",
+            patch(handle_profile_skill_edit),
+        )
+        .route(
+            "/profiles/{profile_id}/skills/{skill_id}/delete",
+            delete(handle_profile_skill_delete),
+        )
+        .route("/corp/info", get(handle_corp_info))
+        .route("/corp/edit", put(handle_corp_config))
+        .route("/corp/validate", post(handle_corp_validate))
+        .route("/corp/reload", post(handle_corp_reload))
+        .route(
+            "/profiles/{profile_id}/mcp/servers/list",
+            get(handle_profile_mcp_servers),
+        )
+        .route(
+            "/profiles/{profile_id}/mcp/info",
+            get(handle_profile_mcp_info),
+        )
+        .route(
+            "/profiles/{profile_id}/mcp/default/info",
+            get(handle_profile_mcp_default_info),
+        )
+        .route(
+            "/profiles/{profile_id}/mcp/default/edit",
+            patch(handle_profile_mcp_default_edit),
+        )
+        .route(
+            "/profiles/{profile_id}/mcp/servers/{server_id}/edit",
+            put(handle_profile_mcp_server_edit),
+        )
+        .route(
+            "/profiles/{profile_id}/mcp/servers/{server_id}/delete",
+            delete(handle_profile_mcp_server_delete),
+        )
+        .route(
+            "/profiles/{profile_id}/mcp/servers/{server_id}/tools/list",
+            get(handle_profile_mcp_server_tools),
+        )
+        .route(
+            "/profiles/{profile_id}/mcp/servers/{server_id}/refresh",
+            post(handle_profile_mcp_server_refresh),
+        )
+        .route(
+            "/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/edit",
+            patch(handle_profile_mcp_tool_edit),
+        )
+        .route(
+            "/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/call",
+            post(handle_profile_mcp_tool_call),
+        )
+        .route("/vms/{id}/history", get(handle_history))
+        .route("/vms/{id}/history/processes", get(handle_history_processes))
+        .route("/vms/{id}/history/counts", get(handle_history_counts))
+        .route(
+            "/vms/{id}/history/transcript",
+            get(handle_history_transcript),
+        )
+        .route("/vms/{id}/files/list", get(handle_list_files))
+        .route(
+            "/vms/{id}/files/content",
+            get(handle_download_file).post(handle_upload_file),
+        )
+        .layer(TraceLayer::new_for_http())
+        .with_state(state)
+}
+
+async fn handle_service_status(
+    State(state): State<Arc<ServiceState>>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let credential_store = capsem_core::credential_broker::credential_store_status();
+    let ready = credential_store.ready;
+    Ok(Json(serde_json::json!({
+        "service": "capsem-service",
+        "version": state.current_version,
+        "ready": ready,
+        "components": {
+            "credential_store": {
+                "ready": credential_store.ready,
+                "status": credential_store.status,
+                "last_error": credential_store.last_error,
+            },
+        },
+    })))
 }
 
 #[tokio::main]
@@ -12190,8 +8966,13 @@ async fn main() -> Result<()> {
         },
         default_filter: "info",
     })?;
+    let service_launch_span = tracing::info_span!(
+        target: "capsem.launch",
+        capsem_core::telemetry::LAUNCH_SERVICE_SPAN,
+        status = tracing::field::Empty,
+    );
 
-    info!("capsem-service starting up");
+    service_launch_span.in_scope(|| info!("capsem-service starting up"));
     info!(args = ?args, run_dir = %run_dir.display(), "environment initialized");
 
     // Optional parent-watch. Symmetric with the companion (tray/gateway)
@@ -12310,26 +9091,38 @@ async fn main() -> Result<()> {
     let process_binary = args
         .process_binary
         .unwrap_or_else(|| PathBuf::from("target/debug/capsem-process"));
-    let service_settings_path = service_settings_path();
-    let service_settings =
-        capsem_core::settings_profiles::load_service_settings_or_default(&service_settings_path)
-            .with_context(|| format!("load {}", service_settings_path.display()))?;
-    let asset_locations = capsem_core::settings_profiles::resolve_service_asset_locations(
-        &service_settings,
-        args.assets_dir.clone(),
-        Some(capsem_core::paths::capsem_assets_dir()),
-        run_dir.parent().unwrap().join("assets"),
-    )
-    .context("resolve service asset locations")?;
-    let assets_base_dir = asset_locations.assets_dir.clone();
+    let assets_base_dir = args
+        .assets_dir
+        .unwrap_or_else(|| run_dir.parent().unwrap().join("assets"));
 
+    // Load v2 manifest if available. In dev mode (no manifest or v1), use None.
     let current_version = env!("CARGO_PKG_VERSION").to_string();
-    let asset_requirement = startup_asset_requirement(
-        &service_settings,
-        host_asset_arch(),
-        cfg!(debug_assertions) || args.assets_dir.is_some(),
-    )
-    .context("resolve startup VM asset requirement")?;
+    let manifest_path = if assets_base_dir.join("manifest.json").exists() {
+        Some(assets_base_dir.join("manifest.json"))
+    } else if assets_base_dir
+        .parent()
+        .unwrap()
+        .join("manifest.json")
+        .exists()
+    {
+        Some(assets_base_dir.parent().unwrap().join("manifest.json"))
+    } else {
+        None
+    };
+
+    let manifest = manifest_path.and_then(|path| {
+        let content = std::fs::read_to_string(&path).ok()?;
+        match capsem_core::asset_manager::ManifestV2::from_json(&content) {
+            Ok(m) => {
+                info!(asset_version = %m.assets.current, "loaded manifest");
+                Some(Arc::new(m))
+            }
+            Err(e) => {
+                warn!(error = %e, "failed to parse manifest");
+                None
+            }
+        }
+    });
 
     let registry_path = run_dir.join("persistent_registry.json");
     let persistent_registry = PersistentRegistry::load(registry_path);
@@ -12338,12 +9131,53 @@ async fn main() -> Result<()> {
         "loaded persistent VM registry"
     );
 
-    let asset_supervisor = Arc::new(AssetSupervisor::new(
-        assets_base_dir.clone(),
-        asset_requirement,
-        std::time::Duration::from_secs(300),
-    ));
-    asset_supervisor.refresh_local_state();
+    match capsem_core::credential_broker::hydrate_credential_runtime_cache_from_durable_store() {
+        Ok(count) => {
+            info!(
+                component = "credential_store",
+                status = "ready",
+                loaded_count = count,
+                "credential broker runtime cache hydrated"
+            );
+        }
+        Err(error) => {
+            warn!(
+                component = "credential_store",
+                status = "degraded",
+                error = %error,
+                "credential broker runtime cache hydration failed"
+            );
+        }
+    }
+
+    // Clean up stale assets (legacy v*/ dirs, unreferenced hash-named files).
+    // Preserve every filename referenced by the profile catalog or by saved VM
+    // boot pins so cleanup cannot strand a valid profile or persistent VM.
+    if let Some(ref m) = manifest {
+        match ProfileCatalog::load_default() {
+            Ok(catalog) => {
+                let mut preserve = profile_catalog_asset_filenames(&catalog);
+                preserve.extend(persistent_registry_asset_filenames(&persistent_registry));
+                match capsem_core::asset_manager::cleanup_unused_assets_preserving(
+                    &assets_base_dir,
+                    m,
+                    preserve,
+                ) {
+                    Ok(removed) if !removed.is_empty() => {
+                        info!(count = removed.len(), "cleaned up stale assets");
+                    }
+                    Err(e) => warn!(error = %e, "asset cleanup failed"),
+                    _ => {}
+                }
+            }
+            Err(error) => {
+                warn!(
+                    error = %error,
+                    "profile catalog unavailable; skipping asset cleanup"
+                );
+            }
+        }
+    }
 
     let magika_session = magika::Session::builder()
         .with_inter_threads(1)
@@ -12351,41 +9185,39 @@ async fn main() -> Result<()> {
         .build()
         .expect("failed to init magika file-type detection");
 
+    let asset_status_path = asset_status_path_for_run_dir(&run_dir);
+    let asset_reconcile = load_asset_reconcile_state(&asset_status_path);
     let state = Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
         persistent_registry: Mutex::new(persistent_registry),
         process_binary: process_binary.clone(),
         assets_dir: assets_base_dir,
-        asset_locations,
-        service_settings,
-        service_settings_path,
         run_dir: run_dir.clone(),
         job_counter: AtomicU64::new(1),
-        asset_supervisor,
-        enforcement_registry: Arc::new(Mutex::new(seceng::RuntimeRuleRegistry::default())),
-        detection_registry: Arc::new(Mutex::new(seceng::RuntimeRuleRegistry::default())),
-        runtime_rules_store_path: Some(run_dir.join("runtime_security_rules.json")),
-        runtime_rules_store_lock: Mutex::new(()),
+        manifest,
         current_version,
+        asset_reconcile: Mutex::new(asset_reconcile),
+        asset_reconcile_inflight: AtomicBool::new(false),
+        asset_status_path,
         magika: Mutex::new(magika_session),
-        save_restore_lock: tokio::sync::Mutex::new(()),
+        plugin_policy_by_profile: Mutex::new(HashMap::new()),
+        save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });
 
-    seed_runtime_security_rules_from_profiles(&state)
-        .map_err(|error| anyhow!("seed profile runtime security rules: {}", error.1))?;
-    let restored_runtime_rules = restore_runtime_security_rule_overlays(&state)
-        .map_err(|error| anyhow!("restore runtime security rule overlays: {}", error.1))?;
-    if restored_runtime_rules > 0 {
-        info!(
-            rule_count = restored_runtime_rules,
-            "restored runtime security rule overlays"
-        );
+    {
+        let state_for_assets = Arc::clone(&state);
+        tokio::spawn(async move {
+            match ensure_assets_for_state(Arc::clone(&state_for_assets)).await {
+                Ok(downloaded) => {
+                    info!(downloaded, "startup asset reconciliation finished");
+                }
+                Err(error) => {
+                    warn!(error = %error, "startup asset reconciliation failed");
+                }
+            }
+        });
     }
-
-    Arc::clone(&state.asset_supervisor).spawn();
-    let _profile_catalog_reconcile_task =
-        spawn_profile_catalog_reconcile_task(state.service_settings.clone());
 
     // Reap capsem-process orphans from any prior service run sharing this
     // run_dir. A previous service that crashed (SIGKILL) or was killed by
@@ -12419,181 +9251,44 @@ async fn main() -> Result<()> {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
             loop {
                 interval.tick().await;
-                let state = Arc::clone(&state_for_cleanup);
-                if let Err(e) =
-                    tokio::task::spawn_blocking(move || state.cleanup_stale_instances()).await
-                {
-                    warn!(error = %e, "stale instance cleanup task failed");
-                }
+                state_for_cleanup.cleanup_stale_instances();
             }
         });
     }
+
+    let app = build_service_router(Arc::clone(&state));
+
+    info!(socket = %service_sock.display(), "listening on UDS");
+
+    let uds = match service_launch_span
+        .in_scope(|| UnixListener::bind(&service_sock).context("failed to bind UDS"))
+    {
+        Ok(uds) => {
+            service_launch_span.record("status", "ok");
+            uds
+        }
+        Err(error) => {
+            service_launch_span.record("status", "error");
+            return Err(error);
+        }
+    };
+    // Socket is bound; release the startup lock so any peer starter still in
+    // its flock wait can fast-probe us and exit 0.
+    drop(startup_lock_guard);
 
     // Spawn companion processes (gateway + tray) in the background so the UDS
     // starts accepting immediately. The previous .await here delayed accept()
     // by up to 5s on every startup while polling gateway.token into existence
     // -- fatal under parallel test load. Companions are stateless and can come
     // up after the service is already serving clients.
+    struct CompanionManager {
+        children: Vec<tokio::process::Child>,
+        spawn_task: Option<tokio::task::JoinHandle<()>>,
+    }
     let companions = Arc::new(std::sync::Mutex::new(CompanionManager {
         children: Vec::new(),
         spawn_task: None,
-        #[cfg(target_os = "macos")]
-        run_dir: run_dir.clone(),
-        #[cfg(target_os = "macos")]
-        tray_bin: args.tray_binary.clone(),
     }));
-    let companions_for_route = Arc::clone(&companions);
-
-    let app = Router::new()
-        .route(
-            "/version",
-            get(|| async { Json(serde_json::json!({ "version": env!("CARGO_PKG_VERSION") })) }),
-        )
-        .route(
-            "/companions/tray/ensure",
-            post(move || handle_ensure_tray(Arc::clone(&companions_for_route))),
-        )
-        .route("/provision", post(handle_provision))
-        .route("/list", get(handle_list))
-        .route("/info/{id}", get(handle_info))
-        .route("/logs/{id}", get(handle_logs))
-        .route("/inspect/{id}", post(handle_inspect))
-        .route("/exec/{id}", post(handle_exec))
-        .route("/stop/{id}", post(handle_stop))
-        .route("/suspend/{id}", post(handle_suspend))
-        .route("/delete/{id}", delete(handle_delete))
-        .route("/resume/{name}", post(handle_resume))
-        .route("/persist/{id}", post(handle_persist))
-        .route("/purge", post(handle_purge))
-        .route("/run", post(handle_run))
-        .route("/stats", get(handle_stats))
-        .route("/service-logs", get(handle_service_logs))
-        .route("/debug/report", get(handle_debug_report))
-        .route("/triage", get(handle_triage))
-        .route("/panics", get(handle_panics))
-        .route("/host-logs/{name}", get(handle_host_logs))
-        .route("/timeline/{id}", get(handle_timeline))
-        .route("/reload-config", post(handle_reload_config))
-        .route("/fork/{id}", post(handle_fork))
-        .route(
-            "/settings",
-            get(handle_get_settings).post(handle_save_settings),
-        )
-        .route("/settings/presets", get(handle_get_presets))
-        .route("/settings/presets/{id}", post(handle_select_profile_preset))
-        .route("/settings/lint", post(handle_lint_config))
-        .route("/settings/validate-key", post(handle_validate_key))
-        .route(
-            "/profiles",
-            get(handle_list_profiles).post(handle_create_profile),
-        )
-        .route(
-            "/profiles/catalog/reconcile",
-            post(handle_reconcile_profile_catalog),
-        )
-        .route("/profiles/catalog", get(handle_profile_catalog))
-        .route(
-            "/profiles/{id}/revisions/install",
-            post(handle_install_profile_revision),
-        )
-        .route(
-            "/profiles/{id}/revisions/update",
-            post(handle_update_profile_revision_lifecycle),
-        )
-        .route(
-            "/profiles/{id}/revisions/remove",
-            post(handle_remove_profile_revision),
-        )
-        .route("/profiles/{id}/select", post(handle_select_profile))
-        .route("/profiles/{id}/revisions", get(handle_profile_revisions))
-        .route(
-            "/profiles/{id}",
-            get(handle_get_profile)
-                .put(handle_update_profile)
-                .delete(handle_delete_profile),
-        )
-        .route("/profiles/{id}/fork", post(handle_fork_profile))
-        .route("/profiles/{id}/effective", get(handle_resolve_profile))
-        .route("/rules", get(handle_list_rules).post(handle_create_rule))
-        .route(
-            "/rules/{rule_id}",
-            get(handle_get_rule).delete(handle_delete_rule),
-        )
-        .route(
-            "/enforcement",
-            get(handle_list_enforcement_rules).post(handle_create_enforcement_rule),
-        )
-        .route(
-            "/enforcement/validate",
-            post(handle_validate_enforcement_rule),
-        )
-        .route(
-            "/enforcement/compile",
-            post(handle_compile_enforcement_rule),
-        )
-        .route("/enforcement/backtest", post(handle_enforcement_backtest))
-        .route("/enforcement/stats", get(handle_enforcement_stats))
-        .route(
-            "/enforcement/{id}",
-            put(handle_update_enforcement_rule).delete(handle_delete_enforcement_rule),
-        )
-        .route(
-            "/detection",
-            get(handle_list_detection_rules).post(handle_create_detection_rule),
-        )
-        .route("/detection/validate", post(handle_validate_detection_rule))
-        .route("/detection/compile", post(handle_compile_detection_rule))
-        .route("/detection/backtest", post(handle_detection_backtest))
-        .route("/detection/hunt", post(handle_detection_hunt))
-        .route(
-            "/sessions/{id}/detection/hunt",
-            post(handle_session_detection_hunt),
-        )
-        .route(
-            "/sessions/{id}/policy-contexts",
-            get(handle_session_policy_contexts),
-        )
-        .route("/detection/stats", get(handle_detection_stats))
-        .route(
-            "/detection/{id}",
-            put(handle_update_detection_rule).delete(handle_delete_detection_rule),
-        )
-        .route("/confirm/pending", get(handle_list_pending_confirms))
-        .route("/skills", get(handle_list_skills).post(handle_create_skill))
-        .route("/skills/{id}", delete(handle_delete_skill))
-        .route("/setup/state", get(handle_get_setup_state))
-        .route("/setup/detect", get(handle_detect_host_config))
-        .route("/credentials/{id}", post(handle_upsert_credential))
-        .route("/setup/complete", post(handle_complete_onboarding))
-        .route("/setup/retry", post(handle_setup_retry))
-        .route("/setup/assets", get(handle_asset_status))
-        .route("/setup/assets/reconcile", post(handle_asset_reconcile))
-        .route("/setup/assets/cleanup", post(handle_asset_cleanup))
-        .route("/setup/corp-config", post(handle_corp_config))
-        .route(
-            "/mcp/connectors",
-            get(handle_mcp_connectors).post(handle_create_mcp_connector),
-        )
-        .route("/mcp/connectors/{id}", delete(handle_delete_mcp_connector))
-        .route("/history/{id}", get(handle_history))
-        .route("/history/{id}/processes", get(handle_history_processes))
-        .route("/history/{id}/counts", get(handle_history_counts))
-        .route("/history/{id}/transcript", get(handle_history_transcript))
-        .route("/files/{id}", get(handle_list_files))
-        .route(
-            "/files/{id}/content",
-            get(handle_download_file).post(handle_upload_file),
-        )
-        .layer(TraceLayer::new_for_http())
-        .with_state(state.clone());
-
-    info!(socket = %service_sock.display(), "listening on UDS");
-
-    let uds = UnixListener::bind(&service_sock).context("failed to bind UDS")?;
-    // Socket is bound; release the startup lock so any peer starter still in
-    // its flock wait can fast-probe us and exit 0.
-    drop(startup_lock_guard);
-
     let companions_for_spawn = Arc::clone(&companions);
     let service_sock_for_spawn = service_sock.clone();
     let run_dir_for_spawn = run_dir.clone();
@@ -12643,13 +9338,9 @@ async fn main() -> Result<()> {
             };
 
             info!(count = children.len(), "killing companions");
-            for mut companion in children {
-                info!(
-                    pid = companion.child.id(),
-                    kind = ?companion.kind,
-                    "killing companion process"
-                );
-                let _ = companion.child.kill().await;
+            for mut child in children {
+                info!(pid = child.id(), "killing companion process");
+                let _ = child.kill().await;
             }
             info!("killing all VM processes");
             kill_all_vm_processes(&shutdown_state);
@@ -12889,170 +9580,6 @@ fn companion_stdio(log_path: &std::path::Path) -> (std::process::Stdio, std::pro
     }
 }
 
-fn companion_log_dir(run_dir: &std::path::Path) -> PathBuf {
-    if std::env::var("CAPSEM_RUN_DIR").is_ok() {
-        run_dir.join("logs")
-    } else {
-        std::env::var("HOME")
-            .map(|h| std::path::PathBuf::from(h).join("Library/Logs/capsem"))
-            .unwrap_or_else(|_| run_dir.join("logs"))
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum CompanionKind {
-    Gateway,
-    #[cfg(target_os = "macos")]
-    Tray,
-}
-
-struct CompanionProcess {
-    kind: CompanionKind,
-    child: tokio::process::Child,
-}
-
-struct CompanionManager {
-    children: Vec<CompanionProcess>,
-    spawn_task: Option<tokio::task::JoinHandle<()>>,
-    #[cfg(target_os = "macos")]
-    run_dir: PathBuf,
-    #[cfg(target_os = "macos")]
-    tray_bin: Option<PathBuf>,
-}
-
-#[derive(Serialize)]
-struct EnsureTrayResponse {
-    tray: &'static str,
-    pid: Option<u32>,
-    reason: Option<String>,
-}
-
-#[cfg(target_os = "macos")]
-fn spawn_tray_companion(
-    run_dir: &std::path::Path,
-    tray_bin: Option<PathBuf>,
-) -> std::io::Result<CompanionProcess> {
-    let tray_bin = tray_bin.unwrap_or_else(|| find_sibling_binary("capsem-tray"));
-    let log_dir = companion_log_dir(run_dir);
-    let _ = std::fs::create_dir_all(&log_dir);
-    let (tray_out, tray_err) = companion_stdio(&log_dir.join("tray.log"));
-    info!(binary = %tray_bin.display(), "spawning capsem-tray");
-    tokio::process::Command::new(&tray_bin)
-        .arg("--parent-pid")
-        .arg(std::process::id().to_string())
-        .stdout(tray_out)
-        .stderr(tray_err)
-        .kill_on_drop(true)
-        .spawn()
-        .map(|child| CompanionProcess {
-            kind: CompanionKind::Tray,
-            child,
-        })
-}
-
-fn ensure_tray_running(manager: &mut CompanionManager) -> (StatusCode, EnsureTrayResponse) {
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = manager;
-        (
-            StatusCode::OK,
-            EnsureTrayResponse {
-                tray: "unsupported",
-                pid: None,
-                reason: Some("capsem-tray is only supported on macOS".into()),
-            },
-        )
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        manager.children.retain_mut(|companion| {
-            if companion.kind != CompanionKind::Tray {
-                return true;
-            }
-            match companion.child.try_wait() {
-                Ok(Some(status)) => {
-                    info!(
-                        pid = companion.child.id(),
-                        ?status,
-                        "dropping exited capsem-tray child"
-                    );
-                    false
-                }
-                Ok(None) => true,
-                Err(e) => {
-                    warn!(
-                        pid = companion.child.id(),
-                        error = %e,
-                        "dropping unreadable capsem-tray child handle"
-                    );
-                    false
-                }
-            }
-        });
-
-        if let Some(companion) = manager
-            .children
-            .iter()
-            .find(|companion| companion.kind == CompanionKind::Tray)
-        {
-            return (
-                StatusCode::OK,
-                EnsureTrayResponse {
-                    tray: "running",
-                    pid: companion.child.id(),
-                    reason: None,
-                },
-            );
-        }
-
-        if !manager.run_dir.join("gateway.token").exists() {
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                EnsureTrayResponse {
-                    tray: "unavailable",
-                    pid: None,
-                    reason: Some("gateway token is not ready yet".into()),
-                },
-            );
-        }
-
-        match spawn_tray_companion(&manager.run_dir, manager.tray_bin.clone()) {
-            Ok(companion) => {
-                let pid = companion.child.id();
-                info!(pid, "capsem-tray spawned by ensure request");
-                manager.children.push(companion);
-                (
-                    StatusCode::OK,
-                    EnsureTrayResponse {
-                        tray: "spawned",
-                        pid,
-                        reason: None,
-                    },
-                )
-            }
-            Err(e) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                EnsureTrayResponse {
-                    tray: "error",
-                    pid: None,
-                    reason: Some(e.to_string()),
-                },
-            ),
-        }
-    }
-}
-
-async fn handle_ensure_tray(
-    companions: Arc<std::sync::Mutex<CompanionManager>>,
-) -> impl IntoResponse {
-    let (status, response) = {
-        let mut manager = companions.lock().unwrap();
-        ensure_tray_running(&mut manager)
-    };
-    (status, Json(response))
-}
-
 /// Spawn the gateway and tray as child processes of the service.
 async fn spawn_companions(
     service_sock: &std::path::Path,
@@ -13060,7 +9587,7 @@ async fn spawn_companions(
     gateway_bin: Option<PathBuf>,
     gateway_port: Option<u16>,
     tray_bin: Option<PathBuf>,
-) -> Vec<CompanionProcess> {
+) -> Vec<tokio::process::Child> {
     // tray_bin is only consumed by the macOS-gated tray-spawn block below.
     // On Linux there's no system tray, so the parameter is intentionally
     // unused -- silence the unused-variable warning without breaking the
@@ -13073,7 +9600,13 @@ async fn spawn_companions(
     // Log files for companion processes. Tests set CAPSEM_RUN_DIR for isolation;
     // when it is set, keep logs under that run_dir so parallel test workers do
     // not trample each other's gateway.log in ~/Library/Logs/capsem.
-    let log_dir = companion_log_dir(run_dir);
+    let log_dir = if std::env::var("CAPSEM_RUN_DIR").is_ok() {
+        run_dir.join("logs")
+    } else {
+        std::env::var("HOME")
+            .map(|h| std::path::PathBuf::from(h).join("Library/Logs/capsem"))
+            .unwrap_or_else(|_| run_dir.join("logs"))
+    };
     let _ = std::fs::create_dir_all(&log_dir);
 
     // 1. Spawn capsem-gateway (TCP reverse proxy -> UDS)
@@ -13095,18 +9628,21 @@ async fn spawn_companions(
     if let Some(port) = gateway_port {
         gw_cmd.arg("--port").arg(port.to_string());
     }
-    match gw_cmd
-        .stdout(gw_out)
-        .stderr(gw_err)
-        .kill_on_drop(true)
-        .spawn()
-    {
+    let gateway_span = tracing::debug_span!(
+        target: "capsem.launch",
+        capsem_core::telemetry::LAUNCH_GATEWAY_SPAN,
+        status = tracing::field::Empty,
+    );
+    match gateway_span.in_scope(|| {
+        gw_cmd
+            .stdout(gw_out)
+            .stderr(gw_err)
+            .kill_on_drop(true)
+            .spawn()
+    }) {
         Ok(child) => {
             info!(pid = child.id(), "capsem-gateway spawned");
-            children.push(CompanionProcess {
-                kind: CompanionKind::Gateway,
-                child,
-            });
+            children.push(child);
 
             // Wait for gateway to write token + port files (up to 5s)
             let token_path = run_dir.join("gateway.token");
@@ -13131,16 +9667,32 @@ async fn spawn_companions(
                         }
                     },
                 )
+                .instrument(gateway_span.clone())
                 .await;
+            }
+            if token_path.exists() && port_path.exists() {
+                gateway_span.record("status", "ok");
+            } else {
+                gateway_span.record("status", "error");
             }
 
             // 2. Spawn capsem-tray (menu bar) -- only on macOS, only after gateway ready
             #[cfg(target_os = "macos")]
             if token_path.exists() {
-                match spawn_tray_companion(run_dir, tray_bin) {
-                    Ok(companion) => {
-                        info!(pid = companion.child.id(), "capsem-tray spawned");
-                        children.push(companion);
+                let tray_bin = tray_bin.unwrap_or_else(|| find_sibling_binary("capsem-tray"));
+                let (tray_out, tray_err) = companion_stdio(&log_dir.join("tray.log"));
+                info!(binary = %tray_bin.display(), "spawning capsem-tray");
+                match tokio::process::Command::new(&tray_bin)
+                    .arg("--parent-pid")
+                    .arg(std::process::id().to_string())
+                    .stdout(tray_out)
+                    .stderr(tray_err)
+                    .kill_on_drop(true)
+                    .spawn()
+                {
+                    Ok(child) => {
+                        info!(pid = child.id(), "capsem-tray spawned");
+                        children.push(child);
                     }
                     Err(e) => {
                         tracing::warn!("failed to spawn capsem-tray: {e} (non-fatal)");
@@ -13149,6 +9701,7 @@ async fn spawn_companions(
             }
         }
         Err(e) => {
+            gateway_span.record("status", "error");
             tracing::warn!("failed to spawn capsem-gateway: {e} (non-fatal)");
         }
     }

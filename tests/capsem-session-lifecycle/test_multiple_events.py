@@ -18,7 +18,7 @@ def test_multiple_execs_create_ordered_events(lifecycle_env, lifecycle_db):
         "echo event-gamma",
     ]
     for cmd in commands:
-        client.post(f"/exec/{vm_name}", {"command": cmd})
+        client.post(f"/vms/{vm_name}/exec", {"command": cmd})
 
     # Wait for async writer
     time.sleep(3)
@@ -36,28 +36,21 @@ def test_multiple_execs_create_ordered_events(lifecycle_env, lifecycle_db):
             assert ids[i] > ids[i-1], f"Event IDs not ordered: {ids}"
 
 
-def test_net_event_has_domain_field(lifecycle_env, lifecycle_db):
+def test_net_event_has_domain_field(lifecycle_env, lifecycle_db, lifecycle_mock_server):
     """Net events should have a non-empty domain field."""
     client, vm_name, _, _ = lifecycle_env
 
-    client.post("/settings", {"security.web.custom_allow": "example.com"})
-    reload_response = client.post("/reload-config", {}, timeout=15)
-    assert reload_response["success"] is True
-
-    # Trigger a network request to an explicitly allowed domain.
-    client.post(f"/exec/{vm_name}", {
-        "command": "curl -s -o /dev/null https://example.com/ 2>&1 || true"
+    # Trigger deterministic local HTTP telemetry without depending on public DNS
+    # or Internet reachability.
+    client.post(f"/vms/{vm_name}/exec", {
+        "command": f"curl -s -o /dev/null --max-time 5 {lifecycle_mock_server}/tiny || true"
     })
 
-    deadline = time.time() + 5
-    rows = []
-    while time.time() < deadline:
-        rows = lifecycle_db.execute(
-            "SELECT domain FROM net_events WHERE domain IS NOT NULL AND domain != ''"
-        ).fetchall()
-        if rows:
-            break
-        time.sleep(0.2)
+    time.sleep(3)
+
+    rows = lifecycle_db.execute(
+        "SELECT domain FROM net_events WHERE domain IS NOT NULL AND domain != ''"
+    ).fetchall()
     assert len(rows) > 0, "Expected at least one net_event with a domain"
 
 
@@ -70,6 +63,7 @@ def test_session_db_readable_during_vm_run(lifecycle_env, lifecycle_db):
     ).fetchall()
     table_names = [t["name"] for t in tables]
 
-    expected = ["net_events", "fs_events", "snapshot_events"]
+    expected = ["net_events", "fs_events"]
     for name in expected:
         assert name in table_names, f"Missing table {name} during live read"
+    assert "snapshot_events" not in table_names

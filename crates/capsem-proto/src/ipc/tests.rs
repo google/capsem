@@ -105,6 +105,38 @@ fn read_file_roundtrip() {
     }
 }
 
+#[test]
+fn log_file_boundary_roundtrip() {
+    let msg = ServiceToProcess::LogFileBoundary {
+        id: 101,
+        action: FileBoundaryAction::Import,
+        path: "notes/plan.md".into(),
+        data: b"preview".to_vec(),
+        size: 1_024,
+        mime_type: Some("text/markdown".into()),
+    };
+    let bytes = serde_json::to_vec(&msg).unwrap();
+    let msg2: ServiceToProcess = serde_json::from_slice(&bytes).unwrap();
+    match msg2 {
+        ServiceToProcess::LogFileBoundary {
+            id,
+            action,
+            path,
+            data,
+            size,
+            mime_type,
+        } => {
+            assert_eq!(id, 101);
+            assert_eq!(action, FileBoundaryAction::Import);
+            assert_eq!(path, "notes/plan.md");
+            assert_eq!(data, b"preview");
+            assert_eq!(size, 1_024);
+            assert_eq!(mime_type.as_deref(), Some("text/markdown"));
+        }
+        _ => panic!("wrong variant"),
+    }
+}
+
 // -----------------------------------------------------------------------
 // ProcessToService serde roundtrips
 // -----------------------------------------------------------------------
@@ -197,6 +229,37 @@ fn exec_result_nonzero_exit() {
 }
 
 #[test]
+fn snapshot_status_roundtrip() {
+    let msg = ProcessToService::SnapshotStatusResult {
+        id: 7,
+        status: super::SnapshotStatus {
+            total: 1,
+            auto_count: 1,
+            manual_count: 0,
+            manual_available: 12,
+            snapshots: vec![super::SnapshotSlotStatus {
+                checkpoint: "cp-0".into(),
+                slot: 0,
+                origin: "auto".into(),
+                name: None,
+                timestamp: "2026-06-11T00:00:00Z".into(),
+                hash: None,
+            }],
+        },
+    };
+    let bytes = serde_json::to_vec(&msg).unwrap();
+    let msg2: ProcessToService = serde_json::from_slice(&bytes).unwrap();
+    match msg2 {
+        ProcessToService::SnapshotStatusResult { id, status } => {
+            assert_eq!(id, 7);
+            assert_eq!(status.total, 1);
+            assert_eq!(status.snapshots[0].checkpoint, "cp-0");
+        }
+        _ => panic!("wrong variant"),
+    }
+}
+
+#[test]
 fn write_file_result_success() {
     let msg = ProcessToService::WriteFileResult {
         id: 5,
@@ -269,6 +332,32 @@ fn read_file_result_not_found() {
     }
 }
 
+#[test]
+fn log_file_boundary_result_roundtrip() {
+    let msg = ProcessToService::LogFileBoundaryResult {
+        id: 101,
+        success: false,
+        data: Some(b"rewritten".to_vec()),
+        error: Some("ledger failed".into()),
+    };
+    let bytes = serde_json::to_vec(&msg).unwrap();
+    let msg2: ProcessToService = serde_json::from_slice(&bytes).unwrap();
+    match msg2 {
+        ProcessToService::LogFileBoundaryResult {
+            id,
+            success,
+            data,
+            error,
+        } => {
+            assert_eq!(id, 101);
+            assert!(!success);
+            assert_eq!(data.as_deref(), Some(&b"rewritten"[..]));
+            assert_eq!(error.as_deref(), Some("ledger failed"));
+        }
+        _ => panic!("wrong variant"),
+    }
+}
+
 // -----------------------------------------------------------------------
 // Job ID correlation
 // -----------------------------------------------------------------------
@@ -288,21 +377,33 @@ fn job_ids_are_distinct() {
         id: 3,
         path: "/y".into(),
     };
+    let boundary = ServiceToProcess::LogFileBoundary {
+        id: 4,
+        action: FileBoundaryAction::Export,
+        path: "/z".into(),
+        data: vec![],
+        size: 0,
+        mime_type: None,
+    };
 
     // Verify each preserves its own ID through serde
     let e: ServiceToProcess = serde_json::from_slice(&serde_json::to_vec(&exec).unwrap()).unwrap();
     let w: ServiceToProcess = serde_json::from_slice(&serde_json::to_vec(&write).unwrap()).unwrap();
     let r: ServiceToProcess = serde_json::from_slice(&serde_json::to_vec(&read).unwrap()).unwrap();
+    let b: ServiceToProcess =
+        serde_json::from_slice(&serde_json::to_vec(&boundary).unwrap()).unwrap();
 
-    match (e, w, r) {
+    match (e, w, r, b) {
         (
             ServiceToProcess::Exec { id: e_id, .. },
             ServiceToProcess::WriteFile { id: w_id, .. },
             ServiceToProcess::ReadFile { id: r_id, .. },
+            ServiceToProcess::LogFileBoundary { id: b_id, .. },
         ) => {
             assert_eq!(e_id, 1);
             assert_eq!(w_id, 2);
             assert_eq!(r_id, 3);
+            assert_eq!(b_id, 4);
         }
         _ => panic!("wrong variants"),
     }
@@ -314,95 +415,10 @@ fn job_ids_are_distinct() {
 
 #[test]
 fn reload_config_roundtrip() {
-    let msg = ServiceToProcess::ReloadConfig {
-        runtime_rules: Some(RuntimeSecurityRulesSnapshot {
-            enforcement: vec![RuntimeEnforcementRuleSnapshot {
-                id: "block-metadata".into(),
-                pack_id: Some("runtime-pack".into()),
-                condition: "http.request.host == 'metadata.google.internal'".into(),
-                decision: RuntimeSecurityDecisionAction::Block,
-                reason: Some("metadata access".into()),
-            }],
-            detection: vec![RuntimeDetectionRuleSnapshot {
-                id: "detect-tool".into(),
-                pack_id: "runtime-detection".into(),
-                sigma_id: Some("sigma-1".into()),
-                title: "Tool execution".into(),
-                condition: "mcp.request.tool_name == 'danger'".into(),
-                severity: RuntimeDetectionSeverity::High,
-                confidence: RuntimeDetectionConfidence::Medium,
-                tags: vec!["mcp".into()],
-            }],
-        }),
-    };
+    let msg = ServiceToProcess::ReloadConfig;
     let bytes = serde_json::to_vec(&msg).unwrap();
     let msg2: ServiceToProcess = serde_json::from_slice(&bytes).unwrap();
-    let ServiceToProcess::ReloadConfig { runtime_rules } = msg2 else {
-        panic!("wrong variant")
-    };
-    let runtime_rules = runtime_rules.expect("runtime rule snapshot should round trip");
-    assert_eq!(runtime_rules.enforcement[0].id, "block-metadata");
-    assert_eq!(
-        runtime_rules.enforcement[0].decision,
-        RuntimeSecurityDecisionAction::Block
-    );
-    assert_eq!(
-        runtime_rules.detection[0].severity,
-        RuntimeDetectionSeverity::High
-    );
-    assert_eq!(
-        runtime_rules.detection[0].confidence,
-        RuntimeDetectionConfidence::Medium
-    );
-}
-
-#[test]
-fn reload_config_result_roundtrip() {
-    let msg = ProcessToService::ReloadConfigResult {
-        success: false,
-        error: Some("refresh failed".into()),
-    };
-    let bytes = serde_json::to_vec(&msg).unwrap();
-    let msg2: ProcessToService = serde_json::from_slice(&bytes).unwrap();
-    match msg2 {
-        ProcessToService::ReloadConfigResult { success, error } => {
-            assert!(!success);
-            assert_eq!(error.as_deref(), Some("refresh failed"));
-        }
-        _ => panic!("wrong variant"),
-    }
-}
-
-#[test]
-fn runtime_rule_match_drain_roundtrip() {
-    let request = ServiceToProcess::DrainRuntimeRuleMatches { id: 77 };
-    let bytes = serde_json::to_vec(&request).unwrap();
-    let decoded: ServiceToProcess = serde_json::from_slice(&bytes).unwrap();
-    match decoded {
-        ServiceToProcess::DrainRuntimeRuleMatches { id } => assert_eq!(id, 77),
-        other => panic!("wrong variant: {other:?}"),
-    }
-
-    let response = ProcessToService::RuntimeRuleMatches {
-        id: 77,
-        matches: vec![RuntimeRuleMatchSnapshot {
-            rule_id: "block-live".into(),
-            match_count: 2,
-            last_matched_event: Some("evt-2".into()),
-            last_matched_unix_ms: Some(1_790),
-        }],
-    };
-    let bytes = serde_json::to_vec(&response).unwrap();
-    let decoded: ProcessToService = serde_json::from_slice(&bytes).unwrap();
-    match decoded {
-        ProcessToService::RuntimeRuleMatches { id, matches } => {
-            assert_eq!(id, 77);
-            assert_eq!(matches[0].rule_id, "block-live");
-            assert_eq!(matches[0].match_count, 2);
-            assert_eq!(matches[0].last_matched_event.as_deref(), Some("evt-2"));
-        }
-        other => panic!("wrong variant: {other:?}"),
-    }
+    assert!(matches!(msg2, ServiceToProcess::ReloadConfig));
 }
 
 // -----------------------------------------------------------------------
@@ -487,37 +503,172 @@ fn snapshot_ready_roundtrip() {
     }
 }
 
+// -----------------------------------------------------------------------
+// MCP IPC roundtrips
+// -----------------------------------------------------------------------
+
 #[test]
-fn metrics_snapshot_ipc_roundtrip_bincode() {
-    let request = ServiceToProcess::GetMetricsSnapshot { id: 44 };
-    let request_bytes = bincode::serialize(&request).unwrap();
-    let request2: ServiceToProcess = bincode::deserialize(&request_bytes).unwrap();
-    match request2 {
-        ServiceToProcess::GetMetricsSnapshot { id } => assert_eq!(id, 44),
+fn mcp_list_servers_roundtrip() {
+    let msg = ServiceToProcess::McpListServers { id: 10 };
+    let bytes = serde_json::to_vec(&msg).unwrap();
+    let msg2: ServiceToProcess = serde_json::from_slice(&bytes).unwrap();
+    match msg2 {
+        ServiceToProcess::McpListServers { id } => assert_eq!(id, 10),
         _ => panic!("wrong variant"),
     }
+}
 
-    let snapshot = crate::metrics::VmMetricsSnapshot::empty("vm-metrics", true, 1_789);
-    assert_eq!(
-        snapshot.schema_version,
-        crate::metrics::METRICS_SCHEMA_VERSION
-    );
-    assert_eq!(snapshot.vm_id, "vm-metrics");
-    assert!(snapshot.persistent);
-    assert_eq!(snapshot.http.http_requests_total, 0);
-    assert_eq!(snapshot.model.model_estimated_cost_micros_total, 0);
+#[test]
+fn mcp_list_tools_roundtrip() {
+    let msg = ServiceToProcess::McpListTools { id: 20 };
+    let bytes = serde_json::to_vec(&msg).unwrap();
+    let msg2: ServiceToProcess = serde_json::from_slice(&bytes).unwrap();
+    match msg2 {
+        ServiceToProcess::McpListTools { id } => assert_eq!(id, 20),
+        _ => panic!("wrong variant"),
+    }
+}
 
-    let response = ProcessToService::MetricsSnapshot {
-        id: 44,
-        snapshot: Box::new(snapshot),
+#[test]
+fn mcp_call_tool_roundtrip_bincode() {
+    // Regression guard: bincode is the real IPC wire format (via
+    // tokio-unix-ipc). When `arguments` was a `serde_json::Value` this
+    // failed with "Bincode does not support deserialize_any". Keeping
+    // the field as a JSON string means the payload is transparent to
+    // bincode and capsem-process actually receives the message.
+    let msg = ServiceToProcess::McpCallTool {
+        id: 30,
+        namespaced_name: "github__search".into(),
+        arguments_json: serde_json::json!({"q": "rust"}).to_string(),
     };
-    let response_bytes = bincode::serialize(&response).unwrap();
-    let response2: ProcessToService = bincode::deserialize(&response_bytes).unwrap();
-    match response2 {
-        ProcessToService::MetricsSnapshot { id, snapshot } => {
-            assert_eq!(id, 44);
-            assert_eq!(snapshot.vm_id, "vm-metrics");
-            assert_eq!(snapshot.captured_at_unix_ms, 1_789);
+    let bytes = bincode::serialize(&msg).unwrap();
+    let msg2: ServiceToProcess = bincode::deserialize(&bytes).unwrap();
+    match msg2 {
+        ServiceToProcess::McpCallTool {
+            id,
+            namespaced_name,
+            arguments_json,
+        } => {
+            assert_eq!(id, 30);
+            assert_eq!(namespaced_name, "github__search");
+            let parsed: serde_json::Value = serde_json::from_str(&arguments_json).unwrap();
+            assert_eq!(parsed["q"], "rust");
+        }
+        _ => panic!("wrong variant"),
+    }
+}
+
+#[test]
+fn mcp_call_tool_result_roundtrip_bincode() {
+    let msg = ProcessToService::McpCallToolResult {
+        id: 30,
+        result_json: Some(serde_json::json!({"items": [1, 2]}).to_string()),
+        error: None,
+    };
+    let bytes = bincode::serialize(&msg).unwrap();
+    let msg2: ProcessToService = bincode::deserialize(&bytes).unwrap();
+    match msg2 {
+        ProcessToService::McpCallToolResult {
+            id,
+            result_json,
+            error,
+        } => {
+            assert_eq!(id, 30);
+            assert!(error.is_none());
+            let parsed: serde_json::Value = serde_json::from_str(&result_json.unwrap()).unwrap();
+            assert_eq!(parsed["items"], serde_json::json!([1, 2]));
+        }
+        _ => panic!("wrong variant"),
+    }
+}
+
+#[test]
+fn mcp_servers_result_roundtrip() {
+    let msg = ProcessToService::McpServersResult {
+        id: 10,
+        servers: vec![McpServerStatus {
+            name: "github".into(),
+            url: "https://mcp.github.com".into(),
+            enabled: true,
+            source: "claude".into(),
+            is_stdio: false,
+            connected: true,
+            tool_count: 5,
+        }],
+    };
+    let bytes = serde_json::to_vec(&msg).unwrap();
+    let msg2: ProcessToService = serde_json::from_slice(&bytes).unwrap();
+    match msg2 {
+        ProcessToService::McpServersResult { id, servers } => {
+            assert_eq!(id, 10);
+            assert_eq!(servers.len(), 1);
+            assert_eq!(servers[0].name, "github");
+            assert!(servers[0].connected);
+        }
+        _ => panic!("wrong variant"),
+    }
+}
+
+#[test]
+fn mcp_tools_result_roundtrip() {
+    let msg = ProcessToService::McpToolsResult {
+        id: 20,
+        tools: vec![McpToolStatus {
+            namespaced_name: "github__search".into(),
+            original_name: "search".into(),
+            description: Some("Search repos".into()),
+            server_name: "github".into(),
+            annotations: None,
+        }],
+    };
+    let bytes = serde_json::to_vec(&msg).unwrap();
+    let msg2: ProcessToService = serde_json::from_slice(&bytes).unwrap();
+    match msg2 {
+        ProcessToService::McpToolsResult { id, tools } => {
+            assert_eq!(id, 20);
+            assert_eq!(tools[0].namespaced_name, "github__search");
+        }
+        _ => panic!("wrong variant"),
+    }
+}
+
+#[test]
+fn mcp_call_tool_result_roundtrip() {
+    let msg = ProcessToService::McpCallToolResult {
+        id: 30,
+        result_json: Some(serde_json::json!({"content": []}).to_string()),
+        error: None,
+    };
+    let bytes = serde_json::to_vec(&msg).unwrap();
+    let msg2: ProcessToService = serde_json::from_slice(&bytes).unwrap();
+    match msg2 {
+        ProcessToService::McpCallToolResult {
+            id,
+            result_json,
+            error,
+        } => {
+            assert_eq!(id, 30);
+            assert!(result_json.is_some());
+            assert!(error.is_none());
+        }
+        _ => panic!("wrong variant"),
+    }
+}
+
+#[test]
+fn mcp_refresh_result_roundtrip() {
+    let msg = ProcessToService::McpRefreshResult {
+        id: 40,
+        success: true,
+        error: None,
+    };
+    let bytes = serde_json::to_vec(&msg).unwrap();
+    let msg2: ProcessToService = serde_json::from_slice(&bytes).unwrap();
+    match msg2 {
+        ProcessToService::McpRefreshResult { id, success, error } => {
+            assert_eq!(id, 40);
+            assert!(success);
+            assert!(error.is_none());
         }
         _ => panic!("wrong variant"),
     }

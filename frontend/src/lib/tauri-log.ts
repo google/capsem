@@ -62,15 +62,16 @@ function fmt(v: unknown): string {
 // `window.__capsemDebug.versions()` reports build timestamp + version.
 // `window.__capsemDebug.lastWsEvents` is a small ring of the last 5
 // websocket events captured by the api.ts onmessage handler.
-// `window.__capsemDebug.dumpLogs()` returns the path to the latest
-// frontend log (jsonl) the Tauri shell wrote -- copy/paste from
-// devtools and `cat` it from the host shell.
+// `window.__capsemDebug.snapshot()` returns the same diagnostic truth
+// the UI reads from gateway routes: status, profile catalog readiness,
+// corp config summary, websocket tail, and frontend log path.
 //
 // This is intentionally a console-only handle, not a UI panel. The
 // visual HUD is punted to the frontend-rebuild sprint.
 export interface CapsemDebug {
   versions: () => { build_ts: string; version: string };
   dumpLogs: () => Promise<string>;
+  snapshot: () => Promise<unknown>;
   lastWsEvents: unknown[];
 }
 
@@ -89,8 +90,13 @@ export function maybeInstallDebugHandle(): void {
   const params = new URLSearchParams(url.search);
   if (params.get('debug') !== '1') return;
 
-  const buildTs: string = typeof __BUILD_TS__ === 'string' ? __BUILD_TS__ : 'dev';
-  const appVersion: string = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : 'dev';
+  // Read build-time constants out of globalThis so a missing Vite-define
+  // doesn't throw a ReferenceError. The build pipeline can wire these
+  // via vite-define / esbuild --define / equivalent.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const g = globalThis as any;
+  const buildTs: string = g.__BUILD_TS__ ?? 'dev';
+  const appVersion: string = g.__APP_VERSION__ ?? 'dev';
 
   const handle: CapsemDebug = {
     versions: () => ({ build_ts: buildTs, version: appVersion }),
@@ -100,6 +106,22 @@ export function maybeInstallDebugHandle(): void {
       } catch (e) {
         return `error: ${String(e)}`;
       }
+    },
+    snapshot: async () => {
+      const api = await import('./api');
+      const [gateway, frontendLog] = await Promise.allSettled([
+        api.debugSnapshot(),
+        handle.dumpLogs(),
+      ]);
+      return {
+        generated_at: new Date().toISOString(),
+        frontend: handle.versions(),
+        gateway: gateway.status === 'fulfilled'
+          ? gateway.value
+          : { error: gateway.reason instanceof Error ? gateway.reason.message : String(gateway.reason) },
+        frontend_log: frontendLog.status === 'fulfilled' ? frontendLog.value : String(frontendLog.reason),
+        last_ws_events: [...wsRing],
+      };
     },
     lastWsEvents: wsRing,
   };

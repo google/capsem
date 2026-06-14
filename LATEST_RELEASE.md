@@ -1,6 +1,6 @@
-version: 1.2.1779673506
+version: 1.0.1777065213
 ---
-### Fixed
-- Fixed release package profile asset URLs so packaged Profile V2 installs
-  download VM assets from the live GitHub Release, and updated the post-release
-  verifier to seed packaged profiles before running `capsem update --assets`.
+### Fixed (CI)
+- Codesign companion binaries with --options runtime + --timestamp;
+  notary rejected the .pkg because the 8 companion binaries lacked
+  hardened runtime.

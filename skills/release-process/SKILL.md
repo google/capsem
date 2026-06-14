@@ -13,10 +13,10 @@ scripts/preflight.sh           # Validate Apple certs for CI
 just test                      # ALL tests: unit + integration + cross-compile + bench
 ```
 
-`minisign` is a first-class local release prerequisite. `bootstrap.sh`,
-`just doctor`, `just doctor fix`, and `scripts/preflight.sh` must all surface it
-before any local install, `just exec`, asset sync, or package signing path can
-claim to be healthy.
+Release asset manifests are generated through `capsem-admin manifest generate`.
+Do not publish or document alternate manifest writers. Runtime VM asset
+integrity is BLAKE3 hash verification plus manifest origin/hash reporting; do
+not resurrect local manifest-signing keys or `manifest-sign.pub` verification.
 
 ## Cutting a release
 
@@ -260,23 +260,19 @@ and packaging checks, but they are gitignored and must never be staged.
 ```bash
 gh release view vX.Y.Z
 gh release download vX.Y.Z --pattern manifest.json -D /tmp/verify
-gh release download vX.Y.Z --pattern manifest.json.minisig -D /tmp/verify
-minisign -Vm /tmp/verify/manifest.json -x /tmp/verify/manifest.json.minisig -p config/manifest-sign.pub
 gh release download vX.Y.Z --pattern '*.pkg' -D /tmp/verify
 pkgutil --check-signature /tmp/verify/Capsem-*.pkg
 spctl -a -vv -t install /tmp/verify/Capsem-*.pkg      # Gatekeeper accepts notarized+stapled
 xcrun stapler validate /tmp/verify/Capsem-*.pkg       # Staple ticket present
 gh release download vX.Y.Z --pattern '*.deb' -D /tmp/verify
-python3 scripts/verify_deb_payload.py /tmp/verify/*.deb --minisign-pubkey config/manifest-sign.pub
+python3 scripts/verify_deb_payload.py /tmp/verify/*.deb
 ```
 
 Use `scripts/verify_deb_payload.py` for `.deb` inspection instead of ad hoc
 `tar`/`strings` checks. It validates control metadata, companion binaries, the
-signed manifest files, and optional minisign verification. The manifest
-signature check is mandatory for local-signature releases; a release is not
-verified until `minisign -Vm` passes against `config/manifest-sign.pub`. The
-script handles `.tar.zst` Debian payloads with a streaming zstandard reader
-because published `.deb` members may omit an embedded content-size header.
+packaged manifest, and payload layout. The script handles `.tar.zst` Debian
+payloads with a streaming zstandard reader because published `.deb` members may
+omit an embedded content-size header.
 
 For a demo-facing macOS release, also prove the installer path users see:
 

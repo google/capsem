@@ -43,7 +43,7 @@ def test_entitlements_plist_valid():
     import xml.etree.ElementTree as ET
     plist = PROJECT_ROOT / "entitlements.plist"
     assert plist.exists()
-    tree = ET.parse(plist)
+    ET.parse(plist)
     text = plist.read_text()
     assert "com.apple.security.virtualization" in text
     assert "com.apple.security.network.client" in text

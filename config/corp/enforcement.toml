@@ -1,0 +1,9 @@
+# Minimal corporate enforcement proof fixture.
+
+[corp.rules.block_evil_example]
+name = "block_evil_example"
+action = "block"
+priority = -100
+detection_level = "high"
+reason = "Example corp rule proving negative-priority enforcement from corp source."
+match = 'http.host.matches("(^|.*\\.)evil\\.example$")'

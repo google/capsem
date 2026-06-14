@@ -25,9 +25,11 @@ fn google_key_prefix_is_redacted() {
 
 #[test]
 fn slack_xoxb_token_is_redacted() {
-    let line = concat!("Slack token=xoxb-1234567890-", "aBcDeFgHiJkLmNoPqRsTuVwX");
-    let r = redact_line(line);
+    let token = format!("{}{}", "xox", "b-1234567890-aBcDeFgHiJkLmNoPqRsTuVwX");
+    let line = format!("Slack token={token}");
+    let r = redact_line(&line);
     assert!(r.contains("<redacted-key>"), "{r}");
+    assert!(!r.contains(&token), "{r}");
 }
 
 #[test]
@@ -76,10 +78,10 @@ fn lowercase_authorization_redacted() {
 
 #[test]
 fn home_path_with_special_chars_collapsed() {
-    let line = "/Users/jane.doe-1/project/file.rs";
+    let line = "/Users/co-work.doe-1/project/file.rs";
     let r = redact_line(line);
     assert!(r.starts_with("~/"), "{r}");
-    assert!(!r.contains("/Users/jane.doe-1/"));
+    assert!(!r.contains("/Users/co-work.doe-1/"));
 }
 
 #[test]

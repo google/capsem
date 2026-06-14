@@ -1,30 +1,21 @@
-// MCP store -- loads servers, tools, and policy for the MCP settings section.
+// MCP store -- loads profile-owned MCP servers and tools.
 import {
+  getMcpDefaultPermission,
   getMcpServers,
   getMcpTools,
-  getMcpPolicy,
-  setMcpServerEnabled,
-  addMcpServer,
-  removeMcpServer,
-  setMcpGlobalPolicy,
-  setMcpDefaultPermission,
-  setMcpToolPermission,
-  approveMcpTool,
+  updateMcpDefaultPermission,
+  updateMcpToolPermission,
   refreshMcpTools,
 } from '../api';
-import type { McpServerInfo, McpToolInfo, McpPolicyInfo } from '../types';
+import type { McpDefaultPermission, McpServerInfo, McpToolInfo, ToolPermission } from '../types';
 
 class McpStore {
   servers = $state<McpServerInfo[]>([]);
   tools = $state<McpToolInfo[]>([]);
-  policy = $state<McpPolicyInfo>({
-    global_policy: null,
-    default_tool_permission: 'allow',
-    blocked_servers: [],
-    tool_permissions: {},
-  });
+  defaultPermission = $state<McpDefaultPermission | null>(null);
   loading = $state(false);
   error = $state<string | null>(null);
+  profileId = $state<string | null>(null);
 
   /** Tools grouped by server_name. */
   toolsByServer = $derived.by(() => {
@@ -43,20 +34,28 @@ class McpStore {
   totalTools = $derived(this.tools.length);
 
   /** Number of running servers. */
-  runningCount = $derived(this.servers.filter((s) => s.running).length);
+  runningCount = $derived(this.servers.filter((s) => s.source !== 'builtin' && s.running).length);
 
-  async load() {
+  private activeProfileId(): string {
+    if (!this.profileId) throw new Error('MCP profile id is not loaded');
+    return this.profileId;
+  }
+
+  async load(profileId: string) {
+    this.profileId = profileId;
     this.loading = true;
     this.error = null;
     try {
-      const [servers, tools, policy] = await Promise.all([
-        getMcpServers(),
-        getMcpTools(),
-        getMcpPolicy(),
+      const [servers, defaultPermission] = await Promise.all([
+        getMcpServers(profileId),
+        getMcpDefaultPermission(profileId),
       ]);
+      const toolLists = await Promise.all(
+        servers.map((server) => getMcpTools(profileId, server.name)),
+      );
       this.servers = servers;
-      this.tools = tools;
-      this.policy = policy;
+      this.defaultPermission = defaultPermission;
+      this.tools = toolLists.flat();
     } catch (e) {
       console.error('Failed to load MCP data:', e);
       this.error = String(e);
@@ -65,44 +64,27 @@ class McpStore {
     }
   }
 
-  async toggleServer(name: string, enabled: boolean) {
-    await setMcpServerEnabled(name, enabled);
-    await this.load();
+  async setToolPermission(tool: McpToolInfo | string, action: ToolPermission) {
+    const target = typeof tool === 'string'
+      ? this.tools.find((candidate) => candidate.namespaced_name === tool || candidate.original_name === tool)
+      : tool;
+    if (!target) throw new Error(`MCP tool not loaded: ${tool}`);
+    const profileId = this.activeProfileId();
+    await updateMcpToolPermission(profileId, target.server_name, target.original_name, action);
+    await this.load(profileId);
   }
 
-  async addServer(name: string, url: string, headers: Record<string, string>, bearerToken: string | null) {
-    await addMcpServer(name, url, headers, bearerToken);
-    await this.load();
-  }
-
-  async removeServer(name: string) {
-    await removeMcpServer(name);
-    await this.load();
-  }
-
-  async setGlobalPolicy(policy: string) {
-    await setMcpGlobalPolicy(policy);
-    await this.load();
-  }
-
-  async setDefaultPermission(permission: string) {
-    await setMcpDefaultPermission(permission);
-    await this.load();
-  }
-
-  async setToolPermission(tool: string, permission: string) {
-    await setMcpToolPermission(tool, permission);
-    await this.load();
-  }
-
-  async approveTool(tool: string) {
-    await approveMcpTool(tool);
-    await this.load();
+  async setDefaultPermission(action: ToolPermission) {
+    const profileId = this.activeProfileId();
+    await updateMcpDefaultPermission(profileId, action);
+    await this.load(profileId);
   }
 
   async refresh(server?: string) {
-    await refreshMcpTools(server);
-    await this.load();
+    const profileId = this.activeProfileId();
+    const serverIds = server ? [server] : this.servers.map((entry) => entry.name);
+    await Promise.all(serverIds.map((serverId) => refreshMcpTools(profileId, serverId)));
+    await this.load(profileId);
   }
 }
 

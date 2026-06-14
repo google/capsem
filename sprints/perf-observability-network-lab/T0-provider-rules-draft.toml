@@ -1,0 +1,275 @@
+# Draft provider-rule profile for T0 review.
+#
+# This is the proposed authoring format, not the current engine TOML. The T0
+# implementation task is to make this parse, compile to deterministic internal
+# CEL/Sigma rules, and validate against code/log fixtures.
+#
+# Principles:
+# - Rules live under the provider the operator understands.
+# - No separate provider matcher schema.
+# - Credential detections are merged into the provider rules.
+# - One event family per rule; no cross-family OR mega-rules.
+# - Corp disables by overriding the same rule name with decision = "block"
+#   and negative priority.
+# - Tool config files remain source-of-truth files; settings hold paths/index
+#   metadata and narrow overlays only.
+
+[ai.openai]
+name = "OpenAI"
+protocol = "openai"
+url = "https://api.openai.com/v1"
+files = ["/root/.codex/config.toml"]
+
+[ai.openai.rules.http_api]
+on = "http.request"
+if = 'http.host.matches("(^|.*\.)openai\.com$")'
+decision = "detect"
+actions = ["provider.detect"]
+priority = 10
+
+[ai.openai.rules.dns_api]
+on = "dns.query"
+if = 'dns.qname.matches("(^|.*\.)openai\.com$")'
+decision = "detect"
+actions = ["provider.detect"]
+priority = 10
+
+[ai.openai.rules.codex_config]
+on = "file.import"
+if = 'file.import.path == "/root/.codex/config.toml"'
+decision = "detect"
+actions = ["provider.detect"]
+priority = 10
+
+[ai.openai.rules.api_key]
+on = "credential.observed"
+if = 'credential.name == "OPENAI_API_KEY"'
+decision = "detect"
+actions = ["credential_broker.capture", "provider.detect"]
+priority = 10
+
+[ai.openai.rules.replace_http_credential]
+on = "http.request"
+if = 'credential.provider == "openai" && has(credential.ref)'
+decision = "replace"
+actions = ["credential_broker.substitute"]
+priority = 20
+
+[ai.openai.rules.model_api]
+on = "model.request"
+if = 'model.provider == "openai"'
+decision = "detect"
+actions = ["provider.detect"]
+priority = 10
+
+
+[ai.anthropic]
+name = "Anthropic"
+protocol = "anthropic"
+url = "https://api.anthropic.com/v1"
+files = [
+  "/root/.claude/settings.json",
+  "/root/.claude.json",
+  "/root/.claude/.credentials.json",
+]
+
+[ai.anthropic.rules.http_api]
+on = "http.request"
+if = 'http.host.matches("(^|.*\.)(anthropic\.com|claude\.ai|claude\.com)$")'
+decision = "detect"
+actions = ["provider.detect"]
+priority = 10
+
+[ai.anthropic.rules.dns_api]
+on = "dns.query"
+if = 'dns.qname.matches("(^|.*\.)(anthropic\.com|claude\.ai|claude\.com)$")'
+decision = "detect"
+actions = ["provider.detect"]
+priority = 10
+
+[ai.anthropic.rules.claude_settings]
+on = "file.import"
+if = 'file.import.path == "/root/.claude/settings.json"'
+decision = "detect"
+actions = ["provider.detect"]
+priority = 10
+
+[ai.anthropic.rules.claude_state]
+on = "file.import"
+if = 'file.import.path == "/root/.claude.json"'
+decision = "detect"
+actions = ["provider.detect"]
+priority = 10
+
+[ai.anthropic.rules.claude_credentials]
+on = "file.import"
+if = 'file.import.path == "/root/.claude/.credentials.json"'
+decision = "detect"
+actions = ["credential_broker.capture", "provider.detect"]
+priority = 10
+
+[ai.anthropic.rules.api_key]
+on = "credential.observed"
+if = 'credential.name == "ANTHROPIC_API_KEY"'
+decision = "detect"
+actions = ["credential_broker.capture", "provider.detect"]
+priority = 10
+
+[ai.anthropic.rules.replace_http_credential]
+on = "http.request"
+if = 'credential.provider == "anthropic" && has(credential.ref)'
+decision = "replace"
+actions = ["credential_broker.substitute"]
+priority = 20
+
+[ai.anthropic.rules.model_api]
+on = "model.request"
+if = 'model.provider == "anthropic"'
+decision = "detect"
+actions = ["provider.detect"]
+priority = 10
+
+
+[ai.google]
+name = "Google AI"
+protocol = "google"
+url = "https://generativelanguage.googleapis.com/v1beta"
+files = [
+  "/root/.gemini/settings.json",
+  "/root/.gemini/projects.json",
+  "/root/.gemini/trustedFolders.json",
+  "/root/.gemini/installation_id",
+  "/root/.config/gcloud/application_default_credentials.json",
+]
+
+[ai.google.rules.http_gemini_api]
+on = "http.request"
+if = 'http.host == "generativelanguage.googleapis.com"'
+decision = "detect"
+actions = ["provider.detect"]
+priority = 10
+
+[ai.google.rules.http_googleapis]
+on = "http.request"
+if = 'http.host.matches("(^|.*\.)googleapis\.com$")'
+decision = "detect"
+actions = ["provider.detect"]
+priority = 20
+
+[ai.google.rules.dns_googleapis]
+on = "dns.query"
+if = 'dns.qname.matches("(^|.*\.)googleapis\.com$")'
+decision = "detect"
+actions = ["provider.detect"]
+priority = 10
+
+[ai.google.rules.gemini_settings]
+on = "file.import"
+if = 'file.import.path == "/root/.gemini/settings.json"'
+decision = "detect"
+actions = ["provider.detect"]
+priority = 10
+
+[ai.google.rules.gemini_projects]
+on = "file.import"
+if = 'file.import.path == "/root/.gemini/projects.json"'
+decision = "detect"
+actions = ["provider.detect"]
+priority = 10
+
+[ai.google.rules.gemini_trusted_folders]
+on = "file.import"
+if = 'file.import.path == "/root/.gemini/trustedFolders.json"'
+decision = "detect"
+actions = ["provider.detect"]
+priority = 10
+
+[ai.google.rules.gemini_installation_id]
+on = "file.import"
+if = 'file.import.path == "/root/.gemini/installation_id"'
+decision = "detect"
+actions = ["provider.detect"]
+priority = 10
+
+[ai.google.rules.google_adc]
+on = "file.import"
+if = 'file.import.path == "/root/.config/gcloud/application_default_credentials.json"'
+decision = "detect"
+actions = ["credential_broker.capture", "provider.detect"]
+priority = 10
+
+[ai.google.rules.gemini_api_key]
+on = "credential.observed"
+if = 'credential.name == "GEMINI_API_KEY"'
+decision = "detect"
+actions = ["credential_broker.capture", "provider.detect"]
+priority = 10
+
+[ai.google.rules.google_api_key]
+on = "credential.observed"
+if = 'credential.name == "GOOGLE_API_KEY"'
+decision = "detect"
+actions = ["credential_broker.capture", "provider.detect"]
+priority = 10
+
+[ai.google.rules.replace_http_credential]
+on = "http.request"
+if = 'credential.provider == "google" && has(credential.ref)'
+decision = "replace"
+actions = ["credential_broker.substitute"]
+priority = 20
+
+[ai.google.rules.model_api]
+on = "model.request"
+if = 'model.provider == "google"'
+decision = "detect"
+actions = ["provider.detect"]
+priority = 10
+
+
+[ai.ollama]
+name = "Ollama"
+protocol = "ollama"
+url = "http://127.0.0.1:11434"
+files = []
+
+[ai.ollama.rules.http_local_host]
+on = "http.request"
+if = 'http.host.matches("^(localhost|127\.0\.0\.1|host\.docker\.internal|local\.ollama)$") && http.port == "11434"'
+decision = "detect"
+actions = ["provider.detect"]
+priority = 10
+
+[ai.ollama.rules.http_native_api]
+on = "http.request"
+if = 'http.path.matches("^/api/(chat|generate|embeddings|embed|tags|show|pull|push|create|copy|delete|ps|version)")'
+decision = "detect"
+actions = ["provider.detect"]
+priority = 10
+
+[ai.ollama.rules.http_openai_compatible]
+on = "http.request"
+if = 'http.path.matches("^/v1/(chat/completions|completions|embeddings|models)") && http.port == "11434"'
+decision = "detect"
+actions = ["provider.detect"]
+priority = 10
+
+[ai.ollama.rules.model_api]
+on = "model.request"
+if = 'model.provider == "ollama"'
+decision = "detect"
+actions = ["provider.detect"]
+priority = 10
+
+
+# Corp override example. Corp can copy the same provider rule name and flip only
+# the decision/priority/lock. The rule condition stays the real detection
+# condition, so detect and block do not drift.
+#
+# [ai.openai.rules.http_api]
+# on = "http.request"
+# if = 'http.host.matches("(^|.*\.)openai\.com$")'
+# decision = "block"
+# priority = -100
+# corp_locked = true
+# reason = "OpenAI blocked by corporate policy"

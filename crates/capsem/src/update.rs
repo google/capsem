@@ -1,16 +1,15 @@
 //! Self-update: check GitHub for new versions, prompt to update.
 //!
-//! Binary swap is still future work. Profile-owned VM asset updates are
-//! delegated to the running service so `capsem update --assets` uses the same
-//! Profile V2 asset reconciler as background checks.
+//! Asset download and binary swap are implemented in the orthogonal CI sprint
+//! (see sprints/orthogonal-ci/plan.md). Until then, development builds use
+//! `git pull && just install`.
 
 use std::path::PathBuf;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
-use crate::client::{ApiResponse, UdsClient};
 use crate::platform::{self, InstallLayout};
 
 /// Cached update check result.
@@ -163,14 +162,13 @@ fn is_newer(latest: &str, current: &str) -> bool {
 /// Run the update flow.
 ///
 /// With `assets = true`, refresh only the VM asset files referenced by the
-/// selected by the active profile. Binary swap is still scoped to the
-/// orthogonal CI sprint and remains a "rebuild from source" step for dev
-/// builds.
-pub async fn run_update(_yes: bool, assets: bool, uds_path: Option<PathBuf>) -> Result<()> {
+/// locally-installed manifest. Binary swap is still scoped to the orthogonal
+/// CI sprint and remains a "rebuild from source" step for dev builds.
+pub async fn run_update(_yes: bool, assets: bool) -> Result<()> {
     let layout = platform::detect_install_layout();
 
     if assets {
-        return refresh_assets(uds_path).await;
+        return refresh_assets().await;
     }
 
     if layout == InstallLayout::Development {
@@ -184,42 +182,96 @@ pub async fn run_update(_yes: bool, assets: bool, uds_path: Option<PathBuf>) -> 
     Ok(())
 }
 
-/// Trigger the service-owned Profile V2 asset reconciler.
-async fn refresh_assets(uds_path: Option<PathBuf>) -> Result<()> {
-    let sock = asset_refresh_socket(uds_path);
-    let client = UdsClient::new(sock, true);
-    let response: ApiResponse<serde_json::Value> = client
-        .post("/setup/assets/reconcile", serde_json::json!({}))
-        .await
-        .context("request Profile V2 asset reconcile from service")?;
-    let result = response.into_result()?;
-    let summary = profile_asset_reconcile_summary_line(&result);
-    println!("{summary}");
-    if result["outcome"].as_str() == Some("error") {
-        bail!("{summary}");
+/// Pull any missing / hash-mismatched VM assets from the release URL.
+async fn refresh_assets() -> Result<()> {
+    let assets_dir = capsem_core::asset_manager::default_assets_dir()
+        .context("cannot resolve CAPSEM_HOME -- set $HOME or $CAPSEM_HOME")?;
+    let manifest_path = assets_dir.join("manifest.json");
+    let manifest_bytes = std::fs::read_to_string(&manifest_path)
+        .with_context(|| format!("read {}", manifest_path.display()))?;
+    let manifest = capsem_core::asset_manager::ManifestV2::from_json(&manifest_bytes)
+        .with_context(|| format!("parse {}", manifest_path.display()))?;
+
+    let arch = if cfg!(target_arch = "aarch64") {
+        "arm64"
+    } else {
+        "x86_64"
+    };
+    let binary_version = env!("CARGO_PKG_VERSION");
+
+    println!("Refreshing VM assets into {}...", assets_dir.display());
+    if let Some(local_source) = local_manifest_asset_source(&assets_dir)? {
+        println!("Using local asset source {}...", local_source.display());
+        let copied = capsem_core::asset_manager::copy_missing_local_assets(
+            &manifest,
+            binary_version,
+            arch,
+            &local_source,
+            &assets_dir,
+            |p| {
+                if p.done {
+                    let mb = p.bytes_done as f64 / 1_048_576.0;
+                    println!("  {} ({:.1} MB)", p.logical_name, mb);
+                }
+            },
+        )
+        .context("local asset hydration failed")?;
+
+        if copied.is_empty() {
+            println!("All assets already up to date.");
+        } else {
+            println!("Refreshed {} asset(s).", copied.len());
+        }
+        return Ok(());
+    }
+
+    let downloaded = capsem_core::asset_manager::download_missing_assets(
+        &manifest,
+        binary_version,
+        arch,
+        &assets_dir,
+        |p| {
+            if p.done {
+                let mb = p.bytes_done as f64 / 1_048_576.0;
+                println!("  {} ({:.1} MB)", p.logical_name, mb);
+            }
+        },
+    )
+    .await
+    .context("asset download failed")?;
+
+    if downloaded.is_empty() {
+        println!("All assets already up to date.");
+    } else {
+        println!("Refreshed {} asset(s).", downloaded.len());
     }
     Ok(())
 }
 
-fn asset_refresh_socket(uds_path: Option<PathBuf>) -> PathBuf {
-    uds_path.unwrap_or_else(capsem_core::paths::service_socket_path)
-}
-
-fn profile_asset_reconcile_summary_line(result: &serde_json::Value) -> String {
-    let outcome = result["outcome"].as_str().unwrap_or("unknown");
-    let health = &result["health"];
-    let state = health["state"].as_str().unwrap_or("unknown");
-    let version = health["version"].as_str().unwrap_or("unknown");
-    let arch = health["arch"].as_str().unwrap_or("unknown");
-    match outcome {
-        "already_ready" => format!("Profile VM assets already ready ({version}, {arch})."),
-        "downloaded" => format!("Profile VM assets reconciled ({version}, {arch})."),
-        "error" => {
-            let error = health["error"].as_str().unwrap_or("unknown error");
-            format!("Profile VM asset reconcile failed: {error}")
-        }
-        _ => format!("Profile VM asset reconcile {outcome} (state={state}, {version}, {arch})."),
+fn local_manifest_asset_source(assets_dir: &std::path::Path) -> Result<Option<PathBuf>> {
+    let origin_path = assets_dir.join("manifest-origin.json");
+    if !origin_path.exists() {
+        return Ok(None);
     }
+    let content = std::fs::read_to_string(&origin_path)
+        .with_context(|| format!("read {}", origin_path.display()))?;
+    let value: serde_json::Value = serde_json::from_str(&content)
+        .with_context(|| format!("parse {}", origin_path.display()))?;
+    let Some(source) = value.get("source").and_then(|v| v.as_str()) else {
+        return Ok(None);
+    };
+    if source.starts_with("http://") || source.starts_with("https://") {
+        return Ok(None);
+    }
+    let path = if let Some(rest) = source.strip_prefix("file://") {
+        PathBuf::from(rest)
+    } else {
+        PathBuf::from(source)
+    };
+    if !path.is_file() {
+        return Ok(None);
+    }
+    Ok(path.parent().map(|parent| parent.to_path_buf()))
 }
 
 #[cfg(test)]
@@ -271,41 +323,47 @@ mod tests {
     }
 
     #[test]
-    fn profile_asset_reconcile_summary_line_reports_downloaded() {
-        let result = serde_json::json!({
-            "outcome": "downloaded",
-            "health": {
-                "state": "ready",
-                "version": "everyday-work@2026.0520.1",
-                "arch": "arm64"
-            }
-        });
+    fn local_manifest_asset_source_uses_manifest_origin_parent() {
+        let dir = tempfile::tempdir().unwrap();
+        let assets_dir = dir.path().join("installed-assets");
+        let source_dir = dir.path().join("source-assets");
+        std::fs::create_dir_all(&assets_dir).unwrap();
+        std::fs::create_dir_all(&source_dir).unwrap();
+        let manifest = source_dir.join("manifest.json");
+        std::fs::write(&manifest, "{}").unwrap();
+        std::fs::write(
+            assets_dir.join("manifest-origin.json"),
+            serde_json::json!({
+                "schema": "capsem.manifest_origin.v1",
+                "origin": "package",
+                "source": manifest.display().to_string()
+            })
+            .to_string(),
+        )
+        .unwrap();
 
         assert_eq!(
-            profile_asset_reconcile_summary_line(&result),
-            "Profile VM assets reconciled (everyday-work@2026.0520.1, arm64)."
+            local_manifest_asset_source(&assets_dir).unwrap(),
+            Some(source_dir)
         );
     }
 
     #[test]
-    fn profile_asset_reconcile_summary_line_reports_error() {
-        let result = serde_json::json!({
-            "outcome": "error",
-            "health": {
-                "state": "error",
-                "error": "GET https://assets.example.test/rootfs returned 503"
-            }
-        });
+    fn local_manifest_asset_source_ignores_remote_origin() {
+        let dir = tempfile::tempdir().unwrap();
+        let assets_dir = dir.path().join("installed-assets");
+        std::fs::create_dir_all(&assets_dir).unwrap();
+        std::fs::write(
+            assets_dir.join("manifest-origin.json"),
+            serde_json::json!({
+                "schema": "capsem.manifest_origin.v1",
+                "origin": "package",
+                "source": "https://example.invalid/manifest.json"
+            })
+            .to_string(),
+        )
+        .unwrap();
 
-        assert_eq!(
-            profile_asset_reconcile_summary_line(&result),
-            "Profile VM asset reconcile failed: GET https://assets.example.test/rootfs returned 503"
-        );
-    }
-
-    #[test]
-    fn update_assets_uses_explicit_uds_socket_when_provided() {
-        let explicit = PathBuf::from("/tmp/capsem-profile-asset.sock");
-        assert_eq!(asset_refresh_socket(Some(explicit.clone())), explicit);
+        assert_eq!(local_manifest_asset_source(&assets_dir).unwrap(), None);
     }
 }

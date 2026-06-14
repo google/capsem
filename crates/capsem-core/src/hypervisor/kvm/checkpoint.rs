@@ -735,6 +735,18 @@ const fn arch_tag() -> [u8; 4] {
 mod tests {
     use super::*;
 
+    fn test_header() -> CheckpointHeader {
+        CheckpointHeader {
+            version: VERSION,
+            arch: arch_tag(),
+            ram_bytes: 4096,
+            vcpu_count: 2,
+            vcpu_state_len: 0,
+            mmio_device_count: 3,
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
     fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir()
             .join("capsem-kvm-checkpoint")
@@ -746,24 +758,28 @@ mod tests {
 
     #[test]
     fn header_roundtrips() {
-        let header = CheckpointHeader::current(4096, 2, 3);
+        let header = test_header();
         let decoded = CheckpointHeader::decode(&header.encode()).unwrap();
         assert_eq!(decoded, header);
         assert_eq!(decoded.version, VERSION);
         assert_eq!(decoded.ram_bytes, 4096);
         assert_eq!(decoded.vcpu_count, 2);
+        #[cfg(target_arch = "x86_64")]
         assert_eq!(decoded.vcpu_state_len, X86_VCPU_STATE_LEN);
+        #[cfg(not(target_arch = "x86_64"))]
+        assert_eq!(decoded.vcpu_state_len, 0);
         assert_eq!(decoded.mmio_device_count, 3);
     }
 
     #[test]
     fn header_rejects_bad_magic() {
-        let mut encoded = CheckpointHeader::current(4096, 1, 0).encode();
+        let mut encoded = test_header().encode();
         encoded[0] = b'X';
         let err = CheckpointHeader::decode(&encoded).unwrap_err();
         assert!(err.to_string().contains("bad checkpoint magic"));
     }
 
+    #[cfg(target_arch = "x86_64")]
     fn snapshot(id: u32) -> VcpuSnapshot {
         let regs = KvmRegs {
             rax: id as u64 + 10,
@@ -796,6 +812,7 @@ mod tests {
         }
     }
 
+    #[cfg(target_arch = "x86_64")]
     fn vm_snapshot() -> VmSnapshot {
         let mut pic_master = KvmIrqchip {
             chip_id: KVM_IRQCHIP_PIC_MASTER,
@@ -823,6 +840,7 @@ mod tests {
         }
     }
 
+    #[cfg(target_arch = "x86_64")]
     fn mmio(slot: u32) -> MmioDeviceSnapshot {
         MmioDeviceSnapshot {
             slot,
@@ -849,6 +867,7 @@ mod tests {
         }
     }
 
+    #[cfg(target_arch = "x86_64")]
     #[test]
     fn writes_header_and_memory() {
         let dir = temp_dir("writes-header-memory");
@@ -875,6 +894,7 @@ mod tests {
         assert_eq!(bytes.len(), memory_offset + 8192);
     }
 
+    #[cfg(target_arch = "x86_64")]
     #[test]
     fn restores_memory_and_vcpu_state() {
         let dir = temp_dir("restore-memory-vcpu");
@@ -909,6 +929,7 @@ mod tests {
         assert_eq!(restored.mmio_devices, vec![mmio(3)]);
     }
 
+    #[cfg(target_arch = "x86_64")]
     #[test]
     fn overwrites_atomically() {
         let dir = temp_dir("atomic-overwrite");
@@ -937,6 +958,7 @@ mod tests {
             .contains(".tmp.")));
     }
 
+    #[cfg(target_arch = "x86_64")]
     #[test]
     fn rejects_missing_parent() {
         let dir = temp_dir("missing-parent");
@@ -950,6 +972,7 @@ mod tests {
             .contains("checkpoint parent directory does not exist"));
     }
 
+    #[cfg(target_arch = "x86_64")]
     #[test]
     fn removes_temp_file_after_create_failure() {
         let dir = temp_dir("temp-cleanup");
@@ -965,6 +988,7 @@ mod tests {
         assert!(!path.exists());
     }
 
+    #[cfg(target_arch = "x86_64")]
     #[test]
     fn restore_rejects_wrong_ram_size() {
         let dir = temp_dir("wrong-ram-size");
@@ -978,6 +1002,7 @@ mod tests {
         assert!(err.to_string().contains("checkpoint RAM size mismatch"));
     }
 
+    #[cfg(target_arch = "x86_64")]
     #[test]
     fn restore_rejects_wrong_vcpu_count() {
         let dir = temp_dir("wrong-vcpu-count");
@@ -990,6 +1015,7 @@ mod tests {
         assert!(err.to_string().contains("checkpoint vCPU count mismatch"));
     }
 
+    #[cfg(target_arch = "x86_64")]
     #[test]
     fn restore_rejects_trailing_bytes() {
         let dir = temp_dir("trailing-bytes");

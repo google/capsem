@@ -18,29 +18,29 @@ def test_full_chain_boot_exec_delete(signed_binaries):
     name = f"chain-{uuid.uuid4().hex[:8]}"
 
     try:
-        resp = client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        resp = client.post("/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
         assert resp is not None, f"Provision failed: {resp}"
 
         assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT), (
             f"VM {name} never became exec-ready"
         )
 
-        resp = client.post(f"/exec/{name}", {"command": "echo chain-works"})
+        resp = client.post(f"/vms/{name}/exec", {"command": "echo chain-works"})
         assert resp is not None
         assert "chain-works" in resp.get("stdout", ""), (
             f"Expected 'chain-works' in stdout, got: {resp}"
         )
 
-        client.delete(f"/delete/{name}")
+        client.delete(f"/vms/{name}/delete")
 
         # Verify deleted
-        list_resp = client.get("/list")
+        list_resp = client.get("/vms/list")
         ids = [s["id"] for s in list_resp["sandboxes"]]
         assert name not in ids, f"VM {name} still in list after delete"
 
     finally:
         try:
-            client.delete(f"/delete/{name}")
+            client.delete(f"/vms/{name}/delete")
         except Exception:
             pass
         svc.stop()

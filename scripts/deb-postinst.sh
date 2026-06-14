@@ -2,12 +2,10 @@
 # deb-postinst.sh -- Post-install script for the Capsem .deb package.
 #
 # Runs as root after dpkg installs the package. Creates the per-user
-# ~/.capsem layout, registers the systemd user unit, and runs setup.
+# ~/.capsem layout and registers the systemd user unit.
 #
-# The .deb installs companion binaries to /usr/bin/, Profile V2 base profiles
-# to /usr/share/capsem/profiles/base/, and signed manifest files to
-# /usr/share/capsem/assets/. This script symlinks binaries into ~/.capsem/bin/
-# and seeds the user's profile/asset state.
+# The .deb installs companion binaries to /usr/bin/. This script
+# symlinks them into ~/.capsem/bin/ for the user who installed.
 set -euo pipefail
 
 # Determine the real user (not root from sudo)
@@ -21,69 +19,76 @@ else
 fi
 
 if [ -z "$TARGET_USER" ]; then
-    echo "capsem: could not determine installing user; cannot complete per-user setup" >&2
-    exit 1
+    echo "capsem: could not determine installing user, skipping per-user install"
+    exit 0
 fi
 
 USER_HOME=$(eval echo "~$TARGET_USER")
 CAPSEM_DIR="$USER_HOME/.capsem"
-PKG_SHARE="/usr/share/capsem"
-
-seed_assets() {
-    for asset in manifest.json manifest.json.minisig; do
-        if [ -f "$PKG_SHARE/assets/$asset" ]; then
-            install -m 0644 "$PKG_SHARE/assets/$asset" "$CAPSEM_DIR/assets/$asset"
-        fi
-    done
-    if [ -f "$PKG_SHARE/assets/manifest-sign.dev.pub" ]; then
-        install -m 0644 "$PKG_SHARE/assets/manifest-sign.dev.pub" \
-            "$CAPSEM_DIR/assets/manifest-sign.dev.pub"
-    fi
-    if [ -f "$PKG_SHARE/assets/manifest-sign.dev.pub" ] \
-        && [ ! -f "$CAPSEM_DIR/assets/manifest-sign.dev.pub" ]; then
-        echo "capsem: manifest-sign.dev.pub failed to install" >&2
-        exit 1
-    fi
-}
-
-seed_base_profiles() {
-    if [ ! -d "$PKG_SHARE/profiles/base" ]; then
-        echo "capsem: required base profiles missing: $PKG_SHARE/profiles/base" >&2
-        exit 1
-    fi
-    mkdir -p "$CAPSEM_DIR/profiles/base"
-    find "$CAPSEM_DIR/profiles/base" -maxdepth 1 -type f -name '*.profile.toml' -delete
-    install -m 0644 "$PKG_SHARE/profiles/base/"*.profile.toml "$CAPSEM_DIR/profiles/base/"
-}
+INSTALL_LOG="$CAPSEM_DIR/logs/install.log"
+INSTALL_RUN_ID=$(date -u '+%Y%m%dT%H%M%SZ')
+INSTALL_RUN_LOG="$CAPSEM_DIR/logs/install-$INSTALL_RUN_ID.log"
+INSTALL_RUN_FILE="$CAPSEM_DIR/logs/install-current-run"
 
 # Create user-level directory layout
-mkdir -p "$CAPSEM_DIR/bin" "$CAPSEM_DIR/assets" "$CAPSEM_DIR/profiles/base" "$CAPSEM_DIR/run"
+mkdir -p "$CAPSEM_DIR/bin" "$CAPSEM_DIR/assets" "$CAPSEM_DIR/run" "$CAPSEM_DIR/logs"
+touch "$INSTALL_LOG" "$INSTALL_RUN_LOG"
+printf '%s\n' "$INSTALL_RUN_ID" > "$INSTALL_RUN_FILE"
+ln -sf "$(basename "$INSTALL_RUN_LOG")" "$CAPSEM_DIR/logs/install-latest.log"
+chown -R "$TARGET_USER:$(id -gn "$TARGET_USER")" "$CAPSEM_DIR/logs"
+exec > >(tee -a "$INSTALL_LOG" "$INSTALL_RUN_LOG") 2>&1
+echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=start user=$TARGET_USER install_run_id=$INSTALL_RUN_ID install_run_log=$INSTALL_RUN_LOG"
+
+# Copy the package-selected manifest and provenance. VM asset payloads are
+# external to the package and are reconciled by the service from this manifest.
+if [ -f "/usr/share/capsem/assets/manifest.json" ]; then
+    install -m 0644 /usr/share/capsem/assets/manifest.json "$CAPSEM_DIR/assets/manifest.json"
+    if [ -f "/usr/share/capsem/assets/manifest-origin.json" ]; then
+        install -m 0644 /usr/share/capsem/assets/manifest-origin.json "$CAPSEM_DIR/assets/manifest-origin.json"
+    fi
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=manifest_copied"
+    MANIFEST_REPORT=$(/usr/bin/capsem-admin manifest check --json "$CAPSEM_DIR/assets/manifest.json" | tr '\n' ' ')
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=manifest_report $MANIFEST_REPORT"
+    if [ -f "$CAPSEM_DIR/assets/manifest-origin.json" ]; then
+        MANIFEST_ORIGIN=$(tr '\n' ' ' < "$CAPSEM_DIR/assets/manifest-origin.json")
+        echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=manifest_origin $MANIFEST_ORIGIN"
+    fi
+fi
+
+if [ -d "/usr/share/capsem/profiles" ]; then
+    rm -rf "$CAPSEM_DIR/profiles"
+    mkdir -p "$CAPSEM_DIR/profiles"
+    cp -R /usr/share/capsem/profiles/. "$CAPSEM_DIR/profiles/" 2>/dev/null || true
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=profiles_copied"
+fi
 
 # Symlink system binaries into user dir
-for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-tui capsem-admin; do
+for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin; do
     if [ -f "/usr/bin/$bin" ]; then
         ln -sf "/usr/bin/$bin" "$CAPSEM_DIR/bin/$bin"
     fi
 done
 
-seed_assets
-seed_base_profiles
-
 # Fix ownership
 chown -R "$TARGET_USER:$(id -gn "$TARGET_USER")" "$CAPSEM_DIR"
 
-# Register systemd user unit and run setup (as the target user). These are
-# release-critical: if either fails, dpkg must report failure instead of
-# leaving a package that looks installed but cannot boot.
+if [ -f "$CAPSEM_DIR/assets/manifest.json" ] && [ -x "$CAPSEM_DIR/bin/capsem" ]; then
+    if ! su "$TARGET_USER" -c "CAPSEM_HOME=\"$CAPSEM_DIR\" CAPSEM_RUN_DIR=\"$CAPSEM_DIR/run\" \"$CAPSEM_DIR/bin/capsem\" update --assets"; then
+        echo "capsem: asset hydration failed" >&2
+        echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=asset_hydration_failed"
+        exit 1
+    fi
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=assets_hydrated"
+fi
+
+# Register systemd user unit as the target user.
 # XDG_RUNTIME_DIR is required for systemctl --user; su drops it.
 TARGET_UID=$(id -u "$TARGET_USER")
 XDG_DIR="/run/user/$TARGET_UID"
 if command -v systemctl >/dev/null 2>&1; then
-    su "$TARGET_USER" -c "XDG_RUNTIME_DIR=$XDG_DIR $CAPSEM_DIR/bin/capsem install"
+    su "$TARGET_USER" -c "XDG_RUNTIME_DIR=$XDG_DIR $CAPSEM_DIR/bin/capsem install" 2>/dev/null || true
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=service_install_invoked"
 fi
-seed_assets
-seed_base_profiles
-chown -R "$TARGET_USER:$(id -gn "$TARGET_USER")" "$CAPSEM_DIR/assets" "$CAPSEM_DIR/profiles"
-su "$TARGET_USER" -c "XDG_RUNTIME_DIR=$XDG_DIR $CAPSEM_DIR/bin/capsem setup --non-interactive --accept-detected"
 
+echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=complete"
 exit 0

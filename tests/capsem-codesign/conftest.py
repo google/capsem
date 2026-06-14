@@ -4,7 +4,6 @@ These tests FAIL (not skip) when binaries are unsigned on macOS.
 """
 
 import os
-import subprocess
 
 import pytest
 

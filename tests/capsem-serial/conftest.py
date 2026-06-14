@@ -18,7 +18,7 @@ def serial_env():
 
     client = svc.client()
     vm_name = f"serial-{uuid.uuid4().hex[:8]}"
-    client.post("/provision", {"name": vm_name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+    client.post("/vms/create", {"name": vm_name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
 
     if not wait_exec_ready(client, vm_name):
         svc.stop()
@@ -27,7 +27,7 @@ def serial_env():
     yield client, vm_name
 
     try:
-        client.delete(f"/delete/{vm_name}")
+        client.delete(f"/vms/{vm_name}/delete")
     except Exception:
         pass
     svc.stop()

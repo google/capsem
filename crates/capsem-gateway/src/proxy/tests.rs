@@ -2,6 +2,7 @@
 
 use super::*;
 use axum::body::Body;
+use axum::routing::any;
 use axum::Router;
 use bytes::Bytes;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -17,7 +18,26 @@ fn proxy_app(uds_path: &str) -> Router {
         auth_failures: crate::auth::AuthFailureTracker::new(),
         events_tx: tokio::sync::broadcast::channel(16).0,
     });
-    Router::new().fallback(handle_proxy).with_state(state)
+    Router::new()
+        .route("/big", any(handle_proxy))
+        .route("/bad", any(handle_proxy))
+        .route("/bin", any(handle_proxy))
+        .route("/count", any(handle_proxy))
+        .route("/created", any(handle_proxy))
+        .route("/custom", any(handle_proxy))
+        .route("/vms/{id}/delete", any(handle_proxy))
+        .route("/echo", any(handle_proxy))
+        .route("/empty", any(handle_proxy))
+        .route("/err", any(handle_proxy))
+        .route("/headers", any(handle_proxy))
+        .route("/health", any(handle_proxy))
+        .route("/item", any(handle_proxy))
+        .route("/vms/list", any(handle_proxy))
+        .route("/ok", any(handle_proxy))
+        .route("/vms/create", any(handle_proxy))
+        .route("/search", any(handle_proxy))
+        .route("/unavail", any(handle_proxy))
+        .with_state(state)
 }
 
 /// Start a mock UDS server with the given router, return (sock_path, join_handle, tempdir).
@@ -54,7 +74,7 @@ async fn returns_502_when_uds_missing() {
     let resp = app
         .oneshot(
             axum::http::Request::builder()
-                .uri("/list")
+                .uri("/vms/list")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -72,7 +92,7 @@ async fn returns_502_when_uds_missing() {
 async fn returns_502_for_post_when_uds_missing() {
     let app = proxy_app("/tmp/capsem-gw-test-nonexistent.sock");
     assert_eq!(
-        status_of(app, "POST", "/provision").await,
+        status_of(app, "POST", "/vms/create").await,
         StatusCode::BAD_GATEWAY
     );
 }
@@ -81,7 +101,7 @@ async fn returns_502_for_post_when_uds_missing() {
 async fn returns_502_for_delete_when_uds_missing() {
     let app = proxy_app("/tmp/capsem-gw-test-nonexistent.sock");
     assert_eq!(
-        status_of(app, "DELETE", "/delete/abc").await,
+        status_of(app, "DELETE", "/vms/abc/delete").await,
         StatusCode::BAD_GATEWAY
     );
 }
@@ -96,7 +116,7 @@ async fn returns_502_when_uds_exists_but_closed() {
     drop(std::fs::File::open(&sock_path)); // keep file alive via dir
     let app = proxy_app(sock_path.to_str().unwrap());
     assert_eq!(
-        status_of(app, "GET", "/list").await,
+        status_of(app, "GET", "/vms/list").await,
         StatusCode::BAD_GATEWAY
     );
 }
@@ -106,7 +126,7 @@ async fn returns_502_when_uds_exists_but_closed() {
 #[tokio::test]
 async fn forwards_get_to_uds() {
     let mock = axum::Router::new().route(
-        "/list",
+        "/vms/list",
         axum::routing::get(|| async { axum::Json(serde_json::json!({"sandboxes": []})) }),
     );
     let (path, h, _d) = mock_uds(mock).await;
@@ -115,7 +135,7 @@ async fn forwards_get_to_uds() {
     let resp = app
         .oneshot(
             axum::http::Request::builder()
-                .uri("/list")
+                .uri("/vms/list")
                 .body(Body::empty())
                 .unwrap(),
         )

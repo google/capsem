@@ -2,11 +2,6 @@ import { defineConfig } from 'astro/config';
 import svelte from '@astrojs/svelte';
 import tailwindcss from '@tailwindcss/vite';
 import releaseNotes from './plugins/vite-plugin-release-notes';
-import { readFileSync } from 'node:fs';
-
-const tauriConfig = JSON.parse(
-  readFileSync(new URL('../crates/capsem-app/tauri.conf.json', import.meta.url), 'utf8'),
-);
 
 export default defineConfig({
   output: 'static',
@@ -16,7 +11,6 @@ export default defineConfig({
     envPrefix: ['VITE_', 'TAURI_'],
     define: {
       __BUILD_TS__: JSON.stringify(new Date().toISOString().replace('T', ' ').slice(0, 19)),
-      __APP_VERSION__: JSON.stringify(tauriConfig.version ?? 'dev'),
     },
     plugins: [tailwindcss(), releaseNotes()],
     build: {

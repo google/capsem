@@ -164,10 +164,6 @@ _REQUIRED_ARTIFACTS = {
     # on this path. A per-arch entry here never resolved on a real build.
     "assets/manifest.json": _PROJECT_ROOT / "assets" / "manifest.json",
     "assets/<arch>/initrd.img": _PROJECT_ROOT / "assets" / _ARCH / "initrd.img",
-    "assets/<arch>/image-inventory.json": _PROJECT_ROOT
-    / "assets"
-    / _ARCH
-    / "image-inventory.json",
     "entitlements.plist": _PROJECT_ROOT / "entitlements.plist",
     "target/linux-agent/<arch>": _PROJECT_ROOT / "target" / "linux-agent" / _ARCH,
 }
@@ -199,7 +195,7 @@ def pytest_sessionstart(session):
     if missing:
         pytest.exit(
             "CAPSEM_REQUIRE_ARTIFACTS=1 but the following artifacts are "
-            f"missing: {missing}. Run `just build-assets` (for assets/) "
+            f"missing: {missing}. Run `just build-assets code` (for assets/) "
             "and `uv run capsem-builder agent` (for target/linux-agent/) "
             "before invoking pytest. Locally, unset the env var to let "
             "tests skip on missing artifacts.",
@@ -259,10 +255,11 @@ def get_capsem_processes() -> dict[int, dict]:
     and on any cargo/rustc command that carries `-p capsem-*`.
 
     cmdline is fetched lazily per capsem-* proc rather than via
-    process_iter's attr prefetch reads host process metadata before callers get
-    a per-proc try/except boundary, and on macOS a single
-    sysctl(KERN_PROCARGS2) denial for an unrelated system proc can surface as
-    an uncaught SystemError. Fetch name/cmdline per-proc, catch per-proc.
+    `process_iter(['pid', 'name', 'cmdline'])`. Attr-prefetch reads every
+    host proc's cmdline through psutil's as_dict, and on macOS a single
+    sysctl(KERN_PROCARGS2) denial for an unrelated system proc surfaces as
+    an uncaught SystemError that drops out of process_iter before our
+    per-iteration try/except can run. Fetch per-proc, catch per-proc.
     """
     procs: dict[int, dict] = {}
     for proc in psutil.process_iter():

@@ -20,7 +20,7 @@ pub struct CertAuthority {
 impl CertAuthority {
     /// Load a CA from PEM-encoded private key and certificate.
     ///
-    /// Typically called with `include_str!("../../../config/capsem-ca.key")`.
+    /// Typically called with `include_str!("../../../../security/keys/capsem-ca.key")`.
     pub fn load(key_pem: &str, cert_pem: &str) -> anyhow::Result<Self> {
         let ca_key = KeyPair::from_pem(key_pem)?;
 
@@ -151,8 +151,8 @@ impl rustls::server::ResolvesServerCert for MitmCertResolver {
 mod tests {
     use super::*;
 
-    const CA_KEY: &str = include_str!("../../../../config/capsem-ca.key");
-    const CA_CERT: &str = include_str!("../../../../config/capsem-ca.crt");
+    const CA_KEY: &str = include_str!("../../../../security/keys/capsem-ca.key");
+    const CA_CERT: &str = include_str!("../../../../security/keys/capsem-ca.crt");
 
     fn load_ca() -> CertAuthority {
         CertAuthority::load(CA_KEY, CA_CERT).expect("failed to load CA")

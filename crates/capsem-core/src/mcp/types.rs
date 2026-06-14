@@ -5,6 +5,25 @@ use serde::{Deserialize, Serialize};
 /// Namespace separator for MCP tool/prompt/resource names.
 pub const NS_SEP: &str = "__";
 
+/// Auth material for remote MCP servers.
+///
+/// The TOML contract stores only brokered credential references. Raw API keys,
+/// OAuth access tokens, refresh tokens, or Authorization headers must stay
+/// inside the credential broker.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum McpAuthKind {
+    Bearer,
+    OAuth,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct McpAuthConfig {
+    pub kind: McpAuthKind,
+    pub credential_ref: String,
+}
+
 /// A host-side MCP server definition (from user config or auto-detected).
 ///
 /// Transport is determined by which fields are set:
@@ -28,9 +47,9 @@ pub struct McpServerDef {
     /// Custom HTTP headers to send with every request.
     #[serde(default)]
     pub headers: HashMap<String, String>,
-    /// Bearer token for Authorization header (extracted from env for convenience).
+    /// Broker-owned auth material for remote MCP servers.
     #[serde(default)]
-    pub bearer_token: Option<String>,
+    pub auth: Option<McpAuthConfig>,
     pub enabled: bool,
     /// Where this definition came from: "claude", "gemini", "manual", "builtin".
     pub source: String,

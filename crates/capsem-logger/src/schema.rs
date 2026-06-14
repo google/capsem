@@ -1,8 +1,31 @@
 use rusqlite::Connection;
 
+const CREDENTIAL_REF_CHECK: &str =
+    "CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))";
+const SUBSTITUTION_REF_CHECK: &str =
+    "CHECK (substitution_ref IS NULL OR (length(substitution_ref) = 82 AND substitution_ref GLOB 'credential:blake3:[0-9a-f]*'))";
+const SUBSTITUTION_OUTCOME_CHECK: &str =
+    "CHECK (outcome IN ('captured', 'brokered', 'injected', 'error'))";
+const RULE_ACTION_CHECK: &str =
+    "CHECK (rule_action IN ('allow', 'ask', 'block', 'preprocess', 'rewrite', 'postprocess'))";
+const DETECTION_LEVEL_CHECK: &str =
+    "CHECK (detection_level IN ('none', 'informational', 'low', 'medium', 'high', 'critical'))";
+const ASK_STATUS_CHECK: &str = "CHECK (status IN ('pending', 'approved', 'denied'))";
+const PROFILE_MUTATION_STATUS_CHECK: &str = "CHECK (status IN ('applied', 'failed'))";
+const BLAKE3_REF_CHECK: &str =
+    "CHECK (length(old_hash) = 71 AND old_hash GLOB 'blake3:[0-9a-f]*' AND length(new_hash) = 71 AND new_hash GLOB 'blake3:[0-9a-f]*')";
+const SECURITY_DECISION_CHECK: &str = "CHECK (previous_decision IN ('allow', 'ask', 'block') AND requested_decision IN ('allow', 'ask', 'block') AND effective_decision IN ('allow', 'ask', 'block'))";
+const SECURITY_DECISION_STAGE_CHECK: &str =
+    "CHECK (stage IN ('preprocess', 'rule', 'rewrite', 'postprocess', 'ask_resolution'))";
+const SECURITY_EVENT_TYPE_CHECK: &str =
+    "CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask'))";
+const SECURITY_EVENT_ID_CHECK: &str =
+    "CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]')";
+
 pub const CREATE_SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS net_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         timestamp TEXT NOT NULL,
         domain TEXT NOT NULL,
         port INTEGER DEFAULT 443,
@@ -26,11 +49,13 @@ pub const CREATE_SCHEMA: &str = "
         policy_action TEXT,
         policy_rule TEXT,
         policy_reason TEXT,
-        trace_id TEXT
+        trace_id TEXT,
+        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
     );
 
     CREATE TABLE IF NOT EXISTS model_calls (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         timestamp TEXT NOT NULL,
         provider TEXT NOT NULL,
         model TEXT,
@@ -55,140 +80,24 @@ pub const CREATE_SCHEMA: &str = "
         response_bytes INTEGER DEFAULT 0,
         estimated_cost_usd REAL DEFAULT 0,
         trace_id TEXT,
-        usage_details TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS ai_model_interactions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        model_call_id INTEGER NOT NULL,
-        interaction_id TEXT NOT NULL,
-        trace_id TEXT NOT NULL,
-        attribution_scope TEXT NOT NULL CHECK (attribution_scope IN ('host', 'vm', 'profile', 'session', 'unknown')),
-        source_engine TEXT NOT NULL CHECK (source_engine IN ('network', 'file', 'process', 'conversation', 'security', 'vm', 'profile', 'host_ai')),
-        origin_kind TEXT NOT NULL CHECK (origin_kind IN ('guest_network', 'host_service', 'host_admin', 'host_workbench', 'test_fixture', 'unknown')),
-        accounting_owner TEXT,
-        profile_id TEXT,
-        vm_id TEXT,
-        session_id TEXT,
-        user_id TEXT,
-        provider TEXT NOT NULL CHECK (provider IN ('openai', 'anthropic', 'google_gemini', 'unknown')),
-        api_family TEXT NOT NULL CHECK (api_family IN ('openai_chat_completions', 'openai_responses', 'anthropic_messages', 'google_gemini_content', 'mcp', 'unknown')),
-        model TEXT NOT NULL,
-        parse_status TEXT NOT NULL CHECK (parse_status IN ('complete', 'partial', 'malformed', 'unsupported', 'redacted')),
-        evidence_status TEXT NOT NULL CHECK (evidence_status IN ('complete', 'partial', 'ambiguous', 'orphaned', 'untrusted')),
-        request_id TEXT NOT NULL,
-        request_model TEXT,
-        request_stream INTEGER NOT NULL DEFAULT 0,
-        request_system_prompt_preview TEXT,
-        request_message_count INTEGER NOT NULL DEFAULT 0,
-        request_tools_declared_count INTEGER NOT NULL DEFAULT 0,
-        request_raw_shape_version TEXT NOT NULL,
-        request_unknown_fields_present INTEGER NOT NULL DEFAULT 0,
-        response_id TEXT,
-        response_provider_response_id TEXT,
-        response_stop_reason TEXT,
-        response_text_preview TEXT,
-        response_thinking_preview TEXT,
-        response_raw_shape_version TEXT,
-        usage_input_tokens INTEGER,
-        usage_output_tokens INTEGER,
-        usage_estimated_cost_micros INTEGER,
-        FOREIGN KEY(model_call_id) REFERENCES model_calls(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS ai_usage_details (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        interaction_id INTEGER NOT NULL,
-        scope TEXT NOT NULL CHECK (scope IN ('interaction', 'response')),
-        name TEXT NOT NULL,
-        value INTEGER NOT NULL,
-        FOREIGN KEY(interaction_id) REFERENCES ai_model_interactions(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS ai_content_blocks (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        interaction_id INTEGER NOT NULL,
-        block_index INTEGER NOT NULL,
-        kind TEXT NOT NULL CHECK (kind IN ('text', 'json', 'image', 'file', 'tool_use', 'tool_result', 'reasoning', 'cache_marker', 'redacted', 'unknown')),
-        text_preview TEXT,
-        json_preview TEXT,
-        mime_type TEXT,
-        redacted INTEGER,
-        file_name TEXT,
-        path_class TEXT,
-        tool_call_id TEXT,
-        name TEXT,
-        is_error INTEGER,
-        marker TEXT,
-        reason TEXT,
-        raw_type TEXT,
-        FOREIGN KEY(interaction_id) REFERENCES ai_model_interactions(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS ai_model_tool_calls (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        interaction_id INTEGER NOT NULL,
-        tool_call_id TEXT NOT NULL,
-        call_index INTEGER NOT NULL,
-        provider_call_id TEXT,
-        raw_name TEXT NOT NULL,
-        normalized_name TEXT NOT NULL,
-        arguments_raw TEXT,
-        arguments_json TEXT,
-        arguments_status TEXT NOT NULL CHECK (arguments_status IN ('valid_json', 'partial_json', 'malformed_json', 'not_json', 'redacted', 'absent')),
-        origin TEXT NOT NULL CHECK (origin IN ('native_provider_tool', 'mcp_tool', 'local_builtin_tool', 'unknown')),
-        linked_mcp_call_id TEXT,
-        status TEXT NOT NULL CHECK (status IN ('proposed', 'executed', 'blocked', 'returned_to_model', 'error', 'unknown')),
-        parse_confidence TEXT NOT NULL CHECK (parse_confidence IN ('low', 'medium', 'high')),
-        FOREIGN KEY(interaction_id) REFERENCES ai_model_interactions(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS ai_model_tool_results (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        interaction_id INTEGER NOT NULL,
-        tool_call_id TEXT NOT NULL,
-        linked_mcp_call_id TEXT,
-        content_kind TEXT NOT NULL CHECK (content_kind IN ('text', 'json', 'image', 'file', 'tool_use', 'tool_result', 'reasoning', 'cache_marker', 'redacted', 'unknown')),
-        content_preview TEXT,
-        content_json TEXT,
-        is_error INTEGER NOT NULL DEFAULT 0,
-        result_status TEXT NOT NULL CHECK (result_status IN ('proposed', 'executed', 'blocked', 'returned_to_model', 'error', 'unknown')),
-        returned_to_model INTEGER NOT NULL DEFAULT 0,
-        parse_confidence TEXT NOT NULL CHECK (parse_confidence IN ('low', 'medium', 'high')),
-        FOREIGN KEY(interaction_id) REFERENCES ai_model_interactions(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS ai_mcp_execution_evidence (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        interaction_id INTEGER,
-        mcp_call_id TEXT NOT NULL,
-        server_id TEXT NOT NULL,
-        tool_name TEXT NOT NULL,
-        namespaced_tool_name TEXT NOT NULL,
-        transport TEXT NOT NULL,
-        request_arguments_raw TEXT,
-        request_arguments_json TEXT,
-        result_kind TEXT NOT NULL CHECK (result_kind IN ('text', 'json', 'image', 'file', 'tool_use', 'tool_result', 'reasoning', 'cache_marker', 'redacted', 'unknown')),
-        result_preview TEXT,
-        result_json TEXT,
-        is_error INTEGER NOT NULL DEFAULT 0,
-        latency_ms INTEGER NOT NULL DEFAULT 0,
-        linked_model_interaction_id TEXT,
-        linked_model_tool_call_id TEXT,
-        link_status TEXT NOT NULL CHECK (link_status IN ('linked', 'unlinked_pending', 'orphan_model_tool_call', 'orphan_mcp_execution', 'ambiguous', 'not_applicable')),
-        FOREIGN KEY(interaction_id) REFERENCES ai_model_interactions(id)
+        usage_details TEXT,
+        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
     );
 
     CREATE TABLE IF NOT EXISTS tool_calls (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         model_call_id INTEGER NOT NULL,
+        provider TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'observed' CHECK (status IN ('requested', 'observed', 'responded', 'error')),
         call_index INTEGER NOT NULL,
         call_id TEXT NOT NULL,
         tool_name TEXT NOT NULL,
         arguments TEXT,
         origin TEXT NOT NULL DEFAULT 'native',
         mcp_call_id INTEGER,
-        trace_id TEXT
+        trace_id TEXT,
+        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
     );
 
     CREATE TABLE IF NOT EXISTS tool_responses (
@@ -212,29 +121,10 @@ pub const CREATE_SCHEMA: &str = "
         ON tool_responses(model_call_id);
     CREATE INDEX IF NOT EXISTS idx_model_calls_trace_id
         ON model_calls(trace_id);
-    CREATE INDEX IF NOT EXISTS idx_ai_model_interactions_model_call
-        ON ai_model_interactions(model_call_id);
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_model_interactions_interaction_id
-        ON ai_model_interactions(interaction_id);
-    CREATE INDEX IF NOT EXISTS idx_ai_model_interactions_trace_id
-        ON ai_model_interactions(trace_id);
-    CREATE INDEX IF NOT EXISTS idx_ai_model_interactions_provider_model
-        ON ai_model_interactions(provider, model);
-    CREATE INDEX IF NOT EXISTS idx_ai_model_tool_calls_interaction
-        ON ai_model_tool_calls(interaction_id);
-    CREATE INDEX IF NOT EXISTS idx_ai_model_tool_calls_name
-        ON ai_model_tool_calls(normalized_name);
-    CREATE INDEX IF NOT EXISTS idx_ai_model_tool_calls_link
-        ON ai_model_tool_calls(linked_mcp_call_id);
-    CREATE INDEX IF NOT EXISTS idx_ai_model_tool_results_interaction
-        ON ai_model_tool_results(interaction_id);
-    CREATE INDEX IF NOT EXISTS idx_ai_mcp_execution_evidence_interaction
-        ON ai_mcp_execution_evidence(interaction_id);
-    CREATE INDEX IF NOT EXISTS idx_ai_mcp_execution_evidence_link
-        ON ai_mcp_execution_evidence(linked_model_tool_call_id);
 
     CREATE TABLE IF NOT EXISTS mcp_calls (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         timestamp TEXT NOT NULL,
         server_name TEXT NOT NULL,
         method TEXT NOT NULL,
@@ -252,7 +142,8 @@ pub const CREATE_SCHEMA: &str = "
         policy_action TEXT,
         policy_rule TEXT,
         policy_reason TEXT,
-        trace_id TEXT
+        trace_id TEXT,
+        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
     );
 
     CREATE INDEX IF NOT EXISTS idx_mcp_calls_server
@@ -266,11 +157,15 @@ pub const CREATE_SCHEMA: &str = "
 
     CREATE TABLE IF NOT EXISTS fs_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         timestamp TEXT NOT NULL,
         action TEXT NOT NULL,
         path TEXT NOT NULL,
+        directory TEXT,
+        name TEXT,
         size INTEGER,
-        trace_id TEXT
+        trace_id TEXT,
+        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
     );
 
     CREATE INDEX IF NOT EXISTS idx_fs_events_timestamp
@@ -278,143 +173,9 @@ pub const CREATE_SCHEMA: &str = "
     CREATE INDEX IF NOT EXISTS idx_fs_events_path
         ON fs_events(path);
 
-    CREATE TABLE IF NOT EXISTS snapshot_events (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        timestamp TEXT NOT NULL,
-        slot INTEGER NOT NULL,
-        origin TEXT NOT NULL,
-        name TEXT,
-        files_count INTEGER DEFAULT 0,
-        start_fs_event_id INTEGER DEFAULT 0,
-        stop_fs_event_id INTEGER DEFAULT 0,
-        trace_id TEXT
-    );
-    CREATE INDEX IF NOT EXISTS idx_snapshot_events_timestamp
-        ON snapshot_events(timestamp);
-
-    CREATE TABLE IF NOT EXISTS session_identity (
-        id INTEGER PRIMARY KEY CHECK (id = 1),
-        updated_at TEXT NOT NULL,
-        vm_id TEXT NOT NULL,
-        profile_id TEXT NOT NULL,
-        user_id TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_session_identity_profile
-        ON session_identity(profile_id);
-    CREATE INDEX IF NOT EXISTS idx_session_identity_user
-        ON session_identity(user_id);
-
-    CREATE TABLE IF NOT EXISTS security_events (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_id TEXT NOT NULL UNIQUE,
-        timestamp TEXT NOT NULL,
-        timestamp_unix_ms INTEGER NOT NULL,
-        event_family TEXT NOT NULL CHECK (event_family IN ('dns', 'http', 'mcp', 'model', 'file', 'process', 'credential', 'vm', 'profile', 'conversation', 'snapshot')),
-        event_type TEXT NOT NULL,
-        source_engine TEXT NOT NULL CHECK (source_engine IN ('network', 'file', 'process', 'conversation', 'security', 'vm', 'profile', 'host_ai')),
-        final_action TEXT NOT NULL CHECK (final_action IN ('continue', 'ask', 'rewrite', 'block', 'throttle', 'quarantine', 'restore', 'drop_connection', 'observe_only', 'error')),
-        enforceability TEXT NOT NULL CHECK (enforceability IN ('inline_blockable', 'observe_only', 'remediation_only')),
-        attribution_scope TEXT NOT NULL CHECK (attribution_scope IN ('host', 'vm', 'profile', 'session', 'unknown')),
-        origin_kind TEXT NOT NULL CHECK (origin_kind IN ('guest_network', 'host_service', 'host_admin', 'host_workbench', 'test_fixture', 'unknown')),
-        accounting_owner TEXT,
-        trace_id TEXT,
-        span_id TEXT,
-        parent_event_id TEXT,
-        stream_id TEXT,
-        activity_id TEXT,
-        sequence_no INTEGER,
-        vm_id TEXT,
-        session_id TEXT,
-        profile_id TEXT,
-        profile_revision TEXT,
-        user_id TEXT,
-        process_id TEXT,
-        parent_process_id TEXT,
-        exec_id TEXT,
-        turn_id TEXT,
-        message_id TEXT,
-        tool_call_id TEXT,
-        mcp_call_id TEXT,
-        redaction_state TEXT NOT NULL CHECK (redaction_state IN ('raw', 'redacted', 'summary-only')),
-        process_operation TEXT,
-        process_command_class TEXT,
-        label_count INTEGER NOT NULL DEFAULT 0,
-        mutation_count INTEGER NOT NULL DEFAULT 0,
-        finding_count INTEGER NOT NULL DEFAULT 0
-    );
-    CREATE INDEX IF NOT EXISTS idx_security_events_timestamp
-        ON security_events(timestamp);
-    CREATE INDEX IF NOT EXISTS idx_security_events_trace_id
-        ON security_events(trace_id);
-    CREATE INDEX IF NOT EXISTS idx_security_events_profile
-        ON security_events(profile_id);
-    CREATE INDEX IF NOT EXISTS idx_security_events_vm
-        ON security_events(vm_id);
-    CREATE INDEX IF NOT EXISTS idx_security_events_family_action
-        ON security_events(event_family, final_action);
-
-    CREATE TABLE IF NOT EXISTS security_event_steps (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_id TEXT NOT NULL,
-        step_index INTEGER NOT NULL,
-        kind TEXT NOT NULL CHECK (kind IN ('preprocessor', 'plugin_callback', 'enforcement_match', 'confirm', 'rate_limit_check', 'detection_match', 'postprocessor', 'emitter_delivery')),
-        status TEXT NOT NULL CHECK (status IN ('applied', 'matched', 'skipped', 'error')),
-        rule_id TEXT,
-        pack_id TEXT,
-        message TEXT,
-        FOREIGN KEY(event_id) REFERENCES security_events(event_id) ON DELETE CASCADE,
-        UNIQUE(event_id, step_index)
-    );
-    CREATE INDEX IF NOT EXISTS idx_security_event_steps_event
-        ON security_event_steps(event_id);
-    CREATE INDEX IF NOT EXISTS idx_security_event_steps_rule
-        ON security_event_steps(rule_id);
-
-    CREATE TABLE IF NOT EXISTS detection_findings (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        finding_id TEXT NOT NULL UNIQUE,
-        event_id TEXT NOT NULL,
-        rule_id TEXT NOT NULL,
-        pack_id TEXT NOT NULL,
-        sigma_id TEXT,
-        title TEXT NOT NULL,
-        severity TEXT NOT NULL CHECK (severity IN ('info', 'low', 'medium', 'high', 'critical')),
-        confidence TEXT NOT NULL CHECK (confidence IN ('low', 'medium', 'high')),
-        FOREIGN KEY(event_id) REFERENCES security_events(event_id) ON DELETE CASCADE
-    );
-    CREATE INDEX IF NOT EXISTS idx_detection_findings_event
-        ON detection_findings(event_id);
-    CREATE INDEX IF NOT EXISTS idx_detection_findings_rule
-        ON detection_findings(rule_id);
-    CREATE INDEX IF NOT EXISTS idx_detection_findings_pack
-        ON detection_findings(pack_id);
-
-    CREATE TABLE IF NOT EXISTS detection_finding_tags (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        finding_id TEXT NOT NULL,
-        tag_index INTEGER NOT NULL,
-        tag TEXT NOT NULL,
-        FOREIGN KEY(finding_id) REFERENCES detection_findings(finding_id) ON DELETE CASCADE,
-        UNIQUE(finding_id, tag_index)
-    );
-    CREATE INDEX IF NOT EXISTS idx_detection_finding_tags_tag
-        ON detection_finding_tags(tag);
-
-    CREATE TABLE IF NOT EXISTS security_event_links (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_id TEXT NOT NULL,
-        linked_event_id TEXT NOT NULL,
-        link_type TEXT NOT NULL,
-        evidence TEXT,
-        FOREIGN KEY(event_id) REFERENCES security_events(event_id) ON DELETE CASCADE
-    );
-    CREATE INDEX IF NOT EXISTS idx_security_event_links_event
-        ON security_event_links(event_id);
-    CREATE INDEX IF NOT EXISTS idx_security_event_links_linked
-        ON security_event_links(linked_event_id);
-
     CREATE TABLE IF NOT EXISTS exec_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         timestamp TEXT NOT NULL,
         exec_id INTEGER NOT NULL,
         command TEXT NOT NULL,
@@ -428,7 +189,8 @@ pub const CREATE_SCHEMA: &str = "
         mcp_call_id INTEGER,
         trace_id TEXT,
         process_name TEXT,
-        pid INTEGER
+        pid INTEGER,
+        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
     );
     CREATE INDEX IF NOT EXISTS idx_exec_events_timestamp
         ON exec_events(timestamp);
@@ -441,11 +203,13 @@ pub const CREATE_SCHEMA: &str = "
 
     CREATE TABLE IF NOT EXISTS dns_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         timestamp TEXT NOT NULL,
         qname TEXT NOT NULL,
         qtype INTEGER NOT NULL,
         qclass INTEGER NOT NULL,
         rcode INTEGER NOT NULL,
+        answer_ip TEXT,
         decision TEXT NOT NULL,
         matched_rule TEXT,
         source_proto TEXT,
@@ -455,7 +219,8 @@ pub const CREATE_SCHEMA: &str = "
         policy_mode TEXT,
         policy_action TEXT,
         policy_rule TEXT,
-        policy_reason TEXT
+        policy_reason TEXT,
+        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
     );
     CREATE INDEX IF NOT EXISTS idx_dns_events_timestamp
         ON dns_events(timestamp);
@@ -470,6 +235,7 @@ pub const CREATE_SCHEMA: &str = "
 
     CREATE TABLE IF NOT EXISTS audit_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         timestamp TEXT NOT NULL,
         pid INTEGER NOT NULL,
         ppid INTEGER NOT NULL,
@@ -484,7 +250,8 @@ pub const CREATE_SCHEMA: &str = "
         audit_id TEXT,
         exec_event_id INTEGER,
         parent_exe TEXT,
-        trace_id TEXT
+        trace_id TEXT,
+        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
     );
     CREATE INDEX IF NOT EXISTS idx_audit_events_timestamp
         ON audit_events(timestamp);
@@ -494,6 +261,124 @@ pub const CREATE_SCHEMA: &str = "
         ON audit_events(pid);
     CREATE INDEX IF NOT EXISTS idx_audit_events_ppid
         ON audit_events(ppid);
+
+    CREATE TABLE IF NOT EXISTS substitution_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        timestamp TEXT NOT NULL,
+        material_class TEXT NOT NULL,
+        source TEXT NOT NULL,
+        event_type TEXT,
+        algorithm TEXT NOT NULL,
+        substitution_ref TEXT NOT NULL CHECK (length(substitution_ref) = 82 AND substitution_ref GLOB 'credential:blake3:[0-9a-f]*'),
+        outcome TEXT NOT NULL CHECK (outcome IN ('captured', 'brokered', 'injected', 'error')),
+        provider TEXT,
+        confidence REAL,
+        trace_id TEXT,
+        context_json TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_substitution_events_timestamp
+        ON substitution_events(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_substitution_events_ref
+        ON substitution_events(substitution_ref);
+    CREATE INDEX IF NOT EXISTS idx_substitution_events_material
+        ON substitution_events(material_class);
+
+    CREATE TABLE IF NOT EXISTS security_rule_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp_unix_ms INTEGER NOT NULL,
+        event_id TEXT NOT NULL CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask')),
+        rule_id TEXT NOT NULL,
+        rule_action TEXT NOT NULL CHECK (rule_action IN ('allow', 'ask', 'block', 'preprocess', 'rewrite', 'postprocess')),
+        detection_level TEXT NOT NULL DEFAULT 'none' CHECK (detection_level IN ('none', 'informational', 'low', 'medium', 'high', 'critical')),
+        rule_json TEXT NOT NULL CHECK (json_valid(rule_json)),
+        event_json TEXT NOT NULL CHECK (json_valid(event_json)),
+        trace_id TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_security_rule_events_timestamp
+        ON security_rule_events(timestamp_unix_ms);
+    CREATE INDEX IF NOT EXISTS idx_security_rule_events_event_id
+        ON security_rule_events(event_id);
+    CREATE INDEX IF NOT EXISTS idx_security_rule_events_rule_id
+        ON security_rule_events(rule_id);
+    CREATE INDEX IF NOT EXISTS idx_security_rule_events_event_type
+        ON security_rule_events(event_type);
+
+    CREATE TABLE IF NOT EXISTS security_decision_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp_unix_ms INTEGER NOT NULL,
+        event_id TEXT NOT NULL CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask')),
+        stage TEXT NOT NULL CHECK (stage IN ('preprocess', 'rule', 'rewrite', 'postprocess', 'ask_resolution')),
+        actor TEXT NOT NULL,
+        rule_id TEXT,
+        plugin_id TEXT,
+        previous_decision TEXT NOT NULL CHECK (previous_decision IN ('allow', 'ask', 'block')),
+        requested_decision TEXT NOT NULL CHECK (requested_decision IN ('allow', 'ask', 'block')),
+        effective_decision TEXT NOT NULL CHECK (effective_decision IN ('allow', 'ask', 'block')),
+        reason TEXT,
+        event_json TEXT NOT NULL CHECK (json_valid(event_json)),
+        trace_id TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_security_decision_events_timestamp
+        ON security_decision_events(timestamp_unix_ms);
+    CREATE INDEX IF NOT EXISTS idx_security_decision_events_event_id
+        ON security_decision_events(event_id);
+    CREATE INDEX IF NOT EXISTS idx_security_decision_events_actor
+        ON security_decision_events(actor);
+
+    CREATE TABLE IF NOT EXISTS security_ask_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp_unix_ms INTEGER NOT NULL,
+        ask_id TEXT NOT NULL CHECK (length(ask_id) = 12 AND ask_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        event_id TEXT NOT NULL CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask')),
+        rule_id TEXT NOT NULL,
+        rule_name TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'denied')),
+        rule_json TEXT NOT NULL CHECK (json_valid(rule_json)),
+        event_json TEXT NOT NULL CHECK (json_valid(event_json)),
+        resolver TEXT,
+        reason TEXT,
+        trace_id TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_security_ask_events_timestamp
+        ON security_ask_events(timestamp_unix_ms);
+    CREATE INDEX IF NOT EXISTS idx_security_ask_events_ask_id
+        ON security_ask_events(ask_id);
+    CREATE INDEX IF NOT EXISTS idx_security_ask_events_event_id
+        ON security_ask_events(event_id);
+    CREATE INDEX IF NOT EXISTS idx_security_ask_events_rule_id
+        ON security_ask_events(rule_id);
+
+    CREATE TABLE IF NOT EXISTS profile_mutation_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp_unix_ms INTEGER NOT NULL,
+        mutation_id TEXT NOT NULL CHECK (length(mutation_id) = 12 AND mutation_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        profile_id TEXT NOT NULL,
+        actor TEXT NOT NULL,
+        category TEXT NOT NULL,
+        filename TEXT NOT NULL,
+        affected_path TEXT NOT NULL,
+        target_kind TEXT NOT NULL,
+        target_key TEXT NOT NULL,
+        operation TEXT NOT NULL,
+        rule_id TEXT,
+        old_hash TEXT NOT NULL CHECK (length(old_hash) = 71 AND old_hash GLOB 'blake3:[0-9a-f]*'),
+        old_size INTEGER NOT NULL,
+        new_hash TEXT NOT NULL CHECK (length(new_hash) = 71 AND new_hash GLOB 'blake3:[0-9a-f]*'),
+        new_size INTEGER NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('applied', 'failed')),
+        error TEXT,
+        trace_id TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_profile_mutation_events_timestamp
+        ON profile_mutation_events(timestamp_unix_ms);
+    CREATE INDEX IF NOT EXISTS idx_profile_mutation_events_profile
+        ON profile_mutation_events(profile_id);
+    CREATE INDEX IF NOT EXISTS idx_profile_mutation_events_target
+        ON profile_mutation_events(category, target_kind, target_key);
 ";
 
 /// Create all tables and indexes on the given connection.
@@ -546,149 +431,28 @@ pub fn migrate(conn: &Connection) {
     // Replace cache_read_tokens with usage_details TEXT column.
     // SQLite doesn't support DROP COLUMN before 3.35, so just add the new one.
     let _ = conn.execute("ALTER TABLE model_calls ADD COLUMN usage_details TEXT", []);
-    let _ = conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS ai_model_interactions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            model_call_id INTEGER NOT NULL,
-            interaction_id TEXT NOT NULL,
-            trace_id TEXT NOT NULL,
-            attribution_scope TEXT NOT NULL CHECK (attribution_scope IN ('host', 'vm', 'profile', 'session', 'unknown')),
-            source_engine TEXT NOT NULL CHECK (source_engine IN ('network', 'file', 'process', 'conversation', 'security', 'vm', 'profile', 'host_ai')),
-            origin_kind TEXT NOT NULL CHECK (origin_kind IN ('guest_network', 'host_service', 'host_admin', 'host_workbench', 'test_fixture', 'unknown')),
-            accounting_owner TEXT,
-            profile_id TEXT,
-            vm_id TEXT,
-            session_id TEXT,
-            user_id TEXT,
-            provider TEXT NOT NULL CHECK (provider IN ('openai', 'anthropic', 'google_gemini', 'unknown')),
-            api_family TEXT NOT NULL CHECK (api_family IN ('openai_chat_completions', 'openai_responses', 'anthropic_messages', 'google_gemini_content', 'mcp', 'unknown')),
-            model TEXT NOT NULL,
-            parse_status TEXT NOT NULL CHECK (parse_status IN ('complete', 'partial', 'malformed', 'unsupported', 'redacted')),
-            evidence_status TEXT NOT NULL CHECK (evidence_status IN ('complete', 'partial', 'ambiguous', 'orphaned', 'untrusted')),
-            request_id TEXT NOT NULL,
-            request_model TEXT,
-            request_stream INTEGER NOT NULL DEFAULT 0,
-            request_system_prompt_preview TEXT,
-            request_message_count INTEGER NOT NULL DEFAULT 0,
-            request_tools_declared_count INTEGER NOT NULL DEFAULT 0,
-            request_raw_shape_version TEXT NOT NULL,
-            request_unknown_fields_present INTEGER NOT NULL DEFAULT 0,
-            response_id TEXT,
-            response_provider_response_id TEXT,
-            response_stop_reason TEXT,
-            response_text_preview TEXT,
-            response_thinking_preview TEXT,
-            response_raw_shape_version TEXT,
-            usage_input_tokens INTEGER,
-            usage_output_tokens INTEGER,
-            usage_estimated_cost_micros INTEGER,
-            FOREIGN KEY(model_call_id) REFERENCES model_calls(id)
-        );
-        CREATE TABLE IF NOT EXISTS ai_usage_details (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            interaction_id INTEGER NOT NULL,
-            scope TEXT NOT NULL CHECK (scope IN ('interaction', 'response')),
-            name TEXT NOT NULL,
-            value INTEGER NOT NULL,
-            FOREIGN KEY(interaction_id) REFERENCES ai_model_interactions(id)
-        );
-        CREATE TABLE IF NOT EXISTS ai_content_blocks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            interaction_id INTEGER NOT NULL,
-            block_index INTEGER NOT NULL,
-            kind TEXT NOT NULL CHECK (kind IN ('text', 'json', 'image', 'file', 'tool_use', 'tool_result', 'reasoning', 'cache_marker', 'redacted', 'unknown')),
-            text_preview TEXT,
-            json_preview TEXT,
-            mime_type TEXT,
-            redacted INTEGER,
-            file_name TEXT,
-            path_class TEXT,
-            tool_call_id TEXT,
-            name TEXT,
-            is_error INTEGER,
-            marker TEXT,
-            reason TEXT,
-            raw_type TEXT,
-            FOREIGN KEY(interaction_id) REFERENCES ai_model_interactions(id)
-        );
-        CREATE TABLE IF NOT EXISTS ai_model_tool_calls (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            interaction_id INTEGER NOT NULL,
-            tool_call_id TEXT NOT NULL,
-            call_index INTEGER NOT NULL,
-            provider_call_id TEXT,
-            raw_name TEXT NOT NULL,
-            normalized_name TEXT NOT NULL,
-            arguments_raw TEXT,
-            arguments_json TEXT,
-            arguments_status TEXT NOT NULL CHECK (arguments_status IN ('valid_json', 'partial_json', 'malformed_json', 'not_json', 'redacted', 'absent')),
-            origin TEXT NOT NULL CHECK (origin IN ('native_provider_tool', 'mcp_tool', 'local_builtin_tool', 'unknown')),
-            linked_mcp_call_id TEXT,
-            status TEXT NOT NULL CHECK (status IN ('proposed', 'executed', 'blocked', 'returned_to_model', 'error', 'unknown')),
-            parse_confidence TEXT NOT NULL CHECK (parse_confidence IN ('low', 'medium', 'high')),
-            FOREIGN KEY(interaction_id) REFERENCES ai_model_interactions(id)
-        );
-        CREATE TABLE IF NOT EXISTS ai_model_tool_results (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            interaction_id INTEGER NOT NULL,
-            tool_call_id TEXT NOT NULL,
-            linked_mcp_call_id TEXT,
-            content_kind TEXT NOT NULL CHECK (content_kind IN ('text', 'json', 'image', 'file', 'tool_use', 'tool_result', 'reasoning', 'cache_marker', 'redacted', 'unknown')),
-            content_preview TEXT,
-            content_json TEXT,
-            is_error INTEGER NOT NULL DEFAULT 0,
-            result_status TEXT NOT NULL CHECK (result_status IN ('proposed', 'executed', 'blocked', 'returned_to_model', 'error', 'unknown')),
-            returned_to_model INTEGER NOT NULL DEFAULT 0,
-            parse_confidence TEXT NOT NULL CHECK (parse_confidence IN ('low', 'medium', 'high')),
-            FOREIGN KEY(interaction_id) REFERENCES ai_model_interactions(id)
-        );
-        CREATE TABLE IF NOT EXISTS ai_mcp_execution_evidence (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            interaction_id INTEGER,
-            mcp_call_id TEXT NOT NULL,
-            server_id TEXT NOT NULL,
-            tool_name TEXT NOT NULL,
-            namespaced_tool_name TEXT NOT NULL,
-            transport TEXT NOT NULL,
-            request_arguments_raw TEXT,
-            request_arguments_json TEXT,
-            result_kind TEXT NOT NULL CHECK (result_kind IN ('text', 'json', 'image', 'file', 'tool_use', 'tool_result', 'reasoning', 'cache_marker', 'redacted', 'unknown')),
-            result_preview TEXT,
-            result_json TEXT,
-            is_error INTEGER NOT NULL DEFAULT 0,
-            latency_ms INTEGER NOT NULL DEFAULT 0,
-            linked_model_interaction_id TEXT,
-            linked_model_tool_call_id TEXT,
-            link_status TEXT NOT NULL CHECK (link_status IN ('linked', 'unlinked_pending', 'orphan_model_tool_call', 'orphan_mcp_execution', 'ambiguous', 'not_applicable')),
-            FOREIGN KEY(interaction_id) REFERENCES ai_model_interactions(id)
-        );
-        CREATE INDEX IF NOT EXISTS idx_ai_model_interactions_model_call
-            ON ai_model_interactions(model_call_id);
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_model_interactions_interaction_id
-            ON ai_model_interactions(interaction_id);
-        CREATE INDEX IF NOT EXISTS idx_ai_model_interactions_trace_id
-            ON ai_model_interactions(trace_id);
-        CREATE INDEX IF NOT EXISTS idx_ai_model_interactions_provider_model
-            ON ai_model_interactions(provider, model);
-        CREATE INDEX IF NOT EXISTS idx_ai_model_tool_calls_interaction
-            ON ai_model_tool_calls(interaction_id);
-        CREATE INDEX IF NOT EXISTS idx_ai_model_tool_calls_name
-            ON ai_model_tool_calls(normalized_name);
-        CREATE INDEX IF NOT EXISTS idx_ai_model_tool_calls_link
-            ON ai_model_tool_calls(linked_mcp_call_id);
-        CREATE INDEX IF NOT EXISTS idx_ai_model_tool_results_interaction
-            ON ai_model_tool_results(interaction_id);
-        CREATE INDEX IF NOT EXISTS idx_ai_mcp_execution_evidence_interaction
-            ON ai_mcp_execution_evidence(interaction_id);
-        CREATE INDEX IF NOT EXISTS idx_ai_mcp_execution_evidence_link
-            ON ai_mcp_execution_evidence(linked_model_tool_call_id);",
-    );
     // Add origin + mcp_call_id columns to tool_calls (for DBs created before this feature).
     let _ = conn.execute(
         "ALTER TABLE tool_calls ADD COLUMN origin TEXT NOT NULL DEFAULT 'native'",
         [],
     );
     let _ = conn.execute("ALTER TABLE tool_calls ADD COLUMN mcp_call_id INTEGER", []);
+    let _ = conn.execute(
+        "ALTER TABLE tool_calls ADD COLUMN event_id TEXT NOT NULL DEFAULT '000000000000' CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]')",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE tool_calls ADD COLUMN provider TEXT NOT NULL DEFAULT ''",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE tool_calls ADD COLUMN status TEXT NOT NULL DEFAULT 'observed' CHECK (status IN ('requested', 'observed', 'responded', 'error'))",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE tool_calls ADD COLUMN credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))",
+        [],
+    );
     // Add bytes_sent/bytes_received to mcp_calls (for DBs created before this feature).
     let _ = conn.execute(
         "ALTER TABLE mcp_calls ADD COLUMN bytes_sent INTEGER DEFAULT 0",
@@ -703,7 +467,7 @@ pub fn migrate(conn: &Connection) {
     let _ = conn.execute("ALTER TABLE mcp_calls ADD COLUMN policy_action TEXT", []);
     let _ = conn.execute("ALTER TABLE mcp_calls ADD COLUMN policy_rule TEXT", []);
     let _ = conn.execute("ALTER TABLE mcp_calls ADD COLUMN policy_reason TEXT", []);
-    // Add policy decision metadata to net_events for Policy HTTP/DNS audit.
+    // Add policy decision metadata to net_events for security rule HTTP/DNS audit.
     let _ = conn.execute("ALTER TABLE net_events ADD COLUMN policy_mode TEXT", []);
     let _ = conn.execute("ALTER TABLE net_events ADD COLUMN policy_action TEXT", []);
     let _ = conn.execute("ALTER TABLE net_events ADD COLUMN policy_rule TEXT", []);
@@ -724,25 +488,15 @@ pub fn migrate(conn: &Connection) {
             timestamp TEXT NOT NULL,
             action TEXT NOT NULL,
             path TEXT NOT NULL,
+            directory TEXT,
+            name TEXT,
             size INTEGER
         );
         CREATE INDEX IF NOT EXISTS idx_fs_events_timestamp ON fs_events(timestamp);
         CREATE INDEX IF NOT EXISTS idx_fs_events_path ON fs_events(path);",
     );
-    // Add snapshot_events table if not present (for DBs created before this feature).
-    let _ = conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS snapshot_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp TEXT NOT NULL,
-            slot INTEGER NOT NULL,
-            origin TEXT NOT NULL,
-            name TEXT,
-            files_count INTEGER DEFAULT 0,
-            start_fs_event_id INTEGER DEFAULT 0,
-            stop_fs_event_id INTEGER DEFAULT 0
-        );
-        CREATE INDEX IF NOT EXISTS idx_snapshot_events_timestamp ON snapshot_events(timestamp);",
-    );
+    // Snapshot metadata is host recovery state, not session.db activity.
+    let _ = conn.execute_batch("DROP TABLE IF EXISTS snapshot_events;");
     // Add exec_events table if not present (for DBs created before this feature).
     let _ = conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS exec_events (
@@ -767,122 +521,6 @@ pub fn migrate(conn: &Connection) {
         CREATE INDEX IF NOT EXISTS idx_exec_events_trace_id ON exec_events(trace_id);
         CREATE INDEX IF NOT EXISTS idx_exec_events_source ON exec_events(source);",
     );
-    // S07a: one durable identity row per session DB. This keeps event writes
-    // lean while making VM/profile/user identity available to telemetry
-    // exports, detail/status paths, and support bundles.
-    let _ = conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS session_identity (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            updated_at TEXT NOT NULL,
-            vm_id TEXT NOT NULL,
-            profile_id TEXT NOT NULL,
-            user_id TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_session_identity_profile
-            ON session_identity(profile_id);
-        CREATE INDEX IF NOT EXISTS idx_session_identity_user
-            ON session_identity(user_id);",
-    );
-    // S08b: canonical resolved security-event journal. Domain-specific tables
-    // remain query projections; these tables are the structured security
-    // ledger the Security Engine emitter writes.
-    let _ = conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS security_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_id TEXT NOT NULL UNIQUE,
-            timestamp TEXT NOT NULL,
-            timestamp_unix_ms INTEGER NOT NULL,
-            event_family TEXT NOT NULL CHECK (event_family IN ('dns', 'http', 'mcp', 'model', 'file', 'process', 'credential', 'vm', 'profile', 'conversation', 'snapshot')),
-            event_type TEXT NOT NULL,
-            source_engine TEXT NOT NULL CHECK (source_engine IN ('network', 'file', 'process', 'conversation', 'security', 'vm', 'profile', 'host_ai')),
-            final_action TEXT NOT NULL CHECK (final_action IN ('continue', 'ask', 'rewrite', 'block', 'throttle', 'quarantine', 'restore', 'drop_connection', 'observe_only', 'error')),
-            enforceability TEXT NOT NULL CHECK (enforceability IN ('inline_blockable', 'observe_only', 'remediation_only')),
-            attribution_scope TEXT NOT NULL CHECK (attribution_scope IN ('host', 'vm', 'profile', 'session', 'unknown')),
-            origin_kind TEXT NOT NULL CHECK (origin_kind IN ('guest_network', 'host_service', 'host_admin', 'host_workbench', 'test_fixture', 'unknown')),
-            accounting_owner TEXT,
-            trace_id TEXT,
-            span_id TEXT,
-            parent_event_id TEXT,
-            stream_id TEXT,
-            activity_id TEXT,
-            sequence_no INTEGER,
-            vm_id TEXT,
-            session_id TEXT,
-            profile_id TEXT,
-            profile_revision TEXT,
-            user_id TEXT,
-            process_id TEXT,
-            parent_process_id TEXT,
-            exec_id TEXT,
-            turn_id TEXT,
-            message_id TEXT,
-            tool_call_id TEXT,
-            mcp_call_id TEXT,
-            redaction_state TEXT NOT NULL CHECK (redaction_state IN ('raw', 'redacted', 'summary-only')),
-            process_operation TEXT,
-            process_command_class TEXT,
-            label_count INTEGER NOT NULL DEFAULT 0,
-            mutation_count INTEGER NOT NULL DEFAULT 0,
-            finding_count INTEGER NOT NULL DEFAULT 0
-        );
-        CREATE INDEX IF NOT EXISTS idx_security_events_timestamp ON security_events(timestamp);
-        CREATE INDEX IF NOT EXISTS idx_security_events_trace_id ON security_events(trace_id);
-        CREATE INDEX IF NOT EXISTS idx_security_events_profile ON security_events(profile_id);
-        CREATE INDEX IF NOT EXISTS idx_security_events_vm ON security_events(vm_id);
-        CREATE INDEX IF NOT EXISTS idx_security_events_family_action ON security_events(event_family, final_action);
-
-        CREATE TABLE IF NOT EXISTS security_event_steps (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_id TEXT NOT NULL,
-            step_index INTEGER NOT NULL,
-            kind TEXT NOT NULL CHECK (kind IN ('preprocessor', 'plugin_callback', 'enforcement_match', 'confirm', 'rate_limit_check', 'detection_match', 'postprocessor', 'emitter_delivery')),
-            status TEXT NOT NULL CHECK (status IN ('applied', 'matched', 'skipped', 'error')),
-            rule_id TEXT,
-            pack_id TEXT,
-            message TEXT,
-            FOREIGN KEY(event_id) REFERENCES security_events(event_id) ON DELETE CASCADE,
-            UNIQUE(event_id, step_index)
-        );
-        CREATE INDEX IF NOT EXISTS idx_security_event_steps_event ON security_event_steps(event_id);
-        CREATE INDEX IF NOT EXISTS idx_security_event_steps_rule ON security_event_steps(rule_id);
-
-        CREATE TABLE IF NOT EXISTS detection_findings (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            finding_id TEXT NOT NULL UNIQUE,
-            event_id TEXT NOT NULL,
-            rule_id TEXT NOT NULL,
-            pack_id TEXT NOT NULL,
-            sigma_id TEXT,
-            title TEXT NOT NULL,
-            severity TEXT NOT NULL CHECK (severity IN ('info', 'low', 'medium', 'high', 'critical')),
-            confidence TEXT NOT NULL CHECK (confidence IN ('low', 'medium', 'high')),
-            FOREIGN KEY(event_id) REFERENCES security_events(event_id) ON DELETE CASCADE
-        );
-        CREATE INDEX IF NOT EXISTS idx_detection_findings_event ON detection_findings(event_id);
-        CREATE INDEX IF NOT EXISTS idx_detection_findings_rule ON detection_findings(rule_id);
-        CREATE INDEX IF NOT EXISTS idx_detection_findings_pack ON detection_findings(pack_id);
-
-        CREATE TABLE IF NOT EXISTS detection_finding_tags (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            finding_id TEXT NOT NULL,
-            tag_index INTEGER NOT NULL,
-            tag TEXT NOT NULL,
-            FOREIGN KEY(finding_id) REFERENCES detection_findings(finding_id) ON DELETE CASCADE,
-            UNIQUE(finding_id, tag_index)
-        );
-        CREATE INDEX IF NOT EXISTS idx_detection_finding_tags_tag ON detection_finding_tags(tag);
-
-        CREATE TABLE IF NOT EXISTS security_event_links (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_id TEXT NOT NULL,
-            linked_event_id TEXT NOT NULL,
-            link_type TEXT NOT NULL,
-            evidence TEXT,
-            FOREIGN KEY(event_id) REFERENCES security_events(event_id) ON DELETE CASCADE
-        );
-        CREATE INDEX IF NOT EXISTS idx_security_event_links_event ON security_event_links(event_id);
-        CREATE INDEX IF NOT EXISTS idx_security_event_links_linked ON security_event_links(linked_event_id);",
-    );
     // T3.3: Add dns_events table if not present (for DBs created before
     // T3 landed). The host-side DNS proxy writes one row per resolved
     // query; trace_id correlates back to the same agent action that
@@ -895,6 +533,7 @@ pub fn migrate(conn: &Connection) {
             qtype INTEGER NOT NULL,
             qclass INTEGER NOT NULL,
             rcode INTEGER NOT NULL,
+            answer_ip TEXT,
             decision TEXT NOT NULL,
             matched_rule TEXT,
             source_proto TEXT,
@@ -916,18 +555,13 @@ pub fn migrate(conn: &Connection) {
     let _ = conn.execute("ALTER TABLE dns_events ADD COLUMN policy_action TEXT", []);
     let _ = conn.execute("ALTER TABLE dns_events ADD COLUMN policy_rule TEXT", []);
     let _ = conn.execute("ALTER TABLE dns_events ADD COLUMN policy_reason TEXT", []);
-    let _ = conn.execute(
-        "ALTER TABLE security_events ADD COLUMN process_operation TEXT",
-        [],
-    );
-    let _ = conn.execute(
-        "ALTER TABLE security_events ADD COLUMN process_command_class TEXT",
-        [],
-    );
+    let _ = conn.execute("ALTER TABLE dns_events ADD COLUMN answer_ip TEXT", []);
     let _ = conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_dns_events_policy_rule ON dns_events(policy_rule)",
         [],
     );
+    let _ = conn.execute("ALTER TABLE fs_events ADD COLUMN directory TEXT", []);
+    let _ = conn.execute("ALTER TABLE fs_events ADD COLUMN name TEXT", []);
 
     // Add audit_events table if not present (for DBs created before this feature).
     let _ = conn.execute_batch(
@@ -953,7 +587,6 @@ pub fn migrate(conn: &Connection) {
         CREATE INDEX IF NOT EXISTS idx_audit_events_pid ON audit_events(pid);
         CREATE INDEX IF NOT EXISTS idx_audit_events_ppid ON audit_events(ppid);",
     );
-    let _ = conn.execute("ALTER TABLE audit_events ADD COLUMN exit_code INTEGER", []);
 
     // W6: trace_id everywhere. Adding the column to the seven tables that
     // didn't already have it lets `capsem_timeline --trace_id <X>` join
@@ -964,7 +597,6 @@ pub fn migrate(conn: &Connection) {
         "mcp_calls",
         "net_events",
         "fs_events",
-        "snapshot_events",
         "tool_calls",
         "tool_responses",
         "audit_events",
@@ -975,6 +607,183 @@ pub fn migrate(conn: &Connection) {
             [],
         );
     }
+
+    for tbl in [
+        "net_events",
+        "model_calls",
+        "mcp_calls",
+        "fs_events",
+        "exec_events",
+        "dns_events",
+        "audit_events",
+    ] {
+        let _ = conn.execute(
+            &format!("ALTER TABLE {tbl} ADD COLUMN credential_ref TEXT {CREDENTIAL_REF_CHECK}"),
+            [],
+        );
+        let _ = conn.execute(
+            &format!(
+                "CREATE INDEX IF NOT EXISTS idx_{tbl}_credential_ref ON {tbl}(credential_ref)"
+            ),
+            [],
+        );
+    }
+
+    for tbl in [
+        "net_events",
+        "model_calls",
+        "mcp_calls",
+        "fs_events",
+        "exec_events",
+        "dns_events",
+        "audit_events",
+        "substitution_events",
+    ] {
+        let _ = conn.execute(&format!("ALTER TABLE {tbl} ADD COLUMN event_id TEXT"), []);
+        let _ = conn.execute(
+            &format!("CREATE INDEX IF NOT EXISTS idx_{tbl}_event_id ON {tbl}(event_id)"),
+            [],
+        );
+    }
+
+    let _ = conn.execute_batch(&format!(
+        "CREATE TABLE IF NOT EXISTS substitution_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            material_class TEXT NOT NULL,
+            source TEXT NOT NULL,
+            event_type TEXT,
+            algorithm TEXT NOT NULL,
+            substitution_ref TEXT NOT NULL {SUBSTITUTION_REF_CHECK},
+            outcome TEXT NOT NULL {SUBSTITUTION_OUTCOME_CHECK},
+            provider TEXT,
+            confidence REAL,
+            trace_id TEXT,
+            context_json TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_substitution_events_timestamp
+            ON substitution_events(timestamp);
+        CREATE INDEX IF NOT EXISTS idx_substitution_events_ref
+            ON substitution_events(substitution_ref);
+        CREATE INDEX IF NOT EXISTS idx_substitution_events_material
+            ON substitution_events(material_class);"
+    ));
+
+    let _ = conn.execute_batch(&format!(
+        "CREATE TABLE IF NOT EXISTS security_rule_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp_unix_ms INTEGER NOT NULL,
+            event_id TEXT NOT NULL {SECURITY_EVENT_ID_CHECK},
+            event_type TEXT NOT NULL {SECURITY_EVENT_TYPE_CHECK},
+            rule_id TEXT NOT NULL,
+            rule_action TEXT NOT NULL {RULE_ACTION_CHECK},
+            detection_level TEXT NOT NULL DEFAULT 'none' {DETECTION_LEVEL_CHECK},
+            rule_json TEXT NOT NULL CHECK (json_valid(rule_json)),
+            event_json TEXT NOT NULL CHECK (json_valid(event_json)),
+            trace_id TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_security_rule_events_timestamp
+            ON security_rule_events(timestamp_unix_ms);
+        CREATE INDEX IF NOT EXISTS idx_security_rule_events_event_id
+            ON security_rule_events(event_id);
+        CREATE INDEX IF NOT EXISTS idx_security_rule_events_rule_id
+            ON security_rule_events(rule_id);
+        CREATE INDEX IF NOT EXISTS idx_security_rule_events_event_type
+            ON security_rule_events(event_type);"
+    ));
+    let _ = conn.execute_batch(&format!(
+        "CREATE TABLE IF NOT EXISTS security_decision_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp_unix_ms INTEGER NOT NULL,
+            event_id TEXT NOT NULL {SECURITY_EVENT_ID_CHECK},
+            event_type TEXT NOT NULL {SECURITY_EVENT_TYPE_CHECK},
+            stage TEXT NOT NULL {SECURITY_DECISION_STAGE_CHECK},
+            actor TEXT NOT NULL,
+            rule_id TEXT,
+            plugin_id TEXT,
+            previous_decision TEXT NOT NULL,
+            requested_decision TEXT NOT NULL,
+            effective_decision TEXT NOT NULL,
+            reason TEXT,
+            event_json TEXT NOT NULL CHECK (json_valid(event_json)),
+            trace_id TEXT,
+            {SECURITY_DECISION_CHECK}
+        );
+        CREATE INDEX IF NOT EXISTS idx_security_decision_events_timestamp
+            ON security_decision_events(timestamp_unix_ms);
+        CREATE INDEX IF NOT EXISTS idx_security_decision_events_event_id
+            ON security_decision_events(event_id);
+        CREATE INDEX IF NOT EXISTS idx_security_decision_events_actor
+            ON security_decision_events(actor);"
+    ));
+    let _ = conn.execute(
+        "ALTER TABLE security_rule_events ADD COLUMN rule_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(rule_json))",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE security_rule_events ADD COLUMN event_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(event_json))",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE security_rule_events ADD COLUMN detection_level TEXT NOT NULL DEFAULT 'none' CHECK (detection_level IN ('none', 'informational', 'low', 'medium', 'high', 'critical'))",
+        [],
+    );
+
+    let _ = conn.execute_batch(&format!(
+        "CREATE TABLE IF NOT EXISTS security_ask_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp_unix_ms INTEGER NOT NULL,
+            ask_id TEXT NOT NULL {SECURITY_EVENT_ID_CHECK},
+            event_id TEXT NOT NULL {SECURITY_EVENT_ID_CHECK},
+            event_type TEXT NOT NULL {SECURITY_EVENT_TYPE_CHECK},
+            rule_id TEXT NOT NULL,
+            rule_name TEXT NOT NULL,
+            status TEXT NOT NULL {ASK_STATUS_CHECK},
+            rule_json TEXT NOT NULL CHECK (json_valid(rule_json)),
+            event_json TEXT NOT NULL CHECK (json_valid(event_json)),
+            resolver TEXT,
+            reason TEXT,
+            trace_id TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_security_ask_events_timestamp
+            ON security_ask_events(timestamp_unix_ms);
+        CREATE INDEX IF NOT EXISTS idx_security_ask_events_ask_id
+            ON security_ask_events(ask_id);
+        CREATE INDEX IF NOT EXISTS idx_security_ask_events_event_id
+            ON security_ask_events(event_id);
+        CREATE INDEX IF NOT EXISTS idx_security_ask_events_rule_id
+            ON security_ask_events(rule_id);"
+    ));
+    let _ = conn.execute_batch(&format!(
+        "CREATE TABLE IF NOT EXISTS profile_mutation_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp_unix_ms INTEGER NOT NULL,
+            mutation_id TEXT NOT NULL {SECURITY_EVENT_ID_CHECK},
+            profile_id TEXT NOT NULL,
+            actor TEXT NOT NULL,
+            category TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            affected_path TEXT NOT NULL,
+            target_kind TEXT NOT NULL,
+            target_key TEXT NOT NULL,
+            operation TEXT NOT NULL,
+            rule_id TEXT,
+            old_hash TEXT NOT NULL,
+            old_size INTEGER NOT NULL,
+            new_hash TEXT NOT NULL,
+            new_size INTEGER NOT NULL,
+            status TEXT NOT NULL {PROFILE_MUTATION_STATUS_CHECK},
+            error TEXT,
+            trace_id TEXT,
+            {BLAKE3_REF_CHECK}
+        );
+        CREATE INDEX IF NOT EXISTS idx_profile_mutation_events_timestamp
+            ON profile_mutation_events(timestamp_unix_ms);
+        CREATE INDEX IF NOT EXISTS idx_profile_mutation_events_profile
+            ON profile_mutation_events(profile_id);
+        CREATE INDEX IF NOT EXISTS idx_profile_mutation_events_target
+            ON profile_mutation_events(category, target_kind, target_key);"
+    ));
 }
 
 /// Apply read-safe pragmas for read-only connections.
@@ -999,92 +808,6 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         create_tables(&conn).unwrap();
         create_tables(&conn).unwrap();
-    }
-
-    #[test]
-    fn ai_evidence_enum_columns_have_check_constraints() {
-        let conn = Connection::open_in_memory().unwrap();
-        create_tables(&conn).unwrap();
-        conn.execute(
-            "INSERT INTO model_calls (id, timestamp, provider, method, path)
-             VALUES (1, '2026-01-01T00:00:00Z', 'anthropic', 'POST', '/v1/messages')",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO ai_model_interactions (
-                model_call_id, interaction_id, trace_id, attribution_scope,
-                source_engine, origin_kind, provider, api_family, model,
-                parse_status, evidence_status, request_id,
-                request_raw_shape_version
-             )
-             VALUES (
-                1, 'interaction-ok', 'trace-ok', 'vm',
-                'network', 'guest_network', 'anthropic', 'anthropic_messages',
-                'claude-test', 'complete', 'complete', 'request-ok',
-                'anthropic.messages.v1'
-             )",
-            [],
-        )
-        .unwrap();
-        let bad_provider = conn.execute(
-            "INSERT INTO ai_model_interactions (
-                model_call_id, interaction_id, trace_id, attribution_scope,
-                source_engine, origin_kind, provider, api_family, model,
-                parse_status, evidence_status, request_id,
-                request_raw_shape_version
-             )
-             VALUES (
-                1, 'interaction-bad', 'trace-bad', 'vm',
-                'network', 'guest_network', 'bogus_provider',
-                'anthropic_messages', 'claude-test', 'complete', 'complete',
-                'request-bad', 'anthropic.messages.v1'
-             )",
-            [],
-        );
-        assert!(bad_provider.is_err());
-
-        let bad_scope = conn.execute(
-            "INSERT INTO ai_usage_details (interaction_id, scope, name, value)
-             VALUES (1, 'bad_scope', 'input_tokens', 1)",
-            [],
-        );
-        assert!(bad_scope.is_err());
-        let bad_tool_origin = conn.execute(
-            "INSERT INTO ai_model_tool_calls (
-                interaction_id, tool_call_id, call_index, raw_name,
-                normalized_name, arguments_status, origin, status,
-                parse_confidence
-             )
-             VALUES (
-                1, 'tool-1', 0, 'read_file', 'read_file',
-                'valid_json', 'bad_origin', 'proposed', 'high'
-             )",
-            [],
-        );
-        assert!(bad_tool_origin.is_err());
-        let bad_content_kind = conn.execute(
-            "INSERT INTO ai_model_tool_results (
-                interaction_id, tool_call_id, content_kind, is_error,
-                result_status, returned_to_model, parse_confidence
-             )
-             VALUES (1, 'tool-1', 'bad_kind', 0, 'returned_to_model', 1, 'high')",
-            [],
-        );
-        assert!(bad_content_kind.is_err());
-        let bad_link_status = conn.execute(
-            "INSERT INTO ai_mcp_execution_evidence (
-                interaction_id, mcp_call_id, server_id, tool_name,
-                namespaced_tool_name, transport, result_kind, is_error,
-                latency_ms, link_status
-             )
-             VALUES (
-                1, 'mcp-1', 'filesystem', 'read_file',
-                'filesystem.read_file', 'stdio', 'text', 0, 1, 'bad_link'
-             )",
-            [],
-        );
-        assert!(bad_link_status.is_err());
     }
 
     #[test]
@@ -1212,6 +935,453 @@ mod tests {
         assert_eq!(origin, "mcp");
     }
 
+    #[test]
+    fn create_tables_include_shared_credential_ref_columns() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+
+        for table in [
+            "net_events",
+            "model_calls",
+            "mcp_calls",
+            "fs_events",
+            "exec_events",
+            "dns_events",
+            "audit_events",
+        ] {
+            let mut stmt = conn
+                .prepare(&format!("PRAGMA table_info({table})"))
+                .unwrap();
+            let cols: Vec<String> = stmt
+                .query_map([], |row| row.get::<_, String>(1))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect();
+            assert!(
+                cols.iter().any(|col| col == "credential_ref"),
+                "{table} missing top-level shared credential_ref column: {cols:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn create_tables_include_shared_event_id_columns() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+
+        for table in [
+            "net_events",
+            "model_calls",
+            "mcp_calls",
+            "fs_events",
+            "exec_events",
+            "dns_events",
+            "audit_events",
+            "substitution_events",
+            "security_rule_events",
+        ] {
+            let mut stmt = conn
+                .prepare(&format!("PRAGMA table_info({table})"))
+                .unwrap();
+            let cols: Vec<String> = stmt
+                .query_map([], |row| row.get::<_, String>(1))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect();
+            assert!(
+                cols.iter().any(|col| col == "event_id"),
+                "{table} missing shared event_id column: {cols:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn create_tables_reject_raw_credential_ref_values() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+
+        let err = conn
+            .execute(
+                "INSERT INTO net_events (
+                    timestamp, domain, decision, credential_ref
+                 ) VALUES (
+                    '2026-01-01T00:00:00Z', 'api.github.com', 'allowed', 'ghp_raw_secret'
+                 )",
+                [],
+            )
+            .expect_err("raw credentials must not be accepted as credential_ref");
+        assert!(
+            err.to_string().contains("CHECK"),
+            "expected CHECK constraint failure, got: {err}"
+        );
+    }
+
+    #[test]
+    fn substitution_events_require_brokered_reference() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO substitution_events (
+                timestamp, material_class, source, event_type,
+                algorithm, substitution_ref, outcome
+             ) VALUES (
+                '2026-01-01T00:00:00Z', 'credential', 'http.authorization',
+                'http.request', 'blake3',
+                'credential:blake3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+                'captured'
+             )",
+            [],
+        )
+        .unwrap();
+
+        let err = conn
+            .execute(
+                "INSERT INTO substitution_events (
+                    timestamp, material_class, source, algorithm,
+                    substitution_ref, outcome
+                 ) VALUES (
+                    '2026-01-01T00:00:00Z', 'credential', 'http.authorization',
+                    'blake3', 'Bearer raw-secret', 'captured'
+                 )",
+                [],
+            )
+            .expect_err("substitution_ref must be a brokered reference");
+        assert!(
+            err.to_string().contains("CHECK"),
+            "expected CHECK constraint failure, got: {err}"
+        );
+
+        for outcome in ["substituted", "ignored"] {
+            let err = conn
+                .execute(
+                    "INSERT INTO substitution_events (
+                        timestamp, material_class, source, event_type,
+                        algorithm, substitution_ref, outcome
+                     ) VALUES (
+                        '2026-01-01T00:00:00Z', 'credential', 'http.authorization',
+                        'http.request', 'blake3',
+                        'credential:blake3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+                        ?1
+                     )",
+                    [outcome],
+                )
+                .expect_err("substitution_events outcome must be a closed broker verb");
+            assert!(
+                err.to_string().contains("CHECK"),
+                "expected CHECK constraint failure for outcome {outcome}, got: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn create_tables_includes_security_rule_events_contract() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO security_rule_events (
+                timestamp_unix_ms, event_id, event_type, rule_id,
+                rule_action, detection_level, rule_json, event_json
+             ) VALUES (
+                1789000000000, 'abcdef123456', 'model.call',
+                'openai_api_block', 'block', 'critical',
+                '{\"name\":\"openai_api_block\",\"match\":\"model.provider == \\\"openai\\\"\"}',
+                '{\"common\":{\"event_type\":\"model.call\"},\"model\":{\"provider\":\"openai\"}}'
+             )",
+            [],
+        )
+        .unwrap();
+
+        let (event_id, rule_action, detection_level): (String, String, String) = conn
+            .query_row(
+                "SELECT event_id, rule_action, detection_level
+                 FROM security_rule_events WHERE rule_id = 'openai_api_block'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(event_id, "abcdef123456");
+        assert_eq!(rule_action, "block");
+        assert_eq!(detection_level, "critical");
+    }
+
+    #[test]
+    fn create_tables_includes_security_ask_events_contract() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO security_ask_events (
+                timestamp_unix_ms, ask_id, event_id, event_type, rule_id,
+                rule_name, status, rule_json, event_json
+             ) VALUES (
+                1789000000000, 'abcdef123456', '111111abcdef',
+                'http.request', 'profiles.rules.ask_openai', 'ask_openai',
+                'pending', '{\"name\":\"ask_openai\"}',
+                '{\"http\":{\"host\":\"api.openai.com\"}}'
+             )",
+            [],
+        )
+        .unwrap();
+
+        let err = conn
+            .execute(
+                "INSERT INTO security_ask_events (
+                    timestamp_unix_ms, ask_id, event_id, event_type, rule_id,
+                    rule_name, status, rule_json, event_json
+                 ) VALUES (
+                    1789000000000, 'abcdef123457', '111111abcdeg',
+                    'http.request', 'profiles.rules.ask_openai', 'ask_openai',
+                    'maybe', '{}', '{}'
+                 )",
+                [],
+            )
+            .expect_err("ask status and ids must be strict");
+        assert!(
+            err.to_string().contains("CHECK"),
+            "expected CHECK constraint failure, got: {err}"
+        );
+    }
+
+    #[test]
+    fn security_rule_events_reject_unknown_rule_action() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+
+        let err = conn
+            .execute(
+                "INSERT INTO security_rule_events (
+                    timestamp_unix_ms, event_id, event_type, rule_id,
+                    rule_action, rule_json, event_json
+                 ) VALUES (
+                    1789000000000, 'abcdef123456', 'model.call',
+                    'old_detect', 'detect', '{}', '{}'
+                 )",
+                [],
+            )
+            .expect_err("detect is not a rule action");
+        assert!(
+            err.to_string().contains("CHECK"),
+            "expected CHECK constraint failure, got: {err}"
+        );
+    }
+
+    #[test]
+    fn security_rule_events_accept_rewrite_rule_action() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO security_rule_events (
+                timestamp_unix_ms, event_id, event_type, rule_id,
+                rule_action, rule_json, event_json
+             ) VALUES (
+                1789000000000, 'abcdef123456', 'model.call',
+                'profiles.rules.redact_model', 'rewrite', '{}', '{}'
+             )",
+            [],
+        )
+        .expect("rewrite is a canonical stored action");
+    }
+
+    #[test]
+    fn security_decision_events_record_explicit_decisions_and_reject_magic_outcome() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO security_decision_events (
+                timestamp_unix_ms, event_id, event_type, stage, actor,
+                rule_id, plugin_id, previous_decision, requested_decision,
+                effective_decision, reason, event_json
+             ) VALUES (
+                1789000000000, 'abcdef123456', 'file.import', 'rewrite',
+                'dummy_pre_eicar', 'profiles.rules.scan_eicar', 'dummy_pre_eicar',
+                'allow', 'block', 'block', 'EICAR test seed observed', '{}'
+             )",
+            [],
+        )
+        .expect("explicit decision transition must persist");
+
+        let err = conn
+            .execute(
+                "INSERT INTO security_decision_events (
+                    timestamp_unix_ms, event_id, event_type, stage, actor,
+                    previous_decision, requested_decision, effective_decision,
+                    event_json
+                 ) VALUES (
+                    1789000000001, 'abcdef123457', 'file.import', 'rewrite',
+                    'dummy_pre_eicar', 'allow', 'outcome', 'block', '{}'
+                 )",
+                [],
+            )
+            .expect_err("requested_decision must be an explicit decision, not magic outcome");
+        assert!(
+            err.to_string().contains("CHECK"),
+            "expected CHECK constraint failure, got: {err}"
+        );
+
+        let err = conn
+            .execute(
+                "INSERT INTO security_decision_events (
+                    timestamp_unix_ms, event_id, event_type, stage, actor,
+                    previous_decision, requested_decision, effective_decision,
+                    event_json
+                 ) VALUES (
+                    1789000002, 'abcdef123458', 'file.import', 'mystery',
+                    'dummy_pre_eicar', 'allow', 'block', 'block', '{}'
+                 )",
+                [],
+            )
+            .expect_err("stage must be canonical");
+        assert!(
+            err.to_string().contains("CHECK"),
+            "expected CHECK constraint failure, got: {err}"
+        );
+    }
+
+    #[test]
+    fn security_rule_events_reject_non_hex_event_id() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+
+        let err = conn
+            .execute(
+                "INSERT INTO security_rule_events (
+                    timestamp_unix_ms, event_id, event_type, rule_id,
+                    rule_action, rule_json, event_json
+                 ) VALUES (
+                    1789000000000, 'evt_abc123', 'model.call',
+                    'bad_event_id', 'allow', '{}', '{}'
+                 )",
+                [],
+            )
+            .expect_err("event_id must be 12 lowercase hex characters");
+        assert!(
+            err.to_string().contains("CHECK"),
+            "expected CHECK constraint failure, got: {err}"
+        );
+    }
+
+    #[test]
+    fn security_rule_events_reject_unknown_event_type() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+
+        for event_type in ["dns.response", "model.request", "file.ingress"] {
+            let err = conn
+                .execute(
+                    "INSERT INTO security_rule_events (
+                        timestamp_unix_ms, event_id, event_type, rule_id,
+                        rule_action, rule_json, event_json
+                     ) VALUES (
+                        1789000000000, 'abcdef123456', ?1,
+                        'stale_event_type', 'allow', '{}', '{}'
+                     )",
+                    [event_type],
+                )
+                .expect_err("event_type must be a backed runtime event type");
+            assert!(
+                err.to_string().contains("CHECK"),
+                "expected CHECK constraint failure for {event_type}, got: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn security_ask_events_reject_unknown_event_type() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+
+        let err = conn
+            .execute(
+                "INSERT INTO security_ask_events (
+                    timestamp_unix_ms, ask_id, event_id, event_type, rule_id,
+                    rule_name, status, rule_json, event_json
+                 ) VALUES (
+                    1789000000000, 'abcdef123456', '111111abcdef',
+                    'model.request', 'profiles.rules.ask_model', 'ask_model',
+                    'pending', '{}', '{}'
+                 )",
+                [],
+            )
+            .expect_err("ask event_type must be a backed runtime event type");
+        assert!(
+            err.to_string().contains("CHECK"),
+            "expected CHECK constraint failure, got: {err}"
+        );
+    }
+
+    #[test]
+    fn security_rule_events_reject_unknown_detection_level() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+
+        let err = conn
+            .execute(
+                "INSERT INTO security_rule_events (
+                    timestamp_unix_ms, event_id, event_type, rule_id,
+                    rule_action, detection_level, rule_json, event_json
+                 ) VALUES (
+                    1789000000000, 'abcdef123456', 'model.call',
+                    'bad_level', 'allow', 'info', '{}', '{}'
+                 )",
+                [],
+            )
+            .expect_err("DB stores only canonical detection levels");
+        assert!(
+            err.to_string().contains("CHECK"),
+            "expected CHECK constraint failure, got: {err}"
+        );
+    }
+
+    #[test]
+    fn security_rule_events_reject_null_detection_level() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+
+        let err = conn
+            .execute(
+                "INSERT INTO security_rule_events (
+                    timestamp_unix_ms, event_id, event_type, rule_id,
+                    rule_action, detection_level, rule_json, event_json
+                 ) VALUES (
+                    1789000000000, 'abcdef123456', 'model.call',
+                    'ambiguous_level', 'allow', NULL, '{}', '{}'
+                 )",
+                [],
+            )
+            .expect_err("detection_level must be explicit none, not NULL");
+        assert!(
+            err.to_string().contains("NOT NULL") || err.to_string().contains("CHECK"),
+            "expected NOT NULL/CHECK constraint failure, got: {err}"
+        );
+    }
+
+    #[test]
+    fn security_rule_events_reject_non_json_forensic_payloads() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+
+        let err = conn
+            .execute(
+                "INSERT INTO security_rule_events (
+                    timestamp_unix_ms, event_id, event_type, rule_id,
+                    rule_action, rule_json, event_json
+                 ) VALUES (
+                    1789000000000, 'abcdef123456', 'model.call',
+                    'bad_payload', 'allow', 'not json', '{}'
+                 )",
+                [],
+            )
+            .expect_err("rule_json must be valid JSON");
+        assert!(
+            err.to_string().contains("CHECK"),
+            "expected CHECK constraint failure, got: {err}"
+        );
+    }
+
     /// Writer pragmas (WAL + synchronous) must only be applied to read-write
     /// connections. Read-only connections must use apply_reader_pragmas instead.
     #[test]
@@ -1289,129 +1459,40 @@ mod tests {
     }
 
     #[test]
-    fn migrate_legacy_pre_policy_db_adds_current_tables_and_columns() {
+    fn create_tables_keeps_snapshots_out_of_session_db() {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(
-            "CREATE TABLE net_events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp TEXT NOT NULL,
-                domain TEXT NOT NULL,
-                decision TEXT NOT NULL
-            );
-            CREATE TABLE model_calls (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp TEXT NOT NULL,
-                provider TEXT NOT NULL,
-                method TEXT NOT NULL,
-                path TEXT NOT NULL
-            );
-            CREATE TABLE tool_calls (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                model_call_id INTEGER NOT NULL,
-                call_index INTEGER NOT NULL,
-                call_id TEXT NOT NULL,
-                tool_name TEXT NOT NULL
-            );
-            CREATE TABLE tool_responses (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                model_call_id INTEGER NOT NULL,
-                call_id TEXT NOT NULL
-            );
-            CREATE TABLE mcp_calls (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp TEXT NOT NULL,
-                server_name TEXT NOT NULL,
-                method TEXT NOT NULL,
-                decision TEXT NOT NULL
-            );
-            CREATE TABLE fs_events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp TEXT NOT NULL,
-                action TEXT NOT NULL,
-                path TEXT NOT NULL,
-                size INTEGER
-            );",
-        )
-        .unwrap();
-
-        migrate(&conn);
-        migrate(&conn);
-
-        for table in [
-            "dns_events",
-            "exec_events",
-            "snapshot_events",
-            "audit_events",
-        ] {
-            let count: i64 = conn
-                .query_row(
-                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = ?1",
-                    [table],
-                    |row| row.get(0),
-                )
-                .unwrap();
-            assert_eq!(count, 1, "missing migrated table {table}");
-        }
-
-        for (table, column) in [
-            ("net_events", "policy_action"),
-            ("mcp_calls", "policy_reason"),
-            ("dns_events", "policy_rule"),
-            ("security_events", "process_operation"),
-            ("security_events", "process_command_class"),
-            ("tool_calls", "mcp_call_id"),
-            ("tool_responses", "trace_id"),
-            ("fs_events", "trace_id"),
-            ("snapshot_events", "trace_id"),
-            ("audit_events", "exit_code"),
-            ("audit_events", "trace_id"),
-        ] {
-            let count: i64 = conn
-                .query_row(
-                    &format!("SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = ?1"),
-                    [column],
-                    |row| row.get(0),
-                )
-                .unwrap();
-            assert_eq!(count, 1, "{table} missing migrated column {column}");
-        }
-
-        conn.execute(
-            "INSERT INTO dns_events (
-                timestamp, qname, qtype, qclass, rcode, decision,
-                policy_mode, policy_action, policy_rule, policy_reason, trace_id
-             )
-             VALUES (
-                '2026-05-10T00:00:00Z', 'blocked.example', 1, 1, 5, 'denied',
-                'v2', 'block', 'policy.dns.block_example', 'fixture', 'trace_legacy'
-             )",
-            [],
-        )
-        .unwrap();
+        create_tables(&conn).unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='snapshot_events'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            count, 0,
+            "snapshots are host recovery state; session.db is the user/security activity ledger"
+        );
     }
 
     #[test]
-    fn create_tables_includes_snapshot_events() {
+    fn security_event_type_check_rejects_snapshot_event() {
         let conn = Connection::open_in_memory().unwrap();
         create_tables(&conn).unwrap();
-        conn.execute(
-            "INSERT INTO snapshot_events (timestamp, slot, origin, name, files_count, start_fs_event_id, stop_fs_event_id)
-             VALUES ('2026-01-01T00:00:00Z', 0, 'auto', NULL, 14, 0, 5)",
+        let result = conn.execute(
+            "INSERT INTO security_rule_events (
+                timestamp_unix_ms, event_id, event_type, rule_id, rule_name,
+                rule_action, detection_level, provider, rule_snapshot, event_payload
+             ) VALUES (
+                1, 'abcdef123456', 'snapshot.event', 'profiles.rules.snapshot',
+                'snapshot', 'allow', 'none', 'profiles', '{}', '{}'
+             )",
             [],
-        )
-        .unwrap();
-        let (slot, origin, files_count, start_id, stop_id): (i64, String, i64, i64, i64) = conn
-            .query_row(
-                "SELECT slot, origin, files_count, start_fs_event_id, stop_fs_event_id FROM snapshot_events",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
-            )
-            .unwrap();
-        assert_eq!(slot, 0);
-        assert_eq!(origin, "auto");
-        assert_eq!(files_count, 14);
-        assert_eq!(start_id, 0);
-        assert_eq!(stop_id, 5);
+        );
+        assert!(
+            result.is_err(),
+            "snapshot.event must not be a security-event type"
+        );
     }
 
     #[test]
@@ -1485,56 +1566,5 @@ mod tests {
                 .unwrap();
             assert_eq!(count, 1, "missing index {idx}");
         }
-    }
-
-    #[test]
-    fn migrate_snapshot_events_idempotent() {
-        let conn = Connection::open_in_memory().unwrap();
-        create_tables(&conn).unwrap();
-        migrate(&conn);
-        migrate(&conn);
-        conn.execute(
-            "INSERT INTO snapshot_events (timestamp, slot, origin, files_count, start_fs_event_id, stop_fs_event_id)
-             VALUES ('2026-01-01T00:00:00Z', 5, 'manual', 20, 10, 25)",
-            [],
-        )
-        .unwrap();
-        let origin: String = conn
-            .query_row(
-                "SELECT origin FROM snapshot_events WHERE slot = 5",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(origin, "manual");
-    }
-
-    #[test]
-    fn migrate_session_identity_idempotent() {
-        let conn = Connection::open_in_memory().unwrap();
-        create_tables(&conn).unwrap();
-        migrate(&conn);
-        migrate(&conn);
-        conn.execute(
-            "INSERT INTO session_identity (id, updated_at, vm_id, profile_id, user_id)
-             VALUES (1, '2026-05-18T00:00:00Z', 'vm-1', 'everyday-work', 'elie')",
-            [],
-        )
-        .unwrap();
-        let identity: (String, String, String) = conn
-            .query_row(
-                "SELECT vm_id, profile_id, user_id FROM session_identity WHERE id = 1",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .unwrap();
-        assert_eq!(
-            identity,
-            (
-                "vm-1".to_string(),
-                "everyday-work".to_string(),
-                "elie".to_string()
-            )
-        );
     }
 }

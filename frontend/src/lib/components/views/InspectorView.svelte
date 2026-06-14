@@ -13,6 +13,20 @@
   let presetOpen = $state(false);
   let running = $state(false);
 
+  type InspectorRow = Record<string, string | number | null>;
+
+  function resultRows(): InspectorRow[] {
+    if (!result) return [];
+    return result.rows.map((row) => {
+      if (!Array.isArray(row)) return row;
+      const objectRow: InspectorRow = {};
+      result!.columns.forEach((column, index) => {
+        objectRow[column] = row[index] ?? null;
+      });
+      return objectRow;
+    });
+  }
+
   async function runQuery() {
     error = null;
     result = null;
@@ -66,9 +80,10 @@
   let sortAsc = $state(true);
 
   let sortedRows = $derived.by(() => {
-    if (!result || !sortColumn) return result?.rows ?? [];
+    const rows = resultRows();
+    if (!sortColumn) return rows;
     const col = sortColumn;
-    return [...result.rows].sort((a, b) => {
+    return [...rows].sort((a, b) => {
       const va = a[col];
       const vb = b[col];
       if (va == null && vb == null) return 0;
@@ -146,7 +161,7 @@
     <textarea
       class="w-full px-4 py-3 font-mono text-sm bg-background text-foreground resize-none focus:outline-none"
       rows="4"
-      placeholder="SELECT * FROM event_log LIMIT 10"
+      placeholder="SELECT * FROM security_rule_events LIMIT 10"
       bind:value={sql}
       onkeydown={handleKeydown}
       spellcheck={false}

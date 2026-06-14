@@ -44,59 +44,64 @@ pub fn render_with_terminal(
 ) {
     render_layout(
         frame,
-        state,
-        terminal,
-        AppOverlay::None,
-        None,
-        None,
-        None,
-        None,
+        RenderLayoutCtx {
+            state,
+            terminal,
+            overlay: AppOverlay::None,
+            pending_action: None,
+            control_progress: None,
+            create_draft: None,
+            fork_draft: None,
+        },
     );
 }
 
 pub fn render_app(frame: &mut Frame<'_>, app: &App, terminal: Option<&TerminalSurface>) {
     render_layout(
         frame,
-        app.state(),
-        terminal,
-        app.overlay(),
-        app.pending_action(),
-        app.control_progress(),
-        app.create_draft(),
-        app.fork_draft(),
+        RenderLayoutCtx {
+            state: app.state(),
+            terminal,
+            overlay: app.overlay(),
+            pending_action: app.pending_action(),
+            control_progress: app.control_progress(),
+            create_draft: app.create_draft(),
+            fork_draft: app.fork_draft(),
+        },
     );
 }
 
-fn render_layout(
-    frame: &mut Frame<'_>,
-    state: &AppState,
-    terminal: Option<&TerminalSurface>,
+struct RenderLayoutCtx<'a> {
+    state: &'a AppState,
+    terminal: Option<&'a TerminalSurface>,
     overlay: AppOverlay,
-    pending_action: Option<&ControlAction>,
-    control_progress: Option<&str>,
-    create_draft: Option<&CreateDraft>,
-    fork_draft: Option<&ForkDraft>,
-) {
+    pending_action: Option<&'a ControlAction>,
+    control_progress: Option<&'a str>,
+    create_draft: Option<&'a CreateDraft>,
+    fork_draft: Option<&'a ForkDraft>,
+}
+
+fn render_layout(frame: &mut Frame<'_>, ctx: RenderLayoutCtx<'_>) {
     let root = frame.area();
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(1), Constraint::Length(1)])
         .split(root);
 
-    if let Some(label) = control_progress {
+    if let Some(label) = ctx.control_progress {
         render_control_progress_surface(frame, chunks[0], label);
     } else {
-        render_terminal_surface(frame, chunks[0], state, terminal);
+        render_terminal_surface(frame, chunks[0], ctx.state, ctx.terminal);
     }
-    render_status_bar(frame, state, chunks[1]);
+    render_status_bar(frame, ctx.state, chunks[1]);
     render_overlay(
         frame,
         chunks[0],
-        state,
-        overlay,
-        pending_action,
-        create_draft,
-        fork_draft,
+        ctx.state,
+        ctx.overlay,
+        ctx.pending_action,
+        ctx.create_draft,
+        ctx.fork_draft,
     );
 }
 

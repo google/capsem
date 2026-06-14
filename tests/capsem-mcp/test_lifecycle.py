@@ -1,6 +1,7 @@
 """VM lifecycle: create, list, info, delete and edge cases."""
 
 import time
+import uuid
 
 import pytest
 
@@ -94,9 +95,6 @@ def test_delete_nonexistent(mcp_session):
     resp = mcp_session.call_tool_raw("capsem_delete", {"id": "no-such-vm-xyz"})
     result = resp.get("result", {})
     assert result.get("isError") is True or "error" in resp
-
-
-import uuid
 
 def test_delete_twice(mcp_session):
     """Deleting an already-deleted VM should error, not crash."""

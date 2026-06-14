@@ -244,9 +244,17 @@ impl Pipeline {
     {
         let name = hook.name();
         ::metrics::counter!(m::HOOK_INVOCATIONS_TOTAL, "hook" => name).increment(1);
+        let span = tracing::debug_span!(
+            target: "capsem.mitm",
+            super::spans::MITM_BODY_CHUNK_HOOKS,
+            hook = name,
+            kind = kind,
+            duration_ms = tracing::field::Empty,
+        );
         let started = Instant::now();
-        f(hook, ctx);
+        span.in_scope(|| f(hook, ctx));
         let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+        span.record("duration_ms", elapsed_ms);
         ::metrics::histogram!(m::HOOK_DURATION_MS, "hook" => name).record(elapsed_ms);
         trace!(
             target: "mitm.hook.chunk",
@@ -309,9 +317,9 @@ impl Pipeline {
             // `on_enter` is logged at trace! so RUST_LOG=mitm.hook=trace
             // surfaces the entry-exit pair without flooding info.
             ::metrics::counter!(m::HOOK_INVOCATIONS_TOTAL, "hook" => hook_name).increment(1);
-            let span = tracing::info_span!(
-                target: "mitm.hook",
-                "hook",
+            let span = tracing::debug_span!(
+                target: "capsem.mitm",
+                super::spans::MITM_BODY_CHUNK_HOOKS,
                 hook = hook_name,
                 kind = ?kind,
                 layer = ?layer,

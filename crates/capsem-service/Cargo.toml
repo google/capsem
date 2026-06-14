@@ -13,16 +13,15 @@ authors.workspace = true
 capsem-core = { path = "../capsem-core" }
 capsem-guard = { path = "../capsem-guard" }
 capsem-logger = { path = "../capsem-logger" }
-capsem-network-engine = { path = "../capsem-network-engine" }
-capsem-process-engine = { path = "../capsem-process-engine" }
 capsem-proto = { path = "../capsem-proto" }
-capsem-security-engine = { path = "../capsem-security-engine" }
 anyhow.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+toml.workspace = true
+humantime.workspace = true
 clap.workspace = true
 tokio-unix-ipc.workspace = true
 tokio-stream.workspace = true
@@ -44,4 +43,4 @@ workspace = true
 [dev-dependencies]
 tempfile = "3"
 filetime = "0.2"
-rusqlite.workspace = true
+tower = { version = "0.5", features = ["util"] }

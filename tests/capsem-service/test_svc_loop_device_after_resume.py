@@ -25,13 +25,7 @@ import uuid
 
 import pytest
 
-from helpers.constants import (
-    DEFAULT_CPUS,
-    DEFAULT_RAM_MB,
-    EXEC_READY_TIMEOUT,
-    EXEC_TIMEOUT_SECS,
-    SUSPEND_TIMEOUT,
-)
+from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT, EXEC_TIMEOUT_SECS
 from helpers.service import wait_exec_ready, vm_name
 
 pytestmark = pytest.mark.integration
@@ -49,7 +43,7 @@ LOOP_ERROR_PATTERNS = [
 
 def _exec(client, name, command):
     return client.post(
-        f"/exec/{name}",
+        f"/vms/{name}/exec",
         {"command": command, "timeout_secs": EXEC_TIMEOUT_SECS},
     )
 
@@ -78,8 +72,14 @@ class TestLoopDeviceAfterResume:
         """
         name = vm_name("loopio")
         client.post(
-            "/provision",
-            {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS, "persistent": True},
+            "/vms/create",
+            {
+                "name": name,
+                "profile_id": CODE_PROFILE_ID,
+                "ram_mb": DEFAULT_RAM_MB,
+                "cpus": DEFAULT_CPUS,
+                "persistent": True,
+            },
         )
         try:
             assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
@@ -105,10 +105,10 @@ class TestLoopDeviceAfterResume:
             r = _exec(client, name, churn)
             assert r.get("exit_code") == 0, f"churn write failed: {r}"
 
-            sus = client.post(f"/suspend/{name}", {}, timeout=SUSPEND_TIMEOUT)
+            sus = client.post(f"/vms/{name}/pause", {})
             assert sus and sus.get("success"), f"suspend failed: {sus}"
 
-            res = client.post(f"/resume/{name}", {})
+            res = client.post(f"/vms/{name}/resume", {})
             assert res is not None, "resume returned None"
             resumed = res.get("id", name)
             assert wait_exec_ready(client, resumed, timeout=EXEC_READY_TIMEOUT), \
@@ -120,11 +120,11 @@ class TestLoopDeviceAfterResume:
             _exec(client, resumed, "ls /tmp /etc /var /opt /usr/local > /dev/null 2>&1; sync")
 
             post = _dmesg_offending_lines(client, resumed)
-            new_errors = [l for l in post if l not in pre]
+            new_errors = [line for line in post if line not in pre]
             assert not new_errors, (
                 "System-overlay EXT4 errors NEW after suspend/resume "
                 "(see sprints/done/virtio-blk-overlay-migration/ISSUE.md):\n"
-                + "\n".join(f"  {l}" for l in new_errors[:10])
+                + "\n".join(f"  {line}" for line in new_errors[:10])
             )
         finally:
-            client.delete(f"/delete/{name}")
+            client.delete(f"/vms/{name}/delete")

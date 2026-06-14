@@ -5,10 +5,7 @@ Uses mock UDS with a WebSocket echo server to verify relay behavior.
 """
 
 import asyncio
-import json
 import os
-import socket
-import subprocess
 import tempfile
 import threading
 import time
@@ -51,12 +48,12 @@ class MockWsProcess:
             self._loop.close()
 
     async def _serve(self):
-        self._shutdown = asyncio.Event()
         self._server = await websockets.unix_serve(
             self._handler, self.sock_path,
         )
         # Park on an Event instead of serve_forever(): serve_forever() only
         # returns on task cancellation, which complicates cross-thread shutdown.
+        self._shutdown = asyncio.Event()
         try:
             await self._shutdown.wait()
         finally:

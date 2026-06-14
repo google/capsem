@@ -85,11 +85,10 @@ pub struct ConnMeta {
     /// on transport read this; pre-T2 fixtures and `Default` use
     /// `Unknown`.
     pub protocol: Protocol,
-    /// AI provider classification when known independently of the domain.
-    /// Normal provider domains still infer this from `domain`; local
-    /// OpenAI-compatible servers and direct test fixtures can set it
-    /// explicitly so response parsers and telemetry use the same provider
-    /// decision as the enforcement path.
+    /// Model protocol classification resolved by MITM from the live
+    /// endpoint registry. Hooks must trust this metadata and must not
+    /// infer providers from `domain`, so enforcement, parsing, broker
+    /// substitution, and telemetry share one provider decision.
     pub ai_provider: Option<ProviderKind>,
 }
 

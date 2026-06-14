@@ -1,12 +1,10 @@
 """Auto snapshot ring buffer behavior."""
 
 import json
-import time
 import uuid
 
 import pytest
 
-from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.service import ServiceInstance, wait_exec_ready
 
@@ -21,13 +19,13 @@ def snapshot_vm():
     client = svc.client()
 
     name = f"snap-{uuid.uuid4().hex[:8]}"
-    client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+    client.post("/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
     assert wait_exec_ready(client, name), f"VM {name} never exec-ready"
 
     yield client, name, svc.tmp_dir
 
     try:
-        client.delete(f"/delete/{name}")
+        client.delete(f"/vms/{name}/delete")
     except Exception:
         pass
     svc.stop()
@@ -37,7 +35,6 @@ def test_auto_snapshots_dir_exists(snapshot_vm):
     """Session dir should have an auto_snapshots/ directory."""
     _, name, tmp_dir = snapshot_vm
     session_dir = tmp_dir / "sessions" / name
-    snap_dir = session_dir / "auto_snapshots"
     # May not exist yet if no snapshots taken -- the test documents the expectation
     if session_dir.exists():
         # At minimum the session dir exists

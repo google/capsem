@@ -8,7 +8,6 @@ Tests each KVM ioctl individually to pinpoint the failure.
 
 Usage: python3 scripts/kvm-diagnostic.py
 """
-import ctypes
 import fcntl
 import os
 import struct
@@ -27,7 +26,7 @@ KVM_CREATE_VCPU         = KVMIO << 8 | 0x41
 KVM_SET_USER_MEMORY_REGION = 0x4020AE46
 KVM_CREATE_IRQCHIP      = KVMIO << 8 | 0x60
 KVM_CREATE_PIT2         = 0x4040AE77
-KVM_SET_TSS_ADDR        = KVMIO << 8 | 0x47  # _IO
+KVM_SET_TSS_ADDR        = KVMIO << 8 | 0xD7  # _IO
 KVM_SET_IDENTITY_MAP_ADDR = 0x4008AE48
 KVM_GET_SUPPORTED_CPUID = 0xC008AE05  # _IOWR
 
@@ -60,16 +59,6 @@ def kvm_ioctl(fd, request, arg=0):
     ret = fcntl.ioctl(fd, request, arg)
     return ret
 
-def kvm_ioctl_ulong(fd, request, arg):
-    """Raw ioctl with an unsigned long argument."""
-    ret = ctypes.CDLL(None, use_errno=True).ioctl(
-        fd, ctypes.c_ulong(request), ctypes.c_ulong(arg)
-    )
-    if ret < 0:
-        errno = ctypes.get_errno()
-        raise OSError(errno, os.strerror(errno))
-    return ret
-
 
 def main():
     print("=" * 60)
@@ -94,11 +83,11 @@ def main():
         sys.exit(1)
     print(f"  [{PASS}] open(/dev/kvm): fd={kvm}")
 
-    api_ver = check("KVM_GET_API_VERSION",
-                     lambda: fcntl.ioctl(kvm, KVM_GET_API_VERSION, 0))
+    check("KVM_GET_API_VERSION",
+          lambda: fcntl.ioctl(kvm, KVM_GET_API_VERSION, 0))
 
-    mmap_size = check("KVM_GET_VCPU_MMAP_SIZE",
-                      lambda: fcntl.ioctl(kvm, KVM_GET_VCPU_MMAP_SIZE, 0))
+    check("KVM_GET_VCPU_MMAP_SIZE",
+          lambda: fcntl.ioctl(kvm, KVM_GET_VCPU_MMAP_SIZE, 0))
 
     # -- Phase 2: capabilities -------------------------------------------
     print()
@@ -124,14 +113,14 @@ def main():
         sys.exit(1)
 
     check("KVM_SET_TSS_ADDR(0xFFFBD000)",
-          lambda: kvm_ioctl_ulong(vm1, KVM_SET_TSS_ADDR, 0xFFFBD000))
+          lambda: fcntl.ioctl(vm1, KVM_SET_TSS_ADDR, 0xFFFBD000))
 
     check("KVM_SET_IDENTITY_MAP_ADDR(0xFFFBC000)",
           lambda: fcntl.ioctl(vm1, KVM_SET_IDENTITY_MAP_ADDR,
                               struct.pack("Q", 0xFFFBC000)))
 
-    irqchip_ok = check("KVM_CREATE_IRQCHIP",
-                       lambda: fcntl.ioctl(vm1, KVM_CREATE_IRQCHIP, 0))
+    check("KVM_CREATE_IRQCHIP",
+          lambda: fcntl.ioctl(vm1, KVM_CREATE_IRQCHIP, 0))
 
     check("KVM_CREATE_PIT2",
           lambda: fcntl.ioctl(vm1, KVM_CREATE_PIT2, b"\x00" * 64))
@@ -140,7 +129,7 @@ def main():
     buf = array.array("b", b"\x00" * 8200)
     struct.pack_into("I", buf, 0, 256)  # nent = 256
     check("KVM_GET_SUPPORTED_CPUID",
-          lambda: fcntl.ioctl(kvm, KVM_GET_SUPPORTED_CPUID, buf, True))
+          lambda: fcntl.ioctl(vm1, KVM_GET_SUPPORTED_CPUID, buf, True))
 
     vcpu0_result = check("KVM_CREATE_VCPU(0)",
                          lambda: fcntl.ioctl(vm1, KVM_CREATE_VCPU, 0))
@@ -182,7 +171,7 @@ def main():
         if vcpu_first is not None:
             os.close(vcpu_first)
             check("KVM_SET_TSS_ADDR(0xFFFBD000)",
-                  lambda: kvm_ioctl_ulong(vm3, KVM_SET_TSS_ADDR, 0xFFFBD000))
+                  lambda: fcntl.ioctl(vm3, KVM_SET_TSS_ADDR, 0xFFFBD000))
             check("KVM_SET_IDENTITY_MAP_ADDR(0xFFFBC000)",
                   lambda: fcntl.ioctl(vm3, KVM_SET_IDENTITY_MAP_ADDR,
                                       struct.pack("Q", 0xFFFBC000)))

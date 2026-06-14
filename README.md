@@ -23,7 +23,7 @@
 curl -fsSL https://capsem.org/install.sh | sh
 ```
 
-Pre-built packages (`.pkg` for macOS and `.deb` for Linux) are also available from the [latest release](https://github.com/google/capsem/releases/latest). See the [Getting Started](https://capsem.org/getting-started/) guide for details.
+Pre-built binaries (DMG, .deb, .AppImage) are also available from the [latest release](https://github.com/google/capsem/releases/latest). See the [Getting Started](https://capsem.org/getting-started/) guide for details.
 
 ## Quick start
 

@@ -67,7 +67,12 @@ just run "<manual investigation command>"
 ```
 Check boot logs for daemon startup failures, vsock connection issues, or timing problems.
 
-**Network/policy issues**: Check the MITM proxy path -- SNI parsing, domain policy evaluation, HTTP rule matching, cert minting. Use session DB to see what actually happened:
+**Network/security issues**: Check the network intercept path -- SNI parsing,
+HTTP/DNS/model normalization, cert minting, `SecurityEvent` construction,
+security rule evaluation, plugin execution, runtime materialization, and ledger
+materialization. Do not debug by adding credential handling to formatters,
+routes, DB readers, frontend transforms, or harnesses. Use session DB to see
+what actually happened:
 ```bash
 just inspect-session   # Check net_events for domain, decision, status_code
 ```

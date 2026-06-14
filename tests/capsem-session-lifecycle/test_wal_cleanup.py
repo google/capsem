@@ -19,14 +19,14 @@ def test_wal_absent_after_clean_shutdown():
     name = f"wal-{uuid.uuid4().hex[:8]}"
 
     try:
-        client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        client.post("/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
         assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
 
         # Generate some activity to create WAL entries
-        client.post(f"/exec/{name}", {"command": "echo wal-test"})
+        client.post(f"/vms/{name}/exec", {"command": "echo wal-test"})
 
         # Clean shutdown
-        client.delete(f"/delete/{name}")
+        client.delete(f"/vms/{name}/delete")
 
         # Check WAL state
         db_path = svc.tmp_dir / "sessions" / name / "session.db"

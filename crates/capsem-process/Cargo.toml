@@ -12,16 +12,14 @@ authors.workspace = true
 [dependencies]
 capsem-core = { path = "../capsem-core" }
 capsem-logger = { path = "../capsem-logger" }
-capsem-network-engine = { path = "../capsem-network-engine" }
-capsem-process-engine = { path = "../capsem-process-engine" }
 capsem-proto = { path = "../capsem-proto" }
-capsem-security-engine = { path = "../capsem-security-engine" }
 anyhow.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+toml.workspace = true
 clap.workspace = true
 tokio-unix-ipc.workspace = true
 futures.workspace = true

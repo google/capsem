@@ -51,7 +51,7 @@ class TestNetEventsData:
     def test_denied_event_logged(self, exhaustive_env, exhaust_db):
         """A request to a blocked domain produces a denied event."""
         client, vm_name, _ = exhaustive_env
-        client.post(f"/exec/{vm_name}", {
+        client.post(f"/vms/{vm_name}/exec", {
             "command": "curl -s https://malware.example.com 2>&1 || true"
         })
         import time

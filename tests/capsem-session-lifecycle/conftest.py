@@ -6,9 +6,21 @@ import uuid
 import pytest
 
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
+from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
 from helpers.service import ServiceInstance, wait_exec_ready
 
 pytestmark = pytest.mark.session_lifecycle
+
+
+@pytest.fixture
+def lifecycle_mock_server():
+    if not MOCK_SERVER_BINARY.exists():
+        pytest.fail(f"{MOCK_SERVER_BINARY} not found; restore scripts/mock_server_runtime.py")
+    proc, ready = start_mock_server()
+    try:
+        yield ready["base_url"]
+    finally:
+        stop_process(proc)
 
 
 @pytest.fixture(scope="session")
@@ -19,7 +31,7 @@ def lifecycle_env():
 
     client = svc.client()
     vm_name = f"lifecycle-{uuid.uuid4().hex[:8]}"
-    client.post("/provision", {"name": vm_name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+    client.post("/vms/create", {"name": vm_name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
 
     if not wait_exec_ready(client, vm_name):
         svc.stop()
@@ -28,7 +40,7 @@ def lifecycle_env():
     yield client, vm_name, svc.tmp_dir, svc
 
     try:
-        client.delete(f"/delete/{vm_name}")
+        client.delete(f"/vms/{vm_name}/delete")
     except Exception:
         pass
     svc.stop()

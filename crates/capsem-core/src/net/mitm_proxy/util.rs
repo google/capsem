@@ -1,6 +1,7 @@
 //! Pure helpers used by the MITM pipeline: LLM-API path detection,
-//! URI splitting, and header formatting with sensitive-value hashing.
+//! URI splitting, and header formatting.
 
+use crate::credential_broker::{detect_http_credential_with_provider, CredentialObservation};
 use crate::net::ai_traffic::provider::ProviderKind;
 
 /// Returns true only for paths that are actual LLM API endpoints
@@ -22,6 +23,15 @@ pub(super) fn is_llm_api_path(provider: ProviderKind, path: &str) -> bool {
                 || path.contains(":streamGenerateContent")
                 || path.contains(":embedContent")
                 || path.contains(":batchEmbedContents")
+        }
+        ProviderKind::Ollama => {
+            path.starts_with("/api/chat")
+                || path.starts_with("/api/generate")
+                || path.starts_with("/api/embeddings")
+                || path.starts_with("/api/embed")
+                || path.starts_with("/v1/chat/completions")
+                || path.starts_with("/v1/completions")
+                || path.starts_with("/v1/embeddings")
         }
     }
 }
@@ -61,9 +71,9 @@ pub(super) fn parse_http_host_target(
 }
 
 /// Headers whose values are safe to store verbatim in telemetry logs.
-/// Everything else keeps its name but the value is replaced with a BLAKE3
-/// hash prefix so credentials (API keys, bearer tokens, cookies) never
-/// reach the database while still allowing correlation across requests.
+/// Everything else keeps its name but the value is replaced with a short hash.
+/// Provider-aware credential handling belongs to the security-engine plugin
+/// rail, not this network formatting helper.
 const HEADER_ALLOWLIST: &[&str] = &[
     "accept",
     "content-encoding",
@@ -76,14 +86,33 @@ const HEADER_ALLOWLIST: &[&str] = &[
     "user-agent",
 ];
 
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct FormattedHeaders {
+    pub formatted: String,
+    pub observations: Vec<CredentialObservation>,
+    pub credential_ref: Option<String>,
+}
+
 /// Format HTTP headers for telemetry storage.
 ///
 /// Allowlisted headers are stored verbatim. All other headers keep their
-/// name but the value is replaced with `hash:<12-char-hex>` (first 6 bytes
-/// of the BLAKE3 digest). This prevents credential leakage while preserving
-/// header presence and enabling same-key correlation.
+/// name but the value is replaced with `hash:<12-char-hex>`. Credential-shaped
+/// values also emit broker observations for the security ledger.
 pub(super) fn format_headers(headers: &hyper::HeaderMap) -> String {
-    headers
+    format_headers_for_domain("", None, headers).formatted
+}
+
+pub(super) fn format_headers_for_domain(
+    domain: &str,
+    ai_provider: Option<ProviderKind>,
+    headers: &hyper::HeaderMap,
+) -> FormattedHeaders {
+    let provider_hint = ai_provider.map(|provider| match provider {
+        ProviderKind::Ollama => ProviderKind::OpenAi,
+        other => other,
+    });
+    let mut observations = Vec::new();
+    let formatted = headers
         .iter()
         .map(|(name, value)| {
             if HEADER_ALLOWLIST.contains(&name.as_str()) {
@@ -91,11 +120,62 @@ pub(super) fn format_headers(headers: &hyper::HeaderMap) -> String {
                 format!("{}: {}", name, v)
             } else {
                 let raw = value.as_bytes();
+                if let Some(observation) =
+                    detect_http_credential_with_provider(domain, provider_hint, name.as_str(), raw)
+                {
+                    observations.push(observation);
+                }
                 let digest = blake3::hash(raw);
                 let hex = &digest.to_hex()[..12];
                 format!("{}: hash:{}", name, hex)
             }
         })
         .collect::<Vec<_>>()
-        .join("\r\n")
+        .join("\r\n");
+
+    FormattedHeaders {
+        formatted,
+        credential_ref: observations
+            .first()
+            .map(CredentialObservation::credential_ref),
+        observations,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::credential_broker::CredentialProvider;
+
+    #[test]
+    fn header_formatter_sanitizes_and_emits_broker_observations() {
+        let mut headers = hyper::HeaderMap::new();
+        headers.insert(
+            hyper::header::AUTHORIZATION,
+            hyper::header::HeaderValue::from_static("Bearer sk-network-format-secret"),
+        );
+
+        let formatted =
+            format_headers_for_domain("127.0.0.1", Some(ProviderKind::OpenAi), &headers);
+
+        assert_eq!(formatted.observations.len(), 1);
+        assert_eq!(
+            formatted.observations[0].provider,
+            CredentialProvider::OpenAi
+        );
+        assert_eq!(
+            formatted.observations[0].source,
+            "http.header.authorization"
+        );
+        assert_eq!(
+            formatted.observations[0].event_type.as_deref(),
+            Some("http.request")
+        );
+        assert_eq!(
+            formatted.credential_ref.as_deref(),
+            Some(formatted.observations[0].credential_ref().as_str())
+        );
+        assert!(formatted.formatted.contains("authorization: hash:"));
+        assert!(!formatted.formatted.contains("sk-network-format-secret"));
+    }
 }

@@ -1,46 +1,44 @@
 # Capsem Justfile
 #
 # Internal helpers:
-#   _ensure-setup   checks for .dev-setup sentinel, runs doctor if missing (auto first-run)
+#   _ensure-dev-ready checks for .dev-setup sentinel, runs doctor if missing (auto first-run)
 #   _install-tools  auto-installs rust targets, components, cargo tools
-#   _check-assets   verifies VM assets exist, runs build-assets if not
+#   _check-assets   verifies VM assets exist, builds checked-in profiles if not
 #   _pack-initrd    cross-compiles guest binaries + repacks initrd
 #   _sign           builds host binaries + codesigns (macOS only, required for VZ)
 #   _ensure-service kills any running service, launches a fresh one, waits for socket
 #
 # User-facing recipe chains:
-#   shell            -> _check-assets + _pack-initrd + _ensure-service + TUI
-#   ui               -> _ensure-setup + _pnpm-install + run-service (service + Tauri dev hot-reload)
-#   run-service      -> _check-assets + _pack-initrd + _ensure-service (start daemon, idempotent)
+#   shell            -> _check-assets + _pack-initrd + _materialize-config + _ensure-service (daily dev entry point)
+#   ui               -> _ensure-dev-ready + _pnpm-install + run-service (service + Tauri dev hot-reload)
+#   run-service      -> _check-assets + _pack-initrd + _materialize-config + _ensure-service (start daemon, idempotent)
 #   exec +CMD        -> run-service (one-shot command in a fresh temp VM)
-#   build-assets     -> _install-tools + _clean-stale + inline doctor (kernel + rootfs, profile-aware)
-#   build-ui         -> _frontend-dist (pnpm build + cargo build -p capsem-app, in lockstep)
+#   build-assets     -> _install-tools + _clean-stale + inline doctor (kernel + rootfs via capsem-admin)
+#   build-ui         -> _pnpm-install (pnpm build + cargo build -p capsem-app, in lockstep)
 #   run-ui *ARGS     -> build-ui (launch ./target/debug/capsem-app)
-#   smoke            -> _install-tools + _frontend-dist + _check-assets + _pack-initrd + _ensure-service
-#                       (audit, doctor --fast, injection, integration, parallel pytest groups)
-#   test             -> _install-tools + _clean-stale + _frontend-dist + _generate-settings
-#                       + _check-assets + _pack-initrd (everything: audit, cov, cross-compile,
+#   smoke            -> _install-tools + _pnpm-install + _check-assets + _pack-initrd + _materialize-config + _ensure-service
+#                       (audit, full doctor, injection, integration, parallel pytest groups)
+#   test             -> _install-tools + _clean-stale + _pnpm-install + _generate-settings
+#                       + _check-assets + _pack-initrd + _materialize-config (everything: audit, cov, cross-compile,
 #                       frontend, python, injection, integration, bench, test-install)
-#   benchmark        -> _ensure-setup + _check-assets + _pack-initrd + _ensure-service
-#                       (standard artifact-recording performance suite)
-#   bench            -> benchmark
+#   bench            -> _ensure-dev-ready + _check-assets + _pack-initrd + _materialize-config + _ensure-service
 #   test-gateway     -> (no deps; unit + mock UDS tests)
-#   test-gateway-e2e -> _check-assets + _pack-initrd + _sign (real service + VMs)
+#   test-gateway-e2e -> _check-assets + _pack-initrd + _materialize-config + _sign (real service + VMs)
 #   test-install     -> _build-host (Docker e2e: build .deb, dpkg -i, pytest)
-#   install          -> _pnpm-install + _stamp-version + profile-derived asset rebuild + _pack-initrd
-#                       (hard clean + native package install + status capture + guest DNS/HTTPS gate)
-#   cut-release      -> test + _stamp-version (commits changelog and creates a local tag)
+#   install          -> _pnpm-install + _stamp-version + _check-assets + _pack-initrd + _materialize-config
+#                       (release build + frontend + Tauri bundle + .pkg/.deb installer)
+#   cut-release      -> test + _stamp-version (commits changelog, tags, pushes, waits for CI)
 #   release [tag]    -> (waits for CI on a pushed tag)
 #
-# First-time setup:
+# First-time dev readiness:
 #   just doctor       (shows what's missing; `just doctor fix` auto-installs)
-#   just build-assets (builds kernel + rootfs -- needs docker via Colima on macOS)
+#   just build-assets <profile-id> (builds profile-owned kernel + rootfs via capsem-admin -- needs docker via Colima on macOS)
 #
-# Daily dev:          just shell         (service daemon + TUI, ~10s)
+# Daily dev:          just shell         (service daemon + temp VM + shell, ~10s)
 #                     just ui            (service + Tauri GUI with hot-reload)
 #                     just exec "<cmd>"  (one-shot command in a temp VM)
-# Local install:      just install       (hard clean + native package install + status/VM network gate)
-# Releases:           just cut-release   (test + bump + local tag; push main/tag manually)
+# Local install:      just install       (build .pkg/.deb + install it)
+# Releases:           just cut-release   (test + bump, tag, push, CI)
 # Dep maintenance:    just update-deps   (cargo update + pnpm update)
 #                     just update-prices (refresh genai-prices.json)
 #                     just update-fixture <src> (rebuild test.db fixture)
@@ -55,18 +53,18 @@ service_binary := "target/debug/capsem-service"
 process_binary := "target/debug/capsem-process"
 mcp_binary := "target/debug/capsem-mcp"
 gateway_binary := "target/debug/capsem-gateway"
-host_binaries := "target/debug/capsem target/debug/capsem-service target/debug/capsem-process target/debug/capsem-mcp target/debug/capsem-mcp-aggregator target/debug/capsem-mcp-builtin target/debug/capsem-gateway target/debug/capsem-tray target/debug/capsem-tui"
+admin_binary := "target/debug/capsem-admin"
+host_binaries := "target/debug/capsem target/debug/capsem-service target/debug/capsem-process target/debug/capsem-mcp target/debug/capsem-mcp-aggregator target/debug/capsem-mcp-builtin target/debug/capsem-gateway target/debug/capsem-tray target/debug/capsem-admin target/debug/capsem-tui"
 assets_dir := "assets"
-default_asset_profile := "config/profiles/base/coding.profile.toml"
 entitlements := "entitlements.plist"
-host_crates := "-p capsem-service -p capsem-process -p capsem -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray -p capsem-tui"
+host_crates := "-p capsem-service -p capsem-process -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray -p capsem-admin"
 
-# Stamp version as 1.2.{unix_timestamp} in Cargo.toml, tauri.conf.json, and pyproject.toml.
+# Stamp version as 1.3.{unix_timestamp} in Cargo.toml, tauri.conf.json, and pyproject.toml.
 _stamp-version:
     #!/bin/bash
     set -euo pipefail
     CURRENT=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
-    NEW="${CAPSEM_RELEASE_VERSION:-1.2.$(date +%s)}"
+    NEW="1.3.$(date +%s)"
     echo "Stamping version: ${CURRENT} -> ${NEW}"
     sed -i '' "s/^version = \"${CURRENT}\"/version = \"${NEW}\"/" Cargo.toml
     sed -i '' "s/\"version\": \"${CURRENT}\"/\"version\": \"${NEW}\"/" crates/capsem-app/tauri.conf.json
@@ -75,6 +73,11 @@ _stamp-version:
 # Compile all host binaries
 _build-host:
     cargo build {{host_crates}}
+
+# Run the terminal control UI against the installed gateway, or with
+# `--fixture --snapshot` for deterministic render inspection.
+dev-tui *ARGS:
+    cargo run -p capsem-tui -- {{ARGS}}
 
 # Codesign all host binaries (macOS only, needed for Virtualization.framework)
 _sign: _build-host
@@ -93,82 +96,41 @@ _sign: _build-host
 _ensure-service: _sign
     #!/bin/bash
     set -euo pipefail
+    ROOT="{{justfile_directory()}}"
     arch=$(uname -m)
     [[ "$arch" == "arm64" ]] || arch="x86_64"
+    GENERATED_PROFILES="$ROOT/target/config/profiles"
+    if [ ! -d "$GENERATED_PROFILES" ]; then
+        echo "ERROR: generated profiles missing at $GENERATED_PROFILES"
+        echo "       Run just _materialize-config or a recipe that depends on it."
+        exit 1
+    fi
     # Resolve capsem home + run dir from env, matching the Rust helpers.
     CAPSEM_HOME_DIR="${CAPSEM_HOME:-$HOME/.capsem}"
     RUN_DIR="${CAPSEM_RUN_DIR:-$CAPSEM_HOME_DIR/run}"
     mkdir -p "$RUN_DIR"
     PIDFILE="$RUN_DIR/service.pid"
-    GATEWAY_PIDFILE="$RUN_DIR/gateway.pid"
     SOCKET="$RUN_DIR/service.sock"
-    socket_owner_pids() {
-        lsof -nU 2>/dev/null | awk -v socket="$SOCKET" 'index($0, socket) { print $2 }' | sort -u
-    }
-    kill_service_tree() {
-        local pid="$1"
-        if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
-            return
-        fi
-        kill "$pid" 2>/dev/null || true
-        for _ in 1 2 3 4 5 6; do
-            kill -0 "$pid" 2>/dev/null || break
-            sleep 0.25
-        done
-        if kill -0 "$pid" 2>/dev/null; then
-            pgrep -P "$pid" | xargs -r kill -9 2>/dev/null || true
-            kill -9 "$pid" 2>/dev/null || true
-        fi
-    }
-    pid_command() {
-        local pid="$1"
-        ps -p "$pid" -o command= 2>/dev/null || true
-    }
-    cleanup_runtime_processes() {
-        # Kill ONLY the service this pidfile tracks -- no pkill by name.
-        # Killing by pattern would take down a user's locally installed capsem
-        # (or a parallel test run with a different CAPSEM_HOME).
-        if [ -f "$PIDFILE" ]; then
-            OLD_PID=$(cat "$PIDFILE" 2>/dev/null || true)
-            kill_service_tree "$OLD_PID"
-        fi
-        if [ -f "$GATEWAY_PIDFILE" ]; then
-            OLD_GATEWAY_PID=$(cat "$GATEWAY_PIDFILE" 2>/dev/null || true)
-            kill_service_tree "$OLD_GATEWAY_PID"
-        fi
-        # A stale pidfile is not enough proof that the socket is free: a previous
-        # isolated smoke/test service can survive with the same run dir and cause
-        # the fresh service to exit as "already running" before it owns the gateway.
-        if [ -S "$SOCKET" ]; then
-            for SOCKET_PID in $(socket_owner_pids); do
-                kill_service_tree "$SOCKET_PID"
-            done
-            for _ in 1 2 3 4 5 6 7 8; do
-                [ -z "$(socket_owner_pids)" ] && break
+    # Kill ONLY the service this pidfile tracks -- no pkill by name.
+    # Killing by pattern would take down a user's locally installed capsem
+    # (or a parallel test run with a different CAPSEM_HOME).
+    if [ -f "$PIDFILE" ]; then
+        OLD_PID=$(cat "$PIDFILE" 2>/dev/null || true)
+        if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
+            # SIGTERM the service; it propagates to child capsem-process VMs.
+            kill "$OLD_PID" 2>/dev/null || true
+            for _ in 1 2 3 4 5 6; do
+                kill -0 "$OLD_PID" 2>/dev/null || break
                 sleep 0.25
             done
-            REMAINING_SOCKET_PIDS=$(socket_owner_pids)
-            if [ -n "$REMAINING_SOCKET_PIDS" ]; then
-                echo "ERROR: could not clear existing capsem-service socket owners: $REMAINING_SOCKET_PIDS" >&2
-                exit 1
+            # Force-kill if still alive.
+            if kill -0 "$OLD_PID" 2>/dev/null; then
+                pgrep -P "$OLD_PID" | xargs -r kill -9 2>/dev/null || true
+                kill -9 "$OLD_PID" 2>/dev/null || true
             fi
         fi
-        if [ -f "$RUN_DIR/gateway.lock" ]; then
-            LOCK_PID=$(cat "$RUN_DIR/gateway.lock" 2>/dev/null || true)
-            if [ -z "$LOCK_PID" ] || ! kill -0 "$LOCK_PID" 2>/dev/null; then
-                rm -f "$RUN_DIR/gateway.lock"
-            else
-                LOCK_CMD=$(pid_command "$LOCK_PID")
-                if [[ "$LOCK_CMD" == *"capsem-gateway"* && "$LOCK_CMD" == *"$RUN_DIR"* ]]; then
-                    kill_service_tree "$LOCK_PID"
-                else
-                    rm -f "$RUN_DIR/gateway.lock"
-                fi
-            fi
-        fi
-        rm -f "$PIDFILE" "$GATEWAY_PIDFILE" "$SOCKET" "$RUN_DIR/gateway.lock" "$RUN_DIR/gateway.token" "$RUN_DIR/gateway.port"
-    }
-    cleanup_runtime_processes
+    fi
+    rm -f "$PIDFILE" "$SOCKET"
     # Symlink <capsem_home>/assets -> repo assets so installed tools (MCP, CLI)
     # see the same repacked initrd as the dev service.
     ASSETS_LINK="$CAPSEM_HOME_DIR/assets"
@@ -191,48 +153,18 @@ _ensure-service: _sign
         ln -sfn "$DEV_ASSETS" "$ASSETS_LINK"
         echo "Symlinked $ASSETS_LINK -> $DEV_ASSETS"
     fi
-    # Refresh the local development profile after every initrd repack. The
-    # profile pins asset hashes, so leaving it stale makes the service reject
-    # the freshly repacked initrd before the VM can boot.
-    CAPSEM_ASSETS_DIR="${CAPSEM_ASSETS_DIR:-$DEV_ASSETS}" {{cli_binary}} setup --non-interactive --accept-detected
-    cleanup_runtime_processes
-    GATEWAY_ARGS=(--gateway-binary {{gateway_binary}})
-    if [ -n "${CAPSEM_RUN_DIR:-}" ]; then
-        # Isolated smoke/test services must not contend with a locally
-        # installed gateway on the default developer port.
-        GATEWAY_ARGS+=(--gateway-port 0)
-    fi
     echo "Starting capsem-service (CAPSEM_HOME=$CAPSEM_HOME_DIR)..."
-    cleanup_runtime_processes
     # Close fd 3 on the service; otherwise the backgrounded service inherits
     # the execution-lock fd from `just smoke` / `just test` and keeps the
     # flock held after the outer shell exits, blocking subsequent runs.
-    RUST_LOG="${RUST_LOG:-capsem=debug}" nohup {{service_binary}} \
+    nohup env CAPSEM_PROFILES_DIR="$GENERATED_PROFILES" RUST_LOG=capsem=debug {{service_binary}} \
         --assets-dir {{assets_dir}}/$arch \
         --process-binary {{process_binary}} \
-        "${GATEWAY_ARGS[@]}" \
         --foreground 3>&- >/dev/null 2>&1 &
     SVC_PID=$!
     echo "$SVC_PID" > "$PIDFILE"
     for i in $(seq 1 30); do
-        if ! kill -0 "$SVC_PID" 2>/dev/null; then
-            echo "ERROR: capsem-service exited during startup"
-            rm -f "$PIDFILE"
-            exit 1
-        fi
         if [ -S "$SOCKET" ] && curl -s --unix-socket "$SOCKET" --max-time 2 http://localhost/list >/dev/null 2>&1; then
-            if [ -n "${CAPSEM_RUN_DIR:-}" ]; then
-                for _ in 1 2 3 4 5 6 7 8 9 10; do
-                    [ -s "$RUN_DIR/gateway.token" ] && [ -s "$RUN_DIR/gateway.port" ] && break
-                    sleep 0.25
-                done
-                if [ ! -s "$RUN_DIR/gateway.token" ] || [ ! -s "$RUN_DIR/gateway.port" ]; then
-                    echo "ERROR: capsem-gateway did not publish token/port files"
-                    kill "$SVC_PID" 2>/dev/null || true
-                    rm -f "$PIDFILE"
-                    exit 1
-                fi
-            fi
             echo "capsem-service running (PID $SVC_PID)"
             exit 0
         fi
@@ -244,7 +176,7 @@ _ensure-service: _sign
     exit 1
 
 # Start service daemon + Tauri GUI with hot-reloading
-ui: _ensure-setup _pnpm-install run-service
+ui: _ensure-dev-ready _pnpm-install run-service
     #!/bin/bash
     set -euo pipefail
     source {{justfile_directory()}}/scripts/lib/exec_lock.sh
@@ -255,24 +187,20 @@ ui: _ensure-setup _pnpm-install run-service
 dev-frontend: _pnpm-install
     cd frontend && pnpm run dev
 
-# Standalone terminal control-plane shell.
-# App-owned controls: Alt+Left/Right switch sessions; Alt+1..9 jumps;
-# Alt+n new, Alt+f fork, Alt+r resume, Alt+s suspend, Alt+c checkpoint,
-# Alt+t stop, Alt+d delete, Alt+q quit;
-# Alt+? help, Alt+i session info, Alt+l sessions. Plain q/Ctrl-C pass to the VM.
-# Pass extra args after `--`: `just dev-tui -- --snapshot`.
-dev-tui *ARGS:
-    cargo run -p capsem-tui {{ARGS}}
-
 # Build the Tauri desktop app (capsem-app) with a fresh frontend bundle.
 # IMPORTANT: the Tauri binary embeds frontend/dist at cargo compile time via
 # tauri::generate_context!(), so rebuilding only the frontend has no effect
 # on the running binary. This recipe keeps the two in lockstep.
 #   just build-ui          # debug binary at ./target/debug/capsem-app
 #   just build-ui release  # release binary at ./target/release/capsem-app
-build-ui profile="debug": _frontend-dist
+build-ui profile="debug": _pnpm-install
     #!/bin/bash
     set -euo pipefail
+    echo "=== Frontend build ==="
+    cd frontend
+    pnpm run build
+    cd ..
+    echo ""
     echo "=== capsem-app ({{profile}}) build ==="
     if [[ "{{profile}}" == "release" ]]; then
         cargo build -p capsem-app --release
@@ -293,8 +221,8 @@ run-ui *ARGS: build-ui
     sleep 1
     ./target/debug/capsem-app {{ARGS}}
 
-# Start service daemon + open the TUI (~10s after first build)
-shell: _check-assets _pack-initrd _ensure-service
+# Start service daemon + boot temporary VM + shell (~10s after first build)
+shell: _check-assets _pack-initrd _materialize-config _ensure-service
     #!/bin/bash
     set -euo pipefail
     source {{justfile_directory()}}/scripts/lib/exec_lock.sh
@@ -302,7 +230,7 @@ shell: _check-assets _pack-initrd _ensure-service
     {{cli_binary}} shell
 
 # Start capsem-service daemon (builds, signs, launches or reuses running instance)
-run-service: _check-assets _pack-initrd _ensure-service
+run-service: _check-assets _pack-initrd _materialize-config _ensure-service
 
 # Execute a command in a fresh temporary VM (auto-provisioned and destroyed)
 # Usage: just exec "echo hello"   or   just exec "ls -la"
@@ -314,31 +242,70 @@ exec +CMD: run-service
     {{cli_binary}} run "{{CMD}}"
 
 
-# Build kernel only for one arch (CI-facing primitive).
-build-kernel arch profile=default_asset_profile: _install-tools
+# Build kernel only for one profile/arch (CI-facing primitive).
+build-kernel arch profile="":
     #!/bin/bash
     set -euo pipefail
-    test -f "{{profile}}" || { echo "ERROR: profile not found: {{profile}}" >&2; exit 1; }
-    uv run capsem-admin image build "{{profile}}" --arch {{arch}} --template kernel --out {{assets_dir}}/ --json
-
-# Build rootfs only for one arch (CI-facing primitive).
-build-rootfs arch profile=default_asset_profile: _install-tools
-    #!/bin/bash
-    set -euo pipefail
-    test -f "{{profile}}" || { echo "ERROR: profile not found: {{profile}}" >&2; exit 1; }
-    uv run capsem-admin image build "{{profile}}" --arch {{arch}} --template rootfs --out {{assets_dir}}/ --json
-
-# VM asset rebuild (kernel + rootfs). Default: both arches. Pass arch and profile to build one.
-build-assets arch="" profile=default_asset_profile: _install-tools _clean-stale
-    #!/bin/bash
-    set -euo pipefail
-    CAPSEM_SKIP_ASSET_CHECK=1 just doctor
-    test -f "{{profile}}" || { echo "ERROR: profile not found: {{profile}}" >&2; exit 1; }
-    if [[ -n "{{arch}}" ]]; then
-        bash scripts/build-assets.sh --profile "{{profile}}" --assets-dir "{{assets_dir}}" --arch "{{arch}}"
-    else
-        bash scripts/build-assets.sh --profile "{{profile}}" --assets-dir "{{assets_dir}}"
+    PROFILE_ARG="{{profile}}"
+    if [[ -z "$PROFILE_ARG" ]]; then
+        echo "ERROR: profile id required. Use: just build-kernel {{arch}} <profile-id>"
+        exit 2
     fi
+    just _install-tools
+    CAPSEM_SKIP_ASSET_CHECK=1 just doctor
+    cargo run -p capsem-admin -- image build \
+        --profile "config/profiles/${PROFILE_ARG}/profile.toml" \
+        --config-root config \
+        --output "{{assets_dir}}" \
+        --arch "{{arch}}" \
+        --template kernel \
+        --clean
+    just _docker-gc
+
+# Build rootfs only for one profile/arch (CI-facing primitive).
+build-rootfs arch profile="":
+    #!/bin/bash
+    set -euo pipefail
+    PROFILE_ARG="{{profile}}"
+    if [[ -z "$PROFILE_ARG" ]]; then
+        echo "ERROR: profile id required. Use: just build-rootfs {{arch}} <profile-id>"
+        exit 2
+    fi
+    just _install-tools
+    CAPSEM_SKIP_ASSET_CHECK=1 just doctor
+    cargo run -p capsem-admin -- image build \
+        --profile "config/profiles/${PROFILE_ARG}/profile.toml" \
+        --config-root config \
+        --output "{{assets_dir}}" \
+        --arch "{{arch}}" \
+        --template rootfs \
+        --clean
+    just _docker-gc
+
+# VM asset rebuild (kernel + rootfs). Profile is mandatory. Optional second arg
+# restricts to one arch.
+build-assets profile="" arch="":
+    #!/bin/bash
+    set -euo pipefail
+    PROFILE_ARG="{{profile}}"
+    ARCH_ARG="{{arch}}"
+    if [[ -z "$PROFILE_ARG" ]]; then
+        echo "ERROR: profile id required. Use: just build-assets <profile-id> [arm64|x86_64]"
+        exit 2
+    fi
+    just _install-tools
+    just _clean-stale
+    CAPSEM_SKIP_ASSET_CHECK=1 just doctor
+    ARGS=(
+        --profile "config/profiles/${PROFILE_ARG}/profile.toml"
+        --config-root config
+        --output "{{assets_dir}}"
+        --clean
+    )
+    if [[ -n "$ARCH_ARG" ]]; then
+        ARGS+=(--arch "$ARCH_ARG")
+    fi
+    cargo run -p capsem-admin -- image build "${ARGS[@]}"
     just _docker-gc
 
 # Run vulnerability audits (cargo audit + pnpm audit). Fast standalone gate.
@@ -398,36 +365,22 @@ test-artifacts:
     echo "  cat $DIR/.../service.log | less"
     echo "  cat $DIR/.../sessions/<vm>/process.log | less"
 
-test: _install-tools _clean-stale _frontend-dist _generate-settings _check-assets _pack-initrd
+_bootstrap:
+    sh {{justfile_directory()}}/bootstrap.sh -y
+
+test: _bootstrap _install-tools _clean-stale _pnpm-install _generate-settings _check-assets _pack-initrd _materialize-config
     #!/bin/bash
     set -euo pipefail
     export CAPSEM_HOME="{{justfile_directory()}}/target/test-home/.capsem"
     export CAPSEM_RUN_DIR="$CAPSEM_HOME/run"
-    export CAPSEM_ASSETS_DIR="{{justfile_directory()}}/{{assets_dir}}"
-    export TMPDIR="{{justfile_directory()}}/target/tmp"
     # Lockfile lives OUTSIDE $CAPSEM_HOME so it survives `rm -rf $CAPSEM_HOME`
     # below. Acquired BEFORE the wipe: if a second `just test` were to run
     # past this line, the first's fd would be pinned to an unlinked inode
     # and the second would flock a brand-new inode unchallenged.
     source {{justfile_directory()}}/scripts/lib/exec_lock.sh
     acquire_exec_lock "{{justfile_directory()}}/target/capsem-test-execution.lock"
-    cleanup_isolated_home_processes() {
-        [ -e "$CAPSEM_HOME" ] || return 0
-        PIDS=$(lsof -n 2>/dev/null | awk -v home="$CAPSEM_HOME" 'index($0, home) { print $2 }' | sort -u)
-        for PID in $PIDS; do
-            [ "$PID" != "$$" ] || continue
-            kill "$PID" 2>/dev/null || true
-        done
-        sleep 0.5
-        for PID in $PIDS; do
-            [ "$PID" != "$$" ] || continue
-            kill -9 "$PID" 2>/dev/null || true
-        done
-    }
-    cleanup_isolated_home_processes
     rm -rf "$CAPSEM_HOME"
-    rm -rf "$TMPDIR"
-    mkdir -p "$CAPSEM_RUN_DIR" "$CAPSEM_HOME/sessions" "$CAPSEM_HOME/logs" "$TMPDIR"
+    mkdir -p "$CAPSEM_RUN_DIR" "$CAPSEM_HOME/sessions" "$CAPSEM_HOME/logs"
 
     # ---- Stage 1: parallel fast-fail (audits + lint + frontend) -------------
     # Cheap, independent, most-common failure class. Clippy (not cargo check)
@@ -438,15 +391,22 @@ test: _install-tools _clean-stale _frontend-dist _generate-settings _check-asset
     cargo audit & PID_CARGO_AUDIT=$!
     (cd frontend && pnpm audit) & PID_PNPM_AUDIT=$!
     cargo clippy --workspace --all-targets -- -D warnings & PID_CLIPPY=$!
+    uv run ruff check . & PID_RUFF=$!
+    uv run ty check src/capsem & PID_TY=$!
+    uv run capsem-builder validate-skills skills & PID_SKILLS=$!
     (
         cd frontend
         pnpm run check
         pnpm run test
+        pnpm run build
     ) & PID_FE=$!
     FAIL=0
     wait $PID_CARGO_AUDIT || { echo "cargo audit failed"; FAIL=1; }
     wait $PID_PNPM_AUDIT  || { echo "pnpm audit failed";  FAIL=1; }
     wait $PID_CLIPPY      || { echo "cargo clippy failed (warnings = error)"; FAIL=1; }
+    wait $PID_RUFF        || { echo "ruff check failed"; FAIL=1; }
+    wait $PID_TY          || { echo "ty check failed"; FAIL=1; }
+    wait $PID_SKILLS      || { echo "skill validation failed"; FAIL=1; }
     wait $PID_FE          || { echo "frontend (check/test/build) failed"; FAIL=1; }
     [ $FAIL -eq 0 ] || exit 1
 
@@ -471,15 +431,14 @@ test: _install-tools _clean-stale _frontend-dist _generate-settings _check-asset
     echo "=== Sign binaries for integration tests ==="
     just _sign
 
-    # ---- Stage 5: Python pytest, n=4 ----------------------------------------
+    # ---- Stage 5: Python pytest ---------------------------------------------
     # Dogfooding canary: 4 concurrent VMs. --dist=loadfile keeps per-file
     # fixtures on the same worker. Any concurrency flake here is a Capsem-side
     # bug.
     #
-    # Serial/timing tests are intentionally excluded from this phase and run
-    # in Stage 6. They have their own load profiles and timing gates; mixing
-    # them into n=4 turns the gates into host-contention measurements instead
-    # of product regressions.
+    # Tests marked `serial` are benchmark/timing probes. They run after the
+    # n=4 canary so their numbers measure Capsem, not another benchmark file
+    # stealing the same Apple VZ launch budget.
     #
     # --ignore=tests/capsem-recipes -- recipe meta-tests invoke `cargo build
     #   --workspace` via subprocess, which atomically replaces the codesigned
@@ -490,7 +449,7 @@ test: _install-tools _clean-stale _frontend-dist _generate-settings _check-asset
     #   build -p capsem` from within pytest. This directory is owned by
     #   Stage 7's `just test-install`, which runs it inside Docker with
     #   CAPSEM_DEB_INSTALLED=1 (the skip flag live_system tests respect).
-    echo "=== Python: ALL tests (n=4 parallel) ==="
+    echo "=== Python: non-serial tests (n=4 parallel) ==="
     # CAPSEM_REQUIRE_ARTIFACTS=1: fail the suite if any of assets/<arch>/
     # manifest.json, initrd.img, entitlements.plist, or target/linux-agent/
     # <arch>/ is missing. Stages 1-4 already produced them (this recipe
@@ -498,11 +457,15 @@ test: _install-tools _clean-stale _frontend-dist _generate-settings _check-asset
     # absent it means an earlier stage silently dropped its output, and
     # we want that to fail loudly here rather than manifest as a pile of
     # individually-skipped tests whose absence goes unnoticed.
-    CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest tests/ -v --tb=short -n 4 --dist=loadfile -m "not benchmark and not serial" \
+    CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest tests/ -v --tb=short -n 4 --dist=loadfile \
+        -m "not serial" \
         --ignore=tests/capsem-recipes \
         --ignore=tests/capsem-install \
         --ignore=tests/capsem-build-chain \
-        --cov=src/capsem --cov-report=xml:codecov-python.xml --cov-fail-under=89
+        --cov=src/capsem --cov-report=xml:codecov-python.xml --cov-fail-under=90
+
+    echo "=== Python: serial timing and benchmark tests ==="
+    CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest tests/capsem-serial/ -v --tb=short -m serial
 
     echo "=== Python: Build chain tests (serial) ==="
     CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest tests/capsem-build-chain/ -v --tb=short
@@ -511,20 +474,14 @@ test: _install-tools _clean-stale _frontend-dist _generate-settings _check-asset
     echo "=== Injection test ==="
     python3 scripts/injection_test.py --binary {{binary}} --assets {{assets_dir}}
 
-    echo "=== Verify local asset manifest signature ==="
-    bash scripts/verify-local-manifest-signature.sh {{assets_dir}} config/manifest-sign.pub
-
     echo "=== Integration test ==="
     python3 scripts/integration_test.py --binary {{binary}} --assets {{assets_dir}}
 
-    echo "=== Serial timing + benchmarks ==="
-    # Runs host-side timing gates and diagnostics serially, plus records
-    # /tmp/capsem-benchmark.json to benchmarks/capsem-bench/data_<ver>_<arch>.json
-    # on every run so we accumulate a baseline.
-    CAPSEM_ASSETS_DIR={{assets_dir}} uv run python -m pytest \
-        tests/capsem-serial/ \
-        tests/capsem-e2e/test_e2e_lifecycle.py::TestDoctor::test_doctor_passes \
-        -v --tb=short -m "serial or benchmark"
+    echo "=== Benchmarks ==="
+    # Records /tmp/capsem-benchmark.json to benchmarks/capsem-bench/data_<ver>_<arch>.json
+    # on every run so we accumulate a baseline. No gate yet -- will grow
+    # per-category tolerances once ~5-10 clean runs are on disk per arch.
+    CAPSEM_ASSETS_DIR={{assets_dir}} uv run python -m pytest tests/capsem-serial/test_capsem_bench_baseline.py -v --tb=short
 
     # ---- Stage 7: Docker e2e ------------------------------------------------
     echo "=== Cross-compile Linux release (Docker) ==="
@@ -611,22 +568,7 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
     esac
     # Sync assets layout for Tauri build
     rm -rf assets/current
-    if [ -d "assets/$TARGET_ARCH" ]; then
-        cp -r "assets/$TARGET_ARCH" assets/current
-        : > assets/B3SUMS
-        for arch_dir in assets/*; do
-            [ -d "$arch_dir" ] || continue
-            arch_name=$(basename "$arch_dir")
-            if [ -f "$arch_dir/vmlinuz" ] && [ -f "$arch_dir/initrd.img" ] && [ -f "$arch_dir/rootfs.squashfs" ]; then
-                (cd assets && b3sum "$arch_name/vmlinuz" "$arch_name/initrd.img" "$arch_name/rootfs.squashfs" >> B3SUMS)
-            fi
-        done
-        python3 scripts/gen_manifest.py assets Cargo.toml
-        python3 scripts/create_hash_assets.py assets
-        bash scripts/sync-dev-assets.sh assets assets
-        bash scripts/verify-local-manifest-signature.sh assets config/manifest-sign.pub
-        touch crates/capsem-app/build.rs
-    fi
+    if [ -d "assets/$TARGET_ARCH" ]; then cp -r "assets/$TARGET_ARCH" assets/current; fi
     # If the host has the real release signing keys under private/tauri/,
     # inject them into the container. Otherwise the container generates a
     # throwaway dev-only key inline -- the authoritative release keys
@@ -645,30 +587,14 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
     fi
     echo "=== Building Linux deb ($TARGET_ARCH via docker, target=$RUST_TARGET) ==="
     mkdir -p "$ROOT/dist"
-    # KVM boot test: pass host virtualization devices if available (Linux host)
-    # or skip on macOS/cross-arch builds.
+    # KVM boot test: pass /dev/kvm if available (Linux host) or skip (macOS)
     KVM_FLAG=""
     if [ -e /dev/kvm ]; then
         KVM_FLAG="--device /dev/kvm"
     fi
-    VSOCK_FLAG=""
-    if [ -e /dev/vhost-vsock ]; then
-        VSOCK_FLAG="--device /dev/vhost-vsock"
-        # Docker's default seccomp profile denies AF_VSOCK bind even when the
-        # vhost-vsock device is passed through, so the KVM boot test cannot
-        # accept guest vsock connections without this.
-        VSOCK_SECURITY_FLAG="--security-opt seccomp=unconfined"
-    else
-        VSOCK_SECURITY_FLAG=""
-    fi
-    # macOS ships Bash 3.2, where expanding an empty array under nounset
-    # raises "unbound variable". The signing args are intentionally optional.
-    set +u
     docker run --rm \
         $KVM_FLAG \
-        "${SIGNING_ARGS[@]}" \
-        $VSOCK_FLAG \
-        $VSOCK_SECURITY_FLAG \
+        ${SIGNING_ARGS[@]+"${SIGNING_ARGS[@]}"} \
         -e "TARGET_ARCH=$TARGET_ARCH" \
         -e "RUST_TARGET=$RUST_TARGET" \
         -e "DPKG_ARCH=$DPKG_ARCH" \
@@ -677,7 +603,6 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
         -v "capsem-cargo-registry:/usr/local/cargo/registry" \
         -v "capsem-cargo-git:/usr/local/cargo/git" \
         -v "capsem-host-target-$TARGET_ARCH:/cargo-target" \
-        -v "capsem-frontend-node-modules-$TARGET_ARCH:/src/frontend/node_modules" \
         -v "capsem-rustup:/usr/local/rustup" \
         -w /src \
         capsem-host-builder:latest \
@@ -686,9 +611,6 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
                cargo build --release --target \$RUST_TARGET -p capsem-agent && \
                mkdir -p /cargo-target/linux-agent/\$TARGET_ARCH && \
                cp /cargo-target/\$RUST_TARGET/release/capsem-pty-agent /cargo-target/\$RUST_TARGET/release/capsem-mcp-server /cargo-target/\$RUST_TARGET/release/capsem-net-proxy /cargo-target/\$RUST_TARGET/release/capsem-dns-proxy /cargo-target/\$RUST_TARGET/release/capsem-sysutil /cargo-target/linux-agent/\$TARGET_ARCH/ && \
-               echo '--- Build host binaries ---' && \
-               cargo build --release --target \$RUST_TARGET {{host_crates}} && \
-               UV_PROJECT_ENVIRONMENT=/cargo-target/capsem-package-venv bash scripts/prepare-admin-cli.sh /cargo-target/\$RUST_TARGET/release && \
                echo '--- Build frontend ---' && \
                cd frontend && CI=true pnpm install && pnpm build && cd .. && \
                echo '--- Resolve Tauri signing key ---' && \
@@ -706,51 +628,34 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
                    echo '    using host-injected signing key'; \
                fi && \
                echo '--- Build Tauri app ---' && \
-               DEB_DIR=/cargo-target/\$RUST_TARGET/release/bundle/deb && \
-               rm -f \"\$DEB_DIR\"/*.deb && \
+               rm -rf /cargo-target/\$RUST_TARGET/release/bundle/deb && \
                cd crates/capsem-app && cargo tauri build --target \$RUST_TARGET --bundles deb && cd ../.. && \
                echo '--- Validate artifacts ---' && \
-               DEBS=(\"\$DEB_DIR\"/*.deb) && \
-               if [ \"\${#DEBS[@]}\" -ne 1 ] || [ ! -f \"\${DEBS[0]}\" ]; then \
-                   echo \"ERROR: expected exactly one deb artifact in \$DEB_DIR\" >&2; \
-                   ls -lah \"\$DEB_DIR\" >&2 || true; \
-                   exit 1; \
-               fi && \
-               DEB=\"\${DEBS[0]}\" && \
-               PACKAGE_VERSION=\$(sed -n 's/^version = \"\\(.*\\)\"/\\1/p' Cargo.toml | head -1) && \
-               bash scripts/repack-deb.sh \"\$DEB\" /cargo-target/\$RUST_TARGET/release assets \"\$DEB\" && \
-               UV_PROJECT_ENVIRONMENT=/cargo-target/capsem-package-venv uv run python scripts/verify_deb_payload.py \"\$DEB\" --version \"\$PACKAGE_VERSION\" --architecture \"\$DPKG_ARCH\" --minisign-pubkey assets/manifest-sign.dev.pub && \
+               DEB=\$(ls -t /cargo-target/\$RUST_TARGET/release/bundle/deb/*.deb | head -n1) && \
                dpkg-deb --info \"\$DEB\" && \
-               rm -f /src/dist/Capsem_*_\"\$DPKG_ARCH\".deb && \
                cp \"\$DEB\" /src/dist/ && \
                cp /cargo-target/linux-agent/\$TARGET_ARCH/* /src/dist/ && \
                echo '--- Boot test ---' && \
                if [ -e /dev/kvm ] && [ \"\$TARGET_ARCH\" = \"\$(uname -m | sed 's/aarch64/arm64/')\" ]; then \
                    echo 'KVM available + native arch: running boot test' && \
-                   dpkg --unpack \"\$DEB\" && \
-                   timeout 120 python3 scripts/doctor_session_test.py --binary /usr/bin/capsem --assets assets; \
+                   dpkg -i /cargo-target/\$RUST_TARGET/release/bundle/deb/*.deb 2>/dev/null || apt-get install -f -y && \
+                   timeout 120 python3 scripts/doctor_session_test.py --binary capsem --assets assets; \
                else \
                    echo 'Skipping boot test (no KVM or cross-arch -- CI will test)'; \
                fi"
-    set -u
     echo ""
     echo "=== Artifacts ==="
     ls -lh "$ROOT/dist/"
     just _docker-gc
 
-# Generate settings-schema.json, defaults.json, mcp-tools.json, and mock-data.generated.ts
+# Generate settings schema/UI metadata and frontend mock data.
 _generate-settings:
     #!/bin/bash
     set -euo pipefail
-    LOG="target/build.log"
-    mkdir -p target
-    echo "[generate] $(date +%H:%M:%S) exporting MCP tool defs" >> "$LOG"
-    cargo run --bin mcp_export 2>>"$LOG" > config/mcp-tools.json
-    echo "[generate] $(date +%H:%M:%S) generating schema + defaults + mock" >> "$LOG"
-    uv run python scripts/generate_schema.py >> "$LOG" 2>&1
+    bash scripts/generate-settings.sh
 
 # Fast path: audit, doctor, injection, integration tests (no Docker, no cross-compile)
-smoke: _install-tools _frontend-dist _check-assets _pack-initrd
+smoke: _install-tools _pnpm-install _check-assets _pack-initrd _materialize-config
     #!/bin/bash
     set -euo pipefail
     # Smoke runs against an isolated CAPSEM_HOME so it doesn't stomp on a
@@ -758,7 +663,6 @@ smoke: _install-tools _frontend-dist _check-assets _pack-initrd
     # (not as a just dep) so it inherits the exported env vars.
     export CAPSEM_HOME="{{justfile_directory()}}/target/test-home/.capsem"
     export CAPSEM_RUN_DIR="$CAPSEM_HOME/run"
-    export CAPSEM_ASSETS_DIR="{{justfile_directory()}}/{{assets_dir}}"
     # Lockfile lives OUTSIDE $CAPSEM_HOME so it survives `rm -rf $CAPSEM_HOME`
     # below. Acquired BEFORE the wipe: if a second `just smoke` were to run
     # past this line, the first's fd would be pinned to an unlinked inode
@@ -770,20 +674,6 @@ smoke: _install-tools _frontend-dist _check-assets _pack-initrd
     # (e.g. a 0-entry capsem-app launch log left by a crashed Tauri shell).
     # Matches the `just test` preamble; smoke inherited the leak when
     # CAPSEM_HOME isolation was introduced.
-    cleanup_isolated_home_processes() {
-        [ -e "$CAPSEM_HOME" ] || return 0
-        PIDS=$(lsof -n 2>/dev/null | awk -v home="$CAPSEM_HOME" 'index($0, home) { print $2 }' | sort -u)
-        for PID in $PIDS; do
-            [ "$PID" != "$$" ] || continue
-            kill "$PID" 2>/dev/null || true
-        done
-        sleep 0.5
-        for PID in $PIDS; do
-            [ "$PID" != "$$" ] || continue
-            kill -9 "$PID" 2>/dev/null || true
-        done
-    }
-    cleanup_isolated_home_processes
     rm -rf "$CAPSEM_HOME"
     mkdir -p "$CAPSEM_RUN_DIR" "$CAPSEM_HOME/sessions" "$CAPSEM_HOME/logs"
     just _ensure-service
@@ -799,18 +689,24 @@ smoke: _install-tools _frontend-dist _check-assets _pack-initrd
     # fails smoke in seconds instead of only surfacing under `just test`.
     # Background jobs don't trip `set -e`, so aggregate via FAIL=1.
     cargo clippy --workspace --all-targets -- -D warnings & CLIPPY_PID=$!
+    uv run ruff check . & RUFF_PID=$!
+    uv run ty check src/capsem & TY_PID=$!
+    uv run capsem-builder validate-skills skills & SKILLS_PID=$!
     cargo audit & AUDIT_PID=$!
     (cd frontend && pnpm audit) & PNPM_AUDIT_PID=$!
     (cd frontend && pnpm run check) & FE_CHECK_PID=$!
     FAIL=0
     wait $CLIPPY_PID     || { echo "cargo clippy failed"; FAIL=1; }
+    wait $RUFF_PID       || { echo "ruff check failed"; FAIL=1; }
+    wait $TY_PID         || { echo "ty check failed"; FAIL=1; }
+    wait $SKILLS_PID     || { echo "skill validation failed"; FAIL=1; }
     wait $AUDIT_PID      || { echo "cargo audit failed";  FAIL=1; }
     wait $PNPM_AUDIT_PID || { echo "pnpm audit failed";   FAIL=1; }
     wait $FE_CHECK_PID   || { echo "pnpm check failed";   FAIL=1; }
     [ $FAIL -eq 0 ] || exit 1
     step_done
-    step "capsem-doctor --fast (in-VM diagnostics, no throughput)"
-    {{cli_binary}} doctor --fast
+    step "capsem-doctor (in-VM diagnostics)"
+    {{cli_binary}} doctor
     step_done
     step "Injection test"
     python3 scripts/injection_test.py --binary {{binary}} --assets {{assets_dir}}
@@ -836,9 +732,9 @@ smoke: _install-tools _frontend-dist _check-assets _pack-initrd
         "tests/capsem-service/test_svc_suspend_corruption.py"
         "tests/capsem-service/test_svc_loop_device_after_resume.py"
     )
-    # Keep the two VM-heavy groups from overlapping. Both service+CLI and MCP
-    # boot/resume real VMs; running them at the same time can starve Apple VZ
-    # enough that otherwise healthy service requests hit client timeouts.
+    CAPSEM_TEST_RUN_ID=smoke-mcp uv run python -m pytest tests/capsem-mcp/ -v --tb=short -m "mcp" \
+        --ignore="$MCP_SERIAL" &
+    PID_MCP=$!
     CAPSEM_TEST_RUN_ID=smoke-service-cli uv run python -m pytest tests/capsem-service/ tests/capsem-cli/ \
         -v --tb=short -m "integration" -n 2 --dist=loadfile \
         --ignore="${SVC_SERIAL[0]}" \
@@ -848,11 +744,10 @@ smoke: _install-tools _frontend-dist _check-assets _pack-initrd
     CAPSEM_TEST_RUN_ID=smoke-gateway uv run python -m pytest tests/capsem-gateway/ -v --tb=short -m "gateway" &
     PID_GW=$!
     FAIL=0
+    wait $PID_MCP || FAIL=1
     wait $PID_SVC || FAIL=1
     wait $PID_GW || FAIL=1
     [ $FAIL -eq 0 ] || { echo "Python tests failed"; exit 1; }
-    CAPSEM_TEST_RUN_ID=smoke-mcp uv run python -m pytest tests/capsem-mcp/ -v --tb=short -m "mcp" \
-        --ignore="$MCP_SERIAL"
     CAPSEM_TEST_RUN_ID=smoke-mcp-serial uv run python -m pytest "$MCP_SERIAL" -v --tb=short -m "mcp"
     CAPSEM_TEST_RUN_ID=smoke-service-serial uv run python -m pytest "${SVC_SERIAL[@]}" -v --tb=short -m "integration"
     step_done
@@ -875,7 +770,7 @@ test-gateway:
     echo "Gateway tests passed"
 
 # Gateway E2E tests (requires capsem-service + VM assets)
-test-gateway-e2e: _check-assets _pack-initrd _sign
+test-gateway-e2e: _check-assets _pack-initrd _materialize-config _sign
     #!/bin/bash
     set -euo pipefail
     source {{justfile_directory()}}/scripts/lib/exec_lock.sh
@@ -892,33 +787,22 @@ coverage:
     echo "Coverage report: target/llvm-cov/html/index.html"
     open target/llvm-cov/html/index.html 2>/dev/null || true
 
-# Run the standard artifact-recording benchmark suite.
-benchmark: _ensure-setup _check-assets _pack-initrd _ensure-service
+# Run in-VM benchmarks (disk I/O, rootfs read, CLI startup, HTTP latency)
+bench: _ensure-dev-ready _check-assets _pack-initrd _materialize-config _ensure-service
     #!/bin/bash
     set -euo pipefail
     source {{justfile_directory()}}/scripts/lib/exec_lock.sh
     acquire_exec_lock "$HOME/.capsem/run/execution.lock"
-    echo "=== Preserve current benchmark artifacts ==="
-    uv run python scripts/archive_superseded_benchmark_artifacts.py --archive-current-arch
-    echo "=== Criterion microbenchmarks ==="
-    cargo bench -p capsem-security-engine --bench security_engine_cel
-    cargo bench -p capsem-core --bench security_packs
-    uv run python scripts/archive_criterion_benchmarks.py
-    echo "=== VM-originated and in-VM benchmark artifacts ==="
-    CAPSEM_ASSETS_DIR={{assets_dir}} uv run python -m pytest tests/capsem-serial/ -v --tb=short -m benchmark
-    echo "=== Archive superseded benchmark artifacts ==="
-    uv run python scripts/archive_superseded_benchmark_artifacts.py
+    echo "=== In-VM benchmarks (disk, rootfs, CLI, HTTP, snapshots) ==="
+    {{cli_binary}} run "capsem-bench"
+    echo ""
+    echo "=== Host-side benchmarks (lifecycle, fork) ==="
+    uv run python -m pytest tests/capsem-serial/test_lifecycle_benchmark.py -v --tb=short -m serial
 
-# Backward-compatible alias for the canonical benchmark suite.
-bench: benchmark
-
-# Compare committed benchmark artifacts across Linux x86_64 and macOS arm64.
-benchmark-compare:
-    uv run python scripts/compare_benchmark_artifacts.py
-
-# Build package, runtime-clean local install, use the install.sh native command,
-# then verify installed status, service, gateway, and guest DNS/HTTPS.
-install: _pnpm-install _stamp-version _check-assets
+# Build the platform package (.pkg on macOS, .deb on Linux) and install it.
+# Builds release binaries, frontend, and Tauri app. Asks for sudo to install.
+# The postinstall script handles codesign, PATH, service registration, and service readiness.
+install: _pnpm-install _stamp-version _check-assets _pack-initrd _materialize-config
     #!/bin/bash
     set -euo pipefail
     # Strip test-isolation env vars so the installer never bakes a transient
@@ -927,139 +811,12 @@ install: _pnpm-install _stamp-version _check-assets
     # install would permanently embed a path that gets wiped on the next
     # test run. `capsem install` also refuses these vars defensively.
     unset CAPSEM_HOME CAPSEM_RUN_DIR CAPSEM_ASSETS_DIR
-    ROOT="{{justfile_directory()}}"
-    source "$ROOT/scripts/lib/exec_lock.sh"
+    source {{justfile_directory()}}/scripts/lib/exec_lock.sh
     acquire_exec_lock "$HOME/.capsem/run/execution.lock"
     VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
     export CAPSEM_BUILD_TS=$(date +%y%m%d%H%M)
-    INSTALL_ASSETS_DIR="$ROOT/.capsem-assets/install"
-
-    CAPSEM_SETTINGS_BACKUP="$(mktemp -d "${TMPDIR:-/tmp}/capsem-settings.XXXXXX")"
-    cleanup_settings_backup() {
-        rm -rf "$CAPSEM_SETTINGS_BACKUP"
-    }
-    trap cleanup_settings_backup EXIT
-
-    preserve_setting() {
-        local rel="$1"
-        local src="$HOME/.capsem/$rel"
-        local dst="$CAPSEM_SETTINGS_BACKUP/$rel"
-        if [ -f "$src" ]; then
-            mkdir -p "$(dirname "$dst")"
-            cp -p "$src" "$dst"
-        elif [ -d "$src" ]; then
-            mkdir -p "$(dirname "$dst")"
-            cp -a "$src/." "$dst/"
-        fi
-    }
-
-    restore_setting() {
-        local rel="$1"
-        local src="$CAPSEM_SETTINGS_BACKUP/$rel"
-        local dst="$HOME/.capsem/$rel"
-        if [ -f "$src" ]; then
-            mkdir -p "$(dirname "$dst")"
-            cp -p "$src" "$dst"
-        elif [ -d "$src" ]; then
-            mkdir -p "$dst"
-            cp -a "$src/." "$dst/"
-        fi
-    }
-
-    assert_clean_uninstall() {
-        local failed=0
-        if [ -d "$HOME/.capsem/bin" ]; then
-            echo "ERROR: runtime bin dir still exists after uninstall:" >&2
-            find "$HOME/.capsem/bin" -maxdepth 2 -print >&2 || true
-            failed=1
-        fi
-        if [ -e "$HOME/Library/LaunchAgents/com.capsem.service.plist" ]; then
-            echo "ERROR: LaunchAgent still exists after uninstall" >&2
-            failed=1
-        fi
-        if [ -e "$HOME/.config/systemd/user/capsem.service" ]; then
-            echo "ERROR: systemd user unit still exists after uninstall" >&2
-            failed=1
-        fi
-        for name in capsem-service capsem-process capsem-gateway capsem-tray; do
-            if pgrep -f "$HOME/.capsem/bin/$name" >/dev/null 2>&1; then
-                echo "ERROR: $name from ~/.capsem/bin is still running after uninstall" >&2
-                failed=1
-            fi
-        done
-        if [ -d "$HOME/.capsem/run" ]; then
-            local runtime_left
-            runtime_left=$(find "$HOME/.capsem/run" -mindepth 1 -maxdepth 1 \
-                ! -name persistent \
-                ! -name persistent_registry.json \
-                -print 2>/dev/null || true)
-            if [ -n "$runtime_left" ]; then
-                echo "ERROR: runtime run-state still exists after uninstall:" >&2
-                echo "$runtime_left" >&2
-                failed=1
-            fi
-        fi
-        return "$failed"
-    }
-
-    assert_executable() {
-        local path="$1"
-        if [ ! -x "$path" ]; then
-            echo "ERROR: expected executable missing after install: $path" >&2
-            exit 1
-        fi
-    }
-
-    remove_stale_path() {
-        local path="$1"
-        if [ -e "$path" ]; then
-            rm -rf "$path" 2>/dev/null || sudo rm -rf "$path"
-        fi
-    }
-
     echo "=== Building release binaries (build=$CAPSEM_BUILD_TS) ==="
     cargo build --release {{host_crates}}
-
-    echo "=== Rebuilding profile-derived VM assets ==="
-    HOST_ARCH=$(uname -m | sed 's/aarch64/arm64/;s/amd64/x86_64/')
-    just build-assets "$HOST_ARCH" "{{default_asset_profile}}"
-
-    echo "=== Repacking VM assets ==="
-    just _pack-initrd
-
-    echo "=== Keeping existing local profile metadata coherent ==="
-    if [ -x "$HOME/.capsem/bin/capsem" ] && [ -d "$HOME/.capsem/profiles/base" ] && [ -f "{{assets_dir}}/manifest.json" ]; then
-        python3 scripts/materialize-install-profiles.py \
-            "config/profiles/base" \
-            "{{assets_dir}}" \
-            "$HOME/.capsem/profiles/base" \
-            "$HOME/.capsem/assets"
-        if "$HOME/.capsem/bin/capsem" setup --non-interactive --accept-detected; then
-            "$HOME/.capsem/bin/capsem" start >/dev/null 2>&1 || true
-        else
-            echo "WARNING: pre-package profile metadata repair failed; final package setup will retry." >&2
-        fi
-    fi
-
-    echo "=== Snapshotting package asset payload ==="
-    rm -rf "$INSTALL_ASSETS_DIR"
-    mkdir -p "$INSTALL_ASSETS_DIR"
-    bash scripts/sync-dev-assets.sh "{{assets_dir}}" "$INSTALL_ASSETS_DIR"
-
-    echo "=== Clean uninstalling existing local Capsem ==="
-    preserve_setting "service.toml"
-    if [ -x "$HOME/.capsem/bin/capsem" ]; then
-        if "$HOME/.capsem/bin/capsem" uninstall --yes; then
-            echo "Existing local Capsem uninstalled."
-        else
-            echo "Installed capsem uninstall failed; retrying with freshly built CLI." >&2
-        fi
-    elif [ -e "$HOME/.capsem/bin/capsem" ]; then
-        echo "Installed capsem exists but is not executable; retrying with freshly built CLI." >&2
-    fi
-    "$ROOT/target/release/capsem" uninstall --yes || true
-    assert_clean_uninstall
-
     echo "=== Building frontend ==="
     cd frontend
     pnpm build
@@ -1073,83 +830,52 @@ install: _pnpm-install _stamp-version _check-assets
     else
         TAURI_FLAGS="--config '{\"bundle\":{\"createUpdaterArtifacts\":false}}'"
     fi
+    # Unload LaunchAgent first so macOS doesn't respawn while we install
+    PLIST="$HOME/Library/LaunchAgents/com.capsem.service.plist"
+    if [ -f "$PLIST" ]; then
+        launchctl bootout "gui/$(id -u)" "$PLIST" 2>/dev/null || \
+            launchctl unload "$PLIST" 2>/dev/null || true
+    fi
+    pkill -9 -x capsem-service 2>/dev/null || true
+    pkill -9 -x capsem-gateway 2>/dev/null || true
+    pkill -9 -x capsem-tray 2>/dev/null || true
+    pkill -9 -x capsem-process 2>/dev/null || true
+    pkill -9 -x capsem-app 2>/dev/null || true
+    sleep 0.5
+    rm -f "$HOME/.capsem/run/service.sock"
+    rm -f "$HOME/.capsem/run/gateway.token"
+    rm -f "$HOME/.capsem/run/gateway.port"
     OS=$(uname -s)
     if [ "$OS" = "Darwin" ]; then
         echo "=== Building Capsem.app ==="
-        remove_stale_path "target/release/bundle/macos/Capsem.app"
         eval cargo tauri build --bundles app $TAURI_FLAGS
-        echo "=== Signing local asset manifest for package payload ==="
-        bash scripts/sync-dev-assets.sh "$INSTALL_ASSETS_DIR" "$INSTALL_ASSETS_DIR"
-        echo "=== Preparing capsem-admin package payload ==="
-        bash scripts/prepare-admin-cli.sh "target/release"
         echo "=== Assembling .pkg (v$VERSION) ==="
         bash scripts/build-pkg.sh \
+            --manifest "{{assets_dir}}/manifest.json" \
             "target/release/bundle/macos/Capsem.app" \
             "target/release" \
-            "$INSTALL_ASSETS_DIR" \
+            "{{assets_dir}}" \
+            "target/config" \
             "$VERSION"
         PKG="packages/Capsem-$VERSION.pkg"
-        echo "=== Installing .pkg ==="
-        sudo installer -pkg "$PKG" -target /
+        echo "=== Opening installer ==="
+        open -W "$PKG"
+        echo "=== Starting service ==="
+        "$HOME/.capsem/bin/capsem" start || true
     else
         echo "=== Building .deb ==="
-        rm -f target/release/bundle/deb/*.deb
         eval cargo tauri build --bundles deb $TAURI_FLAGS
-        echo "=== Signing local asset manifest for package payload ==="
-        bash scripts/sync-dev-assets.sh "$INSTALL_ASSETS_DIR" "$INSTALL_ASSETS_DIR"
-        echo "=== Preparing capsem-admin package payload ==="
-        bash scripts/prepare-admin-cli.sh "target/release"
-        DEB=$(ls -t target/release/bundle/deb/*.deb | head -1)
-        bash scripts/repack-deb.sh "$DEB" "target/release" "$INSTALL_ASSETS_DIR"
+        DEB=$(ls target/release/bundle/deb/*.deb)
+        bash scripts/repack-deb.sh --manifest "{{assets_dir}}/manifest.json" "$DEB" "target/release" "target/config" "{{assets_dir}}"
         echo "=== Installing .deb ==="
-        sudo apt install -y "$DEB"
+        sudo dpkg -i "$DEB" 2>&1 || sudo apt-get install -f -y
     fi
-
-    echo "=== Restoring preserved settings ==="
-    restore_setting "service.toml"
-
-    echo "=== Verifying installed layout ==="
-    assert_executable "$HOME/.capsem/bin/capsem"
-    assert_executable "$HOME/.capsem/bin/capsem-service"
-    assert_executable "$HOME/.capsem/bin/capsem-process"
-    assert_executable "$HOME/.capsem/bin/capsem-mcp"
-    assert_executable "$HOME/.capsem/bin/capsem-mcp-aggregator"
-    assert_executable "$HOME/.capsem/bin/capsem-mcp-builtin"
-    assert_executable "$HOME/.capsem/bin/capsem-gateway"
-    assert_executable "$HOME/.capsem/bin/capsem-tray"
-    assert_executable "$HOME/.capsem/bin/capsem-tui"
-    if [ ! -f "$HOME/.capsem/assets/manifest.json" ]; then
-        echo "ERROR: installed asset manifest missing" >&2
-        exit 1
-    fi
-    if [ ! -f "$HOME/.capsem/assets/manifest.json.minisig" ]; then
-        echo "ERROR: installed asset manifest signature missing" >&2
-        exit 1
-    fi
-    BUILT_VERSION=$("$ROOT/target/release/capsem" version)
-    INSTALLED_VERSION=$("$HOME/.capsem/bin/capsem" version)
-    if [ "$BUILT_VERSION" != "$INSTALLED_VERSION" ]; then
-        echo "ERROR: installed capsem version does not match the current checkout" >&2
-        echo "  built:     $BUILT_VERSION" >&2
-        echo "  installed: $INSTALLED_VERSION" >&2
-        exit 1
-    fi
-
-    echo "=== Syncing locally built assets into ~/.capsem/assets ==="
-    bash scripts/sync-dev-assets.sh "$INSTALL_ASSETS_DIR" "$HOME/.capsem/assets"
-
-    echo "=== Finalizing installed setup ==="
-    "$HOME/.capsem/bin/capsem" setup --non-interactive --accept-detected
-
-    echo "=== Restarting installed service ==="
-    "$HOME/.capsem/bin/capsem" stop >/dev/null 2>&1 || true
-    "$HOME/.capsem/bin/capsem" start
-
+    # Post-install health check
     echo "=== Verifying service health ==="
     HEALTHY=false
-    for i in $(seq 1 60); do
+    for i in $(seq 1 30); do
         if [ -S "$HOME/.capsem/run/service.sock" ] && \
-           curl -fsS --unix-socket "$HOME/.capsem/run/service.sock" --max-time 2 http://localhost/list >/dev/null 2>&1; then
+           curl -s --unix-socket "$HOME/.capsem/run/service.sock" --max-time 2 http://localhost/list >/dev/null 2>&1; then
             echo "Service is responding."
             HEALTHY=true
             break
@@ -1157,42 +883,18 @@ install: _pnpm-install _stamp-version _check-assets
         sleep 0.5
     done
     if [ "$HEALTHY" != "true" ]; then
-        echo "ERROR: Service not responding after 30s." >&2
+        echo "WARNING: Service not responding after 15s."
         if [ "$OS" = "Darwin" ]; then
-            echo "Check: ~/Library/Logs/capsem/service.log" >&2
+            echo "Check: ~/Library/Logs/capsem/service.log"
         else
-            echo "Check: journalctl --user -u capsem" >&2
+            echo "Check: journalctl --user -u capsem"
         fi
-        exit 1
     fi
-
-    echo "=== Verifying gateway health ==="
-    GATEWAY_HEALTHY=false
-    for i in $(seq 1 60); do
-        if [ -f "$HOME/.capsem/run/gateway.port" ]; then
-            GATEWAY_PORT=$(tr -d '[:space:]' < "$HOME/.capsem/run/gateway.port")
-            if [[ "$GATEWAY_PORT" =~ ^[0-9]+$ ]] && \
-               curl -fsS "http://127.0.0.1:$GATEWAY_PORT/health" >/dev/null 2>&1; then
-                echo "Gateway is responding on port $GATEWAY_PORT."
-                GATEWAY_HEALTHY=true
-                break
-            fi
-        fi
-        sleep 0.5
-    done
-    if [ "$GATEWAY_HEALTHY" != "true" ]; then
-        echo "ERROR: Gateway not responding after 30s." >&2
-        exit 1
+    "$HOME/.capsem/bin/capsem" status
+    if [ "$OS" = "Darwin" ]; then
+        echo "=== Opening Capsem.app ==="
+        open /Applications/Capsem.app
     fi
-
-    echo "=== Capturing installed status ==="
-    python3 scripts/capture-install-status.py \
-        --capsem-bin "$HOME/.capsem/bin/capsem" \
-        --label just-install
-
-    echo "=== Verifying guest DNS and HTTPS ==="
-    "$HOME/.capsem/bin/capsem" run 'set -eux; getent hosts localhost; getent hosts elie.net; getent hosts generativelanguage.googleapis.com; curl -fsS --connect-timeout 10 https://elie.net >/dev/null; agy --version'
-
     echo "=== Pruning stale build artifacts ==="
     just _clean-stale
 
@@ -1208,14 +910,6 @@ test-install:
     # masked the asset-URL bug for v1.0.1777065213).
     set -euo pipefail
     IMAGE="capsem-install-test"
-    ASSETS_HOST="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "{{assets_dir}}")"
-    WORKDIR_CONTAINER="/work/src"
-    ASSETS_CONTAINER="$WORKDIR_CONTAINER/{{assets_dir}}"
-    # `cross-compile` runs Docker GC after producing artifacts, which can
-    # remove this local base image before the install e2e stage starts.
-    if ! docker image inspect capsem-host-builder:latest >/dev/null 2>&1; then
-        just build-host-image
-    fi
     # Build the Docker image if needed
     if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
         echo "Building $IMAGE Docker image..."
@@ -1260,8 +954,7 @@ test-install:
         --privileged --cgroupns=host \
         -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
         --tmpfs /run --tmpfs /tmp \
-        -v "$PWD":/checkout:ro \
-        -v "$ASSETS_HOST":/asset-source:ro \
+        -v "$PWD":/src \
         -v capsem-install-target:/cargo-target \
         -v capsem-install-cargo:/usr/local/cargo/registry \
         -v capsem-install-rustup:/usr/local/rustup \
@@ -1273,44 +966,24 @@ test-install:
         fi
         sleep 0.5
     done
-    # Copy the checkout into container-local storage before building. The
-    # install e2e loop writes frontend output, Python envs, generated assets,
-    # and Debian bundles; keeping those writes off the bind mount prevents
-    # host ownership drift and avoids large local uid/gid values in .deb ar
-    # headers.
-    docker exec "$CONTAINER" bash -c "set -euo pipefail; \
-        rm -rf '$WORKDIR_CONTAINER'; \
-        mkdir -p '$WORKDIR_CONTAINER' '$ASSETS_CONTAINER'; \
-        cd /checkout; \
-        tar \
-            --exclude='./.venv' \
-            --exclude='./target' \
-            --exclude='./frontend/node_modules' \
-            --exclude='./frontend/dist' \
-            --exclude='./frontend/.astro' \
-            --exclude='./dist' \
-            --exclude='./tmp' \
-            --exclude='./coverage' \
-            --exclude='./{{assets_dir}}' \
-            -cf - . | tar -C '$WORKDIR_CONTAINER' -xf -; \
-        cd /asset-source; \
-        tar -cf - . | tar -C '$ASSETS_CONTAINER' -xf -; \
-        chown -R capsem:capsem /work"
     # Fix ownership for capsem user builds. /usr/local/rustup is included
     # because rustup self-updates (triggered by rust-toolchain.toml's
     # channel = "stable") try to write /usr/local/rustup/tmp/, which is
     # root-owned in the baked image -- without this chown, cargo build as
     # the capsem user dies with `Permission denied (os error 13)`.
-    docker exec "$CONTAINER" bash -c "mkdir -p /cargo-target /run/user/1000 && chown -R capsem:capsem /cargo-target /usr/local/cargo /usr/local/rustup /home/capsem /run/user/1000"
+    docker exec "$CONTAINER" bash -c "mkdir -p /cargo-target && chown -R capsem:capsem /cargo-target /usr/local/cargo /usr/local/rustup"
+    # On GitHub runners the bind-mounted /src is owned by uid 1001
+    # (runner), but the container builds as uid 1000 (capsem). Anything
+    # that tries to write into /src (pnpm/vite temp files, Tauri build.rs
+    # generating context into OUT_DIR but traversing /src, cargo's lock
+    # checks, etc.) hits EACCES. Chown the whole tree once up front.
+    docker exec "$CONTAINER" bash -c "chown -R capsem:capsem /src 2>/dev/null || true"
     echo "Building host binaries..."
     docker exec -u capsem "$CONTAINER" bash -c \
-        "cd '$WORKDIR_CONTAINER' && cargo build {{host_crates}}"
-    echo "Preparing clean-checkout assets..."
-    docker exec -u capsem -e ASSETS_CONTAINER="$ASSETS_CONTAINER" "$CONTAINER" bash -c \
-        'cd /work/src && bash scripts/prepare-install-assets.sh "$ASSETS_CONTAINER" Cargo.toml "${INSTALL_ARCH:-$(uname -m)}"'
+        "cd /src && cargo build {{host_crates}}"
     echo "Building frontend..."
     docker exec -u capsem -e CI=true "$CONTAINER" bash -c \
-        "cd '$WORKDIR_CONTAINER/frontend' && pnpm install && pnpm build"
+        "cd /src/frontend && pnpm install && pnpm build"
     echo "Building Tauri .deb..."
     # Clear stale bundles before the build: /cargo-target is a persistent
     # Docker volume, and any previous version's .deb lingers there. The
@@ -1320,16 +993,22 @@ test-install:
     docker exec -u capsem "$CONTAINER" bash -c \
         "rm -f /cargo-target/debug/bundle/deb/*.deb"
     docker exec -u capsem "$CONTAINER" bash -c \
-        "cd '$WORKDIR_CONTAINER' && cargo tauri build --debug --bundles deb --config '{\"bundle\":{\"createUpdaterArtifacts\":false}}'"
+        "cd /src && cargo tauri build --debug --bundles deb --config '{\"bundle\":{\"createUpdaterArtifacts\":false}}'"
+    echo "Preparing install-test asset manifest..."
+    docker exec -u capsem "$CONTAINER" bash -c \
+        "cd /src && bash scripts/prepare-install-test-assets.sh"
+    echo "Materializing runtime config..."
+    docker exec -u capsem "$CONTAINER" bash -c \
+        "cd /src && bash scripts/materialize-config.sh"
     echo "Repacking .deb with companion binaries..."
-    docker exec -u capsem -e UV_PROJECT_ENVIRONMENT=/cargo-target/install-test-venv -e ASSETS_CONTAINER="$ASSETS_CONTAINER" "$CONTAINER" bash -c \
-        'cd /work/src && bash scripts/prepare-admin-cli.sh /cargo-target/debug && DEB=$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && CAPSEM_INSTALL_PROFILE_ASSET_ROOT="$ASSETS_CONTAINER" bash scripts/repack-deb.sh "$DEB" /cargo-target/debug "$ASSETS_CONTAINER" "$DEB"'
-    echo "Installing .deb via apt..."
+    docker exec -u capsem "$CONTAINER" bash -c \
+        'cd /src && DEB=$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && bash scripts/repack-deb.sh --manifest assets/manifest.json "$DEB" /cargo-target/debug target/config assets'
+    echo "Installing .deb via dpkg..."
     docker exec "$CONTAINER" bash -c \
-        'DEB=$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && apt-get install -y "$DEB"'
+        "dpkg -i /cargo-target/debug/bundle/deb/*.deb 2>&1 || apt-get install -f -y"
     echo "Running install e2e tests..."
-    docker exec -u capsem -e UV_PROJECT_ENVIRONMENT=/cargo-target/install-test-venv -e XDG_RUNTIME_DIR=/run/user/1000 -e CAPSEM_DEB_INSTALLED=1 -e CAPSEM_ASSETS_SRC="$ASSETS_CONTAINER" "$CONTAINER" bash -c \
-        "cd '$WORKDIR_CONTAINER' && uv run --group dev python -m pytest tests/capsem-install/ -v --tb=short"
+    docker exec -u capsem -e XDG_RUNTIME_DIR=/run/user/1000 -e CAPSEM_DEB_INSTALLED=1 "$CONTAINER" bash -c \
+        "cd /src && uv run pytest tests/capsem-install/ -v --tb=short"
 
 # Wait for CI to build and publish a tag.
 # Usage: just release          (uses latest vX.Y.Z tag on HEAD)
@@ -1369,10 +1048,8 @@ release tag="":
     echo "=== Release $TAG published ==="
     echo "https://github.com/google/capsem/releases/tag/$TAG"
 
-# Stamp version, commit, and tag locally.
-# Runs test first (all validation gates) before creating the local tag.
-# Prepare a release commit and local immutable tag. Push main + tag manually,
-# then use `just release <tag>` to watch the tag-triggered release workflow.
+# Stamp version, commit, tag, push, and wait for CI to publish.
+# Runs test first (all validation gates) to avoid burning tags on issues only CI would catch.
 cut-release: test _stamp-version
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1384,17 +1061,13 @@ cut-release: test _stamp-version
     sed -i '' "s/^## \[Unreleased\]/## [Unreleased]\n\n## [${NEW}] - ${TODAY}/" CHANGELOG.md
     # Extract latest release notes for the frontend boot screen
     uv run python3 scripts/extract-release-notes.py
-    # Commit and tag locally. The actual push is deliberate/manual so the
-    # release commit and immutable tag are visible before CI starts publishing.
-    git add Cargo.toml crates/capsem-app/tauri.conf.json pyproject.toml uv.lock CHANGELOG.md LATEST_RELEASE.md
+    # Commit, tag, push
+    git add Cargo.toml crates/capsem-app/tauri.conf.json pyproject.toml CHANGELOG.md LATEST_RELEASE.md
     git commit -m "release: v${NEW}"
     git tag "$TAG"
-    echo "Release commit and local tag created: $TAG"
-    echo ""
-    echo "Manual publish commands:"
-    echo "  git push origin HEAD:main"
-    echo "  git push origin $TAG"
-    echo "  just release $TAG"
+    git push origin main "$TAG"
+    echo "Tag $TAG pushed. Waiting for CI..."
+    just release "$TAG"
 
 # Check dev tools and dependencies. Pass "fix" to auto-fix.
 doctor fix="": _pnpm-install
@@ -1544,8 +1217,8 @@ update-fixture src:
 # Update model pricing data from pydantic/genai-prices
 update-prices:
     curl -sL https://raw.githubusercontent.com/pydantic/genai-prices/main/prices/data_slim.json \
-        -o config/genai-prices.json
-    @echo "Updated config/genai-prices.json"
+        -o config/data/genai-prices.json
+    @echo "Updated config/data/genai-prices.json"
 
 # Remove stale rootfs copies, orphan UDS sockets, and trim bloated incremental caches.
 # See scripts/clean_stale.py for implementation (tested: tests/capsem-cleanup-script/).
@@ -1574,7 +1247,7 @@ _docker-gc:
 # --- Internal helpers (hidden from `just --list`) ---
 
 # Run doctor automatically on first use (creates .dev-setup sentinel)
-_ensure-setup:
+_ensure-dev-ready:
     #!/bin/bash
     if [ ! -f .dev-setup ]; then
         echo "First run detected -- running doctor..."
@@ -1626,7 +1299,7 @@ _install-tools:
         cargo install cargo-sbom --locked
     fi
 
-# Verify VM assets exist (vmlinuz, initrd.img, rootfs, image-inventory)
+# Verify VM assets exist (vmlinuz, initrd.img, rootfs)
 _check-assets:
     #!/bin/bash
     set -euo pipefail
@@ -1636,7 +1309,7 @@ _check-assets:
     missing=()
     if [ -f "$dir/$arch/vmlinuz" ]; then
         # Per-arch layout: assets/{arch}/vmlinuz
-        for f in vmlinuz initrd.img rootfs.squashfs image-inventory.json; do
+        for f in vmlinuz initrd.img rootfs.erofs; do
             [ -f "$dir/$arch/$f" ] || missing+=("$arch/$f")
         done
     elif [ -f "$dir/vmlinuz" ]; then
@@ -1644,14 +1317,16 @@ _check-assets:
         for f in vmlinuz initrd.img; do
             [ -f "$dir/$f" ] || missing+=("$f")
         done
-        [ -f "$dir/rootfs.squashfs" ] || missing+=("rootfs.squashfs")
+        [ -f "$dir/rootfs.erofs" ] || missing+=("rootfs.erofs")
     else
         missing+=("vmlinuz (checked $dir/$arch/ and $dir/)")
     fi
     if [ ${#missing[@]} -gt 0 ]; then
         echo "Missing VM assets in $dir/: ${missing[*]}"
-        echo "Building $arch assets (requires docker)..."
-        just build-assets "$arch"
+        echo "Building checked-in profile assets for $arch (requires docker)..."
+        for profile in config/profiles/*/profile.toml; do
+            just build-assets "$(basename "$(dirname "$profile")")" "$arch"
+        done
     fi
 
 _pnpm-install:
@@ -1662,14 +1337,10 @@ _pnpm-install:
     # test-install below.
     cd frontend && CI=true pnpm install --frozen-lockfile
 
-_frontend-dist: _pnpm-install
-    # Tauri's generate_context! macro reads frontend/dist at Rust compile time.
-    # Keep this before any workspace clippy/test/build that includes capsem-app.
+_frontend: _pnpm-install
     cd frontend && pnpm build
 
-_frontend: _frontend-dist
-
-_compile: _clean-stale _frontend
+_compile: _frontend _clean-stale
     cargo build -p capsem
 
 _sign-release: _compile
@@ -1718,9 +1389,6 @@ _pack-initrd:
     fi
     if [ "$NEED_BUILD" = "true" ]; then
         echo "=== Cross-compile agent ==="
-        if [ -d "$RELEASE_DIR" ]; then
-            chmod u+w "$RELEASE_DIR"/capsem-* 2>/dev/null || true
-        fi
         uv run capsem-builder agent --arch "$arch"
         echo ""
     else
@@ -1776,29 +1444,20 @@ _pack-initrd:
     mv "$TMP" "$INITRD"
     rm -rf "$WORKDIR"
     cd "$ROOT"
-    # Regenerate checksums -- handle every complete per-arch layout so a
-    # host-arch initrd repack does not erase the other arch's manifest map.
     ASSETS="$ROOT/{{assets_dir}}"
-    if [ -d "$ASSETS/$arch" ]; then
-        : > "$ASSETS/B3SUMS"
-        for arch_dir in "$ASSETS"/*; do
-            [ -d "$arch_dir" ] || continue
-            arch_name=$(basename "$arch_dir")
-            if [ -f "$arch_dir/vmlinuz" ] && [ -f "$arch_dir/initrd.img" ] && [ -f "$arch_dir/rootfs.squashfs" ]; then
-                (cd "$ASSETS" && b3sum "$arch_name/vmlinuz" "$arch_name/initrd.img" "$arch_name/rootfs.squashfs" >> B3SUMS)
-            fi
-        done
-    else
-        (cd "$ASSETS" && b3sum vmlinuz initrd.img rootfs.squashfs > B3SUMS)
-    fi
-    # Generate manifest.json from B3SUMS + file sizes
-    python3 "$ROOT/scripts/gen_manifest.py" "$ASSETS" "$ROOT/Cargo.toml"
+    # Generate B3SUMS + manifest.json through the same admin rail used by
+    # corp/release builds. The Python builder generator is an internal
+    # implementation detail, never a public install/package path.
+    VERSION=$(grep '^version' "$ROOT/Cargo.toml" | head -1 | sed 's/.*"\(.*\)"/\1/')
+    cargo run -p capsem-admin -- manifest generate "$ASSETS" --version "$VERSION"
     # Create hash-named copies so dev layout matches installed layout.
     python3 "$ROOT/scripts/create_hash_assets.py" "$ASSETS"
-    # Sign the freshly regenerated local manifest so dev `run-service` and
-    # `exec` can still exercise the same verified-manifest path as releases.
-    bash "$ROOT/scripts/sync-dev-assets.sh" "$ASSETS" "$ASSETS"
-    bash "$ROOT/scripts/verify-local-manifest-signature.sh" "$ASSETS" "$ROOT/config/manifest-sign.pub"
     # Force cargo to re-run build.rs so it picks up new manifest hashes
     touch "$ROOT/crates/capsem-app/build.rs"
     echo "initrd repacked (with agent + net-proxy + mcp-server + sysutil + doctor)"
+
+_materialize-config:
+    #!/bin/bash
+    set -euo pipefail
+    ROOT="{{justfile_directory()}}"
+    bash "$ROOT/scripts/materialize-config.sh"

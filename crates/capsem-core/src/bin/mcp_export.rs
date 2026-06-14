@@ -1,6 +1,6 @@
 //! Dumps builtin MCP tool definitions to JSON on stdout.
 //!
-//! Used by `_generate-settings` to produce `config/mcp-tools.json`,
+//! Used by `_generate-settings` to produce `target/config/profiles/catalog.generated.json`,
 //! which the Python mock generator reads to create frontend mock data.
 
 fn main() {

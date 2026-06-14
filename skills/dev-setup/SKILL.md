@@ -134,7 +134,11 @@ Three phases. Default at every prompt is **Yes** (Enter accepts; type `n` to dec
 
 ### Kernel version
 
-`guest/config/build.toml` ships `kernel_branch = "auto"`, which makes `resolve_kernel_version` pick the newest non-EOL longterm release from `kernel.org/releases.json` and fetch its latest patch (e.g. `6.18.26`). Set `kernel_branch = "X.Y"` (e.g. `"6.6"`) to pin for reproducibility.
+Kernel selection is part of the profile-derived image build, not a standalone
+developer setting. The build backend resolves the configured kernel branch
+while materializing and building profile assets through `capsem-admin`/`just`.
+Do not add a parallel kernel setting under runtime settings or backend-only
+config.
 
 Or step by step:
 
@@ -159,18 +163,17 @@ just dev              # Full Tauri app with hot-reload
 
 See `/dev-just` for the complete recipe reference.
 
-## API keys (optional, needed for integration tests)
+## Credentials
 
-Create `~/.capsem/user.toml`:
-```toml
-[providers.anthropic]
-api_key = "sk-ant-..."
+Do not create `~/.capsem/user.toml`. Credentials are captured and replayed by
+the credential broker plugin through profile/corp policy. Hermetic tests use
+the local mock server and Ironbank fixtures; real OAuth/API-key manual runs are
+debug evidence, not release proof.
 
-[providers.google]
-api_key = "AIza..."
-```
-
-Needed for: `just test` (integration tests exercise real AI API calls), interactive AI sessions inside the VM.
+Do not add setup-time admin or guest config roots. Runtime behavior is
+profile/corp-owned; settings are UI/application preferences only. Generated
+settings UI metadata may render controls, but it is not a product config
+authority.
 
 ## Claude Code permissions
 
@@ -243,7 +246,7 @@ The container VM's clock has drifted. The builder uses `Acquire::Check-Valid-Unt
 
 ### `just build-assets` fails (other)
 - Check Docker is running: `docker info`
-- Check guest config is valid: `uv run capsem-builder validate guest/`
+- Check the profile contract is valid: `capsem-admin profile check config/profiles/code/profile.toml --config-root config`
 - On first run, Docker image pulls can be slow
 
 ### `just run` fails with "assets not found"
@@ -285,7 +288,7 @@ Fix: set `credsStore` to empty string in `~/.docker/config.json`:
 
 ### VM boot hangs
 - Check codesigning: `codesign -dvv target/debug/capsem 2>&1 | grep entitlements`
-- Check assets exist: `ls assets/arm64/vmlinuz assets/arm64/rootfs.squashfs`
+- Check assets exist: `ls assets/arm64/vmlinuz assets/arm64/rootfs.erofs`
 - Check kernel architecture matches host: wrong-arch kernel causes silent hang. `VmConfig::build()` now rejects mismatched kernels at config time.
 - Try with debug logs: `RUST_LOG=capsem=debug just run`
 

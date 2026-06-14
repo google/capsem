@@ -198,7 +198,7 @@ Rollup happens when a session ends.
 - Guest MCP endpoint not started (check for MITM MCP endpoint startup in process logs)
 
 ### Cost is zero
-- Model not found in pricing table (`config/genai-prices.json`)
+- Model not found in pricing table (`config/data/genai-prices.json`)
 - Run `just update-prices` to refresh pricing data
 
 ## When to inspect sessions

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""End-to-end injection test: generate Profile V2 state, boot VMs, verify injection paths.
+"""End-to-end boot-config test for non-secret settings materialization.
 
-Each scenario writes temporary `service.toml` and profile TOML under an isolated
-CAPSEM_HOME, boots the VM with `capsem-doctor -k injection`, and checks the exit
-code. The in-VM tests read /tmp/capsem-injection-manifest.json to verify every
-env var and file arrived.
+Each scenario writes a temporary settings.toml (and optionally corp.toml), boots the VM
+with `capsem-doctor -k injection`, and checks the exit code. The in-VM tests read
+/tmp/capsem-injection-manifest.json to verify the emitted boot env/files are
+well-formed.
 
 Usage:
     python3 scripts/injection_test.py              # uses target/debug/capsem
@@ -13,10 +13,10 @@ Usage:
 
 import argparse
 import os
+from pathlib import Path
 import subprocess
 import sys
 import tempfile
-from pathlib import Path
 
 BOLD = "\033[1m"
 DIM = "\033[2m"
@@ -25,8 +25,6 @@ RED = "\033[31m"
 YELLOW = "\033[33m"
 CYAN = "\033[36m"
 RESET = "\033[0m"
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-INJECTION_TMP_ROOT = PROJECT_ROOT / "target" / "it"
 
 
 class Results:
@@ -55,152 +53,163 @@ class Results:
         return len(self.failed) == 0
 
 
-def _provider_sections(anthropic: bool, google: bool, openai: bool) -> str:
-    return f"""\
-[ai.providers.anthropic]
-enabled = {str(anthropic).lower()}
-credential_refs = ["anthropic-api-key"]
-
-[ai.providers.google]
-enabled = {str(google).lower()}
-credential_refs = ["google-api-key"]
-
-[ai.providers.openai]
-enabled = {str(openai).lower()}
-credential_refs = ["openai-api-key"]
-"""
-
-
-def _profile_toml(profile_id: str, provider_sections: str) -> str:
-    return f"""\
-version = 1
-id = "{profile_id}"
-name = "Injection {profile_id}"
-best_for = "Injection diagnostics."
-profile_type = "coding"
-extends_profile_id = "everyday-work"
-
-{provider_sections}
-"""
-
-
-def _service_toml(profile_id: str, profile_dir: Path) -> str:
-    return f"""\
-version = 1
-
-[profiles]
-user_dirs = ["{profile_dir}"]
-default_profile = "{profile_id}"
-
-[credentials.items.anthropic-api-key]
-value = "sk-ant-test-key-injection"
-
-[credentials.items.google-api-key]
-value = "AIzaSy_test_key_injection"
-
-[credentials.items.openai-api-key]
-value = "sk-test-key-injection"
-
-[credentials.items.github-token]
-value = "ghp_test_token_injection"
-"""
-
-
 # -- Scenario definitions --
-# Each scenario selects a temporary Profile V2 profile.
+# Each scenario is a dict with:
+#   name: human-readable label
+#   settings_toml: TOML string for <CAPSEM_HOME>/settings.toml
+#   corp_toml: optional TOML string for CAPSEM_CORP_CONFIG (None = no corp override)
+#
+# Runtime AI credentials are intentionally absent here. Provider access and
+# credential brokerage now flow through profile/corp security rules plus plugins,
+# not settings-owned AI toggles or static boot-time secret injection.
 
 SCENARIOS = [
     {
-        "name": "all_enabled",
-        "description": "All AI providers on through Profile V2",
-        "providers": (True, True, True),
+        "name": "git_identity",
+        "description": "Non-secret git identity and repository toggles materialize cleanly",
+        "settings_toml": """\
+[settings]
+"repository.providers.github.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
+"repository.providers.gitlab.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
+"repository.git.identity.author_name" = { value = "Test User", modified = "2026-01-01T00:00:00Z" }
+"repository.git.identity.author_email" = { value = "test@example.com", modified = "2026-01-01T00:00:00Z" }
+""",
+        "corp_toml": None,
     },
     {
-        "name": "partial",
-        "description": "Only Google enabled through Profile V2",
-        "providers": (False, True, False),
+        "name": "broker_refs_not_boot_secrets",
+        "description": "Brokered repository credential references are accepted but not materialized as raw boot secrets",
+        "settings_toml": """\
+[settings]
+"repository.providers.github.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
+"repository.providers.github.token" = { value = "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111", modified = "2026-01-01T00:00:00Z" }
+"repository.providers.gitlab.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
+"repository.providers.gitlab.token" = { value = "credential:blake3:2222222222222222222222222222222222222222222222222222222222222222", modified = "2026-01-01T00:00:00Z" }
+""",
+        "corp_toml": None,
     },
     {
-        "name": "all_disabled",
-        "description": "All providers off through Profile V2",
-        "providers": (False, False, False),
+        "name": "empty_tokens",
+        "description": "Repository providers on with empty tokens -- no credential file should be emitted",
+        "settings_toml": """\
+[settings]
+"repository.providers.github.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
+"repository.providers.github.token" = { value = "", modified = "2026-01-01T00:00:00Z" }
+"repository.providers.gitlab.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
+"repository.providers.gitlab.token" = { value = "", modified = "2026-01-01T00:00:00Z" }
+""",
+        "corp_toml": None,
+    },
+    {
+        "name": "corp_rule_file",
+        "description": "Corp rule config loads without resurrecting settings-owned AI provider toggles",
+        "settings_toml": """\
+[settings]
+"repository.git.identity.author_name" = { value = "Corp Test User", modified = "2026-01-01T00:00:00Z" }
+""",
+        "corp_toml": """\
+[corp.rules.block_example_invalid]
+name = "block_example_invalid"
+action = "block"
+priority = -100
+detection_level = "high"
+reason = "Integration proof that corp rules own enforcement."
+match = 'http.host == "example.invalid"'
+""",
     },
 ]
+
+
+def default_materialized_profiles_dir() -> str:
+    """Return the generated profile catalog used by packages and CI."""
+    repo_root = Path(__file__).resolve().parent.parent
+    return str(repo_root / "target" / "config" / "profiles")
 
 
 def run_scenario(
     binary: str,
     assets_dir: str,
+    profiles_dir: str,
     scenario: dict,
     results: Results,
 ) -> None:
-    """Write temporary Profile V2 state, boot VM, and check the doctor exit code."""
+    """Write temp config(s), boot VM with capsem-doctor -k injection, check exit code."""
     name = scenario["name"]
     print(f"\n{BOLD}--- Scenario: {name} ---{RESET}")
     print(f"  {DIM}{scenario['description']}{RESET}")
 
+    # Write temporary settings.toml inside an isolated Capsem home.
+    # macOS UDS paths are short; the default tempfile location under
+    # /var/folders/... can exceed the usable socket path once /run/service.sock
+    # is appended.
+    capsem_home = tempfile.TemporaryDirectory(prefix=f"capsem-injection-{name}-home-", dir="/tmp")
+    settings_path = os.path.join(capsem_home.name, "settings.toml")
+    with open(settings_path, "w") as settings_file:
+        settings_file.write(scenario["settings_toml"])
+
+    # Write temporary corp.toml if specified.
+    corp_path = None
+    if scenario.get("corp_toml"):
+        corp_file = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".toml", prefix=f"capsem-injection-{name}-corp-", delete=False,
+        )
+        corp_file.write(scenario["corp_toml"])
+        corp_file.close()
+        corp_path = corp_file.name
+
+    env = {
+        **os.environ,
+        "CAPSEM_ASSETS_DIR": assets_dir,
+        "CAPSEM_PROFILES_DIR": profiles_dir,
+        "RUST_LOG": "capsem=warn",
+        "CAPSEM_HOME": capsem_home.name,
+    }
+    if corp_path:
+        env["CAPSEM_CORP_CONFIG"] = corp_path
+    else:
+        # Ensure no stale corp config leaks through.
+        env.pop("CAPSEM_CORP_CONFIG", None)
+
+    vm_command = "capsem-doctor -k injection"
     try:
-        INJECTION_TMP_ROOT.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(
-            prefix=f"ci-{name}-",
-            dir=INJECTION_TMP_ROOT,
-        ) as capsem_home:
-            capsem_home_path = Path(capsem_home)
-            profile_dir = capsem_home_path / "profiles"
-            profile_dir.mkdir(parents=True, exist_ok=True)
-            profile_id = f"injection-{name.replace('_', '-')}"
-            profile_path = profile_dir / f"{profile_id}.toml"
-            profile_path.write_text(
-                _profile_toml(profile_id, _provider_sections(*scenario["providers"])),
-                encoding="utf-8",
-            )
-            (capsem_home_path / "service.toml").write_text(
-                _service_toml(profile_id, profile_dir),
-                encoding="utf-8",
-            )
+        proc = subprocess.run(
+            [binary, "run", vm_command],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        exit_code = proc.returncode
+        stdout = proc.stdout.strip()
+        stderr = proc.stderr.strip()
 
-            env = {
-                **os.environ,
-                "CAPSEM_ASSETS_DIR": assets_dir,
-                "CAPSEM_HOME": str(capsem_home_path),
-                "CAPSEM_RUN_DIR": str(capsem_home_path / "run"),
-                "RUST_LOG": "capsem=warn",
-            }
-
-            vm_command = "capsem-doctor -k injection"
-            proc = subprocess.run(
-                [binary, "run", vm_command],
-                env=env,
-                capture_output=True,
-                text=True,
-                timeout=120,
-            )
-            exit_code = proc.returncode
-            stdout = proc.stdout.strip()
-            stderr = proc.stderr.strip()
-
-            if exit_code == 0:
-                results.ok(f"{name}: all injection tests passed")
-            else:
-                results.fail(f"{name}: injection tests failed (exit {exit_code})")
-                # Show full output so failures are easy to diagnose.
-                if stdout:
-                    print(f"    {CYAN}--- stdout ---{RESET}")
-                    for line in stdout.splitlines():
-                        color = RED if ("FAILED" in line or "AssertionError" in line) else ""
-                        end = RESET if color else ""
-                        print(f"    {color}{line}{end}")
-                if stderr:
-                    print(f"    {YELLOW}--- stderr ---{RESET}")
-                    for line in stderr.splitlines():
-                        print(f"    {line}")
+        if exit_code == 0:
+            results.ok(f"{name}: all injection tests passed")
+        else:
+            results.fail(f"{name}: injection tests failed (exit {exit_code})")
+            # Show full output so failures are easy to diagnose.
+            if stdout:
+                print(f"    {CYAN}--- stdout ---{RESET}")
+                for line in stdout.splitlines():
+                    color = RED if ("FAILED" in line or "AssertionError" in line) else ""
+                    end = RESET if color else ""
+                    print(f"    {color}{line}{end}")
+            if stderr:
+                print(f"    {YELLOW}--- stderr ---{RESET}")
+                for line in stderr.splitlines():
+                    print(f"    {line}")
     except subprocess.TimeoutExpired:
         results.fail(f"{name}: VM timed out after 120s")
+    finally:
+        # Clean up temp files.
+        capsem_home.cleanup()
+        if corp_path:
+            os.unlink(corp_path)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="End-to-end injection test for capsem boot config.",
+        description="End-to-end non-secret boot config test.",
     )
     parser.add_argument(
         "--binary",
@@ -213,16 +222,21 @@ def main():
         help="Path to VM assets directory (default: assets)",
     )
     parser.add_argument(
+        "--profiles-dir",
+        default=default_materialized_profiles_dir(),
+        help="Path to materialized profile catalog (default: target/config/profiles)",
+    )
+    parser.add_argument(
         "--scenario",
         default=None,
         help="Run only this scenario (by name). Default: run all.",
     )
     args = parser.parse_args()
-    assets_dir = str(Path(args.assets).resolve())
 
     print(f"{BOLD}=== Capsem Injection Test ==={RESET}")
     print(f"  binary: {args.binary}")
-    print(f"  assets: {assets_dir}")
+    print(f"  assets: {args.assets}")
+    print(f"  profiles: {args.profiles_dir}")
 
     results = Results()
 
@@ -235,7 +249,7 @@ def main():
             sys.exit(1)
 
     for scenario in scenarios:
-        run_scenario(args.binary, assets_dir, scenario, results)
+        run_scenario(args.binary, args.assets, args.profiles_dir, scenario, results)
 
     # Summary.
     print(f"\n{BOLD}{'=' * 60}{RESET}")

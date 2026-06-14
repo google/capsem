@@ -9,7 +9,6 @@ we have a test infrastructure bug.
 """
 
 import os
-import json
 import subprocess
 import sys
 import tempfile
@@ -23,7 +22,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from helpers.constants import EXEC_READY_TIMEOUT
-from helpers.profile_asset_fixture import find_asset, write_profile_home
 from helpers.service import preserve_tmp_dir_on_failure
 from helpers.sign import sign_binary
 
@@ -33,6 +31,7 @@ PROCESS_BINARY = PROJECT_ROOT / "target/debug/capsem-process"
 CLI_BINARY = PROJECT_ROOT / "target/debug/capsem"
 MCP_BINARY = PROJECT_ROOT / "target/debug/capsem-mcp"
 ASSETS_DIR = PROJECT_ROOT / "assets"
+PROFILES_DIR = PROJECT_ROOT / "target" / "config" / "profiles"
 
 pytestmark = pytest.mark.e2e
 
@@ -44,18 +43,14 @@ def _vm_name(prefix="e2e"):
 class RealService:
     """Starts capsem-service the way just run-service does.
 
-    Readiness check: socket file exists AND curl to /list succeeds.
+    Readiness check: socket file exists AND curl to /vms/list succeeds.
     This is intentionally the same logic as the justfile run-service
     recipe. If they diverge, tests pass but the product breaks.
     """
 
-    def __init__(self, *, capsem_home=None, assets_dir=None, extra_env=None):
+    def __init__(self):
         self.tmp_dir = Path(tempfile.mkdtemp(prefix="capsem-e2e-"))
-        self.uds_path = self.tmp_dir / "service.sock"
-        self.capsem_home = Path(capsem_home) if capsem_home else None
-        self.assets_dir = Path(assets_dir) if assets_dir else None
-        self.extra_env = dict(extra_env or {})
-        self.env = None
+        self.uds_path = self.tmp_dir / f"service-{uuid.uuid4().hex[:8]}.sock"
         self.proc = None
         self._log_file = None
         self._stderr_file = None
@@ -65,51 +60,36 @@ class RealService:
         sign_binary(SERVICE_BINARY)
 
         arch = "arm64" if os.uname().machine == "arm64" else "x86_64"
-        assets_dir = self.assets_dir or (ASSETS_DIR / arch)
-        capsem_home = self.capsem_home or self.tmp_dir
-
-        if self.capsem_home is None:
-            asset_cache = self.tmp_dir / "assets"
-            assets = {
-                "vmlinuz": find_asset(assets_dir, "vmlinuz"),
-                "initrd.img": find_asset(assets_dir, "initrd.img"),
-                "rootfs.squashfs": find_asset(assets_dir, "rootfs.squashfs"),
-            }
-            write_profile_home(capsem_home, asset_cache, assets)
-            assets_dir = asset_cache
+        assets_dir = ASSETS_DIR / arch
 
         env = os.environ.copy()
         env["RUST_LOG"] = "capsem=debug"
         env["CAPSEM_RUN_DIR"] = str(self.tmp_dir)
-        env["CAPSEM_HOME"] = str(capsem_home)
-        env["CAPSEM_ASSETS_DIR"] = str(assets_dir)
-        env.update(self.extra_env)
-        self.env = env
+        env["CAPSEM_HOME"] = str(self.tmp_dir)
+        env["CAPSEM_PROFILES_DIR"] = str(PROFILES_DIR)
+        env["CAPSEM_CREDENTIAL_BROKER_TEST_STORE"] = str(
+            self.tmp_dir / "credential-broker-test-store.json"
+        )
+        env["HOME"] = str(self.tmp_dir)
 
         log_path = self.tmp_dir / "service.log"
         stderr_path = self.tmp_dir / "service.stderr.log"
+        self._log_file = open(log_path, "w")
+        self._stderr_file = open(stderr_path, "w")
 
-        log_fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
-        try:
-            stderr_fd = os.open(stderr_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
-            try:
-                self.proc = subprocess.Popen(
-                    [
-                        str(SERVICE_BINARY),
-                        "--uds-path", str(self.uds_path),
-                        "--assets-dir", str(assets_dir),
-                        "--process-binary", str(PROCESS_BINARY),
-                        "--parent-pid", str(os.getpid()),
-                        "--foreground",
-                    ],
-                    env=env,
-                    stdout=log_fd,
-                    stderr=stderr_fd,
-                )
-            finally:
-                os.close(stderr_fd)
-        finally:
-            os.close(log_fd)
+        self.proc = subprocess.Popen(
+            [
+                str(SERVICE_BINARY),
+                "--uds-path", str(self.uds_path),
+                "--assets-dir", str(assets_dir),
+                "--process-binary", str(PROCESS_BINARY),
+                "--parent-pid", str(os.getpid()),
+                "--foreground",
+            ],
+            env=env,
+            stdout=self._log_file,
+            stderr=self._stderr_file,
+        )
 
         # Readiness check: matches production (just run-service).
         # Socket file exists AND service responds to HTTP.
@@ -119,7 +99,7 @@ class RealService:
                 try:
                     result = subprocess.run(
                         ["curl", "-s", "--unix-socket", str(self.uds_path),
-                         "--max-time", "2", "http://localhost/list"],
+                         "--max-time", "2", "http://localhost/vms/list"],
                         capture_output=True, text=True, timeout=5,
                     )
                     if result.returncode == 0:
@@ -153,7 +133,7 @@ class RealService:
         """Run the real capsem CLI binary. Returns CompletedProcess."""
         cmd = [str(CLI_BINARY), "--uds-path", str(self.uds_path)] + list(args)
         return subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout, env=self.env,
+            cmd, capture_output=True, text=True, timeout=timeout,
         )
 
     def cli_ok(self, *args, timeout=60):
@@ -164,26 +144,6 @@ class RealService:
             f"stdout: {r.stdout}\nstderr: {r.stderr}"
         )
         return r
-
-    def api_json(self, method, path, payload=None, timeout=60):
-        """Call the real service over its UDS HTTP API and decode JSON."""
-        cmd = [
-            "curl", "-sS", "--unix-socket", str(self.uds_path),
-            "--max-time", str(timeout), "-X", method,
-        ]
-        body = None
-        if payload is not None:
-            cmd.extend(["-H", "Content-Type: application/json", "--data-binary", "@-"])
-            body = json.dumps(payload)
-        cmd.append("http://localhost" + path)
-        r = subprocess.run(
-            cmd, input=body, capture_output=True, text=True,
-            timeout=timeout + 5, env=self.env,
-        )
-        assert r.returncode == 0, (
-            f"HTTP {method} {path} failed\nstdout: {r.stdout}\nstderr: {r.stderr}"
-        )
-        return json.loads(r.stdout)
 
     def wait_exec_ready(self, vm_name, timeout=EXEC_READY_TIMEOUT):
         """Wait until a VM responds to exec via the real CLI.
@@ -210,9 +170,3 @@ def service():
     svc.start()
     yield svc
     svc.stop()
-
-
-@pytest.fixture
-def real_service_factory():
-    """Factory for tests that need their own isolated real service."""
-    return RealService

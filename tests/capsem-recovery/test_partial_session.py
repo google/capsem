@@ -25,7 +25,7 @@ def test_partial_session_dir_handled():
 
     try:
         client = svc.client()
-        resp = client.get("/list")
+        resp = client.get("/vms/list")
         assert resp is not None, "Service should start despite partial session dir"
     finally:
         svc.stop()
@@ -44,7 +44,7 @@ def test_empty_session_dir_handled():
 
     try:
         client = svc.client()
-        resp = client.get("/list")
+        resp = client.get("/vms/list")
         assert resp is not None
     finally:
         svc.stop()

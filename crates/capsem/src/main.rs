@@ -2,28 +2,116 @@ mod client;
 mod completions;
 mod paths;
 mod platform;
-mod profile_catalog_source;
 mod service_install;
-mod setup;
-mod status;
 mod support;
 mod support_bundle;
 mod uninstall;
 mod update;
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::builder::styling::{AnsiColor, Color, Style, Styles};
-use clap::{Parser, Subcommand, ValueEnum};
-use std::fmt::Write as _;
-use std::path::{Path, PathBuf};
+use clap::{Parser, Subcommand};
+use std::{
+    io::BufRead,
+    path::PathBuf,
+    process::{Child, Command as StdCommand, Stdio},
+};
 use tokio::io::AsyncWriteExt;
 
 use client::{
-    ApiResponse, ExecRequest, ExecResponse, ForkRequest, ForkResponse, HistoryResponse,
-    ListResponse, LogsResponse, PersistRequest, ProvisionRequest, ProvisionResponse, PurgeRequest,
-    PurgeResponse, RunRequest, SessionInfo, SessionProfileStatus, UdsClient,
+    ApiResponse, AssetStatusResponse, ExecRequest, ExecResponse, ForkRequest, ForkResponse,
+    HistoryResponse, ListResponse, LogsResponse, PersistRequest, ProvisionRequest,
+    ProvisionResponse, PurgeRequest, PurgeResponse, RunRequest, SessionInfo, UdsClient,
+    VmLifecycleState,
 };
-use profile_catalog_source::read_profile_catalog_manifest;
+
+const DEFAULT_PROFILE_ID: &str = "code";
+const DOCTOR_MOCK_SERVER_ADDR: &str = "127.0.0.1:3713";
+
+struct DoctorMockServer {
+    child: Child,
+    base_url: String,
+}
+
+impl DoctorMockServer {
+    fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
+    fn shutdown(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+impl Drop for DoctorMockServer {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
+fn mock_server_runtime_path() -> Result<PathBuf> {
+    let cwd_candidate = std::env::current_dir()
+        .context("read current directory")?
+        .join("scripts/mock_server_runtime.py");
+    if cwd_candidate.exists() {
+        return Ok(cwd_candidate);
+    }
+
+    let manifest_candidate =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../scripts/mock_server_runtime.py");
+    if manifest_candidate.exists() {
+        return manifest_candidate
+            .canonicalize()
+            .context("resolve source-tree scripts/mock_server_runtime.py");
+    }
+
+    Err(anyhow!(
+        "scripts/mock_server_runtime.py not found; restore the shared Python mock server runtime"
+    ))
+}
+
+fn spawn_doctor_mock_server() -> Result<DoctorMockServer> {
+    let script = mock_server_runtime_path()?;
+    let mut child = StdCommand::new("python3")
+        .arg(&script)
+        .arg("--addr")
+        .arg(DOCTOR_MOCK_SERVER_ADDR)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .with_context(|| format!("start {}", script.display()))?;
+
+    let stdout = child
+        .stdout
+        .take()
+        .context("mock server stdout must be piped")?;
+    let mut reader = std::io::BufReader::new(stdout);
+    let mut line = String::new();
+    let bytes = reader
+        .read_line(&mut line)
+        .context("read mock server ready JSON")?;
+    if bytes == 0 {
+        let status = child.try_wait().context("read mock server status")?;
+        return Err(anyhow!(
+            "mock server exited before ready JSON; status={status:?}"
+        ));
+    }
+
+    let ready: serde_json::Value =
+        serde_json::from_str(&line).context("parse mock server ready JSON")?;
+    if ready.get("service").and_then(serde_json::Value::as_str) != Some("capsem-mock-server") {
+        child.kill().ok();
+        return Err(anyhow!("unexpected mock server ready payload: {line}"));
+    }
+    let base_url = ready
+        .get("base_url")
+        .and_then(serde_json::Value::as_str)
+        .context("mock server ready JSON missing base_url")?
+        .to_string();
+
+    Ok(DoctorMockServer { child, base_url })
+}
 
 const fn cli_styles() -> Styles {
     Styles::styled()
@@ -56,7 +144,7 @@ const fn cli_styles() -> Styles {
 const GROUPED_HELP: &str = "\
 \x1b[36;1;4mSession Commands:\x1b[0m
   \x1b[32;1mcreate\x1b[0m       Create and boot a new session
-  \x1b[32;1mshell\x1b[0m        Open the Capsem TUI
+  \x1b[32;1mshell\x1b[0m        Open an interactive shell in a session
   \x1b[32;1mresume\x1b[0m       Resume a suspended session or attach to a running one
   \x1b[32;1msuspend\x1b[0m      Suspend a running session to disk
   \x1b[32;1mrestart\x1b[0m      Restart a persistent session (reboot)
@@ -68,52 +156,28 @@ const GROUPED_HELP: &str = "\
   \x1b[32;1mdelete\x1b[0m       Delete a session and all its state
   \x1b[32;1mfork\x1b[0m         Fork a session into a reusable snapshot
   \x1b[32;1mpersist\x1b[0m      Promote an ephemeral session to persistent
-  \x1b[32;1mpurge\x1b[0m        Destroy temporary sessions or reset product state
+  \x1b[32;1mpurge\x1b[0m        Destroy all temporary sessions
 
 \x1b[36;1;4mService:\x1b[0m
   \x1b[32;1minstall\x1b[0m      Install as a system service (LaunchAgent / systemd)
-  \x1b[32;1mstatus\x1b[0m       Show installed Capsem health and readiness
+  \x1b[32;1mstatus\x1b[0m       Show service status
   \x1b[32;1mstart\x1b[0m        Start the background service
   \x1b[32;1mstop\x1b[0m         Stop the background service
+  \x1b[32;1massets\x1b[0m       Inspect or repair VM assets
 
 \x1b[36;1;4mMCP:\x1b[0m
-  \x1b[32;1mmcp list\x1b[0m       List Profile V2 MCP servers
-  \x1b[32;1mmcp show\x1b[0m       Show one Profile V2 MCP server
-  \x1b[32;1mmcp connectors\x1b[0m List Profile V2 MCP servers
-  \x1b[32;1mmcp add\x1b[0m        Add a Profile V2 MCP server
-  \x1b[32;1mmcp delete\x1b[0m     Delete a Profile V2 MCP server
-
-\x1b[36;1;4mSecurity Rules:\x1b[0m
-  \x1b[32;1menforcement list\x1b[0m    List runtime enforcement rules
-  \x1b[32;1menforcement compile\x1b[0m Compile a runtime enforcement rule
-  \x1b[32;1menforcement install\x1b[0m Install a runtime enforcement rule
-  \x1b[32;1menforcement backtest\x1b[0m Backtest one enforcement rule against events
-  \x1b[32;1mdetection list\x1b[0m      List runtime detection rules
-  \x1b[32;1mdetection compile\x1b[0m   Compile a runtime detection rule
-  \x1b[32;1mdetection backtest\x1b[0m  Backtest one detection rule against events
-  \x1b[32;1mdetection hunt\x1b[0m      Hunt detection rules against events
-  \x1b[32;1mdetection hunt-session\x1b[0m Backtest one detection rule against a session
-  \x1b[32;1mconfirm list\x1b[0m       Show ask/confirm resolver state
-
-\x1b[36;1;4mProfiles:\x1b[0m
-  \x1b[32;1mprofile list\x1b[0m      List typed Profile V2 profiles
-  \x1b[32;1mprofile create\x1b[0m    Create a user Profile V2 profile from a typed file
-  \x1b[32;1mprofile show\x1b[0m      Show one typed Profile V2 profile
-  \x1b[32;1mprofile resolve\x1b[0m   Resolve one profile to effective settings
-  \x1b[32;1mprofile fork\x1b[0m      Fork a profile into a user profile
-  \x1b[32;1mprofile delete\x1b[0m    Delete a user Profile V2 profile
-  \x1b[32;1mprofile reconcile-catalog\x1b[0m Apply a signed profile catalog manifest
-  \x1b[32;1mskills list\x1b[0m       List resolved Profile V2 skills
-  \x1b[32;1mskills add\x1b[0m        Add a direct Profile V2 skill
+  \x1b[32;1mmcp servers\x1b[0m  List configured MCP servers with connection status
+  \x1b[32;1mmcp tools\x1b[0m    List discovered MCP tools across all servers
+  \x1b[32;1mmcp refresh\x1b[0m  Re-discover tools from all MCP servers
+  \x1b[32;1mmcp call\x1b[0m     Call an MCP tool
 
 \x1b[36;1;4mMisc:\x1b[0m
-  \x1b[32;1msetup\x1b[0m        Run the first-time setup wizard
   \x1b[32;1mupdate\x1b[0m       Check for updates and install the latest version
   \x1b[32;1mdoctor\x1b[0m       Run diagnostic tests in a fresh session
-  \x1b[32;1mdebug\x1b[0m        Print a redacted JSON debug report for bug reports
+  \x1b[32;1mdebug\x1b[0m        Write a redacted support bundle for bug reports
   \x1b[32;1mcompletions\x1b[0m  Generate shell completions (bash, zsh, fish, powershell)
   \x1b[32;1mversion\x1b[0m      Show version and build information
-  \x1b[32;1muninstall\x1b[0m    Uninstall Capsem runtime, preserving user state";
+  \x1b[32;1muninstall\x1b[0m    Uninstall capsem completely (service, binaries, data)";
 
 #[derive(Parser)]
 #[command(
@@ -145,790 +209,55 @@ enum Commands {
     #[command(subcommand)]
     Mcp(McpCommands),
 
-    /// Manage runtime enforcement rules
+    /// Inspect or repair VM assets
     #[command(subcommand)]
-    Enforcement(EnforcementCommands),
-
-    /// Manage runtime detection rules
-    #[command(subcommand)]
-    Detection(DetectionCommands),
-
-    /// Manage ask/confirm prompts
-    #[command(subcommand)]
-    Confirm(ConfirmCommands),
-
-    /// Manage Profile V2 catalogs and installed revisions
-    #[command(subcommand)]
-    Profile(ProfileCommands),
-
-    /// Manage Profile V2 skills
-    #[command(subcommand)]
-    Skills(SkillsCommands),
+    Assets(AssetsCommands),
 
     #[command(flatten)]
     Misc(MiscCommands),
 }
 
 #[derive(Subcommand)]
-#[allow(clippy::large_enum_variant)]
+enum AssetsCommands {
+    /// Show VM asset readiness
+    Status {
+        /// Profile whose VM assets should be inspected
+        #[arg(long, default_value = DEFAULT_PROFILE_ID)]
+        profile: String,
+        /// Output JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Download missing or corrupt VM assets, then show readiness
+    Ensure {
+        /// Profile whose VM assets should be repaired
+        #[arg(long, default_value = DEFAULT_PROFILE_ID)]
+        profile: String,
+        /// Output JSON
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum McpCommands {
-    /// List Profile V2 MCP servers
-    List {
-        /// Profile id to inspect
+    /// List configured MCP servers with connection status
+    Servers,
+    /// List discovered MCP tools across all servers
+    Tools {
+        /// Filter by server name
         #[arg(long)]
-        profile: Option<String>,
-        /// Print the raw JSON response
-        #[arg(long)]
-        json: bool,
+        server: Option<String>,
     },
-    /// Show one Profile V2 MCP server
-    Show {
-        /// MCP server id
-        id: String,
-        /// Profile id to inspect
-        #[arg(long)]
-        profile: Option<String>,
-        /// Print the raw JSON response
-        #[arg(long)]
-        json: bool,
-    },
-    /// List Profile V2 MCP servers
-    Connectors {
-        /// Profile id to inspect
-        #[arg(long)]
-        profile: Option<String>,
-        /// Print the raw JSON response
-        #[arg(long)]
-        json: bool,
-    },
-    /// Add a Profile V2 MCP server to a user profile
-    Add {
-        /// MCP server id
-        id: String,
-        /// Profile id to mutate; defaults to the selected profile
-        #[arg(long)]
-        profile: Option<String>,
-        /// Store the server disabled
-        #[arg(long)]
-        disabled: bool,
-        /// MCP server transport type: stdio, http, or sse
-        #[arg(long = "type")]
-        server_type: Option<String>,
-        /// Stdio MCP server command
-        #[arg(long)]
-        command: Option<String>,
-        /// Stdio MCP server argument; repeat for multiple args
-        #[arg(long = "arg", allow_hyphen_values = true)]
-        args: Vec<String>,
-        /// Stdio MCP server env var; repeat as KEY=VALUE
-        #[arg(long = "env")]
-        env: Vec<String>,
-        /// HTTP/SSE MCP server URL
-        #[arg(long)]
-        url: Option<String>,
-        /// HTTP/SSE MCP server header; repeat as KEY=VALUE
-        #[arg(long = "header")]
-        headers: Vec<String>,
-        /// Bearer token for HTTP/SSE MCP server auth
-        #[arg(long = "bearer-token")]
-        bearer_token: Option<String>,
-        /// Credential reference id; repeat for multiple credentials
-        #[arg(long = "credential-ref")]
-        credential_refs: Vec<String>,
-        /// Allowed tool id; repeat for multiple tools
-        #[arg(long = "allowed-tool")]
-        allowed_tools: Vec<String>,
-        /// Print the raw JSON response
-        #[arg(long)]
-        json: bool,
-    },
-    /// Delete a direct user Profile V2 MCP server
-    Delete {
-        /// MCP server id
-        id: String,
-        /// Profile id to mutate; defaults to the selected profile
-        #[arg(long)]
-        profile: Option<String>,
-    },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-enum CliSecurityDecision {
-    Allow,
-    Ask,
-    Block,
-    Rewrite,
-    Throttle,
-}
-
-impl CliSecurityDecision {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Allow => "allow",
-            Self::Ask => "ask",
-            Self::Block => "block",
-            Self::Rewrite => "rewrite",
-            Self::Throttle => "throttle",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-enum CliSeverity {
-    Info,
-    Low,
-    Medium,
-    High,
-    Critical,
-}
-
-impl CliSeverity {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Info => "info",
-            Self::Low => "low",
-            Self::Medium => "medium",
-            Self::High => "high",
-            Self::Critical => "critical",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-enum CliConfidence {
-    Low,
-    Medium,
-    High,
-}
-
-impl CliConfidence {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Low => "low",
-            Self::Medium => "medium",
-            Self::High => "high",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-enum CliSkillKind {
-    Group,
-    Enabled,
-    Disabled,
-}
-
-impl CliSkillKind {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Group => "group",
-            Self::Enabled => "enabled",
-            Self::Disabled => "disabled",
-        }
-    }
-}
-
-#[derive(Subcommand)]
-enum EnforcementCommands {
-    /// List installed runtime enforcement rules
-    List {
-        /// Print the raw JSON response
-        #[arg(long)]
-        json: bool,
-    },
-    /// List runtime enforcement rule match counters
-    Stats {
-        /// Print the raw JSON response
-        #[arg(long)]
-        json: bool,
-    },
-    /// Validate and compile an enforcement rule without installing it
-    Validate {
-        /// Runtime rule id
-        id: String,
-        /// CEL condition using policy-context roots
-        #[arg(long)]
-        condition: String,
-        /// Enforcement decision to return when the rule matches
-        #[arg(long, value_enum)]
-        decision: CliSecurityDecision,
-        /// Optional pack id
-        #[arg(long = "pack-id")]
-        pack_id: Option<String>,
-        /// Optional operator-facing reason
-        #[arg(long)]
-        reason: Option<String>,
-        /// Store the rule disabled
-        #[arg(long)]
-        disabled: bool,
-        /// Print the raw JSON response
-        #[arg(long)]
-        json: bool,
-    },
-    /// Compile an enforcement rule without installing it
-    Compile {
-        /// Runtime rule id
-        id: String,
-        /// CEL condition using policy-context roots
-        #[arg(long)]
-        condition: String,
-        /// Enforcement decision to return when the rule matches
-        #[arg(long, value_enum)]
-        decision: CliSecurityDecision,
-        /// Optional pack id
-        #[arg(long = "pack-id")]
-        pack_id: Option<String>,
-        /// Optional operator-facing reason
-        #[arg(long)]
-        reason: Option<String>,
-        /// Store the rule disabled
-        #[arg(long)]
-        disabled: bool,
-        /// Print the raw JSON response
-        #[arg(long)]
-        json: bool,
-    },
-    /// Install or replace a runtime enforcement rule
-    #[command(visible_alias = "add")]
-    Install {
-        /// Runtime rule id
-        id: String,
-        /// CEL condition using policy-context roots
-        #[arg(long)]
-        condition: String,
-        /// Enforcement decision to return when the rule matches
-        #[arg(long, value_enum)]
-        decision: CliSecurityDecision,
-        /// Optional pack id
-        #[arg(long = "pack-id")]
-        pack_id: Option<String>,
-        /// Optional operator-facing reason
-        #[arg(long)]
-        reason: Option<String>,
-        /// Store the rule disabled
-        #[arg(long)]
-        disabled: bool,
-        /// Print the raw JSON response
-        #[arg(long)]
-        json: bool,
-    },
-    /// Update an installed runtime enforcement rule
-    Update {
-        /// Runtime rule id
-        id: String,
-        /// CEL condition using policy-context roots
-        #[arg(long)]
-        condition: String,
-        /// Enforcement decision to return when the rule matches
-        #[arg(long, value_enum)]
-        decision: CliSecurityDecision,
-        /// Optional pack id
-        #[arg(long = "pack-id")]
-        pack_id: Option<String>,
-        /// Optional operator-facing reason
-        #[arg(long)]
-        reason: Option<String>,
-        /// Store the rule disabled
-        #[arg(long)]
-        disabled: bool,
-        /// Print the raw JSON response
-        #[arg(long)]
-        json: bool,
-    },
-    /// Backtest one enforcement rule against a JSON/JSONL event file
-    Backtest {
-        /// Runtime rule id
-        id: String,
-        /// JSON or JSONL file containing backtest events
-        #[arg(long)]
-        events: PathBuf,
-        /// CEL condition using policy-context roots
-        #[arg(long)]
-        condition: String,
-        /// Enforcement decision to return when the rule matches
-        #[arg(long, value_enum)]
-        decision: CliSecurityDecision,
-        /// Optional pack id
-        #[arg(long = "pack-id")]
-        pack_id: Option<String>,
-        /// Optional operator-facing reason
-        #[arg(long)]
-        reason: Option<String>,
-        /// Maximum diverse matches to return
-        #[arg(long)]
-        limit: Option<usize>,
-        /// Store the rule disabled
-        #[arg(long)]
-        disabled: bool,
-        /// Print the raw JSON response
-        #[arg(long)]
-        json: bool,
-    },
-    /// Delete a runtime enforcement rule
-    Delete {
-        /// Runtime rule id
-        id: String,
-    },
-}
-
-#[derive(Subcommand)]
-enum DetectionCommands {
-    /// List installed runtime detection rules
-    List {
-        /// Print the raw JSON response
-        #[arg(long)]
-        json: bool,
-    },
-    /// List runtime detection rule match counters
-    Stats {
-        /// Print the raw JSON response
-        #[arg(long)]
-        json: bool,
-    },
-    /// Validate and compile a detection rule without installing it
-    Validate {
-        /// Runtime rule id
-        id: String,
-        /// Runtime pack id
-        #[arg(long = "pack-id")]
-        pack_id: String,
-        /// Detection title
-        #[arg(long)]
-        title: String,
-        /// CEL condition using policy-context roots
-        #[arg(long)]
-        condition: String,
-        /// Severity for emitted findings
-        #[arg(long, value_enum)]
-        severity: CliSeverity,
-        /// Confidence for emitted findings
-        #[arg(long, value_enum)]
-        confidence: CliConfidence,
-        /// Optional Sigma rule id
-        #[arg(long = "sigma-id")]
-        sigma_id: Option<String>,
-        /// Finding tag; repeat for multiple tags
-        #[arg(long = "tag")]
-        tags: Vec<String>,
-        /// Store the rule disabled
-        #[arg(long)]
-        disabled: bool,
-        /// Print the raw JSON response
-        #[arg(long)]
-        json: bool,
-    },
-    /// Compile a detection rule without installing it
-    Compile {
-        /// Runtime rule id
-        id: String,
-        /// Runtime pack id
-        #[arg(long = "pack-id")]
-        pack_id: String,
-        /// Detection title
-        #[arg(long)]
-        title: String,
-        /// CEL condition using policy-context roots
-        #[arg(long)]
-        condition: String,
-        /// Severity for emitted findings
-        #[arg(long, value_enum)]
-        severity: CliSeverity,
-        /// Confidence for emitted findings
-        #[arg(long, value_enum)]
-        confidence: CliConfidence,
-        /// Optional Sigma rule id
-        #[arg(long = "sigma-id")]
-        sigma_id: Option<String>,
-        /// Finding tag; repeat for multiple tags
-        #[arg(long = "tag")]
-        tags: Vec<String>,
-        /// Store the rule disabled
-        #[arg(long)]
-        disabled: bool,
-        /// Print the raw JSON response
-        #[arg(long)]
-        json: bool,
-    },
-    /// Install or replace a runtime detection rule
-    #[command(visible_alias = "add")]
-    Install {
-        /// Runtime rule id
-        id: String,
-        /// Runtime pack id
-        #[arg(long = "pack-id")]
-        pack_id: String,
-        /// Detection title
-        #[arg(long)]
-        title: String,
-        /// CEL condition using policy-context roots
-        #[arg(long)]
-        condition: String,
-        /// Severity for emitted findings
-        #[arg(long, value_enum)]
-        severity: CliSeverity,
-        /// Confidence for emitted findings
-        #[arg(long, value_enum)]
-        confidence: CliConfidence,
-        /// Optional Sigma rule id
-        #[arg(long = "sigma-id")]
-        sigma_id: Option<String>,
-        /// Finding tag; repeat for multiple tags
-        #[arg(long = "tag")]
-        tags: Vec<String>,
-        /// Store the rule disabled
-        #[arg(long)]
-        disabled: bool,
-        /// Print the raw JSON response
-        #[arg(long)]
-        json: bool,
-    },
-    /// Update an installed runtime detection rule
-    Update {
-        /// Runtime rule id
-        id: String,
-        /// Runtime pack id
-        #[arg(long = "pack-id")]
-        pack_id: String,
-        /// Detection title
-        #[arg(long)]
-        title: String,
-        /// CEL condition using policy-context roots
-        #[arg(long)]
-        condition: String,
-        /// Severity for emitted findings
-        #[arg(long, value_enum)]
-        severity: CliSeverity,
-        /// Confidence for emitted findings
-        #[arg(long, value_enum)]
-        confidence: CliConfidence,
-        /// Optional Sigma rule id
-        #[arg(long = "sigma-id")]
-        sigma_id: Option<String>,
-        /// Finding tag; repeat for multiple tags
-        #[arg(long = "tag")]
-        tags: Vec<String>,
-        /// Store the rule disabled
-        #[arg(long)]
-        disabled: bool,
-        /// Print the raw JSON response
-        #[arg(long)]
-        json: bool,
-    },
-    /// Backtest one detection rule against a JSON/JSONL event file
-    Backtest {
-        /// Runtime rule id
-        id: String,
-        /// JSON or JSONL file containing backtest events
-        #[arg(long)]
-        events: PathBuf,
-        /// Runtime pack id
-        #[arg(long = "pack-id")]
-        pack_id: String,
-        /// Detection title
-        #[arg(long)]
-        title: String,
-        /// CEL condition using policy-context roots
-        #[arg(long)]
-        condition: String,
-        /// Severity for emitted findings
-        #[arg(long, value_enum)]
-        severity: CliSeverity,
-        /// Confidence for emitted findings
-        #[arg(long, value_enum)]
-        confidence: CliConfidence,
-        /// Optional Sigma rule id
-        #[arg(long = "sigma-id")]
-        sigma_id: Option<String>,
-        /// Finding tag; repeat for multiple tags
-        #[arg(long = "tag")]
-        tags: Vec<String>,
-        /// Maximum diverse matches to return
-        #[arg(long)]
-        limit: Option<usize>,
-        /// Store the rule disabled
-        #[arg(long)]
-        disabled: bool,
-        /// Print the raw JSON response
-        #[arg(long)]
-        json: bool,
-    },
-    /// Hunt detection rules against a JSON/JSONL event file
-    Hunt {
-        /// Runtime rule id
-        id: String,
-        /// JSON or JSONL file containing backtest events
-        #[arg(long)]
-        events: PathBuf,
-        /// Runtime pack id
-        #[arg(long = "pack-id")]
-        pack_id: String,
-        /// Detection title
-        #[arg(long)]
-        title: String,
-        /// CEL condition using policy-context roots
-        #[arg(long)]
-        condition: String,
-        /// Severity for emitted findings
-        #[arg(long, value_enum)]
-        severity: CliSeverity,
-        /// Confidence for emitted findings
-        #[arg(long, value_enum)]
-        confidence: CliConfidence,
-        /// Optional Sigma rule id
-        #[arg(long = "sigma-id")]
-        sigma_id: Option<String>,
-        /// Finding tag; repeat for multiple tags
-        #[arg(long = "tag")]
-        tags: Vec<String>,
-        /// Maximum diverse matches to return
-        #[arg(long)]
-        limit: Option<usize>,
-        /// Store the rule disabled
-        #[arg(long)]
-        disabled: bool,
-        /// Print the raw JSON response
-        #[arg(long)]
-        json: bool,
-    },
-    /// Backtest one detection rule against a session database
-    HuntSession {
-        /// Session id/name
-        session: String,
-        /// Runtime rule id
-        id: String,
-        /// Runtime pack id
-        #[arg(long = "pack-id")]
-        pack_id: String,
-        /// Detection title
-        #[arg(long)]
-        title: String,
-        /// CEL condition using policy-context roots
-        #[arg(long)]
-        condition: String,
-        /// Severity for emitted findings
-        #[arg(long, value_enum)]
-        severity: CliSeverity,
-        /// Confidence for emitted findings
-        #[arg(long, value_enum)]
-        confidence: CliConfidence,
-        /// Optional Sigma rule id
-        #[arg(long = "sigma-id")]
-        sigma_id: Option<String>,
-        /// Finding tag; repeat for multiple tags
-        #[arg(long = "tag")]
-        tags: Vec<String>,
-        /// Maximum diverse matches to return
-        #[arg(long)]
-        limit: Option<usize>,
-        /// Store the rule disabled
-        #[arg(long)]
-        disabled: bool,
-        /// Print the raw JSON response
-        #[arg(long)]
-        json: bool,
-    },
-    /// Delete a runtime detection rule
-    Delete {
-        /// Runtime rule id
-        id: String,
-    },
-}
-
-#[derive(Subcommand)]
-enum ConfirmCommands {
-    /// Show pending ask/confirm prompts or the disabled resolver state
-    List {
-        /// Print the raw JSON response
-        #[arg(long)]
-        json: bool,
-    },
-}
-
-#[derive(Subcommand)]
-enum ProfileCommands {
-    /// List typed Profile V2 profiles
-    List {
-        /// Print the raw JSON response
-        #[arg(long)]
-        json: bool,
-    },
-    /// Create a user-owned Profile V2 profile from a typed TOML or JSON file
-    Create {
-        /// Profile document to parse and validate
-        #[arg(long)]
-        file: PathBuf,
-        /// Print the raw JSON response
-        #[arg(long)]
-        json: bool,
-    },
-    /// Show one typed Profile V2 profile
-    Show {
-        /// Profile id to inspect
-        profile_id: String,
-        /// Print the raw JSON response
-        #[arg(long)]
-        json: bool,
-    },
-    /// Resolve one profile to VM-effective settings
-    Resolve {
-        /// Profile id to resolve
-        profile_id: String,
-        /// Print the raw JSON response
-        #[arg(long)]
-        json: bool,
-    },
-    /// Fork a profile into a user-owned Profile V2 profile
-    Fork {
-        /// Source profile id
-        source_profile_id: String,
-        /// New profile id
-        #[arg(long)]
-        id: String,
-        /// New profile display name
-        #[arg(long)]
+    /// Re-discover tools from all MCP servers
+    Refresh,
+    /// Call an MCP tool by namespaced name
+    Call {
+        /// Namespaced tool name (e.g. github__search_repos)
         name: String,
-        /// Print the raw JSON response
-        #[arg(long)]
-        json: bool,
-    },
-    /// Delete a user-owned Profile V2 profile
-    Delete {
-        /// Profile id to delete
-        profile_id: String,
-        /// Print the raw JSON response
-        #[arg(long)]
-        json: bool,
-    },
-    /// Show signed profile catalog and installed revision state
-    Catalog {
-        /// Print the raw JSON response
-        #[arg(long)]
-        json: bool,
-    },
-    /// Show signed revisions for one catalog profile
-    Revisions {
-        /// Profile id to inspect
-        profile_id: String,
-        /// Print the raw JSON response
-        #[arg(long)]
-        json: bool,
-    },
-    /// Install an active signed catalog revision
-    Install {
-        /// Profile id to install
-        profile_id: String,
-        /// Specific revision to install; defaults to catalog current_revision
-        #[arg(long)]
-        revision: Option<String>,
-        /// Print the raw JSON response
-        #[arg(long)]
-        json: bool,
-    },
-    /// Reconcile a signed catalog revision lifecycle
-    Update {
-        /// Profile id to update
-        profile_id: String,
-        /// Profile document to parse, validate, and write through PUT /profiles/{id}
-        #[arg(long, conflicts_with = "revision")]
-        file: Option<PathBuf>,
-        /// Specific revision to reconcile; defaults to catalog current_revision
-        #[arg(long)]
-        revision: Option<String>,
-        /// Print the raw JSON response
-        #[arg(long)]
-        json: bool,
-    },
-    /// Remove local launchable state for an installed profile revision
-    Remove {
-        /// Profile id to remove
-        profile_id: String,
-        /// Specific revision to remove; defaults to the installed revision
-        #[arg(long)]
-        revision: Option<String>,
-        /// Print the raw JSON response
-        #[arg(long)]
-        json: bool,
-    },
-    /// Apply a signed profile catalog manifest through the service
-    ReconcileCatalog {
-        /// Profile catalog manifest JSON file.
-        #[arg(
-            long,
-            conflicts_with = "manifest_url",
-            required_unless_present = "manifest_url"
-        )]
-        manifest: Option<PathBuf>,
-        /// HTTPS profile catalog manifest URL (http:// is accepted only for loopback development).
-        #[arg(
-            long,
-            conflicts_with = "manifest",
-            required_unless_present = "manifest"
-        )]
-        manifest_url: Option<String>,
-        /// Minisign public key file used to verify profile payloads
-        #[arg(long)]
-        pubkey: PathBuf,
-        /// Print the raw JSON response
-        #[arg(long)]
-        json: bool,
-    },
-}
-
-#[derive(Subcommand)]
-enum SkillsCommands {
-    /// List resolved Profile V2 skills
-    List {
-        /// Profile id to inspect; defaults to selected profile
-        #[arg(long)]
-        profile: Option<String>,
-        /// Restrict results to one skill list
-        #[arg(long, value_enum)]
-        kind: Option<CliSkillKind>,
-        /// Print the raw JSON response
-        #[arg(long)]
-        json: bool,
-    },
-    /// Show one resolved Profile V2 skill
-    Show {
-        /// Skill id
-        id: String,
-        /// Profile id to inspect; defaults to selected profile
-        #[arg(long)]
-        profile: Option<String>,
-        /// Restrict lookup to one skill list
-        #[arg(long, value_enum)]
-        kind: Option<CliSkillKind>,
-        /// Print the raw JSON response
-        #[arg(long)]
-        json: bool,
-    },
-    /// Add a direct Profile V2 skill entry to a user profile
-    Add {
-        /// Skill id
-        id: String,
-        /// Profile id to mutate; defaults to selected profile
-        #[arg(long)]
-        profile: Option<String>,
-        /// Skill list to mutate
-        #[arg(long, value_enum, default_value = "enabled")]
-        kind: CliSkillKind,
-        /// Print the raw JSON response
-        #[arg(long)]
-        json: bool,
-    },
-    /// Delete a direct Profile V2 skill entry from a user profile
-    Delete {
-        /// Skill id
-        id: String,
-        /// Profile id to mutate; defaults to selected profile
-        #[arg(long)]
-        profile: Option<String>,
-        /// Skill list to mutate; defaults to enabled
-        #[arg(long, value_enum)]
-        kind: Option<CliSkillKind>,
-        /// Print the raw JSON response
-        #[arg(long)]
-        json: bool,
+        /// JSON arguments
+        #[arg(long, default_value = "{}")]
+        args: String,
     },
 }
 
@@ -936,12 +265,11 @@ enum SkillsCommands {
 enum SessionCommands {
     /// Create and boot a new session
     ///
-    /// Sessions are ephemeral by default and destroyed on delete. Pass a
-    /// positional name to create a persistent session that survives
-    /// suspend/resume cycles.
+    /// Sessions are ephemeral by default and destroyed on delete. Use -n <name> to
+    /// create a persistent session that survives suspend/resume cycles.
     Create {
         /// Name for the session (makes it persistent -- "if you name it, you keep it")
-        #[arg(value_name = "NAME")]
+        #[arg(short = 'n', long)]
         name: Option<String>,
         /// RAM in GB
         #[arg(long, default_value_t = 4)]
@@ -953,25 +281,23 @@ enum SessionCommands {
         #[arg(short = 'e', long = "env")]
         env: Vec<String>,
         /// Clone state from an existing persistent session
-        #[arg(long)]
+        #[arg(long, alias = "image")]
         from: Option<String>,
-        /// Profile id for a fresh VM
-        #[arg(long)]
-        profile: Option<String>,
-        /// Exact installed profile revision for a fresh VM
-        #[arg(long = "profile-revision")]
-        profile_revision: Option<String>,
     },
-    /// Open the Capsem TUI
+    /// Open an interactive shell in a session
     ///
-    /// With no arguments, opens the TUI home/create flow.
-    /// Pass a session name/ID to focus the TUI on that session.
+    /// With no arguments, creates a temporary session (destroyed on exit).
+    /// Pass a session name/ID or --name to attach to an existing running session.
     Shell {
+        /// Find by name (for persistent sessions)
+        #[arg(short = 'n', long)]
+        name: Option<String>,
         /// Name or ID of the session (positional)
         #[arg(value_name = "SESSION")]
         session: Option<String>,
     },
     /// Resume a suspended session or attach to a running one
+    #[command(alias = "attach")]
     Resume {
         /// Name of the persistent session
         name: String,
@@ -1010,12 +336,6 @@ enum SessionCommands {
         /// Timeout in seconds
         #[arg(long)]
         timeout: Option<u64>,
-        /// Profile id for the temporary VM
-        #[arg(long)]
-        profile: Option<String>,
-        /// Exact installed profile revision for the temporary VM
-        #[arg(long = "profile-revision")]
-        profile_revision: Option<String>,
         /// Set environment variables (repeatable: -e KEY=VALUE)
         #[arg(short = 'e', long = "env")]
         env: Vec<String>,
@@ -1039,6 +359,7 @@ enum SessionCommands {
         dst: String,
     },
     /// List all sessions (running + suspended persistent)
+    #[command(alias = "ls")]
     List {
         /// Print only IDs, one per line (for scripting)
         #[arg(short, long)]
@@ -1064,16 +385,8 @@ enum SessionCommands {
         #[arg(long)]
         tail: Option<usize>,
     },
-    /// Export session security events as policy-context fixture JSONL
-    ExportPolicyContexts {
-        /// Name or ID of the session
-        #[arg(value_name = "SESSION")]
-        session: String,
-        /// Output the full JSON export envelope instead of JSONL fixtures
-        #[arg(long)]
-        json: bool,
-    },
     /// Delete a session and all its state
+    #[command(alias = "rm")]
     Delete {
         /// Name or ID of the session
         #[arg(value_name = "SESSION")]
@@ -1102,20 +415,13 @@ enum SessionCommands {
         /// Name to assign
         name: String,
     },
-    /// Destroy temporary sessions or reset product state
+    /// Destroy all temporary sessions
     ///
     /// Use --all to also destroy persistent sessions (requires confirmation).
-    /// Use --product for a destructive whole-product reset.
     Purge {
         /// Also destroy persistent sessions (requires confirmation)
         #[arg(long, default_value_t = false)]
         all: bool,
-        /// Remove runtime and all durable user state. Requires confirmation unless --yes is passed.
-        #[arg(long, default_value_t = false)]
-        product: bool,
-        /// Skip confirmation prompt for --product.
-        #[arg(long, short, default_value_t = false)]
-        yes: bool,
     },
     /// Show command history for a session
     ///
@@ -1145,28 +451,6 @@ enum SessionCommands {
 
 #[derive(Subcommand)]
 enum MiscCommands {
-    /// Run the first-time setup wizard
-    Setup {
-        /// Run without prompts (accept defaults or detected values)
-        #[arg(long)]
-        non_interactive: bool,
-        /// Security preset to apply (medium or high)
-        #[arg(long)]
-        preset: Option<String>,
-        /// Re-run all steps even if previously completed
-        #[arg(long)]
-        force: bool,
-        /// Auto-accept detected credentials without prompting
-        #[arg(long)]
-        accept_detected: bool,
-        /// Provision corp config from URL or file path
-        #[arg(long)]
-        corp_config: Option<String>,
-        /// Reset only the GUI wizard (onboarding_completed and onboarding_version).
-        /// Preserves security preset, provider keys, and other install state.
-        #[arg(long)]
-        force_onboarding: bool,
-    },
     /// Check for updates and install the latest version
     Update {
         /// Skip confirmation prompt
@@ -1180,11 +464,8 @@ enum MiscCommands {
     /// Run diagnostic tests in a fresh session
     ///
     /// Boots a temporary session, runs the capsem-doctor test suite, and reports
-    /// results. Use --fast to skip slow network tests.
+    /// results.
     Doctor {
-        /// Skip slow tests (throughput download, etc.)
-        #[arg(long)]
-        fast: bool,
         /// Tell the in-VM doctor to package its diagnostic surface
         /// (pytest output + junit, /var/log, dmesg, /proc/{mounts,cmdline},
         /// session.db) into a tar that capsem support-bundle picks up
@@ -1192,8 +473,6 @@ enum MiscCommands {
         #[arg(long)]
         bundle: bool,
     },
-    /// Print a redacted JSON debug report for bug reports
-    Debug,
     /// Generate shell completions (bash, zsh, fish, powershell)
     Completions {
         /// Shell to generate completions for
@@ -1206,9 +485,10 @@ enum MiscCommands {
     /// info into a single redacted tar.gz for bug reports.
     ///
     /// Default output: `~/.capsem/support/capsem-support-<ts>-<host>.tar.gz`.
-    /// Secrets in service.toml/profile TOML and bearer tokens in log lines are
+    /// Secrets in settings.toml/corp.toml and bearer tokens in log lines are
     /// stripped by default. The bundle excludes rootfs.img unless
     /// `--include-rootfs` is passed.
+    #[command(alias = "debug")]
     SupportBundle {
         /// Output tar.gz path. Default: ~/.capsem/support/capsem-support-<ts>-<host>.tar.gz
         #[arg(long, short)]
@@ -1231,7 +511,7 @@ enum MiscCommands {
         #[arg(long, default_value_t = 50 * 1024 * 1024)]
         max_session_bytes: u64,
     },
-    /// Uninstall Capsem runtime, preserving user state
+    /// Uninstall capsem completely (service, binaries, data)
     Uninstall {
         /// Skip confirmation prompt
         #[arg(long, short)]
@@ -1239,12 +519,8 @@ enum MiscCommands {
     },
     /// Install capsem as a system service (LaunchAgent on macOS, systemd on Linux)
     Install,
-    /// Show installed Capsem health and readiness
-    Status {
-        /// Output a machine-readable status report
-        #[arg(long)]
-        json: bool,
-    },
+    /// Show service installation and runtime status
+    Status,
     /// Start the background service
     Start,
     /// Stop the background service
@@ -1269,689 +545,72 @@ fn format_uptime(secs: Option<u64>) -> String {
     }
 }
 
-fn format_session_profile_for_list(session: &client::SessionInfo) -> String {
-    match (
-        session.profile_id.as_deref(),
-        session.profile_revision.as_deref(),
-        session.profile_status,
-    ) {
-        (_, _, Some(SessionProfileStatus::Corrupted)) => "corrupted".to_string(),
-        (Some(profile_id), Some(revision), Some(status)) => {
-            format!("{profile_id}@{revision}:{}", status.as_str())
-        }
-        (Some(profile_id), Some(revision), None) => format!("{profile_id}@{revision}"),
-        (Some(profile_id), None, Some(status)) => format!("{profile_id}:{}", status.as_str()),
-        (Some(profile_id), None, None) => profile_id.to_string(),
-        (None, None, Some(status)) => status.as_str().to_string(),
-        _ => "-".to_string(),
-    }
-}
-
-fn format_provision_profile_summary(info: &ProvisionResponse) -> Option<String> {
-    if info.profile_id.is_none() && info.profile_pin.is_none() && info.asset_health.is_none() {
-        return None;
-    }
-
-    let mut output = String::new();
-    let profile_id = info
-        .profile_id
-        .as_deref()
-        .or_else(|| info.profile_pin.as_ref().map(|pin| pin.profile_id.as_str()));
-    let profile_revision = info.profile_revision.as_deref().or_else(|| {
-        info.profile_pin
+fn print_asset_status(status: &AssetStatusResponse) {
+    println!(
+        "Assets: {}{}",
+        if status.ready { "ready" } else { "not ready" },
+        status
+            .asset_version
             .as_ref()
-            .and_then(|pin| pin.profile_revision.as_deref())
-    });
-    if let Some(profile_id) = profile_id {
-        match (profile_revision, info.profile_status) {
-            (Some(revision), Some(status)) => {
-                writeln!(
-                    output,
-                    "  profile: {profile_id}@{revision} status={}",
-                    status.as_str()
-                )
-                .expect("write to string");
-            }
-            (Some(revision), None) => {
-                writeln!(output, "  profile: {profile_id}@{revision}").expect("write to string");
-            }
-            (None, Some(status)) => {
-                writeln!(output, "  profile: {profile_id} status={}", status.as_str())
-                    .expect("write to string");
-            }
-            (None, None) => {
-                writeln!(output, "  profile: {profile_id}").expect("write to string");
-            }
-        }
-    }
-
-    if let Some(pin) = &info.profile_pin {
-        if let Some(hash) = &pin.profile_payload_hash {
-            writeln!(output, "  profile_payload_hash: {hash}").expect("write to string");
-        }
-        writeln!(
-            output,
-            "  package_contract_hash: {}",
-            pin.package_contract_hash
-        )
-        .expect("write to string");
-        if let Some(base) = &pin.base_assets {
-            writeln!(
-                output,
-                "  pinned_assets: version={} arch={} guest_abi={}",
-                base.asset_version,
-                base.arch,
-                base.guest_abi.as_deref().unwrap_or("-")
-            )
-            .expect("write to string");
-            writeln!(output, "    kernel: {}", base.kernel_hash).expect("write to string");
-            writeln!(output, "    initrd: {}", base.initrd_hash).expect("write to string");
-            writeln!(output, "    rootfs: {}", base.rootfs_hash).expect("write to string");
-        }
-    }
-
-    if let Some(health) = &info.asset_health {
-        writeln!(
-            output,
-            "  assets: state={} ready={} version={} arch={}",
-            health.state,
-            health.ready,
-            health.version.as_deref().unwrap_or("unknown"),
-            health.arch.as_deref().unwrap_or("unknown")
-        )
-        .expect("write to string");
-        if let Some(hash) = &health.profile_payload_hash {
-            writeln!(output, "  installed_profile_payload_hash: {hash}").expect("write to string");
-        }
-        for asset in &health.profile_assets {
-            writeln!(
-                output,
-                "    {}: hash={} size={} content_type={} source={}",
-                asset.logical_name, asset.hash, asset.size, asset.content_type, asset.source_url
-            )
-            .expect("write to string");
-        }
-        if let Some(progress) = &health.progress {
-            match progress.bytes_total {
-                Some(total) => writeln!(
-                    output,
-                    "  asset_progress: {} {}/{} done={}",
-                    progress.logical_name, progress.bytes_done, total, progress.done
-                ),
-                None => writeln!(
-                    output,
-                    "  asset_progress: {} {} bytes done={}",
-                    progress.logical_name, progress.bytes_done, progress.done
-                ),
-            }
-            .expect("write to string");
-        }
-        if !health.missing.is_empty() {
-            writeln!(output, "  missing_assets: {}", health.missing.join(", "))
-                .expect("write to string");
-        }
-        if let Some(error) = &health.error {
-            writeln!(output, "  asset_error: {error}").expect("write to string");
-        }
-    }
-
-    (!output.is_empty()).then_some(output)
-}
-
-fn print_provision_profile_summary(info: &ProvisionResponse) {
-    if let Some(summary) = format_provision_profile_summary(info) {
-        eprint!("{summary}");
-    }
-}
-
-fn format_session_profile_pin_summary(info: &SessionInfo) -> Option<String> {
-    let pin = info.profile_pin.as_ref()?;
-    let mut output = String::new();
-    writeln!(output, "Profile Pin:").expect("write to string");
-    match pin.profile_revision.as_deref() {
-        Some(revision) => writeln!(output, "  profile: {}@{}", pin.profile_id, revision),
-        None => writeln!(output, "  profile: {}", pin.profile_id),
-    }
-    .expect("write to string");
-    if let Some(hash) = &pin.profile_payload_hash {
-        writeln!(output, "  profile_payload_hash: {hash}").expect("write to string");
-    }
-    writeln!(
-        output,
-        "  package_contract_hash: {}",
-        pin.package_contract_hash
-    )
-    .expect("write to string");
-
-    let base_assets = pin.base_assets.as_ref().or(info.base_assets.as_ref());
-    if let Some(base) = base_assets {
-        writeln!(
-            output,
-            "  pinned_assets: version={} arch={} guest_abi={}",
-            base.asset_version,
-            base.arch,
-            base.guest_abi.as_deref().unwrap_or("-")
-        )
-        .expect("write to string");
-        writeln!(output, "    kernel: {}", base.kernel_hash).expect("write to string");
-        writeln!(output, "    initrd: {}", base.initrd_hash).expect("write to string");
-        writeln!(output, "    rootfs: {}", base.rootfs_hash).expect("write to string");
-    }
-    Some(output)
-}
-
-fn tail_log_lines(text: &str, n: usize) -> String {
-    let lines: Vec<&str> = text.lines().collect();
-    if lines.len() <= n {
-        text.to_string()
-    } else {
-        lines[lines.len() - n..].join("\n")
-    }
-}
-
-#[derive(Debug, Default, PartialEq, Eq)]
-struct SecurityLogSummary {
-    event_count: usize,
-    blocked_count: usize,
-    detection_count: u64,
-    families: std::collections::BTreeMap<String, usize>,
-    rules: std::collections::BTreeMap<String, usize>,
-}
-
-fn security_log_summary(security_logs: &str) -> SecurityLogSummary {
-    let mut summary = SecurityLogSummary::default();
-    for line in security_logs.lines().filter(|line| !line.trim().is_empty()) {
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
-            continue;
-        };
-        let Some(fields) = value.get("fields").and_then(|fields| fields.as_object()) else {
-            continue;
-        };
-        if fields.get("message").and_then(|value| value.as_str()) != Some("resolved_security_event")
-        {
-            continue;
-        }
-        summary.event_count += 1;
-        if let Some(family) = fields.get("event_family").and_then(|value| value.as_str()) {
-            *summary.families.entry(family.to_string()).or_default() += 1;
-        }
-        if fields.get("final_action").and_then(|value| value.as_str()) == Some("block") {
-            summary.blocked_count += 1;
-        }
-        if let Some(finding_count) = fields.get("finding_count").and_then(|value| value.as_u64()) {
-            summary.detection_count += finding_count;
-        }
-        if let Some(rule_id) = fields.get("rule_id").and_then(|value| value.as_str()) {
-            *summary.rules.entry(rule_id.to_string()).or_default() += 1;
-        }
-        if let Some(rule_ids) = fields
-            .get("detection_rule_ids")
-            .and_then(|value| value.as_str())
-        {
-            for rule_id in rule_ids.split(',').filter(|rule_id| !rule_id.is_empty()) {
-                *summary.rules.entry(rule_id.to_string()).or_default() += 1;
-            }
-        }
-    }
-    summary
-}
-
-fn format_security_log_summary(summary: &SecurityLogSummary) -> Option<String> {
-    if summary.event_count == 0 {
-        return None;
-    }
-    let families = summary
-        .families
-        .iter()
-        .map(|(family, count)| format!("{family}={count}"))
-        .collect::<Vec<_>>()
-        .join(",");
-    let rules = summary
-        .rules
-        .iter()
-        .take(5)
-        .map(|(rule_id, count)| format!("{rule_id}={count}"))
-        .collect::<Vec<_>>()
-        .join(",");
-    Some(format!(
-        "summary: events={} blocked={} detections={} families={} rules={}",
-        summary.event_count,
-        summary.blocked_count,
-        summary.detection_count,
-        if families.is_empty() { "-" } else { &families },
-        if rules.is_empty() { "-" } else { &rules },
-    ))
-}
-
-fn format_session_logs(session: &str, logs: LogsResponse, tail: Option<usize>) -> String {
-    let mut output = String::new();
-
-    if let Some(security_logs) = logs.security_logs {
-        output.push_str(&format!("--- Security Events ({session}) ---\n"));
-        if let Some(summary) = format_security_log_summary(&security_log_summary(&security_logs)) {
-            output.push_str(&summary);
-            output.push('\n');
-        }
-        output.push_str(&match tail {
-            Some(n) => tail_log_lines(&security_logs, n),
-            None => security_logs,
-        });
-        output.push('\n');
-    }
-
-    if let Some(process_logs) = logs.process_logs {
-        output.push_str(&format!("--- Process Logs ({session}) ---\n"));
-        output.push_str(&match tail {
-            Some(n) => tail_log_lines(&process_logs, n),
-            None => process_logs,
-        });
-        output.push('\n');
-    }
-
-    if let Some(serial_logs) = logs.serial_logs {
-        output.push_str(&format!("--- Serial Logs ({session}) ---\n"));
-        output.push_str(&match tail {
-            Some(n) => tail_log_lines(&serial_logs, n),
-            None => serial_logs,
-        });
-        output.push('\n');
-    } else if !logs.logs.is_empty() {
-        output.push_str(&format!("--- Serial Logs ({session}) ---\n"));
-        output.push_str(&match tail {
-            Some(n) => tail_log_lines(&logs.logs, n),
-            None => logs.logs,
-        });
-        output.push('\n');
-    }
-
-    output
-}
-
-fn enforcement_rule_body(
-    id: &str,
-    condition: &str,
-    decision: CliSecurityDecision,
-    pack_id: &Option<String>,
-    reason: &Option<String>,
-    disabled: bool,
-) -> serde_json::Value {
-    serde_json::json!({
-        "id": id,
-        "pack_id": pack_id,
-        "condition": condition,
-        "decision": decision.as_str(),
-        "reason": reason,
-        "enabled": !disabled,
-    })
-}
-
-#[allow(clippy::too_many_arguments)]
-fn detection_rule_body(
-    id: &str,
-    pack_id: &str,
-    title: &str,
-    condition: &str,
-    severity: CliSeverity,
-    confidence: CliConfidence,
-    sigma_id: &Option<String>,
-    tags: &[String],
-    disabled: bool,
-) -> serde_json::Value {
-    serde_json::json!({
-        "id": id,
-        "pack_id": pack_id,
-        "sigma_id": sigma_id,
-        "title": title,
-        "condition": condition,
-        "severity": severity.as_str(),
-        "confidence": confidence.as_str(),
-        "tags": tags,
-        "enabled": !disabled,
-    })
-}
-
-fn read_runtime_backtest_events(path: &Path) -> Result<Vec<serde_json::Value>> {
-    let text = std::fs::read_to_string(path)
-        .with_context(|| format!("read runtime backtest events {}", path.display()))?;
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        anyhow::bail!("runtime backtest events file is empty: {}", path.display());
-    }
-
-    if trimmed.starts_with('[') {
-        return serde_json::from_str(trimmed)
-            .with_context(|| format!("parse runtime backtest events array {}", path.display()));
-    }
-
-    if trimmed.starts_with('{') {
-        if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
-            if let Some(events) = value.get("events").and_then(serde_json::Value::as_array) {
-                return Ok(events.clone());
-            }
-            return Ok(vec![value]);
-        }
-    }
-
-    let mut events = Vec::new();
-    for (index, line) in text.lines().enumerate() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let value: serde_json::Value = serde_json::from_str(line).with_context(|| {
-            format!(
-                "parse runtime backtest JSONL event {} in {}",
-                index + 1,
-                path.display()
-            )
-        })?;
-        events.push(value);
-    }
-    if events.is_empty() {
-        anyhow::bail!(
-            "runtime backtest events file had no JSON events: {}",
-            path.display()
-        );
-    }
-    Ok(events)
-}
-
-fn read_profile_document(path: &Path) -> Result<capsem_core::settings_profiles::Profile> {
-    let text = std::fs::read_to_string(path)
-        .with_context(|| format!("read Profile V2 document {}", path.display()))?;
-    let trimmed = text.trim_start();
-    if trimmed.starts_with('{') {
-        let profile = serde_json::from_str::<capsem_core::settings_profiles::Profile>(&text)
-            .with_context(|| format!("parse Profile V2 JSON {}", path.display()))?;
-        profile
-            .validate()
-            .with_context(|| format!("validate Profile V2 JSON {}", path.display()))?;
-        return Ok(profile);
-    }
-    capsem_core::settings_profiles::Profile::from_toml_str(&text)
-        .with_context(|| format!("parse Profile V2 TOML {}", path.display()))
-}
-
-fn mcp_connectors_path(profile: Option<&String>) -> String {
-    let mut path = "/mcp/connectors".to_string();
-    if let Some(profile) = profile {
-        path.push_str(&format!("?profile={}", urlencoding::encode(profile)));
-    }
-    path
-}
-
-fn format_mcp_connectors_summary(result: &serde_json::Value) -> String {
-    let mut output = String::new();
-    let servers = result["servers"].as_array().cloned().unwrap_or_default();
-    if servers.is_empty() {
-        output.push_str("No MCP servers configured.\n");
-        return output;
-    }
-    writeln!(
-        output,
-        "{:<24} {:<8} {:<8} {:<18} {:<10} ALLOWED_TOOLS",
-        "ID", "ENABLED", "TYPE", "TARGET", "SOURCE"
-    )
-    .expect("write to string");
-    for server in servers {
-        let config = &server["server"];
-        let allowed = config["capsem"]["allowed_tools"]
-            .as_array()
-            .map(|tools| {
-                tools
-                    .iter()
-                    .filter_map(serde_json::Value::as_str)
-                    .collect::<Vec<_>>()
-                    .join(",")
-            })
-            .unwrap_or_default();
-        let target = config["command"]
-            .as_str()
-            .or_else(|| config["url"].as_str())
-            .unwrap_or("-");
-        writeln!(
-            output,
-            "{:<24} {:<8} {:<8} {:<18} {:<10} {}",
-            server["id"].as_str().unwrap_or("-"),
-            if config["enabled"].as_bool().unwrap_or(false) {
-                "yes"
-            } else {
-                "no"
-            },
-            config["type"].as_str().unwrap_or("-"),
-            target,
-            server["source_profile"].as_str().unwrap_or("-"),
-            allowed,
-        )
-        .expect("write to string");
-    }
-    output
-}
-
-fn mcp_server_matches(result: &serde_json::Value, id: &str) -> Vec<serde_json::Value> {
-    result["servers"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter(|server| server["id"].as_str() == Some(id))
-        .cloned()
-        .collect()
-}
-
-fn print_runtime_rule_list_summary(kind: &str, result: &serde_json::Value) {
-    let rules = result["rules"].as_array().cloned().unwrap_or_default();
-    if rules.is_empty() {
-        println!("No runtime {kind} rules installed.");
-        return;
-    }
-    #[allow(clippy::print_literal)]
-    {
-        println!(
-            "{:<28} {:<8} {:<8} {:<8} CONDITION",
-            "ID", "ENABLED", "MATCHES", "PLAN"
-        );
-    }
-    for rule in rules {
-        let plan = rule["compiled_plan"].as_str().unwrap_or("-");
-        println!(
-            "{:<28} {:<8} {:<8} {:<8} {}",
-            rule["id"].as_str().unwrap_or("-"),
-            if rule["enabled"].as_bool().unwrap_or(false) {
-                "yes"
-            } else {
-                "no"
-            },
-            rule["match_count"].as_u64().unwrap_or(0),
-            plan,
-            rule["condition"].as_str().unwrap_or("-"),
-        );
-    }
-}
-
-fn print_runtime_compile_summary(kind: &str, result: &serde_json::Value) {
-    println!(
-        "{} rule compiled: {} ({})",
-        kind,
-        result["id"].as_str().unwrap_or("-"),
-        result["compiled_plan"].as_str().unwrap_or("-"),
+            .map(|v| format!(" ({v})"))
+            .unwrap_or_default()
     );
-}
-
-fn print_runtime_install_summary(kind: &str, result: &serde_json::Value) {
-    let rule = &result["rule"];
-    println!(
-        "{} rule installed: {} ({})",
-        kind,
-        rule["id"].as_str().unwrap_or("-"),
-        rule["compiled_plan"].as_str().unwrap_or("-"),
-    );
-}
-
-fn print_runtime_hunt_summary(result: &serde_json::Value) {
-    print!("{}", format_runtime_hunt_summary(result));
-}
-
-fn format_runtime_hunt_summary(result: &serde_json::Value) -> String {
-    format_runtime_match_summary("Detection hunt", result)
-}
-
-fn print_runtime_backtest_summary(kind: &str, result: &serde_json::Value) {
-    print!("{}", format_runtime_match_summary(kind, result));
-}
-
-fn format_runtime_match_summary(kind: &str, result: &serde_json::Value) -> String {
-    let mut output = String::new();
-    let truncated = if result["truncated"].as_bool().unwrap_or(false) {
-        " (truncated)"
-    } else {
-        ""
-    };
-    writeln!(
-        output,
-        "{} matched {} event(s), {} unique evidence signature(s){}.",
-        kind,
-        result["total_matches"].as_u64().unwrap_or(0),
-        result["unique_evidence_matches"].as_u64().unwrap_or(0),
-        truncated
-    )
-    .expect("write to string");
-
-    let Some(rows) = result["rows"].as_array() else {
-        return output;
-    };
-    if rows.is_empty() {
-        return output;
-    }
-
-    writeln!(output, "Matches:").expect("write to string");
-    for row in rows {
-        let event_ref = &row["event_ref"];
-        let event_id = event_ref["event_id"].as_str().unwrap_or("-");
-        let corpus = event_ref["corpus"].as_str().unwrap_or("-");
-        let session = event_ref["session_id"].as_str().unwrap_or("-");
-        let rule_id = row["rule_id"].as_str().unwrap_or("-");
-        let pack_id = row["pack_id"].as_str().unwrap_or("-");
-        let outcome = runtime_hunt_outcome_text(&row["outcome"]);
-        writeln!(
-            output,
-            "- event={} session={} corpus={} rule={} pack={} outcome={}",
-            event_id, session, corpus, rule_id, pack_id, outcome
-        )
-        .expect("write to string");
-        if let Some(fields) = row["matched_fields"].as_array() {
-            for field in fields.iter().take(8) {
-                let path = field["path"].as_str().unwrap_or("-");
-                writeln!(
-                    output,
-                    "  {}={}",
-                    path,
-                    runtime_hunt_field_value_text(&field["value"])
-                )
-                .expect("write to string");
-            }
-            if fields.len() > 8 {
-                writeln!(output, "  ... {} more field(s)", fields.len() - 8)
-                    .expect("write to string");
+    if status.downloading {
+        println!("Downloading: true");
+        if let Some(asset) = &status.current_asset {
+            match (status.bytes_done, status.bytes_total) {
+                (Some(done), Some(total)) => {
+                    println!("Current:   {} ({}/{})", asset, done, total);
+                }
+                (Some(done), None) => {
+                    println!("Current:   {} ({} bytes)", asset, done);
+                }
+                _ => println!("Current:   {}", asset),
             }
         }
     }
-    output
-}
-
-fn runtime_hunt_outcome_text(value: &serde_json::Value) -> String {
-    if let Some(outcome) = value.as_str() {
-        return outcome.to_owned();
+    if let Some(downloaded) = status.downloaded {
+        println!("Downloaded: {downloaded}");
     }
-    value
-        .get("outcome")
-        .and_then(|value| value.as_str())
-        .map(str::to_owned)
-        .unwrap_or_else(|| value.to_string())
-}
-
-fn runtime_hunt_field_value_text(value: &serde_json::Value) -> String {
-    value
-        .as_str()
-        .map(str::to_owned)
-        .unwrap_or_else(|| value.to_string())
-}
-
-fn skills_path(profile: Option<&String>, kind: Option<CliSkillKind>) -> String {
-    let mut params = Vec::new();
-    if let Some(profile) = profile {
-        params.push(format!("profile={}", urlencoding::encode(profile)));
+    if let Some(error) = &status.error {
+        println!("Error: {error}");
     }
-    if let Some(kind) = kind {
-        params.push(format!("kind={}", kind.as_str()));
+    if let Some(error) = &status.reconcile_error {
+        println!("Last error: {error}");
     }
-    if params.is_empty() {
-        "/skills".to_string()
-    } else {
-        format!("/skills?{}", params.join("&"))
+    if let Some(manifest) = &status.manifest {
+        println!("Manifest: {} ({})", manifest.origin, manifest.path);
+        if let Some(source) = &manifest.origin_source {
+            println!("Manifest source: {source}");
+        }
+        if let Some(packaged_at) = &manifest.packaged_at {
+            println!("Packaged at: {packaged_at}");
+        }
+        if let Some(refreshed_at) = &manifest.refreshed_at {
+            println!("Manifest refreshed: {refreshed_at}");
+        }
+        if let Some(status) = &manifest.validation_status {
+            println!("Manifest status: {status}");
+        }
+        if let Some(error) = &manifest.validation_error {
+            println!("Manifest error: {error}");
+        }
+        if let Some(hash) = &manifest.blake3 {
+            println!("Manifest hash: blake3:{hash}");
+        }
+        if let Some(current) = &manifest.assets_current {
+            println!("Asset set: {current}");
+        }
+        if let Some(current) = &manifest.binaries_current {
+            println!("Binary set: {current}");
+        }
     }
-}
-
-fn format_skills_summary(result: &serde_json::Value) -> String {
-    let mut output = String::new();
-    let skills = result["skills"].as_array().cloned().unwrap_or_default();
-    if skills.is_empty() {
-        writeln!(
-            output,
-            "No skills configured for profile {}.",
-            result["profile_id"].as_str().unwrap_or("-")
-        )
-        .expect("write to string");
-        return output;
+    for asset in &status.assets {
+        match &asset.path {
+            Some(path) => println!("  {:<14} {:<8} {}", asset.name, asset.status, path),
+            None => println!("  {:<14} {}", asset.name, asset.status),
+        }
     }
-    writeln!(
-        output,
-        "{:<32} {:<9} {:<18} {:<7} EDITABLE",
-        "ID", "KIND", "SOURCE_PROFILE", "DIRECT"
-    )
-    .expect("write to string");
-    for skill in skills {
-        writeln!(
-            output,
-            "{:<32} {:<9} {:<18} {:<7} {}",
-            skill["id"].as_str().unwrap_or("-"),
-            skill["kind"].as_str().unwrap_or("-"),
-            skill["source_profile"].as_str().unwrap_or("-"),
-            if skill["direct"].as_bool().unwrap_or(false) {
-                "yes"
-            } else {
-                "no"
-            },
-            if skill["editable"].as_bool().unwrap_or(false) {
-                "yes"
-            } else {
-                "no"
-            },
-        )
-        .expect("write to string");
-    }
-    output
-}
-
-fn skill_matches(result: &serde_json::Value, id: &str) -> Vec<serde_json::Value> {
-    result["skills"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter(|skill| skill["id"].as_str() == Some(id))
-        .cloned()
-        .collect()
-}
-
-fn format_confirm_list_summary(result: &serde_json::Value) -> String {
-    let resolve_available = result["resolve_available"].as_bool().unwrap_or(false);
-    let pending_count = result["pending_count"].as_u64().unwrap_or(0);
-    if !resolve_available {
-        return format!(
-            "Ask/confirm resolver unavailable; owner={} pending={pending_count}",
-            result["resolve_owner"].as_str().unwrap_or("-")
-        );
-    }
-    format!("Pending confirmations: {pending_count}")
 }
 
 fn print_session_info(info: &SessionInfo) {
@@ -1982,14 +641,6 @@ fn print_session_info(info: &SessionInfo) {
     }
     if let Some(desc) = &info.description {
         println!("Desc:    {}", desc);
-    }
-    let profile = format_session_profile_for_list(info);
-    if profile != "-" {
-        println!("Profile: {}", profile);
-    }
-    if let Some(pin_summary) = format_session_profile_pin_summary(info) {
-        println!();
-        print!("{pin_summary}");
     }
 
     let has_telemetry = info.created_at.is_some()
@@ -2035,6 +686,23 @@ fn print_session_info(info: &SessionInfo) {
     }
 }
 
+fn purge_summary_message(result: &PurgeResponse, all: bool) -> String {
+    if all {
+        return format!(
+            "[*] Purged {} sessions ({} persistent, {} temporary).",
+            result.purged, result.persistent_purged, result.ephemeral_purged
+        );
+    }
+    if result.persistent_purged > 0 {
+        format!(
+            "[*] Purged {} sessions ({} broken persistent, {} temporary).",
+            result.purged, result.persistent_purged, result.ephemeral_purged
+        )
+    } else {
+        format!("[*] Purged {} temporary sessions.", result.ephemeral_purged)
+    }
+}
+
 fn capsem_shell_tui_args(session: Option<&str>) -> Vec<String> {
     session
         .map(|session| vec!["--session".to_string(), session.to_string()])
@@ -2075,316 +743,310 @@ async fn run_tui_shell(session: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-fn command_refreshes_update_cache(command: Option<&Commands>) -> bool {
-    !matches!(
-        command,
-        Some(Commands::Misc(MiscCommands::Uninstall { .. }))
-            | Some(Commands::Session(SessionCommands::Purge {
-                product: true,
-                ..
-            }))
-    )
-}
+async fn check_service_health() -> Result<Vec<String>> {
+    let mut issues = Vec::new();
+    let status = service_install::service_status().await?;
 
-fn print_profile_catalog_reconcile_summary(result: &serde_json::Value) {
-    println!("{}", profile_catalog_reconcile_summary_line(result));
-    if let Some(outcomes) = result["outcomes"].as_array() {
-        for outcome in outcomes {
-            let profile_id = outcome["profile_id"].as_str().unwrap_or("-");
-            let revision = outcome["revision"].as_str().unwrap_or("-");
-            let status = outcome["outcome"].as_str().unwrap_or("unknown");
-            if let Some(error) = outcome["error"].as_str() {
-                println!("  {profile_id}@{revision}: {status} ({error})");
-            } else {
-                println!("  {profile_id}@{revision}: {status}");
-            }
-        }
+    if !status.running {
+        issues.push("Service is not running. Run `capsem start` to start the service.".into());
+        return Ok(issues);
     }
-}
 
-fn print_profile_catalog_summary(result: &serde_json::Value) {
-    println!("{}", profile_catalog_summary_line(result));
-    if let Some(profiles) = result["profiles"].as_array() {
-        for profile in profiles {
-            let profile_id = profile["profile_id"].as_str().unwrap_or("-");
-            let current = profile["current_revision"].as_str().unwrap_or("-");
-            let installed = profile["installed_revision"].as_str().unwrap_or("-");
-            println!("  {profile_id}: current={current} installed={installed}");
-            if let Some(revisions) = profile["revisions"].as_array() {
-                for revision in revisions {
-                    let revision_id = revision["revision"].as_str().unwrap_or("-");
-                    let status = revision["status"].as_str().unwrap_or("unknown");
-                    let marker = if revision["installed"].as_bool().unwrap_or(false) {
-                        " installed"
-                    } else if revision["current"].as_bool().unwrap_or(false) {
-                        " current"
-                    } else {
-                        ""
-                    };
-                    println!("    {revision_id}: {status}{marker}");
+    let home = crate::paths::capsem_home().unwrap_or_default();
+    let sock = home.join("run/service.sock");
+    let my_version = env!("CARGO_PKG_VERSION");
+
+    // Check service version via UDS
+    let svc_version = async {
+        let stream = tokio::net::UnixStream::connect(&sock).await.ok()?;
+        let (reader, mut writer) = tokio::io::split(stream);
+        writer
+            .write_all(b"GET /version HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            .await
+            .ok()?;
+        let mut buf = Vec::new();
+        tokio::io::AsyncReadExt::read_to_end(&mut tokio::io::BufReader::new(reader), &mut buf)
+            .await
+            .ok()?;
+        let body = String::from_utf8_lossy(&buf);
+        let json_start = body.find('{')?;
+        let v: serde_json::Value = serde_json::from_str(&body[json_start..]).ok()?;
+        v.get("version")?.as_str().map(String::from)
+    }
+    .await;
+
+    match svc_version {
+        Some(ref v) if v == my_version => {}
+        Some(ref v) => issues.push(format!(
+            "Service is STALE (running v{}, binary is v{}) -- restart service",
+            v, my_version
+        )),
+        None => issues.push("Service is STALE (socket dead or no /version endpoint)".into()),
+    }
+
+    let port_path = home.join("run/gateway.port");
+    let token_path = home.join("run/gateway.token");
+    match (
+        std::fs::read_to_string(&port_path),
+        std::fs::read_to_string(&token_path),
+    ) {
+        (Ok(port_str), Ok(token)) => {
+            let port = port_str.trim();
+            let token = token.trim();
+            let client = reqwest::Client::new();
+
+            // Check gateway version (unauthenticated health endpoint)
+            let health_url = format!("http://127.0.0.1:{}/health", port);
+            let gw_version: Option<String> = async {
+                let r = client
+                    .get(&health_url)
+                    .timeout(std::time::Duration::from_secs(2))
+                    .send()
+                    .await
+                    .ok()?;
+                let v: serde_json::Value = r.json().await.ok()?;
+                v.get("version")?.as_str().map(String::from)
+            }
+            .await;
+
+            // Check token validity (authenticated endpoint)
+            let auth_url = format!("http://127.0.0.1:{}/vms/list", port);
+            let token_ok = client
+                .get(&auth_url)
+                .header("Authorization", format!("Bearer {}", token))
+                .timeout(std::time::Duration::from_secs(2))
+                .send()
+                .await
+                .map(|r| r.status().is_success())
+                .unwrap_or(false);
+
+            match (gw_version, token_ok) {
+                (Some(ref v), true) if v == my_version => {}
+                (Some(ref v), true) => {
+                    issues.push(format!(
+                        "Gateway is STALE (running v{}, binary is v{}) -- restart service",
+                        v, my_version
+                    ));
+                }
+                (Some(_), false) => {
+                    issues.push(format!(
+                        "Gateway token MISMATCH (port {}) -- restart service",
+                        port
+                    ));
+                }
+                (None, _) => {
+                    issues.push(format!("Gateway is DOWN (port {} not responding)", port));
                 }
             }
         }
+        _ => issues.push("Gateway files not found (no token/port files)".into()),
     }
+
+    let status_client = client::UdsClient::new(sock, false);
+    match service_json(&status_client, "/profiles/status").await {
+        Some(profile_status) => issues.extend(profile_status_issues(&profile_status)),
+        None => issues.push("Profile status unavailable from service".into()),
+    }
+
+    Ok(issues)
 }
 
-fn print_profile_revisions_summary(result: &serde_json::Value) {
-    println!("{}", profile_revisions_summary_line(result));
-    if let Some(revisions) = result["revisions"].as_array() {
-        for revision in revisions {
-            let revision_id = revision["revision"].as_str().unwrap_or("-");
-            let status = revision["status"].as_str().unwrap_or("unknown");
-            let marker = if revision["installed"].as_bool().unwrap_or(false) {
-                " installed"
-            } else if revision["current"].as_bool().unwrap_or(false) {
-                " current"
-            } else {
-                ""
-            };
-            println!("  {revision_id}: {status}{marker}");
+async fn service_json(client: &UdsClient, path: &str) -> Option<serde_json::Value> {
+    client
+        .get::<ApiResponse<serde_json::Value>>(path)
+        .await
+        .ok()?
+        .into_result()
+        .ok()
+}
+
+fn profile_status_summary_lines(status: &serde_json::Value) -> Vec<String> {
+    let mut lines = Vec::new();
+    let source = status["source"].as_str().unwrap_or("unknown");
+    let profile_count = status["profile_count"].as_u64().unwrap_or(0);
+    let ready_count = status["ready_count"].as_u64().unwrap_or(0);
+    lines.push(format!(
+        "Profiles:  {ready_count}/{profile_count} ready ({source})"
+    ));
+    if let Some(manifest) = status["asset_manifest"].as_object() {
+        let origin = manifest
+            .get("origin")
+            .and_then(|value| value.as_str())
+            .unwrap_or("unknown");
+        let path = manifest
+            .get("path")
+            .and_then(|value| value.as_str())
+            .unwrap_or("-");
+        lines.push(format!("Manifest:  {origin} ({path})"));
+        if let Some(source) = manifest
+            .get("origin_source")
+            .and_then(|value| value.as_str())
+        {
+            lines.push(format!("  source:  {source}"));
+        }
+        if let Some(packaged_at) = manifest.get("packaged_at").and_then(|value| value.as_str()) {
+            lines.push(format!("  built:   {packaged_at}"));
+        }
+        if let Some(refreshed_at) = manifest
+            .get("refreshed_at")
+            .and_then(|value| value.as_str())
+        {
+            lines.push(format!("  refresh: {refreshed_at}"));
+        }
+        if let Some(validation_status) = manifest
+            .get("validation_status")
+            .and_then(|value| value.as_str())
+        {
+            lines.push(format!("  status:  {validation_status}"));
+        }
+        if let Some(error) = manifest
+            .get("validation_error")
+            .and_then(|value| value.as_str())
+        {
+            lines.push(format!("  error:   {error}"));
+        }
+        if let Some(hash) = manifest.get("blake3").and_then(|value| value.as_str()) {
+            lines.push(format!("  hash:    blake3:{hash}"));
+        }
+        if let Some(current) = manifest
+            .get("assets_current")
+            .and_then(|value| value.as_str())
+        {
+            lines.push(format!("  assets:  {current}"));
+        }
+        if let Some(current) = manifest
+            .get("binaries_current")
+            .and_then(|value| value.as_str())
+        {
+            lines.push(format!("  binary:  {current}"));
         }
     }
-}
-
-fn print_profile_revision_action_summary(result: &serde_json::Value) {
-    println!("{}", profile_revision_action_summary_line(result));
-}
-
-fn format_profile_list_summary(result: &serde_json::Value) -> String {
-    let mut output = String::new();
-    let profiles = result["profiles"].as_array().cloned().unwrap_or_default();
-    if profiles.is_empty() {
-        writeln!(output, "No Profile V2 profiles discovered.").expect("write to string");
-        return output;
-    }
-    writeln!(
-        output,
-        "{:<24} {:<20} {:<8} {:<7} EXTENDS",
-        "ID", "NAME", "SOURCE", "LOCKED"
-    )
-    .expect("write to string");
-    for record in profiles {
-        let profile = &record["profile"];
-        writeln!(
-            output,
-            "{:<24} {:<20} {:<8} {:<7} {}",
-            profile["id"].as_str().unwrap_or("-"),
-            profile["name"].as_str().unwrap_or("-"),
-            record["source"].as_str().unwrap_or("-"),
-            if record["locked"].as_bool().unwrap_or(false) {
-                "yes"
-            } else {
-                "no"
-            },
-            profile["extends_profile_id"].as_str().unwrap_or("-"),
-        )
-        .expect("write to string");
-    }
-    output
-}
-
-fn format_profile_record_summary(record: &serde_json::Value) -> String {
-    let profile = &record["profile"];
-    let mut output = String::new();
-    writeln!(
-        output,
-        "Profile: {} ({})",
-        profile["id"].as_str().unwrap_or("-"),
-        profile["name"].as_str().unwrap_or("-")
-    )
-    .expect("write to string");
-    writeln!(
-        output,
-        "Source: {} locked={}",
-        record["source"].as_str().unwrap_or("-"),
-        record["locked"].as_bool().unwrap_or(false)
-    )
-    .expect("write to string");
-    if let Some(parent) = profile["extends_profile_id"].as_str() {
-        writeln!(output, "Extends: {parent}").expect("write to string");
-    }
-    writeln!(
-        output,
-        "UI: {} type={}",
-        profile["ui"].as_str().unwrap_or("-"),
-        profile["profile_type"].as_str().unwrap_or("-")
-    )
-    .expect("write to string");
-    write_profile_contract_summary(&mut output, &profile["packages"], &profile["tools"]);
-    writeln!(
-        output,
-        "MCP: servers={}",
-        profile["mcpServers"]
-            .as_object()
-            .map(|items| items.len())
-            .unwrap_or(0)
-    )
-    .expect("write to string");
-    write_profile_vm_summary(&mut output, &profile["vm"]);
-    output
-}
-
-fn format_profile_resolve_summary(result: &serde_json::Value) -> String {
-    let effective = &result["effective"];
-    let rules = effective["rules"]
-        .as_array()
-        .map(|rules| rules.len())
-        .unwrap_or(0);
-    let mcp_servers = effective["mcp"]["value"]
-        .as_object()
-        .map(|servers| servers.len())
-        .unwrap_or(0);
-    let skills = ["groups", "enabled", "disabled"]
-        .iter()
-        .map(|key| {
-            effective["skills"]["value"][*key]
+    if let Some(profiles) = status["profiles"].as_array() {
+        for profile in profiles {
+            let id = profile["id"].as_str().unwrap_or("-");
+            let name = profile["name"].as_str().unwrap_or(id);
+            let ready = profile["ready"].as_bool().unwrap_or(false);
+            let arch = profile["current_arch"].as_str().unwrap_or("-");
+            let hash = profile["profile_payload_hash"].as_str().unwrap_or("-");
+            let missing = profile["missing_assets"]
                 .as_array()
-                .map(|items| items.len())
-                .unwrap_or(0)
-        })
-        .sum::<usize>();
-    let mut output = format!(
-        "Profile resolved: profile={} name={} ui={} rules={} mcp_servers={} skills={} tools={}",
-        result["profile_id"].as_str().unwrap_or("-"),
-        effective["profile_name"].as_str().unwrap_or("-"),
-        effective["profile_ui"].as_str().unwrap_or("-"),
-        rules,
-        mcp_servers,
-        skills,
-        effective["tools"]["value"]
-            .as_object()
-            .map(|tools| tools.len())
-            .unwrap_or(0),
-    );
-    output.push('\n');
-    write_profile_contract_summary(
-        &mut output,
-        &effective["packages"]["value"],
-        &effective["tools"]["value"],
-    );
-    write_profile_vm_summary(&mut output, &effective["vm"]["value"]);
-    output
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let readiness = if ready { "ready" } else { "not-ready" };
+            lines.push(format!(
+                "  - {id}: {name} ({readiness}, arch {arch}, hash {hash})"
+            ));
+            if !missing.is_empty() {
+                lines.push(format!("    missing: {}", missing.join(", ")));
+            }
+        }
+    }
+    lines
 }
 
-fn write_profile_contract_summary(
-    output: &mut String,
-    packages: &serde_json::Value,
-    tools: &serde_json::Value,
-) {
-    let system = &packages["system"];
-    let distro = system["distro"].as_str().unwrap_or("-");
-    let release = system["release"].as_str().unwrap_or("-");
-    writeln!(
-        output,
-        "Packages: runtimes={} python={} node={} apt={} distro={} release={}",
-        packages["runtimes"]
-            .as_object()
-            .map(|items| items.len())
-            .unwrap_or(0),
-        packages["python_modules"]
-            .as_object()
-            .map(|items| items.len())
-            .unwrap_or(0),
-        packages["node_packages"]
-            .as_object()
-            .map(|items| items.len())
-            .unwrap_or(0),
-        system["apt"]
-            .as_object()
-            .map(|items| items.len())
-            .unwrap_or(0),
-        if distro.is_empty() { "-" } else { distro },
-        if release.is_empty() { "-" } else { release },
-    )
-    .expect("write to string");
-    writeln!(
-        output,
-        "Tools: {}",
-        tools.as_object().map(|items| items.len()).unwrap_or(0)
-    )
-    .expect("write to string");
-}
-
-fn write_profile_vm_summary(output: &mut String, vm: &serde_json::Value) {
-    let assets = &vm["assets"];
-    writeln!(
-        output,
-        "VM: memory_mib={} cpus={} network={} asset_arches={}",
-        vm["memory_mib"].as_u64().unwrap_or(0),
-        vm["cpus"].as_u64().unwrap_or(0),
-        vm["network"].as_str().unwrap_or("-"),
-        assets.as_object().map(|items| items.len()).unwrap_or(0),
-    )
-    .expect("write to string");
-    if let Some(assets) = assets.as_object() {
-        for (arch, asset_set) in assets.iter().take(4) {
-            writeln!(
-                output,
-                "  assets.{arch}: kernel={} initrd={} rootfs={}",
-                short_hash(asset_set["kernel"]["hash"].as_str().unwrap_or("-")),
-                short_hash(asset_set["initrd"]["hash"].as_str().unwrap_or("-")),
-                short_hash(asset_set["rootfs"]["hash"].as_str().unwrap_or("-")),
-            )
-            .expect("write to string");
-        }
-        if assets.len() > 4 {
-            writeln!(output, "  ... {} more asset arch(es)", assets.len() - 4)
-                .expect("write to string");
-        }
+fn print_profiles_status(status: &serde_json::Value) {
+    for line in profile_status_summary_lines(status) {
+        println!("{line}");
     }
 }
 
-fn short_hash(hash: &str) -> String {
-    if hash.len() <= 18 {
-        return hash.to_string();
+fn profile_status_issues(status: &serde_json::Value) -> Vec<String> {
+    let mut issues = Vec::new();
+    if status["profile_count"].as_u64().unwrap_or(0) == 0 {
+        issues.push("No profiles are installed".to_string());
+        return issues;
     }
-    format!("{}...", &hash[..18])
+    if let Some(profiles) = status["profiles"].as_array() {
+        for profile in profiles {
+            if profile["ready"].as_bool().unwrap_or(false) {
+                continue;
+            }
+            let id = profile["id"].as_str().unwrap_or("unknown");
+            let missing_assets = profile["missing_assets"]
+                .as_array()
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let invalid_assets = profile["invalid_assets"]
+                .as_array()
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let invalid_files = profile["invalid_files"]
+                .as_array()
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let mut detail = Vec::new();
+            if !missing_assets.is_empty() {
+                detail.push(format!("missing assets: {}", missing_assets.join(", ")));
+            }
+            if !invalid_assets.is_empty() {
+                detail.push(format!("invalid assets: {}", invalid_assets.join(", ")));
+            }
+            if !invalid_files.is_empty() {
+                detail.push(format!(
+                    "invalid profile files: {}",
+                    invalid_files.join(", ")
+                ));
+            }
+            if detail.is_empty() {
+                issues.push(format!("Profile {id} is not ready"));
+            } else {
+                issues.push(format!("Profile {id} is not ready ({})", detail.join("; ")));
+            }
+        }
+    }
+    issues
 }
 
-fn profile_revision_action_summary_line(result: &serde_json::Value) -> String {
-    let action = result["action"].as_str().unwrap_or("-");
-    let profile_id = result["profile_id"].as_str().unwrap_or("-");
-    let revision = result["selected_revision"].as_str().unwrap_or("-");
-    let outcome = result["outcome"]["outcome"].as_str().unwrap_or("unknown");
-    format!("Profile revision {action}: {profile_id}@{revision} {outcome}")
-}
-
-fn profile_revisions_summary_line(result: &serde_json::Value) -> String {
-    let profile_id = result["profile_id"].as_str().unwrap_or("-");
-    let current = result["current_revision"].as_str().unwrap_or("-");
-    let installed = result["installed_revision"].as_str().unwrap_or("-");
-    let revisions = result["revisions"]
-        .as_array()
-        .map(|revisions| revisions.len())
-        .unwrap_or(0);
-    format!(
-        "Profile revisions: profile={profile_id} current={current} installed={installed} revisions={revisions}"
-    )
-}
-
-fn profile_catalog_summary_line(result: &serde_json::Value) -> String {
-    let profiles = result["profiles"]
-        .as_array()
-        .map(|profiles| profiles.len())
-        .unwrap_or(0);
-    let configured = result["configured"].as_bool().unwrap_or(false);
-    let manifest_present = result["manifest_present"].as_bool().unwrap_or(false);
-    format!(
-        "Profile catalog: configured={configured} manifest_present={manifest_present} profiles={profiles}"
-    )
-}
-
-fn profile_catalog_reconcile_summary_line(result: &serde_json::Value) -> String {
-    let summary = &result["summary"];
-    format!(
-        "Profile catalog reconciled: installed={} unchanged={} deprecated_kept={} revoked_removed={} absent_removed={} errors={}",
-        summary["installed"].as_u64().unwrap_or(0),
-        summary["unchanged"].as_u64().unwrap_or(0),
-        summary["deprecated_kept"].as_u64().unwrap_or(0),
-        summary["revoked_removed"].as_u64().unwrap_or(0),
-        summary["absent_removed"].as_u64().unwrap_or(0),
-        summary["errors"].as_u64().unwrap_or(0),
-    )
+fn print_corp_status(info: &serde_json::Value) {
+    let installed = info["installed"].as_bool().unwrap_or(false);
+    println!(
+        "Corp:      {}",
+        if installed {
+            "installed"
+        } else {
+            "not installed"
+        }
+    );
+    if let Some(source) = info["source"].as_object() {
+        let url = source.get("url").and_then(|value| value.as_str());
+        let file_path = source.get("file_path").and_then(|value| value.as_str());
+        let hash = source
+            .get("content_hash")
+            .and_then(|value| value.as_str())
+            .unwrap_or("-");
+        let refresh = source
+            .get("refresh_interval_hours")
+            .and_then(|value| value.as_u64())
+            .map(|hours| format!("{hours}h"))
+            .unwrap_or_else(|| "-".to_string());
+        if let Some(url) = url {
+            println!("  source:  {url}");
+        } else if let Some(path) = file_path {
+            println!("  source:  {path}");
+        }
+        println!("  hash:    {hash}");
+        println!("  refresh: {refresh}");
+    }
 }
 
 #[tokio::main]
@@ -2417,14 +1079,12 @@ async fn main() -> Result<()> {
         eprintln!("{}", notice);
     }
 
-    // Background update check (fire-and-forget). Skip destructive cleanup
-    // commands so `capsem uninstall` cannot recreate state it just removed.
-    if command_refreshes_update_cache(cli.command.as_ref()) {
-        tokio::spawn(update::refresh_update_cache_if_stale());
-    }
+    // Background update check (fire-and-forget). Spawned early so it runs
+    // even for commands that call std::process::exit (exec, run).
+    tokio::spawn(update::refresh_update_cache_if_stale());
 
     if cli.command.is_none() {
-        let issues = status::check_service_health().await?;
+        let issues = check_service_health().await?;
         if !issues.is_empty() {
             eprintln!("\x1b[31;1m[!] Background service has issues:\x1b[0m");
             for issue in issues {
@@ -2470,8 +1130,160 @@ async fn main() -> Result<()> {
             println!("Service installed.");
             return Ok(());
         }
-        Commands::Misc(MiscCommands::Status { json }) => {
-            status::run(*json).await?;
+        Commands::Misc(MiscCommands::Status) => {
+            let status = service_install::service_status().await?;
+            println!("Version:   {}", env!("CARGO_PKG_VERSION"));
+            println!("Installed: {}", status.installed);
+            println!("Running:   {}", status.running);
+            if let Some(pid) = status.pid {
+                println!("PID:       {}", pid);
+            }
+            if let Some(path) = &status.unit_path {
+                println!("Unit:      {}", path.display());
+            }
+            // Check service + gateway connectivity and version sync
+            if status.running {
+                let home = crate::paths::capsem_home().unwrap_or_default();
+                let sock = home.join("run/service.sock");
+                let my_version = env!("CARGO_PKG_VERSION");
+
+                // Check service version via UDS
+                let svc_version = async {
+                    let stream = tokio::net::UnixStream::connect(&sock).await.ok()?;
+                    let (reader, mut writer) = tokio::io::split(stream);
+                    writer.write_all(b"GET /version HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").await.ok()?;
+                    let mut buf = Vec::new();
+                    tokio::io::AsyncReadExt::read_to_end(&mut tokio::io::BufReader::new(reader), &mut buf).await.ok()?;
+                    let body = String::from_utf8_lossy(&buf);
+                    let json_start = body.find('{')?;
+                    let v: serde_json::Value = serde_json::from_str(&body[json_start..]).ok()?;
+                    v.get("version")?.as_str().map(String::from)
+                }.await;
+
+                match svc_version {
+                    Some(ref v) if v == my_version => println!("Service:   ok (v{})", v),
+                    Some(ref v) => println!(
+                        "Service:   STALE (running v{}, binary is v{}) -- restart service",
+                        v, my_version
+                    ),
+                    None => println!("Service:   STALE (socket dead or no /version endpoint)"),
+                }
+
+                let port_path = home.join("run/gateway.port");
+                let token_path = home.join("run/gateway.token");
+                match (
+                    std::fs::read_to_string(&port_path),
+                    std::fs::read_to_string(&token_path),
+                ) {
+                    (Ok(port_str), Ok(token)) => {
+                        let port = port_str.trim();
+                        let token = token.trim();
+                        let client = reqwest::Client::new();
+
+                        // Check gateway version (unauthenticated health endpoint)
+                        let health_url = format!("http://127.0.0.1:{}/health", port);
+                        let gw_version: Option<String> = async {
+                            let r = client
+                                .get(&health_url)
+                                .timeout(std::time::Duration::from_secs(2))
+                                .send()
+                                .await
+                                .ok()?;
+                            let v: serde_json::Value = r.json().await.ok()?;
+                            v.get("version")?.as_str().map(String::from)
+                        }
+                        .await;
+
+                        // Check token validity (authenticated endpoint)
+                        let auth_url = format!("http://127.0.0.1:{}/vms/list", port);
+                        let token_ok = client
+                            .get(&auth_url)
+                            .header("Authorization", format!("Bearer {}", token))
+                            .timeout(std::time::Duration::from_secs(2))
+                            .send()
+                            .await
+                            .map(|r| r.status().is_success())
+                            .unwrap_or(false);
+
+                        match (gw_version, token_ok) {
+                            (Some(ref v), true) if v == my_version => {
+                                println!("Gateway:   ok (port {}, v{})", port, v);
+                            }
+                            (Some(ref v), true) => {
+                                println!("Gateway:   STALE (running v{}, binary is v{}) -- restart service", v, my_version);
+                            }
+                            (Some(_), false) => {
+                                println!(
+                                    "Gateway:   token MISMATCH (port {}) -- restart service",
+                                    port
+                                );
+                            }
+                            (None, _) => {
+                                println!("Gateway:   DOWN (port {} not responding)", port);
+                            }
+                        }
+                    }
+                    _ => println!("Gateway:   no token/port files"),
+                }
+            }
+
+            if status.running {
+                let home = crate::paths::capsem_home().unwrap_or_default();
+                let sock = home.join("run/service.sock");
+                let status_client = client::UdsClient::new(sock, false);
+                println!();
+                match service_json(&status_client, "/profiles/status").await {
+                    Some(profile_status) => print_profiles_status(&profile_status),
+                    None => println!("Profiles:  unavailable"),
+                }
+                match service_json(&status_client, "/corp/info").await {
+                    Some(corp_info) => print_corp_status(&corp_info),
+                    None => println!("Corp:      unavailable"),
+                }
+            }
+
+            // Surface defunct sandboxes prominently -- a boot failure
+            // otherwise only appears as a line in `capsem list`, and the
+            // first command users reach for after "it doesn't work" is
+            // `capsem status`. One-line banner + hint at `capsem logs`.
+            if status.running {
+                let home = crate::paths::capsem_home().unwrap_or_default();
+                let sock = home.join("run/service.sock");
+                let list_client = client::UdsClient::new(sock, false);
+                if let Ok(resp) = list_client
+                    .get::<client::ApiResponse<client::ListResponse>>("/vms/list")
+                    .await
+                {
+                    if let Ok(list) = resp.into_result() {
+                        let defunct: Vec<&client::SessionInfo> = list
+                            .sessions
+                            .iter()
+                            .filter(|s| s.status == VmLifecycleState::Defunct)
+                            .collect();
+                        if !defunct.is_empty() {
+                            println!();
+                            println!(
+                                "Defunct:   {} sandbox(es) failed to boot -- run `capsem logs <name>`",
+                                defunct.len()
+                            );
+                            for s in &defunct {
+                                let name = s.name.as_deref().unwrap_or(&s.id);
+                                if let Some(err) = &s.last_error {
+                                    let last = err
+                                        .lines()
+                                        .rev()
+                                        .find(|line| !line.trim().is_empty())
+                                        .unwrap_or("(log empty)");
+                                    println!("  - {}: {}", name, last);
+                                } else {
+                                    println!("  - {}", name);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             return Ok(());
         }
         Commands::Misc(MiscCommands::Start) => {
@@ -2493,97 +1305,63 @@ async fn main() -> Result<()> {
             return Ok(());
         }
         Commands::Misc(MiscCommands::Update { yes, assets }) => {
-            update::run_update(*yes, *assets, Some(uds_path.clone())).await?;
-            return Ok(());
-        }
-        Commands::Misc(MiscCommands::Setup {
-            non_interactive,
-            preset,
-            force,
-            accept_detected,
-            corp_config,
-            force_onboarding,
-        }) => {
-            let opts = setup::SetupOptions {
-                non_interactive: *non_interactive,
-                preset: preset.clone(),
-                force: *force,
-                accept_detected: *accept_detected,
-                corp_config: corp_config.clone(),
-                force_onboarding: *force_onboarding,
-            };
-            setup::run_setup(opts).await?;
+            update::run_update(*yes, *assets).await?;
             return Ok(());
         }
         _ => {}
     }
 
-    if let Some(Commands::Session(SessionCommands::Purge {
-        all,
-        product: true,
-        yes,
-    })) = cli.command.as_ref()
-    {
-        if *all {
-            anyhow::bail!("`capsem purge --product` cannot be combined with --all");
-        }
-        uninstall::run_purge(*yes).await?;
-        return Ok(());
-    }
-
-    // Auto-setup on first use: if setup-state.json doesn't exist, the user
-    // hasn't run `capsem setup` yet. Run non-interactive setup so service
-    // registration, asset download, and credential detection happen automatically.
-    // Skip when --uds-path is explicit (tests, CI, custom service).
-    if auto_launch {
-        let setup_done = paths::capsem_home()
-            .map(|d| d.join("setup-state.json").exists())
-            .unwrap_or(false);
-        if !setup_done {
-            eprintln!("First run detected. Running initial setup...");
-            eprintln!("(Run `capsem setup` to reconfigure later)\n");
-            setup::run_setup(setup::SetupOptions {
-                non_interactive: true,
-                preset: None,
-                force: false,
-                accept_detected: true,
-                corp_config: None,
-                force_onboarding: false,
-            })
-            .await?;
-        }
-    }
-
-    if let Commands::Session(SessionCommands::Shell { session }) = cli.command.as_ref().unwrap() {
-        run_tui_shell(session.as_deref()).await?;
-        return Ok(());
-    }
-
     let client = UdsClient::new(uds_path, auto_launch);
 
     match cli.command.as_ref().unwrap() {
+        Commands::Assets(AssetsCommands::Status { profile, json }) => {
+            client::validate_id(profile)?;
+            let encoded_profile = urlencoding::encode(profile);
+            let resp: ApiResponse<AssetStatusResponse> = client
+                .get(&format!("/profiles/{encoded_profile}/assets/status"))
+                .await?;
+            let status = resp.into_result()?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&status)?);
+            } else {
+                print_asset_status(&status);
+            }
+        }
+        Commands::Assets(AssetsCommands::Ensure { profile, json }) => {
+            client::validate_id(profile)?;
+            let encoded_profile = urlencoding::encode(profile);
+            let resp: ApiResponse<AssetStatusResponse> = client
+                .post(
+                    &format!("/profiles/{encoded_profile}/assets/ensure"),
+                    serde_json::json!({}),
+                )
+                .await?;
+            let status = resp.into_result()?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&status)?);
+            } else {
+                print_asset_status(&status);
+            }
+        }
         Commands::Session(SessionCommands::Create {
             name,
             ram,
             cpu,
             env,
             from,
-            profile,
-            profile_revision,
         }) => {
             let persistent = name.is_some() || from.is_some();
             let req = ProvisionRequest {
                 name: name.clone(),
+                profile_id: DEFAULT_PROFILE_ID.to_string(),
                 ram_mb: ram * 1024,
                 cpus: *cpu,
                 persistent,
                 env: client::parse_env_vars(env)?,
                 from: from.clone(),
-                profile_id: profile.clone(),
-                profile_revision: profile_revision.clone(),
             };
 
-            let resp: ApiResponse<ProvisionResponse> = client.post("/provision", &req).await?;
+            let resp: ApiResponse<ProvisionResponse> = client.post("/vms/create", &req).await?;
             let info = resp.into_result()?;
 
             if persistent {
@@ -2591,7 +1369,6 @@ async fn main() -> Result<()> {
             } else {
                 println!("{}", info.id);
             }
-            print_provision_profile_summary(&info);
         }
         Commands::Session(SessionCommands::Fork {
             session,
@@ -2604,7 +1381,7 @@ async fn main() -> Result<()> {
                 description: description.clone(),
             };
             let resp: ApiResponse<ForkResponse> =
-                client.post(&format!("/fork/{}", session), &req).await?;
+                client.post(&format!("/vms/{}/fork", session), &req).await?;
             let info = resp.into_result()?;
             let size_mb = info.size_bytes as f64 / 1024.0 / 1024.0;
             println!(
@@ -2615,24 +1392,26 @@ async fn main() -> Result<()> {
         Commands::Session(SessionCommands::Resume { name }) => {
             client::validate_id(name)?;
             let resp: ApiResponse<ProvisionResponse> = client
-                .post(&format!("/resume/{}", name), &serde_json::json!({}))
+                .post(&format!("/vms/{}/resume", name), &serde_json::json!({}))
                 .await?;
             let info = resp.into_result()?;
             println!("{}", info.id);
-            print_provision_profile_summary(&info);
         }
         Commands::Session(SessionCommands::Suspend { session }) => {
             client::validate_id(session)?;
             println!("Suspending session: {}", session);
             let resp: ApiResponse<serde_json::Value> = client
-                .post(&format!("/suspend/{}", session), &serde_json::json!({}))
+                .post(&format!("/vms/{}/pause", session), &serde_json::json!({}))
                 .await?;
             resp.into_result()?;
             println!("Session suspended.");
         }
-        Commands::Session(SessionCommands::Shell { .. }) => unreachable!("handled before client"),
+        Commands::Session(SessionCommands::Shell { name, session }) => {
+            let target = name.as_ref().or(session.as_ref());
+            run_tui_shell(target.map(String::as_str)).await?;
+        }
         Commands::Session(SessionCommands::List { quiet }) => {
-            let resp: ApiResponse<ListResponse> = client.get("/list").await?;
+            let resp: ApiResponse<ListResponse> = client.get("/vms/list").await?;
             let resp = resp.into_result()?;
             if *quiet {
                 for s in &resp.sessions {
@@ -2642,7 +1421,7 @@ async fn main() -> Result<()> {
                 println!("No sessions.");
             } else {
                 println!(
-                    "{:<20} {:<12} {:<10} {:<8} {:<6} {:<10} PROFILE",
+                    "{:<20} {:<12} {:<10} {:<8} {:<6} {:<10}",
                     "ID", "NAME", "STATUS", "RAM", "CPUs", "UPTIME"
                 );
                 for s in &resp.sessions {
@@ -2653,15 +1432,14 @@ async fn main() -> Result<()> {
                         .unwrap_or_else(|| "-".into());
                     let cpus = s.cpus.map(|c| c.to_string()).unwrap_or_else(|| "-".into());
                     let uptime = format_uptime(s.uptime_secs);
-                    let profile = format_session_profile_for_list(s);
                     println!(
-                        "{:<20} {:<12} {:<10} {:<8} {:<6} {:<10} {}",
-                        s.id, name, s.status, ram, cpus, uptime, profile
+                        "{:<20} {:<12} {:<10} {:<8} {:<6} {:<10}",
+                        s.id, name, s.status, ram, cpus, uptime
                     );
                     // Defunct rows: show the tail of process.log inline so
                     // the user doesn't need a separate `capsem logs` call
                     // to see why boot failed.
-                    if s.status == "Defunct" {
+                    if s.status == VmLifecycleState::Defunct {
                         if let Some(err) = &s.last_error {
                             let last = err
                                 .lines()
@@ -2671,17 +1449,21 @@ async fn main() -> Result<()> {
                             println!("  ! {}", last);
                             println!("  (`capsem logs {}` for full context)", s.id);
                         }
+                    } else if s.status == VmLifecycleState::Incompatible {
+                        if let Some(reason) = &s.resume_blocked_reason {
+                            println!("  ! {}", reason);
+                        }
                     }
                 }
                 let defunct = resp
                     .sessions
                     .iter()
-                    .filter(|s| s.status == "Defunct")
+                    .filter(|s| s.status == VmLifecycleState::Defunct)
                     .count();
                 if defunct > 0 {
                     println!();
                     println!(
-                        "{} defunct session(s). Run `capsem logs <name>` to debug.",
+                        "{} defunct sandbox(es). Run `capsem logs <name>` to debug.",
                         defunct
                     );
                 }
@@ -2698,7 +1480,7 @@ async fn main() -> Result<()> {
                 timeout_secs: *timeout,
             };
             let resp: ApiResponse<ExecResponse> =
-                client.post(&format!("/exec/{}", session), req).await?;
+                client.post(&format!("/vms/{}/exec", session), req).await?;
             let resp = resp.into_result()?;
             if !resp.stdout.is_empty() {
                 print!("{}", resp.stdout);
@@ -2711,15 +1493,12 @@ async fn main() -> Result<()> {
         Commands::Session(SessionCommands::Run {
             command,
             timeout,
-            profile,
-            profile_revision,
             env,
         }) => {
             let req = RunRequest {
                 command: command.clone(),
+                profile_id: DEFAULT_PROFILE_ID.to_string(),
                 timeout_secs: *timeout,
-                profile_id: profile.clone(),
-                profile_revision: profile_revision.clone(),
                 env: client::parse_env_vars(env)?,
             };
             let resp: ApiResponse<ExecResponse> = client.post("/run", &req).await?;
@@ -2739,7 +1518,7 @@ async fn main() -> Result<()> {
             client::validate_id(session)?;
             println!("Deleting session: {}", session);
             let resp: ApiResponse<serde_json::Value> =
-                client.delete(&format!("/delete/{}", session)).await?;
+                client.delete(&format!("/vms/{}/delete", session)).await?;
             resp.into_result()?;
             println!("Session deleted.");
         }
@@ -2747,34 +1526,23 @@ async fn main() -> Result<()> {
             client::validate_id(session)?;
             let req = PersistRequest { name: name.clone() };
             let resp: ApiResponse<serde_json::Value> =
-                client.post(&format!("/persist/{}", session), &req).await?;
+                client.post(&format!("/vms/{}/save", session), &req).await?;
             resp.into_result()?;
             println!(
                 "[*] Session \"{}\" is now persistent as \"{}\"",
                 session, name
             );
         }
-        Commands::Session(SessionCommands::Purge {
-            all,
-            product,
-            yes: _,
-        }) => {
-            if *product {
-                anyhow::bail!(
-                    "internal error: product purge should be handled before service startup"
-                );
-            }
+        Commands::Session(SessionCommands::Purge { all }) => {
             if *all {
                 // Confirmation prompt
                 use std::io::Write;
-                let list_resp: ApiResponse<ListResponse> = client.get("/list").await?;
+                let list_resp: ApiResponse<ListResponse> = client.get("/vms/list").await?;
                 let resp = list_resp.into_result()?;
                 let persistent_count = resp.sessions.iter().filter(|s| s.persistent).count();
                 let ephemeral_count = resp.sessions.iter().filter(|s| !s.persistent).count();
-                print!(
-                    "[!] This will destroy {} persistent and {} temporary sessions. Continue? [y/N] ",
-                    persistent_count, ephemeral_count
-                );
+                print!("[!] This will destroy {} persistent and {} temporary sessions. Continue? [y/N] ",
+                    persistent_count, ephemeral_count);
                 std::io::stdout().flush()?;
                 let mut input = String::new();
                 std::io::stdin().read_line(&mut input)?;
@@ -2787,23 +1555,12 @@ async fn main() -> Result<()> {
             let req = PurgeRequest { all: *all };
             let resp: ApiResponse<PurgeResponse> = client.post("/purge", &req).await?;
             let result = resp.into_result()?;
-            if *all {
-                println!(
-                    "[*] Purged {} sessions ({} persistent, {} temporary).",
-                    result.purged, result.persistent_purged, result.ephemeral_purged
-                );
-            } else if result.persistent_purged > 0 {
-                println!(
-                    "[*] Purged {} sessions ({} broken persistent, {} temporary).",
-                    result.purged, result.persistent_purged, result.ephemeral_purged
-                );
-            } else {
-                println!("[*] Purged {} temporary sessions.", result.ephemeral_purged);
-            }
+            println!("{}", purge_summary_message(&result, *all));
         }
         Commands::Session(SessionCommands::Info { session, json }) => {
             client::validate_id(session)?;
-            let resp: ApiResponse<SessionInfo> = client.get(&format!("/info/{}", session)).await?;
+            let resp: ApiResponse<SessionInfo> =
+                client.get(&format!("/vms/{}/info", session)).await?;
             let info = resp.into_result()?;
             if *json {
                 println!("{}", serde_json::to_string_pretty(&info)?);
@@ -2813,28 +1570,42 @@ async fn main() -> Result<()> {
         }
         Commands::Session(SessionCommands::Logs { session, tail }) => {
             client::validate_id(session)?;
-            let resp: ApiResponse<LogsResponse> = client.get(&format!("/logs/{}", session)).await?;
+            let resp: ApiResponse<LogsResponse> =
+                client.get(&format!("/vms/{}/logs", session)).await?;
             let logs = resp.into_result()?;
-            print!("{}", format_session_logs(session, logs, *tail));
-        }
-        Commands::Session(SessionCommands::ExportPolicyContexts { session, json }) => {
-            client::validate_id(session)?;
-            let resp: ApiResponse<serde_json::Value> = client
-                .get(&format!(
-                    "/sessions/{}/policy-contexts",
-                    urlencoding::encode(session)
-                ))
-                .await?;
-            let result = resp.into_result()?;
-            if *json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
-                let fixtures = result["fixtures"]
-                    .as_array()
-                    .context("policy-context export response did not contain fixtures")?;
-                for fixture in fixtures {
-                    println!("{}", serde_json::to_string(fixture)?);
+
+            let tail_lines = |text: &str, n: usize| -> String {
+                let lines: Vec<&str> = text.lines().collect();
+                if lines.len() <= n {
+                    text.to_string()
+                } else {
+                    lines[lines.len() - n..].join("\n")
                 }
+            };
+
+            if let Some(process_logs) = logs.process_logs {
+                println!("--- Process Logs ({}) ---", session);
+                let output = match tail {
+                    Some(n) => tail_lines(&process_logs, *n),
+                    None => process_logs,
+                };
+                println!("{}", output);
+            }
+
+            if let Some(serial_logs) = logs.serial_logs {
+                println!("--- Serial Logs ({}) ---", session);
+                let output = match tail {
+                    Some(n) => tail_lines(&serial_logs, *n),
+                    None => serial_logs,
+                };
+                println!("{}", output);
+            } else if !logs.logs.is_empty() {
+                println!("--- Serial Logs ({}) ---", session);
+                let output = match tail {
+                    Some(n) => tail_lines(&logs.logs, *n),
+                    None => logs.logs,
+                };
+                println!("{}", output);
             }
         }
         Commands::Session(SessionCommands::History {
@@ -2847,7 +1618,7 @@ async fn main() -> Result<()> {
         }) => {
             client::validate_id(session)?;
             let limit = if *all { 100_000 } else { *tail };
-            let mut url = format!("/history/{}?limit={}&layer={}", session, limit, layer);
+            let mut url = format!("/vms/{}/history?limit={}&layer={}", session, limit, layer);
             if let Some(q) = search {
                 url.push_str(&format!(
                     "&search={}",
@@ -2926,820 +1697,166 @@ async fn main() -> Result<()> {
         Commands::Session(SessionCommands::Restart { name }) => {
             client::validate_id(name)?;
             let info_resp: ApiResponse<SessionInfo> =
-                client.get(&format!("/info/{}", name)).await?;
+                client.get(&format!("/vms/{}/info", name)).await?;
             let info = info_resp.into_result()?;
             if !info.persistent {
-                anyhow::bail!(
-                    "Cannot restart ephemeral session \"{}\". Only persistent sessions support restart.",
-                    name
-                );
+                anyhow::bail!("Cannot restart ephemeral session \"{}\". Only persistent sessions support restart.", name);
             }
 
             // Stop, then resume
             let stop_resp: ApiResponse<serde_json::Value> = client
-                .post(&format!("/stop/{}", name), &serde_json::json!({}))
+                .post(&format!("/vms/{}/stop", name), &serde_json::json!({}))
                 .await?;
             stop_resp
                 .into_result()
                 .context("failed to stop session during restart")?;
             let resp: ApiResponse<ProvisionResponse> = client
-                .post(&format!("/resume/{}", name), &serde_json::json!({}))
+                .post(&format!("/vms/{}/resume", name), &serde_json::json!({}))
                 .await?;
             let resumed = resp.into_result()?;
             println!("{}", resumed.id);
-            print_provision_profile_summary(&resumed);
         }
-        Commands::Skills(SkillsCommands::List {
-            profile,
-            kind,
-            json,
-        }) => {
-            let path = skills_path(profile.as_ref(), *kind);
-            let resp: ApiResponse<serde_json::Value> = client.get(&path).await?;
-            let result = resp.into_result()?;
-            if *json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
+        Commands::Mcp(McpCommands::Servers) => {
+            let resp: ApiResponse<Vec<serde_json::Value>> = client
+                .get(&format!(
+                    "/profiles/{}/mcp/servers/list",
+                    DEFAULT_PROFILE_ID
+                ))
+                .await?;
+            let servers = resp.into_result()?;
+            if servers.is_empty() {
+                println!("No MCP servers configured.");
             } else {
-                print!("{}", format_skills_summary(&result));
+                #[allow(clippy::print_literal)]
+                {
+                    println!(
+                        "{:<20} {:<8} {:<10} {:<8} {}",
+                        "NAME", "ENABLED", "SOURCE", "TOOLS", "URL"
+                    );
+                }
+                for s in &servers {
+                    println!(
+                        "{:<20} {:<8} {:<10} {:<8} {}",
+                        s["name"].as_str().unwrap_or("-"),
+                        if s["enabled"].as_bool().unwrap_or(false) {
+                            "yes"
+                        } else {
+                            "no"
+                        },
+                        s["source"].as_str().unwrap_or("-"),
+                        s["tool_count"].as_u64().unwrap_or(0),
+                        s["url"].as_str().unwrap_or("-"),
+                    );
+                }
             }
         }
-        Commands::Skills(SkillsCommands::Show {
-            id,
-            profile,
-            kind,
-            json,
-        }) => {
-            let path = skills_path(profile.as_ref(), *kind);
-            let resp: ApiResponse<serde_json::Value> = client.get(&path).await?;
-            let result = resp.into_result()?;
-            let matches = skill_matches(&result, id);
-            if matches.is_empty() {
-                anyhow::bail!("skill '{}' not found", id);
-            }
-            let result = serde_json::json!({
-                "mode": result["mode"].clone(),
-                "profile_id": result["profile_id"].clone(),
-                "skills": matches,
-            });
-            if *json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
+        Commands::Mcp(McpCommands::Tools { server }) => {
+            let server_names: Vec<String> = if let Some(server_filter) = server {
+                vec![server_filter.clone()]
             } else {
-                print!("{}", format_skills_summary(&result));
+                let resp: ApiResponse<Vec<serde_json::Value>> = client
+                    .get(&format!(
+                        "/profiles/{}/mcp/servers/list",
+                        DEFAULT_PROFILE_ID
+                    ))
+                    .await?;
+                resp.into_result()?
+                    .into_iter()
+                    .filter_map(|server| server["name"].as_str().map(ToOwned::to_owned))
+                    .collect()
+            };
+            let mut tools = Vec::new();
+            for server_name in server_names {
+                let resp: ApiResponse<Vec<serde_json::Value>> = client
+                    .get(&format!(
+                        "/profiles/{}/mcp/servers/{}/tools/list",
+                        DEFAULT_PROFILE_ID, server_name
+                    ))
+                    .await?;
+                tools.extend(resp.into_result()?);
             }
-        }
-        Commands::Skills(SkillsCommands::Add {
-            id,
-            profile,
-            kind,
-            json,
-        }) => {
-            let body = serde_json::json!({
-                "profile": profile,
-                "id": id,
-                "kind": kind.as_str(),
-            });
-            let resp: ApiResponse<serde_json::Value> = client.post("/skills", &body).await?;
-            let result = resp.into_result()?;
-            if *json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
+            if tools.is_empty() {
+                println!("No MCP tools discovered.");
             } else {
-                println!(
-                    "Skill added: {} ({})",
-                    result["id"].as_str().unwrap_or(id),
-                    result["kind"].as_str().unwrap_or(kind.as_str()),
-                );
+                #[allow(clippy::print_literal)]
+                {
+                    println!(
+                        "{:<40} {:<20} {:<10} {}",
+                        "TOOL", "SERVER", "APPROVED", "DESCRIPTION"
+                    );
+                }
+                for t in &tools {
+                    let desc = t["description"].as_str().unwrap_or("-");
+                    let short_desc = if desc.len() > 60 { &desc[..60] } else { desc };
+                    println!(
+                        "{:<40} {:<20} {:<10} {}",
+                        t["namespaced_name"].as_str().unwrap_or("-"),
+                        t["server_name"].as_str().unwrap_or("-"),
+                        if t["approved"].as_bool().unwrap_or(false) {
+                            "yes"
+                        } else {
+                            "no"
+                        },
+                        short_desc,
+                    );
+                }
             }
         }
-        Commands::Skills(SkillsCommands::Delete {
-            id,
-            profile,
-            kind,
-            json,
-        }) => {
-            let mut path = format!("/skills/{}", urlencoding::encode(id));
-            let mut params = Vec::new();
-            if let Some(profile) = profile {
-                params.push(format!("profile={}", urlencoding::encode(profile)));
+        Commands::Mcp(McpCommands::Refresh) => {
+            let resp: ApiResponse<Vec<serde_json::Value>> = client
+                .get(&format!(
+                    "/profiles/{}/mcp/servers/list",
+                    DEFAULT_PROFILE_ID
+                ))
+                .await?;
+            for server in resp.into_result()? {
+                if let Some(server_name) = server["name"].as_str() {
+                    let refresh: ApiResponse<serde_json::Value> = client
+                        .post(
+                            &format!(
+                                "/profiles/{}/mcp/servers/{}/refresh",
+                                DEFAULT_PROFILE_ID, server_name
+                            ),
+                            &serde_json::json!({}),
+                        )
+                        .await?;
+                    refresh.into_result()?;
+                }
             }
-            if let Some(kind) = kind {
-                params.push(format!("kind={}", kind.as_str()));
-            }
-            if !params.is_empty() {
-                path.push_str(&format!("?{}", params.join("&")));
-            }
-            let resp: ApiResponse<serde_json::Value> = client.delete(&path).await?;
-            let result = resp.into_result()?;
-            if *json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
-                println!(
-                    "Skill deleted: {} ({})",
-                    result["skill_id"].as_str().unwrap_or(id),
-                    result["kind"].as_str().unwrap_or("-"),
-                );
-            }
+            println!("MCP tools refreshed.");
         }
-        Commands::Mcp(McpCommands::List { profile, json })
-        | Commands::Mcp(McpCommands::Connectors { profile, json }) => {
-            let path = mcp_connectors_path(profile.as_ref());
-            let resp: ApiResponse<serde_json::Value> = client.get(&path).await?;
-            let result = resp.into_result()?;
-            if *json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
-                print!("{}", format_mcp_connectors_summary(&result));
-            }
-        }
-        Commands::Mcp(McpCommands::Show { id, profile, json }) => {
-            let path = mcp_connectors_path(profile.as_ref());
-            let resp: ApiResponse<serde_json::Value> = client.get(&path).await?;
-            let result = resp.into_result()?;
-            let matches = mcp_server_matches(&result, id);
-            if matches.is_empty() {
-                anyhow::bail!("MCP server '{}' not found", id);
-            }
-            let result = serde_json::json!({
-                "mode": result["mode"].clone(),
-                "profile_id": result["profile_id"].clone(),
-                "servers": matches,
-            });
-            if *json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
-                print!("{}", format_mcp_connectors_summary(&result));
-            }
-        }
-        Commands::Mcp(McpCommands::Add {
-            id,
-            profile,
-            disabled,
-            server_type,
-            command,
-            args,
-            env,
-            url,
-            headers,
-            bearer_token,
-            credential_refs,
-            allowed_tools,
-            json,
-        }) => {
-            let mut body = serde_json::json!({
-                "id": id,
-                "enabled": !*disabled,
-                "capsem": {
-                    "credential_refs": credential_refs,
-                    "allowed_tools": allowed_tools,
-                },
-            });
-            if let Some(server_type) = server_type {
-                body["type"] = serde_json::json!(server_type);
-            }
-            if let Some(command) = command {
-                body["command"] = serde_json::json!(command);
-            }
-            if !args.is_empty() {
-                body["args"] = serde_json::json!(args);
-            }
-            if let Some(env) = client::parse_env_vars(env)? {
-                body["env"] = serde_json::json!(env);
-            }
-            if let Some(url) = url {
-                body["url"] = serde_json::json!(url);
-            }
-            if let Some(headers) = client::parse_env_vars(headers)? {
-                body["headers"] = serde_json::json!(headers);
-            }
-            if let Some(bearer_token) = bearer_token {
-                body["bearerToken"] = serde_json::json!(bearer_token);
-            }
-            if let Some(profile) = profile {
-                body["profile"] = serde_json::json!(profile);
-            }
-            let resp: ApiResponse<serde_json::Value> =
-                client.post("/mcp/connectors", &body).await?;
-            let result = resp.into_result()?;
-            if *json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
-                println!("MCP server added: {}", result["id"].as_str().unwrap_or("-"));
-            }
-        }
-        Commands::Mcp(McpCommands::Delete { id, profile }) => {
-            let mut path = format!("/mcp/connectors/{}", urlencoding::encode(id));
-            if let Some(profile) = profile {
-                path.push_str(&format!("?profile={}", urlencoding::encode(profile)));
-            }
-            let resp: ApiResponse<serde_json::Value> = client.delete(&path).await?;
-            let result = resp.into_result()?;
-            println!(
-                "MCP server deleted: {}",
-                result["server_id"].as_str().unwrap_or(id)
-            );
-        }
-        Commands::Enforcement(EnforcementCommands::List { json }) => {
-            let resp: ApiResponse<serde_json::Value> = client.get("/enforcement").await?;
-            let result = resp.into_result()?;
-            if *json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
-                print_runtime_rule_list_summary("enforcement", &result);
-            }
-        }
-        Commands::Enforcement(EnforcementCommands::Stats { json }) => {
-            let resp: ApiResponse<serde_json::Value> = client.get("/enforcement/stats").await?;
-            let result = resp.into_result()?;
-            if *json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
-                print_runtime_rule_list_summary("enforcement", &result);
-            }
-        }
-        Commands::Enforcement(EnforcementCommands::Validate {
-            id,
-            condition,
-            decision,
-            pack_id,
-            reason,
-            disabled,
-            json,
-        }) => {
-            let body = enforcement_rule_body(id, condition, *decision, pack_id, reason, *disabled);
-            let resp: ApiResponse<serde_json::Value> =
-                client.post("/enforcement/validate", &body).await?;
-            let result = resp.into_result()?;
-            if *json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
-                print_runtime_compile_summary("Enforcement", &result);
-            }
-        }
-        Commands::Enforcement(EnforcementCommands::Compile {
-            id,
-            condition,
-            decision,
-            pack_id,
-            reason,
-            disabled,
-            json,
-        }) => {
-            let body = enforcement_rule_body(id, condition, *decision, pack_id, reason, *disabled);
-            let resp: ApiResponse<serde_json::Value> =
-                client.post("/enforcement/compile", &body).await?;
-            let result = resp.into_result()?;
-            if *json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
-                print_runtime_compile_summary("Enforcement", &result);
-            }
-        }
-        Commands::Enforcement(EnforcementCommands::Install {
-            id,
-            condition,
-            decision,
-            pack_id,
-            reason,
-            disabled,
-            json,
-        }) => {
-            let body = enforcement_rule_body(id, condition, *decision, pack_id, reason, *disabled);
-            let resp: ApiResponse<serde_json::Value> = client.post("/enforcement", &body).await?;
-            let result = resp.into_result()?;
-            if *json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
-                print_runtime_install_summary("Enforcement", &result);
-            }
-        }
-        Commands::Enforcement(EnforcementCommands::Update {
-            id,
-            condition,
-            decision,
-            pack_id,
-            reason,
-            disabled,
-            json,
-        }) => {
-            let body = enforcement_rule_body(id, condition, *decision, pack_id, reason, *disabled);
-            let path = format!("/enforcement/{}", urlencoding::encode(id));
-            let resp: ApiResponse<serde_json::Value> = client.put(&path, &body).await?;
-            let result = resp.into_result()?;
-            if *json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
-                print_runtime_install_summary("Enforcement", &result);
-            }
-        }
-        Commands::Enforcement(EnforcementCommands::Backtest {
-            id,
-            events,
-            condition,
-            decision,
-            pack_id,
-            reason,
-            limit,
-            disabled,
-            json,
-        }) => {
-            let body = serde_json::json!({
-                "rule": enforcement_rule_body(id, condition, *decision, pack_id, reason, *disabled),
-                "events": read_runtime_backtest_events(events)?,
-                "limit": limit,
-            });
-            let resp: ApiResponse<serde_json::Value> =
-                client.post("/enforcement/backtest", &body).await?;
-            let result = resp.into_result()?;
-            if *json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
-                print_runtime_backtest_summary("Enforcement backtest", &result);
-            }
-        }
-        Commands::Enforcement(EnforcementCommands::Delete { id }) => {
-            let path = format!("/enforcement/{}", urlencoding::encode(id));
-            let resp: ApiResponse<serde_json::Value> = client.delete(&path).await?;
-            let result = resp.into_result()?;
-            println!(
-                "Enforcement rule deleted: {}",
-                result["id"].as_str().unwrap_or(id)
-            );
-        }
-        Commands::Detection(DetectionCommands::List { json }) => {
-            let resp: ApiResponse<serde_json::Value> = client.get("/detection").await?;
-            let result = resp.into_result()?;
-            if *json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
-                print_runtime_rule_list_summary("detection", &result);
-            }
-        }
-        Commands::Detection(DetectionCommands::Stats { json }) => {
-            let resp: ApiResponse<serde_json::Value> = client.get("/detection/stats").await?;
-            let result = resp.into_result()?;
-            if *json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
-                print_runtime_rule_list_summary("detection", &result);
-            }
-        }
-        Commands::Detection(DetectionCommands::Validate {
-            id,
-            pack_id,
-            title,
-            condition,
-            severity,
-            confidence,
-            sigma_id,
-            tags,
-            disabled,
-            json,
-        }) => {
-            let body = detection_rule_body(
-                id,
-                pack_id,
-                title,
-                condition,
-                *severity,
-                *confidence,
-                sigma_id,
-                tags,
-                *disabled,
-            );
-            let resp: ApiResponse<serde_json::Value> =
-                client.post("/detection/validate", &body).await?;
-            let result = resp.into_result()?;
-            if *json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
-                print_runtime_compile_summary("Detection", &result);
-            }
-        }
-        Commands::Detection(DetectionCommands::Compile {
-            id,
-            pack_id,
-            title,
-            condition,
-            severity,
-            confidence,
-            sigma_id,
-            tags,
-            disabled,
-            json,
-        }) => {
-            let body = detection_rule_body(
-                id,
-                pack_id,
-                title,
-                condition,
-                *severity,
-                *confidence,
-                sigma_id,
-                tags,
-                *disabled,
-            );
-            let resp: ApiResponse<serde_json::Value> =
-                client.post("/detection/compile", &body).await?;
-            let result = resp.into_result()?;
-            if *json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
-                print_runtime_compile_summary("Detection", &result);
-            }
-        }
-        Commands::Detection(DetectionCommands::Install {
-            id,
-            pack_id,
-            title,
-            condition,
-            severity,
-            confidence,
-            sigma_id,
-            tags,
-            disabled,
-            json,
-        }) => {
-            let body = detection_rule_body(
-                id,
-                pack_id,
-                title,
-                condition,
-                *severity,
-                *confidence,
-                sigma_id,
-                tags,
-                *disabled,
-            );
-            let resp: ApiResponse<serde_json::Value> = client.post("/detection", &body).await?;
-            let result = resp.into_result()?;
-            if *json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
-                print_runtime_install_summary("Detection", &result);
-            }
-        }
-        Commands::Detection(DetectionCommands::Update {
-            id,
-            pack_id,
-            title,
-            condition,
-            severity,
-            confidence,
-            sigma_id,
-            tags,
-            disabled,
-            json,
-        }) => {
-            let body = detection_rule_body(
-                id,
-                pack_id,
-                title,
-                condition,
-                *severity,
-                *confidence,
-                sigma_id,
-                tags,
-                *disabled,
-            );
-            let path = format!("/detection/{}", urlencoding::encode(id));
-            let resp: ApiResponse<serde_json::Value> = client.put(&path, &body).await?;
-            let result = resp.into_result()?;
-            if *json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
-                print_runtime_install_summary("Detection", &result);
-            }
-        }
-        Commands::Detection(DetectionCommands::Backtest {
-            id,
-            events,
-            pack_id,
-            title,
-            condition,
-            severity,
-            confidence,
-            sigma_id,
-            tags,
-            limit,
-            disabled,
-            json,
-        }) => {
-            let body = serde_json::json!({
-                "rule": detection_rule_body(
-                    id,
-                    pack_id,
-                    title,
-                    condition,
-                    *severity,
-                    *confidence,
-                    sigma_id,
-                    tags,
-                    *disabled,
-                ),
-                "events": read_runtime_backtest_events(events)?,
-                "limit": limit,
-            });
-            let resp: ApiResponse<serde_json::Value> =
-                client.post("/detection/backtest", &body).await?;
-            let result = resp.into_result()?;
-            if *json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
-                print_runtime_backtest_summary("Detection backtest", &result);
-            }
-        }
-        Commands::Detection(DetectionCommands::Hunt {
-            id,
-            events,
-            pack_id,
-            title,
-            condition,
-            severity,
-            confidence,
-            sigma_id,
-            tags,
-            limit,
-            disabled,
-            json,
-        }) => {
-            let rule = detection_rule_body(
-                id,
-                pack_id,
-                title,
-                condition,
-                *severity,
-                *confidence,
-                sigma_id,
-                tags,
-                *disabled,
-            );
-            let body = serde_json::json!({
-                "rules": [rule],
-                "events": read_runtime_backtest_events(events)?,
-                "limit": limit,
-            });
-            let resp: ApiResponse<serde_json::Value> =
-                client.post("/detection/hunt", &body).await?;
-            let result = resp.into_result()?;
-            if *json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
-                print_runtime_hunt_summary(&result);
-            }
-        }
-        Commands::Detection(DetectionCommands::HuntSession {
-            session,
-            id,
-            pack_id,
-            title,
-            condition,
-            severity,
-            confidence,
-            sigma_id,
-            tags,
-            limit,
-            disabled,
-            json,
-        }) => {
-            client::validate_id(session)?;
-            let rule = detection_rule_body(
-                id,
-                pack_id,
-                title,
-                condition,
-                *severity,
-                *confidence,
-                sigma_id,
-                tags,
-                *disabled,
-            );
-            let body = serde_json::json!({
-                "rules": [rule],
-                "limit": limit,
-            });
+        Commands::Mcp(McpCommands::Call { name, args }) => {
+            let (server_name, tool_name) = name.split_once("__").ok_or_else(|| {
+                anyhow!("MCP tool calls must use namespaced names like server__tool; got {name}")
+            })?;
+            let arguments: serde_json::Value =
+                serde_json::from_str(args).context("invalid JSON arguments")?;
             let resp: ApiResponse<serde_json::Value> = client
                 .post(
-                    &format!("/sessions/{}/detection/hunt", urlencoding::encode(session)),
-                    &body,
+                    &format!(
+                        "/profiles/{}/mcp/servers/{}/tools/{}/call",
+                        DEFAULT_PROFILE_ID, server_name, tool_name
+                    ),
+                    &arguments,
                 )
                 .await?;
             let result = resp.into_result()?;
-            if *json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
-                print_runtime_hunt_summary(&result);
-            }
-        }
-        Commands::Detection(DetectionCommands::Delete { id }) => {
-            let path = format!("/detection/{}", urlencoding::encode(id));
-            let resp: ApiResponse<serde_json::Value> = client.delete(&path).await?;
-            let result = resp.into_result()?;
-            println!(
-                "Detection rule deleted: {}",
-                result["id"].as_str().unwrap_or(id)
-            );
-        }
-        Commands::Confirm(ConfirmCommands::List { json }) => {
-            let resp: ApiResponse<serde_json::Value> = client.get("/confirm/pending").await?;
-            let result = resp.into_result()?;
-            if *json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
-                println!("{}", format_confirm_list_summary(&result));
-            }
-        }
-        Commands::Profile(ProfileCommands::List { json }) => {
-            let resp: ApiResponse<serde_json::Value> = client.get("/profiles").await?;
-            let result = resp.into_result()?;
-            if *json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
-                print!("{}", format_profile_list_summary(&result));
-            }
-        }
-        Commands::Profile(ProfileCommands::Create { file, json }) => {
-            let profile = read_profile_document(file)?;
-            let resp: ApiResponse<serde_json::Value> = client.post("/profiles", &profile).await?;
-            let result = resp.into_result()?;
-            if *json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
-                print!("{}", format_profile_record_summary(&result));
-            }
-        }
-        Commands::Profile(ProfileCommands::Show { profile_id, json }) => {
-            let path = format!("/profiles/{}", urlencoding::encode(profile_id));
-            let resp: ApiResponse<serde_json::Value> = client.get(&path).await?;
-            let result = resp.into_result()?;
-            if *json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
-                print!("{}", format_profile_record_summary(&result));
-            }
-        }
-        Commands::Profile(ProfileCommands::Resolve { profile_id, json }) => {
-            let path = format!("/profiles/{}/effective", urlencoding::encode(profile_id));
-            let resp: ApiResponse<serde_json::Value> = client.get(&path).await?;
-            let result = resp.into_result()?;
-            if *json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
-                println!("{}", format_profile_resolve_summary(&result));
-            }
-        }
-        Commands::Profile(ProfileCommands::Fork {
-            source_profile_id,
-            id,
-            name,
-            json,
-        }) => {
-            let path = format!("/profiles/{}/fork", urlencoding::encode(source_profile_id));
-            let body = serde_json::json!({
-                "id": id,
-                "name": name,
-            });
-            let resp: ApiResponse<serde_json::Value> = client.post(&path, &body).await?;
-            let result = resp.into_result()?;
-            if *json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
-                print!("{}", format_profile_record_summary(&result));
-            }
-        }
-        Commands::Profile(ProfileCommands::Delete { profile_id, json }) => {
-            let path = format!("/profiles/{}", urlencoding::encode(profile_id));
-            let resp: ApiResponse<serde_json::Value> = client.delete(&path).await?;
-            let result = resp.into_result()?;
-            if *json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
-                println!(
-                    "Profile deleted: {}",
-                    result["deleted"].as_str().unwrap_or(profile_id)
-                );
-            }
-        }
-        Commands::Profile(ProfileCommands::ReconcileCatalog {
-            manifest,
-            manifest_url,
-            pubkey,
-            json,
-        }) => {
-            let manifest_json =
-                read_profile_catalog_manifest(manifest.clone(), manifest_url.clone()).await?;
-            let profile_payload_pubkey = std::fs::read_to_string(pubkey)
-                .with_context(|| format!("read profile payload pubkey {}", pubkey.display()))?;
-            let body = serde_json::json!({
-                "manifest_json": manifest_json,
-                "profile_payload_pubkey": profile_payload_pubkey,
-            });
-            let resp: ApiResponse<serde_json::Value> =
-                client.post("/profiles/catalog/reconcile", &body).await?;
-            let result = resp.into_result()?;
-            if *json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
-                print_profile_catalog_reconcile_summary(&result);
-            }
-        }
-        Commands::Profile(ProfileCommands::Catalog { json }) => {
-            let resp: ApiResponse<serde_json::Value> = client.get("/profiles/catalog").await?;
-            let result = resp.into_result()?;
-            if *json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
-                print_profile_catalog_summary(&result);
-            }
-        }
-        Commands::Profile(ProfileCommands::Revisions { profile_id, json }) => {
-            let resp: ApiResponse<serde_json::Value> = client
-                .get(&format!("/profiles/{profile_id}/revisions"))
-                .await?;
-            let result = resp.into_result()?;
-            if *json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
-                print_profile_revisions_summary(&result);
-            }
-        }
-        Commands::Profile(ProfileCommands::Install {
-            profile_id,
-            revision,
-            json,
-        }) => {
-            let body = serde_json::json!({ "revision": revision });
-            let resp: ApiResponse<serde_json::Value> = client
-                .post(&format!("/profiles/{profile_id}/revisions/install"), &body)
-                .await?;
-            let result = resp.into_result()?;
-            if *json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
-                print_profile_revision_action_summary(&result);
-            }
-        }
-        Commands::Profile(ProfileCommands::Update {
-            profile_id,
-            file,
-            revision,
-            json,
-        }) => {
-            if let Some(file) = file {
-                let profile = read_profile_document(file)?;
-                let path = format!("/profiles/{}", urlencoding::encode(profile_id));
-                let resp: ApiResponse<serde_json::Value> = client.put(&path, &profile).await?;
-                let result = resp.into_result()?;
-                if *json {
-                    println!("{}", serde_json::to_string_pretty(&result)?);
-                } else {
-                    print!("{}", format_profile_record_summary(&result));
-                }
-                return Ok(());
-            }
-            let body = serde_json::json!({ "revision": revision });
-            let resp: ApiResponse<serde_json::Value> = client
-                .post(&format!("/profiles/{profile_id}/revisions/update"), &body)
-                .await?;
-            let result = resp.into_result()?;
-            if *json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
-                print_profile_revision_action_summary(&result);
-            }
-        }
-        Commands::Profile(ProfileCommands::Remove {
-            profile_id,
-            revision,
-            json,
-        }) => {
-            let body = serde_json::json!({ "revision": revision });
-            let resp: ApiResponse<serde_json::Value> = client
-                .post(&format!("/profiles/{profile_id}/revisions/remove"), &body)
-                .await?;
-            let result = resp.into_result()?;
-            if *json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
-                print_profile_revision_action_summary(&result);
-            }
-        }
-        Commands::Misc(MiscCommands::Debug) => {
-            status::debug_report(&client).await?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
         }
         Commands::Misc(
             MiscCommands::Version
-            | MiscCommands::Setup { .. }
             | MiscCommands::Update { .. }
             | MiscCommands::Completions { .. }
             | MiscCommands::Uninstall { .. }
             | MiscCommands::Install
-            | MiscCommands::Status { .. }
+            | MiscCommands::Status
             | MiscCommands::Start
             | MiscCommands::Stop
             | MiscCommands::SupportBundle { .. }, /* handled before UDS */
         ) => {
             unreachable!("handled before UdsClient creation")
         }
-        Commands::Misc(MiscCommands::Doctor { fast, bundle }) => {
+        Commands::Misc(MiscCommands::Doctor { bundle }) => {
             use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
             use tokio_unix_ipc::channel_from_std;
 
@@ -3750,33 +1867,38 @@ async fn main() -> Result<()> {
             println!("Running capsem-doctor...");
             println!("Log: {}", log_path.display());
 
-            // Preflight checks the default host install layout and service
-            // manager state. When the user targets a custom socket via
-            // --uds-path, those checks are unrelated to the selected
-            // service instance and can false-fail (for example in e2e
-            // harnesses that run against an ephemeral service).
-            if auto_launch {
-                status::doctor_preflight().await?;
-            }
+            let mut mock_server = spawn_doctor_mock_server().with_context(|| {
+                format!(
+                    "start local mock server for capsem-doctor at {DOCTOR_MOCK_SERVER_ADDR}; \
+                     this address is required so guest traffic proves the iptables-nft redirect rail"
+                )
+            })?;
+            let mock_base_url = mock_server.base_url().to_string();
+            println!("Local mock server: {mock_base_url}");
+
+            let mut doctor_env = std::collections::HashMap::new();
+            doctor_env.insert(
+                "CAPSEM_MOCK_SERVER_BASE_URL".to_string(),
+                mock_base_url.clone(),
+            );
 
             let req = ProvisionRequest {
                 name: None,
+                profile_id: DEFAULT_PROFILE_ID.to_string(),
                 ram_mb: 2048,
                 cpus: 2,
                 persistent: false,
-                env: None,
+                env: Some(doctor_env),
                 from: None,
-                profile_id: None,
-                profile_revision: None,
             };
-            let resp: ApiResponse<ProvisionResponse> = client.post("/provision", req).await?;
+            let resp: ApiResponse<ProvisionResponse> = client.post("/vms/create", req).await?;
             let provisioned = resp.into_result()?;
             let vm_id = provisioned.id;
 
             // Helper: always delete the session, even on Ctrl-C or error
             async fn delete_vm(client: &UdsClient, vm_id: &str) {
                 let _: Result<ApiResponse<serde_json::Value>, _> =
-                    client.delete(&format!("/delete/{}", vm_id)).await;
+                    client.delete(&format!("/vms/{}/delete", vm_id)).await;
             }
 
             let ctrl_c = tokio::signal::ctrl_c();
@@ -3887,12 +2009,7 @@ async fn main() -> Result<()> {
             } else {
                 ""
             };
-            let cmd: Vec<u8> = if *fast {
-                format!("capsem-doctor --durations=10 -k 'not throughput'{bundle_arg}\n")
-                    .into_bytes()
-            } else {
-                format!("capsem-doctor --durations=10{bundle_arg}\n").into_bytes()
-            };
+            let cmd: Vec<u8> = format!("capsem-doctor --durations=10{bundle_arg}\n").into_bytes();
             capsem_core::try_send!(
                 "cli_doctor_terminal_input",
                 tx.send(ServiceToProcess::TerminalInput { data: cmd }).await
@@ -3979,18 +2096,12 @@ async fn main() -> Result<()> {
                     }
                 }
                 if !copied {
-                    eprintln!(
-                        "warning: no doctor bundle found in any of {} -- the in-VM script may have failed before tar",
-                        candidates
-                            .iter()
-                            .map(|p| p.display().to_string())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    );
+                    eprintln!("warning: no doctor bundle found in any of {} -- the in-VM script may have failed before tar", candidates.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", "));
                 }
             }
 
             delete_vm(&client, &vm_id).await;
+            mock_server.shutdown();
             if exit_code != 0 {
                 eprintln!("Full log: {}", log_path.display());
                 std::process::exit(exit_code);
@@ -4026,7 +2137,7 @@ async fn handle_cp(client: &client::UdsClient, src: &str, dst: &str) -> Result<(
         (Some((session, guest_path)), None) => {
             client::validate_id(session)?;
             let url = format!(
-                "/files/{session}/content?path={}",
+                "/vms/{session}/files/content?path={}",
                 urlencoding::encode(guest_path)
             );
             let (bytes, _ct) = client.request_bytes("GET", &url, None, None).await?;
@@ -4056,7 +2167,7 @@ async fn handle_cp(client: &client::UdsClient, src: &str, dst: &str) -> Result<(
                 std::fs::read(src).with_context(|| format!("read {src}"))?
             };
             let url = format!(
-                "/files/{session}/content?path={}",
+                "/vms/{session}/files/content?path={}",
                 urlencoding::encode(guest_path)
             );
             let (resp_body, _ct) = client
@@ -4100,7 +2211,7 @@ mod tests {
 
     #[test]
     fn parse_create_with_name() {
-        let cli = Cli::parse_from(["capsem", "create", "my-vm"]);
+        let cli = Cli::parse_from(["capsem", "create", "-n", "my-vm"]);
         match cli.command.unwrap() {
             Commands::Session(SessionCommands::Create { name, ram, cpu, .. }) => {
                 assert_eq!(name, Some("my-vm".into()));
@@ -4135,29 +2246,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_create_with_profile_selection() {
-        let cli = Cli::parse_from([
-            "capsem",
-            "create",
-            "--profile",
-            "coding",
-            "--profile-revision",
-            "2026.0520.1",
-        ]);
-        match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Create {
-                profile,
-                profile_revision,
-                ..
-            }) => {
-                assert_eq!(profile.as_deref(), Some("coding"));
-                assert_eq!(profile_revision.as_deref(), Some("2026.0520.1"));
-            }
-            _ => panic!("expected Create with profile selection"),
-        }
-    }
-
-    #[test]
     fn parse_resume() {
         let cli = Cli::parse_from(["capsem", "resume", "mydev"]);
         match cli.command.unwrap() {
@@ -4167,9 +2255,12 @@ mod tests {
     }
 
     #[test]
-    fn parse_attach_alias_rejected() {
-        let cli = Cli::try_parse_from(["capsem", "attach", "mydev"]);
-        assert!(cli.is_err(), "attach alias should be rejected");
+    fn parse_attach_alias_for_resume() {
+        let cli = Cli::parse_from(["capsem", "attach", "mydev"]);
+        match cli.command.unwrap() {
+            Commands::Session(SessionCommands::Resume { name }) => assert_eq!(name, "mydev"),
+            _ => panic!("expected Resume via attach alias"),
+        }
     }
 
     #[test]
@@ -4187,25 +2278,20 @@ mod tests {
     fn parse_shell_positional() {
         let cli = Cli::parse_from(["capsem", "shell", "my-vm"]);
         match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Shell { session }) => {
+            Commands::Session(SessionCommands::Shell { session, name }) => {
                 assert_eq!(session, Some("my-vm".into()));
+                assert_eq!(name, None);
             }
             _ => panic!("expected Shell"),
         }
     }
 
     #[test]
-    fn parse_shell_with_name_flag_rejected() {
-        let cli = Cli::try_parse_from(["capsem", "shell", "-n", "mydev"]);
-        assert!(cli.is_err(), "shell -n should be rejected");
-    }
-
-    #[test]
-    fn parse_shell_bare() {
-        // Bare `capsem shell` = TUI home/create flow.
-        let cli = Cli::parse_from(["capsem", "shell"]);
+    fn parse_shell_by_name() {
+        let cli = Cli::parse_from(["capsem", "shell", "-n", "mydev"]);
         match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Shell { session }) => {
+            Commands::Session(SessionCommands::Shell { name, session }) => {
+                assert_eq!(name, Some("mydev".into()));
                 assert_eq!(session, None);
             }
             _ => panic!("expected Shell"),
@@ -4213,16 +2299,16 @@ mod tests {
     }
 
     #[test]
-    fn shell_without_session_launches_tui_without_args() {
-        assert_eq!(capsem_shell_tui_args(None), Vec::<String>::new());
-    }
-
-    #[test]
-    fn shell_session_maps_to_tui_session_arg() {
-        assert_eq!(
-            capsem_shell_tui_args(Some("my-vm")),
-            vec!["--session".to_string(), "my-vm".to_string()]
-        );
+    fn parse_shell_bare() {
+        // Bare `capsem shell` = temp session + auto-destroy
+        let cli = Cli::parse_from(["capsem", "shell"]);
+        match cli.command.unwrap() {
+            Commands::Session(SessionCommands::Shell { name, session }) => {
+                assert_eq!(name, None);
+                assert_eq!(session, None);
+            }
+            _ => panic!("expected Shell"),
+        }
     }
 
     #[test]
@@ -4241,11 +2327,7 @@ mod tests {
     fn parse_purge() {
         let cli = Cli::parse_from(["capsem", "purge"]);
         match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Purge { all, product, yes }) => {
-                assert!(!all);
-                assert!(!product);
-                assert!(!yes);
-            }
+            Commands::Session(SessionCommands::Purge { all }) => assert!(!all),
             _ => panic!("expected Purge"),
         }
     }
@@ -4254,26 +2336,35 @@ mod tests {
     fn parse_purge_all() {
         let cli = Cli::parse_from(["capsem", "purge", "--all"]);
         match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Purge { all, product, yes }) => {
-                assert!(all);
-                assert!(!product);
-                assert!(!yes);
-            }
+            Commands::Session(SessionCommands::Purge { all }) => assert!(all),
             _ => panic!("expected Purge --all"),
         }
     }
 
     #[test]
-    fn parse_purge_product_yes() {
-        let cli = Cli::parse_from(["capsem", "purge", "--product", "--yes"]);
-        match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Purge { all, product, yes }) => {
-                assert!(!all);
-                assert!(product);
-                assert!(yes);
-            }
-            _ => panic!("expected Purge --product --yes"),
-        }
+    fn purge_summary_mentions_broken_persistent_for_default_purge() {
+        let result = PurgeResponse {
+            purged: 2,
+            persistent_purged: 1,
+            ephemeral_purged: 1,
+        };
+        assert_eq!(
+            purge_summary_message(&result, false),
+            "[*] Purged 2 sessions (1 broken persistent, 1 temporary)."
+        );
+    }
+
+    #[test]
+    fn purge_summary_keeps_temporary_only_message_when_no_defunct_persistent() {
+        let result = PurgeResponse {
+            purged: 3,
+            persistent_purged: 0,
+            ephemeral_purged: 3,
+        };
+        assert_eq!(
+            purge_summary_message(&result, false),
+            "[*] Purged 3 temporary sessions."
+        );
     }
 
     #[test]
@@ -4283,14 +2374,10 @@ mod tests {
             Commands::Session(SessionCommands::Run {
                 command,
                 timeout,
-                profile,
-                profile_revision,
                 env,
             }) => {
                 assert_eq!(command, "echo hello");
                 assert_eq!(timeout, None);
-                assert_eq!(profile, None);
-                assert_eq!(profile_revision, None);
                 assert!(env.is_empty());
             }
             _ => panic!("expected Run"),
@@ -4304,43 +2391,10 @@ mod tests {
             Commands::Session(SessionCommands::Run {
                 command,
                 timeout,
-                profile,
-                profile_revision,
                 env,
             }) => {
                 assert_eq!(command, "ls -la");
                 assert_eq!(timeout, Some(120));
-                assert_eq!(profile, None);
-                assert_eq!(profile_revision, None);
-                assert!(env.is_empty());
-            }
-            _ => panic!("expected Run"),
-        }
-    }
-
-    #[test]
-    fn parse_run_with_profile_selection() {
-        let cli = Cli::parse_from([
-            "capsem",
-            "run",
-            "--profile",
-            "coding",
-            "--profile-revision",
-            "2026.0520.1",
-            "echo hello",
-        ]);
-        match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Run {
-                command,
-                timeout,
-                profile,
-                profile_revision,
-                env,
-            }) => {
-                assert_eq!(command, "echo hello");
-                assert_eq!(timeout, None);
-                assert_eq!(profile.as_deref(), Some("coding"));
-                assert_eq!(profile_revision.as_deref(), Some("2026.0520.1"));
                 assert!(env.is_empty());
             }
             _ => panic!("expected Run"),
@@ -4375,27 +2429,21 @@ mod tests {
     }
 
     #[test]
-    fn parse_ls_alias_rejected() {
-        let cli = Cli::try_parse_from(["capsem", "ls"]);
-        assert!(cli.is_err(), "ls alias should be rejected");
-    }
-
-    #[test]
     fn parse_status() {
         // `capsem status` is now the service status command
         let cli = Cli::parse_from(["capsem", "status"]);
         assert!(matches!(
             cli.command.unwrap(),
-            Commands::Misc(MiscCommands::Status { json: false })
+            Commands::Misc(MiscCommands::Status)
         ));
     }
 
     #[test]
-    fn parse_status_json() {
-        let cli = Cli::parse_from(["capsem", "status", "--json"]);
+    fn parse_debug_aliases_support_bundle() {
+        let cli = Cli::parse_from(["capsem", "debug"]);
         assert!(matches!(
             cli.command.unwrap(),
-            Commands::Misc(MiscCommands::Status { json: true })
+            Commands::Misc(MiscCommands::SupportBundle { .. })
         ));
     }
 
@@ -4469,12 +2517,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_rm_alias_rejected() {
-        let cli = Cli::try_parse_from(["capsem", "rm", "vm-123"]);
-        assert!(cli.is_err(), "rm alias should be rejected");
-    }
-
-    #[test]
     fn parse_info() {
         let cli = Cli::parse_from(["capsem", "info", "vm-1"]);
         match cli.command.unwrap() {
@@ -4520,126 +2562,6 @@ mod tests {
             }
             _ => panic!("expected Logs"),
         }
-    }
-
-    #[test]
-    fn parse_export_policy_contexts() {
-        let cli = Cli::parse_from(["capsem", "export-policy-contexts", "vm-1", "--json"]);
-        match cli.command.unwrap() {
-            Commands::Session(SessionCommands::ExportPolicyContexts { session, json }) => {
-                assert_eq!(session, "vm-1");
-                assert!(json);
-            }
-            _ => panic!("expected export-policy-contexts"),
-        }
-    }
-
-    #[test]
-    fn format_session_logs_preserves_structured_process_security_line() {
-        let process_security_line = serde_json::json!({
-            "target": "security.process",
-            "fields": {
-                "message": "process_exec_security_decision",
-                "event_type": "process.exec",
-                "final_action": "block",
-                "vm_id": "vm-cli-logs",
-                "profile_id": "coding",
-                "user_id": "elie",
-                "rule_id": "runtime.block-shell",
-                "reason": "shell exec blocked"
-            }
-        })
-        .to_string();
-        let output = format_session_logs(
-            "vm-cli-logs",
-            LogsResponse {
-                logs: String::new(),
-                serial_logs: Some("serial booted\n".into()),
-                process_logs: Some(format!("old line\n{process_security_line}\n")),
-                security_logs: Some(
-                    serde_json::json!({
-                        "target": "security.event",
-                        "fields": {
-                            "message": "resolved_security_event",
-                            "event_type": "process.exec",
-                            "final_action": "block",
-                            "vm_id": "vm-cli-logs",
-                            "profile_id": "coding",
-                            "user_id": "elie",
-                            "rule_id": "runtime.block-shell",
-                            "reason": "shell exec blocked"
-                        }
-                    })
-                    .to_string(),
-                ),
-            },
-            Some(1),
-        );
-
-        assert!(output.contains("--- Security Events (vm-cli-logs) ---"));
-        assert!(output.contains(r#""target":"security.event""#));
-        assert!(output.contains(r#""message":"resolved_security_event""#));
-        assert!(output.contains("--- Process Logs (vm-cli-logs) ---"));
-        assert!(output.contains(r#""target":"security.process""#));
-        assert!(output.contains(r#""message":"process_exec_security_decision""#));
-        assert!(output.contains(r#""event_type":"process.exec""#));
-        assert!(output.contains(r#""final_action":"block""#));
-        assert!(output.contains(r#""profile_id":"coding""#));
-        assert!(output.contains(r#""user_id":"elie""#));
-        assert!(output.contains(r#""rule_id":"runtime.block-shell""#));
-        assert!(!output.contains("old line"));
-        assert!(output.contains("--- Serial Logs (vm-cli-logs) ---"));
-        assert!(output.contains("serial booted"));
-    }
-
-    #[test]
-    fn format_session_logs_adds_resolved_security_summary() {
-        let process_event = serde_json::json!({
-            "target": "security.event",
-            "fields": {
-                "message": "resolved_security_event",
-                "event_family": "process",
-                "event_type": "process.exec",
-                "final_action": "block",
-                "rule_id": "runtime.block-shell",
-                "finding_count": 1,
-                "detection_rule_ids": "detect.shell"
-            }
-        })
-        .to_string();
-        let dns_event = serde_json::json!({
-            "target": "security.event",
-            "fields": {
-                "message": "resolved_security_event",
-                "event_family": "dns",
-                "event_type": "dns.request",
-                "final_action": "allow",
-                "rule_id": "runtime.allow-dns",
-                "finding_count": 0
-            }
-        })
-        .to_string();
-
-        let output = format_session_logs(
-            "vm-cli-logs",
-            LogsResponse {
-                logs: String::new(),
-                serial_logs: None,
-                process_logs: None,
-                security_logs: Some(format!("{process_event}\n{dns_event}\n")),
-            },
-            None,
-        );
-
-        assert!(output.contains("--- Security Events (vm-cli-logs) ---"));
-        assert!(
-            output.contains("summary: events=2 blocked=1 detections=1 families=dns=1,process=1")
-        );
-        assert!(output.contains("detect.shell=1"));
-        assert!(output.contains("runtime.block-shell=1"));
-        assert!(output.contains("runtime.allow-dns=1"));
-        assert!(output.contains(r#""event_type":"process.exec""#));
-        assert!(output.contains(r#""event_type":"dns.request""#));
     }
 
     #[test]
@@ -4698,10 +2620,7 @@ mod tests {
         let cli = Cli::parse_from(["capsem", "doctor"]);
         assert!(matches!(
             cli.command.unwrap(),
-            Commands::Misc(MiscCommands::Doctor {
-                fast: false,
-                bundle: false
-            })
+            Commands::Misc(MiscCommands::Doctor { bundle: false })
         ));
     }
 
@@ -4710,1266 +2629,25 @@ mod tests {
         let cli = Cli::parse_from(["capsem", "doctor", "--bundle"]);
         assert!(matches!(
             cli.command.unwrap(),
-            Commands::Misc(MiscCommands::Doctor {
-                fast: false,
-                bundle: true
-            })
+            Commands::Misc(MiscCommands::Doctor { bundle: true })
         ));
     }
 
     #[test]
-    fn parse_debug() {
-        let cli = Cli::parse_from(["capsem", "debug"]);
-        assert!(matches!(
-            cli.command.unwrap(),
-            Commands::Misc(MiscCommands::Debug)
-        ));
-    }
-
-    #[test]
-    fn parse_profile_reconcile_catalog() {
-        let cli = Cli::parse_from([
-            "capsem",
-            "profile",
-            "reconcile-catalog",
-            "--manifest",
-            "manifest.json",
-            "--pubkey",
-            "profile.pub",
-            "--json",
-        ]);
-        match cli.command.unwrap() {
-            Commands::Profile(ProfileCommands::ReconcileCatalog {
-                manifest,
-                manifest_url,
-                pubkey,
-                json,
-            }) => {
-                assert_eq!(manifest, Some(PathBuf::from("manifest.json")));
-                assert_eq!(manifest_url, None);
-                assert_eq!(pubkey, PathBuf::from("profile.pub"));
-                assert!(json);
-            }
-            _ => panic!("expected profile reconcile-catalog"),
-        }
-    }
-
-    #[test]
-    fn parse_profile_catalog() {
-        let cli = Cli::parse_from(["capsem", "profile", "catalog", "--json"]);
-        match cli.command.unwrap() {
-            Commands::Profile(ProfileCommands::Catalog { json }) => assert!(json),
-            _ => panic!("expected profile catalog"),
-        }
-    }
-
-    #[test]
-    fn parse_profile_revisions() {
-        let cli = Cli::parse_from(["capsem", "profile", "revisions", "everyday-work", "--json"]);
-        match cli.command.unwrap() {
-            Commands::Profile(ProfileCommands::Revisions { profile_id, json }) => {
-                assert_eq!(profile_id, "everyday-work");
-                assert!(json);
-            }
-            _ => panic!("expected profile revisions"),
-        }
-    }
-
-    #[test]
-    fn parse_profile_list_show_resolve() {
-        let cli = Cli::parse_from(["capsem", "profile", "list", "--json"]);
-        match cli.command.unwrap() {
-            Commands::Profile(ProfileCommands::List { json }) => assert!(json),
-            _ => panic!("expected profile list"),
-        }
-
-        let cli = Cli::parse_from(["capsem", "profile", "create", "--file", "profile.toml"]);
-        match cli.command.unwrap() {
-            Commands::Profile(ProfileCommands::Create { file, json }) => {
-                assert_eq!(file, PathBuf::from("profile.toml"));
-                assert!(!json);
-            }
-            _ => panic!("expected profile create"),
-        }
-
-        let cli = Cli::parse_from(["capsem", "profile", "show", "coding", "--json"]);
-        match cli.command.unwrap() {
-            Commands::Profile(ProfileCommands::Show { profile_id, json }) => {
-                assert_eq!(profile_id, "coding");
-                assert!(json);
-            }
-            _ => panic!("expected profile show"),
-        }
-
-        let cli = Cli::parse_from(["capsem", "profile", "resolve", "coding"]);
-        match cli.command.unwrap() {
-            Commands::Profile(ProfileCommands::Resolve { profile_id, json }) => {
-                assert_eq!(profile_id, "coding");
-                assert!(!json);
-            }
-            _ => panic!("expected profile resolve"),
-        }
-
-        let cli = Cli::parse_from([
-            "capsem",
-            "profile",
-            "update",
-            "coding",
-            "--file",
-            "profile.json",
-            "--json",
-        ]);
-        match cli.command.unwrap() {
-            Commands::Profile(ProfileCommands::Update {
-                profile_id,
-                file,
-                revision,
-                json,
-            }) => {
-                assert_eq!(profile_id, "coding");
-                assert_eq!(file, Some(PathBuf::from("profile.json")));
-                assert!(revision.is_none());
-                assert!(json);
-            }
-            _ => panic!("expected profile update --file"),
-        }
-    }
-
-    #[test]
-    fn parse_profile_fork_delete() {
-        let cli = Cli::parse_from([
-            "capsem",
-            "profile",
-            "fork",
-            "coding",
-            "--id",
-            "my-coding",
-            "--name",
-            "My Coding",
-            "--json",
-        ]);
-        match cli.command.unwrap() {
-            Commands::Profile(ProfileCommands::Fork {
-                source_profile_id,
-                id,
-                name,
-                json,
-            }) => {
-                assert_eq!(source_profile_id, "coding");
-                assert_eq!(id, "my-coding");
-                assert_eq!(name, "My Coding");
-                assert!(json);
-            }
-            _ => panic!("expected profile fork"),
-        }
-
-        let cli = Cli::parse_from(["capsem", "profile", "delete", "my-coding", "--json"]);
-        match cli.command.unwrap() {
-            Commands::Profile(ProfileCommands::Delete { profile_id, json }) => {
-                assert_eq!(profile_id, "my-coding");
-                assert!(json);
-            }
-            _ => panic!("expected profile delete"),
-        }
-    }
-
-    #[test]
-    fn parse_mcp_connectors_add_delete() {
-        let cli = Cli::parse_from(["capsem", "mcp", "list", "--profile", "coding"]);
-        match cli.command.unwrap() {
-            Commands::Mcp(McpCommands::List { profile, json }) => {
-                assert_eq!(profile.as_deref(), Some("coding"));
-                assert!(!json);
-            }
-            _ => panic!("expected mcp list"),
-        }
-
-        let cli = Cli::parse_from(["capsem", "mcp", "show", "github", "--json"]);
-        match cli.command.unwrap() {
-            Commands::Mcp(McpCommands::Show { id, json, .. }) => {
-                assert_eq!(id, "github");
-                assert!(json);
-            }
-            _ => panic!("expected mcp show"),
-        }
-
-        let cli = Cli::parse_from([
-            "capsem",
-            "mcp",
-            "connectors",
-            "--profile",
-            "coding",
-            "--json",
-        ]);
-        match cli.command.unwrap() {
-            Commands::Mcp(McpCommands::Connectors { profile, json }) => {
-                assert_eq!(profile.as_deref(), Some("coding"));
-                assert!(json);
-            }
-            _ => panic!("expected mcp connectors"),
-        }
-
-        let cli = Cli::parse_from([
-            "capsem",
-            "mcp",
-            "add",
-            "github",
-            "--profile",
-            "coding",
-            "--type",
-            "stdio",
-            "--command",
-            "npx",
-            "--arg",
-            "-y",
-            "--arg",
-            "@modelcontextprotocol/server-github",
-            "--env",
-            "GITHUB_TOKEN=env:CAPSEM_GITHUB_TOKEN",
-            "--credential-ref",
-            "github-token",
-            "--allowed-tool",
-            "repo.read",
-            "--disabled",
-            "--json",
-        ]);
-        match cli.command.unwrap() {
-            Commands::Mcp(McpCommands::Add {
-                id,
-                profile,
-                disabled,
-                server_type,
-                command,
-                args,
-                env,
-                url,
-                headers,
-                bearer_token,
-                credential_refs,
-                allowed_tools,
-                json,
-            }) => {
-                assert_eq!(id, "github");
-                assert_eq!(profile.as_deref(), Some("coding"));
-                assert!(disabled);
-                assert_eq!(server_type.as_deref(), Some("stdio"));
-                assert_eq!(command.as_deref(), Some("npx"));
-                assert_eq!(args, vec!["-y", "@modelcontextprotocol/server-github"]);
-                assert_eq!(env, vec!["GITHUB_TOKEN=env:CAPSEM_GITHUB_TOKEN"]);
-                assert!(url.is_none());
-                assert!(headers.is_empty());
-                assert!(bearer_token.is_none());
-                assert_eq!(credential_refs, vec!["github-token"]);
-                assert_eq!(allowed_tools, vec!["repo.read"]);
-                assert!(json);
-            }
-            _ => panic!("expected mcp add"),
-        }
-
-        let cli = Cli::parse_from(["capsem", "mcp", "delete", "github", "--profile", "coding"]);
-        match cli.command.unwrap() {
-            Commands::Mcp(McpCommands::Delete { id, profile }) => {
-                assert_eq!(id, "github");
-                assert_eq!(profile.as_deref(), Some("coding"));
-            }
-            _ => panic!("expected mcp delete"),
-        }
-    }
-
-    #[test]
-    fn parse_skills_list_show_add_delete() {
-        let cli = Cli::parse_from([
-            "capsem",
-            "skills",
-            "list",
-            "--profile",
-            "coding",
-            "--kind",
-            "enabled",
-            "--json",
-        ]);
-        match cli.command.unwrap() {
-            Commands::Skills(SkillsCommands::List {
-                profile,
-                kind,
-                json,
-            }) => {
-                assert_eq!(profile.as_deref(), Some("coding"));
-                assert_eq!(kind, Some(CliSkillKind::Enabled));
-                assert!(json);
-            }
-            _ => panic!("expected skills list"),
-        }
-
-        let cli = Cli::parse_from([
-            "capsem",
-            "skills",
-            "show",
-            "admin-profile",
-            "--kind",
-            "group",
-        ]);
-        match cli.command.unwrap() {
-            Commands::Skills(SkillsCommands::Show { id, kind, .. }) => {
-                assert_eq!(id, "admin-profile");
-                assert_eq!(kind, Some(CliSkillKind::Group));
-            }
-            _ => panic!("expected skills show"),
-        }
-
-        let cli = Cli::parse_from([
-            "capsem",
-            "skills",
-            "add",
-            "admin-image",
-            "--profile",
-            "coding",
-            "--kind",
-            "disabled",
-        ]);
-        match cli.command.unwrap() {
-            Commands::Skills(SkillsCommands::Add {
-                id, profile, kind, ..
-            }) => {
-                assert_eq!(id, "admin-image");
-                assert_eq!(profile.as_deref(), Some("coding"));
-                assert_eq!(kind, CliSkillKind::Disabled);
-            }
-            _ => panic!("expected skills add"),
-        }
-
-        let cli = Cli::parse_from([
-            "capsem",
-            "skills",
-            "delete",
-            "admin-image",
-            "--profile",
-            "coding",
-        ]);
-        match cli.command.unwrap() {
-            Commands::Skills(SkillsCommands::Delete {
-                id, profile, kind, ..
-            }) => {
-                assert_eq!(id, "admin-image");
-                assert_eq!(profile.as_deref(), Some("coding"));
-                assert_eq!(kind, None);
-            }
-            _ => panic!("expected skills delete"),
-        }
-    }
-
-    #[test]
-    fn parse_runtime_security_rule_commands() {
-        let cli = Cli::parse_from(["capsem", "enforcement", "list", "--json"]);
-        match cli.command.unwrap() {
-            Commands::Enforcement(EnforcementCommands::List { json }) => assert!(json),
-            _ => panic!("expected enforcement list"),
-        }
-
-        let cli = Cli::parse_from([
-            "capsem",
-            "enforcement",
-            "compile",
-            "block-admin",
-            "--condition",
-            "http.request.path.startsWith('/admin')",
-            "--decision",
-            "block",
-            "--json",
-        ]);
-        match cli.command.unwrap() {
-            Commands::Enforcement(EnforcementCommands::Compile {
-                id,
-                condition,
-                decision,
-                json,
-                ..
-            }) => {
-                assert_eq!(id, "block-admin");
-                assert_eq!(condition, "http.request.path.startsWith('/admin')");
-                assert_eq!(decision, CliSecurityDecision::Block);
-                assert!(json);
-            }
-            _ => panic!("expected enforcement compile"),
-        }
-
-        let cli = Cli::parse_from([
-            "capsem",
-            "enforcement",
-            "install",
-            "block-admin",
-            "--condition",
-            "http.request.path.startsWith('/admin')",
-            "--decision",
-            "block",
-            "--pack-id",
-            "runtime",
-            "--reason",
-            "admin path",
-            "--disabled",
-            "--json",
-        ]);
-        match cli.command.unwrap() {
-            Commands::Enforcement(EnforcementCommands::Install {
-                id,
-                condition,
-                decision,
-                pack_id,
-                reason,
-                disabled,
-                json,
-            }) => {
-                assert_eq!(id, "block-admin");
-                assert_eq!(condition, "http.request.path.startsWith('/admin')");
-                assert_eq!(decision, CliSecurityDecision::Block);
-                assert_eq!(pack_id.as_deref(), Some("runtime"));
-                assert_eq!(reason.as_deref(), Some("admin path"));
-                assert!(disabled);
-                assert!(json);
-            }
-            _ => panic!("expected enforcement install"),
-        }
-
-        let cli = Cli::parse_from([
-            "capsem",
-            "enforcement",
-            "update",
-            "block-admin",
-            "--condition",
-            "http.request.path.startsWith('/admin')",
-            "--decision",
-            "block",
-            "--pack-id",
-            "runtime",
-        ]);
-        match cli.command.unwrap() {
-            Commands::Enforcement(EnforcementCommands::Update {
-                id,
-                condition,
-                decision,
-                pack_id,
-                ..
-            }) => {
-                assert_eq!(id, "block-admin");
-                assert_eq!(condition, "http.request.path.startsWith('/admin')");
-                assert_eq!(decision, CliSecurityDecision::Block);
-                assert_eq!(pack_id.as_deref(), Some("runtime"));
-            }
-            _ => panic!("expected enforcement update"),
-        }
-
-        let cli = Cli::parse_from([
-            "capsem",
-            "enforcement",
-            "backtest",
-            "block-admin",
-            "--events",
-            "events.jsonl",
-            "--condition",
-            "http.request.path.startsWith('/admin')",
-            "--decision",
-            "block",
-            "--limit",
-            "25",
-            "--json",
-        ]);
-        match cli.command.unwrap() {
-            Commands::Enforcement(EnforcementCommands::Backtest {
-                id,
-                events,
-                limit,
-                json,
-                ..
-            }) => {
-                assert_eq!(id, "block-admin");
-                assert_eq!(events, PathBuf::from("events.jsonl"));
-                assert_eq!(limit, Some(25));
-                assert!(json);
-            }
-            _ => panic!("expected enforcement backtest"),
-        }
-
-        let cli = Cli::parse_from([
-            "capsem",
-            "detection",
-            "compile",
-            "detect-tool-result",
-            "--pack-id",
-            "runtime-detection",
-            "--title",
-            "Tool result",
-            "--condition",
-            "model.response.tool_results[0].returned_to_model == true",
-            "--severity",
-            "medium",
-            "--confidence",
-            "high",
-        ]);
-        match cli.command.unwrap() {
-            Commands::Detection(DetectionCommands::Compile {
-                id,
-                pack_id,
-                severity,
-                confidence,
-                ..
-            }) => {
-                assert_eq!(id, "detect-tool-result");
-                assert_eq!(pack_id, "runtime-detection");
-                assert_eq!(severity, CliSeverity::Medium);
-                assert_eq!(confidence, CliConfidence::High);
-            }
-            _ => panic!("expected detection compile"),
-        }
-
-        let cli = Cli::parse_from([
-            "capsem",
-            "detection",
-            "backtest",
-            "detect-tool-result",
-            "--events",
-            "events.json",
-            "--pack-id",
-            "runtime-detection",
-            "--title",
-            "Tool result",
-            "--condition",
-            "model.response.tool_results[0].returned_to_model == true",
-            "--severity",
-            "medium",
-            "--confidence",
-            "high",
-            "--limit",
-            "50",
-        ]);
-        match cli.command.unwrap() {
-            Commands::Detection(DetectionCommands::Backtest {
-                id, events, limit, ..
-            }) => {
-                assert_eq!(id, "detect-tool-result");
-                assert_eq!(events, PathBuf::from("events.json"));
-                assert_eq!(limit, Some(50));
-            }
-            _ => panic!("expected detection backtest"),
-        }
-
-        let cli = Cli::parse_from([
-            "capsem",
-            "detection",
-            "hunt",
-            "detect-tool-result",
-            "--events",
-            "events.json",
-            "--pack-id",
-            "runtime-detection",
-            "--title",
-            "Tool result",
-            "--condition",
-            "model.response.tool_results[0].returned_to_model == true",
-            "--severity",
-            "medium",
-            "--confidence",
-            "high",
-        ]);
-        match cli.command.unwrap() {
-            Commands::Detection(DetectionCommands::Hunt { id, events, .. }) => {
-                assert_eq!(id, "detect-tool-result");
-                assert_eq!(events, PathBuf::from("events.json"));
-            }
-            _ => panic!("expected detection hunt"),
-        }
-
-        let cli = Cli::parse_from([
-            "capsem",
-            "detection",
-            "hunt-session",
-            "vm-1",
-            "detect-tool-result",
-            "--pack-id",
-            "runtime-detection",
-            "--title",
-            "Tool result",
-            "--condition",
-            "model.response.tool_results[0].returned_to_model == true",
-            "--severity",
-            "medium",
-            "--confidence",
-            "high",
-            "--tag",
-            "model",
-            "--limit",
-            "50",
-            "--json",
-        ]);
-        match cli.command.unwrap() {
-            Commands::Detection(DetectionCommands::HuntSession {
-                session,
-                id,
-                pack_id,
-                title,
-                condition,
-                severity,
-                confidence,
-                tags,
-                limit,
-                json,
-                ..
-            }) => {
-                assert_eq!(session, "vm-1");
-                assert_eq!(id, "detect-tool-result");
-                assert_eq!(pack_id, "runtime-detection");
-                assert_eq!(title, "Tool result");
-                assert_eq!(
-                    condition,
-                    "model.response.tool_results[0].returned_to_model == true"
-                );
-                assert_eq!(severity, CliSeverity::Medium);
-                assert_eq!(confidence, CliConfidence::High);
-                assert_eq!(tags, vec!["model"]);
-                assert_eq!(limit, Some(50));
-                assert!(json);
-            }
-            _ => panic!("expected detection hunt-session"),
-        }
-    }
-
-    #[test]
-    fn parse_confirm_list() {
-        let cli = Cli::parse_from(["capsem", "confirm", "list", "--json"]);
-        match cli.command.unwrap() {
-            Commands::Confirm(ConfirmCommands::List { json }) => assert!(json),
-            _ => panic!("expected confirm list"),
-        }
-    }
-
-    #[test]
-    fn format_runtime_hunt_summary_includes_event_and_evidence_rows() {
-        let summary = format_runtime_hunt_summary(&serde_json::json!({
-            "total_matches": 1,
-            "unique_evidence_matches": 1,
-            "truncated": false,
-            "rows": [{
-                "event_ref": {
-                    "corpus": "session_db",
-                    "session_id": "vm-1",
-                    "event_id": "evt-1",
-                    "timestamp_unix_ms": 1700000000000_i64
-                },
-                "rule_id": "detect-google",
-                "pack_id": "runtime-detection",
-                "matched_fields": [{
-                    "path": "http.request.host",
-                    "value": "google.example.test"
-                }],
-                "outcome": "matched"
-            }]
-        }));
-
-        assert!(summary.contains("Detection hunt matched 1 event(s)"));
-        assert!(summary.contains("detect-google"));
-        assert!(summary.contains("evt-1"));
-        assert!(summary.contains("http.request.host=google.example.test"));
-    }
-
-    #[test]
-    fn format_runtime_backtest_summary_uses_requested_label() {
-        let summary = format_runtime_match_summary(
-            "Enforcement backtest",
-            &serde_json::json!({
-                "total_matches": 1,
-                "unique_evidence_matches": 1,
-                "truncated": true,
-                "rows": []
-            }),
-        );
-
-        assert!(summary.contains("Enforcement backtest matched 1 event(s)"));
-        assert!(summary.contains("(truncated)"));
-    }
-
-    #[test]
-    fn confirm_summary_renders_disabled_resolver_state() {
-        let summary = format_confirm_list_summary(&serde_json::json!({
-            "pending_count": 0,
-            "resolve_available": false,
-            "resolve_owner": "S15-confirm-ux"
-        }));
-        assert!(summary.contains("unavailable"));
-        assert!(summary.contains("S15-confirm-ux"));
-        assert!(summary.contains("pending=0"));
-    }
-
-    #[test]
-    fn profile_list_show_and_resolve_summaries_use_typed_fields() {
-        let list = format_profile_list_summary(&serde_json::json!({
-            "profiles": [
-                {
-                    "source": "built-in",
-                    "locked": true,
-                    "profile": {
-                        "id": "coding",
-                        "name": "Coding",
-                        "extends_profile_id": "root"
-                    }
-                }
-            ]
-        }));
-        assert!(list.contains("coding"));
-        assert!(list.contains("built-in"));
-        assert!(list.contains("root"));
-
-        let show = format_profile_record_summary(&serde_json::json!({
-            "source": "user",
-            "locked": false,
-            "profile": {
-                "id": "everyday",
-                "name": "Everyday",
-                "ui": "everyday",
-                "profile_type": "user",
-                "packages": {
-                    "runtimes": { "python": "3.12" },
-                    "python_modules": { "requests": "2" },
-                    "node_packages": {},
-                    "system": {
-                        "distro": "debian",
-                        "release": "bookworm",
-                        "apt": { "curl": "latest" }
-                    }
-                },
-                "tools": {
-                    "python": { "version": "3.12", "required": true, "source": "guest" }
-                },
-                "mcpServers": {
-                    "github": { "enabled": true }
-                },
-                "vm": {
-                    "memory_mib": 4096,
-                    "cpus": 4,
-                    "network": "proxied",
-                    "assets": {
-                        "arm64": {
-                            "kernel": { "hash": "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
-                            "initrd": { "hash": "blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
-                            "rootfs": { "hash": "blake3:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" }
-                        }
-                    }
-                }
-            }
-        }));
-        assert!(show.contains("Profile: everyday"));
-        assert!(show.contains("locked=false"));
-        assert!(show.contains("Packages: runtimes=1 python=1 node=0 apt=1"));
-        assert!(show.contains("Tools: 1"));
-        assert!(show.contains("MCP: servers=1"));
-        assert!(show.contains("asset_arches=1"));
-        assert!(show.contains("assets.arm64"));
-
-        let resolved = format_profile_resolve_summary(&serde_json::json!({
-            "profile_id": "coding",
-            "effective": {
-                "profile_name": "Coding",
-                "profile_ui": "coding",
-                "rules": [{ "id": "rule-1" }],
-                "mcp": { "value": { "github": {} } },
-                "skills": { "value": {
-                    "groups": ["admin"],
-                    "enabled": ["admin-profile"],
-                    "disabled": []
-                }},
-                "packages": { "value": {
-                    "runtimes": { "node": "22" },
-                    "python_modules": {},
-                    "node_packages": { "typescript": "latest" },
-                    "system": { "distro": "", "release": "", "apt": {} }
-                }},
-                "tools": { "value": { "python": {} } },
-                "vm": { "value": {
-                    "memory_mib": 8192,
-                    "cpus": 6,
-                    "network": "proxied",
-                    "assets": {}
-                }}
-            }
-        }));
-        assert!(resolved.contains("profile=coding"));
-        assert!(resolved.contains("rules=1"));
-        assert!(resolved.contains("mcp_servers=1"));
-        assert!(resolved.contains("skills=2"));
-        assert!(resolved.contains("Packages: runtimes=1 python=0 node=1 apt=0"));
-        assert!(resolved.contains("VM: memory_mib=8192 cpus=6"));
-    }
-
-    #[test]
-    fn mcp_path_summary_and_show_filter_preserve_server_identity() {
-        assert_eq!(
-            mcp_connectors_path(Some(&"coding profile".to_string())),
-            "/mcp/connectors?profile=coding%20profile"
-        );
-        let result = serde_json::json!({
-            "profile_id": "coding",
-            "servers": [
-                {
-                    "id": "github",
-                    "source_profile": "coding",
-                    "server": {
-                        "enabled": true,
-                        "type": "stdio",
-                        "command": "npx",
-                        "capsem": { "allowed_tools": ["repo.read"] }
-                    }
-                },
-                {
-                    "id": "browser",
-                    "source_profile": "corp-root",
-                    "server": {
-                        "enabled": false,
-                        "type": "http",
-                        "url": "https://mcp.example.test",
-                        "capsem": { "allowed_tools": [] }
-                    }
-                }
-            ]
-        });
-        let summary = format_mcp_connectors_summary(&result);
-        assert!(summary.contains("github"));
-        assert!(summary.contains("repo.read"));
-        assert!(summary.contains("corp-root"));
-
-        let matches = mcp_server_matches(&result, "github");
-        assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0]["id"], "github");
-    }
-
-    #[test]
-    fn skills_path_and_summary_preserve_profile_kind_and_ownership() {
-        assert_eq!(
-            skills_path(
-                Some(&"coding profile".to_string()),
-                Some(CliSkillKind::Disabled)
-            ),
-            "/skills?profile=coding%20profile&kind=disabled"
-        );
-
-        let summary = format_skills_summary(&serde_json::json!({
-            "profile_id": "coding",
-            "skills": [
-                {
-                    "id": "admin-profile",
-                    "kind": "enabled",
-                    "source_profile": "coding",
-                    "direct": true,
-                    "editable": true
-                },
-                {
-                    "id": "corp-skill",
-                    "kind": "group",
-                    "source_profile": "corp-root",
-                    "direct": false,
-                    "editable": false
-                }
-            ]
-        }));
-
-        assert!(summary.contains("admin-profile"));
-        assert!(summary.contains("corp-skill"));
-        assert!(summary.contains("corp-root"));
-    }
-
-    #[test]
-    fn read_runtime_backtest_events_accepts_envelope_array_and_jsonl() {
-        let dir = tempfile::tempdir().unwrap();
-        let envelope = dir.path().join("events-envelope.json");
-        std::fs::write(
-            &envelope,
-            r#"{"events":[{"event":{"event_id":"evt-1"}},{"event":{"event_id":"evt-2"}}]}"#,
-        )
-        .unwrap();
-        assert_eq!(read_runtime_backtest_events(&envelope).unwrap().len(), 2);
-
-        let array = dir.path().join("events-array.json");
-        std::fs::write(
-            &array,
-            r#"[{"event":{"event_id":"evt-1"}},{"event":{"event_id":"evt-2"}}]"#,
-        )
-        .unwrap();
-        assert_eq!(read_runtime_backtest_events(&array).unwrap().len(), 2);
-
-        let jsonl = dir.path().join("events.jsonl");
-        std::fs::write(
-            &jsonl,
-            "{\"event\":{\"event_id\":\"evt-1\"}}\n{\"event\":{\"event_id\":\"evt-2\"}}\n",
-        )
-        .unwrap();
-        assert_eq!(read_runtime_backtest_events(&jsonl).unwrap().len(), 2);
-    }
-
-    #[test]
-    fn read_profile_document_parses_toml_and_json_with_validation() {
-        let dir = tempfile::tempdir().unwrap();
-
-        let toml_path = dir.path().join("profile.toml");
-        std::fs::write(
-            &toml_path,
-            r#"
-id = "typed-toml"
-name = "Typed TOML"
-best_for = "Testing typed profile TOML parsing."
-"#,
-        )
-        .unwrap();
-        let profile = read_profile_document(&toml_path).unwrap();
-        assert_eq!(profile.id, "typed-toml");
-
-        let json_path = dir.path().join("profile.json");
-        std::fs::write(
-            &json_path,
-            r#"{"id":"typed-json","name":"Typed JSON","best_for":"Testing typed profile JSON parsing."}"#,
-        )
-        .unwrap();
-        let profile = read_profile_document(&json_path).unwrap();
-        assert_eq!(profile.id, "typed-json");
-
-        let bad_path = dir.path().join("bad.json");
-        std::fs::write(&bad_path, r#"{"id":"bad","name":"","best_for":"nope"}"#).unwrap();
-        assert!(read_profile_document(&bad_path).is_err());
-    }
-
-    #[test]
-    fn parse_profile_install_update_remove() {
-        for (verb, expected_revision) in [
-            ("install", Some("2026.0520.2")),
-            ("update", Some("2026.0520.3")),
-            ("remove", None),
-        ] {
-            let mut args = vec!["capsem", "profile", verb, "everyday-work", "--json"];
-            if let Some(revision) = expected_revision {
-                args.push("--revision");
-                args.push(revision);
-            }
-            let cli = Cli::parse_from(args);
-            match (verb, cli.command.unwrap()) {
-                (
-                    "install",
-                    Commands::Profile(ProfileCommands::Install {
-                        profile_id,
-                        revision,
-                        json,
-                    }),
-                ) => {
-                    assert_eq!(profile_id, "everyday-work");
-                    assert_eq!(revision.as_deref(), expected_revision);
-                    assert!(json);
-                }
-                (
-                    "update",
-                    Commands::Profile(ProfileCommands::Update {
-                        profile_id,
-                        file,
-                        revision,
-                        json,
-                    }),
-                ) => {
-                    assert_eq!(profile_id, "everyday-work");
-                    assert!(file.is_none());
-                    assert_eq!(revision.as_deref(), expected_revision);
-                    assert!(json);
-                }
-                (
-                    "remove",
-                    Commands::Profile(ProfileCommands::Remove {
-                        profile_id,
-                        revision,
-                        json,
-                    }),
-                ) => {
-                    assert_eq!(profile_id, "everyday-work");
-                    assert_eq!(revision.as_deref(), expected_revision);
-                    assert!(json);
-                }
-                _ => panic!("expected profile {verb}"),
-            }
-        }
-    }
-
-    #[test]
-    fn parse_profile_reconcile_catalog_url() {
-        let cli = Cli::parse_from([
-            "capsem",
-            "profile",
-            "reconcile-catalog",
-            "--manifest-url",
-            "https://profiles.example.test/catalog.json",
-            "--pubkey",
-            "profile.pub",
-        ]);
-        match cli.command.unwrap() {
-            Commands::Profile(ProfileCommands::ReconcileCatalog {
-                manifest,
-                manifest_url,
-                pubkey,
-                json,
-            }) => {
-                assert_eq!(manifest, None);
-                assert_eq!(
-                    manifest_url.as_deref(),
-                    Some("https://profiles.example.test/catalog.json")
-                );
-                assert_eq!(pubkey, PathBuf::from("profile.pub"));
-                assert!(!json);
-            }
-            _ => panic!("expected profile reconcile-catalog"),
-        }
-    }
-
-    #[test]
-    fn parse_profile_reconcile_catalog_rejects_missing_source() {
-        let err = match Cli::try_parse_from([
-            "capsem",
-            "profile",
-            "reconcile-catalog",
-            "--pubkey",
-            "profile.pub",
-        ]) {
-            Ok(_) => panic!("expected missing source parse error"),
+    fn parse_doctor_rejects_fast_escape_hatch() {
+        let err = match Cli::try_parse_from(["capsem", "doctor", "--fast"]) {
+            Ok(_) => panic!("doctor --fast must not be accepted"),
             Err(err) => err,
         };
-
-        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
-    }
-
-    #[test]
-    fn profile_catalog_reconcile_summary_line_includes_absent_removed() {
-        let result = serde_json::json!({
-            "summary": {
-                "installed": 1,
-                "unchanged": 2,
-                "deprecated_kept": 3,
-                "revoked_removed": 4,
-                "absent_removed": 5,
-                "errors": 6
-            }
-        });
-
-        assert_eq!(
-            profile_catalog_reconcile_summary_line(&result),
-            "Profile catalog reconciled: installed=1 unchanged=2 deprecated_kept=3 revoked_removed=4 absent_removed=5 errors=6"
+        assert!(
+            err.to_string().contains("--fast"),
+            "error should identify the retired flag: {err}"
         );
     }
 
     #[test]
-    fn profile_catalog_summary_line_counts_profiles() {
-        let result = serde_json::json!({
-            "configured": true,
-            "manifest_present": true,
-            "profiles": [
-                {
-                    "profile_id": "everyday-work",
-                    "current_revision": "2026.0520.2",
-                    "installed_revision": "2026.0520.2",
-                    "revisions": []
-                }
-            ]
-        });
-
-        assert_eq!(
-            profile_catalog_summary_line(&result),
-            "Profile catalog: configured=true manifest_present=true profiles=1"
-        );
-    }
-
-    #[test]
-    fn profile_revisions_summary_line_counts_revisions() {
-        let result = serde_json::json!({
-            "profile_id": "everyday-work",
-            "current_revision": "2026.0520.2",
-            "installed_revision": "2026.0520.1",
-            "revisions": [
-                {"revision": "2026.0520.1", "status": "deprecated"},
-                {"revision": "2026.0520.2", "status": "active"},
-                {"revision": "2026.0520.3", "status": "revoked"}
-            ]
-        });
-
-        assert_eq!(
-            profile_revisions_summary_line(&result),
-            "Profile revisions: profile=everyday-work current=2026.0520.2 installed=2026.0520.1 revisions=3"
-        );
-    }
-
-    #[test]
-    fn profile_revision_action_summary_line_reports_outcome() {
-        let result = serde_json::json!({
-            "action": "install",
-            "profile_id": "everyday-work",
-            "selected_revision": "2026.0520.2",
-            "outcome": {
-                "outcome": "installed"
-            }
-        });
-
-        assert_eq!(
-            profile_revision_action_summary_line(&result),
-            "Profile revision install: everyday-work@2026.0520.2 installed"
-        );
-    }
-
-    #[test]
-    fn format_session_profile_for_list_shows_revision_and_status() {
-        let mut session = SessionInfo {
-            id: "vm".into(),
-            name: None,
-            pid: 0,
-            status: "Stopped".into(),
-            persistent: true,
-            ram_mb: None,
-            cpus: None,
-            version: None,
-            base_assets: None,
-            profile_pin: None,
-            forked_from: None,
-            description: None,
-            profile_id: Some("everyday-work".into()),
-            profile_revision: Some("2026.0520.2".into()),
-            profile_status: Some(SessionProfileStatus::Current),
-            created_at: None,
-            uptime_secs: None,
-            total_input_tokens: None,
-            total_output_tokens: None,
-            total_estimated_cost: None,
-            total_tool_calls: None,
-            total_mcp_calls: None,
-            total_requests: None,
-            allowed_requests: None,
-            denied_requests: None,
-            total_file_events: None,
-            model_call_count: None,
-            last_error: None,
-        };
-
-        assert_eq!(
-            format_session_profile_for_list(&session),
-            "everyday-work@2026.0520.2:current"
-        );
-
-        session.profile_id = None;
-        session.profile_revision = None;
-        session.profile_status = Some(SessionProfileStatus::Corrupted);
-        assert_eq!(format_session_profile_for_list(&session), "corrupted");
-    }
-
-    #[test]
-    fn format_provision_profile_summary_prints_profile_pin_and_asset_hashes() {
-        let response = ProvisionResponse {
-            id: "vm-1".into(),
-            uds_path: Some(std::path::PathBuf::from("/tmp/capsem/vm-1.sock")),
-            profile_id: Some("coding".into()),
-            profile_revision: Some("2026.0520.1".into()),
-            profile_status: Some(SessionProfileStatus::Current),
-            profile_pin: Some(client::SavedVmProfilePin {
-                profile_id: "coding".into(),
-                profile_revision: Some("2026.0520.1".into()),
-                profile_payload_hash: Some("blake3:profile".into()),
-                package_contract_hash: "blake3:packages".into(),
-                base_assets: Some(client::SavedVmBaseAssets {
-                    asset_version: "2026.0520.1".into(),
-                    arch: "arm64".into(),
-                    kernel_hash: "blake3:kernel".into(),
-                    initrd_hash: "blake3:initrd".into(),
-                    rootfs_hash: "blake3:rootfs".into(),
-                    guest_abi: Some("capsem-guest-v1".into()),
-                }),
-            }),
-            asset_health: Some(client::AssetHealth {
-                ready: true,
-                state: "ready".into(),
-                profile_id: Some("coding".into()),
-                profile_revision: Some("2026.0520.1".into()),
-                profile_payload_hash: Some("blake3:profile".into()),
-                profile_assets: vec![client::ProfileAssetProvenance {
-                    logical_name: "rootfs.squashfs".into(),
-                    hash: "blake3:rootfs".into(),
-                    source_url: "https://assets.example/rootfs.squashfs".into(),
-                    size: 123,
-                    content_type: "application/octet-stream".into(),
-                }],
-                version: Some("2026.0520.1".into()),
-                arch: Some("arm64".into()),
-                missing: Vec::new(),
-                progress: Some(client::AssetProgress {
-                    logical_name: "rootfs.squashfs".into(),
-                    bytes_done: 123,
-                    bytes_total: Some(123),
-                    done: true,
-                }),
-                error: None,
-                retry_count: 0,
-                retryable: false,
-                saved_vm_dependencies: Vec::new(),
-                checked_at_unix_secs: None,
-            }),
-        };
-
-        let summary = format_provision_profile_summary(&response).unwrap();
-        assert!(summary.contains("profile: coding@2026.0520.1 status=current"));
-        assert!(summary.contains("profile_payload_hash: blake3:profile"));
-        assert!(summary.contains("package_contract_hash: blake3:packages"));
-        assert!(summary.contains("kernel: blake3:kernel"));
-        assert!(summary.contains("rootfs.squashfs: hash=blake3:rootfs"));
-        assert!(summary.contains("asset_progress: rootfs.squashfs 123/123 done=true"));
-    }
-
-    #[test]
-    fn format_session_profile_pin_summary_prints_package_and_asset_hashes() {
-        let session = SessionInfo {
-            id: "vm".into(),
-            name: None,
-            pid: 0,
-            status: "Running".into(),
-            persistent: true,
-            ram_mb: None,
-            cpus: None,
-            version: None,
-            base_assets: None,
-            profile_pin: Some(client::SavedVmProfilePin {
-                profile_id: "coding".into(),
-                profile_revision: Some("2026.0520.1".into()),
-                profile_payload_hash: Some("blake3:profile".into()),
-                package_contract_hash: "blake3:packages".into(),
-                base_assets: Some(client::SavedVmBaseAssets {
-                    asset_version: "2026.0520.1".into(),
-                    arch: "arm64".into(),
-                    kernel_hash: "blake3:kernel".into(),
-                    initrd_hash: "blake3:initrd".into(),
-                    rootfs_hash: "blake3:rootfs".into(),
-                    guest_abi: Some("capsem-guest-v1".into()),
-                }),
-            }),
-            forked_from: None,
-            description: None,
-            profile_id: Some("coding".into()),
-            profile_revision: Some("2026.0520.1".into()),
-            profile_status: Some(SessionProfileStatus::Current),
-            created_at: None,
-            uptime_secs: None,
-            total_input_tokens: None,
-            total_output_tokens: None,
-            total_estimated_cost: None,
-            total_tool_calls: None,
-            total_mcp_calls: None,
-            total_requests: None,
-            allowed_requests: None,
-            denied_requests: None,
-            total_file_events: None,
-            model_call_count: None,
-            last_error: None,
-        };
-
-        let summary = format_session_profile_pin_summary(&session).unwrap();
-        assert!(summary.contains("Profile Pin:"));
-        assert!(summary.contains("profile: coding@2026.0520.1"));
-        assert!(summary.contains("profile_payload_hash: blake3:profile"));
-        assert!(summary.contains("package_contract_hash: blake3:packages"));
-        assert!(summary.contains("kernel: blake3:kernel"));
-        assert!(summary.contains("rootfs: blake3:rootfs"));
+    fn doctor_mock_server_addr_is_iptables_redirect_target() {
+        assert_eq!(DOCTOR_MOCK_SERVER_ADDR, "127.0.0.1:3713");
     }
 
     #[test]
@@ -6000,57 +2678,115 @@ best_for = "Testing typed profile TOML parsing."
     }
 
     #[test]
-    fn parse_setup_non_interactive() {
-        let cli = Cli::parse_from(["capsem", "setup", "--non-interactive"]);
+    fn parse_setup_is_removed() {
+        let err = match Cli::try_parse_from(["capsem", "setup", "--non-interactive"]) {
+            Ok(_) => panic!("setup command must not parse after T5 removal"),
+            Err(err) => err,
+        };
+        assert_eq!(err.kind(), clap::error::ErrorKind::InvalidSubcommand);
+    }
+
+    #[test]
+    fn parse_assets_status() {
+        let cli = Cli::parse_from(["capsem", "assets", "status"]);
         match cli.command.unwrap() {
-            Commands::Misc(MiscCommands::Setup {
-                non_interactive,
-                preset,
-                force,
-                ..
-            }) => {
-                assert!(non_interactive);
-                assert_eq!(preset, None);
-                assert!(!force);
+            Commands::Assets(AssetsCommands::Status { profile, json }) => {
+                assert_eq!(profile, "code");
+                assert!(!json);
             }
-            _ => panic!("expected Setup"),
+            _ => panic!("expected assets status"),
         }
     }
 
     #[test]
-    fn parse_setup_with_preset_and_force() {
-        let cli = Cli::parse_from(["capsem", "setup", "--preset", "high", "--force"]);
+    fn cli_default_profile_is_primary_profile() {
+        assert_eq!(DEFAULT_PROFILE_ID, "code");
+    }
+
+    #[test]
+    fn status_asset_lines_are_derived_from_profiles_status_payload() {
+        let payload = serde_json::json!({
+            "source": "installed",
+            "profile_count": 1,
+            "ready_count": 1,
+            "asset_manifest": {
+                "origin": "package",
+                "path": "/tmp/manifest.json",
+                "blake3": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "assets_current": "2026.0609.1",
+                "binaries_current": "1.3.0"
+            },
+            "profiles": [
+                {
+                    "id": "code",
+                    "name": "Code",
+                    "ready": true,
+                    "current_arch": "arm64",
+                    "profile_payload_hash": "bbbbbbbbbbbb",
+                    "missing_assets": []
+                }
+            ]
+        });
+
+        let lines = profile_status_summary_lines(&payload);
+
+        assert!(lines
+            .iter()
+            .any(|line| line == "Profiles:  1/1 ready (installed)"));
+        assert!(lines
+            .iter()
+            .any(|line| line == "Manifest:  package (/tmp/manifest.json)"));
+        assert!(lines.iter().any(|line| line == "  assets:  2026.0609.1"));
+        assert!(lines
+            .iter()
+            .any(|line| line == "  - code: Code (ready, arch arm64, hash bbbbbbbbbbbb)"));
+    }
+
+    #[test]
+    fn health_issues_are_derived_from_profiles_status_payload() {
+        let payload = serde_json::json!({
+            "profile_count": 1,
+            "profiles": [
+                {
+                    "id": "code",
+                    "ready": false,
+                    "missing_assets": ["initrd.img"],
+                    "invalid_assets": ["rootfs.erofs"],
+                    "invalid_files": ["profiles/code/enforcement.toml"]
+                }
+            ]
+        });
+
+        let issues = profile_status_issues(&payload);
+
+        assert_eq!(issues.len(), 1);
+        assert!(issues[0].contains("Profile code is not ready"));
+        assert!(issues[0].contains("missing assets: initrd.img"));
+        assert!(issues[0].contains("invalid assets: rootfs.erofs"));
+        assert!(issues[0].contains("invalid profile files: profiles/code/enforcement.toml"));
+    }
+
+    #[test]
+    fn parse_assets_ensure_json() {
+        let cli = Cli::parse_from(["capsem", "assets", "ensure", "--json"]);
         match cli.command.unwrap() {
-            Commands::Misc(MiscCommands::Setup { preset, force, .. }) => {
-                assert_eq!(preset, Some("high".into()));
-                assert!(force);
+            Commands::Assets(AssetsCommands::Ensure { profile, json }) => {
+                assert_eq!(profile, "code");
+                assert!(json);
             }
-            _ => panic!("expected Setup"),
+            _ => panic!("expected assets ensure"),
         }
     }
 
     #[test]
-    fn parse_setup_with_corp_config() {
-        let cli = Cli::parse_from([
-            "capsem",
-            "setup",
-            "--corp-config",
-            "https://example.com/corp-profile.toml",
-            "--non-interactive",
-        ]);
+    fn parse_assets_status_profile() {
+        let cli = Cli::parse_from(["capsem", "assets", "status", "--profile", "analysis"]);
         match cli.command.unwrap() {
-            Commands::Misc(MiscCommands::Setup {
-                corp_config,
-                non_interactive,
-                ..
-            }) => {
-                assert_eq!(
-                    corp_config,
-                    Some("https://example.com/corp-profile.toml".into())
-                );
-                assert!(non_interactive);
+            Commands::Assets(AssetsCommands::Status { profile, json }) => {
+                assert_eq!(profile, "analysis");
+                assert!(!json);
             }
-            _ => panic!("expected Setup"),
+            _ => panic!("expected assets status"),
         }
     }
 
@@ -6081,18 +2817,6 @@ best_for = "Testing typed profile TOML parsing."
             Commands::Misc(MiscCommands::Uninstall { yes }) => assert!(yes),
             _ => panic!("expected Uninstall"),
         }
-    }
-
-    #[test]
-    fn uninstall_does_not_refresh_update_cache() {
-        let cli = Cli::parse_from(["capsem", "uninstall", "--yes"]);
-        assert!(!command_refreshes_update_cache(cli.command.as_ref()));
-    }
-
-    #[test]
-    fn product_purge_does_not_refresh_update_cache() {
-        let cli = Cli::parse_from(["capsem", "purge", "--product", "--yes"]);
-        assert!(!command_refreshes_update_cache(cli.command.as_ref()));
     }
 
     #[test]
@@ -6203,14 +2927,20 @@ best_for = "Testing typed profile TOML parsing."
     }
 
     #[test]
-    fn parse_create_with_image_alias_rejected() {
-        let cli = Cli::try_parse_from(["capsem", "create", "--image", "old-img"]);
-        assert!(cli.is_err(), "--image alias should be rejected");
+    fn parse_create_with_from_image_alias() {
+        // --image is a backward-compat alias for --from
+        let cli = Cli::parse_from(["capsem", "create", "--image", "old-img"]);
+        match cli.command.unwrap() {
+            Commands::Session(SessionCommands::Create { from, .. }) => {
+                assert_eq!(from, Some("old-img".into()));
+            }
+            _ => panic!("expected Create with --image alias"),
+        }
     }
 
     #[test]
     fn parse_create_with_name_and_from() {
-        let cli = Cli::parse_from(["capsem", "create", "my-session", "--from", "my-src"]);
+        let cli = Cli::parse_from(["capsem", "create", "-n", "my-session", "--from", "my-src"]);
         match cli.command.unwrap() {
             Commands::Session(SessionCommands::Create { name, from, .. }) => {
                 assert_eq!(name, Some("my-session".into()));
@@ -6221,8 +2951,15 @@ best_for = "Testing typed profile TOML parsing."
     }
 
     #[test]
-    fn parse_create_with_name_flag_rejected() {
-        let cli = Cli::try_parse_from(["capsem", "create", "-n", "my-vm"]);
-        assert!(cli.is_err(), "create -n should be rejected");
+    fn shell_without_session_launches_tui_home() {
+        assert_eq!(capsem_shell_tui_args(None), Vec::<String>::new());
+    }
+
+    #[test]
+    fn shell_with_session_focuses_tui_session() {
+        assert_eq!(
+            capsem_shell_tui_args(Some("profile-v2")),
+            vec!["--session".to_string(), "profile-v2".to_string()]
+        );
     }
 }

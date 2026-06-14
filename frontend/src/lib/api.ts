@@ -13,34 +13,16 @@ import type {
   ForkRequest,
   ForkResponse,
   StatsResponse,
-  RuntimeEnforcementRuleRequest,
-  RuntimeDetectionRuleRequest,
-  RuntimeRuleListResponse,
-  RuntimeRuleCompileResponse,
-  RuntimeRuleInstallResponse,
-  RuntimeRuleDeleteResponse,
-  RuntimeEnforcementBacktestRequest,
-  RuntimeDetectionBacktestRequest,
-  RuntimeDetectionHuntRequest,
-  RuntimeSessionDetectionHuntRequest,
-  RuntimeBacktestResult,
-  DebugReport,
-  ProfileCatalogResponse,
-  ProfileListResponse,
-  ProfileRevisionsResponse,
 } from './types/gateway';
 import type {
   SettingsResponse,
-  SecurityPreset,
-  ConfigIssue,
-  PolicyRuleConfig,
 } from './types/settings';
-import { policyRuleKey, policyRuleNameFromParts } from './models/settings-model';
 import type {
   DownloadProgress,
+  McpDefaultPermission,
   McpServerInfo,
   McpToolInfo,
-  McpPolicyInfo,
+  ToolPermission,
   VmStateResponse,
   FileListResponse,
   FileContentResult,
@@ -72,27 +54,6 @@ function _detectBaseUrl(): string {
 
 let _baseUrl = _detectBaseUrl();
 
-export type ReloadConfigFailure = {
-  session_id: string;
-  message: string;
-};
-
-export type ReloadConfigResult = {
-  success: boolean;
-  reloaded: number;
-  failed_session_count: number;
-  failed_session_ids: string[];
-  failures: ReloadConfigFailure[];
-  message: string | null;
-};
-
-export class ReloadConfigError extends Error {
-  constructor(public result: ReloadConfigResult) {
-    super(result.message ?? 'reload failed');
-    this.name = 'ReloadConfigError';
-  }
-}
-
 // -- Public getters --
 
 export function isConnected(): boolean {
@@ -108,6 +69,251 @@ export type InitResult = {
   reachable: boolean;
   version: string | null;
 };
+
+export type PluginMode = 'allow' | 'ask' | 'block' | 'disable' | 'rewrite';
+export type PluginDetectionLevel = 'informational' | 'low' | 'medium' | 'high' | 'critical';
+export type PluginStage = 'preprocess' | 'postprocess' | 'logging';
+export type PluginDetailRouteKind = 'credential_broker';
+
+export interface PluginConfig {
+  mode: PluginMode;
+  detection_level: PluginDetectionLevel;
+}
+
+export interface PluginScope {
+  kind: 'profile';
+  profile_id: string;
+}
+
+export interface BrokeredCredentialStatus {
+  provider: string | null;
+  credential_ref: string;
+  observed_count: number;
+  injected_count: number;
+  replay_available: boolean;
+  last_seen: string | null;
+}
+
+export interface PluginRuntimeStatus {
+  enabled: boolean;
+  event_count: number;
+  execution_count: number;
+  applied_count: number;
+  skipped_count: number;
+  total_duration_us: number;
+  max_duration_us: number;
+  detection_count: number;
+  block_count: number;
+  rewrite_count: number;
+  last_error: string | null;
+  brokered_credentials: BrokeredCredentialStatus[];
+}
+
+export interface PluginCapabilities {
+  event_families: string[];
+  credential_providers: string[];
+  credential_sources: string[];
+}
+
+export interface PluginDetailRoute {
+  id: string;
+  label: string;
+  kind: PluginDetailRouteKind;
+  path: string;
+}
+
+export interface PluginInfo {
+  id: string;
+  config: PluginConfig;
+  default_config: PluginConfig;
+  overridden: boolean;
+  scope: PluginScope;
+  description: string;
+  stage: PluginStage;
+  version: string;
+  capabilities: PluginCapabilities;
+  runtime: PluginRuntimeStatus;
+  detail_routes: PluginDetailRoute[];
+}
+
+export interface PluginListResponse {
+  scope: PluginScope;
+  plugins: PluginInfo[];
+}
+
+export type CredentialBrokerForkGrantDefault = 'inherit_profile';
+
+export interface CredentialBrokerVmGrant {
+  vm_id: string;
+  enabled: boolean;
+}
+
+export interface CredentialBrokerGrantStatus {
+  profile_enabled: boolean;
+  vm_grants: CredentialBrokerVmGrant[];
+  fork_default: CredentialBrokerForkGrantDefault;
+}
+
+export interface CredentialBrokerCorpConstraint {
+  id: string;
+  description: string;
+}
+
+export interface CredentialStoreStatus {
+  backend: string;
+  ready: boolean;
+  status: 'ready' | 'degraded';
+  cached_count: number;
+  last_hydrated_count: number;
+  last_hydrated_unix_ms: number | null;
+  last_error: string | null;
+}
+
+export interface CredentialBrokerInfo {
+  scope: PluginScope;
+  plugin_id: 'credential_broker';
+  store: CredentialStoreStatus;
+  inventory: BrokeredCredentialStatus[];
+  grants: CredentialBrokerGrantStatus;
+  corp_constraints: CredentialBrokerCorpConstraint[];
+}
+
+export interface ProfileSummary {
+  id: string;
+  name: string;
+  description: string;
+  icon_svg?: string | null;
+  availability: {
+    web: boolean;
+    shell: boolean;
+    mobile: boolean;
+  };
+  source: string;
+  rule_count: number;
+  default_rule_count: number;
+  plugin_count: number;
+  mcp_server_count: number;
+}
+
+export interface ProfilesListResponse {
+  profiles: ProfileSummary[];
+}
+
+export interface ProfileObomInfo {
+  profile_id: string;
+  current_arch: string;
+  scope: 'base_image';
+  format: string;
+  name: string;
+  url: string;
+  hash: string;
+  size: number;
+  generator: string;
+  generator_version: string;
+  rootfs_hash: string;
+  route: string;
+}
+
+export interface ProfileInfoResponse {
+  profile: ProfileSummary;
+  obom?: ProfileObomInfo | null;
+}
+
+export interface ProfileObomResponse {
+  profile_id: string;
+  current_arch: string;
+  obom: ProfileObomInfo;
+  document?: unknown;
+}
+
+export interface ProfileValidateRequest {
+  toml?: string;
+  profile?: Record<string, unknown>;
+}
+
+export interface ProfileValidateResponse {
+  valid: boolean;
+  profile_id: string;
+}
+
+export type SecurityRuleAction = 'allow' | 'ask' | 'block' | 'preprocess' | 'rewrite' | 'postprocess';
+export type SecurityRuleDetectionLevel = 'informational' | 'low' | 'medium' | 'high' | 'critical';
+export type RuntimeSecurityRuleDetectionLevel = SecurityRuleDetectionLevel | 'none';
+
+export interface EnforcementRuleInfo {
+  rule_id: string;
+  source: string;
+  provider: string;
+  namespace: string;
+  rule_key: string;
+  default_rule: boolean;
+  enabled: boolean;
+  name: string;
+  action: SecurityRuleAction;
+  match: string;
+  detection_level?: SecurityRuleDetectionLevel;
+  priority: number;
+  corp_locked: boolean;
+  reason?: string;
+}
+
+export interface EnforcementRuleListResponse {
+  profile_id: string;
+  rules: EnforcementRuleInfo[];
+}
+
+export interface EnforcementInfoResponse {
+  profile_id: string;
+  rule_count: number;
+  default_rule_count: number;
+  custom_rule_count: number;
+  detection_rule_count: number;
+  corp_locked_rule_count: number;
+  source_counts: Record<string, number>;
+  action_counts: Record<string, number>;
+}
+
+export type DetectionRuleInfo = EnforcementRuleInfo;
+export type DetectionRuleListResponse = EnforcementRuleListResponse;
+export type DetectionInfoResponse = EnforcementInfoResponse;
+
+export interface SecurityRuleActionCount {
+  rule_action: SecurityRuleAction;
+  count: number;
+}
+
+export interface SecurityRuleEventTypeCount {
+  event_type: string;
+  count: number;
+}
+
+export interface SecurityRuleStatsByRule {
+  rule_id: string;
+  rule_action: SecurityRuleAction;
+  detection_level: RuntimeSecurityRuleDetectionLevel;
+  count: number;
+  latest_event_id: string;
+  latest_timestamp_unix_ms: number;
+}
+
+export interface SecurityRuleStats {
+  total: number;
+  by_action: SecurityRuleActionCount[];
+  by_event_type: SecurityRuleEventTypeCount[];
+  by_rule: SecurityRuleStatsByRule[];
+}
+
+export interface SecurityRuleEvent {
+  timestamp_unix_ms: number;
+  event_id: string;
+  event_type: string;
+  rule_id: string;
+  rule_action: SecurityRuleAction;
+  detection_level: RuntimeSecurityRuleDetectionLevel;
+  rule_json: string;
+  event_json: string;
+  trace_id?: string | null;
+}
 
 // -- Initialization --
 
@@ -131,7 +337,7 @@ export async function init(): Promise<InitResult> {
       return { connected: false, reachable: true, version: health.version };
     }
     const tokenData: TokenResponse = await tokenResp.json();
-    _token = tokenData.token;
+    _applyToken(tokenData.token);
 
     _connected = true;
     console.log('[api] init OK: connected, token acquired, version=%s', health.version);
@@ -142,6 +348,36 @@ export async function init(): Promise<InitResult> {
     _token = null;
     
     return { connected: false, reachable: false, version: null };
+  }
+}
+
+function _applyToken(token: string): void {
+  if (_token === token) return;
+  _token = token;
+  if (_eventWs) {
+    const ws = _eventWs;
+    _eventWs = null;
+    ws.onclose = null;
+    ws.close();
+  }
+}
+
+async function _refreshToken(): Promise<boolean> {
+  try {
+    const tokenResp = await fetch(`${_baseUrl}/token`);
+    if (!tokenResp.ok) {
+      _connected = false;
+      _token = null;
+      return false;
+    }
+    const tokenData: TokenResponse = await tokenResp.json();
+    _applyToken(tokenData.token);
+    _connected = true;
+    return true;
+  } catch {
+    _connected = false;
+    _token = null;
+    return false;
   }
 }
 
@@ -169,8 +405,27 @@ class ApiError extends Error {
   }
 }
 
-async function _get(path: string): Promise<Response> {
-  const resp = await _authFetch(path);
+function _isAuthRefreshStatus(status: number): boolean {
+  return status === 401 || status === 429;
+}
+
+async function _request(method: string, path: string, body?: unknown, retryAuth = true): Promise<Response> {
+  const init: RequestInit = {
+    headers: {
+      Authorization: `Bearer ${_token}`,
+      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+    },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  };
+  if (method !== 'GET') {
+    init.method = method;
+  }
+  const resp = await fetch(`${_baseUrl}${path}`, {
+    ...init,
+  });
+  if (!resp.ok && retryAuth && _isAuthRefreshStatus(resp.status) && await _refreshToken()) {
+    return _request(method, path, body, false);
+  }
   if (!resp.ok) {
     const body = await resp.text();
     throw new ApiError(resp.status, body);
@@ -178,66 +433,20 @@ async function _get(path: string): Promise<Response> {
   return resp;
 }
 
+async function _get(path: string): Promise<Response> {
+  return _request('GET', path);
+}
+
 async function _post(path: string, body?: unknown): Promise<Response> {
-  const resp = await _authFetch(path, {
-    method: 'POST',
-    headers: {
-      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
-    },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
-  if (!resp.ok) {
-    const text = await resp.text();
-    throw new ApiError(resp.status, text);
-  }
-  return resp;
+  return _request('POST', path, body);
+}
+
+async function _patch(path: string, body?: unknown): Promise<Response> {
+  return _request('PATCH', path, body);
 }
 
 async function _delete(path: string): Promise<Response> {
-  const resp = await _authFetch(path, {
-    method: 'DELETE',
-  });
-  if (!resp.ok) {
-    const text = await resp.text();
-    throw new ApiError(resp.status, text);
-  }
-  return resp;
-}
-
-async function _refreshAuthToken(): Promise<void> {
-  const tokenResp = await fetch(`${_baseUrl}/token`);
-  if (!tokenResp.ok) {
-    _connected = false;
-    _token = null;
-    const body = await tokenResp.text();
-    throw new ApiError(tokenResp.status, body);
-  }
-  const tokenData: TokenResponse = await tokenResp.json();
-  _token = tokenData.token;
-  _connected = true;
-}
-
-async function _authFetch(path: string, init: RequestInit = {}, retry = true): Promise<Response> {
-  if (!_token) {
-    await _refreshAuthToken();
-  }
-
-  const headers = {
-    ...((init.headers as Record<string, string> | undefined) ?? {}),
-    Authorization: `Bearer ${_token}`,
-  };
-  const resp = await fetch(`${_baseUrl}${path}`, {
-    ...init,
-    headers,
-  });
-
-  if (resp.status === 401 && retry) {
-    _token = null;
-    await _refreshAuthToken();
-    return _authFetch(path, init, false);
-  }
-
-  return resp;
+  return _request('DELETE', path);
 }
 
 // Helper: returns true if error is a network failure (gateway unreachable)
@@ -249,11 +458,8 @@ function isNetworkError(err: unknown): boolean {
 
 export async function getStatus(): Promise<StatusResponse> {
   if (!_connected) {
-    console.log('[api] getStatus() reconnecting before status poll');
-    const result = await init();
-    if (!result.connected) {
-      return emptyStatus();
-    }
+    console.log('[api] getStatus() skipped: not connected');
+    return emptyStatus();
   }
   try {
     const resp = await _get('/status');
@@ -267,24 +473,30 @@ export async function getStatus(): Promise<StatusResponse> {
   }
 }
 
-export async function getProfileCatalog(): Promise<ProfileCatalogResponse> {
-  const resp = await _get('/profiles/catalog');
+async function routeJson(path: string): Promise<unknown> {
+  const resp = await _get(path);
   return await resp.json();
 }
 
-export async function listProfiles(): Promise<ProfileListResponse> {
-  const resp = await _get('/profiles');
-  return await resp.json();
+function settledValue(result: PromiseSettledResult<unknown>): unknown {
+  if (result.status === 'fulfilled') return result.value;
+  return { error: result.reason instanceof Error ? result.reason.message : String(result.reason) };
 }
 
-export async function getProfileRevisions(profileId: string): Promise<ProfileRevisionsResponse> {
-  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/revisions`);
-  return await resp.json();
-}
-
-export async function selectProfile(profileId: string): Promise<ProfileCatalogResponse> {
-  const resp = await _post(`/profiles/${encodeURIComponent(profileId)}/select`);
-  return await resp.json();
+export async function debugSnapshot(): Promise<unknown> {
+  const [status, profilesStatus, corpInfo] = await Promise.allSettled([
+    getStatus(),
+    routeJson('/profiles/status'),
+    routeJson('/corp/info'),
+  ]);
+  return {
+    generated_at: new Date().toISOString(),
+    connected: _connected,
+    base_url: _baseUrl,
+    status: settledValue(status),
+    profiles_status: settledValue(profilesStatus),
+    corp_info: settledValue(corpInfo),
+  };
 }
 
 function emptyStatus(): StatusResponse {
@@ -307,7 +519,7 @@ function emptyStatus(): StatusResponse {
 
 export async function provisionVm(opts: ProvisionRequest): Promise<ProvisionResponse> {
   console.log('[api] provisionVm(%o) connected=%s', opts, _connected);
-  const resp = await _post('/provision', opts);
+  const resp = await _post('/vms/create', opts);
   const result = await resp.json();
   console.log('[api] provisionVm result:', result);
   return result;
@@ -319,33 +531,29 @@ export async function runVm(opts: ProvisionRequest): Promise<ProvisionResponse> 
 }
 
 export async function stopVm(id: string): Promise<void> {
-  await _post(`/stop/${encodeURIComponent(id)}`);
+  await _post(`/vms/${encodeURIComponent(id)}/stop`);
 }
 
 export async function suspendVm(id: string): Promise<void> {
-  await _post(`/suspend/${encodeURIComponent(id)}`);
+  await _post(`/vms/${encodeURIComponent(id)}/pause`);
 }
 
 export async function deleteVm(id: string): Promise<void> {
-  await _delete(`/delete/${encodeURIComponent(id)}`);
+  await _delete(`/vms/${encodeURIComponent(id)}/delete`);
 }
 
 export async function resumeVm(name: string): Promise<void> {
-  await _post(`/resume/${encodeURIComponent(name)}`);
-}
-
-export async function persistVm(id: string, name: string): Promise<void> {
-  await _post(`/persist/${encodeURIComponent(id)}`, { name });
+  await _post(`/vms/${encodeURIComponent(name)}/resume`);
 }
 
 export async function forkVm(id: string, opts: ForkRequest): Promise<ForkResponse> {
-  const resp = await _post(`/fork/${encodeURIComponent(id)}`, opts);
+  const resp = await _post(`/vms/${encodeURIComponent(id)}/fork`, opts);
   return await resp.json();
 }
 
 // -- VM inspection --
 
-/** Raw log response from GET /logs/{id}. */
+/** Raw log response from GET /vms/{id}/logs. */
 export interface RawLogsResponse {
   logs: string;
   serial_logs: string | null;
@@ -355,7 +563,7 @@ export interface RawLogsResponse {
 export async function getVmLogs(id: string): Promise<RawLogsResponse> {
   if (!_connected) return { logs: '', serial_logs: null, process_logs: null };
   try {
-    const resp = await _get(`/logs/${encodeURIComponent(id)}`);
+    const resp = await _get(`/vms/${encodeURIComponent(id)}/logs`);
     return await resp.json();
   } catch (err) {
     if (isNetworkError(err)) {
@@ -385,7 +593,7 @@ export async function execCommand(
   command: string,
   timeoutSecs?: number,
 ): Promise<ExecResponse> {
-  const resp = await _post(`/exec/${encodeURIComponent(id)}`, {
+  const resp = await _post(`/vms/${encodeURIComponent(id)}/exec`, {
     command,
     timeout_secs: timeoutSecs,
   });
@@ -395,7 +603,7 @@ export async function execCommand(
 export async function inspectQuery(id: string, sql: string): Promise<InspectResponse> {
   if (!_connected) return { columns: [], rows: [] };
   try {
-    const resp = await _post(`/inspect/${encodeURIComponent(id)}`, { sql });
+    const resp = await _post(`/vms/${encodeURIComponent(id)}/inspect`, { sql });
     return await resp.json();
   } catch (err) {
     if (isNetworkError(err)) {
@@ -407,80 +615,25 @@ export async function inspectQuery(id: string, sql: string): Promise<InspectResp
 }
 
 export async function readFile(id: string, path: string): Promise<ReadFileResponse> {
-  const result = await getFileContent(id, path);
-  return { content: result.text };
+  const resp = await _post(`/vms/${encodeURIComponent(id)}/files/read`, { path });
+  return await resp.json();
 }
 
 export async function writeFile(id: string, path: string, content: string): Promise<void> {
-  await uploadFile(id, path, content);
+  await _post(`/vms/${encodeURIComponent(id)}/files/write`, { path, content });
+}
+
+// -- Images --
+
+export async function getImages(): Promise<{ images: { name: string }[] }> {
+  const resp = await _get('/images');
+  return await resp.json();
 }
 
 // -- Config --
 
-export async function reloadConfig(): Promise<ReloadConfigResult> {
-  const resp = await _authFetch('/reload-config', {
-    method: 'POST',
-  });
-  const text = await resp.text();
-  const parsed = text ? parseReloadConfigBody(text) : null;
-  const result = normalizeReloadConfigResult(parsed, resp.ok, text);
-  if (!resp.ok || !result.success) {
-    throw new ReloadConfigError(result);
-  }
-  return result;
-}
-
-function parseReloadConfigBody(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
-  }
-}
-
-function normalizeReloadConfigResult(
-  raw: unknown,
-  ok: boolean,
-  fallbackText: string,
-): ReloadConfigResult {
-  if (raw && typeof raw === 'object') {
-    const body = raw as Partial<ReloadConfigResult> & { error?: unknown };
-    if (typeof body.success === 'boolean') {
-      return {
-        success: body.success,
-        reloaded: typeof body.reloaded === 'number' ? body.reloaded : 0,
-        failed_session_count: typeof body.failed_session_count === 'number' ? body.failed_session_count : 0,
-        failed_session_ids: Array.isArray(body.failed_session_ids) ? body.failed_session_ids.filter((id): id is string => typeof id === 'string') : [],
-        failures: Array.isArray(body.failures)
-          ? body.failures
-              .filter((failure): failure is ReloadConfigFailure =>
-                Boolean(failure)
-                && typeof failure === 'object'
-                && typeof (failure as ReloadConfigFailure).session_id === 'string'
-                && typeof (failure as ReloadConfigFailure).message === 'string')
-          : [],
-        message: typeof body.message === 'string' ? body.message : null,
-      };
-    }
-    if (typeof body.error === 'string') {
-      return {
-        success: false,
-        reloaded: 0,
-        failed_session_count: 0,
-        failed_session_ids: [],
-        failures: [],
-        message: body.error,
-      };
-    }
-  }
-  return {
-    success: ok,
-    reloaded: ok ? 0 : 0,
-    failed_session_count: 0,
-    failed_session_ids: [],
-    failures: [],
-    message: ok ? null : fallbackText,
-  };
+export async function reloadProfile(profileId: string): Promise<void> {
+  await _post(`/profiles/${encodeURIComponent(profileId)}/reload`);
 }
 
 // -- Stats --
@@ -623,10 +776,10 @@ export async function vmStatus(): Promise<string> {
 export async function getVmState(id?: string): Promise<VmStateResponse> {
   if (!_connected) return { state: 'not created', elapsed_ms: 0, history: [] };
   try {
-    const path = id ? `/info/${encodeURIComponent(id)}` : '/status';
+    const path = id ? `/vms/${encodeURIComponent(id)}/status` : '/status';
     const resp = await _get(path);
     const data = await resp.json();
-    // /info/{id} returns full sandbox info; extract state + history.
+    // /vms/{id}/status returns runtime state; extract optional transition history.
     if (id) {
       return {
         state: data.status ?? 'not created',
@@ -688,7 +841,10 @@ function _connectEventWs() {
     _eventWs = null;
     // Auto-reconnect after 5s if still connected.
     if (_connected) {
-      setTimeout(() => _connectEventWs(), 5000);
+      setTimeout(async () => {
+        await _refreshToken();
+        _connectEventWs();
+      }, 5000);
     }
   };
 }
@@ -715,165 +871,219 @@ export function onDownloadProgress(cb: (progress: DownloadProgress) => void): ()
 
 /** Load the merged settings tree (user + corp + defaults). */
 export async function getSettings(): Promise<SettingsResponse> {
-  const resp = await _get('/settings');
+  const resp = await _get('/settings/info');
   return await resp.json();
 }
 
 /** Save settings changes. Returns the updated settings tree. */
 export async function saveSettings(changes: Record<string, unknown>): Promise<SettingsResponse> {
-  const resp = await _post('/settings', changes);
+  const resp = await _patch('/settings/edit', changes);
   return await resp.json();
 }
 
-/** Save a Profile V2 service credential by credential id. */
-export async function saveCredential(
-  credentialId: string,
-  value: string,
-  description?: string,
-): Promise<void> {
-  await _post(`/credentials/${encodeURIComponent(credentialId)}`, {
-    value,
-    ...(description ? { description } : {}),
-  });
-}
+// -- Profiles --
 
-/** List available security presets. */
-export async function getPresets(): Promise<SecurityPreset[]> {
-  const resp = await _get('/settings/presets');
+export async function listProfiles(): Promise<ProfilesListResponse> {
+  const resp = await _get('/profiles/list');
   return await resp.json();
 }
 
-/** Apply a security preset by ID. Returns updated settings. */
-export async function applyPreset(id: string): Promise<SettingsResponse> {
-  const resp = await _post(`/settings/presets/${encodeURIComponent(id)}`);
+export async function getProfileInfo(profileId: string): Promise<ProfileInfoResponse> {
+  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/info`);
   return await resp.json();
 }
 
-/** Validate config and return issues. */
-export async function lintConfig(): Promise<ConfigIssue[]> {
-  const resp = await _post('/settings/lint');
+export async function getProfileObom(profileId: string): Promise<ProfileObomResponse> {
+  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/obom`);
   return await resp.json();
 }
 
-/** Build a redacted pasteable debug report for bug reports. */
-export async function getDebugReport(): Promise<DebugReport> {
-  const resp = await _get('/debug/report');
+export async function validateProfile(
+  profileId: string,
+  request: ProfileValidateRequest = {},
+): Promise<ProfileValidateResponse> {
+  const resp = await _post(`/profiles/${encodeURIComponent(profileId)}/validate`, request);
   return await resp.json();
 }
 
-// -- MCP config (mutations via settings API) --
-
-/** Get MCP policy from settings. */
-export async function getMcpPolicy(): Promise<McpPolicyInfo> {
-  const resp = await _get('/settings');
-  const settings: SettingsResponse = await resp.json();
-  // Extract MCP policy from settings tree. The backend includes it in the response.
-  return _extractMcpPolicy(settings);
+export async function getProfileSkillsInfo(profileId: string): Promise<unknown> {
+  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/skills/info`);
+  return await resp.json();
 }
 
-function _extractMcpPolicy(settings: SettingsResponse): McpPolicyInfo {
-  // Walk tree looking for mcp policy values; use defaults if not found.
-  const policy: McpPolicyInfo = {
-    global_policy: null,
-    default_tool_permission: 'allow',
-    blocked_servers: [],
-    tool_permissions: {},
-  };
-  function walk(nodes: NonNullable<SettingsResponse['tree']>) {
-    for (const node of nodes) {
-      if (node.kind === 'leaf') {
-        if (node.id === 'mcp.policy.global') {
-          policy.global_policy = node.effective_value as string | null;
-        } else if (node.id === 'mcp.policy.default_tool_permission') {
-          policy.default_tool_permission = node.effective_value as string;
-        }
-      }
-      if (node.kind === 'group' && 'children' in node) {
-        walk(node.children);
-      }
-    }
-  }
-  walk(settings.tree ?? []);
-  for (const rule of Object.values((settings.policy ?? settings.effective_rules)?.mcp ?? {})) {
-    const tool = policyToolName(rule);
-    if (!tool) continue;
-    if (rule.decision === 'allow' || rule.decision === 'ask' || rule.decision === 'block') {
-      policy.tool_permissions[tool] = rule.decision;
-    }
-  }
-  return policy;
+export async function listProfileSkills(profileId: string): Promise<unknown> {
+  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/skills/list`);
+  return await resp.json();
 }
 
-function policyToolName(rule: PolicyRuleConfig): string | null {
-  if (rule.on !== 'mcp.request') return null;
-  const match = rule.if.match(/tool\.name\s*==\s*["']([^"']+)["']/);
-  return match?.[1] ?? null;
+export async function addProfileSkill(profileId: string, request: Record<string, unknown>): Promise<unknown> {
+  const resp = await _post(`/profiles/${encodeURIComponent(profileId)}/skills/add`, request);
+  return await resp.json();
 }
 
-/** Enable/disable an MCP server via settings. */
-export async function setMcpServerEnabled(name: string, enabled: boolean): Promise<void> {
-  await saveSettings({ [`mcp.servers.${name}.enabled`]: enabled });
+export async function editProfileSkill(
+  profileId: string,
+  skillId: string,
+  request: Record<string, unknown>,
+): Promise<unknown> {
+  const resp = await _patch(
+    `/profiles/${encodeURIComponent(profileId)}/skills/${encodeURIComponent(skillId)}/edit`,
+    request,
+  );
+  return await resp.json();
 }
 
-/** Add an MCP server via settings. */
-export async function addMcpServer(
-  name: string,
-  url: string,
-  headers: Record<string, string>,
-  bearerToken: string | null,
-): Promise<void> {
-  const changes: Record<string, unknown> = {
-    [`mcp.servers.${name}.url`]: url,
-    [`mcp.servers.${name}.enabled`]: true,
-  };
-  if (Object.keys(headers).length > 0) {
-    changes[`mcp.servers.${name}.headers`] = headers;
-  }
-  if (bearerToken) {
-    changes[`mcp.servers.${name}.bearer_token`] = bearerToken;
-  }
-  await saveSettings(changes);
+export async function deleteProfileSkill(profileId: string, skillId: string): Promise<unknown> {
+  const resp = await _delete(
+    `/profiles/${encodeURIComponent(profileId)}/skills/${encodeURIComponent(skillId)}/delete`,
+  );
+  return await resp.json();
 }
 
-/** Remove an MCP server via settings. */
-export async function removeMcpServer(name: string): Promise<void> {
-  await saveSettings({ [`mcp.servers.${name}`]: null });
+export async function getProfileAssetsInfo(profileId: string): Promise<unknown> {
+  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/assets/info`);
+  return await resp.json();
 }
 
-/** Set the MCP global policy via settings. */
-export async function setMcpGlobalPolicy(policy: string): Promise<void> {
-  await saveSettings({ 'mcp.policy.global': policy });
+export async function getProfilePluginsInfo(profileId: string): Promise<unknown> {
+  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/plugins/info`);
+  return await resp.json();
 }
 
-/** Set the MCP default tool permission via settings. */
-export async function setMcpDefaultPermission(permission: string): Promise<void> {
-  await saveSettings({ 'mcp.policy.default_tool_permission': permission });
+export async function getProfileMcpInfo(profileId: string): Promise<unknown> {
+  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/mcp/info`);
+  return await resp.json();
 }
 
-/** Set a per-tool MCP permission via settings. */
-export async function setMcpToolPermission(tool: string, permission: string): Promise<void> {
-  const decision = permission === 'warn' ? 'ask' : permission;
-  if (decision !== 'allow' && decision !== 'ask' && decision !== 'block') {
-    throw new Error(`Unsupported MCP policy decision: ${permission}`);
-  }
-  const ruleName = policyRuleNameFromParts(['tool', tool]);
-  const rule: PolicyRuleConfig = {
-    on: 'mcp.request',
-    if: `method == "tools/call" && tool.name == "${tool.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`,
-    decision,
-    priority: 500,
-    reason: `MCP tool ${tool} set from settings UI`,
-  };
-  await saveSettings({ [policyRuleKey('mcp', ruleName)]: rule });
+// -- Enforcement rules --
+
+export async function listEnforcementRules(profileId: string): Promise<EnforcementRuleListResponse> {
+  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/enforcement/rules/list`);
+  return await resp.json();
 }
+
+export async function getEnforcementInfo(profileId: string): Promise<EnforcementInfoResponse> {
+  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/enforcement/info`);
+  return await resp.json();
+}
+
+// -- Detection rules --
+
+export async function listDetectionRules(profileId: string): Promise<DetectionRuleListResponse> {
+  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/detection/rules/list`);
+  return await resp.json();
+}
+
+export async function getDetectionInfo(profileId: string): Promise<DetectionInfoResponse> {
+  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/detection/info`);
+  return await resp.json();
+}
+
+// -- Runtime ledger --
+
+export async function getSecurityLatest(): Promise<unknown> {
+  const resp = await _get('/security/latest');
+  return await resp.json();
+}
+
+export async function getSecurityStatus(): Promise<unknown> {
+  const resp = await _get('/security/status');
+  return await resp.json();
+}
+
+export async function getVmSecurityLatest(id: string, limit = 100): Promise<SecurityRuleEvent[]> {
+  const resp = await _get(`/vms/${encodeURIComponent(id)}/security/latest?limit=${encodeURIComponent(String(limit))}`);
+  return await resp.json();
+}
+
+export async function getVmSecurityStatus(id: string): Promise<SecurityRuleStats> {
+  const resp = await _get(`/vms/${encodeURIComponent(id)}/security/status`);
+  return await resp.json();
+}
+
+export async function getEnforcementLatest(): Promise<unknown> {
+  const resp = await _get('/enforcement/latest');
+  return await resp.json();
+}
+
+export async function getEnforcementStatus(): Promise<unknown> {
+  const resp = await _get('/enforcement/status');
+  return await resp.json();
+}
+
+export async function getVmEnforcementLatest(id: string, limit = 100): Promise<SecurityRuleEvent[]> {
+  const resp = await _get(`/vms/${encodeURIComponent(id)}/enforcement/latest?limit=${encodeURIComponent(String(limit))}`);
+  return await resp.json();
+}
+
+export async function getVmEnforcementStatus(id: string): Promise<SecurityRuleStats> {
+  const resp = await _get(`/vms/${encodeURIComponent(id)}/enforcement/status`);
+  return await resp.json();
+}
+
+export async function getDetectionLatest(): Promise<unknown> {
+  const resp = await _get('/detection/latest');
+  return await resp.json();
+}
+
+export async function getDetectionStatus(): Promise<unknown> {
+  const resp = await _get('/detection/status');
+  return await resp.json();
+}
+
+export async function getVmDetectionLatest(id: string, limit = 100): Promise<SecurityRuleEvent[]> {
+  const resp = await _get(`/vms/${encodeURIComponent(id)}/detection/latest?limit=${encodeURIComponent(String(limit))}`);
+  return await resp.json();
+}
+
+export async function getVmDetectionStatus(id: string): Promise<SecurityRuleStats> {
+  const resp = await _get(`/vms/${encodeURIComponent(id)}/detection/status`);
+  return await resp.json();
+}
+
+// -- Plugins --
+
+export async function listPlugins(profileId: string): Promise<PluginListResponse> {
+  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/plugins/list`);
+  return await resp.json();
+}
+
+export async function updatePlugin(
+  profileId: string,
+  pluginId: string,
+  update: Partial<PluginConfig>,
+): Promise<PluginInfo> {
+  const resp = await _patch(
+    `/profiles/${encodeURIComponent(profileId)}/plugins/${encodeURIComponent(pluginId)}/edit`,
+    update,
+  );
+  return await resp.json();
+}
+
+export async function getCredentialBrokerInfo(profileId: string): Promise<CredentialBrokerInfo> {
+  const resp = await _get(
+    `/profiles/${encodeURIComponent(profileId)}/plugins/credential_broker/credentials/info`,
+  );
+  return await resp.json();
+}
+
+export async function reloadCredentialBrokerStore(profileId: string): Promise<CredentialBrokerInfo> {
+  const resp = await _post(
+    `/profiles/${encodeURIComponent(profileId)}/plugins/credential_broker/credentials/reload`,
+    {},
+  );
+  return await resp.json();
+}
+
+// -- MCP config --
 
 // -- MCP runtime --
 
 /** List configured MCP servers with tool counts (runtime). */
-export async function getMcpServers(): Promise<McpServerInfo[]> {
+export async function getMcpServers(profileId: string): Promise<McpServerInfo[]> {
   if (!_connected) return [];
   try {
-    const resp = await _get('/mcp/servers');
+    const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/mcp/servers/list`);
     return await resp.json();
   } catch (err) {
     if (isNetworkError(err)) return [];
@@ -881,11 +1091,19 @@ export async function getMcpServers(): Promise<McpServerInfo[]> {
   }
 }
 
+/** Read the profile default MCP permission rule. */
+export async function getMcpDefaultPermission(profileId: string): Promise<McpDefaultPermission> {
+  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/mcp/default/info`);
+  return await resp.json();
+}
+
 /** List discovered MCP tools with cache/approval status (runtime). */
-export async function getMcpTools(): Promise<McpToolInfo[]> {
+export async function getMcpTools(profileId: string, serverId: string): Promise<McpToolInfo[]> {
   if (!_connected) return [];
   try {
-    const resp = await _get('/mcp/tools');
+    const resp = await _get(
+      `/profiles/${encodeURIComponent(profileId)}/mcp/servers/${encodeURIComponent(serverId)}/tools/list`,
+    );
     return await resp.json();
   } catch (err) {
     if (isNetworkError(err)) return [];
@@ -894,165 +1112,93 @@ export async function getMcpTools(): Promise<McpToolInfo[]> {
 }
 
 /** Re-discover tools from MCP servers. */
-export async function refreshMcpTools(server?: string): Promise<void> {
-  await _post('/mcp/tools/refresh', server ? { server } : undefined);
+export async function refreshMcpTools(profileId: string, serverId: string): Promise<void> {
+  await _post(
+    `/profiles/${encodeURIComponent(profileId)}/mcp/servers/${encodeURIComponent(serverId)}/refresh`,
+  );
 }
 
-/** Approve an MCP tool (writes tool cache). */
-export async function approveMcpTool(name: string): Promise<void> {
-  await _post(`/mcp/tools/${encodeURIComponent(name)}/approve`);
+/** Edit the profile default MCP permission through the enforcement rule ledger. */
+export async function updateMcpDefaultPermission(
+  profileId: string,
+  action: ToolPermission,
+): Promise<void> {
+  await _patch(
+    `/profiles/${encodeURIComponent(profileId)}/mcp/default/edit`,
+    { action },
+  );
+}
+
+/** Edit MCP tool permission through the profile enforcement rule ledger. */
+export async function updateMcpToolPermission(
+  profileId: string,
+  serverId: string,
+  toolId: string,
+  action: ToolPermission,
+): Promise<void> {
+  await _patch(
+    `/profiles/${encodeURIComponent(profileId)}/mcp/servers/${encodeURIComponent(serverId)}/tools/${encodeURIComponent(toolId)}/edit`,
+    { action },
+  );
 }
 
 /** Call a built-in MCP file tool. */
-export async function callMcpTool(name: string, args: Record<string, unknown>): Promise<unknown> {
-  const resp = await _post(`/mcp/tools/${encodeURIComponent(name)}/call`, args);
+export async function callMcpTool(
+  profileId: string,
+  serverId: string,
+  toolId: string,
+  args: Record<string, unknown>,
+): Promise<unknown> {
+  const resp = await _post(
+    `/profiles/${encodeURIComponent(profileId)}/mcp/servers/${encodeURIComponent(serverId)}/tools/${encodeURIComponent(toolId)}/call`,
+    args,
+  );
   return await resp.json();
 }
 
-// -- Runtime security rules --
+export interface SnapshotSlotStatus {
+  checkpoint: string;
+  slot: number;
+  origin: 'auto' | 'manual' | string;
+  name?: string | null;
+  timestamp: string;
+  hash?: string | null;
+}
 
-export async function getRuntimeEnforcementRules(): Promise<RuntimeRuleListResponse> {
-  const resp = await _get('/enforcement');
+export interface SnapshotStatusResponse {
+  total: number;
+  auto_count: number;
+  manual_count: number;
+  manual_available: number;
+  snapshots: SnapshotSlotStatus[];
+}
+
+/** Get VM recovery snapshot state through the service route, never session.db. */
+export async function getVmSnapshotStatus(vmId: string): Promise<SnapshotStatusResponse> {
+  const resp = await _get(`/vms/${encodeURIComponent(vmId)}/snapshots/status`);
   return await resp.json();
 }
 
-export async function getRuntimeEnforcementStats(): Promise<RuntimeRuleListResponse> {
-  const resp = await _get('/enforcement/stats');
+/** Get the VM recovery snapshot list through the service route. */
+export async function listVmSnapshots(vmId: string): Promise<{ total: number; snapshots: SnapshotSlotStatus[] }> {
+  const resp = await _get(`/vms/${encodeURIComponent(vmId)}/snapshots/list`);
   return await resp.json();
 }
 
-export async function validateRuntimeEnforcementRule(
-  rule: RuntimeEnforcementRuleRequest,
-): Promise<RuntimeRuleCompileResponse> {
-  const resp = await _post('/enforcement/validate', rule);
+// -- Assets --
+
+import type { AssetStatusResponse } from './types/assets';
+
+/** Get first-class VM asset status. */
+export async function getAssetsStatus(profileId: string): Promise<AssetStatusResponse> {
+  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/assets/status`);
   return await resp.json();
 }
 
-export async function compileRuntimeEnforcementRule(
-  rule: RuntimeEnforcementRuleRequest,
-): Promise<RuntimeRuleCompileResponse> {
-  const resp = await _post('/enforcement/compile', rule);
+/** Ensure missing/corrupt VM assets, then return refreshed status. */
+export async function ensureAssets(profileId: string): Promise<AssetStatusResponse> {
+  const resp = await _post(`/profiles/${encodeURIComponent(profileId)}/assets/ensure`, {});
   return await resp.json();
-}
-
-export async function installRuntimeEnforcementRule(
-  rule: RuntimeEnforcementRuleRequest,
-): Promise<RuntimeRuleInstallResponse> {
-  const resp = await _post('/enforcement', rule);
-  return await resp.json();
-}
-
-export async function backtestRuntimeEnforcementRule(
-  request: RuntimeEnforcementBacktestRequest,
-): Promise<RuntimeBacktestResult> {
-  const resp = await _post('/enforcement/backtest', request);
-  return await resp.json();
-}
-
-export async function deleteRuntimeEnforcementRule(id: string): Promise<RuntimeRuleDeleteResponse> {
-  const resp = await _delete(`/enforcement/${encodeURIComponent(id)}`);
-  return await resp.json();
-}
-
-export async function getRuntimeDetectionRules(): Promise<RuntimeRuleListResponse> {
-  const resp = await _get('/detection');
-  return await resp.json();
-}
-
-export async function getRuntimeDetectionStats(): Promise<RuntimeRuleListResponse> {
-  const resp = await _get('/detection/stats');
-  return await resp.json();
-}
-
-export async function validateRuntimeDetectionRule(
-  rule: RuntimeDetectionRuleRequest,
-): Promise<RuntimeRuleCompileResponse> {
-  const resp = await _post('/detection/validate', rule);
-  return await resp.json();
-}
-
-export async function compileRuntimeDetectionRule(
-  rule: RuntimeDetectionRuleRequest,
-): Promise<RuntimeRuleCompileResponse> {
-  const resp = await _post('/detection/compile', rule);
-  return await resp.json();
-}
-
-export async function installRuntimeDetectionRule(
-  rule: RuntimeDetectionRuleRequest,
-): Promise<RuntimeRuleInstallResponse> {
-  const resp = await _post('/detection', rule);
-  return await resp.json();
-}
-
-export async function backtestRuntimeDetectionRule(
-  request: RuntimeDetectionBacktestRequest,
-): Promise<RuntimeBacktestResult> {
-  const resp = await _post('/detection/backtest', request);
-  return await resp.json();
-}
-
-export async function huntRuntimeDetectionRules(
-  request: RuntimeDetectionHuntRequest,
-): Promise<RuntimeBacktestResult> {
-  const resp = await _post('/detection/hunt', request);
-  return await resp.json();
-}
-
-export async function huntSessionRuntimeDetectionRules(
-  sessionId: string,
-  request: RuntimeSessionDetectionHuntRequest,
-): Promise<RuntimeBacktestResult> {
-  const resp = await _post(`/sessions/${encodeURIComponent(sessionId)}/detection/hunt`, request);
-  return await resp.json();
-}
-
-export async function deleteRuntimeDetectionRule(id: string): Promise<RuntimeRuleDeleteResponse> {
-  const resp = await _delete(`/detection/${encodeURIComponent(id)}`);
-  return await resp.json();
-}
-
-// -- Validation --
-
-/** Validate an API key against a provider endpoint. */
-export async function validateApiKey(provider: string, key: string): Promise<{ valid: boolean; message: string }> {
-  try {
-    const resp = await _post('/settings/validate-key', { provider, key });
-    return await resp.json();
-  } catch {
-    return { valid: false, message: 'Validation failed (gateway unreachable)' };
-  }
-}
-
-// -- Setup / Onboarding --
-
-import type {
-  SetupStateResponse,
-  DetectedConfigSummary,
-} from './types/onboarding';
-
-/** Get setup/onboarding state (setup-state.json). */
-export async function getSetupState(): Promise<SetupStateResponse> {
-  const resp = await _get('/setup/state');
-  return await resp.json();
-}
-
-/** Run host detection, write found values to settings, return summary. */
-export async function runDetection(): Promise<DetectedConfigSummary> {
-  const resp = await _get('/setup/detect');
-  return await resp.json();
-}
-
-/** Mark GUI onboarding as completed. */
-export async function completeOnboarding(): Promise<void> {
-  await _post('/setup/complete');
-}
-
-/** Retry `capsem setup --non-interactive --accept-detected` server-side.
- *  Blocks until the subprocess exits. Throws ApiError with stderr tail on
- *  non-zero exit so the UI can surface a useful message. */
-export async function retrySetup(): Promise<void> {
-  await _post('/setup/retry');
 }
 
 // -- App actions --
@@ -1069,6 +1215,16 @@ export async function openUrl(url: string): Promise<void> {
   window.open(url, '_blank', 'noopener,noreferrer');
 }
 
+/** Check for app updates. Returns null if no update available. */
+export async function checkForAppUpdate(): Promise<{ version: string; current_version: string } | null> {
+  try {
+    const resp = await _get('/update/check');
+    return await resp.json();
+  } catch {
+    return null;
+  }
+}
+
 // -- Files API (host-side VirtioFS) --
 
 /** Sanitize a file path: allowlist [a-zA-Z0-9._\-/], strip leading slashes. */
@@ -1082,7 +1238,7 @@ export async function listFiles(id: string, path?: string, depth?: number): Prom
   if (path) params.set('path', sanitizePath(path));
   if (depth != null) params.set('depth', String(depth));
   const qs = params.toString();
-  const url = `/files/${encodeURIComponent(id)}${qs ? `?${qs}` : ''}`;
+  const url = `/vms/${encodeURIComponent(id)}/files/list${qs ? `?${qs}` : ''}`;
   const resp = await _get(url);
   return await resp.json();
 }
@@ -1090,7 +1246,9 @@ export async function listFiles(id: string, path?: string, depth?: number): Prom
 /** Download a file from a VM workspace. Returns text, blob, and size. */
 export async function getFileContent(id: string, path: string): Promise<FileContentResult> {
   const sanitized = sanitizePath(path);
-  const resp = await _authFetch(`/files/${encodeURIComponent(id)}/content?path=${encodeURIComponent(sanitized)}`);
+  const resp = await fetch(`${_baseUrl}/vms/${encodeURIComponent(id)}/files/content?path=${encodeURIComponent(sanitized)}`, {
+    headers: { Authorization: `Bearer ${_token}` },
+  });
   if (!resp.ok) {
     const body = await resp.text();
     throw new ApiError(resp.status, body);
@@ -1104,9 +1262,10 @@ export async function getFileContent(id: string, path: string): Promise<FileCont
 export async function uploadFile(id: string, path: string, content: Blob | string): Promise<FileUploadResponse> {
   const sanitized = sanitizePath(path);
   const body = typeof content === 'string' ? new Blob([content]) : content;
-  const resp = await _authFetch(`/files/${encodeURIComponent(id)}/content?path=${encodeURIComponent(sanitized)}`, {
+  const resp = await fetch(`${_baseUrl}/vms/${encodeURIComponent(id)}/files/content?path=${encodeURIComponent(sanitized)}`, {
     method: 'POST',
     headers: {
+      Authorization: `Bearer ${_token}`,
       'Content-Type': 'application/octet-stream',
     },
     body,

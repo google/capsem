@@ -16,15 +16,15 @@ def test_default_cpu_count(config_svc):
     name = f"defcpu-{uuid.uuid4().hex[:8]}"
 
     try:
-        client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": 4})
+        client.post("/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": 4})
         assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
 
-        resp = client.post(f"/exec/{name}", {"command": "nproc"})
+        resp = client.post(f"/vms/{name}/exec", {"command": "nproc"})
         nproc = int(resp.get("stdout", "0").strip()) if resp else 0
         assert nproc == 4, f"Expected 4 CPUs, got {nproc}"
     finally:
         try:
-            client.delete(f"/delete/{name}")
+            client.delete(f"/vms/{name}/delete")
         except Exception:
             pass
 
@@ -35,15 +35,15 @@ def test_default_ram(config_svc):
     name = f"defram-{uuid.uuid4().hex[:8]}"
 
     try:
-        client.post("/provision", {"name": name, "ram_mb": 4096, "cpus": DEFAULT_CPUS})
+        client.post("/vms/create", {"name": name, "ram_mb": 4096, "cpus": DEFAULT_CPUS})
         assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
 
-        resp = client.post(f"/exec/{name}", {"command": "free -m | awk '/Mem:/ {print $2}'"})
+        resp = client.post(f"/vms/{name}/exec", {"command": "free -m | awk '/Mem:/ {print $2}'"})
         total_mb = int(resp.get("stdout", "0").strip()) if resp else 0
         # Allow 10% tolerance for kernel overhead
         assert total_mb > 3600, f"Expected ~4096MB, got {total_mb}MB"
     finally:
         try:
-            client.delete(f"/delete/{name}")
+            client.delete(f"/vms/{name}/delete")
         except Exception:
             pass

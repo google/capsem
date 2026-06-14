@@ -1,0 +1,677 @@
+{
+  "settings": {
+    "app": {
+      "name": "App",
+      "description": "Application settings",
+      "collapsed": false,
+      "auto_update": {
+        "name": "Auto-check for updates",
+        "description": "Check for new Capsem versions on launch",
+        "type": "bool",
+        "default": true
+      },
+      "check_update": {
+        "name": "Check for updates",
+        "description": "Manually check if a new version is available",
+        "action": "check_update"
+      }
+    },
+    "repository": {
+      "name": "Repositories",
+      "description": "Code hosting and git configuration",
+      "collapsed": false,
+      "git": {
+        "identity": {
+          "name": "Git Identity",
+          "description": "Author name and email for commits inside the VM",
+          "author_name": {
+            "name": "Author name",
+            "description": "Name used for git commits. Injected as GIT_AUTHOR_NAME and GIT_COMMITTER_NAME.",
+            "type": "text",
+            "default": "",
+            "meta": {
+              "env_vars": [
+                "GIT_AUTHOR_NAME",
+                "GIT_COMMITTER_NAME"
+              ]
+            }
+          },
+          "author_email": {
+            "name": "Author email",
+            "description": "Email used for git commits. Injected as GIT_AUTHOR_EMAIL and GIT_COMMITTER_EMAIL.",
+            "type": "text",
+            "default": "",
+            "meta": {
+              "env_vars": [
+                "GIT_AUTHOR_EMAIL",
+                "GIT_COMMITTER_EMAIL"
+              ]
+            }
+          }
+        }
+      },
+      "providers": {
+        "name": "Providers",
+        "description": "Code hosting platforms",
+        "github": {
+          "name": "GitHub",
+          "description": "GitHub and GitHub-hosted content",
+          "enabled_by": "repository.providers.github.allow",
+          "allow": {
+            "name": "Allow GitHub",
+            "description": "Enable access to GitHub and GitHub-hosted content.",
+            "type": "bool",
+            "default": true,
+            "meta": {
+              "domains": [
+                "github.com",
+                "*.github.com",
+                "*.githubusercontent.com"
+              ],
+              "rules": {
+                "default": {
+                  "get": true,
+                  "post": true
+                }
+              }
+            }
+          },
+          "domains": {
+            "name": "GitHub Domains",
+            "description": "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains.",
+            "type": "text",
+            "default": "github.com, *.github.com, *.githubusercontent.com",
+            "meta": {
+              "format": "domain_list"
+            }
+          },
+          "token": {
+            "name": "GitHub Token",
+            "description": "Personal access token for git push over HTTPS. Injected into .git-credentials.",
+            "type": "apikey",
+            "default": "",
+            "meta": {
+              "env_vars": [
+                "GH_TOKEN",
+                "GITHUB_TOKEN"
+              ],
+              "docs_url": "https://github.com/settings/tokens",
+              "prefix": "ghp_"
+            }
+          }
+        },
+        "gitlab": {
+          "name": "GitLab",
+          "description": "GitLab and GitLab-hosted content",
+          "enabled_by": "repository.providers.gitlab.allow",
+          "allow": {
+            "name": "Allow GitLab",
+            "description": "Enable access to GitLab and GitLab-hosted content.",
+            "type": "bool",
+            "default": false,
+            "meta": {
+              "domains": [
+                "gitlab.com",
+                "*.gitlab.com"
+              ],
+              "rules": {
+                "default": {
+                  "get": true,
+                  "post": true
+                }
+              }
+            }
+          },
+          "domains": {
+            "name": "GitLab Domains",
+            "description": "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains.",
+            "type": "text",
+            "default": "gitlab.com, *.gitlab.com",
+            "meta": {
+              "format": "domain_list"
+            }
+          },
+          "token": {
+            "name": "GitLab Token",
+            "description": "Personal access token for git push over HTTPS. Injected into .git-credentials.",
+            "type": "apikey",
+            "default": "",
+            "meta": {
+              "env_vars": [
+                "GITLAB_TOKEN"
+              ],
+              "docs_url": "https://gitlab.com/-/user_settings/personal_access_tokens",
+              "prefix": "glpat-"
+            }
+          }
+        }
+      }
+    },
+    "security": {
+      "name": "Security",
+      "description": "Network mechanics and service access controls",
+      "collapsed": false,
+      "web": {
+        "name": "Network Mechanics",
+        "description": "Network engine mechanics. HTTP/DNS decisions are profile security rules.",
+        "http_upstream_ports": {
+          "name": "Allowed plain HTTP upstream ports",
+          "description": "Plain HTTP upstream ports the MITM may dial after guest traffic reaches the local proxy.",
+          "type": "int_list",
+          "default": [
+            80,
+            3128,
+            3713,
+            8080,
+            11434
+          ]
+        }
+      },
+      "services": {
+        "name": "Services",
+        "description": "Search engines and package registries",
+        "search": {
+          "name": "Search Engines",
+          "description": "Web search engine access",
+          "google": {
+            "name": "Google",
+            "description": "Google web search",
+            "enabled_by": "security.services.search.google.allow",
+            "allow": {
+              "name": "Allow Google",
+              "description": "Enable access to Google web search.",
+              "type": "bool",
+              "default": true,
+              "meta": {
+                "domains": [
+                  "www.google.com",
+                  "google.com"
+                ],
+                "rules": {
+                  "default": {
+                    "get": true
+                  }
+                }
+              }
+            },
+            "domains": {
+              "name": "Google Domains",
+              "description": "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains.",
+              "type": "text",
+              "default": "www.google.com, google.com",
+              "meta": {
+                "format": "domain_list"
+              }
+            }
+          },
+          "bing": {
+            "name": "Bing",
+            "description": "Bing web search",
+            "enabled_by": "security.services.search.bing.allow",
+            "allow": {
+              "name": "Allow Bing",
+              "description": "Enable access to Bing web search.",
+              "type": "bool",
+              "default": false,
+              "meta": {
+                "domains": [
+                  "www.bing.com",
+                  "bing.com"
+                ],
+                "rules": {
+                  "default": {
+                    "get": true
+                  }
+                }
+              }
+            },
+            "domains": {
+              "name": "Bing Domains",
+              "description": "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains.",
+              "type": "text",
+              "default": "www.bing.com, bing.com",
+              "meta": {
+                "format": "domain_list"
+              }
+            }
+          },
+          "duckduckgo": {
+            "name": "DuckDuckGo",
+            "description": "DuckDuckGo web search",
+            "enabled_by": "security.services.search.duckduckgo.allow",
+            "allow": {
+              "name": "Allow DuckDuckGo",
+              "description": "Enable access to DuckDuckGo web search.",
+              "type": "bool",
+              "default": false,
+              "meta": {
+                "domains": [
+                  "duckduckgo.com",
+                  "*.duckduckgo.com"
+                ],
+                "rules": {
+                  "default": {
+                    "get": true
+                  }
+                }
+              }
+            },
+            "domains": {
+              "name": "DuckDuckGo Domains",
+              "description": "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains.",
+              "type": "text",
+              "default": "duckduckgo.com, *.duckduckgo.com",
+              "meta": {
+                "format": "domain_list"
+              }
+            }
+          }
+        },
+        "registry": {
+          "name": "Package Registries",
+          "description": "Package manager registries",
+          "debian": {
+            "name": "Debian",
+            "description": "Debian package registry",
+            "enabled_by": "security.services.registry.debian.allow",
+            "allow": {
+              "name": "Allow Debian",
+              "description": "Enable access to Debian.",
+              "type": "bool",
+              "default": true,
+              "meta": {
+                "domains": [
+                  "deb.debian.org",
+                  "security.debian.org"
+                ],
+                "rules": {
+                  "default": {
+                    "get": true
+                  }
+                }
+              }
+            },
+            "domains": {
+              "name": "Debian Domains",
+              "description": "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains.",
+              "type": "text",
+              "default": "deb.debian.org, security.debian.org",
+              "meta": {
+                "format": "domain_list"
+              }
+            }
+          },
+          "npm": {
+            "name": "npm",
+            "description": "npm package registry",
+            "enabled_by": "security.services.registry.npm.allow",
+            "allow": {
+              "name": "Allow npm",
+              "description": "Enable access to npm.",
+              "type": "bool",
+              "default": true,
+              "meta": {
+                "domains": [
+                  "registry.npmjs.org",
+                  "*.npmjs.org"
+                ],
+                "rules": {
+                  "default": {
+                    "get": true
+                  }
+                }
+              }
+            },
+            "domains": {
+              "name": "npm Domains",
+              "description": "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains.",
+              "type": "text",
+              "default": "registry.npmjs.org, *.npmjs.org",
+              "meta": {
+                "format": "domain_list"
+              }
+            }
+          },
+          "pypi": {
+            "name": "PyPI",
+            "description": "PyPI package registry",
+            "enabled_by": "security.services.registry.pypi.allow",
+            "allow": {
+              "name": "Allow PyPI",
+              "description": "Enable access to PyPI.",
+              "type": "bool",
+              "default": true,
+              "meta": {
+                "domains": [
+                  "pypi.org",
+                  "files.pythonhosted.org"
+                ],
+                "rules": {
+                  "default": {
+                    "get": true
+                  }
+                }
+              }
+            },
+            "domains": {
+              "name": "PyPI Domains",
+              "description": "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains.",
+              "type": "text",
+              "default": "pypi.org, files.pythonhosted.org",
+              "meta": {
+                "format": "domain_list"
+              }
+            }
+          },
+          "crates": {
+            "name": "crates.io",
+            "description": "crates.io package registry",
+            "enabled_by": "security.services.registry.crates.allow",
+            "allow": {
+              "name": "Allow crates.io",
+              "description": "Enable access to crates.io.",
+              "type": "bool",
+              "default": true,
+              "meta": {
+                "domains": [
+                  "crates.io",
+                  "static.crates.io"
+                ],
+                "rules": {
+                  "default": {
+                    "get": true
+                  }
+                }
+              }
+            },
+            "domains": {
+              "name": "crates.io Domains",
+              "description": "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains.",
+              "type": "text",
+              "default": "crates.io, static.crates.io",
+              "meta": {
+                "format": "domain_list"
+              }
+            }
+          }
+        }
+      }
+    },
+    "vm": {
+      "name": "VM",
+      "description": "Virtual machine configuration",
+      "collapsed": false,
+      "snapshots": {
+        "name": "Snapshots",
+        "description": "Automatic and manual workspace snapshot settings",
+        "auto_max": {
+          "name": "Auto snapshot limit",
+          "description": "Maximum number of automatic rolling snapshots.",
+          "type": "number",
+          "default": 10,
+          "meta": {
+            "min": 1,
+            "max": 50
+          }
+        },
+        "manual_max": {
+          "name": "Manual snapshot limit",
+          "description": "Maximum number of named manual snapshots.",
+          "type": "number",
+          "default": 12,
+          "meta": {
+            "min": 1,
+            "max": 50
+          }
+        },
+        "auto_interval": {
+          "name": "Auto snapshot interval",
+          "description": "Seconds between automatic snapshots.",
+          "type": "number",
+          "default": 300,
+          "meta": {
+            "min": 30,
+            "max": 3600
+          }
+        }
+      },
+      "environment": {
+        "name": "Environment",
+        "description": "Shell and environment variables",
+        "shell": {
+          "name": "Shell",
+          "description": "Guest shell settings",
+          "term": {
+            "name": "TERM",
+            "description": "Terminal type for the guest shell.",
+            "type": "text",
+            "default": "xterm-256color",
+            "meta": {
+              "env_vars": [
+                "TERM"
+              ]
+            }
+          },
+          "home": {
+            "name": "HOME",
+            "description": "Home directory for the guest shell.",
+            "type": "text",
+            "default": "/root",
+            "meta": {
+              "env_vars": [
+                "HOME"
+              ]
+            }
+          },
+          "path": {
+            "name": "PATH",
+            "description": "Executable search path for the guest shell.",
+            "type": "text",
+            "default": "/opt/ai-clis/bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            "meta": {
+              "env_vars": [
+                "PATH"
+              ]
+            }
+          },
+          "lang": {
+            "name": "LANG",
+            "description": "Locale for the guest shell.",
+            "type": "text",
+            "default": "C",
+            "meta": {
+              "env_vars": [
+                "LANG"
+              ]
+            }
+          },
+          "bashrc": {
+            "name": "Bash configuration",
+            "description": "User shell config sourced at login. Customize prompt, aliases, and functions.",
+            "type": "file",
+            "default": {
+              "path": "/root/.bashrc",
+              "content": "# Prompt: green bold hostname with blue directory\nPS1='\\[\\033[1;32m\\]\\h\\[\\033[0m\\]:\\[\\033[1;34m\\]\\w\\[\\033[0m\\]\\$ '\n\n# Aliases\nalias pip='uv pip'\nalias pip3='uv pip'\nalias python='uv run python'\nalias python3='uv run python3'\nalias claude='claude --dangerously-skip-permissions'\nalias gemini='gemini --yolo'\nalias ls='ls --color=auto'\nalias ll='ls -la --color=auto'\nalias grep='grep --color=auto'\n"
+            },
+            "meta": {
+              "filetype": "bash"
+            }
+          },
+          "tmux_conf": {
+            "name": "tmux configuration",
+            "description": "tmux terminal multiplexer config. Customize appearance, keybindings, and behavior.",
+            "type": "file",
+            "default": {
+              "path": "/root/.tmux.conf",
+              "content": "set -g default-terminal \"tmux-256color\"\nset -ag terminal-features \",xterm-256color:RGB\"\nset -g mouse on\nset -g escape-time 0\nset -g history-limit 50000\nset -g status-style \"bg=default,fg=colour8\"\nset -g status-left \"\"\nset -g status-right \"\"\nset -g pane-border-style \"fg=colour8\"\nset -g pane-active-border-style \"fg=colour4\"\nset -g message-style \"bg=default,fg=colour4\"\n"
+            },
+            "meta": {
+              "filetype": "conf"
+            }
+          }
+        },
+        "ssh": {
+          "name": "SSH",
+          "description": "SSH key configuration",
+          "public_key": {
+            "name": "SSH public key",
+            "description": "Public key injected as /root/.ssh/authorized_keys in the guest VM.",
+            "type": "text",
+            "default": ""
+          }
+        },
+        "tls": {
+          "name": "TLS",
+          "description": "TLS certificate configuration",
+          "ca_bundle": {
+            "name": "CA bundle path",
+            "description": "Path to the CA certificate bundle in the guest. Injected as REQUESTS_CA_BUNDLE, NODE_EXTRA_CA_CERTS, and SSL_CERT_FILE.",
+            "type": "text",
+            "default": "/etc/ssl/certs/ca-certificates.crt",
+            "meta": {
+              "env_vars": [
+                "REQUESTS_CA_BUNDLE",
+                "NODE_EXTRA_CA_CERTS",
+                "SSL_CERT_FILE"
+              ]
+            }
+          }
+        }
+      },
+      "resources": {
+        "name": "Resources",
+        "description": "Hardware, telemetry, and session limits",
+        "cpu_count": {
+          "name": "CPU cores",
+          "description": "Number of CPU cores allocated to the VM.",
+          "type": "number",
+          "default": 4,
+          "meta": {
+            "min": 1,
+            "max": 8
+          }
+        },
+        "ram_gb": {
+          "name": "RAM",
+          "description": "Amount of RAM allocated to the VM in GB.",
+          "type": "number",
+          "default": 4,
+          "meta": {
+            "min": 1,
+            "max": 16
+          }
+        },
+        "scratch_disk_size_gb": {
+          "name": "Scratch disk size",
+          "description": "Size of the ephemeral scratch disk in GB.",
+          "type": "number",
+          "default": 16,
+          "meta": {
+            "min": 1,
+            "max": 128
+          }
+        },
+        "log_bodies": {
+          "name": "Log request bodies",
+          "description": "Capture request/response bodies in telemetry.",
+          "type": "bool",
+          "default": false
+        },
+        "max_body_capture": {
+          "name": "Max body capture",
+          "description": "Maximum bytes of body to capture in telemetry.",
+          "type": "number",
+          "default": 4096,
+          "meta": {
+            "min": 0,
+            "max": 1048576
+          }
+        },
+        "retention_days": {
+          "name": "Session retention",
+          "description": "Number of days to retain session data.",
+          "type": "number",
+          "default": 30,
+          "meta": {
+            "min": 1,
+            "max": 365
+          }
+        },
+        "max_sessions": {
+          "name": "Maximum sessions",
+          "description": "Keep at most this many sessions (oldest culled first).",
+          "type": "number",
+          "default": 100,
+          "meta": {
+            "min": 1,
+            "max": 10000
+          }
+        },
+        "min_content_sessions": {
+          "name": "Minimum content sessions",
+          "description": "Always keep at least this many sessions that contain AI activity, regardless of age. Empty test sessions are terminated first.",
+          "type": "number",
+          "default": 25,
+          "meta": {
+            "min": 0,
+            "max": 1000,
+            "step": 1
+          }
+        },
+        "max_disk_gb": {
+          "name": "Maximum disk usage",
+          "description": "Maximum total disk usage for all sessions in GB.",
+          "type": "number",
+          "default": 100,
+          "meta": {
+            "min": 1,
+            "max": 1000
+          }
+        },
+        "terminated_retention_days": {
+          "name": "Terminated session retention",
+          "description": "Days to keep terminated session records in the index. After this, the record is permanently deleted.",
+          "type": "number",
+          "default": 365,
+          "meta": {
+            "min": 30,
+            "max": 3650
+          }
+        }
+      }
+    },
+    "appearance": {
+      "name": "Appearance",
+      "description": "UI appearance and display settings",
+      "collapsed": false,
+      "dark_mode": {
+        "name": "Dark mode",
+        "description": "Use dark color scheme in the UI.",
+        "type": "bool",
+        "default": true,
+        "meta": {
+          "side_effect": "toggle_theme"
+        }
+      },
+      "font_size": {
+        "name": "Font size",
+        "description": "Terminal font size in pixels.",
+        "type": "number",
+        "default": 14,
+        "meta": {
+          "min": 8,
+          "max": 32
+        }
+      }
+    }
+  },
+  "mcp": {
+    "local": {
+      "name": "Local",
+      "description": "Built-in local tools: HTTP fetch, workspace snapshots",
+      "transport": "stdio",
+      "command": "/run/capsem-mcp-server",
+      "builtin": true
+    }
+  }
+}

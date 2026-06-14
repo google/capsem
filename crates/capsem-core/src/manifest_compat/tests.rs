@@ -4,6 +4,7 @@ use super::*;
 
 const V2_MANIFEST: &str = r#"{
     "format": 2,
+    "refresh_policy": "24h",
     "assets": {
         "current": "2026.0415.1",
         "releases": {
@@ -15,12 +16,12 @@ const V2_MANIFEST: &str = r#"{
                     "arm64": {
                         "vmlinuz": { "hash": "aaa111", "size": 100 },
                         "initrd.img": { "hash": "bbb222", "size": 200 },
-                        "rootfs.squashfs": { "hash": "ccc333", "size": 300 }
+                        "rootfs.erofs": { "hash": "ccc333", "size": 300 }
                     },
                     "x86_64": {
                         "vmlinuz": { "hash": "ddd444", "size": 100 },
                         "initrd.img": { "hash": "eee555", "size": 200 },
-                        "rootfs.squashfs": { "hash": "fff666", "size": 300 }
+                        "rootfs.erofs": { "hash": "fff666", "size": 300 }
                     }
                 }
             }
@@ -44,7 +45,7 @@ fn v2_arm64_extracts_correct_hashes() {
     let hashes = extract_hashes(&v, "", "arm64");
     assert_eq!(hashes.get("vmlinuz").unwrap(), "aaa111");
     assert_eq!(hashes.get("initrd.img").unwrap(), "bbb222");
-    assert_eq!(hashes.get("rootfs.squashfs").unwrap(), "ccc333");
+    assert_eq!(hashes.get("rootfs.erofs").unwrap(), "ccc333");
 }
 
 #[test]
@@ -53,7 +54,7 @@ fn v2_x86_64_extracts_correct_hashes() {
     let hashes = extract_hashes(&v, "", "x86_64");
     assert_eq!(hashes.get("vmlinuz").unwrap(), "ddd444");
     assert_eq!(hashes.get("initrd.img").unwrap(), "eee555");
-    assert_eq!(hashes.get("rootfs.squashfs").unwrap(), "fff666");
+    assert_eq!(hashes.get("rootfs.erofs").unwrap(), "fff666");
 }
 
 #[test]

@@ -11,7 +11,7 @@
 //! host/run-snapshot/{service.pid,gateway.pid,gateway.port}
 //! sessions/<id>/{session.db,serial.log,process.log,metadata.json,...}
 //! assets/manifest.json                   # ~/.capsem/assets/manifest.json
-//! config/{service.toml,profiles/**}      # secrets redacted
+//! config/{settings.toml,corp.toml}       # secrets redacted
 //! system/{version.json,os.txt,proxy.json,dmesg.log,mitm-ca-fingerprint.txt}
 //! ```
 //!
@@ -38,7 +38,7 @@ const SCHEMA_VERSION: u32 = 1;
 const MAX_LOG_TAIL_BYTES: u64 = 5 * 1024 * 1024;
 const MAX_SESSIONS: usize = 10;
 
-/// Bundle options. Use `Default::default()` for the compatibility three-flag
+/// Bundle options. Use `Default::default()` for the legacy three-flag
 /// signature; `max_session_bytes = 0` disables the cap.
 pub struct Opts {
     pub output: Option<PathBuf>,
@@ -349,10 +349,34 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
             });
         }
     }
-
-    // -- Profile V2 settings (redacted) --
     {
-        let name = "service.toml";
+        let path = home.join("assets").join("manifest-origin.json");
+        let entry_path = format!("{bundle_root}/assets/manifest-origin.json");
+        if let Ok(bytes) = fs::read(&path) {
+            let len = bytes.len() as u64;
+            add_bytes(&mut tar, &entry_path, &bytes)?;
+            sections.push(Section {
+                path: entry_path,
+                kind: "json",
+                bytes: Some(len),
+                missing: false,
+                reason: None,
+                truncated_to_last_bytes: None,
+            });
+        } else {
+            sections.push(Section {
+                path: entry_path,
+                kind: "json",
+                bytes: None,
+                missing: true,
+                reason: Some("file-not-found".into()),
+                truncated_to_last_bytes: None,
+            });
+        }
+    }
+
+    // -- configs (redacted) --
+    for name in ["settings.toml", "corp.toml", "corp-source.json"] {
         let path = home.join(name);
         let entry_path = format!("{bundle_root}/config/{name}");
         if let Ok(text) = fs::read_to_string(&path) {
@@ -383,23 +407,54 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
             });
         }
     }
-    let profiles_dir = home.join("profiles");
-    if profiles_dir.exists() {
-        add_redacted_config_dir(
-            &mut tar,
-            &mut sections,
-            &bundle_root,
-            &profiles_dir,
-            Path::new("profiles"),
-            no_redact,
-        )?;
-    } else {
+
+    // -- profile/corp diagnostics index --
+    {
+        let entry_path = format!("{bundle_root}/system/config-diagnostics.json");
+        let diagnostics = config_diagnostics(&home);
+        let bytes = serde_json::to_vec_pretty(&diagnostics)?;
+        let len = bytes.len() as u64;
+        add_bytes(&mut tar, &entry_path, &bytes)?;
         sections.push(Section {
-            path: format!("{bundle_root}/config/profiles"),
-            kind: "config-dir",
-            bytes: None,
-            missing: true,
-            reason: Some("file-not-found".into()),
+            path: entry_path,
+            kind: "json",
+            bytes: Some(len),
+            missing: false,
+            reason: None,
+            truncated_to_last_bytes: None,
+        });
+    }
+
+    // -- runtime boundary/debug contract --
+    {
+        let entry_path = format!("{bundle_root}/system/runtime-boundary.json");
+        let boundary = runtime_boundary_debug_contract();
+        let bytes = serde_json::to_vec_pretty(&boundary)?;
+        let len = bytes.len() as u64;
+        add_bytes(&mut tar, &entry_path, &bytes)?;
+        sections.push(Section {
+            path: entry_path,
+            kind: "json",
+            bytes: Some(len),
+            missing: false,
+            reason: None,
+            truncated_to_last_bytes: None,
+        });
+    }
+
+    // -- release supply-chain references --
+    {
+        let entry_path = format!("{bundle_root}/system/supply-chain.json");
+        let supply_chain = supply_chain_debug_references();
+        let bytes = serde_json::to_vec_pretty(&supply_chain)?;
+        let len = bytes.len() as u64;
+        add_bytes(&mut tar, &entry_path, &bytes)?;
+        sections.push(Section {
+            path: entry_path,
+            kind: "json",
+            bytes: Some(len),
+            missing: false,
+            reason: None,
             truncated_to_last_bytes: None,
         });
     }
@@ -661,64 +716,101 @@ fn read_tail(path: &Path, max_bytes: u64) -> Option<Vec<u8>> {
     Some(tail)
 }
 
-fn add_redacted_config_dir<W: Write>(
-    tar: &mut TarBuilder<W>,
-    sections: &mut Vec<Section>,
-    bundle_root: &str,
-    dir: &Path,
-    relative_dir: &Path,
-    no_redact: bool,
-) -> Result<()> {
-    let mut entries: Vec<_> = fs::read_dir(dir)
-        .with_context(|| format!("read {}", dir.display()))?
-        .collect::<std::result::Result<Vec<_>, _>>()
-        .with_context(|| format!("read {}", dir.display()))?;
-    entries.sort_by_key(|entry| entry.path());
+fn config_diagnostics(home: &Path) -> serde_json::Value {
+    use capsem_core::net::policy_config::{
+        corp_config_paths, corp_provision, ProfileCatalog, ProfileCatalogSource,
+    };
 
-    for entry in entries {
-        let path = entry.path();
-        let relative_path = relative_dir.join(entry.file_name());
-        if entry.file_type()?.is_dir() {
-            add_redacted_config_dir(tar, sections, bundle_root, &path, &relative_path, no_redact)?;
-            continue;
+    let profiles = match ProfileCatalog::load_default() {
+        Ok(catalog) => {
+            let source = match catalog.source() {
+                ProfileCatalogSource::BuiltIn => "built_in".to_string(),
+                ProfileCatalogSource::Directory(path) => format!("directory:{}", path.display()),
+            };
+            let profiles = catalog
+                .profiles()
+                .map(|profile| {
+                    let obom = profile.obom.as_ref().and_then(|obom| {
+                        let current_arch =
+                            capsem_core::net::policy_config::current_profile_arch().to_string();
+                        let descriptor = obom.current_arch_obom()?;
+                        let rootfs_hash = profile
+                            .assets
+                            .current_arch_assets()
+                            .and_then(|assets| assets.rootfs.hash.clone());
+                        Some(serde_json::json!({
+                            "current_arch": current_arch,
+                            "scope": "base_image",
+                            "format": obom.format,
+                            "name": descriptor.name,
+                            "url": descriptor.url,
+                            "hash": descriptor.hash,
+                            "size": descriptor.size,
+                            "generator": descriptor.generator,
+                            "generator_version": descriptor.generator_version,
+                            "rootfs_hash": rootfs_hash,
+                            "route": format!("/profiles/{}/obom", profile.id),
+                        }))
+                    });
+                    let mcp_server_count = profile
+                        .mcp
+                        .as_ref()
+                        .map(|mcp| {
+                            mcp.servers.len()
+                                + usize::from(
+                                    mcp.server_enabled.get("local").copied().unwrap_or(false),
+                                )
+                        })
+                        .unwrap_or(0);
+                    serde_json::json!({
+                        "id": profile.id,
+                        "name": profile.name,
+                        "description": profile.description,
+                        "revision": profile.revision,
+                        "refresh_policy": profile.refresh_policy,
+                        "availability": profile.availability,
+                        "asset_arches": profile.assets.arch.keys().collect::<Vec<_>>(),
+                        "default_rule_count": profile.default.len(),
+                        "profile_rule_count": profile.profiles.rules.len(),
+                        "ai_rule_count": profile.ai.values().map(|provider| provider.rules.len()).sum::<usize>(),
+                        "plugin_count": profile.plugins.len(),
+                        "mcp_server_count": mcp_server_count,
+                        "obom": obom,
+                    })
+                })
+                .collect::<Vec<_>>();
+            serde_json::json!({
+                "ok": true,
+                "source": source,
+                "profile_count": profiles.len(),
+                "profiles": profiles,
+            })
         }
-        if !entry.file_type()?.is_file() {
-            continue;
-        }
-        let entry_path = format!(
-            "{bundle_root}/config/{}",
-            relative_path.to_string_lossy().replace('\\', "/")
-        );
-        match fs::read_to_string(&path) {
-            Ok(text) => {
-                let text = if no_redact {
-                    text
-                } else {
-                    redact::redact_config_text(&text)
-                };
-                let bytes = text.into_bytes();
-                let len = bytes.len() as u64;
-                add_bytes(tar, &entry_path, &bytes)?;
-                sections.push(Section {
-                    path: entry_path,
-                    kind: "config",
-                    bytes: Some(len),
-                    missing: false,
-                    reason: None,
-                    truncated_to_last_bytes: None,
-                });
-            }
-            Err(source) => sections.push(Section {
-                path: entry_path,
-                kind: "config",
-                bytes: None,
-                missing: true,
-                reason: Some(source.to_string()),
-                truncated_to_last_bytes: None,
-            }),
-        }
-    }
-    Ok(())
+        Err(error) => serde_json::json!({
+            "ok": false,
+            "error": error,
+        }),
+    };
+
+    let corp_paths = corp_config_paths()
+        .into_iter()
+        .map(|path| {
+            serde_json::json!({
+                "path": path.display().to_string(),
+                "exists": path.exists(),
+            })
+        })
+        .collect::<Vec<_>>();
+    let corp = serde_json::json!({
+        "installed": corp_paths.iter().any(|path| path["exists"].as_bool().unwrap_or(false)),
+        "paths": corp_paths,
+        "source": corp_provision::read_corp_source(home),
+    });
+
+    serde_json::json!({
+        "profiles": profiles,
+        "corp": corp,
+    })
 }
 
 fn redact_log_bytes(bytes: &[u8]) -> Vec<u8> {
@@ -771,6 +863,100 @@ fn host_label() -> String {
         .chars()
         .take(32)
         .collect()
+}
+
+fn runtime_boundary_debug_contract() -> serde_json::Value {
+    let host_vsock_services: Vec<_> = capsem_core::capsem_proto::host_vsock_services()
+        .iter()
+        .map(|service| {
+            serde_json::json!({
+                "service": service.as_str(),
+                "port": service.port(),
+            })
+        })
+        .collect();
+
+    serde_json::json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "host_vsock_services": host_vsock_services,
+        "closed_raw_vsock_ports": [
+            {
+                "port": 5003,
+                "reason": "retired_mcp_raw_port",
+            },
+            {
+                "port": 11434,
+                "reason": "guest_tcp_ollama_must_use_mitm_redirect",
+            },
+            {
+                "port": 3128,
+                "reason": "guest_tcp_proxy_must_use_mitm_redirect",
+            },
+            {
+                "port": 8080,
+                "reason": "guest_tcp_proxy_must_use_mitm_redirect",
+            }
+        ],
+        "debug_routes": [
+            "/version",
+            "/status",
+            "/triage",
+            "/panics",
+            "/host-logs/{name}",
+            "/vms/{id}/status",
+            "/vms/{id}/info",
+            "/vms/{id}/logs",
+            "/vms/{id}/history",
+            "/vms/{id}/security/latest",
+            "/vms/{id}/security/status",
+            "/vms/{id}/detection/latest",
+            "/vms/{id}/detection/status",
+            "/vms/{id}/enforcement/latest",
+            "/vms/{id}/enforcement/status",
+            "/profiles/status",
+            "/profiles/list",
+            "/profiles/{profile_id}/info",
+            "/profiles/{profile_id}/obom",
+            "/profiles/{profile_id}/assets/info",
+            "/profiles/{profile_id}/plugins/info",
+            "/profiles/{profile_id}/plugins/{plugin_id}/info",
+            "/profiles/{profile_id}/plugins/credential_broker/credentials/info",
+            "/profiles/{profile_id}/mcp/info",
+            "/profiles/{profile_id}/mcp/default/info",
+            "/profiles/{profile_id}/mcp/servers/list"
+        ],
+    })
+}
+
+fn supply_chain_debug_references() -> serde_json::Value {
+    serde_json::json!({
+        "host_sbom": {
+            "format": "spdx_json_2_3",
+            "scope": "host_binaries",
+            "generator": "cargo-sbom",
+            "release_artifact": "capsem-sbom.spdx.json",
+            "attestation": "github_attestations",
+            "workflow": ".github/workflows/release.yaml",
+        },
+        "profile_obom": {
+            "format": "cyclonedx-obom.v1",
+            "scope": "base_image",
+            "generator": "cdxgen",
+            "descriptor_source": "profile.toml",
+            "runtime_routes": [
+                "/profiles/{profile_id}/info",
+                "/profiles/{profile_id}/obom",
+            ],
+        },
+        "manifest": {
+            "hash": "blake3",
+            "runtime_status": "/status",
+            "support_bundle_paths": [
+                "assets/manifest.json",
+                "assets/manifest-origin.json",
+            ],
+        },
+    })
 }
 
 fn hostname() -> String {

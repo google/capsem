@@ -3,10 +3,9 @@
 Locked output of `capsem-bench dns-load` captured during T3
 closure (mitm-redesign sprint, T3.4). The baseline represents the
 expected steady-state of the capsem DNS proxy serving the default
-qname (`api.openai.com`) with the user's `~/.capsem/user.toml`
-allowing it (so every query goes through the upstream-forward
-path -> answer cache hot loop, which is the dominant in-agent
-workload).
+qname (`api.openai.com`) with the active profile rules allowing it
+(so every query goes through the upstream-forward path -> answer
+cache hot loop, which is the dominant in-agent workload).
 
 | concurrency | rps   | p50 ms | p99 ms | errors |
 |-------------|-------|--------|--------|--------|
@@ -46,7 +45,7 @@ Per the mitm-redesign sprint discipline:
   cache qid bug that caused 100% errors before the fix)
 
 The decision distribution must match what the policy says: if
-`api.openai.com` is in `security.web.openai.allow = true`, every
-row should be `decision_distribution = {"allowed": N}`. If the
-user has it blocked, expect `{"denied": N}`. Any `transport_error`
-> 0 outside that shape is a real proxy bug, not bench noise.
+the active profile allows `api.openai.com`, every row should be
+`decision_distribution = {"allowed": N}`. If the profile or corp
+rules block it, expect `{"denied": N}`. Any `transport_error` > 0
+outside that shape is a real proxy bug, not bench noise.

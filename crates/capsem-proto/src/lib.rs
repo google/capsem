@@ -12,12 +12,9 @@
 
 pub mod handshake;
 pub mod ipc;
-pub mod metrics;
-pub mod policy_context;
 pub mod poll;
 
 pub use handshake::{HandshakeError, Hello};
-pub use policy_context::*;
 
 use std::path::Path;
 
@@ -42,9 +39,7 @@ pub const MAX_BOOT_FILES: usize = 64;
 /// `1` since the Hello handshake (W3) added Frame<T> wrapping to every
 /// bincode channel and a typed Hello frame to the vsock control port.
 /// Pre-W3 binaries fail decode within 1 second.
-///
-/// `2` adds the S07/S12 live metrics snapshot IPC contract.
-pub const PROTOCOL_VERSION: u16 = 2;
+pub const PROTOCOL_VERSION: u16 = 1;
 
 /// FNV-1a 64 hash of the protocol enum source bytes (lib.rs + ipc.rs +
 /// handshake.rs). Computed by `build.rs`. Detects "I added a variant in
@@ -104,7 +99,7 @@ pub const VSOCK_PORT_CONTROL: u32 = 5000;
 pub const VSOCK_PORT_TERMINAL: u32 = 5001;
 /// vsock port for SNI proxy (HTTPS/HTTP traffic from guest).
 pub const VSOCK_PORT_SNI_PROXY: u32 = 5002;
-/// vsock port for guest lifecycle commands (currently suspend from capsem-sysutil).
+/// vsock port for guest lifecycle commands (shutdown/suspend from capsem-sysutil).
 pub const VSOCK_PORT_LIFECYCLE: u32 = 5004;
 /// vsock port for exec output (direct child process stdout from guest).
 pub const VSOCK_PORT_EXEC: u32 = 5005;
@@ -114,6 +109,91 @@ pub const VSOCK_PORT_AUDIT: u32 = 5006;
 /// listener forwards each DNS query to the host's hickory-backed handler
 /// over an `rmp-serde` length-framed envelope.
 pub const VSOCK_PORT_DNS_PROXY: u32 = 5007;
+
+/// Host-side VSOCK services that the guest is allowed to connect to.
+///
+/// This is the authoritative raw VSOCK boundary. Guest TCP traffic, model
+/// traffic, MCP JSON-RPC, DNS, and process/file audit all enter audited typed
+/// service rails through these ports. New raw VSOCK listeners must be added
+/// here first so boot, dispatch, tests, and debug output stay in lock-step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HostVsockService {
+    Control,
+    Terminal,
+    SniProxy,
+    Lifecycle,
+    Exec,
+    Audit,
+    DnsProxy,
+}
+
+impl HostVsockService {
+    pub const fn port(self) -> u32 {
+        match self {
+            Self::Control => VSOCK_PORT_CONTROL,
+            Self::Terminal => VSOCK_PORT_TERMINAL,
+            Self::SniProxy => VSOCK_PORT_SNI_PROXY,
+            Self::Lifecycle => VSOCK_PORT_LIFECYCLE,
+            Self::Exec => VSOCK_PORT_EXEC,
+            Self::Audit => VSOCK_PORT_AUDIT,
+            Self::DnsProxy => VSOCK_PORT_DNS_PROXY,
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Control => "control",
+            Self::Terminal => "terminal",
+            Self::SniProxy => "sni_proxy",
+            Self::Lifecycle => "lifecycle",
+            Self::Exec => "exec",
+            Self::Audit => "audit",
+            Self::DnsProxy => "dns_proxy",
+        }
+    }
+
+    pub const fn from_port(port: u32) -> Option<Self> {
+        match port {
+            VSOCK_PORT_CONTROL => Some(Self::Control),
+            VSOCK_PORT_TERMINAL => Some(Self::Terminal),
+            VSOCK_PORT_SNI_PROXY => Some(Self::SniProxy),
+            VSOCK_PORT_LIFECYCLE => Some(Self::Lifecycle),
+            VSOCK_PORT_EXEC => Some(Self::Exec),
+            VSOCK_PORT_AUDIT => Some(Self::Audit),
+            VSOCK_PORT_DNS_PROXY => Some(Self::DnsProxy),
+            _ => None,
+        }
+    }
+}
+
+pub const HOST_VSOCK_SERVICES: &[HostVsockService] = &[
+    HostVsockService::Control,
+    HostVsockService::Terminal,
+    HostVsockService::SniProxy,
+    HostVsockService::Lifecycle,
+    HostVsockService::Exec,
+    HostVsockService::Audit,
+    HostVsockService::DnsProxy,
+];
+
+pub const HOST_VSOCK_PORTS: &[u32] = &[
+    VSOCK_PORT_CONTROL,
+    VSOCK_PORT_TERMINAL,
+    VSOCK_PORT_SNI_PROXY,
+    VSOCK_PORT_LIFECYCLE,
+    VSOCK_PORT_EXEC,
+    VSOCK_PORT_AUDIT,
+    VSOCK_PORT_DNS_PROXY,
+];
+
+pub const fn host_vsock_services() -> &'static [HostVsockService] {
+    HOST_VSOCK_SERVICES
+}
+
+pub const fn host_vsock_ports() -> &'static [u32] {
+    HOST_VSOCK_PORTS
+}
 
 // ---------------------------------------------------------------------------
 // Framed MCP transport (MITM MCP unification T0 wire gate)
@@ -513,7 +593,7 @@ pub enum GuestToHost {
     /// Error encountered during a file operation or exec.
     Error { id: u64, message: String },
     // -- Lifecycle --
-    /// Deprecated: guest shutdown is disabled; hosts should ignore this.
+    /// Guest requests shutdown.
     ShutdownRequest,
     /// Guest requests suspend.
     SuspendRequest,
@@ -542,8 +622,6 @@ pub enum GuestToHost {
 /// MessagePack bytes appearing in the middle of legitimate file content
 /// (e.g. `cat msgpack-blob.bin`) are not a leak.
 ///
-/// Tested in `crates/capsem/src/shell_exit/tests.rs` against every variant
-/// of both envelopes.
 pub fn looks_like_ipc_frame(data: &[u8]) -> bool {
     data.len() >= 4
         && (data[0] == 0x81 || data[0] == 0x82)

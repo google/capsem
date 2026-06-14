@@ -838,6 +838,37 @@ fn gateway_status_json_maps_to_tui_state() {
 }
 
 #[test]
+fn gateway_status_can_resume_false_blocks_tui_resume_even_when_profile_ready() {
+    let state = state_from_status_json_for_test(
+        r#"{
+            "service": "running",
+            "vms": [{
+                "id": "stale-vm",
+                "name": "Stale VM",
+                "status": "Stopped",
+                "persistent": true,
+                "profile_id": "code",
+                "profile_status": "current",
+                "can_resume": false,
+                "resume_blocked_reason": "profile payload hash drift"
+            }]
+        }"#,
+        std::time::Duration::from_millis(1),
+    )
+    .expect("parse service status");
+    let mut app = App::new(state);
+
+    let snapshot = render_app_snapshot(&app, 100, 24).expect("render non-resumable VM");
+    assert!(snapshot.contains("profile payload hash drift"));
+    assert!(!snapshot.contains("Press Enter to resume"));
+    assert_eq!(
+        app.handle_key(key(KeyCode::Char('r'), KeyModifiers::ALT)),
+        AppAction::Consumed
+    );
+    assert_eq!(app.pending_action(), None);
+}
+
+#[test]
 fn malformed_gateway_status_fails_state_mapping() {
     let error = state_from_status_json_for_test(
         r#"{"service":"running","vms":"not a list"}"#,
@@ -903,7 +934,7 @@ async fn gateway_provider_does_not_invent_default_profile_when_profiles_fail() {
                 write_json_response(&mut stream, gateway_empty_status_body()).await;
             } else {
                 assert!(
-                    request.contains("GET /profiles "),
+                    request.contains("GET /profiles/list "),
                     "unexpected request: {request:?}"
                 );
                 write_response(
@@ -946,7 +977,7 @@ async fn gateway_provider_reuses_token_across_status_refreshes() {
             if request.contains("GET /token ") {
                 token_requests += 1;
                 write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
-            } else if request.contains("GET /profiles ") {
+            } else if request.contains("GET /profiles/list ") {
                 profile_requests += 1;
                 write_json_response(&mut stream, gateway_profiles_body()).await;
             } else {
@@ -975,8 +1006,48 @@ async fn gateway_provider_reuses_token_across_status_refreshes() {
     provider.load_async().await.expect("initial load");
     let refreshed = provider.load_async().await.expect("refresh load");
     assert_eq!(refreshed.profiles.len(), 2);
-    assert_eq!(refreshed.profiles[0].id, "corp-default");
-    assert!(refreshed.profiles[0].is_default);
+    assert_eq!(refreshed.profiles[0].id, "code");
+    assert_eq!(refreshed.profiles[1].id, "co-work");
+    assert!(
+        !refreshed.profiles.iter().any(|profile| profile.is_default),
+        "current /profiles/list does not expose a default; TUI must not invent one"
+    );
+
+    server.await.expect("server task");
+}
+
+#[tokio::test]
+async fn gateway_provider_only_offers_tui_launchable_profiles() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind test gateway");
+    let addr = listener.local_addr().expect("local addr");
+    let body = gateway_status_body().to_string();
+    let server = tokio::spawn(async move {
+        for _ in 0..3 {
+            let (mut stream, _) = listener.accept().await.expect("accept request");
+            let request = read_http_request(&mut stream).await;
+            if request.contains("GET /token ") {
+                write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
+            } else if request.contains("GET /profiles/list ") {
+                write_json_response(&mut stream, gateway_profiles_with_unlaunchable_body()).await;
+            } else {
+                assert!(
+                    request.contains("GET /status "),
+                    "unexpected request: {request:?}"
+                );
+                write_json_response(&mut stream, &body).await;
+            }
+        }
+    });
+
+    let state = GatewayProvider::new(format!("http://{addr}"))
+        .load_async()
+        .await
+        .expect("load state over gateway");
+
+    assert_eq!(state.profiles.len(), 1);
+    assert_eq!(state.profiles[0].id, "code");
 
     server.await.expect("server task");
 }
@@ -995,7 +1066,7 @@ async fn gateway_provider_invokes_stop_over_authenticated_gateway() {
                 write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
             } else {
                 assert!(
-                    request.contains("POST /stop/vm-1 "),
+                    request.contains("POST /vms/vm-1/stop "),
                     "unexpected request: {request:?}"
                 );
                 assert!(
@@ -1033,12 +1104,12 @@ async fn gateway_provider_invokes_named_profile_create_over_authenticated_gatewa
                 write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
             } else {
                 assert!(
-                    request.contains("POST /provision "),
+                    request.contains("POST /vms/create "),
                     "unexpected request: {request:?}"
                 );
                 assert!(request.contains(r#""name":"tmp-1-proof""#));
                 assert!(request.contains(r#""persistent":true"#));
-                assert!(request.contains(r#""profile_id":"linux-builder""#));
+                assert!(request.contains(r#""profile_id":"co-work""#));
                 write_json_response(&mut stream, r#"{"id":"tmp-1-proof"}"#).await;
             }
         }
@@ -1047,7 +1118,7 @@ async fn gateway_provider_invokes_named_profile_create_over_authenticated_gatewa
     let outcome = GatewayProvider::new(format!("http://{addr}"))
         .invoke_async(&ControlAction::CreateSession {
             name: "tmp-1-proof".to_string(),
-            profile_id: "linux-builder".to_string(),
+            profile_id: "co-work".to_string(),
         })
         .await
         .expect("invoke create");
@@ -1071,7 +1142,7 @@ async fn gateway_provider_invokes_fork_over_authenticated_gateway() {
                 write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
             } else {
                 assert!(
-                    request.contains("POST /fork/profile-v2 "),
+                    request.contains("POST /vms/profile-v2/fork "),
                     "unexpected request: {request:?}"
                 );
                 assert!(request.contains(r#""name":"profile-v2-fork-copy""#));
@@ -1114,7 +1185,7 @@ async fn gateway_provider_invokes_checkpoint_over_suspend_endpoint() {
                 write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
             } else {
                 assert!(
-                    request.contains("POST /suspend/vm-1 "),
+                    request.contains("POST /vms/vm-1/pause "),
                     "unexpected request: {request:?}"
                 );
                 write_json_response(&mut stream, r#"{"success":true}"#).await;
@@ -1228,7 +1299,7 @@ async fn gateway_provider_surfaces_action_error_body() {
                 write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
             } else {
                 assert!(
-                    request.contains("DELETE /delete/vm-1 "),
+                    request.contains("DELETE /vms/vm-1/delete "),
                     "unexpected request: {request:?}"
                 );
                 write_response(
@@ -1410,24 +1481,68 @@ fn gateway_empty_status_body() -> &'static str {
 
 fn gateway_profiles_body() -> &'static str {
     r#"{
-        "mode": "settings_profiles_v2",
-        "default_profile": "corp-default",
         "profiles": [
             {
-                "profile": {
-                    "id": "corp-default",
-                    "name": "Corp Default",
-                    "best_for": "default profile"
-                },
-                "source": "corp"
+                "id": "code",
+                "name": "Code",
+                "description": "Optimized for coding and long-running agents.",
+                "availability": { "web": true, "shell": true, "mobile": false },
+                "source": "profile",
+                "rule_count": 3,
+                "default_rule_count": 2,
+                "plugin_count": 1,
+                "mcp_server_count": 1
             },
             {
-                "profile": {
-                    "id": "linux-builder",
-                    "name": "Linux Builder",
-                    "best_for": "kernel and distro work"
-                },
-                "source": "user"
+                "id": "co-work",
+                "name": "Co-work",
+                "description": "Shared profile for collaborative agent sessions.",
+                "availability": { "web": true, "shell": true, "mobile": false },
+                "source": "profile",
+                "rule_count": 4,
+                "default_rule_count": 2,
+                "plugin_count": 1,
+                "mcp_server_count": 1
+            }
+        ]
+    }"#
+}
+
+fn gateway_profiles_with_unlaunchable_body() -> &'static str {
+    r#"{
+        "profiles": [
+            {
+                "id": "code",
+                "name": "Code",
+                "description": "Optimized for coding and long-running agents.",
+                "availability": { "web": true, "shell": true, "mobile": false },
+                "source": "profile",
+                "rule_count": 3,
+                "default_rule_count": 2,
+                "plugin_count": 1,
+                "mcp_server_count": 1
+            },
+            {
+                "id": "web-only",
+                "name": "Web Only",
+                "description": "browser-only workflow",
+                "availability": { "web": true, "shell": false, "mobile": false },
+                "source": "corp",
+                "rule_count": 1,
+                "default_rule_count": 1,
+                "plugin_count": 0,
+                "mcp_server_count": 0
+            },
+            {
+                "id": "mobile-only",
+                "name": "Mobile Only",
+                "description": "mobile-only workflow",
+                "availability": { "web": false, "shell": false, "mobile": true },
+                "source": "corp",
+                "rule_count": 1,
+                "default_rule_count": 1,
+                "plugin_count": 0,
+                "mcp_server_count": 0
             }
         ]
     }"#

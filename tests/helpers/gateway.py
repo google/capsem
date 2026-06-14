@@ -12,7 +12,6 @@ import tempfile
 import time
 
 from pathlib import Path
-from urllib.parse import quote
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 GATEWAY_BINARY = PROJECT_ROOT / "target/debug/capsem-gateway"
@@ -56,6 +55,7 @@ class GatewayInstance:
 
         log_path = self.tmp_dir / "gateway.log"
         print(f"GATEWAY LOG: {log_path}")
+        self._log_file = open(log_path, "w")
 
         # capsem-gateway refuses to run without a live parent service (see
         # capsem-guard). Standalone test invocations pass the pytest worker PID
@@ -73,16 +73,12 @@ class GatewayInstance:
         if self.frontend_dir:
             cmd += ["--frontend-dir", self.frontend_dir]
 
-        log_fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
-        try:
-            self.proc = subprocess.Popen(
-                cmd,
-                env=env,
-                stdout=log_fd,
-                stderr=log_fd,
-            )
-        finally:
-            os.close(log_fd)
+        self.proc = subprocess.Popen(
+            cmd,
+            env=env,
+            stdout=self._log_file,
+            stderr=self._log_file,
+        )
 
         # Wait for gateway to start and write runtime files
         token_path = run_dir / "gateway.token"
@@ -120,7 +116,6 @@ class GatewayInstance:
                 self.proc.wait()
         if self._log_file:
             self._log_file.close()
-            self._log_file = None
 
     @property
     def base_url(self) -> str:
@@ -167,8 +162,8 @@ class TcpHttpClient:
     def post(self, path, body=None, timeout=60, use_auth=True):
         return self._curl("POST", path, body, timeout=timeout, use_auth=use_auth)
 
-    def put(self, path, body=None, timeout=60, use_auth=True):
-        return self._curl("PUT", path, body, timeout=timeout, use_auth=use_auth)
+    def patch(self, path, body=None, timeout=60, use_auth=True):
+        return self._curl("PATCH", path, body, timeout=timeout, use_auth=use_auth)
 
     def delete(self, path, timeout=30, use_auth=True):
         return self._curl("DELETE", path, timeout=timeout, use_auth=use_auth)
@@ -189,41 +184,14 @@ class TcpHttpClient:
 
     def get_status_and_body(self, path, timeout=30, use_auth=True,
                             extra_headers=None):
-        """Return (status_code, body_text) tuple for GET."""
-        return self.request_status_and_body(
-            "GET",
-            path,
-            timeout=timeout,
-            use_auth=use_auth,
-            extra_headers=extra_headers,
-        )
-
-    def post_status_and_body(self, path, body=None, timeout=30, use_auth=True,
-                             extra_headers=None):
-        """Return (status_code, body_text) tuple for POST."""
-        return self.request_status_and_body(
-            "POST",
-            path,
-            body=body,
-            timeout=timeout,
-            use_auth=use_auth,
-            extra_headers=extra_headers,
-        )
-
-    def request_status_and_body(self, method, path, body=None, timeout=30,
-                                use_auth=True, extra_headers=None):
-        """Return (status_code, body_text) tuple for arbitrary methods."""
+        """Return (status_code, body_text) tuple."""
         cmd = [
             "curl", "-s", "-S",
-            "-X", method,
             "-w", "\n%{http_code}",
             "--max-time", str(timeout),
         ]
         if use_auth:
             cmd += ["-H", f"Authorization: Bearer {self.token}"]
-        if body is not None:
-            cmd += ["-H", "Content-Type: application/json"]
-            cmd += ["-d", json.dumps(body)]
         for k, v in (extra_headers or {}).items():
             cmd += ["-H", f"{k}: {v}"]
         cmd.append(f"{self.base_url}{path}")
@@ -248,74 +216,3 @@ class TcpHttpClient:
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 5)
         return int(result.stdout.strip()) if result.stdout.strip() else 0
-
-    @staticmethod
-    def _sanitize_path(raw):
-        raw = str(raw)
-        if raw.startswith("/root/"):
-            raw = raw[len("/root/"):]
-        cleaned = "".join(
-            ch for ch in raw
-            if ch.isascii() and (ch.isalnum() or ch in "._-/")
-        )
-        while "//" in cleaned:
-            cleaned = cleaned.replace("//", "/")
-        cleaned = cleaned.lstrip("/")
-        if not cleaned:
-            raise ValueError("empty path after sanitization")
-        if ".." in cleaned:
-            raise ValueError("path traversal rejected")
-        return cleaned
-
-    @classmethod
-    def _files_content_path(cls, vm_id, path):
-        sanitized = cls._sanitize_path(path)
-        encoded = quote(sanitized, safe="")
-        return f"/files/{vm_id}/content?path={encoded}"
-
-    def write_file(self, vm_id, path, content, timeout=60):
-        endpoint = self._files_content_path(vm_id, path)
-        data = content.encode("utf-8") if isinstance(content, str) else bytes(content)
-        cmd = [
-            "curl", "-s", "-S",
-            "-X", "POST",
-            "-H", f"Authorization: Bearer {self.token}",
-            "-H", "Content-Type: application/octet-stream",
-            "--max-time", str(timeout),
-            "--data-binary", "@-",
-            f"{self.base_url}{endpoint}",
-        ]
-        result = subprocess.run(cmd, input=data, capture_output=True, timeout=timeout + 5)
-        if result.returncode != 0:
-            raise ConnectionError(f"curl failed (rc={result.returncode}): {result.stderr.decode(errors='replace')}")
-        if not result.stdout.strip():
-            return None
-        return json.loads(result.stdout)
-
-    def read_file(self, vm_id, path, timeout=60):
-        endpoint = self._files_content_path(vm_id, path)
-        cmd = [
-            "curl", "-s", "-S", "-o", "-", "-w", "\n__STATUS__%{http_code}",
-            "--max-time", str(timeout),
-            "-H", f"Authorization: Bearer {self.token}",
-            f"{self.base_url}{endpoint}",
-        ]
-        result = subprocess.run(cmd, capture_output=True, timeout=timeout + 5)
-        if result.returncode != 0:
-            raise ConnectionError(f"curl failed (rc={result.returncode}): {result.stderr.decode(errors='replace')}")
-        raw = result.stdout
-        sep = b"\n__STATUS__"
-        idx = raw.rfind(sep)
-        if idx == -1:
-            return None
-        status = int(raw[idx + len(sep):].decode(errors="replace"))
-        body = raw[:idx]
-        if 200 <= status < 300:
-            return {"content": body.decode("utf-8", errors="replace")}
-        try:
-            parsed = json.loads(body.decode("utf-8", errors="replace"))
-            if isinstance(parsed, dict):
-                return parsed
-        except Exception:
-            pass
-        return {"error": body.decode("utf-8", errors="replace")}

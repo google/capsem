@@ -1,0 +1,51 @@
+{
+  "version": "0.3.0",
+  "timestamp": 1781017603.8582294,
+  "hostname": "release-bench-hermetic",
+  "mcp_load": {
+    "version": "1.0",
+    "tool": "local__echo",
+    "payload_bytes": 4,
+    "concurrency_levels": [
+      {
+        "concurrency": 1,
+        "duration_s": 10.0,
+        "total_requests": 13370,
+        "errors": 0,
+        "rps": 1337.0,
+        "p50_ms": 0.737750000002535,
+        "p95_ms": 0.8367122000013438,
+        "p99_ms": 0.9642412500015849,
+        "p999_ms": 1.503433243999201,
+        "rss_peak_mb": 63.05859375
+      },
+      {
+        "concurrency": 16,
+        "duration_s": 10.0,
+        "total_requests": 65105,
+        "errors": 0,
+        "rps": 6510.5,
+        "p50_ms": 2.2802920000017934,
+        "p95_ms": 3.345875000000831,
+        "p99_ms": 7.856205320006493,
+        "p999_ms": 11.031686367997738,
+        "rss_peak_mb": 66.63671875
+      },
+      {
+        "concurrency": 64,
+        "duration_s": 10.0,
+        "total_requests": 57234,
+        "errors": 0,
+        "rps": 5723.4,
+        "p50_ms": 9.043895500003174,
+        "p95_ms": 22.331806350002736,
+        "p99_ms": 26.96201752999748,
+        "p999_ms": 31.635199161003882,
+        "rss_peak_mb": 69.8515625
+      }
+    ]
+  },
+  "host_recorded_at": 1781017634.9125068,
+  "arch": "arm64",
+  "debug_upstream_base_url": "http://127.0.0.1:3713"
+}

@@ -1,6 +1,6 @@
 [resources]
 cpu_count = 4
-ram_gb = 8
+ram_gb = 4
 scratch_disk_size_gb = 16
 log_bodies = false
 max_body_capture = 4096

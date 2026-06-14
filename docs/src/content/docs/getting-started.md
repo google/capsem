@@ -23,54 +23,48 @@ macOS uses Apple's Virtualization.framework (Apple Silicon only). Linux uses KVM
 curl -fsSL https://capsem.org/install.sh | sh
 ```
 
-The script auto-detects your OS and architecture, downloads the Capsem binaries, and runs `capsem setup` to complete installation.
+The script auto-detects your OS and architecture, installs the Capsem binaries,
+and registers the background service. VM assets are downloaded and verified
+through the service asset contract.
 
 ### Manual download
 
 1. Go to the [latest release](https://github.com/google/capsem/releases/latest) on GitHub.
-2. Download the `.pkg` (macOS) or `.deb` (Linux) file for your architecture.
-3. macOS: open the package and follow the installer.
+2. Download the `.dmg` (macOS) or `.deb` (Linux) file for your architecture.
+3. macOS: open the DMG and drag **Capsem.app** to `/Applications`.
 4. Linux: `sudo apt install ./capsem_*.deb`
 
 ### Building from source
 
 See the [Development Guide](/development/getting-started/) for instructions on cloning the repo, installing toolchain dependencies, building VM assets, and running from source.
 
-## Setup
+## Service And Assets
 
-On first use, Capsem auto-runs the setup wizard. You can also run it explicitly:
+After install, the Capsem service runs in the background and starts
+automatically on login. The desktop UI and CLI report asset status while the
+kernel, initrd, and rootfs download in the background.
 
 ```sh
-capsem setup
+capsem status
+capsem start
 ```
-
-The wizard walks through 6 steps:
-
-1. **Corp config** -- enterprise provisioning (optional, skip for personal use)
-2. **Asset download** -- downloads the Linux VM image (~200 MB) in the background
-3. **Security preset** -- choose medium or high network restriction
-4. **AI providers** -- auto-detects API keys from your environment
-5. **Repository access** -- detects Git/SSH/GitHub configuration
-6. **Service install** -- registers the background service (starts on login)
-
-After setup, the Capsem service runs in the background (like Docker). It starts automatically on login.
 
 ## First session
 
-Open the Capsem TUI:
+Boot a sandboxed VM and get a shell:
 
 ```sh
 capsem shell
 ```
 
-The TUI lets you start the service if it is offline, create or resume sessions,
-and switch between VM terminals. New Linux sessions run with an air-gapped
-network and include Python 3, Node.js, git, and 30+ packages pre-installed.
+This creates a Linux session with an air-gapped network. You get a terminal
+inside the sandbox with Python 3, Node.js, git, and common developer packages
+pre-installed. The default session uses the `code` profile.
 
-For a persistent session that survives suspend/resume cycles:
+For a named retained session that survives stop/resume cycles:
 
 ```sh
-capsem create mybox
+capsem create -n mybox
 capsem shell mybox
 ```
 
@@ -110,38 +104,32 @@ gemini    # Gemini CLI
 codex     # Codex
 ```
 
-API keys are configured in `~/.capsem/user.toml` on the host (or auto-detected by the setup wizard):
-
-```toml
-[ai.anthropic]
-api_key = "sk-ant-..."
-
-[ai.google]
-api_key = "AIza..."
-
-[ai.openai]
-api_key = "sk-..."
-```
-
-The keys are securely forwarded into the VM at boot time. They never touch the guest filesystem.
+API keys can be configured by the tool inside the VM or brokered by Capsem when
+observed at a supported boundary. Brokered credentials are stored and logged
+only as BLAKE3 references; raw credentials stay broker-private and are not
+materialized as settings-owned boot secrets.
 
 ## Network policy
 
-By default, the VM is air-gapped -- all network traffic routes through the host's MITM proxy. Only explicitly allowed domains can be reached. Add custom domains in `~/.capsem/user.toml`:
+By default, the VM is air-gapped -- network traffic routes through Capsem's host
+network engine, where HTTP and DNS become first-party security events. Add
+allow/block behavior with profile or corp enforcement rules:
 
 ```toml
-[security.web]
-custom_allow = [
-  "api.anthropic.com",
-  "generativelanguage.googleapis.com",
-  "api.openai.com",
-  "pypi.org",
-  "files.pythonhosted.org",
-  "registry.npmjs.org",
-]
+[profiles.rules.allow_python_registry]
+name = "allow_python_registry"
+action = "allow"
+match = 'http.host.matches("^(pypi\\.org|files\\.pythonhosted\\.org)$")'
+
+[profiles.rules.block_unapproved_ai_dns]
+name = "block_unapproved_ai_dns"
+action = "block"
+match = 'dns.qname.matches("(^|.*\\.)(openai\\.com|anthropic\\.com|googleapis\\.com)$")'
 ```
 
-Every HTTPS request is logged to a per-session SQLite database with full method, path, headers, and body preview. The Capsem GUI shows this in real time in the Network tab.
+Every HTTP/DNS/model/MCP/file/process boundary is logged to a per-VM SQLite
+database when observed. The Capsem GUI shows this in the VM Stats tab, and the
+Inspector tab can query the same `session.db` directly.
 
 ## MCP integration
 

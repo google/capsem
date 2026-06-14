@@ -15,15 +15,32 @@ import datetime
 import json
 import os
 import sys
-from pathlib import Path
 
 
-ROOT_DIR = Path(__file__).resolve().parent.parent
-SRC_DIR = ROOT_DIR / "src"
-if str(SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(SRC_DIR))
+def _same_asset_map(left, right):
+    return left == right
 
-from capsem.builder.manifest_version import next_asset_version
+
+def _next_or_existing_asset_version(existing, date_prefix, arch_assets):
+    """Reuse the current release for identical assets; otherwise mint a patch."""
+    patch = 1
+    if not isinstance(existing, dict):
+        return f"{date_prefix}.{patch}"
+    assets = existing.get("assets", {})
+    releases = assets.get("releases", {})
+    current = assets.get("current")
+    if current in releases:
+        current_arches = releases[current].get("arches", {})
+        if _same_asset_map(current_arches, arch_assets):
+            return current
+    for version in releases:
+        if not version.startswith(date_prefix + "."):
+            continue
+        try:
+            patch = max(patch, int(version.rsplit(".", 1)[1]) + 1)
+        except ValueError:
+            continue
+    return f"{date_prefix}.{patch}"
 
 
 def main():
@@ -50,15 +67,14 @@ def main():
     today_str = today.isoformat()
 
     manifest_path = os.path.join(assets_dir, "manifest.json")
+    date_prefix = today.strftime("%Y.%m%d")
     existing_manifest = None
     if os.path.exists(manifest_path):
         try:
             with open(manifest_path) as f:
                 existing_manifest = json.load(f)
-        except (json.JSONDecodeError, ValueError, KeyError):
+        except json.JSONDecodeError:
             existing_manifest = None
-
-    asset_version = next_asset_version(existing_manifest, today=today)
 
     # Read B3SUMS and collect entries with file sizes.
     b3sums_path = os.path.join(assets_dir, "B3SUMS")
@@ -87,8 +103,15 @@ def main():
                 "size": sz,
             }
 
+    asset_version = _next_or_existing_asset_version(
+        existing_manifest,
+        date_prefix,
+        arch_assets,
+    )
+
     manifest = {
         "format": 2,
+        "refresh_policy": "24h",
         "assets": {
             "current": asset_version,
             "releases": {

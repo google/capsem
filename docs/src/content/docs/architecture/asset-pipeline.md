@@ -9,12 +9,16 @@ The asset pipeline moves kernel, initrd, and rootfs images from build through to
 
 ## Build
 
-Profile V2 payloads are the build authority for release assets. The
-`capsem-admin` CLI derives a temporary build workspace, renders the existing
-Jinja2 Dockerfile templates, and produces per-architecture assets:
+Profile configuration lives under `config/profiles/<profile_id>/`. The
+profile-derived build rail validates the profile ledger and materializes a backend image
+workspace before Docker runs:
 
 ```
-capsem.profile.v2 -> capsem-admin image build -> generated workspace -> assets/{arch}/
+config/profiles/<id>/profile.toml
+  -> capsem-admin image build
+  -> generated backend image spec
+  -> capsem-builder
+  -> assets/{arch}/
 ```
 
 Two build templates exist:
@@ -22,9 +26,9 @@ Two build templates exist:
 | Template | Output | What it does |
 |----------|--------|-------------|
 | `kernel` | `vmlinuz`, `initrd.img` | Builds a minimal Linux kernel from `defconfig` |
-| `rootfs` | `rootfs.squashfs` | Builds the full guest filesystem with packages, runtimes, and tools |
+| `rootfs` | `rootfs.erofs` | Builds the full guest filesystem with packages, runtimes, and tools |
 
-The build process also cross-compiles the canonical guest binaries (`capsem-pty-agent`, `capsem-net-proxy`, `capsem-dns-proxy`, `capsem-mcp-server`, `capsem-sysutil`) for the target architecture and injects them into the rootfs.
+The build process also cross-compiles guest agent binaries (`capsem-pty-agent`, `capsem-net-proxy`, `capsem-mcp-server`) for the target architecture and injects them into the rootfs.
 
 ### Output layout
 
@@ -33,19 +37,12 @@ assets/
   arm64/
     vmlinuz
     initrd.img
-    rootfs.squashfs
-    vmlinuz-<hash16>
-    initrd-<hash16>.img
-    rootfs-<hash16>.squashfs
+    rootfs.erofs
   x86_64/
     vmlinuz
     initrd.img
-    rootfs.squashfs
-    vmlinuz-<hash16>
-    initrd-<hash16>.img
-    rootfs-<hash16>.squashfs
+    rootfs.erofs
   manifest.json
-  manifest.json.minisig
   B3SUMS
 ```
 
@@ -53,9 +50,16 @@ assets/
 
 | Command | What it does |
 |---------|-------------|
-| `just build-assets` | Full build using `config/profiles/base/coding.profile.toml`: kernel + rootfs + checksums |
-| `just run` | Repack initrd with latest guest binaries, rebuild app, sign, boot |
-| `capsem-admin image build config/profiles/base/coding.profile.toml --arch arm64 --template rootfs` | Build one template for one arch |
+| `just build-assets code [arch]` | Full profile-derived build: kernel + rootfs + checksums |
+| `just shell` / `just exec "CMD"` | Repack initrd, materialize runtime config, sign, boot |
+| `capsem-admin manifest generate assets` | Generate `assets/manifest.json` from an asset directory |
+| `capsem-admin profile materialize` | Generate `target/config` from source `config/` plus `assets/manifest.json` |
+| `capsem-admin image build --profile config/profiles/code/profile.toml --config-root config --arch arm64 --template rootfs` | Build one template for one arch through the profile rail |
+
+`config/` is checked-in source material: profile, corp, settings, rule files,
+and support templates. The current build's runtime config is generated under
+`target/config/`. Local dev, smoke tests, CI, and release packaging all use the
+same profile-derived build rail; there is no dev-only profile patcher.
 
 ## Manifest Format
 
@@ -64,6 +68,7 @@ The manifest (`assets/manifest.json`, format 2) is a single top-level file cover
 ```json
 {
   "format": 2,
+  "refresh_policy": "24h",
   "assets": {
     "current": "2026.0421.30",
     "releases": {
@@ -75,7 +80,7 @@ The manifest (`assets/manifest.json`, format 2) is a single top-level file cover
           "arm64": {
             "vmlinuz":         {"hash": "<64-char blake3>", "size": 7797248},
             "initrd.img":      {"hash": "<blake3>",         "size": 2314963},
-            "rootfs.squashfs": {"hash": "<blake3>",         "size": 454230016}
+            "rootfs.erofs":    {"hash": "<blake3>",         "size": 720896000}
           },
           "x86_64": { "...": "..." }
         }
@@ -101,32 +106,85 @@ Key points:
 - **Hashes are BLAKE3**, 64 lowercase hex characters. Format is validated by `asset_manager.rs`; non-format-2 manifests are rejected.
 - **Compatibility is explicit.** `min_binary` on an asset release and `min_assets` on a binary release define the allowed pairings for upgrades and downloads.
 
-### Two manifest producers
+### Manifest producer
 
-| Producer | Used by | When |
-|----------|---------|------|
-| `docker.py:generate_checksums()` | `just build-assets` | After full image builds |
-| `scripts/gen_manifest.py` | `just _pack-initrd` | After injecting updated guest binaries into initrd |
+`capsem-admin manifest generate <assets_dir>` is the public and supported
+manifest producer. It points at an asset directory, computes BLAKE3 hashes and
+sizes for every built architecture, writes `B3SUMS`, writes
+`<assets_dir>/manifest.json`, and reports the manifest in admin-readable JSON
+when `--json` is passed.
 
-Both emit the same format-2 schema and use the same `YYYY.MMDD.patch` same-day increment rules. `scripts/create_hash_assets.py` then creates `<stem>-<hex16>.<ext>` hardlinks so the dev layout matches the content-addressable names used by the installed layout.
+`just build-assets`, `just _pack-initrd`, CI, release packaging, and corp
+custom builds must all use this profile-derived build rail. The lower-level builder code is an
+implementation detail behind `capsem-admin`; docs and automation should not call
+manifest generator internals directly.
+
+After manifest generation, `scripts/create_hash_assets.py` creates
+`<stem>-<hex16>.<ext>` hardlinks so the dev layout matches the
+content-addressable names used by the installed layout.
+
+After `_pack-initrd` updates the manifest, `_materialize-config` runs
+`capsem-admin profile materialize` and writes:
+
+```
+target/config/
+  settings.toml
+  corp.toml
+  profiles/code/profile.toml # selected arch assets rewritten from manifest
+  profiles/code/*.toml|yaml # copied rule files
+  assets/manifest.json
+```
+
+The generated profile uses verified `file://` URLs for the active local arch.
+Checked-in `config/profiles/<id>/profile.toml` stays source truth and must not
+be edited to match a local repacked initrd.
+
+### Custom corp build manifest flow
+
+Corporate/custom asset builds use the same sequence as release:
+
+```bash
+capsem-admin manifest generate /path/to/assets --version 1.3.corp.1 --json
+capsem-admin manifest check /path/to/assets/manifest.json --json
+bash scripts/build-pkg.sh \
+  --manifest /path/to/assets/manifest.json \
+  target/release/bundle/macos/Capsem.app \
+  target/release \
+  /path/to/assets \
+  target/config \
+  1.3.corp.1
+```
+
+The package copies that selected manifest into its payload and writes
+`manifest-origin.json`. Installed service status exposes the manifest path,
+BLAKE3 hash, origin, and source so corp can debug exactly which manifest a
+machine is using.
 
 ## Runtime Hash Verification
 
-Asset hashes are **not** baked into the binary at compile time -- that would tie every binary release to a specific asset release and defeat the `min_binary`/`min_assets` compatibility model. Instead, the binary is hash-agnostic; the manifest on disk is authoritative, and its authenticity is established by a minisign signature verified against a pubkey baked into the binary (`config/manifest-sign.pub`, key id `93A070CBB288AC9B`).
+Asset hashes are **not** baked into the binary at compile time -- that would tie every binary release to a specific asset release and defeat the `min_binary`/`min_assets` compatibility model. Instead, the binary is hash-agnostic. Profile/corp configuration selects asset URLs, and BLAKE3 hashes verify the bytes before boot.
 
-At boot (`crates/capsem-core/src/vm/boot.rs`):
+At boot, the service loads profiles from `target/config/profiles` in dev/test
+and from the installed profile directory in packaged runs. The selected
+profile's asset descriptors are the runtime contract:
 
-1. `asset_manager::load_verified_manifest_for_assets(assets, require_signature)` reads `manifest.json` from the assets dir or its parent, and verifies the sibling `manifest.json.minisig` against the baked release pubkey.
-2. `ManifestV2::expected_hashes_current(host_manifest_arch())` looks up the kernel/initrd/rootfs hashes for the current release on the host arch (`aarch64` -> `arm64` mapped).
-3. The hashes are passed to `VmConfig::builder()` via `expected_kernel_hash` / `expected_initrd_hash` / `expected_disk_hash`; `VmConfig::build()` hashes the files and refuses to boot on mismatch.
+1. VM create chooses a profile id, normally `code`.
+2. The profile resolves the current host-arch kernel, initrd, and rootfs assets.
+3. Asset ensure/download verifies bytes against profile BLAKE3 hash and size.
+4. The resolved paths and hashes are passed to `VmConfig::builder()`;
+   `VmConfig::build()` hashes the files and refuses to boot on mismatch.
 
 Failure modes:
 
-- **No manifest at all**: local development layouts may skip hash verification (`[boot-audit] asset hash verification disabled`) for fresh checkouts without assets built yet. Installed package layouts require a signed manifest.
-- **Manifest present, no `.minisig`**: local debug builds can proceed only in development layouts. Installed macOS `.pkg` and Linux `.deb` layouts hard-fail -- an untrusted manifest must not drive hash verification.
-- **Manifest present, `.minisig` invalid**: always hard-fail, regardless of build profile. A signature mismatch is a loud signal.
+- **Generated config missing**: the justfile service path fails before launch.
+- **Generated profile/manifest mismatch**: `capsem-admin profile check` rejects
+  the materialized profile before boot.
+- **Asset bytes mismatch**: asset ensure or `VmConfig::build()` rejects the
+  file and the VM does not boot.
 
-Manifests are signed during the release workflow (`scripts/check-release-workflow.sh` uses `minisign -Sm assets/manifest.json`). The corresponding pubkey in `config/manifest-sign.pub` is included via `include_str!` at compile time, so the signing/verification loop is self-contained and does not depend on any TLS or external trust root.
+Release authenticity evidence is handled by SBOM and build provenance
+attestations. Runtime asset authorization is profile/corp URL selection plus
+BLAKE3 byte verification.
 
 ## Runtime Asset Resolution
 
@@ -141,32 +199,32 @@ Manifests are signed during the release workflow (`scripts/check-release-workflo
 
 For each candidate, it checks **per-arch first** (`candidate/{arch}/vmlinuz`), then **flat** (`candidate/vmlinuz`).
 
-### Step 2: Resolve manifest-selected assets
+### Step 2: Find rootfs
 
-`ManifestV2::resolve()` selects the compatible asset release for the running binary, then resolves hash-named assets in either the flat development layout or the installed per-arch layout:
+`resolve_rootfs()` checks in order:
 
-1. **Flat**: `{assets_dir}/<stem>-<hash16>.<ext>`
-2. **Per-arch**: `{assets_dir}/{arch}/<stem>-<hash16>.<ext>`
+1. **Profile/dev logical asset**: the selected profile's current-arch
+   `file://.../assets/{arch}/rootfs.erofs`
+2. **Installed hash asset**: `~/.capsem/assets/rootfs-{hash16}.erofs`
 
 ### Step 3: Download if missing
 
 If rootfs is not found locally, `create_asset_manager()` loads the manifest and initiates download:
 
-1. Loads `manifest.json` from assets dir or its parent (handles per-arch layout)
-2. Creates `AssetManager` with per-arch download directory (`~/.capsem/assets/{arch}/`)
-3. Downloads from GitHub Releases with HTTP resume support (Range headers)
-4. Verifies BLAKE3 hash after download, deletes on mismatch
-5. Atomically renames temp file to final path
+1. Reads the selected profile's asset URL/hash/size descriptor
+2. Downloads the URL when the hash-prefixed local asset is missing
+3. Verifies BLAKE3 hash and size after download, deletes on mismatch
+4. Atomically renames temp file to final path
 
 ### Step 4: Boot
 
-`boot_vm()` builds `VmConfig` with manifest-selected asset paths and hashes:
+`boot_vm()` builds `VmConfig` with profile-selected asset paths and hashes:
 
 ```
 VmConfig::builder()
-    .kernel_path(assets/{arch}/vmlinuz-<hash16>)         + expected_kernel_hash
-    .initrd_path(assets/{arch}/initrd-<hash16>.img)      + expected_initrd_hash
-    .disk_path(assets/{arch}/rootfs-<hash16>.squashfs)   + expected_disk_hash
+    .kernel_path(assets/vmlinuz)    + profile kernel hash
+    .initrd_path(assets/initrd.img) + profile initrd hash
+    .disk_path(rootfs.erofs)        + profile rootfs hash
     .build()  // verifies all hashes
 ```
 
@@ -181,7 +239,11 @@ Assets are verified at multiple points:
 | After download | `asset_manager.rs` | Temp file deleted, download retried |
 | Before boot | `vm/config.rs` | `ConfigError::HashMismatch`, boot prevented |
 
-Both use BLAKE3 with 64-character hex format. Both checks source their expected hashes from the same `manifest.json` on disk -- the boot check just re-reads it via `load_manifest_for_assets()` at `boot_vm()` time.
+Both use BLAKE3 with 64-character hex format. In dev/test, expected hashes are
+copied from `assets/manifest.json` into
+`target/config/profiles/code/profile.toml` by the shared
+`capsem-admin profile materialize` rail. Runtime then reads the generated
+profile, not the source profile.
 
 ## Per-Architecture Isolation
 
@@ -192,7 +254,7 @@ Both use BLAKE3 with 64-character hex format. Both checks source their expected 
 ```mermaid
 flowchart LR
     subgraph Build
-        Profile[Profile V2 payload] --> Admin[capsem-admin image build]
+        PROFILE["config/profiles/<id>/profile.toml"] --> Admin["capsem-admin image build"]
         Admin --> Builder[capsem-builder]
         Builder --> Assets[assets/arm64/]
         Builder --> Checksums[manifest.json]

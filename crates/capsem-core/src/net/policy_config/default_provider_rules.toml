@@ -1,0 +1,271 @@
+# Built-in provider rule defaults.
+#
+# These provider-scoped rules are convenience authoring only. At runtime they
+# compile into the `profiles.rules.*` security-event rule rail.
+
+[plugins.credential_broker]
+mode = "rewrite"
+detection_level = "informational"
+
+[plugins.log_sanitizer]
+mode = "rewrite"
+detection_level = "informational"
+
+[default.000_local_network]
+name = "local_network"
+action = "ask"
+priority = "default"
+reason = "Default ask before local, private, or non-routable network access."
+match = '''
+ip.value.matches("^(127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|0\.|::1$|fc|fd|fe80)")
+|| http.host.matches("^(localhost|127\..*|0\..*|10\..*|192\.168\..*|169\.254\..*|172\.(1[6-9]|2[0-9]|3[0-1])\..*|host\.docker\.internal|local\.ollama)$")
+'''
+
+[default.http]
+name = "http"
+action = "allow"
+priority = "default"
+reason = "Default allow for HTTP requests."
+match = 'has(http.host)'
+
+[default.dns]
+name = "dns"
+action = "allow"
+priority = "default"
+reason = "Default allow for DNS queries."
+match = 'has(dns.qname)'
+
+[default.mcp]
+name = "mcp"
+action = "allow"
+priority = "default"
+reason = "Default allow for MCP server activity and tool calls."
+match = 'has(mcp.method) || has(mcp.server.name) || has(mcp.tool_call.name) || has(mcp.tool_list)'
+
+[default.model]
+name = "model"
+action = "allow"
+priority = "default"
+reason = "Default allow for model calls."
+match = 'has(model.provider) || has(model.name) || has(model.request.body) || has(model.response.body) || has(model.request.tool_calls)'
+
+[default.file]
+name = "file"
+action = "allow"
+priority = "default"
+reason = "Default allow for file reads, writes, creates, deletes, imports, and exports."
+match = '''
+has(file.read.path)
+|| has(file.write.path)
+|| has(file.create.path)
+|| has(file.delete.path)
+|| has(file.import.path)
+|| has(file.export.path)
+|| has(file.content)
+'''
+
+[default.process]
+name = "process"
+action = "allow"
+priority = "default"
+reason = "Default allow for process execution and audit activity."
+match = 'has(process.exec.path) || has(process.command) || has(process.exec.id)'
+
+[ai.openai]
+name = "OpenAI"
+protocol = "openai"
+url = "https://api.openai.com/v1"
+aliases = ["api.openai.com"]
+listen_ports = [443]
+allowed_remote_targets = ["api.openai.com:443"]
+
+[ai.openai.rules.http_api]
+name = "openai_http_api_observed"
+action = "allow"
+detection_level = "informational"
+match = 'http.host.matches("(^|.*\.)(openai\.com|chatgpt\.com|oaistatic\.com|oaiusercontent\.com)$")'
+
+[ai.openai.rules.dns_api]
+name = "openai_dns_api_observed"
+action = "allow"
+detection_level = "informational"
+match = 'dns.qname.matches("(^|.*\.)(openai\.com|chatgpt\.com|oaistatic\.com|oaiusercontent\.com)$")'
+
+[ai.openai.rules.codex_config_read]
+name = "openai_config_read"
+action = "allow"
+detection_level = "informational"
+match = 'file.read.path == "/root/.codex/config.toml"'
+
+[ai.openai.rules.model_api]
+name = "openai_model_api_observed"
+action = "allow"
+detection_level = "informational"
+match = 'model.provider == "openai"'
+
+[ai.openai.rules.mcp_server]
+name = "openai_mcp_server_observed"
+action = "allow"
+detection_level = "informational"
+match = 'mcp.server.name.contains("openai") || mcp.tool_call.name.contains("openai")'
+
+[ai.anthropic]
+name = "Anthropic"
+protocol = "anthropic"
+url = "https://api.anthropic.com/v1"
+aliases = ["api.anthropic.com"]
+listen_ports = [443]
+allowed_remote_targets = ["api.anthropic.com:443"]
+
+[ai.anthropic.rules.http_api]
+name = "anthropic_http_api_observed"
+action = "allow"
+detection_level = "informational"
+match = 'http.host.matches("(^|.*\.)(anthropic\.com|claude\.ai|claude\.com)$")'
+
+[ai.anthropic.rules.dns_api]
+name = "anthropic_dns_api_observed"
+action = "allow"
+detection_level = "informational"
+match = 'dns.qname.matches("(^|.*\.)(anthropic\.com|claude\.ai|claude\.com)$")'
+
+[ai.anthropic.rules.claude_settings_read]
+name = "claude_settings_read"
+action = "allow"
+detection_level = "informational"
+match = 'file.read.path == "/root/.claude/settings.json"'
+
+[ai.anthropic.rules.claude_state_read]
+name = "claude_state_read"
+action = "allow"
+detection_level = "informational"
+match = 'file.read.path == "/root/.claude.json"'
+
+[ai.anthropic.rules.claude_credentials_read]
+name = "claude_credentials_read"
+action = "allow"
+detection_level = "informational"
+match = 'file.read.path == "/root/.claude/.credentials.json"'
+
+[ai.anthropic.rules.model_api]
+name = "anthropic_model_api_observed"
+action = "allow"
+detection_level = "informational"
+match = 'model.provider == "anthropic"'
+
+[ai.anthropic.rules.mcp_server]
+name = "anthropic_mcp_server_observed"
+action = "allow"
+detection_level = "informational"
+match = 'mcp.server.name.contains("anthropic") || mcp.server.name.contains("claude") || mcp.tool_call.name.contains("claude")'
+
+[ai.google]
+name = "Google AI"
+protocol = "google"
+url = "https://generativelanguage.googleapis.com/v1beta"
+aliases = ["generativelanguage.googleapis.com", "daily-cloudcode-pa.googleapis.com"]
+listen_ports = [443]
+allowed_remote_targets = ["generativelanguage.googleapis.com:443", "daily-cloudcode-pa.googleapis.com:443"]
+
+[ai.google.rules.http_gemini_api]
+name = "google_gemini_http_observed"
+action = "allow"
+detection_level = "informational"
+match = 'http.host.matches("(^|.*\.)(generativelanguage\.googleapis\.com|aistudio\.google\.com|gemini\.google\.com)$")'
+
+[ai.google.rules.http_googleapis]
+name = "googleapis_http_observed"
+action = "allow"
+detection_level = "informational"
+match = 'http.host.matches("(^|.*\.)googleapis\.com$")'
+
+[ai.google.rules.dns_googleapis]
+name = "googleapis_dns_observed"
+action = "allow"
+detection_level = "informational"
+match = 'dns.qname.matches("(^|.*\.)googleapis\.com$") || dns.qname.matches("(^|.*\.)(aistudio\.google\.com|gemini\.google\.com)$")'
+
+[ai.google.rules.gemini_settings_read]
+name = "gemini_settings_read"
+action = "allow"
+detection_level = "informational"
+match = 'file.read.path == "/root/.gemini/settings.json"'
+
+[ai.google.rules.gemini_projects_read]
+name = "gemini_projects_read"
+action = "allow"
+detection_level = "informational"
+match = 'file.read.path == "/root/.gemini/projects.json"'
+
+[ai.google.rules.gemini_trusted_folders_read]
+name = "gemini_trusted_folders_read"
+action = "allow"
+detection_level = "informational"
+match = 'file.read.path == "/root/.gemini/trustedFolders.json"'
+
+[ai.google.rules.gemini_installation_id_read]
+name = "gemini_installation_id_read"
+action = "allow"
+detection_level = "informational"
+match = 'file.read.path == "/root/.gemini/installation_id"'
+
+[ai.google.rules.google_adc_read]
+name = "google_adc_read"
+action = "allow"
+detection_level = "informational"
+match = 'file.read.path == "/root/.config/gcloud/application_default_credentials.json"'
+
+[ai.google.rules.model_api]
+name = "google_model_api_observed"
+action = "allow"
+detection_level = "informational"
+match = 'model.provider == "google" || model.provider == "gemini"'
+
+[ai.google.rules.mcp_server]
+name = "google_mcp_server_observed"
+action = "allow"
+detection_level = "informational"
+match = 'mcp.server.name.contains("google") || mcp.server.name.contains("gemini") || mcp.tool_call.name.contains("gemini")'
+
+[ai.ollama]
+name = "Ollama"
+protocol = "ollama"
+url = "http://127.0.0.1:11434"
+aliases = ["localhost", "127.0.0.1", "host.docker.internal", "local.ollama"]
+listen_ports = [11434]
+allowed_remote_targets = [
+  "localhost:11434",
+  "127.0.0.1:11434",
+  "host.docker.internal:11434",
+  "local.ollama:11434",
+]
+
+[ai.ollama.rules.http_local_host]
+name = "ollama_local_http_observed"
+action = "allow"
+detection_level = "informational"
+match = 'http.host.matches("^(localhost|127\.0\.0\.1|host\.docker\.internal|local\.ollama)$")'
+
+[ai.ollama.rules.http_native_api]
+name = "ollama_native_http_observed"
+action = "allow"
+detection_level = "informational"
+match = 'http.path.matches("^/api/(chat|generate|embeddings|embed|tags|show|pull|push|create|copy|delete|ps|version)")'
+
+[ai.ollama.rules.http_openai_compatible]
+name = "ollama_openai_http_observed"
+action = "allow"
+detection_level = "informational"
+match = 'http.path.matches("^/v1/(chat/completions|completions|embeddings|models)")'
+
+[ai.ollama.rules.model_api]
+name = "ollama_model_api_observed"
+action = "allow"
+detection_level = "informational"
+match = 'model.provider == "ollama"'
+
+[ai.ollama.rules.mcp_server]
+name = "ollama_mcp_server_observed"
+action = "allow"
+detection_level = "informational"
+match = 'mcp.server.name.contains("ollama") || mcp.tool_call.name.contains("ollama")'

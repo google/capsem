@@ -8,7 +8,8 @@ These tests verify the VirtioFS single-share hybrid architecture:
 
 import os
 import pathlib
-import subprocess
+import textwrap
+import zipfile
 
 import pytest
 
@@ -55,6 +56,25 @@ def test_system_overlay_block_device_present():
     assert "53 ef" in result.stdout.lower(), f"/dev/vdb not ext4-formatted: {result.stdout!r}"
 
 
+def test_storage_capacity_report_is_available():
+    """Doctor must surface block and inode availability for storage triage."""
+    block_result = run("df -h / /root /tmp")
+    assert block_result.returncode == 0, f"df -h failed: {block_result.stdout}\n{block_result.stderr}"
+    assert "/root" in block_result.stdout, f"df -h missing /root row: {block_result.stdout}"
+
+    inode_result = run("df -i / /root /tmp")
+    assert inode_result.returncode == 0, f"df -i failed: {inode_result.stdout}\n{inode_result.stderr}"
+    assert "IUse%" in inode_result.stdout, f"df -i missing inode utilization: {inode_result.stdout}"
+
+
+def test_overlay_mount_options_are_reported():
+    """Doctor must expose overlay mount options when package writes fail."""
+    result = run("awk '$2 == \"/\" && $3 == \"overlay\" { print $4 }' /proc/mounts")
+    assert result.returncode == 0
+    assert result.stdout.strip(), f"overlay mount options missing from /proc/mounts: {result.stdout}"
+    assert "upperdir=" in result.stdout, f"overlay options missing upperdir: {result.stdout}"
+
+
 def test_workspace_write_read():
     """Write a file to /root and read it back."""
     test_file = pathlib.Path("/root/virtiofs_write_test.txt")
@@ -94,13 +114,51 @@ def test_system_overlay_writable():
     test_file.unlink()
 
 
-def test_pip_install_works():
+def _write_python_wheel(output_dir, distribution, module, module_source):
+    """Create a tiny pure-Python wheel without touching a package index."""
+    version = "0.1.0"
+    normalized = distribution.replace("-", "_")
+    wheel_path = output_dir / f"{normalized}-{version}-py3-none-any.whl"
+    dist_info = f"{normalized}-{version}.dist-info"
+    files = {
+        f"{module}/__init__.py": textwrap.dedent(module_source).lstrip(),
+        f"{dist_info}/METADATA": (
+            "Metadata-Version: 2.1\n"
+            f"Name: {distribution}\n"
+            f"Version: {version}\n"
+        ),
+        f"{dist_info}/WHEEL": (
+            "Wheel-Version: 1.0\n"
+            "Generator: capsem-doctor\n"
+            "Root-Is-Purelib: true\n"
+            "Tag: py3-none-any\n"
+        ),
+    }
+    record_rows = [f"{path},," for path in files]
+    record_rows.append(f"{dist_info}/RECORD,,")
+    files[f"{dist_info}/RECORD"] = "\n".join(record_rows) + "\n"
+    with zipfile.ZipFile(wheel_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for path, data in files.items():
+            zf.writestr(path, data)
+    return wheel_path
+
+
+def test_pip_install_works(output_dir):
     """pip install must work (writes to ext4 virtio-blk overlay, not VirtioFS)."""
-    # Install a tiny package to verify the overlay is writable for package managers.
-    result = run("pip install --quiet cowsay 2>&1", timeout=30)
+    wheel = _write_python_wheel(
+        output_dir,
+        "capsem-virtiofs-pip",
+        "capsem_virtiofs_pip",
+        """
+        def moo():
+            return "moo"
+        """,
+    )
+    result = run(f"pip install --no-index {wheel} 2>&1", timeout=30)
     assert result.returncode == 0, f"pip install failed: {result.stdout}\n{result.stderr}"
-    result = run("python3 -c 'import cowsay; print(cowsay.cow(\"moo\"))'")
-    assert "moo" in result.stdout, f"cowsay not working: {result.stdout}"
+    result = run("python3 -c 'import capsem_virtiofs_pip; print(capsem_virtiofs_pip.moo())'")
+    assert result.returncode == 0, f"local wheel not importable: {result.stderr}"
+    assert "moo" in result.stdout, f"local wheel not working: {result.stdout}"
 
 
 def test_file_delete_and_recreate():

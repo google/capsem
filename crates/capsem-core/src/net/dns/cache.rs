@@ -10,14 +10,15 @@
 //!   Expiry is enforced lazily on lookup: an expired entry is
 //!   removed and counted as a miss.
 //! * **Eligibility**: only `Decision::Allowed` answers are cached.
-//!   Block + rewrite re-evaluate the policy on every query (the
-//!   admin can change either at any moment), and SERVFAIL responses
-//!   should not be persisted.
+//!   Security blocks run before the cache. Redirect settings are still
+//!   re-checked on every query, and SERVFAIL responses should not be
+//!   persisted.
 //! * **Bound**: an LRU on entry count (default 1024). Evictions are
 //!   counted via the `mitm.dns_cache_evictions_total` counter.
 //!
-//! The DNS handler evaluates Policy before consulting the cache, so a
-//! later block or rewrite never serves a stale cached answer.
+//! The cache **does** read the network-policy snapshot on every hit so
+//! redirect/cache mechanics stay coherent without a per-policy version
+//! counter.
 
 use std::num::NonZeroUsize;
 use std::sync::Mutex;
@@ -28,6 +29,8 @@ use lru::LruCache;
 use tracing::trace;
 
 use crate::net::mitm_proxy::metrics as m;
+use crate::net::policy::NetworkPolicy;
+
 /// Default cache capacity (entries). Picked to keep ~64 KB of memory
 /// in the worst case (1024 * 64-byte answers); bounds RSS without
 /// constraining real workloads (a single curl invocation typically
@@ -95,6 +98,8 @@ impl DnsAnswerCache {
     /// Returns `Some(bytes)` only if:
     /// * The entry exists.
     /// * It has not expired.
+    /// * `policy.find_dns_redirect(qname, qtype)` is None (not
+    ///   now-redirected).
     ///
     /// On every other shape we return None and let the caller fall
     /// through to the policy + upstream path (where the new policy
@@ -106,7 +111,14 @@ impl DnsAnswerCache {
     /// downstream resolvers (which match responses by id) would
     /// reject every hit -- surfaced in the in-VM dns-load bench
     /// during T3 closure as "id mismatch" on 100% of queries.
-    pub fn get(&self, qname: &str, qtype: u16, qclass: u16, query_id: u16) -> Option<Vec<u8>> {
+    pub fn get(
+        &self,
+        qname: &str,
+        qtype: u16,
+        qclass: u16,
+        query_id: u16,
+        policy: &NetworkPolicy,
+    ) -> Option<Vec<u8>> {
         let key = CacheKey {
             qname: qname.to_string(),
             qtype,
@@ -121,6 +133,19 @@ impl DnsAnswerCache {
             guard.pop(&key);
             ::metrics::counter!(m::DNS_CACHE_MISSES_TOTAL).increment(1);
             trace!(qname, qtype, "dns cache: expired entry evicted");
+            return None;
+        }
+        // Coherence: re-check redirect mechanics on every hit. Security-rule
+        // enforcement happens before cache lookup in the DNS handler, so this
+        // cache layer does not own allow/block decisions.
+        if policy.find_dns_redirect(qname, qtype).is_some() {
+            guard.pop(&key);
+            ::metrics::counter!(m::DNS_CACHE_MISSES_TOTAL).increment(1);
+            trace!(
+                qname,
+                qtype,
+                "dns cache: entry invalidated by redirect change"
+            );
             return None;
         }
         let mut bytes = entry.bytes.clone();

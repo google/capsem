@@ -1,22 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { McpServerInfo, McpToolInfo, McpPolicyInfo } from '../types';
+import type { McpServerInfo, McpToolInfo } from '../types';
 
 const mockServers: McpServerInfo[] = [
   {
-    name: 'builtin',
+    name: 'local',
     url: '',
-    has_bearer_token: false,
+    has_auth_credential: false,
     custom_header_count: 0,
-    source: 'default',
+    source: 'builtin',
     enabled: true,
-    running: true,
+    running: false,
     tool_count: 5,
-    is_stdio: false,
+    is_stdio: true,
   },
   {
     name: 'external',
     url: 'https://mcp.example.com',
-    has_bearer_token: true,
+    has_auth_credential: true,
     custom_header_count: 1,
     source: 'user',
     enabled: true,
@@ -27,28 +27,18 @@ const mockServers: McpServerInfo[] = [
 ];
 
 const mockTools: McpToolInfo[] = [
-  { namespaced_name: 'builtin__http_get', original_name: 'http_get', description: 'HTTP GET', server_name: 'builtin', annotations: { title: null, read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: true }, pin_hash: 'abc', approved: true, pin_changed: false },
-  { namespaced_name: 'external__search', original_name: 'search', description: 'Search', server_name: 'external', annotations: null, pin_hash: 'def', approved: false, pin_changed: true },
+  { namespaced_name: 'local__http_get', original_name: 'http_get', description: 'HTTP GET', server_name: 'local', annotations: { title: null, read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: true }, pin_hash: 'abc', approved: true, pin_changed: false, permission_action: 'allow', permission_source: 'default' },
+  { namespaced_name: 'external__search', original_name: 'search', description: 'Search', server_name: 'external', annotations: null, pin_hash: 'def', approved: false, pin_changed: true, permission_action: 'ask', permission_source: 'profile_managed' },
 ];
 
-const mockPolicy: McpPolicyInfo = {
-  global_policy: 'allow',
-  default_tool_permission: 'allow',
-  blocked_servers: [],
-  tool_permissions: {},
-};
-
 vi.mock('../api', () => ({
+  getMcpDefaultPermission: vi.fn(async () => ({ action: 'allow', source: 'default', rule_id: 'default.mcp' })),
   getMcpServers: vi.fn(async () => mockServers),
-  getMcpTools: vi.fn(async () => mockTools),
-  getMcpPolicy: vi.fn(async () => mockPolicy),
-  setMcpServerEnabled: vi.fn(async () => {}),
-  addMcpServer: vi.fn(async () => {}),
-  removeMcpServer: vi.fn(async () => {}),
-  setMcpGlobalPolicy: vi.fn(async () => {}),
-  setMcpDefaultPermission: vi.fn(async () => {}),
-  setMcpToolPermission: vi.fn(async () => {}),
-  approveMcpTool: vi.fn(async () => {}),
+  getMcpTools: vi.fn(async (_profileId: string, serverId: string) =>
+    mockTools.filter((tool) => tool.server_name === serverId)
+  ),
+  updateMcpDefaultPermission: vi.fn(async () => {}),
+  updateMcpToolPermission: vi.fn(async () => {}),
   refreshMcpTools: vi.fn(async () => {}),
 }));
 
@@ -61,15 +51,19 @@ describe('mcpStore', () => {
     mcpStore = mod.mcpStore;
   });
 
-  it('loads servers, tools, and policy', async () => {
-    await mcpStore.load();
+  it('loads servers and tools only', async () => {
+    await mcpStore.load('co-work');
 
     expect(mcpStore.servers).toHaveLength(2);
-    expect(mcpStore.servers[0].name).toBe('builtin');
+    expect(mcpStore.servers[0].name).toBe('local');
+    expect(mcpStore.servers[0].source).toBe('builtin');
+    expect(mcpStore.profileId).toBe('co-work');
 
     expect(mcpStore.tools).toHaveLength(2);
+    expect(mcpStore.defaultPermission.action).toBe('allow');
+    expect(mcpStore.defaultPermission.rule_id).toBe('default.mcp');
 
-    expect(mcpStore.policy.global_policy).toBe('allow');
+    expect('policy' in mcpStore).toBe(false);
 
     expect(mcpStore.loading).toBe(false);
 
@@ -77,85 +71,63 @@ describe('mcpStore', () => {
   });
 
   it('computes derived state', async () => {
-    await mcpStore.load();
+    await mcpStore.load('co-work');
 
     const grouped = mcpStore.toolsByServer;
-    expect(grouped['builtin']).toHaveLength(1);
+    expect(grouped['local']).toHaveLength(1);
 
     expect(mcpStore.pinWarningCount).toBe(1);
 
     expect(mcpStore.totalTools).toBe(2);
 
-    expect(mcpStore.runningCount).toBe(1);
+    expect(mcpStore.runningCount).toBe(0);
   });
 
-  it('toggleServer calls API and reloads', async () => {
-    await mcpStore.load();
-    await mcpStore.toggleServer('builtin', false);
-    const { setMcpServerEnabled } = await import('../api');
-    expect(setMcpServerEnabled).toHaveBeenCalledWith('builtin', false);
+  it('does not expose retired policy or unsupported server mutation methods', () => {
+    expect('setGlobalPolicy' in mcpStore).toBe(false);
+    expect('toggleServer' in mcpStore).toBe(false);
+    expect('addServer' in mcpStore).toBe(false);
+    expect('removeServer' in mcpStore).toBe(false);
   });
 
-  it('addServer calls API and reloads', async () => {
-    await mcpStore.load();
-    await mcpStore.addServer('new-srv', 'http://new', { 'X-H': 'v' }, 'tok');
-    const { addMcpServer } = await import('../api');
-    expect(addMcpServer).toHaveBeenCalledWith('new-srv', 'http://new', { 'X-H': 'v' }, 'tok');
+  it('setDefaultPermission calls the profile-backed default rule API and reloads', async () => {
+    await mcpStore.load('co-work');
+    await mcpStore.setDefaultPermission('ask');
+    const { updateMcpDefaultPermission } = await import('../api');
+    expect(updateMcpDefaultPermission).toHaveBeenCalledWith('co-work', 'ask');
   });
 
-  it('removeServer calls API and reloads', async () => {
-    await mcpStore.load();
-    await mcpStore.removeServer('external');
-    const { removeMcpServer } = await import('../api');
-    expect(removeMcpServer).toHaveBeenCalledWith('external');
-  });
-
-  it('setGlobalPolicy calls API and reloads', async () => {
-    await mcpStore.load();
-    await mcpStore.setGlobalPolicy('deny');
-    const { setMcpGlobalPolicy } = await import('../api');
-    expect(setMcpGlobalPolicy).toHaveBeenCalledWith('deny');
-  });
-
-  it('setDefaultPermission calls API and reloads', async () => {
-    await mcpStore.load();
-    await mcpStore.setDefaultPermission('warn');
-    const { setMcpDefaultPermission } = await import('../api');
-    expect(setMcpDefaultPermission).toHaveBeenCalledWith('warn');
-  });
-
-  it('setToolPermission calls API and reloads', async () => {
-    await mcpStore.load();
-    await mcpStore.setToolPermission('bash', 'block');
-    const { setMcpToolPermission } = await import('../api');
-    expect(setMcpToolPermission).toHaveBeenCalledWith('bash', 'block');
-  });
-
-  it('approveTool calls API and reloads', async () => {
-    await mcpStore.load();
-    await mcpStore.approveTool('bash');
-    const { approveMcpTool } = await import('../api');
-    expect(approveMcpTool).toHaveBeenCalledWith('bash');
+  it('setToolPermission calls the profile-backed rule API and reloads', async () => {
+    await mcpStore.load('co-work');
+    await mcpStore.setToolPermission('local__http_get', 'ask');
+    const { updateMcpToolPermission } = await import('../api');
+    expect(updateMcpToolPermission).toHaveBeenCalledWith('co-work', 'local', 'http_get', 'ask');
   });
 
   it('refresh with server calls API', async () => {
-    await mcpStore.load();
-    await mcpStore.refresh('builtin');
+    await mcpStore.load('co-work');
+    await mcpStore.refresh('local');
     const { refreshMcpTools } = await import('../api');
-    expect(refreshMcpTools).toHaveBeenCalledWith('builtin');
+    expect(refreshMcpTools).toHaveBeenCalledWith('co-work', 'local');
   });
 
-  it('refresh without server calls API', async () => {
-    await mcpStore.load();
+  it('refresh without server refreshes each loaded server', async () => {
+    await mcpStore.load('co-work');
     await mcpStore.refresh();
     const { refreshMcpTools } = await import('../api');
-    expect(refreshMcpTools).toHaveBeenCalledWith(undefined);
+    expect(refreshMcpTools).toHaveBeenCalledWith('co-work', 'local');
+    expect(refreshMcpTools).toHaveBeenCalledWith('co-work', 'external');
   });
 
   it('handles load error', async () => {
     const { getMcpServers } = await import('../api');
     (getMcpServers as any).mockRejectedValueOnce(new Error('boom'));
-    await mcpStore.load();
+    await mcpStore.load('co-work');
     expect(mcpStore.error).toContain('boom');
+  });
+
+  it('requires an explicit profile before mutating MCP config', async () => {
+    await expect(mcpStore.setToolPermission(mockTools[0], 'block')).rejects.toThrow('profile id');
+    await expect(mcpStore.setDefaultPermission('block')).rejects.toThrow('profile id');
   });
 });

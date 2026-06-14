@@ -36,7 +36,7 @@
     </div>
 
     <div class="flex items-center gap-3">
-      <a href="/#download" class="btn-primary hidden sm:inline-flex">
+      <a href="#download" class="btn-primary hidden sm:inline-flex">
         <Icon name="download" />
         Download
       </a>
@@ -75,7 +75,7 @@
           >{link.label}</a>
         {/each}
         <div class="flex gap-3 pt-2">
-          <a href="/#download" class="btn-primary" onclick={closeMobile}>
+          <a href="#download" class="btn-primary" onclick={closeMobile}>
             <Icon name="download" />
             Download
           </a>

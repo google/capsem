@@ -18,7 +18,10 @@ use notify::{Config, Event, EventKind, RecursiveMode, Watcher};
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
-use capsem_logger::{DbWriter, FileAction, FileEvent, WriteOp};
+use capsem_logger::{DbWriter, FileAction, FileEvent};
+
+use crate::credential_broker::{broker_and_log_observations, parse_env_credentials};
+use crate::net::policy_config::SecurityRuleSet;
 
 /// Directories excluded from monitoring.
 const EXCLUDED_DIRS: &[&str] = &[
@@ -68,6 +71,7 @@ fn event_to_action(kind: &EventKind) -> Option<FileAction> {
 /// A raw queued event (path already relativized, exclusions already applied).
 struct QueuedEvent {
     path: String,
+    fs_path: PathBuf,
     action: FileAction,
 }
 
@@ -97,6 +101,7 @@ impl FsMonitor {
         watch_dir: PathBuf,
         strip_prefix: PathBuf,
         db: Arc<DbWriter>,
+        security_rules: Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>,
     ) -> anyhow::Result<Self> {
         let (event_tx, event_rx) = mpsc::channel::<Event>(1024);
         let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);
@@ -122,7 +127,13 @@ impl FsMonitor {
                     .enable_time()
                     .build()
                     .expect("fs_monitor runtime");
-                rt.block_on(Self::event_loop(event_rx, shutdown_rx, strip_prefix, db));
+                rt.block_on(Self::event_loop(
+                    event_rx,
+                    shutdown_rx,
+                    strip_prefix,
+                    db,
+                    security_rules,
+                ));
             })
             .expect("failed to spawn fs_monitor thread");
 
@@ -150,6 +161,7 @@ impl FsMonitor {
         mut shutdown_rx: mpsc::Receiver<()>,
         strip_prefix: PathBuf,
         db: Arc<DbWriter>,
+        security_rules: Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>,
     ) {
         let mut queue: Vec<QueuedEvent> = Vec::new();
         let mut dropped: u64 = 0;
@@ -159,13 +171,13 @@ impl FsMonitor {
             tokio::select! {
                 _ = shutdown_rx.recv() => {
                     // Final flush
-                    Self::flush(&mut queue, &mut dropped, &db).await;
+                    Self::flush(&mut queue, &mut dropped, &db, &security_rules).await;
                     debug!("host fs-monitor stopped");
                     break;
                 }
                 event = event_rx.recv() => {
                     let Some(event) = event else {
-                        Self::flush(&mut queue, &mut dropped, &db).await;
+                        Self::flush(&mut queue, &mut dropped, &db, &security_rules).await;
                         debug!("host fs-monitor channel closed");
                         break;
                     };
@@ -186,12 +198,12 @@ impl FsMonitor {
                         if queue.len() >= MAX_QUEUE_SIZE {
                             dropped += 1;
                         } else {
-                            queue.push(QueuedEvent { path: rel, action });
+                            queue.push(QueuedEvent { path: rel, fs_path: path.clone(), action });
                         }
                     }
                 }
                 _ = tokio::time::sleep(flush_interval) => {
-                    Self::flush(&mut queue, &mut dropped, &db).await;
+                    Self::flush(&mut queue, &mut dropped, &db, &security_rules).await;
                 }
             }
         }
@@ -202,7 +214,12 @@ impl FsMonitor {
     /// For each path, consecutive events of the same action type are coalesced
     /// into one. Different action types on the same path emit separately
     /// (e.g., create then delete = two emitted events).
-    async fn flush(queue: &mut Vec<QueuedEvent>, dropped: &mut u64, db: &DbWriter) {
+    async fn flush(
+        queue: &mut Vec<QueuedEvent>,
+        dropped: &mut u64,
+        db: &DbWriter,
+        security_rules: &Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>,
+    ) {
         if queue.is_empty() && *dropped == 0 {
             return;
         }
@@ -222,29 +239,31 @@ impl FsMonitor {
         // pending map already has the same path with the same action, skip.
         // If it has a different action, emit the pending one first, then
         // store the new action.
-        let mut pending: HashMap<String, FileAction> = HashMap::new();
+        let mut pending: HashMap<String, (FileAction, PathBuf)> = HashMap::new();
         let mut emitted: u64 = 0;
 
         for event in batch {
             match pending.get(&event.path) {
-                Some(&existing) if existing == event.action => {
+                Some((existing, _)) if *existing == event.action => {
                     // Same path, same action -- coalesce (skip)
                 }
                 Some(_) => {
                     // Same path, different action -- emit the old one first
-                    let old_action = pending.insert(event.path.clone(), event.action).unwrap();
-                    Self::emit(db, &event.path, old_action).await;
+                    let (old_action, old_fs_path) = pending
+                        .insert(event.path.clone(), (event.action, event.fs_path.clone()))
+                        .unwrap();
+                    Self::emit(db, security_rules, &event.path, &old_fs_path, old_action).await;
                     emitted += 1;
                 }
                 None => {
-                    pending.insert(event.path, event.action);
+                    pending.insert(event.path, (event.action, event.fs_path));
                 }
             }
         }
 
         // Emit all remaining pending entries
-        for (path, action) in pending {
-            Self::emit(db, &path, action).await;
+        for (path, (action, fs_path)) in pending {
+            Self::emit(db, security_rules, &path, &fs_path, action).await;
             emitted += 1;
         }
 
@@ -253,32 +272,57 @@ impl FsMonitor {
         }
     }
 
-    async fn emit(db: &DbWriter, path: &str, action: FileAction) {
+    async fn emit(
+        db: &DbWriter,
+        security_rules: &Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>,
+        path: &str,
+        fs_path: &Path,
+        action: FileAction,
+    ) {
         let size = if action != FileAction::Deleted {
-            std::fs::metadata(path).ok().map(|m| m.len())
+            std::fs::metadata(fs_path).ok().map(|m| m.len())
         } else {
             None
         };
-        let event = FileEvent {
-            timestamp: SystemTime::now(),
-            action,
-            path: path.to_string(),
-            size,
-            trace_id: crate::telemetry::ambient_capsem_trace_id(),
-        };
-        let resolved_event = capsem_file_engine::build_file_resolved_security_event(
-            &event,
-            &capsem_file_engine::FileEngineIdentity {
-                vm_id: non_empty_env(crate::telemetry::CAPSEM_VM_ID_ENV),
-                session_id: non_empty_env(crate::telemetry::CAPSEM_SESSION_ID_ENV),
-                profile_id: non_empty_env(crate::telemetry::CAPSEM_PROFILE_ID_ENV),
-                profile_revision: non_empty_env(crate::telemetry::CAPSEM_PROFILE_REVISION_ENV),
-                user_id: non_empty_env(crate::telemetry::CAPSEM_USER_ID_ENV),
+        let rules = security_rules.read().unwrap().clone();
+        let credential_ref =
+            Self::broker_env_file_credentials(db, &rules, path, fs_path, action).await;
+        crate::security_engine::emit_file_security_write_and_rules(
+            db,
+            &rules,
+            FileEvent {
+                event_id: None,
+                timestamp: SystemTime::now(),
+                action,
+                path: path.to_string(),
+                size,
+                trace_id: crate::telemetry::ambient_capsem_trace_id(),
+                credential_ref,
             },
-        );
-        db.write(WriteOp::FileEvent(event)).await;
-        db.write(WriteOp::ResolvedSecurityEvent(resolved_event))
-            .await;
+        )
+        .await;
+    }
+
+    async fn broker_env_file_credentials(
+        db: &DbWriter,
+        rules: &SecurityRuleSet,
+        path: &str,
+        fs_path: &Path,
+        action: FileAction,
+    ) -> Option<String> {
+        if action == FileAction::Deleted || !is_env_candidate(path) {
+            return None;
+        }
+        let metadata = std::fs::metadata(fs_path).ok()?;
+        if !metadata.is_file() || metadata.len() > 1024 * 1024 {
+            return None;
+        }
+        let content = std::fs::read_to_string(fs_path).ok()?;
+        let observations = parse_env_credentials(path, &content);
+        if observations.is_empty() {
+            return None;
+        }
+        broker_and_log_observations(db, rules, observations).await
     }
 
     /// Signal the monitor to stop.
@@ -287,16 +331,66 @@ impl FsMonitor {
     }
 }
 
-fn non_empty_env(key: &str) -> Option<String> {
-    std::env::var(key)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
+fn is_env_candidate(path: &str) -> bool {
+    Path::new(path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name == ".env" || name.starts_with(".env."))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::net::policy_config::{SecurityRuleProfile, SecurityRuleSource};
+
+    struct EnvGuard {
+        old_home_override: Option<String>,
+        old_home: Option<String>,
+        old_store: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn install(
+            capsem_home: &std::path::Path,
+            home: &std::path::Path,
+            test_store: &std::path::Path,
+        ) -> Self {
+            let old_home_override = std::env::var("CAPSEM_HOME").ok();
+            let old_home = std::env::var("HOME").ok();
+            let old_store = std::env::var(crate::credential_broker::TEST_STORE_ENV).ok();
+            std::env::set_var("CAPSEM_HOME", capsem_home);
+            std::env::set_var("HOME", home);
+            std::env::set_var(crate::credential_broker::TEST_STORE_ENV, test_store);
+            Self {
+                old_home_override,
+                old_home,
+                old_store,
+            }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match &self.old_home_override {
+                Some(v) => std::env::set_var("CAPSEM_HOME", v),
+                None => std::env::remove_var("CAPSEM_HOME"),
+            }
+            match &self.old_home {
+                Some(v) => std::env::set_var("HOME", v),
+                None => std::env::remove_var("HOME"),
+            }
+            match &self.old_store {
+                Some(v) => std::env::set_var(crate::credential_broker::TEST_STORE_ENV, v),
+                None => std::env::remove_var(crate::credential_broker::TEST_STORE_ENV),
+            }
+        }
+    }
+
+    fn empty_security_rules() -> Arc<std::sync::RwLock<Arc<SecurityRuleSet>>> {
+        Arc::new(std::sync::RwLock::new(Arc::new(SecurityRuleSet::new(
+            Vec::new(),
+        ))))
+    }
 
     #[test]
     fn should_exclude_git() {
@@ -320,6 +414,14 @@ mod tests {
     fn should_not_exclude_partial_name() {
         assert!(!should_exclude(Path::new(".github/workflows")));
         assert!(!should_exclude(Path::new("targets/debug")));
+    }
+
+    #[test]
+    fn env_candidate_matches_dotenv_files_only() {
+        assert!(is_env_candidate(".env"));
+        assert!(is_env_candidate("project/.env.local"));
+        assert!(!is_env_candidate("project/env.txt"));
+        assert!(!is_env_candidate("project/not.env"));
     }
 
     #[test]
@@ -479,6 +581,7 @@ mod tests {
         for i in 0..MAX_QUEUE_SIZE {
             queue.push(QueuedEvent {
                 path: format!("file_{}.txt", i),
+                fs_path: PathBuf::from(format!("file_{}.txt", i)),
                 action: FileAction::Modified,
             });
         }
@@ -488,5 +591,159 @@ mod tests {
         }
         assert_eq!(queue.len(), MAX_QUEUE_SIZE);
         assert_eq!(dropped, 1);
+    }
+
+    #[tokio::test]
+    async fn emit_brokers_env_credentials_and_persists_reference() {
+        let _lock = crate::credential_broker::TEST_ENV_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("session.db");
+        let env_path = dir.path().join(".env");
+        let capsem_home = dir.path().join("capsem-home");
+        let test_store = dir.path().join("credential-store.json");
+        let _guard = EnvGuard::install(&capsem_home, dir.path(), &test_store);
+        std::fs::write(&env_path, "OPENAI_API_KEY=sk-env-secret\n").unwrap();
+
+        let db = DbWriter::open(&db_path, 64).unwrap();
+        FsMonitor::emit(
+            &db,
+            &empty_security_rules(),
+            ".env",
+            &env_path,
+            FileAction::Modified,
+        )
+        .await;
+        db.shutdown_blocking();
+
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let file_ref: String = conn
+            .query_row(
+                "SELECT credential_ref FROM fs_events WHERE path = '.env'",
+                [],
+                |row| row.get(0),
+            )
+            .expect(".env fs event should carry brokered credential ref");
+        let outcomes: Vec<String> = conn
+            .prepare(
+                "SELECT outcome FROM substitution_events WHERE substitution_ref = ?1 AND source = '.env:OPENAI_API_KEY' ORDER BY outcome",
+            )
+            .unwrap()
+            .query_map([&file_ref], |row| row.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(outcomes, vec!["brokered", "captured"]);
+        let db_bytes = std::fs::read(&db_path).unwrap();
+        assert!(!String::from_utf8_lossy(&db_bytes).contains("sk-env-secret"));
+    }
+
+    #[tokio::test]
+    async fn emit_writes_file_security_rule_ledger_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("session.db");
+        let file_path = dir.path().join("skill.md");
+        std::fs::write(&file_path, "# skill").unwrap();
+        let db = DbWriter::open(&db_path, 64).unwrap();
+        let profile = SecurityRuleProfile::parse_toml(
+            r#"
+[profiles.rules.file_create_skill]
+name = "file_create_skill"
+action = "allow"
+detection_level = "informational"
+match = 'file.create.name == "skill.md" && file.create.ext == "md"'
+"#,
+        )
+        .unwrap();
+        let rules = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).unwrap();
+        let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(rules)));
+
+        FsMonitor::emit(
+            &db,
+            &security_rules,
+            "skill.md",
+            &file_path,
+            FileAction::Created,
+        )
+        .await;
+        db.shutdown_blocking();
+
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let joined: (String, String) = conn
+            .query_row(
+                "SELECT fs_events.event_id, security_rule_events.rule_id
+                 FROM fs_events
+                 JOIN security_rule_events ON security_rule_events.event_id = fs_events.event_id
+                 WHERE fs_events.path = 'skill.md'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(joined.0.len(), 12);
+        assert_eq!(joined.1, "profiles.rules.file_create_skill");
+    }
+
+    #[tokio::test]
+    async fn emit_records_block_rules_as_audit_only_file_event() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("session.db");
+        let file_path = dir.path().join("blocked.txt");
+        std::fs::write(&file_path, "already materialized").unwrap();
+        let db = DbWriter::open(&db_path, 64).unwrap();
+        let profile = SecurityRuleProfile::parse_toml(
+            r#"
+[profiles.rules.file_monitor_block_seen]
+name = "file_monitor_block_seen"
+action = "block"
+detection_level = "high"
+match = 'file.write.path == "blocked.txt"'
+"#,
+        )
+        .unwrap();
+        let rules = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).unwrap();
+        let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(rules)));
+
+        FsMonitor::emit(
+            &db,
+            &security_rules,
+            "blocked.txt",
+            &file_path,
+            FileAction::Modified,
+        )
+        .await;
+        db.shutdown_blocking();
+
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let fs_action: String = conn
+            .query_row(
+                "SELECT action FROM fs_events WHERE path = 'blocked.txt'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(fs_action, "modified");
+        let (event_type, rule_action, detection_level): (String, String, String) = conn
+            .query_row(
+                "SELECT event_type, rule_action, detection_level
+                 FROM security_rule_events
+                 WHERE rule_id = 'profiles.rules.file_monitor_block_seen'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(event_type, "file.event");
+        assert_eq!(rule_action, "block");
+        assert_eq!(detection_level, "high");
+        let import_export_rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM security_rule_events
+                 WHERE event_type IN ('file.import', 'file.export')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            import_export_rows, 0,
+            "fs_monitor audit events must not masquerade as boundary gates"
+        );
     }
 }

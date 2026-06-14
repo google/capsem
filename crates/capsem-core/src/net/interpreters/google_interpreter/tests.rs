@@ -1,6 +1,6 @@
 use super::*;
-use capsem_network_engine::model_stream::collect_summary;
-use capsem_network_engine::sse_parser::SseParser;
+use crate::net::ai_traffic::events::collect_summary;
+use crate::net::parsers::sse_parser::SseParser;
 
 #[test]
 fn upstream_url_stream_generate() {
@@ -89,7 +89,7 @@ data: {\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"ge
     let summary = collect_summary(&llm_events);
     assert_eq!(summary.tool_calls.len(), 1);
     assert_eq!(summary.tool_calls[0].name, "get_weather");
-    assert_eq!(summary.tool_calls[0].call_id, "get_weather");
+    assert_eq!(summary.tool_calls[0].call_id, "gemini_get_weather_0");
     let args: serde_json::Value = serde_json::from_str(&summary.tool_calls[0].arguments).unwrap();
     assert_eq!(args["city"], "NYC");
 }

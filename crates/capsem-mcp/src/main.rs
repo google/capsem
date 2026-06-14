@@ -16,6 +16,8 @@ use std::sync::Arc;
 use tokio::net::UnixStream;
 use tracing::{error, info};
 
+const DEFAULT_PROFILE_ID: &str = "code";
+
 /// Case-insensitive line-level grep over a block of text.
 fn grep_lines(text: &str, pattern: &str) -> String {
     let pat = pattern.to_lowercase();
@@ -46,7 +48,7 @@ fn tail_lines(text: &str, n: u64) -> String {
 
 /// Apply tail to log-valued string fields in a JSON object.
 fn tail_log_fields(val: &mut Value, n: u64) {
-    for key in ["logs", "serial_logs", "process_logs", "security_logs"] {
+    for key in ["logs", "serial_logs", "process_logs"] {
         if let Some(Value::String(s)) = val.get_mut(key) {
             *s = tail_lines(s, n);
         }
@@ -55,111 +57,11 @@ fn tail_log_fields(val: &mut Value, n: u64) {
 
 /// Apply grep filtering to log-valued fields in a JSON object.
 fn grep_log_fields(val: &mut Value, pattern: &str) {
-    for key in ["logs", "serial_logs", "process_logs", "security_logs"] {
+    for key in ["logs", "serial_logs", "process_logs"] {
         if let Some(Value::String(s)) = val.get_mut(key) {
             *s = grep_lines(s, pattern);
         }
     }
-}
-
-fn terminal_snapshot_from_logs(
-    val: Value,
-    params: &TerminalSnapshotParams,
-) -> Result<String, String> {
-    if let Some(err) = val.get("error").and_then(|e| e.as_str()) {
-        return Err(err.to_string());
-    }
-    let source = params.source.as_deref().unwrap_or("serial");
-    let raw = match source {
-        "serial" => val
-            .get("serial_logs")
-            .or_else(|| val.get("logs"))
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
-        "process" => val
-            .get("process_logs")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
-        "combined" => {
-            let serial = val
-                .get("serial_logs")
-                .or_else(|| val.get("logs"))
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            let process = val
-                .get("process_logs")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            format!("{serial}\n{process}")
-        }
-        other => {
-            return Err(format!(
-                "unsupported source {other:?}; expected serial, process, or combined"
-            ));
-        }
-    };
-
-    let mut text = strip_terminal_control_sequences(&raw);
-    if let Some(pattern) = &params.grep {
-        text = grep_lines(&text, pattern);
-    }
-    let tail = params.tail.unwrap_or(80);
-    text = tail_lines(&text, tail);
-    let lines = text.lines().map(str::to_string).collect::<Vec<_>>();
-    Ok(serde_json::to_string_pretty(&json!({
-        "id": params.id,
-        "source": source,
-        "line_count": lines.len(),
-        "lines": lines,
-        "text": text,
-    }))
-    .unwrap_or_else(|_| "{\"text\":\"\"}".to_string()))
-}
-
-fn strip_terminal_control_sequences(input: &str) -> String {
-    #[derive(Clone, Copy)]
-    enum State {
-        Ground,
-        Escape,
-        Csi,
-        Osc,
-        OscEscape,
-    }
-
-    let mut output = String::with_capacity(input.len());
-    let mut state = State::Ground;
-    for ch in input.chars() {
-        match state {
-            State::Ground => match ch {
-                '\u{1b}' => state = State::Escape,
-                '\r' => {}
-                '\n' | '\t' => output.push(ch),
-                ch if ch.is_control() => {}
-                ch => output.push(ch),
-            },
-            State::Escape => match ch {
-                '[' => state = State::Csi,
-                ']' => state = State::Osc,
-                _ => state = State::Ground,
-            },
-            State::Csi => {
-                if ('@'..='~').contains(&ch) {
-                    state = State::Ground;
-                }
-            }
-            State::Osc => match ch {
-                '\u{7}' => state = State::Ground,
-                '\u{1b}' => state = State::OscEscape,
-                _ => {}
-            },
-            State::OscEscape => {
-                state = State::Ground;
-            }
-        }
-    }
-    output
 }
 
 /// Render a service response to the shape MCP expects.
@@ -250,11 +152,12 @@ fn query_string<S: AsRef<str>>(params: &[(&str, Option<S>)]) -> String {
     }
 }
 
-/// Body for POST /provision.
+/// Body for POST /vms/create.
 fn build_create_body(params: &CreateParams) -> Value {
     let persistent = params.name.is_some();
     let mut body = json!({
         "name": params.name,
+        "profile_id": DEFAULT_PROFILE_ID,
         "persistent": persistent,
     });
     if let Some(ram) = params.ram_mb {
@@ -276,6 +179,7 @@ fn build_create_body(params: &CreateParams) -> Value {
 fn build_run_body(params: &RunParams) -> Value {
     let mut body = json!({
         "command": params.command,
+        "profile_id": DEFAULT_PROFILE_ID,
         "timeout_secs": params.timeout.unwrap_or(60),
     });
     if let Some(ref env) = params.env {
@@ -284,7 +188,7 @@ fn build_run_body(params: &RunParams) -> Value {
     body
 }
 
-/// Body for POST /fork/{id}.
+/// Body for POST /vms/{id}/fork.
 fn build_fork_body(params: &ForkParams) -> Value {
     json!({
         "name": params.name,
@@ -292,7 +196,7 @@ fn build_fork_body(params: &ForkParams) -> Value {
     })
 }
 
-/// Body for POST /persist/{id}.
+/// Body for POST /vms/{id}/save.
 fn build_persist_body(params: &PersistParams) -> Value {
     json!({ "name": params.name })
 }
@@ -300,6 +204,11 @@ fn build_persist_body(params: &PersistParams) -> Value {
 /// Body for POST /purge.
 fn build_purge_body(params: &PurgeParams) -> Value {
     json!({ "all": params.all.unwrap_or(false) })
+}
+
+/// Body for POST /vms/{id}/files/read.
+fn build_read_file_body(params: &FileReadParams) -> Value {
+    json!({ "path": params.path })
 }
 
 /// Resolve the UDS path following the env-var precedence used by main().
@@ -443,63 +352,6 @@ impl UdsClient {
             Ok(r) => Ok(r),
             Err(e) => {
                 error!(error = %e, body = %String::from_utf8_lossy(&body_bytes), "failed to parse service response");
-                Err(e.into())
-            }
-        }
-    }
-
-    async fn request_binary<R: for<'de> Deserialize<'de>>(
-        &self,
-        method: &str,
-        path: &str,
-        content_type: &str,
-        body: Vec<u8>,
-    ) -> Result<R> {
-        info!(method, path, content_type, "sending UDS binary request");
-
-        let stream = match UnixStream::connect(&self.uds_path).await {
-            Ok(s) => s,
-            Err(_) => {
-                self.try_ensure_service().await?;
-                UnixStream::connect(&self.uds_path).await?
-            }
-        };
-
-        let io = TokioIo::new(stream);
-        let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await?;
-        tokio::task::spawn(async move {
-            if let Err(err) = conn.await {
-                error!("Connection failed: {:?}", err);
-            }
-        });
-
-        let req = Request::builder()
-            .method(method)
-            .uri(format!("http://localhost{}", path))
-            .header("Content-Type", content_type)
-            .body(Full::new(Bytes::from(body)))?;
-
-        let res = match sender.send_request(req).await {
-            Ok(r) => r,
-            Err(e) => {
-                error!(error = %e, "failed to send binary request to service");
-                return Err(e.into());
-            }
-        };
-        let status = res.status();
-        let body_bytes = res.collect().await?.to_bytes();
-        if !status.is_success() {
-            let msg = serde_json::from_slice::<Value>(&body_bytes)
-                .ok()
-                .and_then(|v| v.get("error").and_then(|e| e.as_str()).map(str::to_string))
-                .unwrap_or_else(|| String::from_utf8_lossy(&body_bytes).into_owned());
-            error!(method, path, status = %status, body = %msg, "service returned non-success status");
-            return Err(anyhow::anyhow!("{status}: {msg}"));
-        }
-        match serde_json::from_slice(&body_bytes) {
-            Ok(r) => Ok(r),
-            Err(e) => {
-                error!(error = %e, body = %String::from_utf8_lossy(&body_bytes), "failed to parse binary response");
                 Err(e.into())
             }
         }
@@ -651,17 +503,6 @@ struct LogsParams {
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
-struct TerminalSnapshotParams {
-    id: String,
-    /// Source to render: serial (default), process, or combined.
-    source: Option<String>,
-    /// Case-insensitive substring filter applied after ANSI cleanup.
-    grep: Option<String>,
-    /// Return only the last N rendered terminal lines. Default 80.
-    tail: Option<u64>,
-}
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
 struct ServiceLogsParams {
     /// Case-insensitive substring filter applied to each log line
     grep: Option<String>,
@@ -676,7 +517,8 @@ struct TriageMcpParams {
     since: Option<String>,
     /// Max items per category. Default 20, max 200.
     limit: Option<u64>,
-    /// Optional session id for session.db cross-reference.
+    /// Optional session id (reserved for the future session.db
+    /// cross-reference; ignored today).
     id: Option<String>,
 }
 
@@ -694,8 +536,7 @@ struct TimelineMcpParams {
     since: Option<String>,
     /// Max rows. Default 200, max 2000.
     limit: Option<u64>,
-    /// Comma-separated subset of layers:
-    /// "exec,mcp,net,dns,security,audit,snapshot,fs,model".
+    /// Comma-separated subset of layers: "exec,mcp,net,fs,model".
     /// Default all.
     layers: Option<String>,
 }
@@ -720,52 +561,17 @@ struct InspectParams {
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
-struct McpConnectorsParams {
-    /// Profile id to inspect. Defaults to the selected Profile V2 root.
-    profile: Option<String>,
+struct McpToolsParams {
+    /// Filter tools by server name (optional)
+    server: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
-struct McpAddParams {
-    /// MCP server id.
-    id: String,
-    /// Profile id to mutate. Defaults to the selected Profile V2 root.
-    profile: Option<String>,
-    /// Store the server disabled. Defaults to false.
-    disabled: Option<bool>,
-    /// MCP server transport type: stdio, http, or sse.
-    #[serde(rename = "type")]
-    server_type: Option<String>,
-    /// Stdio MCP server command.
-    command: Option<String>,
-    /// Stdio MCP server arguments.
-    #[serde(default)]
-    args: Vec<String>,
-    /// Stdio MCP server environment variables.
-    #[serde(default)]
-    env: HashMap<String, String>,
-    /// HTTP/SSE MCP server URL.
-    url: Option<String>,
-    /// HTTP/SSE MCP server headers.
-    #[serde(default)]
-    headers: HashMap<String, String>,
-    /// Bearer token for HTTP/SSE MCP server auth.
-    #[serde(rename = "bearerToken")]
-    bearer_token: Option<String>,
-    /// Credential reference ids.
-    #[serde(default)]
-    credential_refs: Vec<String>,
-    /// Allowed tool ids.
-    #[serde(default)]
-    allowed_tools: Vec<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
-struct McpDeleteParams {
-    /// MCP server id.
-    id: String,
-    /// Profile id to mutate. Defaults to the selected Profile V2 root.
-    profile: Option<String>,
+struct McpCallParams {
+    /// Namespaced tool name (e.g. github__search_repos)
+    name: String,
+    /// JSON arguments for the tool call
+    arguments: Option<Value>,
 }
 
 #[tool_router]
@@ -777,19 +583,19 @@ impl CapsemHandler {
     async fn list(&self) -> Result<String, String> {
         let resp = self
             .client
-            .request::<Value, Value>("GET", "/list", None)
+            .request::<Value, Value>("GET", "/vms/list", None)
             .await;
         format_service_response(resp)
     }
 
     #[tool(
         name = "capsem_vm_logs",
-        description = "Get security, process, and serial logs for a session. Use grep to filter lines, tail to limit to last N lines"
+        description = "Get serial and process logs for a session. Use grep to filter lines, tail to limit to last N lines"
     )]
     async fn vm_logs(&self, Parameters(params): Parameters<LogsParams>) -> Result<String, String> {
         match self
             .client
-            .request::<Value, Value>("GET", &format!("/logs/{}", params.id), None)
+            .request::<Value, Value>("GET", &format!("/vms/{}/logs", params.id), None)
             .await
         {
             Ok(mut val) => {
@@ -804,24 +610,6 @@ impl CapsemHandler {
                 }
                 Ok(serde_json::to_string_pretty(&val).unwrap_or_else(|_| format!("{:?}", val)))
             }
-            Err(e) => Err(e.to_string()),
-        }
-    }
-
-    #[tool(
-        name = "capsem_terminal_snapshot",
-        description = "Render a text snapshot of a session terminal/log surface from service logs. Uses serial logs by default, strips ANSI/control sequences, supports grep and tail. This is the MCP-visible terminal inspection tool for agents when an image screenshot is not needed."
-    )]
-    async fn terminal_snapshot(
-        &self,
-        Parameters(params): Parameters<TerminalSnapshotParams>,
-    ) -> Result<String, String> {
-        match self
-            .client
-            .request::<Value, Value>("GET", &format!("/logs/{}", params.id), None)
-            .await
-        {
-            Ok(val) => terminal_snapshot_from_logs(val, &params),
             Err(e) => Err(e.to_string()),
         }
     }
@@ -872,7 +660,7 @@ impl CapsemHandler {
 
     #[tool(
         name = "capsem_triage",
-        description = "Opinionated host + session triage summary: ranked list of recent panics, dropped IPC frames (target=ipc warns), 4xx/5xx server errors (target=service), slow operations (target=fs op=fsync etc., >500ms), and when `id` is provided session.db denied network/DNS, MCP errors, exec/audit failures, and policy hook failures/fallbacks. Reads ~/.capsem/run/{service,mcp,gateway,tray}.log and capsem-app's latest jsonl. Use this after capsem_panics to widen the search."
+        description = "Opinionated host triage summary: ranked list of recent panics, dropped IPC frames (target=ipc warns), 4xx/5xx server errors (target=service), and slow operations (target=fs op=fsync etc., >500ms). Reads ~/.capsem/run/{service,mcp,gateway,tray}.log and capsem-app's latest jsonl. Use this after capsem_panics to widen the search. Optional `id` parameter is reserved for the future session.db cross-reference (T3)."
     )]
     async fn triage(
         &self,
@@ -918,14 +706,14 @@ impl CapsemHandler {
 
     #[tool(
         name = "capsem_timeline",
-        description = "Render a unified time-ordered timeline for a session, joining exec/mcp/net/dns/security/audit/snapshot/fs/model events. Optional traceId filter follows one logical operation across layers (W6 added trace_id to every table; pre-W4 rows are NULL and surface alongside). Layers default to all available tables; pass a subset like `exec,mcp,dns,security` to scope. Use this AFTER capsem_triage / capsem_panics narrow the window."
+        description = "Render a unified time-ordered timeline for a session, joining exec/mcp/net/fs/model events. Optional traceId filter follows one logical operation across layers (W6 added trace_id to every table; pre-W4 rows are NULL and surface alongside). Layers default to all five; pass a subset like `exec,mcp` to scope. Use this AFTER capsem_triage / capsem_panics narrow the window."
     )]
     async fn timeline(
         &self,
         Parameters(params): Parameters<TimelineMcpParams>,
     ) -> Result<String, String> {
         let path = format!(
-            "/timeline/{}{}",
+            "/vms/{}/timeline{}",
             params.id,
             query_string(&[
                 ("trace_id", params.trace_id.clone()),
@@ -949,7 +737,7 @@ impl CapsemHandler {
         let body = build_create_body(&params);
         let resp = self
             .client
-            .request::<Value, Value>("POST", "/provision", Some(body))
+            .request::<Value, Value>("POST", "/vms/create", Some(body))
             .await;
         if let Err(ref e) = resp {
             error!(error = %e, "provision request failed");
@@ -964,7 +752,7 @@ impl CapsemHandler {
     async fn info(&self, Parameters(params): Parameters<IdParams>) -> Result<String, String> {
         let resp = self
             .client
-            .request::<Value, Value>("GET", &format!("/info/{}", params.id), None)
+            .request::<Value, Value>("GET", &format!("/vms/{}/info", params.id), None)
             .await;
         format_service_response(resp)
     }
@@ -977,46 +765,43 @@ impl CapsemHandler {
         let body = build_exec_body(&params);
         let resp = self
             .client
-            .request::<Value, Value>("POST", &format!("/exec/{}", params.id), Some(body))
+            .request::<Value, Value>("POST", &format!("/vms/{}/exec", params.id), Some(body))
             .await;
         format_service_response(resp)
     }
 
     #[tool(
         name = "capsem_read_file",
-        description = "Read a file from a session workspace path. Returns file content as text"
+        description = "Read a file from a session's guest filesystem. Returns file content as text"
     )]
     async fn read_file(
         &self,
         Parameters(params): Parameters<FileReadParams>,
     ) -> Result<String, String> {
-        let q = query_string(&[("path", Some(params.path))]);
-        let path = format!("/files/{}/content{q}", params.id);
-        match self.client.request_text("GET", &path).await {
-            Ok(content) => Ok(serde_json::to_string_pretty(&json!({ "content": content }))
-                .unwrap_or_else(|_| "{\"content\":\"\"}".to_string())),
-            Err(e) => Err(e.to_string()),
-        }
+        let body = build_read_file_body(&params);
+        let resp = self
+            .client
+            .request::<Value, Value>(
+                "POST",
+                &format!("/vms/{}/files/read", params.id),
+                Some(body),
+            )
+            .await;
+        format_service_response(resp)
     }
 
     #[tool(
         name = "capsem_write_file",
-        description = "Write a file to a session workspace path"
+        description = "Write a file to a session's guest filesystem"
     )]
     async fn write_file(
         &self,
         Parameters(params): Parameters<FileWriteParams>,
     ) -> Result<String, String> {
-        let q = query_string(&[("path", Some(params.path.clone()))]);
-        let path = format!("/files/{}/content{q}", params.id);
+        let path = format!("/vms/{}/files/write", params.id);
         let resp = self
             .client
-            .request_binary::<Value>(
-                "POST",
-                &path,
-                "application/octet-stream",
-                params.content.into_bytes(),
-            )
+            .request::<FileWriteParams, Value>("POST", &path, Some(params))
             .await;
         format_service_response(resp)
     }
@@ -1037,7 +822,7 @@ impl CapsemHandler {
         &self,
         Parameters(params): Parameters<InspectParams>,
     ) -> Result<String, String> {
-        let path = format!("/inspect/{}", params.id);
+        let path = format!("/vms/{}/inspect", params.id);
         let resp = self
             .client
             .request::<InspectParams, Value>("POST", &path, Some(params))
@@ -1052,7 +837,7 @@ impl CapsemHandler {
     async fn delete(&self, Parameters(params): Parameters<IdParams>) -> Result<String, String> {
         let resp = self
             .client
-            .request::<Value, Value>("DELETE", &format!("/delete/{}", params.id), None)
+            .request::<Value, Value>("DELETE", &format!("/vms/{}/delete", params.id), None)
             .await;
         format_service_response(resp)
     }
@@ -1064,7 +849,7 @@ impl CapsemHandler {
     async fn stop(&self, Parameters(params): Parameters<IdParams>) -> Result<String, String> {
         let resp = self
             .client
-            .request::<Value, Value>("POST", &format!("/stop/{}", params.id), Some(json!({})))
+            .request::<Value, Value>("POST", &format!("/vms/{}/stop", params.id), Some(json!({})))
             .await;
         format_service_response(resp)
     }
@@ -1076,7 +861,11 @@ impl CapsemHandler {
     async fn suspend(&self, Parameters(params): Parameters<IdParams>) -> Result<String, String> {
         let resp = self
             .client
-            .request::<Value, Value>("POST", &format!("/suspend/{}", params.id), Some(json!({})))
+            .request::<Value, Value>(
+                "POST",
+                &format!("/vms/{}/pause", params.id),
+                Some(json!({})),
+            )
             .await;
         format_service_response(resp)
     }
@@ -1088,7 +877,11 @@ impl CapsemHandler {
     async fn resume(&self, Parameters(params): Parameters<NameParams>) -> Result<String, String> {
         let resp = self
             .client
-            .request::<Value, Value>("POST", &format!("/resume/{}", params.name), Some(json!({})))
+            .request::<Value, Value>(
+                "POST",
+                &format!("/vms/{}/resume", params.name),
+                Some(json!({})),
+            )
             .await;
         format_service_response(resp)
     }
@@ -1104,7 +897,7 @@ impl CapsemHandler {
         let body = build_persist_body(&params);
         let resp = self
             .client
-            .request::<Value, Value>("POST", &format!("/persist/{}", params.id), Some(body))
+            .request::<Value, Value>("POST", &format!("/vms/{}/save", params.id), Some(body))
             .await;
         format_service_response(resp)
     }
@@ -1144,7 +937,7 @@ impl CapsemHandler {
         let body = build_fork_body(&params);
         let resp = self
             .client
-            .request::<Value, Value>("POST", &format!("/fork/{}", params.id), Some(body))
+            .request::<Value, Value>("POST", &format!("/vms/{}/fork", params.id), Some(body))
             .await;
         format_service_response(resp)
     }
@@ -1157,7 +950,7 @@ impl CapsemHandler {
         let mcp_version = env!("CARGO_PKG_VERSION");
         let service_status = match self
             .client
-            .request::<Value, Value>("GET", "/list", None)
+            .request::<Value, Value>("GET", "/vms/list", None)
             .await
         {
             Ok(_) => "connected".to_string(),
@@ -1171,83 +964,91 @@ impl CapsemHandler {
     }
 
     #[tool(
-        name = "capsem_mcp_connectors",
-        description = "List Profile V2 MCP servers for the selected or requested profile"
+        name = "capsem_mcp_servers",
+        description = "List configured MCP servers with connection status and tool counts"
     )]
-    async fn mcp_connectors(
-        &self,
-        Parameters(params): Parameters<McpConnectorsParams>,
-    ) -> Result<String, String> {
-        let path = format!(
-            "/mcp/connectors{}",
-            query_string(&[("profile", params.profile.as_deref())])
-        );
-        let resp = self.client.request("GET", &path, None::<&()>).await;
-        format_service_response(resp)
-    }
-
-    #[tool(
-        name = "capsem_mcp_add",
-        description = "Add a Profile V2 MCP server to a user profile"
-    )]
-    async fn mcp_add(
-        &self,
-        Parameters(params): Parameters<McpAddParams>,
-    ) -> Result<String, String> {
-        let mut body = json!({
-            "id": params.id,
-            "enabled": !params.disabled.unwrap_or(false),
-            "capsem": {
-                "credential_refs": params.credential_refs,
-                "allowed_tools": params.allowed_tools,
-            },
-        });
-        if let Some(server_type) = params.server_type {
-            body["type"] = json!(server_type);
-        }
-        if let Some(command) = params.command {
-            body["command"] = json!(command);
-        }
-        if !params.args.is_empty() {
-            body["args"] = json!(params.args);
-        }
-        if !params.env.is_empty() {
-            body["env"] = json!(params.env);
-        }
-        if let Some(url) = params.url {
-            body["url"] = json!(url);
-        }
-        if !params.headers.is_empty() {
-            body["headers"] = json!(params.headers);
-        }
-        if let Some(bearer_token) = params.bearer_token {
-            body["bearerToken"] = json!(bearer_token);
-        }
-        if let Some(profile) = params.profile {
-            body["profile"] = json!(profile);
-        }
-        let resp = self
+    async fn mcp_servers(&self) -> Result<String, String> {
+        let resp: Vec<Value> = self
             .client
-            .request("POST", "/mcp/connectors", Some(body))
-            .await;
-        format_service_response(resp)
+            .request(
+                "GET",
+                &format!("/profiles/{}/mcp/servers/list", DEFAULT_PROFILE_ID),
+                None::<&()>,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        serde_json::to_string_pretty(&resp).map_err(|e| e.to_string())
     }
 
     #[tool(
-        name = "capsem_mcp_delete",
-        description = "Delete a direct user Profile V2 MCP server"
+        name = "capsem_mcp_tools",
+        description = "List discovered MCP tools across all connected servers. Filter by server name."
     )]
-    async fn mcp_delete(
+    async fn mcp_tools(
         &self,
-        Parameters(params): Parameters<McpDeleteParams>,
+        Parameters(params): Parameters<McpToolsParams>,
     ) -> Result<String, String> {
-        let path = format!(
-            "/mcp/connectors/{}{}",
-            percent_encoding::utf8_percent_encode(&params.id, QUERY_VALUE),
-            query_string(&[("profile", params.profile.as_deref())])
-        );
-        let resp = self.client.request("DELETE", &path, None::<&()>).await;
-        format_service_response(resp)
+        let server_names = if let Some(ref filter) = params.server {
+            vec![filter.clone()]
+        } else {
+            let servers: Vec<Value> = self
+                .client
+                .request(
+                    "GET",
+                    &format!("/profiles/{}/mcp/servers/list", DEFAULT_PROFILE_ID),
+                    None::<&()>,
+                )
+                .await
+                .map_err(|e| e.to_string())?;
+            servers
+                .into_iter()
+                .filter_map(|server| server["name"].as_str().map(ToOwned::to_owned))
+                .collect()
+        };
+        let mut tools = Vec::new();
+        for server_name in server_names {
+            let mut server_tools: Vec<Value> = self
+                .client
+                .request(
+                    "GET",
+                    &format!(
+                        "/profiles/{}/mcp/servers/{}/tools/list",
+                        DEFAULT_PROFILE_ID, server_name
+                    ),
+                    None::<&()>,
+                )
+                .await
+                .map_err(|e| e.to_string())?;
+            tools.append(&mut server_tools);
+        }
+        serde_json::to_string_pretty(&tools).map_err(|e| e.to_string())
+    }
+
+    #[tool(
+        name = "capsem_mcp_call",
+        description = "Call an MCP tool by namespaced name (e.g. github__search_repos) with JSON arguments"
+    )]
+    async fn mcp_call(
+        &self,
+        Parameters(params): Parameters<McpCallParams>,
+    ) -> Result<String, String> {
+        let (server_name, tool_name) = params.name.split_once("__").ok_or_else(|| {
+            "MCP tool calls must use namespaced names like server__tool".to_string()
+        })?;
+        let args = params.arguments.unwrap_or(json!({}));
+        let resp: Value = self
+            .client
+            .request(
+                "POST",
+                &format!(
+                    "/profiles/{}/mcp/servers/{}/tools/{}/call",
+                    DEFAULT_PROFILE_ID, server_name, tool_name
+                ),
+                Some(&args),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        serde_json::to_string_pretty(&resp).map_err(|e| e.to_string())
     }
 }
 

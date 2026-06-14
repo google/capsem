@@ -3,7 +3,6 @@
 Browser fetch needs CORS headers or requests fail.
 """
 
-import json
 import subprocess
 
 import pytest
@@ -32,7 +31,7 @@ class TestCORS:
              "-X", "OPTIONS",
              "-H", "Origin: http://localhost:5173",
              "-H", "Access-Control-Request-Method: GET",
-             f"http://127.0.0.1:{gateway_env.port}/list"],
+             f"http://127.0.0.1:{gateway_env.port}/vms/list"],
             capture_output=True, text=True, timeout=10,
         )
         status = result.stdout.strip()
@@ -45,7 +44,7 @@ class TestCORS:
             ["curl", "-s", "-D", "-", "--max-time", "5",
              "-H", f"Authorization: Bearer {gateway_env.token}",
              "-H", "Origin: http://localhost:5173",
-             f"http://127.0.0.1:{gateway_env.port}/list"],
+             f"http://127.0.0.1:{gateway_env.port}/vms/list"],
             capture_output=True, text=True, timeout=10,
         )
         headers = result.stdout.lower()
