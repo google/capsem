@@ -1370,18 +1370,18 @@ async fn reload_refreshes_session_runtime_profile_from_source_profile() {
     );
 
     state
-        .refresh_runtime_profile_dirs(Some("code"))
+        .refresh_active_profiles(Some("code"))
         .expect("initial runtime profile materialization");
-    let runtime_enforcement = session_dir.join("runtime-config/profiles/code/enforcement.toml");
+    let active_profile = session_dir.join("vm/active_profile.toml");
     assert!(
-        runtime_enforcement.exists(),
-        "runtime profile must carry profile enforcement file"
+        active_profile.exists(),
+        "session must carry one active profile file"
     );
     assert!(
-        !std::fs::read_to_string(&runtime_enforcement)
+        !std::fs::read_to_string(&active_profile)
             .unwrap()
             .contains("block_local_echo"),
-        "fresh runtime profile should start from the original source profile"
+        "fresh active profile should start from the original source profile"
     );
 
     let source_enforcement = state.run_dir.join("config/profiles/code/enforcement.toml");
@@ -1389,7 +1389,7 @@ async fn reload_refreshes_session_runtime_profile_from_source_profile() {
     updated.push_str(
         r#"
 
-[rules.block_local_echo]
+[profiles.rules.block_local_echo]
 name = "block_local_echo"
 action = "block"
 priority = 10
@@ -1400,12 +1400,12 @@ match = 'mcp.tool_call.name == "local__echo"'
     std::fs::write(&source_enforcement, updated).unwrap();
 
     state
-        .refresh_runtime_profile_dirs(Some("code"))
+        .refresh_active_profiles(Some("code"))
         .expect("reload must refresh session-local runtime profile config");
-    let refreshed = std::fs::read_to_string(&runtime_enforcement).unwrap();
+    let refreshed = std::fs::read_to_string(&active_profile).unwrap();
     assert!(
         refreshed.contains("block_local_echo"),
-        "reload must copy source profile edits into the session runtime profile"
+        "reload must materialize source profile edits into the active profile"
     );
 
     let Json(plugin_info) = update_plugin_for_scope(
@@ -1427,21 +1427,25 @@ match = 'mcp.tool_call.name == "local__echo"'
         capsem_core::net::policy_config::DetectionLevel::Critical
     );
     state
-        .refresh_runtime_profile_dirs(Some("code"))
+        .refresh_active_profiles(Some("code"))
         .expect("plugin override must refresh runtime profile config");
-    let runtime_overlay = session_dir.join("runtime-config/profiles/code/runtime-overlay.toml");
-    let overlay_text = std::fs::read_to_string(&runtime_overlay).unwrap();
+    let overlay_path = session_dir.join("runtime-config/profiles/code/runtime-overlay.toml");
     assert!(
-        overlay_text.contains("[plugins.dummy_pre_eicar]"),
-        "runtime overlay must carry profile plugin overrides into launched VMs"
+        !overlay_path.exists(),
+        "runtime overlay must not exist after active profile materialization"
+    );
+    let active_text = std::fs::read_to_string(&active_profile).unwrap();
+    assert!(
+        active_text.contains("[plugins.dummy_pre_eicar]"),
+        "active profile must carry profile plugin overrides into launched VMs"
     );
     assert!(
-        overlay_text.contains("mode = \"block\""),
-        "runtime overlay must carry edited plugin mode"
+        active_text.contains("mode = \"block\""),
+        "active profile must carry edited plugin mode"
     );
     assert!(
-        overlay_text.contains("detection_level = \"critical\""),
-        "runtime overlay must carry edited plugin detection level"
+        active_text.contains("detection_level = \"critical\""),
+        "active profile must carry edited plugin detection level"
     );
 }
 

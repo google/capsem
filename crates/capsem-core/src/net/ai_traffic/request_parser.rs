@@ -288,31 +288,45 @@ fn parse_openai(body: &[u8]) -> RequestMeta {
         })
         .map(|s| s.to_string());
 
-    // Extract tool results from only the TRAILING tool messages (the new ones
-    // the agent just appended). Multi-turn conversations re-send the full
-    // history, so iterating all messages would re-log previous tool results.
     let mut tool_results = Vec::new();
-    for msg in messages.iter().rev() {
-        let is_chat_tool_result = msg.role.as_deref() == Some("tool");
-        let is_responses_tool_result = msg.item_type.as_deref() == Some("function_call_output");
-        if !is_chat_tool_result && !is_responses_tool_result {
-            break;
+    if req.input.is_some() {
+        // Responses API input arrays are the current turn payload. A
+        // function_call_output can be followed by the user prompt for
+        // convenience, so a trailing-only scan would miss the tool result.
+        for msg in messages {
+            if msg.item_type.as_deref() == Some("function_call_output") {
+                if let Some(call_id) = msg.call_id.as_ref() {
+                    tool_results.push(ToolResultMeta {
+                        call_id: call_id.clone(),
+                        content_preview: msg.output.clone().unwrap_or_default(),
+                        is_error: false,
+                    });
+                }
+            }
         }
-        if let Some(call_id) = msg.tool_call_id.as_ref().or(msg.call_id.as_ref()) {
-            let content_text = match &msg.content {
-                Some(openai_wire::MessageContent::Text(t)) => t.clone(),
-                Some(openai_wire::MessageContent::Parts(parts)) => parts
-                    .iter()
-                    .filter_map(|p| p.text.as_deref())
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-                None => msg.output.clone().unwrap_or_default(),
-            };
-            tool_results.push(ToolResultMeta {
-                call_id: call_id.clone(),
-                content_preview: content_text,
-                is_error: false, // OpenAI doesn't have explicit is_error on tool results
-            });
+    } else {
+        // Chat Completions re-sends history. Only the trailing tool messages
+        // represent new tool results for this request.
+        for msg in messages.iter().rev() {
+            if msg.role.as_deref() != Some("tool") {
+                break;
+            }
+            if let Some(call_id) = msg.tool_call_id.as_ref().or(msg.call_id.as_ref()) {
+                let content_text = match &msg.content {
+                    Some(openai_wire::MessageContent::Text(t)) => t.clone(),
+                    Some(openai_wire::MessageContent::Parts(parts)) => parts
+                        .iter()
+                        .filter_map(|p| p.text.as_deref())
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                    None => msg.output.clone().unwrap_or_default(),
+                };
+                tool_results.push(ToolResultMeta {
+                    call_id: call_id.clone(),
+                    content_preview: content_text,
+                    is_error: false,
+                });
+            }
         }
     }
 

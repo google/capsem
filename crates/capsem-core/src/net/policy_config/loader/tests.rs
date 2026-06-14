@@ -348,6 +348,9 @@ match = 'http.host == "127.0.0.1" && http.path == "/deny-target"'
 
 [plugins.credential_broker]
 mode = "rewrite"
+
+[network.dns]
+upstreams = ["127.0.0.1:5353"]
         "#,
     )
     .unwrap();
@@ -374,6 +377,7 @@ mode = "rewrite"
         corp.plugins.contains_key("credential_broker"),
         "corp plugin policy must not be dropped by load_settings_and_corp_files"
     );
+    assert_eq!(corp.network.dns.upstreams, vec!["127.0.0.1:5353"]);
 }
 
 #[test]

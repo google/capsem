@@ -435,6 +435,9 @@ pub struct SettingsFile {
     /// MCP server configuration (optional section in profile/corp TOML).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp: Option<crate::mcp::policy::McpUserConfig>,
+    /// Corporate-owned network mechanics such as DNS upstreams.
+    #[serde(default, skip_serializing_if = "NetworkConfig::is_empty")]
+    pub network: NetworkConfig,
 }
 
 impl SettingsFile {
@@ -447,6 +450,46 @@ impl SettingsFile {
         }
         if let Some(mcp) = &self.mcp {
             mcp.validate("settings")?;
+        }
+        self.network.validate()?;
+        Ok(())
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct NetworkConfig {
+    #[serde(default, skip_serializing_if = "DnsNetworkConfig::is_empty")]
+    pub dns: DnsNetworkConfig,
+}
+
+impl NetworkConfig {
+    pub fn is_empty(&self) -> bool {
+        self.dns.is_empty()
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        self.dns.validate()
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct DnsNetworkConfig {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub upstreams: Vec<String>,
+}
+
+impl DnsNetworkConfig {
+    pub fn is_empty(&self) -> bool {
+        self.upstreams.is_empty()
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        for upstream in &self.upstreams {
+            upstream.parse::<std::net::SocketAddr>().map_err(|error| {
+                format!("network.dns.upstreams entry {upstream:?} is invalid: {error}")
+            })?;
         }
         Ok(())
     }

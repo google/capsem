@@ -40,6 +40,9 @@ pub fn validate_profile_toml_contract(file: &SettingsFile) -> Result<(), String>
     if !file.corp_rule_files.is_empty() {
         return Err("profile.toml cannot define corp rule-file endpoints".to_string());
     }
+    if !file.network.is_empty() {
+        return Err("profile.toml cannot define network mechanics".to_string());
+    }
     reject_settings_keys_not_owned_by(file, ConfigOwner::Profile, "profile.toml")
 }
 
@@ -74,6 +77,9 @@ fn reject_non_settings_sections(file: &SettingsFile) -> Result<(), String> {
     }
     if file.mcp.is_some() {
         return Err("settings.toml cannot define MCP servers".to_string());
+    }
+    if !file.network.is_empty() {
+        return Err("settings.toml cannot define network mechanics".to_string());
     }
     Ok(())
 }

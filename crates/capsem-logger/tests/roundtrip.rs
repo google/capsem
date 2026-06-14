@@ -207,6 +207,109 @@ async fn model_call_roundtrip() {
     assert!(!trs[0].is_error);
 }
 
+#[tokio::test]
+async fn model_items_dedup_by_trace_kind_hash_and_call_id_across_restarts() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("session.db");
+
+    let mut call = sample_model_call("openai");
+    call.trace_id = Some("trace_ironbank_dedup".to_string());
+    call.model = Some("gemma4:latest".to_string());
+    call.path = "/v1/responses".to_string();
+    call.request_body_preview = Some(
+        r#"{"model":"gemma4:latest","input":"write nonce","tools":[{"name":"exec_command"}]}"#
+            .to_string(),
+    );
+    call.thinking_content = Some("dedup reasoning".to_string());
+    call.text_content = Some("dedup response".to_string());
+    call.tool_calls = vec![ToolCallEntry {
+        call_index: 0,
+        call_id: "call_dedup_01".to_string(),
+        tool_name: "exec_command".to_string(),
+        arguments: Some(r#"{"cmd":"printf nonce > /root/dedup.txt"}"#.to_string()),
+        origin: "native".to_string(),
+        trace_id: None,
+    }];
+    call.tool_responses = Vec::new();
+
+    {
+        let writer = DbWriter::open(&path, 64).unwrap();
+        writer.write(WriteOp::ModelCall(call.clone())).await;
+        writer.write(WriteOp::ModelCall(call.clone())).await;
+        drop(writer);
+    }
+
+    let mut response_call = call.clone();
+    response_call.request_body_preview = Some(
+        r#"{"input":[{"type":"function_call_output","call_id":"call_dedup_01","output":"Process exited with code 0"}]}"#
+            .to_string(),
+    );
+    response_call.thinking_content = None;
+    response_call.text_content = None;
+    response_call.tool_calls = Vec::new();
+    response_call.tool_responses = vec![ToolResponseEntry {
+        call_id: "call_dedup_01".to_string(),
+        content_preview: Some("Process exited with code 0".to_string()),
+        is_error: false,
+        trace_id: None,
+    }];
+
+    {
+        let writer = DbWriter::open(&path, 64).unwrap();
+        writer
+            .write(WriteOp::ModelCall(response_call.clone()))
+            .await;
+        writer.write(WriteOp::ModelCall(response_call)).await;
+        drop(writer);
+    }
+
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let rows = conn
+        .prepare(
+            "SELECT kind, call_id, tool_name, arguments, content, content_hash
+             FROM model_items
+             WHERE trace_id = 'trace_ironbank_dedup'
+             ORDER BY kind",
+        )
+        .unwrap()
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, String>(5)?,
+            ))
+        })
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+
+    assert_eq!(rows.len(), 5, "{rows:#?}");
+    let kinds: Vec<_> = rows.iter().map(|row| row.0.as_str()).collect();
+    assert_eq!(
+        kinds,
+        [
+            "reasoning",
+            "request",
+            "response",
+            "tool_call",
+            "tool_response"
+        ]
+    );
+    assert!(rows
+        .iter()
+        .all(|row| row.5.len() == 71 && row.5.starts_with("blake3:")));
+    assert!(rows.iter().any(|row| row.1 == "call_dedup_01"
+        && row.2.as_deref() == Some("exec_command")
+        && row.3.as_deref() == Some(r#"{"cmd":"printf nonce > /root/dedup.txt"}"#)));
+    assert!(rows
+        .iter()
+        .any(|row| row.1 == "call_dedup_01"
+            && row.4.as_deref() == Some("Process exited with code 0")));
+}
+
 // ── Count queries ────────────────────────────────────────────────────
 
 #[tokio::test]

@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed (route surfaces and diagnostics)
+- Tightened the OpenAI-compatible Ironbank double-turn ledger so repeated
+  model history is deduplicated by persisted BLAKE3 item hashes, model tool
+  calls register workspace file-path trace hints, and subsequent fs-monitor
+  events plus security-rule rows are attributed to the same model trace. The
+  focused proof now asserts two random tool calls produce exactly two traces,
+  ten model item rows, four model calls, four HTTP rows, one DNS row, two tool
+  calls, two tool responses, and two created file events.
 - Tightened Ironbank model/client coverage so the mock server replays an
   Ollama-compatible OpenAI chat-completion shape with native tool calls, the
   OpenAI SDK/Anthropic SDK/LiteLLM/Ollama SDK/Codex CLI paths assert full

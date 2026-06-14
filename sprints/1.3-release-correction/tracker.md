@@ -26,6 +26,65 @@ its focused verification and its own commit before the next bug starts. Do not
 batch unrelated fixes, do not leave a solved bug uncommitted while opening the
 next one, and stage only the files for that slice.
 
+## Active Correction Queue
+
+- [x] S1/S7: replace the session `runtime-overlay.toml` handoff with a single
+  `vm/active_profile.toml` artifact. The service must write the fully merged
+  VM runtime profile there; `capsem-process` must load that one file and must
+  not re-read profile/corp/settings side files.
+- [x] S1/S4: add corp-owned DNS/network mechanics to `corp.toml` and pass them
+  through `active_profile.toml`. Hermetic tests must point Capsem DNS upstreams
+  at the mock-server DNS fixture through this corp rail, not a test-only env
+  escape hatch.
+- [x] S7/Ironbank: extend the OpenAI-compatible double-turn ledger test with
+  two random tool calls and exact per-trace cardinality: model request,
+  reasoning, response, tool_call, tool_response, HTTP request/response, DNS
+  request, security rows, and created fs event.
+  - 2026-06-14 progress: focused OpenAI-compatible double-turn proof is green.
+    The test now drives two random tool calls through the mock-server OpenAI
+    Responses/SSE path, waits for the async fs monitor, and asserts exact
+    cardinality and content for two traces: 10 `model_items`, 4 `model_calls`,
+    4 `net_events`, 1 `dns_events` row, 2 `tool_calls`, 2 `tool_responses`, 2
+    created `fs_events`, plus `security_rule_events` coverage for model, HTTP,
+    DNS, and file event IDs.
+  - Product fix: model tool-call arguments now register bounded workspace
+    file-path trace hints in `TraceState`; the fs monitor uses those hints
+    before emission so `fs_events.trace_id` and matching security-rule rows
+    point at the model/tool trace instead of the ambient boot/process trace.
+- [x] S7: fix OpenAI parser/tool-response logging and dedup. Use fast BLAKE3
+  hashes for model request/response/tool-call/tool-response identity, persist
+  those hashes in the DB, and reload an in-memory hash map from session DB at
+  startup so repeated history does not duplicate old ledger truth.
+  - 2026-06-14 progress: `model_items` now carries non-null `call_id` and a
+    unique `(trace_id, kind, content_hash, call_id)` contract; the writer
+    reloads a dedup set from SQLite at startup and skips duplicate model
+    request/reasoning/response/tool_call/tool_response rows without merging
+    distinct traces. Logger restart regression is green.
+  - 2026-06-14 progress: `CAPSEM_CORP_CONFIG` DNS upstreams merge into the
+    active profile artifact used by the process runtime; the Ironbank test
+    proves the generated `vm/active_profile.toml` contains the mock-server DNS
+    upstream and no `runtime-overlay.toml` reference.
+  - Proof: `cargo test -p capsem-core trace_state -- --nocapture`; `cargo test
+    -p capsem-core fs_monitor::tests::emit_uses_model_tool_file_hint_for_trace_id
+    -- --nocapture`; `cargo test -p capsem-logger
+    model_items_dedup_by_trace_kind_hash_and_call_id_across_restarts --
+    --nocapture`; `cargo test -p capsem-core
+    load_settings_and_corp_files_preserves_direct_corp_rule_groups_from_env_config
+    -- --nocapture`; `uv run ruff check
+    tests/ironbank/test_model_client_ledger_contract.py
+    tests/ironbank/model_ledger.py`; `uv run python -m py_compile
+    tests/ironbank/test_model_client_ledger_contract.py
+    tests/ironbank/model_ledger.py`; `cargo build -p capsem-service -p
+    capsem-process -p capsem-mcp-builtin`; `uv run pytest
+    tests/ironbank/test_model_client_ledger_contract.py::test_openai_two_tool_calls_have_exact_item_cardinality_red
+    -q -s`; `cargo check -p capsem-core -p capsem-logger -p capsem-process -p
+    capsem-service -p capsem-mcp-builtin`; `cargo test -p capsem-process
+    runtime_config -- --nocapture`; `cargo test -p capsem-service
+    runtime_profile -- --nocapture`; `cargo test -p capsem-mcp-builtin
+    --no-run`; `just _materialize-config`; `uv run pytest
+    tests/capsem-build-chain/test_profile_payload_contract.py
+    tests/ironbank/test_agent_bootstrap.py -q`.
+
 ## S0. Sprint Ledger and Release Hold
 
 - [x] Create `sprints/1.3-release-correction/`.

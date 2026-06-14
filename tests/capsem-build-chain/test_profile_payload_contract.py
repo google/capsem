@@ -11,6 +11,7 @@ import blake3
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PROFILES_DIR = PROJECT_ROOT / "config" / "profiles"
+MATERIALIZED_PROFILES_DIR = PROJECT_ROOT / "target" / "config" / "profiles"
 
 
 def _profile_payload(profile_dir: Path) -> tuple[dict, Path, Path]:
@@ -138,9 +139,9 @@ def test_profiles_package_scriptable_local_model_agent_bootstrap() -> None:
         if "env_key" in local_ollama:
             failures.append(f"{profile_id}: Codex local_ollama must not require a baked API key")
 
-        agy_config_path = root_dir / "root/.antigravity/config.json"
+        agy_config_path = root_dir / "root/.gemini/config/config.json"
         if not agy_config_path.is_file():
-            failures.append(f"{profile_id}: missing root/.antigravity/config.json")
+            failures.append(f"{profile_id}: missing root/.gemini/config/config.json")
         else:
             agy_config = json.loads(agy_config_path.read_text())
             ai = agy_config.get("ai", {})
@@ -154,6 +155,22 @@ def test_profiles_package_scriptable_local_model_agent_bootstrap() -> None:
                 failures.append(f"{profile_id}: AGY contextLength is not 8192")
             if "auth" in ai or "token" in json.dumps(ai).lower():
                 failures.append(f"{profile_id}: AGY local model config bakes auth material")
+
+        agy_cli_settings_path = root_dir / "root/.gemini/antigravity-cli/settings.json"
+        if not agy_cli_settings_path.is_file():
+            failures.append(f"{profile_id}: missing root/.gemini/antigravity-cli/settings.json")
+        else:
+            agy_cli_settings = json.loads(agy_cli_settings_path.read_text())
+            if "toolPermission" in agy_cli_settings:
+                failures.append(f"{profile_id}: AGY CLI settings include invalid toolPermission")
+            if "/root" not in agy_cli_settings.get("trustedWorkspaces", []):
+                failures.append(f"{profile_id}: AGY CLI settings do not trust /root")
+            if agy_cli_settings.get("telemetry", {}).get("enabled") is not False:
+                failures.append(f"{profile_id}: AGY CLI telemetry is not disabled")
+            if agy_cli_settings.get("autoUpdate", {}).get("enabled") is not False:
+                failures.append(f"{profile_id}: AGY CLI autoUpdate is not disabled")
+            if "auth" in agy_cli_settings or "token" in json.dumps(agy_cli_settings).lower():
+                failures.append(f"{profile_id}: AGY CLI settings bake auth material")
 
     assert not failures, "invalid local model agent bootstrap contract:\n" + "\n".join(failures)
 
@@ -174,6 +191,8 @@ def test_profile_root_manifests_pin_exactly_the_shipped_root_payload() -> None:
         "root/.claude/settings.json",
         "root/.claude/settings.local.json",
         "root/.codex/config.toml",
+        "root/.gemini/antigravity-cli/settings.json",
+        "root/.gemini/config/config.json",
         "root/.mcp.json",
     }
 
@@ -217,6 +236,45 @@ def test_profile_root_manifests_pin_exactly_the_shipped_root_payload() -> None:
                 failures.append(f"{profile_id}: {rel} manifest size is stale")
 
     assert not failures, "invalid profile root payload contract:\n" + "\n".join(failures)
+
+
+def test_materialized_profile_root_payload_matches_source_profile_root() -> None:
+    failures: list[str] = []
+    for profile_dir in sorted(PROFILES_DIR.iterdir()):
+        if not profile_dir.is_dir():
+            continue
+        profile_id = profile_dir.name
+        materialized_dir = MATERIALIZED_PROFILES_DIR / profile_id
+        if not materialized_dir.is_dir():
+            failures.append(f"{profile_id}: missing materialized profile directory")
+            continue
+
+        source_root = profile_dir / "root"
+        materialized_root = materialized_dir / "root"
+        source_paths = {
+            path.relative_to(source_root).as_posix()
+            for path in source_root.rglob("*")
+            if path.is_file()
+        }
+        materialized_paths = {
+            path.relative_to(materialized_root).as_posix()
+            for path in materialized_root.rglob("*")
+            if path.is_file()
+        }
+        if source_paths != materialized_paths:
+            missing = sorted(source_paths - materialized_paths)
+            extra = sorted(materialized_paths - source_paths)
+            failures.append(
+                f"{profile_id}: materialized root payload drift missing={missing} extra={extra}"
+            )
+            continue
+        for rel in sorted(source_paths):
+            source_bytes = (source_root / rel).read_bytes()
+            materialized_bytes = (materialized_root / rel).read_bytes()
+            if materialized_bytes != source_bytes:
+                failures.append(f"{profile_id}: materialized root payload differs for {rel}")
+
+    assert not failures, "materialized profile root drift:\n" + "\n".join(failures)
 
 
 def test_profiles_package_agent_bootstrap_without_baking_credentials() -> None:

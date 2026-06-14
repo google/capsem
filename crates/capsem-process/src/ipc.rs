@@ -619,7 +619,7 @@ pub(crate) async fn handle_ipc_connection(
             }
             ServiceToProcess::ReloadConfig => {
                 info!(
-                    profile_dir = %runtime_source.profile_dir().display(),
+                    active_profile = %runtime_source.active_profile_path().display(),
                     "Reloading profile runtime config"
                 );
                 let runtime_config = runtime_source.load()?;

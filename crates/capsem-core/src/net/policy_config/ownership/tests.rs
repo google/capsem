@@ -121,6 +121,13 @@ match = 'http.host == "api.openai.com"'
 mode = "block"
 "#,
         ),
+        (
+            "network",
+            r#"
+[network.dns]
+upstreams = ["127.0.0.1:5353"]
+"#,
+        ),
     ] {
         let file = parse(input);
         assert!(
@@ -186,6 +193,16 @@ sigma_output_endpoint = "https://security.example.invalid/sigma"
 "#,
     );
     assert!(validate_profile_toml_contract(&corp).is_err());
+
+    let network = parse(
+        r#"
+[network.dns]
+upstreams = ["127.0.0.1:5353"]
+"#,
+    );
+    assert!(validate_profile_toml_contract(&network)
+        .unwrap_err()
+        .contains("network mechanics"));
 }
 
 #[test]
@@ -207,6 +224,9 @@ match = 'http.host == "external.example"'
 
 [corp_rule_files]
 sigma_output_endpoint = "https://security.example.invalid/sigma"
+
+[network.dns]
+upstreams = ["127.0.0.1:5353"]
 "#,
     );
     validate_corp_toml_contract(&valid).expect("corp constraints are corp-owned");

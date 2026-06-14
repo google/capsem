@@ -9,10 +9,11 @@ use capsem_core::poll::{poll_until, PollOpts};
 use capsem_core::{
     mcp::policy::{McpManualServer, McpUserConfig},
     net::policy_config::{
-        skill_id_for_path, CompiledSecurityRule, DetectionLevel, Profile, ProfileAssetDescriptor,
-        ProfileCatalog, ProfileCatalogSource, ProfileConfigFile, ProviderRuleProfile,
-        SecurityPluginConfig, SecurityPluginMode, SecurityRule, SecurityRuleAction,
-        SecurityRuleGroup, SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource, SettingsFile,
+        skill_id_for_path, ActiveProfileFile, CompiledSecurityRule, DetectionLevel, Profile,
+        ProfileAssetDescriptor, ProfileCatalog, ProfileCatalogSource, ProfileConfigFile,
+        ProviderRuleProfile, SecurityPluginConfig, SecurityPluginMode, SecurityRule,
+        SecurityRuleAction, SecurityRuleGroup, SecurityRuleProfile, SecurityRuleSet,
+        SecurityRuleSource, SettingsFile,
     },
     security_engine::{
         FileSecurityEvent, RuntimeSecurityEventType, SecurityActionRegistry, SecurityEmitError,
@@ -126,8 +127,8 @@ const PROCESS_ENV_ALLOWLIST: &[&str] = &[
     "CAPSEM_EXPERIMENTAL_EROFS_DAX",
 ];
 
-const RUNTIME_PROFILE_CONFIG_DIR: &str = "runtime-config";
-const RUNTIME_OVERLAY_FILE: &str = "runtime-overlay.toml";
+const ACTIVE_PROFILE_DIR: &str = "vm";
+const ACTIVE_PROFILE_FILE: &str = "active_profile.toml";
 
 // ---------------------------------------------------------------------------
 // Service state
@@ -775,8 +776,8 @@ impl ServiceState {
         }
 
         let runtime_profile = self.profile_for_runtime(&profile_id)?;
-        let runtime_profile_dir =
-            self.materialize_runtime_profile_dir(&runtime_profile, &session_dir)?;
+        let active_profile_path =
+            self.materialize_active_profile(&runtime_profile, &session_dir)?;
         let profile = runtime_profile.config();
         let profile_revision = profile.revision.clone();
         let profile_payload_hash = profile_payload_hash(profile)?;
@@ -859,8 +860,8 @@ impl ServiceState {
                 .arg(&resolved.initrd)
                 .arg("--session-dir")
                 .arg(&session_dir)
-                .arg("--profile-dir")
-                .arg(&runtime_profile_dir)
+                .arg("--active-profile")
+                .arg(&active_profile_path)
                 .arg("--cpus")
                 .arg(cpus.to_string())
                 .arg("--ram-mb")
@@ -1076,8 +1077,8 @@ impl ServiceState {
         let _ = std::fs::remove_file(uds_path.with_extension("ready"));
 
         let runtime_profile = self.profile_for_runtime(&entry.profile_id)?;
-        let runtime_profile_dir =
-            self.materialize_runtime_profile_dir(&runtime_profile, &entry.session_dir)?;
+        let active_profile_path =
+            self.materialize_active_profile(&runtime_profile, &entry.session_dir)?;
         let profile = runtime_profile.config();
         self.validate_profile_pins(
             profile,
@@ -1168,8 +1169,8 @@ impl ServiceState {
                 .arg(&resolved.initrd)
                 .arg("--session-dir")
                 .arg(&entry.session_dir)
-                .arg("--profile-dir")
-                .arg(&runtime_profile_dir)
+                .arg("--active-profile")
+                .arg(&active_profile_path)
                 .arg("--cpus")
                 .arg(cpus.to_string())
                 .arg("--ram-mb")
@@ -1392,69 +1393,43 @@ impl ServiceState {
         }
     }
 
-    fn materialize_runtime_profile_dir(
+    fn materialize_active_profile(
         &self,
         profile: &Profile,
         session_dir: &StdPath,
     ) -> Result<PathBuf> {
         let config = profile.config();
-        let runtime_config_root = session_dir.join(RUNTIME_PROFILE_CONFIG_DIR);
-        let runtime_profile_dir = runtime_config_root.join("profiles").join(&config.id);
-        if runtime_config_root.exists() {
-            std::fs::remove_dir_all(&runtime_config_root).with_context(|| {
-                format!(
-                    "remove stale runtime profile config {}",
-                    runtime_config_root.display()
-                )
-            })?;
-        }
-        copy_dir_recursive(profile.profile_dir(), &runtime_profile_dir).with_context(|| {
-            format!(
-                "copy profile runtime {} to {}",
-                profile.profile_dir().display(),
-                runtime_profile_dir.display()
-            )
-        })?;
-
         let (_, corp) = capsem_core::net::policy_config::load_settings_and_corp_files();
-        let mut plugins = self
+        let plugins = self
             .plugin_policy_by_profile
             .lock()
             .unwrap()
             .get(&config.id)
             .cloned()
             .unwrap_or_default();
-        for (plugin_id, plugin) in &corp.plugins {
-            plugins.insert(plugin_id.clone(), *plugin);
+        let active_profile = ActiveProfileFile::from_profile_and_corp(profile, &corp, plugins)
+            .map_err(anyhow::Error::msg)
+            .with_context(|| format!("build active profile for {}", config.id))?;
+        let active_profile_dir = session_dir.join(ACTIVE_PROFILE_DIR);
+        std::fs::create_dir_all(&active_profile_dir)
+            .with_context(|| format!("create {}", active_profile_dir.display()))?;
+        let active_profile_path = active_profile_dir.join(ACTIVE_PROFILE_FILE);
+        std::fs::write(
+            &active_profile_path,
+            toml::to_string_pretty(&active_profile).context("serialize active profile")?,
+        )
+        .with_context(|| format!("write {}", active_profile_path.display()))?;
+
+        let stale_runtime_config = session_dir.join("runtime-config");
+        if stale_runtime_config.exists() {
+            std::fs::remove_dir_all(&stale_runtime_config)
+                .with_context(|| format!("remove stale {}", stale_runtime_config.display()))?;
         }
-        let runtime_overlay = SettingsFile {
-            rule_files: corp.rule_files.clone(),
-            default: corp.default.clone(),
-            profiles: corp.profiles.clone(),
-            corp: corp.corp.clone(),
-            corp_rule_files: corp.corp_rule_files.clone(),
-            ai: corp.ai.clone(),
-            plugins,
-            mcp: corp.mcp.clone(),
-            ..SettingsFile::default()
-        };
-        if !runtime_overlay_is_empty(&runtime_overlay) {
-            std::fs::write(
-                runtime_profile_dir.join(RUNTIME_OVERLAY_FILE),
-                toml::to_string_pretty(&runtime_overlay)
-                    .context("serialize runtime profile overlay")?,
-            )
-            .with_context(|| {
-                format!(
-                    "write runtime profile overlay {}",
-                    runtime_profile_dir.join(RUNTIME_OVERLAY_FILE).display()
-                )
-            })?;
-        }
-        Ok(runtime_profile_dir)
+
+        Ok(active_profile_path)
     }
 
-    fn refresh_runtime_profile_dirs(&self, profile_filter: Option<&str>) -> Result<usize> {
+    fn refresh_active_profiles(&self, profile_filter: Option<&str>) -> Result<usize> {
         let targets = {
             let instances = self.instances.lock().unwrap();
             instances
@@ -1478,10 +1453,10 @@ impl ServiceState {
             let runtime_profile = self
                 .profile_for_runtime(profile_id)
                 .with_context(|| format!("load runtime profile {profile_id} for {id}"))?;
-            self.materialize_runtime_profile_dir(&runtime_profile, session_dir)
+            self.materialize_active_profile(&runtime_profile, session_dir)
                 .with_context(|| {
                     format!(
-                        "refresh runtime profile config for {id} ({profile_id}) in {}",
+                        "refresh active profile config for {id} ({profile_id}) in {}",
                         session_dir.display()
                     )
                 })?;
@@ -1621,54 +1596,8 @@ impl ServiceState {
     }
 }
 
-fn runtime_overlay_is_empty(overlay: &SettingsFile) -> bool {
-    overlay.rule_files.is_empty()
-        && overlay.default.is_empty()
-        && overlay.profiles.is_empty()
-        && overlay.corp.is_empty()
-        && overlay.corp_rule_files.is_empty()
-        && overlay.ai.is_empty()
-        && overlay.plugins.is_empty()
-        && overlay.mcp.is_none()
-}
-
 fn gib(bytes: u64) -> u64 {
     bytes / 1024 / 1024 / 1024
-}
-
-fn copy_dir_recursive(src: &StdPath, dst: &StdPath) -> Result<()> {
-    std::fs::create_dir_all(dst).with_context(|| format!("create directory {}", dst.display()))?;
-    for entry in
-        std::fs::read_dir(src).with_context(|| format!("read directory {}", src.display()))?
-    {
-        let entry = entry.with_context(|| format!("read entry in {}", src.display()))?;
-        let source_path = entry.path();
-        let target_path = dst.join(entry.file_name());
-        let file_type = entry
-            .file_type()
-            .with_context(|| format!("stat {}", source_path.display()))?;
-        if file_type.is_dir() {
-            copy_dir_recursive(&source_path, &target_path)?;
-        } else if file_type.is_file() {
-            if let Some(parent) = target_path.parent() {
-                std::fs::create_dir_all(parent)
-                    .with_context(|| format!("create directory {}", parent.display()))?;
-            }
-            std::fs::copy(&source_path, &target_path).with_context(|| {
-                format!(
-                    "copy runtime profile file {} to {}",
-                    source_path.display(),
-                    target_path.display()
-                )
-            })?;
-        } else {
-            return Err(anyhow!(
-                "runtime profile source {} must contain only directories and regular files",
-                source_path.display()
-            ));
-        }
-    }
-    Ok(())
 }
 
 fn validate_session_rootfs_size(
@@ -3956,7 +3885,7 @@ async fn handle_reload_config_for_profile(
     profile_filter: Option<&str>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     state
-        .refresh_runtime_profile_dirs(profile_filter)
+        .refresh_active_profiles(profile_filter)
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     // Collect paths to broadcast to.

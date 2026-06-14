@@ -9,6 +9,7 @@ mod vsock;
 
 use anyhow::{Context, Result};
 use capsem_core::fs_monitor::FsMonitor;
+use capsem_core::net::dns::{DnsAnswerCache, DnsResolver};
 use capsem_core::{boot_vm, BootOptions, VirtioFsShare, VsockConnection};
 use capsem_logger::DbWriter;
 use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
@@ -67,7 +68,7 @@ struct Args {
     #[arg(long)]
     session_dir: PathBuf,
     #[arg(long)]
-    profile_dir: PathBuf,
+    active_profile: PathBuf,
     #[arg(long, default_value_t = 2)]
     cpus: u32,
     #[arg(long, default_value_t = 2048)]
@@ -308,7 +309,7 @@ async fn run_async_main_loop(
     // starts, we still want a clean checkpoint.
     shutdown.lock().await.db = Some(Arc::clone(&db));
 
-    let runtime_source = runtime_config::RuntimeProfileSource::new(args.profile_dir.clone());
+    let runtime_source = runtime_config::RuntimeProfileSource::new(args.active_profile.clone());
     let runtime_config = runtime_source.load()?;
     let security_rule_ids = runtime_config
         .security_rules
@@ -318,11 +319,11 @@ async fn run_async_main_loop(
         .collect::<Vec<_>>();
     info!(
         profile_id = %runtime_config.profile_id,
-        profile_dir = %runtime_config.profile_dir.display(),
-        config_root = %runtime_config.config_root.display(),
+        active_profile = %runtime_config.active_profile_path.display(),
         security_rule_count = security_rule_ids.len(),
         security_rule_ids = ?security_rule_ids,
         plugin_count = runtime_config.plugins.len(),
+        dns_upstreams = ?runtime_config.dns_upstreams,
         "capsem-process loaded profile runtime config"
     );
     let guest_config = capsem_core::net::policy_config::GuestConfig::default();
@@ -330,6 +331,9 @@ async fn run_async_main_loop(
         runtime_config.security_rules.clone(),
     )));
     let plugin_policy = Arc::new(std::sync::RwLock::new(runtime_config.plugins.clone()));
+    let model_trace_state = Arc::new(std::sync::Mutex::new(
+        capsem_core::net::ai_traffic::TraceState::new(),
+    ));
 
     // Start host file monitor to record fs_events.
     let workspace_dir = session_dir.join("workspace");
@@ -338,6 +342,7 @@ async fn run_async_main_loop(
         workspace_dir.clone(),
         Arc::clone(&db),
         Arc::clone(&security_rules),
+        Arc::clone(&model_trace_state),
     ) {
         Ok(monitor) => {
             info!("host file monitor started");
@@ -368,8 +373,11 @@ async fn run_async_main_loop(
         db_path.to_string_lossy().to_string(),
     );
     builtin_env.insert(
-        "CAPSEM_PROFILE_DIR".into(),
-        runtime_config.profile_dir.to_string_lossy().to_string(),
+        "CAPSEM_ACTIVE_PROFILE".into(),
+        runtime_config
+            .active_profile_path
+            .to_string_lossy()
+            .to_string(),
     );
     let mcp_servers = runtime_config.mcp_servers(builtin_bin.as_deref(), builtin_env);
     let snap_auto_max = 10usize;
@@ -470,9 +478,7 @@ async fn run_async_main_loop(
         capsem_core::net::mitm_proxy::telemetry_hook::TelemetryDeps {
             db: Arc::clone(&db),
             pricing: Arc::new(capsem_core::net::ai_traffic::pricing::PricingTable::load()),
-            trace_state: Arc::new(std::sync::Mutex::new(
-                capsem_core::net::ai_traffic::TraceState::new(),
-            )),
+            trace_state: Arc::clone(&model_trace_state),
             security_rules: Arc::clone(&security_rules),
             plugin_policy: Arc::clone(&plugin_policy),
         },
@@ -494,12 +500,17 @@ async fn run_async_main_loop(
 
     // DNS handler shares the same security rule/plugin handles as MITM
     // so admin enforcement edits take effect across protocols at once.
-    // Default upstream nameservers (1.1.1.1, 8.8.8.8) until operator-
-    // configurable upstreams land.
-    let dns_handler = Arc::new(capsem_core::net::dns::DnsHandler::with_default_resolver(
+    let dns_resolver = if runtime_config.dns_upstreams.is_empty() {
+        DnsResolver::new()
+    } else {
+        DnsResolver::with_upstreams(runtime_config.dns_upstreams.clone())
+    };
+    let dns_handler = Arc::new(capsem_core::net::dns::DnsHandler::with_cache(
         Arc::clone(&net_state.policy),
         Arc::clone(&security_rules),
         Arc::clone(&plugin_policy),
+        Arc::new(dns_resolver),
+        Arc::new(DnsAnswerCache::default()),
     ));
 
     let sched_clone = Arc::clone(&scheduler);
@@ -889,7 +900,7 @@ mod tests {
             "/tmp/rootfs.img",
             "--session-dir",
             "/tmp/session",
-            "--profile-dir",
+            "--active-profile",
             "/tmp/config/profiles/code",
             "--uds-path",
             "/tmp/vm.sock",
@@ -899,7 +910,10 @@ mod tests {
         assert_eq!(args.assets_dir, PathBuf::from("/tmp/assets"));
         assert_eq!(args.rootfs, PathBuf::from("/tmp/rootfs.img"));
         assert_eq!(args.session_dir, PathBuf::from("/tmp/session"));
-        assert_eq!(args.profile_dir, PathBuf::from("/tmp/config/profiles/code"));
+        assert_eq!(
+            args.active_profile,
+            PathBuf::from("/tmp/config/profiles/code")
+        );
         assert_eq!(args.uds_path, PathBuf::from("/tmp/vm.sock"));
     }
 
@@ -915,7 +929,7 @@ mod tests {
             "/r",
             "--session-dir",
             "/s",
-            "--profile-dir",
+            "--active-profile",
             "/profiles/code",
             "--uds-path",
             "/u",
@@ -936,7 +950,7 @@ mod tests {
             "/r",
             "--session-dir",
             "/s",
-            "--profile-dir",
+            "--active-profile",
             "/profiles/code",
             "--uds-path",
             "/u",
@@ -957,7 +971,7 @@ mod tests {
             "/r",
             "--session-dir",
             "/s",
-            "--profile-dir",
+            "--active-profile",
             "/profiles/code",
             "--uds-path",
             "/u",
@@ -978,7 +992,7 @@ mod tests {
             "/r",
             "--session-dir",
             "/s",
-            "--profile-dir",
+            "--active-profile",
             "/profiles/code",
             "--uds-path",
             "/u",
@@ -1018,7 +1032,7 @@ mod tests {
             "/r",
             "--session-dir",
             "/s",
-            "--profile-dir",
+            "--active-profile",
             "/profiles/code",
             "--uds-path",
             "/u",
@@ -1036,7 +1050,7 @@ mod tests {
             "/r",
             "--session-dir",
             "/s",
-            "--profile-dir",
+            "--active-profile",
             "/profiles/code",
             "--uds-path",
             "/u",
@@ -1045,7 +1059,7 @@ mod tests {
     }
 
     #[test]
-    fn args_missing_required_profile_dir_fails() {
+    fn args_missing_required_active_profile_fails() {
         let result = Args::try_parse_from([
             "capsem-process",
             "--id",
@@ -1074,7 +1088,7 @@ mod tests {
             "/r",
             "--session-dir",
             "/s",
-            "--profile-dir",
+            "--active-profile",
             "/profiles/code",
             "--uds-path",
             "/u",
@@ -1096,7 +1110,7 @@ mod tests {
             "/r",
             "--session-dir",
             "/s",
-            "--profile-dir",
+            "--active-profile",
             "/profiles/code",
             "--uds-path",
             "/u",
@@ -1117,7 +1131,7 @@ mod tests {
             "/r",
             "--session-dir",
             "/s",
-            "--profile-dir",
+            "--active-profile",
             "/profiles/code",
             "--uds-path",
             "/u",
@@ -1143,7 +1157,7 @@ mod tests {
             "/r",
             "--session-dir",
             "/s",
-            "--profile-dir",
+            "--active-profile",
             "/profiles/code",
             "--uds-path",
             "/u",

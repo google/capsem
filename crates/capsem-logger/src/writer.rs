@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime};
 
@@ -50,6 +51,27 @@ fn cap_field(s: &Option<String>) -> Option<String> {
             v[..end].to_string()
         }
     })
+}
+
+fn blake3_ref(value: &str) -> String {
+    format!("blake3:{}", blake3::hash(value.as_bytes()).to_hex())
+}
+
+type ModelItemDedup = HashSet<String>;
+
+fn model_item_dedup_key(
+    trace_id: Option<&str>,
+    kind: &str,
+    content_hash: &str,
+    call_id: &str,
+) -> String {
+    format!(
+        "{}\0{}\0{}\0{}",
+        trace_id.unwrap_or_default(),
+        kind,
+        content_hash,
+        call_id
+    )
 }
 
 /// Typed write operations sent to the writer thread.
@@ -304,6 +326,8 @@ impl Drop for DbWriter {
 
 /// The writer thread loop: block-then-drain batching.
 fn writer_loop(conn: Connection, mut rx: tokio::sync::mpsc::Receiver<WriteOp>) {
+    let mut model_item_dedup = load_model_item_dedup(&conn);
+
     // 1. Block until at least one op arrives. Returns None when all
     //    Senders are dropped (clean shutdown) and ends the loop.
     while let Some(first_op) = rx.blocking_recv() {
@@ -328,7 +352,7 @@ fn writer_loop(conn: Connection, mut rx: tokio::sync::mpsc::Receiver<WriteOp>) {
             status = tracing::field::Empty,
         );
         let started = Instant::now();
-        if let Err(e) = span.in_scope(|| execute_batch(&conn, &batch)) {
+        if let Err(e) = span.in_scope(|| execute_batch(&conn, &batch, &mut model_item_dedup)) {
             record_batch(started, batch_size, batch_bucket, "error", &span);
             warn!(error = %e, count = batch.len(), "db write batch failed");
         } else {
@@ -358,6 +382,33 @@ fn writer_loop(conn: Connection, mut rx: tokio::sync::mpsc::Receiver<WriteOp>) {
     let status = if result.is_ok() { "ok" } else { "error" };
     ::metrics::histogram!(DB_SHUTDOWN_FLUSH_MS, "status" => status).record(elapsed_ms);
     span.record("status", status);
+}
+
+fn load_model_item_dedup(conn: &Connection) -> ModelItemDedup {
+    let mut dedup = ModelItemDedup::new();
+    let Ok(mut stmt) =
+        conn.prepare("SELECT trace_id, kind, content_hash, call_id FROM model_items")
+    else {
+        return dedup;
+    };
+    let Ok(rows) = stmt.query_map([], |row| {
+        let trace_id: Option<String> = row.get(0)?;
+        let kind: String = row.get(1)?;
+        let content_hash: String = row.get(2)?;
+        let call_id: String = row.get(3)?;
+        Ok(model_item_dedup_key(
+            trace_id.as_deref(),
+            &kind,
+            &content_hash,
+            &call_id,
+        ))
+    }) else {
+        return dedup;
+    };
+    for key in rows.flatten() {
+        dedup.insert(key);
+    }
+    dedup
 }
 
 fn record_enqueue(started: Instant, queue_result: &'static str, span: &tracing::Span) {
@@ -407,12 +458,16 @@ fn batch_size_bucket(size: usize) -> &'static str {
     }
 }
 
-fn execute_batch(conn: &Connection, batch: &[WriteOp]) -> rusqlite::Result<()> {
+fn execute_batch(
+    conn: &Connection,
+    batch: &[WriteOp],
+    model_item_dedup: &mut ModelItemDedup,
+) -> rusqlite::Result<()> {
     let tx = conn.unchecked_transaction()?;
     for op in batch {
         match op {
             WriteOp::NetEvent(e) => insert_net_event(&tx, e)?,
-            WriteOp::ModelCall(m) => insert_model_call(&tx, m)?,
+            WriteOp::ModelCall(m) => insert_model_call(&tx, m, model_item_dedup)?,
             WriteOp::McpCall(c) => insert_mcp_call(&tx, c)?,
             WriteOp::FileEvent(f) => insert_file_event(&tx, f)?,
             WriteOp::ExecEvent(e) => insert_exec_event(&tx, e)?,
@@ -478,7 +533,11 @@ fn insert_net_event(conn: &Connection, event: &NetEvent) -> rusqlite::Result<()>
     Ok(())
 }
 
-fn insert_model_call(conn: &Connection, call: &ModelCall) -> rusqlite::Result<()> {
+fn insert_model_call(
+    conn: &Connection,
+    call: &ModelCall,
+    model_item_dedup: &mut ModelItemDedup,
+) -> rusqlite::Result<()> {
     let timestamp = format_timestamp(call.timestamp);
     let req_body = cap_field(&call.request_body_preview);
     let text_content = cap_field(&call.text_content);
@@ -527,6 +586,7 @@ fn insert_model_call(conn: &Connection, call: &ModelCall) -> rusqlite::Result<()
         ],
     )?;
     let model_call_id = conn.last_insert_rowid();
+    insert_model_items(conn, model_call_id, call, &timestamp, model_item_dedup)?;
 
     for tc in &call.tool_calls {
         // W6: tool_calls.trace_id falls back to the parent model_call's
@@ -569,6 +629,99 @@ fn insert_model_call(conn: &Connection, call: &ModelCall) -> rusqlite::Result<()
         )?;
     }
 
+    Ok(())
+}
+
+fn insert_model_items(
+    conn: &Connection,
+    model_call_id: i64,
+    call: &ModelCall,
+    timestamp: &str,
+    model_item_dedup: &mut ModelItemDedup,
+) -> rusqlite::Result<()> {
+    let mut item_index = 0_i64;
+    let mut insert_item = |kind: &str,
+                           call_id: Option<&str>,
+                           tool_name: Option<&str>,
+                           arguments: Option<&str>,
+                           content: Option<String>|
+     -> rusqlite::Result<()> {
+        item_index += 1;
+        let call_id = call_id.unwrap_or_default();
+        let content = cap_field(&content);
+        let hash_material = serde_json::json!({
+            "kind": kind,
+            "call_id": call_id,
+            "tool_name": tool_name,
+            "arguments": arguments,
+            "content": content,
+        })
+        .to_string();
+        let content_hash = blake3_ref(&hash_material);
+        let dedup_key =
+            model_item_dedup_key(call.trace_id.as_deref(), kind, &content_hash, call_id);
+        if !model_item_dedup.insert(dedup_key) {
+            return Ok(());
+        }
+        conn.execute(
+            "INSERT OR IGNORE INTO model_items (
+                event_id, model_call_id, timestamp, provider, model, path, trace_id,
+                kind, item_index, call_id, tool_name, arguments, content,
+                content_hash, credential_ref
+             )
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+            params![
+                new_event_id(),
+                model_call_id,
+                timestamp,
+                call.provider,
+                call.model,
+                call.path,
+                call.trace_id,
+                kind,
+                item_index,
+                call_id,
+                tool_name,
+                arguments,
+                content,
+                content_hash,
+                call.credential_ref,
+            ],
+        )?;
+        Ok(())
+    };
+
+    // A tool-result continuation request is represented by tool_response rows;
+    // do not also log it as another user request for the same trace.
+    if call.tool_responses.is_empty() {
+        if let Some(content) = &call.request_body_preview {
+            insert_item("request", None, None, None, Some(content.clone()))?;
+        }
+    }
+    if let Some(content) = &call.thinking_content {
+        insert_item("reasoning", None, None, None, Some(content.clone()))?;
+    }
+    if let Some(content) = &call.text_content {
+        insert_item("response", None, None, None, Some(content.clone()))?;
+    }
+    for tool_call in &call.tool_calls {
+        insert_item(
+            "tool_call",
+            Some(&tool_call.call_id),
+            Some(&tool_call.tool_name),
+            tool_call.arguments.as_deref(),
+            tool_call.arguments.clone(),
+        )?;
+    }
+    for tool_response in &call.tool_responses {
+        insert_item(
+            "tool_response",
+            Some(&tool_response.call_id),
+            None,
+            None,
+            tool_response.content_preview.clone(),
+        )?;
+    }
     Ok(())
 }
 

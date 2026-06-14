@@ -2,25 +2,23 @@ use anyhow::{Context, Result};
 use capsem_core::mcp::types::McpServerDef;
 use capsem_core::net::policy::NetworkPolicy;
 use capsem_core::net::policy_config::{
-    MergedPolicies, ModelEndpointRegistry, Profile, ProviderRuleProfile, SecurityPluginConfig,
-    SecurityRuleSet, SecurityRuleSource, SettingsFile,
+    ActiveProfileFile, MergedPolicies, ModelEndpointRegistry, SecurityPluginConfig, SecurityRuleSet,
 };
 use std::collections::{BTreeMap, HashMap};
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-
-const RUNTIME_OVERLAY_FILE: &str = "runtime-overlay.toml";
 
 #[derive(Debug, Clone)]
 pub(crate) struct RuntimeProfileSource {
-    profile_dir: PathBuf,
+    active_profile_path: PathBuf,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct RuntimeProfileConfig {
     pub(crate) profile_id: String,
-    pub(crate) profile_dir: PathBuf,
-    pub(crate) config_root: PathBuf,
+    pub(crate) active_profile_path: PathBuf,
     pub(crate) network: NetworkPolicy,
+    pub(crate) dns_upstreams: Vec<SocketAddr>,
     pub(crate) security_rules: SecurityRuleSet,
     pub(crate) plugins: BTreeMap<String, SecurityPluginConfig>,
     pub(crate) model_endpoints: ModelEndpointRegistry,
@@ -28,80 +26,65 @@ pub(crate) struct RuntimeProfileConfig {
 }
 
 impl RuntimeProfileSource {
-    pub(crate) fn new(profile_dir: impl Into<PathBuf>) -> Self {
+    pub(crate) fn new(active_profile_path: impl Into<PathBuf>) -> Self {
         Self {
-            profile_dir: profile_dir.into(),
+            active_profile_path: active_profile_path.into(),
         }
     }
 
-    pub(crate) fn profile_dir(&self) -> &Path {
-        &self.profile_dir
+    pub(crate) fn active_profile_path(&self) -> &Path {
+        &self.active_profile_path
     }
 
     pub(crate) fn load(&self) -> Result<RuntimeProfileConfig> {
-        let profile = Profile::load_from_dir(&self.profile_dir)
-            .map_err(anyhow::Error::msg)
-            .with_context(|| format!("load runtime profile {}", self.profile_dir.display()))?;
-        RuntimeProfileConfig::from_profile(profile)
+        let content = std::fs::read_to_string(&self.active_profile_path)
+            .with_context(|| format!("read {}", self.active_profile_path.display()))?;
+        let active: ActiveProfileFile = toml::from_str(&content)
+            .with_context(|| format!("parse {}", self.active_profile_path.display()))?;
+        RuntimeProfileConfig::from_active(active, self.active_profile_path.clone())
     }
 }
 
 impl RuntimeProfileConfig {
-    fn from_profile(profile: Profile) -> Result<Self> {
-        let config = profile.config();
-        let runtime_overlay = load_runtime_overlay(profile.profile_dir())?;
-        let profile_rules = config
-            .compile_security_rule_set_from_files(profile.config_root(), SecurityRuleSource::User)
+    fn from_active(active: ActiveProfileFile, active_profile_path: PathBuf) -> Result<Self> {
+        active
+            .validate()
             .map_err(anyhow::Error::msg)
-            .with_context(|| format!("compile runtime profile rules for {}", config.id))?;
-        let profile_rule_settings = SettingsFile {
-            ai: config.ai.clone(),
-            ..SettingsFile::default()
-        };
-        let overlay_policies = MergedPolicies::from_files(&profile_rule_settings, &runtime_overlay);
-        let mut rules_by_id = BTreeMap::new();
-        for rule in profile_rules.rules() {
-            rules_by_id.insert(rule.rule_id.clone(), rule.clone());
-        }
-        for rule in overlay_policies.security_rules.rules() {
-            rules_by_id.insert(rule.rule_id.clone(), rule.clone());
-        }
-        let security_rules = SecurityRuleSet::new(rules_by_id.into_values().collect());
-
-        let mut plugins = ProviderRuleProfile::builtin_security_defaults().plugins;
-        for (plugin_id, config) in &config.plugins {
-            plugins.insert(plugin_id.clone(), *config);
-        }
-        for (plugin_id, config) in &runtime_overlay.plugins {
-            plugins.insert(plugin_id.clone(), *config);
-        }
-
-        let provider_profile = ProviderRuleProfile::merge_defaults_user_and_corp(
-            &ProviderRuleProfile {
-                ai: config.ai.clone(),
-            },
-            &ProviderRuleProfile {
-                ai: runtime_overlay.ai.clone(),
-            },
-        )
-        .map_err(anyhow::Error::msg)
-        .with_context(|| format!("compile runtime profile AI providers for {}", config.id))?;
-        let model_endpoints = provider_profile
-            .endpoint_registry()
+            .with_context(|| format!("validate {}", active_profile_path.display()))?;
+        let (profile_settings, corp_settings) = active.merged_policy_inputs();
+        let merged = MergedPolicies::from_files(&profile_settings, &corp_settings);
+        let security_rules = active
+            .compile_security_rule_set()
             .map_err(anyhow::Error::msg)
-            .with_context(|| {
-                format!("compile runtime profile model endpoints for {}", config.id)
-            })?;
+            .with_context(|| format!("compile active profile rules for {}", active.id))?;
+        let model_endpoints = active
+            .model_endpoint_registry()
+            .map_err(anyhow::Error::msg)
+            .with_context(|| format!("compile active profile model endpoints for {}", active.id))?;
+        let dns_upstreams = active
+            .network
+            .dns
+            .upstreams
+            .iter()
+            .map(|upstream| {
+                upstream.parse::<SocketAddr>().with_context(|| {
+                    format!(
+                        "parse DNS upstream {upstream:?} from {}",
+                        active_profile_path.display()
+                    )
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
 
         Ok(Self {
-            profile_id: config.id.clone(),
-            profile_dir: profile.profile_dir().to_path_buf(),
-            config_root: profile.config_root().to_path_buf(),
-            network: overlay_policies.network,
+            profile_id: active.id.clone(),
+            active_profile_path,
+            network: merged.network,
+            dns_upstreams,
             security_rules,
-            plugins,
+            plugins: active.plugins.clone(),
             model_endpoints,
-            mcp: config.mcp.clone().unwrap_or_default(),
+            mcp: active.mcp.clone().unwrap_or_default(),
         })
     }
 
@@ -114,56 +97,29 @@ impl RuntimeProfileConfig {
     }
 }
 
-fn load_runtime_overlay(profile_dir: &Path) -> Result<SettingsFile> {
-    let path = profile_dir.join(RUNTIME_OVERLAY_FILE);
-    if !path.exists() {
-        return Ok(SettingsFile::default());
-    }
-    let content =
-        std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
-    let overlay: SettingsFile =
-        toml::from_str(&content).with_context(|| format!("parse {}", path.display()))?;
-    overlay
-        .validate_metadata_contract()
-        .map_err(anyhow::Error::msg)
-        .with_context(|| format!("validate {}", path.display()))?;
-    Ok(overlay)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use capsem_core::net::policy_config::SecurityPluginMode;
 
     #[test]
-    fn runtime_profile_source_loads_profile_rules_plugins_mcp() {
+    fn runtime_profile_source_loads_active_profile_rules_plugins_mcp() {
         let dir = tempfile::tempdir().unwrap();
-        let config_root = dir.path().join("config");
-        let profile_dir = config_root.join("profiles/code");
-        std::fs::create_dir_all(&profile_dir).unwrap();
+        let active_path = dir.path().join("vm/active_profile.toml");
+        std::fs::create_dir_all(active_path.parent().unwrap()).unwrap();
         std::fs::write(
-            profile_dir.join("enforcement.toml"),
+            &active_path,
             r#"
-[profiles.rules.runtime_http]
+id = "code"
+name = "Code"
+description = "Runtime test active profile."
+revision = "test.1"
+
+[profile_rules.profiles.rules.runtime_http]
 name = "runtime_http"
 action = "allow"
 priority = 10
 match = 'http.host == "profile.example"'
-"#,
-        )
-        .unwrap();
-
-        std::fs::write(
-            profile_dir.join("profile.toml"),
-            r#"
-id = "code"
-name = "Code"
-description = "Runtime test profile."
-revision = "test.1"
-refresh_policy = "24h"
-
-[rule_files]
-enforcement = "profiles/code/enforcement.toml"
 
 [plugins.credential_broker]
 mode = "rewrite"
@@ -175,9 +131,10 @@ local = false
         )
         .unwrap();
 
-        let runtime = RuntimeProfileSource::new(&profile_dir).load().unwrap();
+        let runtime = RuntimeProfileSource::new(&active_path).load().unwrap();
 
         assert_eq!(runtime.profile_id, "code");
+        assert_eq!(runtime.active_profile_path, active_path);
         assert!(runtime
             .security_rules
             .rules()
@@ -195,42 +152,38 @@ local = false
     }
 
     #[test]
-    fn runtime_profile_source_loads_service_supplied_corp_overlay_without_global_config() {
+    fn runtime_profile_source_loads_corp_rules_and_dns_from_active_profile() {
         let dir = tempfile::tempdir().unwrap();
-        let config_root = dir.path().join("config");
-        let profile_dir = config_root.join("profiles/code");
-        std::fs::create_dir_all(&profile_dir).unwrap();
+        let active_path = dir.path().join("vm/active_profile.toml");
+        std::fs::create_dir_all(active_path.parent().unwrap()).unwrap();
         std::fs::write(
-            profile_dir.join("profile.toml"),
+            &active_path,
             r#"
 id = "code"
 name = "Code"
-description = "Runtime test profile."
+description = "Runtime test active profile."
 revision = "test.1"
-refresh_policy = "24h"
 
-[default.http]
+[profile_rules.default.http]
 name = "default_http"
 action = "allow"
 priority = "default"
 match = 'has(http.host)'
-"#,
-        )
-        .unwrap();
-        std::fs::write(
-            profile_dir.join(RUNTIME_OVERLAY_FILE),
-            r#"
-[corp.rules.block_local_deny_target]
+
+[corp_rules.corp.rules.block_local_deny_target]
 name = "block_local_deny_target"
 action = "block"
 priority = -100
 detection_level = "high"
 match = 'http.host == "127.0.0.1" && http.path == "/deny-target"'
+
+[network.dns]
+upstreams = ["127.0.0.1:5353"]
 "#,
         )
         .unwrap();
 
-        let runtime = RuntimeProfileSource::new(&profile_dir).load().unwrap();
+        let runtime = RuntimeProfileSource::new(&active_path).load().unwrap();
         let event = serde_json::json!({
             "http": {
                 "host": "127.0.0.1",
@@ -245,6 +198,10 @@ match = 'http.host == "127.0.0.1" && http.path == "/deny-target"'
             .expect("corp rule should match");
 
         assert_eq!(first.rule_id, "corp.rules.block_local_deny_target");
+        assert_eq!(
+            runtime.dns_upstreams,
+            vec!["127.0.0.1:5353".parse().unwrap()]
+        );
         assert_eq!(
             first.action,
             capsem_core::net::policy_config::SecurityRuleAction::Block

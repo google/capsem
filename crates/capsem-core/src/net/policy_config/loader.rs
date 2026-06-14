@@ -348,6 +348,9 @@ pub fn load_settings_and_corp_files() -> (SettingsFile, SettingsFile) {
                 for (plugin_id, plugin) in file.plugins {
                     corp.plugins.entry(plugin_id).or_insert(plugin);
                 }
+                if corp.network.dns.upstreams.is_empty() && !file.network.dns.upstreams.is_empty() {
+                    corp.network.dns.upstreams = file.network.dns.upstreams;
+                }
             }
             Err(e) => {
                 tracing::warn!("corp settings at {}: {e}", path.display());

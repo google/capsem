@@ -122,6 +122,32 @@ pub const CREATE_SCHEMA: &str = "
     CREATE INDEX IF NOT EXISTS idx_model_calls_trace_id
         ON model_calls(trace_id);
 
+    CREATE TABLE IF NOT EXISTS model_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        model_call_id INTEGER NOT NULL,
+        timestamp TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        model TEXT,
+        path TEXT NOT NULL,
+        trace_id TEXT,
+        kind TEXT NOT NULL CHECK (kind IN ('request', 'reasoning', 'response', 'tool_call', 'tool_response')),
+        item_index INTEGER NOT NULL,
+        call_id TEXT NOT NULL DEFAULT '',
+        tool_name TEXT,
+        arguments TEXT,
+        content TEXT,
+        content_hash TEXT NOT NULL CHECK (length(content_hash) = 71 AND content_hash GLOB 'blake3:[0-9a-f]*'),
+        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*')),
+        UNIQUE(trace_id, kind, content_hash, call_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_model_items_trace_id
+        ON model_items(trace_id);
+    CREATE INDEX IF NOT EXISTS idx_model_items_call_id
+        ON model_items(call_id);
+    CREATE INDEX IF NOT EXISTS idx_model_items_provider_path_model
+        ON model_items(provider, path, model);
+
     CREATE TABLE IF NOT EXISTS mcp_calls (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
@@ -480,6 +506,30 @@ pub fn migrate(conn: &Connection) {
     let _ = conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_tool_responses_call_id ON tool_responses(call_id)",
         [],
+    );
+    let _ = conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS model_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+            model_call_id INTEGER NOT NULL,
+            timestamp TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            model TEXT,
+            path TEXT NOT NULL,
+            trace_id TEXT,
+            kind TEXT NOT NULL CHECK (kind IN ('request', 'reasoning', 'response', 'tool_call', 'tool_response')),
+            item_index INTEGER NOT NULL,
+            call_id TEXT NOT NULL DEFAULT '',
+            tool_name TEXT,
+            arguments TEXT,
+            content TEXT,
+            content_hash TEXT NOT NULL CHECK (length(content_hash) = 71 AND content_hash GLOB 'blake3:[0-9a-f]*'),
+            credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*')),
+            UNIQUE(trace_id, kind, content_hash, call_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_model_items_trace_id ON model_items(trace_id);
+        CREATE INDEX IF NOT EXISTS idx_model_items_call_id ON model_items(call_id);
+        CREATE INDEX IF NOT EXISTS idx_model_items_provider_path_model ON model_items(provider, path, model);",
     );
     // Add fs_events table if not present (for DBs created before this feature).
     let _ = conn.execute_batch(

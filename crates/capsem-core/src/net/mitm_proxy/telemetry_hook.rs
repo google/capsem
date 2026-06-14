@@ -224,7 +224,6 @@ impl ChunkHook for TelemetryHook {
             }
         }
 
-        let net_event = build_net_event(&req_ctx, &resp_stats);
         let model_call = maybe_build_model_call(
             &req_ctx,
             &resp_stats,
@@ -232,6 +231,10 @@ impl ChunkHook for TelemetryHook {
             &self.deps.pricing,
             &self.deps.trace_state,
         );
+        let mut net_event = build_net_event(&req_ctx, &resp_stats);
+        if let Some(model_call) = &model_call {
+            net_event.trace_id = model_call.trace_id.clone();
+        }
         for observation in &mut credential_observations {
             if observation.trace_id.is_none() {
                 observation.trace_id = net_event.trace_id.clone();
@@ -476,7 +479,7 @@ pub fn maybe_build_model_call(
                         Some(tc.arguments.clone())
                     },
                     origin: tool_origin(&tc.name).to_string(),
-                    trace_id: crate::telemetry::ambient_capsem_trace_id(),
+                    trace_id: None,
                 })
                 .collect()
         })
@@ -490,7 +493,7 @@ pub fn maybe_build_model_call(
                 tool_name: tc.name.clone(),
                 arguments: Some(tc.arguments),
                 origin: tool_origin(&tc.name).to_string(),
-                trace_id: crate::telemetry::ambient_capsem_trace_id(),
+                trace_id: None,
             })
             .collect();
     }
@@ -502,7 +505,7 @@ pub fn maybe_build_model_call(
             call_id: tr.call_id.clone(),
             content_preview: Some(tr.content_preview.clone()),
             is_error: tr.is_error,
-            trace_id: crate::telemetry::ambient_capsem_trace_id(),
+            trace_id: None,
         })
         .collect();
 
@@ -562,10 +565,8 @@ pub fn maybe_build_model_call(
     let tool_call_ids: Vec<String> = tool_calls.iter().map(|tc| tc.call_id.clone()).collect();
     let trace_id = {
         let mut state = trace_state.lock().unwrap_or_else(|e| e.into_inner());
-        let ambient_trace_id = crate::telemetry::ambient_capsem_trace_id();
         let tid = state
             .lookup(&tool_response_ids)
-            .or(ambient_trace_id)
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let is_tool_use = !tool_call_ids.is_empty()
             || stop_reason_str
@@ -574,6 +575,12 @@ pub fn maybe_build_model_call(
                 .unwrap_or(false);
         if is_tool_use && !tool_call_ids.is_empty() {
             state.register_tool_calls(&tid, &tool_call_ids);
+            state.register_tool_file_hints(
+                &tid,
+                tool_calls
+                    .iter()
+                    .filter_map(|tool_call| tool_call.arguments.as_deref()),
+            );
         } else if !is_tool_use {
             state.complete_trace(&tid);
         }

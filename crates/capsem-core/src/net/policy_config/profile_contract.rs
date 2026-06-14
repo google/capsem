@@ -6,13 +6,13 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use super::provider_profile::AiProviderProfile;
+use super::provider_profile::{AiProviderProfile, ModelEndpointRegistry, ProviderRuleProfile};
 use super::security_rule_profile::{
     SecurityPluginConfig, SecurityRule, SecurityRuleAction, SecurityRuleGroup,
     SecurityRuleManagedOperation, SecurityRuleManagedTarget, SecurityRulePriority,
     SecurityRulePriorityName, SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource,
 };
-use super::types::RuleFileReferences;
+use super::types::{NetworkConfig, RuleFileReferences, SettingsFile};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -191,6 +191,25 @@ pub struct Profile {
     profile_dir: PathBuf,
     config_root: PathBuf,
     config: ProfileConfigFile,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ActiveProfileFile {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub revision: String,
+    #[serde(default)]
+    pub profile_rules: SecurityRuleProfile,
+    #[serde(default)]
+    pub corp_rules: SecurityRuleProfile,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub plugins: BTreeMap<String, SecurityPluginConfig>,
+    #[serde(default)]
+    pub network: NetworkConfig,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp: Option<crate::mcp::policy::McpUserConfig>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1187,6 +1206,107 @@ impl Profile {
                 descriptor.path
             ))
         }
+    }
+}
+
+impl ActiveProfileFile {
+    pub fn from_profile_and_corp(
+        profile: &Profile,
+        corp: &SettingsFile,
+        plugin_overrides: BTreeMap<String, SecurityPluginConfig>,
+    ) -> Result<Self, String> {
+        corp.validate_metadata_contract()?;
+        let config = profile.config();
+        let mut profile_rules = config.security_rule_profile_from_files(profile.config_root())?;
+
+        let mut plugins = ProviderRuleProfile::builtin_security_defaults().plugins;
+        for (plugin_id, plugin) in &profile_rules.plugins {
+            plugins.insert(plugin_id.clone(), *plugin);
+        }
+        for (plugin_id, plugin) in plugin_overrides {
+            plugins.insert(plugin_id, plugin);
+        }
+        for (plugin_id, plugin) in &corp.plugins {
+            plugins.insert(plugin_id.clone(), *plugin);
+        }
+        profile_rules.plugins.clear();
+
+        let corp_rules = SecurityRuleProfile {
+            default: corp.default.clone(),
+            profiles: corp.profiles.clone(),
+            corp: corp.corp.clone(),
+            ai: corp.ai.clone(),
+            plugins: BTreeMap::new(),
+        };
+        corp_rules.validate()?;
+
+        let active = Self {
+            id: config.id.clone(),
+            name: config.name.clone(),
+            description: config.description.clone(),
+            revision: config.revision.clone(),
+            profile_rules,
+            corp_rules,
+            plugins,
+            network: corp.network.clone(),
+            mcp: config.mcp.clone(),
+        };
+        active.validate()?;
+        Ok(active)
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        validate_profile_id(&self.id)?;
+        validate_non_empty("active_profile.name", &self.name)?;
+        validate_non_empty("active_profile.description", &self.description)?;
+        validate_non_empty("active_profile.revision", &self.revision)?;
+        self.profile_rules.validate()?;
+        self.corp_rules.validate()?;
+        for plugin_id in self.plugins.keys() {
+            validate_profile_target("plugin id", plugin_id)?;
+        }
+        self.network.validate()?;
+        if let Some(mcp) = &self.mcp {
+            mcp.validate("active_profile")?;
+        }
+        Ok(())
+    }
+
+    pub fn merged_policy_inputs(&self) -> (SettingsFile, SettingsFile) {
+        let profile = SettingsFile {
+            default: self.profile_rules.default.clone(),
+            profiles: self.profile_rules.profiles.clone(),
+            ai: self.profile_rules.ai.clone(),
+            ..SettingsFile::default()
+        };
+        let corp = SettingsFile {
+            default: self.corp_rules.default.clone(),
+            profiles: self.corp_rules.profiles.clone(),
+            corp: self.corp_rules.corp.clone(),
+            ai: self.corp_rules.ai.clone(),
+            network: self.network.clone(),
+            ..SettingsFile::default()
+        };
+        (profile, corp)
+    }
+
+    pub fn compile_security_rule_set(&self) -> Result<SecurityRuleSet, String> {
+        self.validate()?;
+        let (profile, corp) = self.merged_policy_inputs();
+        Ok(super::builder::MergedPolicies::from_files(&profile, &corp).security_rules)
+    }
+
+    pub fn model_endpoint_registry(&self) -> Result<ModelEndpointRegistry, String> {
+        self.validate()?;
+        let provider_profile = ProviderRuleProfile::merge_defaults_user_and_corp(
+            &ProviderRuleProfile {
+                ai: self.profile_rules.ai.clone(),
+            },
+            &ProviderRuleProfile {
+                ai: self.corp_rules.ai.clone(),
+            },
+        )?;
+        provider_profile.endpoint_registry()
     }
 }
 

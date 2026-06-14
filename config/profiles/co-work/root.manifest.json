@@ -37,6 +37,16 @@
       "size": 52
     },
     {
+      "path": "root/.gemini/antigravity-cli/settings.json",
+      "hash": "blake3:b79afea5264eda1f2a0af2566398f2856ac81b39d3d055197f4ddf1ed2371899",
+      "size": 157
+    },
+    {
+      "path": "root/.gemini/config/config.json",
+      "hash": "blake3:98e5a1ada9e176cc6e4576abb70891ed3057416e7129670d42e0ed90c98835de",
+      "size": 141
+    },
+    {
       "path": "root/.gemini/projects.json",
       "hash": "blake3:12d1884de84d3717377da1e2e4b6df3011b27aa54f32f39415625b6405330baf",
       "size": 44

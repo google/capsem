@@ -1,0 +1,8 @@
+{
+  "ai": {
+    "provider": "ollama",
+    "baseUrl": "http://127.0.0.1:11434",
+    "model": "gemma4:latest",
+    "contextLength": 8192
+  }
+}

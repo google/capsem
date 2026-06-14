@@ -21,6 +21,7 @@ use tracing::{debug, info, warn};
 use capsem_logger::{DbWriter, FileAction, FileEvent};
 
 use crate::credential_broker::{broker_and_log_observations, parse_env_credentials};
+use crate::net::ai_traffic::TraceState;
 use crate::net::policy_config::SecurityRuleSet;
 
 /// Directories excluded from monitoring.
@@ -102,6 +103,7 @@ impl FsMonitor {
         strip_prefix: PathBuf,
         db: Arc<DbWriter>,
         security_rules: Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>,
+        trace_state: Arc<std::sync::Mutex<TraceState>>,
     ) -> anyhow::Result<Self> {
         let (event_tx, event_rx) = mpsc::channel::<Event>(1024);
         let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);
@@ -133,6 +135,7 @@ impl FsMonitor {
                     strip_prefix,
                     db,
                     security_rules,
+                    trace_state,
                 ));
             })
             .expect("failed to spawn fs_monitor thread");
@@ -162,6 +165,7 @@ impl FsMonitor {
         strip_prefix: PathBuf,
         db: Arc<DbWriter>,
         security_rules: Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>,
+        trace_state: Arc<std::sync::Mutex<TraceState>>,
     ) {
         let mut queue: Vec<QueuedEvent> = Vec::new();
         let mut dropped: u64 = 0;
@@ -171,13 +175,13 @@ impl FsMonitor {
             tokio::select! {
                 _ = shutdown_rx.recv() => {
                     // Final flush
-                    Self::flush(&mut queue, &mut dropped, &db, &security_rules).await;
+                    Self::flush(&mut queue, &mut dropped, &db, &security_rules, &trace_state).await;
                     debug!("host fs-monitor stopped");
                     break;
                 }
                 event = event_rx.recv() => {
                     let Some(event) = event else {
-                        Self::flush(&mut queue, &mut dropped, &db, &security_rules).await;
+                        Self::flush(&mut queue, &mut dropped, &db, &security_rules, &trace_state).await;
                         debug!("host fs-monitor channel closed");
                         break;
                     };
@@ -203,7 +207,7 @@ impl FsMonitor {
                     }
                 }
                 _ = tokio::time::sleep(flush_interval) => {
-                    Self::flush(&mut queue, &mut dropped, &db, &security_rules).await;
+                    Self::flush(&mut queue, &mut dropped, &db, &security_rules, &trace_state).await;
                 }
             }
         }
@@ -219,6 +223,7 @@ impl FsMonitor {
         dropped: &mut u64,
         db: &DbWriter,
         security_rules: &Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>,
+        trace_state: &Arc<std::sync::Mutex<TraceState>>,
     ) {
         if queue.is_empty() && *dropped == 0 {
             return;
@@ -252,7 +257,15 @@ impl FsMonitor {
                     let (old_action, old_fs_path) = pending
                         .insert(event.path.clone(), (event.action, event.fs_path.clone()))
                         .unwrap();
-                    Self::emit(db, security_rules, &event.path, &old_fs_path, old_action).await;
+                    Self::emit(
+                        db,
+                        security_rules,
+                        trace_state,
+                        &event.path,
+                        &old_fs_path,
+                        old_action,
+                    )
+                    .await;
                     emitted += 1;
                 }
                 None => {
@@ -263,7 +276,7 @@ impl FsMonitor {
 
         // Emit all remaining pending entries
         for (path, (action, fs_path)) in pending {
-            Self::emit(db, security_rules, &path, &fs_path, action).await;
+            Self::emit(db, security_rules, trace_state, &path, &fs_path, action).await;
             emitted += 1;
         }
 
@@ -275,6 +288,7 @@ impl FsMonitor {
     async fn emit(
         db: &DbWriter,
         security_rules: &Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>,
+        trace_state: &Arc<std::sync::Mutex<TraceState>>,
         path: &str,
         fs_path: &Path,
         action: FileAction,
@@ -296,7 +310,11 @@ impl FsMonitor {
                 action,
                 path: path.to_string(),
                 size,
-                trace_id: crate::telemetry::ambient_capsem_trace_id(),
+                trace_id: trace_state
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .lookup_file_path(path)
+                    .or_else(crate::telemetry::ambient_capsem_trace_id),
                 credential_ref,
             },
         )
@@ -384,6 +402,10 @@ mod tests {
                 None => std::env::remove_var(crate::credential_broker::TEST_STORE_ENV),
             }
         }
+    }
+
+    fn empty_trace_state() -> Arc<std::sync::Mutex<TraceState>> {
+        Arc::new(std::sync::Mutex::new(TraceState::new()))
     }
 
     fn empty_security_rules() -> Arc<std::sync::RwLock<Arc<SecurityRuleSet>>> {
@@ -608,6 +630,7 @@ mod tests {
         FsMonitor::emit(
             &db,
             &empty_security_rules(),
+            &empty_trace_state(),
             ".env",
             &env_path,
             FileAction::Modified,
@@ -660,6 +683,7 @@ match = 'file.create.name == "skill.md" && file.create.ext == "md"'
         FsMonitor::emit(
             &db,
             &security_rules,
+            &empty_trace_state(),
             "skill.md",
             &file_path,
             FileAction::Created,
@@ -680,6 +704,61 @@ match = 'file.create.name == "skill.md" && file.create.ext == "md"'
             .unwrap();
         assert_eq!(joined.0.len(), 12);
         assert_eq!(joined.1, "profiles.rules.file_create_skill");
+    }
+
+    #[tokio::test]
+    async fn emit_uses_model_tool_file_hint_for_trace_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("session.db");
+        let file_path = dir.path().join("openai-two.txt");
+        std::fs::write(&file_path, "nonce\n").unwrap();
+        let db = DbWriter::open(&db_path, 64).unwrap();
+        let profile = SecurityRuleProfile::parse_toml(
+            r#"
+[profiles.rules.file_create_any]
+name = "file_create_any"
+action = "allow"
+match = 'file.create.path == "openai-two.txt"'
+"#,
+        )
+        .unwrap();
+        let rules = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).unwrap();
+        let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(rules)));
+        let trace_state = empty_trace_state();
+        trace_state.lock().unwrap().register_tool_file_hints(
+            "trace-model",
+            [r#"{"cmd":"printf x > /root/openai-two.txt"}"#],
+        );
+
+        FsMonitor::emit(
+            &db,
+            &security_rules,
+            &trace_state,
+            "openai-two.txt",
+            &file_path,
+            FileAction::Created,
+        )
+        .await;
+        db.shutdown_blocking();
+
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let trace_id: String = conn
+            .query_row(
+                "SELECT trace_id FROM fs_events WHERE path = 'openai-two.txt'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let rule_trace_id: String = conn
+            .query_row(
+                "SELECT trace_id FROM security_rule_events
+                 WHERE event_id = (SELECT event_id FROM fs_events WHERE path = 'openai-two.txt')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(trace_id, "trace-model");
+        assert_eq!(rule_trace_id, "trace-model");
     }
 
     #[tokio::test]
@@ -705,6 +784,7 @@ match = 'file.write.path == "blocked.txt"'
         FsMonitor::emit(
             &db,
             &security_rules,
+            &empty_trace_state(),
             "blocked.txt",
             &file_path,
             FileAction::Modified,

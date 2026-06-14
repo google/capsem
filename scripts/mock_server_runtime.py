@@ -31,6 +31,8 @@ OLLAMA_OPENAI_TOOL_ARGUMENTS = '{"query":"Capsem ironbank poem"}'
 CODEX_RESPONSES_TOOL_CALL_ID = "call_codex_write_poem"
 CODEX_RESPONSES_TOOL_ITEM_ID = "fc_codex_write_poem"
 CODEX_RESPONSES_TOOL_NAME = "exec_command"
+ANTHROPIC_TOOL_CALL_ID = "toolu_capsem_write_poem"
+OLLAMA_TOOL_CALL_ID = "ollama_capsem_write_poem"
 HTML_ABOUT = """<!doctype html>
 <html>
   <head><title>Capsem Mock Server About</title></head>
@@ -172,10 +174,37 @@ def _responses_payload_for_output(model: str = "mock-local", output_text: str = 
 def _codex_responses_write_target(payload: dict) -> tuple[str, str]:
     body = json.dumps(payload, separators=(",", ":"))
     token_match = re.search(r"uuid4 hex value ([0-9a-f]{32})", body)
-    path_match = re.search(r"(/root/codex-cli-[0-9a-f]{32}\.txt)", body)
+    path_match = re.search(r"(/root/[a-z0-9_-]+-[0-9a-f]{32}\.txt)", body)
     token = token_match.group(1) if token_match else EXPECTED_POEM
     path = path_match.group(1) if path_match else "/root/codex-cli-output.txt"
     return token, path
+
+
+def _responses_call_id_for_payload(payload: dict) -> str:
+    token, _ = _codex_responses_write_target(payload)
+    if re.fullmatch(r"[0-9a-f]{32}", token):
+        return f"call_{token[:12]}"
+    return CODEX_RESPONSES_TOOL_CALL_ID
+
+
+def _responses_item_id_for_payload(payload: dict) -> str:
+    token, _ = _codex_responses_write_target(payload)
+    if re.fullmatch(r"[0-9a-f]{32}", token):
+        return f"fc_{token[:12]}"
+    return CODEX_RESPONSES_TOOL_ITEM_ID
+
+
+def _generic_write_target(payload: dict, default_prefix: str) -> tuple[str, str]:
+    body = json.dumps(payload, separators=(",", ":"))
+    token_match = re.search(r"uuid4 hex value ([0-9a-f]{32})", body)
+    path_match = re.search(r"(/root/[a-z0-9_-]+-[0-9a-f]{32}\.txt)", body)
+    token = token_match.group(1) if token_match else EXPECTED_POEM
+    path = path_match.group(1) if path_match else f"/root/{default_prefix}-output.txt"
+    return token, path
+
+
+def _shell_write_command(token: str, path: str) -> str:
+    return f"printf '%s\\n' {shlex.quote(token)} > {shlex.quote(path)}"
 
 
 def _codex_responses_tool_arguments(payload: dict) -> str:
@@ -192,6 +221,8 @@ def _codex_responses_tool_arguments(payload: dict) -> str:
 
 def _responses_tool_call_payload(model: str = "mock-local", payload: dict | None = None) -> dict:
     payload = payload or {}
+    call_id = _responses_call_id_for_payload(payload)
+    item_id = _responses_item_id_for_payload(payload)
     return {
         "id": "resp_ironbank_tool_01",
         "object": "response",
@@ -200,10 +231,10 @@ def _responses_tool_call_payload(model: str = "mock-local", payload: dict | None
         "model": model,
         "output": [
             {
-                "id": CODEX_RESPONSES_TOOL_ITEM_ID,
+                "id": item_id,
                 "type": "function_call",
                 "status": "completed",
-                "call_id": CODEX_RESPONSES_TOOL_CALL_ID,
+                "call_id": call_id,
                 "name": CODEX_RESPONSES_TOOL_NAME,
                 "arguments": _codex_responses_tool_arguments(payload),
             }
@@ -218,11 +249,13 @@ def _responses_tool_call_payload(model: str = "mock-local", payload: dict | None
 
 def _responses_payload_has_tool_output(payload: dict) -> bool:
     body = json.dumps(payload, separators=(",", ":"))
-    return CODEX_RESPONSES_TOOL_CALL_ID in body and "function_call_output" in body
+    return "function_call_output" in body
 
 
 def _responses_tool_call_stream_body(model: str = "mock-local", payload: dict | None = None) -> bytes:
     payload = payload or {}
+    call_id = _responses_call_id_for_payload(payload)
+    item_id = _responses_item_id_for_payload(payload)
     response = {
         "id": "resp_ironbank_tool_01",
         "object": "response",
@@ -236,10 +269,10 @@ def _responses_tool_call_stream_body(model: str = "mock-local", payload: dict | 
         "type": "response.output_item.added",
         "output_index": 0,
         "item": {
-            "id": CODEX_RESPONSES_TOOL_ITEM_ID,
+            "id": item_id,
             "type": "function_call",
             "status": "in_progress",
-            "call_id": CODEX_RESPONSES_TOOL_CALL_ID,
+            "call_id": call_id,
             "name": CODEX_RESPONSES_TOOL_NAME,
             "arguments": "",
         },
@@ -247,7 +280,7 @@ def _responses_tool_call_stream_body(model: str = "mock-local", payload: dict | 
     arguments_done = {
         "type": "response.function_call_arguments.done",
         "output_index": 0,
-        "item_id": CODEX_RESPONSES_TOOL_ITEM_ID,
+        "item_id": item_id,
         "arguments": _codex_responses_tool_arguments(payload),
     }
     item_done = {
@@ -261,7 +294,7 @@ def _responses_tool_call_stream_body(model: str = "mock-local", payload: dict | 
         f"event: response.created\ndata: {json.dumps(created, separators=(',', ':'))}\n\n"
         f"event: response.output_item.added\ndata: {json.dumps(item_started, separators=(',', ':'))}\n\n"
         f"event: response.function_call_arguments.delta\ndata: "
-        f"{json.dumps({'type': 'response.function_call_arguments.delta', 'output_index': 0, 'item_id': CODEX_RESPONSES_TOOL_ITEM_ID, 'delta': arguments}, separators=(',', ':'))}\n\n"
+        f"{json.dumps({'type': 'response.function_call_arguments.delta', 'output_index': 0, 'item_id': item_id, 'delta': arguments}, separators=(',', ':'))}\n\n"
         f"event: response.function_call_arguments.done\ndata: {json.dumps(arguments_done, separators=(',', ':'))}\n\n"
         f"event: response.output_item.done\ndata: {json.dumps(item_done, separators=(',', ':'))}\n\n"
         f"event: response.completed\ndata: {json.dumps(completed, separators=(',', ':'))}\n\n"
@@ -361,11 +394,136 @@ def _anthropic_message_payload(model: str = "claude-sonnet-4-20250514") -> dict:
     }
 
 
+def _anthropic_has_tool_result(payload: dict) -> bool:
+    return "tool_result" in json.dumps(payload, separators=(",", ":"))
+
+
+def _anthropic_tool_name(payload: dict) -> str:
+    tools = payload.get("tools")
+    if isinstance(tools, list):
+        names = [tool.get("name") for tool in tools if isinstance(tool, dict)]
+        for preferred in ("exec_command", "Bash", "bash"):
+            if preferred in names:
+                return preferred
+        for name in names:
+            if isinstance(name, str) and name:
+                return name
+    return "exec_command"
+
+
+def _anthropic_tool_input(name: str, token: str, path: str) -> dict:
+    command = _shell_write_command(token, path)
+    if name == "Bash":
+        return {"command": command, "description": "write ironbank token"}
+    if name in {"write_file", "Write"}:
+        return {"file_path": path, "content": f"{token}\n"}
+    return {"cmd": command, "yield_time_ms": 1000, "max_output_tokens": 2000}
+
+
+def _anthropic_tool_use_payload(
+    model: str = "claude-sonnet-4-20250514",
+    payload: dict | None = None,
+) -> dict:
+    payload = payload or {}
+    token, path = _generic_write_target(payload, "claude")
+    tool_name = _anthropic_tool_name(payload)
+    return {
+        "id": "msg_ironbank_tool_01",
+        "type": "message",
+        "role": "assistant",
+        "model": model,
+        "content": [
+            {
+                "type": "tool_use",
+                "id": ANTHROPIC_TOOL_CALL_ID,
+                "name": tool_name,
+                "input": _anthropic_tool_input(tool_name, token, path),
+            }
+        ],
+        "stop_reason": "tool_use",
+        "stop_sequence": None,
+        "usage": {"input_tokens": 31, "output_tokens": 17},
+    }
+
+
+def _anthropic_final_payload(
+    model: str = "claude-sonnet-4-20250514",
+    payload: dict | None = None,
+) -> dict:
+    payload = payload or {}
+    token, _ = _generic_write_target(payload, "claude")
+    return {
+        "id": "msg_ironbank_final_01",
+        "type": "message",
+        "role": "assistant",
+        "model": model,
+        "content": [
+            {"type": "thinking", "thinking": "ledger reasoning"},
+            {"type": "text", "text": token},
+        ],
+        "stop_reason": "end_turn",
+        "stop_sequence": None,
+        "usage": {"input_tokens": 7, "output_tokens": 5},
+    }
+
+
 def _ollama_chat_payload(model: str = "gemma4:latest") -> dict:
     return {
         "model": model,
         "created_at": "2026-06-13T00:00:00Z",
         "message": {"role": "assistant", "content": EXPECTED_POEM},
+        "done": True,
+        "prompt_eval_count": 7,
+        "eval_count": 5,
+    }
+
+
+def _ollama_has_tool_result(payload: dict) -> bool:
+    return "tool" in json.dumps(payload, separators=(",", ":")).lower() and (
+        "result" in json.dumps(payload, separators=(",", ":")).lower()
+        or "output" in json.dumps(payload, separators=(",", ":")).lower()
+    )
+
+
+def _ollama_chat_tool_payload(model: str = "gemma4:latest", payload: dict | None = None) -> dict:
+    payload = payload or {}
+    token, path = _generic_write_target(payload, "agy")
+    return {
+        "model": model,
+        "created_at": "2026-06-13T00:00:00Z",
+        "message": {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": "exec_command",
+                        "arguments": {
+                            "cmd": _shell_write_command(token, path),
+                            "yield_time_ms": 1000,
+                            "max_output_tokens": 2000,
+                        },
+                    }
+                }
+            ],
+        },
+        "done": True,
+        "prompt_eval_count": 31,
+        "eval_count": 17,
+    }
+
+
+def _ollama_chat_final_payload(model: str = "gemma4:latest", payload: dict | None = None) -> dict:
+    payload = payload or {}
+    token, _ = _generic_write_target(payload, "agy")
+    return {
+        "model": model,
+        "created_at": "2026-06-13T00:00:00Z",
+        "message": {
+            "role": "assistant",
+            "content": token,
+            "thinking": "ledger reasoning",
+        },
         "done": True,
         "prompt_eval_count": 7,
         "eval_count": 5,
@@ -552,11 +710,21 @@ class MockHandler(BaseHTTPRequestHandler):
                     if isinstance(payload.get("model"), str)
                     else "claude-sonnet-4-20250514"
                 )
-                self._send_json(_anthropic_message_payload(model))
+                if _anthropic_has_tool_result(payload):
+                    self._send_json(_anthropic_final_payload(model, payload))
+                elif payload.get("tools"):
+                    self._send_json(_anthropic_tool_use_payload(model, payload))
+                else:
+                    self._send_json(_anthropic_message_payload(model))
         elif path == "/api/chat":
             payload = self._json_body()
             model = payload.get("model") if isinstance(payload.get("model"), str) else "gemma4:latest"
-            self._send_json(_ollama_chat_payload(model))
+            if _ollama_has_tool_result(payload):
+                self._send_json(_ollama_chat_final_payload(model, payload))
+            elif payload.get("tools"):
+                self._send_json(_ollama_chat_tool_payload(model, payload))
+            else:
+                self._send_json(_ollama_chat_payload(model))
         elif path == "/oauth/token":
             self._body()
             self._send_json(

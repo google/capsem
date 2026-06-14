@@ -90,7 +90,10 @@ def _agent_bootstrap_probe_script() -> str:
         )
         forbidden_path_re = re.compile(r"(token|oauth|conversation|history|cache|log)", re.IGNORECASE)
         config_paths = {
+            "agy_config": Path("/root/.antigravity/config.json"),
             "agy_settings": Path("/root/.antigravity/settings.json"),
+            "agy_cli_settings": Path("/root/.gemini/antigravity-cli/settings.json"),
+            "agy_product_config": Path("/root/.gemini/config/config.json"),
             "claude_json": Path("/root/.claude.json"),
             "claude_settings": Path("/root/.claude/settings.json"),
             "claude_settings_local": Path("/root/.claude/settings.local.json"),
@@ -115,6 +118,19 @@ def _agent_bootstrap_probe_script() -> str:
         agy_settings = json.loads(raw_config["agy_settings"])
         assert agy_settings["colorScheme"] == "dark"
         assert "/root" in agy_settings["trustedWorkspaces"]
+
+        agy_config = json.loads(raw_config["agy_config"])
+        assert agy_config["ai"]["provider"] == "ollama"
+        assert agy_config["ai"]["baseUrl"] == "http://127.0.0.1:11434"
+        assert agy_config["ai"]["model"] == "gemma4:latest"
+        assert agy_config["ai"]["contextLength"] == 8192
+        agy_product_config = json.loads(raw_config["agy_product_config"])
+        assert agy_product_config["ai"] == agy_config["ai"]
+        agy_cli_settings = json.loads(raw_config["agy_cli_settings"])
+        assert "toolPermission" not in agy_cli_settings
+        assert "/root" in agy_cli_settings["trustedWorkspaces"]
+        assert agy_cli_settings["telemetry"]["enabled"] is False
+        assert agy_cli_settings["autoUpdate"]["enabled"] is False
 
         claude_json = json.loads(raw_config["claude_json"])
         assert claude_json["hasCompletedOnboarding"] is True

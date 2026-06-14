@@ -5,7 +5,7 @@
 //! file/snapshot tools (when CAPSEM_SESSION_DIR is set).
 //!
 //! Config via environment variables:
-//! - CAPSEM_PROFILE_DIR: Profile directory whose security rules/plugins govern tools.
+//! - CAPSEM_ACTIVE_PROFILE: Session active profile whose security rules/plugins govern tools.
 //! - CAPSEM_SESSION_DIR: Session directory (parent of workspace). Enables snapshot tools.
 //! - CAPSEM_SESSION_DB: Path to session DB for telemetry (optional)
 
@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rmcp::handler::server::{router::Router, wrapper::Parameters, ServerHandler};
 use rmcp::model::{Implementation, InitializeResult, ServerCapabilities};
 use rmcp::schemars::{self, JsonSchema};
@@ -25,9 +25,7 @@ use tracing::info;
 use capsem_core::auto_snapshot::AutoSnapshotScheduler;
 use capsem_core::mcp::types::JsonRpcResponse;
 use capsem_core::mcp::{builtin_tools, file_tools};
-use capsem_core::net::policy_config::{
-    Profile, ProviderRuleProfile, SecurityPluginConfig, SecurityRuleSet, SecurityRuleSource,
-};
+use capsem_core::net::policy_config::{ActiveProfileFile, SecurityPluginConfig, SecurityRuleSet};
 use capsem_logger::DbWriter;
 
 // -- Tool parameter types --
@@ -469,20 +467,24 @@ async fn main() -> Result<()> {
         }
     }
 
-    let profile_dir = std::env::var("CAPSEM_PROFILE_DIR")
-        .map_err(|_| anyhow::anyhow!("CAPSEM_PROFILE_DIR is required"))?;
-    let profile = Profile::load_from_dir(&profile_dir).map_err(anyhow::Error::msg)?;
-    let config = profile.config();
+    let active_profile_path = std::env::var("CAPSEM_ACTIVE_PROFILE")
+        .map_err(|_| anyhow::anyhow!("CAPSEM_ACTIVE_PROFILE is required"))?;
+    let active_profile_text = std::fs::read_to_string(&active_profile_path)
+        .map_err(anyhow::Error::new)
+        .with_context(|| format!("read active profile {active_profile_path}"))?;
+    let active_profile: ActiveProfileFile = toml::from_str(&active_profile_text)
+        .map_err(anyhow::Error::new)
+        .with_context(|| format!("parse active profile {active_profile_path}"))?;
+    active_profile
+        .validate()
+        .map_err(anyhow::Error::msg)
+        .with_context(|| format!("validate active profile {active_profile_path}"))?;
     let security_rules = Arc::new(
-        config
-            .compile_security_rule_set_from_files(profile.config_root(), SecurityRuleSource::User)
+        active_profile
+            .compile_security_rule_set()
             .map_err(anyhow::Error::msg)?,
     );
-    let mut plugins = ProviderRuleProfile::builtin_security_defaults().plugins;
-    for (plugin_id, config) in &config.plugins {
-        plugins.insert(plugin_id.clone(), *config);
-    }
-    let plugin_policy = Arc::new(plugins);
+    let plugin_policy = Arc::new(active_profile.plugins.clone());
 
     // Session DB writer (optional).
     let db = match std::env::var("CAPSEM_SESSION_DB") {
