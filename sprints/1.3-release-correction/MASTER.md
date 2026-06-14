@@ -104,6 +104,21 @@ prove the same rails without user credentials.
   model SDK, doctor/security, package-manager, agent bootstrap, and native
   profile MCP ledgers as a suite; it does not close the still-open S4/S5/S7
   streaming/provider matrix, UI, and full `just test` gates.
+- Ironbank progress on 2026-06-14: the shared mock server now replays an
+  Ollama-compatible OpenAI chat completion, including native tool calls, and
+  the model ledger proves OpenAI Python SDK, Anthropic SDK, LiteLLM, Ollama SDK,
+  and Codex CLI poem generation through a fresh VM with full model/net/security/
+  file/exec/session DB assertions. The new negative assertions caught and
+  closed Codex plugin/OTLP public traffic and LiteLLM cost-map public traffic;
+  public HTTP and public DNS rows are now asserted empty for the passing SDK
+  and Codex CLI proofs. Claude CLI and AGY CLI remain open release debt.
+- Codex CLI proof is no longer subprocess theater: the mock server preserves a
+  JSONL wire ledger, the first `/v1/responses` call emits native
+  `exec_command` call `call_codex_write_poem`, Codex executes it to create
+  `codex-cli-poem.md`, the second `/v1/responses` request carries
+  `function_call_output`, and Ironbank reconciles the exact HTTP bodies with
+  `model_calls`, `tool_calls`, `fs_events`, `net_events`, and
+  `security_rule_events` by trace id.
 - Ironbank/MCP progress on 2026-06-13: native profile MCP calls now use the
   same logged MCP JSON-RPC rail as framed guest MCP instead of calling the
   aggregator directly. Focused RED/GREEN coverage proves `capsem_mcp_call`

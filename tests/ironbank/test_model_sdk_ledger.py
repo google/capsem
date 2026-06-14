@@ -24,6 +24,22 @@ PROFILES_DIR = PROJECT_ROOT / "target" / "config" / "profiles"
 
 RAW_SDK_SECRET = "capsem_test_sdk_api_key_repeat_0123456789abcdef"
 EXPECTED_POEM = "Capsem ironbank poem\nledgers count the sparks\nno secret crosses raw"
+CODEX_NO_SIDE_TRAFFIC_CONFIG = """
+
+check_for_update_on_startup = false
+
+[analytics]
+enabled = false
+
+[otel]
+exporter = "none"
+metrics_exporter = "none"
+trace_exporter = "none"
+
+[features]
+plugins = false
+plugin_sharing = false
+"""
 EXPECTED_SECURITY_LATEST_FIELDS = {
     "timestamp_unix_ms",
     "event_id",
@@ -453,13 +469,36 @@ def _real_client_diversity_probe_script(base_url: str) -> str:
     return textwrap.dedent(
         f"""
         import json
+        import os
         from pathlib import Path
+
+        os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] = "True"
 
         import anthropic
         import litellm
         import ollama
 
         cfg = json.loads({json.dumps(json.dumps(payload))})
+        litellm.register_model({{
+            "openai/gemma4:latest": {{
+                "max_tokens": 8192,
+                "max_input_tokens": 8192,
+                "max_output_tokens": 8192,
+                "input_cost_per_token": 0.0,
+                "output_cost_per_token": 0.0,
+                "litellm_provider": "openai",
+                "mode": "chat",
+            }},
+            "gemma4:latest": {{
+                "max_tokens": 8192,
+                "max_input_tokens": 8192,
+                "max_output_tokens": 8192,
+                "input_cost_per_token": 0.0,
+                "output_cost_per_token": 0.0,
+                "litellm_provider": "openai",
+                "mode": "chat",
+            }},
+        }})
 
         anthropic_client = anthropic.Anthropic(
             base_url=cfg["base_url"],
@@ -512,6 +551,78 @@ def _real_client_diversity_probe_script(base_url: str) -> str:
     ).strip()
 
 
+def _codex_cli_probe_script(base_url: str) -> str:
+    payload = {
+        "openai_base_url": f"{base_url.rstrip('/')}/v1",
+        "codex_config": "/root/.codex/config.toml",
+        "poem_path": "/root/codex-cli-poem.md",
+        "api_key_parts": ["capsem_test_codex_cli_", "key_0123456789abcdef"],
+    }
+    return textwrap.dedent(
+        f"""
+        import json
+        import os
+        import subprocess
+        from pathlib import Path
+
+        cfg = json.loads({json.dumps(json.dumps(payload))})
+        codex_config = Path(cfg["codex_config"])
+        codex_text = codex_config.read_text(encoding="utf-8")
+        codex_text = codex_text.replace(
+            'base_url = "http://127.0.0.1:11434/v1"',
+            'base_url = "' + cfg["openai_base_url"] + '"',
+        )
+        if "check_for_update_on_startup" not in codex_text:
+            codex_text += {json.dumps(CODEX_NO_SIDE_TRAFFIC_CONFIG)}
+        codex_config.write_text(codex_text, encoding="utf-8")
+
+        env = os.environ.copy()
+        env["HOME"] = "/root"
+        env["NO_COLOR"] = "1"
+        env["TERM"] = "xterm-256color"
+        env["OPENAI_API_KEY"] = "".join(cfg["api_key_parts"])
+
+        prompt = (
+            "Write exactly this text to /root/codex-cli-poem.md and print it: "
+            {json.dumps(EXPECTED_POEM)!r}
+        )
+        completed = subprocess.run(
+            [
+                "codex",
+                "exec",
+                "--dangerously-bypass-approvals-and-sandbox",
+                "--skip-git-repo-check",
+                "--cd",
+                "/root",
+                prompt,
+            ],
+            cwd="/root",
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=180,
+        )
+        output = (completed.stdout or "") + (completed.stderr or "")
+        if completed.returncode != 0:
+            raise SystemExit("codex failed with " + str(completed.returncode) + "\\n" + output)
+        poem_path = Path(cfg["poem_path"])
+        if not poem_path.exists():
+            raise SystemExit(
+                "codex completed without writing " + cfg["poem_path"] + "\\n" + output
+            )
+        poem_text = poem_path.read_text(encoding="utf-8")
+        result = {{
+            "contains_poem": {EXPECTED_POEM!r} in output,
+            "file_contains_poem": {EXPECTED_POEM!r} in poem_text,
+            "output_bytes": len(output.encode("utf-8")),
+            "poem_bytes": len(poem_text.encode("utf-8")),
+            "poem_path": cfg["poem_path"],
+        }}
+        print("IRONBANK_CODEX_CLI_RESULT=" + json.dumps(result, sort_keys=True))
+        """
+    ).strip()
+
+
 def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
     assert MOCK_SERVER_BINARY.exists(), f"{MOCK_SERVER_BINARY} missing; restore mock server runtime"
     assert ASSETS_DIR.exists(), f"{ASSETS_DIR} missing; build VM assets before Ironbank"
@@ -525,7 +636,9 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
     try:
         service.start()
         client = service.client()
-        mock_proc, ready = start_mock_server()
+        mock_proc, ready = start_mock_server(
+            request_log=service.tmp_dir / "mock-server-requests.jsonl"
+        )
         mock_base_url = ready["base_url"]
 
         create = client.post(
@@ -572,13 +685,13 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
         assert sdk_result == {
             "first_content": EXPECTED_POEM,
             "first_model": "gemma4:latest",
-            "first_tool_arguments": '{"query":"capsem"}',
+            "first_tool_arguments": '{"query":"Capsem ironbank poem"}',
             "first_tool_count": 1,
             "first_tool_name": "fixture_lookup",
             "poem_path": "/root/poem.md",
             "second_content": EXPECTED_POEM,
             "second_model": "gemma4:latest",
-            "usage_total": 24,
+            "usage_total": 534,
         }
 
         poem_status, poem_bytes = client.get_bytes(
@@ -621,7 +734,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             "content": EXPECTED_POEM,
             "model": "gpt-4.1",
             "tool_name": "fixture_lookup",
-            "usage_total": 12,
+            "usage_total": 456,
         }
 
         declared_tool_script_name = f"ironbank-declared-tool-{uuid.uuid4().hex[:8]}.py"
@@ -660,7 +773,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             "finish_reason": "stop",
             "has_tool_calls": False,
             "model": "gpt-4.1",
-            "usage_total": 12,
+            "usage_total": 78,
         }
 
         mcp_script_name = f"ironbank-unknown-mcp-{uuid.uuid4().hex[:8]}.py"
@@ -829,7 +942,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 "model": "gemma4:latest",
                 "query_echo_has_access_token": True,
                 "query_echo_has_broker_ref": False,
-                "usage_total": 12,
+                "usage_total": 78,
             }
 
             net_rows = _eventually(
@@ -855,7 +968,11 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 assert row["trace_id"]
                 assert RAW_SDK_SECRET not in (row["request_headers"] or "")
                 assert RAW_SDK_SECRET not in (row["request_body_preview"] or "")
-                assert EXPECTED_POEM.splitlines()[0] in (row["response_body_preview"] or "")
+                response_preview = row["response_body_preview"] or ""
+                if '"tool_calls"' in response_preview:
+                    assert '"finish_reason":"tool_calls"' in response_preview
+                else:
+                    assert EXPECTED_POEM.splitlines()[0] in response_preview
 
             echo_rows = _eventually(
                 lambda: conn.execute(
@@ -958,11 +1075,17 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 assert row["messages_count"] >= 1
                 assert row["tools_count"] in {0, 1}
                 assert row["request_bytes"] > 0
-                assert row["input_tokens"] == 7
-                assert row["output_tokens"] == 5
+                if row["tools_count"] == 1:
+                    assert row["input_tokens"] == 66
+                    assert row["output_tokens"] == 390
+                    assert row["text_content"] in {"", None}
+                    assert row["stop_reason"] == "tool_use"
+                else:
+                    assert row["input_tokens"] == 26
+                    assert row["output_tokens"] == 52
+                    assert row["text_content"] == EXPECTED_POEM
+                    assert row["stop_reason"] == "end_turn"
                 assert row["response_bytes"] > 0
-                assert row["text_content"] == EXPECTED_POEM
-                assert row["stop_reason"] == "tool_use"
                 assert row["credential_ref"] == credential_ref
                 assert RAW_SDK_SECRET not in (row["request_body_preview"] or "")
 
@@ -985,8 +1108,8 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             assert unknown_shape["status_code"] == 200
             assert unknown_shape["messages_count"] == 1
             assert unknown_shape["tools_count"] == 1
-            assert unknown_shape["input_tokens"] == 7
-            assert unknown_shape["output_tokens"] == 5
+            assert unknown_shape["input_tokens"] == 66
+            assert unknown_shape["output_tokens"] == 390
             assert unknown_shape["text_content"] == EXPECTED_POEM
             assert unknown_shape["credential_ref"] is not None
             _assert_credential_ref(unknown_shape["credential_ref"])
@@ -1013,6 +1136,8 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             assert declared_tool_only["status_code"] == 200
             assert declared_tool_only["messages_count"] == 1
             assert declared_tool_only["tools_count"] == 1
+            assert declared_tool_only["input_tokens"] == 26
+            assert declared_tool_only["output_tokens"] == 52
             assert declared_tool_only["text_content"] == EXPECTED_POEM
             assert declared_tool_only["stop_reason"] == "end_turn"
             assert declared_tool_only["credential_ref"] is not None
@@ -1101,13 +1226,13 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                     WHERE tool_calls.tool_name = 'fixture_lookup'
                     ORDER BY tool_calls.id
                     """
-                ).fetchall(),
+            ).fetchall(),
                 lambda rows: len(rows) >= 2,
             )
-            assert len(tool_rows) == len(model_rows) + 1
-            assert {row["call_id"] for row in tool_rows} == {"tool_0001"}
+            assert len(tool_rows) == sum(1 for row in model_rows if row["tools_count"] == 1) + 1
+            assert {row["call_id"] for row in tool_rows} == {"call_fm3e3d2f"}
             assert {row["model_call_id"] for row in tool_rows} == {
-                *(row["id"] for row in model_rows),
+                *(row["id"] for row in model_rows if row["tools_count"] == 1),
                 unknown_shape["id"],
             }
             assert declared_tool_only["id"] not in {row["model_call_id"] for row in tool_rows}
@@ -1120,7 +1245,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 assert row["provider"] == "openai"
                 assert row["status"] == "observed"
                 assert row["call_index"] == 0
-                assert row["arguments"] == '{"query":"capsem"}'
+                assert row["arguments"] == '{"query":"Capsem ironbank poem"}'
                 assert row["origin"] == "native"
                 assert row["trace_id"] == row["model_trace_id"]
                 _assert_credential_ref(row["credential_ref"])
@@ -1445,7 +1570,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 "anthropic_usage_total": 30,
                 "litellm_model": "gemma4:latest",
                 "litellm_text": EXPECTED_POEM,
-                "litellm_usage_total": 12,
+                "litellm_usage_total": 78,
                 "ollama_eval_count": 5,
                 "ollama_model": "gemma4:latest",
                 "ollama_prompt_eval_count": 7,
@@ -1497,9 +1622,10 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             assert litellm_row["model"] == "gemma4:latest"
             assert litellm_row["messages_count"] == 1
             assert litellm_row["tools_count"] == 0
-            assert litellm_row["input_tokens"] == 7
-            assert litellm_row["output_tokens"] == 5
+            assert litellm_row["input_tokens"] == 26
+            assert litellm_row["output_tokens"] == 52
             assert litellm_row["text_content"] == EXPECTED_POEM
+            assert litellm_row["stop_reason"] == "end_turn"
             assert litellm_row["credential_ref"] is not None
             _assert_credential_ref(litellm_row["credential_ref"])
             assert "capsem_test_litellm_sdk_key" not in (
@@ -1564,6 +1690,385 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 assert "allow" in {item["rule_action"] for item in rows}
                 assert "profiles.rules.default_model" in {item["rule_id"] for item in rows}
 
+            public_net_rows = conn.execute(
+                """
+                SELECT id, event_id, domain, port, method, path, status_code
+                FROM net_events
+                WHERE domain IS NOT NULL AND domain != '127.0.0.1'
+                ORDER BY id
+                """
+            ).fetchall()
+            assert public_net_rows == []
+            public_dns_rows = conn.execute(
+                """
+                SELECT id, event_id, qname, qtype, qclass, rcode, decision
+                FROM dns_events
+                WHERE qname NOT LIKE ?
+                ORDER BY id
+                """,
+                (f"{session_id}%",),
+            ).fetchall()
+            assert public_dns_rows == []
+
+            _assert_raw_secret_not_in_db(conn)
+        finally:
+            conn.close()
+    finally:
+        stop_process(mock_proc)
+        if client is not None:
+            try:
+                client.delete(f"/vms/{session_id}/delete", timeout=60)
+            except Exception:
+                pass
+        service.stop()
+
+
+def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
+    assert MOCK_SERVER_BINARY.exists(), f"{MOCK_SERVER_BINARY} missing; restore mock server runtime"
+    assert ASSETS_DIR.exists(), f"{ASSETS_DIR} missing; build VM assets before Ironbank"
+    assert PROFILES_DIR.exists(), f"{PROFILES_DIR} missing; materialize profile config before Ironbank"
+
+    service = ServiceInstance()
+    client = None
+    mock_proc = None
+    session_id = vm_name("ironbank-codex")
+    script_name = f"ironbank-codex-cli-{uuid.uuid4().hex[:8]}.py"
+    try:
+        service.start()
+        client = service.client()
+        mock_proc, ready = start_mock_server(
+            request_log=service.tmp_dir / "mock-server-requests.jsonl"
+        )
+        mock_base_url = ready["base_url"]
+        mock_request_log = Path(ready["request_log"])
+        create = client.post(
+            "/vms/create",
+            {
+                "name": session_id,
+                "profile_id": CODE_PROFILE_ID,
+                "ram_mb": DEFAULT_RAM_MB,
+                "cpus": DEFAULT_CPUS,
+                "env": {"CAPSEM_MOCK_SERVER_BASE_URL": mock_base_url},
+            },
+            timeout=90,
+        )
+        assert create is not None
+        assert create.get("id") == session_id or create.get("name") == session_id
+        assert wait_exec_ready(client, session_id, timeout=EXEC_READY_TIMEOUT)
+
+        script = _codex_cli_probe_script(mock_base_url).encode()
+        upload = client.post_bytes(
+            f"/vms/{session_id}/files/content?path={script_name}",
+            script,
+            timeout=30,
+        )
+        assert upload is not None
+        assert upload["success"] is True
+        assert upload["size"] == len(script)
+
+        exec_resp = client.post(
+            f"/vms/{session_id}/exec",
+            {"command": f"python3 /root/{script_name}", "timeout_secs": 240},
+            timeout=270,
+        )
+        assert exec_resp is not None
+        assert exec_resp["exit_code"] == 0, exec_resp
+        output = (exec_resp.get("stdout") or "") + (exec_resp.get("stderr") or "")
+        assert "capsem_test_codex_cli_key" not in output
+        result_line = next(
+            (
+                line
+                for line in output.splitlines()
+                if line.startswith("IRONBANK_CODEX_CLI_RESULT=")
+            ),
+            None,
+        )
+        assert result_line is not None, output
+        result = json.loads(result_line.split("=", 1)[1])
+        assert result["contains_poem"] is True
+        assert result["file_contains_poem"] is True
+        assert result["output_bytes"] > len(EXPECTED_POEM)
+        assert result["poem_bytes"] == len((EXPECTED_POEM + "\n").encode())
+        assert result["poem_path"] == "/root/codex-cli-poem.md"
+
+        poem_status, poem_bytes = client.get_bytes(
+            f"/vms/{session_id}/files/content?path=codex-cli-poem.md",
+            timeout=30,
+        )
+        assert poem_status == 200
+        assert EXPECTED_POEM in poem_bytes.decode()
+
+        mock_records = [json.loads(line) for line in mock_request_log.read_text().splitlines()]
+        responses_records = [row for row in mock_records if row["path"] == "/v1/responses"]
+        assert len(responses_records) == 2
+        tool_http_record, final_http_record = responses_records
+        assert tool_http_record["method"] == "POST"
+        assert tool_http_record["status"] == 200
+        assert tool_http_record["content_type"] == "text/event-stream"
+        assert tool_http_record["request_bytes"] == len(
+            tool_http_record["request_body"].encode()
+        )
+        assert tool_http_record["response_bytes"] == len(
+            tool_http_record["response_body"].encode()
+        )
+        tool_http_request = json.loads(tool_http_record["request_body"])
+        assert tool_http_request["model"] == "gemma4:latest"
+        assert tool_http_request["stream"] is True
+        assert len(tool_http_request["tools"]) == 14
+        assert any(tool["name"] == "exec_command" for tool in tool_http_request["tools"])
+        assert "/root/codex-cli-poem.md" in tool_http_record["request_body"]
+        assert "call_codex_write_poem" in tool_http_record["response_body"]
+        assert "response.function_call_arguments.delta" in tool_http_record["response_body"]
+        assert "/root/codex-cli-poem.md" in tool_http_record["response_body"]
+        assert "capsem_test_codex_cli_key" not in tool_http_record["request_body"]
+
+        assert final_http_record["method"] == "POST"
+        assert final_http_record["status"] == 200
+        assert final_http_record["content_type"] == "text/event-stream"
+        assert final_http_record["request_bytes"] == len(
+            final_http_record["request_body"].encode()
+        )
+        assert final_http_record["response_bytes"] == len(
+            final_http_record["response_body"].encode()
+        )
+        final_http_request = json.loads(final_http_record["request_body"])
+        assert final_http_request["model"] == "gemma4:latest"
+        assert final_http_request["stream"] is True
+        assert len(final_http_request["tools"]) == 14
+        final_inputs = final_http_request["input"]
+        assert final_inputs[-2]["type"] == "function_call"
+        assert final_inputs[-2]["name"] == "exec_command"
+        assert final_inputs[-2]["call_id"] == "call_codex_write_poem"
+        assert "/root/codex-cli-poem.md" in final_inputs[-2]["arguments"]
+        assert final_inputs[-1]["type"] == "function_call_output"
+        assert final_inputs[-1]["call_id"] == "call_codex_write_poem"
+        assert EXPECTED_POEM in final_inputs[-1]["output"]
+        final_sse_events = [
+            json.loads(line.removeprefix("data: "))
+            for line in final_http_record["response_body"].splitlines()
+            if line.startswith("data: ")
+        ]
+        assert any(event.get("delta") == EXPECTED_POEM for event in final_sse_events)
+        assert any(event.get("text") == EXPECTED_POEM for event in final_sse_events)
+        assert "capsem_test_codex_cli_key" not in final_http_record["request_body"]
+
+        conn = _connect_session_db(service, session_id)
+        try:
+            model_rows = _eventually(
+                lambda: conn.execute(
+                    """
+                    SELECT *
+                    FROM model_calls
+                    WHERE path = '/v1/responses'
+                    ORDER BY id
+                    """
+                ).fetchall(),
+                lambda rows: len(rows) >= 2,
+                timeout_s=30,
+            )
+            tool_model = model_rows[-2]
+            codex_model = model_rows[-1]
+            _assert_event_id(tool_model["event_id"])
+            assert tool_model["provider"] == "openai"
+            assert tool_model["model"] == "gemma4:latest"
+            assert tool_model["method"] == "POST"
+            assert tool_model["status_code"] == 200
+            assert tool_model["messages_count"] >= 1
+            assert tool_model["tools_count"] == 14
+            assert tool_model["input_tokens"] == 31
+            assert tool_model["output_tokens"] == 17
+            assert tool_model["text_content"] is None
+            assert tool_model["stop_reason"] == "end_turn"
+            assert tool_model["request_bytes"] > 0
+            assert tool_model["response_bytes"] > 0
+            assert tool_model["credential_ref"] is None
+            assert '"name":"exec_command"' in (tool_model["request_body_preview"] or "")
+            assert "capsem_test_codex_cli_key" not in (
+                tool_model["request_body_preview"] or ""
+            )
+            _assert_event_id(codex_model["event_id"])
+            assert codex_model["provider"] == "openai"
+            assert codex_model["model"] == "gemma4:latest"
+            assert codex_model["method"] == "POST"
+            assert codex_model["status_code"] == 200
+            assert codex_model["messages_count"] >= 1
+            assert codex_model["tools_count"] == 14
+            assert codex_model["input_tokens"] == 7
+            assert codex_model["output_tokens"] == 5
+            assert codex_model["text_content"] == EXPECTED_POEM
+            assert codex_model["stop_reason"] == "end_turn"
+            assert codex_model["request_bytes"] > 0
+            assert codex_model["response_bytes"] > 0
+            assert codex_model["credential_ref"] is None
+            assert "call_codex_write_poem" in (codex_model["request_body_preview"] or "")
+            assert "capsem_test_codex_cli_key" not in (
+                codex_model["request_body_preview"] or ""
+            )
+
+            tool_rows = _eventually(
+                lambda: conn.execute(
+                    """
+                    SELECT tool_calls.*, model_calls.trace_id AS model_trace_id
+                    FROM tool_calls
+                    JOIN model_calls ON model_calls.id = tool_calls.model_call_id
+                    WHERE tool_calls.call_id = 'call_codex_write_poem'
+                    ORDER BY tool_calls.id
+                    """
+                ).fetchall(),
+                lambda rows: len(rows) == 1,
+            )
+            tool_row = tool_rows[0]
+            _assert_event_id(tool_row["event_id"])
+            assert tool_row["model_call_id"] == tool_model["id"]
+            assert tool_row["provider"] == "openai"
+            assert tool_row["status"] == "observed"
+            assert tool_row["call_index"] == 0
+            assert tool_row["tool_name"] == "exec_command"
+            tool_args = json.loads(tool_row["arguments"])
+            assert tool_args["cmd"].startswith("python3 - <<'PY'")
+            assert "/root/codex-cli-poem.md" in tool_args["cmd"]
+            assert EXPECTED_POEM.replace("\n", "\\n") in tool_args["cmd"]
+            assert tool_args["yield_time_ms"] == 1000
+            assert tool_args["max_output_tokens"] == 2000
+            assert tool_row["origin"] == "native"
+            assert tool_row["trace_id"] == tool_row["model_trace_id"]
+            assert tool_row["credential_ref"] is None
+
+            net_rows = _eventually(
+                lambda: conn.execute(
+                    """
+                    SELECT *
+                    FROM net_events
+                    WHERE path = '/v1/responses'
+                    ORDER BY id
+                    """
+                ).fetchall(),
+                lambda rows: len(rows) >= 2,
+            )
+            tool_net = net_rows[-2]
+            codex_net = net_rows[-1]
+            _assert_event_id(tool_net["event_id"])
+            assert tool_net["method"] == "POST"
+            assert tool_net["domain"] == "127.0.0.1"
+            assert tool_net["port"] == 3713
+            assert tool_net["status_code"] == 200
+            assert tool_net["decision"] == "allowed"
+            assert tool_net["credential_ref"] is None
+            assert '"name":"exec_command"' in (tool_net["request_body_preview"] or "")
+            assert "call_codex_write_poem" in (tool_net["response_body_preview"] or "")
+            assert "response.function_call_arguments.delta" in (
+                tool_net["response_body_preview"] or ""
+            )
+            _assert_event_id(codex_net["event_id"])
+            assert codex_net["method"] == "POST"
+            assert codex_net["domain"] == "127.0.0.1"
+            assert codex_net["port"] == 3713
+            assert codex_net["status_code"] == 200
+            assert codex_net["decision"] == "allowed"
+            assert codex_net["credential_ref"] is None
+            assert codex_net["bytes_sent"] > 0
+            assert codex_net["bytes_received"] > 0
+            assert "capsem_test_codex_cli_key" not in (codex_net["request_headers"] or "")
+            assert "capsem_test_codex_cli_key" not in (
+                codex_net["request_body_preview"] or ""
+            )
+            assert "call_codex_write_poem" in (codex_net["request_body_preview"] or "")
+            assert "response.output_text.delta" in (codex_net["response_body_preview"] or "")
+            assert json.dumps(EXPECTED_POEM)[1:-1] in (
+                codex_net["response_body_preview"] or ""
+            )
+
+            security_rows = _eventually(
+                lambda: conn.execute(
+                    """
+                    SELECT *
+                    FROM security_rule_events
+                    WHERE event_id IN (?, ?, ?, ?)
+                    ORDER BY id
+                    """,
+                    (
+                        tool_net["event_id"],
+                        codex_net["event_id"],
+                        tool_model["event_id"],
+                        codex_model["event_id"],
+                    ),
+                ).fetchall(),
+                lambda rows: len(rows) >= 8,
+            )
+            by_event: dict[str, list[sqlite3.Row]] = {}
+            for row in security_rows:
+                by_event.setdefault(row["event_id"], []).append(row)
+                assert json.loads(row["rule_json"])
+                assert json.loads(row["event_json"])
+            assert "profiles.rules.default_model" in {
+                row["rule_id"] for row in by_event[codex_model["event_id"]]
+            }
+            assert "profiles.rules.default_model" in {
+                row["rule_id"] for row in by_event[tool_model["event_id"]]
+            }
+            assert "profiles.rules.ai_openai_model_api" in {
+                row["rule_id"] for row in by_event[codex_model["event_id"]]
+            }
+            assert "profiles.rules.ai_openai_model_api" in {
+                row["rule_id"] for row in by_event[tool_model["event_id"]]
+            }
+            assert "profiles.rules.default_http" in {
+                row["rule_id"] for row in by_event[codex_net["event_id"]]
+            }
+            assert "profiles.rules.default_http" in {
+                row["rule_id"] for row in by_event[tool_net["event_id"]]
+            }
+            assert "allow" in {row["rule_action"] for row in security_rows}
+
+            public_net_rows = conn.execute(
+                """
+                SELECT *
+                FROM net_events
+                WHERE domain IS NOT NULL AND domain != '127.0.0.1'
+                ORDER BY id
+                """
+            ).fetchall()
+            assert public_net_rows == []
+            public_dns_rows = conn.execute(
+                """
+                SELECT id, event_id, qname, qtype, qclass, rcode, decision
+                FROM dns_events
+                WHERE qname NOT LIKE ?
+                ORDER BY id
+                """,
+                (f"{session_id}%",),
+            ).fetchall()
+            assert public_dns_rows == []
+
+            substitutions = conn.execute("SELECT * FROM substitution_events ORDER BY id").fetchall()
+            assert substitutions == []
+
+            file_rows = _eventually(
+                lambda: conn.execute(
+                    "SELECT * FROM fs_events WHERE path = 'codex-cli-poem.md' ORDER BY id"
+                ).fetchall(),
+                lambda rows: any(row["action"] in {"created", "modified"} for row in rows),
+            )
+            assert all(row["credential_ref"] is None for row in file_rows)
+            created_file_rows = [
+                row for row in file_rows if row["action"] in {"created", "modified"}
+            ]
+            assert any(
+                row["size"] == len((EXPECTED_POEM + "\n").encode())
+                and row["trace_id"] == tool_row["trace_id"]
+                for row in created_file_rows
+            )
+
+            exec_row = conn.execute(
+                "SELECT * FROM exec_events WHERE command = ? ORDER BY id DESC LIMIT 1",
+                (f"python3 /root/{script_name}",),
+            ).fetchone()
+            assert exec_row is not None
+            _assert_event_id(exec_row["event_id"])
+            assert exec_row["source"] == "api"
+            assert exec_row["exit_code"] == 0
+            assert "IRONBANK_CODEX_CLI_RESULT" in (exec_row["stdout_preview"] or "")
+            assert "capsem_test_codex_cli_key" not in (exec_row["stdout_preview"] or "")
             _assert_raw_secret_not_in_db(conn)
         finally:
             conn.close()

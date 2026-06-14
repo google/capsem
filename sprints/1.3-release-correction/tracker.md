@@ -819,6 +819,44 @@ next one, and stage only the files for that slice.
     tests/ironbank/test_model_sdk_ledger.py scripts/mock_server_runtime.py`;
     `cargo test -p capsem-core provider -- --nocapture`; `cargo build -p
     capsem-service`; `cargo build -p capsem-process`.
+  - 2026-06-14 progress: the shared mock server now returns an
+    Ollama-compatible OpenAI chat-completion shape, including the exact native
+    tool-call payload `call_fm3e3d2f` with
+    `{"query":"Capsem ironbank poem"}`. Ironbank now proves OpenAI Python SDK,
+    Anthropic SDK, LiteLLM, Ollama SDK, and Codex CLI poem generation through a
+    fresh VM. The proof caught two release bugs: Codex leaked plugin/OTLP
+    traffic to `chatgpt.com`, `github.com`, and `ab.chatgpt.com` until its
+    test config disabled plugins, update checks, analytics, and OTLP; LiteLLM
+    leaked `raw.githubusercontent.com/BerriAI/litellm/...model_prices...`
+    until the probe forced `LITELLM_LOCAL_MODEL_COST_MAP=True`. The tests now
+    assert both public HTTP and public DNS row counts are zero.
+  - Proof: `uv run pytest
+    tests/test_mock_server_launcher.py::test_mock_server_replays_ollama_openai_chat_completion_shape
+    -q`; `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run pytest
+    tests/ironbank/test_model_sdk_ledger.py::test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox
+    -q -s --tb=short`; `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run pytest
+    tests/ironbank/test_model_sdk_ledger.py::test_codex_cli_poem_path_pays_full_ledger_debt_blackbox
+    -q -s --tb=short`; `uv run ruff check
+    scripts/mock_server_runtime.py tests/test_mock_server_launcher.py
+    tests/ironbank/test_model_sdk_ledger.py`.
+  - 2026-06-14 correction: the first Codex proof was too weak because the
+    Python probe wrote `codex-cli-poem.md` after `codex exec`. Fixed with RED
+    first, then added a mock-server JSONL request ledger and an OpenAI
+    Responses API two-turn fixture: first `/v1/responses` emits native
+    `exec_command` call `call_codex_write_poem`; Codex executes it; the second
+    `/v1/responses` request carries `function_call_output` containing the poem.
+    Passing artifact
+    `test-artifacts/20260614-104415-master-no-failures-on-this-worker/capsem-test-d5ju6cfa`
+    proves trace `a516fd2534184659` across `model_calls` ids 1/2,
+    `tool_calls` id 1, `net_events` ids 1/2, and `fs_events.created`
+    `codex-cli-poem.md` size 68. Security rows prove
+    `profiles.rules.ai_openai_model_api`, `profiles.rules.default_model`,
+    `profiles.rules.ai_ollama_http_local_host`,
+    `profiles.rules.default_000_local_network`, and
+    `profiles.rules.default_http` on the corresponding model/http events.
+  - Remaining debt: Claude CLI and AGY CLI still need their own scriptable
+    poem/ledger proof after this common client rail; do not claim S7/S9 closed
+    until both are green or have exact product-specific blockers.
 - [x] Proof: lab is shared by doctor, integration tests, recorder, and
   benchmark.
   - 2026-06-12 progress: renamed the canonical deterministic fixture service

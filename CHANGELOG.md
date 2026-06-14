@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed (route surfaces and diagnostics)
+- Tightened Ironbank model/client coverage so the mock server replays an
+  Ollama-compatible OpenAI chat-completion shape with native tool calls, the
+  OpenAI SDK/Anthropic SDK/LiteLLM/Ollama SDK/Codex CLI poem paths assert full
+  model, HTTP, security, file, exec, credential, and session DB ledger fields,
+  and the tests now fail on any public HTTP or DNS side traffic. This caught and
+  closed Codex plugin/OTLP side calls and LiteLLM's default public cost-map
+  fetch during hermetic release proof.
+- Added a full mock-server JSONL request ledger and upgraded the Codex CLI
+  Ironbank proof to drive the OpenAI Responses API through a native
+  `exec_command` tool call, require Codex to write `codex-cli-poem.md`, return
+  the tool output to the model, and reconcile exact HTTP bodies with
+  `model_calls`, `tool_calls`, `fs_events`, `net_events`, and
+  `security_rule_events`.
 - Tightened the config authority guard so `config/` can only contain the
   declared `settings/`, `corp/`, `profiles/`, `docker/`, and `data/` roots;
   active docs and skills now explicitly reject admin/default/guest/preset/

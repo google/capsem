@@ -24,6 +24,26 @@ from urllib.parse import urlparse
 
 TINY_BODY = b"capsem-mock-server:tiny\n"
 EXPECTED_POEM = "Capsem ironbank poem\nledgers count the sparks\nno secret crosses raw"
+OLLAMA_OPENAI_TOOL_CALL_ID = "call_fm3e3d2f"
+OLLAMA_OPENAI_TOOL_ARGUMENTS = '{"query":"Capsem ironbank poem"}'
+CODEX_RESPONSES_TOOL_CALL_ID = "call_codex_write_poem"
+CODEX_RESPONSES_TOOL_ITEM_ID = "fc_codex_write_poem"
+CODEX_RESPONSES_TOOL_NAME = "exec_command"
+CODEX_RESPONSES_TOOL_ARGUMENTS = json.dumps(
+    {
+        "cmd": (
+            "python3 - <<'PY'\n"
+            "from pathlib import Path\n"
+            "poem = 'Capsem ironbank poem\\nledgers count the sparks\\nno secret crosses raw\\n'\n"
+            "Path('/root/codex-cli-poem.md').write_text(poem, encoding='utf-8')\n"
+            "print(poem, end='')\n"
+            "PY"
+        ),
+        "yield_time_ms": 1000,
+        "max_output_tokens": 2000,
+    },
+    separators=(",", ":"),
+)
 HTML_ABOUT = """<!doctype html>
 <html>
   <head><title>Capsem Mock Server About</title></head>
@@ -48,6 +68,7 @@ ENDPOINTS = [
     "/model/no-tool-call",
     "/v1beta/models/gemini-2.5-flash:streamGenerateContent",
     "/v1/chat/completions",
+    "/v1/responses",
     "/v1/messages",
     "/api/chat",
     "/oauth/authorize",
@@ -66,6 +87,8 @@ DNS_FIXTURES = {
     "model.capsem.test": "127.0.0.1",
     "mcp.capsem.test": "127.0.0.1",
 }
+REQUEST_LOG_PATH: Path | None = None
+REQUEST_LOG_LOCK = threading.Lock()
 
 
 def _deterministic_bytes(size: str) -> bytes:
@@ -77,27 +100,41 @@ def _deterministic_bytes(size: str) -> bytes:
     return bytes(ord("a") + (idx % 26) for idx in range(length))
 
 
-def _model_payload(model: str = "mock-local", *, include_tool_call: bool = True) -> dict:
+def _model_payload(
+    model: str = "mock-local",
+    *,
+    include_tool_call: bool = True,
+    ollama_tool_shape: bool = False,
+) -> dict:
+    tool_call_content = "" if ollama_tool_shape else EXPECTED_POEM
     message = {
         "role": "assistant",
-        "content": EXPECTED_POEM,
+        "content": tool_call_content if include_tool_call else EXPECTED_POEM,
+        "reasoning": "Deterministic local Ollama-compatible fixture reasoning.",
     }
     if include_tool_call:
         message["tool_calls"] = [
             {
-                "id": "tool_0001",
+                "id": OLLAMA_OPENAI_TOOL_CALL_ID,
+                "index": 0,
                 "type": "function",
                 "function": {
                     "name": "fixture_lookup",
-                    "arguments": '{"query":"capsem"}',
+                    "arguments": OLLAMA_OPENAI_TOOL_ARGUMENTS,
                 },
             }
         ]
+    usage = (
+        {"prompt_tokens": 66, "completion_tokens": 390, "total_tokens": 456}
+        if include_tool_call
+        else {"prompt_tokens": 26, "completion_tokens": 52, "total_tokens": 78}
+    )
     return {
-        "id": "chatcmpl-mock-local",
+        "id": "chatcmpl-601" if include_tool_call else "chatcmpl-515",
         "object": "chat.completion",
-        "provider": "mock",
+        "created": 1781444656 if include_tool_call else 1781444596,
         "model": model,
+        "system_fingerprint": "fp_ollama",
         "choices": [
             {
                 "index": 0,
@@ -105,12 +142,152 @@ def _model_payload(model: str = "mock-local", *, include_tool_call: bool = True)
                 "finish_reason": "tool_calls" if include_tool_call else "stop",
             }
         ],
+        "usage": usage,
+    }
+
+
+def _responses_payload(model: str = "mock-local") -> dict:
+    return {
+        "id": "resp_ironbank_01",
+        "object": "response",
+        "created_at": 1781205836,
+        "status": "completed",
+        "model": model,
+        "output": [
+            {
+                "id": "msg_ironbank_01",
+                "type": "message",
+                "status": "completed",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "output_text",
+                        "text": EXPECTED_POEM,
+                        "annotations": [],
+                    }
+                ],
+            }
+        ],
+        "output_text": EXPECTED_POEM,
         "usage": {
-            "prompt_tokens": 7,
-            "completion_tokens": 5,
+            "input_tokens": 7,
+            "output_tokens": 5,
             "total_tokens": 12,
         },
     }
+
+
+def _responses_tool_call_payload(model: str = "mock-local") -> dict:
+    return {
+        "id": "resp_ironbank_tool_01",
+        "object": "response",
+        "created_at": 1781205836,
+        "status": "completed",
+        "model": model,
+        "output": [
+            {
+                "id": CODEX_RESPONSES_TOOL_ITEM_ID,
+                "type": "function_call",
+                "status": "completed",
+                "call_id": CODEX_RESPONSES_TOOL_CALL_ID,
+                "name": CODEX_RESPONSES_TOOL_NAME,
+                "arguments": CODEX_RESPONSES_TOOL_ARGUMENTS,
+            }
+        ],
+        "usage": {
+            "input_tokens": 31,
+            "output_tokens": 17,
+            "total_tokens": 48,
+        },
+    }
+
+
+def _responses_payload_has_tool_output(payload: dict) -> bool:
+    body = json.dumps(payload, separators=(",", ":"))
+    return (
+        CODEX_RESPONSES_TOOL_CALL_ID in body
+        and ("function_call_output" in body or EXPECTED_POEM in body)
+    )
+
+
+def _responses_tool_call_stream_body(model: str = "mock-local") -> bytes:
+    response = {
+        "id": "resp_ironbank_tool_01",
+        "object": "response",
+        "created_at": 1781205836,
+        "status": "in_progress",
+        "model": model,
+        "output": [],
+    }
+    created = {"type": "response.created", "response": response}
+    item_started = {
+        "type": "response.output_item.added",
+        "output_index": 0,
+        "item": {
+            "id": CODEX_RESPONSES_TOOL_ITEM_ID,
+            "type": "function_call",
+            "status": "in_progress",
+            "call_id": CODEX_RESPONSES_TOOL_CALL_ID,
+            "name": CODEX_RESPONSES_TOOL_NAME,
+            "arguments": "",
+        },
+    }
+    arguments_done = {
+        "type": "response.function_call_arguments.done",
+        "output_index": 0,
+        "item_id": CODEX_RESPONSES_TOOL_ITEM_ID,
+        "arguments": CODEX_RESPONSES_TOOL_ARGUMENTS,
+    }
+    item_done = {
+        "type": "response.output_item.done",
+        "output_index": 0,
+        "item": _responses_tool_call_payload(model)["output"][0],
+    }
+    completed = {"type": "response.completed", "response": _responses_tool_call_payload(model)}
+    return (
+        f"event: response.created\ndata: {json.dumps(created, separators=(',', ':'))}\n\n"
+        f"event: response.output_item.added\ndata: {json.dumps(item_started, separators=(',', ':'))}\n\n"
+        f"event: response.function_call_arguments.delta\ndata: "
+        f"{json.dumps({'type': 'response.function_call_arguments.delta', 'output_index': 0, 'item_id': CODEX_RESPONSES_TOOL_ITEM_ID, 'delta': CODEX_RESPONSES_TOOL_ARGUMENTS}, separators=(',', ':'))}\n\n"
+        f"event: response.function_call_arguments.done\ndata: {json.dumps(arguments_done, separators=(',', ':'))}\n\n"
+        f"event: response.output_item.done\ndata: {json.dumps(item_done, separators=(',', ':'))}\n\n"
+        f"event: response.completed\ndata: {json.dumps(completed, separators=(',', ':'))}\n\n"
+    ).encode()
+
+
+def _responses_stream_body(model: str = "mock-local") -> bytes:
+    response = {
+        "id": "resp_ironbank_01",
+        "object": "response",
+        "created_at": 1781205836,
+        "status": "in_progress",
+        "model": model,
+        "output": [],
+    }
+    created = {"type": "response.created", "response": response}
+    completed = {"type": "response.completed", "response": _responses_payload(model)}
+    message_item = completed["response"]["output"][0]
+    content_part = message_item["content"][0]
+    return (
+        f"event: response.created\ndata: {json.dumps(created, separators=(',', ':'))}\n\n"
+        'event: response.output_item.added\n'
+        'data: {"type":"response.output_item.added","output_index":0,'
+        '"item":{"id":"msg_ironbank_01","type":"message","status":"in_progress",'
+        '"role":"assistant","content":[]}}\n\n'
+        'event: response.content_part.added\n'
+        'data: {"type":"response.content_part.added","item_id":"msg_ironbank_01",'
+        '"output_index":0,"content_index":0,'
+        '"part":{"type":"output_text","text":"","annotations":[]}}\n\n'
+        f"event: response.output_text.delta\ndata: "
+        f"{json.dumps({'type': 'response.output_text.delta', 'item_id': 'msg_ironbank_01', 'output_index': 0, 'content_index': 0, 'delta': EXPECTED_POEM}, separators=(',', ':'))}\n\n"
+        f"event: response.output_text.done\ndata: "
+        f"{json.dumps({'type': 'response.output_text.done', 'item_id': 'msg_ironbank_01', 'output_index': 0, 'content_index': 0, 'text': EXPECTED_POEM}, separators=(',', ':'))}\n\n"
+        f"event: response.content_part.done\ndata: "
+        f"{json.dumps({'type': 'response.content_part.done', 'item_id': 'msg_ironbank_01', 'output_index': 0, 'content_index': 0, 'part': content_part}, separators=(',', ':'))}\n\n"
+        f"event: response.output_item.done\ndata: "
+        f"{json.dumps({'type': 'response.output_item.done', 'output_index': 0, 'item': message_item}, separators=(',', ':'))}\n\n"
+        f"event: response.completed\ndata: {json.dumps(completed, separators=(',', ':'))}\n\n"
+    ).encode()
 
 
 def _google_stream_body() -> bytes:
@@ -184,7 +361,9 @@ class MockHandler(BaseHTTPRequestHandler):
 
     def _body(self) -> bytes:
         length = int(self.headers.get("content-length") or "0")
-        return self.rfile.read(length) if length else b""
+        body = self.rfile.read(length) if length else b""
+        self._capsem_request_body = body
+        return body
 
     def _json_body(self) -> dict:
         body = self._body()
@@ -202,10 +381,33 @@ class MockHandler(BaseHTTPRequestHandler):
         self.send_header("content-length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+        self._record_request(status, content_type, body)
 
     def _send_json(self, value: object, status: int = HTTPStatus.OK) -> None:
         body = json.dumps(value, separators=(",", ":")).encode()
         self._send(status, body, "application/json")
+
+    def _record_request(self, status: int, content_type: str, response_body: bytes) -> None:
+        if REQUEST_LOG_PATH is None:
+            return
+        request_body = getattr(self, "_capsem_request_body", b"")
+        record = {
+            "method": self.command,
+            "path": urlparse(self.path).path,
+            "query": urlparse(self.path).query,
+            "headers": {key.lower(): value for key, value in self.headers.items()},
+            "status": int(status),
+            "content_type": content_type,
+            "request_body": request_body.decode("utf-8", errors="replace"),
+            "response_body": response_body.decode("utf-8", errors="replace"),
+            "request_bytes": len(request_body),
+            "response_bytes": len(response_body),
+        }
+        line = json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n"
+        with REQUEST_LOG_LOCK:
+            REQUEST_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            with REQUEST_LOG_PATH.open("a", encoding="utf-8") as handle:
+                handle.write(line)
 
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
@@ -284,7 +486,31 @@ class MockHandler(BaseHTTPRequestHandler):
         if path == "/v1/chat/completions":
             payload = self._json_body()
             model = payload.get("model") if isinstance(payload.get("model"), str) else "mock-local"
-            self._send_json(_model_payload(model))
+            include_tool_call = bool(payload.get("tools"))
+            self._send_json(
+                _model_payload(
+                    model,
+                    include_tool_call=include_tool_call,
+                    ollama_tool_shape=include_tool_call,
+                )
+            )
+        elif path == "/v1/responses":
+            payload = self._json_body()
+            model = payload.get("model") if isinstance(payload.get("model"), str) else "mock-local"
+            has_tool_output = _responses_payload_has_tool_output(payload)
+            if payload.get("stream") is True:
+                body = (
+                    _responses_stream_body(model)
+                    if has_tool_output
+                    else _responses_tool_call_stream_body(model)
+                )
+                self._send(HTTPStatus.OK, body, "text/event-stream")
+            else:
+                self._send_json(
+                    _responses_payload(model)
+                    if has_tool_output
+                    else _responses_tool_call_payload(model)
+                )
         elif path == "/model/shape":
             payload = self._json_body()
             model = payload.get("model") if isinstance(payload.get("model"), str) else "mock-local"
@@ -636,6 +862,7 @@ def _ready_payload(
         "dns_tcp_addr": f"{dns_tcp_host}:{dns_tcp_port}",
         "dns_fixtures": sorted(DNS_FIXTURES),
         "endpoints": ENDPOINTS,
+        "request_log": str(REQUEST_LOG_PATH) if REQUEST_LOG_PATH is not None else None,
     }
 
 
@@ -672,9 +899,12 @@ def _tls_context(tmpdir: Path) -> ssl.SSLContext:
 
 
 def main() -> int:
+    global REQUEST_LOG_PATH
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--addr", default="127.0.0.1:0")
+    parser.add_argument("--request-log", default=None)
     args = parser.parse_args()
+    REQUEST_LOG_PATH = Path(args.request_log) if args.request_log else None
     host, port_text = args.addr.rsplit(":", 1)
     server = ThreadingHTTPServer((host, int(port_text)), MockHandler)
     tls_tmpdir = tempfile.TemporaryDirectory(prefix="capsem-mock-server-tls-")

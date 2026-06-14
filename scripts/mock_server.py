@@ -92,6 +92,7 @@ def stop_process(proc: subprocess.Popen[str] | None) -> None:
 def start_mock_server(
     *,
     addr: str = MOCK_SERVER_ADDR,
+    request_log: Path | None = None,
     timeout_s: float = 120,
     retry_interval_s: float = 0.2,
 ) -> tuple[subprocess.Popen[str], dict[str, Any]]:
@@ -103,8 +104,18 @@ def start_mock_server(
     deadline = time.monotonic() + timeout_s
     last_error: BaseException | None = None
     while time.monotonic() < deadline:
+        request_log_path = request_log or (
+            Path(tempfile.mkdtemp(prefix="capsem-mock-server-")) / "requests.jsonl"
+        )
         proc = subprocess.Popen(
-            [sys.executable, str(MOCK_SERVER_BINARY), "--addr", addr],
+            [
+                sys.executable,
+                str(MOCK_SERVER_BINARY),
+                "--addr",
+                addr,
+                "--request-log",
+                str(request_log_path),
+            ],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
