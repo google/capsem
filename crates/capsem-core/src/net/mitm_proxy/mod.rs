@@ -1561,14 +1561,19 @@ async fn handle_request(
     if !http_evaluation.enforcement.is_allowed() {
         actions_span.record("decision", http_evaluation.enforcement.action.as_str());
         actions_span.record("status", "ok");
-        let body_text = format!(
-            "capsem: HTTP request blocked by security rule: {}\n",
-            http_evaluation
-                .enforcement
-                .rule_id
-                .as_deref()
-                .unwrap_or("unknown")
-        );
+        let rule_id = http_evaluation
+            .enforcement
+            .rule_id
+            .as_deref()
+            .unwrap_or("unknown");
+        let body_text = if matches!(
+            http_evaluation.enforcement.action,
+            crate::security_engine::SecurityEnforcementAction::Ask
+        ) {
+            format!("capsem: HTTP request requires approval by security rule: {rule_id}\n")
+        } else {
+            format!("capsem: HTTP request blocked by security rule: {rule_id}\n")
+        };
         let req_ctx = TelemetryRequestContext {
             domain: domain.to_string(),
             process_name: process_name.clone(),

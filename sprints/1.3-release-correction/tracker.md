@@ -723,6 +723,28 @@ next one, and stage only the files for that slice.
     capsem-service -p capsem-process -p capsem-gateway && uv run pytest
     tests/ironbank/test_http_protocol_ledger.py -q -s --tb=short` (`2 passed
     in 7.22s`). Remaining HTTP cases stay open below.
+  - 2026-06-14 progress: extended the HTTP Ironbank proof with an unresolved
+    `ask` `POST /ask-target` case. The RED run failed because clients saw a
+    generic "blocked" body even though the active rule was `ask`; GREEN returns
+    an approval-required 403 while still accounting the request as denied until
+    resolved. The test proves no upstream request, exact 403 body, `net_events`
+    `policy_action = ask`, `security_rule_events.rule_action = ask`, a pending
+    `security_ask_events` row with the same event/trace, UDS inspect, HTTP
+    gateway inspect, security latest/status, `/vms/list` counters, and
+    structured logs.
+  - Proof: RED `cargo build -p capsem-service -p capsem-process -p
+    capsem-gateway && uv run pytest
+    tests/ironbank/test_http_protocol_ledger.py::test_asked_http_request_pays_full_ledger_debt_blackbox
+    -q -s --tb=short` failed on the client-visible "blocked" body; GREEN
+    `cargo fmt --check`; `uv run ruff check
+    tests/ironbank/test_http_protocol_ledger.py`; `cargo build -p
+    capsem-service -p capsem-process -p capsem-gateway && uv run pytest
+    tests/ironbank/test_http_protocol_ledger.py::test_asked_http_request_pays_full_ledger_debt_blackbox
+    -q -s --tb=short` (`1 passed in 4.46s`); full HTTP file `uv run ruff
+    check tests/ironbank/test_http_protocol_ledger.py && cargo build -p
+    capsem-service -p capsem-process -p capsem-gateway && uv run pytest
+    tests/ironbank/test_http_protocol_ledger.py -q -s --tb=short` (`3 passed
+    in 9.55s`). Remaining HTTP cases stay open below.
   - Required protocol specs:
     - HTTP must have at least twelve full-chain cases:
       1. accepted plain JSON request/response;

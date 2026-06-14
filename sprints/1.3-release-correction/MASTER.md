@@ -136,6 +136,13 @@ prove the same rails without user credentials.
   collected body and proves the 403 body, request bytes, response bytes,
   security row, UDS/gateway inspect rows, counters, logs, and empty upstream
   transcript all agree. The remaining HTTP cases still stay open.
+- Ironbank/HTTP ask progress on 2026-06-14: the HTTP ledger proof now covers
+  an unresolved `ask` rule. RED proved the client-visible response incorrectly
+  said "blocked"; GREEN returns an approval-required 403 while preserving
+  `net_events.decision = denied`, `policy_action = ask`, `security_rule_events`
+  action `ask`, the pending `security_ask_events` lifecycle row, UDS/gateway
+  inspect output, security status/latest, counters, logs, and empty upstream
+  transcript. The remaining HTTP cases still stay open.
 - Ironbank/MCP progress on 2026-06-13: native profile MCP calls now use the
   same logged MCP JSON-RPC rail as framed guest MCP instead of calling the
   aggregator directly. Focused RED/GREEN coverage proves `capsem_mcp_call`

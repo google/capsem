@@ -26,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   counts, request previews, and client-visible denial response previews in the
   same ledger path as allowed requests, with Ironbank proof that the denied
   request never reaches the upstream fixture.
+- Fixed pending HTTP `ask` decisions so clients see an approval-required 403
+  instead of a generic block message, while Ironbank proves the pending
+  `security_ask_events` lifecycle row, `policy_action = ask`, security status,
+  UDS inspect, gateway inspect, counters, and logs all agree.
 - Tightened Ironbank model/client coverage so the mock server replays an
   Ollama-compatible OpenAI chat-completion shape with native tool calls, the
   OpenAI SDK/Anthropic SDK/LiteLLM/Ollama SDK/Codex CLI paths assert full
