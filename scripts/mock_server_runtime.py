@@ -164,6 +164,7 @@ def _responses_payload_for_output(model: str = "mock-local", output_text: str = 
             "input_tokens": 7,
             "output_tokens": 5,
             "total_tokens": 12,
+            "output_tokens_details": {"reasoning_tokens": 2},
         },
     }
 
@@ -269,6 +270,7 @@ def _responses_tool_call_stream_body(model: str = "mock-local", payload: dict | 
 
 def _responses_stream_body(model: str = "mock-local", payload: dict | None = None) -> bytes:
     output_text, _ = _codex_responses_write_target(payload or {})
+    reasoning_text = "ledger reasoning"
     response = {
         "id": "resp_ironbank_01",
         "object": "response",
@@ -294,6 +296,8 @@ def _responses_stream_body(model: str = "mock-local", payload: dict | None = Non
         'data: {"type":"response.content_part.added","item_id":"msg_ironbank_01",'
         '"output_index":0,"content_index":0,'
         '"part":{"type":"output_text","text":"","annotations":[]}}\n\n'
+        f"event: response.reasoning_summary_text.delta\ndata: "
+        f"{json.dumps({'type': 'response.reasoning_summary_text.delta', 'item_id': 'msg_ironbank_01', 'output_index': 0, 'summary_index': 0, 'delta': reasoning_text}, separators=(',', ':'))}\n\n"
         f"event: response.output_text.delta\ndata: "
         f"{json.dumps({'type': 'response.output_text.delta', 'item_id': 'msg_ironbank_01', 'output_index': 0, 'content_index': 0, 'delta': output_text}, separators=(',', ':'))}\n\n"
         f"event: response.output_text.done\ndata: "

@@ -574,20 +574,35 @@ fn insert_model_call(conn: &Connection, call: &ModelCall) -> rusqlite::Result<()
 
 fn insert_file_event(conn: &Connection, event: &FileEvent) -> rusqlite::Result<()> {
     let timestamp = format_timestamp(event.timestamp);
+    let (directory, name) = split_event_path(&event.path);
     conn.execute(
-        "INSERT INTO fs_events (event_id, timestamp, action, path, size, trace_id, credential_ref)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        "INSERT INTO fs_events (event_id, timestamp, action, path, directory, name, size, trace_id, credential_ref)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![
             event.event_id.clone().unwrap_or_else(new_event_id),
             timestamp,
             event.action.as_str(),
             event.path,
+            directory,
+            name,
             event.size.map(|s| s as i64),
             event.trace_id,
             event.credential_ref,
         ],
     )?;
     Ok(())
+}
+
+fn split_event_path(path: &str) -> (String, String) {
+    let normalized = path.trim_end_matches('/');
+    if normalized.is_empty() {
+        return (".".to_string(), String::new());
+    }
+    match normalized.rsplit_once('/') {
+        Some(("", name)) => ("/".to_string(), name.to_string()),
+        Some((dir, name)) if !name.is_empty() => (dir.to_string(), name.to_string()),
+        _ => (".".to_string(), normalized.to_string()),
+    }
 }
 
 fn insert_mcp_call(conn: &Connection, call: &McpCall) -> rusqlite::Result<()> {
@@ -684,10 +699,10 @@ fn insert_dns_event(conn: &Connection, event: &DnsEvent) -> rusqlite::Result<()>
     conn.execute(
         "INSERT INTO dns_events (
             event_id, timestamp, qname, qtype, qclass, rcode, decision, matched_rule,
-            source_proto, process_name, upstream_resolver_ms, trace_id,
+            answer_ip, source_proto, process_name, upstream_resolver_ms, trace_id,
             policy_mode, policy_action, policy_rule, policy_reason, credential_ref
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
         params![
             event.event_id.clone().unwrap_or_else(new_event_id),
             timestamp,
@@ -697,6 +712,7 @@ fn insert_dns_event(conn: &Connection, event: &DnsEvent) -> rusqlite::Result<()>
             event.rcode as i64,
             event.decision,
             event.matched_rule,
+            event.answer_ip,
             event.source_proto,
             event.process_name,
             event.upstream_resolver_ms as i64,

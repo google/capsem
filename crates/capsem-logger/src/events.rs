@@ -713,6 +713,10 @@ pub struct DnsEvent {
     pub qclass: u16,
     /// DNS response code (0 = NoError, 2 = ServFail, 3 = NXDomain).
     pub rcode: u16,
+    /// First A/AAAA answer observed in the response, when the DNS proxy
+    /// received a parseable answer packet.
+    #[serde(default)]
+    pub answer_ip: Option<String>,
     /// "allowed" / "denied" / "error" (mirrors `Decision::as_str`).
     pub decision: String,
     /// Policy rule that produced a Denied decision, e.g.

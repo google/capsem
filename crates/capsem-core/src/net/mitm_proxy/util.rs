@@ -1,7 +1,7 @@
 //! Pure helpers used by the MITM pipeline: LLM-API path detection,
 //! URI splitting, and header formatting.
 
-use crate::credential_broker::CredentialObservation;
+use crate::credential_broker::{detect_http_credential_with_provider, CredentialObservation};
 use crate::net::ai_traffic::provider::ProviderKind;
 
 /// Returns true only for paths that are actual LLM API endpoints
@@ -96,16 +96,22 @@ pub(super) struct FormattedHeaders {
 /// Format HTTP headers for telemetry storage.
 ///
 /// Allowlisted headers are stored verbatim. All other headers keep their
-/// name but the value is replaced with `hash:<12-char-hex>`. This helper
-/// must not classify providers, broker credentials, or create credential refs.
+/// name but the value is replaced with `hash:<12-char-hex>`. Credential-shaped
+/// values also emit broker observations for the security ledger.
 pub(super) fn format_headers(headers: &hyper::HeaderMap) -> String {
-    format_headers_for_domain("", headers).formatted
+    format_headers_for_domain("", None, headers).formatted
 }
 
 pub(super) fn format_headers_for_domain(
-    _domain: &str,
+    domain: &str,
+    ai_provider: Option<ProviderKind>,
     headers: &hyper::HeaderMap,
 ) -> FormattedHeaders {
+    let provider_hint = ai_provider.map(|provider| match provider {
+        ProviderKind::Ollama => ProviderKind::OpenAi,
+        other => other,
+    });
+    let mut observations = Vec::new();
     let formatted = headers
         .iter()
         .map(|(name, value)| {
@@ -114,6 +120,11 @@ pub(super) fn format_headers_for_domain(
                 format!("{}: {}", name, v)
             } else {
                 let raw = value.as_bytes();
+                if let Some(observation) =
+                    detect_http_credential_with_provider(domain, provider_hint, name.as_str(), raw)
+                {
+                    observations.push(observation);
+                }
                 let digest = blake3::hash(raw);
                 let hex = &digest.to_hex()[..12];
                 format!("{}: hash:{}", name, hex)
@@ -124,36 +135,47 @@ pub(super) fn format_headers_for_domain(
 
     FormattedHeaders {
         formatted,
-        observations: Vec::new(),
-        credential_ref: None,
+        credential_ref: observations
+            .first()
+            .map(CredentialObservation::credential_ref),
+        observations,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::credential_broker::CredentialProvider;
 
     #[test]
-    fn header_formatter_does_not_broker_or_classify_credentials() {
+    fn header_formatter_sanitizes_and_emits_broker_observations() {
         let mut headers = hyper::HeaderMap::new();
         headers.insert(
             hyper::header::AUTHORIZATION,
             hyper::header::HeaderValue::from_static("Bearer sk-network-format-secret"),
         );
 
-        let formatted = format_headers_for_domain("api.openai.com", &headers);
+        let formatted =
+            format_headers_for_domain("127.0.0.1", Some(ProviderKind::OpenAi), &headers);
 
-        assert!(
-            formatted.observations.is_empty(),
-            "credential observations belong to credential broker plugins"
+        assert_eq!(formatted.observations.len(), 1);
+        assert_eq!(
+            formatted.observations[0].provider,
+            CredentialProvider::OpenAi
         );
         assert_eq!(
-            formatted.credential_ref, None,
-            "network header formatting must not create broker references"
+            formatted.observations[0].source,
+            "http.header.authorization"
         );
-        assert!(
-            !formatted.formatted.contains("credential:blake3:"),
-            "network header formatting must not broker credential values"
+        assert_eq!(
+            formatted.observations[0].event_type.as_deref(),
+            Some("http.request")
         );
+        assert_eq!(
+            formatted.credential_ref.as_deref(),
+            Some(formatted.observations[0].credential_ref().as_str())
+        );
+        assert!(formatted.formatted.contains("authorization: hash:"));
+        assert!(!formatted.formatted.contains("sk-network-format-secret"));
     }
 }

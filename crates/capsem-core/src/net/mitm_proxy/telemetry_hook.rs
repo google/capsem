@@ -232,6 +232,11 @@ impl ChunkHook for TelemetryHook {
             &self.deps.pricing,
             &self.deps.trace_state,
         );
+        for observation in &mut credential_observations {
+            if observation.trace_id.is_none() {
+                observation.trace_id = net_event.trace_id.clone();
+            }
+        }
 
         log_outcome(&req_ctx);
 
@@ -593,7 +598,7 @@ pub fn maybe_build_model_call(
         stream,
         system_prompt_preview: req_meta.system_prompt_preview,
         messages_count: req_meta.messages_count,
-        tools_count: req_meta.tools_count,
+        tools_count: tool_calls.len(),
         request_bytes: bytes_sent,
         request_body_preview,
         message_id: summary.as_ref().and_then(|s| s.message_id.clone()),

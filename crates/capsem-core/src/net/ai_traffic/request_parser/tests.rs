@@ -176,6 +176,40 @@ fn openai_tool_results() {
     assert_eq!(meta.tool_results[0].content_preview, "72F sunny");
 }
 
+#[test]
+fn openai_responses_api_function_call_output_is_tool_response() {
+    let body = br#"{
+        "model": "gpt-4o",
+        "input": [
+            {"type": "message", "role": "user", "content": "write a file"},
+            {
+                "type": "function_call",
+                "call_id": "call_codex_write_poem",
+                "name": "exec_command",
+                "arguments": "{\"cmd\":\"printf hello > /root/poem.md\"}"
+            },
+            {
+                "type": "function_call_output",
+                "call_id": "call_codex_write_poem",
+                "output": "Process exited with code 0"
+            }
+        ],
+        "tools": [{"type": "function", "name": "exec_command"}]
+    }"#;
+
+    let meta = parse_request(ProviderKind::OpenAi, body);
+
+    assert_eq!(meta.messages_count, 3);
+    assert_eq!(meta.tools_count, 1);
+    assert_eq!(meta.tool_results.len(), 1);
+    assert_eq!(meta.tool_results[0].call_id, "call_codex_write_poem");
+    assert_eq!(
+        meta.tool_results[0].content_preview,
+        "Process exited with code 0"
+    );
+    assert!(!meta.tool_results[0].is_error);
+}
+
 // ── Google ──────────────────────────────────────────────────────
 
 #[test]

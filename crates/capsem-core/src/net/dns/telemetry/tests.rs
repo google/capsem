@@ -6,7 +6,12 @@ use capsem_logger::events::Decision;
 
 fn allowed_result() -> DnsHandlerResult {
     DnsHandlerResult {
-        answer_bytes: vec![1, 2, 3, 4],
+        answer_bytes: vec![
+            0x12, 0x34, 0x81, 0x80, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x09, b'a',
+            b'n', b't', b'h', b'r', b'o', b'p', b'i', b'c', 0x03, b'c', b'o', b'm', 0x00, 0x00,
+            0x01, 0x00, 0x01, 0xc0, 0x0c, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x3c, 0x00,
+            0x04, 93, 184, 216, 34,
+        ],
         query: Some(DnsQuery {
             id: 0x1234,
             qname: "anthropic.com".into(),
@@ -54,6 +59,7 @@ fn build_event_for_allowed_query() {
     assert_eq!(evt.qtype, 1);
     assert_eq!(evt.qclass, 1);
     assert_eq!(evt.rcode, 0);
+    assert_eq!(evt.answer_ip.as_deref(), Some("93.184.216.34"));
     assert_eq!(evt.decision, "allowed");
     assert!(evt.matched_rule.is_none());
     assert_eq!(evt.source_proto.as_deref(), Some("udp"));

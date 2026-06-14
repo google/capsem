@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -28,7 +28,7 @@ struct DurableCredentialIndexEntry {
     credential_ref: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CredentialProvider {
     Anthropic,
@@ -623,8 +623,20 @@ pub async fn broker_and_log_observations(
     observations: Vec<CredentialObservation>,
 ) -> Option<String> {
     let mut first_ref = None;
+    let mut seen = HashSet::new();
     for observation in observations {
         let reference = observation.credential_ref();
+        let key = (
+            observation.provider,
+            reference.clone(),
+            observation.source.clone(),
+            observation.event_type.clone(),
+            observation.trace_id.clone(),
+            observation.context_json.clone(),
+        );
+        if !seen.insert(key) {
+            continue;
+        }
         if first_ref.is_none() {
             first_ref = Some(reference);
         }
@@ -868,7 +880,7 @@ fn credential_provider_for_request(
         Some(ProviderKind::Anthropic) => Some(CredentialProvider::Anthropic),
         Some(ProviderKind::Google) => Some(CredentialProvider::Google),
         Some(ProviderKind::OpenAi) => Some(CredentialProvider::OpenAi),
-        Some(ProviderKind::Ollama) => None,
+        Some(ProviderKind::Ollama) => Some(CredentialProvider::OpenAi),
         None if domain.ends_with("anthropic.com") || domain.ends_with("claude.com") => {
             Some(CredentialProvider::Anthropic)
         }

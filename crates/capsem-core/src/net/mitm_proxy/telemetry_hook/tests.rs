@@ -582,14 +582,15 @@ async fn hook_writes_substitution_event_and_shared_credential_ref() {
     let credential_ref = credential_reference("anthropic", raw);
     let mut req_ctx = anthropic_req_ctx();
     req_ctx.credential_ref = Some(credential_ref.clone());
-    req_ctx.credential_observations = vec![CredentialObservation {
+    let observation = CredentialObservation {
         provider: CredentialProvider::Anthropic,
         raw_value: raw.to_string(),
         source: "http.header.x-api-key".to_string(),
         event_type: Some("http.request".to_string()),
         trace_id: Some("trace-hook".to_string()),
         context_json: Some(r#"{"domain":"api.anthropic.com"}"#.to_string()),
-    }];
+    };
+    req_ctx.credential_observations = vec![observation.clone(), observation];
 
     let mut state = HookState::default();
     let conn = any_conn();

@@ -1041,7 +1041,7 @@ async fn handle_request(
 
     let method = parts.method.to_string();
     let (path, query) = split_path_query(&parts.uri);
-    let formatted_req_headers = format_headers_for_domain(domain, &parts.headers);
+    let formatted_req_headers = format_headers_for_domain(domain, ai_provider, &parts.headers);
     let req_hdrs = formatted_req_headers.formatted;
     let credential_observations = formatted_req_headers.observations;
     let credential_ref = formatted_req_headers.credential_ref;

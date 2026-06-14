@@ -161,6 +161,8 @@ pub const CREATE_SCHEMA: &str = "
         timestamp TEXT NOT NULL,
         action TEXT NOT NULL,
         path TEXT NOT NULL,
+        directory TEXT,
+        name TEXT,
         size INTEGER,
         trace_id TEXT,
         credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
@@ -207,6 +209,7 @@ pub const CREATE_SCHEMA: &str = "
         qtype INTEGER NOT NULL,
         qclass INTEGER NOT NULL,
         rcode INTEGER NOT NULL,
+        answer_ip TEXT,
         decision TEXT NOT NULL,
         matched_rule TEXT,
         source_proto TEXT,
@@ -485,6 +488,8 @@ pub fn migrate(conn: &Connection) {
             timestamp TEXT NOT NULL,
             action TEXT NOT NULL,
             path TEXT NOT NULL,
+            directory TEXT,
+            name TEXT,
             size INTEGER
         );
         CREATE INDEX IF NOT EXISTS idx_fs_events_timestamp ON fs_events(timestamp);
@@ -528,6 +533,7 @@ pub fn migrate(conn: &Connection) {
             qtype INTEGER NOT NULL,
             qclass INTEGER NOT NULL,
             rcode INTEGER NOT NULL,
+            answer_ip TEXT,
             decision TEXT NOT NULL,
             matched_rule TEXT,
             source_proto TEXT,
@@ -549,10 +555,13 @@ pub fn migrate(conn: &Connection) {
     let _ = conn.execute("ALTER TABLE dns_events ADD COLUMN policy_action TEXT", []);
     let _ = conn.execute("ALTER TABLE dns_events ADD COLUMN policy_rule TEXT", []);
     let _ = conn.execute("ALTER TABLE dns_events ADD COLUMN policy_reason TEXT", []);
+    let _ = conn.execute("ALTER TABLE dns_events ADD COLUMN answer_ip TEXT", []);
     let _ = conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_dns_events_policy_rule ON dns_events(policy_rule)",
         [],
     );
+    let _ = conn.execute("ALTER TABLE fs_events ADD COLUMN directory TEXT", []);
+    let _ = conn.execute("ALTER TABLE fs_events ADD COLUMN name TEXT", []);
 
     // Add audit_events table if not present (for DBs created before this feature).
     let _ = conn.execute_batch(

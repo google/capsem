@@ -225,9 +225,15 @@ mod openai_wire {
 
     #[derive(Deserialize)]
     pub struct Message {
+        #[serde(rename = "type")]
+        pub item_type: Option<String>,
         pub role: Option<String>,
         pub content: Option<MessageContent>,
         pub tool_call_id: Option<String>,
+        pub call_id: Option<String>,
+        pub output: Option<String>,
+        pub name: Option<String>,
+        pub arguments: Option<String>,
     }
 
     #[derive(Deserialize)]
@@ -287,10 +293,12 @@ fn parse_openai(body: &[u8]) -> RequestMeta {
     // history, so iterating all messages would re-log previous tool results.
     let mut tool_results = Vec::new();
     for msg in messages.iter().rev() {
-        if msg.role.as_deref() != Some("tool") {
+        let is_chat_tool_result = msg.role.as_deref() == Some("tool");
+        let is_responses_tool_result = msg.item_type.as_deref() == Some("function_call_output");
+        if !is_chat_tool_result && !is_responses_tool_result {
             break;
         }
-        if let Some(call_id) = &msg.tool_call_id {
+        if let Some(call_id) = msg.tool_call_id.as_ref().or(msg.call_id.as_ref()) {
             let content_text = match &msg.content {
                 Some(openai_wire::MessageContent::Text(t)) => t.clone(),
                 Some(openai_wire::MessageContent::Parts(parts)) => parts
@@ -298,7 +306,7 @@ fn parse_openai(body: &[u8]) -> RequestMeta {
                     .filter_map(|p| p.text.as_deref())
                     .collect::<Vec<_>>()
                     .join("\n"),
-                None => String::new(),
+                None => msg.output.clone().unwrap_or_default(),
             };
             tool_results.push(ToolResultMeta {
                 call_id: call_id.clone(),

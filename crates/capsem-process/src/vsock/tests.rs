@@ -436,6 +436,7 @@ match = 'dns.qname == "api.openai.com" && dns.qtype == "1"'
         qtype: 1,
         qclass: 1,
         rcode: 0,
+        answer_ip: Some("93.184.216.34".to_string()),
         decision: "allowed".to_string(),
         matched_rule: None,
         source_proto: Some("udp".to_string()),
