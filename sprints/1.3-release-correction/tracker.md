@@ -154,10 +154,10 @@ next one, and stage only the files for that slice.
     tests/capsem-build-chain/test_active_docs_profile_contract.py -q`;
     `cargo fmt --check`; `git diff --check`.
   - 2026-06-13 backend CLI burn proof: public `capsem-builder build`,
-    `validate`, `inspect`, and `--dry-run` are removed. Surviving
+    `validate`, `inspect`, `mcp`, and `--dry-run` are removed. Surviving
     `capsem-builder` commands are backend helpers only: `doctor`,
-    `validate-skills`, `agent`, `audit`, and `mcp`. Active docs/skills now
-    say product image/config work goes through `capsem-admin`.
+    `validate-skills`, `agent`, and `audit`. Active docs/skills now say
+    product image/config work goes through `capsem-admin`.
   - Proof: `uv run python -m pytest tests/test_cli.py
     tests/capsem-build-chain/test_active_docs_profile_contract.py
     tests/test_release_doctor_contract.py -q`; `uv run ruff check

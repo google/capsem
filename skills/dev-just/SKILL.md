@@ -20,7 +20,7 @@ All workflows use `just` (not make). The justfile is the single entry point.
 | `just dev-frontend` | Frontend-only dev server on :5173 (no Tauri, no VM, mock data) |
 | `just build-ui [release]` | **Frontend build + `cargo build -p capsem-app` in lockstep.** Use after any frontend change when running the Tauri binary directly. |
 | `just run-ui -- [args]` | `build-ui` then launch `./target/debug/capsem-app` with args (e.g. `--connect <id>`) |
-| `just build-assets [arch]` | Full VM asset rebuild via capsem-builder (kernel + rootfs). Default: both arches. |
+| `just build-assets [arch]` | Full VM asset rebuild through capsem-admin/profile materialization and the private Python builder backend. Default: both arches. |
 | `just smoke` | Hermetic smoke gate: audit + doctor + injection + integration + parallel pytest groups |
 | `just test` | ALL tests: unit (warnings-as-errors) + cov + cross-compile + frontend + python + injection + integration + bench + install e2e |
 | `just test-gateway` | Gateway unit + Python mock-UDS tests (no VM needed) |
@@ -153,10 +153,11 @@ just _materialize-config       # Materialize generated runtime profile config
 ```
 
 The only public `capsem-builder` helper commands are backend support commands
-used by just/CI: `doctor`, `validate-skills`, `agent`, `audit`, and `mcp`.
+used by just/CI: `doctor`, `validate-skills`, `agent`, and `audit`.
 There is no public `capsem-builder build`, `validate`, `inspect`, `--dry-run`,
-or render-only rail. If the product contract needs a new image input, add it to
-the profile/corp/settings config model and the `capsem-admin` validation path.
+`mcp`, or render-only rail. If the product contract needs a new image input,
+add it to the profile/corp/settings config model and the `capsem-admin`
+validation path.
 
 ## Cross-compilation
 

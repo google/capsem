@@ -62,6 +62,7 @@ STALE_GUIDANCE = [
     "capsem-builder new",
     "capsem-builder add",
     "capsem-builder add ai-provider",
+    "capsem-builder mcp",
     "config/admin",
     "config/guest",
     "settings registry",

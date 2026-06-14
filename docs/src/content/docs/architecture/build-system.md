@@ -8,9 +8,10 @@ sidebar:
 Capsem builds VM assets from the profile ledger. Checked-in
 `config/profiles/<profile_id>/profile.toml` and its referenced sibling files
 are product source truth. `capsem-admin image build` resolves that profile into
-a generated backend workspace, then `capsem-builder` validates the backend
-image spec, renders Jinja2 Dockerfiles, and produces per-architecture VM
-assets.
+a generated backend workspace, then invokes the private Python builder backend
+to validate the backend image spec, render Jinja2 Dockerfiles, and produce
+per-architecture VM assets. `capsem-builder` is not a public image-authoring
+CLI.
 
 ## Architecture
 
@@ -63,7 +64,8 @@ The data flows through four layers:
    product truth: assets, package files, MCP config, security rules, plugins,
    root seed, install script, tips, and OBOM descriptors.
 2. **Image materialization** (`capsem-admin image build`) -- validates profile
-   references and writes a generated backend image workspace.
+   references, recopies descriptor files and profile root payloads from source,
+   and writes a generated backend image workspace.
 3. **Pydantic models** (`models.py`) -- validate the generated backend image
    spec with enums (`PackageManager`: apt, uv, pip, npm, curl), frozen models,
    and cross-field validators.
@@ -93,9 +95,10 @@ Four outputs are produced:
 | `kernel/defconfig.*` | (raw) | Kernel configs per arch | Linux kernel defconfig files |
 
 These files are backend image spec, usually generated under `target/` by the
-profile-derived build rail. Do not add provider authorization, credentials, security policy, UI
-settings, or MCP runtime truth to the backend image spec. Those belong to the
-profile, corp config, rule files, and plugins.
+profile-derived build rail. They are implementation detail, not product
+authoring API. Do not add provider authorization, credentials, security policy,
+UI settings, or MCP runtime truth to the backend image spec. Those belong to
+the profile, corp config, rule files, and plugins.
 
 Example `build.toml`:
 
@@ -131,7 +134,8 @@ Profile validation is exposed through `capsem-admin profile check`. The Python
 builder keeps compiler-style diagnostics internally, with error codes, severity
 levels, and file:line references, but it is not a second public profile
 validation rail. Errors block the admin/profile build path; warnings are
-informational.
+informational. There is no public `capsem-builder build`, render-only,
+inspect, validate, MCP, or dry-run rail for product images.
 
 ### Error Codes
 
@@ -348,7 +352,6 @@ The `audit` subcommand parses vulnerability scanner output and fails on CRITICAL
 | `capsem-builder agent` | Cross-compile guest agent binaries for initrd repack | `--arch`, `--output` |
 | `capsem-builder audit` | Parse vulnerability scan results | `--scanner` (trivy/grype), `--input`, `--json` |
 | `capsem-builder validate-skills` | Validate repository development skills | `--json` |
-| `capsem-builder mcp` | Start MCP stdio server for builder tools | (none) |
 
 Usage:
 
@@ -364,9 +367,9 @@ cargo run -p capsem-admin -- image build --profile config/profiles/code/profile.
 ```
 
 There is no public `capsem-builder build`, `capsem-builder validate`,
-`capsem-builder inspect`, or `--dry-run` rendering rail. Product image inputs
-must enter through profile/corp/settings config and the `capsem-admin` checks
-above.
+`capsem-builder inspect`, builder MCP, or `--dry-run` rendering rail. Product
+image inputs must enter through profile/corp/settings config and the
+`capsem-admin` checks above.
 
 ## Settings JSON Generation
 

@@ -432,6 +432,7 @@ def test_builder_has_no_guest_scaffold_authoring_rail() -> None:
         "capsem-builder init",
         "capsem-builder new",
         "capsem-builder add",
+        "capsem-builder mcp",
         "builder.scaffold",
         "scaffold.py",
         "init_guest_dir",

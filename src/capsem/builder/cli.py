@@ -168,18 +168,6 @@ def audit(scanner: str, input_file: str | None, json_output: bool) -> None:
         raise SystemExit(1)
 
 
-# ---------------------------------------------------------------------------
-# mcp
-# ---------------------------------------------------------------------------
-
-
-@cli.command("mcp")
-def mcp_cmd() -> None:
-    """Start MCP stdio server for builder tools."""
-    from capsem.builder.mcp_server import run_mcp_server
-    run_mcp_server()
-
-
 def main() -> None:
     """Entry point for capsem-builder."""
     cli()

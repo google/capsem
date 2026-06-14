@@ -14,9 +14,9 @@ Capsem image builds are profile-led.
   files, tips, build-time hooks, and packaged guest root seed files.
 - `capsem-admin` validates profile-owned inputs and materializes the generated
   backend build workspace.
-- The Python `capsem-builder` backend renders Docker templates and emits
-  assets, build ledgers, and OBOMs. Do not add product truth directly to the
-  backend image-spec path.
+- The Python builder backend renders Docker templates and emits assets, build
+  ledgers, and OBOMs only when invoked by the admin build rail. Do not add
+  product truth directly to the backend image-spec path.
 
 ## Source Layout
 
@@ -69,7 +69,10 @@ uv run capsem-builder audit                  # Parse trivy/grype vulnerability o
 
 Use admin/just recipes for all product image work. `capsem-builder` is a
 backend helper only; it must not expose or document public `build`, `validate`,
-`inspect`, render-only, or dry-run rails for profile/image authoring.
+`inspect`, `mcp`, render-only, or dry-run rails for profile/image authoring.
+`capsem-admin image build` may call private Python modules such as
+`capsem.builder.image_build_backend`; agents must not make those modules public
+CLI contracts.
 
 ## Building assets
 
@@ -117,7 +120,9 @@ rules, MCP declarations, tips, or root seed files makes
 validation/materialization rail with tests. Do not "just fix the hash" in TOML.
 
 Generated runtime asset URLs/hashes belong in `target/config` after
-`capsem-admin profile materialize`, not in checked-in source TOML.
+`capsem-admin profile materialize`, not in checked-in source TOML. Profile
+materialization must recopy descriptor files and `root/` payloads from source
+on every run; stale generated roots are a release blocker, not a cache.
 
 ## Adding packages to the VM
 
@@ -220,6 +225,7 @@ The data flows through four layers:
 | `src/capsem/builder/models.py` | All Pydantic models (enums, configs, top-level `GuestImageConfig`) |
 | `src/capsem/builder/config.py` | Backend loader for admin-materialized build workspaces |
 | `src/capsem/builder/docker.py` | Context builders (`_rootfs_context`, `_kernel_context`), rendering, build execution |
+| `src/capsem/builder/image_build_backend.py` | Private admin-invoked image build backend; not a public CLI |
 | `config/docker/Dockerfile.rootfs.j2` | Rootfs Dockerfile template |
 | `config/docker/Dockerfile.kernel.j2` | Kernel Dockerfile template |
 | `src/capsem/builder/validate.py` | Validation rules (E001-E302, W001-W012) |

@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   profiles and corp own runtime truth while settings only describe
   UI/application preferences; private capsem-admin scaffold helpers are now
   burned by a guard test too.
-- Burned the public `capsem-builder build`, `validate`, `inspect`, and
+- Burned the public `capsem-builder build`, `validate`, `inspect`, `mcp`, and
   `--dry-run` rails so product image/config work can only enter through
   profile-owned config plus `capsem-admin`; docs, skills, and CLI tests now
   document and enforce `capsem-builder` as a backend helper only.

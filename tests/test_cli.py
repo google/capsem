@@ -29,7 +29,7 @@ def test_help_exposes_only_backend_helper_commands() -> None:
         for line in lines[start:]
         if line.startswith("  ") and line.strip()
     ]
-    assert set(command_lines) == {"doctor", "validate-skills", "agent", "audit", "mcp"}
+    assert set(command_lines) == {"doctor", "validate-skills", "agent", "audit"}
     assert "--dry-run" not in result.output
 
 
@@ -43,6 +43,7 @@ def test_help_exposes_only_backend_helper_commands() -> None:
         ["init"],
         ["new"],
         ["add"],
+        ["mcp"],
     ],
 )
 def test_product_authoring_and_render_commands_are_removed(argv: list[str]) -> None:
@@ -182,22 +183,3 @@ def test_audit_no_input_fails() -> None:
     assert result.exit_code != 0
     assert "no input" in result.output
 
-
-def test_mcp_initialize() -> None:
-    init_msg = json.dumps({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "initialize",
-        "params": {
-            "protocolVersion": "2024-11-05",
-            "capabilities": {},
-            "clientInfo": {"name": "test", "version": "1.0"},
-        },
-    })
-    runner = CliRunner()
-
-    result = runner.invoke(cli, ["mcp"], input=init_msg + "\n")
-
-    assert result.exit_code == 0
-    resp = json.loads(result.output.strip().splitlines()[0])
-    assert resp["result"]["serverInfo"]["name"] == "capsem-builder"

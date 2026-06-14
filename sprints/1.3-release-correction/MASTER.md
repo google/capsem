@@ -187,9 +187,9 @@ prove the same rails without user credentials.
   Proof: full `cargo test -p capsem-admin -- --nocapture` plus focused Python
   config/CLI/active-doc/admin-surface guard suite.
 - Backend CLI burn proof on 2026-06-13: public `capsem-builder build`,
-  `validate`, `inspect`, and `--dry-run` are gone. `capsem-builder` is now a
-  backend helper surface only (`doctor`, `validate-skills`, `agent`, `audit`,
-  `mcp`); profile/image product work must enter through checked-in
+  `validate`, `inspect`, `mcp`, and `--dry-run` are gone. `capsem-builder` is
+  now a backend helper surface only (`doctor`, `validate-skills`, `agent`,
+  `audit`); profile/image product work must enter through checked-in
   profile/corp/settings config and `capsem-admin`.
 - Apple VZ lifecycle hardening on 2026-06-13: checkpoint files now require an
   fsynced `.complete` marker before service registry state can mark a VM

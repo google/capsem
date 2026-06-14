@@ -87,7 +87,7 @@ src/capsem/
         manifest.py       BOM collection, manifest rendering
         validate.py       Compiler-style linting with error codes
         audit.py          Trivy/grype output parsing
-        mcp_server.py     JSON-RPC 2.0 MCP stdio server
+        image_build_backend.py Private capsem-admin image build backend
         doctor.py         Build environment doctor checks
         templates/
             Dockerfile.rootfs.j2
