@@ -93,6 +93,33 @@ def generated_profile_guest(tmp_path):
     (guest / "profile-root" / "root" / ".codex" / "config.toml").write_text(
         '[mcp_servers.capsem]\ncommand = "/run/capsem-mcp-server"\n'
     )
+    (guest / "profile-root" / "root" / ".antigravity").mkdir(parents=True)
+    (guest / "profile-root" / "root" / ".antigravity" / "config.json").write_text(
+        json.dumps(
+            {
+                "ai": {
+                    "provider": "ollama",
+                    "baseUrl": "http://127.0.0.1:11434",
+                    "model": "gemma4:latest",
+                    "contextLength": 8192,
+                }
+            }
+        )
+    )
+    (guest / "profile-root" / "root" / ".gemini" / "config").mkdir(parents=True)
+    (guest / "profile-root" / "root" / ".gemini" / "config" / "config.json").write_text(
+        (guest / "profile-root" / "root" / ".antigravity" / "config.json").read_text()
+    )
+    (guest / "profile-root" / "root" / ".gemini" / "antigravity-cli").mkdir(parents=True)
+    (guest / "profile-root" / "root" / ".gemini" / "antigravity-cli" / "settings.json").write_text(
+        json.dumps(
+            {
+                "trustedWorkspaces": ["/root"],
+                "telemetry": {"enabled": False},
+                "autoUpdate": {"enabled": False},
+            }
+        )
+    )
     (guest / "profile-build.sh").write_text("#!/bin/sh\nexit 0\n")
     return load_guest_config(guest)
 
@@ -1375,6 +1402,9 @@ class TestPrepareBuildContext:
             PROJECT_ROOT,
         )
         assert (context_dir / "profile-build.sh").is_file()
+        assert (context_dir / "profile-root/root/.antigravity/config.json").is_file()
+        assert (context_dir / "profile-root/root/.gemini/config/config.json").is_file()
+        assert (context_dir / "profile-root/root/.gemini/antigravity-cli/settings.json").is_file()
         assert (context_dir / "profile-root/root/.codex/config.toml").is_file()
         assert (context_dir / "tips.txt").read_text() == "tip\n"
 
@@ -1576,6 +1606,25 @@ class TestGenerateChecksums:
         (arm64 / "vmlinuz").write_bytes(b"kernel")
         (arm64 / "initrd.img").write_bytes(b"initrd")
         (arm64 / "rootfs.squashfs").write_bytes(b"rootfs")
+
+        with pytest.raises(FileNotFoundError, match="rootfs.erofs"):
+            generate_checksums(tmp_path, "0.13.0")
+
+    def test_manifest_rejects_rootfs_only_arch(self, tmp_path):
+        """A rootfs-only partial build must not clobber a bootable manifest."""
+        arm64 = tmp_path / "arm64"
+        arm64.mkdir()
+        (arm64 / "rootfs.erofs").write_bytes(b"rootfs")
+
+        with pytest.raises(FileNotFoundError, match="vmlinuz"):
+            generate_checksums(tmp_path, "0.13.0")
+
+    def test_manifest_rejects_kernel_only_arch(self, tmp_path):
+        """A kernel-only partial build must not mint a rootfs-less manifest."""
+        arm64 = tmp_path / "arm64"
+        arm64.mkdir()
+        (arm64 / "vmlinuz").write_bytes(b"kernel")
+        (arm64 / "initrd.img").write_bytes(b"initrd")
 
         with pytest.raises(FileNotFoundError, match="rootfs.erofs"):
             generate_checksums(tmp_path, "0.13.0")

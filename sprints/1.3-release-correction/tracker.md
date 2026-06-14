@@ -163,6 +163,17 @@ next one, and stage only the files for that slice.
     tests/test_release_doctor_contract.py -q`; `uv run ruff check
     src/capsem/builder/cli.py src/capsem/builder/config.py
     src/capsem/builder/models.py tests/test_cli.py`.
+  - 2026-06-14 private backend proof: `capsem-admin image build` now invokes
+    `python -m capsem.builder.image_build_backend` as a private execution
+    module, not a public `capsem-builder build` authoring rail. Rootfs-clean
+    preserves kernel/initrd, kernel-clean preserves rootfs, and checksum
+    generation rejects rootfs-only or kernel-only partial asset directories so
+    a partial rebuild cannot clobber the manifest.
+  - Proof: `cargo test -p capsem-admin image_build -- --nocapture`; `cargo
+    test -p capsem-admin image_clean -- --nocapture`; `uv run pytest
+    tests/test_cli.py tests/test_docker.py::TestGenerateChecksums -q`;
+    `uv run ruff check src/capsem/builder/image_build_backend.py
+    src/capsem/builder/docker.py tests/test_cli.py tests/test_docker.py`.
 
 ## S2. Materialization, Assets, VM Resources
 

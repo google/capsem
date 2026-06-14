@@ -1140,6 +1140,9 @@ fn materialize_profile_config(args: &ProfileMaterializeArgs) -> Result<ProfileMa
             .arch
             .retain(|arch, _| selected_arches.iter().any(|selected| selected == arch));
     }
+    copy_profile_descriptor_files(&profile, &args.config_root, &args.output_root)?;
+    materialize_profile_file_descriptors(&mut profile, &args.output_root)?;
+
     let mut materialized_assets = Vec::new();
     let mut materialized_obom = Vec::new();
     for arch in selected_arches {
@@ -1183,7 +1186,6 @@ fn materialize_profile_config(args: &ProfileMaterializeArgs) -> Result<ProfileMa
                 .clone()
                 .ok_or_else(|| anyhow!("materialized {arch} rootfs hash is unresolved"))?
         };
-        materialize_profile_file_descriptors(&mut profile, &args.output_root)?;
         materialize_profile_obom_descriptor(
             &args.assets_dir,
             &arch,
@@ -1580,8 +1582,9 @@ fn image_build_plan(args: &ImageBuildArgs) -> Result<ImageBuildPlan> {
                 argv: vec![
                     "uv".to_string(),
                     "run".to_string(),
-                    "capsem-builder".to_string(),
-                    "build".to_string(),
+                    "python".to_string(),
+                    "-m".to_string(),
+                    "capsem.builder.image_build_backend".to_string(),
                     args.guest_dir.display().to_string(),
                     "--arch".to_string(),
                     arch.clone(),
@@ -1616,8 +1619,9 @@ fn image_build_plan(args: &ImageBuildArgs) -> Result<ImageBuildPlan> {
                 argv: vec![
                     "uv".to_string(),
                     "run".to_string(),
-                    "capsem-builder".to_string(),
-                    "build".to_string(),
+                    "python".to_string(),
+                    "-m".to_string(),
+                    "capsem.builder.image_build_backend".to_string(),
                     args.guest_dir.display().to_string(),
                     "--arch".to_string(),
                     arch.clone(),
@@ -1889,6 +1893,10 @@ fn copy_profile_descriptor_files(
                 .parent()
                 .ok_or_else(|| anyhow!("workspace profile root manifest has no parent"))?
                 .join("root");
+            if destination_root.exists() {
+                fs::remove_dir_all(&destination_root)
+                    .with_context(|| format!("remove {}", destination_root.display()))?;
+            }
             copy_dir_recursive(&source_root, &destination_root)?;
         }
     }
@@ -2229,8 +2237,38 @@ fn clean_image_outputs(plan: &ImageBuildPlan) -> Result<()> {
     let output = PathBuf::from(&plan.output);
     for arch in &plan.arches {
         let path = output.join(&arch.arch);
-        if path.exists() {
-            fs::remove_dir_all(&path).with_context(|| format!("remove {}", path.display()))?;
+        if !path.exists() {
+            continue;
+        }
+        match plan.template {
+            "all" => {
+                fs::remove_dir_all(&path).with_context(|| format!("remove {}", path.display()))?;
+            }
+            "kernel" => {
+                for name in [&arch.kernel, &arch.initrd] {
+                    let file = path.join(name);
+                    if file.exists() {
+                        fs::remove_file(&file)
+                            .with_context(|| format!("remove {}", file.display()))?;
+                    }
+                }
+            }
+            "rootfs" => {
+                for name in [
+                    arch.rootfs.as_str(),
+                    "rootfs.squashfs",
+                    "obom.cdx.json",
+                    "build-ledger.log",
+                    "tool-versions.txt",
+                ] {
+                    let file = path.join(name);
+                    if file.exists() {
+                        fs::remove_file(&file)
+                            .with_context(|| format!("remove {}", file.display()))?;
+                    }
+                }
+            }
+            other => return Err(anyhow!("unsupported image build template {other}")),
         }
     }
     if plan.arches.len() > 1 {
@@ -3234,7 +3272,41 @@ decision = "block"
         assert_eq!(plan.arches[0].rootfs, "rootfs.erofs");
         assert_eq!(plan.commands.len(), 3);
         assert_eq!(plan.commands[0].step, "kernel");
+        assert_eq!(
+            plan.commands[0].argv[0..5]
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            vec![
+                "uv",
+                "run",
+                "python",
+                "-m",
+                "capsem.builder.image_build_backend",
+            ]
+        );
+        assert!(!plan.commands[0]
+            .argv
+            .windows(2)
+            .any(|window| window[0] == "capsem-builder" && window[1] == "build"));
         assert_eq!(plan.commands[1].step, "rootfs");
+        assert_eq!(
+            plan.commands[1].argv[0..5]
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            vec![
+                "uv",
+                "run",
+                "python",
+                "-m",
+                "capsem.builder.image_build_backend",
+            ]
+        );
+        assert!(!plan.commands[1]
+            .argv
+            .windows(2)
+            .any(|window| window[0] == "capsem-builder" && window[1] == "build"));
         assert_eq!(
             plan.commands[1].env.get("CAPSEM_BUILD_EROFS_COMPRESSION"),
             Some(&"lz4hc".to_string())
@@ -3246,6 +3318,72 @@ decision = "block"
             Some(&"12".to_string())
         );
         assert_eq!(plan.commands[2].step, "manifest");
+    }
+
+    #[test]
+    fn image_clean_rootfs_preserves_kernel_and_initrd() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let arch_dir = temp.path().join("arm64");
+        fs::create_dir_all(&arch_dir).expect("arch dir");
+        fs::write(arch_dir.join("vmlinuz"), b"kernel").expect("kernel");
+        fs::write(arch_dir.join("initrd.img"), b"initrd").expect("initrd");
+        fs::write(arch_dir.join("rootfs.erofs"), b"rootfs").expect("rootfs");
+        fs::write(arch_dir.join("obom.cdx.json"), b"obom").expect("obom");
+
+        clean_image_outputs(&ImageBuildPlan {
+            schema: "test",
+            profile_id: "code".to_string(),
+            profile_revision: "test".to_string(),
+            guest_dir: "guest".to_string(),
+            output: temp.path().display().to_string(),
+            clean: true,
+            template: "rootfs",
+            arches: vec![ImageBuildArchPlan {
+                arch: "arm64".to_string(),
+                kernel: "vmlinuz".to_string(),
+                initrd: "initrd.img".to_string(),
+                rootfs: "rootfs.erofs".to_string(),
+            }],
+            commands: Vec::new(),
+        })
+        .expect("rootfs clean");
+
+        assert!(arch_dir.join("vmlinuz").is_file());
+        assert!(arch_dir.join("initrd.img").is_file());
+        assert!(!arch_dir.join("rootfs.erofs").exists());
+        assert!(!arch_dir.join("obom.cdx.json").exists());
+    }
+
+    #[test]
+    fn image_clean_kernel_preserves_rootfs() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let arch_dir = temp.path().join("arm64");
+        fs::create_dir_all(&arch_dir).expect("arch dir");
+        fs::write(arch_dir.join("vmlinuz"), b"kernel").expect("kernel");
+        fs::write(arch_dir.join("initrd.img"), b"initrd").expect("initrd");
+        fs::write(arch_dir.join("rootfs.erofs"), b"rootfs").expect("rootfs");
+
+        clean_image_outputs(&ImageBuildPlan {
+            schema: "test",
+            profile_id: "code".to_string(),
+            profile_revision: "test".to_string(),
+            guest_dir: "guest".to_string(),
+            output: temp.path().display().to_string(),
+            clean: true,
+            template: "kernel",
+            arches: vec![ImageBuildArchPlan {
+                arch: "arm64".to_string(),
+                kernel: "vmlinuz".to_string(),
+                initrd: "initrd.img".to_string(),
+                rootfs: "rootfs.erofs".to_string(),
+            }],
+            commands: Vec::new(),
+        })
+        .expect("kernel clean");
+
+        assert!(!arch_dir.join("vmlinuz").exists());
+        assert!(!arch_dir.join("initrd.img").exists());
+        assert!(arch_dir.join("rootfs.erofs").is_file());
     }
 
     #[test]

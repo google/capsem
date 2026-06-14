@@ -1018,25 +1018,42 @@ def generate_checksums(output_dir: Path, version: str) -> Path:
     all_files: list[str] = []
     for arch_dir in sorted(arch_dirs):
         arch_name = arch_dir.name
+        rootfs_name = _select_rootfs_asset(arch_dir)
+        arch_has_assets = rootfs_name is not None or (arch_dir / OBOM_ASSET).is_file() or any(
+            (arch_dir / filename).is_file() for filename in BOOT_ASSETS
+        )
+        if arch_has_assets:
+            for filename in BOOT_ASSETS:
+                if not (arch_dir / filename).is_file():
+                    raise FileNotFoundError(f"{arch_dir / filename}")
+            if rootfs_name is None:
+                raise FileNotFoundError(f"{arch_dir / 'rootfs.erofs'}")
         for filename in BOOT_ASSETS:
             if (arch_dir / filename).is_file():
                 all_files.append(f"{arch_name}/{filename}")
-        if rootfs_name := _select_rootfs_asset(arch_dir):
+        if rootfs_name:
             all_files.append(f"{arch_name}/{rootfs_name}")
-        elif any((arch_dir / filename).is_file() for filename in BOOT_ASSETS):
-            raise FileNotFoundError(f"{arch_dir / 'rootfs.erofs'}")
         if (arch_dir / OBOM_ASSET).is_file():
             all_files.append(f"{arch_name}/{OBOM_ASSET}")
 
     if not all_files:
         # Flat layout fallback
+        flat_rootfs_name = _select_rootfs_asset(output_dir)
+        flat_has_assets = flat_rootfs_name is not None or (output_dir / OBOM_ASSET).is_file() or any(
+            (output_dir / f).is_file() for f in BOOT_ASSETS
+        )
+        if flat_has_assets:
+            for filename in BOOT_ASSETS:
+                if not (output_dir / filename).is_file():
+                    raise FileNotFoundError(f"{output_dir / filename}")
+            if flat_rootfs_name is None:
+                raise FileNotFoundError(f"{output_dir / 'rootfs.erofs'}")
         for f in BOOT_ASSETS:
             if (output_dir / f).is_file():
                 all_files.append(f)
-        if rootfs_name := _select_rootfs_asset(output_dir):
+        if flat_rootfs_name:
+            rootfs_name = flat_rootfs_name
             all_files.append(rootfs_name)
-        elif all_files:
-            raise FileNotFoundError(f"{output_dir / 'rootfs.erofs'}")
         if (output_dir / OBOM_ASSET).is_file():
             all_files.append(OBOM_ASSET)
 

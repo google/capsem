@@ -28,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--dry-run` rails so product image/config work can only enter through
   profile-owned config plus `capsem-admin`; docs, skills, and CLI tests now
   document and enforce `capsem-builder` as a backend helper only.
+- Kept profile image builds behind the `capsem-admin image build` rail while
+  moving Docker/template execution to a private Python backend module, and
+  tightened partial asset generation so rootfs-only or kernel-only outputs
+  cannot mint a bootable manifest or delete unrelated arch assets.
 - Fixed PR CI Python coverage so the schema/builder coverage step runs the
   explicit Python contract suite that exercises `src/capsem`, instead of
   replaying VM, serial, install, MCP, service, and Ironbank suites under one

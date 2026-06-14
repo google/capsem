@@ -191,6 +191,16 @@ prove the same rails without user credentials.
   now a backend helper surface only (`doctor`, `validate-skills`, `agent`,
   `audit`); profile/image product work must enter through checked-in
   profile/corp/settings config and `capsem-admin`.
+- Private image backend proof on 2026-06-14: `capsem-admin image build` owns
+  the public profile-derived image rail and calls
+  `python -m capsem.builder.image_build_backend` only as a private execution
+  module. Rootfs-clean preserves kernel/initrd, kernel-clean preserves rootfs,
+  and checksum generation rejects rootfs-only or kernel-only partial asset
+  directories. Proof: `cargo test -p capsem-admin image_build --
+  --nocapture`; `cargo test -p capsem-admin image_clean -- --nocapture`;
+  `uv run pytest tests/test_cli.py tests/test_docker.py::TestGenerateChecksums
+  -q`; `uv run ruff check src/capsem/builder/image_build_backend.py
+  src/capsem/builder/docker.py tests/test_cli.py tests/test_docker.py`.
 - Apple VZ lifecycle hardening on 2026-06-13: checkpoint files now require an
   fsynced `.complete` marker before service registry state can mark a VM
   suspended or resume from warm checkpoint. Save/restore use exclusive
