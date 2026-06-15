@@ -1318,11 +1318,40 @@ def _dns_response(packet: bytes) -> bytes:
     return struct.pack("!HHHHHH", query_id, 0x8180, 1, 1, 0, 0) + question + answer
 
 
+def _record_dns_request(packet: bytes, response: bytes, proto: str) -> None:
+    if REQUEST_LOG_PATH is None:
+        return
+    try:
+        qname, offset = _decode_dns_name(packet)
+        qtype, qclass = struct.unpack("!HH", packet[offset:offset + 4])
+    except Exception:
+        qname = "<invalid>"
+        qtype = None
+        qclass = None
+    rcode = response[3] & 0x0F if len(response) >= 4 else None
+    ancount = struct.unpack("!H", response[6:8])[0] if len(response) >= 8 else None
+    record = {
+        "kind": "dns",
+        "proto": proto,
+        "qname": qname,
+        "qtype": qtype,
+        "qclass": qclass,
+        "rcode": rcode,
+        "answer_count": ancount,
+        "request_bytes": len(packet),
+        "response_bytes": len(response),
+    }
+    with REQUEST_LOG_LOCK:
+        with REQUEST_LOG_PATH.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, sort_keys=True) + "\n")
+
+
 class DnsUdpHandler(socketserver.BaseRequestHandler):
     def handle(self) -> None:
         data, socket = self.request
         response = _dns_response(data)
         if response:
+            _record_dns_request(data, response, "udp")
             socket.sendto(response, self.client_address)
 
 
@@ -1340,6 +1369,7 @@ class DnsTcpHandler(socketserver.BaseRequestHandler):
             packet += chunk
         response = _dns_response(packet)
         if response:
+            _record_dns_request(packet, response, "tcp")
             self.request.sendall(struct.pack("!H", len(response)) + response)
 
 

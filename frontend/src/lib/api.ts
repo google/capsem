@@ -287,6 +287,11 @@ export interface SecurityRuleEventTypeCount {
   count: number;
 }
 
+export interface SecurityRuleDetectionLevelCount {
+  detection_level: RuntimeSecurityRuleDetectionLevel;
+  count: number;
+}
+
 export interface SecurityRuleStatsByRule {
   rule_id: string;
   rule_action: SecurityRuleAction;
@@ -300,6 +305,7 @@ export interface SecurityRuleStats {
   total: number;
   by_action: SecurityRuleActionCount[];
   by_event_type: SecurityRuleEventTypeCount[];
+  by_level: SecurityRuleDetectionLevelCount[];
   by_rule: SecurityRuleStatsByRule[];
 }
 

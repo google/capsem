@@ -91,6 +91,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   preview, and HTTPS override traffic. Decoded gzip responses now log the same
   materialized headers and body bytes delivered to the guest instead of stale
   compressed response metadata.
+- Added DNS Ironbank ledger proof for allowed and blocked UDP DNS traffic.
+  Allowed DNS rows now carry the matched security rule and policy fields just
+  like blocked rows, hermetic DNS upstream transcripts prove blocked
+  exfiltration never leaves the VM boundary, and security status exposes
+  detection-level counters regenerated from `session.db`.
 - Tightened Ironbank model/client coverage so the mock server replays an
   Ollama-compatible OpenAI chat-completion shape with native tool calls, the
   OpenAI SDK/Anthropic SDK/LiteLLM/Ollama SDK/Codex CLI paths assert full

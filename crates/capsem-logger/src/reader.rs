@@ -204,6 +204,13 @@ pub struct SecurityRuleEventTypeCount {
     pub count: u64,
 }
 
+/// Rule-match counts grouped by canonical detection level.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SecurityRuleDetectionLevelCount {
+    pub detection_level: String,
+    pub count: u64,
+}
+
 /// Rule-match counts grouped by immutable rule labels stored in session.db.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SecurityRuleStatsByRule {
@@ -221,6 +228,7 @@ pub struct SecurityRuleStats {
     pub total: u64,
     pub by_action: Vec<SecurityRuleActionCount>,
     pub by_event_type: Vec<SecurityRuleEventTypeCount>,
+    pub by_level: Vec<SecurityRuleDetectionLevelCount>,
     pub by_rule: Vec<SecurityRuleStatsByRule>,
 }
 
@@ -721,6 +729,19 @@ impl DbReader {
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
+        let mut level_stmt = self.conn.prepare(
+            "SELECT detection_level, COUNT(*) FROM security_rule_events
+             GROUP BY detection_level ORDER BY detection_level",
+        )?;
+        let by_level = level_stmt
+            .query_map([], |row| {
+                Ok(SecurityRuleDetectionLevelCount {
+                    detection_level: row.get(0)?,
+                    count: row.get::<_, i64>(1)? as u64,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
         let mut rule_stmt = self.conn.prepare(
             "SELECT
                 sre.rule_id,
@@ -758,6 +779,7 @@ impl DbReader {
             total,
             by_action,
             by_event_type,
+            by_level,
             by_rule,
         })
     }
@@ -2136,6 +2158,14 @@ mod tests {
             .by_event_type
             .iter()
             .any(|entry| entry.event_type == "model.call" && entry.count == 2));
+        assert!(stats
+            .by_level
+            .iter()
+            .any(|entry| entry.detection_level == "critical" && entry.count == 2));
+        assert!(stats
+            .by_level
+            .iter()
+            .any(|entry| entry.detection_level == "none" && entry.count == 1));
         let block = stats
             .by_rule
             .iter()

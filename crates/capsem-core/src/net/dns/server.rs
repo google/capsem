@@ -159,6 +159,9 @@ fn apply_security_enforcement_fields(
     result: &mut DnsHandlerResult,
     enforcement: &SecurityEnforcementDecision,
 ) {
+    if result.matched_rule.is_none() {
+        result.matched_rule = enforcement.rule_id.clone();
+    }
     result.policy_mode = Some("security_event".to_string());
     result.policy_action = Some(enforcement.action.as_str().to_string());
     result.policy_rule = enforcement.rule_id.clone();
@@ -418,7 +421,9 @@ impl DnsHandler {
                     qtype = query.qtype,
                     "dns handler: answer cache hit"
                 );
-                return DnsHandlerResult::allowed(cached, query, 0, rcode);
+                let mut result = DnsHandlerResult::allowed(cached, query, 0, rcode);
+                apply_security_enforcement_fields(&mut result, &dns_evaluation.enforcement);
+                return result;
             }
             ::metrics::counter!(m::DNS_CACHE_MISSES_TOTAL).increment(1);
         }
@@ -439,7 +444,10 @@ impl DnsHandler {
                         cache.insert(&query.qname, query.qtype, query.qclass, &resp);
                     }
                 }
-                DnsHandlerResult::allowed(resp, query, elapsed.as_millis() as u64, rcode)
+                let mut result =
+                    DnsHandlerResult::allowed(resp, query, elapsed.as_millis() as u64, rcode);
+                apply_security_enforcement_fields(&mut result, &dns_evaluation.enforcement);
+                result
             }
             Err(e) => {
                 ::metrics::counter!(m::DNS_UPSTREAM_FAILURES_TOTAL).increment(1);

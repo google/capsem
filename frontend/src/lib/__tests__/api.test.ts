@@ -333,6 +333,7 @@ describe('api', () => {
         total: 1,
         by_action: [{ rule_action: 'block', count: 1 }],
         by_event_type: [{ event_type: 'dns.query', count: 1 }],
+        by_level: [{ detection_level: 'high', count: 1 }],
         by_rule: [{
           rule_id: 'corp.rules.block_dns',
           rule_action: 'block',
@@ -351,9 +352,9 @@ describe('api', () => {
     it('VM detection and enforcement helpers use profile-scoped runtime routes', async () => {
       mockFetch
         .mockReturnValueOnce(jsonResponse([]))
-        .mockReturnValueOnce(jsonResponse({ total: 0, by_action: [], by_event_type: [], by_rule: [] }))
+        .mockReturnValueOnce(jsonResponse({ total: 0, by_action: [], by_event_type: [], by_level: [], by_rule: [] }))
         .mockReturnValueOnce(jsonResponse([]))
-        .mockReturnValueOnce(jsonResponse({ total: 0, by_action: [], by_event_type: [], by_rule: [] }));
+        .mockReturnValueOnce(jsonResponse({ total: 0, by_action: [], by_event_type: [], by_level: [], by_rule: [] }));
 
       await api.getVmDetectionLatest('vm-1', 5);
       await api.getVmDetectionStatus('vm-1');
