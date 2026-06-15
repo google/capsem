@@ -1006,6 +1006,23 @@ next one, and stage only the files for that slice.
     token counts, byte counts, tool-call/tool-response rows when applicable,
     file write rows, security/detection rows, UDS route output, HTTP route
     output, and session DB rows all agree.
+  - 2026-06-15 progress: Codex and Claude launcher paths now run as real
+    in-VM clients through `ollama launch`, hit the hermetic mock server through
+    Capsem, write random UUID4 content to random guest paths, and reconcile the
+    full model/HTTP/DNS/security/file/tool ledger. Claude specifically caught
+    and fixed two bugs: Anthropic streaming `tool_use` replay was missing, and
+    the 64 KiB AI body capture clipped real Claude continuation requests before
+    trailing `tool_result` blocks could be parsed.
+  - Proof: `uv run pytest
+    tests/test_mock_server_launcher.py::test_mock_server_replays_streaming_anthropic_tool_use_shape
+    tests/test_mock_server_launcher.py::test_mock_server_replays_streaming_anthropic_final_shape
+    -q`; `cargo test -p capsem-core
+    body_preview_cap_keeps_ai_capture_independent_from_body_logging --
+    --nocapture`; `cargo build -p capsem-service -p capsem-process -p
+    capsem-gateway`; `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run pytest
+    tests/ironbank/test_model_client_ledger_contract.py::test_ollama_launch_codex_ledger_contract
+    tests/ironbank/test_model_client_ledger_contract.py::test_ollama_launch_claude_ledger_contract
+    -q -s --tb=short`.
   - Current debt: existing recorder/replay and live Ollama proof are useful,
     but they are still too thin; they do not yet prove real SDK/client
     behavior or file-writing agent outcomes.

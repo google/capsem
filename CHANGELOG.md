@@ -75,6 +75,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reconcile exact HTTP bodies with
   `model_calls`, `tool_calls`, `fs_events`, `net_events`, and
   `security_rule_events`.
+- Upgraded the mock server and Ironbank launcher proof for
+  `ollama launch claude`: the mock now replays Anthropic streaming `tool_use`
+  and final-message SSE shapes, structurally detects real `tool_result` blocks,
+  and the ledger proof covers Claude's real `Bash` tool call, tool response,
+  token usage, file write, HTTP/model rows, DNS, and security rules. AI request
+  capture is now bounded at 1 MiB by default so large real agent continuations
+  are parseable instead of clipping away trailing tool results.
 - Tightened the config authority guard so `config/` can only contain the
   declared `settings/`, `corp/`, `profiles/`, `docker/`, and `data/` roots;
   active docs and skills now explicitly reject admin/default/guest/preset/

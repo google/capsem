@@ -214,7 +214,38 @@ def _usage_from_upstream(row: dict[str, Any]) -> dict[str, int] | None:
             for payload in payloads
             if isinstance(payload.get("response"), dict)
         ]
-        payload = response_payloads[-1] if response_payloads else {}
+        if response_payloads:
+            payload = response_payloads[-1]
+        else:
+            message_start = next(
+                (
+                    payload["message"]
+                    for payload in payloads
+                    if payload.get("type") == "message_start"
+                    and isinstance(payload.get("message"), dict)
+                ),
+                {},
+            )
+            message_delta = next(
+                (
+                    payload
+                    for payload in reversed(payloads)
+                    if payload.get("type") == "message_delta"
+                    and isinstance(payload.get("usage"), dict)
+                ),
+                {},
+            )
+            start_usage = message_start.get("usage") if isinstance(message_start, dict) else {}
+            delta_usage = message_delta.get("usage") if isinstance(message_delta, dict) else {}
+            if isinstance(start_usage, dict) and isinstance(delta_usage, dict):
+                payload = {
+                    "usage": {
+                        "input_tokens": int(start_usage.get("input_tokens") or 0),
+                        "output_tokens": int(delta_usage.get("output_tokens") or 0),
+                    }
+                }
+            else:
+                payload = {}
     else:
         payload = json.loads(body)
 

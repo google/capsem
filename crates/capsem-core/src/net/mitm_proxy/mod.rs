@@ -75,7 +75,7 @@ pub type UpstreamTlsConfig = rustls::ClientConfig;
 
 /// Maximum bytes to buffer when peeking at the TLS ClientHello.
 const MAX_HELLO_SIZE: usize = 16384;
-const AI_BODY_PREVIEW: usize = 64 * 1024;
+const AI_BODY_PREVIEW: usize = 1024 * 1024;
 const MCP_BODY_PREVIEW: usize = 64 * 1024;
 const CREDENTIAL_BODY_PREVIEW: usize = 16 * 1024;
 
@@ -448,7 +448,7 @@ fn body_preview_cap(
     max_body: usize,
 ) -> usize {
     if ai_provider.is_some() {
-        return AI_BODY_PREVIEW.max(if log_bodies { max_body } else { 0 });
+        return AI_BODY_PREVIEW.max(max_body);
     }
     if log_bodies {
         return max_body;
@@ -3020,6 +3020,16 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713" && ip.value == "127.0.0.
                 "/v1internal:streamGenerateContent",
                 false,
                 0
+            ),
+            AI_BODY_PREVIEW
+        );
+        assert_eq!(
+            body_preview_cap(
+                Some(ProviderKind::Anthropic),
+                "127.0.0.1",
+                "/v1/messages",
+                false,
+                128 * 1024
             ),
             AI_BODY_PREVIEW
         );

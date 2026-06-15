@@ -164,6 +164,14 @@ def model_client_env():
                 listen_ports = [3713]
                 allowed_remote_targets = ["127.0.0.1:3713"]
 
+                [ai.ollama.rules.local_fixture_endpoint]
+                name = "ollama_local_fixture_endpoint"
+                action = "allow"
+                priority = -100
+                detection_level = "informational"
+                reason = "Declare the hermetic Ollama-compatible endpoint for Ironbank launcher tests."
+                match = 'http.host == "127.0.0.1" && tcp.port == "3713" && (http.path == "/" || http.path == "/api/show" || http.path == "/api/tags" || http.path == "/api/chat" || http.path == "/v1/responses" || http.path == "/v1/messages")'
+
                 [corp.rules.allow_ironbank_mock_model_server]
                 name = "allow_ironbank_mock_model_server"
                 action = "allow"

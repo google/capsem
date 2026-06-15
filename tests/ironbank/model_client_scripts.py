@@ -357,8 +357,8 @@ completed = subprocess.run(
 )
 if completed.returncode != 0:
     raise SystemExit((completed.stdout or "") + (completed.stderr or ""))
-call_args = {"cmd": "printf '%s\\n' " + NONCE + " > " + TARGET, "yield_time_ms": 1000, "max_output_tokens": 2000}
-emit_result("ollama", "127.0.0.1", "/v1/messages", "gemma4:latest", NONCE, "ledger reasoning", "exec_command", call_args, "Process exited with code 0")
+call_args = {"command": "printf '%s\\n' " + NONCE + " > " + TARGET, "description": "write ironbank token"}
+emit_result("ollama", "127.0.0.1", "/v1/messages", "gemma4:latest", NONCE, "ledger reasoning", "Bash", call_args, "(Bash completed with no output)")
 '''
     ).strip()
 

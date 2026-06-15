@@ -131,6 +131,19 @@ def _post_json(url: str, value: object) -> dict:
     return body
 
 
+def _post_raw(url: str, value: object) -> str:
+    request = Request(
+        url,
+        data=json.dumps(value).encode(),
+        headers={"content-type": "application/json"},
+        method="POST",
+    )
+    with urlopen(request, timeout=2) as response:
+        assert response.status == 200
+        assert response.headers["content-type"] == "text/event-stream"
+        return response.read().decode()
+
+
 def _get_json(url: str) -> dict:
     with urlopen(url, timeout=2) as response:
         assert response.status == 200
@@ -263,5 +276,89 @@ def test_mock_server_replays_ollama_openai_chat_completion_shape() -> None:
             "fixture_lookup"
         )
         assert json.loads(first_record["response_body"]) == tool_payload
+    finally:
+        stop_process(proc)
+
+
+def test_mock_server_replays_streaming_anthropic_tool_use_shape() -> None:
+    proc = None
+    try:
+        proc, ready = start_mock_server()
+        base_url = ready["base_url"]
+        target = "/root/claude-stream-tool-0123456789abcdef0123456789abcdef.txt"
+        token = "0123456789abcdef0123456789abcdef"
+        body = {
+            "model": "gemma4:latest",
+            "stream": True,
+            "messages": [
+                {"role": "user", "content": f"Write uuid4 hex value {token} to {target}."},
+                {
+                    "role": "system",
+                    "content": "Documentation mentions tool_result but this is not a result block.",
+                },
+            ],
+            "tools": [
+                {
+                    "name": "Bash",
+                    "description": "run a command",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"command": {"type": "string"}},
+                    },
+                }
+            ],
+        }
+        stream = _post_raw(f"{base_url}/v1/messages?beta=true", body)
+
+        assert "event: message_start" in stream
+        assert "event: content_block_start" in stream
+        assert "event: content_block_delta" in stream
+        assert "event: message_delta" in stream
+        assert "event: message_stop" in stream
+        assert '"type":"tool_use"' in stream
+        assert '"name":"Bash"' in stream
+        assert '"type":"input_json_delta"' in stream
+        assert "printf" in stream
+        assert token in stream
+        assert target in stream
+        assert '"stop_reason":"tool_use"' in stream
+    finally:
+        stop_process(proc)
+
+
+def test_mock_server_replays_streaming_anthropic_final_shape() -> None:
+    proc = None
+    try:
+        proc, ready = start_mock_server()
+        base_url = ready["base_url"]
+        token = "fedcba9876543210fedcba9876543210"
+        body = {
+            "model": "gemma4:latest",
+            "stream": True,
+            "messages": [
+                {"role": "user", "content": f"Write uuid4 hex value {token} to /root/out.txt."},
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "toolu_capsem_write_poem",
+                            "content": "Process exited with code 0",
+                        }
+                    ],
+                },
+            ],
+            "tools": [{"name": "Bash"}],
+        }
+        stream = _post_raw(f"{base_url}/v1/messages?beta=true", body)
+
+        assert "event: message_start" in stream
+        assert '"type":"thinking"' in stream
+        assert '"type":"thinking_delta"' in stream
+        assert '"thinking":"ledger reasoning"' in stream
+        assert '"type":"text_delta"' in stream
+        assert token in stream
+        assert '"stop_reason":"end_turn"' in stream
+        assert "tool_use" not in stream
     finally:
         stop_process(proc)

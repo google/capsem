@@ -383,6 +383,78 @@ def _anthropic_stream_body() -> bytes:
     ).encode()
 
 
+def _anthropic_tool_use_stream_body(
+    model: str = "claude-sonnet-4-20250514",
+    payload: dict | None = None,
+) -> bytes:
+    tool_payload = _anthropic_tool_use_payload(model, payload)
+    tool_block = tool_payload["content"][0]
+    partial_json = json.dumps(tool_block["input"], separators=(",", ":"))
+    message = {
+        "id": tool_payload["id"],
+        "type": "message",
+        "role": "assistant",
+        "model": model,
+        "content": [],
+        "stop_reason": None,
+        "stop_sequence": None,
+        "usage": {"input_tokens": 31, "output_tokens": 1},
+    }
+    return (
+        "event: message_start\n"
+        f"data: {json.dumps({'type': 'message_start', 'message': message}, separators=(',', ':'))}\n\n"
+        "event: content_block_start\n"
+        f"data: {json.dumps({'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'tool_use', 'id': tool_block['id'], 'name': tool_block['name'], 'input': {}}}, separators=(',', ':'))}\n\n"
+        "event: content_block_delta\n"
+        f"data: {json.dumps({'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'input_json_delta', 'partial_json': partial_json}}, separators=(',', ':'))}\n\n"
+        "event: content_block_stop\n"
+        f"data: {json.dumps({'type': 'content_block_stop', 'index': 0}, separators=(',', ':'))}\n\n"
+        "event: message_delta\n"
+        f"data: {json.dumps({'type': 'message_delta', 'delta': {'stop_reason': 'tool_use', 'stop_sequence': None}, 'usage': {'output_tokens': 17}}, separators=(',', ':'))}\n\n"
+        "event: message_stop\n"
+        f"data: {json.dumps({'type': 'message_stop'}, separators=(',', ':'))}\n\n"
+    ).encode()
+
+
+def _anthropic_final_stream_body(
+    model: str = "claude-sonnet-4-20250514",
+    payload: dict | None = None,
+) -> bytes:
+    final_payload = _anthropic_final_payload(model, payload)
+    thinking = final_payload["content"][0]["thinking"]
+    text = final_payload["content"][1]["text"]
+    message = {
+        "id": final_payload["id"],
+        "type": "message",
+        "role": "assistant",
+        "model": model,
+        "content": [],
+        "stop_reason": None,
+        "stop_sequence": None,
+        "usage": {"input_tokens": 7, "output_tokens": 1},
+    }
+    return (
+        "event: message_start\n"
+        f"data: {json.dumps({'type': 'message_start', 'message': message}, separators=(',', ':'))}\n\n"
+        "event: content_block_start\n"
+        f"data: {json.dumps({'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'thinking', 'thinking': ''}}, separators=(',', ':'))}\n\n"
+        "event: content_block_delta\n"
+        f"data: {json.dumps({'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'thinking_delta', 'thinking': thinking}}, separators=(',', ':'))}\n\n"
+        "event: content_block_stop\n"
+        f"data: {json.dumps({'type': 'content_block_stop', 'index': 0}, separators=(',', ':'))}\n\n"
+        "event: content_block_start\n"
+        f"data: {json.dumps({'type': 'content_block_start', 'index': 1, 'content_block': {'type': 'text', 'text': ''}}, separators=(',', ':'))}\n\n"
+        "event: content_block_delta\n"
+        f"data: {json.dumps({'type': 'content_block_delta', 'index': 1, 'delta': {'type': 'text_delta', 'text': text}}, separators=(',', ':'))}\n\n"
+        "event: content_block_stop\n"
+        f"data: {json.dumps({'type': 'content_block_stop', 'index': 1}, separators=(',', ':'))}\n\n"
+        "event: message_delta\n"
+        f"data: {json.dumps({'type': 'message_delta', 'delta': {'stop_reason': 'end_turn', 'stop_sequence': None}, 'usage': {'output_tokens': 5}}, separators=(',', ':'))}\n\n"
+        "event: message_stop\n"
+        f"data: {json.dumps({'type': 'message_stop'}, separators=(',', ':'))}\n\n"
+    ).encode()
+
+
 def _anthropic_message_payload(model: str = "claude-sonnet-4-20250514") -> dict:
     return {
         "id": "msg_ironbank_01",
@@ -397,7 +469,16 @@ def _anthropic_message_payload(model: str = "claude-sonnet-4-20250514") -> dict:
 
 
 def _anthropic_has_tool_result(payload: dict) -> bool:
-    return "tool_result" in json.dumps(payload, separators=(",", ":"))
+    def visit(value: object) -> bool:
+        if isinstance(value, dict):
+            if value.get("type") == "tool_result":
+                return True
+            return any(visit(child) for child in value.values())
+        if isinstance(value, list):
+            return any(visit(child) for child in value)
+        return False
+
+    return visit(payload.get("messages", []))
 
 
 def _anthropic_tool_name(payload: dict) -> str:
@@ -733,14 +814,27 @@ class MockHandler(BaseHTTPRequestHandler):
             self._send(HTTPStatus.OK, _google_stream_body(), "text/event-stream")
         elif path == "/v1/messages":
             payload = self._json_body()
+            model = (
+                payload.get("model")
+                if isinstance(payload.get("model"), str)
+                else "claude-sonnet-4-20250514"
+            )
             if payload.get("stream") is True:
-                self._send(HTTPStatus.OK, _anthropic_stream_body(), "text/event-stream")
+                if _anthropic_has_tool_result(payload):
+                    self._send(
+                        HTTPStatus.OK,
+                        _anthropic_final_stream_body(model, payload),
+                        "text/event-stream",
+                    )
+                elif payload.get("tools"):
+                    self._send(
+                        HTTPStatus.OK,
+                        _anthropic_tool_use_stream_body(model, payload),
+                        "text/event-stream",
+                    )
+                else:
+                    self._send(HTTPStatus.OK, _anthropic_stream_body(), "text/event-stream")
             else:
-                model = (
-                    payload.get("model")
-                    if isinstance(payload.get("model"), str)
-                    else "claude-sonnet-4-20250514"
-                )
                 if _anthropic_has_tool_result(payload):
                     self._send_json(_anthropic_final_payload(model, payload))
                 elif payload.get("tools"):
