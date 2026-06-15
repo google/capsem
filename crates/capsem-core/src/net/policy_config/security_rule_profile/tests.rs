@@ -691,7 +691,7 @@ fn built_in_local_network_guard_asks_unless_explicit_ollama_rule_allows() {
     );
     assert!(
         ollama_eval
-            .enforcement_rules()
+            .matched_rules()
             .iter()
             .any(|rule| rule.rule_id == "profiles.rules.default_000_local_network"
                 && rule.action == SecurityRuleAction::Ask),

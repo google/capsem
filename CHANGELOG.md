@@ -13,6 +13,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   parsed without pretending protocol and provider are aliases. Recognized model
   protocol traffic on undeclared endpoints now emits `model.provider =
   "unknown"` and hits a default informational detection rule.
+- Fixed local model enforcement so explicit profile/corp allow rules win over
+  the built-in local-network `ask` default while the default rule remains
+  visible in the security ledger. Model request/response events now carry the
+  same `tcp.port`/`ip.value` transport facts as HTTP events, and Ironbank
+  proves UDS and HTTP latest routes expose the same unknown-provider detection
+  row.
+- Tightened credential brokerage for unknown OpenAI-compatible and
+  Anthropic-compatible model endpoints: `Authorization` and `x-api-key` headers
+  are brokered from protocol/header shape without relabeling the provider, and
+  async file attribution keeps the first credential seen for a trace.
 - Refactored the Ironbank model-client proof into composable script-builder
   and ledger-assertion helpers, and made the Codex CLI fixture use the same
   brokered OpenAI credential path as the SDK/API clients instead of a

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
 import textwrap
@@ -13,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
+from helpers.gateway import GatewayInstance, TcpHttpClient
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
 from helpers.service import ServiceInstance, wait_exec_ready, vm_name
 
@@ -656,14 +658,54 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
     service = ServiceInstance()
     client = None
     mock_proc = None
+    gateway: GatewayInstance | None = None
+    gateway_client: TcpHttpClient | None = None
     session_id = vm_name("ironbank-sdk")
     script_name = f"ironbank-model-sdk-{uuid.uuid4().hex[:8]}.py"
+    old_corp_config = os.environ.get("CAPSEM_CORP_CONFIG")
     try:
-        service.start()
-        client = service.client()
         mock_proc, ready = start_mock_server(
             request_log=service.tmp_dir / "mock-server-requests.jsonl"
         )
+        corp_path = service.tmp_dir / "corp.toml"
+        corp_path.write_text(
+            textwrap.dedent(
+                f"""
+                refresh_policy = "24h"
+
+                [network.dns]
+                upstreams = [{json.dumps(ready["dns_udp_addr"])}]
+
+                [settings."security.web.http_upstream_ports"]
+                value = [80, 3713, 8080, 11434]
+                modified = "2026-06-14T00:00:00Z"
+
+                [corp.rules.allow_ironbank_mock_model_server]
+                name = "allow_ironbank_mock_model_server"
+                action = "allow"
+                priority = -100
+                detection_level = "informational"
+                reason = "Allow the hermetic Ironbank model fixture while preserving local-network ask defaults."
+                match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
+
+                [corp.rules.allow_ironbank_mock_mcp_server]
+                name = "allow_ironbank_mock_mcp_server"
+                action = "allow"
+                priority = -100
+                detection_level = "informational"
+                reason = "Allow the hermetic Ironbank observed MCP fixture while preserving local-network ask defaults."
+                match = 'mcp.server.name == "observed:127.0.0.1:3713/mcp" || (ip.value == "127.0.0.1" && tcp.port == "3713")'
+                """
+            ).strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        os.environ["CAPSEM_CORP_CONFIG"] = str(corp_path)
+        service.start()
+        client = service.client()
+        gateway = GatewayInstance(uds_path=service.uds_path)
+        gateway.start()
+        gateway_client = TcpHttpClient(gateway.base_url, gateway.token)
         mock_base_url = ready["base_url"]
 
         create = client.post(
@@ -1093,7 +1135,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             assert model_trace_ids <= net_trace_ids
             for row in model_rows:
                 _assert_event_id(row["event_id"])
-                assert row["provider"] == "openai"
+                assert row["provider"] == "unknown"
                 assert row["model"] == "gemma4:latest"
                 assert row["method"] == "POST"
                 assert row["status_code"] == 200
@@ -1193,7 +1235,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             )
             google_stream = google_stream_rows[-1]
             _assert_event_id(google_stream["event_id"])
-            assert google_stream["provider"] == "google"
+            assert google_stream["provider"] == "unknown"
             assert google_stream["model"] == "gemini-2.5-flash"
             assert google_stream["method"] == "POST"
             assert google_stream["status_code"] == 200
@@ -1224,7 +1266,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             )
             anthropic_stream = anthropic_stream_rows[-1]
             _assert_event_id(anthropic_stream["event_id"])
-            assert anthropic_stream["provider"] == "anthropic"
+            assert anthropic_stream["provider"] == "unknown"
             assert anthropic_stream["model"] == "claude-sonnet-4-20250514"
             assert anthropic_stream["method"] == "POST"
             assert anthropic_stream["status_code"] == 200
@@ -1267,10 +1309,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             }
             for row in tool_rows:
                 _assert_event_id(row["event_id"])
-                expected_provider = (
-                    "unknown" if row["model_call_id"] == unknown_shape["id"] else "openai"
-                )
-                assert row["provider"] == expected_provider
+                assert row["provider"] == "unknown"
                 assert row["status"] == "observed"
                 assert row["call_index"] == 0
                 assert row["arguments"] == '{"query":"Capsem ironbank poem"}'
@@ -1296,13 +1335,18 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             assert {"initialize", "tools/list", "tools/call"} <= observed_methods
             assert sum(1 for row in observed_mcp_rows if row["method"] == "tools/call") == 1
             assert all(row["tool_name"] is None for row in observed_mcp_rows if row["method"] != "tools/call")
+            observed_mcp_trace_ids = {row["trace_id"] for row in observed_mcp_rows}
+            assert len(observed_mcp_trace_ids) == 1
+            assert None not in observed_mcp_trace_ids
             observed_tool_call = next(
                 row for row in observed_mcp_rows if row["method"] == "tools/call"
             )
             _assert_event_id(observed_tool_call["event_id"])
             assert observed_tool_call["tool_name"] == "fixture_lookup"
             assert observed_tool_call["decision"] == "allowed"
-            assert observed_tool_call["trace_id"] in {row["trace_id"] for row in tool_rows}
+            assert observed_tool_call["trace_id"] not in {
+                row["trace_id"] for row in tool_rows
+            }
             assert observed_tool_call["tool_name"] in {row["tool_name"] for row in tool_rows}
             assert observed_tool_call["bytes_sent"] > 0
             assert observed_tool_call["bytes_received"] > 0
@@ -1393,8 +1437,8 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 rule_ids = {item["rule_id"] for item in rows}
                 actions = {item["rule_action"] for item in rows}
                 assert "allow" in actions
+                assert "corp.rules.allow_ironbank_mock_model_server" in rule_ids
                 assert "profiles.rules.default_http" in rule_ids
-                assert "profiles.rules.ai_ollama_http_local_host" in rule_ids
                 assert "profiles.rules.default_000_local_network" in rule_ids
                 assert any(
                     item["rule_id"] == "profiles.rules.default_000_local_network"
@@ -1405,7 +1449,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 rows = security_by_event[row["event_id"]]
                 assert {item["rule_action"] for item in rows} == {"allow"}
                 assert {
-                    "profiles.rules.ai_openai_model_api",
+                    "profiles.rules.default_unknown_model_provider",
                     "profiles.rules.default_model",
                 } <= {item["rule_id"] for item in rows}
             shape_security_rows = security_by_event[unknown_shape["event_id"]]
@@ -1419,6 +1463,36 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 and item["detection_level"] == "informational"
                 for item in shape_security_rows
             )
+            uds_latest = client.get(f"/vms/{session_id}/security/latest?limit=500", timeout=30)
+            assert isinstance(uds_latest, list)
+            uds_shape_latest = [
+                row
+                for row in uds_latest
+                if row["event_id"] == unknown_shape["event_id"]
+                and row["rule_id"] == "profiles.rules.default_unknown_model_provider"
+            ]
+            assert len(uds_shape_latest) == 1
+            assert uds_shape_latest[0]["event_type"] == "model.call"
+            assert uds_shape_latest[0]["rule_action"] == "allow"
+            assert uds_shape_latest[0]["detection_level"] == "informational"
+            uds_shape_event = json.loads(uds_shape_latest[0]["event_json"])
+            assert uds_shape_event["event_type"] == "model.call"
+            assert uds_shape_event["model"]["provider"] == "unknown"
+            assert uds_shape_event["model"]["name"] == "gpt-4.1"
+
+            assert gateway_client is not None
+            gateway_latest = gateway_client.get(
+                f"/vms/{session_id}/security/latest?limit=500",
+                timeout=30,
+            )
+            assert isinstance(gateway_latest, list)
+            gateway_shape_latest = [
+                row
+                for row in gateway_latest
+                if row["event_id"] == unknown_shape["event_id"]
+                and row["rule_id"] == "profiles.rules.default_unknown_model_provider"
+            ]
+            assert gateway_shape_latest == uds_shape_latest
             declared_tool_security_rows = security_by_event[declared_tool_only["event_id"]]
             assert {item["rule_action"] for item in declared_tool_security_rows} == {"allow"}
             assert {
@@ -1547,7 +1621,13 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             assert poem_rows
             assert any(row["action"] in {"created", "modified"} for row in poem_rows)
             assert all(row["size"] is None or row["size"] >= len(EXPECTED_POEM) for row in poem_rows)
-            assert all(row["credential_ref"] is None for row in poem_rows)
+            causally_linked_poem_rows = [
+                row for row in poem_rows if row["action"] in {"created", "modified"}
+            ]
+            assert causally_linked_poem_rows
+            assert all(
+                row["credential_ref"] == credential_ref for row in causally_linked_poem_rows
+            )
 
             exec_row = conn.execute(
                 "SELECT * FROM exec_events WHERE command = ? ORDER BY id DESC LIMIT 1",
@@ -1643,7 +1723,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             by_path = {row["path"]: row for row in real_client_models}
             assert {"/v1/messages", "/v1/chat/completions", "/api/chat"} <= set(by_path)
             anthropic_sdk_row = by_path["/v1/messages"]
-            assert anthropic_sdk_row["provider"] == "anthropic"
+            assert anthropic_sdk_row["provider"] == "unknown"
             assert anthropic_sdk_row["model"] == "claude-sonnet-4-20250514"
             assert anthropic_sdk_row["messages_count"] == 1
             assert anthropic_sdk_row["tools_count"] == 0
@@ -1657,7 +1737,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 anthropic_sdk_row["request_body_preview"] or ""
             )
             litellm_row = by_path["/v1/chat/completions"]
-            assert litellm_row["provider"] == "openai"
+            assert litellm_row["provider"] == "unknown"
             assert litellm_row["model"] == "gemma4:latest"
             assert litellm_row["messages_count"] == 1
             assert litellm_row["tools_count"] == 0
@@ -1671,7 +1751,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 litellm_row["request_body_preview"] or ""
             )
             ollama_row = by_path["/api/chat"]
-            assert ollama_row["provider"] == "ollama"
+            assert ollama_row["provider"] == "unknown"
             assert ollama_row["model"] == "gemma4:latest"
             assert ollama_row["messages_count"] == 1
             assert ollama_row["tools_count"] == 0
@@ -1759,7 +1839,13 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 client.delete(f"/vms/{session_id}/delete", timeout=60)
             except Exception:
                 pass
+        if gateway is not None:
+            gateway.stop()
         service.stop()
+        if old_corp_config is None:
+            os.environ.pop("CAPSEM_CORP_CONFIG", None)
+        else:
+            os.environ["CAPSEM_CORP_CONFIG"] = old_corp_config
 
 
 def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():

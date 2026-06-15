@@ -937,7 +937,7 @@ pub async fn emit_matching_security_rules_with_decision(
     let mut emitted = 0;
     let enriched_event = event_with_rule_detections(event, evaluation.detections());
     let mut decision_state = enriched_event.decision.clone();
-    for rule in evaluation.matched_rules() {
+    for rule in evaluation.enforcement_rules() {
         emit_security_decision_transition(
             db,
             event_id.clone(),
@@ -948,6 +948,8 @@ pub async fn emit_matching_security_rules_with_decision(
             timestamp_unix_ms,
         )
         .await?;
+    }
+    for rule in evaluation.matched_rules() {
         emit_security_rule_match(
             db,
             event_id.clone(),
@@ -1014,7 +1016,7 @@ pub fn emit_matching_security_rules_with_decision_blocking(
     let mut emitted = 0;
     let enriched_event = event_with_rule_detections(event, evaluation.detections());
     let mut decision_state = enriched_event.decision.clone();
-    for rule in evaluation.matched_rules() {
+    for rule in evaluation.enforcement_rules() {
         emit_security_decision_transition_blocking(
             db,
             event_id.clone(),
@@ -1024,6 +1026,8 @@ pub fn emit_matching_security_rules_with_decision_blocking(
             &mut decision_state,
             timestamp_unix_ms,
         )?;
+    }
+    for rule in evaluation.matched_rules() {
         emit_security_rule_match_blocking(
             db,
             event_id.clone(),

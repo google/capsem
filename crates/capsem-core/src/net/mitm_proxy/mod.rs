@@ -983,7 +983,7 @@ fn http_request_security_event(
     body: Option<&Bytes>,
 ) -> SecurityEvent {
     let body = body.and_then(|body| std::str::from_utf8(body).ok().map(ToOwned::to_owned));
-    let mut event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
         .with_http(HttpSecurityEvent {
             host: Some(domain.to_string()),
             method: Some(method.to_string()),
@@ -992,16 +992,23 @@ fn http_request_security_event(
             status: None,
             body,
         })
-        .with_tcp(TcpSecurityEvent {
-            port: Some(upstream_port.to_string()),
-        })
         .with_http_request(crate::security_engine::HttpRequestSecurityEvent::new(
             domain,
             ai_provider,
             headers,
             query,
         ));
+    security_event_with_transport(event, domain, upstream_port)
+}
 
+fn security_event_with_transport(
+    mut event: SecurityEvent,
+    domain: &str,
+    upstream_port: u16,
+) -> SecurityEvent {
+    event = event.with_tcp(TcpSecurityEvent {
+        port: Some(upstream_port.to_string()),
+    });
     if let Ok(ip) = domain.parse::<IpAddr>() {
         event = event.with_ip(IpSecurityEvent {
             value: Some(ip.to_string()),
@@ -1955,6 +1962,7 @@ async fn handle_request(
                 status: None,
                 body: Some(String::from_utf8_lossy(&body_bytes).to_string()),
             });
+            let model_event = security_event_with_transport(model_event, domain, upstream_port);
             let model_evaluation = match crate::security_engine::evaluate_security_boundary(
                 &rules,
                 config.telemetry.plugin_policy.read().unwrap().clone(),
@@ -2485,6 +2493,7 @@ async fn handle_request(
                 status: Some(resp_status.to_string()),
                 body: Some(String::from_utf8_lossy(&response_body).to_string()),
             });
+            let model_event = security_event_with_transport(model_event, domain, upstream_port);
             let model_evaluation = match crate::security_engine::evaluate_security_boundary(
                 &rules,
                 config.telemetry.plugin_policy.read().unwrap().clone(),

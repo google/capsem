@@ -958,6 +958,22 @@ next one, and stage only the files for that slice.
     `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run python -m pytest
     tests/ironbank/test_model_sdk_ledger.py::test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox
     -q -s` (`1 passed in 2.97s`).
+  - 2026-06-14 correction: the explicit local fixture allow now wins the
+    enforcement decision while `profiles.rules.default_000_local_network`
+    remains visible as a matched rule. Model request/response security events
+    carry `tcp.port` and `ip.value` just like HTTP events, so the CEL rail can
+    decide local OpenAI-compatible model traffic without a hidden bypass.
+    Ironbank proves the UDS and HTTP latest routes expose the same unknown
+    provider detection row.
+  - Proof: `cargo test -p capsem-core
+    default_rules_do_not_override_specific_enforcement_decisions --
+    --nocapture`; `cargo test -p capsem-core
+    built_in_local_network_guard_asks_unless_explicit_ollama_rule_allows --
+    --nocapture`; `cargo test -p capsem-core local_network -- --nocapture`;
+    `cargo build -p capsem-service -p capsem-process -p capsem-gateway`;
+    `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run pytest
+    tests/ironbank/test_model_sdk_ledger.py::test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox
+    -q -s --tb=short`.
 - [x] RED/GREEN: profile images ship Ollama through the builder/profile rail,
   not through manual VM repair.
   - 2026-06-12 progress: `config/profiles/{code,co-work}/build.sh` runs the
@@ -1585,6 +1601,21 @@ next one, and stage only the files for that slice.
     -q -s --tb=short`; `cargo test -p capsem-core --lib
     provider_detection -- --nocapture`; `uv run ruff check
     tests/ironbank/test_model_sdk_ledger.py scripts/mock_server_runtime.py`.
+  - 2026-06-14 correction: the OpenAI SDK local-model Ironbank test now treats
+    all undeclared hermetic OpenAI/Anthropic/Gemini/Ollama-shaped endpoints as
+    provider `unknown` while preserving parser protocol behavior. The same run
+    asserts `profiles.rules.default_unknown_model_provider` in
+    `security_rule_events`, UDS `/security/latest`, and gateway
+    `/security/latest` for the exact model event id. Unknown-provider
+    credential headers are still brokered by header/protocol shape so the
+    OpenAI-compatible `Authorization` and Anthropic-compatible `x-api-key`
+    paths keep working without provider aliasing.
+  - Proof: `cargo test -p capsem-core http_detector_brokers_unknown --
+    --nocapture`; `uv run ruff check tests/ironbank/test_model_sdk_ledger.py`;
+    `python3 -m py_compile tests/ironbank/test_model_sdk_ledger.py`;
+    `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run pytest
+    tests/ironbank/test_model_sdk_ledger.py::test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox
+    -q -s --tb=short`.
 - [x] RED/GREEN: unknown remote MCP activity becomes route-visible profile
   evidence.
   - 2026-06-13 closure: the Ironbank SDK ledger proof now sends

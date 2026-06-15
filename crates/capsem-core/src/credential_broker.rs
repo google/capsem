@@ -517,6 +517,12 @@ fn provider_for_header_hint(
     if header == "x-goog-api-key" {
         return Some(CredentialProvider::Google);
     }
+    if matches!(ai_provider, Some(ProviderKind::Unknown)) && header == "authorization" {
+        return Some(CredentialProvider::OpenAi);
+    }
+    if matches!(ai_provider, Some(ProviderKind::Unknown)) && header == "x-api-key" {
+        return Some(CredentialProvider::Anthropic);
+    }
     let credential_header = header == "authorization"
         || header == "x-api-key"
         || header == "x-goog-api-key"

@@ -1708,6 +1708,131 @@ match = 'file.read.name == "SKILL.md"'
 }
 
 #[tokio::test]
+async fn default_rules_do_not_override_specific_enforcement_decisions() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db_path = tmp.path().join("session.db");
+    let writer = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
+    let rules = security_rule_set(
+        r#"
+[profiles.rules.allow_local_fixture]
+name = "allow_local_fixture"
+action = "allow"
+priority = 10
+detection_level = "informational"
+reason = "Hermetic fixture endpoint is explicitly allowed."
+match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
+
+[default.000_local_network]
+name = "local_network"
+action = "ask"
+priority = "default"
+reason = "Default ask before local network access."
+match = 'ip.value == "127.0.0.1" || http.host == "127.0.0.1"'
+"#,
+    );
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
+        .with_http(HttpSecurityEvent {
+            host: Some("127.0.0.1".into()),
+            method: Some("POST".into()),
+            path: Some("/v1/chat/completions".into()),
+            ..Default::default()
+        })
+        .with_ip(IpSecurityEvent {
+            value: Some("127.0.0.1".into()),
+            version: Some("4".into()),
+        })
+        .with_tcp(TcpSecurityEvent {
+            port: Some("3713".into()),
+        });
+
+    let boundary = evaluate_security_boundary(&rules, BTreeMap::new(), event.clone()).unwrap();
+    assert_eq!(boundary.matched_rule_count, 2);
+    assert_eq!(
+        boundary.enforcement.action,
+        SecurityEnforcementAction::Allow
+    );
+    assert_eq!(
+        boundary.enforcement.rule_id.as_deref(),
+        Some("profiles.rules.allow_local_fixture")
+    );
+    assert_eq!(
+        boundary.event.decision.effective,
+        SecurityDecisionKind::Allow
+    );
+
+    let event_id = emit_security_write(&writer, net_write(None))
+        .await
+        .expect("primary HTTP event must receive an id");
+    let emission = emit_matching_security_rules_with_decision(
+        &writer,
+        event_id,
+        RuntimeSecurityEventType::HttpRequest,
+        &rules,
+        &event,
+        1_789_000_000_265,
+    )
+    .await
+    .unwrap();
+    writer.shutdown_blocking();
+
+    assert_eq!(emission.emitted, 2);
+    assert_eq!(
+        emission.enforcement.action,
+        SecurityEnforcementAction::Allow
+    );
+    assert_eq!(
+        emission.enforcement.rule_id.as_deref(),
+        Some("profiles.rules.allow_local_fixture")
+    );
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let rule_rows: Vec<(String, String)> = {
+        let mut stmt = conn
+            .prepare("SELECT rule_id, rule_action FROM security_rule_events ORDER BY rule_id")
+            .unwrap();
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap()
+    };
+    assert_eq!(
+        rule_rows,
+        vec![
+            (
+                "profiles.rules.allow_local_fixture".to_string(),
+                "allow".to_string(),
+            ),
+            (
+                "profiles.rules.default_000_local_network".to_string(),
+                "ask".to_string(),
+            ),
+        ],
+        "the default catchall remains visible in the rule ledger"
+    );
+    let decision_rows: Vec<(String, String, String)> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT rule_id, requested_decision, effective_decision
+                 FROM security_decision_events ORDER BY id",
+            )
+            .unwrap();
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap()
+    };
+    assert_eq!(
+        decision_rows,
+        vec![(
+            "profiles.rules.allow_local_fixture".to_string(),
+            "allow".to_string(),
+            "allow".to_string(),
+        )],
+        "the default ask must not appear as an effective decision after a specific allow"
+    );
+}
+
+#[tokio::test]
 async fn ask_enforcement_writes_pending_and_resolution_controls_materialization() {
     let tmp = tempfile::tempdir().unwrap();
     let db_path = tmp.path().join("session.db");

@@ -120,6 +120,54 @@ fn http_detector_detects_google_api_key_header_with_provider_hint() {
 }
 
 #[test]
+fn http_detector_brokers_unknown_openai_compatible_authorization() {
+    let obs = detect_http_credential_with_provider(
+        "127.0.0.1",
+        Some(ProviderKind::Unknown),
+        "authorization",
+        b"Bearer capsem_test_sdk_api_key_repeat_0123456789abcdef",
+    )
+    .expect("unknown OpenAI-compatible authorization header should be brokered");
+
+    assert_eq!(obs.provider, CredentialProvider::OpenAi);
+    assert_eq!(
+        obs.raw_value,
+        "capsem_test_sdk_api_key_repeat_0123456789abcdef"
+    );
+    assert_eq!(obs.source, "http.header.authorization");
+    let event = obs.redacted_event("captured");
+    assert!(is_broker_reference(&event.substitution_ref));
+    assert!(!event
+        .context_json
+        .unwrap()
+        .contains("capsem_test_sdk_api_key"));
+}
+
+#[test]
+fn http_detector_brokers_unknown_anthropic_compatible_api_key() {
+    let obs = detect_http_credential_with_provider(
+        "127.0.0.1",
+        Some(ProviderKind::Unknown),
+        "x-api-key",
+        b"capsem_test_anthropic_stream_key_0123456789abcdef",
+    )
+    .expect("unknown Anthropic-compatible x-api-key header should be brokered");
+
+    assert_eq!(obs.provider, CredentialProvider::Anthropic);
+    assert_eq!(
+        obs.raw_value,
+        "capsem_test_anthropic_stream_key_0123456789abcdef"
+    );
+    assert_eq!(obs.source, "http.header.x-api-key");
+    let event = obs.redacted_event("captured");
+    assert!(is_broker_reference(&event.substitution_ref));
+    assert!(!event
+        .context_json
+        .unwrap()
+        .contains("capsem_test_anthropic_stream_key"));
+}
+
+#[test]
 fn http_body_detector_finds_github_token_exchange_and_redacts_body() {
     let body = br#"{"access_token":"github_pat_body_secret","token_type":"bearer"}"#;
     let found = detect_http_body_credentials(

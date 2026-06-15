@@ -115,6 +115,9 @@ impl TraceState {
         let Some(credential_ref) = credential_ref else {
             return;
         };
+        if self.trace_credentials.contains_key(trace_id) {
+            return;
+        }
         self.trace_credentials
             .insert(trace_id.to_string(), credential_ref.to_string());
         self.trace_credential_order
