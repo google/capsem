@@ -125,6 +125,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   logs, and credential inventory merges injected rows with their captured
   provider identity. Grouped CEL rule matches such as `a && (b || c)` now
   compile through the same profile rule path used by the HTTP rewrite proof.
+- Changed the macOS credential broker durable store to a single
+  `org.capsem.credentials` Keychain vault item so service startup/reload
+  hydrates captured credentials with one durable read instead of prompting once
+  for an index and again for each stored secret.
 - Tightened HTTP body-handling ledger proof for gzip, chunked, SSE, truncated
   preview, and HTTPS override traffic. Decoded gzip responses now log the same
   materialized headers and body bytes delivered to the guest instead of stale

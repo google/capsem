@@ -3537,6 +3537,7 @@ async fn route_authored_detection_rule_triggers_runtime_ledger_and_latest_routes
             host: Some("api.openai.com".to_string()),
             method: Some("POST".to_string()),
             path: Some("/v1/responses".to_string()),
+            query: None,
             status: Some("200".to_string()),
             body: None,
         });
@@ -3738,6 +3739,7 @@ async fn mounted_service_ledger_routes_read_real_session_db_rows() {
             host: Some("api.example.com".to_string()),
             method: Some("GET".to_string()),
             path: Some("/health".to_string()),
+            query: None,
             status: Some("200".to_string()),
             body: None,
         },

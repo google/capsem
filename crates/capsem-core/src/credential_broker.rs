@@ -14,19 +14,14 @@ use crate::security_engine::RuntimeSecurityEventType;
 #[cfg(target_os = "macos")]
 const KEYCHAIN_SERVICE: &str = "org.capsem.credentials";
 #[cfg(target_os = "macos")]
-const KEYCHAIN_INDEX_ACCOUNT: &str = "__capsem_credential_index_v1";
+const KEYCHAIN_VAULT_ACCOUNT: &str = "__capsem_credential_vault_v1";
 pub(crate) const TEST_STORE_ENV: &str = "CAPSEM_CREDENTIAL_BROKER_TEST_STORE";
 #[cfg(test)]
 pub(crate) static TEST_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static TEST_STORE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 static CREDENTIAL_STORE: OnceLock<CredentialStore> = OnceLock::new();
-
 #[cfg(target_os = "macos")]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct DurableCredentialIndexEntry {
-    provider: CredentialProvider,
-    credential_ref: String,
-}
+static KEYCHAIN_VAULT_CACHE: OnceLock<Mutex<Option<HashMap<String, String>>>> = OnceLock::new();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -1298,9 +1293,15 @@ fn durable_store_write_native(
     credential_ref: &str,
     raw_value: &str,
 ) -> Result<(), String> {
-    keychain_write_account(&keychain_account(provider, credential_ref), raw_value)?;
-    keychain_index_insert(provider, credential_ref)?;
-    Ok(())
+    let mut vault = keychain_read_vault().unwrap_or_else(|error| {
+        warn!(error = %error, "credential store: rebuilding empty keychain vault");
+        HashMap::new()
+    });
+    vault.insert(
+        keychain_account(provider, credential_ref),
+        raw_value.to_string(),
+    );
+    keychain_write_vault(&vault)
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -1322,7 +1323,12 @@ fn durable_store_read_native(
     provider: CredentialProvider,
     credential_ref: &str,
 ) -> Result<String, String> {
-    keychain_read_account(&keychain_account(provider, credential_ref))
+    let vault = keychain_read_vault()?;
+    let account = keychain_account(provider, credential_ref);
+    vault
+        .get(&account)
+        .cloned()
+        .ok_or_else(|| format!("credential reference not found in keychain vault: {account}"))
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -1335,18 +1341,17 @@ fn durable_store_read_native(
 
 #[cfg(target_os = "macos")]
 fn durable_store_hydrate_native() -> Result<Vec<(CredentialProvider, String, String)>, String> {
-    let entries = keychain_read_index()?;
+    let vault = keychain_read_vault()?;
     let mut hydrated = Vec::new();
-    for entry in entries {
-        match durable_store_read_native(entry.provider, &entry.credential_ref) {
-            Ok(raw_value) => hydrated.push((entry.provider, entry.credential_ref, raw_value)),
-            Err(error) => warn!(
-                provider = entry.provider.as_str(),
-                credential_ref = entry.credential_ref.as_str(),
-                error = %error,
-                "credential store: failed to hydrate indexed keychain credential"
-            ),
-        }
+    for (account, raw_value) in vault {
+        let Some((provider, credential_ref)) = parse_credential_store_account(&account) else {
+            warn!(
+                account,
+                "credential store: ignoring malformed keychain vault account"
+            );
+            continue;
+        };
+        hydrated.push((provider, credential_ref.to_string(), raw_value));
     }
     Ok(hydrated)
 }
@@ -1375,36 +1380,39 @@ fn restrict_secret_file(_path: &PathBuf) -> Result<(), String> {
 }
 
 #[cfg(target_os = "macos")]
-fn keychain_index_insert(provider: CredentialProvider, credential_ref: &str) -> Result<(), String> {
-    let mut entries = keychain_read_index().unwrap_or_else(|error| {
-        warn!(error = %error, "credential store: rebuilding empty keychain index");
-        Vec::new()
-    });
-    if !entries
-        .iter()
-        .any(|entry| entry.provider == provider && entry.credential_ref == credential_ref)
-    {
-        entries.push(DurableCredentialIndexEntry {
-            provider,
-            credential_ref: credential_ref.to_string(),
-        });
+fn keychain_read_vault() -> Result<HashMap<String, String>, String> {
+    let cache = KEYCHAIN_VAULT_CACHE.get_or_init(|| Mutex::new(None));
+    let mut guard = cache
+        .lock()
+        .map_err(|_| "credential keychain vault cache lock poisoned".to_string())?;
+    if let Some(vault) = guard.as_ref() {
+        return Ok(vault.clone());
     }
-    keychain_write_index(&entries)
-}
-
-#[cfg(target_os = "macos")]
-fn keychain_read_index() -> Result<Vec<DurableCredentialIndexEntry>, String> {
-    match keychain_read_account(KEYCHAIN_INDEX_ACCOUNT) {
-        Ok(raw) => serde_json::from_str(&raw).map_err(|e| format!("parse keychain index: {e}")),
-        Err(_) => Ok(Vec::new()),
+    match keychain_read_account(KEYCHAIN_VAULT_ACCOUNT) {
+        Ok(raw) => {
+            let vault: HashMap<String, String> =
+                serde_json::from_str(&raw).map_err(|e| format!("parse keychain vault: {e}"))?;
+            *guard = Some(vault.clone());
+            Ok(vault)
+        }
+        Err(_) => {
+            let vault = HashMap::new();
+            *guard = Some(vault.clone());
+            Ok(vault)
+        }
     }
 }
 
 #[cfg(target_os = "macos")]
-fn keychain_write_index(entries: &[DurableCredentialIndexEntry]) -> Result<(), String> {
-    let raw =
-        serde_json::to_string(entries).map_err(|e| format!("serialize keychain index: {e}"))?;
-    keychain_write_account(KEYCHAIN_INDEX_ACCOUNT, &raw)
+fn keychain_write_vault(vault: &HashMap<String, String>) -> Result<(), String> {
+    let raw = serde_json::to_string(vault).map_err(|e| format!("serialize keychain vault: {e}"))?;
+    keychain_write_account(KEYCHAIN_VAULT_ACCOUNT, &raw)?;
+    let cache = KEYCHAIN_VAULT_CACHE.get_or_init(|| Mutex::new(None));
+    let mut guard = cache
+        .lock()
+        .map_err(|_| "credential keychain vault cache lock poisoned".to_string())?;
+    *guard = Some(vault.clone());
+    Ok(())
 }
 
 #[cfg(target_os = "macos")]
