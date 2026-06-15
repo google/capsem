@@ -139,9 +139,16 @@ def assert_model_ledger_exchange(spec: ModelLedgerSpec, run: ModelLedgerRun) -> 
               AND tool_calls.tool_name = ?
               AND model_calls.path = ?
               AND model_calls.model = ?
+              AND tool_calls.model_call_id IN ({})
             ORDER BY tool_calls.id
-            """,
-            (spec.provider, spec.tool_call_name, spec.path, spec.model),
+            """.format(",".join("?" for _ in model_rows)),
+            (
+                spec.provider,
+                spec.tool_call_name,
+                spec.path,
+                spec.model,
+                *(row["id"] for row in model_rows),
+            ),
         ).fetchall()
         assert len(tool_rows) == 1, [dict(row) for row in tool_rows]
         tool_row = tool_rows[0]
@@ -155,9 +162,10 @@ def assert_model_ledger_exchange(spec: ModelLedgerSpec, run: ModelLedgerRun) -> 
             SELECT *
             FROM tool_responses
             WHERE call_id = ?
+              AND trace_id = ?
             ORDER BY id
             """,
-            (tool_row["call_id"],),
+            (tool_row["call_id"], final_model["trace_id"]),
         ).fetchall()
         assert len(response_rows) == 1, [dict(row) for row in response_rows]
         response_row = response_rows[0]

@@ -441,6 +441,71 @@ emit_result("anthropic", BASE_DOMAIN, "/v1/messages", HERMETIC_ANTHROPIC_MODEL, 
     ).strip()
 
 
+def claude_streaming_api_script(base_url: str) -> str:
+    return textwrap.dedent(
+        common_result_script_prelude(base_url, "claude-stream")
+        + r'''
+def parse_sse(body):
+    events = []
+    for line in body.splitlines():
+        if line.startswith("data: "):
+            events.append(json.loads(line[6:]))
+    return events
+
+def post(body):
+    headers = {"content-type": "application/json", "anthropic-version": "2023-06-01"}
+    add_anthropic_auth(headers)
+    req = urllib.request.Request(
+        BASE_URL + "/v1/messages",
+        data=json.dumps(body).encode(),
+        headers=headers,
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=60) as response:
+        return parse_sse(response.read().decode())
+
+tools = [{"name": "exec_command", "description": "run a command", "input_schema": {"type": "object", "properties": {"cmd": {"type": "string"}}}}]
+first_events = post({
+    "model": HERMETIC_ANTHROPIC_MODEL,
+    "max_tokens": 128,
+    "stream": True,
+    "messages": [{"role": "user", "content": PROMPT}],
+    "tools": tools,
+})
+tool_start = next(event["content_block"] for event in first_events if event.get("type") == "content_block_start" and event["content_block"]["type"] == "tool_use")
+arguments = "".join(
+    event["delta"]["partial_json"]
+    for event in first_events
+    if event.get("type") == "content_block_delta" and event.get("delta", {}).get("type") == "input_json_delta"
+)
+call_args = json.loads(arguments)
+call_response = run_tool(call_args)
+second_events = post({
+    "model": HERMETIC_ANTHROPIC_MODEL,
+    "max_tokens": 128,
+    "stream": True,
+    "messages": [
+        {"role": "user", "content": PROMPT},
+        {"role": "assistant", "content": [tool_start]},
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": tool_start["id"], "content": call_response}]},
+    ],
+    "tools": tools,
+})
+reasoning = "".join(
+    event["delta"]["thinking"]
+    for event in second_events
+    if event.get("type") == "content_block_delta" and event.get("delta", {}).get("type") == "thinking_delta"
+)
+output = "".join(
+    event["delta"]["text"]
+    for event in second_events
+    if event.get("type") == "content_block_delta" and event.get("delta", {}).get("type") == "text_delta"
+)
+emit_result("anthropic", BASE_DOMAIN, "/v1/messages", HERMETIC_ANTHROPIC_MODEL, output, reasoning, tool_start["name"], call_args, call_response)
+'''
+    ).strip()
+
+
 def claude_sdk_script(base_url: str) -> str:
     return textwrap.dedent(
         common_result_script_prelude(base_url, "claude-sdk")

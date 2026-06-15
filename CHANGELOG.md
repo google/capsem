@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed (route surfaces and diagnostics)
+- Strengthened the Claude/Anthropic Ironbank ledger proof to cover
+  non-streaming HTTP, streaming SSE, and SDK client paths through the same
+  model/tool/file/security/broker ledger assertions. Repeated same-path model
+  checks now anchor tool rows and tool responses to the current model-call IDs
+  and trace IDs so provider proofs cannot pass on stale rows.
 - Extended the OpenAI/Codex Ironbank ledger proof to cover Responses,
   embeddings, and image-generation traffic through the same VM/session DB
   path. OpenAI image endpoints are now classified as model traffic and their

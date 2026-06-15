@@ -32,6 +32,7 @@ from ironbank.model_client_scripts import (
     claude_api_script,
     claude_ollama_launch_script,
     claude_sdk_script,
+    claude_streaming_api_script,
     codex_cli_script,
     codex_ollama_launch_script,
     live_openai_chat_completions_script,
@@ -857,6 +858,11 @@ def test_claude_http_api_ledger_contract(model_client_env: ModelClientEnv):
     assert_one_model_client(
         model_client_env,
         claude_api_script("https://api.anthropic.com"),
+    )
+    model_client_env.upstream_transcript_path.write_text("", encoding="utf-8")
+    assert_one_model_client(
+        model_client_env,
+        claude_streaming_api_script("https://api.anthropic.com"),
     )
 
 
