@@ -64,11 +64,7 @@ def estimate_cost_usd(
     provider_data = _provider(provider)
     if provider_data is None:
         return 0.0
-    price = _strict_price(provider_data, model_str)
-    if price is None:
-        price = _suffix_stripped_price(provider_data, model_str)
-    if price is None:
-        price = _prefix_price(provider_data, model_str)
+    price = _matched_price(provider_data, model_str)
     if price is None:
         return 0.0
     return (
@@ -84,11 +80,7 @@ def has_pricing(*, provider: str, model: str | None) -> bool:
     provider_data = _provider(provider)
     if provider_data is None:
         return False
-    return (
-        _strict_price(provider_data, model_str)
-        or _suffix_stripped_price(provider_data, model_str)
-        or _prefix_price(provider_data, model_str)
-    ) is not None
+    return _matched_price(provider_data, model_str) is not None
 
 
 @lru_cache(maxsize=1)
@@ -100,43 +92,11 @@ def _provider(provider: str) -> dict[str, Any] | None:
     return next((entry for entry in _pricing_data() if entry.get("id") == provider), None)
 
 
-def _strict_price(provider_data: dict[str, Any], model: str) -> dict[str, Any] | None:
+def _matched_price(provider_data: dict[str, Any], model: str) -> dict[str, Any] | None:
     for entry in provider_data.get("models") or []:
         if _matches(entry.get("match") or {}, model):
             return _price(entry)
     return None
-
-
-def _suffix_stripped_price(provider_data: dict[str, Any], model: str) -> dict[str, Any] | None:
-    candidate = model
-    for _ in range(4):
-        pos = candidate.rfind("-")
-        if pos < 4:
-            break
-        candidate = candidate[:pos]
-        price = _strict_price(provider_data, candidate)
-        if price is not None:
-            return price
-    return None
-
-
-def _prefix_price(provider_data: dict[str, Any], model: str) -> dict[str, Any] | None:
-    best_entry: dict[str, Any] | None = None
-    best_len = 0
-    best_version: int | None = None
-    for entry in provider_data.get("models") or []:
-        model_id = str(entry.get("id") or "")
-        prefix_len = _common_prefix_len(model, model_id)
-        if prefix_len < 8:
-            continue
-        version = _trailing_version(model_id)
-        if prefix_len > best_len or (
-            prefix_len == best_len and version is not None and (best_version is None or version > best_version)
-        ):
-            best_entry = entry
-            best_len = prefix_len
-            best_version = version
-    return _price(best_entry) if best_entry is not None else None
 
 
 def _matches(rule: dict[str, Any], model: str) -> bool:
@@ -173,20 +133,3 @@ def _rate(value: Any) -> float:
     if isinstance(value, dict):
         return float(value.get("base") or 0.0)
     return 0.0
-
-
-def _common_prefix_len(a: str, b: str) -> int:
-    count = 0
-    for left, right in zip(a.encode(), b.encode(), strict=False):
-        if left != right:
-            break
-        count += 1
-    return count
-
-
-def _trailing_version(model_id: str) -> int | None:
-    segment = model_id.rsplit("-", 1)[-1]
-    try:
-        return int(segment)
-    except ValueError:
-        return None

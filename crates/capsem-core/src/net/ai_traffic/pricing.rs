@@ -1,8 +1,8 @@
 /// Model pricing: estimates cost per API call using bundled pricing data
-/// from pydantic/genai-prices. Update via `just update_prices`.
+/// from pydantic/genai-prices. Update via `just update-prices`.
 use serde::Deserialize;
 
-/// Embedded pricing data (updated via `just update_prices`).
+/// Embedded pricing data (updated via `just update-prices`).
 const PRICING_JSON: &str = include_str!("../../../../../config/data/genai-prices.json");
 
 /// Pre-parsed pricing lookup table.
@@ -132,10 +132,8 @@ impl PricingTable {
     /// Estimate the cost in USD for a single API call.
     /// Returns 0.0 if the provider/model is unknown.
     ///
-    /// Uses a three-pass strategy:
-    /// 1. Strict match against all provider model rules
-    /// 2. Progressive suffix stripping (remove trailing `-segment`s and retry)
-    /// 3. Longest common prefix match against model IDs (min 8 chars)
+    /// Uses only the upstream `match` clauses from pydantic/genai-prices. If
+    /// the bundled ledger does not claim the model, Capsem does not guess.
     pub fn estimate_cost(
         &self,
         provider: &str,
@@ -144,9 +142,8 @@ impl PricingTable {
         output_tokens: Option<u64>,
         usage_details: &std::collections::BTreeMap<String, u64>,
     ) -> f64 {
-        // Reject oversized model strings before any allocation. Real model
-        // names are well under 128 bytes; anything larger is garbage or an
-        // attempted DoS via the fuzzy-match `.to_string()` clone below.
+        // Reject oversized model strings. Real model names are well under
+        // 128 bytes; anything larger is garbage or an attempted DoS.
         const MAX_MODEL_LEN: usize = 128;
 
         let model_str = match model {
@@ -171,39 +168,11 @@ impl PricingTable {
             None => return 0.0,
         };
 
-        // Pass 1: strict match
-        if let Some(cost) = Self::try_strict_match(prov, model_str, effective_input, output) {
-            return cost;
-        }
-
-        // Pass 2: progressive suffix stripping (max 4 strips, min 4 chars remaining)
-        const MAX_STRIP_DEPTH: usize = 4;
-        const MIN_STRIP_LEN: usize = 4;
-        let mut candidate = model_str.to_string();
-        for _ in 0..MAX_STRIP_DEPTH {
-            match candidate.rfind('-') {
-                Some(pos) if pos >= MIN_STRIP_LEN => {
-                    candidate.truncate(pos);
-                    if let Some(cost) =
-                        Self::try_strict_match(prov, &candidate, effective_input, output)
-                    {
-                        return cost;
-                    }
-                }
-                _ => break,
-            }
-        }
-
-        // Pass 3: longest common prefix match (min 8 chars shared)
-        if let Some(cost) = Self::try_prefix_match(prov, model_str, effective_input, output) {
-            return cost;
-        }
-
-        0.0
+        Self::try_match(prov, model_str, effective_input, output).unwrap_or(0.0)
     }
 
-    /// Try strict match against all models in a provider.
-    fn try_strict_match(prov: &ProviderData, model: &str, input: f64, output: f64) -> Option<f64> {
+    /// Match against all upstream model rules in a provider.
+    fn try_match(prov: &ProviderData, model: &str, input: f64, output: f64) -> Option<f64> {
         for m in &prov.models {
             if m.match_rule.matches(model) {
                 if let Some(price) = m.prices.price() {
@@ -217,62 +186,6 @@ impl PricingTable {
         }
         None
     }
-
-    /// Find the model whose ID shares the longest common prefix with the input.
-    /// Requires at least `MIN_PREFIX_LEN` chars of shared prefix.
-    /// Ties broken by closest version number (higher version preferred).
-    fn try_prefix_match(prov: &ProviderData, model: &str, input: f64, output: f64) -> Option<f64> {
-        const MIN_PREFIX_LEN: usize = 8;
-
-        let mut best_len: usize = 0;
-        let mut best_idx: Option<usize> = None;
-        let mut best_version: Option<u64> = None;
-
-        for (i, m) in prov.models.iter().enumerate() {
-            let prefix_len = common_prefix_len(model, &m.id);
-            if prefix_len < MIN_PREFIX_LEN {
-                continue;
-            }
-            if prefix_len > best_len
-                || (prefix_len == best_len && Self::version_closer(model, &m.id, best_version))
-            {
-                best_len = prefix_len;
-                best_idx = Some(i);
-                best_version = extract_trailing_version(&m.id);
-            }
-        }
-
-        if let Some(idx) = best_idx {
-            if let Some(price) = prov.models[idx].prices.price() {
-                let input_rate = price.input_mtok.rate();
-                let output_rate = price.output_mtok.rate();
-                return Some(input * input_rate / 1_000_000.0 + output * output_rate / 1_000_000.0);
-            }
-        }
-        None
-    }
-
-    /// Returns true if the candidate model's version is a better tiebreaker
-    /// than the current best. Prefers higher version numbers (latest model).
-    fn version_closer(_query: &str, candidate_id: &str, current_best: Option<u64>) -> bool {
-        match (extract_trailing_version(candidate_id), current_best) {
-            (Some(v), Some(best)) => v > best,
-            (Some(_), None) => true,
-            _ => false,
-        }
-    }
-}
-
-/// Length of the longest common prefix between two strings.
-fn common_prefix_len(a: &str, b: &str) -> usize {
-    a.bytes().zip(b.bytes()).take_while(|(x, y)| x == y).count()
-}
-
-/// Extract a trailing numeric version from a model ID.
-/// E.g. "claude-opus-4-6" -> Some(6), "claude-opus-4-0" -> Some(0).
-fn extract_trailing_version(id: &str) -> Option<u64> {
-    let last_seg = id.rsplit('-').next()?;
-    last_seg.parse::<u64>().ok()
 }
 
 #[cfg(test)]

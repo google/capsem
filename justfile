@@ -1216,9 +1216,12 @@ update-fixture src:
 
 # Update model pricing data from pydantic/genai-prices
 update-prices:
-    curl -sL https://raw.githubusercontent.com/pydantic/genai-prices/main/prices/data_slim.json \
-        -o config/data/genai-prices.json
-    @echo "Updated config/data/genai-prices.json"
+    tmp="$(mktemp)"; \
+    curl -fsSL https://raw.githubusercontent.com/pydantic/genai-prices/main/prices/data.json -o "$tmp"; \
+    python3 -m json.tool "$tmp" >/dev/null; \
+    python3 scripts/update_genai_prices.py "$tmp" config/data/genai-prices.json; \
+    rm -f "$tmp"
+    @echo "Updated compact config/data/genai-prices.json from pydantic/genai-prices prices/data.json"
 
 # Remove stale rootfs copies, orphan UDS sockets, and trim bloated incremental caches.
 # See scripts/clean_stale.py for implementation (tested: tests/capsem-cleanup-script/).

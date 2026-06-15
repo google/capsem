@@ -255,13 +255,19 @@ next one, and stage only the files for that slice.
     -q -s --tb=short`; `cargo test -p capsem-core trace -- --nocapture`;
     `cargo test -p capsem-core anthropic_tool -- --nocapture`.
   - 2026-06-15 pricing refresh: Ironbank now carries a Python pricing oracle
-    that mirrors the bundled `config/data/genai-prices.json` semantics for
-    provider/model matching, cache-read subtraction, and tiered base rates. The
-    ledger assertions verify every `model_calls.estimated_cost_usd` row they
-    inspect. Hermetic OpenAI provider-host fixtures use `gpt-5-nano` through
-    corp-owned upstream overrides for `api.openai.com:443`, while the Codex CLI
-    fixture stays on the local mock route and records `credential_provider =
-    openai` separately from model provider `ollama`.
+    that mirrors the compact bundled `config/data/genai-prices.json` runtime
+    ledger for provider/model matching, cache-read subtraction, and tiered base
+    rates. `just update-prices` fetches pydantic/genai-prices
+    `prices/data.json`, transforms it through `scripts/update_genai_prices.py`,
+    and commits only Capsem's compact first-party runtime provider table
+    (`anthropic`, `google`, `openai`). Runtime and Ironbank both use only the
+    upstream `match` clauses in that single file; fuzzy suffix/prefix pricing
+    is removed. The ledger assertions verify every
+    `model_calls.estimated_cost_usd` row they inspect. Hermetic OpenAI
+    provider-host fixtures use `gpt-5-nano` through corp-owned upstream
+    overrides for `api.openai.com:443`, while the Codex CLI fixture stays on
+    the local mock route and records `credential_provider = openai` separately
+    from model provider `ollama`.
   - Pricing proof: `uv run ruff check tests/ironbank/model_client_assertions.py
     tests/ironbank/model_client_scripts.py tests/ironbank/model_ledger.py
     tests/ironbank/model_pricing.py tests/ironbank/test_model_pricing.py

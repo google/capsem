@@ -46,3 +46,18 @@ def test_claude_sonnet_46_tiered_base_price_matches_product_rule() -> None:
         )
         == pytest.approx(0.0045)
     )
+
+
+def test_pricing_uses_upstream_match_without_suffix_guessing() -> None:
+    assert has_pricing(provider="openai", model="gpt-5-nano")
+    assert not has_pricing(provider="openai", model="gpt-5-private-fork")
+    assert (
+        estimate_cost_usd(
+            provider="openai",
+            model="gpt-5-private-fork",
+            input_tokens=1000,
+            output_tokens=250,
+            usage_details={},
+        )
+        == 0.0
+    )
