@@ -1,11 +1,9 @@
 {
-  "total_settings": 21,
+  "total_settings": 17,
   "by_type": {
-    "bool": 3,
+    "bool": 2,
     "number": 1,
-    "text": 6,
-    "apikey": 1,
-    "file": 1,
+    "text": 5,
     "url": 1,
     "email": 1,
     "string_list": 1,
@@ -15,7 +13,7 @@
     "mcp_tool": 1,
     "kv_map": 2
   },
-  "group_count": 8,
+  "group_count": 6,
   "settings": [
     {
       "key": "test_app.auto_update",
@@ -34,30 +32,6 @@
       "name": "Check for updates",
       "setting_type": "action",
       "enabled_by": null
-    },
-    {
-      "key": "test_ai.provider.allow",
-      "name": "Allow Provider",
-      "setting_type": "bool",
-      "enabled_by": null
-    },
-    {
-      "key": "test_ai.provider.api_key",
-      "name": "API Key",
-      "setting_type": "apikey",
-      "enabled_by": "test_ai.provider.allow"
-    },
-    {
-      "key": "test_ai.provider.domains",
-      "name": "Provider Domains",
-      "setting_type": "text",
-      "enabled_by": "test_ai.provider.allow"
-    },
-    {
-      "key": "test_ai.provider.settings_json",
-      "name": "Provider settings.json",
-      "setting_type": "file",
-      "enabled_by": "test_ai.provider.allow"
     },
     {
       "key": "test_security.masked_field",

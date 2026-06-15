@@ -248,29 +248,27 @@ fn setting_fields_match_expected() {
 }
 
 #[test]
-fn all_13_setting_types_present() {
-    let expected_types = [
+fn only_app_preference_setting_types_present() {
+    let expected_types = std::collections::HashSet::from([
         "text",
         "number",
         "url",
         "email",
-        "apikey",
         "bool",
-        "file",
         "kv_map",
         "string_list",
         "int_list",
         "float_list",
         "action",
         "mcp_tool",
-    ];
+    ]);
     let root = parse_golden();
     let settings = extract_settings(&root.settings);
     let present: std::collections::HashSet<&str> =
         settings.iter().map(|s| s.setting_type.as_str()).collect();
-    for t in &expected_types {
-        assert!(present.contains(t), "missing setting_type: {t}");
-    }
+    assert_eq!(present, expected_types);
+    assert!(!present.contains("apikey"));
+    assert!(!present.contains("file"));
 }
 
 #[test]
@@ -310,22 +308,16 @@ fn mcp_tool_settings_have_origin() {
 }
 
 #[test]
-fn file_setting_has_path_content() {
+fn no_profile_provider_file_payloads_in_settings() {
     let root = parse_golden();
     let settings = extract_settings(&root.settings);
     let files: Vec<_> = settings
         .iter()
         .filter(|s| s.setting_type == "file")
         .collect();
-    assert!(!files.is_empty());
-    for f in &files {
-        let dv = f
-            .default_value
-            .as_ref()
-            .expect("file setting should have default_value");
-        assert!(dv.get("path").is_some(), "file missing path");
-        assert!(dv.get("content").is_some(), "file missing content");
-    }
+    assert!(files.is_empty());
+    assert!(settings.iter().all(|s| !s.key.contains("provider")));
+    assert!(settings.iter().all(|s| !s.key.contains("credential")));
 }
 
 #[test]

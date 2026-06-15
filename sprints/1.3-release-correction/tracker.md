@@ -755,6 +755,21 @@ next one, and stage only the files for that slice.
     (`1 passed`); `uv run ruff check
     tests/capsem-gateway/test_profile_gateway_contract.py`; `cargo build -p
     capsem-gateway`.
+  - 2026-06-15 correction: frontend settings conformance was still demanding
+    stale AI-provider/API-key/profile-file settings that were intentionally
+    burned from the runtime settings contract. The shared golden expected
+    ledger now matches the 17-leaf fixture and all three conformance suites
+    assert that provider, credential, file-payload, and provider `enabled_by`
+    surfaces stay out of settings.
+  - Proof: RED `pnpm --dir frontend test -- profile-page-contract.test.ts
+    api.test.ts` surfaced the stale `settings_spec` expectations; GREEN
+    `uv run pytest tests/test_settings_spec.py -q` (`85 passed`);
+    `cargo test -p capsem-core --test settings_spec -- --nocapture` (`12
+    passed`); `pnpm --dir frontend test -- --run
+    src/lib/__tests__/settings_spec.test.ts
+    frontend/src/lib/__tests__/profile-page-contract.test.ts
+    frontend/src/lib/__tests__/api.test.ts` (`390 passed`); `uv run ruff check
+    tests/test_settings_spec.py`.
   - 2026-06-13 progress: `tests/capsem-mcp/test_mcp_call.py` now proves the
     native host `capsem_mcp_call` route, not just doctor-triggered MCP. RED
     caught that service-initiated profile MCP calls invoked the aggregator

@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed (route surfaces and diagnostics)
+- Aligned the shared settings conformance fixture with the 1.3 contract that
+  settings are UI/application preferences only. Python, Rust, and frontend
+  settings schema tests now reject stale AI-provider, credential, profile-file,
+  and `enabled_by` provider surfaces instead of requiring them.
 - Split model wire protocol from endpoint-provider identity so Ollama,
   OpenAI-compatible, Anthropic-compatible, and unknown model endpoints can be
   parsed without pretending protocol and provider are aliases. Recognized model

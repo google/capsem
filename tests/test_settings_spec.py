@@ -710,24 +710,35 @@ class TestGoldenFixture:
                 f"enabled_by mismatch for {exp['key']}"
             )
 
-    def test_all_setting_types_present(self):
+    def test_only_app_preference_setting_types_present(self):
         root = _load_golden()
         settings = extract_settings(root.settings)
-        present = {s.setting_type for s in settings}
-        for st in SettingType:
-            assert st in present, f"Missing setting_type: {st.value}"
+        present = {s.setting_type.value for s in settings}
+        assert present == {
+            "text",
+            "number",
+            "url",
+            "email",
+            "bool",
+            "kv_map",
+            "string_list",
+            "int_list",
+            "float_list",
+            "action",
+            "mcp_tool",
+        }
+        assert SettingType.APIKEY.value not in present
+        assert SettingType.FILE.value not in present
 
-    def test_all_metadata_fields_exercised(self):
-        """Key SettingMetadata fields are non-default in at least one setting."""
+    def test_runtime_settings_metadata_fields_exercised(self):
+        """Runtime settings exercise UI metadata without profile/provider payloads."""
         root = _load_golden()
         settings = extract_settings(root.settings)
         defaults = SettingMetadata()
 
         fields_to_check = [
-            "domains", "choices", "min", "max", "rules", "env_vars",
-            "format", "docs_url", "prefix", "filetype", "widget",
-            "side_effect", "hidden", "builtin", "mask", "validator",
-            "action", "origin",
+            "choices", "min", "max", "widget", "side_effect", "hidden",
+            "builtin", "mask", "validator", "action", "origin",
         ]
         exercised = set()
         for s in settings:
@@ -805,34 +816,20 @@ class TestGoldenFixture:
         assert tools_group is not None
         assert len(tools_group.children) >= 1
 
-    def test_enabled_by_chain(self):
-        """The provider group's enabled_by points to a valid bool setting."""
+    def test_no_settings_enabled_by_provider_state(self):
+        """Profile/provider state is not modeled through settings enabled_by."""
         root = _load_golden()
         settings = extract_settings(root.settings)
-        settings_by_key = {s.key: s for s in settings}
-        # Find settings with enabled_by
         with_parent = [s for s in settings if s.enabled_by]
-        assert len(with_parent) >= 1
-        for s in with_parent:
-            parent = settings_by_key.get(s.enabled_by)
-            assert parent is not None, (
-                f"{s.key} has enabled_by={s.enabled_by} but that setting doesn't exist"
-            )
-            assert parent.setting_type == SettingType.BOOL, (
-                f"{s.key}'s enabled_by target {s.enabled_by} is not a bool"
-            )
+        assert with_parent == []
 
-    def test_file_setting_has_path_content(self):
+    def test_no_profile_provider_file_payloads_in_settings(self):
         root = _load_golden()
         settings = extract_settings(root.settings)
         files = [s for s in settings if s.setting_type == SettingType.FILE]
-        assert len(files) >= 1
-        for f in files:
-            assert isinstance(f.default_value, dict), (
-                f"File setting {f.key} default_value should be a dict"
-            )
-            assert "path" in f.default_value
-            assert "content" in f.default_value
+        assert files == []
+        assert all("provider" not in s.key for s in settings)
+        assert all("credential" not in s.key for s in settings)
 
     def test_hidden_setting_exists(self):
         root = _load_golden()
@@ -846,24 +843,15 @@ class TestGoldenFixture:
         builtins = [s for s in settings if s.metadata.builtin]
         assert len(builtins) >= 1
 
-    def test_nested_group_depth(self):
-        """test_ai.provider is nested 2 levels deep."""
+    def test_no_ai_provider_group_in_settings(self):
+        """AI/provider configuration belongs to profile/corp, not settings."""
         root = _load_golden()
-        # Find test_ai group
         ai_group = None
         for node in root.settings:
             if isinstance(node, GroupNode) and node.key == "test_ai":
                 ai_group = node
                 break
-        assert ai_group is not None
-        # Find provider group inside
-        provider = None
-        for child in ai_group.children:
-            if isinstance(child, GroupNode) and child.key == "test_ai.provider":
-                provider = child
-                break
-        assert provider is not None
-        assert len(provider.children) >= 1
+        assert ai_group is None
 
     def test_roundtrip_golden(self):
         """Parse golden -> serialize -> parse again -> identical structure."""
@@ -902,12 +890,12 @@ class TestGoldenFixture:
 
         assert find_collapsed(root.settings)
 
-    def test_collapsed_setting_exists(self):
-        """At least one setting has collapsed=true."""
+    def test_settings_are_not_collapsed_leaves(self):
+        """Leaf collapse belongs to richer profile editors, not app settings."""
         root = _load_golden()
         settings = extract_settings(root.settings)
         collapsed = [s for s in settings if s.collapsed]
-        assert len(collapsed) >= 1
+        assert collapsed == []
 
     def test_choices_field_exercised(self):
         """At least one setting has non-empty choices."""
