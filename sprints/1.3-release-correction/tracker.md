@@ -2461,6 +2461,13 @@ next one, and stage only the files for that slice.
   useful namespace guard now targets the profile-owned builder, and
   `tests/capsem-build-chain/test_no_legacy_user_config.py` rejects the old
   helper symbol outside dedicated guard files.
+- S1 2026-06-14 correction: `ProfileConfigFile.assets` is now required on the
+  wire and no longer defaults to the first built-in profile's assets. RED/GREEN
+  proof added `profile_config_requires_assets_section`; focused proof:
+  `cargo test -p capsem-core --lib profile_contract -- --nocapture`; admin
+  profile-check proof: `cargo test -p capsem-admin profile_check --
+  --nocapture`; settings isolation proof: `cargo test -p capsem-core --test
+  settings_spec -- --nocapture`.
 - S1 package proof: `cargo test -p capsem-admin
   profile_check_rejects_empty_profile_package_file_even_when_hash_matches --
   --nocapture` passes; the full capsem-admin suite is now 29/29 green.

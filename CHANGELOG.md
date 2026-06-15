@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Runtime MCP server construction is now guarded to use profile-owned
   `build_profile_server_list()` only, with docs and skills updated to remove
   the stale fallback language.
+- Hardened profile parsing so `assets` is a required profile-owned section
+  instead of silently defaulting to the first built-in profile's asset release.
+  Profile contract and admin profile-check tests now prove malformed profiles
+  cannot inherit Code assets by omission.
 - Aligned the shared settings conformance fixture with the 1.3 contract that
   settings are UI/application preferences only. Python, Rust, and frontend
   settings schema tests now reject stale AI-provider, credential, profile-file,

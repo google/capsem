@@ -26,7 +26,6 @@ pub struct ProfileConfigFile {
     pub refresh_policy: String,
     #[serde(default)]
     pub availability: ProfileAvailability,
-    #[serde(default)]
     pub assets: ProfileAssetConfig,
     #[serde(default)]
     pub vm: ProfileVmDefaults,
@@ -80,12 +79,6 @@ pub struct ProfileAssetConfig {
     pub format: String,
     pub refresh_policy: String,
     pub arch: BTreeMap<String, ProfileArchAssets>,
-}
-
-impl Default for ProfileAssetConfig {
-    fn default() -> Self {
-        ProfileConfigFile::builtin_primary().assets
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

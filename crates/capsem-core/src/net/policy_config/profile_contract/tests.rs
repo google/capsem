@@ -4,6 +4,49 @@ fn parse_profile(input: &str) -> ProfileConfigFile {
     toml::from_str(input).expect("profile TOML parses")
 }
 
+const MINIMAL_ASSETS: &str = r#"
+[assets]
+format = "profile-assets.v1"
+refresh_policy = "24h"
+
+[assets.arch.arm64.kernel]
+name = "vmlinuz"
+url = "file:///tmp/vmlinuz"
+hash = "blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+size = 1
+
+[assets.arch.arm64.initrd]
+name = "initrd.img"
+url = "file:///tmp/initrd.img"
+hash = "blake3:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+size = 1
+
+[assets.arch.arm64.rootfs]
+name = "rootfs.erofs"
+url = "file:///tmp/rootfs.erofs"
+hash = "blake3:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+size = 1
+"#;
+
+#[test]
+fn profile_config_requires_assets_section() {
+    let error = toml::from_str::<ProfileConfigFile>(
+        r#"
+id = "developer"
+name = "Developer"
+description = "Developer profile"
+revision = "2026.06.14.1"
+refresh_policy = "24h"
+"#,
+    )
+    .expect_err("profile assets must be explicit");
+
+    assert!(
+        error.to_string().contains("missing field `assets`"),
+        "unexpected parse error: {error}"
+    );
+}
+
 #[test]
 fn profile_config_file_owns_full_profile_behavior_contract() {
     let profile = parse_profile(
@@ -192,19 +235,22 @@ size = 1
 
 #[test]
 fn profile_file_refs_reject_unpinned_or_escape_paths() {
-    let base = r#"
+    let base = format!(
+        r#"
 id = "developer"
 name = "Developer"
 description = "Developer profile"
 revision = "2026.06.09.1"
 refresh_policy = "24h"
+{MINIMAL_ASSETS}
 
 [files.mcp]
 path = "profiles/developer/mcp.json"
 hash = "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 size = 1
-"#;
-    parse_profile(base)
+"#
+    );
+    parse_profile(&base)
         .validate()
         .expect("valid profile file ref");
 
