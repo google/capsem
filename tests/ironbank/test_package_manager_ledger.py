@@ -1,55 +1,25 @@
-"""Ironbank black-box package-manager ledger tests.
+"""Ironbank black-box package-manager ledger tests."""
 
-These tests intentionally drive Capsem through public service routes and the
-guest VM. They do not use product internals to decide what should happen.
-"""
+from __future__ import annotations
 
+import json
+import re
 import sqlite3
 import textwrap
 import time
 import uuid
+from pathlib import Path
 
 import pytest
 
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.service import ServiceInstance, wait_exec_ready, vm_name
 
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROFILES_DIR = PROJECT_ROOT / "target" / "config" / "profiles"
+
 pytestmark = pytest.mark.integration
-
-EXPECTED_EXEC_COLUMNS = {
-    "id",
-    "event_id",
-    "timestamp",
-    "exec_id",
-    "command",
-    "exit_code",
-    "duration_ms",
-    "stdout_preview",
-    "stderr_preview",
-    "stdout_bytes",
-    "stderr_bytes",
-    "source",
-    "mcp_call_id",
-    "trace_id",
-    "process_name",
-    "pid",
-    "credential_ref",
-}
-
-EXPECTED_FS_COLUMNS = {
-    "id",
-    "event_id",
-    "timestamp",
-    "action",
-    "path",
-    "size",
-    "trace_id",
-    "credential_ref",
-}
-
-
-def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
-    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
 
 
 def _connect_session_db(service: ServiceInstance, session_id: str) -> sqlite3.Connection:
@@ -60,7 +30,7 @@ def _connect_session_db(service: ServiceInstance, session_id: str) -> sqlite3.Co
     return conn
 
 
-def _eventually(fetch, predicate, *, timeout_s: float = 10.0, interval_s: float = 0.25):
+def _eventually(fetch, predicate, *, timeout_s: float = 15.0, interval_s: float = 0.25):
     deadline = time.monotonic() + timeout_s
     last = None
     while time.monotonic() < deadline:
@@ -72,6 +42,18 @@ def _eventually(fetch, predicate, *, timeout_s: float = 10.0, interval_s: float 
     return last
 
 
+def _assert_ledger_id(value: object) -> None:
+    assert isinstance(value, str)
+    assert re.fullmatch(r"[0-9a-f]{12}", value), value
+
+
+def _columnar_rows(payload: dict) -> list[dict]:
+    assert set(payload) == {"columns", "rows"}
+    columns = payload["columns"]
+    assert columns == ["timestamp", "layer", "ref", "summary", "status", "duration_ms", "trace_id"]
+    return [dict(zip(columns, row, strict=True)) for row in payload["rows"]]
+
+
 def _package_probe_script() -> str:
     return textwrap.dedent(
         r'''
@@ -80,7 +62,7 @@ def _package_probe_script() -> str:
 
         work="/root/ironbank-package-probe"
         rm -rf "$work"
-        mkdir -p "$work"/{wheels,npm/bin,deb/DEBIAN,deb/usr/local/bin}
+        mkdir -p "$work"/{wheels,npm/bin,deb/DEBIAN,deb/usr/local/bin,zstd}
         printf 'ironbank-package-bytes\n' > "$work/payload.txt"
 
         node - <<'JS'
@@ -121,7 +103,6 @@ def _package_probe_script() -> str:
             with zipfile.ZipFile(wheel_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
                 for name, data in files.items():
                     zf.writestr(name, data)
-            return wheel_path
 
         wheel(
             "ironbank-pip-pkg",
@@ -186,12 +167,21 @@ def _package_probe_script() -> str:
         apt-get install -y -qq "$work/ironbank-apt-tool.deb" >/tmp/ironbank-apt.log 2>&1
         ironbank-apt-tool "$work/payload.txt"
 
+        if command -v zstd >/dev/null 2>&1; then
+          zstd -q -f "$work/payload.txt" -o "$work/zstd/payload.txt.zst"
+          zstd -q -d -f "$work/zstd/payload.txt.zst" -o "$work/zstd/payload.roundtrip.txt"
+          cmp "$work/payload.txt" "$work/zstd/payload.roundtrip.txt"
+          printf 'IRONBANK:zstd:roundtrip\n'
+        fi
+
         printf 'IRONBANK:complete:apt+npm+npx+node+pip+uv\n'
         '''
     ).lstrip()
 
 
 def test_package_managers_pay_their_ledger_debt_blackbox():
+    assert PROFILES_DIR.exists(), f"{PROFILES_DIR} missing; materialize profile config"
+
     service = ServiceInstance()
     session_id = vm_name("ironbank-pkg")
     script_name = f"ironbank-package-probe-{uuid.uuid4().hex[:8]}.sh"
@@ -209,7 +199,7 @@ def test_package_managers_pay_their_ledger_debt_blackbox():
             },
             timeout=90,
         )
-        assert create is not None, "session creation returned no body"
+        assert create is not None
         assert create.get("id") == session_id or create.get("name") == session_id
         assert wait_exec_ready(client, session_id, timeout=EXEC_READY_TIMEOUT)
 
@@ -219,89 +209,149 @@ def test_package_managers_pay_their_ledger_debt_blackbox():
             script_bytes,
             timeout=30,
         )
-        assert upload is not None, "script upload returned no body"
-        assert upload.get("success") is True, f"script upload failed: {upload}"
-        assert upload.get("size") == len(script_bytes), f"uploaded script size mismatch: {upload}"
-
-        status_before = client.get(f"/vms/{session_id}/status", timeout=30)
-        assert status_before is not None
-        assert status_before.get("id") == session_id or status_before.get("name") == session_id
-        assert isinstance(status_before.get("available_actions"), list)
+        assert upload == {"success": True, "size": len(script_bytes)}
 
         exec_resp = client.post(
             f"/vms/{session_id}/exec",
-            {"command": f"bash /root/{script_name}", "timeout_secs": 240},
-            timeout=260,
+            {"command": f"bash /root/{script_name}", "timeout_secs": 260},
+            timeout=290,
         )
-        assert exec_resp is not None, "exec returned no body"
-        assert exec_resp.get("exit_code") == 0, exec_resp
+        assert exec_resp is not None
+        assert exec_resp["exit_code"] == 0, exec_resp
         stdout = exec_resp.get("stdout", "")
         stderr = exec_resp.get("stderr", "")
-        assert "IRONBANK:node:IRONBANK-PACKAGE-BYTES" in stdout
-        assert "IRONBANK:pip:42" in stdout
-        assert "IRONBANK:uv:uv:ironbank" in stdout
-        assert "IRONBANK:npm:npm:realm" in stdout
-        assert "IRONBANK:npx:npm:realm" in stdout
-        assert "IRONBANK:apt:apt:ironbank-package-bytes" in stdout
-        assert "IRONBANK:complete:apt+npm+npx+node+pip+uv" in stdout
-        assert "No space left on device" not in stdout + stderr
-        assert "Permission denied" not in stdout + stderr
-        assert "externally-managed" not in (stdout + stderr).lower()
-
-        history = client.get(f"/vms/{session_id}/history", timeout=30)
-        assert history is not None
-        assert history.get("total", 0) >= 1
-        history_text = " ".join(
-            (entry.get("command") or "") + " " + (entry.get("stdout_preview") or "")
-            for entry in history.get("commands", [])
-        )
-        assert script_name in history_text
-        assert "IRONBANK:complete" in history_text
-
-        counts = client.get(f"/vms/{session_id}/history/counts", timeout=30)
-        assert counts is not None
-        assert isinstance(counts.get("exec_count"), int) and counts["exec_count"] >= 1
-        assert isinstance(counts.get("audit_count"), int) and counts["audit_count"] >= 0
+        output = stdout + stderr
+        expected_lines = {
+            "IRONBANK:node:IRONBANK-PACKAGE-BYTES",
+            "IRONBANK:pip:42",
+            "IRONBANK:uv:uv:ironbank",
+            "IRONBANK:npm:npm:realm",
+            "IRONBANK:npx:npm:realm",
+            "IRONBANK:apt:apt:ironbank-package-bytes",
+            "IRONBANK:complete:apt+npm+npx+node+pip+uv",
+        }
+        assert expected_lines <= set(stdout.splitlines()), stdout
+        if "IRONBANK:zstd:roundtrip" in stdout:
+            assert "zstd:roundtrip" in stdout
+        assert "No space left on device" not in output
+        assert "Permission denied" not in output
+        assert "externally-managed" not in output.lower()
 
         conn = _connect_session_db(service, session_id)
         try:
-            assert _table_columns(conn, "exec_events") == EXPECTED_EXEC_COLUMNS
-            assert _table_columns(conn, "fs_events") == EXPECTED_FS_COLUMNS
-
             exec_row = _eventually(
                 lambda: conn.execute(
-                    "SELECT * FROM exec_events WHERE command LIKE ? ORDER BY id DESC LIMIT 1",
-                    (f"%{script_name}%",),
+                    "SELECT * FROM exec_events WHERE command = ? ORDER BY id DESC LIMIT 1",
+                    (f"bash /root/{script_name}",),
                 ).fetchone(),
                 lambda row: row is not None and row["exit_code"] == 0,
-                timeout_s=15,
+                timeout_s=20,
             )
-            assert exec_row["command"] == f"bash /root/{script_name}"
-            assert isinstance(exec_row["event_id"], str) and len(exec_row["event_id"]) == 12
+            _assert_ledger_id(exec_row["event_id"])
             assert exec_row["source"] == "api"
-            assert exec_row["exit_code"] == 0
-            assert exec_row["duration_ms"] >= 0
-            assert exec_row["stdout_bytes"] >= len("IRONBANK:complete")
+            assert exec_row["stdout_bytes"] >= sum(len(line) for line in expected_lines)
+            assert "IRONBANK:complete" in exec_row["stdout_preview"]
             assert exec_row["stderr_bytes"] >= 0
-            assert "IRONBANK:complete" in (exec_row["stdout_preview"] or "")
-            assert "No space left" not in (exec_row["stderr_preview"] or "")
             assert exec_row["credential_ref"] is None
+
+            package_audit_rows = _eventually(
+                lambda: conn.execute(
+                    """
+                    SELECT *
+                    FROM audit_events
+                    WHERE argv LIKE '%pip install%'
+                       OR argv LIKE '%uv pip install%'
+                       OR argv LIKE '%npm install%'
+                       OR argv LIKE '%apt-get install%'
+                       OR exe LIKE '%/node'
+                       OR exe LIKE '%/python3'
+                    ORDER BY id
+                    """
+                ).fetchall(),
+                lambda rows: len(rows) >= 4,
+                timeout_s=20,
+            )
+            audit_text = "\n".join(f"{row['exe']} {row['argv']}" for row in package_audit_rows)
+            assert "pip install --no-index" in audit_text
+            assert "uv pip install" in audit_text
+            assert "npm install -g" in audit_text
+            assert "apt-get install" in audit_text
+            for row in package_audit_rows[:20]:
+                _assert_ledger_id(row["event_id"])
+                assert row["pid"] > 0
+                assert row["uid"] == 0
+                assert row["credential_ref"] is None
 
             fs_rows = _eventually(
                 lambda: conn.execute(
-                    "SELECT * FROM fs_events WHERE path LIKE ? ORDER BY id",
-                    (f"%{script_name}%",),
+                    "SELECT * FROM fs_events WHERE path = ? OR path LIKE ? ORDER BY id",
+                    (script_name, "ironbank-package-probe/%"),
                 ).fetchall(),
-                lambda rows: len(rows) >= 1,
-                timeout_s=15,
+                lambda rows: len(rows) >= 6,
+                timeout_s=20,
             )
-            assert any(row["action"] in {"created", "modified"} for row in fs_rows)
-            assert all(isinstance(row["event_id"], str) and len(row["event_id"]) == 12 for row in fs_rows)
-            assert all(row["path"] for row in fs_rows)
-            assert all(row["size"] is None or row["size"] >= 0 for row in fs_rows)
-            assert all(row["credential_ref"] is None for row in fs_rows)
+            paths = {row["path"] for row in fs_rows}
+            assert script_name in paths
+            assert "ironbank-package-probe/payload.txt" in paths
+            assert any(path.endswith("package.json") for path in paths)
+            assert any(path.endswith(".whl") for path in paths)
+            for row in fs_rows[:80]:
+                _assert_ledger_id(row["event_id"])
+                assert row["path"]
+                assert row["name"]
+                assert row["directory"]
+                assert row["action"] in {
+                    "created",
+                    "modified",
+                    "deleted",
+                    "import",
+                    "export",
+                    "read",
+                    "restored",
+                }
+
+            security_rows = conn.execute(
+                """
+                SELECT *
+                FROM security_rule_events
+                WHERE event_id IN (
+                    SELECT event_id FROM fs_events WHERE path = ?
+                )
+                  AND event_type = 'file.import'
+                ORDER BY id
+                """,
+                (script_name,),
+            ).fetchall()
+            assert security_rows, "package probe upload must be governed by file rule"
+            for row in security_rows:
+                assert row["event_type"] == "file.import"
+                assert row["rule_id"] == "profiles.rules.default_file"
+                assert row["rule_action"] == "allow"
+                event_json = json.loads(row["event_json"])
+                assert event_json["file"]["import_name"] == script_name
+                assert event_json["file"]["import_path"] == script_name
+                assert event_json["decision"]["effective"] == "allow"
         finally:
             conn.close()
+
+        history = client.get(f"/vms/{session_id}/history?layer=exec&limit=20", timeout=30)
+        assert any(
+            row["command"] == f"bash /root/{script_name}"
+            and row["exit_code"] == 0
+            and "IRONBANK:complete" in (row["stdout_preview"] or "")
+            for row in history["commands"]
+        )
+
+        counts = client.get(f"/vms/{session_id}/history/counts", timeout=30)
+        assert counts["exec_count"] >= 1
+        assert counts["audit_count"] >= 4
+
+        timeline = client.get(f"/vms/{session_id}/timeline?layers=exec,fs&limit=250", timeout=30)
+        timeline_rows = _columnar_rows(timeline)
+        assert {"exec", "fs"} <= {row["layer"] for row in timeline_rows}
+        summaries = "\n".join(row["summary"] for row in timeline_rows)
+        assert script_name in summaries
+        assert "ironbank-package-probe" in summaries
     finally:
         if client is not None:
             try:

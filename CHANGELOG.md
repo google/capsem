@@ -100,6 +100,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   remote MCP traffic. MCP security events now carry request arguments,
   response content, trace IDs, and transport facts through CEL, DB rows, UDS
   inspection, gateway inspection, latest/status routes, and structured logs.
+- Added Ironbank file/process/snapshot and package-manager ledger proofs.
+  The new black-box coverage exercises file import/export/create/modify/delete
+  rows, symlink escape rejection, process audit versus exec semantics,
+  snapshot route hermeticity, package-manager functional probes, route
+  serialization, and DB-backed security rows.
 - Tightened Ironbank model/client coverage so the mock server replays an
   Ollama-compatible OpenAI chat-completion shape with native tool calls, the
   OpenAI SDK/Anthropic SDK/LiteLLM/Ollama SDK/Codex CLI paths assert full
