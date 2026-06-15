@@ -55,12 +55,39 @@ next one, and stage only the files for that slice.
     stream request, so the session DB contains setup HTTP/DNS events only and
     zero `model_calls`/tool/file proof rows.
   - Latest preserved artifacts:
-    `test-artifacts/20260615-014517-master-tests_ironbank_test_model_client_ledger_contract.py__test_agy_cli_ledger_contrac/capsem-test-2nu3epel`
-    and
-    `test-artifacts/20260615-013503-master-tests_ironbank_test_model_client_ledger_contract.py__test_agy_cli_ledger_contrac/capsem-test-vho1f0qb`.
+    `test-artifacts/20260615-041326-master-tests_ironbank_test_model_client_ledger_contract.py__test_agy_cli_ledger_contrac/capsem-test-q880545d`
+    proves AGY consumes the recorded 248-flag `listExperiments` fixture but
+    still fails model selection before any stream request;
+    `test-artifacts/20260615-041613-master-tests_ironbank_test_model_client_ledger_contract.py__test_agy_cli_ledger_contrac/capsem-test-a9627hdr`
+    proves removing the forced model flag avoids the quick CLI rejection but
+    still leaves no `PlanModel`/`RequestedModel`, so print mode times out with
+    zero `model_calls`;
+    `test-artifacts/20260615-041729-master-tests_ironbank_test_model_client_ledger_contract.py__test_agy_cli_ledger_contrac/capsem-test-txj0wh_9`
+    proves `--model gemini-3.5-flash-low` is also not accepted by the public
+    CLI model flag path.
+  - 2026-06-15 progress: the mock-server now loads a recorded non-secret
+    Google Code Assist `listExperiments`, `fetchAvailableModels`,
+    `loadCodeAssist`, and quota fixture set from
+    `tests/fixtures/protocols/google_code_assist/`. The launcher tests guard
+    exact fixture cardinality and setup shape so the old hand-written 4 KB flag
+    stub and one-model catalog cannot return. Focused proof:
+    `uv run pytest
+    tests/test_mock_server_launcher.py::test_mock_server_replays_recorded_agy_code_assist_experiments
+    tests/test_mock_server_launcher.py::test_mock_server_replays_recorded_agy_available_models
+    tests/test_mock_server_launcher.py::test_mock_server_replays_recorded_agy_code_assist_setup
+    -q`.
+  - 2026-06-15 blocker after recorded fixtures:
+    `test-artifacts/20260615-043211-master-tests_ironbank_test_model_client_ledger_contract.py__test_agy_cli_ledger_contrac/capsem-test-y5ulwi_t`
+    shows AGY receives recorded setup/catalog/quota responses
+    (`fetchAvailableModels` response 56 KB) but still never logs
+    `Propagating selected model override`, never calls
+    `/v1internal:streamGenerateContent`, and exits with zero
+    `model_calls`. The next red/green slice must identify the supported
+    model-selection state for print mode or explicitly split AGY into an
+    interactive-only Ironbank lane.
   - Do not claim AGY coverage from these fixtures. Next AGY work needs a
-    specific terminal/config hypothesis or a recorded real client fixture; no
-    more blind long-running TUI pokes.
+    specific model-selection config/state hypothesis or a recorded real
+    `fetchAvailableModels` fixture; no more blind long-running TUI pokes.
 - [x] S7/Ironbank: extend the OpenAI-compatible double-turn ledger test with
   two random tool calls and exact per-trace cardinality: model request,
   reasoning, response, tool_call, tool_response, HTTP request/response, DNS

@@ -59,6 +59,10 @@ ENDPOINTS = [
     "/v1/chat/completions",
     "/v1/responses",
     "/v1/messages",
+    "/v1internal:listExperiments",
+    "/v1internal:loadCodeAssist",
+    "/v1internal:fetchAvailableModels",
+    "/v1internal:streamGenerateContent",
     "/api/chat",
     "/api/show",
     "/api/tags",
@@ -77,6 +81,10 @@ DNS_FIXTURES = {
     "fixture.capsem.test": "127.0.0.1",
     "model.capsem.test": "127.0.0.1",
     "mcp.capsem.test": "127.0.0.1",
+    "daily-cloudcode-pa.googleapis.com": "127.0.0.1",
+    "www.googleapis.com": "127.0.0.1",
+    "play.googleapis.com": "127.0.0.1",
+    "antigravity-unleash.goog": "127.0.0.1",
 }
 REQUEST_LOG_PATH: Path | None = None
 REQUEST_LOG_LOCK = threading.Lock()
@@ -203,6 +211,38 @@ def _generic_write_target(payload: dict, default_prefix: str) -> tuple[str, str]
     token = token_match.group(1) if token_match else EXPECTED_POEM
     path = path_match.group(1) if path_match else f"/root/{default_prefix}-output.txt"
     return token, path
+
+
+def _google_code_assist_experiments() -> dict:
+    """Recorded non-secret AGY Code Assist flags used for CLI model routing."""
+    return _google_code_assist_fixture("list_experiments.json")
+
+
+def _google_available_models() -> dict:
+    """Recorded non-secret AGY model catalog used by `agy models` and print mode."""
+    return _google_code_assist_fixture("available_models.json")
+
+
+def _google_load_code_assist() -> dict:
+    """Recorded non-secret AGY Code Assist tier/project setup response."""
+    return _google_code_assist_fixture("load_code_assist.json")
+
+
+def _google_quota_summary() -> dict:
+    """Recorded non-secret AGY quota shape required by the CLI model cache."""
+    return _google_code_assist_fixture("quota_summary.json")
+
+
+def _google_code_assist_fixture(name: str) -> dict:
+    fixture_path = (
+        Path(__file__).resolve().parents[1]
+        / "tests"
+        / "fixtures"
+        / "protocols"
+        / "google_code_assist"
+        / name
+    )
+    return json.loads(fixture_path.read_text(encoding="utf-8"))
 
 
 def _shell_write_command(token: str, path: str) -> str:
@@ -356,6 +396,74 @@ def _google_stream_body() -> bytes:
         '"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":5,'
         '"candidatesTokenCount":3,"totalTokenCount":8}}\n\n'
     ).encode()
+
+
+def _google_has_tool_response(payload: dict) -> bool:
+    raw = json.dumps(payload, separators=(",", ":"))
+    return "functionResponse" in raw
+
+
+def _google_write_target(payload: dict) -> tuple[str, str]:
+    return _generic_write_target(payload, "agy")
+
+
+def _google_stream_tool_body(payload: dict | None = None) -> bytes:
+    payload = payload or {}
+    token, path = _google_write_target(payload)
+    args = {
+        "TargetFile": path,
+        "AbsolutePath": path,
+        "Content": f"{token}\n",
+        "FileContent": f"{token}\n",
+        "Overwrite": True,
+        "ArtifactMetadata": {
+            "Summary": "Write the Ironbank AGY proof token.",
+            "RequestFeedback": False,
+        },
+        "toolSummary": "Write proof",
+        "toolAction": "Writing file",
+    }
+    first = {
+        "candidates": [
+            {
+                "content": {
+                    "parts": [{"functionCall": {"name": "write_to_file", "args": args}}],
+                    "role": "model",
+                },
+                "finishReason": "STOP",
+            }
+        ],
+        "usageMetadata": {"promptTokenCount": 31, "candidatesTokenCount": 17},
+        "modelVersion": "gemini-3.5-flash-low",
+    }
+    return f"data: {json.dumps(first, separators=(',', ':'))}\n\n".encode()
+
+
+def _google_stream_final_body(payload: dict | None = None) -> bytes:
+    payload = payload or {}
+    token, _ = _google_write_target(payload)
+    final = {
+        "candidates": [
+            {
+                "content": {
+                    "parts": [
+                        {"thought": True, "text": "ledger reasoning"},
+                        {"text": token},
+                    ],
+                    "role": "model",
+                },
+                "finishReason": "STOP",
+            }
+        ],
+        "usageMetadata": {
+            "promptTokenCount": 7,
+            "candidatesTokenCount": 5,
+            "thoughtsTokenCount": 2,
+            "totalTokenCount": 14,
+        },
+        "modelVersion": "gemini-3.5-flash-low",
+    }
+    return f"data: {json.dumps(final, separators=(',', ':'))}\n\n".encode()
 
 
 def _anthropic_stream_body() -> bytes:
@@ -723,6 +831,8 @@ class MockHandler(BaseHTTPRequestHandler):
                     "scope": "openid profile email offline_access",
                 }
             )
+        elif path == "/api/client/features":
+            self._send_json({"version": 1, "features": []})
         elif path == "/slow-chunks":
             self.send_response(HTTPStatus.OK)
             self.send_header("content-type", "text/plain; charset=utf-8")
@@ -763,6 +873,15 @@ class MockHandler(BaseHTTPRequestHandler):
                             },
                         }
                     ]
+                }
+            )
+        elif path == "/oauth2/v2/userinfo":
+            self._send_json(
+                {
+                    "id": "capsem-mock-user",
+                    "email": "capsem-mock@example.invalid",
+                    "verified_email": True,
+                    "name": "Capsem Mock User",
                 }
             )
         elif path == "/deny-target":
@@ -809,6 +928,40 @@ class MockHandler(BaseHTTPRequestHandler):
             payload = self._json_body()
             model = payload.get("model") if isinstance(payload.get("model"), str) else "mock-local"
             self._send_json(_model_payload(model, include_tool_call=False))
+        elif path == "/v1internal:listExperiments":
+            self._body()
+            self._send_json(_google_code_assist_experiments())
+        elif path == "/v1internal:loadCodeAssist":
+            self._body()
+            self._send_json(_google_load_code_assist())
+        elif path == "/v1internal:fetchAvailableModels":
+            self._body()
+            self._send_json(_google_available_models())
+        elif path == "/v1internal:fetchUserInfo":
+            self._body()
+            self._send_json(
+                {
+                    "userSettings": {"telemetryEnabled": False},
+                    "regionCode": "US",
+                }
+            )
+        elif path == "/v1internal:retrieveUserQuotaSummary":
+            self._body()
+            self._send_json(_google_quota_summary())
+        elif path == "/v1internal:setUserSettings":
+            self._body()
+            self._send_json({"userSettings": {"telemetryEnabled": False}})
+        elif path == "/v1internal:fetchAdminControls":
+            self._body()
+            self._send_json({})
+        elif path == "/v1internal:streamGenerateContent":
+            payload = self._json_body()
+            body = (
+                _google_stream_final_body(payload)
+                if _google_has_tool_response(payload)
+                else _google_stream_tool_body(payload)
+            )
+            self._send(HTTPStatus.OK, body, "text/event-stream")
         elif path.endswith(":streamGenerateContent"):
             self._body()
             self._send(HTTPStatus.OK, _google_stream_body(), "text/event-stream")
@@ -882,6 +1035,18 @@ class MockHandler(BaseHTTPRequestHandler):
                     "scope": "openid profile email offline_access",
                 }
             )
+        elif path == "/log":
+            self._body()
+            self._send_json({})
+        elif path == "/api/client/register":
+            self._body()
+            self._send(HTTPStatus.ACCEPTED, b"", "application/json")
+        elif path == "/api/client/features":
+            self._body()
+            self._send_json({"version": 1, "features": []})
+        elif path == "/api/client/metrics":
+            self._body()
+            self._send(HTTPStatus.ACCEPTED, b"", "application/json")
         elif path == "/mcp":
             self._mcp(self._json_body())
         elif path == "/echo":
@@ -905,6 +1070,7 @@ class MockHandler(BaseHTTPRequestHandler):
                 }
             )
         else:
+            self._body()
             self._send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
 
     def _bytes(self, size: str, *, gzip_body: bool) -> None:

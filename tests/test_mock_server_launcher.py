@@ -362,3 +362,75 @@ def test_mock_server_replays_streaming_anthropic_final_shape() -> None:
         assert "tool_use" not in stream
     finally:
         stop_process(proc)
+
+
+def test_mock_server_replays_recorded_agy_code_assist_experiments() -> None:
+    proc = None
+    try:
+        proc, ready = start_mock_server()
+        payload = _post_json(f"{ready['base_url']}/v1internal:listExperiments", {})
+
+        flags = payload["flags"]
+        assert len(payload["experimentIds"]) == 66
+        assert len(flags) == 248
+        assert len(json.dumps(payload, separators=(",", ":")).encode()) > 20_000
+        assert {
+            "GcliConfigPayload__config_payload",
+            "GcliConfig__cli_max_attempts",
+            "CliComplexityBasedRouting__enabled",
+            "allow-always-config",
+        }.issubset({flag["name"] for flag in flags})
+    finally:
+        stop_process(proc)
+
+
+def test_mock_server_replays_recorded_agy_available_models() -> None:
+    proc = None
+    try:
+        proc, ready = start_mock_server()
+        payload = _post_json(
+            f"{ready['base_url']}/v1internal:fetchAvailableModels",
+            {"project": "capsem-mock-project"},
+        )
+
+        models = payload["models"]
+        assert len(models) == 16
+        assert models["gemini-3.5-flash-low"]["displayName"] == "Gemini 3.5 Flash (Medium)"
+        assert models["gemini-3.5-flash-low"]["model"] == "MODEL_PLACEHOLDER_M20"
+        assert models["gemini-3.5-flash-low"]["modelProvider"] == "MODEL_PROVIDER_GOOGLE"
+        assert models["claude-sonnet-4-6"]["modelProvider"] == "MODEL_PROVIDER_ANTHROPIC"
+        assert all(model["quotaInfo"]["remainingFraction"] == 1 for model in models.values())
+    finally:
+        stop_process(proc)
+
+
+def test_mock_server_replays_recorded_agy_code_assist_setup() -> None:
+    proc = None
+    try:
+        proc, ready = start_mock_server()
+        base_url = ready["base_url"]
+
+        setup = _post_json(
+            f"{base_url}/v1internal:loadCodeAssist",
+            {"metadata": {"ideType": "ANTIGRAVITY"}},
+        )
+        assert setup["currentTier"]["id"] == "free-tier"
+        assert setup["cloudaicompanionProject"] == "capsem-mock-project"
+        assert len(setup["allowedTiers"]) == 2
+        assert len(json.dumps(setup, separators=(",", ":")).encode()) > 3_000
+
+        quota = _post_json(
+            f"{base_url}/v1internal:retrieveUserQuotaSummary",
+            {"project": "capsem-mock-project"},
+        )
+        assert {group["displayName"] for group in quota["groups"]} == {
+            "Gemini Models",
+            "Claude and GPT models",
+        }
+        assert all(
+            bucket["remainingFraction"] == 1
+            for group in quota["groups"]
+            for bucket in group["buckets"]
+        )
+    finally:
+        stop_process(proc)

@@ -302,7 +302,7 @@ codex_config.write_text(codex_text, encoding="utf-8")
 env = os.environ.copy()
 env["HOME"] = "/root"
 env["NO_COLOR"] = "1"
-env["TERM"] = "xterm-256color"
+env["TERM"] = "dumb"
 env["OPENAI_API_KEY"] = "sk-" + NONCE
 completed = subprocess.run(
     [
@@ -404,23 +404,62 @@ emit_result("ollama", "127.0.0.1", "/v1/responses", "gemma4:latest", NONCE, "led
 
 def agy_cli_script(_base_url: str) -> str:
     return textwrap.dedent(
-        common_result_script_prelude("http://127.0.0.1:11434", "agy-cli")
+        common_result_script_prelude("http://127.0.0.1:3713", "agy-cli")
         + r'''
 env = os.environ.copy()
 env["HOME"] = "/root"
 env["NO_COLOR"] = "1"
 env["TERM"] = "xterm-256color"
+token_path = Path("/root/.gemini/antigravity-cli/antigravity-oauth-token")
+token_path.parent.mkdir(parents=True, exist_ok=True)
+token_path.write_text(json.dumps({
+    "token": {
+        "access_token": "capsem_test_agy_access_" + NONCE,
+        "token_type": "Bearer",
+        "refresh_token": "capsem_test_agy_refresh_" + NONCE,
+        "expiry": "2099-01-01T00:00:00Z"
+    },
+    "auth_method": "consumer"
+}), encoding="utf-8")
+token_path.chmod(0o600)
+settings_path = Path("/root/.gemini/antigravity-cli/settings.json")
+settings_path.write_text(json.dumps({
+    "model": "Gemini 3.5 Flash (Medium)",
+    "trustedWorkspaces": ["/root"],
+    "telemetry": {"enabled": False},
+    "autoUpdate": {"enabled": False}
+}), encoding="utf-8")
 completed = subprocess.run(
-    ["agy", "-p", PROMPT, "--print-timeout", "90s"],
+    [
+        "agy",
+        "-p",
+        PROMPT,
+        "--print-timeout",
+        "90s",
+    ],
     cwd="/root",
     env=env,
     capture_output=True,
     text=True,
-    timeout=150,
+    timeout=120,
 )
 if completed.returncode != 0:
-    raise SystemExit((completed.stdout or "") + (completed.stderr or ""))
-call_args = {"cmd": "printf '%s\\n' " + NONCE + " > " + TARGET, "yield_time_ms": 1000, "max_output_tokens": 2000}
-emit_result("ollama", "127.0.0.1", "/api/chat", "gemma4:latest", NONCE, "ledger reasoning", "exec_command", call_args, "Process exited with code 0")
+    raise SystemExit((completed.stdout or "")[-24000:] + (completed.stderr or "")[-12000:])
+if not Path(TARGET).exists():
+    raise SystemExit(
+        "agy did not create target file\n"
+        + "--- stdout ---\n"
+        + (completed.stdout or "")[-12000:]
+        + "\n--- stderr ---\n"
+        + (completed.stderr or "")[-12000:]
+    )
+call_args = {
+    "TargetFile": TARGET,
+    "AbsolutePath": TARGET,
+    "Content": NONCE + "\\n",
+    "FileContent": NONCE + "\\n",
+    "Overwrite": True,
+}
+emit_result("ollama", "127.0.0.1", "/api/chat", "gemma4:latest", NONCE, "ledger reasoning", "write_to_file", call_args, "saved")
 '''
     ).strip()

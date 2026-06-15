@@ -1,0 +1,31 @@
+{
+  "description": "Within each group, models share a weekly limit. Quota is consumed proportionally to the cost of the tokens. Thus, limits will last longer with shorter tasks or using more cost-effective models. Your weekly limit is tied directly to your individual tier.",
+  "groups": [
+    {
+      "buckets": [
+        {
+          "bucketId": "gemini-weekly",
+          "displayName": "Weekly Limit",
+          "remainingFraction": 1,
+          "resetTime": "2026-06-18T20:03:23Z",
+          "window": "weekly"
+        }
+      ],
+      "description": "Models within this group: Gemini Flash, Gemini Pro",
+      "displayName": "Gemini Models"
+    },
+    {
+      "buckets": [
+        {
+          "bucketId": "3p-weekly",
+          "displayName": "Weekly Limit",
+          "remainingFraction": 1,
+          "resetTime": "2026-06-18T20:03:23Z",
+          "window": "weekly"
+        }
+      ],
+      "description": "Models within this group: Claude Opus, Claude Sonnet, GPT-OSS",
+      "displayName": "Claude and GPT models"
+    }
+  ]
+}

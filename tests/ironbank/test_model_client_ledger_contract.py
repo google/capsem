@@ -153,6 +153,22 @@ def model_client_env():
                 [network.dns]
                 upstreams = [{json.dumps(ready["dns_udp_addr"])}]
 
+                [network.upstream_overrides."daily-cloudcode-pa.googleapis.com:443"]
+                dial = {json.dumps(ready["http_addr"])}
+                protocol = "http"
+
+                [network.upstream_overrides."www.googleapis.com:443"]
+                dial = {json.dumps(ready["http_addr"])}
+                protocol = "http"
+
+                [network.upstream_overrides."play.googleapis.com:443"]
+                dial = {json.dumps(ready["http_addr"])}
+                protocol = "http"
+
+                [network.upstream_overrides."antigravity-unleash.goog:443"]
+                dial = {json.dumps(ready["http_addr"])}
+                protocol = "http"
+
                 [settings."security.web.http_upstream_ports"]
                 value = [80, 3713, 8080, 11434]
                 modified = "2026-06-14T00:00:00Z"
@@ -179,6 +195,14 @@ def model_client_env():
                 detection_level = "informational"
                 reason = "Allow the hermetic Ironbank model fixture while preserving local-network ask defaults."
                 match = 'http.host == "127.0.0.1" && tcp.port == "3713" && (http.path == "/" || http.path == "/api/show" || http.path == "/api/tags" || http.path == "/api/chat" || http.path == "/v1/responses" || http.path == "/v1/messages")'
+
+                [corp.rules.allow_ironbank_google_code_assist]
+                name = "allow_ironbank_google_code_assist"
+                action = "allow"
+                priority = -100
+                detection_level = "informational"
+                reason = "Allow hermetic AGY Google Code Assist replay through the declared upstream override."
+                match = 'tcp.port == "443" && ((http.host == "daily-cloudcode-pa.googleapis.com" && http.path.matches("^/v1internal:")) || (http.host == "www.googleapis.com" && http.path == "/oauth2/v2/userinfo") || (http.host == "play.googleapis.com" && http.path == "/log") || (http.host == "antigravity-unleash.goog" && http.path.matches("^/api/client/")))'
                 """
             ).strip()
             + "\n",
@@ -204,6 +228,9 @@ def model_client_env():
         assert active_profile.exists(), f"active profile missing at {active_profile}"
         active_profile_text = active_profile.read_text(encoding="utf-8")
         assert ready["dns_udp_addr"] in active_profile_text
+        assert ready["http_addr"] in active_profile_text
+        assert "daily-cloudcode-pa.googleapis.com:443" in active_profile_text
+        assert "antigravity-unleash.goog:443" in active_profile_text
         assert "runtime-overlay.toml" not in active_profile_text
         assert wait_exec_ready(client, session_id, timeout=EXEC_READY_TIMEOUT)
         yield ModelClientEnv(
