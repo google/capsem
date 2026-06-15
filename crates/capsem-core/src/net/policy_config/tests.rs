@@ -2973,8 +2973,8 @@ fn settings_tree_has_top_level_groups() {
             SettingsNode::Leaf(_) => {
                 panic!("top-level nodes should be groups, not leaves");
             }
-            SettingsNode::Action { .. } | SettingsNode::McpServer(_) => {
-                // Action and MCP nodes can appear at top level
+            SettingsNode::Action { .. } => {
+                // Action nodes can appear at top level
             }
         }
     }
@@ -2994,7 +2994,7 @@ fn settings_tree_contains_all_definitions() {
                 SettingsNode::Group { children, .. } => {
                     ids.extend(collect_leaf_ids(children));
                 }
-                SettingsNode::Action { .. } | SettingsNode::McpServer(_) => {}
+                SettingsNode::Action { .. } => {}
             }
         }
         ids
@@ -3178,45 +3178,6 @@ fn dark_mode_has_side_effect() {
         dark_mode.metadata.side_effect,
         Some(SideEffect::ToggleTheme)
     );
-}
-
-// -----------------------------------------------------------------------
-// Grammar: MCP server loading
-// -----------------------------------------------------------------------
-
-#[test]
-fn mcp_section_parsed_from_defaults() {
-    // Generated settings UI metadata declares the default local MCP server.
-    let servers = super::loader::load_mcp_servers();
-    let local = servers.iter().find(|s| s.key == "local");
-    assert!(local.is_some(), "local MCP server should be in defaults");
-    let local = local.unwrap();
-    assert_eq!(local.name, "Local");
-    assert_eq!(local.transport, McpTransport::Stdio);
-    assert_eq!(local.command.as_deref(), Some("/run/capsem-mcp-server"));
-    assert!(local.builtin);
-    assert!(local.enabled);
-    assert_eq!(local.source, PolicySource::Default);
-}
-
-#[test]
-fn mcp_servers_in_tree() {
-    let resolved = resolve_settings(&empty_file(), &empty_file());
-    let servers = super::loader::load_mcp_servers();
-    let tree = build_settings_tree_with_mcp(&resolved, &servers);
-
-    // Find the MCP Servers group
-    let mcp_group = tree
-        .iter()
-        .find(|n| matches!(n, SettingsNode::Group { name, .. } if name == "MCP Servers"));
-    assert!(mcp_group.is_some(), "tree should have MCP Servers group");
-
-    if let Some(SettingsNode::Group { children, .. }) = mcp_group {
-        let has_local = children
-            .iter()
-            .any(|c| matches!(c, SettingsNode::McpServer(s) if s.key == "local"));
-        assert!(has_local, "MCP Servers group should contain local");
-    }
 }
 
 // -----------------------------------------------------------------------
@@ -4767,6 +4728,14 @@ fn load_settings_response_exposes_settings_tree_only() {
     assert!(
         serialized.get("issues").is_some(),
         "settings response must expose config issues"
+    );
+    let tree = serialized
+        .get("tree")
+        .expect("settings tree is present")
+        .to_string();
+    assert!(
+        !tree.contains("\"mcp\"") && !tree.contains("MCP Servers"),
+        "settings response must not expose profile-owned MCP configuration"
     );
     assert!(
         serialized.get("providers").is_none(),

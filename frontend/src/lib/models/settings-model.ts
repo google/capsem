@@ -6,7 +6,6 @@ import {
   type SettingsNode,
   type SettingsGroup,
   type SettingsLeaf,
-  type McpServerNode,
   type SettingsChangeValue,
   type ConfigIssue,
   type SettingsResponse,
@@ -22,14 +21,12 @@ export class SettingsModel {
   private _tree: SettingsNode[];
   private _issues: ConfigIssue[];
   private _leafIndex: Map<string, SettingsLeaf>;
-  private _mcpIndex: Map<string, McpServerNode>;
   private _pendingChanges: Map<string, SettingsChangeValue>;
 
   constructor(response: SettingsResponse) {
     this._tree = response.tree;
     this._issues = response.issues;
     this._leafIndex = new Map();
-    this._mcpIndex = new Map();
     this._pendingChanges = new Map();
     this._buildIndexes(this._tree);
   }
@@ -40,8 +37,6 @@ export class SettingsModel {
         this._leafIndex.set(node.id, node);
       } else if (node.kind === 'group') {
         this._buildIndexes(node.children);
-      } else if (node.kind === 'mcp_server') {
-        this._mcpIndex.set(node.key, node);
       }
     }
   }
@@ -62,10 +57,6 @@ export class SettingsModel {
     return Array.from(this._leafIndex.values());
   }
 
-  get mcpServers(): McpServerNode[] {
-    return Array.from(this._mcpIndex.values());
-  }
-
   getLeaf(id: string): SettingsLeaf | undefined {
     return this._leafIndex.get(id);
   }
@@ -82,10 +73,6 @@ export class SettingsModel {
       return undefined;
     };
     return search(this._tree);
-  }
-
-  getMcpServer(key: string): McpServerNode | undefined {
-    return this._mcpIndex.get(key);
   }
 
   section(name: string): SettingsGroup | undefined {

@@ -403,11 +403,11 @@ class TestGenerateDefaultsJsonStructure:
         result = generate_defaults_json(cfg)
         assert isinstance(result, dict)
 
-    def test_has_settings_and_mcp_keys(self, guest_full):
+    def test_has_settings_key_only(self, guest_full):
         cfg = load_guest_config(guest_full)
         result = generate_defaults_json(cfg)
         assert "settings" in result
-        assert "mcp" in result
+        assert "mcp" not in result
 
     def test_settings_has_top_level_groups(self, guest_full):
         cfg = load_guest_config(guest_full)
@@ -441,12 +441,10 @@ class TestGenerateDefaultsJsonStructure:
         assert res["cpu_count"]["type"] == "number"
         assert res["cpu_count"]["default"] == 4
 
-    def test_mcp_servers(self, guest_full):
+    def test_mcp_servers_stay_out_of_settings_metadata(self, guest_full):
         cfg = load_guest_config(guest_full)
         result = generate_defaults_json(cfg)
-        assert "capsem" in result["mcp"]
-        assert result["mcp"]["capsem"]["transport"] == "stdio"
-        assert result["mcp"]["capsem"]["command"] == "/run/capsem-mcp-server"
+        assert "mcp" not in result
 
     def test_valid_json_roundtrip(self, guest_full):
         cfg = load_guest_config(guest_full)
@@ -507,14 +505,10 @@ class TestGenerateDefaultsJsonConformance:
                 assert gen[sid].get("default") == data["default"], \
                     f"{sid}: default mismatch: {data['default']!r} vs {gen[sid].get('default')!r}"
 
-    def test_same_mcp_servers(self, generated, current_defaults):
-        """MCP server definitions match."""
-        assert set(generated["mcp"].keys()) == set(current_defaults["mcp"].keys())
-        for key in current_defaults["mcp"]:
-            for field in ("transport", "command", "builtin"):
-                if field in current_defaults["mcp"][key]:
-                    assert generated["mcp"][key].get(field) == current_defaults["mcp"][key][field], \
-                        f"mcp.{key}.{field}: mismatch"
+    def test_mcp_servers_do_not_reappear(self, generated, current_defaults):
+        """Profile MCP declarations must not be exported through settings metadata."""
+        assert "mcp" not in generated
+        assert "mcp" not in current_defaults
 
     def test_agent_provider_settings_do_not_reappear(self, generated, current_defaults):
         """Runtime model provider control must stay out of generated settings."""

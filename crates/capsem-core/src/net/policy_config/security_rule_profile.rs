@@ -900,8 +900,7 @@ impl<'a> SecurityRuleEvaluation<'a> {
     }
 
     pub fn enforcement_rules(&self) -> Vec<&'a CompiledSecurityRule> {
-        let enforcement_rules = self
-            .matched_rules
+        self.matched_rules
             .iter()
             .copied()
             .filter(|rule| {
@@ -910,17 +909,7 @@ impl<'a> SecurityRuleEvaluation<'a> {
                     SecurityRuleAction::Allow | SecurityRuleAction::Ask | SecurityRuleAction::Block
                 )
             })
-            .collect::<Vec<_>>();
-        let specific_rules = enforcement_rules
-            .iter()
-            .copied()
-            .filter(|rule| !rule.default_rule)
-            .collect::<Vec<_>>();
-        if specific_rules.is_empty() {
-            enforcement_rules
-        } else {
-            specific_rules
-        }
+            .collect::<Vec<_>>()
     }
 }
 

@@ -1,19 +1,18 @@
 {
-  "total_settings": 17,
+  "total_settings": 13,
   "by_type": {
     "bool": 2,
     "number": 1,
-    "text": 5,
+    "action": 1,
+    "text": 3,
     "url": 1,
     "email": 1,
     "string_list": 1,
     "int_list": 1,
     "float_list": 1,
-    "action": 1,
-    "mcp_tool": 1,
-    "kv_map": 2
+    "kv_map": 1
   },
-  "group_count": 6,
+  "group_count": 3,
   "settings": [
     {
       "key": "test_app.auto_update",
@@ -91,30 +90,6 @@
       "key": "test_appearance.theme",
       "name": "Theme",
       "setting_type": "text",
-      "enabled_by": null
-    },
-    {
-      "key": "mcp.capsem.type",
-      "name": "Server Type",
-      "setting_type": "text",
-      "enabled_by": null
-    },
-    {
-      "key": "mcp.capsem.command",
-      "name": "Command",
-      "setting_type": "text",
-      "enabled_by": null
-    },
-    {
-      "key": "mcp.capsem.env",
-      "name": "Environment",
-      "setting_type": "kv_map",
-      "enabled_by": null
-    },
-    {
-      "key": "mcp.capsem.tools.snapshot_create",
-      "name": "snapshot_create",
-      "setting_type": "mcp_tool",
       "enabled_by": null
     }
   ]

@@ -260,7 +260,6 @@ fn only_app_preference_setting_types_present() {
         "int_list",
         "float_list",
         "action",
-        "mcp_tool",
     ]);
     let root = parse_golden();
     let settings = extract_settings(&root.settings);
@@ -290,21 +289,14 @@ fn action_settings_have_action_kind() {
 }
 
 #[test]
-fn mcp_tool_settings_have_origin() {
+fn profile_mcp_tools_are_not_settings() {
     let root = parse_golden();
     let settings = extract_settings(&root.settings);
     let tools: Vec<_> = settings
         .iter()
         .filter(|s| s.setting_type == "mcp_tool")
         .collect();
-    assert!(!tools.is_empty());
-    for t in &tools {
-        assert!(
-            t.metadata.origin.is_some(),
-            "mcp_tool {} missing metadata.origin",
-            t.key
-        );
-    }
+    assert!(tools.is_empty());
 }
 
 #[test]
@@ -341,15 +333,5 @@ fn hidden_setting_exists() {
     assert!(
         settings.iter().any(|s| s.metadata.hidden),
         "no hidden setting found"
-    );
-}
-
-#[test]
-fn builtin_setting_exists() {
-    let root = parse_golden();
-    let settings = extract_settings(&root.settings);
-    assert!(
-        settings.iter().any(|s| s.metadata.builtin),
-        "no builtin setting found"
     );
 }

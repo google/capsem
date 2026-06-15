@@ -297,26 +297,8 @@ export interface SettingsAction {
   action: string;
 }
 
-/** A declarative MCP server node in the settings tree. */
-export interface McpServerNode {
-  kind: 'mcp_server';
-  key: string;
-  name: string;
-  description?: string | null;
-  transport: string;
-  command?: string | null;
-  url?: string | null;
-  args: string[];
-  env: Record<string, string>;
-  headers: Record<string, string>;
-  builtin: boolean;
-  enabled: boolean;
-  source: PolicySource;
-  corp_locked: boolean;
-}
-
-/** A settings tree node: group, leaf, action, or MCP server. */
-export type SettingsNode = SettingsGroup | SettingsLeaf | SettingsAction | McpServerNode;
+/** A settings tree node: group, leaf, or action. */
+export type SettingsNode = SettingsGroup | SettingsLeaf | SettingsAction;
 
 /** Unified response from load_settings / save_settings. */
 export interface SettingsResponse {

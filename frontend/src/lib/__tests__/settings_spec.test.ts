@@ -185,7 +185,6 @@ describe('settings_spec conformance', () => {
       'int_list',
       'float_list',
       'action',
-      'mcp_tool',
     ]);
     const settings = extractSettings(golden.settings);
     const types = new Set(settings.map((s) => s.setting_type));
@@ -205,14 +204,10 @@ describe('settings_spec conformance', () => {
     }
   });
 
-  it('mcp_tool settings have metadata.origin', () => {
+  it('does not carry profile MCP tools in settings', () => {
     const settings = extractSettings(golden.settings);
     const tools = settings.filter((s) => s.setting_type === 'mcp_tool');
-    expect(tools.length).toBeGreaterThanOrEqual(1);
-    for (const t of tools) {
-      expect(t.metadata.origin).toBeDefined();
-      expect(t.metadata.origin).not.toBeNull();
-    }
+    expect(tools).toHaveLength(0);
   });
 
   it('does not carry profile/provider file payloads in settings', () => {
@@ -228,9 +223,9 @@ describe('settings_spec conformance', () => {
     expect(settings.some((s) => s.metadata.hidden)).toBe(true);
   });
 
-  it('builtin setting exists', () => {
+  it('does not use builtin metadata for profile-owned state', () => {
     const settings = extractSettings(golden.settings);
-    expect(settings.some((s) => s.metadata.builtin)).toBe(true);
+    expect(settings.some((s) => s.metadata.builtin)).toBe(false);
   });
 
   it('does not use settings enabled_by to model profile/provider state', () => {

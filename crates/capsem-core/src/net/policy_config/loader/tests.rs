@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::HashMap;
 
 #[test]
 fn load_settings_file_missing_returns_default() {
@@ -381,39 +382,6 @@ upstreams = ["127.0.0.1:5353"]
 }
 
 #[test]
-fn parse_mcp_section_ignores_missing_section() {
-    let toml = "[settings]\n";
-    assert!(parse_mcp_section(toml, PolicySource::User).is_empty());
-}
-
-#[test]
-fn parse_mcp_section_ignores_invalid_toml() {
-    assert!(parse_mcp_section("{{{not toml", PolicySource::User).is_empty());
-}
-
-#[test]
-fn parse_mcp_section_skips_non_server_mechanics_keys() {
-    let toml = r#"
-[mcp]
-health_check_interval_secs = 60
-
-[mcp.my_server]
-name = "Example"
-transport = "stdio"
-command = "example-mcp"
-"#;
-    let servers = parse_mcp_section(toml, PolicySource::User);
-    assert_eq!(servers.len(), 1);
-    assert_eq!(servers[0].key, "my_server");
-    assert_eq!(servers[0].name, "Example");
-    assert_eq!(servers[0].command.as_deref(), Some("example-mcp"));
-    assert_eq!(servers[0].source, PolicySource::User);
-    // enabled defaults to true via the `default_true` helper.
-    assert!(servers[0].enabled);
-    assert!(!servers[0].corp_locked);
-}
-
-#[test]
 fn load_settings_file_rejects_retired_mcp_policy_keys() {
     let dir = tempfile::tempdir().unwrap();
     for retired in [
@@ -435,66 +403,6 @@ local__echo = "block"
             "unexpected error: {error}"
         );
     }
-}
-
-#[test]
-fn parse_mcp_section_skips_malformed_server_entries() {
-    let toml = r#"
-[mcp.bad_server]
-# missing required `name` field
-transport = "stdio"
-
-[mcp.good_server]
-name = "Good"
-transport = "sse"
-url = "https://example.com/mcp"
-"#;
-    let servers = parse_mcp_section(toml, PolicySource::Corp);
-    assert_eq!(servers.len(), 1);
-    assert_eq!(servers[0].key, "good_server");
-    assert_eq!(servers[0].url.as_deref(), Some("https://example.com/mcp"));
-}
-
-#[test]
-fn parse_mcp_section_json_ignores_missing_section() {
-    assert!(parse_mcp_section_json("{}", PolicySource::Default).is_empty());
-    // Also handles invalid JSON silently.
-    assert!(parse_mcp_section_json("not json", PolicySource::Default).is_empty());
-}
-
-#[test]
-fn parse_mcp_section_json_parses_builtin_server() {
-    let json = r#"{
-      "mcp": {
-        "my_tool": {
-          "name": "My Tool",
-          "transport": "stdio",
-          "command": "mytool",
-          "builtin": true,
-          "enabled": false
-        }
-      }
-    }"#;
-    let servers = parse_mcp_section_json(json, PolicySource::Default);
-    assert_eq!(servers.len(), 1);
-    let s = &servers[0];
-    assert_eq!(s.key, "my_tool");
-    assert!(s.builtin);
-    assert!(!s.enabled);
-    assert_eq!(s.source, PolicySource::Default);
-}
-
-#[test]
-fn parse_mcp_section_json_skips_malformed_entries() {
-    let json = r#"{
-      "mcp": {
-        "broken": {},
-        "ok": {"name": "OK", "transport": "stdio"}
-      }
-    }"#;
-    let servers = parse_mcp_section_json(json, PolicySource::User);
-    assert_eq!(servers.len(), 1);
-    assert_eq!(servers[0].key, "ok");
 }
 
 #[test]

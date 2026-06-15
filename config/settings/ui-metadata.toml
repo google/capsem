@@ -641,14 +641,3 @@ default = 14
 [settings.appearance.font_size.meta]
 min = 8
 max = 32
-
-# -- MCP Servers -------------------------------------------------------------
-# Declarative MCP server definitions. Profile/runtime plumbing owns materialization.
-# Enterprises can add servers via corp.toml [mcp] section.
-
-[mcp.local]
-name = "Local"
-description = "Built-in local tools: HTTP fetch, workspace snapshots"
-transport = "stdio"
-command = "/run/capsem-mcp-server"
-builtin = true

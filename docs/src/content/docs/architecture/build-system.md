@@ -171,8 +171,8 @@ inspect, validate, MCP, or dry-run rail for product images.
 Diagnostic output format:
 
 ```
-error: [E006] config/security/network.toml: Invalid domain pattern 'https://api.anthropic.com'
-warning: [W003] config/mcp/capsem.toml: Potential secret in mcp.capsem.headers.Authorization
+error: [E006] config/profiles/code/enforcement.toml: Invalid domain pattern 'https://api.anthropic.com'
+warning: [W003] config/profiles/code/mcp.json: Potential secret in MCP server headers
 ```
 
 ## Multi-Architecture Support

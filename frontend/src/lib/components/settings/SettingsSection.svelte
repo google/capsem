@@ -155,7 +155,7 @@
 {/if}
 
 <!-- Render children (groups at depth 0, everything at depth > 0) -->
-{#each group.children as child (child.kind === 'leaf' ? child.id : child.kind === 'group' ? child.key : child.kind === 'action' ? child.key : child.kind === 'mcp_server' ? child.key : Math.random())}
+{#each group.children as child (child.kind === 'leaf' ? child.id : child.kind === 'group' ? child.key : child.key)}
   {#if depth > 0 && child.kind === 'action'}
     {@render actionControl(child)}
   {:else if depth > 0 && child.kind === 'leaf'}

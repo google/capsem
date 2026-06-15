@@ -28,6 +28,24 @@ next one, and stage only the files for that slice.
 
 ## Active Correction Queue
 
+- [x] S1/S4: burn the old settings-tree MCP server rail while preserving
+  profile-owned MCP routes.
+  - 2026-06-15 proof: settings metadata/responses no longer expose a top-level
+    `mcp` tree, `mcp_server` settings nodes, `load_mcp_servers`,
+    `load_mcp_corp_config`, or `build_settings_tree_with_mcp`. Frontend
+    settings models no longer index MCP from settings; MCP remains under
+    `/profiles/{profile_id}/mcp/...`.
+  - 2026-06-15 proof: `SecurityRuleEvaluation::enforcement_rules()` keeps
+    built-in/default catchalls visible after specific enforcement matches, so
+    the security ledger records the specific rule and the late default rule
+    without changing the effective decision.
+  - Focused proof:
+    `cargo test -p capsem-core load_settings_response_exposes_settings_tree_only -- --nocapture`;
+    `uv run pytest tests/test_config.py tests/test_settings_spec.py tests/capsem-build-chain/test_no_legacy_user_config.py -q`;
+    `cargo test -p capsem-core --test settings_spec -- --nocapture`;
+    `pnpm --dir frontend test -- --run src/lib/__tests__/settings_spec.test.ts src/lib/models/__tests__/settings-model.test.ts`;
+    `uv run ruff check tests/test_config.py tests/test_settings_spec.py scripts/generate_schema.py src/capsem/builder/config.py`;
+    `cargo test -p capsem-core --lib net::policy_config -- --nocapture`.
 - [x] S1/S7: replace the session `runtime-overlay.toml` handoff with a single
   `vm/active_profile.toml` artifact. The service must write the fully merged
   VM runtime profile there; `capsem-process` must load that one file and must

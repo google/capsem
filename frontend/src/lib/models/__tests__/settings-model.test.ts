@@ -173,14 +173,10 @@ describe('SettingsModel', () => {
   });
 
   describe('MCP servers', () => {
-    it('mcpServers returns array', () => {
+    it('does not expose profile MCP through settings model', () => {
       const model = loadModel();
-      expect(Array.isArray(model.mcpServers)).toBe(true);
-    });
-
-    it('getMcpServer returns undefined for unknown key', () => {
-      const model = loadModel();
-      expect(model.getMcpServer('nonexistent')).toBeUndefined();
+      expect('mcpServers' in model).toBe(false);
+      expect('getMcpServer' in model).toBe(false);
     });
   });
 

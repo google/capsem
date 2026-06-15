@@ -463,29 +463,7 @@ def generate_defaults_json(config: GuestImageConfig) -> dict:
         },
     }
 
-    # -- mcp (from TOML configs) --
-    mcp: dict[str, Any] = {}
-    for key, server in config.mcp_servers.items():
-        entry: dict[str, Any] = {
-            "name": server.name,
-            "description": server.description,
-            "transport": server.transport.value,
-        }
-        if server.command:
-            entry["command"] = server.command
-        if server.url:
-            entry["url"] = server.url
-        if server.args:
-            entry["args"] = server.args
-        if server.env:
-            entry["env"] = server.env
-        if server.headers:
-            entry["headers"] = server.headers
-        if server.builtin:
-            entry["builtin"] = server.builtin
-        mcp[key] = entry
-
-    return {"settings": settings, "mcp": mcp}
+    return {"settings": settings}
 
 
 # ---------------------------------------------------------------------------

@@ -230,7 +230,7 @@ flowchart TD
 | **Enums** | `settings-enums.ts` | Typed enums matching Rust serde output (Widget, SideEffect, ActionKind, SettingType) |
 | **Model** | `settings-model.ts` | Pure TypeScript -- parsing, indexing, widget resolution, pending changes, validation. No Svelte dependency. Fully unit-tested. |
 | **Store** | `settings.svelte.ts` | Thin Svelte 5 wrapper -- reactive state, IPC calls, delegates to SettingsModel |
-| **View** | `SettingsSection.svelte` | Recursive renderer -- dispatches on `node.kind` (group/leaf/action/mcp_server) and `Widget` enum |
+| **View** | `SettingsSection.svelte` | Recursive renderer -- dispatches on `node.kind` (group/leaf/action) and `Widget` enum |
 
 The model class is independently testable (43 vitest tests) and works identically whether talking to the gateway or using mock data.
 
@@ -275,8 +275,9 @@ Key behaviors:
 
 ## MCP Server Definitions
 
-MCP servers are profile configuration. The settings UI may display MCP profile
-config, but settings do not own or merge MCP runtime truth:
+MCP servers are profile configuration. The UI may display MCP profile config
+through profile routes, but settings do not own or merge MCP runtime truth and
+the settings tree never contains MCP server nodes:
 
 ```mermaid
 flowchart LR

@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed (route surfaces and diagnostics)
+- Removed the old settings-tree MCP server rail. Settings metadata and
+  settings responses now expose UI/application preferences only, while MCP
+  remains profile-owned through `/profiles/{profile_id}/mcp/...` routes.
+  Default security-rule catchalls also remain visible in the security ledger
+  after specific rules match, so forensic rows show both the specific verdict
+  and the late default rule.
 - Removed the dead MCP server merge rail that auto-detected host AI CLI MCP
   configs and merged manual/corp/user inputs outside the profile contract.
   Runtime MCP server construction is now guarded to use profile-owned

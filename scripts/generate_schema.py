@@ -36,9 +36,8 @@ def main():
 
     # Summary
     settings = defaults.get("settings", {})
-    mcp_servers = defaults.get("mcp", {})
     print(f"  Settings groups: {[k for k in settings if k not in ('name','description','collapsed')]}")
-    print(f"  MCP servers: {list(mcp_servers.keys())}")
+    print("  MCP servers: profile routes")
     print("  MCP tools: profile routes")
 
 

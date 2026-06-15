@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use super::types::{McpServerDef, McpTransport, PolicySource};
 use super::{
     setting_id_owner, validate_corp_toml_contract, validate_settings_toml_contract,
     validate_stored_setting_contract, ConfigOwner, SettingValue, SettingsFile,
@@ -378,157 +377,6 @@ pub fn can_write_corp_settings() -> bool {
     false
 }
 
-/// Load the corp MCP config.
-pub fn load_mcp_corp_config() -> crate::mcp::policy::McpProfileConfig {
-    let (_, corp) = load_settings_and_corp_files();
-    corp.mcp.unwrap_or_default()
-}
-
-// ---------------------------------------------------------------------------
-// MCP server loading
-// ---------------------------------------------------------------------------
-
-/// Raw MCP server entry as it appears in TOML (without key or source metadata).
-#[derive(serde::Deserialize, Debug)]
-struct McpServerToml {
-    name: String,
-    #[serde(default)]
-    description: Option<String>,
-    transport: McpTransport,
-    #[serde(default)]
-    command: Option<String>,
-    #[serde(default)]
-    url: Option<String>,
-    #[serde(default)]
-    args: Vec<String>,
-    #[serde(default)]
-    env: HashMap<String, String>,
-    #[serde(default)]
-    headers: HashMap<String, String>,
-    #[serde(default)]
-    builtin: bool,
-    #[serde(default = "super::types::default_true")]
-    enabled: bool,
-}
-
-/// Parse `[mcp]` section from a TOML string into McpServerDef entries.
-fn parse_mcp_section(toml_str: &str, source: PolicySource) -> Vec<McpServerDef> {
-    let root: toml::Value = match toml::from_str(toml_str) {
-        Ok(v) => v,
-        Err(_) => return vec![],
-    };
-    let mcp_table = match root.get("mcp").and_then(|v| v.as_table()) {
-        Some(t) => t,
-        None => return vec![],
-    };
-    let mut servers = Vec::new();
-    for (key, val) in mcp_table {
-        // Skip global config keys that aren't server definitions
-        if key == "health_check_interval_secs" || key == "server_enabled" {
-            continue;
-        }
-
-        let toml_str = match toml::to_string(val) {
-            Ok(s) => s,
-            Err(_) => continue,
-        };
-        let server: McpServerToml = match toml::from_str(&toml_str) {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::warn!("skipping MCP server '{key}': {e}");
-                continue;
-            }
-        };
-        servers.push(McpServerDef {
-            key: key.clone(),
-            name: server.name,
-            description: server.description,
-            transport: server.transport,
-            command: server.command,
-            url: server.url,
-            args: server.args,
-            env: server.env,
-            headers: server.headers,
-            builtin: server.builtin,
-            enabled: server.enabled,
-            source,
-            corp_locked: false,
-        });
-    }
-    servers
-}
-
-/// Parse `mcp` section from a JSON string into McpServerDef entries.
-fn parse_mcp_section_json(json_str: &str, source: PolicySource) -> Vec<McpServerDef> {
-    let root: serde_json::Value = match serde_json::from_str(json_str) {
-        Ok(v) => v,
-        Err(_) => return vec![],
-    };
-    let mcp_obj = match root.get("mcp").and_then(|v| v.as_object()) {
-        Some(t) => t,
-        None => return vec![],
-    };
-    let mut servers = Vec::new();
-    for (key, val) in mcp_obj {
-        // Skip global config keys that aren't server definitions
-        if key == "health_check_interval_secs" || key == "server_enabled" {
-            continue;
-        }
-
-        let server: McpServerToml = match serde_json::from_value(val.clone()) {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::warn!("skipping MCP server '{key}': {e}");
-                continue;
-            }
-        };
-        servers.push(McpServerDef {
-            key: key.clone(),
-            name: server.name,
-            description: server.description,
-            transport: server.transport,
-            command: server.command,
-            url: server.url,
-            args: server.args,
-            env: server.env,
-            headers: server.headers,
-            builtin: server.builtin,
-            enabled: server.enabled,
-            source,
-            corp_locked: false,
-        });
-    }
-    servers
-}
-
-/// Load and merge MCP server definitions from defaults and corp configs.
-///
-/// Resolution: corp > defaults (per key). Corp entries are corp_locked.
-pub fn load_mcp_servers() -> Vec<McpServerDef> {
-    use super::settings_metadata::DEFAULTS_JSON;
-
-    let mut by_key: HashMap<String, McpServerDef> = HashMap::new();
-
-    // 1. Defaults from JSON (lowest priority)
-    for s in parse_mcp_section_json(DEFAULTS_JSON, PolicySource::Default) {
-        by_key.insert(s.key.clone(), s);
-    }
-
-    // 2. Corp overrides (highest priority, corp_locked)
-    let corp_toml = std::fs::read_to_string(corp_config_path()).unwrap_or_default();
-    for mut s in parse_mcp_section(&corp_toml, PolicySource::Corp) {
-        s.corp_locked = true;
-        by_key.insert(s.key.clone(), s);
-    }
-
-    // Also mark defaults as corp_locked if corp has the same key (already
-    // handled by overwrite above -- corp entry replaces default).
-
-    let mut servers: Vec<McpServerDef> = by_key.into_values().collect();
-    servers.sort_by(|a, b| a.key.cmp(&b.key));
-    servers
-}
-
 // ---------------------------------------------------------------------------
 // Unified settings response
 // ---------------------------------------------------------------------------
@@ -537,9 +385,8 @@ pub fn load_mcp_servers() -> Vec<McpServerDef> {
 pub fn load_settings_response() -> super::types::SettingsResponse {
     let (settings, corp) = load_settings_and_corp_files();
     let resolved = super::resolver::resolve_settings(&settings, &corp);
-    let mcp_servers = load_mcp_servers();
     super::types::SettingsResponse {
-        tree: super::tree::build_settings_tree_with_mcp(&resolved, &mcp_servers),
+        tree: super::tree::build_settings_tree(&resolved),
         issues: super::lint::config_lint(&resolved),
     }
 }

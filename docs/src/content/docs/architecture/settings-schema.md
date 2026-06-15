@@ -251,9 +251,9 @@ own assets, rules, MCP, plugins, image payloads, and VM runtime posture.
 
 The schema path: Pydantic models generate JSON Schema for documentation and validation. The conformance tests ensure all three languages agree on parsing.
 
-## Design Decision: Two Node Types
+## Design Decision: Settings Nodes Only
 
-The retired schema had four node types:
+The retired schema mixed settings and profile MCP runtime state:
 
 | Old type | Discriminant |
 |---|---|
@@ -262,14 +262,18 @@ The retired schema had four node types:
 | Action | `kind="action"` |
 | McpServer | `kind="mcp_server"` |
 
-This was simplified to two:
+The current settings schema keeps only settings-owned nodes:
 
 | Current type | Discriminant | Covers |
 |---|---|---|
-| GroupNode | `kind="group"` | Containers with children |
-| SettingNode | `kind="setting"` | Regular settings and actions |
+| Group | `kind="group"` | Containers with children |
+| Leaf | `kind="leaf"` | Regular UI/application settings |
+| Action | `kind="action"` | Settings-owned action controls |
 
-The four-type design forced consumers to match on `kind` with four arms, even though actions and MCP servers share nearly all fields with regular settings. The two-type design uses `setting_type` as the discriminant for behavior:
+MCP server state is profile-owned and comes from
+`/profiles/{profile_id}/mcp/...`, not from the settings tree. Consumers must not
+invent a settings `mcp_server` node. Behavior is driven by `setting_type` and
+`widget` on settings leaves:
 
 - Regular settings: `setting_type` in `{text, number, bool, ...}` -- value fields populated
 - Actions: `setting_type="action"` -- `metadata.action` specifies the action kind

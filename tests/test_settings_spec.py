@@ -725,7 +725,6 @@ class TestGoldenFixture:
             "int_list",
             "float_list",
             "action",
-            "mcp_tool",
         }
         assert SettingType.APIKEY.value not in present
         assert SettingType.FILE.value not in present
@@ -738,7 +737,7 @@ class TestGoldenFixture:
 
         fields_to_check = [
             "choices", "min", "max", "widget", "side_effect", "hidden",
-            "builtin", "mask", "validator", "action", "origin",
+            "mask", "validator", "action",
         ]
         exercised = set()
         for s in settings:
@@ -761,15 +760,11 @@ class TestGoldenFixture:
                 f"Action {a.key} missing metadata.action"
             )
 
-    def test_mcp_tool_settings_have_origin(self):
+    def test_profile_mcp_tools_are_not_settings(self):
         root = _load_golden()
         settings = extract_settings(root.settings)
         tools = [s for s in settings if s.setting_type == SettingType.MCP_TOOL]
-        assert len(tools) >= 1
-        for t in tools:
-            assert t.metadata.origin is not None, (
-                f"MCP tool {t.key} missing metadata.origin"
-            )
+        assert tools == []
 
     def test_mask_field_exercised(self):
         root = _load_golden()
@@ -793,28 +788,10 @@ class TestGoldenFixture:
         with_validator = [s for s in settings if s.metadata.validator]
         assert len(with_validator) >= 1
 
-    def test_mcp_server_is_group_with_tools(self):
-        """MCP server 'capsem' is a GroupNode containing a tools sub-group."""
+    def test_profile_mcp_is_not_in_settings_tree(self):
+        """MCP is profile-route state, not a settings tree group."""
         root = _load_golden()
-        mcp_group = None
-        for node in root.settings:
-            if isinstance(node, GroupNode) and node.key == "mcp":
-                mcp_group = node
-                break
-        assert mcp_group is not None
-        capsem_group = None
-        for child in mcp_group.children:
-            if isinstance(child, GroupNode) and child.key == "mcp.capsem":
-                capsem_group = child
-                break
-        assert capsem_group is not None
-        tools_group = None
-        for child in capsem_group.children:
-            if isinstance(child, GroupNode) and child.key == "mcp.capsem.tools":
-                tools_group = child
-                break
-        assert tools_group is not None
-        assert len(tools_group.children) >= 1
+        assert all(not (isinstance(node, GroupNode) and node.key == "mcp") for node in root.settings)
 
     def test_no_settings_enabled_by_provider_state(self):
         """Profile/provider state is not modeled through settings enabled_by."""
@@ -837,11 +814,11 @@ class TestGoldenFixture:
         hidden = [s for s in settings if s.metadata.hidden]
         assert len(hidden) >= 1
 
-    def test_builtin_setting_exists(self):
+    def test_builtin_metadata_not_used_for_profile_state(self):
         root = _load_golden()
         settings = extract_settings(root.settings)
         builtins = [s for s in settings if s.metadata.builtin]
-        assert len(builtins) >= 1
+        assert builtins == []
 
     def test_no_ai_provider_group_in_settings(self):
         """AI/provider configuration belongs to profile/corp, not settings."""
