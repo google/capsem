@@ -542,7 +542,8 @@ pub fn security_event_from_file_event(event: &FileEvent) -> SecurityEvent {
             file.export_ext = ext;
         }
     }
-    let mut security_event = SecurityEvent::new(runtime_file_event_type(event.action)).with_file(file);
+    let mut security_event =
+        SecurityEvent::new(runtime_file_event_type(event.action)).with_file(file);
     if let Some(trace_id) = event.trace_id.clone() {
         security_event = security_event.with_trace_id(trace_id);
     }

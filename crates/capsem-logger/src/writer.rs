@@ -616,7 +616,10 @@ fn insert_model_call(
 
     for tr in &call.tool_responses {
         let tr_trace = tr.trace_id.clone().or_else(|| call.trace_id.clone());
-        let tr_credential_ref = tr.credential_ref.clone().or_else(|| call.credential_ref.clone());
+        let tr_credential_ref = tr
+            .credential_ref
+            .clone()
+            .or_else(|| call.credential_ref.clone());
         conn.execute(
             "INSERT INTO tool_responses (model_call_id, call_id, content_preview, is_error, trace_id, credential_ref)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
