@@ -84,6 +84,29 @@ pub const CREATE_SCHEMA: &str = "
         credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
     );
 
+    CREATE TABLE IF NOT EXISTS event_body_blobs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id TEXT NOT NULL CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask')),
+        source_table TEXT NOT NULL CHECK (source_table IN ('net_events', 'model_calls', 'mcp_calls')),
+        direction TEXT NOT NULL CHECK (direction IN ('request', 'response')),
+        content_type TEXT,
+        original_bytes INTEGER NOT NULL CHECK (original_bytes >= 0),
+        stored_bytes INTEGER NOT NULL CHECK (stored_bytes >= 0 AND stored_bytes <= original_bytes),
+        truncated INTEGER NOT NULL CHECK (truncated IN (0, 1)),
+        body_hash TEXT NOT NULL CHECK (length(body_hash) = 71 AND body_hash GLOB 'blake3:[0-9a-f]*'),
+        body BLOB NOT NULL,
+        trace_id TEXT,
+        created_at TEXT NOT NULL,
+        UNIQUE(event_id, source_table, direction)
+    );
+    CREATE INDEX IF NOT EXISTS idx_event_body_blobs_event_id
+        ON event_body_blobs(event_id);
+    CREATE INDEX IF NOT EXISTS idx_event_body_blobs_trace_id
+        ON event_body_blobs(trace_id);
+    CREATE INDEX IF NOT EXISTS idx_event_body_blobs_hash
+        ON event_body_blobs(body_hash);
+
     CREATE TABLE IF NOT EXISTS tool_calls (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
@@ -531,6 +554,27 @@ pub fn migrate(conn: &Connection) {
         CREATE INDEX IF NOT EXISTS idx_model_items_trace_id ON model_items(trace_id);
         CREATE INDEX IF NOT EXISTS idx_model_items_call_id ON model_items(call_id);
         CREATE INDEX IF NOT EXISTS idx_model_items_provider_path_model ON model_items(provider, path, model);",
+    );
+    let _ = conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS event_body_blobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id TEXT NOT NULL CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+            event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask')),
+            source_table TEXT NOT NULL CHECK (source_table IN ('net_events', 'model_calls', 'mcp_calls')),
+            direction TEXT NOT NULL CHECK (direction IN ('request', 'response')),
+            content_type TEXT,
+            original_bytes INTEGER NOT NULL CHECK (original_bytes >= 0),
+            stored_bytes INTEGER NOT NULL CHECK (stored_bytes >= 0 AND stored_bytes <= original_bytes),
+            truncated INTEGER NOT NULL CHECK (truncated IN (0, 1)),
+            body_hash TEXT NOT NULL CHECK (length(body_hash) = 71 AND body_hash GLOB 'blake3:[0-9a-f]*'),
+            body BLOB NOT NULL,
+            trace_id TEXT,
+            created_at TEXT NOT NULL,
+            UNIQUE(event_id, source_table, direction)
+        );
+        CREATE INDEX IF NOT EXISTS idx_event_body_blobs_event_id ON event_body_blobs(event_id);
+        CREATE INDEX IF NOT EXISTS idx_event_body_blobs_trace_id ON event_body_blobs(trace_id);
+        CREATE INDEX IF NOT EXISTS idx_event_body_blobs_hash ON event_body_blobs(body_hash);",
     );
     // Add fs_events table if not present (for DBs created before this feature).
     let _ = conn.execute_batch(

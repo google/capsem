@@ -17,6 +17,7 @@ use crate::schema;
 /// Callers should truncate before constructing events, but the logger
 /// enforces this defensively to prevent unbounded storage.
 const MAX_FIELD_BYTES: usize = 256 * 1024;
+const MAX_BODY_BLOB_BYTES: usize = 10 * 1024 * 1024;
 
 pub const DB_ENQUEUE_SPAN: &str = "capsem.db.enqueue";
 pub const DB_WRITE_BATCH_SPAN: &str = "capsem.db.write_batch";
@@ -55,6 +56,10 @@ fn cap_field(s: &Option<String>) -> Option<String> {
 
 fn blake3_ref(value: &str) -> String {
     format!("blake3:{}", blake3::hash(value.as_bytes()).to_hex())
+}
+
+fn blake3_bytes_ref(value: &[u8]) -> String {
+    format!("blake3:{}", blake3::hash(value).to_hex())
 }
 
 type ModelItemDedup = HashSet<String>;
@@ -490,6 +495,7 @@ fn insert_net_event(conn: &Connection, event: &NetEvent) -> rusqlite::Result<()>
     let resp_body = cap_field(&event.response_body_preview);
     let req_headers = cap_field(&event.request_headers);
     let resp_headers = cap_field(&event.response_headers);
+    let event_id = event.event_id.clone().unwrap_or_else(new_event_id);
     conn.execute(
         "INSERT INTO net_events (
             event_id, timestamp, domain, port, decision, process_name, pid,
@@ -502,7 +508,7 @@ fn insert_net_event(conn: &Connection, event: &NetEvent) -> rusqlite::Result<()>
          )
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)",
         params![
-            event.event_id.clone().unwrap_or_else(new_event_id),
+            event_id,
             timestamp,
             event.domain,
             event.port as i64,
@@ -530,6 +536,26 @@ fn insert_net_event(conn: &Connection, event: &NetEvent) -> rusqlite::Result<()>
             event.credential_ref,
         ],
     )?;
+    insert_event_body_blob(
+        conn,
+        &event_id,
+        "http.request",
+        "net_events",
+        "request",
+        event.request_headers.as_deref().and_then(content_type_from_headers),
+        event.request_body_preview.as_deref(),
+        event.trace_id.as_deref(),
+    )?;
+    insert_event_body_blob(
+        conn,
+        &event_id,
+        "http.request",
+        "net_events",
+        "response",
+        event.response_headers.as_deref().and_then(content_type_from_headers),
+        event.response_body_preview.as_deref(),
+        event.trace_id.as_deref(),
+    )?;
     Ok(())
 }
 
@@ -543,6 +569,7 @@ fn insert_model_call(
     let text_content = cap_field(&call.text_content);
     let thinking_content = cap_field(&call.thinking_content);
     let sys_prompt = cap_field(&call.system_prompt_preview);
+    let event_id = call.event_id.clone().unwrap_or_else(new_event_id);
     conn.execute(
         "INSERT INTO model_calls (
             event_id, timestamp, provider, model, process_name, pid,
@@ -556,7 +583,7 @@ fn insert_model_call(
          )
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)",
         params![
-            call.event_id.clone().unwrap_or_else(new_event_id),
+            event_id,
             timestamp,
             call.provider,
             call.model,
@@ -586,6 +613,26 @@ fn insert_model_call(
         ],
     )?;
     let model_call_id = conn.last_insert_rowid();
+    insert_event_body_blob(
+        conn,
+        &event_id,
+        "model.call",
+        "model_calls",
+        "request",
+        Some("application/json"),
+        call.request_body_preview.as_deref(),
+        call.trace_id.as_deref(),
+    )?;
+    insert_event_body_blob(
+        conn,
+        &event_id,
+        "model.call",
+        "model_calls",
+        "response",
+        None,
+        call.text_content.as_deref(),
+        call.trace_id.as_deref(),
+    )?;
     insert_model_items(conn, model_call_id, call, &timestamp, model_item_dedup)?;
 
     for tc in &call.tool_calls {
@@ -767,6 +814,7 @@ fn insert_mcp_call(conn: &Connection, call: &McpCall) -> rusqlite::Result<()> {
     let timestamp = format_timestamp(call.timestamp);
     let req_preview = cap_field(&call.request_preview);
     let resp_preview = cap_field(&call.response_preview);
+    let event_id = call.event_id.clone().unwrap_or_else(new_event_id);
     conn.execute(
         "INSERT INTO mcp_calls (
             event_id, timestamp, server_name, method, tool_name, request_id,
@@ -778,7 +826,7 @@ fn insert_mcp_call(conn: &Connection, call: &McpCall) -> rusqlite::Result<()> {
          )
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
         params![
-            call.event_id.clone().unwrap_or_else(new_event_id),
+            event_id,
             timestamp,
             call.server_name,
             call.method,
@@ -798,6 +846,89 @@ fn insert_mcp_call(conn: &Connection, call: &McpCall) -> rusqlite::Result<()> {
             call.policy_reason,
             call.trace_id,
             call.credential_ref,
+        ],
+    )?;
+    let event_type = if call.method == "tools/list" {
+        "mcp.tool_list"
+    } else if call.method == "tools/call" {
+        "mcp.tool_call"
+    } else {
+        "mcp.event"
+    };
+    insert_event_body_blob(
+        conn,
+        &event_id,
+        event_type,
+        "mcp_calls",
+        "request",
+        Some("application/json"),
+        call.request_preview.as_deref(),
+        call.trace_id.as_deref(),
+    )?;
+    insert_event_body_blob(
+        conn,
+        &event_id,
+        event_type,
+        "mcp_calls",
+        "response",
+        Some("application/json"),
+        call.response_preview.as_deref(),
+        call.trace_id.as_deref(),
+    )?;
+    Ok(())
+}
+
+fn content_type_from_headers(headers: &str) -> Option<&str> {
+    headers.lines().find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        if name.trim().eq_ignore_ascii_case("content-type") {
+            Some(value.trim())
+        } else {
+            None
+        }
+    })
+}
+
+fn insert_event_body_blob(
+    conn: &Connection,
+    event_id: &str,
+    event_type: &str,
+    source_table: &str,
+    direction: &str,
+    content_type: Option<&str>,
+    body: Option<&str>,
+    trace_id: Option<&str>,
+) -> rusqlite::Result<()> {
+    let Some(body) = body else {
+        return Ok(());
+    };
+    if body.is_empty() {
+        return Ok(());
+    }
+    let bytes = body.as_bytes();
+    let stored_len = bytes.len().min(MAX_BODY_BLOB_BYTES);
+    let stored = &bytes[..stored_len];
+    let created_at = format_timestamp(SystemTime::now());
+    conn.execute(
+        "INSERT OR REPLACE INTO event_body_blobs (
+            event_id, event_type, source_table, direction, content_type,
+            original_bytes, stored_bytes, truncated, body_hash, body,
+            trace_id, created_at
+         )
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        params![
+            event_id,
+            event_type,
+            source_table,
+            direction,
+            content_type,
+            bytes.len() as i64,
+            stored_len as i64,
+            (bytes.len() > stored_len) as i64,
+            blake3_bytes_ref(bytes),
+            stored,
+            trace_id,
+            created_at,
         ],
     )?;
     Ok(())

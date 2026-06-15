@@ -108,6 +108,20 @@ describe('StatsView detail drawer contract', () => {
     expect(source).toContain("if (key.endsWith('_headers')) return 'http';");
     expect(source).not.toContain("lang: 'json',");
   });
+
+  it('loads body payloads from event_body_blobs instead of preview columns', () => {
+    expect(source).toContain('FROM event_body_blobs');
+    expect(source).toContain("'request_body'");
+    expect(source).toContain("'response_body'");
+    expect(source).toContain("void showDetail('model', row)");
+    expect(source).toContain("void showDetail('mcp', row)");
+    expect(source).toContain("void showDetail('http', row)");
+    expect(source).not.toContain('request_body_preview');
+    expect(source).not.toContain('response_body_preview');
+    expect(source).not.toContain('request_preview');
+    expect(source).not.toContain('response_preview');
+    expect(source).not.toContain('text_content');
+  });
 });
 
 describe('StatsView file summary contract', () => {

@@ -72,6 +72,43 @@
     return toObjects(await api.inspectQuery(vmId, sql));
   }
 
+  function safeEventId(value: unknown): string | null {
+    const id = text(value);
+    return /^[0-9a-f]{12}$/.test(id) ? id : null;
+  }
+
+  async function showDetail(type: string, row: Row) {
+    detail = { type, data: row };
+    const eventId = safeEventId(row.event_id);
+    if (!eventId) return;
+
+    let bodyRows: Row[] = [];
+    try {
+      bodyRows = await query(`SELECT direction, content_type, original_bytes,
+                     stored_bytes, truncated, body_hash, CAST(body AS TEXT) AS body
+                   FROM event_body_blobs
+                   WHERE event_id = '${eventId}'
+                   ORDER BY direction`);
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Failed to load event body ledger';
+      return;
+    }
+    if (bodyRows.length === 0) return;
+
+    const enriched: Row = { ...row };
+    for (const bodyRow of bodyRows) {
+      const direction = text(bodyRow.direction);
+      if (direction !== 'request' && direction !== 'response') continue;
+      enriched[`${direction}_body`] = bodyRow.body;
+      enriched[`${direction}_body_content_type`] = bodyRow.content_type;
+      enriched[`${direction}_body_original_bytes`] = bodyRow.original_bytes;
+      enriched[`${direction}_body_stored_bytes`] = bodyRow.stored_bytes;
+      enriched[`${direction}_body_truncated`] = bodyRow.truncated;
+      enriched[`${direction}_body_hash`] = bodyRow.body_hash;
+    }
+    detail = { type, data: enriched };
+  }
+
   function number(value: unknown): number {
     const n = Number(value ?? 0);
     return Number.isFinite(n) ? n : 0;
@@ -92,11 +129,8 @@
   const DETAIL_PAYLOAD_KEYS = new Set([
     'request_headers',
     'response_headers',
-    'request_body_preview',
-    'response_body_preview',
-    'request_preview',
-    'response_preview',
-    'text_content',
+    'request_body',
+    'response_body',
     'context_json',
   ]);
 
@@ -146,7 +180,7 @@
   function detailPayloadLang(key: string, value: unknown): string {
     if (key.endsWith('_headers')) return 'http';
     if (key === 'context_json') return 'json';
-    const content = normalizePreviewContent(typeof value === 'string' ? value : JSON.stringify(value));
+    const content = normalizePayloadContent(typeof value === 'string' ? value : JSON.stringify(value));
     const trimmed = content.trim();
     if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
       try {
@@ -165,7 +199,7 @@
     return String(value);
   }
 
-  function normalizePreviewContent(content: string): string {
+  function normalizePayloadContent(content: string): string {
     const trimmed = content.trim();
     if (!trimmed) return content;
     if (
@@ -191,7 +225,7 @@
     shikiTick;
     if (value == null) return '';
     let content = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
-    content = normalizePreviewContent(content);
+    content = normalizePayloadContent(content);
     const trimmed = content.trim();
     if (!trimmed) return '';
     const isJson = trimmed.startsWith('{') || trimmed.startsWith('[');
@@ -248,20 +282,19 @@
                ORDER BY call_count DESC, provider ASC`),
         query(`SELECT event_id, timestamp, provider, model, method, path, status_code,
                  input_tokens, output_tokens, duration_ms, response_bytes,
-                 stop_reason, trace_id, credential_ref, request_body_preview, text_content
+                 stop_reason, trace_id, credential_ref
                FROM model_calls
                ORDER BY id DESC
                LIMIT 200`),
         query(`SELECT event_id, timestamp, server_name, method, tool_name, request_id,
                  decision, duration_ms, bytes_sent, bytes_received, policy_rule,
-                 trace_id, credential_ref, request_preview, response_preview, error_message
+                 trace_id, credential_ref, error_message
                FROM mcp_calls
                ORDER BY id DESC
                LIMIT 200`),
         query(`SELECT event_id, timestamp, domain, port, method, path, query, status_code,
                  decision, duration_ms, bytes_sent, bytes_received, matched_rule, policy_rule,
-                 trace_id, credential_ref, request_headers, response_headers,
-                 request_body_preview, response_body_preview
+                 trace_id, credential_ref, request_headers, response_headers
                FROM net_events
                ORDER BY id DESC
                LIMIT 200`),
@@ -454,7 +487,7 @@
             <td class="px-4 py-2 text-right text-foreground">${number(row.estimated_cost_usd).toFixed(2)}</td>
           {/snippet}
         </StatsTable>
-        <StatsEventList title="Recent Model Events" rows={modelRows} columns={['Time', 'Provider', 'Model', 'Tokens', 'Trace']} onrow={(row) => detail = { type: 'model', data: row }}>
+        <StatsEventList title="Recent Model Events" rows={modelRows} columns={['Time', 'Provider', 'Model', 'Tokens', 'Trace']} onrow={(row) => { void showDetail('model', row); }}>
           {#snippet children(row: any)}
             <td class="px-4 py-2 text-muted-foreground">{formatTime(row.timestamp)}</td>
             <td class="px-4 py-2 text-foreground">{row.provider}</td>
@@ -471,7 +504,7 @@
           <MetricCard label="Blocked/Error" value={mcpBlocked.toLocaleString()} tone="danger" />
           <MetricCard label="Credential Refs" value={mcpRows.filter(row => row.credential_ref).length.toLocaleString()} />
         </div>
-        <StatsEventList title="MCP Events" rows={mcpRows} columns={['Time', 'Server', 'Method', 'Tool', 'Decision']} onrow={(row) => detail = { type: 'mcp', data: row }}>
+        <StatsEventList title="MCP Events" rows={mcpRows} columns={['Time', 'Server', 'Method', 'Tool', 'Decision']} onrow={(row) => { void showDetail('mcp', row); }}>
           {#snippet children(row: any)}
             <td class="px-4 py-2 text-muted-foreground">{formatTime(row.timestamp)}</td>
             <td class="px-4 py-2 text-foreground">{row.server_name}</td>
@@ -488,7 +521,7 @@
           <MetricCard label="Denied/Error" value={httpDenied.toLocaleString()} tone="danger" />
           <MetricCard label="Bytes In" value={formatBytes(httpRows.reduce((sum, row) => sum + number(row.bytes_received), 0))} />
         </div>
-        <StatsEventList title="HTTP Events" rows={httpRows} columns={['Time', 'Method', 'Host', 'Status', 'Decision']} onrow={(row) => detail = { type: 'http', data: row }}>
+        <StatsEventList title="HTTP Events" rows={httpRows} columns={['Time', 'Method', 'Host', 'Status', 'Decision']} onrow={(row) => { void showDetail('http', row); }}>
           {#snippet children(row: any)}
             <td class="px-4 py-2 text-muted-foreground">{formatTime(row.timestamp)}</td>
             <td class="px-4 py-2 font-mono text-xs font-semibold text-foreground">{row.method ?? 'CONNECT'}</td>

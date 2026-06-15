@@ -75,9 +75,10 @@ pub type UpstreamTlsConfig = rustls::ClientConfig;
 
 /// Maximum bytes to buffer when peeking at the TLS ClientHello.
 const MAX_HELLO_SIZE: usize = 16384;
-const AI_BODY_PREVIEW: usize = 1024 * 1024;
-const MCP_BODY_PREVIEW: usize = 64 * 1024;
-const CREDENTIAL_BODY_PREVIEW: usize = 16 * 1024;
+const HTTP_BODY_CAPTURE_LIMIT: usize = 10 * 1024 * 1024;
+const AI_BODY_CAPTURE_LIMIT: usize = HTTP_BODY_CAPTURE_LIMIT;
+const MCP_BODY_CAPTURE_LIMIT: usize = HTTP_BODY_CAPTURE_LIMIT;
+const CREDENTIAL_BODY_CAPTURE_LIMIT: usize = HTTP_BODY_CAPTURE_LIMIT;
 
 static FIRST_NETWORK_READY_EMITTED: AtomicBool = AtomicBool::new(false);
 
@@ -227,7 +228,7 @@ fn ai_provider_for_target_or_path(
 }
 
 fn ai_protocol_for_body_preview(body: &[u8]) -> Option<ModelProtocol> {
-    if body.len() > AI_BODY_PREVIEW {
+    if body.len() > AI_BODY_CAPTURE_LIMIT {
         return None;
     }
     let json: serde_json::Value = serde_json::from_slice(body).ok()?;
@@ -292,7 +293,7 @@ fn should_sniff_unknown_model_body(
     else {
         return false;
     };
-    len <= AI_BODY_PREVIEW
+    len <= AI_BODY_CAPTURE_LIMIT
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -355,7 +356,7 @@ fn should_sniff_mcp_http_body(method: &http::Method, headers: &http::HeaderMap) 
     else {
         return false;
     };
-    len <= MCP_BODY_PREVIEW
+    len <= MCP_BODY_CAPTURE_LIMIT
 }
 
 fn observed_mcp_http_request_for_body(
@@ -364,7 +365,7 @@ fn observed_mcp_http_request_for_body(
     upstream_port: u16,
     path: &str,
 ) -> Option<ObservedMcpHttpRequest> {
-    if body.len() > MCP_BODY_PREVIEW {
+    if body.len() > MCP_BODY_CAPTURE_LIMIT {
         return None;
     }
     let json: serde_json::Value = serde_json::from_slice(body).ok()?;
@@ -453,7 +454,7 @@ fn provider_label(provider: Option<ProviderKind>) -> &'static str {
     provider.map(|provider| provider.as_str()).unwrap_or("none")
 }
 
-fn body_preview_cap(
+fn body_capture_limit(
     ai_provider: Option<ProviderKind>,
     domain: &str,
     path: &str,
@@ -461,18 +462,18 @@ fn body_preview_cap(
     max_body: usize,
 ) -> usize {
     if ai_provider.is_some() {
-        return AI_BODY_PREVIEW.max(max_body);
+        return AI_BODY_CAPTURE_LIMIT.max(max_body);
     }
     if log_bodies {
         return max_body;
     }
     if crate::credential_broker::is_http_body_credential_candidate(domain, path) {
-        return CREDENTIAL_BODY_PREVIEW;
+        return CREDENTIAL_BODY_CAPTURE_LIMIT;
     }
     0
 }
 
-fn response_body_preview_cap(
+fn response_body_capture_limit(
     ai_provider: Option<ProviderKind>,
     domain: &str,
     path: &str,
@@ -480,9 +481,9 @@ fn response_body_preview_cap(
     max_body: usize,
     credential_ref: Option<&str>,
 ) -> usize {
-    let cap = body_preview_cap(ai_provider, domain, path, log_bodies, max_body);
+    let cap = body_capture_limit(ai_provider, domain, path, log_bodies, max_body);
     if credential_ref.is_some() {
-        cap.max(CREDENTIAL_BODY_PREVIEW)
+        cap.max(CREDENTIAL_BODY_CAPTURE_LIMIT)
     } else {
         cap
     }
@@ -1219,7 +1220,7 @@ async fn handle_request(
                 response_headers: None,
                 start_time,
                 request_body_stats: Arc::new(Mutex::new(BodyStats::new(0))),
-                max_response_preview: 0,
+                max_response_body_capture: 0,
                 port: upstream_port,
                 conn_type,
                 policy_mode: request_security_decision.policy_mode.clone(),
@@ -1386,7 +1387,7 @@ async fn handle_request(
             response_headers: Some(format_headers(&resp_parts.headers)),
             start_time,
             request_body_stats: Arc::new(Mutex::new(BodyStats::new(0))),
-            max_response_preview: 0,
+            max_response_body_capture: 0,
             port: upstream_port,
             conn_type,
             policy_mode: request_security_decision.policy_mode.clone(),
@@ -1440,7 +1441,7 @@ async fn handle_request(
             response_headers: None,
             start_time: start,
             request_body_stats: Arc::new(Mutex::new(BodyStats::new(0))),
-            max_response_preview: 0,
+            max_response_body_capture: 0,
             port: upstream_port,
             conn_type,
             policy_mode: policy_fields.policy_mode.clone(),
@@ -1472,12 +1473,12 @@ async fn handle_request(
 
     fn collected_request_body_stats(
         request_body_source: &RequestBodySource,
-        max_preview: usize,
+        max_body_capture: usize,
     ) -> Arc<Mutex<BodyStats>> {
-        let mut stats = BodyStats::new(max_preview);
+        let mut stats = BodyStats::new(max_body_capture);
         if let RequestBodySource::Collected(body) = request_body_source {
             stats.bytes = body.len() as u64;
-            let to_copy = max_preview.min(body.len());
+            let to_copy = max_body_capture.min(body.len());
             stats.preview.extend_from_slice(&body[..to_copy]);
         }
         Arc::new(Mutex::new(stats))
@@ -1505,9 +1506,9 @@ async fn handle_request(
         );
         if let RequestBodySource::Incoming(body) = request_body_source {
             let preview_limit = if should_sniff_model {
-                AI_BODY_PREVIEW.max(MCP_BODY_PREVIEW)
+                AI_BODY_CAPTURE_LIMIT.max(MCP_BODY_CAPTURE_LIMIT)
             } else {
-                MCP_BODY_PREVIEW
+                MCP_BODY_CAPTURE_LIMIT
             };
             let collected = match http_body_util::Limited::new(body, preview_limit)
                 .collect()
@@ -1667,7 +1668,7 @@ async fn handle_request(
             response_headers: None,
             start_time,
             request_body_stats: collected_request_body_stats(&request_body_source, max_body),
-            max_response_preview: max_body,
+            max_response_body_capture: max_body,
             port: upstream_port,
             conn_type,
             policy_mode: request_security_decision.policy_mode.clone(),
@@ -1850,7 +1851,7 @@ async fn handle_request(
                 response_headers: None,
                 start_time,
                 request_body_stats: Arc::new(Mutex::new(scrubbed_stats)),
-                max_response_preview: 0,
+                max_response_body_capture: 0,
                 port: upstream_port,
                 conn_type,
                 policy_mode: request_security_decision.policy_mode.clone(),
@@ -1881,12 +1882,12 @@ async fn handle_request(
     // Track request body (boxed for consistent sender type across requests).
     // Always capture AI provider request bodies for telemetry parsing
     // (model name, tool results, etc.) regardless of log_bodies setting.
-    let req_max_preview =
-        body_preview_cap(effective_ai_provider, domain, &path, log_bodies, max_body);
+    let req_max_body_capture =
+        body_capture_limit(effective_ai_provider, domain, &path, log_bodies, max_body);
     let req_stats = Arc::new(Mutex::new(BodyStats {
         bytes: 0,
         preview: Vec::new(),
-        max_preview: req_max_preview,
+        max_body_capture: req_max_body_capture,
     }));
 
     let should_evaluate_model_request = sniffed_model_request
@@ -1932,7 +1933,7 @@ async fn handle_request(
         {
             let mut st = req_stats.lock().expect("req body stats lock");
             st.bytes = body_bytes.len() as u64;
-            let to_copy = st.max_preview.min(body_bytes.len());
+            let to_copy = st.max_body_capture.min(body_bytes.len());
             st.preview.extend_from_slice(&body_bytes[..to_copy]);
         }
 
@@ -2009,7 +2010,7 @@ async fn handle_request(
                     response_headers: None,
                     start_time,
                     request_body_stats: Arc::new(Mutex::new(scrubbed_stats)),
-                    max_response_preview: 0,
+                    max_response_body_capture: 0,
                     port: upstream_port,
                     conn_type,
                     policy_mode: request_security_decision.policy_mode.clone(),
@@ -2043,7 +2044,7 @@ async fn handle_request(
                             let mut st = req_stats.lock().expect("req body stats lock");
                             st.bytes = body_for_upstream.len() as u64;
                             st.preview.clear();
-                            let to_copy = st.max_preview.min(body_for_upstream.len());
+                            let to_copy = st.max_body_capture.min(body_for_upstream.len());
                             st.preview.extend_from_slice(&body_for_upstream[..to_copy]);
                         }
                         original_headers.remove(http::header::CONTENT_LENGTH);
@@ -2066,7 +2067,7 @@ async fn handle_request(
                 {
                     let mut st = req_stats.lock().expect("req body stats lock");
                     st.bytes = body_bytes.len() as u64;
-                    let to_copy = st.max_preview.min(body_bytes.len());
+                    let to_copy = st.max_body_capture.min(body_bytes.len());
                     st.preview.extend_from_slice(&body_bytes[..to_copy]);
                 }
                 Full::new(body_bytes)
@@ -2406,11 +2407,11 @@ async fn handle_request(
     let mut resp_hdrs = format_headers(&resp_parts.headers);
 
     // Pick the response-side preview cap. AI provider bodies always
-    // capture at least AI_BODY_PREVIEW so non-streaming usage parsing
+    // capture at least AI_BODY_CAPTURE_LIMIT so non-streaming usage parsing
     // works even when log_bodies is off. Credential broker exchange
     // candidates get a smaller bounded preview for capture/redaction.
     // Other non-AI bodies follow the log_bodies / max_body_capture policy.
-    let mut resp_max_preview = response_body_preview_cap(
+    let mut resp_max_body_capture = response_body_capture_limit(
         effective_ai_provider,
         domain,
         &path,
@@ -2419,7 +2420,7 @@ async fn handle_request(
         credential_ref.as_deref(),
     );
     if observed_mcp_request.is_some() {
-        resp_max_preview = resp_max_preview.max(MCP_BODY_PREVIEW);
+        resp_max_body_capture = resp_max_body_capture.max(MCP_BODY_CAPTURE_LIMIT);
     }
 
     let should_evaluate_model_response = sniffed_model_request
@@ -2555,7 +2556,7 @@ async fn handle_request(
                     response_headers: None,
                     start_time,
                     request_body_stats: Arc::clone(&req_stats),
-                    max_response_preview: 0,
+                    max_response_body_capture: 0,
                     port: upstream_port,
                     conn_type,
                     policy_mode: effective_security_decision.policy_mode.clone(),
@@ -2677,7 +2678,7 @@ async fn handle_request(
         response_headers: Some(resp_hdrs),
         start_time,
         request_body_stats: Arc::clone(&req_stats),
-        max_response_preview: resp_max_preview,
+        max_response_body_capture: resp_max_body_capture,
         port: upstream_port,
         conn_type,
         policy_mode: effective_security_decision.policy_mode.clone(),
@@ -2862,7 +2863,7 @@ match = 'http.host == "127.0.0.1"'
 
     #[test]
     fn provider_detection_body_shape_ignores_oversized_or_irrelevant_bodies() {
-        let mut oversized = vec![b' '; AI_BODY_PREVIEW + 1];
+        let mut oversized = vec![b' '; AI_BODY_CAPTURE_LIMIT + 1];
         oversized.extend_from_slice(
             br#"{"model":"gpt-4.1","messages":[{"role":"user","content":"hi"}]}"#,
         );
@@ -2935,7 +2936,7 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713" && ip.value == "127.0.0.
         ));
         headers.insert(
             http::header::CONTENT_LENGTH,
-            http::HeaderValue::from_str(&(AI_BODY_PREVIEW + 1).to_string()).unwrap(),
+            http::HeaderValue::from_str(&(AI_BODY_CAPTURE_LIMIT + 1).to_string()).unwrap(),
         );
         assert!(!should_sniff_unknown_model_body(
             None,
@@ -2965,7 +2966,7 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713" && ip.value == "127.0.0.
 
         headers.insert(
             http::header::CONTENT_LENGTH,
-            http::HeaderValue::from_str(&(MCP_BODY_PREVIEW + 1).to_string()).unwrap(),
+            http::HeaderValue::from_str(&(MCP_BODY_CAPTURE_LIMIT + 1).to_string()).unwrap(),
         );
         assert!(!should_sniff_mcp_http_body(&http::Method::POST, &headers));
 
@@ -3009,27 +3010,27 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713" && ip.value == "127.0.0.
     }
 
     #[test]
-    fn body_preview_cap_captures_oauth_broker_candidates_without_body_logging() {
+    fn body_capture_limit_captures_oauth_broker_candidates_without_body_logging() {
         assert_eq!(
-            body_preview_cap(None, "oauth2.googleapis.com", "/token", false, 0),
-            CREDENTIAL_BODY_PREVIEW
+            body_capture_limit(None, "oauth2.googleapis.com", "/token", false, 0),
+            CREDENTIAL_BODY_CAPTURE_LIMIT
         );
         assert_eq!(
-            body_preview_cap(
+            body_capture_limit(
                 None,
                 "api.github.com",
                 "/login/oauth/access_token",
                 false,
                 0
             ),
-            CREDENTIAL_BODY_PREVIEW
+            CREDENTIAL_BODY_CAPTURE_LIMIT
         );
     }
 
     #[test]
-    fn body_preview_cap_keeps_unrelated_non_ai_bodies_off_without_body_logging() {
+    fn body_capture_limit_keeps_unrelated_non_ai_bodies_off_without_body_logging() {
         assert_eq!(
-            body_preview_cap(
+            body_capture_limit(
                 None,
                 "daily-cloudcode-pa.googleapis.com",
                 "/v1internal:streamGenerateContent",
@@ -3041,9 +3042,9 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713" && ip.value == "127.0.0.
     }
 
     #[test]
-    fn response_body_preview_cap_captures_broker_replay_proof_without_body_logging() {
+    fn response_body_capture_limit_captures_broker_replay_proof_without_body_logging() {
         assert_eq!(
-            response_body_preview_cap(
+            response_body_capture_limit(
                 None,
                 "127.0.0.1",
                 "/echo",
@@ -3051,35 +3052,35 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713" && ip.value == "127.0.0.
                 0,
                 Some("credential:blake3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
             ),
-            CREDENTIAL_BODY_PREVIEW
+            CREDENTIAL_BODY_CAPTURE_LIMIT
         );
         assert_eq!(
-            response_body_preview_cap(None, "127.0.0.1", "/echo", false, 0, None),
+            response_body_capture_limit(None, "127.0.0.1", "/echo", false, 0, None),
             0
         );
     }
 
     #[test]
-    fn body_preview_cap_keeps_ai_capture_independent_from_body_logging() {
+    fn body_capture_limit_keeps_ai_capture_independent_from_body_logging() {
         assert_eq!(
-            body_preview_cap(
+            body_capture_limit(
                 Some(ProviderKind::Google),
                 "daily-cloudcode-pa.googleapis.com",
                 "/v1internal:streamGenerateContent",
                 false,
                 0
             ),
-            AI_BODY_PREVIEW
+            AI_BODY_CAPTURE_LIMIT
         );
         assert_eq!(
-            body_preview_cap(
+            body_capture_limit(
                 Some(ProviderKind::Anthropic),
                 "127.0.0.1",
                 "/v1/messages",
                 false,
                 128 * 1024
             ),
-            AI_BODY_PREVIEW
+            AI_BODY_CAPTURE_LIMIT
         );
     }
 }

@@ -4,7 +4,7 @@
 //!
 //! T1 slice 8. Replaces the logic in `telemetry::TelemetryEmitter`
 //! and the body-wrapper firing surface from `telemetry::TelemetryBody`.
-//! The ChunkHook owns its own response-side byte counting + preview
+//! The ChunkHook owns its own response-side byte counting + capture
 //! (so we no longer need `body::TrackedBody` or `body::RespStatsKind`
 //! once the legacy chain is removed in the cleanup slice). Per-request
 //! context (method, path, status, headers, decision, matched-rule,
@@ -73,9 +73,9 @@ pub struct TelemetryRequestContext {
     /// `TrackedBody` wrapper around the upstream request body. The
     /// hook reads the final value at `on_response_end`.
     pub request_body_stats: Arc<Mutex<BodyStats>>,
-    /// `max_body_capture` for the response side (controls preview
-    /// growth in the hook's own response stats).
-    pub max_response_preview: usize,
+    /// Body-capture limit for the response side. DB/UI previews are derived
+    /// later by capsem-logger and must not be the source of truth.
+    pub max_response_body_capture: usize,
     /// Upstream port for this request. 443 for the TLS path, 80
     /// (or another allowlisted port) for the plain-HTTP path. Lands
     /// in `NetEvent.port` so operators can distinguish HTTPS from
@@ -94,14 +94,14 @@ pub struct TelemetryRequestContext {
 }
 
 /// Per-request response-side counters owned by the hook. Updated on
-/// every `on_response_chunk`. The cap on the preview is taken from
-/// `TelemetryRequestContext::max_response_preview` if seeded;
-/// otherwise zero (no preview captured -- shadow mode).
+/// every `on_response_chunk`. The cap on the captured body is taken from
+/// `TelemetryRequestContext::max_response_body_capture` if seeded;
+/// otherwise zero (no body captured -- shadow mode).
 #[derive(Default)]
 pub struct TelemetryResponseStats {
     pub bytes: u64,
     pub preview: Vec<u8>,
-    pub max_preview: usize,
+    pub max_body_capture: usize,
 }
 
 /// Shared dependencies handed to `TelemetryHook` at construction --
@@ -138,24 +138,24 @@ impl ChunkHook for TelemetryHook {
     }
 
     fn on_response_chunk(&self, chunk: &mut Bytes, ctx: &mut ChunkCtx<'_>) {
-        // Determine the per-request preview cap by peeking at the
+        // Determine the per-request body-capture cap by peeking at the
         // request context (if any). We touch the response stats slot
         // only if the request context has been seeded -- shadow mode
         // skips the slot allocation entirely.
-        let max_preview = match ctx
+        let max_body_capture = match ctx
             .state::<Option<TelemetryRequestContext>>(|| None)
             .as_ref()
         {
-            Some(req_ctx) => req_ctx.max_response_preview,
+            Some(req_ctx) => req_ctx.max_response_body_capture,
             None => return,
         };
 
         let stats = ctx.state::<TelemetryResponseStats>(TelemetryResponseStats::default);
-        if stats.max_preview == 0 {
-            stats.max_preview = max_preview;
+        if stats.max_body_capture == 0 {
+            stats.max_body_capture = max_body_capture;
         }
         stats.bytes += chunk.len() as u64;
-        let remaining = stats.max_preview.saturating_sub(stats.preview.len());
+        let remaining = stats.max_body_capture.saturating_sub(stats.preview.len());
         if remaining > 0 {
             let to_copy = remaining.min(chunk.len());
             stats.preview.extend_from_slice(&chunk[..to_copy]);

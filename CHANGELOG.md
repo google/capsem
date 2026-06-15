@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed (route surfaces and diagnostics)
+- Added a first-class `event_body_blobs` ledger for HTTP, model, and MCP
+  request/response bodies with a 10 MiB bounded capture, original/stored byte
+  counts, BLAKE3 body hash, content type, trace ID, and truncation flag. Stats
+  details now load `request_body`/`response_body` from that ledger instead of
+  treating preview fields as forensic truth.
 - Strengthened the Claude/Anthropic Ironbank ledger proof to cover
   non-streaming HTTP, streaming SSE, and SDK client paths through the same
   model/tool/file/security/broker ledger assertions. Repeated same-path model

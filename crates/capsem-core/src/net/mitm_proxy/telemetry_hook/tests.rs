@@ -12,7 +12,7 @@ fn req_stats(preview: &[u8]) -> Arc<Mutex<BodyStats>> {
     Arc::new(Mutex::new(BodyStats {
         bytes: preview.len() as u64,
         preview: preview.to_vec(),
-        max_preview: 64 * 1024,
+        max_body_capture: 64 * 1024,
     }))
 }
 
@@ -115,7 +115,7 @@ fn anthropic_req_ctx() -> TelemetryRequestContext {
         response_headers: Some("content-type: text/event-stream".into()),
         start_time: Instant::now(),
         request_body_stats: req_stats(b"{\"model\":\"claude-test\",\"messages\":[]}"),
-        max_response_preview: 4096,
+        max_response_body_capture: 4096,
         port: 443,
         conn_type: "https-mitm",
         policy_mode: None,
@@ -252,7 +252,7 @@ fn google_non_streaming_function_call_is_logged_as_model_tool_call() {
     let resp_stats = TelemetryResponseStats {
         bytes: response.len() as u64,
         preview: response.to_vec(),
-        max_preview: response.len(),
+        max_body_capture: response.len(),
     };
     let pricing = Arc::new(PricingTable::load());
     let trace = Arc::new(Mutex::new(TraceState::new()));
@@ -295,7 +295,7 @@ fn agy_google_tool_call_survives_into_session_stats() {
     let resp_stats = TelemetryResponseStats {
         bytes: response.len() as u64,
         preview: response.to_vec(),
-        max_preview: response.len(),
+        max_body_capture: response.len(),
     };
     let pricing = Arc::new(PricingTable::load());
     let trace = Arc::new(Mutex::new(TraceState::new()));
@@ -369,7 +369,7 @@ fn openai_non_streaming_tool_call_carries_request_trace() {
     let resp_stats = TelemetryResponseStats {
         bytes: response.len() as u64,
         preview: response.to_vec(),
-        max_preview: response.len(),
+        max_body_capture: response.len(),
     };
     let pricing = Arc::new(PricingTable::load());
     let trace = Arc::new(Mutex::new(TraceState::new()));
@@ -429,7 +429,7 @@ fn ollama_endpoint_can_use_anthropic_wire_protocol() {
     let resp_stats = TelemetryResponseStats {
         bytes: response.len() as u64,
         preview: response.to_vec(),
-        max_preview: response.len(),
+        max_body_capture: response.len(),
     };
     let pricing = Arc::new(PricingTable::load());
     let trace = Arc::new(Mutex::new(TraceState::new()));
@@ -964,7 +964,7 @@ async fn hook_detects_response_body_token_exchange_and_redacts_preview() {
                 bytes: raw.len() as u64,
                 preview: format!(r#"{{"access_token":"{raw}","token_type":"bearer"}}"#)
                     .into_bytes(),
-                max_preview: 4096,
+                max_body_capture: 4096,
             };
     }
     {

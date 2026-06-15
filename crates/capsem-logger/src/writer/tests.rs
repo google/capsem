@@ -86,6 +86,124 @@ fn cap_field_mixed_ascii_and_multibyte() {
 }
 
 #[test]
+fn net_event_stores_bounded_body_blobs_and_small_previews() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("body-blobs.db");
+    let event_id = "abc123def456".to_string();
+    let trace_id = "trace-body-blob".to_string();
+    let request_body = format!("{{\"prompt\":\"{}\"}}", "r".repeat(MAX_FIELD_BYTES + 1024));
+    let response_body = format!(
+        "event: message\ndata: {}\n\n",
+        "s".repeat(MAX_BODY_BLOB_BYTES + 128)
+    );
+    let response_hash = blake3_bytes_ref(response_body.as_bytes());
+
+    {
+        let writer = DbWriter::open(&db_path, 64).unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            writer
+                .write(WriteOp::NetEvent(crate::events::NetEvent {
+                    event_id: Some(event_id.clone()),
+                    timestamp: std::time::SystemTime::now(),
+                    domain: "daily-cloudcode-pa.googleapis.com".into(),
+                    port: 443,
+                    decision: crate::events::Decision::Allowed,
+                    process_name: Some("agy".into()),
+                    pid: Some(1234),
+                    method: Some("POST".into()),
+                    path: Some("/v1internal:streamGenerateContent".into()),
+                    query: None,
+                    status_code: Some(200),
+                    bytes_sent: request_body.len() as u64,
+                    bytes_received: response_body.len() as u64,
+                    duration_ms: 42,
+                    matched_rule: Some("profiles.rules.ai_google_http_googleapis".into()),
+                    request_headers: Some("content-type: application/json".into()),
+                    response_headers: Some("content-type: text/event-stream".into()),
+                    request_body_preview: Some(request_body.clone()),
+                    response_body_preview: Some(response_body.clone()),
+                    conn_type: Some("https-mitm".into()),
+                    policy_mode: None,
+                    policy_action: Some("allow".into()),
+                    policy_rule: Some("profiles.rules.ai_google_http_googleapis".into()),
+                    policy_reason: None,
+                    trace_id: Some(trace_id.clone()),
+                    credential_ref: None,
+                }))
+                .await;
+        });
+    }
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let (stored_request_preview, stored_response_preview): (String, String) = conn
+        .query_row(
+            "SELECT request_body_preview, response_body_preview FROM net_events WHERE event_id = ?1",
+            [&event_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(stored_request_preview.len(), MAX_FIELD_BYTES);
+    assert_eq!(stored_response_preview.len(), MAX_FIELD_BYTES);
+
+    let blobs: Vec<(String, String, String, i64, i64, i64, String, Vec<u8>, String)> = conn
+        .prepare(
+            "SELECT direction, event_type, content_type, original_bytes, stored_bytes,
+                    truncated, body_hash, body, trace_id
+             FROM event_body_blobs
+             WHERE event_id = ?1
+             ORDER BY direction",
+        )
+        .unwrap()
+        .query_map([&event_id], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+                row.get(6)?,
+                row.get(7)?,
+                row.get(8)?,
+            ))
+        })
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(blobs.len(), 2);
+
+    let request = blobs
+        .iter()
+        .find(|(direction, ..)| direction == "request")
+        .unwrap();
+    assert_eq!(request.1, "http.request");
+    assert_eq!(request.2, "application/json");
+    assert_eq!(request.3, request_body.len() as i64);
+    assert_eq!(request.4, request_body.len() as i64);
+    assert_eq!(request.5, 0);
+    assert_eq!(request.6, blake3_bytes_ref(request_body.as_bytes()));
+    assert_eq!(request.7, request_body.as_bytes());
+    assert_eq!(request.8, trace_id);
+
+    let response = blobs
+        .iter()
+        .find(|(direction, ..)| direction == "response")
+        .unwrap();
+    assert_eq!(response.1, "http.request");
+    assert_eq!(response.2, "text/event-stream");
+    assert_eq!(response.3, response_body.len() as i64);
+    assert_eq!(response.4, MAX_BODY_BLOB_BYTES as i64);
+    assert_eq!(response.5, 1);
+    assert_eq!(response.6, response_hash);
+    assert_eq!(response.7.len(), MAX_BODY_BLOB_BYTES);
+    assert_eq!(&response.7, &response_body.as_bytes()[..MAX_BODY_BLOB_BYTES]);
+    assert_eq!(response.8, trace_id);
+}
+
+#[test]
 fn db_writer_checkpoints_wal_on_drop() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("test.db");
