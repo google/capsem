@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed (route surfaces and diagnostics)
+- Added a host `capsem-mcp` Ironbank proof that exercises the real stdio MCP
+  server against `capsem-service`, verifies every advertised tool, calls the
+  session/file/exec/MCP/log/triage routes with deterministic inputs, and
+  reconciles MCP, file, exec, security, route, snapshot, and structured-log
+  ledger output. Host-triggered exec events now carry trace IDs so MCP-driven
+  command activity stays attributable through the session ledger.
 - Added a reusable Ironbank two-turn model ledger assertion surface that
   computes expected trace/cardinality from externally meaningful client facts
   and proves exactly matched model item, tool call, tool response, file, DNS,

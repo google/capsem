@@ -445,6 +445,14 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     // creates the capture slot *before* sending here. The
                     // control bridge owns delivery/replay, so this layer just
                     // forwards without replacing the active_exec slot.
+                    let trace_id =
+                        capsem_core::telemetry::ambient_capsem_trace_id().or_else(|| {
+                            capsem_core::telemetry::child_trace_env(&format!(
+                                "{vm_id_for_cmd}-exec-{id}"
+                            ))
+                            .into_iter()
+                            .find_map(|(key, value)| (key == "CAPSEM_TRACE_ID").then_some(value))
+                        });
                     let rules = security_rules_for_cmd.read().unwrap().clone();
                     let event_id =
                         capsem_core::security_engine::emit_process_exec_security_write_and_rules(
@@ -457,7 +465,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                                 command: command.clone(),
                                 source: "api".into(),
                                 mcp_call_id: None,
-                                trace_id: None,
+                                trace_id,
                                 process_name: None,
                                 credential_ref: None,
                             },
