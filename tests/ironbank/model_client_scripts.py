@@ -5,6 +5,15 @@ from __future__ import annotations
 import json
 import textwrap
 
+from ironbank.model_client_config import (
+    HERMETIC_AGY_MODEL,
+    HERMETIC_ANTHROPIC_MODEL,
+    HERMETIC_OPENAI_COMPAT_MODEL,
+    HERMETIC_OPENAI_PRICED_MODEL,
+    LIVE_OPENAI_RESPONSES_MODEL,
+)
+
+
 def common_result_script_prelude(base_url: str, filename_prefix: str) -> str:
     return f"""
 import json
@@ -12,10 +21,17 @@ import os
 from pathlib import Path
 import socket
 import subprocess
+import urllib.parse
 import urllib.request
 import uuid
 
 BASE_URL = {json.dumps(base_url.rstrip("/"))}
+BASE_DOMAIN = urllib.parse.urlparse(BASE_URL).hostname or ""
+HERMETIC_OPENAI_COMPAT_MODEL = {json.dumps(HERMETIC_OPENAI_COMPAT_MODEL)}
+HERMETIC_OPENAI_PRICED_MODEL = {json.dumps(HERMETIC_OPENAI_PRICED_MODEL)}
+HERMETIC_ANTHROPIC_MODEL = {json.dumps(HERMETIC_ANTHROPIC_MODEL)}
+HERMETIC_AGY_MODEL = {json.dumps(HERMETIC_AGY_MODEL)}
+LIVE_OPENAI_RESPONSES_MODEL = {json.dumps(LIVE_OPENAI_RESPONSES_MODEL)}
 DNS_QNAME = "model.capsem.test"
 DNS_IP = socket.gethostbyname(DNS_QNAME)
 NONCE = uuid.uuid4().hex
@@ -42,7 +58,7 @@ def run_tool(arguments):
         return "Process exited with code 0"
     raise RuntimeError("unsupported tool args: " + json.dumps(arguments, sort_keys=True))
 
-def emit_result(provider, domain, path, model, output, reasoning, tool_call_name, call_args, call_response):
+def emit_result(provider, domain, path, model, output, reasoning, tool_call_name, call_args, call_response, credential_provider=None):
     file_text = Path(TARGET).read_text(encoding="utf-8")
     result = {{
         "input": PROMPT,
@@ -52,6 +68,7 @@ def emit_result(provider, domain, path, model, output, reasoning, tool_call_name
         "call_args": call_args,
         "call_response": call_response,
         "provider": provider,
+        "credential_provider": credential_provider or provider,
         "domain": domain,
         "path": path,
         "model": model,
@@ -60,6 +77,7 @@ def emit_result(provider, domain, path, model, output, reasoning, tool_call_name
         "nonce": NONCE,
         "file_text": file_text,
         "file_matches": file_text == NONCE + "\\n",
+        "output_contains_nonce": NONCE in output,
         "dns_qname": DNS_QNAME,
         "dns_ip": DNS_IP,
     }}
@@ -101,7 +119,7 @@ def post(body):
         return response.read().decode()
 
 first_body = {
-    "model": "gemma4:latest",
+    "model": HERMETIC_OPENAI_PRICED_MODEL,
     "stream": True,
     "input": PROMPT,
     "tools": [{"type": "function", "name": "exec_command"}],
@@ -111,7 +129,7 @@ tool_item = next(event["item"] for event in first_events if event.get("type") ==
 call_args = json.loads(tool_item["arguments"])
 call_response = run_tool(call_args)
 second_body = {
-    "model": "gemma4:latest",
+    "model": HERMETIC_OPENAI_PRICED_MODEL,
     "stream": True,
     "input": [
         {"type": "function_call", "call_id": tool_item["call_id"], "name": tool_item["name"], "arguments": tool_item["arguments"]},
@@ -123,7 +141,135 @@ second_body = {
 second_events = parse_sse(post(second_body))
 output = next(event["text"] for event in second_events if event.get("type") == "response.output_text.done")
 reasoning = next(event["delta"] for event in second_events if event.get("type") == "response.reasoning_summary_text.delta")
-emit_result("openai", "127.0.0.1", "/v1/responses", "gemma4:latest", output, reasoning, tool_item["name"], call_args, call_response)
+emit_result("openai", BASE_DOMAIN, "/v1/responses", HERMETIC_OPENAI_PRICED_MODEL, output, reasoning, tool_item["name"], call_args, call_response)
+'''
+    ).strip()
+
+
+def live_openai_responses_api_script() -> str:
+    return textwrap.dedent(
+        common_result_script_prelude("https://api.openai.com", "live-openai-api")
+        + r'''
+from openai import OpenAI
+
+MODEL = os.environ.get("CAPSEM_LIVE_OPENAI_RESPONSE_MODEL", LIVE_OPENAI_RESPONSES_MODEL)
+client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+tools = [{
+    "type": "function",
+    "name": "exec_command",
+    "description": "Write the requested UUID value to the requested file.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "cmd": {"type": "string"},
+        },
+        "required": ["cmd"],
+    },
+}]
+
+first = client.responses.create(
+    model=MODEL,
+    input=PROMPT,
+    tools=tools,
+    tool_choice={"type": "function", "name": "exec_command"},
+    reasoning={"effort": "minimal"},
+    max_output_tokens=1024,
+)
+tool_item = next(item for item in first.output if getattr(item, "type", None) == "function_call")
+call_args = json.loads(tool_item.arguments)
+call_response = run_tool(call_args)
+second = client.responses.create(
+    model=MODEL,
+    input=[
+        {
+            "type": "function_call",
+            "call_id": tool_item.call_id,
+            "name": tool_item.name,
+            "arguments": tool_item.arguments,
+        },
+        {
+            "type": "function_call_output",
+            "call_id": tool_item.call_id,
+            "output": call_response,
+        },
+        {
+            "role": "user",
+            "content": "Return exactly the uuid4 hex value that was written to disk.",
+        },
+    ],
+    tools=tools,
+    reasoning={"effort": "minimal"},
+    max_output_tokens=1024,
+)
+output = second.output_text.strip()
+if NONCE not in output:
+    raise SystemExit("live OpenAI output did not contain nonce: " + output)
+reasoning = ""
+for item in getattr(second, "output", []) or []:
+    if getattr(item, "type", None) == "reasoning":
+        summary = getattr(item, "summary", None) or []
+        if summary:
+            reasoning = " ".join(str(getattr(part, "text", "")) for part in summary).strip()
+emit_result("openai", "api.openai.com", "/v1/responses", MODEL, output, reasoning, tool_item.name, call_args, call_response)
+'''
+    ).strip()
+
+
+def live_openai_chat_completions_script() -> str:
+    return textwrap.dedent(
+        common_result_script_prelude("https://api.openai.com", "live-openai-chat")
+        + r'''
+from openai import OpenAI
+
+MODEL = os.environ.get("CAPSEM_LIVE_OPENAI_CHAT_MODEL", LIVE_OPENAI_RESPONSES_MODEL)
+client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+tools = [{
+    "type": "function",
+    "function": {
+        "name": "exec_command",
+        "description": "Write the requested UUID value to the requested file.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "cmd": {"type": "string"},
+            },
+            "required": ["cmd"],
+        },
+    },
+}]
+
+first = client.chat.completions.create(
+    model=MODEL,
+    messages=[{"role": "user", "content": PROMPT}],
+    tools=tools,
+    tool_choice={"type": "function", "function": {"name": "exec_command"}},
+    max_completion_tokens=1024,
+)
+tool_item = first.choices[0].message.tool_calls[0]
+call_args = json.loads(tool_item.function.arguments)
+call_response = run_tool(call_args)
+second = client.chat.completions.create(
+    model=MODEL,
+    messages=[
+        {"role": "user", "content": PROMPT},
+        first.choices[0].message.model_dump(exclude_none=True),
+        {
+            "role": "tool",
+            "tool_call_id": tool_item.id,
+            "content": call_response,
+        },
+        {
+            "role": "user",
+            "content": "Return exactly the uuid4 hex value that was written to disk.",
+        },
+    ],
+    tools=tools,
+    max_completion_tokens=1024,
+)
+output = (second.choices[0].message.content or "").strip()
+if NONCE not in output:
+    raise SystemExit("live OpenAI chat output did not contain nonce: " + output)
+emit_result("openai", "api.openai.com", "/v1/chat/completions", MODEL, output, "", tool_item.function.name, call_args, call_response)
 '''
     ).strip()
 
@@ -157,7 +303,7 @@ def run_one(index):
     target = "/root/" + filename
     prompt = "Write uuid4 hex value " + nonce + " to " + target + "."
     first_events = parse_sse(post({
-        "model": "gemma4:latest",
+        "model": HERMETIC_OPENAI_PRICED_MODEL,
         "stream": True,
         "input": prompt,
         "tools": [{"type": "function", "name": "exec_command"}],
@@ -166,7 +312,7 @@ def run_one(index):
     call_args = json.loads(tool_item["arguments"])
     call_response = run_tool(call_args)
     second_events = parse_sse(post({
-        "model": "gemma4:latest",
+        "model": HERMETIC_OPENAI_PRICED_MODEL,
         "stream": True,
         "input": [
             {"type": "function_call", "call_id": tool_item["call_id"], "name": tool_item["name"], "arguments": tool_item["arguments"]},
@@ -196,9 +342,9 @@ def run_one(index):
 results = [run_one(1), run_one(2)]
 print("IRONBANK_CLIENT_RESULT=" + json.dumps({
     "provider": "openai",
-    "domain": "127.0.0.1",
+    "domain": BASE_DOMAIN,
     "path": "/v1/responses",
-    "model": "gemma4:latest",
+    "model": HERMETIC_OPENAI_PRICED_MODEL,
     "dns_qname": DNS_QNAME,
     "dns_ip": DNS_IP,
     "credential_nonce": NONCE,
@@ -225,7 +371,7 @@ def post(body):
         return json.loads(response.read().decode())
 
 first = post({
-    "model": "claude-sonnet-4-20250514",
+    "model": HERMETIC_ANTHROPIC_MODEL,
     "max_tokens": 128,
     "messages": [{"role": "user", "content": PROMPT}],
     "tools": [{"name": "exec_command", "description": "run a command", "input_schema": {"type": "object", "properties": {"cmd": {"type": "string"}}}}],
@@ -234,7 +380,7 @@ tool_item = next(part for part in first["content"] if part["type"] == "tool_use"
 call_args = tool_item["input"]
 call_response = run_tool(call_args)
 second = post({
-    "model": "claude-sonnet-4-20250514",
+    "model": HERMETIC_ANTHROPIC_MODEL,
     "max_tokens": 128,
     "messages": [
         {"role": "user", "content": PROMPT},
@@ -245,7 +391,7 @@ second = post({
 })
 reasoning = next(part["thinking"] for part in second["content"] if part["type"] == "thinking")
 output = next(part["text"] for part in second["content"] if part["type"] == "text")
-emit_result("anthropic", "127.0.0.1", "/v1/messages", "claude-sonnet-4-20250514", output, reasoning, tool_item["name"], call_args, call_response)
+emit_result("anthropic", BASE_DOMAIN, "/v1/messages", HERMETIC_ANTHROPIC_MODEL, output, reasoning, tool_item["name"], call_args, call_response)
 '''
     ).strip()
 
@@ -262,7 +408,7 @@ client = anthropic.Anthropic(
 )
 tools = [{"name": "exec_command", "description": "run a command", "input_schema": {"type": "object", "properties": {"cmd": {"type": "string"}}}}]
 first = client.messages.create(
-    model="claude-sonnet-4-20250514",
+    model=HERMETIC_ANTHROPIC_MODEL,
     max_tokens=128,
     messages=[{"role": "user", "content": PROMPT}],
     tools=tools,
@@ -271,7 +417,7 @@ tool_item = next(part for part in first.content if part.type == "tool_use")
 call_args = dict(tool_item.input)
 call_response = run_tool(call_args)
 second = client.messages.create(
-    model="claude-sonnet-4-20250514",
+    model=HERMETIC_ANTHROPIC_MODEL,
     max_tokens=128,
     messages=[
         {"role": "user", "content": PROMPT},
@@ -282,7 +428,7 @@ second = client.messages.create(
 )
 reasoning = next(part.thinking for part in second.content if part.type == "thinking")
 output = next(part.text for part in second.content if part.type == "text")
-emit_result("anthropic", "127.0.0.1", "/v1/messages", "claude-sonnet-4-20250514", output, reasoning, tool_item.name, call_args, call_response)
+emit_result("anthropic", BASE_DOMAIN, "/v1/messages", HERMETIC_ANTHROPIC_MODEL, output, reasoning, tool_item.name, call_args, call_response)
 '''
     ).strip()
 
@@ -323,7 +469,7 @@ completed = subprocess.run(
 if completed.returncode != 0:
     raise SystemExit((completed.stdout or "") + (completed.stderr or ""))
 call_args = {"cmd": "printf '%s\\n' " + NONCE + " > " + TARGET, "yield_time_ms": 1000, "max_output_tokens": 2000}
-emit_result("openai", "127.0.0.1", "/v1/responses", "gemma4:latest", NONCE, "ledger reasoning", "exec_command", call_args, "Process exited with code 0")
+emit_result("ollama", BASE_DOMAIN, "/v1/responses", HERMETIC_OPENAI_COMPAT_MODEL, NONCE, "ledger reasoning", "exec_command", call_args, "Process exited with code 0", credential_provider="openai")
 '''
     ).strip()
 
@@ -344,7 +490,7 @@ completed = subprocess.run(
         "claude",
         "-y",
         "--model",
-        "gemma4:latest",
+        HERMETIC_OPENAI_COMPAT_MODEL,
         "--",
         "-p",
         PROMPT,
@@ -358,7 +504,7 @@ completed = subprocess.run(
 if completed.returncode != 0:
     raise SystemExit((completed.stdout or "") + (completed.stderr or ""))
 call_args = {"command": "printf '%s\\n' " + NONCE + " > " + TARGET, "description": "write ironbank token"}
-emit_result("ollama", "127.0.0.1", "/v1/messages", "gemma4:latest", NONCE, "ledger reasoning", "Bash", call_args, "(Bash completed with no output)")
+emit_result("ollama", "127.0.0.1", "/v1/messages", HERMETIC_OPENAI_COMPAT_MODEL, NONCE, "ledger reasoning", "Bash", call_args, "(Bash completed with no output)")
 '''
     ).strip()
 
@@ -379,7 +525,7 @@ completed = subprocess.run(
         "codex",
         "-y",
         "--model",
-        "gemma4:latest",
+        HERMETIC_OPENAI_COMPAT_MODEL,
         "--",
         "exec",
         "--dangerously-bypass-approvals-and-sandbox",
@@ -397,7 +543,7 @@ completed = subprocess.run(
 if completed.returncode != 0:
     raise SystemExit((completed.stdout or "") + (completed.stderr or ""))
 call_args = {"cmd": "printf '%s\\n' " + NONCE + " > " + TARGET, "yield_time_ms": 1000, "max_output_tokens": 2000}
-emit_result("ollama", "127.0.0.1", "/v1/responses", "gemma4:latest", NONCE, "ledger reasoning", "exec_command", call_args, "Process exited with code 0")
+emit_result("ollama", "127.0.0.1", "/v1/responses", HERMETIC_OPENAI_COMPAT_MODEL, NONCE, "ledger reasoning", "exec_command", call_args, "Process exited with code 0")
 '''
     ).strip()
 
@@ -461,6 +607,6 @@ call_args = {
     "FileContent": NONCE + "\\n",
     "Overwrite": True,
 }
-emit_result("ollama", "127.0.0.1", "/api/chat", "gemma4:latest", NONCE, "ledger reasoning", "write_to_file", call_args, "saved")
+emit_result("ollama", "127.0.0.1", "/api/chat", HERMETIC_OPENAI_COMPAT_MODEL, NONCE, "ledger reasoning", "write_to_file", call_args, "saved")
 '''
     ).strip()

@@ -81,6 +81,8 @@ DNS_FIXTURES = {
     "fixture.capsem.test": "127.0.0.1",
     "model.capsem.test": "127.0.0.1",
     "mcp.capsem.test": "127.0.0.1",
+    "api.openai.com": "127.0.0.1",
+    "api.anthropic.com": "127.0.0.1",
     "daily-cloudcode-pa.googleapis.com": "127.0.0.1",
     "www.googleapis.com": "127.0.0.1",
     "play.googleapis.com": "127.0.0.1",

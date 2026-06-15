@@ -112,7 +112,6 @@ def _assert_raw_secret_not_in_db(conn: sqlite3.Connection) -> None:
                         f"raw secret leaked in {table}.{column}"
                     )
 
-
 def _sdk_probe_script(base_url: str) -> str:
     payload = {
         "base_url": f"{base_url.rstrip('/')}/v1",

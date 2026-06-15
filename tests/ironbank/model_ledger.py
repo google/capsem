@@ -11,6 +11,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from ironbank.model_pricing import assert_model_call_price
+
 
 @dataclass(frozen=True)
 class ModelLedgerSpec:
@@ -24,6 +26,7 @@ class ModelLedgerSpec:
     domain: str
     path: str
     model: str
+    credential_provider: str | None = None
 
 
 @dataclass(frozen=True)
@@ -32,6 +35,7 @@ class ModelLedgerRun:
     upstream_transcript_path: Path
     log_paths: tuple[Path, ...]
     raw_secrets: tuple[str, ...] = ()
+    expected_credential_ref: str | None = None
 
 
 def assert_model_ledger_exchange(spec: ModelLedgerSpec, run: ModelLedgerRun) -> None:
@@ -94,6 +98,7 @@ def assert_model_ledger_exchange(spec: ModelLedgerSpec, run: ModelLedgerRun) -> 
             assert details.get("thinking", 0) == usage["thinking_tokens"], dict(row)
             assert row["request_bytes"] > 0
             assert row["response_bytes"] > 0
+            assert_model_call_price(row)
 
         final_model = model_rows[-1]
         assert final_model["text_content"] == spec.output, dict(final_model)
@@ -171,7 +176,7 @@ def assert_model_ledger_exchange(spec: ModelLedgerSpec, run: ModelLedgerRun) -> 
         _assert_security_rows(conn, [row["event_id"] for row in (*model_rows, *net_rows)])
         credential_refs = _assert_brokered_model_credentials(
             conn,
-            provider=spec.provider,
+            provider=spec.credential_provider or spec.provider,
             model_rows=model_rows,
             tool_rows=tool_rows,
             response_rows=response_rows,
@@ -183,11 +188,148 @@ def assert_model_ledger_exchange(spec: ModelLedgerSpec, run: ModelLedgerRun) -> 
     _assert_no_raw_secret_in_logs(run.log_paths, run.raw_secrets)
 
 
+def assert_live_model_ledger_exchange(
+    spec: ModelLedgerSpec,
+    run: ModelLedgerRun,
+    *,
+    expected_model_calls: int = 2,
+) -> None:
+    """Assert one live-provider model exchange through the same ledger contract.
+
+    Live-provider canaries are compatibility diagnostics, not release proof.
+    They still owe the same double-entry accounting as hermetic Ironbank:
+    semantic client facts in, exact DB/log/security/plugin facts out.
+    """
+
+    with closing(_connect(run.db_path)) as conn:
+        model_rows = _latest_rows(
+            conn,
+            """
+            SELECT *
+            FROM model_calls
+            WHERE provider = ? AND path = ? AND model = ?
+            ORDER BY id
+            """,
+            (spec.provider, spec.path, spec.model),
+            expected_model_calls,
+        )
+        assert len(model_rows) == expected_model_calls, [dict(row) for row in model_rows]
+        for row in model_rows:
+            _assert_event_id(row["event_id"])
+            assert row["provider"] == spec.provider
+            assert row["path"] == spec.path
+            assert row["model"] == spec.model
+            assert row["method"] == "POST"
+            assert row["status_code"] == 200
+            assert row["input_tokens"] > 0, dict(row)
+            assert row["output_tokens"] >= 0, dict(row)
+            assert row["request_bytes"] > 0
+            assert row["response_bytes"] > 0
+            assert_model_call_price(row)
+
+        final_model = model_rows[-1]
+        assert final_model["text_content"] == spec.output, dict(final_model)
+        if spec.reasoning:
+            assert final_model["thinking_content"] == spec.reasoning, dict(final_model)
+        assert spec.input in (model_rows[0]["request_body_preview"] or ""), dict(model_rows[0])
+
+        tool_rows = _latest_rows(
+            conn,
+            """
+            SELECT tool_calls.*, model_calls.path AS model_path, model_calls.model AS model_name
+            FROM tool_calls
+            JOIN model_calls ON model_calls.id = tool_calls.model_call_id
+            WHERE tool_calls.provider = ?
+              AND tool_calls.tool_name = ?
+              AND model_calls.path = ?
+              AND model_calls.model = ?
+            ORDER BY tool_calls.id
+            """,
+            (spec.provider, spec.tool_call_name, spec.path, spec.model),
+            1,
+        )
+        assert len(tool_rows) == 1, [dict(row) for row in tool_rows]
+        tool_row = tool_rows[0]
+        _assert_event_id(tool_row["event_id"])
+        assert json.loads(tool_row["arguments"]) == spec.call_args
+        assert tool_row["origin"] in {"native", "mcp"}
+        assert tool_row["trace_id"]
+
+        response_rows = _latest_rows(
+            conn,
+            """
+            SELECT *
+            FROM tool_responses
+            WHERE call_id = ?
+            ORDER BY id
+            """,
+            (tool_row["call_id"],),
+            1,
+        )
+        assert len(response_rows) == 1, [dict(row) for row in response_rows]
+        response_row = response_rows[0]
+        assert response_row["is_error"] == 0
+        assert response_row["trace_id"] == final_model["trace_id"]
+        assert spec.call_response in (response_row["content_preview"] or "")
+
+        net_rows = _latest_rows(
+            conn,
+            """
+            SELECT *
+            FROM net_events
+            WHERE domain = ? AND path = ?
+            ORDER BY id
+            """,
+            (spec.domain, spec.path),
+            expected_model_calls,
+        )
+        assert len(net_rows) == expected_model_calls, [dict(row) for row in net_rows]
+        for row in net_rows:
+            _assert_event_id(row["event_id"])
+            assert row["method"] == "POST"
+            assert row["status_code"] == 200
+            assert row["decision"] == "allowed"
+            assert row["bytes_sent"] > 0
+            assert row["bytes_received"] > 0
+        assert spec.input in (net_rows[0]["request_body_preview"] or ""), dict(net_rows[0])
+        assert spec.output in (net_rows[-1]["response_body_preview"] or ""), dict(net_rows[-1])
+
+        _assert_security_rows(conn, [row["event_id"] for row in (*model_rows, *net_rows)])
+        credential_refs = _assert_brokered_model_credentials(
+            conn,
+            provider=spec.credential_provider or spec.provider,
+            model_rows=model_rows,
+            tool_rows=tool_rows,
+            response_rows=response_rows,
+            net_rows=net_rows,
+            raw_secrets=run.raw_secrets,
+        )
+        if run.expected_credential_ref is not None:
+            assert credential_refs == {run.expected_credential_ref}, {
+                "expected": run.expected_credential_ref,
+                "actual": sorted(credential_refs),
+            }
+        _assert_tool_output_file(conn, spec, credential_refs=credential_refs)
+        _assert_no_raw_secret_in_db(conn, run.raw_secrets)
+    _assert_no_raw_secret_in_logs(run.log_paths, run.raw_secrets)
+
+
 def _connect(db_path: Path) -> sqlite3.Connection:
     assert db_path.exists(), f"missing session DB: {db_path}"
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def _latest_rows(
+    conn: sqlite3.Connection,
+    query: str,
+    params: tuple[Any, ...],
+    count: int,
+) -> list[sqlite3.Row]:
+    rows = conn.execute(query, params).fetchall()
+    assert len(rows) >= count, [dict(row) for row in rows]
+    return rows[-count:]
 
 
 def _load_upstream_records(path: Path, model_path: str) -> list[dict[str, Any]]:

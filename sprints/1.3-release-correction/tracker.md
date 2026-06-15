@@ -173,6 +173,34 @@ next one, and stage only the files for that slice.
     --nocapture`; `cargo test -p capsem-core
     default_rules_do_not_override_specific_enforcement_decisions --
     --nocapture`.
+- [ ] S7/Ironbank diagnostics: add optional live-provider canaries that reuse
+  the same model-client script result shape and shared ledger assertions as
+  the hermetic Ironbank clients.
+  - These are not release proof and must never replace hermetic mock-server
+    coverage. They run only when the matching real key exists in the process
+    env, `CAPSEM_LIVE_PROVIDER_DOTENV`, or project `.env`.
+  - Chat canaries must always use two turns because the Responses/history path
+    previously duplicated model items. Each turn uses a random UUID input and
+    random file path, then asserts exact per-trace cardinality and content for
+    request, reasoning/thinking when present, response, tool_call,
+    tool_response, HTTP, DNS, security rows, broker substitution rows, and
+    created file events.
+  - OpenAI live canaries: Chat Completions `/v1/chat/completions` and
+    Responses `/v1/responses` two-turn chat with `gpt-5-nano` by default and
+    1024 output tokens; Responses image-generation tool path from the current
+    OpenAI images guide; embeddings with `text-embedding-3-small`;
+    independent BLAKE3 of `OPENAI_API_KEY` must match the broker
+    `credential_ref`.
+  - Gemini live canary: `gemini-3.5-flash` two-turn chat with the same shared
+    ledger/broker/hash checks for `GOOGLE_API_KEY`.
+  - Follow-on live canaries use the same helper for Claude API/SDK and AGY
+    once AGY's model-selection fixture is green. Do not add provider-specific
+    bespoke assertion code when the shared helper can express the expectation.
+  - Every live canary that passes must produce or refresh a matching hermetic
+    mock-server fixture before it can count as model-parsing confidence. The
+    release gate trusts the derived hermetic fixture, not the public network:
+    same request shape, same response/tool/thinking/token fields, same ledger
+    assertions, and same two-turn duplication check.
 - [x] S7: fix OpenAI parser/tool-response logging and dedup. Use fast BLAKE3
   hashes for model request/response/tool-call/tool-response identity, persist
   those hashes in the DB, and reload an in-memory hash map from session DB at
@@ -226,6 +254,35 @@ next one, and stage only the files for that slice.
     tests/ironbank/test_model_client_ledger_contract.py::test_claude_sdk_ledger_contract
     -q -s --tb=short`; `cargo test -p capsem-core trace -- --nocapture`;
     `cargo test -p capsem-core anthropic_tool -- --nocapture`.
+  - 2026-06-15 pricing refresh: Ironbank now carries a Python pricing oracle
+    that mirrors the bundled `config/data/genai-prices.json` semantics for
+    provider/model matching, cache-read subtraction, and tiered base rates. The
+    ledger assertions verify every `model_calls.estimated_cost_usd` row they
+    inspect. Hermetic OpenAI provider-host fixtures use `gpt-5-nano` through
+    corp-owned upstream overrides for `api.openai.com:443`, while the Codex CLI
+    fixture stays on the local mock route and records `credential_provider =
+    openai` separately from model provider `ollama`.
+  - Pricing proof: `uv run ruff check tests/ironbank/model_client_assertions.py
+    tests/ironbank/model_client_scripts.py tests/ironbank/model_ledger.py
+    tests/ironbank/model_pricing.py tests/ironbank/test_model_pricing.py
+    tests/ironbank/test_model_client_ledger_contract.py
+    tests/test_mock_server_launcher.py`; `uv run python -m py_compile
+    tests/ironbank/model_client_assertions.py
+    tests/ironbank/model_client_scripts.py tests/ironbank/model_ledger.py
+    tests/ironbank/model_pricing.py tests/ironbank/test_model_pricing.py
+    tests/ironbank/test_model_client_ledger_contract.py
+    tests/test_mock_server_launcher.py`; `uv run pytest
+    tests/ironbank/test_model_pricing.py
+    tests/ironbank/test_model_client_ledger_contract.py::test_codex_cli_ledger_contract
+    tests/ironbank/test_model_client_ledger_contract.py::test_openai_responses_api_ledger_contract
+    tests/ironbank/test_model_client_ledger_contract.py::test_openai_two_tool_calls_have_exact_item_cardinality
+    tests/ironbank/test_model_client_ledger_contract.py::test_claude_http_api_ledger_contract
+    tests/ironbank/test_model_client_ledger_contract.py::test_claude_sdk_ledger_contract
+    tests/test_mock_server_launcher.py::test_mock_server_serves_dns_udp_fixture
+    -q -s --tb=short` passed with 9 tests. Wider non-AGY proof:
+    `uv run pytest tests/ironbank/test_model_client_ledger_contract.py -q
+    -m 'not live_provider' -k 'not agy' -s --tb=short` passed with
+    7 tests and 3 deselected; AGY remains the explicitly tracked red lane.
 
 ## S0. Sprint Ledger and Release Hold
 

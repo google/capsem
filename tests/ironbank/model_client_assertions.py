@@ -7,7 +7,12 @@ from pathlib import Path
 import sqlite3
 from typing import Protocol
 
-from ironbank.model_ledger import ModelLedgerRun, ModelLedgerSpec, assert_model_ledger_exchange
+from ironbank.model_ledger import (
+    ModelLedgerRun,
+    ModelLedgerSpec,
+    assert_live_model_ledger_exchange,
+    assert_model_ledger_exchange,
+)
 
 
 class ModelClientEnvironment(Protocol):
@@ -58,6 +63,7 @@ def assert_one_model_client(
         domain=result["domain"],
         path=result["path"],
         model=result["model"],
+        credential_provider=result.get("credential_provider"),
     )
     run = ModelLedgerRun(
         db_path=env.db_path,
@@ -70,8 +76,49 @@ def assert_one_model_client(
         assert_imported_script_contains(env, expected_imported_text)
 
 
+def assert_live_model_client(
+    env: ModelClientEnvironment,
+    script: str,
+    *,
+    raw_secret: str,
+    expected_credential_ref: str,
+    expected_model_calls: int = 2,
+    timeout_secs: int = 240,
+) -> dict:
+    result = env.run_python(script, timeout_secs=timeout_secs)
+    assert result["file_matches"] is True, result
+    if "output_contains_nonce" in result:
+        assert result["output_contains_nonce"] is True, result
+    spec = ModelLedgerSpec(
+        input=result["input"],
+        reasoning=result["reasoning"],
+        output=result["output"],
+        tool_call_name=result["tool_call_name"],
+        call_args=result["call_args"],
+        call_response=result["call_response"],
+        provider=result["provider"],
+        domain=result["domain"],
+        path=result["path"],
+        model=result["model"],
+        credential_provider=result.get("credential_provider"),
+    )
+    run = ModelLedgerRun(
+        db_path=env.db_path,
+        upstream_transcript_path=env.upstream_transcript_path,
+        log_paths=env.log_paths,
+        raw_secrets=(raw_secret,),
+        expected_credential_ref=expected_credential_ref,
+    )
+    assert_live_model_ledger_exchange(
+        spec,
+        run,
+        expected_model_calls=expected_model_calls,
+    )
+    return result
+
+
 def _derive_model_client_raw_secrets(result: dict) -> tuple[str, ...]:
-    provider = result["provider"]
+    provider = result.get("credential_provider") or result["provider"]
     if provider == "openai":
         return ("sk-" + result["nonce"],)
     if provider == "anthropic":

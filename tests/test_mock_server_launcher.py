@@ -93,6 +93,22 @@ def test_mock_server_serves_dns_udp_fixture() -> None:
 
         assert response[:2] == b"\x12\x34"
         assert _answer_ip(response) == "127.0.0.1"
+
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.settimeout(2)
+            sock.sendto(_dns_query("api.openai.com", query_id=0x5678), (host, int(port_text)))
+            response, _ = sock.recvfrom(512)
+
+        assert response[:2] == b"\x56\x78"
+        assert _answer_ip(response) == "127.0.0.1"
+
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.settimeout(2)
+            sock.sendto(_dns_query("api.anthropic.com", query_id=0x9ABC), (host, int(port_text)))
+            response, _ = sock.recvfrom(512)
+
+        assert response[:2] == b"\x9a\xbc"
+        assert _answer_ip(response) == "127.0.0.1"
     finally:
         stop_process(proc)
 

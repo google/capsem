@@ -16,12 +16,15 @@ import textwrap
 import time
 import uuid
 
+import blake3
 import pytest
 
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
 from helpers.service import ServiceInstance, wait_exec_ready, vm_name
-from ironbank.model_client_assertions import assert_one_model_client
+from ironbank.model_client_assertions import assert_live_model_client, assert_one_model_client
+from ironbank.model_client_config import HERMETIC_OPENAI_PRICED_MODEL
+from ironbank.model_pricing import assert_model_call_price
 from ironbank.model_client_scripts import (
     agy_cli_script,
     claude_api_script,
@@ -29,6 +32,8 @@ from ironbank.model_client_scripts import (
     claude_sdk_script,
     codex_cli_script,
     codex_ollama_launch_script,
+    live_openai_chat_completions_script,
+    live_openai_responses_api_script,
     openai_responses_api_script,
     openai_two_tool_calls_script,
 )
@@ -77,6 +82,31 @@ def _assert_raw_absent_from_db(conn, raw_secret: str) -> None:
         for row in conn.execute(f'SELECT {selected} FROM "{table}"').fetchall():
             for column, value in zip(text_columns, row, strict=True):
                 assert raw_secret not in str(value), f"raw secret leaked in {table}.{column}"
+
+
+def _live_provider_secret(name: str) -> str | None:
+    value = os.environ.get(name)
+    if value:
+        return value
+    candidates: list[Path] = []
+    if os.environ.get("CAPSEM_LIVE_PROVIDER_DOTENV"):
+        candidates.append(Path(os.environ["CAPSEM_LIVE_PROVIDER_DOTENV"]))
+    candidates.append(PROJECT_ROOT / ".env")
+    for dotenv in candidates:
+        if not dotenv.exists():
+            continue
+        for line in dotenv.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                continue
+            key, raw_value = stripped.split("=", 1)
+            if key == name:
+                return raw_value.strip().strip('"').strip("'")
+    return None
+
+
+def _credential_ref_for_secret(secret: str) -> str:
+    return f"credential:blake3:{blake3.blake3(secret.encode('utf-8')).hexdigest()}"
 
 
 @dataclass
@@ -169,6 +199,14 @@ def model_client_env():
                 dial = {json.dumps(ready["http_addr"])}
                 protocol = "http"
 
+                [network.upstream_overrides."api.openai.com:443"]
+                dial = {json.dumps(ready["http_addr"])}
+                protocol = "http"
+
+                [network.upstream_overrides."api.anthropic.com:443"]
+                dial = {json.dumps(ready["http_addr"])}
+                protocol = "http"
+
                 [settings."security.web.http_upstream_ports"]
                 value = [80, 3713, 8080, 11434]
                 modified = "2026-06-14T00:00:00Z"
@@ -203,6 +241,22 @@ def model_client_env():
                 detection_level = "informational"
                 reason = "Allow hermetic AGY Google Code Assist replay through the declared upstream override."
                 match = 'tcp.port == "443" && ((http.host == "daily-cloudcode-pa.googleapis.com" && http.path.matches("^/v1internal:")) || (http.host == "www.googleapis.com" && http.path == "/oauth2/v2/userinfo") || (http.host == "play.googleapis.com" && http.path == "/log") || (http.host == "antigravity-unleash.goog" && http.path.matches("^/api/client/")))'
+
+                [corp.rules.allow_ironbank_openai_api]
+                name = "allow_ironbank_openai_api"
+                action = "allow"
+                priority = -100
+                detection_level = "informational"
+                reason = "Allow hermetic OpenAI API replay through the declared upstream override."
+                match = 'tcp.port == "443" && http.host == "api.openai.com" && http.path.matches("^/v1/")'
+
+                [corp.rules.allow_ironbank_anthropic_api]
+                name = "allow_ironbank_anthropic_api"
+                action = "allow"
+                priority = -100
+                detection_level = "informational"
+                reason = "Allow hermetic Anthropic API replay through the declared upstream override."
+                match = 'tcp.port == "443" && http.host == "api.anthropic.com" && http.path.matches("^/v1/")'
                 """
             ).strip()
             + "\n",
@@ -229,6 +283,8 @@ def model_client_env():
         active_profile_text = active_profile.read_text(encoding="utf-8")
         assert ready["dns_udp_addr"] in active_profile_text
         assert ready["http_addr"] in active_profile_text
+        assert "api.openai.com:443" in active_profile_text
+        assert "api.anthropic.com:443" in active_profile_text
         assert "daily-cloudcode-pa.googleapis.com:443" in active_profile_text
         assert "antigravity-unleash.goog:443" in active_profile_text
         assert "runtime-overlay.toml" not in active_profile_text
@@ -254,14 +310,124 @@ def model_client_env():
             os.environ["CAPSEM_CORP_CONFIG"] = old_corp_config
 
 
+@pytest.fixture
+def live_model_client_env():
+    assert ASSETS_DIR.exists(), f"{ASSETS_DIR} missing; build VM assets before live canary"
+    assert PROFILES_DIR.exists(), f"{PROFILES_DIR} missing; materialize profile config"
+
+    service = ServiceInstance()
+    client = None
+    old_corp_config = os.environ.get("CAPSEM_CORP_CONFIG")
+    session_id = vm_name("ironbank-live-model")
+    vm_env = {
+        key: value
+        for key in ("OPENAI_API_KEY", "GOOGLE_API_KEY", "GEMINI_API_KEY")
+        if (value := _live_provider_secret(key))
+    }
+    try:
+        corp_path = service.tmp_dir / "corp.toml"
+        corp_path.write_text(
+            textwrap.dedent(
+                """
+                refresh_policy = "24h"
+
+                [corp.rules.allow_live_provider_canary]
+                name = "allow_live_provider_canary"
+                action = "allow"
+                priority = -100
+                detection_level = "informational"
+                reason = "Allow optional live-provider compatibility canaries when an operator explicitly provides credentials."
+                match = 'http.host.matches("(^|.*\\.)(openai\\.com|googleapis\\.com)$")'
+                """
+            ).strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        os.environ["CAPSEM_CORP_CONFIG"] = str(corp_path)
+        service.start()
+        client = service.client()
+        create = client.post(
+            "/vms/create",
+            {
+                "name": session_id,
+                "profile_id": CODE_PROFILE_ID,
+                "ram_mb": DEFAULT_RAM_MB,
+                "cpus": DEFAULT_CPUS,
+                "env": vm_env,
+            },
+            timeout=90,
+        )
+        assert create is not None
+        assert create.get("id") == session_id or create.get("name") == session_id
+        assert wait_exec_ready(client, session_id, timeout=EXEC_READY_TIMEOUT)
+        transcript_path = service.tmp_dir / "live-provider-transcript-unused.jsonl"
+        transcript_path.write_text("", encoding="utf-8")
+        yield ModelClientEnv(
+            service=service,
+            client=client,
+            session_id=session_id,
+            mock_base_url="https://live-provider.invalid",
+            upstream_transcript_path=transcript_path,
+        )
+    finally:
+        if client is not None:
+            try:
+                client.delete(f"/vms/{session_id}/delete", timeout=60)
+            except Exception:
+                pass
+        service.stop()
+        if old_corp_config is None:
+            os.environ.pop("CAPSEM_CORP_CONFIG", None)
+        else:
+            os.environ["CAPSEM_CORP_CONFIG"] = old_corp_config
+
+
 def test_openai_responses_api_ledger_contract(model_client_env: ModelClientEnv):
-    assert_one_model_client(model_client_env, openai_responses_api_script(model_client_env.mock_base_url))
+    assert_one_model_client(model_client_env, openai_responses_api_script("https://api.openai.com"))
+
+
+@pytest.mark.live_provider
+def test_live_openai_chat_completions_ledger_canary(
+    live_model_client_env: ModelClientEnv,
+):
+    openai_key = _live_provider_secret("OPENAI_API_KEY")
+    if not openai_key:
+        pytest.skip("OPENAI_API_KEY not provided for optional live-provider canary")
+    result = assert_live_model_client(
+        live_model_client_env,
+        live_openai_chat_completions_script(),
+        raw_secret=openai_key,
+        expected_credential_ref=_credential_ref_for_secret(openai_key),
+        expected_model_calls=2,
+        timeout_secs=240,
+    )
+    assert result["provider"] == "openai"
+    assert result["domain"] == "api.openai.com"
+    assert result["path"] == "/v1/chat/completions"
+
+
+@pytest.mark.live_provider
+def test_live_openai_responses_api_ledger_canary(live_model_client_env: ModelClientEnv):
+    openai_key = _live_provider_secret("OPENAI_API_KEY")
+    if not openai_key:
+        pytest.skip("OPENAI_API_KEY not provided for optional live-provider canary")
+    result = assert_live_model_client(
+        live_model_client_env,
+        live_openai_responses_api_script(),
+        raw_secret=openai_key,
+        expected_credential_ref=_credential_ref_for_secret(openai_key),
+        expected_model_calls=2,
+        timeout_secs=240,
+    )
+    assert result["provider"] == "openai"
+    assert result["domain"] == "api.openai.com"
+    assert result["path"] == "/v1/responses"
 
 
 def test_openai_two_tool_calls_have_exact_item_cardinality(
     model_client_env: ModelClientEnv,
 ):
-    result = model_client_env.run_python(openai_two_tool_calls_script(model_client_env.mock_base_url))
+    result = model_client_env.run_python(openai_two_tool_calls_script("https://api.openai.com"))
     assert len(result["results"]) == 2, result
     assert all(item["file_matches"] for item in result["results"]), result
     assert len({item["call_id"] for item in result["results"]}) == 2, result
@@ -289,15 +455,18 @@ def test_openai_two_tool_calls_have_exact_item_cardinality(
             FROM model_calls
             WHERE provider = 'openai'
               AND path = '/v1/responses'
-              AND model = 'gemma4:latest'
+              AND model = ?
             ORDER BY id
-            """
+            """,
+            (HERMETIC_OPENAI_PRICED_MODEL,),
         ).fetchall()
         assert len(model_calls) == 4, [dict(row) for row in model_calls]
         assert {row["method"] for row in model_calls} == {"POST"}
         assert {row["status_code"] for row in model_calls} == {200}
         assert all(row["request_bytes"] > 0 for row in model_calls)
         assert all(row["response_bytes"] > 0 for row in model_calls)
+        for row in model_calls:
+            assert_model_call_price(row)
 
         item_rows = conn.execute(
             """
@@ -305,9 +474,10 @@ def test_openai_two_tool_calls_have_exact_item_cardinality(
             FROM model_items
             WHERE provider = 'openai'
               AND path = '/v1/responses'
-              AND model = 'gemma4:latest'
+              AND model = ?
             ORDER BY id
-            """
+            """,
+            (HERMETIC_OPENAI_PRICED_MODEL,),
         ).fetchall()
         by_trace: dict[str, list[sqlite3.Row]] = {}
         for row in item_rows:
@@ -316,7 +486,7 @@ def test_openai_two_tool_calls_have_exact_item_cardinality(
         assert len(item_rows) == 10, [dict(row) for row in item_rows]
         assert all(row["provider"] == "openai" for row in item_rows)
         assert all(row["path"] == "/v1/responses" for row in item_rows)
-        assert all(row["model"] == "gemma4:latest" for row in item_rows)
+        assert all(row["model"] == HERMETIC_OPENAI_PRICED_MODEL for row in item_rows)
         assert all(
             isinstance(row["content_hash"], str)
             and len(row["content_hash"]) == 71
@@ -346,7 +516,7 @@ def test_openai_two_tool_calls_have_exact_item_cardinality(
             """
             SELECT *
             FROM net_events
-            WHERE domain = '127.0.0.1'
+            WHERE domain = 'api.openai.com'
               AND path = '/v1/responses'
             ORDER BY id
             """
@@ -522,14 +692,14 @@ def test_codex_cli_ledger_contract(model_client_env: ModelClientEnv):
 def test_claude_http_api_ledger_contract(model_client_env: ModelClientEnv):
     assert_one_model_client(
         model_client_env,
-        claude_api_script(model_client_env.mock_base_url),
+        claude_api_script("https://api.anthropic.com"),
     )
 
 
 def test_claude_sdk_ledger_contract(model_client_env: ModelClientEnv):
     assert_one_model_client(
         model_client_env,
-        claude_sdk_script(model_client_env.mock_base_url),
+        claude_sdk_script("https://api.anthropic.com"),
     )
 
 
