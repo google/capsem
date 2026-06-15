@@ -36,6 +36,31 @@ next one, and stage only the files for that slice.
   through `active_profile.toml`. Hermetic tests must point Capsem DNS upstreams
   at the mock-server DNS fixture through this corp rail, not a test-only env
   escape hatch.
+  - 2026-06-15 checkpoint: corp/profile-owned `network.upstream_overrides`
+    is implemented and pushed in `ed463602 feat: support corp upstream routing
+    overrides`. The rail lets a profile/corp file route an original
+    `{host}:{port}` to a hermetic dial target while preserving the original
+    host/port/path for CEL, provider classification, security-rule events, and
+    the session ledger. Focused proof: `cargo test -p capsem-process
+    runtime_profile_source_loads_exact_upstream_overrides -- --nocapture`;
+    `cargo test -p capsem-core
+    provider_detection_marks_undeclared_model_path_as_unknown_provider --
+    --nocapture`.
+- [ ] S7/Ironbank: AGY CLI hermetic ledger proof remains red and must not be
+  counted as release coverage yet.
+  - Current blocker: print mode reaches Google Code Assist setup but fails
+    before `/v1internal:streamGenerateContent` with AGY reporting that neither
+    `PlanModel` nor `RequestedModel` is specified. PTY mode reaches terminal
+    control negotiation but does not produce `HandleUserInput` or a model
+    stream request, so the session DB contains setup HTTP/DNS events only and
+    zero `model_calls`/tool/file proof rows.
+  - Latest preserved artifacts:
+    `test-artifacts/20260615-014517-master-tests_ironbank_test_model_client_ledger_contract.py__test_agy_cli_ledger_contrac/capsem-test-2nu3epel`
+    and
+    `test-artifacts/20260615-013503-master-tests_ironbank_test_model_client_ledger_contract.py__test_agy_cli_ledger_contrac/capsem-test-vho1f0qb`.
+  - Do not claim AGY coverage from these fixtures. Next AGY work needs a
+    specific terminal/config hypothesis or a recorded real client fixture; no
+    more blind long-running TUI pokes.
 - [x] S7/Ironbank: extend the OpenAI-compatible double-turn ledger test with
   two random tool calls and exact per-trace cardinality: model request,
   reasoning, response, tool_call, tool_response, HTTP request/response, DNS

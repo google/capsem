@@ -253,6 +253,14 @@ This is the active debug list for the 1.3 release loop. Older captured bugs in
     Ollama-compatible local config where supported; direct protocol probes for
     OpenAI-compatible, Anthropic-compatible, Gemini-compatible, MCP JSON-RPC,
     SSE/WebSocket, and credential broker cases.
+  - 2026-06-15 AGY blocker: corp-owned upstream overrides now route AGY's
+    Google Code Assist endpoints through the hermetic mock server, but AGY is
+    still not a green Ironbank client. Print mode completes setup calls and
+    then fails before `/v1internal:streamGenerateContent`; PTY mode reaches
+    terminal control negotiation but does not submit a prompt. Latest artifacts
+    are recorded in `sprints/1.3-release-correction/tracker.md`. Treat AGY as
+    an open client-driver/fixture problem, not as evidence that model/tool/file
+    ledger coverage is complete.
   - Ollama smoke must also prove the guest package/runtime image can install
     ordinary tooling needed by local backend tests. Manual evidence from
     session `code-mq9ymjb2`: `apt install zstd` completed package processing
