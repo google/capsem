@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed (route surfaces and diagnostics)
+- Added a reusable Ironbank two-turn model ledger assertion surface that
+  computes expected trace/cardinality from externally meaningful client facts
+  and proves exactly matched model item, tool call, tool response, file, DNS,
+  HTTP, security, credential, and upstream transcript rows through a dedicated
+  black-box VM test.
 - Removed the remaining network-side HTTP port denial from the MITM path so
   routing/capture mechanics no longer issue security verdicts outside the CEL
   security-event rail. The former `NetworkPolicy` type is now named

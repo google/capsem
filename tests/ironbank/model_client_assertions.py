@@ -10,8 +10,11 @@ from typing import Protocol
 from ironbank.model_ledger import (
     ModelLedgerRun,
     ModelLedgerSpec,
+    ModelLedgerTurn,
+    TwoTurnModelLedgerSpec,
     assert_live_model_ledger_exchange,
     assert_model_ledger_exchange,
+    assert_two_turn_model_ledger_exchange,
 )
 
 
@@ -114,6 +117,46 @@ def assert_live_model_client(
         run,
         expected_model_calls=expected_model_calls,
     )
+    return result
+
+
+def assert_two_turn_model_client(env: ModelClientEnvironment, script: str) -> dict:
+    result = env.run_python(script)
+    turns = tuple(
+        ModelLedgerTurn(
+            input=item["input"],
+            reasoning=item["reasoning"],
+            output=item["output"],
+            tool_call_name=item["tool_call_name"],
+            call_args=item["call_args"],
+            call_response=item["call_response"],
+            file_path=item["target"],
+            file_content=item["nonce"] + "\n",
+            call_id=item.get("call_id"),
+        )
+        for item in result["results"]
+    )
+    assert len(turns) == 2, result
+    assert all(item["file_matches"] for item in result["results"]), result
+    assert len({item["filename"] for item in result["results"]}) == 2, result
+    spec = TwoTurnModelLedgerSpec(
+        provider=result["provider"],
+        domain=result["domain"],
+        path=result["path"],
+        model=result["model"],
+        dns_qname=result["dns_qname"],
+        dns_ip=result["dns_ip"],
+        turns=turns,
+        credential_provider=result.get("credential_provider") or result["provider"],
+    )
+    raw_secret = "sk-" + result["credential_nonce"]
+    run = ModelLedgerRun(
+        db_path=env.db_path,
+        upstream_transcript_path=env.upstream_transcript_path,
+        log_paths=env.log_paths,
+        raw_secrets=(raw_secret,),
+    )
+    assert_two_turn_model_ledger_exchange(spec, run)
     return result
 
 

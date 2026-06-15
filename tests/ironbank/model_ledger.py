@@ -38,6 +38,31 @@ class ModelLedgerRun:
     expected_credential_ref: str | None = None
 
 
+@dataclass(frozen=True)
+class ModelLedgerTurn:
+    input: str
+    reasoning: str
+    output: str
+    tool_call_name: str
+    call_args: dict[str, Any]
+    call_response: str
+    file_path: str
+    file_content: str
+    call_id: str | None = None
+
+
+@dataclass(frozen=True)
+class TwoTurnModelLedgerSpec:
+    provider: str
+    domain: str
+    path: str
+    model: str
+    dns_qname: str
+    dns_ip: str
+    turns: tuple[ModelLedgerTurn, ModelLedgerTurn]
+    credential_provider: str | None = None
+
+
 def assert_model_ledger_exchange(spec: ModelLedgerSpec, run: ModelLedgerRun) -> None:
     """Assert one model exchange from upstream truth through the Capsem ledger.
 
@@ -188,6 +213,181 @@ def assert_model_ledger_exchange(spec: ModelLedgerSpec, run: ModelLedgerRun) -> 
     _assert_no_raw_secret_in_logs(run.log_paths, run.raw_secrets)
 
 
+def assert_two_turn_model_ledger_exchange(
+    spec: TwoTurnModelLedgerSpec,
+    run: ModelLedgerRun,
+) -> None:
+    """Assert two full model/tool/file turns with exact ledger cardinality."""
+
+    assert len(spec.turns) == 2
+    assert len({turn.file_path for turn in spec.turns}) == 2
+    assert len({turn.input for turn in spec.turns}) == 2
+
+    with closing(_connect(run.db_path)) as conn:
+        upstream_records = _load_upstream_records(run.upstream_transcript_path, spec.path)
+        assert len(upstream_records) == 4, upstream_records
+        assert all(row["path"] == spec.path for row in upstream_records)
+        assert all(row["status"] == 200 for row in upstream_records)
+        assert all(row["method"] == "POST" for row in upstream_records)
+
+        upstream_inputs = "\n".join(row["request_body"] for row in upstream_records)
+        upstream_outputs = "\n".join(row["response_body"] for row in upstream_records)
+        for turn in spec.turns:
+            assert turn.input in upstream_inputs
+            assert turn.call_response in upstream_inputs
+            assert turn.output in upstream_outputs
+            assert turn.reasoning in upstream_outputs
+            assert turn.tool_call_name in upstream_outputs
+            assert Path(turn.file_path).name in upstream_outputs
+            for key in turn.call_args:
+                assert key in upstream_outputs
+
+        model_rows = conn.execute(
+            """
+            SELECT *
+            FROM model_calls
+            WHERE provider = ? AND path = ? AND model = ?
+            ORDER BY id
+            """,
+            (spec.provider, spec.path, spec.model),
+        ).fetchall()
+        assert len(model_rows) == 4, [dict(row) for row in model_rows]
+        for row in model_rows:
+            _assert_event_id(row["event_id"])
+            assert row["provider"] == spec.provider
+            assert row["path"] == spec.path
+            assert row["model"] == spec.model
+            assert row["method"] == "POST"
+            assert row["status_code"] == 200
+            assert row["input_tokens"] > 0, dict(row)
+            assert row["output_tokens"] >= 0, dict(row)
+            assert row["request_bytes"] > 0
+            assert row["response_bytes"] > 0
+            assert_model_call_price(row)
+
+        item_rows = conn.execute(
+            """
+            SELECT *
+            FROM model_items
+            WHERE provider = ? AND path = ? AND model = ?
+            ORDER BY id
+            """,
+            (spec.provider, spec.path, spec.model),
+        ).fetchall()
+        assert len(item_rows) == 10, [dict(row) for row in item_rows]
+        assert all(row["provider"] == spec.provider for row in item_rows)
+        assert all(row["path"] == spec.path for row in item_rows)
+        assert all(row["model"] == spec.model for row in item_rows)
+        assert all(_is_blake3_ref(row["content_hash"]) for row in item_rows)
+
+        by_trace: dict[str, list[sqlite3.Row]] = {}
+        for row in item_rows:
+            by_trace.setdefault(row["trace_id"], []).append(row)
+        assert len(by_trace) == 2, [dict(row) for row in item_rows]
+
+        tool_rows = conn.execute(
+            """
+            SELECT *
+            FROM tool_calls
+            WHERE provider = ? AND tool_name = ?
+            ORDER BY id
+            """,
+            (spec.provider, spec.turns[0].tool_call_name),
+        ).fetchall()
+        assert len(tool_rows) == 2, [dict(row) for row in tool_rows]
+        response_rows = conn.execute(
+            "SELECT * FROM tool_responses ORDER BY id"
+        ).fetchall()
+        assert len(response_rows) == 2, [dict(row) for row in response_rows]
+
+        net_rows = conn.execute(
+            """
+            SELECT *
+            FROM net_events
+            WHERE domain = ? AND path = ?
+            ORDER BY id
+            """,
+            (spec.domain, spec.path),
+        ).fetchall()
+        assert len(net_rows) == 4, [dict(row) for row in net_rows]
+        for row in net_rows:
+            _assert_event_id(row["event_id"])
+            assert row["method"] == "POST"
+            assert row["status_code"] == 200
+            assert row["decision"] == "allowed"
+            assert row["bytes_sent"] > 0
+            assert row["bytes_received"] > 0
+
+        credential_refs = _assert_brokered_model_credentials(
+            conn,
+            provider=spec.credential_provider or spec.provider,
+            model_rows=model_rows,
+            tool_rows=tool_rows,
+            response_rows=response_rows,
+            net_rows=net_rows,
+            raw_secrets=run.raw_secrets,
+        )
+
+        dns_rows = conn.execute(
+            """
+            SELECT *
+            FROM dns_events
+            WHERE qname = ?
+            ORDER BY id
+            """,
+            (spec.dns_qname,),
+        ).fetchall()
+        assert len(dns_rows) == 1, [dict(row) for row in dns_rows]
+        dns = dns_rows[0]
+        _assert_event_id(dns["event_id"])
+        assert dns["qtype"] == 1, dict(dns)
+        assert dns["qclass"] == 1, dict(dns)
+        assert dns["rcode"] == 0, dict(dns)
+        assert dns["decision"] == "allowed", dict(dns)
+        assert dns["answer_ip"] == spec.dns_ip == "127.0.0.1", dict(dns)
+        assert dns["source_proto"] in {"udp", "tcp"}, dict(dns)
+
+        file_event_ids: list[str] = []
+        for turn in spec.turns:
+            trace_id = _trace_for_turn(by_trace, turn)
+            rows = by_trace[trace_id]
+            _assert_trace_items(rows, turn)
+
+            trace_model_calls = [row for row in model_rows if row["trace_id"] == trace_id]
+            assert len(trace_model_calls) == 2, [dict(row) for row in model_rows]
+            trace_net_rows = [row for row in net_rows if row["trace_id"] == trace_id]
+            assert len(trace_net_rows) == 2, [dict(row) for row in net_rows]
+
+            trace_tool_calls = [row for row in tool_rows if row["trace_id"] == trace_id]
+            assert len(trace_tool_calls) == 1, [dict(row) for row in tool_rows]
+            assert trace_tool_calls[0]["call_id"] == (turn.call_id or trace_tool_calls[0]["call_id"])
+            assert json.loads(trace_tool_calls[0]["arguments"]) == turn.call_args
+
+            trace_tool_responses = [
+                row for row in response_rows if row["trace_id"] == trace_id
+            ]
+            assert len(trace_tool_responses) == 1, [dict(row) for row in response_rows]
+            assert trace_tool_responses[0]["call_id"] == trace_tool_calls[0]["call_id"]
+            assert turn.call_response in (trace_tool_responses[0]["content_preview"] or "")
+
+            file_row = _assert_created_file_row(
+                conn,
+                trace_id=trace_id,
+                file_path=turn.file_path,
+                file_content=turn.file_content,
+                credential_refs=credential_refs,
+            )
+            file_event_ids.append(file_row["event_id"])
+
+        _assert_security_rows(
+            conn,
+            [row["event_id"] for row in [*model_rows, *net_rows, dns]]
+            + file_event_ids,
+        )
+        _assert_no_raw_secret_in_db(conn, run.raw_secrets)
+    _assert_no_raw_secret_in_logs(run.log_paths, run.raw_secrets)
+
+
 def assert_live_model_ledger_exchange(
     spec: ModelLedgerSpec,
     run: ModelLedgerRun,
@@ -334,11 +534,14 @@ def _latest_rows(
 
 def _load_upstream_records(path: Path, model_path: str) -> list[dict[str, Any]]:
     assert path.exists(), f"missing upstream transcript: {path}"
-    return [
-        json.loads(line)
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip() and json.loads(line)["path"] == model_path
-    ]
+    records = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        record = json.loads(line)
+        if record.get("path") == model_path:
+            records.append(record)
+    return records
 
 
 def _usage_from_upstream(row: dict[str, Any]) -> dict[str, int] | None:
@@ -428,6 +631,56 @@ def _nested_int(value: dict[str, Any], key: str, nested_key: str) -> int:
 def _assert_event_id(value: object) -> None:
     assert isinstance(value, str)
     assert re.fullmatch(r"[0-9a-f]{12}", value), value
+
+
+def _is_blake3_ref(value: object) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"blake3:[0-9a-f]{64}", value) is not None
+
+
+def _trace_for_turn(
+    by_trace: dict[str, list[sqlite3.Row]],
+    turn: ModelLedgerTurn,
+) -> str:
+    matches = [
+        trace_id
+        for trace_id, rows in by_trace.items()
+        if any(turn.input in (row["content"] or "") for row in rows)
+        or any(turn.output in (row["content"] or "") for row in rows)
+    ]
+    assert len(matches) == 1, {
+        "turn": turn,
+        "rows": [dict(row) for rows in by_trace.values() for row in rows],
+    }
+    return matches[0]
+
+
+def _assert_trace_items(rows: list[sqlite3.Row], turn: ModelLedgerTurn) -> None:
+    assert sum(row["kind"] == "request" for row in rows) == 1, [dict(row) for row in rows]
+    assert sum(row["kind"] == "reasoning" for row in rows) == 1, [dict(row) for row in rows]
+    assert sum(row["kind"] == "response" for row in rows) == 1, [dict(row) for row in rows]
+    assert sum(row["kind"] == "tool_call" for row in rows) == 1, [dict(row) for row in rows]
+    assert sum(row["kind"] == "tool_response" for row in rows) == 1, [dict(row) for row in rows]
+
+    request_row = next(row for row in rows if row["kind"] == "request")
+    reasoning_row = next(row for row in rows if row["kind"] == "reasoning")
+    response_row = next(row for row in rows if row["kind"] == "response")
+    tool_call_row = next(row for row in rows if row["kind"] == "tool_call")
+    tool_response_row = next(row for row in rows if row["kind"] == "tool_response")
+
+    assert turn.input in (request_row["content"] or "")
+    assert turn.file_path in (request_row["content"] or "")
+    assert '"tools"' in (request_row["content"] or "")
+    assert turn.tool_call_name in (request_row["content"] or "")
+    assert reasoning_row["content"] == turn.reasoning
+    assert response_row["content"] == turn.output
+    if turn.call_id is not None:
+        assert tool_call_row["call_id"] == turn.call_id
+        assert tool_response_row["call_id"] == turn.call_id
+    assert tool_call_row["tool_name"] == turn.tool_call_name
+    assert json.loads(tool_call_row["arguments"]) == turn.call_args
+    assert turn.file_path in (tool_call_row["content"] or "")
+    assert turn.file_content.strip() in (tool_call_row["content"] or "")
+    assert tool_response_row["content"] == turn.call_response
 
 
 def _assert_security_rows(conn: sqlite3.Connection, event_ids: list[str]) -> None:
@@ -550,6 +803,41 @@ def _assert_tool_output_file(
         assert any(row["credential_ref"] in credential_refs for row in rows), [
             dict(row) for row in rows
         ]
+
+
+def _assert_created_file_row(
+    conn: sqlite3.Connection,
+    *,
+    trace_id: str,
+    file_path: str,
+    file_content: str,
+    credential_refs: set[str],
+) -> sqlite3.Row:
+    path = Path(file_path).name
+    deadline = time.monotonic() + 15.0
+    rows = []
+    while time.monotonic() < deadline:
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM fs_events
+            WHERE action = 'created'
+            ORDER BY id
+            """
+        ).fetchall()
+        if any(row["trace_id"] == trace_id and row["name"] == path for row in rows):
+            break
+        time.sleep(0.25)
+    matches = [row for row in rows if row["trace_id"] == trace_id and row["name"] == path]
+    assert len(matches) == 1, [dict(row) for row in rows]
+    row = matches[0]
+    _assert_event_id(row["event_id"])
+    assert row["path"] == path, dict(row)
+    assert row["directory"] == ".", dict(row)
+    assert row["size"] == len(file_content.encode()), dict(row)
+    if credential_refs:
+        assert row["credential_ref"] in credential_refs, dict(row)
+    return row
 
 
 def _assert_no_raw_secret_in_db(
