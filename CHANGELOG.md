@@ -23,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Anthropic-compatible model endpoints: `Authorization` and `x-api-key` headers
   are brokered from protocol/header shape without relabeling the provider, and
   async file attribution keeps the first credential seen for a trace.
+- Fixed the AGY hermetic replay fixture so Google Code Assist
+  `listExperiments` matches the recorded 68 experiment IDs and 250 flags, and
+  `/log` accepts protobuf play-log telemetry with the recorded empty text/plain
+  acknowledgement instead of fake JSON.
 - Refactored the Ironbank model-client proof into composable script-builder
   and ledger-assertion helpers, and made the Codex CLI fixture use the same
   brokered OpenAI credential path as the SDK/API clients instead of a

@@ -371,14 +371,16 @@ def test_mock_server_replays_recorded_agy_code_assist_experiments() -> None:
         payload = _post_json(f"{ready['base_url']}/v1internal:listExperiments", {})
 
         flags = payload["flags"]
-        assert len(payload["experimentIds"]) == 66
-        assert len(flags) == 248
+        assert len(payload["experimentIds"]) == 68
+        assert len(flags) == 250
         assert len(json.dumps(payload, separators=(",", ":")).encode()) > 20_000
         assert {
             "GcliConfigPayload__config_payload",
             "GcliConfig__cli_max_attempts",
             "CliComplexityBasedRouting__enabled",
             "allow-always-config",
+            "enable-owl-slash-command",
+            "enable-state-accumulator",
         }.issubset({flag["name"] for flag in flags})
     finally:
         stop_process(proc)
@@ -432,5 +434,26 @@ def test_mock_server_replays_recorded_agy_code_assist_setup() -> None:
             for group in quota["groups"]
             for bucket in group["buckets"]
         )
+    finally:
+        stop_process(proc)
+
+
+def test_mock_server_replays_agy_playlog_empty_ack() -> None:
+    proc = None
+    try:
+        proc, ready = start_mock_server()
+        request = Request(
+            f"{ready['base_url']}/log",
+            data=b"\x0a\x04test",
+            headers={"content-type": "application/x-protobuf"},
+            method="POST",
+        )
+        with urlopen(request, timeout=5) as response:
+            body = response.read()
+            content_type = response.headers.get("content-type", "")
+
+        assert response.status == 200
+        assert body == b""
+        assert "text/plain" in content_type
     finally:
         stop_process(proc)

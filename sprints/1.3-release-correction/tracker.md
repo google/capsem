@@ -56,7 +56,7 @@ next one, and stage only the files for that slice.
     zero `model_calls`/tool/file proof rows.
   - Latest preserved artifacts:
     `test-artifacts/20260615-041326-master-tests_ironbank_test_model_client_ledger_contract.py__test_agy_cli_ledger_contrac/capsem-test-q880545d`
-    proves AGY consumes the recorded 248-flag `listExperiments` fixture but
+    proves AGY consumes the recorded `listExperiments` fixture but
     still fails model selection before any stream request;
     `test-artifacts/20260615-041613-master-tests_ironbank_test_model_client_ledger_contract.py__test_agy_cli_ledger_contrac/capsem-test-a9627hdr`
     proves removing the forced model flag avoids the quick CLI rejection but
@@ -69,12 +69,16 @@ next one, and stage only the files for that slice.
     Google Code Assist `listExperiments`, `fetchAvailableModels`,
     `loadCodeAssist`, and quota fixture set from
     `tests/fixtures/protocols/google_code_assist/`. The launcher tests guard
-    exact fixture cardinality and setup shape so the old hand-written 4 KB flag
-    stub and one-model catalog cannot return. Focused proof:
+    exact fixture cardinality (68 experiment IDs, 250 flags) and setup shape so
+    the old hand-written 4 KB flag stub and one-model catalog cannot return.
+    The mock `/log` endpoint now matches the recorded AGY play-log behavior by
+    accepting protobuf telemetry with an empty text/plain ACK instead of
+    returning fake JSON. Focused proof:
     `uv run pytest
     tests/test_mock_server_launcher.py::test_mock_server_replays_recorded_agy_code_assist_experiments
     tests/test_mock_server_launcher.py::test_mock_server_replays_recorded_agy_available_models
     tests/test_mock_server_launcher.py::test_mock_server_replays_recorded_agy_code_assist_setup
+    tests/test_mock_server_launcher.py::test_mock_server_replays_agy_playlog_empty_ack
     -q`.
   - 2026-06-15 blocker after recorded fixtures:
     `test-artifacts/20260615-043211-master-tests_ironbank_test_model_client_ledger_contract.py__test_agy_cli_ledger_contrac/capsem-test-y5ulwi_t`

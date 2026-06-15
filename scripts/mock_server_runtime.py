@@ -1037,7 +1037,7 @@ class MockHandler(BaseHTTPRequestHandler):
             )
         elif path == "/log":
             self._body()
-            self._send_json({})
+            self._send(HTTPStatus.OK, b"", "text/plain; charset=UTF-8")
         elif path == "/api/client/register":
             self._body()
             self._send(HTTPStatus.ACCEPTED, b"", "application/json")

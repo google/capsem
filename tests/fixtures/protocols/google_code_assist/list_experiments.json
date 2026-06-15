@@ -19,6 +19,7 @@
     106143956,
     105856899,
     106064030,
+    105746183,
     105757908,
     104892493,
     105822886,
@@ -54,6 +55,7 @@
     104922082,
     103012592,
     106064028,
+    105746181,
     104892490,
     105822881,
     105721268,
@@ -839,6 +841,10 @@
     },
     {
       "boolValue": false,
+      "name": "enable-state-accumulator"
+    },
+    {
+      "boolValue": false,
       "name": "enable-vcs-ui"
     },
     {
@@ -912,6 +918,10 @@
     {
       "boolValue": false,
       "name": "enable-learn-slash-command"
+    },
+    {
+      "boolValue": false,
+      "name": "enable-owl-slash-command"
     },
     {
       "boolValue": true,
