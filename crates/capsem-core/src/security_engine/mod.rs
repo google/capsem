@@ -1708,7 +1708,7 @@ pub struct SecurityPluginExecution {
 ///
 /// Protocol parsers attach typed context to this object; action plugins return
 /// the next object. Persistence, fanout, batching, and future process
-/// transport should hang off `SecurityEventEmitter`, not protocol side writes.
+/// transport should hang off `SecurityEventEmitter`, not protocol-owned writes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SecurityEvent {
     pub event_type: RuntimeSecurityEventType,

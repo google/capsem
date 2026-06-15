@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use capsem_core::mcp::types::McpServerDef;
-use capsem_core::net::policy::NetworkPolicy;
+use capsem_core::net::policy::NetworkMechanics;
 use capsem_core::net::policy_config::{
     ActiveProfileFile, MergedPolicies, ModelEndpointRegistry, SecurityPluginConfig, SecurityRuleSet,
 };
@@ -17,7 +17,7 @@ pub(crate) struct RuntimeProfileSource {
 pub(crate) struct RuntimeProfileConfig {
     pub(crate) profile_id: String,
     pub(crate) active_profile_path: PathBuf,
-    pub(crate) network: NetworkPolicy,
+    pub(crate) network: NetworkMechanics,
     pub(crate) dns_upstreams: Vec<SocketAddr>,
     pub(crate) security_rules: SecurityRuleSet,
     pub(crate) plugins: BTreeMap<String, SecurityPluginConfig>,

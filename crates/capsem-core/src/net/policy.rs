@@ -115,7 +115,7 @@ pub struct UpstreamOverride {
 /// Security decisions live in the security-rule engine. This type must not
 /// carry allow/ask/block/default semantics.
 #[derive(Debug, Clone)]
-pub struct NetworkPolicy {
+pub struct NetworkMechanics {
     /// Whether to log request/response body previews.
     pub log_bodies: bool,
     /// Maximum bytes of body preview to capture in telemetry.
@@ -148,7 +148,7 @@ const DEFAULT_MAX_BODY_CAPTURE: usize = 4096;
 /// in tandem is the configurable allowlist promise from the T2.2 plan.
 const DEFAULT_HTTP_UPSTREAM_PORTS: &[u16] = &[80, 3128, 3713, 8080, 11434];
 
-impl NetworkPolicy {
+impl NetworkMechanics {
     /// Create network mechanics with default capture and upstream-port settings.
     pub fn new() -> Self {
         Self {
@@ -185,7 +185,7 @@ impl NetworkPolicy {
     }
 }
 
-impl Default for NetworkPolicy {
+impl Default for NetworkMechanics {
     fn default() -> Self {
         Self::new()
     }
@@ -195,8 +195,8 @@ impl Default for NetworkPolicy {
 mod tests {
     use super::*;
 
-    fn dev_policy() -> NetworkPolicy {
-        NetworkPolicy::default_dev()
+    fn dev_policy() -> NetworkMechanics {
+        NetworkMechanics::default_dev()
     }
 
     // -- DomainMatcher::parse --
@@ -241,7 +241,7 @@ mod tests {
 
     #[test]
     fn find_redirect_exact_match_a_qtype() {
-        let mut p = NetworkPolicy::new();
+        let mut p = NetworkMechanics::new();
         p.dns_redirects.push(redirect(
             "anthropic.com",
             Some(1),
@@ -255,7 +255,7 @@ mod tests {
 
     #[test]
     fn find_redirect_qtype_filter_misses() {
-        let mut p = NetworkPolicy::new();
+        let mut p = NetworkMechanics::new();
         p.dns_redirects.push(redirect(
             "anthropic.com",
             Some(1), // A only
@@ -267,7 +267,7 @@ mod tests {
 
     #[test]
     fn find_redirect_any_qtype_matches_aaaa() {
-        let mut p = NetworkPolicy::new();
+        let mut p = NetworkMechanics::new();
         p.dns_redirects.push(redirect(
             "anthropic.com",
             None, // any qtype
@@ -281,7 +281,7 @@ mod tests {
 
     #[test]
     fn find_redirect_wildcard_subdomain_match() {
-        let mut p = NetworkPolicy::new();
+        let mut p = NetworkMechanics::new();
         p.dns_redirects.push(redirect(
             "*.openai.com",
             None,
@@ -295,7 +295,7 @@ mod tests {
 
     #[test]
     fn find_redirect_first_match_wins() {
-        let mut p = NetworkPolicy::new();
+        let mut p = NetworkMechanics::new();
         p.dns_redirects.push(redirect(
             "anthropic.com",
             None,
@@ -312,7 +312,7 @@ mod tests {
 
     #[test]
     fn find_redirect_no_match_returns_none() {
-        let mut p = NetworkPolicy::new();
+        let mut p = NetworkMechanics::new();
         p.dns_redirects.push(redirect(
             "anthropic.com",
             Some(1),
@@ -323,15 +323,15 @@ mod tests {
 
     #[test]
     fn find_redirect_empty_list_returns_none() {
-        let p = NetworkPolicy::new();
+        let p = NetworkMechanics::new();
         assert!(p.find_dns_redirect("anything.com", 1).is_none());
     }
 
     #[test]
     fn dns_redirects_default_empty() {
-        let p = NetworkPolicy::new();
+        let p = NetworkMechanics::new();
         assert!(p.dns_redirects.is_empty());
-        let p2 = NetworkPolicy::default_dev();
+        let p2 = NetworkMechanics::default_dev();
         assert!(p2.dns_redirects.is_empty());
     }
 
@@ -339,7 +339,7 @@ mod tests {
     fn dns_redirect_empty_answers_is_legal() {
         // Empty `answers` is the "name exists, no record of that
         // type" signal -- still a valid policy entry.
-        let mut p = NetworkPolicy::new();
+        let mut p = NetworkMechanics::new();
         p.dns_redirects
             .push(redirect("nodata.example.com", None, vec![]));
         let r = p.find_dns_redirect("nodata.example.com", 1).unwrap();

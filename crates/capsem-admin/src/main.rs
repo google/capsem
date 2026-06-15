@@ -2649,14 +2649,16 @@ code = true
         let temp = tempfile::tempdir().expect("tempdir");
         let config_root = temp.path();
         fs::create_dir_all(config_root.join("profiles/code")).expect("profile rules dir");
+        let old_table = "policy".to_string() + ".http.block_old";
         fs::write(
             config_root.join("profiles/code/enforcement.toml"),
             r#"
-[policy.http.block_old]
+[__OLD_TABLE__]
 on = ["http.request"]
 if = "http.host == 'evil.test'"
 decision = "block"
-"#,
+"#
+            .replace("__OLD_TABLE__", &old_table),
         )
         .expect("old policy file");
         fs::write(

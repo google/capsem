@@ -53,7 +53,7 @@ trait TokioReadWrite: AsyncRead + AsyncWrite {}
 impl<T> TokioReadWrite for T where T: AsyncRead + AsyncWrite {}
 
 use super::cert_authority::{CertAuthority, MitmCertResolver};
-use super::policy::NetworkPolicy;
+use super::policy::NetworkMechanics;
 use crate::net::ai_traffic::provider::{route_provider, ModelProtocol, ProviderKind};
 use crate::security_engine::{
     HttpSecurityEvent, IpSecurityEvent, ModelSecurityEvent, SecurityEvent, TcpSecurityEvent,
@@ -88,7 +88,7 @@ pub struct MitmProxyConfig {
     /// without restarting the VM. Each HTTP request snapshots the Arc so
     /// that disabling a provider blocks the next request even on an
     /// existing keep-alive connection.
-    pub policy: Arc<std::sync::RwLock<Arc<NetworkPolicy>>>,
+    pub policy: Arc<std::sync::RwLock<Arc<NetworkMechanics>>>,
     /// Live model endpoint registry from settings/profile provider blocks.
     /// MITM resolves host -> model protocol once per request and then passes
     /// that typed metadata to enforcement, hooks, broker substitution, and
@@ -148,7 +148,7 @@ impl Drop for ConnectionGauge {
 /// `handle_request` before chunk dispatch begins -- the chunk hooks
 /// themselves never see the head.
 pub fn make_production_pipeline(
-    policy: Arc<std::sync::RwLock<Arc<NetworkPolicy>>>,
+    policy: Arc<std::sync::RwLock<Arc<NetworkMechanics>>>,
     telemetry: Arc<telemetry_hook::TelemetryDeps>,
 ) -> Arc<pipeline::Pipeline> {
     let _ = policy;
@@ -1100,7 +1100,7 @@ async fn handle_request(
     // Snapshot the live policy for this request (not per-connection) so that
     // hot-reloaded settings take effect for subsequent requests on the same
     // keep-alive connection.
-    let policy: Arc<NetworkPolicy> = config.policy.read().unwrap().clone();
+    let policy: Arc<NetworkMechanics> = config.policy.read().unwrap().clone();
     let log_bodies = policy.log_bodies;
     let max_body = policy.max_body_capture;
 
@@ -1717,59 +1717,6 @@ async fn handle_request(
         .clone()
         .or_else(|| upstream_materialized.credential_ref.clone());
     let upstream_query = upstream_materialized.query.as_ref().or(query.as_ref());
-
-    // T2.2: enforce the HTTP upstream-port allowlist. The policy
-    // hook ran above with `domain` already set; the port comes from
-    // the inbound `Host` header (or default 80) and is not yet
-    // policy-checked. The default allowlist mirrors guest iptables:
-    // 80, 3128, 3713, 8080, and 11434. The TLS path always uses
-    // 443, which is implicit and not gated here.
-    if protocol == Protocol::Http && !policy.http_upstream_ports.contains(&upstream_port) {
-        ::metrics::counter!(metrics::REQUESTS_TOTAL,
-            "protocol" => protocol.label(), "decision" => "deny")
-        .increment(1);
-        let body_text =
-            format!("Capsem: HTTP upstream port {upstream_port} not in allowlist for {domain}\n");
-        let req_ctx = TelemetryRequestContext {
-            domain: domain.to_string(),
-            process_name: process_name.clone(),
-            ai_provider,
-            ai_protocol,
-            model_traffic: false,
-            method: method.clone(),
-            path: path.clone(),
-            query: query.clone(),
-            status_code: Some(403),
-            decision: Decision::Denied,
-            matched_rule: Some(format!("http-port-not-allowlisted({upstream_port})")),
-            request_headers: Some(req_hdrs.clone()),
-            response_headers: None,
-            start_time,
-            request_body_stats: Arc::new(Mutex::new(BodyStats::new(0))),
-            max_response_preview: 0,
-            port: upstream_port,
-            conn_type,
-            policy_mode: request_security_decision.policy_mode.clone(),
-            policy_action: request_security_decision.policy_action.clone(),
-            policy_rule: request_security_decision.policy_rule.clone(),
-            policy_reason: request_security_decision.policy_reason.clone(),
-            credential_ref: credential_ref.clone(),
-            credential_observations: credential_observations.clone(),
-            credential_injections: credential_injections.clone(),
-        };
-        let deny_body = Full::new(Bytes::from(body_text))
-            .map_err(|never| match never {})
-            .boxed();
-        return Ok(hyper::Response::builder()
-            .status(403)
-            .body(seal_with_telemetry(
-                deny_body,
-                req_ctx,
-                ai_provider,
-                ai_protocol,
-            ))
-            .unwrap());
-    }
 
     if let Some(observed) = observed_mcp_request.as_ref() {
         let mcp_span = tracing::debug_span!(

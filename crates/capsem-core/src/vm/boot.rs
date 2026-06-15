@@ -38,19 +38,19 @@ pub fn create_net_state(vm_id: &str, db: Arc<DbWriter>) -> Result<SandboxNetwork
 pub fn create_net_state_with_policy(
     vm_id: &str,
     db: Arc<DbWriter>,
-    policy: crate::net::policy::NetworkPolicy,
+    mechanics: crate::net::policy::NetworkMechanics,
 ) -> Result<SandboxNetworkState> {
     let ca = CertAuthority::load(CA_KEY_PEM, CA_CERT_PEM).context("failed to load MITM CA")?;
     info!(vm_id, "loaded MITM CA");
     info!(
         vm_id,
-        http_upstream_ports = ?policy.http_upstream_ports,
-        dns_redirects = policy.dns_redirects.len(),
+        http_upstream_ports = ?mechanics.http_upstream_ports,
+        dns_redirects = mechanics.dns_redirects.len(),
         "loaded network mechanics"
     );
 
     Ok(SandboxNetworkState {
-        policy: Arc::new(std::sync::RwLock::new(Arc::new(policy))),
+        policy: Arc::new(std::sync::RwLock::new(Arc::new(mechanics))),
         db,
         ca: Arc::new(ca),
         upstream_tls: mitm_proxy::make_upstream_tls_config(),

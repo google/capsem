@@ -173,7 +173,7 @@ pub fn settings_to_vm_settings(resolved: &[ResolvedSetting]) -> VmSettings {
 /// standard paths). Every policy type is derived from a single
 /// `resolve_settings()` call, ensuring consistency.
 pub struct MergedPolicies {
-    pub network: crate::net::policy::NetworkPolicy,
+    pub network: crate::net::policy::NetworkMechanics,
     pub security_rules: SecurityRuleSet,
     pub plugins: BTreeMap<String, SecurityPluginConfig>,
     pub model_endpoints: ModelEndpointRegistry,
@@ -286,8 +286,8 @@ fn compile_merged_security_rules(
 ///
 /// Security allow/block/default behavior compiles into `SecurityRuleSet`.
 /// This builder carries only non-decision mechanics used by the network engine.
-pub fn build_network_policy(resolved: &[ResolvedSetting]) -> crate::net::policy::NetworkPolicy {
-    use crate::net::policy::NetworkPolicy;
+pub fn build_network_policy(resolved: &[ResolvedSetting]) -> crate::net::policy::NetworkMechanics {
+    use crate::net::policy::NetworkMechanics;
 
     let log_bodies = resolved
         .iter()
@@ -301,25 +301,25 @@ pub fn build_network_policy(resolved: &[ResolvedSetting]) -> crate::net::policy:
         .and_then(|s| s.effective_value.as_number())
         .unwrap_or(4096) as usize;
 
-    let mut policy = NetworkPolicy::new();
+    let mut mechanics = NetworkMechanics::new();
     if let Some(ports) = resolved
         .iter()
         .find(|s| s.id == "security.web.http_upstream_ports")
         .and_then(|s| s.effective_value.as_int_list())
     {
-        policy.http_upstream_ports = parse_http_upstream_ports(ports);
+        mechanics.http_upstream_ports = parse_http_upstream_ports(ports);
     }
-    policy.log_bodies = log_bodies;
-    policy.max_body_capture = max_body_capture;
-    policy
+    mechanics.log_bodies = log_bodies;
+    mechanics.max_body_capture = max_body_capture;
+    mechanics
 }
 
 // ---------------------------------------------------------------------------
 // High-level entry points (thin wrappers over MergedPolicies)
 // ---------------------------------------------------------------------------
 
-/// Build a `NetworkPolicy` (new policy engine) from merged settings.
-pub fn load_merged_network_policy() -> crate::net::policy::NetworkPolicy {
+/// Build network mechanics from merged settings.
+pub fn load_merged_network_policy() -> crate::net::policy::NetworkMechanics {
     MergedPolicies::from_disk().network
 }
 

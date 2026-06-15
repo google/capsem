@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed (route surfaces and diagnostics)
+- Removed the remaining network-side HTTP port denial from the MITM path so
+  routing/capture mechanics no longer issue security verdicts outside the CEL
+  security-event rail. The former `NetworkPolicy` type is now named
+  `NetworkMechanics`, and Ironbank now guards old policy-v2, MCP decision,
+  fallback logger, side-write, and retired policy authoring strings from
+  reappearing in live code.
 - Added dedicated Ironbank credential broker and plugin ledger proof. Broker
   coverage now has its own release-gate entry point for capture, brokered
   rewrite, injection rows, and raw-secret absence, while plugin route coverage

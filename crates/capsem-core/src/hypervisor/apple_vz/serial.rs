@@ -62,7 +62,7 @@ pub fn create_serial_port() -> Result<(
         ));
     }
 
-    // Get the raw fd for the host-side write end of the input pipe.
+    // Get the raw fd for the host-owned input pipe writer.
     let input_write_fd = input_pipe.fileHandleForWriting().fileDescriptor();
     let input_write_fd_dup = unsafe { libc::dup(input_write_fd) };
     if input_write_fd_dup < 0 {

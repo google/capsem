@@ -33,7 +33,7 @@ use crate::net::mitm_proxy::metrics as m;
 use crate::net::parsers::dns_parser::{
     build_nxdomain, build_redirect_response, build_servfail, parse_query, DnsQuery,
 };
-use crate::net::policy::NetworkPolicy;
+use crate::net::policy::NetworkMechanics;
 use crate::net::policy_config::{SecurityPluginConfig, SecurityRuleSet};
 use crate::security_engine::{
     evaluate_security_boundary, DnsSecurityEvent, RuntimeSecurityEventType,
@@ -172,9 +172,9 @@ fn apply_security_enforcement_fields(
 ///
 /// The outer `Arc<RwLock<...>>` lets admins edit the policy at runtime
 /// (frontend's policy editor → service → write lock); the inner
-/// `Arc<NetworkPolicy>` is what each request snapshots before redirect/cache
+/// `Arc<NetworkMechanics>` is what each request snapshots before redirect/cache
 /// checks so we never hold the read lock across an await point.
-pub type SharedPolicy = Arc<std::sync::RwLock<Arc<NetworkPolicy>>>;
+pub type SharedPolicy = Arc<std::sync::RwLock<Arc<NetworkMechanics>>>;
 pub type SharedSecurityRules = Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>;
 pub type SharedPluginPolicy = Arc<std::sync::RwLock<BTreeMap<String, SecurityPluginConfig>>>;
 
@@ -256,10 +256,10 @@ impl DnsHandler {
         self.cache.as_ref()
     }
 
-    /// Snapshot the current `NetworkPolicy` under the read lock,
+    /// Snapshot the current `NetworkMechanics` under the read lock,
     /// release the lock immediately, and return the cheap-Arc snapshot
     /// for use across the rest of the request lifecycle.
-    fn policy_snapshot(&self) -> Arc<NetworkPolicy> {
+    fn policy_snapshot(&self) -> Arc<NetworkMechanics> {
         self.policy.read().unwrap().clone()
     }
 

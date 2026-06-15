@@ -497,15 +497,15 @@ impl NetworkConfig {
     }
 
     pub fn from_policy_and_dns(
-        policy: &crate::net::policy::NetworkPolicy,
+        mechanics: &crate::net::policy::NetworkMechanics,
         dns: DnsNetworkConfig,
     ) -> Self {
         Self {
-            log_bodies: Some(policy.log_bodies),
-            max_body_capture: Some(policy.max_body_capture),
-            http_upstream_ports: policy.http_upstream_ports.clone(),
+            log_bodies: Some(mechanics.log_bodies),
+            max_body_capture: Some(mechanics.max_body_capture),
+            http_upstream_ports: mechanics.http_upstream_ports.clone(),
             dns,
-            upstream_overrides: policy
+            upstream_overrides: mechanics
                 .upstream_overrides
                 .iter()
                 .map(|(target, route)| (target.clone(), UpstreamOverrideConfig::from_policy(route)))
@@ -513,18 +513,18 @@ impl NetworkConfig {
         }
     }
 
-    pub fn apply_to_policy(&self, policy: &mut crate::net::policy::NetworkPolicy) {
+    pub fn apply_to_policy(&self, mechanics: &mut crate::net::policy::NetworkMechanics) {
         if let Some(log_bodies) = self.log_bodies {
-            policy.log_bodies = log_bodies;
+            mechanics.log_bodies = log_bodies;
         }
         if let Some(max_body_capture) = self.max_body_capture {
-            policy.max_body_capture = max_body_capture;
+            mechanics.max_body_capture = max_body_capture;
         }
         if !self.http_upstream_ports.is_empty() {
-            policy.http_upstream_ports = self.http_upstream_ports.clone();
+            mechanics.http_upstream_ports = self.http_upstream_ports.clone();
         }
         if !self.upstream_overrides.is_empty() {
-            policy.upstream_overrides = self
+            mechanics.upstream_overrides = self
                 .upstream_overrides
                 .iter()
                 .map(|(target, route)| {

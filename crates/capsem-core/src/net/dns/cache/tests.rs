@@ -5,7 +5,7 @@ use std::net::Ipv4Addr;
 use hickory_proto::op::{Message, MessageType, OpCode, Query, ResponseCode};
 use hickory_proto::rr::{rdata, Name, RData, Record, RecordType};
 
-use crate::net::policy::{DnsRedirect, NetworkPolicy};
+use crate::net::policy::{DnsRedirect, NetworkMechanics};
 
 /// Build a synthetic A-record answer for `qname` with `ttl` seconds
 /// on the answer record. Used to seed cache entries with known TTLs.
@@ -23,8 +23,8 @@ fn build_answer(qname: &str, ttl: u32, ip: [u8; 4]) -> Vec<u8> {
     msg.to_vec().unwrap()
 }
 
-fn allow_all() -> NetworkPolicy {
-    NetworkPolicy::new()
+fn allow_all() -> NetworkMechanics {
+    NetworkMechanics::new()
 }
 
 #[test]
@@ -73,7 +73,7 @@ fn invalidated_when_policy_now_redirects() {
     let bytes = build_answer("anthropic.com.", 60, [10, 0, 0, 1]);
     cache.insert("anthropic.com", 1, 1, &bytes);
 
-    let mut redirect_policy = NetworkPolicy::new();
+    let mut redirect_policy = NetworkMechanics::new();
     redirect_policy.dns_redirects.push(DnsRedirect::new(
         "anthropic.com",
         Some(1),

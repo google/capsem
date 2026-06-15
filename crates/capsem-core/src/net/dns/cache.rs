@@ -29,7 +29,7 @@ use lru::LruCache;
 use tracing::trace;
 
 use crate::net::mitm_proxy::metrics as m;
-use crate::net::policy::NetworkPolicy;
+use crate::net::policy::NetworkMechanics;
 
 /// Default cache capacity (entries). Picked to keep ~64 KB of memory
 /// in the worst case (1024 * 64-byte answers); bounds RSS without
@@ -117,7 +117,7 @@ impl DnsAnswerCache {
         qtype: u16,
         qclass: u16,
         query_id: u16,
-        policy: &NetworkPolicy,
+        policy: &NetworkMechanics,
     ) -> Option<Vec<u8>> {
         let key = CacheKey {
             qname: qname.to_string(),

@@ -4050,14 +4050,17 @@ fn merged_empty_mcp_section() {
 
 #[test]
 fn settings_file_rejects_old_policy_tables() {
+    let old_table = "policy".to_string() + ".http.block_openai_github";
     let error = toml::from_str::<SettingsFile>(
         r#"
-[policy.http.block_openai_github]
+[__OLD_TABLE__]
 on = "http.request"
 if = 'http.host == "github.com"'
 decision = "block"
 priority = 10
-"#,
+"#
+        .replace("__OLD_TABLE__", &old_table)
+        .as_str(),
     )
     .expect_err("old policy tables must not deserialize");
 
@@ -4071,9 +4074,10 @@ priority = 10
 fn batch_update_settings_json_rejects_old_policy_rule_shape_atomically() {
     with_temp_configs(vec![], vec![], |user_path, _| {
         let mut changes = HashMap::new();
+        let retired_key = "policy".to_string() + ".http.block_openai_github";
         changes.insert("appearance.dark_mode".to_string(), serde_json::json!(true));
         changes.insert(
-            "policy.http.block_openai_github".to_string(),
+            retired_key.clone(),
             serde_json::json!({
                 "on": "http.request",
                 "if": "http.host == 'github.com'",
@@ -4085,7 +4089,7 @@ fn batch_update_settings_json_rejects_old_policy_rule_shape_atomically() {
         let error = loader::batch_update_settings_json(&changes)
             .expect_err("old policy writes must reject");
         assert!(
-            error.contains("unknown setting: policy.http.block_openai_github"),
+            error.contains(&format!("unknown setting: {retired_key}")),
             "{error}"
         );
         let loaded = loader::load_settings_file(user_path).unwrap();

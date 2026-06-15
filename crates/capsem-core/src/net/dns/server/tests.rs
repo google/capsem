@@ -12,7 +12,7 @@ fn build_query_bytes(name: &str, qtype: RecordType, id: u16) -> Vec<u8> {
 }
 
 fn shared_policy() -> SharedPolicy {
-    Arc::new(std::sync::RwLock::new(Arc::new(NetworkPolicy::new())))
+    Arc::new(std::sync::RwLock::new(Arc::new(NetworkMechanics::new())))
 }
 
 fn security_rules(toml: &str) -> SharedSecurityRules {

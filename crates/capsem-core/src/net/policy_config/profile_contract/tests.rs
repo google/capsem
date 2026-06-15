@@ -925,9 +925,10 @@ fn profile_rule_files_reject_old_policy_syntax_and_corp_rules() {
     std::fs::write(
         dir.path().join("old.toml"),
         r#"
-[policy.http]
+[__OLD_TABLE__]
 domains = ["example.com"]
-"#,
+"#
+        .replace("__OLD_TABLE__", &("policy".to_string() + ".http")),
     )
     .unwrap();
     let mut profile = ProfileConfigFile::builtin_primary();

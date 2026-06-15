@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use capsem_core::net::cert_authority::CertAuthority;
 use capsem_core::net::mitm_proxy::{self, MitmProxyConfig};
-use capsem_core::net::policy::NetworkPolicy;
+use capsem_core::net::policy::NetworkMechanics;
 use capsem_logger::{DbWriter, Decision};
 use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
@@ -28,7 +28,7 @@ const CA_CERT: &str = include_str!("../../../security/keys/capsem-ca.crt");
 /// Build a proxy config from allow/block lists for integration tests.
 ///
 /// Enforcement intent is compiled into `SecurityRuleSet` so tests exercise the
-/// same security-event/CEL rail as production. `NetworkPolicy` remains present
+/// same security-event/CEL rail as production. `NetworkMechanics` remains present
 /// for non-enforcement proxy settings such as body capture and HTTP port gates.
 fn make_proxy_config(
     allowed: &[&str],
@@ -147,7 +147,7 @@ fn make_proxy_config_with_security_rules(
     http_ports: &[u16],
 ) -> (Arc<MitmProxyConfig>, Arc<DbWriter>) {
     let ca = Arc::new(CertAuthority::load(CA_KEY, CA_CERT).unwrap());
-    let mut policy_inner = NetworkPolicy::new();
+    let mut policy_inner = NetworkMechanics::new();
     policy_inner.http_upstream_ports = http_ports.to_vec();
     let policy = Arc::new(std::sync::RwLock::new(Arc::new(policy_inner)));
     let dir = tempfile::tempdir().unwrap();
@@ -519,43 +519,70 @@ async fn mitm_proxy_plain_http_denies_disallowed_host() {
     );
 }
 
-/// T2.2: a plain-HTTP request whose Host carries a port not on the
-/// `http_upstream_ports` allowlist is rejected with 403 before the
-/// upstream dial. Default allowlist is `[80]`.
+/// Network routing mechanics must not issue security decisions. A plain-HTTP
+/// request whose Host carries a port outside `http_upstream_ports` is still
+/// decided by the security-rule rail; if the rules allow it, the request is
+/// forwarded and logged as allowed.
 #[tokio::test]
-async fn mitm_proxy_plain_http_denies_port_not_in_allowlist() {
-    // Allow elie.net (so the domain policy passes) but keep the
-    // default port allowlist = [80]. The request explicitly
-    // targets port 8080, which must be denied at the port gate.
-    let (config, db) = make_proxy_config(&["elie.net"], &[], false);
+async fn mitm_proxy_plain_http_port_mechanics_do_not_deny_outside_security_rail() {
+    let upstream_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let upstream_addr = upstream_listener.local_addr().unwrap();
+    let upstream_port = upstream_addr.port();
+    let upstream_task = tokio::spawn(async move {
+        let (mut sock, _) = upstream_listener.accept().await.unwrap();
+        let mut buf = vec![0u8; 2048];
+        let _ = sock.read(&mut buf).await.unwrap();
+        let body = b"port mechanics are not a security rail";
+        let resp = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        sock.write_all(resp.as_bytes()).await.unwrap();
+        sock.write_all(body).await.unwrap();
+        sock.flush().await.unwrap();
+    });
+
+    let (config, db) = make_proxy_config_full(&["127.0.0.1"], &[], false, &[80]);
     let (proxy_task, addr) = spawn_proxy(config).await;
 
     let mut tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
-    tcp.write_all(b"GET / HTTP/1.1\r\nHost: elie.net:8080\r\n\r\n")
-        .await
-        .unwrap();
+    let request = format!("GET / HTTP/1.1\r\nHost: 127.0.0.1:{upstream_port}\r\n\r\n");
+    tcp.write_all(request.as_bytes()).await.unwrap();
 
-    let mut buf = vec![0u8; 4096];
-    let _ = tcp.read(&mut buf).await;
+    let mut buf = Vec::new();
+    let _ = tcp.read_to_end(&mut buf).await;
     drop(tcp);
 
+    upstream_task.await.unwrap();
     proxy_task.await.unwrap();
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
+    let response = String::from_utf8_lossy(&buf);
+    assert!(
+        response.contains("HTTP/1.1 200 OK"),
+        "expected upstream response, got:\n{response}"
+    );
+    assert!(
+        response.contains("port mechanics are not a security rail"),
+        "expected upstream body, got:\n{response}"
+    );
+
     let reader = db.reader().unwrap();
     let events = reader.recent_net_events(10).unwrap();
-    assert!(
-        !events.is_empty(),
-        "port-denied path must record a NetEvent"
+    assert!(!events.is_empty(), "forwarded path must record a NetEvent");
+    assert_eq!(events[0].decision, Decision::Allowed);
+    assert_eq!(events[0].status_code, Some(200));
+    assert_eq!(events[0].domain, "127.0.0.1");
+    assert_eq!(events[0].port, upstream_port);
+    assert_eq!(
+        events[0].matched_rule.as_deref(),
+        Some("security.http.default")
     );
-    assert_eq!(events[0].decision, Decision::Denied);
-    assert_eq!(events[0].status_code, Some(403));
-    assert_eq!(events[0].port, 8080);
-    let reason = events[0].matched_rule.as_deref().unwrap_or("");
-    assert!(
-        reason.contains("http-port-not-allowlisted"),
-        "expected port-not-allowlisted marker, got matched_rule={reason:?}"
-    );
+    assert!(!events[0]
+        .matched_rule
+        .as_deref()
+        .unwrap_or_default()
+        .contains("http-port-not-allowlisted"));
 }
 
 /// T2.3: Ollama-shaped end-to-end. A fake plain-HTTP upstream binds
