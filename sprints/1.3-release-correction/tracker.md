@@ -96,6 +96,24 @@ next one, and stage only the files for that slice.
     fixture explicitly configures its local provider to use `OPENAI_API_KEY`
     so Codex exercises the same broker path as the SDK/API clients without
     changing the shipped profile contract.
+  - 2026-06-15 proof: provider identity and wire protocol remain split.
+    `ProviderKind` includes `unknown` and `ollama` as first-party providers,
+    while `ModelProtocol` owns the parser/protocol (`openai`, `anthropic`,
+    `google`, `ollama`). Ironbank now proves a recognized OpenAI/Gemini/
+    Anthropic-compatible wire shape on an undeclared endpoint logs
+    `model.provider == "unknown"`, hits
+    `profiles.rules.default_unknown_model_provider` with detection level
+    `informational`, and exposes the same row through UDS and gateway latest.
+    Regression caught during WIP AGY fixture work: AGY internal
+    `/v1internal:streamGenerateContent` and generic Gemini
+    `/v1beta/...:streamGenerateContent` must stay separate so AGY tool-call
+    replay cannot poison the provider/protocol proof.
+  - Proof: `uv run ruff check scripts/mock_server_runtime.py
+    tests/ironbank/test_model_sdk_ledger.py`; `uv run python -m py_compile
+    scripts/mock_server_runtime.py tests/ironbank/test_model_sdk_ledger.py`;
+    `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run pytest
+    tests/ironbank/test_model_sdk_ledger.py::test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox
+    -q -s --tb=short`.
 - [x] S7: fix OpenAI parser/tool-response logging and dedup. Use fast BLAKE3
   hashes for model request/response/tool-call/tool-response identity, persist
   those hashes in the DB, and reload an in-memory hash map from session DB at
