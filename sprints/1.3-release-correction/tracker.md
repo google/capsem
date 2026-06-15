@@ -1583,7 +1583,7 @@ next one, and stage only the files for that slice.
     snapshot_pagination_params_preserve_include_changes -- --nocapture`; `uv
     run python -m py_compile guest/artifacts/snapshots
     guest/artifacts/diagnostics/test_mcp.py`.
-- [ ] RED/GREEN: unknown AI-compatible protocol shape on unknown host emits
+- [x] RED/GREEN: unknown AI-compatible protocol shape on unknown host emits
   `model.provider = "unknown"` plus the inferred protocol path and triggers
   the default `unknown_model_provider` detection rule.
   - 2026-06-14 correction: provider and protocol are not aliases. A recognized
