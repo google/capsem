@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed (route surfaces and diagnostics)
+- Added dedicated Ironbank credential broker and plugin ledger proof. Broker
+  coverage now has its own release-gate entry point for capture, brokered
+  rewrite, injection rows, and raw-secret absence, while plugin route coverage
+  proves profile-scoped list/info/edit, broker inventory/reload, dummy
+  pre/post mode changes, serialized security-event detections, plugin
+  executions, and evaluation decisions.
 - Removed the old settings-tree MCP server rail. Settings metadata and
   settings responses now expose UI/application preferences only, while MCP
   remains profile-owned through `/profiles/{profile_id}/mcp/...` routes.
