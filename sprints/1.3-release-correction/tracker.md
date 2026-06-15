@@ -114,6 +114,16 @@ next one, and stage only the files for that slice.
     `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run pytest
     tests/ironbank/test_model_sdk_ledger.py::test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox
     -q -s --tb=short`.
+  - 2026-06-15 proof: local/private/non-routable access is controlled through
+    first-party `ip.value` and `tcp.port` CEL fields. The built-in
+    `profiles.rules.default_000_local_network` asks by default, explicit
+    profile/corp rules can allow Ollama/local fixtures, and default rules do
+    not override specific enforcement decisions.
+  - Proof: `cargo test -p capsem-core
+    built_in_local_network_guard_asks_unless_explicit_ollama_rule_allows --
+    --nocapture`; `cargo test -p capsem-core
+    default_rules_do_not_override_specific_enforcement_decisions --
+    --nocapture`.
 - [x] S7: fix OpenAI parser/tool-response logging and dedup. Use fast BLAKE3
   hashes for model request/response/tool-call/tool-response identity, persist
   those hashes in the DB, and reload an in-memory hash map from session DB at
