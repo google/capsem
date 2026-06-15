@@ -1,6 +1,5 @@
 use super::*;
 use crate::mcp::policy::{McpManualServer, McpUserConfig};
-use std::io::Write;
 
 struct EnvVarGuard {
     key: &'static str,
@@ -269,90 +268,6 @@ fn tool_cache_missing_file_returns_empty() {
     assert!(cache.is_empty());
 }
 
-// ── build_server_list tests ─────────────────────────────────────
-
-#[test]
-fn build_server_list_empty() {
-    let user = McpUserConfig::default();
-    let corp = McpUserConfig::default();
-    // No auto-detected servers in test env, no manual, no corp
-    let list = build_server_list(&user, &corp);
-    // May have auto-detected servers from local dev env, but at least no crash
-    assert!(list.iter().all(|s| s.name != "builtin"));
-}
-
-#[test]
-fn build_server_list_manual_servers() {
-    let user = McpUserConfig {
-        servers: vec![McpManualServer {
-            name: "myserver".into(),
-            url: "https://mcp.example.com/v1".into(),
-            headers: HashMap::new(),
-            auth: None,
-            enabled: true,
-        }],
-        ..Default::default()
-    };
-    let corp = McpUserConfig::default();
-    let list = build_server_list(&user, &corp);
-    assert!(list
-        .iter()
-        .any(|s| s.name == "myserver" && s.source == "manual"));
-}
-
-#[test]
-fn build_server_list_corp_servers_added() {
-    let user = McpUserConfig::default();
-    let corp = McpUserConfig {
-        servers: vec![McpManualServer {
-            name: "corp-server".into(),
-            url: "https://corp.internal/mcp".into(),
-            headers: HashMap::new(),
-            auth: None,
-            enabled: true,
-        }],
-        ..Default::default()
-    };
-    let list = build_server_list(&user, &corp);
-    assert!(list
-        .iter()
-        .any(|s| s.name == "corp-server" && s.source == "corp"));
-}
-
-#[test]
-fn build_server_list_reject_builtin_name() {
-    let user = McpUserConfig {
-        servers: vec![McpManualServer {
-            name: "builtin".into(),
-            url: "https://evil.com/mcp".into(),
-            headers: HashMap::new(),
-            auth: None,
-            enabled: true,
-        }],
-        ..Default::default()
-    };
-    let corp = McpUserConfig::default();
-    let list = build_server_list(&user, &corp);
-    assert!(!list.iter().any(|s| s.name == "builtin"));
-}
-
-#[test]
-fn build_server_list_empty_name_rejected() {
-    let user = McpUserConfig {
-        servers: vec![McpManualServer {
-            name: "".into(),
-            url: "https://test.com/mcp".into(),
-            headers: HashMap::new(),
-            auth: None,
-            enabled: true,
-        }],
-        ..Default::default()
-    };
-    let corp = McpUserConfig::default();
-    let list = build_server_list(&user, &corp);
-    assert!(!list.iter().any(|s| s.name.is_empty()));
-}
-
 #[test]
 fn mcp_config_rejects_raw_bearer_token_field() {
     let err = toml::from_str::<McpUserConfig>(
@@ -434,147 +349,6 @@ fn credential_broker_resolves_mcp_oauth_material_by_reference() {
 }
 
 #[test]
-fn build_server_list_corp_shadows_user_on_same_name() {
-    // AB-002: user manual servers must not shadow corp-defined servers with
-    // the same name. The corp.toml policy is the highest-trust layer; if a
-    // user defines `github` and corp also defines `github`, the corp URL,
-    // headers, and brokered auth ref must be the surviving definition.
-    let user = McpUserConfig {
-        servers: vec![McpManualServer {
-            name: "github".into(),
-            url: "https://user.example/mcp".into(),
-            headers: HashMap::new(),
-            auth: Some(crate::mcp::types::McpAuthConfig {
-                kind: crate::mcp::types::McpAuthKind::OAuth,
-                credential_ref: format!("credential:blake3:{}", "1".repeat(64)),
-            }),
-            enabled: true,
-        }],
-        ..Default::default()
-    };
-    let corp = McpUserConfig {
-        servers: vec![McpManualServer {
-            name: "github".into(),
-            url: "https://corp.internal/mcp".into(),
-            headers: HashMap::new(),
-            auth: Some(crate::mcp::types::McpAuthConfig {
-                kind: crate::mcp::types::McpAuthKind::OAuth,
-                credential_ref: format!("credential:blake3:{}", "2".repeat(64)),
-            }),
-            enabled: true,
-        }],
-        ..Default::default()
-    };
-    let list = build_server_list(&user, &corp);
-    let github = list
-        .iter()
-        .find(|s| s.name == "github")
-        .expect("github must survive");
-    assert_eq!(
-        github.source, "corp",
-        "corp definition must win over same-name user"
-    );
-    assert_eq!(github.url, "https://corp.internal/mcp");
-    let corp_ref = format!("credential:blake3:{}", "2".repeat(64));
-    assert_eq!(
-        github
-            .auth
-            .as_ref()
-            .map(|auth| auth.credential_ref.as_str()),
-        Some(corp_ref.as_str())
-    );
-    // Only one entry, not two.
-    assert_eq!(list.iter().filter(|s| s.name == "github").count(), 1);
-}
-
-#[test]
-fn build_server_list_unique_user_server_survives_with_corp_present() {
-    // Regression guard for AB-002: reordering must not drop unique user
-    // servers when corp also has its own (different-name) servers.
-    let user = McpUserConfig {
-        servers: vec![McpManualServer {
-            name: "user-only".into(),
-            url: "https://user.example/mcp".into(),
-            headers: HashMap::new(),
-            auth: None,
-            enabled: true,
-        }],
-        ..Default::default()
-    };
-    let corp = McpUserConfig {
-        servers: vec![McpManualServer {
-            name: "corp-only".into(),
-            url: "https://corp.internal/mcp".into(),
-            headers: HashMap::new(),
-            auth: None,
-            enabled: true,
-        }],
-        ..Default::default()
-    };
-    let list = build_server_list(&user, &corp);
-    assert!(list
-        .iter()
-        .any(|s| s.name == "user-only" && s.source == "manual"));
-    assert!(list
-        .iter()
-        .any(|s| s.name == "corp-only" && s.source == "corp"));
-}
-
-#[test]
-fn build_server_list_corp_enabled_override_on_user_server() {
-    // AB-002 audit follow-up: corp.server_enabled must still flip a
-    // user-defined server's enabled state. Tested independently from the
-    // precedence change because this path is not affected by it.
-    let user = McpUserConfig {
-        servers: vec![McpManualServer {
-            name: "user-server".into(),
-            url: "https://user.example/mcp".into(),
-            headers: HashMap::new(),
-            auth: None,
-            enabled: true,
-        }],
-        ..Default::default()
-    };
-    let corp = McpUserConfig {
-        server_enabled: {
-            let mut m = HashMap::new();
-            m.insert("user-server".into(), false);
-            m
-        },
-        ..Default::default()
-    };
-    let list = build_server_list(&user, &corp);
-    let s = list.iter().find(|s| s.name == "user-server").unwrap();
-    assert!(
-        !s.enabled,
-        "corp.server_enabled=false must override user-defined enabled=true"
-    );
-}
-
-#[test]
-fn build_server_list_enabled_override() {
-    let user = McpUserConfig {
-        servers: vec![McpManualServer {
-            name: "myserver".into(),
-            url: "https://mcp.example.com/v1".into(),
-            headers: HashMap::new(),
-            auth: None,
-            enabled: true,
-        }],
-        server_enabled: {
-            let mut m = HashMap::new();
-            m.insert("myserver".into(), false);
-            m
-        },
-        ..Default::default()
-    };
-    let corp = McpUserConfig::default();
-    let list = build_server_list(&user, &corp);
-    let s = list.iter().find(|s| s.name == "myserver").unwrap();
-    assert!(!s.enabled);
-}
-
-#[test]
 fn build_profile_server_list_uses_profile_manual_servers_only() {
     let profile = McpUserConfig {
         servers: vec![McpManualServer {
@@ -614,111 +388,17 @@ fn build_profile_server_list_respects_local_builtin_enablement() {
     assert!(!local.enabled);
 }
 
-// ── original parse tests ────────────────────────────────────────
-
 #[test]
-fn parse_claude_settings_stdio_flagged_unsupported() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("settings.json");
-    let mut f = std::fs::File::create(&path).unwrap();
-    write!(
-        f,
-        r#"{{
-        "mcpServers": {{
-            "github": {{
-                "command": "npx",
-                "args": ["-y", "@github/mcp-server"],
-                "env": {{"GITHUB_TOKEN": "ghp_secret"}}
-            }},
-            "capsem": {{
-                "command": "/run/capsem-mcp-server"
-            }}
-        }}
-    }}"#
-    )
-    .unwrap();
-
-    let defs = parse_mcp_servers_from_file(&path, "claude").unwrap();
-    assert_eq!(defs.len(), 1); // capsem filtered out
-    assert_eq!(defs[0].name, "github");
-    assert!(defs[0].is_stdio());
-    assert_eq!(defs[0].command.as_deref(), Some("npx"));
-    assert_eq!(defs[0].source, "claude");
-}
-
-#[test]
-fn parse_http_server_from_settings() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("settings.json");
-    std::fs::write(
-        &path,
-        r#"{"mcpServers": {"api": {"url": "https://mcp.example.com/v1", "bearerToken": "tok_123"}}}"#,
-    )
-    .unwrap();
-
-    let defs = parse_mcp_servers_from_file(&path, "claude").unwrap();
-    assert!(
-        defs.is_empty(),
-        "auto-detected MCP configs with raw bearerToken must not be imported; credentials must be brokered first"
-    );
-}
-
-#[test]
-fn parse_mixed_stdio_and_http_servers() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("settings.json");
-    std::fs::write(
-        &path,
-        r#"{"mcpServers": {
-            "http-server": {"url": "https://mcp.example.com/v1"},
-            "stdio-server": {"command": "npx", "args": ["-y", "@test/server"]}
-        }}"#,
-    )
-    .unwrap();
-
-    let defs = parse_mcp_servers_from_file(&path, "test").unwrap();
-    assert_eq!(defs.len(), 2);
-    let http = defs.iter().find(|d| d.name == "http-server").unwrap();
-    let stdio = defs.iter().find(|d| d.name == "stdio-server").unwrap();
-    assert!(!http.is_stdio());
-    assert!(stdio.is_stdio());
-}
-
-#[test]
-fn parse_missing_file_returns_none() {
-    let result = parse_mcp_servers_from_file(Path::new("/nonexistent/settings.json"), "test");
-    assert!(result.is_none());
-}
-
-#[test]
-fn parse_no_mcp_servers_key() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("settings.json");
-    std::fs::write(&path, r#"{"other": "stuff"}"#).unwrap();
-    let result = parse_mcp_servers_from_file(&path, "test");
-    assert!(result.is_none());
-}
-
-#[test]
-fn parse_server_without_url_or_command_skipped() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("settings.json");
-    std::fs::write(&path, r#"{"mcpServers": {"bad": {"name": "bad"}}}"#).unwrap();
-    let defs = parse_mcp_servers_from_file(&path, "test").unwrap();
-    assert_eq!(defs.len(), 0);
-}
-
-#[test]
-fn build_server_list_rejects_names_with_separator() {
-    let mut user = McpUserConfig::default();
-    user.servers.push(crate::mcp::policy::McpManualServer {
+fn build_profile_server_list_rejects_names_with_separator() {
+    let mut profile = McpUserConfig::default();
+    profile.servers.push(crate::mcp::policy::McpManualServer {
         name: "bad__name".to_string(),
         url: "http://localhost".to_string(),
         headers: HashMap::new(),
         auth: None,
         enabled: true,
     });
-    user.servers.push(crate::mcp::policy::McpManualServer {
+    profile.servers.push(crate::mcp::policy::McpManualServer {
         name: "goodname".to_string(),
         url: "http://localhost".to_string(),
         headers: HashMap::new(),
@@ -726,16 +406,7 @@ fn build_server_list_rejects_names_with_separator() {
         enabled: true,
     });
 
-    let mut corp = McpUserConfig::default();
-    corp.servers.push(crate::mcp::policy::McpManualServer {
-        name: "corp__bad".to_string(),
-        url: "http://localhost".to_string(),
-        headers: HashMap::new(),
-        auth: None,
-        enabled: true,
-    });
-
-    let servers = build_server_list(&user, &corp);
+    let servers = build_profile_server_list(&profile, None, HashMap::new());
     assert_eq!(servers.len(), 1);
     assert_eq!(servers[0].name, "goodname");
 }

@@ -24,10 +24,12 @@ FORBIDDEN = [
     "load_settings_files",
     "save_mcp_user_config",
     "load_mcp_user_config",
+    "build_server_list(",
 ]
 
 ALLOWLIST = {
     Path("tests/capsem-build-chain/test_no_legacy_user_config.py"),
+    Path("tests/capsem-build-chain/test_process_profile_runtime_contract.py"),
 }
 
 

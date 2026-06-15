@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed (route surfaces and diagnostics)
+- Removed the dead MCP server merge rail that auto-detected host AI CLI MCP
+  configs and merged manual/corp/user inputs outside the profile contract.
+  Runtime MCP server construction is now guarded to use profile-owned
+  `build_profile_server_list()` only, with docs and skills updated to remove
+  the stale fallback language.
 - Aligned the shared settings conformance fixture with the 1.3 contract that
   settings are UI/application preferences only. Python, Rust, and frontend
   settings schema tests now reject stale AI-provider, credential, profile-file,

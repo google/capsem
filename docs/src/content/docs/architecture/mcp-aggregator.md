@@ -256,7 +256,7 @@ The aggregator is designed for graceful degradation:
 | Tool call to disconnected server | Error response to caller, other tools unaffected |
 | Malformed request line | Logged, skipped, loop continues |
 | Subprocess crash | Endpoint returns JSON-RPC errors, VM keeps running |
-| Serialization failure | Fallback JSON error response written to stdout |
+| Serialization failure | JSON-RPC error response written to stdout |
 | Stdin EOF | Graceful shutdown (all servers disconnected) |
 
 ## Key source files
@@ -266,7 +266,7 @@ The aggregator is designed for graceful degradation:
 | `capsem-mcp-aggregator/src/main.rs` | Subprocess binary: init, NDJSON loop, request dispatch |
 | `capsem-core/src/mcp/aggregator.rs` | Protocol types (`AggregatorRequest/Response`) and `AggregatorClient` |
 | `capsem-core/src/mcp/server_manager.rs` | `McpServerManager`: rmcp connections, tool catalog, namespacing |
-| `capsem-core/src/mcp/mod.rs` | `build_server_list()`: auto-detect + manual + corp merge |
-| `capsem-process/src/main.rs` | `spawn_mcp_aggregator()`: launch, driver tasks, mock fallback |
+| `capsem-core/src/mcp/mod.rs` | `build_profile_server_list()`: profile-owned MCP servers plus the local builtin server |
+| `capsem-process/src/main.rs` | `spawn_mcp_aggregator()`: launch and driver tasks for the selected profile's MCP contract |
 | `capsem-core/src/net/mitm_proxy/mcp_endpoint.rs` | MITM MCP endpoint: policy, telemetry, and dispatch through the aggregator |
 | `capsem-proto/src/ipc.rs` | Service-process IPC messages for MCP operations |

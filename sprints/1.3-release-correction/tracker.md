@@ -2455,6 +2455,12 @@ next one, and stage only the files for that slice.
   passes after adding a failing/green check for malformed profile-owned MCP
   JSON and requiring generated image workspaces to pass `profile check` rather
   than parse-only validation.
+- S1 2026-06-14 correction: burned the dead MCP `build_server_list()` /
+  `build_server_list_with_builtin()` rail and the host AI CLI MCP auto-detect
+  parser. Runtime already used `build_profile_server_list()`; the remaining
+  useful namespace guard now targets the profile-owned builder, and
+  `tests/capsem-build-chain/test_no_legacy_user_config.py` rejects the old
+  helper symbol outside dedicated guard files.
 - S1 package proof: `cargo test -p capsem-admin
   profile_check_rejects_empty_profile_package_file_even_when_hash_matches --
   --nocapture` passes; the full capsem-admin suite is now 29/29 green.

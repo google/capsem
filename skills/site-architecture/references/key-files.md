@@ -46,7 +46,7 @@
 
 - `frontend/src/components/capsem-terminal.ts` -- xterm.js web component
 - `frontend/src/lib/components/App.svelte` -- root layout
-- `frontend/src/lib/api.ts` -- HTTP client for gateway API with mock fallback
+- `frontend/src/lib/api.ts` -- HTTP client for explicit gateway API routes
 - `frontend/src/lib/mock.ts` -- fake data for browser dev mode
 - `frontend/src/lib/types.ts` -- TS types mirroring Rust IPC structs
 
