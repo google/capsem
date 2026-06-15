@@ -161,6 +161,11 @@ def test_profiles_package_scriptable_local_model_agent_bootstrap() -> None:
             failures.append(f"{profile_id}: missing root/.gemini/antigravity-cli/settings.json")
         else:
             agy_cli_settings = json.loads(agy_cli_settings_path.read_text())
+            if "model" in agy_cli_settings:
+                failures.append(
+                    f"{profile_id}: AGY CLI settings must not pin model; "
+                    "agy 1.0.8 rejects the nested model setting"
+                )
             if "toolPermission" in agy_cli_settings:
                 failures.append(f"{profile_id}: AGY CLI settings include invalid toolPermission")
             if "/root" not in agy_cli_settings.get("trustedWorkspaces", []):

@@ -423,15 +423,16 @@ token_path.write_text(json.dumps({
 }), encoding="utf-8")
 token_path.chmod(0o600)
 settings_path = Path("/root/.gemini/antigravity-cli/settings.json")
-settings_path.write_text(json.dumps({
-    "model": "Gemini 3.5 Flash (Medium)",
+agy_model_settings = {
     "trustedWorkspaces": ["/root"],
     "telemetry": {"enabled": False},
     "autoUpdate": {"enabled": False}
-}), encoding="utf-8")
+}
+settings_path.write_text(json.dumps(agy_model_settings), encoding="utf-8")
 completed = subprocess.run(
     [
         "agy",
+        "--dangerously-skip-permissions",
         "-p",
         PROMPT,
         "--print-timeout",

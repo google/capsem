@@ -941,7 +941,9 @@ class MockHandler(BaseHTTPRequestHandler):
             self._body()
             self._send_json(
                 {
-                    "userSettings": {"telemetryEnabled": False},
+                    "userSettings": {
+                        "telemetryEnabled": False,
+                    },
                     "regionCode": "US",
                 }
             )

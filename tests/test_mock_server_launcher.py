@@ -382,6 +382,12 @@ def test_mock_server_replays_recorded_agy_code_assist_experiments() -> None:
             "enable-owl-slash-command",
             "enable-state-accumulator",
         }.issubset({flag["name"] for flag in flags})
+        config_payload = next(
+            flag["stringValue"]
+            for flag in flags
+            if flag["name"] == "GcliConfigPayload__config_payload"
+        )
+        assert config_payload == ""
     finally:
         stop_process(proc)
 
@@ -434,6 +440,15 @@ def test_mock_server_replays_recorded_agy_code_assist_setup() -> None:
             for group in quota["groups"]
             for bucket in group["buckets"]
         )
+
+        user_info = _post_json(
+            f"{base_url}/v1internal:fetchUserInfo",
+            {"project": "capsem-mock-project"},
+        )
+        assert user_info["regionCode"] == "US"
+        assert user_info["userSettings"]["telemetryEnabled"] is False
+        assert "cachedCascadeModelConfigs" not in user_info["userSettings"]
+        assert "userStatus" not in user_info
     finally:
         stop_process(proc)
 
