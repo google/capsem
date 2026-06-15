@@ -627,8 +627,8 @@ async fn log_mcp_call_with_policy(
 }
 
 fn security_event_from_mcp_call(call: &McpCall) -> SecurityEvent {
-    let security_event =
-        SecurityEvent::new(RuntimeSecurityEventType::McpToolCall).with_mcp(McpSecurityEvent {
+    let security_event = SecurityEvent::new(RuntimeSecurityEventType::McpToolCall).with_mcp(
+        McpSecurityEvent {
             method: Some(call.method.clone()),
             server_name: Some(call.server_name.clone()),
             tool_call_name: call.tool_name.clone(),
@@ -637,7 +637,11 @@ fn security_event_from_mcp_call(call: &McpCall) -> SecurityEvent {
             } else {
                 None
             },
-        });
+            ..Default::default()
+        }
+        .with_request_preview(call.request_preview.as_deref())
+        .with_response_preview(call.response_preview.as_deref()),
+    );
     match call.trace_id.clone() {
         Some(trace_id) => security_event.with_trace_id(trace_id),
         None => security_event,
@@ -665,20 +669,26 @@ fn mcp_security_event_from_summary(
     process_name: &str,
     response: Option<&JsonRpcResponse>,
 ) -> SecurityEvent {
+    let response_preview = response.and_then(response_content);
     let tool_list = if summary.kind == McpMethodKind::ToolsList {
-        response.and_then(response_content)
+        response_preview.clone()
     } else {
         None
     };
-    let event = SecurityEvent::new(event_type).with_mcp(McpSecurityEvent {
-        method: Some(summary.method.clone()),
-        server_name: summary
-            .server_name
-            .clone()
-            .or_else(|| Some(process_name.to_string())),
-        tool_call_name: summary.tool_name.clone(),
-        tool_list,
-    });
+    let event = SecurityEvent::new(event_type).with_mcp(
+        McpSecurityEvent {
+            method: Some(summary.method.clone()),
+            server_name: summary
+                .server_name
+                .clone()
+                .or_else(|| Some(process_name.to_string())),
+            tool_call_name: summary.tool_name.clone(),
+            tool_list,
+            ..Default::default()
+        }
+        .with_request_preview(summary.request_preview.as_deref())
+        .with_response_preview(response_preview.as_deref()),
+    );
     match crate::telemetry::ambient_capsem_trace_id() {
         Some(trace_id) => event.with_trace_id(trace_id),
         None => event,

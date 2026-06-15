@@ -165,8 +165,23 @@ def test_profile_mcp_call_pays_full_ledger_blackbox():
 
     service = ServiceInstance()
     mock_proc = None
+    old_corp_config = os.environ.get("CAPSEM_CORP_CONFIG")
     session_id = vm_name("ironbank-mcp")
     try:
+        corp_path = service.tmp_dir / "ironbank-mcp-profile-corp.toml"
+        corp_path.write_text(
+            """
+[corp.rules.allow_ironbank_mock_mcp_profile_http]
+name = "allow_ironbank_mock_mcp_profile_http"
+action = "allow"
+priority = -100
+detection_level = "informational"
+reason = "Allow the hermetic Ironbank MCP profile fixture HTTP call."
+match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
+""".lstrip(),
+            encoding="utf-8",
+        )
+        os.environ["CAPSEM_CORP_CONFIG"] = str(corp_path)
         service.start()
         client = service.client()
         mock_proc, ready = start_mock_server()
@@ -324,6 +339,10 @@ def test_profile_mcp_call_pays_full_ledger_blackbox():
                 assert event["mcp"]["tool_call_name"] in {"http_headers", "local__http_headers"}
                 assert rule["name"]
     finally:
+        if old_corp_config is None:
+            os.environ.pop("CAPSEM_CORP_CONFIG", None)
+        else:
+            os.environ["CAPSEM_CORP_CONFIG"] = old_corp_config
         if mock_proc is not None:
             stop_process(mock_proc)
         try:

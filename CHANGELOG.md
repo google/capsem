@@ -96,6 +96,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   like blocked rows, hermetic DNS upstream transcripts prove blocked
   exfiltration never leaves the VM boundary, and security status exposes
   detection-level counters regenerated from `session.db`.
+- Added MCP Ironbank ledger proof for profile-owned builtin MCP and observed
+  remote MCP traffic. MCP security events now carry request arguments,
+  response content, trace IDs, and transport facts through CEL, DB rows, UDS
+  inspection, gateway inspection, latest/status routes, and structured logs.
 - Tightened Ironbank model/client coverage so the mock server replays an
   Ollama-compatible OpenAI chat-completion shape with native tool calls, the
   OpenAI SDK/Anthropic SDK/LiteLLM/Ollama SDK/Codex CLI paths assert full

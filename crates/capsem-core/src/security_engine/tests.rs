@@ -842,7 +842,13 @@ fn security_event_cel_exposes_all_first_party_roots() {
         .with_mcp(McpSecurityEvent {
             tool_call_name: Some("email_send".to_string()),
             ..Default::default()
-        })
+        }
+        .with_request_preview(Some(
+            r#"{"name":"email_send","arguments":{"recipient":"bank@example.com","body":"ledger"}}"#,
+        ))
+        .with_response_preview(Some(
+            r#"{"content":[{"type":"text","text":"queued"}]}"#,
+        )))
         .with_model(ModelSecurityEvent {
             provider: Some("openai".to_string()),
             ..Default::default()
@@ -903,6 +909,10 @@ fn security_event_cel_exposes_all_first_party_roots() {
         r#"mcp.valid == "true""#,
         r#"mcp.tool_call.valid == "true""#,
         r#"mcp.tool_call.name.contains("email")"#,
+        r#"mcp.request.valid == "true""#,
+        r#"mcp.request.arguments.contains("bank@example.com")"#,
+        r#"mcp.response.valid == "true""#,
+        r#"mcp.response.content.contains("queued")"#,
         r#"model.valid == "true""#,
         r#"model.request.valid == "false""#,
         r#"model.response.valid == "false""#,

@@ -1986,9 +1986,21 @@ pub struct McpSecurityEvent {
     pub server_name: Option<String>,
     pub tool_call_name: Option<String>,
     pub tool_list: Option<String>,
+    pub request: Option<McpRequestSecurityEvent>,
+    pub response: Option<McpResponseSecurityEvent>,
 }
 
 impl McpSecurityEvent {
+    pub fn with_request_preview(mut self, preview: Option<&str>) -> Self {
+        self.request = preview.and_then(mcp_request_from_preview);
+        self
+    }
+
+    pub fn with_response_preview(mut self, preview: Option<&str>) -> Self {
+        self.response = preview.and_then(mcp_response_from_preview);
+        self
+    }
+
     fn get(&self, field: &str) -> Option<PolicySubjectValue<'_>> {
         match field {
             "valid" => Some(PolicySubjectValue::Bool(true)),
@@ -1999,10 +2011,50 @@ impl McpSecurityEvent {
             "tool_call.name" => borrowed_string(self.tool_call_name.as_deref()),
             "tool_list.valid" => Some(PolicySubjectValue::Bool(self.tool_list.is_some())),
             "tool_list" => borrowed_string(self.tool_list.as_deref()),
+            "request.valid" => Some(PolicySubjectValue::Bool(self.request.is_some())),
+            "request.arguments" => json_string(
+                self.request
+                    .as_ref()
+                    .and_then(|request| request.arguments.as_ref()),
+            ),
+            "response.valid" => Some(PolicySubjectValue::Bool(self.response.is_some())),
+            "response.content" => json_string(
+                self.response
+                    .as_ref()
+                    .and_then(|response| response.content.as_ref()),
+            ),
             "event.valid" => Some(PolicySubjectValue::Bool(self.method.is_some())),
             _ => None,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
+pub struct McpRequestSecurityEvent {
+    pub arguments: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
+pub struct McpResponseSecurityEvent {
+    pub content: Option<serde_json::Value>,
+}
+
+fn mcp_request_from_preview(preview: &str) -> Option<McpRequestSecurityEvent> {
+    let value: serde_json::Value = serde_json::from_str(preview).ok()?;
+    let arguments = value
+        .pointer("/params/arguments")
+        .or_else(|| value.pointer("/arguments"))
+        .cloned();
+    Some(McpRequestSecurityEvent { arguments })
+}
+
+fn mcp_response_from_preview(preview: &str) -> Option<McpResponseSecurityEvent> {
+    let value: serde_json::Value = serde_json::from_str(preview).ok()?;
+    let content = value
+        .pointer("/result/content")
+        .or_else(|| value.pointer("/content"))
+        .cloned();
+    Some(McpResponseSecurityEvent { content })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
@@ -2195,6 +2247,10 @@ impl UdpSecurityEvent {
 
 fn borrowed_string(value: Option<&str>) -> Option<PolicySubjectValue<'_>> {
     value.map(|value| PolicySubjectValue::String(Cow::Borrowed(value)))
+}
+
+fn json_string(value: Option<&serde_json::Value>) -> Option<PolicySubjectValue<'_>> {
+    value.map(|value| PolicySubjectValue::String(Cow::Owned(value.to_string())))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -310,13 +310,26 @@ impl ObservedMcpHttpRequest {
         runtime_mcp_event_type(&self.method)
     }
 
-    fn security_event(&self, tool_list: Option<String>) -> SecurityEvent {
-        SecurityEvent::new(self.event_type()).with_mcp(McpSecurityEvent {
-            method: Some(self.method.clone()),
-            server_name: Some(self.server_name.clone()),
-            tool_call_name: self.tool_name.clone(),
-            tool_list,
-        })
+    fn security_event(
+        &self,
+        tool_list: Option<String>,
+        response_preview: Option<&str>,
+    ) -> SecurityEvent {
+        let event = SecurityEvent::new(self.event_type()).with_mcp(
+            McpSecurityEvent {
+                method: Some(self.method.clone()),
+                server_name: Some(self.server_name.clone()),
+                tool_call_name: self.tool_name.clone(),
+                tool_list,
+                ..Default::default()
+            }
+            .with_request_preview(self.request_preview.as_deref())
+            .with_response_preview(response_preview),
+        );
+        match crate::telemetry::ambient_capsem_trace_id() {
+            Some(trace_id) => event.with_trace_id(trace_id),
+            None => event,
+        }
     }
 }
 
@@ -1769,14 +1782,20 @@ async fn handle_request(
             status = tracing::field::Empty,
             error_kind = tracing::field::Empty,
         );
-        let mcp_event = observed.security_event(None).with_http(HttpSecurityEvent {
-            host: Some(domain.to_string()),
-            method: Some(method.clone()),
-            path: Some(path.clone()),
-            query: query.clone(),
-            status: None,
-            body: observed.request_preview.clone(),
-        });
+        let mcp_event = security_event_with_transport(
+            observed
+                .security_event(None, None)
+                .with_http(HttpSecurityEvent {
+                    host: Some(domain.to_string()),
+                    method: Some(method.clone()),
+                    path: Some(path.clone()),
+                    query: query.clone(),
+                    status: None,
+                    body: observed.request_preview.clone(),
+                }),
+            domain,
+            upstream_port,
+        );
         let mcp_evaluation = match mcp_span.in_scope(|| {
             crate::security_engine::evaluate_security_boundary(
                 &rules,
@@ -1814,7 +1833,20 @@ async fn handle_request(
                     .as_deref()
                     .unwrap_or("unknown")
             );
-            let security_event = observed.security_event(None);
+            let security_event = security_event_with_transport(
+                observed
+                    .security_event(None, Some(&body_text))
+                    .with_http(HttpSecurityEvent {
+                        host: Some(domain.to_string()),
+                        method: Some(method.clone()),
+                        path: Some(path.clone()),
+                        query: query.clone(),
+                        status: Some("403".to_string()),
+                        body: observed.request_preview.clone(),
+                    }),
+                domain,
+                upstream_port,
+            );
             let denied_call = McpCall {
                 event_id: None,
                 timestamp: SystemTime::now(),
@@ -2617,7 +2649,20 @@ async fn handle_request(
             } else {
                 None
             };
-            let security_event = observed.security_event(tool_list);
+            let security_event = security_event_with_transport(
+                observed
+                    .security_event(tool_list, response_preview.as_deref())
+                    .with_http(HttpSecurityEvent {
+                        host: Some(domain.to_string()),
+                        method: Some(method.clone()),
+                        path: Some(path.clone()),
+                        query: query.clone(),
+                        status: Some(resp_status.to_string()),
+                        body: observed.request_preview.clone(),
+                    }),
+                domain,
+                upstream_port,
+            );
             let call = McpCall {
                 event_id: None,
                 timestamp: SystemTime::now(),

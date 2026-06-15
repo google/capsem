@@ -6,6 +6,7 @@
 //! - `http_headers`: return HTTP headers for a URL
 
 use std::collections::BTreeMap;
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Instant, SystemTime};
 
@@ -16,9 +17,9 @@ use capsem_logger::{DbWriter, Decision, NetEvent, WriteOp};
 
 use crate::net::policy_config::{SecurityPluginConfig, SecurityRuleSet};
 use crate::security_engine::{
-    evaluate_security_boundary, HttpRequestSecurityEvent, HttpSecurityEvent,
+    evaluate_security_boundary, HttpRequestSecurityEvent, HttpSecurityEvent, IpSecurityEvent,
     RuntimeSecurityEventType, SecurityEnforcementAction, SecurityEnforcementDecision,
-    SecurityEvent,
+    SecurityEvent, TcpSecurityEvent,
 };
 
 use super::types::{JsonRpcResponse, McpToolDef, ToolAnnotations};
@@ -787,6 +788,20 @@ fn evaluate_builtin_http_request(
         ));
     if let Some(trace_id) = crate::telemetry::ambient_capsem_trace_id() {
         event = event.with_trace_id(trace_id);
+    }
+    if let Some(port) = parsed.port_or_known_default() {
+        event = event.with_tcp(TcpSecurityEvent {
+            port: Some(port.to_string()),
+        });
+    }
+    if let Ok(ip) = domain.parse::<IpAddr>() {
+        event = event.with_ip(IpSecurityEvent {
+            value: Some(ip.to_string()),
+            version: Some(match ip {
+                IpAddr::V4(_) => "4".to_string(),
+                IpAddr::V6(_) => "6".to_string(),
+            }),
+        });
     }
     let evaluated = evaluate_security_boundary(security_rules, plugin_policy.clone(), event)
         .map_err(|error| format!("security engine failed: {error}"))?;
