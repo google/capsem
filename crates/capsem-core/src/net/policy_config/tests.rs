@@ -3825,7 +3825,7 @@ fn migrate_does_not_clobber_existing_new_keys() {
 
 fn file_with_mcp(
     entries: Vec<(&str, SettingValue)>,
-    mcp: crate::mcp::policy::McpUserConfig,
+    mcp: crate::mcp::policy::McpProfileConfig,
 ) -> SettingsFile {
     let mut f = file_with(entries);
     f.mcp = Some(mcp);
@@ -4077,8 +4077,8 @@ fn merged_retired_custom_allow_setting_is_ignored() {
 
 #[test]
 fn merged_empty_mcp_section() {
-    use crate::mcp::policy::McpUserConfig;
-    let user = file_with_mcp(vec![], McpUserConfig::default());
+    use crate::mcp::policy::McpProfileConfig;
+    let user = file_with_mcp(vec![], McpProfileConfig::default());
     let m = MergedPolicies::from_files(&user, &empty_file());
     assert!(has_security_rule(&m, "profiles.rules.default_http"));
 }
@@ -4781,10 +4781,10 @@ fn load_settings_response_exposes_settings_tree_only() {
 #[test]
 fn merged_partial_settings_file() {
     // TOML with only [mcp] section, no [settings]
-    use crate::mcp::policy::McpUserConfig;
+    use crate::mcp::policy::McpProfileConfig;
     let user = SettingsFile {
         settings: HashMap::new(),
-        mcp: Some(McpUserConfig {
+        mcp: Some(McpProfileConfig {
             health_check_interval_secs: Some(30),
             ..Default::default()
         }),

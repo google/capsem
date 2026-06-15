@@ -1843,7 +1843,7 @@ async fn profile_mcp_info_summarizes_profile_mcp_config() {
     // This settings-owned MCP server must not contribute to
     // /profiles/{id}/mcp. Profile MCP routes reflect profile.toml only.
     let settings = capsem_core::net::policy_config::SettingsFile {
-        mcp: Some(capsem_core::mcp::policy::McpUserConfig {
+        mcp: Some(capsem_core::mcp::policy::McpProfileConfig {
             servers: vec![capsem_core::mcp::policy::McpManualServer {
                 name: "settings-only".to_string(),
                 url: "https://settings.invalid/mcp".to_string(),
@@ -1964,7 +1964,7 @@ async fn mounted_read_routes_reflect_profile_settings_corp_mcp_and_assets_contra
     let dir = tempfile::tempdir().unwrap();
     let (_env_guard, user_path, _) = install_empty_settings_env(&dir);
     let settings = capsem_core::net::policy_config::SettingsFile {
-        mcp: Some(capsem_core::mcp::policy::McpUserConfig {
+        mcp: Some(capsem_core::mcp::policy::McpProfileConfig {
             servers: vec![capsem_core::mcp::policy::McpManualServer {
                 name: "settings-only".to_string(),
                 url: "https://settings.invalid/mcp".to_string(),
@@ -2338,7 +2338,7 @@ async fn mounted_mcp_routes_are_profile_scoped_mechanics_only() {
     capsem_core::net::policy_config::write_settings_file(
         &user_path,
         &capsem_core::net::policy_config::SettingsFile {
-            mcp: Some(capsem_core::mcp::policy::McpUserConfig {
+            mcp: Some(capsem_core::mcp::policy::McpProfileConfig {
                 servers: vec![capsem_core::mcp::policy::McpManualServer {
                     name: "settings-only".to_string(),
                     url: "https://settings.invalid/mcp".to_string(),

@@ -43,7 +43,7 @@ pub struct ProfileConfigFile {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub plugins: BTreeMap<String, SecurityPluginConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mcp: Option<crate::mcp::policy::McpUserConfig>,
+    pub mcp: Option<crate::mcp::policy::McpProfileConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub obom: Option<ProfileObomConfig>,
     #[serde(default, skip_serializing_if = "ProfileFileReferences::is_empty")]
@@ -202,7 +202,7 @@ pub struct ActiveProfileFile {
     #[serde(default)]
     pub network: NetworkConfig,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mcp: Option<crate::mcp::policy::McpUserConfig>,
+    pub mcp: Option<crate::mcp::policy::McpProfileConfig>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

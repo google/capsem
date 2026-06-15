@@ -14,7 +14,7 @@ use crate::mcp::types::McpAuthConfig;
 /// are security rules over canonical MCP security events.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(deny_unknown_fields)]
-pub struct McpUserConfig {
+pub struct McpProfileConfig {
     /// Health check interval in seconds (default: 300).
     #[serde(default)]
     pub health_check_interval_secs: Option<u64>,
@@ -43,7 +43,7 @@ pub struct McpManualServer {
     pub enabled: bool,
 }
 
-impl McpUserConfig {
+impl McpProfileConfig {
     pub fn validate(&self, context: &str) -> Result<(), String> {
         for server in &self.servers {
             server.validate(context)?;

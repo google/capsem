@@ -2468,6 +2468,13 @@ next one, and stage only the files for that slice.
   profile-check proof: `cargo test -p capsem-admin profile_check --
   --nocapture`; settings isolation proof: `cargo test -p capsem-core --test
   settings_spec -- --nocapture`.
+- S1 2026-06-14 correction: renamed stale `McpUserConfig` to
+  `McpProfileConfig` and extended
+  `tests/capsem-build-chain/test_no_legacy_user_config.py` to reject the old
+  public type name. Focused proof: RED then GREEN `uv run pytest
+  tests/capsem-build-chain/test_no_legacy_user_config.py -q`; `cargo test -p
+  capsem-core mcp:: -- --nocapture`; `cargo check -p capsem-process -p
+  capsem-service`.
 - S1 package proof: `cargo test -p capsem-admin
   profile_check_rejects_empty_profile_package_file_even_when_hash_matches --
   --nocapture` passes; the full capsem-admin suite is now 29/29 green.

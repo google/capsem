@@ -434,7 +434,7 @@ pub struct SettingsFile {
     pub plugins: BTreeMap<String, super::security_rule_profile::SecurityPluginConfig>,
     /// MCP server configuration (optional section in profile/corp TOML).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mcp: Option<crate::mcp::policy::McpUserConfig>,
+    pub mcp: Option<crate::mcp::policy::McpProfileConfig>,
     /// Corporate-owned network mechanics such as DNS upstreams.
     #[serde(default, skip_serializing_if = "NetworkConfig::is_empty")]
     pub network: NetworkConfig,

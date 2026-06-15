@@ -22,7 +22,7 @@ pub(crate) struct RuntimeProfileConfig {
     pub(crate) security_rules: SecurityRuleSet,
     pub(crate) plugins: BTreeMap<String, SecurityPluginConfig>,
     pub(crate) model_endpoints: ModelEndpointRegistry,
-    pub(crate) mcp: capsem_core::mcp::policy::McpUserConfig,
+    pub(crate) mcp: capsem_core::mcp::policy::McpProfileConfig,
 }
 
 impl RuntimeProfileSource {

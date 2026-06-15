@@ -25,6 +25,7 @@ FORBIDDEN = [
     "save_mcp_user_config",
     "load_mcp_user_config",
     "build_server_list(",
+    "McpUserConfig",
 ]
 
 ALLOWLIST = {

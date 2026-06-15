@@ -379,7 +379,7 @@ pub fn can_write_corp_settings() -> bool {
 }
 
 /// Load the corp MCP config.
-pub fn load_mcp_corp_config() -> crate::mcp::policy::McpUserConfig {
+pub fn load_mcp_corp_config() -> crate::mcp::policy::McpProfileConfig {
     let (_, corp) = load_settings_and_corp_files();
     corp.mcp.unwrap_or_default()
 }

@@ -7,7 +7,7 @@ use axum::{
 };
 use capsem_core::poll::{poll_until, PollOpts};
 use capsem_core::{
-    mcp::policy::{McpManualServer, McpUserConfig},
+    mcp::policy::{McpManualServer, McpProfileConfig},
     net::policy_config::{
         skill_id_for_path, ActiveProfileFile, CompiledSecurityRule, DetectionLevel, Profile,
         ProfileAssetDescriptor, ProfileCatalog, ProfileCatalogSource, ProfileConfigFile,
@@ -5502,9 +5502,9 @@ fn validate_mcp_server_edit_request(
         auth: None,
         enabled: update.enabled.unwrap_or(true),
     };
-    McpUserConfig {
+    McpProfileConfig {
         servers: vec![server.clone()],
-        ..McpUserConfig::default()
+        ..McpProfileConfig::default()
     }
     .validate("profile")
     .map_err(|error| AppError(StatusCode::BAD_REQUEST, error))?;

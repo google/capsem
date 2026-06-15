@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Runtime MCP server construction is now guarded to use profile-owned
   `build_profile_server_list()` only, with docs and skills updated to remove
   the stale fallback language.
+- Renamed the MCP configuration contract from `McpUserConfig` to
+  `McpProfileConfig` and added a no-legacy guard so profile/corp-owned MCP
+  config cannot regress to user-config terminology.
 - Hardened profile parsing so `assets` is a required profile-owned section
   instead of silently defaulting to the first built-in profile's asset release.
   Profile contract and admin profile-check tests now prove malformed profiles

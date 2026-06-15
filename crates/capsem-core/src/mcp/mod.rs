@@ -11,7 +11,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
-use crate::mcp::policy::McpUserConfig;
+use crate::mcp::policy::McpProfileConfig;
 use crate::mcp::types::{McpServerDef, McpToolDef, ToolAnnotations};
 
 /// Compute a CPU-proportional default for framed MCP in-flight handlers.
@@ -78,7 +78,7 @@ fn local_builtin_server_def(
 /// settings/corp MCP sections. Profile routes use this helper so
 /// `/profiles/{profile_id}/mcp/...` reflects the selected profile contract.
 pub fn build_profile_server_list(
-    profile_config: &McpUserConfig,
+    profile_config: &McpProfileConfig,
     builtin_binary: Option<&Path>,
     builtin_env: HashMap<String, String>,
 ) -> Vec<McpServerDef> {

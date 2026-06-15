@@ -592,7 +592,7 @@ fn profile_mcp_tool_permission_mutation_updates_rule_and_pin() {
 }
 
 #[test]
-fn profile_mcp_default_permission_mutation_updates_rule_pin_and_fallback() {
+fn profile_mcp_default_permission_mutation_updates_rule_pin_and_default_tool_permission() {
     let fixture = ProfileFixture::new();
     let mut profile = Profile::load_from_dir(fixture.profile_dir()).expect("profile loads");
     let initial_default = profile
@@ -628,11 +628,11 @@ fn profile_mcp_default_permission_mutation_updates_rule_pin_and_fallback() {
     assert_eq!(default.action, SecurityRuleAction::Ask);
     assert_eq!(default.source, "default");
 
-    let fallback = reloaded
+    let inherited_default = reloaded
         .mcp_tool_permission("capsem", "fetch_http")
-        .expect("tool falls back to default permission");
-    assert_eq!(fallback.action, SecurityRuleAction::Ask);
-    assert_eq!(fallback.source, "default");
+        .expect("tool inherits default permission");
+    assert_eq!(inherited_default.action, SecurityRuleAction::Ask);
+    assert_eq!(inherited_default.source, "default");
 
     let new_pin = reloaded
         .config()

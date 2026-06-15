@@ -1,5 +1,5 @@
 use super::*;
-use crate::mcp::policy::{McpManualServer, McpUserConfig};
+use crate::mcp::policy::{McpManualServer, McpProfileConfig};
 
 struct EnvVarGuard {
     key: &'static str,
@@ -270,7 +270,7 @@ fn tool_cache_missing_file_returns_empty() {
 
 #[test]
 fn mcp_config_rejects_raw_bearer_token_field() {
-    let err = toml::from_str::<McpUserConfig>(
+    let err = toml::from_str::<McpProfileConfig>(
         r#"
 [[servers]]
 name = "remote"
@@ -284,7 +284,7 @@ bearer_token = "tok_raw"
 
 #[test]
 fn mcp_config_rejects_secret_bearing_headers() {
-    let cfg: McpUserConfig = toml::from_str(
+    let cfg: McpProfileConfig = toml::from_str(
         r#"
 [[servers]]
 name = "remote"
@@ -302,7 +302,7 @@ Authorization = "Bearer raw"
 
 #[test]
 fn mcp_config_accepts_oauth_broker_reference() {
-    let cfg: McpUserConfig = toml::from_str(&format!(
+    let cfg: McpProfileConfig = toml::from_str(&format!(
         r#"
 [[servers]]
 name = "remote"
@@ -350,7 +350,7 @@ fn credential_broker_resolves_mcp_oauth_material_by_reference() {
 
 #[test]
 fn build_profile_server_list_uses_profile_manual_servers_only() {
-    let profile = McpUserConfig {
+    let profile = McpProfileConfig {
         servers: vec![McpManualServer {
             name: "profile-api".into(),
             url: "https://profile.example/mcp".into(),
@@ -376,7 +376,7 @@ fn build_profile_server_list_respects_local_builtin_enablement() {
 
     let mut enabled = HashMap::new();
     enabled.insert("local".to_string(), false);
-    let profile = McpUserConfig {
+    let profile = McpProfileConfig {
         server_enabled: enabled,
         ..Default::default()
     };
@@ -390,7 +390,7 @@ fn build_profile_server_list_respects_local_builtin_enablement() {
 
 #[test]
 fn build_profile_server_list_rejects_names_with_separator() {
-    let mut profile = McpUserConfig::default();
+    let mut profile = McpProfileConfig::default();
     profile.servers.push(crate::mcp::policy::McpManualServer {
         name: "bad__name".to_string(),
         url: "http://localhost".to_string(),
