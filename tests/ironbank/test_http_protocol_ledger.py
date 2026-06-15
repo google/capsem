@@ -462,6 +462,398 @@ def test_plain_json_http_request_pays_full_ledger_debt_blackbox() -> None:
             os.environ["CAPSEM_CORP_CONFIG"] = old_corp_config
 
 
+def test_http_body_handling_matrix_pays_full_ledger_debt_blackbox() -> None:
+    assert MOCK_SERVER_BINARY.exists(), f"{MOCK_SERVER_BINARY} missing"
+    assert ASSETS_DIR.exists(), f"{ASSETS_DIR} missing; build VM assets before Ironbank"
+    assert PROFILES_DIR.exists(), f"{PROFILES_DIR} missing; materialize profile config"
+
+    service = ServiceInstance()
+    gateway: GatewayInstance | None = None
+    mock_proc = None
+    client = None
+    session_id = vm_name("ironbank-http-body")
+    nonce = uuid.uuid4().hex
+    old_corp_config = os.environ.get("CAPSEM_CORP_CONFIG")
+    try:
+        mock_proc, ready = start_mock_server(
+            request_log=service.tmp_dir / "upstream-http-body-transcript.jsonl"
+        )
+        corp_path = service.tmp_dir / "corp.toml"
+        corp_path.write_text(
+            textwrap.dedent(
+                f"""
+                refresh_policy = "24h"
+
+                [network.dns]
+                upstreams = [{json.dumps(ready["dns_udp_addr"])}]
+
+                [network.upstream_overrides."daily-cloudcode-pa.googleapis.com:443"]
+                dial = {json.dumps(ready["http_addr"])}
+                protocol = "http"
+
+                [settings."vm.resources.log_bodies"]
+                value = true
+                modified = "2026-06-14T00:00:00Z"
+
+                [settings."vm.resources.max_body_capture"]
+                value = 128
+                modified = "2026-06-14T00:00:00Z"
+
+                [settings."security.web.http_upstream_ports"]
+                value = [80, 3713, 8080]
+                modified = "2026-06-14T00:00:00Z"
+
+                [corp.rules.allow_ironbank_mock_http_body_matrix]
+                name = "allow_ironbank_mock_http_body_matrix"
+                action = "allow"
+                priority = -100
+                detection_level = "informational"
+                reason = "Allow hermetic Ironbank HTTP body-handling fixtures."
+                match = '(http.host == "127.0.0.1" && tcp.port == "3713" && (http.path == "/gzip/10kb" || http.path == "/chunked" || http.path == "/sse/model" || http.path == "/bytes/10kb")) || (http.host == "daily-cloudcode-pa.googleapis.com" && tcp.port == "443" && http.path == "/tiny")'
+                """
+            ).strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        os.environ["CAPSEM_CORP_CONFIG"] = str(corp_path)
+        service.start()
+        client = service.client()
+        gateway = GatewayInstance(uds_path=service.uds_path)
+        gateway.start()
+        gateway_client = TcpHttpClient(gateway.base_url, gateway.token)
+
+        create = client.post(
+            "/vms/create",
+            {
+                "name": session_id,
+                "profile_id": CODE_PROFILE_ID,
+                "ram_mb": DEFAULT_RAM_MB,
+                "cpus": DEFAULT_CPUS,
+                "env": {
+                    "CAPSEM_MOCK_SERVER_BASE_URL": ready["base_url"],
+                },
+            },
+            timeout=90,
+        )
+        assert create is not None
+        assert create.get("id") == session_id or create.get("name") == session_id
+        assert wait_exec_ready(client, session_id, timeout=EXEC_READY_TIMEOUT)
+
+        script = textwrap.dedent(
+            f"""
+            import json
+            import ssl
+            import urllib.request
+
+            base = {json.dumps(ready["base_url"].rstrip("/"))}
+            https_base = "https://daily-cloudcode-pa.googleapis.com"
+            nonce = {json.dumps(nonce)}
+
+            def fetch(name, url, *, insecure_tls=False):
+                request = urllib.request.Request(
+                    url,
+                    method="GET",
+                    headers={{
+                        "user-agent": "capsem-ironbank-http-body/1",
+                        "x-ironbank-nonce": nonce,
+                        "x-ironbank-case": name,
+                    }},
+                )
+                context = ssl._create_unverified_context() if insecure_tls else None
+                with urllib.request.urlopen(request, timeout=30, context=context) as response:
+                    raw = response.read()
+                    return {{
+                        "name": name,
+                        "status": response.status,
+                        "content_type": response.headers.get("content-type"),
+                        "content_encoding": response.headers.get("content-encoding"),
+                        "raw_len": len(raw),
+                        "decoded_len": len(raw),
+                        "decoded_prefix": raw[:48].decode("utf-8", "replace"),
+                    }}
+
+            cases = [
+                fetch("gzip", base + "/gzip/10kb?case=gzip"),
+                fetch("chunked", base + "/chunked?case=chunked"),
+                fetch("sse", base + "/sse/model?case=sse"),
+                fetch("truncated_preview", base + "/bytes/10kb?case=truncated-preview"),
+                fetch("https", https_base + "/tiny?case=https", insecure_tls=True),
+            ]
+            print("IRONBANK_HTTP_BODY_MATRIX=" + json.dumps({{
+                "nonce": nonce,
+                "cases": cases,
+            }}, sort_keys=True))
+            """
+        ).strip()
+        upload = client.post_bytes(
+            f"/vms/{session_id}/files/content?path=ironbank-http-body.py",
+            script.encode(),
+            timeout=30,
+        )
+        assert upload is not None
+        assert upload["success"] is True
+
+        exec_resp = client.post(
+            f"/vms/{session_id}/exec",
+            {"command": "python3 /root/ironbank-http-body.py", "timeout_secs": 120},
+            timeout=150,
+        )
+        assert exec_resp is not None
+        assert exec_resp["exit_code"] == 0, exec_resp
+        result = _one_json_line(
+            exec_resp.get("stdout") or "", "IRONBANK_HTTP_BODY_MATRIX="
+        )
+        assert result["nonce"] == nonce
+        by_name = {case["name"]: case for case in result["cases"]}
+        assert set(by_name) == {"gzip", "chunked", "sse", "truncated_preview", "https"}
+        assert by_name["gzip"]["status"] == 200
+        assert by_name["gzip"]["content_encoding"] is None
+        assert by_name["gzip"]["raw_len"] == by_name["gzip"]["decoded_len"]
+        assert by_name["gzip"]["decoded_len"] == 10 * 1024
+        assert by_name["gzip"]["decoded_prefix"].startswith("abcdefghijklmnopqrstuvwxyz")
+        assert by_name["chunked"]["decoded_prefix"] == "chunk-0\nchunk-1\nchunk-2\nchunk-3\n"
+        assert by_name["sse"]["content_type"].startswith("text/event-stream")
+        assert "event: model.delta" in by_name["sse"]["decoded_prefix"]
+        assert by_name["truncated_preview"]["decoded_len"] == 10 * 1024
+        assert by_name["https"]["decoded_prefix"] == "capsem-mock-server:tiny\n"
+
+        request_log_path = Path(ready["request_log"])
+        upstream_text = (
+            request_log_path.read_text(encoding="utf-8") if request_log_path.exists() else ""
+        )
+        upstream_records = [
+            json.loads(line) for line in upstream_text.splitlines() if line.strip()
+        ]
+        expected_upstream = {
+            ("/gzip/10kb", "case=gzip"),
+            ("/chunked", "case=chunked"),
+            ("/sse/model", "case=sse"),
+            ("/bytes/10kb", "case=truncated-preview"),
+            ("/tiny", "case=https"),
+        }
+        observed_upstream = {
+            (row["path"], row["query"])
+            for row in upstream_records
+            if row["headers"].get("x-ironbank-nonce") == nonce
+        }
+        assert expected_upstream <= observed_upstream, upstream_records
+
+        with closing(_connect_session_db(service, session_id)) as conn:
+            assert _table_columns(conn, "net_events") == EXPECTED_NET_COLUMNS
+            assert _table_columns(conn, "security_rule_events") == EXPECTED_SECURITY_COLUMNS
+            rows = _eventually(
+                lambda: conn.execute(
+                    """
+                    SELECT *
+                    FROM net_events
+                    WHERE method = 'GET'
+                      AND query IN (
+                        'case=gzip',
+                        'case=chunked',
+                        'case=sse',
+                        'case=truncated-preview',
+                        'case=https'
+                      )
+                    ORDER BY id
+                    """
+                ).fetchall(),
+                lambda found: len(found) == 5,
+            )
+            nets = {row["query"]: dict(row) for row in rows}
+            assert set(nets) == {
+                "case=gzip",
+                "case=chunked",
+                "case=sse",
+                "case=truncated-preview",
+                "case=https",
+            }
+            expected_paths = {
+                "case=gzip": "/gzip/10kb",
+                "case=chunked": "/chunked",
+                "case=sse": "/sse/model",
+                "case=truncated-preview": "/bytes/10kb",
+                "case=https": "/tiny",
+            }
+            for query, net in nets.items():
+                event_id = _event_id(net["event_id"])
+                expected_host = (
+                    "daily-cloudcode-pa.googleapis.com"
+                    if query == "case=https"
+                    else "127.0.0.1"
+                )
+                assert net["domain"] == expected_host
+                assert net["port"] == (443 if query == "case=https" else 3713)
+                assert net["method"] == "GET"
+                assert net["path"] == expected_paths[query]
+                assert net["status_code"] == 200
+                assert net["decision"] == "allowed"
+                assert net["matched_rule"] == "corp.rules.allow_ironbank_mock_http_body_matrix"
+                assert net["policy_action"] == "allow"
+                assert net["policy_rule"] == "corp.rules.allow_ironbank_mock_http_body_matrix"
+                assert net["credential_ref"] is None
+                assert net["conn_type"] == ("https-mitm" if query == "case=https" else "http-mitm")
+                assert nonce not in net["request_headers"]
+                assert re.search(
+                    r"x-ironbank-nonce: hash:[0-9a-f]{12}",
+                    net["request_headers"].lower(),
+                )
+                assert isinstance(net["duration_ms"], int)
+                assert net["duration_ms"] >= 0
+                assert isinstance(net["trace_id"], str) and net["trace_id"]
+
+                security_rows = conn.execute(
+                    """
+                    SELECT *
+                    FROM security_rule_events
+                    WHERE event_id = ? AND event_type = 'http.request'
+                    ORDER BY id
+                    """,
+                    (event_id,),
+                ).fetchall()
+                body_rule = next(
+                    row
+                    for row in security_rows
+                    if row["rule_id"] == "corp.rules.allow_ironbank_mock_http_body_matrix"
+                )
+                assert body_rule["rule_action"] == "allow"
+                assert body_rule["detection_level"] == "informational"
+                assert body_rule["trace_id"] == net["trace_id"]
+                event_json = json.loads(body_rule["event_json"])
+                assert event_json["event_type"] == "http.request"
+                assert event_json["http"]["host"] == expected_host
+                assert event_json["http"]["method"] == "GET"
+                assert event_json["http"]["path"] == expected_paths[query]
+                assert event_json["http"]["query"] == query
+                assert event_json["http"]["status"] == "200"
+                assert event_json["tcp"]["port"] == str(net["port"])
+                if query == "case=https":
+                    assert event_json["ip"] is None
+                else:
+                    assert event_json["ip"]["value"] == "127.0.0.1"
+                    assert event_json["ip"]["version"] == "4"
+
+            gzip_net = nets["case=gzip"]
+            assert "content-encoding: gzip" not in (
+                gzip_net["response_headers"] or ""
+            ).lower()
+            assert "content-length:" not in (
+                gzip_net["response_headers"] or ""
+            ).lower()
+            assert gzip_net["bytes_received"] == 10 * 1024
+            assert (gzip_net["response_body_preview"] or "").startswith(
+                "abcdefghijklmnopqrstuvwxyz"
+            )
+
+            chunked_net = nets["case=chunked"]
+            assert chunked_net["response_body_preview"] == "chunk-0\nchunk-1\nchunk-2\nchunk-3\n"
+
+            sse_net = nets["case=sse"]
+            assert "content-type: text/event-stream" in (
+                sse_net["response_headers"] or ""
+            ).lower()
+            assert "event: model.delta" in (sse_net["response_body_preview"] or "")
+            assert "event: model.tool_call" in (sse_net["response_body_preview"] or "")
+
+            truncated_net = nets["case=truncated-preview"]
+            assert truncated_net["bytes_received"] == 10 * 1024
+            assert len(truncated_net["response_body_preview"] or "") <= 128
+            assert (truncated_net["response_body_preview"] or "").startswith(
+                "abcdefghijklmnopqrstuvwxyz"
+            )
+
+            https_net = nets["case=https"]
+            assert https_net["response_body_preview"] == "capsem-mock-server:tiny\n"
+
+            uds_rows = _query_rows(
+                client,
+                session_id,
+                """
+                SELECT event_id, path, query, status_code, decision, conn_type, trace_id
+                FROM net_events
+                WHERE query IN (
+                  'case=gzip',
+                  'case=chunked',
+                  'case=sse',
+                  'case=truncated-preview',
+                  'case=https'
+                )
+                ORDER BY query
+                """,
+            )
+            assert len(uds_rows) == 5
+            assert {row["query"] for row in uds_rows} == set(nets)
+            assert {row["decision"] for row in uds_rows} == {"allowed"}
+            assert any(row["conn_type"] == "https-mitm" for row in uds_rows)
+
+            gateway_rows = gateway_client.post(
+                f"/vms/{session_id}/inspect",
+                {
+                    "sql": (
+                        "SELECT path, query, status_code, decision, conn_type "
+                        "FROM net_events WHERE query IN "
+                        "('case=gzip','case=chunked','case=sse','case=truncated-preview','case=https') "
+                        "ORDER BY query"
+                    )
+                },
+                timeout=30,
+            )
+            assert gateway_rows["columns"] == [
+                "path",
+                "query",
+                "status_code",
+                "decision",
+                "conn_type",
+            ]
+            assert len(gateway_rows["rows"]) == 5
+            assert [row[2] for row in gateway_rows["rows"]] == [200, 200, 200, 200, 200]
+
+            security_latest = client.get(f"/vms/{session_id}/security/latest?limit=100", timeout=30)
+            latest_rows = [
+                row
+                for row in security_latest
+                if row["rule_id"] == "corp.rules.allow_ironbank_mock_http_body_matrix"
+            ]
+            assert len(latest_rows) >= 5
+            assert {row["event_type"] for row in latest_rows} == {"http.request"}
+            assert {row["rule_action"] for row in latest_rows} == {"allow"}
+            assert {row["detection_level"] for row in latest_rows} == {"informational"}
+
+            security_status = client.get(f"/vms/{session_id}/security/status", timeout=30)
+            by_action = {row["rule_action"]: row["count"] for row in security_status["by_action"]}
+            by_event_type = {
+                row["event_type"]: row["count"] for row in security_status["by_event_type"]
+            }
+            assert by_action["allow"] >= 5
+            assert by_event_type["http.request"] >= 5
+
+        vm_list = client.get("/vms/list", timeout=30)
+        sandboxes = vm_list["sandboxes"] if isinstance(vm_list, dict) else vm_list
+        session_stats = next(row for row in sandboxes if row["id"] == session_id)
+        assert session_stats["total_requests"] >= 5
+        assert session_stats["allowed_requests"] >= 5
+        assert session_stats["denied_requests"] == 0
+
+        service_log = (service.tmp_dir / "service.log").read_text(encoding="utf-8")
+        gateway_log = (gateway.run_dir / "gateway.log").read_text(encoding="utf-8")
+        assert "handle_exec" in service_log or "exec" in service_log
+        assert "gateway.proxy.ok" in gateway_log
+        assert f"/vms/{session_id}/inspect" in gateway_log
+    finally:
+        stop_process(mock_proc)
+        if client is not None:
+            try:
+                client.delete(f"/vms/{session_id}/delete", timeout=60)
+            except Exception:
+                pass
+        if gateway is not None:
+            gateway.stop()
+        service.stop()
+        if old_corp_config is None:
+            os.environ.pop("CAPSEM_CORP_CONFIG", None)
+        else:
+            os.environ["CAPSEM_CORP_CONFIG"] = old_corp_config
+
+
 def test_brokered_http_rewrite_pays_full_ledger_debt_blackbox() -> None:
     assert MOCK_SERVER_BINARY.exists(), f"{MOCK_SERVER_BINARY} missing"
     assert ASSETS_DIR.exists(), f"{ASSETS_DIR} missing; build VM assets before Ironbank"

@@ -87,6 +87,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   logs, and credential inventory merges injected rows with their captured
   provider identity. Grouped CEL rule matches such as `a && (b || c)` now
   compile through the same profile rule path used by the HTTP rewrite proof.
+- Tightened HTTP body-handling ledger proof for gzip, chunked, SSE, truncated
+  preview, and HTTPS override traffic. Decoded gzip responses now log the same
+  materialized headers and body bytes delivered to the guest instead of stale
+  compressed response metadata.
 - Tightened Ironbank model/client coverage so the mock server replays an
   Ollama-compatible OpenAI chat-completion shape with native tool calls, the
   OpenAI SDK/Anthropic SDK/LiteLLM/Ollama SDK/Codex CLI paths assert full

@@ -2407,10 +2407,6 @@ async fn handle_request(
     let resp_status = resp_parts.status.as_u16();
     tracing::Span::current().record("status", resp_status);
 
-    // Capture response headers BEFORE stripping Content-Encoding.
-    // Telemetry logs still record the original headers (useful for debugging).
-    let resp_hdrs = format_headers(&resp_parts.headers);
-
     // Strip Content-Encoding / Content-Length when the body is gzip --
     // the DecompressionHook (sync ChunkHook) handles the actual byte
     // transformation downstream. The guest receives uncompressed data
@@ -2428,6 +2424,7 @@ async fn handle_request(
         resp_parts.headers.remove("content-encoding");
         resp_parts.headers.remove("content-length");
     }
+    let mut resp_hdrs = format_headers(&resp_parts.headers);
 
     // Pick the response-side preview cap. AI provider bodies always
     // capture at least AI_BODY_PREVIEW so non-streaming usage parsing
@@ -2663,6 +2660,7 @@ async fn handle_request(
             response_body.len(),
             is_gzip,
         );
+        resp_hdrs = format_headers(&resp_parts.headers);
 
         Full::new(response_body)
             .map_err(|never| -> anyhow::Error { match never {} })

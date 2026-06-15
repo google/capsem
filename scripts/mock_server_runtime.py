@@ -69,7 +69,7 @@ ENDPOINTS = [
     "/oauth/authorize",
     "/oauth/token",
     "/mcp",
-    "/slow-chunks",
+    "/chunked",
     "/credential/response",
     "/echo",
     "/deny-target",
@@ -835,16 +835,24 @@ class MockHandler(BaseHTTPRequestHandler):
             )
         elif path == "/api/client/features":
             self._send_json({"version": 1, "features": []})
-        elif path == "/slow-chunks":
+        elif path == "/chunked":
+            chunks = []
             self.send_response(HTTPStatus.OK)
             self.send_header("content-type", "text/plain; charset=utf-8")
             self.send_header("connection", "close")
             self.end_headers()
             for idx in range(4):
                 time.sleep(0.01)
-                self.wfile.write(f"chunk-{idx}\n".encode())
+                chunk = f"chunk-{idx}\n".encode()
+                chunks.append(chunk)
+                self.wfile.write(chunk)
                 self.wfile.flush()
             self.close_connection = True
+            self._record_request(
+                HTTPStatus.OK,
+                "text/plain; charset=utf-8",
+                b"".join(chunks),
+            )
         elif path == "/credential/response":
             self._send_json(
                 {
@@ -1091,6 +1099,7 @@ class MockHandler(BaseHTTPRequestHandler):
             self.send_header("content-length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
+            self._record_request(HTTPStatus.OK, "application/octet-stream", data)
         else:
             self._send(HTTPStatus.OK, data, "application/octet-stream")
 
