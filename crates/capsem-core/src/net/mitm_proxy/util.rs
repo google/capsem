@@ -5,7 +5,7 @@ use crate::credential_broker::{detect_http_credential_with_provider, CredentialO
 use crate::net::ai_traffic::provider::{ModelProtocol, ProviderKind};
 
 /// Returns true only for paths that are actual LLM API endpoints
-/// (generation, embeddings, audio -- anything billed per token/request).
+/// (generation, embeddings, images, audio -- anything billed per token/request).
 pub(super) fn is_llm_api_path(protocol: ModelProtocol, path: &str) -> bool {
     match protocol {
         ModelProtocol::Anthropic => {
@@ -16,6 +16,7 @@ pub(super) fn is_llm_api_path(protocol: ModelProtocol, path: &str) -> bool {
                 || path.starts_with("/v1/responses")
                 || path.starts_with("/v1/completions")
                 || path.starts_with("/v1/embeddings")
+                || path.starts_with("/v1/images")
                 || path.starts_with("/v1/audio")
         }
         ModelProtocol::Google => {

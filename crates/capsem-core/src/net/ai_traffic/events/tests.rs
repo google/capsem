@@ -672,6 +672,29 @@ fn non_streaming_openai_responses_text_is_recorded() {
 }
 
 #[test]
+fn non_streaming_openai_image_generation_payload_is_recorded() {
+    let body = br#"{
+        "created": 1710000000,
+        "data": [
+            {
+                "b64_json": "Y2Fwc2VtLW1vY2staW1hZ2U="
+            }
+        ],
+        "usage": {
+            "input_tokens": 11,
+            "output_tokens": 17,
+            "total_tokens": 28
+        }
+    }"#;
+
+    let summary = parse_non_streaming_response_summary(ModelProtocol::OpenAi, body);
+
+    assert_eq!(summary.text, "Y2Fwc2VtLW1vY2staW1hZ2U=");
+    assert!(summary.thinking.is_empty());
+    assert_eq!(summary.stop_reason, Some(StopReason::EndTurn));
+}
+
+#[test]
 fn non_streaming_invalid_json() {
     let (model, input, output, details) =
         parse_non_streaming_usage(ModelProtocol::Google, b"not json");

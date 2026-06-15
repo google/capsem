@@ -57,6 +57,8 @@ ENDPOINTS = [
     "/model/no-tool-call",
     "/v1beta/models/gemini-2.5-flash:streamGenerateContent",
     "/v1/chat/completions",
+    "/v1/embeddings",
+    "/v1/images/generations",
     "/v1/responses",
     "/v1/messages",
     "/v1internal:listExperiments",
@@ -179,6 +181,41 @@ def _responses_payload_for_output(model: str = "mock-local", output_text: str = 
             "output_tokens": 5,
             "total_tokens": 12,
             "output_tokens_details": {"reasoning_tokens": 2},
+        },
+    }
+
+
+def _embedding_payload(model: str = "text-embedding-3-small") -> dict:
+    return {
+        "object": "list",
+        "data": [
+            {
+                "object": "embedding",
+                "embedding": [0.125, -0.25, 0.5, 0.75],
+                "index": 0,
+            }
+        ],
+        "model": model,
+        "usage": {
+            "prompt_tokens": 9,
+            "total_tokens": 9,
+        },
+    }
+
+
+def _image_generation_payload() -> dict:
+    return {
+        "created": 1_786_800_000,
+        "data": [
+            {
+                "b64_json": base64.b64encode(b"capsem-mock-image").decode("ascii"),
+                "revised_prompt": "Capsem ledger image fixture",
+            }
+        ],
+        "usage": {
+            "input_tokens": 11,
+            "output_tokens": 17,
+            "total_tokens": 28,
         },
     }
 
@@ -913,6 +950,17 @@ class MockHandler(BaseHTTPRequestHandler):
                     ollama_tool_shape=include_tool_call,
                 )
             )
+        elif path == "/v1/embeddings":
+            payload = self._json_body()
+            model = (
+                payload.get("model")
+                if isinstance(payload.get("model"), str)
+                else "text-embedding-3-small"
+            )
+            self._send_json(_embedding_payload(model))
+        elif path == "/v1/images/generations":
+            self._body()
+            self._send_json(_image_generation_payload())
         elif path == "/v1/responses":
             payload = self._json_body()
             model = payload.get("model") if isinstance(payload.get("model"), str) else "mock-local"

@@ -465,6 +465,16 @@ fn anthropic_non_streaming_tool_calls(json: &serde_json::Value) -> Vec<ToolCall>
 
 fn openai_non_streaming_response_summary(json: &serde_json::Value) -> NonStreamingResponseSummary {
     let mut summary = NonStreamingResponseSummary::default();
+    if let Some(data) = json.get("data").and_then(|value| value.as_array()) {
+        for item in data {
+            append_json_string(&mut summary.text, item.get("b64_json"));
+            append_json_string(&mut summary.text, item.get("url"));
+        }
+        if !summary.text.is_empty() {
+            summary.stop_reason = Some(StopReason::EndTurn);
+            return summary;
+        }
+    }
     if json.get("object").and_then(|value| value.as_str()) == Some("response") {
         if json
             .get("status")

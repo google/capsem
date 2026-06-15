@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed (route surfaces and diagnostics)
+- Extended the OpenAI/Codex Ironbank ledger proof to cover Responses,
+  embeddings, and image-generation traffic through the same VM/session DB
+  path. OpenAI image endpoints are now classified as model traffic and their
+  generated payloads are recorded in `model_calls.text_content` while brokered
+  credentials remain opaque and raw secrets stay out of DB/log output.
 - Added a host `capsem-mcp` Ironbank proof that exercises the real stdio MCP
   server against `capsem-service`, verifies every advertised tool, calls the
   session/file/exec/MCP/log/triage routes with deterministic inputs, and

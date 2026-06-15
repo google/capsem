@@ -146,6 +146,51 @@ emit_result("openai", BASE_DOMAIN, "/v1/responses", HERMETIC_OPENAI_PRICED_MODEL
     ).strip()
 
 
+def openai_embeddings_and_image_script(base_url: str) -> str:
+    return textwrap.dedent(
+        common_result_script_prelude(base_url, "openai-extra")
+        + r'''
+def post(path, body):
+    headers = {"content-type": "application/json"}
+    raw_secret = add_openai_auth(headers)
+    req = urllib.request.Request(
+        BASE_URL + path,
+        data=json.dumps(body).encode(),
+        headers=headers,
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=60) as response:
+        return raw_secret, json.loads(response.read().decode())
+
+embedding_input = "Embed Capsem ledger nonce " + NONCE
+raw_secret, embedding = post("/v1/embeddings", {
+    "model": "text-embedding-3-small",
+    "input": embedding_input,
+})
+image_prompt = "Draw a small ledger mark for " + NONCE
+_, image = post("/v1/images/generations", {
+    "model": "gpt-5-image-mini",
+    "prompt": image_prompt,
+    "size": "256x256",
+    "response_format": "b64_json",
+})
+print("IRONBANK_CLIENT_RESULT=" + json.dumps({
+    "provider": "openai",
+    "domain": BASE_DOMAIN,
+    "embedding_path": "/v1/embeddings",
+    "embedding_model": "text-embedding-3-small",
+    "embedding_input": embedding_input,
+    "embedding_vector": embedding["data"][0]["embedding"],
+    "image_path": "/v1/images/generations",
+    "image_model": "gpt-5-image-mini",
+    "image_prompt": image_prompt,
+    "image_b64": image["data"][0]["b64_json"],
+    "credential_nonce": NONCE,
+}, sort_keys=True))
+'''
+    ).strip()
+
+
 def live_openai_responses_api_script() -> str:
     return textwrap.dedent(
         common_result_script_prelude("https://api.openai.com", "live-openai-api")

@@ -12,6 +12,7 @@ from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
+import sqlite3
 import textwrap
 import time
 import uuid
@@ -24,6 +25,7 @@ from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_proc
 from helpers.service import ServiceInstance, wait_exec_ready, vm_name
 from ironbank.model_client_assertions import assert_live_model_client, assert_one_model_client
 from ironbank.model_client_config import HERMETIC_OPENAI_PRICED_MODEL
+from ironbank.model_ledger import _assert_event_id
 from ironbank.model_pricing import assert_model_call_price
 from ironbank.model_client_scripts import (
     agy_cli_script,
@@ -34,6 +36,7 @@ from ironbank.model_client_scripts import (
     codex_ollama_launch_script,
     live_openai_chat_completions_script,
     live_openai_responses_api_script,
+    openai_embeddings_and_image_script,
     openai_responses_api_script,
     openai_two_tool_calls_script,
 )
@@ -105,8 +108,14 @@ def _live_provider_secret(name: str) -> str | None:
     return None
 
 
-def _credential_ref_for_secret(secret: str) -> str:
-    return f"credential:blake3:{blake3.blake3(secret.encode('utf-8')).hexdigest()}"
+def _credential_ref_for_secret(secret: str, *, provider: str = "openai") -> str:
+    hasher = blake3.blake3()
+    hasher.update(b"capsem.credential.v1")
+    hasher.update(b"\0")
+    hasher.update(provider.encode("utf-8"))
+    hasher.update(b"\0")
+    hasher.update(secret.encode("utf-8"))
+    return f"credential:blake3:{hasher.hexdigest()}"
 
 
 @dataclass
@@ -384,6 +393,161 @@ def live_model_client_env():
 
 def test_openai_responses_api_ledger_contract(model_client_env: ModelClientEnv):
     assert_one_model_client(model_client_env, openai_responses_api_script("https://api.openai.com"))
+    _assert_openai_embeddings_and_image_ledger(model_client_env)
+
+
+def _assert_openai_embeddings_and_image_ledger(model_client_env: ModelClientEnv) -> None:
+    result = model_client_env.run_python(
+        openai_embeddings_and_image_script("https://api.openai.com")
+    )
+    raw_secret = "sk-" + result["credential_nonce"]
+    expected_credential_ref = _credential_ref_for_secret(raw_secret)
+    assert result["provider"] == "openai"
+    assert result["domain"] == "api.openai.com"
+    assert result["embedding_path"] == "/v1/embeddings"
+    assert result["embedding_model"] == "text-embedding-3-small"
+    assert result["embedding_vector"] == [0.125, -0.25, 0.5, 0.75]
+    assert result["image_path"] == "/v1/images/generations"
+    assert result["image_model"] == "gpt-5-image-mini"
+    assert result["image_b64"] == "Y2Fwc2VtLW1vY2staW1hZ2U="
+
+    with closing(sqlite3.connect(f"file:{model_client_env.db_path}?mode=ro", uri=True)) as conn:
+        conn.row_factory = sqlite3.Row
+        upstream_records = [
+            json.loads(line)
+            for line in model_client_env.upstream_transcript_path.read_text(
+                encoding="utf-8"
+            ).splitlines()
+            if line.strip()
+        ]
+        embedding_upstream = [
+            row for row in upstream_records if row.get("path") == result["embedding_path"]
+        ]
+        image_upstream = [
+            row for row in upstream_records if row.get("path") == result["image_path"]
+        ]
+        assert len(embedding_upstream) == 1, embedding_upstream
+        assert len(image_upstream) == 1, image_upstream
+        assert result["embedding_input"] in embedding_upstream[0]["request_body"]
+        assert result["embedding_model"] in embedding_upstream[0]["request_body"]
+        assert result["image_prompt"] in image_upstream[0]["request_body"]
+        assert result["image_model"] in image_upstream[0]["request_body"]
+        assert result["image_b64"] in image_upstream[0]["response_body"]
+
+        model_rows = conn.execute(
+            """
+            SELECT *
+            FROM model_calls
+            WHERE provider = 'openai'
+              AND path IN ('/v1/embeddings', '/v1/images/generations')
+            ORDER BY id
+            """
+        ).fetchall()
+        by_path = {row["path"]: row for row in model_rows}
+        assert set(by_path) == {"/v1/embeddings", "/v1/images/generations"}, [
+            dict(row) for row in model_rows
+        ]
+        embedding_model = by_path["/v1/embeddings"]
+        image_model = by_path["/v1/images/generations"]
+        for row in (embedding_model, image_model):
+            _assert_event_id(row["event_id"])
+            assert row["method"] == "POST", dict(row)
+            assert row["status_code"] == 200, dict(row)
+            assert row["request_bytes"] > 0, dict(row)
+            assert row["response_bytes"] > 0, dict(row)
+            assert row["credential_ref"] == expected_credential_ref, dict(row)
+            assert row["trace_id"], dict(row)
+            assert_model_call_price(row)
+        assert embedding_model["model"] == result["embedding_model"], dict(embedding_model)
+        assert embedding_model["input_tokens"] == 9, dict(embedding_model)
+        assert embedding_model["output_tokens"] in {0, None}, dict(embedding_model)
+        assert result["embedding_input"] in (
+            embedding_model["request_body_preview"] or ""
+        ), dict(embedding_model)
+        assert image_model["model"] == result["image_model"], dict(image_model)
+        assert image_model["input_tokens"] == 11, dict(image_model)
+        assert image_model["output_tokens"] == 17, dict(image_model)
+        assert result["image_prompt"] in (image_model["request_body_preview"] or ""), dict(
+            image_model
+        )
+        assert result["image_b64"] in (image_model["text_content"] or ""), dict(
+            image_model
+        )
+
+        net_rows = conn.execute(
+            """
+            SELECT *
+            FROM net_events
+            WHERE domain = 'api.openai.com'
+              AND path IN ('/v1/embeddings', '/v1/images/generations')
+            ORDER BY id
+            """
+        ).fetchall()
+        net_by_path = {row["path"]: row for row in net_rows}
+        assert set(net_by_path) == {"/v1/embeddings", "/v1/images/generations"}, [
+            dict(row) for row in net_rows
+        ]
+        for path, row in net_by_path.items():
+            _assert_event_id(row["event_id"])
+            assert row["method"] == "POST", dict(row)
+            assert row["status_code"] == 200, dict(row)
+            assert row["decision"] == "allowed", dict(row)
+            assert row["credential_ref"] == expected_credential_ref, dict(row)
+            assert row["bytes_sent"] > 0, dict(row)
+            assert row["bytes_received"] > 0, dict(row)
+            request_headers = (row["request_headers"] or "").lower()
+            assert "authorization: hash:" in request_headers, dict(row)
+            assert raw_secret.lower() not in request_headers, dict(row)
+            assert f"bearer {raw_secret.lower()}" not in request_headers, dict(row)
+            if path == "/v1/embeddings":
+                assert result["embedding_input"] in (
+                    row["request_body_preview"] or ""
+                ), dict(row)
+            else:
+                assert result["image_prompt"] in (row["request_body_preview"] or ""), dict(
+                    row
+                )
+                assert result["image_b64"] in (row["response_body_preview"] or ""), dict(
+                    row
+                )
+
+        event_ids = [row["event_id"] for row in (*model_rows, *net_rows)]
+        placeholders = ",".join("?" for _ in event_ids)
+        security_rows = conn.execute(
+            f"""
+            SELECT *
+            FROM security_rule_events
+            WHERE event_id IN ({placeholders})
+            ORDER BY id
+            """,
+            event_ids,
+        ).fetchall()
+        assert {row["event_id"] for row in security_rows} >= set(event_ids), {
+            "event_ids": event_ids,
+            "security_rows": [dict(row) for row in security_rows],
+        }
+        assert all(json.loads(row["event_json"]) for row in security_rows)
+        assert all(json.loads(row["rule_json"]) for row in security_rows)
+
+        substitution_rows = conn.execute(
+            """
+            SELECT *
+            FROM substitution_events
+            WHERE substitution_ref = ?
+            ORDER BY id
+            """,
+            (expected_credential_ref,),
+        ).fetchall()
+        assert {"captured", "brokered"} <= {row["outcome"] for row in substitution_rows}, [
+            dict(row) for row in substitution_rows
+        ]
+        assert all(row["provider"] == "openai" for row in substitution_rows)
+        _assert_raw_absent_from_db(conn, raw_secret)
+    for log_path in model_client_env.log_paths:
+        if log_path.exists():
+            assert raw_secret not in log_path.read_text(
+                encoding="utf-8", errors="replace"
+            ), f"raw secret leaked in {log_path}"
 
 
 @pytest.mark.live_provider
