@@ -2125,6 +2125,18 @@ async fn handle_request(
     let mut tcp_us = 0u64;
     let mut tls_us = 0u64;
     let mut handshake_us = 0u64;
+    let upstream_override = policy.find_upstream_override(domain, upstream_port).cloned();
+    let dial_target = upstream_override
+        .as_ref()
+        .map(|route| route.dial.clone())
+        .unwrap_or_else(|| format!("{domain}:{upstream_port}"));
+    let upstream_protocol = upstream_override
+        .as_ref()
+        .map(|route| match route.protocol {
+            crate::net::policy::UpstreamOverrideProtocol::Http => Protocol::Http,
+            crate::net::policy::UpstreamOverrideProtocol::Tls => Protocol::Tls,
+        })
+        .unwrap_or(protocol);
 
     // Create a fresh upstream connection if needed. TLS path goes
     // TCP -> TLS handshake -> HTTP/1.1 handshake; HTTP path skips
@@ -2134,7 +2146,7 @@ async fn handle_request(
     } else {
         let dial_start = Instant::now();
         let tcp_start = Instant::now();
-        let upstream_tcp = match tokio::net::TcpStream::connect(format!("{domain}:{upstream_port}"))
+        let upstream_tcp = match tokio::net::TcpStream::connect(&dial_target)
             .instrument(upstream_prepare_span.clone())
             .await
         {
@@ -2150,6 +2162,8 @@ async fn handle_request(
                 tracing::debug!(
                     target: "mitm.transport.upstream",
                     domain, port = upstream_port, reused = false,
+                    dial_target = %dial_target,
+                    upstream_override = upstream_override.is_some(),
                     upstream_lock_us, ready_us, tcp_us,
                     error = %e, "upstream TCP connect failed"
                 );
@@ -2173,7 +2187,7 @@ async fn handle_request(
 
         // TLS path: wrap TCP in a TLS stream, time the handshake.
         // HTTP path: skip TLS, hand the bare TCP stream to hyper.
-        let (sender, hs_us) = match protocol {
+        let (sender, hs_us) = match upstream_protocol {
             Protocol::Tls => {
                 let connector = tokio_rustls::TlsConnector::from(Arc::clone(upstream_tls));
                 let server_name = match rustls::pki_types::ServerName::try_from(domain.to_string())
@@ -2297,6 +2311,8 @@ async fn handle_request(
     tracing::debug!(
         target: "mitm.transport.upstream",
         domain, port = upstream_port, reused, upstream_lock_us, ready_us,
+        dial_target = %dial_target,
+        upstream_override = upstream_override.is_some(),
         tcp_us, tls_us, handshake_us,
         "upstream sender prepared"
     );

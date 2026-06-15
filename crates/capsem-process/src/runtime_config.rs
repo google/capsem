@@ -217,4 +217,45 @@ upstreams = ["127.0.0.1:5353"]
             capsem_core::net::policy_config::SecurityRuleAction::Block
         );
     }
+
+    #[test]
+    fn runtime_profile_source_loads_exact_upstream_overrides() {
+        let dir = tempfile::tempdir().unwrap();
+        let active_path = dir.path().join("vm/active_profile.toml");
+        std::fs::create_dir_all(active_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &active_path,
+            r#"
+id = "code"
+name = "Code"
+description = "Runtime test active profile."
+revision = "test.1"
+
+[network.upstream_overrides."daily-cloudcode-pa.googleapis.com:443"]
+dial = "127.0.0.1:3713"
+protocol = "http"
+"#,
+        )
+        .unwrap();
+
+        let runtime = RuntimeProfileSource::new(&active_path).load().unwrap();
+        let override_route = runtime
+            .network
+            .find_upstream_override("daily-cloudcode-pa.googleapis.com", 443)
+            .expect("exact override should load");
+
+        assert_eq!(override_route.dial, "127.0.0.1:3713");
+        assert_eq!(
+            override_route.protocol,
+            capsem_core::net::policy::UpstreamOverrideProtocol::Http
+        );
+        assert!(runtime
+            .network
+            .find_upstream_override("daily-cloudcode-pa.googleapis.com", 80)
+            .is_none());
+        assert!(runtime
+            .network
+            .find_upstream_override("evil.example", 443)
+            .is_none());
+    }
 }

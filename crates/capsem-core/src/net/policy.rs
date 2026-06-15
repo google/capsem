@@ -9,6 +9,7 @@
 //! enforcement before redirects, then applies redirects before the
 //! upstream forward.
 
+use std::collections::BTreeMap;
 use std::net::IpAddr;
 
 /// How a domain pattern matches incoming requests.
@@ -90,6 +91,25 @@ impl DnsRedirect {
     }
 }
 
+/// Upstream transport used after a routing override chooses the dial target.
+///
+/// This is network routing only: security decisions still evaluate the
+/// original observed host/port/path before any upstream dial happens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpstreamOverrideProtocol {
+    /// Dial the override target as plain HTTP/1.1.
+    Http,
+    /// Dial the override target with TLS.
+    Tls,
+}
+
+/// Exact upstream routing override.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpstreamOverride {
+    pub dial: String,
+    pub protocol: UpstreamOverrideProtocol,
+}
+
 /// Network mechanics derived from profile/corp config.
 ///
 /// Security decisions live in the security-rule engine. This type must not
@@ -108,6 +128,11 @@ pub struct NetworkPolicy {
     /// DNS redirect rules (T3.d). Evaluated in order, first match wins after
     /// security-rule enforcement has allowed the query. Empty by default.
     pub dns_redirects: Vec<DnsRedirect>,
+    /// Exact upstream dial overrides keyed by `host:port`.
+    ///
+    /// Used for corp/dev controlled routing such as hermetic replay. It must
+    /// not change the event host/port observed by CEL or the ledger.
+    pub upstream_overrides: BTreeMap<String, UpstreamOverride>,
 }
 
 /// Default max body capture size (4 KB).
@@ -131,6 +156,7 @@ impl NetworkPolicy {
             max_body_capture: DEFAULT_MAX_BODY_CAPTURE,
             http_upstream_ports: DEFAULT_HTTP_UPSTREAM_PORTS.to_vec(),
             dns_redirects: Vec::new(),
+            upstream_overrides: BTreeMap::new(),
         }
     }
 
@@ -145,6 +171,12 @@ impl NetworkPolicy {
         self.dns_redirects
             .iter()
             .find(|r| r.matcher.matches(qname) && r.qtype.is_none_or(|t| t == qtype))
+    }
+
+    /// Find an exact upstream override for `(domain, port)`.
+    pub fn find_upstream_override(&self, domain: &str, port: u16) -> Option<&UpstreamOverride> {
+        self.upstream_overrides
+            .get(&format!("{}:{port}", domain.to_lowercase()))
     }
 
     /// Create a policy with hardcoded defaults for development.

@@ -467,6 +467,8 @@ pub struct NetworkConfig {
     pub http_upstream_ports: Vec<u16>,
     #[serde(default, skip_serializing_if = "DnsNetworkConfig::is_empty")]
     pub dns: DnsNetworkConfig,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub upstream_overrides: BTreeMap<String, UpstreamOverrideConfig>,
 }
 
 impl NetworkConfig {
@@ -475,6 +477,7 @@ impl NetworkConfig {
             && self.max_body_capture.is_none()
             && self.http_upstream_ports.is_empty()
             && self.dns.is_empty()
+            && self.upstream_overrides.is_empty()
     }
 
     pub fn validate(&self) -> Result<(), String> {
@@ -485,6 +488,10 @@ impl NetworkConfig {
             if *port == 0 {
                 return Err("network.http_upstream_ports must not contain 0".to_string());
             }
+        }
+        for (target, override_config) in &self.upstream_overrides {
+            validate_upstream_override_target(target)?;
+            override_config.validate(target)?;
         }
         self.dns.validate()
     }
@@ -498,6 +505,11 @@ impl NetworkConfig {
             max_body_capture: Some(policy.max_body_capture),
             http_upstream_ports: policy.http_upstream_ports.clone(),
             dns,
+            upstream_overrides: policy
+                .upstream_overrides
+                .iter()
+                .map(|(target, route)| (target.clone(), UpstreamOverrideConfig::from_policy(route)))
+                .collect(),
         }
     }
 
@@ -511,7 +523,88 @@ impl NetworkConfig {
         if !self.http_upstream_ports.is_empty() {
             policy.http_upstream_ports = self.http_upstream_ports.clone();
         }
+        if !self.upstream_overrides.is_empty() {
+            policy.upstream_overrides = self
+                .upstream_overrides
+                .iter()
+                .map(|(target, route)| {
+                    (
+                        target.to_lowercase(),
+                        crate::net::policy::UpstreamOverride {
+                            dial: route.dial.clone(),
+                            protocol: route.protocol.to_policy(),
+                        },
+                    )
+                })
+                .collect();
+        }
     }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct UpstreamOverrideConfig {
+    pub dial: String,
+    pub protocol: UpstreamOverrideProtocolConfig,
+}
+
+impl UpstreamOverrideConfig {
+    fn validate(&self, target: &str) -> Result<(), String> {
+        self.dial.parse::<std::net::SocketAddr>().map_err(|error| {
+            format!("network.upstream_overrides.{target}.dial is invalid: {error}")
+        })?;
+        Ok(())
+    }
+
+    fn from_policy(route: &crate::net::policy::UpstreamOverride) -> Self {
+        Self {
+            dial: route.dial.clone(),
+            protocol: UpstreamOverrideProtocolConfig::from_policy(route.protocol),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum UpstreamOverrideProtocolConfig {
+    Http,
+    Tls,
+}
+
+impl UpstreamOverrideProtocolConfig {
+    fn to_policy(self) -> crate::net::policy::UpstreamOverrideProtocol {
+        match self {
+            Self::Http => crate::net::policy::UpstreamOverrideProtocol::Http,
+            Self::Tls => crate::net::policy::UpstreamOverrideProtocol::Tls,
+        }
+    }
+
+    fn from_policy(protocol: crate::net::policy::UpstreamOverrideProtocol) -> Self {
+        match protocol {
+            crate::net::policy::UpstreamOverrideProtocol::Http => Self::Http,
+            crate::net::policy::UpstreamOverrideProtocol::Tls => Self::Tls,
+        }
+    }
+}
+
+fn validate_upstream_override_target(target: &str) -> Result<(), String> {
+    let (host, port) = target.rsplit_once(':').ok_or_else(|| {
+        format!("network.upstream_overrides key {target:?} must be exact host:port")
+    })?;
+    if host.trim().is_empty() {
+        return Err(format!(
+            "network.upstream_overrides key {target:?} must include a host"
+        ));
+    }
+    let port = port.parse::<u16>().map_err(|error| {
+        format!("network.upstream_overrides key {target:?} has invalid port: {error}")
+    })?;
+    if port == 0 {
+        return Err(format!(
+            "network.upstream_overrides key {target:?} must not use port 0"
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]

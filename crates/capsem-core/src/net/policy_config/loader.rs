@@ -351,6 +351,12 @@ pub fn load_settings_and_corp_files() -> (SettingsFile, SettingsFile) {
                 if corp.network.dns.upstreams.is_empty() && !file.network.dns.upstreams.is_empty() {
                     corp.network.dns.upstreams = file.network.dns.upstreams;
                 }
+                for (target, override_config) in file.network.upstream_overrides {
+                    corp.network
+                        .upstream_overrides
+                        .entry(target)
+                        .or_insert(override_config);
+                }
             }
             Err(e) => {
                 tracing::warn!("corp settings at {}: {e}", path.display());
