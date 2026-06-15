@@ -293,15 +293,20 @@ pub fn parse_non_streaming_usage(
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
             let usage = json.get("usage");
-            let input = usage
-                .and_then(|u| u.get("prompt_tokens"))
-                .and_then(|v| v.as_u64());
-            let output = usage
-                .and_then(|u| u.get("completion_tokens"))
-                .and_then(|v| v.as_u64());
+            let input = usage.and_then(|u| {
+                u.get("prompt_tokens")
+                    .or_else(|| u.get("input_tokens"))
+                    .and_then(|v| v.as_u64())
+            });
+            let output = usage.and_then(|u| {
+                u.get("completion_tokens")
+                    .or_else(|| u.get("output_tokens"))
+                    .and_then(|v| v.as_u64())
+            });
             let mut details = BTreeMap::new();
             if let Some(v) = usage
                 .and_then(|u| u.get("prompt_tokens_details"))
+                .or_else(|| usage.and_then(|u| u.get("input_tokens_details")))
                 .and_then(|u| u.get("cached_tokens"))
                 .and_then(|v| v.as_u64())
             {
@@ -309,6 +314,7 @@ pub fn parse_non_streaming_usage(
             }
             if let Some(v) = usage
                 .and_then(|u| u.get("completion_tokens_details"))
+                .or_else(|| usage.and_then(|u| u.get("output_tokens_details")))
                 .and_then(|u| u.get("reasoning_tokens"))
                 .and_then(|v| v.as_u64())
             {
@@ -459,6 +465,48 @@ fn anthropic_non_streaming_tool_calls(json: &serde_json::Value) -> Vec<ToolCall>
 
 fn openai_non_streaming_response_summary(json: &serde_json::Value) -> NonStreamingResponseSummary {
     let mut summary = NonStreamingResponseSummary::default();
+    if json.get("object").and_then(|value| value.as_str()) == Some("response") {
+        if json
+            .get("status")
+            .and_then(|value| value.as_str())
+            .is_some_and(|status| status == "completed")
+        {
+            summary.stop_reason = Some(StopReason::EndTurn);
+        }
+        if let Some(output) = json.get("output").and_then(|value| value.as_array()) {
+            for item in output {
+                match item.get("type").and_then(|value| value.as_str()) {
+                    Some("message") => {
+                        if let Some(content) =
+                            item.get("content").and_then(|value| value.as_array())
+                        {
+                            for part in content {
+                                append_openai_content(&mut summary.text, Some(part));
+                            }
+                        }
+                    }
+                    Some("reasoning") => {
+                        if let Some(summary_parts) =
+                            item.get("summary").and_then(|value| value.as_array())
+                        {
+                            for part in summary_parts {
+                                append_openai_content(&mut summary.thinking, Some(part));
+                            }
+                        }
+                        if let Some(content) =
+                            item.get("content").and_then(|value| value.as_array())
+                        {
+                            for part in content {
+                                append_openai_content(&mut summary.thinking, Some(part));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        return summary;
+    }
     let Some(choices) = json.get("choices").and_then(|value| value.as_array()) else {
         return summary;
     };
@@ -555,12 +603,21 @@ fn append_openai_content(target: &mut String, value: Option<&serde_json::Value>)
     if append_json_string(target, Some(value)) {
         return;
     }
+    if let Some(part_type) = value.get("type").and_then(|value| value.as_str()) {
+        match part_type {
+            "text" | "output_text" | "summary_text" => {
+                append_json_string(target, value.get("text"));
+            }
+            _ => {}
+        }
+        return;
+    }
     let Some(parts) = value.as_array() else {
         return;
     };
     for part in parts {
         match part.get("type").and_then(|value| value.as_str()) {
-            Some("text") | Some("output_text") => {
+            Some("text") | Some("output_text") | Some("summary_text") => {
                 append_json_string(target, part.get("text"));
             }
             _ => {}
@@ -591,6 +648,43 @@ fn stop_reason_from_provider_string(reason: &str) -> StopReason {
 
 fn openai_non_streaming_tool_calls(json: &serde_json::Value) -> Vec<ToolCall> {
     let mut calls = Vec::new();
+    if json.get("object").and_then(|value| value.as_str()) == Some("response") {
+        if let Some(output) = json.get("output").and_then(|value| value.as_array()) {
+            for item in output {
+                if item.get("type").and_then(|value| value.as_str()) != Some("function_call") {
+                    continue;
+                }
+                let index = calls.len() as u32;
+                let name = item
+                    .get("name")
+                    .and_then(|name| name.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                if name.is_empty() {
+                    continue;
+                }
+                let call_id = item
+                    .get("call_id")
+                    .or_else(|| item.get("id"))
+                    .and_then(|id| id.as_str())
+                    .map(str::to_string)
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or_else(|| format!("openai_{}_{}", name, index));
+                let arguments = item
+                    .get("arguments")
+                    .and_then(|arguments| arguments.as_str())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| "{}".to_string());
+                calls.push(ToolCall {
+                    index,
+                    call_id,
+                    name,
+                    arguments,
+                });
+            }
+        }
+        return calls;
+    }
     let Some(choices) = json.get("choices").and_then(|value| value.as_array()) else {
         return calls;
     };

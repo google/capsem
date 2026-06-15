@@ -475,6 +475,51 @@ fn non_streaming_openai_usage() {
 }
 
 #[test]
+fn non_streaming_openai_responses_usage() {
+    let body = br#"{
+        "id": "resp_ironbank_real_shape",
+        "object": "response",
+        "model": "gpt-5-nano-2025-08-07",
+        "output": [
+            {
+                "id": "rs_01",
+                "type": "reasoning",
+                "content": [],
+                "summary": []
+            },
+            {
+                "id": "msg_01",
+                "type": "message",
+                "status": "completed",
+                "content": [
+                    {
+                        "type": "output_text",
+                        "annotations": [],
+                        "text": "ironbank-live-nonce"
+                    }
+                ],
+                "role": "assistant"
+            }
+        ],
+        "usage": {
+            "input_tokens": 34,
+            "input_tokens_details": {"cached_tokens": 3},
+            "output_tokens": 36,
+            "output_tokens_details": {"reasoning_tokens": 5},
+            "total_tokens": 70
+        }
+    }"#;
+
+    let (model, input, output, details) = parse_non_streaming_usage(ModelProtocol::OpenAi, body);
+
+    assert_eq!(model.as_deref(), Some("gpt-5-nano-2025-08-07"));
+    assert_eq!(input, Some(34));
+    assert_eq!(output, Some(36));
+    assert_eq!(details.get("cache_read"), Some(&3));
+    assert_eq!(details.get("thinking"), Some(&5));
+}
+
+#[test]
 fn non_streaming_ollama_usage() {
     let body = br#"{
         "model": "llama3.1",
@@ -523,6 +568,35 @@ fn non_streaming_openai_tool_calls() {
 }
 
 #[test]
+fn non_streaming_openai_responses_tool_calls() {
+    let body = br#"{
+        "id": "resp_ironbank_tool",
+        "object": "response",
+        "model": "gpt-5-nano-2025-08-07",
+        "output": [
+            {
+                "id": "fc_01",
+                "type": "function_call",
+                "call_id": "call_ironbank_write",
+                "name": "exec_command",
+                "arguments": "{\"cmd\":\"printf '%s\\n' abc123 > /root/poem.md\"}"
+            }
+        ]
+    }"#;
+
+    let calls = parse_non_streaming_tool_calls(ModelProtocol::OpenAi, body);
+
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].index, 0);
+    assert_eq!(calls[0].call_id, "call_ironbank_write");
+    assert_eq!(calls[0].name, "exec_command");
+    assert_eq!(
+        calls[0].arguments,
+        r#"{"cmd":"printf '%s\n' abc123 > /root/poem.md"}"#
+    );
+}
+
+#[test]
 fn non_streaming_openai_text_survives_tool_call_response() {
     let body = br#"{
         "id": "chatcmpl-mock-local",
@@ -558,6 +632,43 @@ fn non_streaming_openai_text_survives_tool_call_response() {
     );
     assert!(summary.thinking.is_empty());
     assert_eq!(summary.stop_reason, Some(StopReason::ToolUse));
+}
+
+#[test]
+fn non_streaming_openai_responses_text_is_recorded() {
+    let body = br#"{
+        "id": "resp_ironbank_real_shape",
+        "object": "response",
+        "model": "gpt-5-nano-2025-08-07",
+        "status": "completed",
+        "output": [
+            {
+                "id": "rs_01",
+                "type": "reasoning",
+                "content": [],
+                "summary": []
+            },
+            {
+                "id": "msg_01",
+                "type": "message",
+                "status": "completed",
+                "content": [
+                    {
+                        "type": "output_text",
+                        "annotations": [],
+                        "text": "ironbank-live-nonce"
+                    }
+                ],
+                "role": "assistant"
+            }
+        ]
+    }"#;
+
+    let summary = parse_non_streaming_response_summary(ModelProtocol::OpenAi, body);
+
+    assert_eq!(summary.text, "ironbank-live-nonce");
+    assert!(summary.thinking.is_empty());
+    assert_eq!(summary.stop_reason, Some(StopReason::EndTurn));
 }
 
 #[test]

@@ -524,6 +524,21 @@ fn maybe_decompress_gzip_body(body: Bytes, is_gzip: bool) -> anyhow::Result<Byte
     Ok(Bytes::from(decompressed))
 }
 
+fn materialize_collected_response_headers(
+    headers: &mut http::HeaderMap,
+    body_len: usize,
+    is_gzip: bool,
+) {
+    if is_gzip {
+        headers.remove(http::header::CONTENT_ENCODING);
+    }
+    headers.remove(http::header::CONTENT_LENGTH);
+    headers.remove(http::header::TRANSFER_ENCODING);
+    if let Ok(value) = http::HeaderValue::from_str(&body_len.to_string()) {
+        headers.insert(http::header::CONTENT_LENGTH, value);
+    }
+}
+
 fn current_unix_ms() -> i64 {
     SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
@@ -2125,7 +2140,9 @@ async fn handle_request(
     let mut tcp_us = 0u64;
     let mut tls_us = 0u64;
     let mut handshake_us = 0u64;
-    let upstream_override = policy.find_upstream_override(domain, upstream_port).cloned();
+    let upstream_override = policy
+        .find_upstream_override(domain, upstream_port)
+        .cloned();
     let dial_target = upstream_override
         .as_ref()
         .map(|route| route.dial.clone())
@@ -2641,12 +2658,11 @@ async fn handle_request(
                 }
             }
         }
-        resp_parts.headers.remove(http::header::CONTENT_LENGTH);
-        if let Ok(value) = http::HeaderValue::from_str(&response_body.len().to_string()) {
-            resp_parts
-                .headers
-                .insert(http::header::CONTENT_LENGTH, value);
-        }
+        materialize_collected_response_headers(
+            &mut resp_parts.headers,
+            response_body.len(),
+            is_gzip,
+        );
 
         Full::new(response_body)
             .map_err(|never| -> anyhow::Error { match never {} })
@@ -2719,6 +2735,32 @@ async fn handle_request(
 mod tests {
     use super::*;
     use crate::net::policy_config::{SecurityRuleAction, SecurityRuleProfile, SecurityRuleSet};
+
+    #[test]
+    fn collected_gzip_chunked_response_headers_are_materialized() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert(
+            http::header::CONTENT_ENCODING,
+            http::HeaderValue::from_static("gzip"),
+        );
+        headers.insert(
+            http::header::TRANSFER_ENCODING,
+            http::HeaderValue::from_static("chunked"),
+        );
+        headers.insert(
+            http::header::CONTENT_LENGTH,
+            http::HeaderValue::from_static("9999"),
+        );
+
+        materialize_collected_response_headers(&mut headers, 1234, true);
+
+        assert!(!headers.contains_key(http::header::CONTENT_ENCODING));
+        assert!(!headers.contains_key(http::header::TRANSFER_ENCODING));
+        assert_eq!(
+            headers.get(http::header::CONTENT_LENGTH),
+            Some(&http::HeaderValue::from_static("1234"))
+        );
+    }
 
     #[test]
     fn provider_detection_marks_undeclared_model_path_as_unknown_provider() {
