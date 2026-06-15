@@ -881,6 +881,7 @@ fn credential_provider_for_request(
         Some(ProviderKind::Google) => Some(CredentialProvider::Google),
         Some(ProviderKind::OpenAi) => Some(CredentialProvider::OpenAi),
         Some(ProviderKind::Ollama) => Some(CredentialProvider::OpenAi),
+        Some(ProviderKind::Unknown) => None,
         None if domain.ends_with("anthropic.com") || domain.ends_with("claude.com") => {
             Some(CredentialProvider::Anthropic)
         }

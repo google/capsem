@@ -25,8 +25,10 @@ from ironbank.model_client_assertions import assert_one_model_client
 from ironbank.model_client_scripts import (
     agy_cli_script,
     claude_api_script,
+    claude_ollama_launch_script,
     claude_sdk_script,
     codex_cli_script,
+    codex_ollama_launch_script,
     openai_responses_api_script,
     openai_two_tool_calls_script,
 )
@@ -152,8 +154,15 @@ def model_client_env():
                 upstreams = [{json.dumps(ready["dns_udp_addr"])}]
 
                 [settings."security.web.http_upstream_ports"]
-                value = [80, 3713, 8080]
+                value = [80, 3713, 8080, 11434]
                 modified = "2026-06-14T00:00:00Z"
+
+                [ai.ollama]
+                name = "Ollama"
+                protocol = "ollama"
+                url = "http://127.0.0.1:3713"
+                listen_ports = [3713]
+                allowed_remote_targets = ["127.0.0.1:3713"]
 
                 [corp.rules.allow_ironbank_mock_model_server]
                 name = "allow_ironbank_mock_model_server"
@@ -161,7 +170,7 @@ def model_client_env():
                 priority = -100
                 detection_level = "informational"
                 reason = "Allow the hermetic Ironbank model fixture while preserving local-network ask defaults."
-                match = 'http.host == "127.0.0.1" && tcp.port == "3713" && (http.path == "/v1/responses" || http.path == "/v1/messages" || http.path == "/api/chat")'
+                match = 'http.host == "127.0.0.1" && tcp.port == "3713" && (http.path == "/" || http.path == "/api/show" || http.path == "/api/tags" || http.path == "/api/chat" || http.path == "/v1/responses" || http.path == "/v1/messages")'
                 """
             ).strip()
             + "\n",
@@ -486,6 +495,20 @@ def test_claude_sdk_ledger_contract(model_client_env: ModelClientEnv):
     assert_one_model_client(
         model_client_env,
         claude_sdk_script(model_client_env.mock_base_url),
+    )
+
+
+def test_ollama_launch_claude_ledger_contract(model_client_env: ModelClientEnv):
+    assert_one_model_client(
+        model_client_env,
+        claude_ollama_launch_script(model_client_env.mock_base_url),
+    )
+
+
+def test_ollama_launch_codex_ledger_contract(model_client_env: ModelClientEnv):
+    assert_one_model_client(
+        model_client_env,
+        codex_ollama_launch_script(model_client_env.mock_base_url),
     )
 
 

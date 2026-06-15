@@ -226,7 +226,7 @@ pub fn collect_summary(events: &[LlmEvent]) -> StreamSummary {
 /// Content-Encoding: gzip through the MITM proxy).
 /// Returns (model, input_tokens, output_tokens, usage_details).
 pub fn parse_non_streaming_usage(
-    kind: super::provider::ProviderKind,
+    kind: super::provider::ModelProtocol,
     body: &[u8],
 ) -> (
     Option<String>,
@@ -239,7 +239,7 @@ pub fn parse_non_streaming_usage(
     };
 
     match kind {
-        super::provider::ProviderKind::Google => {
+        super::provider::ModelProtocol::Google => {
             let model = json
                 .get("modelVersion")
                 .and_then(|v| v.as_str())
@@ -266,7 +266,7 @@ pub fn parse_non_streaming_usage(
             }
             (model, input, output, details)
         }
-        super::provider::ProviderKind::Anthropic => {
+        super::provider::ModelProtocol::Anthropic => {
             let model = json
                 .get("model")
                 .and_then(|v| v.as_str())
@@ -287,7 +287,7 @@ pub fn parse_non_streaming_usage(
             }
             (model, input, output, details)
         }
-        super::provider::ProviderKind::OpenAi => {
+        super::provider::ModelProtocol::OpenAi => {
             let model = json
                 .get("model")
                 .and_then(|v| v.as_str())
@@ -316,7 +316,7 @@ pub fn parse_non_streaming_usage(
             }
             (model, input, output, details)
         }
-        super::provider::ProviderKind::Ollama => {
+        super::provider::ModelProtocol::Ollama => {
             let model = json
                 .get("model")
                 .and_then(|v| v.as_str())
@@ -330,16 +330,16 @@ pub fn parse_non_streaming_usage(
 
 /// Parse model-native tool calls from a non-streaming JSON response body.
 pub fn parse_non_streaming_tool_calls(
-    kind: super::provider::ProviderKind,
+    kind: super::provider::ModelProtocol,
     body: &[u8],
 ) -> Vec<ToolCall> {
     let Some(json) = parse_response_json(body) else {
         return Vec::new();
     };
     match kind {
-        super::provider::ProviderKind::Google => google_non_streaming_tool_calls(&json),
-        super::provider::ProviderKind::OpenAi => openai_non_streaming_tool_calls(&json),
-        super::provider::ProviderKind::Anthropic => anthropic_non_streaming_tool_calls(&json),
+        super::provider::ModelProtocol::Google => google_non_streaming_tool_calls(&json),
+        super::provider::ModelProtocol::OpenAi => openai_non_streaming_tool_calls(&json),
+        super::provider::ModelProtocol::Anthropic => anthropic_non_streaming_tool_calls(&json),
         _ => Vec::new(),
     }
 }
@@ -348,17 +348,19 @@ pub fn parse_non_streaming_tool_calls(
 /// response body. This mirrors streaming `LlmEvent` collection so model
 /// ledgers do not lose content when a provider returns a complete JSON body.
 pub fn parse_non_streaming_response_summary(
-    kind: super::provider::ProviderKind,
+    kind: super::provider::ModelProtocol,
     body: &[u8],
 ) -> NonStreamingResponseSummary {
     let Some(json) = parse_response_json(body) else {
         return NonStreamingResponseSummary::default();
     };
     match kind {
-        super::provider::ProviderKind::OpenAi => openai_non_streaming_response_summary(&json),
-        super::provider::ProviderKind::Anthropic => anthropic_non_streaming_response_summary(&json),
-        super::provider::ProviderKind::Google => google_non_streaming_response_summary(&json),
-        super::provider::ProviderKind::Ollama => ollama_non_streaming_response_summary(&json),
+        super::provider::ModelProtocol::OpenAi => openai_non_streaming_response_summary(&json),
+        super::provider::ModelProtocol::Anthropic => {
+            anthropic_non_streaming_response_summary(&json)
+        }
+        super::provider::ModelProtocol::Google => google_non_streaming_response_summary(&json),
+        super::provider::ModelProtocol::Ollama => ollama_non_streaming_response_summary(&json),
     }
 }
 

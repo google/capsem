@@ -103,6 +103,7 @@ fn anthropic_req_ctx() -> TelemetryRequestContext {
         domain: "api.anthropic.com".into(),
         process_name: Some("agent".into()),
         ai_provider: Some(ProviderKind::Anthropic),
+        ai_protocol: Some(ModelProtocol::Anthropic),
         model_traffic: true,
         method: "POST".into(),
         path: "/v1/messages".into(),
@@ -215,6 +216,7 @@ fn agy_cloudcode_stream_generate_content_is_a_model_call() {
     req_ctx.domain = "daily-cloudcode-pa.googleapis.com".into();
     req_ctx.process_name = Some("agy".into());
     req_ctx.ai_provider = Some(ProviderKind::Google);
+    req_ctx.ai_protocol = Some(ModelProtocol::Google);
     req_ctx.path = "/v1internal:streamGenerateContent".into();
     req_ctx.request_body_stats = req_stats(b"");
     let pricing = Arc::new(PricingTable::load());
@@ -235,6 +237,7 @@ fn google_non_streaming_function_call_is_logged_as_model_tool_call() {
     req_ctx.domain = "daily-cloudcode-pa.googleapis.com".into();
     req_ctx.process_name = Some("agy".into());
     req_ctx.ai_provider = Some(ProviderKind::Google);
+    req_ctx.ai_protocol = Some(ModelProtocol::Google);
     req_ctx.path = "/v1internal:generateContent".into();
     req_ctx.request_body_stats =
         req_stats(br#"{"contents":[{"role":"user","parts":[{"text":"search"}]}]}"#);
@@ -277,6 +280,7 @@ fn agy_google_tool_call_survives_into_session_stats() {
     req_ctx.domain = "daily-cloudcode-pa.googleapis.com".into();
     req_ctx.process_name = Some("agy".into());
     req_ctx.ai_provider = Some(ProviderKind::Google);
+    req_ctx.ai_protocol = Some(ModelProtocol::Google);
     req_ctx.path = "/v1internal:generateContent".into();
     req_ctx.request_body_stats =
         req_stats(br#"{"contents":[{"role":"user","parts":[{"text":"search"}]}]}"#);
@@ -332,6 +336,7 @@ fn openai_non_streaming_tool_call_carries_request_trace() {
     let mut req_ctx = anthropic_req_ctx();
     req_ctx.domain = "127.0.0.1".into();
     req_ctx.ai_provider = Some(ProviderKind::OpenAi);
+    req_ctx.ai_protocol = Some(ModelProtocol::OpenAi);
     req_ctx.path = "/v1/chat/completions".into();
     req_ctx.request_body_stats =
         req_stats(br#"{"model":"mock-local","messages":[{"role":"user","content":"hello"}]}"#);
@@ -372,7 +377,10 @@ fn openai_non_streaming_tool_call_carries_request_trace() {
         .expect("OpenAI-compatible chat completion should produce model telemetry");
 
     assert_ne!(model_call.trace_id.as_deref(), Some("feedfacecafebeef"));
-    assert!(model_call.trace_id.as_deref().is_some_and(|trace| !trace.is_empty()));
+    assert!(model_call
+        .trace_id
+        .as_deref()
+        .is_some_and(|trace| !trace.is_empty()));
     assert_eq!(model_call.provider, "openai");
     assert_eq!(model_call.model.as_deref(), Some("mock-local"));
     assert_eq!(
@@ -393,6 +401,55 @@ fn openai_non_streaming_tool_call_carries_request_trace() {
         model_call.tool_calls[0].trace_id.as_deref(),
         model_call.trace_id.as_deref()
     );
+}
+
+#[test]
+fn ollama_endpoint_can_use_anthropic_wire_protocol() {
+    let mut req_ctx = anthropic_req_ctx();
+    req_ctx.domain = "127.0.0.1".into();
+    req_ctx.port = 11434;
+    req_ctx.ai_provider = Some(ProviderKind::Ollama);
+    req_ctx.ai_protocol = Some(ModelProtocol::Anthropic);
+    req_ctx.path = "/v1/messages".into();
+    req_ctx.request_body_stats = req_stats(
+        br#"{"model":"gemma4:latest","max_tokens":128,"messages":[{"role":"user","content":"hello"}]}"#,
+    );
+    let response = br#"{
+        "id": "msg_ironbank",
+        "type": "message",
+        "role": "assistant",
+        "model": "gemma4:latest",
+        "stop_reason": "end_turn",
+        "usage": {"input_tokens": 11, "output_tokens": 7},
+        "content": [
+            {"type": "thinking", "thinking": "launcher reasoning"},
+            {"type": "text", "text": "launcher response"}
+        ]
+    }"#;
+    let resp_stats = TelemetryResponseStats {
+        bytes: response.len() as u64,
+        preview: response.to_vec(),
+        max_preview: response.len(),
+    };
+    let pricing = Arc::new(PricingTable::load());
+    let trace = Arc::new(Mutex::new(TraceState::new()));
+    let model_call = maybe_build_model_call(&req_ctx, &resp_stats, &[], &pricing, &trace)
+        .expect("Ollama endpoint serving Anthropic protocol should produce model telemetry");
+
+    assert_eq!(model_call.provider, "ollama");
+    assert_eq!(model_call.path, "/v1/messages");
+    assert_eq!(model_call.model.as_deref(), Some("gemma4:latest"));
+    assert_eq!(
+        model_call.text_content.as_deref(),
+        Some("launcher response")
+    );
+    assert_eq!(
+        model_call.thinking_content.as_deref(),
+        Some("launcher reasoning")
+    );
+    assert_eq!(model_call.stop_reason.as_deref(), Some("end_turn"));
+    assert_eq!(model_call.input_tokens, Some(11));
+    assert_eq!(model_call.output_tokens, Some(7));
 }
 
 /// Non-AI provider returns no model call.

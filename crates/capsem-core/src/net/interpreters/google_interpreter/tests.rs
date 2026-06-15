@@ -37,7 +37,7 @@ fn upstream_url_with_existing_query() {
 
 #[test]
 fn kind_is_google() {
-    assert_eq!(GoogleProvider.kind(), ProviderKind::Google);
+    assert_eq!(GoogleProvider.kind(), ModelProtocol::Google);
 }
 
 // ── Stream parser: text response ────────────────────────────────

@@ -1061,6 +1061,19 @@ next one, and stage only the files for that slice.
   - Remaining debt: Claude CLI and AGY CLI still need their own scriptable
     poem/ledger proof after this common client rail; do not claim S7/S9 closed
     until both are green or have exact product-specific blockers.
+  - 2026-06-14 live-client correction: `ollama launch claude` and
+    `ollama launch codex` are not native `/api/chat` clients. The launcher
+    proves a split contract: endpoint/provider is `ollama` on
+    `127.0.0.1:11434`, while the parser protocol is Anthropic
+    (`/v1/messages`) for Claude and OpenAI Responses (`/v1/responses`) for
+    Codex. Ironbank must keep this as a hermetic release gate, with exact DB,
+    route, log, file, tool-call, and token assertions.
+  - New live-acceptance requirement: after the hermetic launcher rail passes,
+    add explicit real OpenAI and real Claude smoke checks. These prove the
+    direct cloud paths (`openai` provider/protocol over OpenAI endpoints and
+    `anthropic` provider/protocol over Anthropic endpoints) but must not replace
+    the hermetic release gate or make CI depend on public network/personal
+    credentials.
 - [x] Proof: lab is shared by doctor, integration tests, recorder, and
   benchmark.
   - 2026-06-12 progress: renamed the canonical deterministic fixture service
@@ -1554,14 +1567,19 @@ next one, and stage only the files for that slice.
     snapshot_pagination_params_preserve_include_changes -- --nocapture`; `uv
     run python -m py_compile guest/artifacts/snapshots
     guest/artifacts/diagnostics/test_mcp.py`.
-- [x] RED/GREEN: unknown AI-compatible protocol shape on unknown host emits
-  model provider plus host and triggers detection.
-  - 2026-06-13 closure: the hermetic mock server exposes `/model/shape`, a
-    neutral non-provider path that returns an OpenAI-compatible response. The
-    Ironbank SDK ledger proof posts an OpenAI-shaped JSON request there,
-    verifies a `model_calls` row with `provider = openai`, validates the
-    brokered credential ref, and proves `profiles.rules.ai_openai_model_api`
-    plus `profiles.rules.default_model` fire from the security ledger.
+- [ ] RED/GREEN: unknown AI-compatible protocol shape on unknown host emits
+  `model.provider = "unknown"` plus the inferred protocol path and triggers
+  the default `unknown_model_provider` detection rule.
+  - 2026-06-14 correction: provider and protocol are not aliases. A recognized
+    OpenAI/Anthropic/Gemini/Ollama wire path on an undeclared endpoint must use
+    provider `unknown` while the parser still uses the inferred
+    `ModelProtocol`. The old Ironbank proof that expected provider `openai`
+    for `/model/shape` is stale and must be updated before this gate closes.
+  - Required proof: an Ironbank black-box request to an undeclared
+    OpenAI-compatible endpoint must assert `model_calls.provider = unknown`,
+    exact parsed model/request/response/tool rows, a security ledger row for
+    `profiles.rules.default_unknown_model_provider`, and route/HTTP/UDS latest
+    output carrying the same event id.
   - Proof: `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run python -m pytest
     tests/ironbank/test_model_sdk_ledger.py::test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox
     -q -s --tb=short`; `cargo test -p capsem-core --lib

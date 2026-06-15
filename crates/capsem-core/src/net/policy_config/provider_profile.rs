@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::net::ai_traffic::provider::ModelProtocol;
+use crate::net::ai_traffic::provider::{ModelProtocol, ProviderKind};
 
 use super::{
     CompiledSecurityRule, SecurityRuleProfile, SecurityRuleProvider, SecurityRuleSet,
@@ -18,6 +18,7 @@ pub type AiProviderProfile = SecurityRuleProvider;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelEndpoint {
     pub provider_id: String,
+    pub provider_kind: ProviderKind,
     pub display_name: String,
     pub protocol: ModelProtocol,
     pub upstream_url: String,
@@ -109,6 +110,7 @@ impl ModelEndpointRegistry {
                 provider_id.clone(),
                 ModelEndpoint {
                     provider_id: provider_id.clone(),
+                    provider_kind: ProviderKind::from_provider_id(provider_id),
                     display_name: provider.name.clone().unwrap_or_else(|| provider_id.clone()),
                     protocol: ModelProtocol::try_from(protocol)?,
                     upstream_url: url.to_string(),
@@ -145,6 +147,16 @@ impl ModelEndpointRegistry {
     pub fn protocol_for_target(&self, host: &str, port: u16) -> Option<ModelProtocol> {
         self.endpoint_for_target(host, port)
             .map(|endpoint| endpoint.protocol)
+    }
+
+    pub fn provider_for_host(&self, host: &str) -> Option<ProviderKind> {
+        self.endpoint_for_host(host)
+            .map(|endpoint| endpoint.provider_kind)
+    }
+
+    pub fn provider_for_target(&self, host: &str, port: u16) -> Option<ProviderKind> {
+        self.endpoint_for_target(host, port)
+            .map(|endpoint| endpoint.provider_kind)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &ModelEndpoint> {
@@ -368,12 +380,25 @@ mod tests {
         assert!(compiled
             .iter()
             .any(|rule| rule.rule_id == "profiles.rules.ai_openai_http_api"));
-        assert!(ProviderRuleProfile::builtin_security_defaults()
-            .plugins
-            .contains_key("credential_broker"));
-        assert!(ProviderRuleProfile::builtin_security_defaults()
-            .plugins
-            .contains_key("log_sanitizer"));
+        let built_in_defaults = ProviderRuleProfile::builtin_security_defaults();
+        let built_in_compiled = built_in_defaults
+            .compile(SecurityRuleSource::BuiltinDefault)
+            .expect("full built-in defaults compile");
+        let unknown_provider_rule = built_in_compiled
+            .iter()
+            .find(|rule| rule.rule_id == "profiles.rules.default_unknown_model_provider")
+            .expect("built-in defaults include unknown provider detection");
+        assert_eq!(unknown_provider_rule.action, SecurityRuleAction::Allow);
+        assert_eq!(
+            unknown_provider_rule.detection_level,
+            Some(DetectionLevel::Informational)
+        );
+        assert_eq!(
+            unknown_provider_rule.condition,
+            r#"model.provider == "unknown""#
+        );
+        assert!(built_in_defaults.plugins.contains_key("credential_broker"));
+        assert!(built_in_defaults.plugins.contains_key("log_sanitizer"));
         assert!(compiled
             .iter()
             .all(|rule| !rule.condition.contains("file.ingress")));

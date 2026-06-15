@@ -22,7 +22,7 @@ fn upstream_url_chat_completions() {
 
 #[test]
 fn kind_is_openai() {
-    assert_eq!(OpenAiProvider.kind(), ProviderKind::OpenAi);
+    assert_eq!(OpenAiProvider.kind(), ModelProtocol::OpenAi);
 }
 
 // ── Stream parser: text-only response ───────────────────────────

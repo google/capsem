@@ -3,45 +3,45 @@ use super::*;
 #[test]
 fn route_anthropic_messages() {
     let (kind, _) = route_provider("/v1/messages").unwrap();
-    assert_eq!(kind, ProviderKind::Anthropic);
+    assert_eq!(kind, ModelProtocol::Anthropic);
 }
 
 #[test]
 fn route_anthropic_messages_with_query() {
     let (kind, _) = route_provider("/v1/messages?beta=true").unwrap();
-    assert_eq!(kind, ProviderKind::Anthropic);
+    assert_eq!(kind, ModelProtocol::Anthropic);
 }
 
 #[test]
 fn route_openai_responses() {
     let (kind, _) = route_provider("/v1/responses").unwrap();
-    assert_eq!(kind, ProviderKind::OpenAi);
+    assert_eq!(kind, ModelProtocol::OpenAi);
 }
 
 #[test]
 fn route_openai_chat_completions() {
     let (kind, _) = route_provider("/v1/chat/completions").unwrap();
-    assert_eq!(kind, ProviderKind::OpenAi);
+    assert_eq!(kind, ModelProtocol::OpenAi);
 }
 
 #[test]
 fn route_ollama_native_chat() {
     let (kind, provider) = route_provider("/api/chat").unwrap();
-    assert_eq!(kind, ProviderKind::Ollama);
-    assert_eq!(provider.kind(), ProviderKind::Ollama);
+    assert_eq!(kind, ModelProtocol::Ollama);
+    assert_eq!(provider.kind(), ModelProtocol::Ollama);
     assert_eq!(provider.upstream_base_url(), "http://127.0.0.1:11434");
 }
 
 #[test]
 fn route_google_gemini() {
     let (kind, _) = route_provider("/v1beta/models/gemini-2.5-pro:streamGenerateContent").unwrap();
-    assert_eq!(kind, ProviderKind::Google);
+    assert_eq!(kind, ModelProtocol::Google);
 }
 
 #[test]
 fn route_google_gemini_generate() {
     let (kind, _) = route_provider("/v1beta/models/gemini-2.5-pro:generateContent").unwrap();
-    assert_eq!(kind, ProviderKind::Google);
+    assert_eq!(kind, ModelProtocol::Google);
 }
 
 #[test]
@@ -53,9 +53,9 @@ fn route_unknown_returns_none() {
 
 #[test]
 fn provider_kind_as_str() {
-    assert_eq!(ProviderKind::Anthropic.as_str(), "anthropic");
-    assert_eq!(ProviderKind::OpenAi.as_str(), "openai");
-    assert_eq!(ProviderKind::Google.as_str(), "google");
+    assert_eq!(ModelProtocol::Anthropic.as_str(), "anthropic");
+    assert_eq!(ModelProtocol::OpenAi.as_str(), "openai");
+    assert_eq!(ModelProtocol::Google.as_str(), "google");
     assert_eq!(ModelProtocol::Ollama.as_str(), "ollama");
 }
 

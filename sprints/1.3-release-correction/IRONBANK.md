@@ -58,7 +58,7 @@ field coverage ledger is updated.
 - DNS: A/AAAA, TXT, denied, malformed/truncated, long-label exfil,
   local/private answer using IP/TCP/UDP/default ask facts.
 - Model: OpenAI-compatible, Anthropic streaming, Gemini/AGY streaming,
-  unknown-compatible-provider, non-stream JSON, SSE, tool declarations,
+  unknown-provider detection with recognized protocol, non-stream JSON, SSE, tool declarations,
   executed tool calls, tool responses, usage/tokens, thinking/reasoning,
   truncation/error, denied and accepted cases.
 - MCP: every configured MCP server/tool path must work black-box and be

@@ -355,7 +355,7 @@ fn summary_tool_calls_sorted_by_index() {
 
 // ── parse_non_streaming_usage ────────────────────────────────────
 
-use super::super::provider::ProviderKind;
+use super::super::provider::ModelProtocol;
 
 #[test]
 fn non_streaming_google_usage() {
@@ -367,7 +367,7 @@ fn non_streaming_google_usage() {
             "thoughtsTokenCount": 20
         }
     }"#;
-    let (model, input, output, details) = parse_non_streaming_usage(ProviderKind::Google, body);
+    let (model, input, output, details) = parse_non_streaming_usage(ModelProtocol::Google, body);
     assert_eq!(model.as_deref(), Some("gemini-2.5-flash-preview-05-20"));
     assert_eq!(input, Some(100));
     assert_eq!(output, Some(50));
@@ -387,7 +387,7 @@ fn non_streaming_google_tool_calls() {
         }]
     }"#;
 
-    let calls = parse_non_streaming_tool_calls(ProviderKind::Google, body);
+    let calls = parse_non_streaming_tool_calls(ModelProtocol::Google, body);
 
     assert_eq!(calls.len(), 2);
     assert_eq!(calls[0].index, 0);
@@ -410,7 +410,7 @@ fn non_streaming_anthropic_usage() {
             "cache_read_input_tokens": 150
         }
     }"#;
-    let (model, input, output, details) = parse_non_streaming_usage(ProviderKind::Anthropic, body);
+    let (model, input, output, details) = parse_non_streaming_usage(ModelProtocol::Anthropic, body);
     assert_eq!(model.as_deref(), Some("claude-sonnet-4-20250514"));
     assert_eq!(input, Some(200));
     assert_eq!(output, Some(80));
@@ -443,7 +443,7 @@ fn non_streaming_anthropic_tool_calls() {
         }
     }"#;
 
-    let calls = parse_non_streaming_tool_calls(ProviderKind::Anthropic, body);
+    let calls = parse_non_streaming_tool_calls(ModelProtocol::Anthropic, body);
 
     assert_eq!(calls.len(), 1);
     assert_eq!(calls[0].index, 0);
@@ -466,7 +466,7 @@ fn non_streaming_openai_usage() {
             "completion_tokens_details": {"reasoning_tokens": 30}
         }
     }"#;
-    let (model, input, output, details) = parse_non_streaming_usage(ProviderKind::OpenAi, body);
+    let (model, input, output, details) = parse_non_streaming_usage(ModelProtocol::OpenAi, body);
     assert_eq!(model.as_deref(), Some("gpt-4o"));
     assert_eq!(input, Some(300));
     assert_eq!(output, Some(120));
@@ -481,7 +481,7 @@ fn non_streaming_ollama_usage() {
         "prompt_eval_count": 24,
         "eval_count": 64
     }"#;
-    let (model, input, output, details) = parse_non_streaming_usage(ProviderKind::Ollama, body);
+    let (model, input, output, details) = parse_non_streaming_usage(ModelProtocol::Ollama, body);
     assert_eq!(model.as_deref(), Some("llama3.1"));
     assert_eq!(input, Some(24));
     assert_eq!(output, Some(64));
@@ -514,7 +514,7 @@ fn non_streaming_openai_tool_calls() {
             }
         ]
     }"#;
-    let calls = parse_non_streaming_tool_calls(ProviderKind::OpenAi, body);
+    let calls = parse_non_streaming_tool_calls(ModelProtocol::OpenAi, body);
     assert_eq!(calls.len(), 1);
     assert_eq!(calls[0].index, 0);
     assert_eq!(calls[0].call_id, "tool_0001");
@@ -550,7 +550,7 @@ fn non_streaming_openai_text_survives_tool_call_response() {
         ]
     }"#;
 
-    let summary = parse_non_streaming_response_summary(ProviderKind::OpenAi, body);
+    let summary = parse_non_streaming_response_summary(ModelProtocol::OpenAi, body);
 
     assert_eq!(
         summary.text,
@@ -563,7 +563,7 @@ fn non_streaming_openai_text_survives_tool_call_response() {
 #[test]
 fn non_streaming_invalid_json() {
     let (model, input, output, details) =
-        parse_non_streaming_usage(ProviderKind::Google, b"not json");
+        parse_non_streaming_usage(ModelProtocol::Google, b"not json");
     assert!(model.is_none());
     assert!(input.is_none());
     assert!(output.is_none());
@@ -572,7 +572,7 @@ fn non_streaming_invalid_json() {
 
 #[test]
 fn non_streaming_empty_body() {
-    let (model, input, output, details) = parse_non_streaming_usage(ProviderKind::Anthropic, b"");
+    let (model, input, output, details) = parse_non_streaming_usage(ModelProtocol::Anthropic, b"");
     assert!(model.is_none());
     assert!(input.is_none());
     assert!(output.is_none());
@@ -596,7 +596,7 @@ fn non_streaming_gzip_compressed() {
     encoder.write_all(json).unwrap();
     let compressed = encoder.finish().unwrap();
 
-    let (model, input, output, _) = parse_non_streaming_usage(ProviderKind::Google, &compressed);
+    let (model, input, output, _) = parse_non_streaming_usage(ModelProtocol::Google, &compressed);
     assert_eq!(model.as_deref(), Some("gemini-2.5-flash-lite"));
     assert_eq!(input, Some(42));
     assert_eq!(output, Some(7));
@@ -606,7 +606,7 @@ fn non_streaming_gzip_compressed() {
 fn non_streaming_corrupt_gzip() {
     // Gzip magic bytes but corrupt data
     let body = &[0x1f, 0x8b, 0x00, 0x00, 0xff, 0xff];
-    let (model, input, output, details) = parse_non_streaming_usage(ProviderKind::Google, body);
+    let (model, input, output, details) = parse_non_streaming_usage(ModelProtocol::Google, body);
     assert!(model.is_none());
     assert!(input.is_none());
     assert!(output.is_none());

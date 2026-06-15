@@ -328,6 +328,80 @@ emit_result("openai", "127.0.0.1", "/v1/responses", "gemma4:latest", NONCE, "led
     ).strip()
 
 
+def claude_ollama_launch_script(base_url: str) -> str:
+    return textwrap.dedent(
+        common_result_script_prelude(base_url, "claude-ollama-launch")
+        + r'''
+env = os.environ.copy()
+env["HOME"] = "/root"
+env["NO_COLOR"] = "1"
+env["TERM"] = "xterm-256color"
+env["OLLAMA_HOST"] = BASE_URL
+completed = subprocess.run(
+    [
+        "ollama",
+        "launch",
+        "claude",
+        "-y",
+        "--model",
+        "gemma4:latest",
+        "--",
+        "-p",
+        PROMPT,
+    ],
+    cwd="/root",
+    env=env,
+    capture_output=True,
+    text=True,
+    timeout=240,
+)
+if completed.returncode != 0:
+    raise SystemExit((completed.stdout or "") + (completed.stderr or ""))
+call_args = {"cmd": "printf '%s\\n' " + NONCE + " > " + TARGET, "yield_time_ms": 1000, "max_output_tokens": 2000}
+emit_result("ollama", "127.0.0.1", "/v1/messages", "gemma4:latest", NONCE, "ledger reasoning", "exec_command", call_args, "Process exited with code 0")
+'''
+    ).strip()
+
+
+def codex_ollama_launch_script(base_url: str) -> str:
+    return textwrap.dedent(
+        common_result_script_prelude(base_url, "codex-ollama-launch")
+        + r'''
+env = os.environ.copy()
+env["HOME"] = "/root"
+env["NO_COLOR"] = "1"
+env["TERM"] = "xterm-256color"
+env["OLLAMA_HOST"] = BASE_URL
+completed = subprocess.run(
+    [
+        "ollama",
+        "launch",
+        "codex",
+        "-y",
+        "--model",
+        "gemma4:latest",
+        "--",
+        "exec",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "--skip-git-repo-check",
+        "--cd",
+        "/root",
+        PROMPT,
+    ],
+    cwd="/root",
+    env=env,
+    capture_output=True,
+    text=True,
+    timeout=240,
+)
+if completed.returncode != 0:
+    raise SystemExit((completed.stdout or "") + (completed.stderr or ""))
+call_args = {"cmd": "printf '%s\\n' " + NONCE + " > " + TARGET, "yield_time_ms": 1000, "max_output_tokens": 2000}
+emit_result("ollama", "127.0.0.1", "/v1/responses", "gemma4:latest", NONCE, "ledger reasoning", "exec_command", call_args, "Process exited with code 0")
+'''
+    ).strip()
+
+
 def agy_cli_script(_base_url: str) -> str:
     return textwrap.dedent(
         common_result_script_prelude("http://127.0.0.1:11434", "agy-cli")

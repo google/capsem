@@ -1,9 +1,9 @@
-//! Model protocol adapters and legacy path routing.
+//! Model provider identity and wire protocol adapters.
 //!
-//! Provider identity is data (`ai.<provider_id>` in settings/profile TOML).
-//! The closed Rust enum below is only the wire protocol/parser adapter.
-//! A custom endpoint such as Ollama or a private OpenAI-compatible gateway
-//! should reuse `ModelProtocol::OpenAi`; it must not need a new enum variant.
+//! Provider identity and wire protocol are deliberately separate. A local
+//! Ollama endpoint can speak OpenAI or Anthropic-compatible wire protocol,
+//! and a rogue endpoint can speak OpenAI protocol without being the OpenAI
+//! provider.
 
 use super::events::{LlmEvent, ProviderStreamParser};
 use crate::net::parsers::sse_parser::SseEvent;
@@ -61,11 +61,48 @@ impl TryFrom<&str> for ModelProtocol {
     }
 }
 
-/// Backward-compatible name for existing call sites.
-///
-/// New code should use [`ModelProtocol`] for the typed parser adapter and keep
-/// provider identity in settings/profile data.
-pub type ProviderKind = ModelProtocol;
+/// Which provider owns this model endpoint for policy and logging.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderKind {
+    Unknown,
+    Anthropic,
+    OpenAi,
+    Google,
+    Ollama,
+}
+
+impl ProviderKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ProviderKind::Unknown => "unknown",
+            ProviderKind::Anthropic => "anthropic",
+            ProviderKind::OpenAi => "openai",
+            ProviderKind::Google => "google",
+            ProviderKind::Ollama => "ollama",
+        }
+    }
+
+    pub fn from_provider_id(provider_id: &str) -> Self {
+        match provider_id.trim().to_ascii_lowercase().as_str() {
+            "anthropic" | "claude" => Self::Anthropic,
+            "openai" => Self::OpenAi,
+            "google" | "gemini" => Self::Google,
+            "ollama" => Self::Ollama,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+impl From<ModelProtocol> for ProviderKind {
+    fn from(protocol: ModelProtocol) -> Self {
+        match protocol {
+            ModelProtocol::Anthropic => Self::Anthropic,
+            ModelProtocol::OpenAi => Self::OpenAi,
+            ModelProtocol::Google => Self::Google,
+            ModelProtocol::Ollama => Self::Ollama,
+        }
+    }
+}
 
 /// A provider knows how to build the upstream URL and inject API keys.
 pub trait Provider: Send + Sync {
@@ -114,7 +151,7 @@ impl Provider for OllamaProvider {
 
 /// Determine the provider from the inbound request path.
 /// Returns None for paths that don't match any known provider API.
-pub fn route_provider(path: &str) -> Option<(ProviderKind, Box<dyn Provider>)> {
+pub fn route_provider(path: &str) -> Option<(ModelProtocol, Box<dyn Provider>)> {
     if path.starts_with("/v1/messages") {
         Some((
             ModelProtocol::Anthropic,

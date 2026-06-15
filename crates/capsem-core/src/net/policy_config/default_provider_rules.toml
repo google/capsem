@@ -49,6 +49,14 @@ priority = "default"
 reason = "Default allow for model calls."
 match = 'has(model.provider) || has(model.name) || has(model.request.body) || has(model.response.body) || has(model.request.tool_calls)'
 
+[default.unknown_model_provider]
+name = "unknown_model_provider"
+action = "allow"
+priority = "default"
+detection_level = "informational"
+reason = "Detect model traffic whose wire protocol is recognized but whose endpoint owner is not declared."
+match = 'model.provider == "unknown"'
+
 [default.file]
 name = "file"
 action = "allow"

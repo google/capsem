@@ -1127,7 +1127,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             )
             unknown_shape = unknown_shape_rows[-1]
             _assert_event_id(unknown_shape["event_id"])
-            assert unknown_shape["provider"] == "openai"
+            assert unknown_shape["provider"] == "unknown"
             assert unknown_shape["model"] == "gpt-4.1"
             assert unknown_shape["method"] == "POST"
             assert unknown_shape["status_code"] == 200
@@ -1155,7 +1155,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             )
             declared_tool_only = declared_tool_only_rows[-1]
             _assert_event_id(declared_tool_only["event_id"])
-            assert declared_tool_only["provider"] == "openai"
+            assert declared_tool_only["provider"] == "unknown"
             assert declared_tool_only["model"] == "gpt-4.1"
             assert declared_tool_only["method"] == "POST"
             assert declared_tool_only["status_code"] == 200
@@ -1267,7 +1267,10 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             }
             for row in tool_rows:
                 _assert_event_id(row["event_id"])
-                assert row["provider"] == "openai"
+                expected_provider = (
+                    "unknown" if row["model_call_id"] == unknown_shape["id"] else "openai"
+                )
+                assert row["provider"] == expected_provider
                 assert row["status"] == "observed"
                 assert row["call_index"] == 0
                 assert row["arguments"] == '{"query":"Capsem ironbank poem"}'
@@ -1408,18 +1411,18 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             shape_security_rows = security_by_event[unknown_shape["event_id"]]
             assert {item["rule_action"] for item in shape_security_rows} == {"allow"}
             assert {
-                "profiles.rules.ai_openai_model_api",
+                "profiles.rules.default_unknown_model_provider",
                 "profiles.rules.default_model",
             } <= {item["rule_id"] for item in shape_security_rows}
             assert any(
-                item["rule_id"] == "profiles.rules.ai_openai_model_api"
+                item["rule_id"] == "profiles.rules.default_unknown_model_provider"
                 and item["detection_level"] == "informational"
                 for item in shape_security_rows
             )
             declared_tool_security_rows = security_by_event[declared_tool_only["event_id"]]
             assert {item["rule_action"] for item in declared_tool_security_rows} == {"allow"}
             assert {
-                "profiles.rules.ai_openai_model_api",
+                "profiles.rules.default_unknown_model_provider",
                 "profiles.rules.default_model",
             } <= {item["rule_id"] for item in declared_tool_security_rows}
             for stream_model in (google_stream, anthropic_stream):

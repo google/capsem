@@ -54,7 +54,7 @@ impl<T> TokioReadWrite for T where T: AsyncRead + AsyncWrite {}
 
 use super::cert_authority::{CertAuthority, MitmCertResolver};
 use super::policy::NetworkPolicy;
-use crate::net::ai_traffic::provider::{route_provider, ProviderKind};
+use crate::net::ai_traffic::provider::{route_provider, ModelProtocol, ProviderKind};
 use crate::security_engine::{
     HttpSecurityEvent, IpSecurityEvent, ModelSecurityEvent, SecurityEvent, TcpSecurityEvent,
 };
@@ -179,7 +179,7 @@ fn ai_provider_for_domain(config: &MitmProxyConfig, domain: &str) -> Option<Prov
         .model_endpoints
         .read()
         .unwrap()
-        .protocol_for_host(domain)
+        .provider_for_host(domain)
 }
 
 fn ai_provider_for_target(
@@ -189,7 +189,32 @@ fn ai_provider_for_target(
     path: &str,
 ) -> Option<ProviderKind> {
     let registry = config.model_endpoints.read().unwrap();
-    ai_provider_for_target_or_path(&registry, domain, upstream_port, path)
+    ai_identity_for_target_or_path(&registry, domain, upstream_port, path).provider
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ModelTrafficIdentity {
+    /// Endpoint owner used for policy/logging. Example: `ollama` for
+    /// `127.0.0.1:11434`, even when the request path is OpenAI/Anthropic
+    /// compatible.
+    provider: Option<ProviderKind>,
+    /// Wire protocol used to parse request/response payloads.
+    protocol: Option<ModelProtocol>,
+}
+
+fn ai_identity_for_target_or_path(
+    registry: &crate::net::policy_config::ModelEndpointRegistry,
+    domain: &str,
+    upstream_port: u16,
+    path: &str,
+) -> ModelTrafficIdentity {
+    let path_protocol = route_provider(path).map(|(protocol, _)| protocol);
+    let endpoint_provider = registry.provider_for_target(domain, upstream_port);
+    let endpoint_protocol = registry.protocol_for_target(domain, upstream_port);
+    ModelTrafficIdentity {
+        provider: endpoint_provider.or_else(|| path_protocol.map(|_| ProviderKind::Unknown)),
+        protocol: path_protocol.or(endpoint_protocol),
+    }
 }
 
 fn ai_provider_for_target_or_path(
@@ -198,16 +223,10 @@ fn ai_provider_for_target_or_path(
     upstream_port: u16,
     path: &str,
 ) -> Option<ProviderKind> {
-    let path_provider = route_provider(path).map(|(provider, _)| provider);
-    if path_provider == Some(ProviderKind::Ollama) {
-        return path_provider;
-    }
-    registry
-        .protocol_for_target(domain, upstream_port)
-        .or(path_provider)
+    ai_identity_for_target_or_path(registry, domain, upstream_port, path).provider
 }
 
-fn ai_provider_for_body_preview(body: &[u8]) -> Option<ProviderKind> {
+fn ai_protocol_for_body_preview(body: &[u8]) -> Option<ModelProtocol> {
     if body.len() > AI_BODY_PREVIEW {
         return None;
     }
@@ -226,12 +245,12 @@ fn ai_provider_for_body_preview(body: &[u8]) -> Option<ProviderKind> {
         || obj.contains_key("safetySettings");
 
     if has_google_contents || model.is_some_and(is_google_model_name) {
-        return Some(ProviderKind::Google);
+        return Some(ModelProtocol::Google);
     }
     if model.is_some_and(is_anthropic_model_name)
         || (has_messages && obj.contains_key("max_tokens"))
     {
-        return Some(ProviderKind::Anthropic);
+        return Some(ModelProtocol::Anthropic);
     }
     if model.is_some_and(is_openai_model_name)
         || obj.contains_key("input")
@@ -239,7 +258,7 @@ fn ai_provider_for_body_preview(body: &[u8]) -> Option<ProviderKind> {
         || obj.contains_key("stream_options")
         || (has_messages && obj.contains_key("tools"))
     {
-        return Some(ProviderKind::OpenAi);
+        return Some(ModelProtocol::OpenAi);
     }
     None
 }
@@ -915,12 +934,15 @@ async fn serve_pipeline<IO>(
                 Protocol::McpFrame => unreachable!("framed MCP bypasses HTTP pipeline"),
                 Protocol::Unknown => (String::new(), 0),
             };
-            let ai_provider = ai_provider_for_target(
-                &config_arc,
-                &request_domain,
-                upstream_port,
-                req.uri().path(),
-            );
+            let ai_identity = {
+                let registry = config_arc.model_endpoints.read().unwrap();
+                ai_identity_for_target_or_path(
+                    &registry,
+                    &request_domain,
+                    upstream_port,
+                    req.uri().path(),
+                )
+            };
             handle_request(
                 req,
                 &request_domain,
@@ -929,7 +951,8 @@ async fn serve_pipeline<IO>(
                 &upstream_tls,
                 &config_arc,
                 &process_name,
-                ai_provider,
+                ai_identity.provider,
+                ai_identity.protocol,
                 &cached_upstream,
             )
             .await
@@ -1020,6 +1043,7 @@ async fn handle_request(
     config: &Arc<MitmProxyConfig>,
     process_name: &Option<String>,
     ai_provider: Option<ProviderKind>,
+    ai_protocol: Option<ModelProtocol>,
     cached_upstream: &tokio::sync::Mutex<
         Option<hyper::client::conn::http1::SendRequest<ProxyBoxBody>>,
     >,
@@ -1108,7 +1132,8 @@ async fn handle_request(
     // websocket-deny, 502).
     let seal_with_telemetry = |inner: ProxyBoxBody,
                                req_ctx: TelemetryRequestContext,
-                               conn_ai_provider: Option<ProviderKind>|
+                               conn_ai_provider: Option<ProviderKind>,
+                               conn_ai_protocol: Option<ModelProtocol>|
      -> ProxyBoxBody {
         let dispatched = body::ChunkDispatchBody::new(
             inner,
@@ -1119,6 +1144,7 @@ async fn handle_request(
                 port: upstream_port,
                 protocol,
                 ai_provider: conn_ai_provider,
+                ai_protocol: conn_ai_protocol,
             },
             crate::telemetry::ambient_capsem_trace_id(),
         )
@@ -1146,6 +1172,7 @@ async fn handle_request(
                 domain: domain.to_string(),
                 process_name: process_name.clone(),
                 ai_provider,
+                ai_protocol,
                 model_traffic: false,
                 method: method.clone(),
                 path: path.clone(),
@@ -1173,7 +1200,7 @@ async fn handle_request(
                 .boxed();
             hyper::Response::builder()
                 .status(http::StatusCode::BAD_GATEWAY)
-                .body(seal_with_telemetry(body, req_ctx, ai_provider))
+                .body(seal_with_telemetry(body, req_ctx, ai_provider, ai_protocol))
                 .unwrap()
         };
 
@@ -1312,6 +1339,7 @@ async fn handle_request(
             domain: domain.to_string(),
             process_name: process_name.clone(),
             ai_provider,
+            ai_protocol,
             model_traffic: false,
             method: method.clone(),
             path: path.clone(),
@@ -1341,7 +1369,7 @@ async fn handle_request(
 
         return Ok(hyper::Response::from_parts(
             resp_parts,
-            seal_with_telemetry(empty_body, req_ctx, ai_provider),
+            seal_with_telemetry(empty_body, req_ctx, ai_provider, ai_protocol),
         ));
     }
 
@@ -1365,6 +1393,7 @@ async fn handle_request(
             domain: domain.to_string(),
             process_name: process_name.clone(),
             ai_provider,
+            ai_protocol,
             model_traffic: false,
             method: method.to_string(),
             path: path.to_string(),
@@ -1392,7 +1421,12 @@ async fn handle_request(
             .boxed();
         hyper::Response::builder()
             .status(502)
-            .body(seal_with_telemetry(deny_body, req_ctx, ai_provider))
+            .body(seal_with_telemetry(
+                deny_body,
+                req_ctx,
+                ai_provider,
+                ai_protocol,
+            ))
             .unwrap()
     };
 
@@ -1415,6 +1449,7 @@ async fn handle_request(
     }
 
     let mut effective_ai_provider = ai_provider;
+    let mut effective_ai_protocol = ai_protocol;
     let mut sniffed_model_request = false;
     let mut observed_mcp_request: Option<ObservedMcpHttpRequest> = None;
     let mut mcp_request_security_decision = SecurityBoundaryDecisionFields::default();
@@ -1461,16 +1496,20 @@ async fn handle_request(
             let body_bytes = collected.to_bytes();
             let mut sniff_matched = false;
             if should_sniff_model {
-                if let Some(provider) = ai_provider_for_body_preview(&body_bytes) {
-                    effective_ai_provider = Some(provider);
+                if let Some(protocol) = ai_protocol_for_body_preview(&body_bytes) {
+                    if effective_ai_provider.is_none() {
+                        effective_ai_provider = Some(ProviderKind::Unknown);
+                    }
+                    effective_ai_protocol = Some(protocol);
                     sniffed_model_request = true;
                     sniff_matched = true;
-                    sniff_span.record("provider", provider.as_str());
+                    sniff_span.record("provider", provider_label(effective_ai_provider));
                     tracing::info!(
                         target: "capsem.mitm",
                         host = domain,
                         path,
-                        provider = provider.as_str(),
+                        provider = provider_label(effective_ai_provider),
+                        protocol = protocol.as_str(),
                         body_bytes = body_bytes.len(),
                         "unknown model endpoint promoted from bounded body shape"
                     );
@@ -1581,6 +1620,7 @@ async fn handle_request(
             domain: domain.to_string(),
             process_name: process_name.clone(),
             ai_provider,
+            ai_protocol,
             model_traffic: false,
             method: method.clone(),
             path: path.clone(),
@@ -1608,7 +1648,12 @@ async fn handle_request(
             .boxed();
         return Ok(hyper::Response::builder()
             .status(403)
-            .body(seal_with_telemetry(deny_body, req_ctx, ai_provider))
+            .body(seal_with_telemetry(
+                deny_body,
+                req_ctx,
+                ai_provider,
+                ai_protocol,
+            ))
             .unwrap());
     }
     actions_span.record("decision", "allow");
@@ -1654,6 +1699,7 @@ async fn handle_request(
             domain: domain.to_string(),
             process_name: process_name.clone(),
             ai_provider,
+            ai_protocol,
             model_traffic: false,
             method: method.clone(),
             path: path.clone(),
@@ -1681,7 +1727,12 @@ async fn handle_request(
             .boxed();
         return Ok(hyper::Response::builder()
             .status(403)
-            .body(seal_with_telemetry(deny_body, req_ctx, ai_provider))
+            .body(seal_with_telemetry(
+                deny_body,
+                req_ctx,
+                ai_provider,
+                ai_protocol,
+            ))
             .unwrap());
     }
 
@@ -1786,6 +1837,7 @@ async fn handle_request(
                 domain: domain.to_string(),
                 process_name: process_name.clone(),
                 ai_provider: effective_ai_provider,
+                ai_protocol: effective_ai_protocol,
                 model_traffic: sniffed_model_request,
                 method: method.clone(),
                 path: path.clone(),
@@ -1817,6 +1869,7 @@ async fn handle_request(
                     deny_body,
                     req_ctx,
                     effective_ai_provider,
+                    effective_ai_protocol,
                 ))
                 .unwrap());
         }
@@ -1836,7 +1889,7 @@ async fn handle_request(
     }));
 
     let should_evaluate_model_request = sniffed_model_request
-        || effective_ai_provider.is_some_and(|provider| is_llm_api_path(provider, &path));
+        || effective_ai_protocol.is_some_and(|protocol| is_llm_api_path(protocol, &path));
     let upstream_req_body: ProxyBoxBody = if should_evaluate_model_request {
         let model_request_span = tracing::debug_span!(
             target: "capsem.mitm",
@@ -1882,9 +1935,11 @@ async fn handle_request(
             st.preview.extend_from_slice(&body_bytes[..to_copy]);
         }
 
-        if let Some(provider) = effective_ai_provider {
+        if let (Some(provider), Some(model_protocol)) =
+            (effective_ai_provider, effective_ai_protocol)
+        {
             let request_meta =
-                crate::net::ai_traffic::request_parser::parse_request(provider, &body_bytes);
+                crate::net::ai_traffic::request_parser::parse_request(model_protocol, &body_bytes);
             let model_event = model_security_event(
                 RuntimeSecurityEventType::ModelCall,
                 provider,
@@ -1940,6 +1995,7 @@ async fn handle_request(
                     domain: domain.to_string(),
                     process_name: process_name.clone(),
                     ai_provider: effective_ai_provider,
+                    ai_protocol: effective_ai_protocol,
                     model_traffic: true,
                     method: method.clone(),
                     path: path.clone(),
@@ -1971,6 +2027,7 @@ async fn handle_request(
                         deny_body,
                         req_ctx,
                         effective_ai_provider,
+                        effective_ai_protocol,
                     ))
                     .unwrap());
             }
@@ -2349,7 +2406,7 @@ async fn handle_request(
     }
 
     let should_evaluate_model_response = sniffed_model_request
-        || effective_ai_provider.is_some_and(|provider| is_llm_api_path(provider, &path));
+        || effective_ai_protocol.is_some_and(|protocol| is_llm_api_path(protocol, &path));
     let should_collect_semantic_response =
         should_evaluate_model_response || observed_mcp_request.is_some();
 
@@ -2402,13 +2459,17 @@ async fn handle_request(
             }
         };
 
-        if let Some(provider) = effective_ai_provider {
+        if let (Some(provider), Some(model_protocol)) =
+            (effective_ai_provider, effective_ai_protocol)
+        {
             let request_preview = {
                 let st = req_stats.lock().expect("req body stats lock");
                 st.preview.clone()
             };
-            let request_meta =
-                crate::net::ai_traffic::request_parser::parse_request(provider, &request_preview);
+            let request_meta = crate::net::ai_traffic::request_parser::parse_request(
+                model_protocol,
+                &request_preview,
+            );
             let model_event = model_security_event(
                 RuntimeSecurityEventType::ModelCall,
                 provider,
@@ -2464,6 +2525,7 @@ async fn handle_request(
                     domain: domain.to_string(),
                     process_name: process_name.clone(),
                     ai_provider: effective_ai_provider,
+                    ai_protocol: effective_ai_protocol,
                     model_traffic: true,
                     method,
                     path,
@@ -2495,6 +2557,7 @@ async fn handle_request(
                         deny_body,
                         req_ctx,
                         effective_ai_provider,
+                        effective_ai_protocol,
                     ))
                     .unwrap());
             }
@@ -2571,6 +2634,7 @@ async fn handle_request(
         domain: domain.to_string(),
         process_name: process_name.clone(),
         ai_provider: effective_ai_provider,
+        ai_protocol: effective_ai_protocol,
         model_traffic: should_evaluate_model_response,
         method,
         path,
@@ -2608,6 +2672,7 @@ async fn handle_request(
             port: upstream_port,
             protocol,
             ai_provider: effective_ai_provider,
+            ai_protocol: effective_ai_protocol,
         },
         crate::telemetry::ambient_capsem_trace_id(),
     )
@@ -2631,56 +2696,110 @@ mod tests {
     use crate::net::policy_config::{SecurityRuleAction, SecurityRuleProfile, SecurityRuleSet};
 
     #[test]
-    fn provider_detection_promotes_unknown_host_by_canonical_model_path() {
+    fn provider_detection_marks_undeclared_model_path_as_unknown_provider() {
         let registry = crate::net::policy_config::ModelEndpointRegistry::default();
 
         assert_eq!(
-            ai_provider_for_target_or_path(
+            ai_identity_for_target_or_path(
                 &registry,
                 "rogue-openai-compatible.example",
                 443,
                 "/v1/chat/completions"
             ),
-            Some(ProviderKind::OpenAi)
+            ModelTrafficIdentity {
+                provider: Some(ProviderKind::Unknown),
+                protocol: Some(ModelProtocol::OpenAi),
+            }
         );
         assert_eq!(
-            ai_provider_for_target_or_path(&registry, "unknown.example", 443, "/v1/messages"),
-            Some(ProviderKind::Anthropic)
+            ai_identity_for_target_or_path(&registry, "unknown.example", 443, "/v1/messages"),
+            ModelTrafficIdentity {
+                provider: Some(ProviderKind::Unknown),
+                protocol: Some(ModelProtocol::Anthropic),
+            }
         );
         assert_eq!(
-            ai_provider_for_target_or_path(
+            ai_identity_for_target_or_path(
                 &registry,
                 "unknown.example",
                 443,
                 "/v1beta/models/gemini-2.5-pro:generateContent"
             ),
-            Some(ProviderKind::Google)
+            ModelTrafficIdentity {
+                provider: Some(ProviderKind::Unknown),
+                protocol: Some(ModelProtocol::Google),
+            }
         );
         assert_eq!(
-            ai_provider_for_target_or_path(&registry, "unknown.example", 443, "/api/chat"),
-            Some(ProviderKind::Ollama)
+            ai_identity_for_target_or_path(&registry, "unknown.example", 443, "/api/chat"),
+            ModelTrafficIdentity {
+                provider: Some(ProviderKind::Unknown),
+                protocol: Some(ModelProtocol::Ollama),
+            }
+        );
+    }
+
+    #[test]
+    fn provider_identity_keeps_ollama_endpoint_owner_with_path_protocol() {
+        let profile = crate::net::policy_config::ProviderRuleProfile::parse_toml(
+            r#"
+[ai.ollama]
+name = "Ollama"
+protocol = "ollama"
+url = "http://127.0.0.1:11434"
+listen_ports = [11434]
+
+[ai.ollama.rules.local]
+name = "ollama_local"
+action = "allow"
+match = 'http.host == "127.0.0.1"'
+"#,
+        )
+        .expect("provider profile parses");
+        let registry = profile.endpoint_registry().expect("registry builds");
+
+        assert_eq!(
+            ai_identity_for_target_or_path(&registry, "127.0.0.1", 11434, "/v1/messages"),
+            ModelTrafficIdentity {
+                provider: Some(ProviderKind::Ollama),
+                protocol: Some(ModelProtocol::Anthropic),
+            }
+        );
+        assert_eq!(
+            ai_identity_for_target_or_path(&registry, "127.0.0.1", 11434, "/v1/responses"),
+            ModelTrafficIdentity {
+                provider: Some(ProviderKind::Ollama),
+                protocol: Some(ModelProtocol::OpenAi),
+            }
+        );
+        assert_eq!(
+            ai_identity_for_target_or_path(&registry, "127.0.0.1", 11434, "/api/chat"),
+            ModelTrafficIdentity {
+                provider: Some(ProviderKind::Ollama),
+                protocol: Some(ModelProtocol::Ollama),
+            }
         );
     }
 
     #[test]
     fn provider_detection_promotes_unknown_host_by_bounded_body_shape() {
         assert_eq!(
-            ai_provider_for_body_preview(
+            ai_protocol_for_body_preview(
                 br#"{"model":"gpt-4.1","messages":[{"role":"user","content":"hi"}]}"#
             ),
-            Some(ProviderKind::OpenAi)
+            Some(ModelProtocol::OpenAi)
         );
         assert_eq!(
-            ai_provider_for_body_preview(
+            ai_protocol_for_body_preview(
                 br#"{"model":"claude-3-5-sonnet","max_tokens":128,"messages":[{"role":"user","content":"hi"}]}"#
             ),
-            Some(ProviderKind::Anthropic)
+            Some(ModelProtocol::Anthropic)
         );
         assert_eq!(
-            ai_provider_for_body_preview(
+            ai_protocol_for_body_preview(
                 br#"{"model":"gemini-2.5-pro","contents":[{"parts":[{"text":"hi"}]}]}"#
             ),
-            Some(ProviderKind::Google)
+            Some(ModelProtocol::Google)
         );
     }
 
@@ -2690,8 +2809,8 @@ mod tests {
         oversized.extend_from_slice(
             br#"{"model":"gpt-4.1","messages":[{"role":"user","content":"hi"}]}"#,
         );
-        assert_eq!(ai_provider_for_body_preview(&oversized), None);
-        assert_eq!(ai_provider_for_body_preview(br#"{"hello":"world"}"#), None);
+        assert_eq!(ai_protocol_for_body_preview(&oversized), None);
+        assert_eq!(ai_protocol_for_body_preview(br#"{"hello":"world"}"#), None);
     }
 
     #[test]

@@ -24,7 +24,7 @@ fn test_extract_model_field() {
 fn test_truncated_json_fallback() {
     let truncated =
         br#"{"model": "claude-3-5-sonnet-20240620", "messages": [{"role": "user", "con"#;
-    let meta = parse_request(ProviderKind::Anthropic, truncated);
+    let meta = parse_request(ModelProtocol::Anthropic, truncated);
     assert_eq!(meta.model.as_deref(), Some("claude-3-5-sonnet-20240620"));
     assert_eq!(meta.messages_count, 0); // parsing failed, but model was extracted
 }
@@ -48,7 +48,7 @@ fn anthropic_basic_request() {
         ]
     }"#;
 
-    let meta = parse_request(ProviderKind::Anthropic, body);
+    let meta = parse_request(ModelProtocol::Anthropic, body);
     assert_eq!(meta.model.as_deref(), Some("claude-sonnet-4-20250514"));
     assert!(meta.stream);
     assert_eq!(
@@ -68,7 +68,7 @@ fn anthropic_system_as_blocks() {
         "messages": [{"role": "user", "content": "Hi"}]
     }"#;
 
-    let meta = parse_request(ProviderKind::Anthropic, body);
+    let meta = parse_request(ModelProtocol::Anthropic, body);
     assert_eq!(
         meta.system_prompt_preview.as_deref(),
         Some("Block system prompt.")
@@ -90,7 +90,7 @@ fn anthropic_tool_results() {
         ]
     }"#;
 
-    let meta = parse_request(ProviderKind::Anthropic, body);
+    let meta = parse_request(ModelProtocol::Anthropic, body);
     assert_eq!(meta.messages_count, 3);
     assert_eq!(meta.tool_results.len(), 1);
     assert_eq!(meta.tool_results[0].call_id, "toolu_01");
@@ -109,7 +109,7 @@ fn anthropic_tool_result_error() {
         ]
     }"#;
 
-    let meta = parse_request(ProviderKind::Anthropic, body);
+    let meta = parse_request(ModelProtocol::Anthropic, body);
     assert_eq!(meta.tool_results.len(), 1);
     assert!(meta.tool_results[0].is_error);
 }
@@ -130,7 +130,7 @@ fn openai_chat_completions_request() {
         ]
     }"#;
 
-    let meta = parse_request(ProviderKind::OpenAi, body);
+    let meta = parse_request(ModelProtocol::OpenAi, body);
     assert_eq!(meta.model.as_deref(), Some("gpt-4o"));
     assert!(meta.stream);
     assert_eq!(
@@ -151,7 +151,7 @@ fn openai_responses_api_request() {
         ]
     }"#;
 
-    let meta = parse_request(ProviderKind::OpenAi, body);
+    let meta = parse_request(ModelProtocol::OpenAi, body);
     assert_eq!(
         meta.system_prompt_preview.as_deref(),
         Some("You are a coding assistant.")
@@ -170,7 +170,7 @@ fn openai_tool_results() {
         ]
     }"#;
 
-    let meta = parse_request(ProviderKind::OpenAi, body);
+    let meta = parse_request(ModelProtocol::OpenAi, body);
     assert_eq!(meta.tool_results.len(), 1);
     assert_eq!(meta.tool_results[0].call_id, "call_abc");
     assert_eq!(meta.tool_results[0].content_preview, "72F sunny");
@@ -197,7 +197,7 @@ fn openai_responses_api_function_call_output_is_tool_response() {
         "tools": [{"type": "function", "name": "exec_command"}]
     }"#;
 
-    let meta = parse_request(ProviderKind::OpenAi, body);
+    let meta = parse_request(ModelProtocol::OpenAi, body);
 
     assert_eq!(meta.messages_count, 3);
     assert_eq!(meta.tools_count, 1);
@@ -227,7 +227,7 @@ fn google_basic_request() {
         }
     }"#;
 
-    let meta = parse_request(ProviderKind::Google, body);
+    let meta = parse_request(ModelProtocol::Google, body);
     assert!(meta.model.is_none()); // model is in URL for Google
     assert!(!meta.stream); // streaming detected from URL path, not body
     assert_eq!(meta.system_prompt_preview.as_deref(), Some("Be helpful."));
@@ -245,7 +245,7 @@ fn google_function_response() {
         ]
     }"#;
 
-    let meta = parse_request(ProviderKind::Google, body);
+    let meta = parse_request(ModelProtocol::Google, body);
     assert_eq!(meta.tool_results.len(), 1);
     assert!(meta.tool_results[0]
         .call_id
@@ -260,7 +260,7 @@ fn google_function_response_preserves_bytes_verbatim() {
     // A serde_json::Value would have re-serialized to canonical compact form.
     let body = br#"{"contents":[{"parts":[{"functionResponse":{"name":"get_weather","response":{"temp" : "72F" , "humidity":  "50%"}}}],"role":"function"}]}"#;
 
-    let meta = parse_request(ProviderKind::Google, body);
+    let meta = parse_request(ModelProtocol::Google, body);
     assert_eq!(meta.tool_results.len(), 1);
     assert_eq!(
         meta.tool_results[0].content_preview,
@@ -272,21 +272,21 @@ fn google_function_response_preserves_bytes_verbatim() {
 
 #[test]
 fn empty_body() {
-    let meta = parse_request(ProviderKind::Anthropic, b"");
+    let meta = parse_request(ModelProtocol::Anthropic, b"");
     assert!(meta.model.is_none());
     assert_eq!(meta.messages_count, 0);
 }
 
 #[test]
 fn invalid_json() {
-    let meta = parse_request(ProviderKind::OpenAi, b"not json");
+    let meta = parse_request(ModelProtocol::OpenAi, b"not json");
     assert!(meta.model.is_none());
     assert_eq!(meta.messages_count, 0);
 }
 
 #[test]
 fn non_json_content_type() {
-    let meta = parse_request(ProviderKind::Google, b"<html>not json</html>");
+    let meta = parse_request(ModelProtocol::Google, b"<html>not json</html>");
     assert!(meta.model.is_none());
 }
 
@@ -297,7 +297,7 @@ fn long_system_prompt_passes_through_untruncated() {
         r#"{{"model":"claude-sonnet-4-20250514","system":"{}","messages":[]}}"#,
         long_prompt
     );
-    let meta = parse_request(ProviderKind::Anthropic, body.as_bytes());
+    let meta = parse_request(ModelProtocol::Anthropic, body.as_bytes());
     let preview = meta.system_prompt_preview.unwrap();
     assert_eq!(preview.len(), 500);
     assert_eq!(preview, long_prompt);
@@ -307,7 +307,7 @@ fn long_system_prompt_passes_through_untruncated() {
 fn request_without_stream_field_defaults_false() {
     let body =
         br#"{"model":"claude-sonnet-4-20250514","messages":[{"role":"user","content":"hi"}]}"#;
-    let meta = parse_request(ProviderKind::Anthropic, body);
+    let meta = parse_request(ModelProtocol::Anthropic, body);
     assert!(!meta.stream);
 }
 
@@ -319,7 +319,7 @@ fn corrupt_utf8_in_body() {
     // replacement char). Verify we don't panic.
     let mut body = br#"{"model":"test","messages":[]}"#.to_vec();
     body[10] = 0xFF;
-    let meta = parse_request(ProviderKind::Anthropic, &body);
+    let meta = parse_request(ModelProtocol::Anthropic, &body);
     // The regex extracts "te\u{FFFD}t" via lossy conversion -- that's fine,
     // it won't match any real model for pricing. The key invariant is no panic.
     assert!(meta.model.is_some());
@@ -344,7 +344,7 @@ fn google_multi_turn_only_extracts_latest_tool_results() {
         ]
     }"#;
 
-    let meta = parse_request(ProviderKind::Google, body);
+    let meta = parse_request(ModelProtocol::Google, body);
     // Only the trailing function message (Paris) should be extracted.
     assert_eq!(meta.tool_results.len(), 1);
     assert!(meta.tool_results[0].content_preview.contains("18C"));
@@ -364,7 +364,7 @@ fn google_duplicate_function_name_unique_call_ids() {
         ]
     }"#;
 
-    let meta = parse_request(ProviderKind::Google, body);
+    let meta = parse_request(ModelProtocol::Google, body);
     assert_eq!(meta.tool_results.len(), 2);
     // call_ids must be distinct
     assert_ne!(meta.tool_results[0].call_id, meta.tool_results[1].call_id);
@@ -387,7 +387,7 @@ fn google_single_turn_tool_result_still_works() {
         ]
     }"#;
 
-    let meta = parse_request(ProviderKind::Google, body);
+    let meta = parse_request(ModelProtocol::Google, body);
     assert_eq!(meta.tool_results.len(), 1);
     assert!(meta.tool_results[0].content_preview.contains("72F"));
 }
@@ -414,7 +414,7 @@ fn anthropic_multi_turn_only_extracts_latest_tool_results() {
         ]
     }"#;
 
-    let meta = parse_request(ProviderKind::Anthropic, body);
+    let meta = parse_request(ModelProtocol::Anthropic, body);
     // Only the trailing user message (toolu_02) should be extracted.
     assert_eq!(meta.tool_results.len(), 1);
     assert_eq!(meta.tool_results[0].call_id, "toolu_02");
@@ -437,7 +437,7 @@ fn openai_multi_turn_only_extracts_latest_tool_results() {
         ]
     }"#;
 
-    let meta = parse_request(ProviderKind::OpenAi, body);
+    let meta = parse_request(ModelProtocol::OpenAi, body);
     // Only the trailing tool message (call_02) should be extracted.
     assert_eq!(meta.tool_results.len(), 1);
     assert_eq!(meta.tool_results[0].call_id, "call_02");
@@ -459,7 +459,7 @@ fn anthropic_tool_result_with_tool_reference_blocks() {
             ]}
         ]
     }"#;
-    let meta = parse_request(ProviderKind::Anthropic, body);
+    let meta = parse_request(ModelProtocol::Anthropic, body);
     assert_eq!(meta.tool_results.len(), 1);
     assert!(
         !meta.tool_results[0].content_preview.is_empty(),
@@ -485,7 +485,7 @@ fn anthropic_tool_result_mixed_text_and_non_text_blocks() {
             ]}
         ]
     }"#;
-    let meta = parse_request(ProviderKind::Anthropic, body);
+    let meta = parse_request(ModelProtocol::Anthropic, body);
     assert_eq!(meta.tool_results.len(), 1);
     assert!(
         meta.tool_results[0]
@@ -506,7 +506,7 @@ fn anthropic_tool_result_empty_content_array() {
             ]}
         ]
     }"#;
-    let meta = parse_request(ProviderKind::Anthropic, body);
+    let meta = parse_request(ModelProtocol::Anthropic, body);
     assert_eq!(meta.tool_results.len(), 1);
     assert_eq!(meta.tool_results[0].content_preview, "");
 }
@@ -521,7 +521,7 @@ fn anthropic_tool_result_null_content() {
             ]}
         ]
     }"#;
-    let meta = parse_request(ProviderKind::Anthropic, body);
+    let meta = parse_request(ModelProtocol::Anthropic, body);
     assert_eq!(meta.tool_results.len(), 1);
     assert_eq!(meta.tool_results[0].content_preview, "");
 }
@@ -538,7 +538,7 @@ fn anthropic_tool_result_image_block_only() {
             ]}
         ]
     }"#;
-    let meta = parse_request(ProviderKind::Anthropic, body);
+    let meta = parse_request(ModelProtocol::Anthropic, body);
     assert_eq!(meta.tool_results.len(), 1);
     assert!(
         !meta.tool_results[0].content_preview.is_empty(),
@@ -558,7 +558,7 @@ fn anthropic_tool_result_blocks_with_text_none() {
             ]}
         ]
     }"#;
-    let meta = parse_request(ProviderKind::Anthropic, body);
+    let meta = parse_request(ModelProtocol::Anthropic, body);
     assert_eq!(meta.tool_results.len(), 1);
     // Should not crash
 }
@@ -575,7 +575,7 @@ fn anthropic_multiple_tool_results_in_single_message() {
             ]}
         ]
     }"#;
-    let meta = parse_request(ProviderKind::Anthropic, body);
+    let meta = parse_request(ModelProtocol::Anthropic, body);
     assert_eq!(meta.tool_results.len(), 3);
     assert_eq!(meta.tool_results[0].call_id, "toolu_a");
     assert_eq!(meta.tool_results[1].call_id, "toolu_b");
@@ -592,7 +592,7 @@ fn anthropic_tool_result_large_content() {
             ]}}
         ]}}"#
     );
-    let meta = parse_request(ProviderKind::Anthropic, body.as_bytes());
+    let meta = parse_request(ModelProtocol::Anthropic, body.as_bytes());
     assert_eq!(meta.tool_results.len(), 1);
     assert!(!meta.tool_results[0].content_preview.is_empty());
 }
@@ -610,7 +610,7 @@ fn anthropic_tool_result_content_as_blocks_with_text() {
             ]}
         ]
     }"#;
-    let meta = parse_request(ProviderKind::Anthropic, body);
+    let meta = parse_request(ModelProtocol::Anthropic, body);
     assert_eq!(meta.tool_results.len(), 1);
     assert_eq!(meta.tool_results[0].content_preview, "line1\nline2");
 }
@@ -625,7 +625,7 @@ fn openai_tool_result_empty_content() {
             {"role": "tool", "tool_call_id": "call_empty", "content": ""}
         ]
     }"#;
-    let meta = parse_request(ProviderKind::OpenAi, body);
+    let meta = parse_request(ModelProtocol::OpenAi, body);
     assert_eq!(meta.tool_results.len(), 1);
     assert_eq!(meta.tool_results[0].content_preview, "");
 }
@@ -638,7 +638,7 @@ fn openai_tool_result_null_content() {
             {"role": "tool", "tool_call_id": "call_null", "content": null}
         ]
     }"#;
-    let meta = parse_request(ProviderKind::OpenAi, body);
+    let meta = parse_request(ModelProtocol::OpenAi, body);
     assert_eq!(meta.tool_results.len(), 1);
     assert_eq!(meta.tool_results[0].content_preview, "");
 }
@@ -653,7 +653,7 @@ fn openai_tool_result_multipart_content() {
             ]}
         ]
     }"#;
-    let meta = parse_request(ProviderKind::OpenAi, body);
+    let meta = parse_request(ModelProtocol::OpenAi, body);
     assert_eq!(meta.tool_results.len(), 1);
     assert!(
         meta.tool_results[0].content_preview.contains("result here"),
@@ -673,7 +673,7 @@ fn openai_multiple_tool_results_trailing() {
             {"role": "tool", "tool_call_id": "call_3", "content": "r3"}
         ]
     }"#;
-    let meta = parse_request(ProviderKind::OpenAi, body);
+    let meta = parse_request(ModelProtocol::OpenAi, body);
     assert_eq!(meta.tool_results.len(), 3);
 }
 
@@ -685,7 +685,7 @@ fn openai_tool_result_large_content() {
             {{"role":"tool","tool_call_id":"call_big","content":"{big}"}}
         ]}}"#
     );
-    let meta = parse_request(ProviderKind::OpenAi, body.as_bytes());
+    let meta = parse_request(ModelProtocol::OpenAi, body.as_bytes());
     assert_eq!(meta.tool_results.len(), 1);
     assert!(!meta.tool_results[0].content_preview.is_empty());
 }
@@ -699,7 +699,7 @@ fn google_function_response_null_response() {
             {"parts": [{"functionResponse": {"name": "get_weather", "response": null}}], "role": "function"}
         ]
     }"#;
-    let meta = parse_request(ProviderKind::Google, body);
+    let meta = parse_request(ModelProtocol::Google, body);
     assert_eq!(meta.tool_results.len(), 1);
     assert_eq!(meta.tool_results[0].content_preview, "");
 }
@@ -711,7 +711,7 @@ fn google_function_response_empty_object() {
             {"parts": [{"functionResponse": {"name": "get_weather", "response": {}}}], "role": "function"}
         ]
     }"#;
-    let meta = parse_request(ProviderKind::Google, body);
+    let meta = parse_request(ModelProtocol::Google, body);
     assert_eq!(meta.tool_results.len(), 1);
     assert_eq!(meta.tool_results[0].content_preview, "{}");
 }
@@ -723,7 +723,7 @@ fn google_function_response_nested_response() {
             {"parts": [{"functionResponse": {"name": "list_items", "response": {"data": {"items": [1,2,3]}}}}], "role": "function"}
         ]
     }"#;
-    let meta = parse_request(ProviderKind::Google, body);
+    let meta = parse_request(ModelProtocol::Google, body);
     assert_eq!(meta.tool_results.len(), 1);
     assert!(
         meta.tool_results[0].content_preview.contains("items"),
@@ -743,7 +743,7 @@ fn google_multiple_function_responses_in_single_part() {
             ], "role": "function"}
         ]
     }"#;
-    let meta = parse_request(ProviderKind::Google, body);
+    let meta = parse_request(ModelProtocol::Google, body);
     assert_eq!(meta.tool_results.len(), 3);
     // All should have unique call_ids
     let ids: std::collections::HashSet<_> = meta.tool_results.iter().map(|r| &r.call_id).collect();
@@ -769,7 +769,7 @@ fn ollama_native_chat_request_metadata() {
         "tools": [{"type": "function", "function": {"name": "lookup"}}]
     }"#;
 
-    let meta = parse_request(ProviderKind::Ollama, body);
+    let meta = parse_request(ModelProtocol::Ollama, body);
 
     assert_eq!(meta.model.as_deref(), Some("llama3.1"));
     assert!(meta.stream);
@@ -789,7 +789,7 @@ fn ollama_native_generate_request_metadata() {
         "stream": false
     }"#;
 
-    let meta = parse_request(ProviderKind::Ollama, body);
+    let meta = parse_request(ModelProtocol::Ollama, body);
 
     assert_eq!(meta.model.as_deref(), Some("mistral"));
     assert!(!meta.stream);

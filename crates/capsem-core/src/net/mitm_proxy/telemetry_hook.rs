@@ -39,7 +39,9 @@ use crate::net::ai_traffic::events::{
     parse_non_streaming_usage, StopReason,
 };
 use crate::net::ai_traffic::pricing::PricingTable;
-use crate::net::ai_traffic::provider::{extract_model_from_path, tool_origin, ProviderKind};
+use crate::net::ai_traffic::provider::{
+    extract_model_from_path, tool_origin, ModelProtocol, ProviderKind,
+};
 use crate::net::ai_traffic::{request_parser, TraceState};
 use crate::net::policy_config::SecurityRuleSet;
 use crate::security_engine::{
@@ -56,6 +58,7 @@ pub struct TelemetryRequestContext {
     pub domain: String,
     pub process_name: Option<String>,
     pub ai_provider: Option<ProviderKind>,
+    pub ai_protocol: Option<ModelProtocol>,
     pub model_traffic: bool,
     pub method: String,
     pub path: String,
@@ -424,8 +427,9 @@ pub fn maybe_build_model_call(
     trace_state: &Arc<Mutex<TraceState>>,
 ) -> Option<ModelCall> {
     let provider = req_ctx.ai_provider?;
+    let protocol = req_ctx.ai_protocol?;
     if req_ctx.method == "HEAD"
-        || !(req_ctx.model_traffic || is_llm_api_path(provider, &req_ctx.path))
+        || !(req_ctx.model_traffic || is_llm_api_path(protocol, &req_ctx.path))
     {
         return None;
     }
@@ -439,7 +443,7 @@ pub fn maybe_build_model_call(
     };
 
     // Parse request body for metadata (model, message count, tools, tool_results).
-    let req_meta = request_parser::parse_request(provider, &req_body_bytes);
+    let req_meta = request_parser::parse_request(protocol, &req_body_bytes);
 
     let summary = if llm_events.is_empty() {
         None
@@ -451,7 +455,7 @@ pub fn maybe_build_model_call(
         && req_ctx.status_code == Some(200)
     {
         Some(parse_non_streaming_response_summary(
-            provider,
+            protocol,
             &resp_stats.preview,
         ))
     } else {
@@ -498,7 +502,7 @@ pub fn maybe_build_model_call(
         })
         .unwrap_or_default();
     if tool_calls.is_empty() {
-        tool_calls = parse_non_streaming_tool_calls(provider, &resp_stats.preview)
+        tool_calls = parse_non_streaming_tool_calls(protocol, &resp_stats.preview)
             .into_iter()
             .map(|tc| ToolCallEntry {
                 call_index: tc.index,
@@ -531,7 +535,7 @@ pub fn maybe_build_model_call(
         .unwrap_or(true)
     {
         if !resp_stats.preview.is_empty() && req_ctx.status_code == Some(200) {
-            parse_non_streaming_usage(provider, &resp_stats.preview)
+            parse_non_streaming_usage(protocol, &resp_stats.preview)
         } else {
             (None, None, None, BTreeMap::new())
         }

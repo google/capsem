@@ -22,7 +22,7 @@ fn upstream_url_with_query() {
 
 #[test]
 fn kind_is_anthropic() {
-    assert_eq!(AnthropicProvider.kind(), ProviderKind::Anthropic);
+    assert_eq!(AnthropicProvider.kind(), ModelProtocol::Anthropic);
 }
 
 // ── Stream parser: text-only response ───────────────────────────

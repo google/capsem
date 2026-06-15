@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed (route surfaces and diagnostics)
+- Split model wire protocol from endpoint-provider identity so Ollama,
+  OpenAI-compatible, Anthropic-compatible, and unknown model endpoints can be
+  parsed without pretending protocol and provider are aliases. Recognized model
+  protocol traffic on undeclared endpoints now emits `model.provider =
+  "unknown"` and hits a default informational detection rule.
 - Refactored the Ironbank model-client proof into composable script-builder
   and ledger-assertion helpers, and made the Codex CLI fixture use the same
   brokered OpenAI credential path as the SDK/API clients instead of a

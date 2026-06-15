@@ -10,14 +10,14 @@
 use std::collections::BTreeMap;
 
 use crate::net::ai_traffic::events::{LlmEvent, ProviderStreamParser, StopReason};
-use crate::net::ai_traffic::provider::{Provider, ProviderKind};
+use crate::net::ai_traffic::provider::{ModelProtocol, Provider};
 use crate::net::parsers::sse_parser::SseEvent;
 
 pub struct GoogleProvider;
 
 impl Provider for GoogleProvider {
-    fn kind(&self) -> ProviderKind {
-        ProviderKind::Google
+    fn kind(&self) -> ModelProtocol {
+        ModelProtocol::Google
     }
 
     fn upstream_base_url(&self) -> &str {

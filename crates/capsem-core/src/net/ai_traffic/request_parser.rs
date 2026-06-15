@@ -6,7 +6,7 @@
 //! and tool_result entries from subsequent requests (for linking tool call
 //! lifecycle).
 
-use super::provider::ProviderKind;
+use super::provider::ModelProtocol;
 
 /// Fallback for truncated JSON: search for "model":"..." in the first few KB
 /// using a simple byte scan.
@@ -42,16 +42,16 @@ pub struct ToolResultMeta {
 /// Parse an inbound request body, extracting metadata based on provider format.
 ///
 /// Tolerant of malformed input -- returns default RequestMeta on parse failure.
-pub fn parse_request(provider: ProviderKind, body: &[u8]) -> RequestMeta {
+pub fn parse_request(protocol: ModelProtocol, body: &[u8]) -> RequestMeta {
     if body.is_empty() {
         return RequestMeta::default();
     }
 
-    match provider {
-        ProviderKind::Anthropic => parse_anthropic(body),
-        ProviderKind::OpenAi => parse_openai(body),
-        ProviderKind::Google => parse_google(body),
-        ProviderKind::Ollama => parse_ollama(body),
+    match protocol {
+        ModelProtocol::Anthropic => parse_anthropic(body),
+        ModelProtocol::OpenAi => parse_openai(body),
+        ModelProtocol::Google => parse_google(body),
+        ModelProtocol::Ollama => parse_ollama(body),
     }
 }
 

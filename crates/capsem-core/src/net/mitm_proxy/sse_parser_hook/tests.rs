@@ -15,6 +15,7 @@ fn anthropic_conn() -> ConnMeta {
         port: 443,
         process_name: None,
         ai_provider: Some(crate::net::ai_traffic::provider::ProviderKind::Anthropic),
+        ai_protocol: Some(crate::net::ai_traffic::provider::ModelProtocol::Anthropic),
         ..Default::default()
     }
 }
@@ -174,6 +175,7 @@ fn openai_done_sentinel_is_filtered() {
         port: 443,
         process_name: None,
         ai_provider: Some(crate::net::ai_traffic::provider::ProviderKind::OpenAi),
+        ai_protocol: Some(crate::net::ai_traffic::provider::ModelProtocol::OpenAi),
         ..Default::default()
     };
 
@@ -199,6 +201,7 @@ fn explicit_ai_provider_enables_local_openai_compatible_streams() {
         port: 11434,
         process_name: None,
         ai_provider: Some(crate::net::ai_traffic::provider::ProviderKind::OpenAi),
+        ai_protocol: Some(crate::net::ai_traffic::provider::ModelProtocol::OpenAi),
         ..Default::default()
     };
 

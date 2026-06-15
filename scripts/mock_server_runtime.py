@@ -60,6 +60,8 @@ ENDPOINTS = [
     "/v1/responses",
     "/v1/messages",
     "/api/chat",
+    "/api/show",
+    "/api/tags",
     "/oauth/authorize",
     "/oauth/token",
     "/mcp",
@@ -587,6 +589,15 @@ class MockHandler(BaseHTTPRequestHandler):
             with REQUEST_LOG_PATH.open("a", encoding="utf-8") as handle:
                 handle.write(line)
 
+    def do_HEAD(self) -> None:  # noqa: N802
+        parsed = urlparse(self.path)
+        path = parsed.path
+        status = HTTPStatus.OK if path == "/" else HTTPStatus.NOT_FOUND
+        self.send_response(status)
+        self.send_header("content-length", "0")
+        self.end_headers()
+        self._record_request(status, "application/octet-stream", b"")
+
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         path = parsed.path
@@ -651,6 +662,26 @@ class MockHandler(BaseHTTPRequestHandler):
                         "refresh_token": "capsem_test_oauth_refresh_0123456789abcdef",
                         "expires_in": 3600,
                     },
+                }
+            )
+        elif path == "/api/tags":
+            self._send_json(
+                {
+                    "models": [
+                        {
+                            "name": "gemma4:latest",
+                            "model": "gemma4:latest",
+                            "modified_at": "2026-06-13T00:00:00Z",
+                            "size": 123456,
+                            "digest": "sha256:capsem-mock-gemma4",
+                            "details": {
+                                "format": "gguf",
+                                "family": "gemma",
+                                "parameter_size": "7B",
+                                "quantization_level": "Q4_0",
+                            },
+                        }
+                    ]
                 }
             )
         elif path == "/deny-target":
@@ -725,6 +756,25 @@ class MockHandler(BaseHTTPRequestHandler):
                 self._send_json(_ollama_chat_tool_payload(model, payload))
             else:
                 self._send_json(_ollama_chat_payload(model))
+        elif path == "/api/show":
+            payload = self._json_body()
+            model = payload.get("model") if isinstance(payload.get("model"), str) else "gemma4:latest"
+            self._send_json(
+                {
+                    "license": "capsem-mock",
+                    "modelfile": f"FROM {model}",
+                    "parameters": "num_ctx 8192",
+                    "template": "{{ .Prompt }}",
+                    "details": {
+                        "format": "gguf",
+                        "family": "gemma",
+                        "families": ["gemma"],
+                        "parameter_size": "7B",
+                        "quantization_level": "Q4_0",
+                    },
+                    "model_info": {"general.architecture": "gemma"},
+                }
+            )
         elif path == "/oauth/token":
             self._body()
             self._send_json(

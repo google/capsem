@@ -131,6 +131,37 @@ def _post_json(url: str, value: object) -> dict:
     return body
 
 
+def _get_json(url: str) -> dict:
+    with urlopen(url, timeout=2) as response:
+        assert response.status == 200
+        assert response.headers["content-type"] == "application/json"
+        body = json.loads(response.read().decode())
+    assert isinstance(body, dict)
+    return body
+
+
+def test_mock_server_serves_ollama_launcher_probe_endpoints() -> None:
+    proc = None
+    try:
+        proc, ready = start_mock_server()
+        base_url = ready["base_url"]
+
+        head_request = Request(f"{base_url}/", method="HEAD")
+        with urlopen(head_request, timeout=2) as response:
+            assert response.status == 200
+            assert response.read() == b""
+
+        tags = _get_json(f"{base_url}/api/tags")
+        assert tags["models"][0]["name"] == "gemma4:latest"
+        assert tags["models"][0]["details"]["family"] == "gemma"
+
+        show = _post_json(f"{base_url}/api/show", {"model": "gemma4:latest"})
+        assert show["modelfile"] == "FROM gemma4:latest"
+        assert show["details"]["parameter_size"] == "7B"
+    finally:
+        stop_process(proc)
+
+
 def test_mock_server_replays_ollama_openai_chat_completion_shape() -> None:
     proc = None
     try:

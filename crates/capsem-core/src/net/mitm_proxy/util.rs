@@ -2,29 +2,29 @@
 //! URI splitting, and header formatting.
 
 use crate::credential_broker::{detect_http_credential_with_provider, CredentialObservation};
-use crate::net::ai_traffic::provider::ProviderKind;
+use crate::net::ai_traffic::provider::{ModelProtocol, ProviderKind};
 
 /// Returns true only for paths that are actual LLM API endpoints
 /// (generation, embeddings, audio -- anything billed per token/request).
-pub(super) fn is_llm_api_path(provider: ProviderKind, path: &str) -> bool {
-    match provider {
-        ProviderKind::Anthropic => {
+pub(super) fn is_llm_api_path(protocol: ModelProtocol, path: &str) -> bool {
+    match protocol {
+        ModelProtocol::Anthropic => {
             path.starts_with("/v1/messages") || path.starts_with("/v1/complete")
         }
-        ProviderKind::OpenAi => {
+        ModelProtocol::OpenAi => {
             path.starts_with("/v1/chat/completions")
                 || path.starts_with("/v1/responses")
                 || path.starts_with("/v1/completions")
                 || path.starts_with("/v1/embeddings")
                 || path.starts_with("/v1/audio")
         }
-        ProviderKind::Google => {
+        ModelProtocol::Google => {
             path.contains(":generateContent")
                 || path.contains(":streamGenerateContent")
                 || path.contains(":embedContent")
                 || path.contains(":batchEmbedContents")
         }
-        ProviderKind::Ollama => {
+        ModelProtocol::Ollama => {
             path.starts_with("/api/chat")
                 || path.starts_with("/api/generate")
                 || path.starts_with("/api/embeddings")
@@ -108,6 +108,7 @@ pub(super) fn format_headers_for_domain(
     headers: &hyper::HeaderMap,
 ) -> FormattedHeaders {
     let provider_hint = ai_provider.map(|provider| match provider {
+        ProviderKind::Unknown => ProviderKind::Unknown,
         ProviderKind::Ollama => ProviderKind::OpenAi,
         other => other,
     });
