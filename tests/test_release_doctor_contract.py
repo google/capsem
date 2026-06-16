@@ -332,7 +332,7 @@ def test_serial_benchmark_release_proofs_are_not_env_gated() -> None:
     assert '"protocol",' in source
 
 
-def test_bench_recipe_uses_archiving_mock_server_release_path() -> None:
+def test_benchmark_release_path_wires_mock_server_and_forbids_http_skip() -> None:
     bench = _recipe_block("bench:")
     baseline = (
         PROJECT_ROOT / "tests" / "capsem-serial" / "test_capsem_bench_baseline.py"
