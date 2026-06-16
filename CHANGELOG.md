@@ -23,6 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   route JSON, and are removed by default purge.
 
 ### Changed (route surfaces and diagnostics)
+- Fixed security decision ledgers so visible default catchall rules remain
+  recorded in `security_rule_events` without emitting a second effective
+  decision after a more specific profile/corp enforcement rule wins. The code
+  and co-work profiles now include an explicit hermetic mock-server allow rule
+  for `127.0.0.1:3713`, so doctor, benchmark, and Ironbank traffic does not
+  trip the default local-network ask rule.
 - Strengthened `/vms/create` and `/vms/{id}/resume` responses so provision
   routes return the session profile ID, lifecycle state, persistence bit,
   resumability, and valid action enum list alongside the VM ID and UDS path.

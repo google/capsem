@@ -336,3 +336,35 @@ def test_profiles_package_agent_bootstrap_without_baking_credentials() -> None:
             failures.append(f"{profile_id}: Codex capsem MCP command is {command!r}")
 
     assert not failures, "invalid agent bootstrap contract:\n" + "\n".join(failures)
+
+
+def test_profiles_allow_only_capsem_mock_server_fixture_over_local_network_guard() -> None:
+    failures: list[str] = []
+    expected_match = (
+        '(http.host == "127.0.0.1" || http.host == "localhost") '
+        '&& ip.value == "127.0.0.1" '
+        '&& tcp.port == "3713"'
+    )
+    for profile_dir in sorted(PROFILES_DIR.iterdir()):
+        if not profile_dir.is_dir():
+            continue
+        profile, _, _ = _profile_payload(profile_dir)
+        profile_id = profile["id"]
+        enforcement_path = PROJECT_ROOT / "config" / profile["files"]["enforcement"]["path"]
+        rules = tomllib.loads(enforcement_path.read_text())
+        mock_rule = rules.get("profiles", {}).get("rules", {}).get("capsem_mock_server")
+        if mock_rule is None:
+            failures.append(f"{profile_id}: missing profiles.rules.capsem_mock_server")
+            continue
+        if mock_rule.get("name") != "capsem_mock_server":
+            failures.append(f"{profile_id}: mock-server rule name is wrong")
+        if mock_rule.get("action") != "allow":
+            failures.append(f"{profile_id}: mock-server rule must allow")
+        if mock_rule.get("priority") != 10:
+            failures.append(f"{profile_id}: mock-server rule priority must be 10")
+        if mock_rule.get("match") != expected_match:
+            failures.append(f"{profile_id}: mock-server rule match is too broad or stale")
+        if "reason" not in mock_rule:
+            failures.append(f"{profile_id}: mock-server rule needs a reason")
+
+    assert not failures, "invalid mock-server local-network contract:\n" + "\n".join(failures)

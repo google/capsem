@@ -937,7 +937,7 @@ pub async fn emit_matching_security_rules_with_decision(
     let mut emitted = 0;
     let enriched_event = event_with_rule_detections(event, evaluation.detections());
     let mut decision_state = enriched_event.decision.clone();
-    for rule in evaluation.enforcement_rules() {
+    for rule in decision_transition_rules(&evaluation) {
         emit_security_decision_transition(
             db,
             event_id.clone(),
@@ -1016,7 +1016,7 @@ pub fn emit_matching_security_rules_with_decision_blocking(
     let mut emitted = 0;
     let enriched_event = event_with_rule_detections(event, evaluation.detections());
     let mut decision_state = enriched_event.decision.clone();
-    for rule in evaluation.enforcement_rules() {
+    for rule in decision_transition_rules(&evaluation) {
         emit_security_decision_transition_blocking(
             db,
             event_id.clone(),
@@ -1181,6 +1181,20 @@ fn selected_enforcement_rule<'a>(
     evaluation: &'a crate::net::policy_config::SecurityRuleEvaluation<'a>,
 ) -> Option<&'a CompiledSecurityRule> {
     evaluation.enforcement_rules().into_iter().next()
+}
+
+fn decision_transition_rules<'a>(
+    evaluation: &'a crate::net::policy_config::SecurityRuleEvaluation<'a>,
+) -> Vec<&'a CompiledSecurityRule> {
+    let enforcement_rules = evaluation.enforcement_rules();
+    if enforcement_rules.iter().any(|rule| !rule.default_rule) {
+        enforcement_rules
+            .into_iter()
+            .filter(|rule| !rule.default_rule)
+            .collect()
+    } else {
+        enforcement_rules
+    }
 }
 
 fn security_enforcement_decision(

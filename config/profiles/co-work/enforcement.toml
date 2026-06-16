@@ -2,6 +2,13 @@
 #
 # These are visible rules compiled into the single SecurityRuleSet/CEL rail.
 
+[profiles.rules.capsem_mock_server]
+name = "capsem_mock_server"
+action = "allow"
+priority = 10
+reason = "Allow Capsem doctor, benchmark, and Ironbank traffic to the local hermetic mock server."
+match = '(http.host == "127.0.0.1" || http.host == "localhost") && ip.value == "127.0.0.1" && tcp.port == "3713"'
+
 [default.http]
 name = "http"
 action = "allow"
