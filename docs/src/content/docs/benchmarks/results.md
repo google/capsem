@@ -66,19 +66,29 @@ database-style writes.
 
 ## Local Network And Model Fixtures
 
-Release network proof uses `capsem-mock-server`, not public internet. The
-current VM MITM-local artifact is
-`benchmarks/mitm-local/data_1.3.1781205836_arm64.json` and was recorded
-through the profile-selected VM path at release scale against local JSON model,
+Release network proof uses the shared `mock_server`, not public internet. The
+current VM artifact is
+`benchmarks/capsem-bench/data_1.3.1781205836_arm64.json` and was recorded
+through the profile-selected VM path against local HTTP, JSON model,
 credential-shaped, and WebSocket control fixtures.
+
+| Scenario | Success | Requests/sec | p50 | p99 |
+|---|---:|---:|---:|---:|
+| HTTP tiny response | 50/50 | 1,886.9 | 1.9ms | 8.3ms |
+| JSON model response | 1,000/1,000 | 2,810.4 | 8.8ms | 27.5ms |
+| credential-shaped response | 1,000/1,000 | 1,524.9 | 11.0ms | 64.9ms |
+
+WebSocket control fixture: echo `10` frames at `1,454.6` frames/sec with
+`0.2ms` p50 and `2.6ms` p99 latency; close control frame completed in `5.9ms`
+p50/p99.
+
+Historical release-scale local fixture artifact:
+`benchmarks/mitm-local/data_1.3.1781205836_arm64.json`.
 
 | Scenario | Success | Requests/sec | p50 | p99 |
 |---|---:|---:|---:|---:|
 | JSON model response | 50,000/50,000 | 3,000.9 | 18.8ms | 58.0ms |
 | credential-shaped response | 50,000/50,000 | 3,029.0 | 18.8ms | 55.9ms |
-
-WebSocket control fixture: echo `10` frames at `2,508.2` frames/sec with
-`0.2ms` p50/p99 latency; close control frame completed in `5.2ms` p50/p99.
 
 The full protocol fixture corpus is still exercised by doctor and unit
 contract tests; the release-scale benchmark intentionally selects
@@ -137,11 +147,11 @@ provision/exec/delete cycles on the same service instance.
 
 | Operation | Min | Mean | Max | Description |
 |-----------|----:|-----:|----:|-------------|
-| provision | 895ms | 931ms | 951ms | Create and boot a temporary VM |
-| exec_ready | 11.5ms | 12.1ms | 12.9ms | First ready check after provisioning |
-| exec | 10.7ms | 10.9ms | 11.3ms | Simple `echo ok` on running VM |
-| delete | 60.1ms | 60.6ms | 61.5ms | VM teardown request |
-| total | 980ms | 1,015ms | 1,033ms | Full lifecycle loop |
+| provision | 1,032.6ms | 1,034.3ms | 1,035.9ms | Create and boot a temporary VM |
+| exec_ready | 12.6ms | 12.8ms | 13.0ms | First ready check after provisioning |
+| exec | 10.3ms | 11.5ms | 12.3ms | Simple `echo ok` on running VM |
+| delete | 59.5ms | 60.8ms | 62.0ms | VM teardown request |
+| total | 1,115.1ms | 1,119.4ms | 1,121.8ms | Full lifecycle loop |
 
 Run:
 
@@ -155,10 +165,10 @@ Host-side latency for fork and boot-from-image over 3 cycles.
 
 | Metric | Min | Mean | Max | Gate | Description |
 |--------|----:|-----:|----:|-----:|-------------|
-| fork | 83ms | 88ms | 93ms | 500ms | APFS clonefile of rootfs overlay and workspace |
-| image_size | 7.5MB | 7.5MB | 7.5MB | 12MB | Actual allocated blocks |
-| boot_provision | 744ms | 747ms | 752ms | 1,200ms | Clone image into new session and boot |
-| boot_ready | 11ms | 11ms | 12ms | 1,200ms | First ready check after provisioning |
+| fork | 38.0ms | 40.5ms | 43.3ms | 500ms | APFS clonefile of rootfs overlay and workspace |
+| image_size | 11.8MB | 11.8MB | 11.8MB | 12MB | Actual allocated blocks |
+| boot_provision | 930.6ms | 948.6ms | 983.8ms | 1,200ms | Clone image into new session and boot |
+| boot_ready | 12.3ms | 12.6ms | 13.1ms | 1,200ms | First ready check after provisioning |
 
 Run:
 

@@ -30,6 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sessions.
 
 ### Changed (route surfaces and diagnostics)
+- Refreshed the 1.3 benchmark artifacts and docs from the canonical
+  `just bench` rail, including mock-server HTTP/protocol throughput plus
+  lifecycle and fork timings used by the S05 route-latency gate.
 - Hardened the Ironbank HTTP body ledger proof so upstream transcript
   assertions ignore non-HTTP records instead of failing on unrelated DNS
   rows emitted by the hermetic mock server.
