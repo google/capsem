@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (session lifecycle)
+- Fixed stale persistent sessions whose preserved boot logs show overlayfs
+  `Stale file handle` / kernel panic failures so they are reconciled as
+  `Defunct`, cannot be resumed, keep the original boot-failure reason in
+  route JSON, and are removed by default purge.
+
 ### Changed (route surfaces and diagnostics)
 - Strengthened the Ironbank route-health gate so profile enforcement evaluate
   routes must prove exact `allow`, `ask`, and `block` decisions, detection

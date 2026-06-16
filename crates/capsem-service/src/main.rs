@@ -561,6 +561,56 @@ impl ServiceState {
         }
     }
 
+    fn reconcile_persistent_defunct_from_logs(&self) {
+        let candidates: Vec<(String, PathBuf)> = {
+            let registry = self.persistent_registry.lock().unwrap();
+            let instances = self.instances.lock().unwrap();
+            registry
+                .list()
+                .filter(|entry| !entry.defunct)
+                .filter(|entry| !instances.contains_key(&entry.name))
+                .map(|entry| (entry.name.clone(), entry.session_dir.clone()))
+                .collect()
+        };
+
+        let updates: Vec<(String, String)> = candidates
+            .into_iter()
+            .filter_map(|(name, session_dir)| {
+                read_boot_failure_tail(&session_dir).map(|tail| (name, tail))
+            })
+            .collect();
+        if updates.is_empty() {
+            return;
+        }
+
+        let mut registry = self.persistent_registry.lock().unwrap();
+        let instances = self.instances.lock().unwrap();
+        let mut changed = false;
+        for (name, tail) in updates {
+            if instances.contains_key(&name) {
+                continue;
+            }
+            if let Some(entry) = registry.get_mut(&name) {
+                if !entry.defunct {
+                    warn!(
+                        name,
+                        "marking persistent VM defunct from preserved boot logs"
+                    );
+                    entry.defunct = true;
+                    entry.last_error = Some(tail);
+                    entry.suspended = false;
+                    entry.checkpoint_path = None;
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            if let Err(error) = registry.save() {
+                error!(error = %error, "failed to save persistent registry after defunct reconciliation");
+            }
+        }
+    }
+
     /// Rename an ephemeral session dir to a `-failed-*` sibling so its
     /// logs survive for post-mortem, then cull down to
     /// `MAX_FAILED_SESSIONS`.
@@ -1040,6 +1090,7 @@ impl ServiceState {
         cpus_override: Option<u32>,
     ) -> Result<String> {
         self.cleanup_stale_instances();
+        self.reconcile_persistent_defunct_from_logs();
 
         // Check if already running
         {
@@ -1059,6 +1110,13 @@ impl ServiceState {
 
         if !entry.session_dir.exists() {
             return Err(anyhow!("session directory for \"{}\" is missing", name));
+        }
+        if entry.defunct {
+            let reason = entry
+                .last_error
+                .as_deref()
+                .unwrap_or("previous boot failed before the VM reached ready");
+            return Err(anyhow!("persistent VM \"{}\" is defunct: {}", name, reason));
         }
 
         let ram_mb = ram_mb_override.unwrap_or(entry.ram_mb);
@@ -1783,6 +1841,36 @@ fn profile_asset_download_target(
 fn is_launchd_cleanup_transient(process_log_tail: &str) -> bool {
     process_log_tail.contains("com.apple.security.virtualization")
         && process_log_tail.contains("entitlement")
+}
+
+fn is_boot_fatal_log_tail(tail: &str) -> bool {
+    tail.contains("FATAL: overlayfs")
+        || tail.contains("Stale file handle")
+        || tail.contains("failed to verify upper root origin")
+        || tail.contains("Kernel panic")
+}
+
+fn read_log_tail(session_dir: &std::path::Path, file_name: &str, n: usize) -> Option<String> {
+    let content = std::fs::read_to_string(session_dir.join(file_name)).ok()?;
+    let lines: Vec<&str> = content.lines().collect();
+    let tail = if lines.len() > n {
+        &lines[lines.len() - n..]
+    } else {
+        &lines[..]
+    };
+    Some(tail.join("\n"))
+}
+
+fn read_boot_failure_tail(session_dir: &std::path::Path) -> Option<String> {
+    for file_name in ["serial.log", "process.log"] {
+        let Some(tail) = read_log_tail(session_dir, file_name, 80) else {
+            continue;
+        };
+        if is_boot_fatal_log_tail(&tail) {
+            return Some(tail);
+        }
+    }
+    None
 }
 
 /// Read the last `n` lines of `<session_dir>/process.log`. Returns a
@@ -2805,6 +2893,7 @@ fn storage_diagnostics(session_dir: &StdPath) -> Option<api::StorageDiagnostics>
 }
 
 async fn handle_list(State(state): State<Arc<ServiceState>>) -> Json<ListResponse> {
+    state.reconcile_persistent_defunct_from_logs();
     let mut sandboxes: Vec<SandboxInfo> = Vec::new();
 
     // Running instances (with live telemetry)
@@ -2914,6 +3003,7 @@ async fn handle_info(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Result<Json<SandboxInfo>, AppError> {
+    state.reconcile_persistent_defunct_from_logs();
     // Check running instances first
     {
         let (instance_data, session_dir) = {
@@ -2996,6 +3086,7 @@ async fn handle_vm_status(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Result<Json<api::VmStatusResponse>, AppError> {
+    state.reconcile_persistent_defunct_from_logs();
     {
         let instances = state.instances.lock().unwrap();
         if let Some(i) = instances.get(&id) {
@@ -9133,6 +9224,7 @@ async fn main() -> Result<()> {
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });
+    state.reconcile_persistent_defunct_from_logs();
 
     {
         let state_for_assets = Arc::clone(&state);
