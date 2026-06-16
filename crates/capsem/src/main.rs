@@ -1049,6 +1049,22 @@ fn print_corp_status(info: &serde_json::Value) {
     }
 }
 
+fn should_refresh_update_cache_for_command(command: &Commands) -> bool {
+    !matches!(
+        command,
+        Commands::Misc(
+            MiscCommands::Install
+                | MiscCommands::Status
+                | MiscCommands::Start
+                | MiscCommands::Stop
+                | MiscCommands::Completions { .. }
+                | MiscCommands::Uninstall { .. }
+                | MiscCommands::SupportBundle { .. }
+                | MiscCommands::Version
+        )
+    )
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -1079,11 +1095,8 @@ async fn main() -> Result<()> {
         eprintln!("{}", notice);
     }
 
-    // Background update check (fire-and-forget). Spawned early so it runs
-    // even for commands that call std::process::exit (exec, run).
-    tokio::spawn(update::refresh_update_cache_if_stale());
-
     if cli.command.is_none() {
+        tokio::spawn(update::refresh_update_cache_if_stale());
         let issues = check_service_health().await?;
         if !issues.is_empty() {
             eprintln!("\x1b[31;1m[!] Background service has issues:\x1b[0m");
@@ -1097,8 +1110,13 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    let command = cli.command.as_ref().unwrap();
+    if should_refresh_update_cache_for_command(command) {
+        tokio::spawn(update::refresh_update_cache_if_stale());
+    }
+
     // Commands that don't need the service
-    match cli.command.as_ref().unwrap() {
+    match command {
         Commands::Misc(MiscCommands::Version) => {
             println!(
                 "capsem {} (build {} ts={})",
@@ -2436,6 +2454,34 @@ mod tests {
             cli.command.unwrap(),
             Commands::Misc(MiscCommands::Status)
         ));
+    }
+
+    #[test]
+    fn service_control_commands_do_not_start_background_update_work() {
+        for args in [
+            &["capsem", "install"][..],
+            &["capsem", "status"][..],
+            &["capsem", "start"][..],
+            &["capsem", "stop"][..],
+            &["capsem", "version"][..],
+            &["capsem", "debug"][..],
+            &["capsem", "completions", "zsh"][..],
+            &["capsem", "uninstall", "--yes"][..],
+        ] {
+            let cli = Cli::parse_from(args);
+            let command = cli.command.as_ref().expect("parsed command");
+            assert!(
+                !should_refresh_update_cache_for_command(command),
+                "{args:?} must stay a pure local control command"
+            );
+        }
+    }
+
+    #[test]
+    fn session_commands_may_refresh_update_cache() {
+        let cli = Cli::parse_from(["capsem", "list"]);
+        let command = cli.command.as_ref().expect("parsed command");
+        assert!(should_refresh_update_cache_for_command(command));
     }
 
     #[test]

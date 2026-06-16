@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (service control)
+- Fixed `capsem stop` and other service-control commands so they stay pure
+  local control operations and no longer start the background update/network
+  refresh before dispatch.
+
 ### Fixed (session lifecycle)
 - Fixed stale persistent sessions whose preserved boot logs show overlayfs
   `Stale file handle` / kernel panic failures so they are reconciled as
