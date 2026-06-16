@@ -1,5 +1,9 @@
 use std::io;
 use std::sync::mpsc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -167,7 +171,13 @@ fn run_loop(
     let mut connected_terminal = None;
     let mut needs_draw = true;
     let input_events = spawn_input_reader();
+    let refresh_bridge = live_provider.clone().map(RefreshBridge::spawn);
     loop {
+        if let Some(bridge) = &refresh_bridge {
+            for event in bridge.drain_events() {
+                needs_draw |= apply_refresh_event(app, event);
+            }
+        }
         if let Some(bridge) = &control_bridge {
             let mut should_refresh = false;
             for event in bridge.drain_events() {
@@ -193,7 +203,9 @@ fn run_loop(
                 }
             }
             if should_refresh {
-                needs_draw |= refresh_state(app, live_provider.as_ref());
+                if let Some(refresh) = &refresh_bridge {
+                    refresh.request();
+                }
             }
         }
         if let Some(bridge) = &terminal_bridge {
@@ -223,7 +235,9 @@ fn run_loop(
             );
         }
         if last_refresh.elapsed() >= refresh_interval {
-            needs_draw |= refresh_state(app, live_provider.as_ref());
+            if let Some(bridge) = &refresh_bridge {
+                bridge.request();
+            }
             last_refresh = Instant::now();
         }
         if needs_draw {
@@ -337,6 +351,69 @@ enum ControlEvent {
     Finished(std::result::Result<ActionOutcome, String>),
 }
 
+struct RefreshBridge {
+    commands: mpsc::Sender<()>,
+    events: mpsc::Receiver<RefreshEvent>,
+    in_flight: Arc<AtomicBool>,
+}
+
+impl RefreshBridge {
+    fn spawn(provider: GatewayProvider) -> Self {
+        Self::spawn_with_loader(move || provider.load())
+    }
+
+    fn spawn_with_loader<F>(mut loader: F) -> Self
+    where
+        F: FnMut() -> Result<AppState> + Send + 'static,
+    {
+        let (command_tx, command_rx) = mpsc::channel::<()>();
+        let (event_tx, event_rx) = mpsc::channel::<RefreshEvent>();
+        let in_flight = Arc::new(AtomicBool::new(false));
+        let worker_in_flight = Arc::clone(&in_flight);
+        thread::spawn(move || {
+            while command_rx.recv().is_ok() {
+                let event = match loader() {
+                    Ok(state) => RefreshEvent::Loaded(state),
+                    Err(error) => RefreshEvent::Failed(format!("{error:#}")),
+                };
+                worker_in_flight.store(false, Ordering::Release);
+                let _ = event_tx.send(event);
+            }
+        });
+        Self {
+            commands: command_tx,
+            events: event_rx,
+            in_flight,
+        }
+    }
+
+    fn request(&self) {
+        if self
+            .in_flight
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return;
+        }
+        if self.commands.send(()).is_err() {
+            self.in_flight.store(false, Ordering::Release);
+        }
+    }
+
+    fn drain_events(&self) -> Vec<RefreshEvent> {
+        let mut events = Vec::new();
+        while let Ok(event) = self.events.try_recv() {
+            events.push(event);
+        }
+        events
+    }
+}
+
+enum RefreshEvent {
+    Loaded(AppState),
+    Failed(String),
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ConnectedTerminal {
     session_id: String,
@@ -418,16 +495,13 @@ fn terminal_status_is_closed(status: &str) -> bool {
         || status.starts_with("read failed:")
 }
 
-fn refresh_state(app: &mut App, provider: Option<&GatewayProvider>) -> bool {
-    let Some(provider) = provider else {
-        return false;
-    };
-    match provider.load() {
-        Ok(state) => {
+fn apply_refresh_event(app: &mut App, event: RefreshEvent) -> bool {
+    match event {
+        RefreshEvent::Loaded(state) => {
             app.replace_state(state);
             true
         }
-        Err(_) => {
+        RefreshEvent::Failed(_error) => {
             let mut state = app.state().clone();
             state.service.status = ServiceStatus::Offline;
             state.service.latency = Duration::ZERO;
