@@ -141,7 +141,7 @@ mod tests {
     }
 
     #[test]
-    fn generate_profile_session_name_uses_profile_counter() {
+    fn session_naming_generate_profile_session_name_uses_profile_counter() {
         assert_eq!(
             generate_profile_session_name("code", std::iter::empty::<&str>()),
             "code-1"
@@ -153,7 +153,7 @@ mod tests {
     }
 
     #[test]
-    fn generate_profile_session_name_sanitizes_profile_id() {
+    fn session_naming_generate_profile_session_name_sanitizes_profile_id() {
         assert_eq!(
             generate_profile_session_name("Co Work!", std::iter::empty::<&str>()),
             "co-work-1"

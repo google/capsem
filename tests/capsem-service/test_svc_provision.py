@@ -25,6 +25,28 @@ class TestProvision:
         assert vm_id, f"No ID in response: {resp}"
         client.delete(f"/vms/{vm_id}/delete")
 
+    def test_session_name_create_without_name_uses_profile_counter(self, client):
+        first = client.post(
+            "/vms/create",
+            {"profile_id": CODE_PROFILE_ID, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS},
+        )
+        second = client.post(
+            "/vms/create",
+            {"profile_id": CODE_PROFILE_ID, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS},
+        )
+        first_id = first.get("id")
+        second_id = second.get("id")
+        try:
+            assert first_id == "code-1"
+            assert second_id == "code-2"
+            assert not first_id.startswith("tmp-")
+            assert not second_id.startswith("tmp-")
+        finally:
+            if first_id:
+                client.delete(f"/vms/{first_id}/delete")
+            if second_id:
+                client.delete(f"/vms/{second_id}/delete")
+
     def test_create_with_custom_resources(self, fresh_vm, client):
         name, _ = fresh_vm("res", ram_mb=4096, cpus=4)
         info = client.get(f"/vms/{name}/info")
