@@ -7,6 +7,7 @@
   import '@xterm/xterm/css/xterm.css';
   import { TERMINAL_OPTIONS } from '../../terminal/terminal-config';
   import { getTheme, DEFAULT_THEME } from '../../terminal/themes';
+  import { TerminalInputCoalescer, TerminalOutputCoalescer } from '../../terminal/io-coalescer';
   import { parseParentMessage } from '../../terminal/postmessage';
 
   initTauriLog();
@@ -29,6 +30,8 @@
   let reconnectAttempt = 0;
   let destroyed = false;
   let everConnected = false;
+  let outputCoalescer: TerminalOutputCoalescer | null = null;
+  let inputCoalescer: TerminalInputCoalescer | null = null;
 
   // Reactive overlay state -- drives the loading animation shown on top of
   // the terminal while we're waiting on the gateway / VM boot.
@@ -57,6 +60,12 @@
 
   function postToParent(msg: unknown): void {
     try { window.parent.postMessage(msg, '*'); } catch { /* detached */ }
+  }
+
+  function sendTerminalBytes(bytes: Uint8Array): void {
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(bytes);
+    }
   }
 
   async function fetchToken(): Promise<string | null> {
@@ -156,9 +165,9 @@
         console.log('[terminal] first-data vmId=%s', vmId);
       }
       if (event.data instanceof ArrayBuffer) {
-        terminal.write(new Uint8Array(event.data));
+        outputCoalescer?.push(new Uint8Array(event.data));
       } else {
-        terminal.write(event.data);
+        outputCoalescer?.push(new TextEncoder().encode(String(event.data)));
       }
     };
 
@@ -223,6 +232,8 @@
     fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
     terminal.open(containerEl);
+    outputCoalescer = new TerminalOutputCoalescer((bytes) => terminal?.write(bytes));
+    inputCoalescer = new TerminalInputCoalescer(sendTerminalBytes);
 
     try {
       const webgl = new WebglAddon();
@@ -255,9 +266,7 @@
     });
 
     terminal.onData((data: string) => {
-      if (ws?.readyState === WebSocket.OPEN) {
-        ws.send(new TextEncoder().encode(data));
-      }
+      inputCoalescer?.push(new TextEncoder().encode(data));
     });
 
     terminal.focus();
@@ -275,6 +284,8 @@
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
     resizeObserver?.disconnect();
     if (ws) { try { ws.close(); } catch { /* already closed */ } ws = null; }
+    outputCoalescer?.reset();
+    inputCoalescer?.reset();
     terminal?.dispose();
   });
 </script>

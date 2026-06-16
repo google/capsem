@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until `capsem start` is run, preventing surprise credential-store hydration
   and Keychain prompts during stop flows.
 
+### Fixed (terminal throughput)
+- Coalesced desktop terminal output to one xterm write per animation frame and
+  batched bursty terminal input before WebSocket send, preventing high-volume
+  agent output from starving keyboard responsiveness.
+
 ### Fixed (session lifecycle)
 - Fixed stale persistent sessions whose preserved boot logs show overlayfs
   `Stale file handle` / kernel panic failures so they are reconciled as
