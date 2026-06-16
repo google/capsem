@@ -1911,6 +1911,7 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
         result = json.loads(result_line.split("=", 1)[1])
         nonce = result["nonce"]
         filename = result["filename"]
+        expected_call_id = f"call_{nonce[:12]}"
         assert re.fullmatch(r"[0-9a-f]{32}", nonce), result
         assert re.fullmatch(r"codex-cli-[0-9a-f]{32}\.txt", filename), result
         assert result["contains_nonce"] is True
@@ -1955,7 +1956,7 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
         assert any(tool["name"] == "exec_command" for tool in tool_http_request["tools"])
         assert nonce in tool_http_record["request_body"]
         assert f"/root/{filename}" in tool_http_record["request_body"]
-        assert "call_codex_write_poem" in tool_http_record["response_body"]
+        assert expected_call_id in tool_http_record["response_body"]
         assert "response.function_call_arguments.delta" in tool_http_record["response_body"]
         assert nonce in tool_http_record["response_body"]
         assert f"/root/{filename}" in tool_http_record["response_body"]
@@ -1978,11 +1979,11 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
         final_inputs = final_http_request["input"]
         assert final_inputs[-2]["type"] == "function_call"
         assert final_inputs[-2]["name"] == "exec_command"
-        assert final_inputs[-2]["call_id"] == "call_codex_write_poem"
+        assert final_inputs[-2]["call_id"] == expected_call_id
         assert nonce in final_inputs[-2]["arguments"]
         assert f"/root/{filename}" in final_inputs[-2]["arguments"]
         assert final_inputs[-1]["type"] == "function_call_output"
-        assert final_inputs[-1]["call_id"] == "call_codex_write_poem"
+        assert final_inputs[-1]["call_id"] == expected_call_id
         assert "Process exited with code 0" in final_inputs[-1]["output"]
         assert nonce not in final_inputs[-1]["output"]
         final_sse_events = [
@@ -2048,7 +2049,8 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
             tool_model = model_rows[-2]
             codex_model = model_rows[-1]
             _assert_event_id(tool_model["event_id"])
-            assert tool_model["provider"] == "openai"
+            assert tool_model["provider"] == "unknown"
+            assert tool_model["protocol"] == "openai"
             assert tool_model["model"] == "gemma4:latest"
             assert tool_model["method"] == "POST"
             assert tool_model["status_code"] == 200
@@ -2067,7 +2069,8 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
                 tool_model["request_body_preview"] or ""
             )
             _assert_event_id(codex_model["event_id"])
-            assert codex_model["provider"] == "openai"
+            assert codex_model["provider"] == "unknown"
+            assert codex_model["protocol"] == "openai"
             assert codex_model["model"] == "gemma4:latest"
             assert codex_model["method"] == "POST"
             assert codex_model["status_code"] == 200
@@ -2083,7 +2086,7 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
             assert codex_model["credential_ref"] is None
             usage_details = json.loads(codex_model["usage_details"])
             assert usage_details["thinking"] == 2
-            assert "call_codex_write_poem" in (codex_model["request_body_preview"] or "")
+            assert expected_call_id in (codex_model["request_body_preview"] or "")
             assert "capsem_test_codex_cli_key" not in (
                 codex_model["request_body_preview"] or ""
             )
@@ -2094,16 +2097,17 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
                     SELECT tool_calls.*, model_calls.trace_id AS model_trace_id
                     FROM tool_calls
                     JOIN model_calls ON model_calls.id = tool_calls.model_call_id
-                    WHERE tool_calls.call_id = 'call_codex_write_poem'
+                    WHERE tool_calls.call_id = ?
                     ORDER BY tool_calls.id
-                    """
+                    """,
+                    (expected_call_id,),
                 ).fetchall(),
                 lambda rows: len(rows) == 1,
             )
             tool_row = tool_rows[0]
             _assert_event_id(tool_row["event_id"])
             assert tool_row["model_call_id"] == tool_model["id"]
-            assert tool_row["provider"] == "openai"
+            assert tool_row["provider"] == "unknown"
             assert tool_row["status"] == "observed"
             assert tool_row["call_index"] == 0
             assert tool_row["tool_name"] == "exec_command"
@@ -2123,15 +2127,16 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
                     """
                     SELECT *
                     FROM tool_responses
-                    WHERE call_id = 'call_codex_write_poem'
+                    WHERE call_id = ?
                     ORDER BY id
-                    """
+                    """,
+                    (expected_call_id,),
                 ).fetchall(),
                 lambda rows: len(rows) == 1,
             )
             tool_response = tool_response_rows[0]
             assert tool_response["model_call_id"] == codex_model["id"]
-            assert tool_response["call_id"] == "call_codex_write_poem"
+            assert tool_response["call_id"] == expected_call_id
             assert tool_response["is_error"] == 0
             assert tool_response["trace_id"] == codex_model["trace_id"]
             assert "Process exited with code 0" in (
@@ -2168,7 +2173,7 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
                 tool_net["response_headers"] or ""
             )
             assert '"name":"exec_command"' in (tool_net["request_body_preview"] or "")
-            assert "call_codex_write_poem" in (tool_net["response_body_preview"] or "")
+            assert expected_call_id in (tool_net["response_body_preview"] or "")
             assert "response.function_call_arguments.delta" in (
                 tool_net["response_body_preview"] or ""
             )
@@ -2189,7 +2194,7 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
             assert "capsem_test_codex_cli_key" not in (
                 codex_net["request_body_preview"] or ""
             )
-            assert "call_codex_write_poem" in (codex_net["request_body_preview"] or "")
+            assert expected_call_id in (codex_net["request_body_preview"] or "")
             assert "response.reasoning_summary_text.delta" in (
                 codex_net["response_body_preview"] or ""
             )
@@ -2224,10 +2229,10 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
             assert "profiles.rules.default_model" in {
                 row["rule_id"] for row in by_event[tool_model["event_id"]]
             }
-            assert "profiles.rules.ai_openai_model_api" in {
+            assert "profiles.rules.default_unknown_model_provider" in {
                 row["rule_id"] for row in by_event[codex_model["event_id"]]
             }
-            assert "profiles.rules.ai_openai_model_api" in {
+            assert "profiles.rules.default_unknown_model_provider" in {
                 row["rule_id"] for row in by_event[tool_model["event_id"]]
             }
             assert "profiles.rules.default_http" in {

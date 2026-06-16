@@ -80,6 +80,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   path. OpenAI image endpoints are now classified as model traffic and their
   generated payloads are recorded in `model_calls.text_content` while brokered
   credentials remain opaque and raw secrets stay out of DB/log output.
+- Strengthened the Codex CLI Ironbank proof so tool-call IDs are derived from
+  the per-run nonce and local OpenAI-compatible traffic asserts
+  `provider = unknown`, `protocol = openai`, and the unknown-provider
+  detection rule instead of relying on stale fixed identifiers.
 - Added a host `capsem-mcp` Ironbank proof that exercises the real stdio MCP
   server against `capsem-service`, verifies every advertised tool, calls the
   session/file/exec/MCP/log/triage routes with deterministic inputs, and
