@@ -752,6 +752,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   configuration.
 
 ### Fixed (install/setup)
+- Fixed `capsem stop` on macOS so it unloads the LaunchAgent instead of sending
+  SIGTERM to a `KeepAlive` job that launchd immediately restarts. The command
+  now verifies the service is no longer loaded before reporting success, so
+  stopping Capsem no longer re-enters service startup or prompts for Keychain.
 - macOS package postinstall now adds `~/.capsem/bin` to fish shell startup via
   an idempotent `fish_add_path --path "$HOME/.capsem/bin"` entry.
 - Rebuilt install/startup flow around service readiness and asset state instead

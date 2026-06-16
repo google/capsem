@@ -282,20 +282,29 @@ pub async fn stop_service() -> Result<()> {
     #[cfg(target_os = "macos")]
     {
         let uid = nix::unistd::getuid();
-        let target = format!("gui/{}/com.capsem.service", uid);
-        let status = tokio::process::Command::new("launchctl")
-            .args(["kill", "SIGTERM", &target])
-            .status()
+        let (primary, fallback) = macos_stop_launchagent_plan(uid.as_raw());
+        let output = tokio::process::Command::new(primary.program)
+            .args(primary.args.iter().map(String::as_str))
+            .output()
             .await?;
-        if !status.success() {
-            // Fallback: unload/load cycle
-            if let Some(plist) = plist_path() {
-                let _ = tokio::process::Command::new("launchctl")
-                    .args(["unload", &plist.to_string_lossy()])
-                    .status()
+        if !output.status.success() && macos_launchagent_loaded(uid.as_raw()).await? {
+            if let Some(fallback) = fallback {
+                let fallback_output = tokio::process::Command::new(fallback.program)
+                    .args(fallback.args.iter().map(String::as_str))
+                    .output()
                     .await;
+                if fallback_output
+                    .as_ref()
+                    .map(|o| !o.status.success())
+                    .unwrap_or(true)
+                    && macos_launchagent_loaded(uid.as_raw()).await?
+                {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    anyhow::bail!("failed to stop capsem service: {}", stderr.trim());
+                }
             }
         }
+        wait_for_macos_launchagent_unloaded(uid.as_raw()).await?;
     }
 
     #[cfg(target_os = "linux")]
@@ -323,6 +332,50 @@ pub fn plist_path() -> Option<PathBuf> {
     std::env::var("HOME")
         .ok()
         .map(|h| PathBuf::from(h).join("Library/LaunchAgents/com.capsem.service.plist"))
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LaunchctlCommand {
+    program: &'static str,
+    args: Vec<String>,
+}
+
+#[cfg(target_os = "macos")]
+fn macos_stop_launchagent_plan(uid: u32) -> (LaunchctlCommand, Option<LaunchctlCommand>) {
+    let target = format!("gui/{uid}/com.capsem.service");
+    (
+        LaunchctlCommand {
+            program: "launchctl",
+            args: vec!["bootout".to_string(), target],
+        },
+        plist_path().map(|plist| LaunchctlCommand {
+            program: "launchctl",
+            args: vec!["unload".to_string(), plist.display().to_string()],
+        }),
+    )
+}
+
+#[cfg(target_os = "macos")]
+async fn wait_for_macos_launchagent_unloaded(uid: u32) -> Result<()> {
+    for _ in 0..50 {
+        if !macos_launchagent_loaded(uid).await? {
+            return Ok(());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    let target = format!("gui/{uid}/com.capsem.service");
+    anyhow::bail!("capsem service still loaded after stop: {target}");
+}
+
+#[cfg(target_os = "macos")]
+async fn macos_launchagent_loaded(uid: u32) -> Result<bool> {
+    let target = format!("gui/{uid}/com.capsem.service");
+    let output = tokio::process::Command::new("launchctl")
+        .args(["print", &target])
+        .output()
+        .await?;
+    Ok(output.status.success())
 }
 
 #[cfg(target_os = "macos")]
@@ -612,6 +665,38 @@ mod tests {
         assert!(plist.contains("<key>KeepAlive</key>"));
         assert!(plist.contains("<true/>"));
         assert!(plist.contains("<key>RunAtLoad</key>"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_stop_uses_bootout_so_keepalive_does_not_restart_service() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _home = EnvGuard::set("HOME", "/Users/tester");
+        let (primary, fallback) = macos_stop_launchagent_plan(501);
+
+        assert_eq!(primary.program, "launchctl");
+        assert_eq!(
+            primary.args,
+            vec![
+                "bootout".to_string(),
+                "gui/501/com.capsem.service".to_string()
+            ]
+        );
+        assert!(
+            !primary
+                .args
+                .iter()
+                .any(|arg| arg == "kill" || arg == "SIGTERM"),
+            "capsem stop must unload the LaunchAgent, not SIGTERM a KeepAlive job"
+        );
+
+        let fallback = fallback.expect("installed macOS stop path should have plist fallback");
+        assert_eq!(fallback.program, "launchctl");
+        assert_eq!(fallback.args[0], "unload");
+        assert_eq!(
+            fallback.args[1],
+            "/Users/tester/Library/LaunchAgents/com.capsem.service.plist"
+        );
     }
 
     #[test]
