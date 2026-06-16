@@ -133,7 +133,7 @@ Common causes:
 1. Run: `just run "capsem-bench storage"`
 2. Compare `/root` against `/tmp`, `/var/tmp`, `/var/log`, and `/run` to separate VirtioFS workspace costs from tmpfs, overlay, and rootfs read costs
 3. Check `storage.kernel` for `/proc/cmdline`, virtio block queue settings, FUSE connection backpressure knobs, and known host-side KVM queue sizes
-4. Check `storage.rootfs.backing.squashfs_superblock` for the booted rootfs compression and block/chunk size before comparing Linux/macOS rootfs reads
+4. Check `storage.rootfs.backing.erofs_mounts` for the booted EROFS rootfs before comparing Linux/macOS rootfs reads; SquashFS fields are historical diagnostics only, not the 1.3 release gate
 5. Compare the detailed I/O profile: sequential 4K/64K/1M IOPS/MB/s, random 4K read IOPS, and random 4K sync-write IOPS with p95 latency
 6. Use the reported mount table to confirm which filesystem backs each path before assigning blame to KVM, VirtioFS, overlayfs, or the host filesystem
 

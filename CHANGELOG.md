@@ -33,6 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Hardened the Ironbank HTTP body ledger proof so upstream transcript
   assertions ignore non-HTTP records instead of failing on unrelated DNS
   rows emitted by the hermetic mock server.
+- Changed `just bench` to use the artifact-recording release benchmark path
+  with the shared local mock server, so HTTP, proxy throughput, and protocol
+  benchmarks fail on skips and publish local numbers alongside lifecycle/fork
+  artifacts.
 - Fixed security decision ledgers so visible default catchall rules remain
   recorded in `security_rule_events` without emitting a second effective
   decision after a more specific profile/corp enforcement rule wins. The code

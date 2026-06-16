@@ -793,8 +793,8 @@ bench: _ensure-dev-ready _check-assets _pack-initrd _materialize-config _ensure-
     set -euo pipefail
     source {{justfile_directory()}}/scripts/lib/exec_lock.sh
     acquire_exec_lock "$HOME/.capsem/run/execution.lock"
-    echo "=== In-VM benchmarks (disk, rootfs, CLI, HTTP, snapshots) ==="
-    {{cli_binary}} run "capsem-bench"
+    echo "=== In-VM benchmarks (disk, rootfs, CLI, HTTP, protocol, snapshots) ==="
+    CAPSEM_ASSETS_DIR={{assets_dir}} uv run python -m pytest tests/capsem-serial/test_capsem_bench_baseline.py -v --tb=short
     echo ""
     echo "=== Host-side benchmarks (lifecycle, fork) ==="
     uv run python -m pytest tests/capsem-serial/test_lifecycle_benchmark.py -v --tb=short -m serial

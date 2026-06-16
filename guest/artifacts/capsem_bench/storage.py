@@ -289,15 +289,15 @@ def _read_int(path):
 def rootfs_backing_metadata(mounts):
     root_mount = find_mount_for_path("/", mounts)
     root_options = parse_mount_options(root_mount.get("options", ""))
-    squashfs_mounts = [
-        mount for mount in mounts if mount.get("fs_type") == "squashfs"
+    erofs_mounts = [
+        mount for mount in mounts if mount.get("fs_type") == "erofs"
     ]
     return {
         "root_mount": root_mount,
         "overlay_lowerdir": root_options.get("lowerdir"),
         "overlay_upperdir": root_options.get("upperdir"),
         "overlay_workdir": root_options.get("workdir"),
-        "squashfs_mounts": squashfs_mounts,
+        "erofs_mounts": erofs_mounts,
         "squashfs_superblock": read_squashfs_superblock("/dev/vda"),
     }
 

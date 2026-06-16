@@ -332,6 +332,29 @@ def test_serial_benchmark_release_proofs_are_not_env_gated() -> None:
     assert '"protocol",' in source
 
 
+def test_bench_recipe_uses_archiving_mock_server_release_path() -> None:
+    bench = _recipe_block("bench:")
+    baseline = (
+        PROJECT_ROOT / "tests" / "capsem-serial" / "test_capsem_bench_baseline.py"
+    ).read_text()
+
+    assert "tests/capsem-serial/test_capsem_bench_baseline.py" in bench
+    assert '{{cli_binary}} run "capsem-bench"' not in bench
+    assert "from helpers.mock_server import start_mock_server, stop_process" in baseline
+    assert "CAPSEM_MOCK_SERVER_BASE_URL" in baseline
+    assert "CAPSEM_MOCK_SERVER_HTTPS_BASE_URL" in baseline
+    assert "CAPSEM_BENCH_TOTAL_REQUESTS" in baseline
+    assert "CAPSEM_BENCH_CONCURRENCY" in baseline
+    assert "RELEASE_PROTOCOL_REQUESTS = 1_000" in baseline
+    assert "RELEASE_PROTOCOL_CONCURRENCY = 32" in baseline
+    assert "RELEASE_PROTOCOL_REQUESTS = 10" not in baseline
+    assert "RELEASE_PROTOCOL_CONCURRENCY = 1" not in baseline
+    assert "validate_capsem_bench_result(data)" in baseline
+    assert "capsem-bench all" in baseline
+    assert "skipped" in baseline
+    assert "benchmarks\" / \"capsem-bench\"" in baseline
+
+
 def test_integration_script_has_no_live_ai_provider_escape_hatch() -> None:
     source = (PROJECT_ROOT / "scripts" / "integration_test.py").read_text()
 

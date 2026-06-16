@@ -174,7 +174,7 @@ def test_rootfs_backing_metadata_includes_overlay_and_superblock(monkeypatch):
         },
         {
             "mount_point": "/mnt/a",
-            "fs_type": "squashfs",
+            "fs_type": "erofs",
             "source": "/dev/vda",
             "options": "ro",
         },
@@ -189,7 +189,7 @@ def test_rootfs_backing_metadata_includes_overlay_and_superblock(monkeypatch):
 
     assert info["overlay_lowerdir"] == "/mnt/a"
     assert info["overlay_upperdir"] == "/mnt/system/upper"
-    assert info["squashfs_mounts"][0]["source"] == "/dev/vda"
+    assert info["erofs_mounts"][0]["source"] == "/dev/vda"
     assert info["squashfs_superblock"]["block_size_bytes"] == 65_536
 
 

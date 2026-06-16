@@ -117,12 +117,20 @@ def validate_storage_split_result(data: dict[str, Any]) -> None:
     assert "/" in data["paths"], "storage path metadata missing root path"
     assert "rootfs" in data, "storage rootfs section missing"
     assert "backing" in data["rootfs"], "storage rootfs backing metadata missing"
-    superblock = data["rootfs"]["backing"].get("squashfs_superblock", {})
-    assert superblock.get("compression"), "storage rootfs compression missing"
-    _assert_gte(
-        superblock.get("block_size_bytes", 0),
-        4096,
-        "storage rootfs squashfs block size",
+    kernel_args = set(data["kernel"].get("cmdline", {}).get("args", []))
+    assert "capsem.rootfs=erofs" in kernel_args, (
+        f"storage kernel cmdline must identify EROFS rootfs: {sorted(kernel_args)}"
+    )
+    backing = data["rootfs"]["backing"]
+    assert backing.get("root_mount", {}).get("fs_type") == "overlay", (
+        f"storage rootfs should run through overlay: {backing.get('root_mount')}"
+    )
+    assert backing.get("overlay_lowerdir"), (
+        f"storage rootfs overlay lowerdir missing: {backing}"
+    )
+    squashfs = backing.get("squashfs_superblock", {})
+    assert squashfs.get("error") == "not squashfs", (
+        f"storage rootfs should not report a SquashFS backing: {squashfs}"
     )
     assert data["rootfs"]["seq_reads"], "storage rootfs seq_reads is empty"
     for item in data["rootfs"]["seq_reads"]:

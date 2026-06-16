@@ -78,7 +78,10 @@ def _valid_result():
         },
         "storage": {
             "kernel": {
-                "cmdline": {"raw": "root=/dev/vda ro", "args": ["root=/dev/vda", "ro"]},
+                "cmdline": {
+                    "raw": "capsem.rootfs=erofs ro",
+                    "args": ["capsem.rootfs=erofs", "ro"],
+                },
                 "block_queues": {"vda": {"read_ahead_kb": 4096}},
                 "fuse_connections": {},
                 "known_host_queue_sizes": {
@@ -99,10 +102,9 @@ def _valid_result():
             },
             "rootfs": {
                 "backing": {
-                    "squashfs_superblock": {
-                        "compression": "zstd",
-                        "block_size_bytes": 65_536,
-                    },
+                    "root_mount": {"fs_type": "overlay"},
+                    "overlay_lowerdir": "/mnt/a",
+                    "squashfs_superblock": {"error": "not squashfs"},
                 },
                 "seq_reads": [
                     {
