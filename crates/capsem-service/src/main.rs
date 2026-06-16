@@ -6171,13 +6171,7 @@ async fn handle_inspect(
         ));
     }
 
-    let db_path = {
-        let instances = state.instances.lock().unwrap();
-        let i = instances
-            .get(&id)
-            .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
-        i.session_dir.join("session.db")
-    };
+    let db_path = resolve_session_dir(&state, &id)?.join("session.db");
 
     let reader = capsem_logger::DbReader::open(&db_path).map_err(|e| {
         AppError(
@@ -6213,13 +6207,7 @@ async fn handle_timeline(
     Path(id): Path<String>,
     axum::extract::Query(params): axum::extract::Query<TimelineQuery>,
 ) -> Result<impl IntoResponse, AppError> {
-    let db_path = {
-        let instances = state.instances.lock().unwrap();
-        let i = instances
-            .get(&id)
-            .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
-        i.session_dir.join("session.db")
-    };
+    let db_path = resolve_session_dir(&state, &id)?.join("session.db");
 
     let limit = params.limit.unwrap_or(200).min(2000);
     let since_filter = params

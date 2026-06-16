@@ -205,7 +205,7 @@ fn normalize_workspace_path_hint(raw: &str) -> Option<String> {
     let trimmed = raw
         .trim()
         .trim_matches(|c: char| matches!(c, '"' | '\'' | '`' | '<' | '>'))
-        .trim_end_matches(|c: char| matches!(c, '.' | ',' | ';' | ':'));
+        .trim_end_matches(['.', ',', ';', ':']);
     if trimmed.is_empty() {
         return None;
     }

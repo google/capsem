@@ -5933,6 +5933,111 @@ async fn handle_info_marks_profile_payload_drift_incompatible() {
 }
 
 #[tokio::test]
+async fn handle_inspect_reads_incompatible_persistent_session_db() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    install_test_profile_assets(&state);
+    let session_dir = state.run_dir.join("persistent/payload-drift-inspect");
+    let db_path = session_dir.join("session.db");
+    std::fs::create_dir_all(&session_dir).unwrap();
+
+    let model_call = capsem_logger::ModelCall {
+        event_id: Some("abcd1234abcd".into()),
+        timestamp: std::time::SystemTime::now(),
+        provider: "google".into(),
+        model: Some("gemini-3.5-flash".into()),
+        process_name: Some("agy".into()),
+        pid: Some(31337),
+        method: "POST".into(),
+        path: "/v1internal:generateContent".into(),
+        stream: false,
+        system_prompt_preview: None,
+        messages_count: 1,
+        tools_count: 1,
+        request_bytes: 64,
+        request_body_preview: Some(r#"{"prompt":"write a poem"}"#.into()),
+        message_id: Some("agy-msg-1".into()),
+        status_code: Some(200),
+        text_content: Some("poem written".into()),
+        thinking_content: Some("choose file destination".into()),
+        stop_reason: Some("tool_use".into()),
+        input_tokens: Some(42),
+        output_tokens: Some(7),
+        usage_details: Default::default(),
+        duration_ms: 1234,
+        response_bytes: 128,
+        estimated_cost_usd: 0.0001,
+        trace_id: Some("traceagy1234567".into()),
+        credential_ref: None,
+        tool_calls: vec![],
+        tool_responses: vec![],
+    };
+    let db_path_for_writer = db_path.clone();
+    tokio::task::spawn_blocking(move || {
+        let writer = capsem_logger::DbWriter::open(&db_path_for_writer, 8).unwrap();
+        writer.write_blocking(capsem_logger::WriteOp::ModelCall(model_call));
+        writer.shutdown_blocking();
+    })
+    .await
+    .unwrap();
+
+    {
+        let mut reg = state.persistent_registry.lock().unwrap();
+        reg.data.vms.insert(
+            "payload-drift-inspect".into(),
+            PersistentVmEntry {
+                name: "payload-drift-inspect".into(),
+                profile_id: "code".into(),
+                profile_revision: test_profile_revision(),
+                profile_payload_hash:
+                    "blake3:0000000000000000000000000000000000000000000000000000000000000000"
+                        .into(),
+                asset_pins: test_asset_pins(),
+                ram_mb: 2048,
+                cpus: 2,
+                base_version: "0.0.0".into(),
+                created_at: "0".into(),
+                session_dir,
+                forked_from: None,
+                description: None,
+                suspended: false,
+                defunct: false,
+                last_error: None,
+                checkpoint_path: None,
+                env: None,
+            },
+        );
+    }
+
+    let Json(info) = handle_info(State(state.clone()), Path("payload-drift-inspect".into()))
+        .await
+        .unwrap();
+    assert_eq!(info.status, VmLifecycleState::Incompatible);
+    assert!(!info.can_resume);
+
+    let response = handle_inspect(
+        State(state),
+        Path("payload-drift-inspect".into()),
+        Json(InspectRequest {
+            sql: "SELECT provider, model, input_tokens, output_tokens FROM model_calls".into(),
+        }),
+    )
+    .await
+    .unwrap()
+    .into_response();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        payload["columns"],
+        serde_json::json!(["provider", "model", "input_tokens", "output_tokens"])
+    );
+    assert_eq!(
+        payload["rows"][0],
+        serde_json::json!(["google", "gemini-3.5-flash", 42, 7])
+    );
+}
+
+#[tokio::test]
 async fn handle_list_marks_profile_rootfs_size_drift_incompatible() {
     let (state, _dir) = make_test_state_with_tempdir();
     install_test_profile_assets(&state);

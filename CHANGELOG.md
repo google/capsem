@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Stale file handle` / kernel panic failures so they are reconciled as
   `Defunct`, cannot be resumed, keep the original boot-failure reason in
   route JSON, and are removed by default purge.
+- Fixed session ledger inspection for incompatible persistent sessions so
+  stats, timeline, and forensic views can still read the preserved
+  `session.db` while the session remains non-resumable and delete-only.
 - Replaced ad hoc temporary session names with profile-scoped session names
   such as `code-1` and `co-work-1` across service provisioning, the TUI create
   dialog, and the desktop UI, while preserving focus handoff to newly created

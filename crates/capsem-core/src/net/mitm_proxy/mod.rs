@@ -1001,33 +1001,37 @@ async fn serve_pipeline<IO>(
     }
 }
 
-fn http_request_security_event(
-    domain: &str,
+struct HttpRequestSecurityEventInput<'a> {
+    domain: &'a str,
     upstream_port: u16,
-    method: &str,
-    path: &str,
+    method: &'a str,
+    path: &'a str,
     query: Option<String>,
     ai_provider: Option<ProviderKind>,
     headers: http::HeaderMap,
-    body: Option<&Bytes>,
-) -> SecurityEvent {
-    let body = body.and_then(|body| std::str::from_utf8(body).ok().map(ToOwned::to_owned));
+    body: Option<&'a Bytes>,
+}
+
+fn http_request_security_event(input: HttpRequestSecurityEventInput<'_>) -> SecurityEvent {
+    let body = input
+        .body
+        .and_then(|body| std::str::from_utf8(body).ok().map(ToOwned::to_owned));
     let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
         .with_http(HttpSecurityEvent {
-            host: Some(domain.to_string()),
-            method: Some(method.to_string()),
-            path: Some(path.to_string()),
-            query: query.clone(),
+            host: Some(input.domain.to_string()),
+            method: Some(input.method.to_string()),
+            path: Some(input.path.to_string()),
+            query: input.query.clone(),
             status: None,
             body,
         })
         .with_http_request(crate::security_engine::HttpRequestSecurityEvent::new(
-            domain,
-            ai_provider,
-            headers,
-            query,
+            input.domain,
+            input.ai_provider,
+            input.headers,
+            input.query,
         ));
-    security_event_with_transport(event, domain, upstream_port)
+    security_event_with_transport(event, input.domain, input.upstream_port)
 }
 
 fn security_event_with_transport(
@@ -1579,19 +1583,19 @@ async fn handle_request(
         }
     }
 
-    let mut http_security_event = http_request_security_event(
+    let mut http_security_event = http_request_security_event(HttpRequestSecurityEventInput {
         domain,
         upstream_port,
-        &method,
-        &path,
-        query.clone(),
-        effective_ai_provider,
-        original_headers.clone(),
-        match &request_body_source {
+        method: &method,
+        path: &path,
+        query: query.clone(),
+        ai_provider: effective_ai_provider,
+        headers: original_headers.clone(),
+        body: match &request_body_source {
             RequestBodySource::Collected(body) => Some(body),
             RequestBodySource::Incoming(_) => None,
         },
-    );
+    });
     if let Some(trace_id) = crate::telemetry::ambient_capsem_trace_id() {
         http_security_event = http_security_event.with_trace_id(trace_id);
     }
@@ -2889,18 +2893,17 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713" && ip.value == "127.0.0.
         )
         .expect("rules compile");
 
-        let event = http_request_security_event(
-            "127.0.0.1",
-            3713,
-            "POST",
-            "/echo",
-            Some("case=plain-json".to_string()),
-            None,
-            http::HeaderMap::new(),
-            Some(&Bytes::from_static(
-                br#"{"kind":"ironbank_http_plain_json"}"#,
-            )),
-        );
+        let body = Bytes::from_static(br#"{"kind":"ironbank_http_plain_json"}"#);
+        let event = http_request_security_event(HttpRequestSecurityEventInput {
+            domain: "127.0.0.1",
+            upstream_port: 3713,
+            method: "POST",
+            path: "/echo",
+            query: Some("case=plain-json".to_string()),
+            ai_provider: None,
+            headers: http::HeaderMap::new(),
+            body: Some(&body),
+        });
         let first = rules
             .evaluate(&event)
             .expect("event evaluates")

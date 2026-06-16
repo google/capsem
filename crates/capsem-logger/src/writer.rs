@@ -538,29 +538,33 @@ fn insert_net_event(conn: &Connection, event: &NetEvent) -> rusqlite::Result<()>
     )?;
     insert_event_body_blob(
         conn,
-        &event_id,
-        "http.request",
-        "net_events",
-        "request",
-        event
-            .request_headers
-            .as_deref()
-            .and_then(content_type_from_headers),
-        event.request_body_preview.as_deref(),
-        event.trace_id.as_deref(),
+        EventBodyBlob {
+            event_id: &event_id,
+            event_type: "http.request",
+            source_table: "net_events",
+            direction: "request",
+            content_type: event
+                .request_headers
+                .as_deref()
+                .and_then(content_type_from_headers),
+            body: event.request_body_preview.as_deref(),
+            trace_id: event.trace_id.as_deref(),
+        },
     )?;
     insert_event_body_blob(
         conn,
-        &event_id,
-        "http.request",
-        "net_events",
-        "response",
-        event
-            .response_headers
-            .as_deref()
-            .and_then(content_type_from_headers),
-        event.response_body_preview.as_deref(),
-        event.trace_id.as_deref(),
+        EventBodyBlob {
+            event_id: &event_id,
+            event_type: "http.request",
+            source_table: "net_events",
+            direction: "response",
+            content_type: event
+                .response_headers
+                .as_deref()
+                .and_then(content_type_from_headers),
+            body: event.response_body_preview.as_deref(),
+            trace_id: event.trace_id.as_deref(),
+        },
     )?;
     Ok(())
 }
@@ -621,23 +625,27 @@ fn insert_model_call(
     let model_call_id = conn.last_insert_rowid();
     insert_event_body_blob(
         conn,
-        &event_id,
-        "model.call",
-        "model_calls",
-        "request",
-        Some("application/json"),
-        call.request_body_preview.as_deref(),
-        call.trace_id.as_deref(),
+        EventBodyBlob {
+            event_id: &event_id,
+            event_type: "model.call",
+            source_table: "model_calls",
+            direction: "request",
+            content_type: Some("application/json"),
+            body: call.request_body_preview.as_deref(),
+            trace_id: call.trace_id.as_deref(),
+        },
     )?;
     insert_event_body_blob(
         conn,
-        &event_id,
-        "model.call",
-        "model_calls",
-        "response",
-        None,
-        call.text_content.as_deref(),
-        call.trace_id.as_deref(),
+        EventBodyBlob {
+            event_id: &event_id,
+            event_type: "model.call",
+            source_table: "model_calls",
+            direction: "response",
+            content_type: None,
+            body: call.text_content.as_deref(),
+            trace_id: call.trace_id.as_deref(),
+        },
     )?;
     insert_model_items(conn, model_call_id, call, &timestamp, model_item_dedup)?;
 
@@ -863,23 +871,27 @@ fn insert_mcp_call(conn: &Connection, call: &McpCall) -> rusqlite::Result<()> {
     };
     insert_event_body_blob(
         conn,
-        &event_id,
-        event_type,
-        "mcp_calls",
-        "request",
-        Some("application/json"),
-        call.request_preview.as_deref(),
-        call.trace_id.as_deref(),
+        EventBodyBlob {
+            event_id: &event_id,
+            event_type,
+            source_table: "mcp_calls",
+            direction: "request",
+            content_type: Some("application/json"),
+            body: call.request_preview.as_deref(),
+            trace_id: call.trace_id.as_deref(),
+        },
     )?;
     insert_event_body_blob(
         conn,
-        &event_id,
-        event_type,
-        "mcp_calls",
-        "response",
-        Some("application/json"),
-        call.response_preview.as_deref(),
-        call.trace_id.as_deref(),
+        EventBodyBlob {
+            event_id: &event_id,
+            event_type,
+            source_table: "mcp_calls",
+            direction: "response",
+            content_type: Some("application/json"),
+            body: call.response_preview.as_deref(),
+            trace_id: call.trace_id.as_deref(),
+        },
     )?;
     Ok(())
 }
@@ -895,17 +907,18 @@ fn content_type_from_headers(headers: &str) -> Option<&str> {
     })
 }
 
-fn insert_event_body_blob(
-    conn: &Connection,
-    event_id: &str,
-    event_type: &str,
-    source_table: &str,
-    direction: &str,
-    content_type: Option<&str>,
-    body: Option<&str>,
-    trace_id: Option<&str>,
-) -> rusqlite::Result<()> {
-    let Some(body) = body else {
+struct EventBodyBlob<'a> {
+    event_id: &'a str,
+    event_type: &'a str,
+    source_table: &'a str,
+    direction: &'a str,
+    content_type: Option<&'a str>,
+    body: Option<&'a str>,
+    trace_id: Option<&'a str>,
+}
+
+fn insert_event_body_blob(conn: &Connection, blob: EventBodyBlob<'_>) -> rusqlite::Result<()> {
+    let Some(body) = blob.body else {
         return Ok(());
     };
     if body.is_empty() {
@@ -923,17 +936,17 @@ fn insert_event_body_blob(
          )
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         params![
-            event_id,
-            event_type,
-            source_table,
-            direction,
-            content_type,
+            blob.event_id,
+            blob.event_type,
+            blob.source_table,
+            blob.direction,
+            blob.content_type,
             bytes.len() as i64,
             stored_len as i64,
             (bytes.len() > stored_len) as i64,
             blake3_bytes_ref(bytes),
             stored,
-            trace_id,
+            blob.trace_id,
             created_at,
         ],
     )?;
