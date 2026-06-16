@@ -55,6 +55,61 @@ fn terminal_surface_preserves_xterm_colors() {
 }
 
 #[test]
+fn terminal_surface_resize_same_dimensions_preserves_screen() {
+    let mut surface = TerminalSurface::new();
+    surface.resize("vm-1", 80, 4);
+    surface.apply(TerminalEvent::Output {
+        session_id: "vm-1".into(),
+        bytes: b"Antigravity CLI 1.0.8\r\n> write me a poem\r\ncreated poem.md".to_vec(),
+    });
+    let before = surface.lines_for("vm-1", 4);
+
+    for _ in 0..10 {
+        surface.resize("vm-1", 80, 4);
+    }
+
+    assert_eq!(surface.lines_for("vm-1", 4), before);
+}
+
+#[test]
+fn terminal_surface_renders_agy_style_control_screen() {
+    let mut surface = TerminalSurface::new();
+    surface.resize("vm-1", 100, 12);
+    surface.apply(TerminalEvent::Output {
+        session_id: "vm-1".into(),
+        bytes: concat!(
+            "\x1b[?1049h",
+            "\x1b]0;Antigravity CLI\x07",
+            "\x1b[2J\x1b[H",
+            "\x1b[34mAntigravity CLI 1.0.8\x1b[0m\r\n",
+            "user@example.com (Antigravity Starter Quota)\r\n",
+            "Gemini 3.5 Flash (Medium)\r\n",
+            "\r\n> hey!\r\n",
+            "\x1b[31mThere was a network issue connecting to the server, please try again.\x1b[0m\r\n",
+            "\x1b[6;1H> write me a poem in poem.md\r\n",
+            "\x1b[7;1H\x1b[2KThought for 2s, 542 tokens\r\n",
+            "\x1b[8;1H\x1b[32mCreate\x1b[0m(/root/poem.md)\r\n",
+            "\x1b[?1049l"
+        )
+        .as_bytes()
+        .to_vec(),
+    });
+
+    let rendered = surface.lines_for("vm-1", 12).join("\n");
+    assert!(rendered.trim().len() > 80, "{rendered}");
+    assert!(rendered.contains("Antigravity CLI 1.0.8"), "{rendered}");
+    assert!(
+        rendered.contains("write me a poem in poem.md"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("Thought for 2s, 542 tokens"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("Create(/root/poem.md)"), "{rendered}");
+}
+
+#[test]
 fn terminal_events_coalesce_adjacent_output() {
     let mut events = Vec::new();
     push_coalesced_event(

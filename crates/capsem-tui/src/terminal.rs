@@ -397,7 +397,8 @@ struct TerminalBuffer {
 
 impl TerminalBuffer {
     fn append(&mut self, bytes: &[u8]) {
-        self.parser.process(bytes);
+        let filtered = strip_alternate_screen_switches(bytes);
+        self.parser.process(&filtered);
     }
 
     fn visible_lines(&self, height: usize) -> Vec<TerminalLine> {
@@ -420,6 +421,44 @@ impl Default for TerminalBuffer {
             parser: vt100::Parser::new(24, 80, MAX_SCROLLBACK_LINES),
             status: None,
         }
+    }
+}
+
+fn strip_alternate_screen_switches(bytes: &[u8]) -> Vec<u8> {
+    let mut filtered = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if let Some(consumed) = alternate_screen_sequence_len(&bytes[index..]) {
+            index += consumed;
+            continue;
+        }
+        filtered.push(bytes[index]);
+        index += 1;
+    }
+    filtered
+}
+
+fn alternate_screen_sequence_len(bytes: &[u8]) -> Option<usize> {
+    const PREFIX: &[u8] = b"\x1b[?";
+    if !bytes.starts_with(PREFIX) {
+        return None;
+    }
+    let mut index = PREFIX.len();
+    let start = index;
+    while index < bytes.len() && bytes[index].is_ascii_digit() {
+        index += 1;
+    }
+    if start == index || index >= bytes.len() {
+        return None;
+    }
+    let mode = std::str::from_utf8(&bytes[start..index]).ok()?;
+    if !matches!(mode, "47" | "1047" | "1049") {
+        return None;
+    }
+    if matches!(bytes[index], b'h' | b'l') {
+        Some(index + 1)
+    } else {
+        None
     }
 }
 
