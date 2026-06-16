@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Coalesced desktop terminal output to one xterm write per animation frame and
   batched bursty terminal input before WebSocket send, preventing high-volume
   agent output from starving keyboard responsiveness.
+- Coalesced gateway terminal relay bursts in both directions, so adjacent
+  terminal WebSocket/UDS frames are batched without losing byte order while
+  preserving a short interactive flush deadline.
 
 ### Fixed (session lifecycle)
 - Fixed stale persistent sessions whose preserved boot logs show overlayfs
@@ -35,6 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sessions.
 
 ### Changed (route surfaces and diagnostics)
+- Cached profile route summaries in service memory so `/profiles/list` no
+  longer reloads profile files or recompiles rule sets on every UI/TUI poll;
+  the Ironbank route-health gate now shows profile list p95 in single-digit
+  milliseconds with negligible service CPU.
 - Renamed the local protocol benchmark internals from the retired
   `mitm-local` escape-hatch wording to the shared mock-server protocol rail;
   `capsem-bench protocol` remains the public command and now emits

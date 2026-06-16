@@ -2,6 +2,7 @@
 
 use super::*;
 use std::path::Path;
+use tokio::sync::oneshot;
 
 // --- validate_vm_id ---
 
@@ -675,6 +676,88 @@ async fn websocket_relay_process_sends_binary_and_ping() {
     }
     assert!(got_binary, "should have received binary from process");
     assert!(got_text, "should have received text 'done' from process");
+    ws.send(TungsteniteMessage::Close(None)).await.ok();
+    mh.abort();
+    sh.abort();
+}
+
+#[tokio::test]
+async fn websocket_relay_coalesces_process_text_bursts() {
+    let (url, mh, sh, _d) = ws_test_setup("p2c-coalesce-vm", |uds| {
+        tokio::spawn(async move {
+            if let Ok((stream, _)) = uds.accept().await {
+                let ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+                let (mut write, _read) = ws.split();
+                write
+                    .send(TungsteniteMessage::Text("alpha ".into()))
+                    .await
+                    .unwrap();
+                write
+                    .send(TungsteniteMessage::Text("beta ".into()))
+                    .await
+                    .unwrap();
+                write
+                    .send(TungsteniteMessage::Text("gamma".into()))
+                    .await
+                    .unwrap();
+            }
+        })
+    })
+    .await;
+
+    let (mut ws, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+
+    let msg = tokio::time::timeout(std::time::Duration::from_secs(2), ws.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    match msg {
+        TungsteniteMessage::Text(t) => assert_eq!(t.to_string(), "alpha beta gamma"),
+        other => panic!("expected coalesced text, got {:?}", other),
+    }
+
+    ws.send(TungsteniteMessage::Close(None)).await.ok();
+    mh.abort();
+    sh.abort();
+}
+
+#[tokio::test]
+async fn websocket_relay_coalesces_client_text_bursts() {
+    let (tx, rx) = oneshot::channel::<String>();
+    let (url, mh, sh, _d) = ws_test_setup("c2p-coalesce-vm", move |uds| {
+        tokio::spawn(async move {
+            if let Ok((stream, _)) = uds.accept().await {
+                let ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+                let (_write, mut read) = ws.split();
+                while let Some(Ok(msg)) = read.next().await {
+                    if let TungsteniteMessage::Text(t) = msg {
+                        let _ = tx.send(t.to_string());
+                        break;
+                    }
+                }
+            }
+        })
+    })
+    .await;
+
+    let (mut ws, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+    ws.send(TungsteniteMessage::Text("cmd ".into()))
+        .await
+        .unwrap();
+    ws.send(TungsteniteMessage::Text("--flag ".into()))
+        .await
+        .unwrap();
+    ws.send(TungsteniteMessage::Text("value\r".into()))
+        .await
+        .unwrap();
+
+    let relayed = tokio::time::timeout(std::time::Duration::from_secs(2), rx)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(relayed, "cmd --flag value\r");
+
     ws.send(TungsteniteMessage::Close(None)).await.ok();
     mh.abort();
     sh.abort();

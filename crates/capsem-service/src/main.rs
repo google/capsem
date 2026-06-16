@@ -157,6 +157,9 @@ struct ServiceState {
     /// Profile-owned plugin policy overrides. Effective policy is built-in
     /// plugin defaults plus overrides for the profile executing the VM.
     plugin_policy_by_profile: Mutex<HashMap<String, BTreeMap<String, SecurityPluginConfig>>>,
+    /// Route-owned profile summaries loaded once at service startup. Hot
+    /// profile routes must not re-read profile files or recompile rules.
+    profile_summary_cache: Vec<api::ProfileSummary>,
     /// Guards Apple VZ lifecycle edges across all VMs managed by this
     /// service. Cold starts and teardown take a read guard; save/restore take
     /// a write guard. That keeps checkpoint edges exclusive without
@@ -5134,23 +5137,32 @@ fn build_profile_summary(
     })
 }
 
+fn build_profile_summary_cache() -> Result<Vec<api::ProfileSummary>, AppError> {
+    let catalog = load_profile_catalog_for_service()?;
+    let (user, corp) = capsem_core::net::policy_config::load_settings_and_corp_files();
+    catalog
+        .profiles()
+        .map(|profile| build_profile_summary(profile, catalog.source(), &user, &corp, 0))
+        .collect::<Result<Vec<_>, AppError>>()
+}
+
+fn profile_summary_with_live_plugin_count(
+    state: &ServiceState,
+    summary: &api::ProfileSummary,
+) -> api::ProfileSummary {
+    let mut summary = summary.clone();
+    summary.plugin_count = effective_plugin_policy(state, &summary.id).len();
+    summary
+}
+
 async fn handle_profiles_list(
     State(state): State<Arc<ServiceState>>,
 ) -> Result<Json<api::ProfilesListResponse>, AppError> {
-    let catalog = load_profile_catalog_for_service()?;
-    let (user, corp) = capsem_core::net::policy_config::load_settings_and_corp_files();
-    let profiles = catalog
-        .profiles()
-        .map(|profile| {
-            build_profile_summary(
-                profile,
-                catalog.source(),
-                &user,
-                &corp,
-                effective_plugin_policy(&state, &profile.id).len(),
-            )
-        })
-        .collect::<Result<Vec<_>, AppError>>()?;
+    let profiles = state
+        .profile_summary_cache
+        .iter()
+        .map(|summary| profile_summary_with_live_plugin_count(&state, summary))
+        .collect();
     Ok(Json(api::ProfilesListResponse { profiles }))
 }
 
@@ -5182,15 +5194,19 @@ async fn handle_profile_info(
             format!("profile not found: {profile_id}"),
         )
     })?;
-    let (user, corp) = capsem_core::net::policy_config::load_settings_and_corp_files();
+    let summary = state
+        .profile_summary_cache
+        .iter()
+        .find(|summary| summary.id == manifest.id)
+        .map(|summary| profile_summary_with_live_plugin_count(&state, summary))
+        .ok_or_else(|| {
+            AppError(
+                StatusCode::NOT_FOUND,
+                format!("profile not found: {profile_id}"),
+            )
+        })?;
     Ok(Json(api::ProfileInfoResponse {
-        profile: build_profile_summary(
-            manifest,
-            catalog.source(),
-            &user,
-            &corp,
-            effective_plugin_policy(&state, &manifest.id).len(),
-        )?,
+        profile: summary,
         obom: profile_obom_info(manifest),
     }))
 }
@@ -9239,6 +9255,9 @@ async fn main() -> Result<()> {
 
     let asset_status_path = asset_status_path_for_run_dir(&run_dir);
     let asset_reconcile = load_asset_reconcile_state(&asset_status_path);
+    let profile_summary_cache = build_profile_summary_cache().map_err(|AppError(_, message)| {
+        anyhow!("failed to build profile summary cache: {message}")
+    })?;
     let state = Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
         persistent_registry: Mutex::new(persistent_registry),
@@ -9253,6 +9272,7 @@ async fn main() -> Result<()> {
         asset_status_path,
         magika: Mutex::new(magika_session),
         plugin_policy_by_profile: Mutex::new(HashMap::new()),
+        profile_summary_cache,
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });

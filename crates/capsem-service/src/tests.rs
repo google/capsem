@@ -127,6 +127,10 @@ fn test_magika() -> Mutex<magika::Session> {
     )
 }
 
+fn test_profile_summary_cache() -> Vec<api::ProfileSummary> {
+    build_profile_summary_cache().expect("test profile summary cache should build")
+}
+
 fn make_test_state() -> Arc<ServiceState> {
     let run_dir = PathBuf::from("/tmp/capsem-test-svc");
     let registry_path = run_dir.join("persistent_registry.json");
@@ -145,6 +149,7 @@ fn make_test_state() -> Arc<ServiceState> {
         asset_status_path,
         magika: test_magika(),
         plugin_policy_by_profile: Mutex::new(HashMap::new()),
+        profile_summary_cache: test_profile_summary_cache(),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
@@ -198,6 +203,7 @@ fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
         asset_status_path,
         magika: test_magika(),
         plugin_policy_by_profile: Mutex::new(HashMap::new()),
+        profile_summary_cache: test_profile_summary_cache(),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
@@ -4677,6 +4683,7 @@ fn make_state_in(run_dir: PathBuf) -> Arc<ServiceState> {
         asset_status_path,
         magika: test_magika(),
         plugin_policy_by_profile: Mutex::new(HashMap::new()),
+        profile_summary_cache: test_profile_summary_cache(),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
@@ -5204,6 +5211,7 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         asset_status_path,
         magika: test_magika(),
         plugin_policy_by_profile: Mutex::new(HashMap::new()),
+        profile_summary_cache: test_profile_summary_cache(),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });
@@ -6784,6 +6792,7 @@ fn make_test_state_with_tempdir_at(
         asset_status_path,
         magika: test_magika(),
         plugin_policy_by_profile: Mutex::new(HashMap::new()),
+        profile_summary_cache: test_profile_summary_cache(),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });
