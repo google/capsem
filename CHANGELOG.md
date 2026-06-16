@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed (route surfaces and diagnostics)
+- Strengthened the Ironbank route-health gate so profile enforcement evaluate
+  routes must prove exact `allow`, `ask`, and `block` decisions, detection
+  rows, and plugin execution stages while keeping hot control-route CPU and
+  latency budgets under test.
 - Added a first-class `event_body_blobs` ledger for HTTP, model, and MCP
   request/response bodies with a 10 MiB bounded capture, original/stored byte
   counts, BLAKE3 body hash, content type, trace ID, and truncation flag. Stats

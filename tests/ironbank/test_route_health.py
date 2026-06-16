@@ -85,6 +85,42 @@ def _assert_contract(client: Any, contract: RouteContract) -> None:
         assert contract.required_keys <= set(payload), (contract.path, payload)
 
 
+def _assert_evaluation_decision(client: Any, *, profile: str, action: str) -> None:
+    payload = client.post(
+        f"/profiles/{profile}/enforcement/evaluate",
+        _enforcement_payload(action),
+        timeout=20,
+    )
+    assert set(payload) == {"event"}
+    event = payload["event"]
+    assert event["event_type"] == "http.request"
+    assert event["http"]["host"] == "route-health.example"
+    assert event["decision"] == {"effective": action}
+
+    detections = event["detections"]
+    assert len(detections) == 1
+    assert detections[0] == {
+        "source": "rule",
+        "detection_level": "high",
+        "rule_id": f"profiles.rules.route_health_{action}",
+        "plugin_id": None,
+        "action": action,
+        "plugin_mode": None,
+        "reason": None,
+    }
+
+    plugin_executions = event["plugin_executions"]
+    assert [plugin["plugin_id"] for plugin in plugin_executions] == [
+        "credential_broker",
+        "log_sanitizer",
+    ]
+    assert [plugin["stage"] for plugin in plugin_executions] == [
+        "preprocess",
+        "logging",
+    ]
+    assert all(isinstance(plugin["duration_us"], int) for plugin in plugin_executions)
+
+
 def _cpu_seconds(proc: psutil.Process) -> float:
     try:
         times = proc.cpu_times()
@@ -278,6 +314,8 @@ def test_control_route_contracts_exist_for_ui_tui_blocking_and_vm_surfaces() -> 
         client = service.client()
         for contract in _service_route_contracts():
             _assert_contract(client, contract)
+        for action in ("allow", "ask", "block"):
+            _assert_evaluation_decision(client, profile=CODE_PROFILE_ID, action=action)
     finally:
         service.stop()
 
