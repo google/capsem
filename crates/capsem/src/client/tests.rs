@@ -2,6 +2,30 @@
 
 use super::*;
 
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+struct EnvGuard {
+    key: &'static str,
+    prev: Option<String>,
+}
+
+impl EnvGuard {
+    fn set(key: &'static str, value: &str) -> Self {
+        let prev = std::env::var(key).ok();
+        std::env::set_var(key, value);
+        Self { key, prev }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        match &self.prev {
+            Some(value) => std::env::set_var(self.key, value),
+            None => std::env::remove_var(self.key),
+        }
+    }
+}
+
 // -- validate_id ----------------------------------------------------------
 
 #[test]
@@ -606,5 +630,31 @@ async fn connect_await_startup_eventually_times_out() {
     assert!(
         msg.contains("timed out") || msg.contains("timeout"),
         "expected timeout error, got: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn request_does_not_auto_launch_after_explicit_stop_marker() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let run_dir = dir.path().join("run");
+    std::fs::create_dir_all(&run_dir).unwrap();
+    let _run = EnvGuard::set("CAPSEM_RUN_DIR", run_dir.to_str().unwrap());
+
+    std::fs::write(service_install::explicit_stop_marker_path(), b"stopped\n").unwrap();
+    let client = UdsClient::new(run_dir.join("missing.sock"), true);
+    let err = client
+        .get::<serde_json::Value>("/status")
+        .await
+        .unwrap_err();
+    let msg = format!("{err:#}");
+
+    assert!(
+        msg.contains("explicitly stopped"),
+        "request should respect explicit stop marker, got: {msg}"
+    );
+    assert!(
+        msg.contains("capsem start"),
+        "error should name the explicit recovery command, got: {msg}"
     );
 }

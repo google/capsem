@@ -3,6 +3,33 @@ use std::path::{Path, PathBuf};
 
 use crate::paths;
 
+const EXPLICIT_STOP_MARKER: &str = "service.explicitly-stopped";
+
+pub fn explicit_stop_marker_path() -> PathBuf {
+    capsem_core::paths::capsem_run_dir().join(EXPLICIT_STOP_MARKER)
+}
+
+pub fn service_explicitly_stopped() -> bool {
+    explicit_stop_marker_path().exists()
+}
+
+pub fn clear_explicit_stop_marker() -> Result<()> {
+    let marker = explicit_stop_marker_path();
+    match std::fs::remove_file(&marker) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error).with_context(|| format!("remove {}", marker.display())),
+    }
+}
+
+fn write_explicit_stop_marker() -> Result<()> {
+    let marker = explicit_stop_marker_path();
+    if let Some(parent) = marker.parent() {
+        std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    std::fs::write(&marker, b"stopped\n").with_context(|| format!("write {}", marker.display()))
+}
+
 /// Escape a string for safe embedding in XML `<string>` elements.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn xml_escape(s: &str) -> String {
@@ -149,6 +176,7 @@ fn reject_test_isolation_env() -> Result<()> {
 /// Install the capsem service as a LaunchAgent (macOS) or systemd user unit (Linux).
 pub async fn install_service() -> Result<()> {
     reject_test_isolation_env()?;
+    clear_explicit_stop_marker()?;
     let capsem_paths =
         paths::discover_paths().context("cannot discover paths for service installation")?;
     let home = std::env::var("HOME").context("HOME not set")?;
@@ -233,6 +261,7 @@ pub async fn start_service() -> Result<()> {
     if !is_service_installed() {
         anyhow::bail!("Service not installed. Run `capsem install` first.");
     }
+    clear_explicit_stop_marker()?;
 
     #[cfg(target_os = "macos")]
     {
@@ -278,6 +307,7 @@ pub async fn stop_service() -> Result<()> {
     if !is_service_installed() {
         anyhow::bail!("Service not installed. Run `capsem install` first.");
     }
+    write_explicit_stop_marker()?;
 
     #[cfg(target_os = "macos")]
     {
@@ -865,6 +895,25 @@ mod tests {
         let _r = EnvGuard::unset("CAPSEM_RUN_DIR");
         let _a = EnvGuard::unset("CAPSEM_ASSETS_DIR");
         assert!(reject_test_isolation_env().is_ok());
+    }
+
+    #[test]
+    fn explicit_stop_marker_roundtrips_under_run_dir() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let run_dir = dir.path().join("run");
+        let _r = EnvGuard::set("CAPSEM_RUN_DIR", run_dir.to_str().unwrap());
+
+        assert!(!service_explicitly_stopped());
+        write_explicit_stop_marker().unwrap();
+        assert!(service_explicitly_stopped());
+        assert_eq!(
+            explicit_stop_marker_path(),
+            run_dir.join(EXPLICIT_STOP_MARKER)
+        );
+
+        clear_explicit_stop_marker().unwrap();
+        assert!(!service_explicitly_stopped());
     }
 
     #[test]

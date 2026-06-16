@@ -460,6 +460,9 @@ impl UdsClient {
     /// if a unit is installed, falls back to direct spawn. Caller
     /// already verified the socket is unreachable.
     async fn try_ensure_service(&self) -> Result<UnixStream> {
+        if service_install::service_explicitly_stopped() {
+            anyhow::bail!("capsem service was explicitly stopped; run `capsem start` to start it");
+        }
         info!("Service not responding, attempting to launch...");
 
         // If the service is registered with a service manager, use that exclusively.
