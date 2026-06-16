@@ -363,6 +363,26 @@ impl Profile {
     pub fn status(&self, assets_dir: &Path, arch: &str) -> ProfileStatus {
         let files = self.file_statuses();
         let assets = self.asset_statuses(assets_dir, arch);
+        self.build_status(files, assets)
+    }
+
+    /// Return profile readiness for hot UI/TUI/service status routes.
+    ///
+    /// This verifies profile-owned config files because they are small and the
+    /// profile contract depends on their pins. VM assets can be hundreds of
+    /// megabytes, so this path checks only existence and size. Full asset hash
+    /// verification stays in `check`/`download_assets`/asset reconciliation.
+    pub fn readiness_status(&self, assets_dir: &Path, arch: &str) -> ProfileStatus {
+        let files = self.file_statuses();
+        let assets = self.asset_metadata_statuses(assets_dir, arch);
+        self.build_status(files, assets)
+    }
+
+    fn build_status(
+        &self,
+        files: Vec<ProfileFileStatus>,
+        assets: Vec<ProfileAssetStatus>,
+    ) -> ProfileStatus {
         let mut errors = Vec::new();
         for file in &files {
             if !file.valid {
@@ -1142,6 +1162,51 @@ impl Profile {
                             && descriptor.size == Some(size),
                     },
                     Err(_) => ProfileAssetStatus {
+                        arch: arch.to_string(),
+                        kind: kind.to_string(),
+                        path,
+                        expected_hash,
+                        expected_size,
+                        actual_hash: None,
+                        actual_size: None,
+                        present: false,
+                        valid: false,
+                    },
+                }
+            })
+            .collect()
+    }
+
+    fn asset_metadata_statuses(&self, assets_dir: &Path, arch: &str) -> Vec<ProfileAssetStatus> {
+        let Some(assets) = self.config.assets.arch.get(arch) else {
+            return Vec::new();
+        };
+        assets
+            .iter()
+            .map(|(kind, descriptor)| {
+                let path = profile_asset_path(assets_dir, arch, descriptor)
+                    .unwrap_or_else(|_| assets_dir.join(arch).join(&descriptor.name));
+                let expected_hash = descriptor
+                    .hash
+                    .clone()
+                    .unwrap_or_else(|| "unresolved".into());
+                let expected_size = descriptor.size.unwrap_or(0);
+                match fs::metadata(&path) {
+                    Ok(metadata) if metadata.is_file() => {
+                        let size = metadata.len();
+                        ProfileAssetStatus {
+                            arch: arch.to_string(),
+                            kind: kind.to_string(),
+                            path,
+                            expected_hash,
+                            expected_size,
+                            actual_hash: None,
+                            actual_size: Some(size),
+                            present: true,
+                            valid: descriptor.hash.is_some() && descriptor.size == Some(size),
+                        }
+                    }
+                    _ => ProfileAssetStatus {
                         arch: arch.to_string(),
                         kind: kind.to_string(),
                         path,

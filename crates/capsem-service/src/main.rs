@@ -4048,7 +4048,7 @@ fn profile_status_value(state: &ServiceState, profile: &Profile) -> serde_json::
         .map(|s| s.clone())
         .unwrap_or_default();
     let current_arch = capsem_core::net::policy_config::current_profile_arch();
-    let status = profile.status(&state.assets_dir, current_arch);
+    let status = profile.readiness_status(&state.assets_dir, current_arch);
     let config = profile.config();
     let assets = status
         .assets
