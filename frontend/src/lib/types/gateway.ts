@@ -149,6 +149,12 @@ export interface ProvisionRequest {
 
 export interface ProvisionResponse {
   id: string;
+  profile_id: string;
+  status: VmLifecycleState;
+  persistent: boolean;
+  can_resume: boolean;
+  available_actions: VmAction[];
+  uds_path?: string;
 }
 
 // POST /vms/{id}/exec

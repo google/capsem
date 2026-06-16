@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   route JSON, and are removed by default purge.
 
 ### Changed (route surfaces and diagnostics)
+- Strengthened `/vms/create` and `/vms/{id}/resume` responses so provision
+  routes return the session profile ID, lifecycle state, persistence bit,
+  resumability, and valid action enum list alongside the VM ID and UDS path.
+  Ironbank route-health now proves create/status/info/list/exec/fork/pause/
+  resume/stop/delete/purge state and latency budgets through service and
+  gateway routes.
 - Strengthened the Ironbank route-health gate so profile enforcement evaluate
   routes must prove exact `allow`, `ask`, and `block` decisions, detection
   rows, and plugin execution stages while keeping hot control-route CPU and

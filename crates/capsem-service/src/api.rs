@@ -56,6 +56,13 @@ pub struct ForkResponse {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ProvisionResponse {
     pub id: String,
+    pub profile_id: String,
+    pub status: VmLifecycleState,
+    #[serde(default)]
+    pub persistent: bool,
+    #[serde(default)]
+    pub can_resume: bool,
+    pub available_actions: Vec<VmAction>,
     /// The UDS path the per-VM capsem-process is listening on. Clients MUST
     /// use this value rather than recomputing it -- the service may fall back
     /// to a short hashed path under /tmp/capsem/ when the preferred path
@@ -763,11 +770,34 @@ mod tests {
     fn provision_response_roundtrip() {
         let r = ProvisionResponse {
             id: "vm-123".into(),
+            profile_id: "code".into(),
+            status: VmLifecycleState::Running,
+            persistent: true,
+            can_resume: false,
+            available_actions: vec![
+                VmAction::Pause,
+                VmAction::Stop,
+                VmAction::Fork,
+                VmAction::Delete,
+            ],
             uds_path: Some(std::path::PathBuf::from("/tmp/r/instances/vm-123.sock")),
         };
         let json = serde_json::to_string(&r).unwrap();
         let r2: ProvisionResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(r2.id, "vm-123");
+        assert_eq!(r2.profile_id, "code");
+        assert_eq!(r2.status, VmLifecycleState::Running);
+        assert!(r2.persistent);
+        assert!(!r2.can_resume);
+        assert_eq!(
+            r2.available_actions,
+            vec![
+                VmAction::Pause,
+                VmAction::Stop,
+                VmAction::Fork,
+                VmAction::Delete
+            ]
+        );
         assert_eq!(
             r2.uds_path.as_deref(),
             Some(std::path::Path::new("/tmp/r/instances/vm-123.sock"))

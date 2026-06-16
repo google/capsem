@@ -15,9 +15,16 @@ from typing import Any, Callable
 import psutil
 import pytest
 
-from helpers.constants import CODE_PROFILE_ID
+from helpers.constants import (
+    CODE_PROFILE_ID,
+    DEFAULT_CPUS,
+    DEFAULT_RAM_MB,
+    EXEC_READY_TIMEOUT,
+    EXEC_TIMEOUT_SECS,
+    HTTP_TIMEOUT,
+)
 from helpers.gateway import GatewayInstance, TcpHttpClient
-from helpers.service import ServiceInstance
+from helpers.service import ServiceInstance, wait_exec_ready, vm_name
 
 
 pytestmark = pytest.mark.integration
@@ -160,6 +167,32 @@ def _measure_route(
     )
 
 
+def _measure_once(
+    label: str,
+    call: Callable[[], Any],
+    *,
+    service_proc: psutil.Process,
+    gateway_proc: psutil.Process | None = None,
+) -> tuple[Any, RouteTiming]:
+    service_before = _cpu_seconds(service_proc)
+    gateway_before = _cpu_seconds(gateway_proc) if gateway_proc is not None else None
+    started = time.perf_counter()
+    payload = call()
+    elapsed_ms = (time.perf_counter() - started) * 1000.0
+    service_after = _cpu_seconds(service_proc)
+    gateway_after = _cpu_seconds(gateway_proc) if gateway_proc is not None else None
+    return payload, RouteTiming(
+        label=label,
+        samples_ms=[elapsed_ms],
+        service_cpu_s=service_after - service_before,
+        gateway_cpu_s=(
+            None
+            if gateway_before is None or gateway_after is None
+            else gateway_after - gateway_before
+        ),
+    )
+
+
 def _assert_timing_budget(timing: RouteTiming, *, p95_ms: float, max_ms: float, cpu_s: float) -> None:
     print(
         "ROUTE_HEALTH "
@@ -183,6 +216,28 @@ def _assert_timing_budget(timing: RouteTiming, *, p95_ms: float, max_ms: float, 
         assert timing.gateway_cpu_s <= cpu_s, (
             f"{timing.label} gateway CPU={timing.gateway_cpu_s:.3f}s > {cpu_s:.3f}s"
         )
+
+
+def _assert_vm_row(
+    listing: dict[str, Any],
+    vm_id: str,
+    *,
+    status: str | None = None,
+    persistent: bool | None = None,
+) -> dict[str, Any]:
+    rows = listing["sandboxes"]
+    row = next((candidate for candidate in rows if candidate["id"] == vm_id), None)
+    assert row is not None, f"{vm_id} missing from /vms/list: {rows}"
+    if status is not None:
+        assert row["status"] == status, row
+    if persistent is not None:
+        assert row["persistent"] is persistent, row
+    return row
+
+
+def _assert_vm_absent(listing: dict[str, Any], vm_id: str) -> None:
+    rows = listing["sandboxes"]
+    assert vm_id not in {row["id"] for row in rows}, rows
 
 
 def _service_route_contracts() -> list[RouteContract]:
@@ -397,4 +452,190 @@ def test_hot_control_routes_have_latency_and_cpu_budgets() -> None:
     finally:
         if gateway is not None:
             gateway.stop()
+        service.stop()
+
+
+def test_vm_session_lifecycle_routes_have_state_and_latency_budgets() -> None:
+    service = ServiceInstance()
+    gateway: GatewayInstance | None = None
+    source_id = vm_name("ironbank-route-life")
+    child_id = vm_name("ironbank-route-child")
+    try:
+        service.start()
+        gateway = GatewayInstance(uds_path=service.uds_path)
+        gateway.start()
+        service_client = service.client()
+        gateway_client = TcpHttpClient(gateway.base_url, gateway.token)
+        assert service.proc is not None
+        assert gateway.proc is not None
+        service_proc = psutil.Process(service.proc.pid)
+        gateway_proc = psutil.Process(gateway.proc.pid)
+
+        create, timing = _measure_once(
+            "service /vms/create persistent",
+            lambda: service_client.post(
+                "/vms/create",
+                {
+                    "name": source_id,
+                    "profile_id": CODE_PROFILE_ID,
+                    "ram_mb": DEFAULT_RAM_MB,
+                    "cpus": DEFAULT_CPUS,
+                    "persistent": True,
+                },
+                timeout=HTTP_TIMEOUT,
+            ),
+            service_proc=service_proc,
+        )
+        assert create["id"] == source_id
+        assert create["profile_id"] == CODE_PROFILE_ID
+        _assert_timing_budget(timing, p95_ms=45_000.0, max_ms=45_000.0, cpu_s=10.0)
+        assert wait_exec_ready(service_client, source_id, timeout=EXEC_READY_TIMEOUT)
+
+        for client_label, client, gateway_for_cpu in (
+            ("service", service_client, None),
+            ("gateway", gateway_client, gateway_proc),
+        ):
+            for contract in (
+                RouteContract("GET", f"/vms/{source_id}/status", None, {"id", "status"}, dict),
+                RouteContract("GET", f"/vms/{source_id}/info", None, {"id", "status"}, dict),
+                RouteContract("GET", "/vms/list", None, {"sandboxes", "asset_health"}, dict),
+            ):
+                timing = _measure_route(
+                    f"{client_label} {contract.path}",
+                    lambda c=contract, route_client=client: _assert_contract(route_client, c),
+                    service_proc=service_proc,
+                    gateway_proc=gateway_for_cpu,
+                )
+                _assert_timing_budget(timing, p95_ms=350.0, max_ms=500.0, cpu_s=0.40)
+
+        running_status = service_client.get(f"/vms/{source_id}/status", timeout=30)
+        assert running_status["id"] == source_id
+        assert running_status["status"] == "Running"
+        assert running_status["persistent"] is True
+        assert running_status["can_resume"] is False
+        assert running_status["available_actions"] == ["pause", "stop", "fork", "delete"]
+        running_info = service_client.get(f"/vms/{source_id}/info", timeout=30)
+        assert running_info["profile_id"] == CODE_PROFILE_ID
+        assert running_info["name"] == source_id
+        assert running_info["status"] == "Running"
+        _assert_vm_row(
+            service_client.get("/vms/list", timeout=30),
+            source_id,
+            status="Running",
+            persistent=True,
+        )
+
+        exec_payload, timing = _measure_once(
+            "service /vms/{id}/exec",
+            lambda: service_client.post(
+                f"/vms/{source_id}/exec",
+                {
+                    "command": "printf route-lifecycle-ok",
+                    "timeout_secs": EXEC_TIMEOUT_SECS,
+                },
+                timeout=EXEC_TIMEOUT_SECS + 5,
+            ),
+            service_proc=service_proc,
+        )
+        assert exec_payload["exit_code"] == 0
+        assert exec_payload["stdout"] == "route-lifecycle-ok"
+        _assert_timing_budget(timing, p95_ms=10_000.0, max_ms=10_000.0, cpu_s=1.0)
+
+        fork_payload, timing = _measure_once(
+            "service /vms/{id}/fork",
+            lambda: service_client.post(
+                f"/vms/{source_id}/fork",
+                {"name": child_id, "description": "Ironbank route lifecycle child"},
+                timeout=60,
+            ),
+            service_proc=service_proc,
+        )
+        assert fork_payload["name"] == child_id
+        assert fork_payload["size_bytes"] > 0
+        _assert_timing_budget(timing, p95_ms=20_000.0, max_ms=20_000.0, cpu_s=5.0)
+        child_status = service_client.get(f"/vms/{child_id}/status", timeout=30)
+        assert child_status["id"] == child_id
+        assert child_status["status"] == "Stopped"
+        assert child_status["persistent"] is True
+        assert child_status["can_resume"] is True
+
+        delete_child, timing = _measure_once(
+            "service /vms/{child}/delete",
+            lambda: service_client.delete(f"/vms/{child_id}/delete", timeout=60),
+            service_proc=service_proc,
+        )
+        assert delete_child == {"success": True}
+        _assert_timing_budget(timing, p95_ms=5_000.0, max_ms=5_000.0, cpu_s=1.0)
+        _assert_vm_absent(service_client.get("/vms/list", timeout=30), child_id)
+
+        pause_payload, timing = _measure_once(
+            "service /vms/{id}/pause",
+            lambda: service_client.post(f"/vms/{source_id}/pause", {}, timeout=45),
+            service_proc=service_proc,
+        )
+        assert pause_payload == {"success": True}
+        _assert_timing_budget(timing, p95_ms=20_000.0, max_ms=20_000.0, cpu_s=5.0)
+        suspended_status = service_client.get(f"/vms/{source_id}/status", timeout=30)
+        assert suspended_status["status"] == "Suspended"
+        assert suspended_status["persistent"] is True
+        assert suspended_status["can_resume"] is True
+
+        resume_payload, timing = _measure_once(
+            "service /vms/{id}/resume from suspended",
+            lambda: service_client.post(f"/vms/{source_id}/resume", {}, timeout=HTTP_TIMEOUT),
+            service_proc=service_proc,
+        )
+        assert resume_payload["id"] == source_id
+        assert resume_payload["profile_id"] == CODE_PROFILE_ID
+        _assert_timing_budget(timing, p95_ms=45_000.0, max_ms=45_000.0, cpu_s=10.0)
+        assert wait_exec_ready(service_client, source_id, timeout=EXEC_READY_TIMEOUT)
+
+        stop_payload, timing = _measure_once(
+            "service /vms/{id}/stop",
+            lambda: service_client.post(f"/vms/{source_id}/stop", {}, timeout=30),
+            service_proc=service_proc,
+        )
+        assert stop_payload == {"success": True, "persistent": True}
+        _assert_timing_budget(timing, p95_ms=10_000.0, max_ms=10_000.0, cpu_s=2.0)
+        stopped_status = service_client.get(f"/vms/{source_id}/status", timeout=30)
+        assert stopped_status["status"] == "Stopped"
+        assert stopped_status["persistent"] is True
+        assert stopped_status["can_resume"] is True
+
+        resume_payload, timing = _measure_once(
+            "service /vms/{id}/resume from stopped",
+            lambda: service_client.post(f"/vms/{source_id}/resume", {}, timeout=HTTP_TIMEOUT),
+            service_proc=service_proc,
+        )
+        assert resume_payload["id"] == source_id
+        _assert_timing_budget(timing, p95_ms=45_000.0, max_ms=45_000.0, cpu_s=10.0)
+        assert wait_exec_ready(service_client, source_id, timeout=EXEC_READY_TIMEOUT)
+
+        delete_source, timing = _measure_once(
+            "service /vms/{id}/delete",
+            lambda: service_client.delete(f"/vms/{source_id}/delete", timeout=60),
+            service_proc=service_proc,
+        )
+        assert delete_source == {"success": True}
+        _assert_timing_budget(timing, p95_ms=5_000.0, max_ms=5_000.0, cpu_s=1.0)
+        _assert_vm_absent(service_client.get("/vms/list", timeout=30), source_id)
+
+        purge_payload, timing = _measure_once(
+            "service /purge",
+            lambda: service_client.post("/purge", {"all": True}, timeout=60),
+            service_proc=service_proc,
+        )
+        assert {"purged", "persistent_purged", "ephemeral_purged"} <= set(purge_payload)
+        _assert_timing_budget(timing, p95_ms=5_000.0, max_ms=5_000.0, cpu_s=1.0)
+    finally:
+        if gateway is not None:
+            gateway.stop()
+        try:
+            service.client().delete(f"/vms/{child_id}/delete", timeout=30)
+        except Exception:
+            pass
+        try:
+            service.client().delete(f"/vms/{source_id}/delete", timeout=30)
+        except Exception:
+            pass
         service.stop()

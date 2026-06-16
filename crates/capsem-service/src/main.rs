@@ -2704,10 +2704,7 @@ async fn handle_provision(
     .await;
 
     match result {
-        Ok(Ok(uds_path)) => Ok(Json(ProvisionResponse {
-            id,
-            uds_path: Some(uds_path),
-        })),
+        Ok(Ok(uds_path)) => provision_response_for_running(&state, id, uds_path).map(Json),
         Ok(Err(app_err)) => Err(app_err),
         Err(timed_out) => {
             // Exhausted retries on launchd transient. Surface the most
@@ -8257,10 +8254,8 @@ async fn handle_resume(
                                 ));
                             }
                             state.clear_resume_checkpoint(&cold_id);
-                            return Ok(Json(ProvisionResponse {
-                                id: cold_id,
-                                uds_path: Some(cold_uds_path),
-                            }));
+                            return provision_response_for_running(&state, cold_id, cold_uds_path)
+                                .map(Json);
                         }
                         Err(cold_e) => {
                             error!(
@@ -8282,10 +8277,7 @@ async fn handle_resume(
                 ));
             }
             state.clear_resume_checkpoint(&id);
-            Ok(Json(ProvisionResponse {
-                id,
-                uds_path: Some(uds_path),
-            }))
+            provision_response_for_running(&state, id, uds_path).map(Json)
         }
         Err(e) => {
             error!(name, "resume failed: {e}");
@@ -8295,6 +8287,30 @@ async fn handle_resume(
             ))
         }
     }
+}
+
+fn provision_response_for_running(
+    state: &ServiceState,
+    id: String,
+    uds_path: std::path::PathBuf,
+) -> Result<ProvisionResponse, AppError> {
+    let instances = state.instances.lock().unwrap();
+    let instance = instances.get(&id).ok_or_else(|| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("provisioned VM missing from runtime registry: {id}"),
+        )
+    })?;
+    let status = VmLifecycleState::Running;
+    Ok(ProvisionResponse {
+        id,
+        profile_id: instance.profile_id.clone(),
+        status,
+        persistent: instance.persistent,
+        can_resume: false,
+        available_actions: status.available_actions(false),
+        uds_path: Some(uds_path),
+    })
 }
 
 async fn handle_persist(

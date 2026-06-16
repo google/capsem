@@ -38,6 +38,13 @@ pub struct ProvisionRequest {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ProvisionResponse {
     pub id: String,
+    pub profile_id: String,
+    pub status: VmLifecycleState,
+    #[serde(default)]
+    pub persistent: bool,
+    #[serde(default)]
+    pub can_resume: bool,
+    pub available_actions: Vec<VmAction>,
     /// Where the per-VM `capsem-process` listens. Returned by the service
     /// so clients never have to recompute the SUN_LEN fallback. `None` only
     /// when talking to an older service that pre-dates this field.
@@ -65,6 +72,17 @@ pub enum VmLifecycleState {
     Suspended,
     Defunct,
     Incompatible,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum VmAction {
+    Pause,
+    Stop,
+    Start,
+    Resume,
+    Fork,
+    Delete,
 }
 
 impl std::fmt::Display for VmLifecycleState {
