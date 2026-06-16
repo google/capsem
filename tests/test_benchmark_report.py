@@ -68,11 +68,11 @@ def test_benchmark_report_extracts_root_load_series(tmp_path):
     assert series[0].levels[0].p99_ms == 1.2
 
 
-def test_benchmark_report_extracts_mitm_local_count_series(tmp_path):
+def test_benchmark_report_extracts_mock_server_protocol_count_series(tmp_path):
     module = _load_module()
-    artifact = tmp_path / "mitm-local.json"
+    artifact = tmp_path / "mock-server-protocol.json"
     artifact.write_text(json.dumps({
-        "mitm_local": {
+        "mock_server_protocol": {
             "scenarios": [{
                 "name": "model_json_response",
                 "total_requests": 50000,
@@ -94,7 +94,7 @@ def test_benchmark_report_extracts_mitm_local_count_series(tmp_path):
 
     series = module.load_count_series([artifact])
 
-    assert series[0].name == "mitm_local"
+    assert series[0].name == "mock_server_protocol"
     assert series[0].scenarios[0].name == "model_json_response"
     assert series[0].scenarios[0].latency_ms.p99 == 30.7
 

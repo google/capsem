@@ -1,4 +1,4 @@
-"""Archive an in-VM local MITM benchmark artifact.
+"""Archive an in-VM local mock-server protocol benchmark artifact.
 
 The release gate runs this every time. When no explicit
 CAPSEM_MOCK_SERVER_BASE_URL is supplied, the test starts the shared mock server
@@ -45,18 +45,18 @@ def _project_version():
 def _archive(data):
     version = _project_version()
     arch = "arm64" if os.uname().machine == "arm64" else "x86_64"
-    out_dir = PROJECT_ROOT / "benchmarks" / "mitm-local"
+    out_dir = PROJECT_ROOT / "benchmarks" / "mock-server-protocol"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"data_{version}_{arch}.json"
     with open(out_path, "w") as handle:
         json.dump(data, handle, indent=2)
-    print(f"mitm-local benchmark archived to {out_path}")
+    print(f"mock-server-protocol benchmark archived to {out_path}")
     return out_path
 
 
-def _assert_mitm_local_succeeded(data):
-    assert "mitm_local" in data
-    result = data["mitm_local"]
+def _assert_mock_server_protocol_succeeded(data):
+    assert "mock_server_protocol" in data
+    result = data["mock_server_protocol"]
     total_requests = result["total_requests"]
 
     for row in result["scenarios"]:
@@ -76,7 +76,7 @@ def _assert_mitm_local_succeeded(data):
         assert row["frames"] > 0, f"{row['name']} should relay frames: {row}"
 
 
-def _assert_session_db_contains_mitm_events(
+def _assert_session_db_contains_protocol_events(
     capsem_home, vm_name, total_requests, selected_scenarios
 ):
     db_path = capsem_home / "sessions" / vm_name / "session.db"
@@ -106,7 +106,7 @@ def _assert_session_db_contains_mitm_events(
 
     assert db_path.exists(), f"session.db not found at {db_path}"
     assert len(rows) >= expected_count, (
-        f"expected at least {expected_count} local MITM net_events, got {len(rows)}: {rows}"
+        f"expected at least {expected_count} local mock-server protocol net_events, got {len(rows)}: {rows}"
     )
     paths = {row[0] for row in rows}
     assert expected_paths.issubset(paths), (
@@ -136,7 +136,7 @@ def _assert_session_db_contains_mitm_events(
     assert leaked == 0, "raw synthetic credential marker leaked into session.db"
 
 
-def test_mitm_local_benchmark_artifact():
+def test_mock_server_protocol_benchmark_artifact():
     upstream_proc = None
     base_url = os.environ.get("CAPSEM_MOCK_SERVER_BASE_URL")
     if not base_url:
@@ -161,7 +161,7 @@ def test_mitm_local_benchmark_artifact():
     svc = ServiceInstance()
     svc.start()
     client = svc.client()
-    name = f"mitm-local-{uuid.uuid4().hex[:8]}"
+    name = f"mock-server-protocol-{uuid.uuid4().hex[:8]}"
 
     try:
         client.post("/vms/create", {
@@ -206,10 +206,10 @@ def test_mitm_local_benchmark_artifact():
             "capsem-bench protocol did not write /tmp/capsem-benchmark.json"
         )
         data = json.loads(resp.get("stdout", "").strip())
-        _assert_mitm_local_succeeded(data)
-        assert tuple(data["mitm_local"]["selected_scenarios"]) == selected_scenarios
+        _assert_mock_server_protocol_succeeded(data)
+        assert tuple(data["mock_server_protocol"]["selected_scenarios"]) == selected_scenarios
         assert "capsem_test_api_key" not in json.dumps(data)
-        _assert_session_db_contains_mitm_events(
+        _assert_session_db_contains_protocol_events(
             svc.tmp_dir, name, total_requests, selected_scenarios
         )
 

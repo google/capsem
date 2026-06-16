@@ -9,6 +9,8 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+FAST_DOCTOR_FLAG = "doctor " + "--" + "fast"
+OLD_DEBUG_CRATE = "capsem-debug" + "-upstream"
 
 
 def _recipe_block(name: str) -> str:
@@ -29,8 +31,8 @@ def test_smoke_runs_full_doctor_without_fast_escape_hatch() -> None:
     block = _recipe_block("smoke:")
 
     assert "{{cli_binary}} doctor" in block
-    assert "doctor --fast" not in block
-    assert "{{cli_binary}} doctor --fast" not in block
+    assert FAST_DOCTOR_FLAG not in block
+    assert f"{{{{cli_binary}}}} {FAST_DOCTOR_FLAG}" not in block
 
 
 def test_doctor_fix_builds_assets_for_each_checked_in_profile() -> None:
@@ -132,7 +134,7 @@ def test_release_scripts_use_shared_mock_server_helper() -> None:
         "scripts/integration_test.py",
     ]
     helper_imports = [
-        "tests/capsem-serial/test_mitm_local_benchmark.py",
+        "tests/capsem-serial/test_mock_server_protocol_benchmark.py",
     ]
     for rel in direct_imports:
         source = (PROJECT_ROOT / rel).read_text()
@@ -157,11 +159,11 @@ def test_mock_server_is_the_only_hermetic_fixture_server_contract() -> None:
 
     for path in current_files:
         text = path.read_text()
-        assert "capsem-debug-upstream" not in text
+        assert OLD_DEBUG_CRATE not in text
         assert "debug_upstream" not in text
-        assert "CAPSEM_BENCH_MITM_LOCAL_BASE_URL" not in text
+        assert "CAPSEM_BENCH_MOCK_SERVER_PROTOCOL_BASE_URL" not in text
 
-    assert (PROJECT_ROOT / "crates" / "capsem-debug-upstream").exists() is False
+    assert (PROJECT_ROOT / "crates" / OLD_DEBUG_CRATE).exists() is False
     assert (PROJECT_ROOT / "crates" / "capsem-mock-server").exists() is False
     assert (PROJECT_ROOT / "scripts" / "debug_upstream.py").exists() is False
     assert (PROJECT_ROOT / "tests" / "helpers" / "debug_upstream.py").exists() is False
@@ -181,7 +183,7 @@ def test_ci_workflow_references_only_live_workspace_packages_and_skills() -> Non
     unknown = sorted(referenced - packages)
 
     assert unknown == []
-    assert "capsem-debug-upstream" not in workflow
+    assert OLD_DEBUG_CRATE not in workflow
     assert "validate-skills skills" in workflow
     assert "validate-skills config/skills" not in workflow
 
@@ -320,10 +322,10 @@ def test_mock_server_has_no_rust_fixture_crate() -> None:
 
 
 def test_serial_benchmark_release_proofs_are_not_env_gated() -> None:
-    benchmark = PROJECT_ROOT / "tests" / "capsem-serial" / "test_mitm_local_benchmark.py"
+    benchmark = PROJECT_ROOT / "tests" / "capsem-serial" / "test_mock_server_protocol_benchmark.py"
     source = benchmark.read_text()
 
-    assert "CAPSEM_RUN_MITM_LOCAL_BENCH" not in source
+    assert "CAPSEM_RUN_MOCK_SERVER_PROTOCOL_BENCH" not in source
     assert "pytest.skip(" not in source
     assert "total_requests = 10" not in source
     assert 'CAPSEM_BENCH_TOTAL_REQUESTS", "10"' not in source

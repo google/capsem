@@ -65,11 +65,11 @@ def _assert_release_network_benchmarks_ran(data):
     assert throughput.get("size_bytes", 0) >= 10 * 1024 * 1024, throughput
     assert throughput.get("throughput_mbps", 0) > 0, throughput
 
-    mitm_local = data.get("mitm_local")
-    assert isinstance(mitm_local, dict), "capsem-bench JSON missing mitm_local section"
-    assert not mitm_local.get("skipped"), f"protocol benchmark skipped: {mitm_local}"
-    assert mitm_local.get("total_requests", 0) > 0, mitm_local
-    for row in mitm_local.get("scenarios", []):
+    mock_server_protocol = data.get("mock_server_protocol")
+    assert isinstance(mock_server_protocol, dict), "capsem-bench JSON missing mock_server_protocol section"
+    assert not mock_server_protocol.get("skipped"), f"protocol benchmark skipped: {mock_server_protocol}"
+    assert mock_server_protocol.get("total_requests", 0) > 0, mock_server_protocol
+    for row in mock_server_protocol.get("scenarios", []):
         assert row["successful"] == row["total_requests"], row
         assert row["failed"] == 0, row
 

@@ -12,13 +12,13 @@ VALID_MODES = (
     "protocol", "mitm-load", "mcp-load", "dns-load", "all",
 )
 
-MITM_LOCAL_BASE_URL_ENV = "CAPSEM_MOCK_SERVER_BASE_URL"
+MOCK_SERVER_PROTOCOL_BASE_URL_ENV = "CAPSEM_MOCK_SERVER_BASE_URL"
 
 
-def _should_run_local_mitm(mode):
+def _should_run_mock_server_protocol(mode):
     if mode == "protocol":
         return True
-    return mode == "all" and bool(os.environ.get(MITM_LOCAL_BASE_URL_ENV))
+    return mode == "all" and bool(os.environ.get(MOCK_SERVER_PROTOCOL_BASE_URL_ENV))
 
 
 def main():
@@ -53,7 +53,7 @@ def main():
         console.print("  CAPSEM_BENCH_CONCURRENCY          Load concurrency, e.g. 64 or 1,64")
         console.print("  CAPSEM_BENCH_DURATION_S           Seconds per load level")
         console.print("  CAPSEM_BENCH_TOTAL_REQUESTS       Total requests per count scenario")
-        console.print("  CAPSEM_BENCH_SCENARIOS            Comma-separated local MITM scenarios")
+        console.print("  CAPSEM_BENCH_SCENARIOS            Comma-separated local mock-server protocol scenarios")
         console.print("  CAPSEM_STORAGE_BENCH_PATHS      Storage paths for split diagnostics")
         console.print("  CAPSEM_STORAGE_BENCH_SIZE_MB    Storage split write size in MB")
         console.print("  CAPSEM_STORAGE_IO_PROFILE_SIZE_MB    Storage IOPS profile size")
@@ -105,9 +105,9 @@ def main():
     # Local protocol scenarios are part of the standard `all` benchmark when
     # the shared doctor/mock server is configured, and are also available as a
     # first-class `protocol` benchmark for release-scale network numbers.
-    if _should_run_local_mitm(mode):
-        from .mitm_local import mitm_local_bench
-        output["mitm_local"] = mitm_local_bench()
+    if _should_run_mock_server_protocol(mode):
+        from .mock_server_protocol import mock_server_protocol_bench
+        output["mock_server_protocol"] = mock_server_protocol_bench()
 
     # mitm-load runs only when explicitly requested -- it's a long-running
     # proxy stress test (default 10s per concurrency level x 4 levels = ~40s

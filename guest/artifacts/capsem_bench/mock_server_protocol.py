@@ -1,4 +1,4 @@
-"""Deterministic local MITM scenarios against capsem-mock-server.
+"""Deterministic local mock-server protocol scenarios against capsem-mock-server.
 
 The standard `capsem-bench all` run includes these scenarios when a host-side
 harness starts capsem-mock-server and passes its routable base URL through
@@ -92,7 +92,7 @@ def _selected_http_scenarios(selected=None):
     if unknown:
         valid = ", ".join(sorted(by_name))
         raise ValueError(
-            f"unknown mitm-local scenario(s): {', '.join(unknown)}; valid: {valid}"
+            f"unknown mock-server-protocol scenario(s): {', '.join(unknown)}; valid: {valid}"
         )
     return [by_name[name] for name in wanted]
 
@@ -105,12 +105,12 @@ def _base_url(base_url):
     url = base_url or os.environ.get(BASE_URL_ENV)
     if not url:
         raise ValueError(
-            f"mitm-local requires BASE_URL or {BASE_URL_ENV}; "
+            f"mock-server-protocol requires BASE_URL or {BASE_URL_ENV}; "
             "start capsem-mock-server and pass its base_url"
         )
     parts = urlsplit(url)
     if parts.scheme not in ("http", "https") or not parts.netloc:
-        raise ValueError(f"invalid mitm-local base URL: {url!r}")
+        raise ValueError(f"invalid mock-server-protocol base URL: {url!r}")
     return _strip_trailing_slash(url)
 
 
@@ -327,14 +327,14 @@ def _run_websocket_scenario(base_url, scenario, timeout_s):
     }
 
 
-def mitm_local_bench(
+def mock_server_protocol_bench(
     base_url=None, total_requests=None, concurrency=None, timeout_s=None,
     scenarios=None,
 ):
-    """Run deterministic local MITM benchmark scenarios."""
+    """Run deterministic local mock-server protocol benchmark scenarios."""
     base_url = _base_url(base_url)
     config = CountLoadConfig.from_inputs(
-        "mitm-local",
+        "mock-server-protocol",
         default_total_requests=DEFAULT_TOTAL_REQUESTS,
         default_concurrency=DEFAULT_CONCURRENCY,
         default_timeout_s=DEFAULT_TIMEOUT_S,
@@ -346,7 +346,7 @@ def mitm_local_bench(
     selected_scenarios = _selected_http_scenarios(config.scenarios)
 
     console.print(
-        "[bold]mitm-local[/bold] "
+        "[bold]mock-server-protocol[/bold] "
         f"base_url={base_url} requests={config.total_requests} "
         f"concurrency={config.concurrency}"
     )
@@ -383,7 +383,7 @@ def mitm_local_bench(
 
 
 def _print_table(result):
-    table = Table(title=f"mitm-local ({result['base_url']})")
+    table = Table(title=f"mock-server-protocol ({result['base_url']})")
     table.add_column("scenario")
     table.add_column("ok", justify="right")
     table.add_column("rps", justify="right")

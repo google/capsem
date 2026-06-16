@@ -95,13 +95,13 @@ def _extract_series(path: Path, data: dict[str, Any]) -> list[LoadSeries]:
 
 
 def _extract_count_series(path: Path, data: dict[str, Any]) -> list[CountSeries]:
-    section = data.get("mitm_local")
+    section = data.get("mock_server_protocol")
     if not isinstance(section, dict) or not isinstance(section.get("scenarios"), list):
         return []
     return [
         CountSeries(
             source=str(path),
-            name="mitm_local",
+            name="mock_server_protocol",
             scenarios=section["scenarios"],
         )
     ]

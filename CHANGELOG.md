@@ -35,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sessions.
 
 ### Changed (route surfaces and diagnostics)
+- Renamed the local protocol benchmark internals from the retired
+  `mitm-local` escape-hatch wording to the shared mock-server protocol rail;
+  `capsem-bench protocol` remains the public command and now emits
+  `mock_server_protocol` benchmark JSON.
 - Fixed profile route summaries so `code` and `co-work` expose route-owned
   rule, plugin, MCP, and asset metadata without leaking host profile paths or
   falling back to default-only profile assumptions.
