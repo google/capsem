@@ -38,7 +38,7 @@ export interface VmSummary {
   can_resume: boolean;
   resume_blocked_reason?: string;
   available_actions: VmAction[];
-  // Telemetry (present for running VMs, absent for stopped)
+  // Telemetry (present for running sessions, absent for stopped)
   uptime_secs?: number;
   total_input_tokens?: number;
   total_output_tokens?: number;

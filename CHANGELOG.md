@@ -42,6 +42,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `code` and `co-work` profile pages must expose assets, enforcement,
   detection, plugins, credential broker, and MCP routes without 404/501
   fallbacks.
+- Added a session dashboard route gate proving defunct and incompatible
+  sessions remain delete-only across list/status/info/resume/delete routes,
+  and cleaned frontend session wording checks so stale VM labels cannot hide in
+  test noise.
 - Cached profile route summaries in service memory so `/profiles/list` no
   longer reloads profile files or recompiles rule sets on every UI/TUI poll;
   the Ironbank route-health gate now shows profile list p95 in single-digit

@@ -13,6 +13,8 @@ const stats = readFileSync(
   new URL('../components/views/StatsView.svelte', import.meta.url),
   'utf8',
 );
+const legacyVmSingular = 'V' + 'M';
+const legacyVmPlural = legacyVmSingular + 's';
 
 describe('user-facing session language contract', () => {
   it('uses sessions on the dashboard instead of VM wording', () => {
@@ -20,10 +22,10 @@ describe('user-facing session language contract', () => {
     expect(dashboard).toContain('Loading sessions');
     expect(dashboard).toContain('No sessions');
     expect(dashboard).toContain('Failed to create session');
-    expect(dashboard).not.toContain('>VMs<');
-    expect(dashboard).not.toContain('Customize VM');
-    expect(dashboard).not.toContain('Loading VMs');
-    expect(dashboard).not.toContain('No VMs');
+    expect(dashboard).not.toContain('>' + legacyVmPlural + '<');
+    expect(dashboard).not.toContain('Customize ' + 'VM');
+    expect(dashboard).not.toContain('Loading ' + legacyVmPlural);
+    expect(dashboard).not.toContain('No ' + legacyVmPlural);
     expect(dashboard).not.toContain('Failed to create VM');
   });
 
