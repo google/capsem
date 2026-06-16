@@ -148,7 +148,17 @@ fn net_event_stores_bounded_body_blobs_and_small_previews() {
     assert_eq!(stored_request_preview.len(), MAX_FIELD_BYTES);
     assert_eq!(stored_response_preview.len(), MAX_FIELD_BYTES);
 
-    let blobs: Vec<(String, String, String, i64, i64, i64, String, Vec<u8>, String)> = conn
+    let blobs: Vec<(
+        String,
+        String,
+        String,
+        i64,
+        i64,
+        i64,
+        String,
+        Vec<u8>,
+        String,
+    )> = conn
         .prepare(
             "SELECT direction, event_type, content_type, original_bytes, stored_bytes,
                     truncated, body_hash, body, trace_id
@@ -199,7 +209,10 @@ fn net_event_stores_bounded_body_blobs_and_small_previews() {
     assert_eq!(response.5, 1);
     assert_eq!(response.6, response_hash);
     assert_eq!(response.7.len(), MAX_BODY_BLOB_BYTES);
-    assert_eq!(&response.7, &response_body.as_bytes()[..MAX_BODY_BLOB_BYTES]);
+    assert_eq!(
+        &response.7,
+        &response_body.as_bytes()[..MAX_BODY_BLOB_BYTES]
+    );
     assert_eq!(response.8, trace_id);
 }
 

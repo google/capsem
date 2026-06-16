@@ -542,7 +542,10 @@ fn insert_net_event(conn: &Connection, event: &NetEvent) -> rusqlite::Result<()>
         "http.request",
         "net_events",
         "request",
-        event.request_headers.as_deref().and_then(content_type_from_headers),
+        event
+            .request_headers
+            .as_deref()
+            .and_then(content_type_from_headers),
         event.request_body_preview.as_deref(),
         event.trace_id.as_deref(),
     )?;
@@ -552,7 +555,10 @@ fn insert_net_event(conn: &Connection, event: &NetEvent) -> rusqlite::Result<()>
         "http.request",
         "net_events",
         "response",
-        event.response_headers.as_deref().and_then(content_type_from_headers),
+        event
+            .response_headers
+            .as_deref()
+            .and_then(content_type_from_headers),
         event.response_body_preview.as_deref(),
         event.trace_id.as_deref(),
     )?;
