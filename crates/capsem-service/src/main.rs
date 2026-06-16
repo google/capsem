@@ -293,6 +293,7 @@ struct PluginDetailRoute {
 #[derive(Debug, Serialize)]
 struct PluginInfo {
     id: String,
+    name: &'static str,
     config: SecurityPluginConfig,
     default_config: SecurityPluginConfig,
     overridden: bool,
@@ -4941,7 +4942,7 @@ fn load_profile_catalog_for_service() -> Result<ProfileCatalog, AppError> {
 fn profile_catalog_source_label(source: &ProfileCatalogSource) -> String {
     match source {
         ProfileCatalogSource::BuiltIn => "built_in".to_string(),
-        ProfileCatalogSource::Directory(path) => format!("directory:{}", path.display()),
+        ProfileCatalogSource::Directory(_) => "profile".to_string(),
     }
 }
 
@@ -5072,45 +5073,50 @@ fn validate_profile_route_id(profile_id: String) -> Result<String, AppError> {
     Ok(profile_id)
 }
 
-fn security_rule_group_len(group: &SecurityRuleGroup) -> usize {
-    group.rules.len()
-}
-
 fn build_profile_summary(
     manifest: &ProfileConfigFile,
     source: &ProfileCatalogSource,
-    user: &SettingsFile,
+    _user: &SettingsFile,
     corp: &SettingsFile,
     plugin_count: usize,
-) -> api::ProfileSummary {
-    let default_rule_count = manifest.default.len()
-        + security_rule_group_len(&manifest.profiles)
-        + manifest
-            .ai
-            .values()
-            .map(|provider| provider.rules.len())
-            .sum::<usize>()
-        + user.default.len()
-        + corp.default.len();
-    let profile_rule_count = default_rule_count
-        + user.profiles.rules.len()
-        + corp.profiles.rules.len()
-        + corp.corp.rules.len()
-        + user
-            .ai
-            .values()
-            .map(|provider| provider.rules.len())
-            .sum::<usize>()
-        + corp
-            .ai
-            .values()
-            .map(|provider| provider.rules.len())
-            .sum::<usize>();
+) -> Result<api::ProfileSummary, AppError> {
+    let profile = profile_from_catalog_entry(manifest, source)?;
+    let mut rules = Vec::new();
+    append_compiled_rules(
+        &mut rules,
+        SecurityRuleSource::BuiltinDefault,
+        ProviderRuleProfile::builtin_security_defaults(),
+    )?;
+    append_compiled_rules(
+        &mut rules,
+        SecurityRuleSource::User,
+        profile
+            .config()
+            .security_rule_profile_from_files(profile.config_root())
+            .map_err(|error| {
+                AppError(
+                    StatusCode::BAD_REQUEST,
+                    format!("invalid profile rule files for {}: {error}", manifest.id),
+                )
+            })?,
+    )?;
+    append_compiled_rules(
+        &mut rules,
+        SecurityRuleSource::Corp,
+        SecurityRuleProfile {
+            corp: corp.corp.clone(),
+            profiles: corp.profiles.clone(),
+            ai: corp.ai.clone(),
+            ..SecurityRuleProfile::default()
+        },
+    )?;
+    let default_rule_count = rules.iter().filter(|rule| rule.default_rule).count();
+    let profile_rule_count = rules.len();
     let mcp_server_count = manifest.mcp.as_ref().map_or(0, |mcp| {
         mcp.servers.len() + usize::from(mcp.server_enabled.get("local").copied().unwrap_or(false))
     });
 
-    api::ProfileSummary {
+    Ok(api::ProfileSummary {
         id: manifest.id.clone(),
         name: manifest.name.clone(),
         description: manifest.description.clone(),
@@ -5125,7 +5131,7 @@ fn build_profile_summary(
         default_rule_count,
         plugin_count,
         mcp_server_count,
-    }
+    })
 }
 
 async fn handle_profiles_list(
@@ -5144,7 +5150,7 @@ async fn handle_profiles_list(
                 effective_plugin_policy(&state, &profile.id).len(),
             )
         })
-        .collect();
+        .collect::<Result<Vec<_>, AppError>>()?;
     Ok(Json(api::ProfilesListResponse { profiles }))
 }
 
@@ -5184,7 +5190,7 @@ async fn handle_profile_info(
             &user,
             &corp,
             effective_plugin_policy(&state, &manifest.id).len(),
-        ),
+        )?,
         obom: profile_obom_info(manifest),
     }))
 }
@@ -6577,6 +6583,7 @@ fn default_plugin_config(mode: SecurityPluginMode) -> SecurityPluginConfig {
 
 #[derive(Debug, Clone, Copy)]
 struct PluginCatalogEntry {
+    name: &'static str,
     description: &'static str,
     default_config: SecurityPluginConfig,
     stage: PluginStage,
@@ -6588,6 +6595,7 @@ fn plugin_catalog() -> BTreeMap<String, PluginCatalogEntry> {
         (
             "credential_broker".to_string(),
             PluginCatalogEntry {
+                name: "Credential Broker",
                 description: "captures observed credentials into brokered credential references",
                 default_config: default_plugin_config(SecurityPluginMode::Rewrite),
                 stage: PluginStage::Preprocess,
@@ -6597,6 +6605,7 @@ fn plugin_catalog() -> BTreeMap<String, PluginCatalogEntry> {
         (
             "log_sanitizer".to_string(),
             PluginCatalogEntry {
+                name: "Log Sanitizer",
                 description: "sanitizes credential material before durable security ledger writes",
                 default_config: default_plugin_config(SecurityPluginMode::Rewrite),
                 stage: PluginStage::Logging,
@@ -6606,6 +6615,7 @@ fn plugin_catalog() -> BTreeMap<String, PluginCatalogEntry> {
         (
             "dummy_pre_eicar".to_string(),
             PluginCatalogEntry {
+                name: "Dummy Preprocess EICAR",
                 description: "debug preprocess plugin that blocks harmless EICAR test content",
                 default_config: default_plugin_config(SecurityPluginMode::Disable),
                 stage: PluginStage::Preprocess,
@@ -6615,6 +6625,7 @@ fn plugin_catalog() -> BTreeMap<String, PluginCatalogEntry> {
         (
             "dummy_post_allow".to_string(),
             PluginCatalogEntry {
+                name: "Dummy Postprocess Allow",
                 description:
                     "debug postprocess plugin that requests allow to prove block is absolute",
                 default_config: default_plugin_config(SecurityPluginMode::Disable),
@@ -6680,6 +6691,7 @@ fn plugin_info_for(
     let detail_routes = plugin_detail_routes(plugin_id, &scope);
     Ok(PluginInfo {
         id: plugin_id.to_string(),
+        name: catalog_entry.name,
         config,
         default_config: catalog_entry.default_config,
         overridden,

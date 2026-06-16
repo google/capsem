@@ -722,6 +722,7 @@ describe('api', () => {
         plugins: [
           {
             id: 'credential_broker',
+            name: 'Credential Broker',
             config: { mode: 'rewrite', detection_level: 'informational' },
             default_config: { mode: 'rewrite', detection_level: 'informational' },
             overridden: false,
@@ -780,6 +781,7 @@ describe('api', () => {
     it('updatePlugin sends PATCH /profiles/{profile_id}/plugins/{plugin_id}/edit', async () => {
       const plugin = {
         id: 'dummy_pre_eicar',
+        name: 'Dummy Preprocess EICAR',
         config: { mode: 'block', detection_level: 'high' },
         default_config: { mode: 'rewrite', detection_level: 'informational' },
         overridden: true,

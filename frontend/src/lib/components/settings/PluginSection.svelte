@@ -194,7 +194,7 @@
         <div class="grid grid-cols-[minmax(0,1fr)_minmax(10rem,14rem)_10rem_12rem] items-center gap-x-4">
           <div class="min-w-0">
             <div class="flex items-center gap-x-2">
-              <p class="text-sm font-medium text-foreground truncate">{plugin.id}</p>
+              <p class="text-sm font-medium text-foreground truncate">{plugin.name}</p>
               <span class={`inline-flex items-center gap-x-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${modeMeta.tone}`}>
                 <modeMeta.icon size={12} weight="fill" />
                 {modeMeta.label}

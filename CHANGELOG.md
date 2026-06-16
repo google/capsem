@@ -35,6 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sessions.
 
 ### Changed (route surfaces and diagnostics)
+- Fixed profile route summaries so `code` and `co-work` expose route-owned
+  rule, plugin, MCP, and asset metadata without leaking host profile paths or
+  falling back to default-only profile assumptions.
 - Refreshed the 1.3 benchmark artifacts and docs from the canonical
   `just bench` rail, including mock-server HTTP/protocol throughput plus
   lifecycle and fork timings used by the S05 route-latency gate.

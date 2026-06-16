@@ -1247,7 +1247,8 @@ fn code_profile_summary_reflects_effective_contract() {
         &SettingsFile::default(),
         &SettingsFile::default(),
         3,
-    );
+    )
+    .expect("profile summary should compile profile-owned rules");
 
     assert_eq!(summary.id, "code");
     assert_eq!(summary.name, "Code");
@@ -1342,11 +1343,9 @@ fn profile_catalog_status_reports_directory_catalog_readiness() {
 
     let status = profile_catalog_status_value(&state, &catalog);
 
-    assert!(
-        status["source"]
-            .as_str()
-            .is_some_and(|source| source.starts_with("directory:")),
-        "status should expose directory source, got: {status}"
+    assert_eq!(
+        status["source"], "profile",
+        "status must not expose host filesystem profile source paths"
     );
     assert_eq!(status["profile_count"], 1);
     assert_eq!(status["ready_count"], 1);

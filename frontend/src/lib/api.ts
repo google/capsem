@@ -124,6 +124,7 @@ export interface PluginDetailRoute {
 
 export interface PluginInfo {
   id: string;
+  name: string;
   config: PluginConfig;
   default_config: PluginConfig;
   overridden: boolean;
