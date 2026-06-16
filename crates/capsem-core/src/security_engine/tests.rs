@@ -2604,6 +2604,7 @@ fn model_write(credential_ref: Option<&str>) -> WriteOp {
         event_id: None,
         timestamp: SystemTime::now(),
         provider: "openai".to_string(),
+        protocol: Some("openai".to_string()),
         model: Some("gpt-test".to_string()),
         process_name: None,
         pid: None,

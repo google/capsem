@@ -242,8 +242,8 @@ pub struct BrokeredCredentialStat {
     pub last_seen: Option<String>,
 }
 
-/// Shared SQL column list for model_calls SELECT queries.
-const MODEL_CALL_COLUMNS_BASE: &str = "id, timestamp, provider, model, process_name, pid,
+/// Shared SQL column tail for model_calls SELECT queries after provider/protocol.
+const MODEL_CALL_COLUMNS_TAIL: &str = "model, process_name, pid,
      method, path, stream,
      system_prompt_preview, messages_count, tools_count,
      request_bytes, request_body_preview,
@@ -271,36 +271,37 @@ fn read_model_call_row(row: &Row<'_>) -> rusqlite::Result<(i64, ModelCall)> {
     Ok((
         id,
         ModelCall {
-            event_id: row.get(27)?,
+            event_id: row.get(28)?,
             timestamp,
             provider: row.get(2)?,
-            model: row.get(3)?,
-            process_name: row.get(4)?,
-            pid: row.get::<_, Option<i64>>(5)?.map(|p| p as u32),
-            method: row.get(6)?,
-            path: row.get(7)?,
-            stream: row.get::<_, i64>(8)? != 0,
-            system_prompt_preview: row.get(9)?,
-            messages_count: row.get::<_, i64>(10)? as usize,
-            tools_count: row.get::<_, i64>(11)? as usize,
-            request_bytes: row.get::<_, i64>(12)? as u64,
-            request_body_preview: row.get(13)?,
-            message_id: row.get(14)?,
-            status_code: row.get::<_, Option<i64>>(15)?.map(|c| c as u16),
-            text_content: row.get(16)?,
-            thinking_content: row.get(17)?,
-            stop_reason: row.get(18)?,
-            input_tokens: row.get::<_, Option<i64>>(19)?.map(|t| t as u64),
-            output_tokens: row.get::<_, Option<i64>>(20)?.map(|t| t as u64),
+            protocol: row.get(3)?,
+            model: row.get(4)?,
+            process_name: row.get(5)?,
+            pid: row.get::<_, Option<i64>>(6)?.map(|p| p as u32),
+            method: row.get(7)?,
+            path: row.get(8)?,
+            stream: row.get::<_, i64>(9)? != 0,
+            system_prompt_preview: row.get(10)?,
+            messages_count: row.get::<_, i64>(11)? as usize,
+            tools_count: row.get::<_, i64>(12)? as usize,
+            request_bytes: row.get::<_, i64>(13)? as u64,
+            request_body_preview: row.get(14)?,
+            message_id: row.get(15)?,
+            status_code: row.get::<_, Option<i64>>(16)?.map(|c| c as u16),
+            text_content: row.get(17)?,
+            thinking_content: row.get(18)?,
+            stop_reason: row.get(19)?,
+            input_tokens: row.get::<_, Option<i64>>(20)?.map(|t| t as u64),
+            output_tokens: row.get::<_, Option<i64>>(21)?.map(|t| t as u64),
             usage_details: row
-                .get::<_, Option<String>>(26)?
+                .get::<_, Option<String>>(27)?
                 .and_then(|s| serde_json::from_str(&s).ok())
                 .unwrap_or_default(),
-            duration_ms: row.get::<_, i64>(21)? as u64,
-            response_bytes: row.get::<_, i64>(22)? as u64,
-            estimated_cost_usd: row.get::<_, f64>(23).unwrap_or(0.0),
-            trace_id: row.get(24)?,
-            credential_ref: row.get(25)?,
+            duration_ms: row.get::<_, i64>(22)? as u64,
+            response_bytes: row.get::<_, i64>(23)? as u64,
+            estimated_cost_usd: row.get::<_, f64>(24).unwrap_or(0.0),
+            trace_id: row.get(25)?,
+            credential_ref: row.get(26)?,
             tool_calls: Vec::new(),
             tool_responses: Vec::new(),
         },
@@ -383,7 +384,9 @@ impl DbReader {
 
     fn model_call_columns(&self) -> String {
         format!(
-            "{MODEL_CALL_COLUMNS_BASE}, {}, usage_details, {}",
+            "id, timestamp, provider, {}, {}, {}, usage_details, {}",
+            self.optional_column_expr("model_calls", "protocol"),
+            MODEL_CALL_COLUMNS_TAIL,
             self.optional_column_expr("model_calls", "credential_ref"),
             self.optional_column_expr("model_calls", "event_id")
         )

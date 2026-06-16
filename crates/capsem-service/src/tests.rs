@@ -5944,6 +5944,7 @@ async fn handle_inspect_reads_incompatible_persistent_session_db() {
         event_id: Some("abcd1234abcd".into()),
         timestamp: std::time::SystemTime::now(),
         provider: "google".into(),
+        protocol: Some("google".into()),
         model: Some("gemini-3.5-flash".into()),
         process_name: Some("agy".into()),
         pid: Some(31337),

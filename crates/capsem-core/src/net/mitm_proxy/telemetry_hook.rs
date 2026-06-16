@@ -634,6 +634,7 @@ pub fn maybe_build_model_call(
         event_id: None,
         timestamp: SystemTime::now(),
         provider: provider.as_str().to_string(),
+        protocol: Some(protocol.as_str().to_string()),
         model: effective_model,
         process_name: req_ctx.process_name.clone(),
         pid: None,

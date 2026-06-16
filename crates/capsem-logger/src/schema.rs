@@ -21,6 +21,8 @@ const SECURITY_EVENT_TYPE_CHECK: &str =
     "CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask'))";
 const SECURITY_EVENT_ID_CHECK: &str =
     "CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]')";
+const MODEL_PROTOCOL_CHECK: &str =
+    "CHECK (protocol IS NULL OR protocol IN ('anthropic', 'openai', 'google', 'ollama'))";
 
 pub const CREATE_SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS net_events (
@@ -58,6 +60,7 @@ pub const CREATE_SCHEMA: &str = "
         event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         timestamp TEXT NOT NULL,
         provider TEXT NOT NULL,
+        protocol TEXT CHECK (protocol IS NULL OR protocol IN ('anthropic', 'openai', 'google', 'ollama')),
         model TEXT,
         process_name TEXT,
         pid INTEGER,
@@ -448,6 +451,10 @@ pub fn apply_pragmas(conn: &Connection) -> rusqlite::Result<()> {
 /// Idempotent: safe to call on databases that already have the changes.
 pub fn migrate(conn: &Connection) {
     let _ = conn.execute("ALTER TABLE model_calls ADD COLUMN trace_id TEXT", []);
+    let _ = conn.execute(
+        &format!("ALTER TABLE model_calls ADD COLUMN protocol TEXT {MODEL_PROTOCOL_CHECK}"),
+        [],
+    );
     let _ = conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_model_calls_trace_id ON model_calls(trace_id)",
         [],
@@ -1091,6 +1098,39 @@ mod tests {
                 "{table} missing shared event_id column: {cols:?}"
             );
         }
+    }
+
+    #[test]
+    fn model_calls_include_strict_protocol_column() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+
+        let cols: Vec<String> = {
+            let mut stmt = conn.prepare("PRAGMA table_info(model_calls)").unwrap();
+            stmt.query_map([], |row| row.get::<_, String>(1))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect()
+        };
+        assert!(
+            cols.iter().any(|col| col == "protocol"),
+            "model_calls must carry model wire protocol separately from provider: {cols:?}"
+        );
+
+        conn.execute(
+            "INSERT INTO model_calls (timestamp, provider, protocol, method, path)
+             VALUES ('2024-01-01T00:00:00Z', 'unknown', 'openai', 'POST', '/v1/chat/completions')",
+            [],
+        )
+        .unwrap();
+        let err = conn
+            .execute(
+                "INSERT INTO model_calls (timestamp, provider, protocol, method, path)
+                 VALUES ('2024-01-01T00:00:00Z', 'unknown', 'madeup', 'POST', '/v1/chat/completions')",
+                [],
+            )
+            .expect_err("unknown model wire protocols must be rejected");
+        assert!(err.to_string().contains("CHECK"));
     }
 
     #[test]

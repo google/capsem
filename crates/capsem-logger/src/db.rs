@@ -85,6 +85,7 @@ mod tests {
             event_id: None,
             timestamp: SystemTime::now(),
             provider: "anthropic".into(),
+            protocol: Some("anthropic".into()),
             model: Some("claude-sonnet-4-20250514".into()),
             process_name: Some("claude".into()),
             pid: Some(42),

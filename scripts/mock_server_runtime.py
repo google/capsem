@@ -72,6 +72,7 @@ ENDPOINTS = [
     "/oauth/token",
     "/mcp",
     "/chunked",
+    "/slow-chunks",
     "/credential/response",
     "/echo",
     "/deny-target",
@@ -147,6 +148,18 @@ def _model_payload(
         ],
         "usage": usage,
     }
+
+
+def _is_baked_doctor_openai_smoke(payload: dict[str, object]) -> bool:
+    if payload.get("model") != "mock-local":
+        return False
+    messages = payload.get("messages")
+    if not isinstance(messages, list) or len(messages) != 1:
+        return False
+    message = messages[0]
+    if not isinstance(message, dict):
+        return False
+    return message.get("role") == "user" and message.get("content") == "hello"
 
 
 def _responses_payload(model: str = "mock-local") -> dict:
@@ -820,7 +833,24 @@ class MockHandler(BaseHTTPRequestHandler):
     def do_HEAD(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         path = parsed.path
-        status = HTTPStatus.OK if path == "/" else HTTPStatus.NOT_FOUND
+        if path == "/":
+            self.send_response(HTTPStatus.OK)
+            self.send_header("content-length", "0")
+            self.end_headers()
+            self._record_request(HTTPStatus.OK, "application/octet-stream", b"")
+            return
+        if path == "/tiny":
+            self.send_response(HTTPStatus.OK)
+            self.send_header("content-type", "text/plain; charset=utf-8")
+            self.send_header("content-length", str(len(TINY_BODY)))
+            self.end_headers()
+            self._record_request(
+                HTTPStatus.OK,
+                "text/plain; charset=utf-8",
+                b"",
+            )
+            return
+        status = HTTPStatus.NOT_FOUND
         self.send_response(status)
         self.send_header("content-length", "0")
         self.end_headers()
@@ -872,7 +902,7 @@ class MockHandler(BaseHTTPRequestHandler):
             )
         elif path == "/api/client/features":
             self._send_json({"version": 1, "features": []})
-        elif path == "/chunked":
+        elif path in {"/chunked", "/slow-chunks"}:
             chunks = []
             self.send_response(HTTPStatus.OK)
             self.send_header("content-type", "text/plain; charset=utf-8")
@@ -942,7 +972,7 @@ class MockHandler(BaseHTTPRequestHandler):
         if path == "/v1/chat/completions":
             payload = self._json_body()
             model = payload.get("model") if isinstance(payload.get("model"), str) else "mock-local"
-            include_tool_call = bool(payload.get("tools"))
+            include_tool_call = bool(payload.get("tools")) or _is_baked_doctor_openai_smoke(payload)
             self._send_json(
                 _model_payload(
                     model,

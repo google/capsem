@@ -50,6 +50,34 @@ def test_mock_server_serves_https_fixture() -> None:
         stop_process(proc)
 
 
+def test_mock_server_head_tiny_matches_get_fixture_headers() -> None:
+    proc = None
+    try:
+        proc, ready = start_mock_server()
+        request = Request(f"{ready['base_url']}/tiny", method="HEAD")
+        with urlopen(request, timeout=2) as response:
+            assert response.status == 200
+            assert response.headers["content-type"] == "text/plain; charset=utf-8"
+            assert response.headers["content-length"] == str(len(b"capsem-mock-server:tiny\n"))
+            assert response.read() == b""
+    finally:
+        stop_process(proc)
+
+
+def test_mock_server_serves_slow_chunks_alias_for_doctor() -> None:
+    proc = None
+    try:
+        proc, ready = start_mock_server()
+        with urlopen(f"{ready['base_url']}/slow-chunks", timeout=2) as response:
+            body = response.read().decode()
+            assert response.status == 200
+            assert response.headers["content-type"] == "text/plain; charset=utf-8"
+            assert "chunk-0" in body
+            assert "chunk-3" in body
+    finally:
+        stop_process(proc)
+
+
 def _dns_query(name: str, qtype: int = 1, query_id: int = 0x1234) -> bytes:
     labels = b"".join(bytes([len(part)]) + part.encode("ascii") for part in name.split("."))
     question = labels + b"\0" + struct.pack("!HH", qtype, 1)
@@ -292,6 +320,30 @@ def test_mock_server_replays_ollama_openai_chat_completion_shape() -> None:
             "fixture_lookup"
         )
         assert json.loads(first_record["response_body"]) == tool_payload
+    finally:
+        stop_process(proc)
+
+
+def test_mock_server_replays_baked_doctor_openai_smoke_as_tool_call() -> None:
+    proc = None
+    try:
+        proc, ready = start_mock_server()
+        payload = _post_json(
+            f"{ready['base_url']}/v1/chat/completions",
+            {
+                "model": "mock-local",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        )
+
+        choice = payload["choices"][0]
+        assert choice["finish_reason"] == "tool_calls"
+        message = choice["message"]
+        assert message["content"] == ""
+        assert message["tool_calls"][0]["function"]["name"] == "fixture_lookup"
+        assert message["tool_calls"][0]["function"]["arguments"] == (
+            '{"query":"Capsem ironbank poem"}'
+        )
     finally:
         stop_process(proc)
 

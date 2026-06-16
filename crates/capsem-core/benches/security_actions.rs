@@ -170,6 +170,7 @@ fn model_write() -> WriteOp {
         event_id: None,
         timestamp: SystemTime::now(),
         provider: "anthropic".to_string(),
+        protocol: Some("anthropic".to_string()),
         model: Some("claude-bench".to_string()),
         process_name: Some("bench".to_string()),
         pid: Some(42),
@@ -287,6 +288,7 @@ fn bench_rule_match(c: &mut Criterion) {
             host: Some("api.anthropic.com".to_string()),
             method: Some("POST".to_string()),
             path: Some("/v1/messages".to_string()),
+            query: None,
             status: None,
             body: None,
         });

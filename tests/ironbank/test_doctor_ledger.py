@@ -328,7 +328,8 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
         _assert_ledger_id(model_call["event_id"])
         assert model_call["event_id"] != model_net["event_id"]
         assert model_call["trace_id"] == model_net["trace_id"]
-        assert model_call["provider"] == "openai"
+        assert model_call["provider"] == "unknown"
+        assert model_call["protocol"] == "openai"
         assert model_call["model"] == "mock-local"
         assert model_call["method"] == "POST"
         assert model_call["path"] == "/v1/chat/completions"
@@ -396,7 +397,7 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
                 if sibling["event_id"] == row["event_id"]
             }
             assert "allow" in sibling_actions
-            assert "profiles.rules.ai_ollama_http_local_host" in sibling_rules
+            assert "profiles.rules.capsem_mock_server" in sibling_rules
 
         informational_rows = [
             row for row in security_rows if row["detection_level"] == "informational"
@@ -440,7 +441,7 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
             "SELECT * FROM tool_calls WHERE tool_name = 'fixture_lookup' ORDER BY id DESC LIMIT 1",
         )
         _assert_ledger_id(tool_call["event_id"])
-        assert tool_call["provider"] == "openai"
+        assert tool_call["provider"] == "unknown"
         assert tool_call["origin"] == "native"
         assert tool_call["status"] in {"requested", "observed"}
         assert tool_call["credential_ref"] == model_call["credential_ref"]

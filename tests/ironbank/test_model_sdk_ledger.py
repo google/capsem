@@ -2422,7 +2422,7 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
                     assert row["previous_decision"] == "allow"
                     assert row["requested_decision"] == "allow"
                     assert row["effective_decision"] == "allow"
-                elif row["rule_id"] == "profiles.rules.ai_ollama_http_local_host":
+                elif row["rule_id"] == "profiles.rules.capsem_mock_server":
                     assert row["previous_decision"] == "allow"
                     assert row["requested_decision"] == "allow"
                     assert row["effective_decision"] == "allow"

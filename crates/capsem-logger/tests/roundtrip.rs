@@ -87,6 +87,7 @@ fn sample_model_call(provider: &str) -> ModelCall {
         event_id: None,
         timestamp: SystemTime::UNIX_EPOCH + Duration::from_secs(1700000000),
         provider: provider.to_string(),
+        protocol: Some(provider.to_string()),
         model: Some("claude-sonnet-4-20250514".to_string()),
         process_name: Some("claude".to_string()),
         pid: Some(1234),
@@ -178,6 +179,7 @@ async fn model_call_roundtrip() {
     let (id, c) = &calls[0];
     assert!(*id > 0);
     assert_eq!(c.provider, "anthropic");
+    assert_eq!(c.protocol.as_deref(), Some("anthropic"));
     assert_eq!(c.model.as_deref(), Some("claude-sonnet-4-20250514"));
     assert_eq!(c.method, "POST");
     assert_eq!(c.path, "/v1/messages");
@@ -554,6 +556,7 @@ async fn unicode_strings() {
         event_id: None,
         timestamp: SystemTime::UNIX_EPOCH + Duration::from_secs(1700000000),
         provider: "anthropic".to_string(),
+        protocol: Some("anthropic".to_string()),
         model: Some("claude".to_string()),
         process_name: None,
         pid: None,

@@ -332,6 +332,7 @@ async fn cycle_attempt_rejected_when_l3_emits_l1() {
         event_id: None,
         timestamp: std::time::SystemTime::UNIX_EPOCH,
         provider: "anthropic".into(),
+        protocol: Some("anthropic".into()),
         model: None,
         process_name: None,
         pid: None,

@@ -41,6 +41,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Hardened the Ironbank HTTP body ledger proof so upstream transcript
   assertions ignore non-HTTP records instead of failing on unrelated DNS
   rows emitted by the hermetic mock server.
+- Added strict model wire-protocol recording to the session ledger so model
+  traffic can preserve both the endpoint owner (`provider`) and the recognized
+  protocol (`protocol`) without collapsing OpenAI-compatible local traffic into
+  a fake provider.
 - Changed `just bench` to use the artifact-recording release benchmark path
   with the shared local mock server, so HTTP, proxy throughput, and protocol
   benchmarks fail on skips and publish local numbers alongside lifecycle/fork

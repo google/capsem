@@ -148,17 +148,19 @@ fn net_event_stores_bounded_body_blobs_and_small_previews() {
     assert_eq!(stored_request_preview.len(), MAX_FIELD_BYTES);
     assert_eq!(stored_response_preview.len(), MAX_FIELD_BYTES);
 
-    let blobs: Vec<(
-        String,
-        String,
-        String,
-        i64,
-        i64,
-        i64,
-        String,
-        Vec<u8>,
-        String,
-    )> = conn
+    struct StoredBlob {
+        direction: String,
+        event_type: String,
+        content_type: String,
+        original_bytes: i64,
+        stored_bytes: i64,
+        truncated: i64,
+        body_hash: String,
+        body: Vec<u8>,
+        trace_id: String,
+    }
+
+    let blobs: Vec<StoredBlob> = conn
         .prepare(
             "SELECT direction, event_type, content_type, original_bytes, stored_bytes,
                     truncated, body_hash, body, trace_id
@@ -168,17 +170,17 @@ fn net_event_stores_bounded_body_blobs_and_small_previews() {
         )
         .unwrap()
         .query_map([&event_id], |row| {
-            Ok((
-                row.get(0)?,
-                row.get(1)?,
-                row.get(2)?,
-                row.get(3)?,
-                row.get(4)?,
-                row.get(5)?,
-                row.get(6)?,
-                row.get(7)?,
-                row.get(8)?,
-            ))
+            Ok(StoredBlob {
+                direction: row.get(0)?,
+                event_type: row.get(1)?,
+                content_type: row.get(2)?,
+                original_bytes: row.get(3)?,
+                stored_bytes: row.get(4)?,
+                truncated: row.get(5)?,
+                body_hash: row.get(6)?,
+                body: row.get(7)?,
+                trace_id: row.get(8)?,
+            })
         })
         .unwrap()
         .collect::<Result<_, _>>()
@@ -187,33 +189,33 @@ fn net_event_stores_bounded_body_blobs_and_small_previews() {
 
     let request = blobs
         .iter()
-        .find(|(direction, ..)| direction == "request")
+        .find(|blob| blob.direction == "request")
         .unwrap();
-    assert_eq!(request.1, "http.request");
-    assert_eq!(request.2, "application/json");
-    assert_eq!(request.3, request_body.len() as i64);
-    assert_eq!(request.4, request_body.len() as i64);
-    assert_eq!(request.5, 0);
-    assert_eq!(request.6, blake3_bytes_ref(request_body.as_bytes()));
-    assert_eq!(request.7, request_body.as_bytes());
-    assert_eq!(request.8, trace_id);
+    assert_eq!(request.event_type, "http.request");
+    assert_eq!(request.content_type, "application/json");
+    assert_eq!(request.original_bytes, request_body.len() as i64);
+    assert_eq!(request.stored_bytes, request_body.len() as i64);
+    assert_eq!(request.truncated, 0);
+    assert_eq!(request.body_hash, blake3_bytes_ref(request_body.as_bytes()));
+    assert_eq!(request.body, request_body.as_bytes());
+    assert_eq!(request.trace_id, trace_id);
 
     let response = blobs
         .iter()
-        .find(|(direction, ..)| direction == "response")
+        .find(|blob| blob.direction == "response")
         .unwrap();
-    assert_eq!(response.1, "http.request");
-    assert_eq!(response.2, "text/event-stream");
-    assert_eq!(response.3, response_body.len() as i64);
-    assert_eq!(response.4, MAX_BODY_BLOB_BYTES as i64);
-    assert_eq!(response.5, 1);
-    assert_eq!(response.6, response_hash);
-    assert_eq!(response.7.len(), MAX_BODY_BLOB_BYTES);
+    assert_eq!(response.event_type, "http.request");
+    assert_eq!(response.content_type, "text/event-stream");
+    assert_eq!(response.original_bytes, response_body.len() as i64);
+    assert_eq!(response.stored_bytes, MAX_BODY_BLOB_BYTES as i64);
+    assert_eq!(response.truncated, 1);
+    assert_eq!(response.body_hash, response_hash);
+    assert_eq!(response.body.len(), MAX_BODY_BLOB_BYTES);
     assert_eq!(
-        &response.7,
+        &response.body,
         &response_body.as_bytes()[..MAX_BODY_BLOB_BYTES]
     );
-    assert_eq!(response.8, trace_id);
+    assert_eq!(response.trace_id, trace_id);
 }
 
 #[test]

@@ -621,6 +621,8 @@ pub struct ModelCall {
     )]
     pub timestamp: SystemTime,
     pub provider: String,
+    #[serde(default)]
+    pub protocol: Option<String>,
     pub model: Option<String>,
     pub process_name: Option<String>,
     pub pid: Option<u32>,

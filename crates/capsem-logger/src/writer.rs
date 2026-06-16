@@ -582,7 +582,7 @@ fn insert_model_call(
     let event_id = call.event_id.clone().unwrap_or_else(new_event_id);
     conn.execute(
         "INSERT INTO model_calls (
-            event_id, timestamp, provider, model, process_name, pid,
+            event_id, timestamp, provider, protocol, model, process_name, pid,
             method, path, stream,
             system_prompt_preview, messages_count, tools_count,
             request_bytes, request_body_preview,
@@ -591,11 +591,12 @@ fn insert_model_call(
             duration_ms, response_bytes, estimated_cost_usd, trace_id,
             usage_details, credential_ref
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28)",
         params![
             event_id,
             timestamp,
             call.provider,
+            call.protocol,
             call.model,
             call.process_name,
             call.pid.map(|p| p as i64),
