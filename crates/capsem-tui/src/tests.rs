@@ -104,7 +104,10 @@ fn empty_state_opens_new_session_modal_with_gradient_logo() {
     let app = App::new(state);
 
     assert_eq!(app.overlay(), AppOverlay::Create);
-    assert_eq!(app.create_draft().expect("create draft").name, "tmp-1");
+    assert_eq!(
+        app.create_draft().expect("create draft").name,
+        "corp-default-1"
+    );
     let snapshot = render_app_snapshot(&app, 100, 24).expect("render empty create modal");
     assert!(snapshot.contains("CAPSEM"));
     assert!(snapshot.contains("new session"));
@@ -247,7 +250,7 @@ fn corrupted_profile_session_blocks_resume_and_explains_recreate() {
     assert_eq!(app.overlay(), AppOverlay::Create);
     assert_eq!(
         app.create_draft().expect("create draft").name,
-        "tmp-1".to_string()
+        "corp-default-1".to_string()
     );
 
     app.handle_key(key(KeyCode::Esc, KeyModifiers::NONE));
@@ -407,7 +410,7 @@ fn create_overlay_selects_profile_and_edits_prefilled_name() {
     let snapshot = render_app_snapshot(&app, 100, 24).expect("render create dialog");
     assert!(snapshot.contains("new session"));
     assert!(snapshot.contains("name"));
-    assert!(snapshot.contains("tmp-1"));
+    assert!(snapshot.contains("corp-default-1"));
     assert!(snapshot.contains("corp-default"));
     assert!(snapshot.contains("linux-builder"));
     assert!(snapshot.contains("active input"));
@@ -417,7 +420,7 @@ fn create_overlay_selects_profile_and_edits_prefilled_name() {
         AppAction::Consumed
     );
     let focused = render_app_test_buffer(&app, 100, 24).expect("render focused create dialog");
-    let (name_x, name_y) = find_cell(&focused, "tmp-1");
+    let (name_x, name_y) = find_cell(&focused, "linux-builder-1");
     assert_eq!(buffer_cell(&focused, name_x, name_y).bg, selected_bg());
     let (profile_x, profile_y) = find_cell(&focused, "linux-builder");
     assert_eq!(
@@ -440,7 +443,7 @@ fn create_overlay_selects_profile_and_edits_prefilled_name() {
     assert_eq!(
         app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
         AppAction::Invoke(ControlAction::CreateSession {
-            name: "tmp-1-proof".to_string(),
+            name: "linux-builder-1-proof".to_string(),
             profile_id: "linux-builder".to_string()
         })
     );
@@ -548,7 +551,7 @@ fn refresh_preserves_active_session_when_it_still_exists() {
 fn pending_create_focus_survives_until_new_session_appears() {
     let mut app = App::new(fixture_state());
     app.select_session_by_id("profile-v2");
-    app.focus_session_when_available("tmp-2");
+    app.focus_session_when_available("code-2");
 
     let unchanged = fixture_state();
     app.replace_state(unchanged);
@@ -560,14 +563,14 @@ fn pending_create_focus_survives_until_new_session_appears() {
 
     let mut refreshed = fixture_state();
     let mut created = refreshed.sessions[0].clone();
-    created.id = "tmp-2".to_string();
-    created.title = "tmp-2".to_string();
+    created.id = "code-2".to_string();
+    created.title = "code-2".to_string();
     refreshed.sessions.push(created);
     app.replace_state(refreshed);
 
     assert_eq!(
         app.state().active_session_id,
-        "tmp-2",
+        "code-2",
         "pending create focus should apply on the first refresh that contains the new VM"
     );
 }
@@ -1107,24 +1110,24 @@ async fn gateway_provider_invokes_named_profile_create_over_authenticated_gatewa
                     request.contains("POST /vms/create "),
                     "unexpected request: {request:?}"
                 );
-                assert!(request.contains(r#""name":"tmp-1-proof""#));
+                assert!(request.contains(r#""name":"code-1-proof""#));
                 assert!(request.contains(r#""persistent":true"#));
                 assert!(request.contains(r#""profile_id":"co-work""#));
-                write_json_response(&mut stream, r#"{"id":"tmp-1-proof"}"#).await;
+                write_json_response(&mut stream, r#"{"id":"code-1-proof"}"#).await;
             }
         }
     });
 
     let outcome = GatewayProvider::new(format!("http://{addr}"))
         .invoke_async(&ControlAction::CreateSession {
-            name: "tmp-1-proof".to_string(),
+            name: "code-1-proof".to_string(),
             profile_id: "co-work".to_string(),
         })
         .await
         .expect("invoke create");
 
-    assert_eq!(outcome.message, "created tmp-1-proof");
-    assert_eq!(outcome.focus_session.as_deref(), Some("tmp-1-proof"));
+    assert_eq!(outcome.message, "created code-1-proof");
+    assert_eq!(outcome.focus_session.as_deref(), Some("code-1-proof"));
     server.await.expect("server task");
 }
 

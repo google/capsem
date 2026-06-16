@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Stale file handle` / kernel panic failures so they are reconciled as
   `Defunct`, cannot be resumed, keep the original boot-failure reason in
   route JSON, and are removed by default purge.
+- Replaced ad hoc temporary session names with profile-scoped session names
+  such as `code-1` and `co-work-1` across service provisioning, the TUI create
+  dialog, and the desktop UI, while preserving focus handoff to newly created
+  sessions.
 
 ### Changed (route surfaces and diagnostics)
 - Hardened the Ironbank HTTP body ledger proof so upstream transcript

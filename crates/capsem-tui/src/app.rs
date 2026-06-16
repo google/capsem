@@ -472,9 +472,10 @@ impl App {
     fn open_create(&mut self) {
         self.pending_action = None;
         self.fork_draft = None;
+        let selected_profile = default_profile_index(&self.state);
         self.create_draft = Some(CreateDraft {
-            name: next_tmp_name(&self.state),
-            selected_profile: default_profile_index(&self.state),
+            name: next_profile_session_name(&self.state, selected_profile),
+            selected_profile,
         });
         self.overlay = AppOverlay::Create;
     }
@@ -518,16 +519,26 @@ impl App {
                 AppAction::Invoke(ControlAction::CreateSession { name, profile_id })
             }
             KeyCode::Up => {
+                let mut selected_profile = None;
                 if let Some(draft) = &mut self.create_draft {
                     draft.selected_profile = draft.selected_profile.saturating_sub(1);
+                    selected_profile = Some(draft.selected_profile);
+                }
+                if let (Some(draft), Some(index)) = (&mut self.create_draft, selected_profile) {
+                    draft.name = next_profile_session_name(&self.state, index);
                 }
                 AppAction::Consumed
             }
             KeyCode::Down => {
                 let max_index = self.state.profiles.len().saturating_sub(1);
+                let mut selected_profile = None;
                 if let Some(draft) = &mut self.create_draft {
                     draft.selected_profile =
                         draft.selected_profile.saturating_add(1).min(max_index);
+                    selected_profile = Some(draft.selected_profile);
+                }
+                if let (Some(draft), Some(index)) = (&mut self.create_draft, selected_profile) {
+                    draft.name = next_profile_session_name(&self.state, index);
                 }
                 AppAction::Consumed
             }
@@ -685,14 +696,39 @@ fn visible_session_indices(state: &AppState) -> Vec<usize> {
         .collect()
 }
 
-fn next_tmp_name(state: &AppState) -> String {
+fn next_profile_session_name(state: &AppState, profile_index: usize) -> String {
+    let base = selected_profile_id(state, profile_index)
+        .map(|profile_id| sanitize_session_prefix(&profile_id))
+        .unwrap_or_else(|| "session".to_string());
     for index in 1..1000 {
-        let candidate = format!("tmp-{index}");
+        let candidate = format!("{base}-{index}");
         if state.sessions.iter().all(|session| session.id != candidate) {
             return candidate;
         }
     }
-    "tmp".to_string()
+    format!("{base}-1000")
+}
+
+fn sanitize_session_prefix(value: &str) -> String {
+    let mut out = String::new();
+    let mut last_dash = false;
+    for ch in value.trim().to_ascii_lowercase().chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch);
+            last_dash = false;
+        } else if !last_dash && !out.is_empty() {
+            out.push('-');
+            last_dash = true;
+        }
+    }
+    while out.ends_with('-') {
+        out.pop();
+    }
+    if out.is_empty() {
+        "session".to_string()
+    } else {
+        out
+    }
 }
 
 fn next_fork_name(state: &AppState, source_id: &str) -> String {

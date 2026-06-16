@@ -23,8 +23,17 @@
   const vmViews = ['terminal', 'stats', 'logs', 'files', 'inspector'] as const;
 
   function generatedVmName(profileId: string): string {
-    const stamp = Date.now().toString(36);
-    return `${profileId}-${stamp}`;
+    const safeProfile = profileId
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9-]+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'session';
+    const existing = new Set(vmStore.vms.map(vm => (vm.name ?? vm.id).toLowerCase()));
+    for (let index = 1; index < 10000; index += 1) {
+      const candidate = `${safeProfile}-${index}`;
+      if (!existing.has(candidate)) return candidate;
+    }
+    return `${safeProfile}-10000`;
   }
 
   function handleExternalLinkClick(e: MouseEvent) {

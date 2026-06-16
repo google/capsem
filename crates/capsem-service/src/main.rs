@@ -73,7 +73,7 @@ fn set_test_profile_dir_override(path: Option<PathBuf>) -> Option<PathBuf> {
 
 use capsem_service::api;
 use capsem_service::api::*;
-use capsem_service::naming::{generate_tmp_name, validate_vm_name};
+use capsem_service::naming::{generate_profile_session_name, validate_vm_name};
 use capsem_service::registry::{
     BootAssetPin, BootAssetPins, PersistentRegistry, PersistentVmEntry,
 };
@@ -2617,8 +2617,16 @@ async fn handle_provision(
     }
 
     let id = payload.name.clone().unwrap_or_else(|| {
-        let existing: Vec<String> = state.instances.lock().unwrap().keys().cloned().collect();
-        generate_tmp_name(existing.iter().map(|s| s.as_str()))
+        let mut existing: Vec<String> = state.instances.lock().unwrap().keys().cloned().collect();
+        existing.extend(
+            state
+                .persistent_registry
+                .lock()
+                .unwrap()
+                .list()
+                .map(|entry| entry.name.clone()),
+        );
+        generate_profile_session_name(&profile_id, existing.iter().map(|s| s.as_str()))
     });
 
     let profile = state
@@ -8547,8 +8555,16 @@ async fn handle_run(
     }
 
     let id = {
-        let existing: Vec<String> = state.instances.lock().unwrap().keys().cloned().collect();
-        generate_tmp_name(existing.iter().map(|s| s.as_str()))
+        let mut existing: Vec<String> = state.instances.lock().unwrap().keys().cloned().collect();
+        existing.extend(
+            state
+                .persistent_registry
+                .lock()
+                .unwrap()
+                .list()
+                .map(|entry| entry.name.clone()),
+        );
+        generate_profile_session_name(&profile_id, existing.iter().map(|s| s.as_str()))
     };
 
     let profile = state

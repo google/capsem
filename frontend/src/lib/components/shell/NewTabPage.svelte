@@ -153,8 +153,12 @@
       .toLowerCase()
       .replace(/[^a-z0-9-]+/g, '-')
       .replace(/^-+|-+$/g, '') || 'session';
-    const stamp = Date.now().toString(36);
-    return `${safeProfile}-${stamp}`;
+    const existing = new Set(vmStore.vms.map(vm => (vm.name ?? vm.id).toLowerCase()));
+    for (let index = 1; index < 10000; index += 1) {
+      const candidate = `${safeProfile}-${index}`;
+      if (!existing.has(candidate)) return candidate;
+    }
+    return `${safeProfile}-10000`;
   }
 
   let creatingVm = $state(false);
