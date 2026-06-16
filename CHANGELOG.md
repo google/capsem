@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   route JSON, and are removed by default purge.
 
 ### Changed (route surfaces and diagnostics)
+- Hardened the Ironbank HTTP body ledger proof so upstream transcript
+  assertions ignore non-HTTP records instead of failing on unrelated DNS
+  rows emitted by the hermetic mock server.
 - Fixed security decision ledgers so visible default catchall rules remain
   recorded in `security_rule_events` without emitting a second effective
   decision after a more specific profile/corp enforcement rule wins. The code

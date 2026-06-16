@@ -634,7 +634,8 @@ def test_http_body_handling_matrix_pays_full_ledger_debt_blackbox() -> None:
         observed_upstream = {
             (row["path"], row["query"])
             for row in upstream_records
-            if row["headers"].get("x-ironbank-nonce") == nonce
+            if isinstance(row.get("headers"), dict)
+            and row["headers"].get("x-ironbank-nonce") == nonce
         }
         assert expected_upstream <= observed_upstream, upstream_records
 
