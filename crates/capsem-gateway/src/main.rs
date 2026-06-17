@@ -221,6 +221,8 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         .route("/vms/list", get(proxy::handle_proxy))
         .route("/vms/{id}/info", get(proxy::handle_proxy))
         .route("/vms/{id}/status", get(proxy::handle_proxy))
+        .route("/vms/{id}/snapshots/status", get(proxy::handle_proxy))
+        .route("/vms/{id}/snapshots/list", get(proxy::handle_proxy))
         .route("/vms/{id}/logs", get(proxy::handle_proxy))
         .route("/vms/{id}/inspect", post(proxy::handle_proxy))
         .route("/vms/{id}/exec", post(proxy::handle_proxy))
@@ -638,6 +640,8 @@ mod tests {
             ("GET", "/vms/list"),
             ("GET", "/vms/test-vm/info"),
             ("GET", "/vms/test-vm/status"),
+            ("GET", "/vms/test-vm/snapshots/status"),
+            ("GET", "/vms/test-vm/snapshots/list"),
             ("GET", "/vms/test-vm/logs"),
             ("POST", "/vms/test-vm/inspect"),
             ("POST", "/vms/test-vm/exec"),

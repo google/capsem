@@ -112,6 +112,41 @@ class MockServiceHandler(BaseHTTPRequestHandler):
                 self._send_json(MOCK_VMS[vm_id])
             else:
                 self._send_error(404, f"sandbox {vm_id} not found")
+        elif path_only.startswith("/vms/") and path_only.endswith("/snapshots/status"):
+            vm_id = path_only.split("/vms/", 1)[1].rsplit("/snapshots/status", 1)[0]
+            if vm_id in MOCK_VMS:
+                self._send_json({
+                    "total": 1,
+                    "auto_count": 1,
+                    "manual_count": 0,
+                    "manual_available": 12,
+                    "snapshots": [
+                        {
+                            "checkpoint": "checkpoint-0",
+                            "slot": 0,
+                            "origin": "auto",
+                            "timestamp": "unix:1700000000",
+                        }
+                    ],
+                })
+            else:
+                self._send_error(404, f"sandbox {vm_id} not found")
+        elif path_only.startswith("/vms/") and path_only.endswith("/snapshots/list"):
+            vm_id = path_only.split("/vms/", 1)[1].rsplit("/snapshots/list", 1)[0]
+            if vm_id in MOCK_VMS:
+                self._send_json({
+                    "total": 1,
+                    "snapshots": [
+                        {
+                            "checkpoint": "checkpoint-0",
+                            "slot": 0,
+                            "origin": "auto",
+                            "timestamp": "unix:1700000000",
+                        }
+                    ],
+                })
+            else:
+                self._send_error(404, f"sandbox {vm_id} not found")
         elif path_only.startswith("/vms/") and path_only.endswith("/status"):
             vm_id = path_only.split("/vms/", 1)[1].rsplit("/status", 1)[0]
             if vm_id in MOCK_VMS:
