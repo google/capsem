@@ -569,6 +569,10 @@ def _usage_from_upstream(row: dict[str, Any]) -> dict[str, int] | None:
         ]
         if response_payloads:
             payload = response_payloads[-1]
+        elif google_payloads := [
+            payload for payload in payloads if isinstance(payload.get("usageMetadata"), dict)
+        ]:
+            payload = google_payloads[-1]
         else:
             message_start = next(
                 (
@@ -602,7 +606,7 @@ def _usage_from_upstream(row: dict[str, Any]) -> dict[str, int] | None:
     else:
         payload = json.loads(body)
 
-    usage = payload.get("usage")
+    usage = payload.get("usage") or payload.get("usageMetadata")
     if not isinstance(usage, dict):
         return None
     input_tokens = (
@@ -763,6 +767,7 @@ def _assert_brokered_model_credentials(
     expected_sources = {
         "openai": "http.header.authorization",
         "anthropic": "http.header.x-api-key",
+        "google": "http.header.x-goog-api-key",
     }
     expected_source = expected_sources.get(provider)
     assert expected_source is not None, provider

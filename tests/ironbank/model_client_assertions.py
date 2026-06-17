@@ -77,6 +77,7 @@ def assert_one_model_client(
     assert_model_ledger_exchange(spec, run)
     if expected_imported_text is not None:
         assert_imported_script_contains(env, expected_imported_text)
+    return result
 
 
 def assert_live_model_client(
@@ -166,4 +167,6 @@ def _derive_model_client_raw_secrets(result: dict) -> tuple[str, ...]:
         return ("sk-" + result["nonce"],)
     if provider == "anthropic":
         return ("sk-ant-" + result["nonce"],)
+    if provider == "google":
+        return ("AIza" + result["nonce"],)
     return ()

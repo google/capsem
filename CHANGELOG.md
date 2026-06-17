@@ -38,6 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sessions.
 
 ### Changed (route surfaces and diagnostics)
+- Added an Ironbank Gemini API ledger gate proving public Gemini
+  `streamGenerateContent` and `generateContent` traffic through the hermetic
+  mock server records Google provider/protocol rows, tool calls, non-stream
+  output, brokered credentials, DNS/HTTP evidence, and security decisions.
 - Fixed installed asset cleanup so `manifest-origin.json` survives service
   startup, preserving manifest origin/hash reporting while profile asset
   readiness and `capsem update --assets` hydrate through the hash-named asset

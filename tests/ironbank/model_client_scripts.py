@@ -8,6 +8,7 @@ import textwrap
 from ironbank.model_client_config import (
     HERMETIC_AGY_MODEL,
     HERMETIC_ANTHROPIC_MODEL,
+    HERMETIC_GEMINI_MODEL,
     HERMETIC_OPENAI_COMPAT_MODEL,
     HERMETIC_OPENAI_PRICED_MODEL,
     LIVE_OPENAI_RESPONSES_MODEL,
@@ -30,6 +31,7 @@ BASE_DOMAIN = urllib.parse.urlparse(BASE_URL).hostname or ""
 HERMETIC_OPENAI_COMPAT_MODEL = {json.dumps(HERMETIC_OPENAI_COMPAT_MODEL)}
 HERMETIC_OPENAI_PRICED_MODEL = {json.dumps(HERMETIC_OPENAI_PRICED_MODEL)}
 HERMETIC_ANTHROPIC_MODEL = {json.dumps(HERMETIC_ANTHROPIC_MODEL)}
+HERMETIC_GEMINI_MODEL = {json.dumps(HERMETIC_GEMINI_MODEL)}
 HERMETIC_AGY_MODEL = {json.dumps(HERMETIC_AGY_MODEL)}
 LIVE_OPENAI_RESPONSES_MODEL = {json.dumps(LIVE_OPENAI_RESPONSES_MODEL)}
 DNS_QNAME = "model.capsem.test"
@@ -91,6 +93,11 @@ def add_openai_auth(headers):
 def add_anthropic_auth(headers):
     token = "sk-ant-" + NONCE
     headers["x-api-key"] = token
+    return token
+
+def add_google_auth(headers):
+    token = "AIza" + NONCE
+    headers["x-goog-api-key"] = token
     return token
 """
 
@@ -186,6 +193,119 @@ print("IRONBANK_CLIENT_RESULT=" + json.dumps({
     "image_prompt": image_prompt,
     "image_b64": image["data"][0]["b64_json"],
     "credential_nonce": NONCE,
+}, sort_keys=True))
+'''
+    ).strip()
+
+
+def gemini_api_script(base_url: str) -> str:
+    return textwrap.dedent(
+        common_result_script_prelude(base_url, "gemini-api")
+        + r'''
+def parse_sse(body):
+    events = []
+    for line in body.splitlines():
+        if line.startswith("data: ") and line[6:] != "[DONE]":
+            events.append(json.loads(line[6:]))
+    return events
+
+def post(path, body, *, stream=False):
+    headers = {"content-type": "application/json"}
+    add_google_auth(headers)
+    req = urllib.request.Request(
+        BASE_URL + path,
+        data=json.dumps(body).encode(),
+        headers=headers,
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=60) as response:
+        raw = response.read().decode()
+    return parse_sse(raw) if stream else json.loads(raw)
+
+stream_path = "/v1beta/models/" + HERMETIC_GEMINI_MODEL + ":streamGenerateContent"
+generate_path = "/v1beta/models/" + HERMETIC_GEMINI_MODEL + ":generateContent"
+tool_declaration = {
+    "functionDeclarations": [
+        {
+            "name": "write_to_file",
+            "description": "Write deterministic fixture text to disk.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "TargetFile": {"type": "string"},
+                    "Content": {"type": "string"},
+                },
+                "required": ["TargetFile", "Content"],
+            },
+        }
+    ]
+}
+first_body = {
+    "contents": [{"role": "user", "parts": [{"text": PROMPT}]}],
+    "tools": [tool_declaration],
+}
+first_events = post(stream_path + "?alt=sse", first_body, stream=True)
+function_call = next(
+    part["functionCall"]
+    for event in first_events
+    for candidate in event.get("candidates", [])
+    for part in candidate.get("content", {}).get("parts", [])
+    if "functionCall" in part
+)
+call_args = function_call["args"]
+Path(call_args["TargetFile"]).write_text(call_args["Content"], encoding="utf-8")
+call_response = "Process exited with code 0"
+second_body = {
+    "contents": [
+        {"role": "user", "parts": [{"text": PROMPT}]},
+        {"role": "model", "parts": [{"functionCall": function_call}]},
+        {
+            "role": "function",
+            "parts": [
+                {
+                    "functionResponse": {
+                        "name": function_call["name"],
+                        "response": {"content": call_response},
+                    }
+                }
+            ],
+        },
+    ],
+    "tools": [tool_declaration],
+}
+second_events = post(stream_path + "?alt=sse", second_body, stream=True)
+final_parts = [
+    part
+    for event in second_events
+    for candidate in event.get("candidates", [])
+    for part in candidate.get("content", {}).get("parts", [])
+]
+reasoning = next((part["text"] for part in final_parts if part.get("thought") is True), "")
+output = next(part["text"] for part in final_parts if "text" in part and part.get("thought") is not True)
+nonstream = post(generate_path, {"contents": [{"role": "user", "parts": [{"text": PROMPT}]}]})
+print("IRONBANK_CLIENT_RESULT=" + json.dumps({
+    "input": PROMPT,
+    "reasoning": reasoning,
+    "output": output,
+    "tool_call_name": function_call["name"],
+    "call_args": call_args,
+    "call_response": call_response,
+    "provider": "google",
+    "credential_provider": "google",
+    "domain": BASE_DOMAIN,
+    "path": stream_path,
+    "model": HERMETIC_GEMINI_MODEL,
+    "target": TARGET,
+    "filename": FILENAME,
+    "nonce": NONCE,
+    "file_text": Path(TARGET).read_text(encoding="utf-8"),
+    "file_matches": Path(TARGET).read_text(encoding="utf-8") == NONCE + "\n",
+    "output_contains_nonce": NONCE in output,
+    "dns_qname": DNS_QNAME,
+    "dns_ip": DNS_IP,
+    "nonstream_path": generate_path,
+    "nonstream_text": nonstream["candidates"][0]["content"]["parts"][0]["text"],
+    "nonstream_model": nonstream["modelVersion"],
 }, sort_keys=True))
 '''
     ).strip()

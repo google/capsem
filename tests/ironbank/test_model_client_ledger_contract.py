@@ -197,6 +197,10 @@ def model_client_env():
                 dial = {json.dumps(ready["http_addr"])}
                 protocol = "http"
 
+                [network.upstream_overrides."generativelanguage.googleapis.com:443"]
+                dial = {json.dumps(ready["http_addr"])}
+                protocol = "http"
+
                 [network.upstream_overrides."www.googleapis.com:443"]
                 dial = {json.dumps(ready["http_addr"])}
                 protocol = "http"
@@ -252,6 +256,14 @@ def model_client_env():
                 reason = "Allow hermetic AGY Google Code Assist replay through the declared upstream override."
                 match = 'tcp.port == "443" && ((http.host == "daily-cloudcode-pa.googleapis.com" && http.path.matches("^/v1internal:")) || (http.host == "www.googleapis.com" && http.path == "/oauth2/v2/userinfo") || (http.host == "play.googleapis.com" && http.path == "/log") || (http.host == "antigravity-unleash.goog" && http.path.matches("^/api/client/")))'
 
+                [corp.rules.allow_ironbank_gemini_api]
+                name = "allow_ironbank_gemini_api"
+                action = "allow"
+                priority = -100
+                detection_level = "informational"
+                reason = "Allow hermetic Gemini API replay through the declared upstream override."
+                match = 'tcp.port == "443" && http.host == "generativelanguage.googleapis.com" && http.path.matches("^/v1beta/models/")'
+
                 [corp.rules.allow_ironbank_openai_api]
                 name = "allow_ironbank_openai_api"
                 action = "allow"
@@ -295,6 +307,7 @@ def model_client_env():
         assert ready["http_addr"] in active_profile_text
         assert "api.openai.com:443" in active_profile_text
         assert "api.anthropic.com:443" in active_profile_text
+        assert "generativelanguage.googleapis.com:443" in active_profile_text
         assert "daily-cloudcode-pa.googleapis.com:443" in active_profile_text
         assert "antigravity-unleash.goog:443" in active_profile_text
         assert "runtime-overlay.toml" not in active_profile_text

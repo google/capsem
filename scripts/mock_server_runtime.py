@@ -87,6 +87,7 @@ DNS_FIXTURES = {
     "api.openai.com": "127.0.0.1",
     "api.anthropic.com": "127.0.0.1",
     "daily-cloudcode-pa.googleapis.com": "127.0.0.1",
+    "generativelanguage.googleapis.com": "127.0.0.1",
     "www.googleapis.com": "127.0.0.1",
     "play.googleapis.com": "127.0.0.1",
     "antigravity-unleash.goog": "127.0.0.1",
@@ -459,7 +460,9 @@ def _google_write_target(payload: dict) -> tuple[str, str]:
     return _generic_write_target(payload, "agy")
 
 
-def _google_stream_tool_body(payload: dict | None = None) -> bytes:
+def _google_stream_tool_body(
+    payload: dict | None = None, model: str = "gemini-3.5-flash-low"
+) -> bytes:
     payload = payload or {}
     token, path = _google_write_target(payload)
     args = {
@@ -486,12 +489,14 @@ def _google_stream_tool_body(payload: dict | None = None) -> bytes:
             }
         ],
         "usageMetadata": {"promptTokenCount": 31, "candidatesTokenCount": 17},
-        "modelVersion": "gemini-3.5-flash-low",
+        "modelVersion": model,
     }
     return f"data: {json.dumps(first, separators=(',', ':'))}\n\n".encode()
 
 
-def _google_stream_final_body(payload: dict | None = None) -> bytes:
+def _google_stream_final_body(
+    payload: dict | None = None, model: str = "gemini-3.5-flash-low"
+) -> bytes:
     payload = payload or {}
     token, _ = _google_write_target(payload)
     final = {
@@ -513,9 +518,36 @@ def _google_stream_final_body(payload: dict | None = None) -> bytes:
             "thoughtsTokenCount": 2,
             "totalTokenCount": 14,
         },
-        "modelVersion": "gemini-3.5-flash-low",
+        "modelVersion": model,
     }
     return f"data: {json.dumps(final, separators=(',', ':'))}\n\n".encode()
+
+
+def _google_generate_content_payload(payload: dict | None = None) -> dict:
+    payload = payload or {}
+    token, _ = _generic_write_target(payload, "gemini")
+    return {
+        "candidates": [
+            {
+                "content": {
+                    "parts": [{"text": f"Gemini nonstream ledger {token}"}],
+                    "role": "model",
+                },
+                "finishReason": "STOP",
+            }
+        ],
+        "usageMetadata": {
+            "promptTokenCount": 11,
+            "candidatesTokenCount": 7,
+            "totalTokenCount": 18,
+        },
+        "modelVersion": "gemini-2.5-flash",
+    }
+
+
+def _google_model_from_path(path: str, fallback: str = "gemini-2.5-flash") -> str:
+    match = re.search(r"/models/([^:]+):", path)
+    return match.group(1) if match else fallback
 
 
 def _anthropic_stream_body() -> bytes:
@@ -1053,8 +1085,20 @@ class MockHandler(BaseHTTPRequestHandler):
             )
             self._send(HTTPStatus.OK, body, "text/event-stream")
         elif path.endswith(":streamGenerateContent"):
-            self._body()
-            self._send(HTTPStatus.OK, _google_stream_body(), "text/event-stream")
+            payload = self._json_body()
+            model = _google_model_from_path(path)
+            if payload.get("tools"):
+                body = (
+                    _google_stream_final_body(payload, model)
+                    if _google_has_tool_response(payload)
+                    else _google_stream_tool_body(payload, model)
+                )
+            else:
+                body = _google_stream_body()
+            self._send(HTTPStatus.OK, body, "text/event-stream")
+        elif path.endswith(":generateContent"):
+            payload = self._json_body()
+            self._send_json(_google_generate_content_payload(payload))
         elif path == "/v1/messages":
             payload = self._json_body()
             model = (
