@@ -22,7 +22,7 @@ def test_exec_curl_creates_net_event(session_env, session_db):
     """An HTTPS request from the guest should appear in net_events."""
     client, vm_name, _ = session_env
     # Make a deterministic denied request; the security decision path should
-    # log the attempt without depending on public network reachability.
+    # log the attempt without depending on Internet reachability.
     client.post(f"/vms/{vm_name}/exec", {"command": "curl -skI --connect-timeout 5 https://evil-never-allowed.invalid 2>&1 || true"})
 
     # Give the async writer time to flush

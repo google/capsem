@@ -18,12 +18,12 @@ DEFAULT_SIZE_MB = 256
 RAND_IO_SIZE_MB = 64
 RAND_IO_COUNT = 10000
 
-# Local/public network benchmark selection.
+# Local/external-network benchmark selection.
 LOCAL_MOCK_SERVER_ENV = "CAPSEM_MOCK_SERVER_BASE_URL"
 ALLOW_PUBLIC_NETWORK_ENV = "CAPSEM_BENCH_ALLOW_PUBLIC_NETWORK"
 PUBLIC_HTTP_URL = "https://www.google.com/"
 
-# HTTP benchmark defaults. The public URL is only used when
+# HTTP benchmark defaults. The external URL is only used when
 # CAPSEM_BENCH_ALLOW_PUBLIC_NETWORK=1; default release gates should use the
 # deterministic local lab or skip cleanly.
 DEFAULT_HTTP_URL = None
