@@ -262,15 +262,12 @@
     {/if}
   </div>
 
-  <!-- Right: stats + build timestamp -->
+  <!-- Right: active-session stats -->
   <div class="flex items-center gap-x-3 text-[11px] text-muted-foreground-1 tabular-nums">
     {#if isVM && activeVm}
       <span title="Tokens">{formatTokens((activeVm.total_input_tokens ?? 0) + (activeVm.total_output_tokens ?? 0))} tok</span>
       <span title="Tool calls">{activeVm.total_tool_calls ?? 0} calls</span>
       <span title="Cost">{formatCost(activeVm.total_estimated_cost ?? 0)}</span>
-    {/if}
-    {#if !isVM}
-      <span title="Frontend build" class="opacity-60 font-mono">build {__BUILD_TS__}</span>
     {/if}
   </div>
 </div>

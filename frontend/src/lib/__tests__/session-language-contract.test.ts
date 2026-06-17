@@ -41,10 +41,11 @@ describe('user-facing session language contract', () => {
     expect(dashboard).not.toContain('vmStore.showCreateModal = true');
   });
 
-  it('uses sessions in toolbar controls and hides build stamp on session tabs', () => {
+  it('uses sessions in toolbar controls and keeps build stamp out of visible chrome', () => {
     expect(toolbar).toContain('Session Logs');
     expect(toolbar).toContain('session');
-    expect(toolbar).toContain('{#if !isVM}');
+    expect(toolbar).not.toContain('Frontend build');
+    expect(toolbar).not.toContain('build {__BUILD_TS__}');
     expect(toolbar).not.toContain('VM Logs');
   });
 

@@ -64,6 +64,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed retired frontend policy vocabulary from settings origins and dead
   network-policy IPC types so profile UI surfaces speak enforcement,
   detection, plugins, MCP, and assets directly.
+- Removed the visible frontend build timestamp from the main toolbar; build and
+  version evidence remain available through debug/status surfaces.
 - Removed the retired MCP tool `approved` field from profile MCP route
   responses; the UI/TUI contract now exposes only route-backed
   `permission_action` / `permission_source` decisions.
