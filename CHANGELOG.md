@@ -41,6 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a config-layout gate that makes the settings/corp/profiles/docker/data
   source contract executable and rejects host metadata or generated pins in
   checked-in profile config.
+- Moved image build defaults out of checked-in `guest` source config and into
+  `config/docker/image`, with `capsem-admin` generating the backend image
+  workspace from the selected profile plus Docker image defaults.
 - Added an Ironbank Gemini API ledger gate proving public Gemini
   `streamGenerateContent` and `generateContent` traffic through the hermetic
   mock server records Google provider/protocol rows, tool calls, non-stream

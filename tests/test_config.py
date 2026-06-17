@@ -1,12 +1,13 @@
 """Tests for capsem.builder.config -- TOML config directory loader + JSON generator.
 
 TDD: tests written first (RED), then config.py makes them pass (GREEN).
-Uses tmp_path fixtures with inline TOML strings (no real guest/config/ yet).
+Uses tmp_path fixtures with inline TOML strings, not checked-in backend config.
 """
 
 from __future__ import annotations
 
 import json
+import shutil
 import tomllib
 from pathlib import Path
 
@@ -28,6 +29,27 @@ from capsem.builder.models import (
 from capsem.builder.schema import McpTransport
 
 PROJECT_ROOT = Path(__file__).parent.parent
+
+
+def generated_settings_guest(tmp_path: Path) -> Path:
+    """Materialize the backend image workspace shape used by settings metadata tests."""
+    guest = tmp_path / "guest"
+    config = guest / "config"
+    shutil.copytree(PROJECT_ROOT / "config" / "docker" / "image", config)
+    (config / "vm" / "resources.toml").write_text("""\
+[resources]
+cpu_count = 4
+ram_gb = 4
+scratch_disk_size_gb = 16
+log_bodies = false
+max_body_capture = 4096
+retention_days = 30
+max_sessions = 100
+min_content_sessions = 25
+max_disk_gb = 100
+terminated_retention_days = 365
+""")
+    return guest
 
 # ---------------------------------------------------------------------------
 # Inline TOML fixtures
@@ -463,8 +485,8 @@ class TestGenerateDefaultsJsonConformance:
     """Verify generated JSON matches the checked-in settings UI metadata."""
 
     @pytest.fixture
-    def real_config(self):
-        return load_guest_config(PROJECT_ROOT / "guest")
+    def real_config(self, tmp_path):
+        return load_guest_config(generated_settings_guest(tmp_path))
 
     @pytest.fixture
     def generated(self, real_config):
@@ -551,13 +573,12 @@ class TestGenerateDefaultsJsonConformance:
             "config/settings/ui-metadata.generated.json is stale -- regenerate with: just _generate-settings"
         )
 
-    def test_mock_ts_not_stale(self):
+    def test_mock_ts_not_stale(self, real_config):
         """Generated mock-settings.generated.ts must match the on-disk file.
 
         If this fails, run: just _generate-settings
         """
-        config = load_guest_config(PROJECT_ROOT / "guest")
-        defaults = generate_defaults_json(config)
+        defaults = generate_defaults_json(real_config)
         expected = generate_mock_ts(defaults, mcp_tools=[])
         on_disk = (
             PROJECT_ROOT / "frontend" / "src" / "lib" / "mock-settings.generated.ts"

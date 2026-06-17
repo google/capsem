@@ -51,11 +51,11 @@ ACTIVE_DOCS_AND_SKILLS = [
 ]
 
 STALE_GUIDANCE = [
-    "edit `guest/config",
-    "editing `guest/config",
-    "TOML configs in `guest/config",
-    "All config lives under `guest/config",
-    "MCP server definitions live in TOML files under `guest/config/mcp",
+    "edit `guest`/`config",
+    "editing `guest`/`config",
+    "TOML configs in `guest`/`config",
+    "All config lives under `guest`/`config",
+    "MCP server definitions live in TOML files under `guest`/`config`/`mcp",
     "uv run capsem-builder build guest/",
     "capsem-builder build guest/",
     "capsem-builder init",

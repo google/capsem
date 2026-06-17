@@ -7,6 +7,7 @@ Build execution tests mock run_cmd (single subprocess seam) -- no Docker needed.
 import json
 import re
 import shutil
+import tomllib
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -54,9 +55,9 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 @pytest.fixture
-def real_config():
+def real_config(tmp_path):
     """Load the generated backend image spec used by Docker rendering tests."""
-    return load_guest_config(PROJECT_ROOT / "guest")
+    return _profile_guest_config(tmp_path, "code")
 
 
 @pytest.fixture
@@ -69,59 +70,103 @@ def rendered_x86(real_config):
     return render_dockerfile("Dockerfile.rootfs.j2", real_config, "x86_64")
 
 
-@pytest.fixture
-def generated_profile_guest(tmp_path):
+def _profile_guest_config(tmp_path: Path, profile_id: str):
     guest = tmp_path / "guest"
     config = guest / "config"
-    (config / "packages").mkdir(parents=True)
-    shutil.copy2(PROJECT_ROOT / "guest" / "config" / "build.toml", config / "build.toml")
-    (config / "packages" / "apt.toml").write_text(
-        '[apt]\nname = "System Packages"\nmanager = "apt"\ninstall_cmd = "apt-get install -y --no-install-recommends"\npackages = ["curl"]\n'
+    shutil.copytree(PROJECT_ROOT / "config" / "docker" / "image", config)
+
+    profile_root = PROJECT_ROOT / "config" / "profiles" / profile_id
+    profile = tomllib.loads((profile_root / "profile.toml").read_text())
+
+    packages = config / "packages"
+    packages.mkdir()
+    _write_package_toml(
+        packages / "apt.toml",
+        "apt",
+        "System Packages",
+        "apt",
+        "apt-get install -y --no-install-recommends",
+        _package_lines(profile_root / "apt-packages.txt"),
     )
-    (config / "packages" / "python.toml").write_text(
-        '[python]\nname = "Python Packages"\nmanager = "uv"\ninstall_cmd = "uv pip install --system --break-system-packages"\npackages = ["pytest"]\n'
+    _write_package_toml(
+        packages / "python.toml",
+        "python",
+        "Python Packages",
+        "uv",
+        "uv pip install --system --break-system-packages",
+        _package_lines(profile_root / "python-requirements.txt"),
     )
-    (config / "packages" / "npm.toml").write_text(
-        '[npm]\nname = "Node Packages"\nmanager = "npm"\ninstall_cmd = "npm install -g --prefix /opt/ai-clis"\npackages = ["@openai/codex"]\n'
+    _write_package_toml(
+        packages / "npm.toml",
+        "npm",
+        "Node Packages",
+        "npm",
+        "npm install -g --prefix /opt/ai-clis",
+        _package_lines(profile_root / "npm-packages.txt"),
     )
-    artifacts = guest / "artifacts"
-    artifacts.mkdir()
-    (artifacts / "capsem-bashrc").write_text("echo capsem\n")
-    (artifacts / "banner.txt").write_text("capsem\n")
-    (artifacts / "tips.txt").write_text("tip\n")
-    (guest / "profile-root" / "root" / ".codex").mkdir(parents=True)
-    (guest / "profile-root" / "root" / ".codex" / "config.toml").write_text(
-        '[mcp_servers.capsem]\ncommand = "/run/capsem-mcp-server"\n'
-    )
-    (guest / "profile-root" / "root" / ".antigravity").mkdir(parents=True)
-    (guest / "profile-root" / "root" / ".antigravity" / "config.json").write_text(
-        json.dumps(
-            {
-                "ai": {
-                    "provider": "ollama",
-                    "baseUrl": "http://127.0.0.1:11434",
-                    "model": "gemma4:latest",
-                    "contextLength": 8192,
-                }
-            }
+
+    vm = profile["vm"]
+    (config / "vm" / "resources.toml").write_text(
+        "\n".join(
+            [
+                "[resources]",
+                f"cpu_count = {vm['cpu_count']}",
+                f"ram_gb = {vm['ram_gb']}",
+                f"scratch_disk_size_gb = {vm['scratch_disk_size_gb']}",
+                "log_bodies = false",
+                "max_body_capture = 4096",
+                "retention_days = 30",
+                "max_sessions = 100",
+                "min_content_sessions = 25",
+                "max_disk_gb = 100",
+                "terminated_retention_days = 365",
+                "",
+            ]
         )
     )
-    (guest / "profile-root" / "root" / ".gemini" / "config").mkdir(parents=True)
-    (guest / "profile-root" / "root" / ".gemini" / "config" / "config.json").write_text(
-        (guest / "profile-root" / "root" / ".antigravity" / "config.json").read_text()
-    )
-    (guest / "profile-root" / "root" / ".gemini" / "antigravity-cli").mkdir(parents=True)
-    (guest / "profile-root" / "root" / ".gemini" / "antigravity-cli" / "settings.json").write_text(
-        json.dumps(
-            {
-                "trustedWorkspaces": ["/root"],
-                "telemetry": {"enabled": False},
-                "autoUpdate": {"enabled": False},
-            }
-        )
-    )
-    (guest / "profile-build.sh").write_text("#!/bin/sh\nexit 0\n")
+
+    shutil.copytree(PROJECT_ROOT / "guest" / "artifacts", guest / "artifacts")
+    shutil.copytree(profile_root / "root", guest / "profile-root")
+    shutil.copy2(profile_root / "build.sh", guest / "profile-build.sh")
+    shutil.copy2(profile_root / "tips.txt", guest / "artifacts" / "tips.txt")
     return load_guest_config(guest)
+
+
+@pytest.fixture
+def generated_profile_guest(tmp_path):
+    return _profile_guest_config(tmp_path, "code")
+
+
+def _package_lines(path: Path) -> list[str]:
+    return [
+        line.strip()
+        for line in path.read_text().splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+
+
+def _write_package_toml(
+    path: Path,
+    key: str,
+    name: str,
+    manager: str,
+    install_cmd: str,
+    packages: list[str],
+) -> None:
+    path.write_text(
+        "\n".join(
+            [
+                f"[{key}]",
+                f'name = "{name}"',
+                f'manager = "{manager}"',
+                f'install_cmd = "{install_cmd}"',
+                "packages = [",
+                *[f'  "{package}",' for package in packages],
+                "]",
+                "",
+            ]
+        )
+    )
 
 
 @pytest.fixture
@@ -491,14 +536,19 @@ class TestGenerateBuildContext:
         assert "kernel_version" in ctx
 
     def test_rootfs_without_npm_package_set(self, real_config):
-        ctx = generate_build_context("Dockerfile.rootfs.j2", real_config, "arm64")
+        package_sets = {
+            key: value for key, value in real_config.package_sets.items() if key != "npm"
+        }
+        config = real_config.model_copy(update={"package_sets": package_sets})
+        ctx = generate_build_context("Dockerfile.rootfs.j2", config, "arm64")
         assert ctx["npm_packages"] == []
 
     def test_rootfs_npm_packages_can_come_from_profile_package_set(self, generated_profile_guest):
         ctx = generate_build_context("Dockerfile.rootfs.j2", generated_profile_guest, "arm64")
-        assert ctx["npm_packages"] == ["@openai/codex"]
+        assert ctx["npm_packages"] == ["@openai/codex", "@google/gemini-cli"]
         rendered = render_dockerfile("Dockerfile.rootfs.j2", generated_profile_guest, "arm64")
         assert "@openai/codex" in rendered
+        assert "@google/gemini-cli" in rendered
         assert "profile-build.sh" in rendered
         assert "profile-root/" in rendered
 
@@ -821,7 +871,7 @@ class TestBuildVersionScript:
     def test_real_config_has_all_sections(self, real_config):
         script = build_version_script(real_config)
         assert '# System' in script
-        assert '# Python' in script
+        assert '# Python' not in script
 
     def test_real_config_has_build_tools(self, real_config):
         script = build_version_script(real_config)
@@ -830,16 +880,11 @@ class TestBuildVersionScript:
         assert 'uv=' in script
         assert 'pip=' in script
 
-    def test_real_config_has_apt_tools(self, real_config):
+    def test_real_config_uses_build_tool_version_commands_only(self, real_config):
         script = build_version_script(real_config)
-        assert 'git=' in script
-        assert 'python3=' in script
-        assert 'gh=' in script
-
-    def test_real_config_has_python_packages(self, real_config):
-        script = build_version_script(real_config)
-        assert 'pytest=' in script
-        assert 'numpy=' in script
+        assert 'git=' not in script
+        assert 'python3=' not in script
+        assert 'pytest=' not in script
 
     def test_empty_config_produces_empty_script(self):
         from capsem.builder.models import BuildConfig, GuestImageConfig
@@ -1041,9 +1086,14 @@ class TestBuildLedger:
 
         assert record["stage"] == "rootfs.config_inputs"
         assert record["arch"] == "arm64"
-        assert record["package_inputs"]["apt"]["packages"] == ["curl"]
-        assert record["package_inputs"]["python"]["packages"] == ["pytest"]
-        assert record["package_inputs"]["npm"]["packages"] == ["@openai/codex"]
+        assert "curl" in record["package_inputs"]["apt"]["packages"]
+        assert "zstd" in record["package_inputs"]["apt"]["packages"]
+        assert "pytest" in record["package_inputs"]["python"]["packages"]
+        assert "openai" in record["package_inputs"]["python"]["packages"]
+        assert record["package_inputs"]["npm"]["packages"] == [
+            "@openai/codex",
+            "@google/gemini-cli",
+        ]
         assert record["package_inputs"]["python"]["install_cmd"] == (
             "uv pip install --system --break-system-packages"
         )
@@ -1178,7 +1228,7 @@ class TestBuildLedger:
         ]
         config_record = records[0]
         assert config_record["package_inputs"]["apt"]["packages"]
-        assert config_record["profile_inputs"]["root_seed"]["enabled"] is False
+        assert config_record["profile_inputs"]["root_seed"]["enabled"] is True
         assert "installed_packages" not in config_record
         erofs_record = records[2]
         assert erofs_record["erofs"] == {
@@ -1296,14 +1346,14 @@ class TestKernelConfig:
 
     @pytest.mark.parametrize("name", ["defconfig.arm64", "defconfig.x86_64"])
     def test_erofs_zstd_enabled(self, name):
-        content = (PROJECT_ROOT / "guest" / "config" / "kernel" / name).read_text()
+        content = (PROJECT_ROOT / "config" / "docker" / "image" / "kernel" / name).read_text()
         assert "CONFIG_EROFS_FS=y" in content
         assert "CONFIG_EROFS_FS_ZIP=y" in content
         assert "CONFIG_EROFS_FS_ZIP_ZSTD=y" in content
 
     @pytest.mark.parametrize("name", ["defconfig.arm64", "defconfig.x86_64"])
     def test_iptables_nft_nat_redirect_enabled(self, name):
-        content = (PROJECT_ROOT / "guest" / "config" / "kernel" / name).read_text()
+        content = (PROJECT_ROOT / "config" / "docker" / "image" / "kernel" / name).read_text()
         required = [
             "CONFIG_NETFILTER=y",
             "CONFIG_NF_TABLES=y",
@@ -1406,7 +1456,7 @@ class TestPrepareBuildContext:
         assert (context_dir / "profile-root/root/.gemini/config/config.json").is_file()
         assert (context_dir / "profile-root/root/.gemini/antigravity-cli/settings.json").is_file()
         assert (context_dir / "profile-root/root/.codex/config.toml").is_file()
-        assert (context_dir / "tips.txt").read_text() == "tip\n"
+        assert "Credentials are brokered by Capsem" in (context_dir / "tips.txt").read_text()
 
     def test_rootfs_dockerfile_content(self, real_config, tmp_path):
         context_dir = tmp_path / "ctx"

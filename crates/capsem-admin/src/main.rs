@@ -1909,7 +1909,7 @@ fn materialize_profile_guest_inputs(
     source_guest_dir: &Path,
     workspace_guest_dir: &Path,
 ) -> Result<()> {
-    let source_config = source_guest_dir.join("config");
+    let source_config = config_root.join("docker").join("image");
     let workspace_config = workspace_guest_dir.join("config");
     fs::create_dir_all(&workspace_config)
         .with_context(|| format!("create {}", workspace_config.display()))?;
@@ -1923,6 +1923,12 @@ fn materialize_profile_guest_inputs(
         &source_config.join("kernel"),
         &workspace_config.join("kernel"),
     )?;
+    copy_dir_recursive(
+        &source_config.join("security"),
+        &workspace_config.join("security"),
+    )?;
+    copy_dir_recursive(&source_config.join("vm"), &workspace_config.join("vm"))?;
+    write_profile_vm_resources_toml(&workspace_config.join("vm").join("resources.toml"), profile)?;
     copy_dir_recursive(
         &source_guest_dir.join("artifacts"),
         &workspace_guest_dir.join("artifacts"),
@@ -1987,6 +1993,27 @@ fn materialize_profile_guest_inputs(
         copy_dir_recursive(&source_root, &workspace_guest_dir.join("profile-root"))?;
     }
     Ok(())
+}
+
+fn write_profile_vm_resources_toml(path: &Path, profile: &ProfileConfigFile) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    let content = format!(
+        "[resources]\n\
+         cpu_count = {}\n\
+         ram_gb = {}\n\
+         scratch_disk_size_gb = {}\n\
+         log_bodies = false\n\
+         max_body_capture = 4096\n\
+         retention_days = 30\n\
+         max_sessions = 100\n\
+         min_content_sessions = 25\n\
+         max_disk_gb = 100\n\
+         terminated_retention_days = 365\n",
+        profile.vm.cpu_count, profile.vm.ram_gb, profile.vm.scratch_disk_size_gb
+    );
+    fs::write(path, content).with_context(|| format!("write {}", path.display()))
 }
 
 fn read_profile_package_lines(path: &Path) -> Result<Vec<String>> {
@@ -3496,18 +3523,20 @@ decision = "block"
             .is_file());
         assert!(args.output.join("build-plan.json").is_file());
         assert!(args.output.join("workspace.json").is_file());
-        assert!(args.output.join("guest/config/packages/apt.toml").is_file());
-        let apt_packages = fs::read_to_string(args.output.join("guest/config/packages/apt.toml"))
+        let generated_config = args.output.join("guest").join("config");
+        assert!(generated_config.join("packages/apt.toml").is_file());
+        let apt_packages = fs::read_to_string(generated_config.join("packages/apt.toml"))
             .expect("materialized apt packages");
         assert!(
             apt_packages.contains("\"zstd\""),
             "Ollama's official installer consumes .tar.zst payloads, so shipped profiles must include zstd"
         );
-        assert!(args
-            .output
-            .join("guest/config/packages/python.toml")
-            .is_file());
-        assert!(args.output.join("guest/config/packages/npm.toml").is_file());
+        assert!(generated_config.join("packages/python.toml").is_file());
+        assert!(generated_config.join("packages/npm.toml").is_file());
+        let resources = fs::read_to_string(generated_config.join("vm/resources.toml"))
+            .expect("materialized VM resources");
+        assert!(resources.contains("ram_gb = 12"));
+        assert!(resources.contains("scratch_disk_size_gb = 64"));
         assert!(args.output.join("guest/profile-build.sh").is_file());
         let profile_build = fs::read_to_string(args.output.join("guest/profile-build.sh"))
             .expect("materialized profile build script");

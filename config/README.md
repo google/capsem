@@ -29,7 +29,9 @@ it.
 - `profiles/<profile_id>/` contains profile source ledgers and profile-owned
   payloads: rules, Sigma detections, MCP declarations, package lists, build
   hooks, tips, and guest root seed manifests.
-- `docker/` contains Docker/Jinja templates used by the profile image builder.
+- `docker/` contains Docker/Jinja templates and image build defaults used by
+  the profile image builder. Profile-specific package lists, build hooks, and
+  root payloads still belong under `profiles/<profile_id>/`.
 - `data/` contains project data embedded or loaded by code, such as model
   pricing tables.
 
