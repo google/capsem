@@ -172,7 +172,7 @@ jobs:
           uv run python -m pytest \
             tests/test_audit.py \
             tests/test_build_pkg.py \
-            tests/test_capsem_bench_mitm_local.py \
+            tests/test_capsem_bench_mock_server_protocol.py \
             tests/test_capsem_bench_storage.py \
             tests/test_cli.py \
             tests/test_config.py \
