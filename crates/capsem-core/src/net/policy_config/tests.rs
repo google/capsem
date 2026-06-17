@@ -4458,7 +4458,6 @@ fn merged_policies_carry_live_model_endpoint_registry() {
 name = "Private Gateway"
 protocol = "openai-compatible"
 url = "https://llm.internal.example/v1"
-aliases = ["company-openai"]
 listen_ports = [443, 8443]
 allowed_remote_targets = ["llm.internal.example:443", "company-openai:8443"]
 

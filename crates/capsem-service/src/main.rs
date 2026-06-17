@@ -16,8 +16,10 @@ use capsem_core::{
         SecurityRuleSource, SettingsFile,
     },
     security_engine::{
-        FileSecurityEvent, RuntimeSecurityEventType, SecurityActionRegistry, SecurityEmitError,
-        SecurityEvent, SecurityEventEmitter, SecurityEventEngine, SerializableSecurityEvent,
+        DnsSecurityEvent, FileSecurityEvent, HttpSecurityEvent, IpSecurityEvent, McpSecurityEvent,
+        ModelSecurityEvent, ProcessSecurityEvent, RuntimeSecurityEventType, SecurityActionRegistry,
+        SecurityEmitError, SecurityEvent, SecurityEventEmitter, SecurityEventEngine,
+        SerializableSecurityEvent, TcpSecurityEvent, UdpSecurityEvent,
     },
 };
 use capsem_proto::ipc::{FileBoundaryAction, ProcessToService, ServiceToProcess};
@@ -405,19 +407,85 @@ match = 'file.import.content.contains("EICAR")'
                 file_import_content: Some(
                     capsem_core::security_engine::DUMMY_EICAR_TEST_STRING.to_string(),
                 ),
-                http_host: None,
+                ..Default::default()
             },
         }
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 struct EnforcementEventInput {
     event_type: String,
     #[serde(default)]
     file_import_content: Option<String>,
     #[serde(default)]
     http_host: Option<String>,
+    #[serde(default)]
+    http_method: Option<String>,
+    #[serde(default)]
+    http_path: Option<String>,
+    #[serde(default)]
+    http_query: Option<String>,
+    #[serde(default)]
+    http_status: Option<String>,
+    #[serde(default)]
+    http_body: Option<String>,
+    #[serde(default)]
+    dns_qname: Option<String>,
+    #[serde(default)]
+    dns_qtype: Option<String>,
+    #[serde(default)]
+    mcp_method: Option<String>,
+    #[serde(default)]
+    mcp_server_name: Option<String>,
+    #[serde(default)]
+    mcp_tool_call_name: Option<String>,
+    #[serde(default)]
+    mcp_tool_list: Option<String>,
+    #[serde(default)]
+    mcp_request_preview: Option<String>,
+    #[serde(default)]
+    mcp_response_preview: Option<String>,
+    #[serde(default)]
+    model_provider: Option<String>,
+    #[serde(default)]
+    model_name: Option<String>,
+    #[serde(default)]
+    model_request_body: Option<String>,
+    #[serde(default)]
+    model_response_body: Option<String>,
+    #[serde(default)]
+    model_tool_calls: Option<String>,
+    #[serde(default)]
+    file_path: Option<String>,
+    #[serde(default)]
+    file_name: Option<String>,
+    #[serde(default)]
+    file_ext: Option<String>,
+    #[serde(default)]
+    file_mime_type: Option<String>,
+    #[serde(default)]
+    file_content: Option<String>,
+    #[serde(default)]
+    process_exec_id: Option<String>,
+    #[serde(default)]
+    process_exec_path: Option<String>,
+    #[serde(default)]
+    process_command: Option<String>,
+    #[serde(default)]
+    process_exit_code: Option<String>,
+    #[serde(default)]
+    process_stdout: Option<String>,
+    #[serde(default)]
+    process_stderr: Option<String>,
+    #[serde(default)]
+    ip_value: Option<String>,
+    #[serde(default)]
+    ip_version: Option<String>,
+    #[serde(default)]
+    tcp_port: Option<String>,
+    #[serde(default)]
+    udp_port: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -7633,22 +7701,151 @@ fn validate_single_user_profile_rule(
 
 impl EnforcementEventInput {
     fn into_security_event(self) -> Result<SecurityEvent, AppError> {
-        match self.event_type.as_str() {
-            "file.import" => Ok(SecurityEvent::new(RuntimeSecurityEventType::FileImport)
-                .with_file(FileSecurityEvent {
-                    import_content: self.file_import_content,
-                    ..Default::default()
-                })),
-            "http.request" => Ok(SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
-                .with_http(capsem_core::security_engine::HttpSecurityEvent {
-                    host: self.http_host,
-                    ..Default::default()
-                })),
+        let event_type = match self.event_type.as_str() {
+            "http.request" => RuntimeSecurityEventType::HttpRequest,
+            "dns.query" => RuntimeSecurityEventType::DnsQuery,
+            "mcp.tool_call" => RuntimeSecurityEventType::McpToolCall,
+            "mcp.tool_list" => RuntimeSecurityEventType::McpToolList,
+            "mcp.event" => RuntimeSecurityEventType::McpEvent,
+            "model.call" => RuntimeSecurityEventType::ModelCall,
+            "file.event" => RuntimeSecurityEventType::FileEvent,
+            "file.import" => RuntimeSecurityEventType::FileImport,
+            "file.export" => RuntimeSecurityEventType::FileExport,
+            "process.exec" => RuntimeSecurityEventType::ProcessExec,
+            "process.exec_complete" => RuntimeSecurityEventType::ProcessExecComplete,
+            "process.audit" => RuntimeSecurityEventType::ProcessAudit,
             other => Err(AppError(
                 StatusCode::BAD_REQUEST,
                 format!("unsupported enforcement event_type: {other}"),
-            )),
+            ))?,
+        };
+
+        let mut event = SecurityEvent::new(event_type);
+        if self.http_host.is_some()
+            || self.http_method.is_some()
+            || self.http_path.is_some()
+            || self.http_query.is_some()
+            || self.http_status.is_some()
+            || self.http_body.is_some()
+        {
+            event = event.with_http(HttpSecurityEvent {
+                host: self.http_host,
+                method: self.http_method,
+                path: self.http_path,
+                query: self.http_query,
+                status: self.http_status,
+                body: self.http_body,
+            });
         }
+        if self.dns_qname.is_some() || self.dns_qtype.is_some() {
+            event = event.with_dns(DnsSecurityEvent {
+                qname: self.dns_qname,
+                qtype: self.dns_qtype,
+            });
+        }
+        if self.mcp_method.is_some()
+            || self.mcp_server_name.is_some()
+            || self.mcp_tool_call_name.is_some()
+            || self.mcp_tool_list.is_some()
+            || self.mcp_request_preview.is_some()
+            || self.mcp_response_preview.is_some()
+        {
+            let mcp = McpSecurityEvent {
+                method: self.mcp_method,
+                server_name: self.mcp_server_name,
+                tool_call_name: self.mcp_tool_call_name,
+                tool_list: self.mcp_tool_list,
+                ..Default::default()
+            }
+            .with_request_preview(self.mcp_request_preview.as_deref())
+            .with_response_preview(self.mcp_response_preview.as_deref());
+            event = event.with_mcp(mcp);
+        }
+        if self.model_provider.is_some()
+            || self.model_name.is_some()
+            || self.model_request_body.is_some()
+            || self.model_response_body.is_some()
+            || self.model_tool_calls.is_some()
+        {
+            event = event.with_model(ModelSecurityEvent {
+                provider: self.model_provider,
+                name: self.model_name,
+                request_body: self.model_request_body,
+                response_body: self.model_response_body,
+                tool_calls: self.model_tool_calls,
+            });
+        }
+        if matches!(
+            event_type,
+            RuntimeSecurityEventType::FileEvent
+                | RuntimeSecurityEventType::FileImport
+                | RuntimeSecurityEventType::FileExport
+        ) || self.file_import_content.is_some()
+            || self.file_path.is_some()
+            || self.file_name.is_some()
+            || self.file_ext.is_some()
+            || self.file_mime_type.is_some()
+            || self.file_content.is_some()
+        {
+            let mut file = FileSecurityEvent::default();
+            match event_type {
+                RuntimeSecurityEventType::FileImport => {
+                    file.import_path = self.file_path;
+                    file.import_name = self.file_name;
+                    file.import_ext = self.file_ext;
+                    file.import_mime_type = self.file_mime_type;
+                    file.import_content = self.file_import_content.or(self.file_content);
+                }
+                RuntimeSecurityEventType::FileExport => {
+                    file.export_path = self.file_path;
+                    file.export_name = self.file_name;
+                    file.export_ext = self.file_ext;
+                    file.export_mime_type = self.file_mime_type;
+                    file.export_content = self.file_content;
+                }
+                _ => {
+                    file.content = self.file_content.or(self.file_import_content);
+                    file.read_path = self.file_path;
+                    file.read_name = self.file_name;
+                    file.read_ext = self.file_ext;
+                    file.read_mime_type = self.file_mime_type;
+                }
+            }
+            event = event.with_file(file);
+        }
+        if self.process_exec_id.is_some()
+            || self.process_exec_path.is_some()
+            || self.process_command.is_some()
+            || self.process_exit_code.is_some()
+            || self.process_stdout.is_some()
+            || self.process_stderr.is_some()
+        {
+            event = event.with_process(ProcessSecurityEvent {
+                exec_id: self.process_exec_id,
+                exec_path: self.process_exec_path,
+                command: self.process_command,
+                exit_code: self.process_exit_code,
+                stdout: self.process_stdout,
+                stderr: self.process_stderr,
+            });
+        }
+        if self.ip_value.is_some() || self.ip_version.is_some() {
+            event = event.with_ip(IpSecurityEvent {
+                value: self.ip_value,
+                version: self.ip_version,
+            });
+        }
+        if self.tcp_port.is_some() {
+            event = event.with_tcp(TcpSecurityEvent {
+                port: self.tcp_port,
+            });
+        }
+        if self.udp_port.is_some() {
+            event = event.with_udp(UdpSecurityEvent {
+                port: self.udp_port,
+            });
+        }
+        Ok(event)
     }
 }
 

@@ -57,6 +57,14 @@ detection_level = "informational"
 reason = "Detect model traffic whose wire protocol is recognized but whose endpoint owner is not declared."
 match = 'model.provider == "unknown"'
 
+[default.unknown_mcp_server]
+name = "unknown_mcp_server"
+action = "allow"
+priority = "default"
+detection_level = "informational"
+reason = "Detect MCP server activity from observed servers not declared by the active profile."
+match = 'mcp.server.name.contains("observed:")'
+
 [default.file]
 name = "file"
 action = "allow"
@@ -83,7 +91,6 @@ match = 'has(process.exec.path) || has(process.command) || has(process.exec.id)'
 name = "OpenAI"
 protocol = "openai"
 url = "https://api.openai.com/v1"
-aliases = ["api.openai.com"]
 listen_ports = [443]
 allowed_remote_targets = ["api.openai.com:443"]
 
@@ -121,7 +128,6 @@ match = 'mcp.server.name.contains("openai") || mcp.tool_call.name.contains("open
 name = "Anthropic"
 protocol = "anthropic"
 url = "https://api.anthropic.com/v1"
-aliases = ["api.anthropic.com"]
 listen_ports = [443]
 allowed_remote_targets = ["api.anthropic.com:443"]
 
@@ -171,7 +177,6 @@ match = 'mcp.server.name.contains("anthropic") || mcp.server.name.contains("clau
 name = "Google AI"
 protocol = "google"
 url = "https://generativelanguage.googleapis.com/v1beta"
-aliases = ["generativelanguage.googleapis.com", "daily-cloudcode-pa.googleapis.com"]
 listen_ports = [443]
 allowed_remote_targets = ["generativelanguage.googleapis.com:443", "daily-cloudcode-pa.googleapis.com:443"]
 
@@ -239,7 +244,6 @@ match = 'mcp.server.name.contains("google") || mcp.server.name.contains("gemini"
 name = "Ollama"
 protocol = "ollama"
 url = "http://127.0.0.1:11434"
-aliases = ["localhost", "127.0.0.1", "host.docker.internal", "local.ollama"]
 listen_ports = [11434]
 allowed_remote_targets = [
   "localhost:11434",

@@ -103,6 +103,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and co-work profiles now include an explicit hermetic mock-server allow rule
   for `127.0.0.1:3713`, so doctor, benchmark, and Ironbank traffic does not
   trip the default local-network ask rule.
+- Tightened the CEL fact contract exposed by profile enforcement routes:
+  evaluate requests now materialize typed `http`, `dns`, `mcp`, `model`,
+  `file`, `process`, `ip`, `tcp`, and `udp` facts, default rules include
+  unknown-model and unknown-MCP detections, and provider endpoint aliases are
+  rejected in favor of explicit `allowed_remote_targets`.
 - Strengthened `/vms/create` and `/vms/{id}/resume` responses so provision
   routes return the session profile ID, lifecycle state, persistence bit,
   resumability, and valid action enum list alongside the VM ID and UDS path.

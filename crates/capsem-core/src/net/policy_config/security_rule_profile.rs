@@ -53,8 +53,6 @@ pub struct SecurityRuleProvider {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub aliases: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub listen_ports: Vec<u16>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allowed_remote_targets: Vec<String>,
@@ -412,9 +410,6 @@ impl SecurityRuleProfile {
             }
             if let Some(url) = provider.url.as_deref() {
                 validate_non_empty("provider url", url)?;
-            }
-            for alias in &provider.aliases {
-                validate_non_empty("provider alias", alias)?;
             }
             for listen_port in &provider.listen_ports {
                 if *listen_port == 0 {

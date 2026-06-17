@@ -604,6 +604,14 @@ fn built_in_defaults_cover_each_runtime_boundary_last() {
             "Default allow for model calls.",
         ),
         (
+            "profiles.rules.default_unknown_model_provider",
+            "Detect model traffic whose wire protocol is recognized but whose endpoint owner is not declared.",
+        ),
+        (
+            "profiles.rules.default_unknown_mcp_server",
+            "Detect MCP server activity from observed servers not declared by the active profile.",
+        ),
+        (
             "profiles.rules.default_file",
             "Default allow for file reads, writes, creates, deletes, imports, and exports.",
         ),
@@ -627,7 +635,13 @@ fn built_in_defaults_cover_each_runtime_boundary_last() {
         assert_eq!(rule.action, expected_action);
         assert_eq!(rule.priority, DEFAULT_RULE_PRIORITY);
         assert_eq!(rule.reason.as_deref(), Some(reason));
-        assert!(rule.detection_level.is_none());
+        if rule_id == "profiles.rules.default_unknown_model_provider"
+            || rule_id == "profiles.rules.default_unknown_mcp_server"
+        {
+            assert_eq!(rule.detection_level, Some(DetectionLevel::Informational));
+        } else {
+            assert!(rule.detection_level.is_none());
+        }
     }
 }
 

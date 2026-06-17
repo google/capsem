@@ -45,6 +45,14 @@ detection_level = "informational"
 reason = "Detect model traffic whose wire protocol is recognized but whose endpoint owner is not declared."
 match = 'model.provider == "unknown"'
 
+[default.unknown_mcp_server]
+name = "unknown_mcp_server"
+action = "allow"
+priority = "default"
+detection_level = "informational"
+reason = "Detect MCP server activity from observed servers not declared by the active profile."
+match = 'mcp.server.name.contains("observed:")'
+
 [default.file]
 name = "file"
 action = "allow"

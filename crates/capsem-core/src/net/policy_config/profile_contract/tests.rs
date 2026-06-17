@@ -142,7 +142,6 @@ match = 'file.read.path.contains("skills/")'
 name = "OpenAI"
 protocol = "openai"
 url = "https://api.openai.com/v1"
-aliases = ["api.openai.com"]
 listen_ports = [443]
 allowed_remote_targets = ["api.openai.com:443"]
 

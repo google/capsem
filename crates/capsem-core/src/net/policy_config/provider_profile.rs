@@ -22,7 +22,6 @@ pub struct ModelEndpoint {
     pub display_name: String,
     pub protocol: ModelProtocol,
     pub upstream_url: String,
-    pub aliases: Vec<String>,
     pub listen_ports: Vec<u16>,
     pub allowed_remote_targets: Vec<String>,
 }
@@ -52,7 +51,6 @@ impl ModelEndpoint {
 
     fn hosts(&self) -> Vec<Option<String>> {
         std::iter::once(upstream_target(&self.upstream_url).and_then(|target| target.host))
-            .chain(self.aliases.iter().map(|alias| normalize_host(alias)))
             .chain(
                 self.allowed_remote_targets
                     .iter()
@@ -63,27 +61,12 @@ impl ModelEndpoint {
 
     fn target_specs(&self) -> Vec<TargetSpec> {
         let upstream = upstream_target(&self.upstream_url).unwrap_or_default();
-        let alias_targets = self.aliases.iter().flat_map(|alias| {
-            let host = normalize_host(alias);
-            if self.listen_ports.is_empty() {
-                vec![TargetSpec { host, port: None }]
-            } else {
-                self.listen_ports
-                    .iter()
-                    .map(|port| TargetSpec {
-                        host: host.clone(),
-                        port: Some(*port),
-                    })
-                    .collect::<Vec<_>>()
-            }
-        });
         std::iter::once(upstream)
             .chain(
                 self.allowed_remote_targets
                     .iter()
                     .filter_map(|target| upstream_target(target)),
             )
-            .chain(alias_targets)
             .collect()
     }
 }
@@ -114,7 +97,6 @@ impl ModelEndpointRegistry {
                     display_name: provider.name.clone().unwrap_or_else(|| provider_id.clone()),
                     protocol: ModelProtocol::try_from(protocol)?,
                     upstream_url: url.to_string(),
-                    aliases: provider.aliases.clone(),
                     listen_ports: provider.listen_ports.clone(),
                     allowed_remote_targets: provider.allowed_remote_targets.clone(),
                 },
@@ -275,9 +257,6 @@ impl ProviderRuleProfile {
                     if override_provider.url.is_some() {
                         base_provider.url = override_provider.url.clone();
                     }
-                    if !override_provider.aliases.is_empty() {
-                        base_provider.aliases = override_provider.aliases.clone();
-                    }
                     if !override_provider.listen_ports.is_empty() {
                         base_provider.listen_ports = override_provider.listen_ports.clone();
                     }
@@ -397,6 +376,19 @@ mod tests {
             unknown_provider_rule.condition,
             r#"model.provider == "unknown""#
         );
+        let unknown_mcp_rule = built_in_compiled
+            .iter()
+            .find(|rule| rule.rule_id == "profiles.rules.default_unknown_mcp_server")
+            .expect("built-in defaults include unknown MCP detection");
+        assert_eq!(unknown_mcp_rule.action, SecurityRuleAction::Allow);
+        assert_eq!(
+            unknown_mcp_rule.detection_level,
+            Some(DetectionLevel::Informational)
+        );
+        assert_eq!(
+            unknown_mcp_rule.condition,
+            r#"mcp.server.name.contains("observed:")"#
+        );
         assert!(built_in_defaults.plugins.contains_key("credential_broker"));
         assert!(built_in_defaults.plugins.contains_key("log_sanitizer"));
         assert!(compiled
@@ -492,7 +484,6 @@ mode = "rewrite"
         );
         assert_eq!(registry.protocol_for_target("api.openai.com", 80), None);
         let openai = registry.get("openai").expect("openai endpoint");
-        assert_eq!(openai.aliases, vec!["api.openai.com"]);
         assert_eq!(openai.listen_ports, vec![443]);
         assert_eq!(openai.allowed_remote_targets, vec!["api.openai.com:443"]);
     }
@@ -505,7 +496,6 @@ mode = "rewrite"
 name = "Private Gateway"
 protocol = "openai-compatible"
 url = "https://llm.internal.example/v1"
-aliases = ["company-openai", "llm.internal.example"]
 listen_ports = [443, 8443]
 allowed_remote_targets = ["llm.internal.example:443", "company-openai:8443"]
 
@@ -538,6 +528,28 @@ match = 'http.host == "llm.internal.example"'
             Some(ModelProtocol::OpenAi)
         );
         assert_eq!(registry.protocol_for_target("company-openai", 11434), None);
+    }
+
+    #[test]
+    fn provider_endpoint_aliases_are_rejected_in_favor_of_explicit_targets() {
+        let error = ProviderRuleProfile::parse_toml(
+            r#"
+[ai.private_gateway]
+name = "Private Gateway"
+protocol = "openai-compatible"
+url = "https://llm.internal.example/v1"
+aliases = ["company-openai"]
+allowed_remote_targets = ["company-openai:443"]
+
+[ai.private_gateway.rules.http_api]
+name = "private_gateway_http_seen"
+action = "allow"
+match = 'http.host == "company-openai"'
+"#,
+        )
+        .expect_err("provider aliases are a second classifier and must be rejected");
+        assert!(error.contains("aliases"), "{error}");
+        assert!(error.contains("unknown field"), "{error}");
     }
 
     #[test]
