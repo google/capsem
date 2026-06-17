@@ -41,6 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sessions.
 
 ### Changed (route surfaces and diagnostics)
+- Added a release compliance gate for SBOM, OBOM, and build-ledger evidence,
+  clarifying that OBOMs describe base VM images while build ledgers remain
+  debug evidence.
 - Added a config-layout gate that makes the settings/corp/profiles/docker/data
   source contract executable and rejects host metadata or generated pins in
   checked-in profile config.

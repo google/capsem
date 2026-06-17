@@ -332,7 +332,8 @@ Every build produces `manifest.json` at the asset root. The manifest records
 asset hashes and compatibility, including the per-arch CycloneDX
 `obom.cdx.json`. The per-arch `build-ledger.log` records debug evidence for
 the inputs that produced the assets, but release uploads expose the OBOM as the
-installed-component truth.
+installed base-image package/component truth. The OBOM does not describe user
+session mutations, workspace writes, or post-boot state.
 
 | Section | Source | Contents |
 |---------|--------|----------|
