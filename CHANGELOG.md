@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Added a dedicated Ironbank Claude CLI ledger gate that runs `ollama launch claude` through the VM profile and proves the model, tool, file, credential, and security ledger path.
+
 ### Fixed (service control)
 - Fixed `capsem stop` and other service-control commands so they stay pure
   local control operations and no longer start the background update/network
