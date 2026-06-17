@@ -22,6 +22,17 @@ def test_just_install_does_not_sync_assets_after_installer() -> None:
     assert "pkill -9 -x capsem-app" in install_body
 
 
+def test_just_install_invokes_package_without_gui_installer_block() -> None:
+    justfile = (PROJECT_ROOT / "justfile").read_text()
+    install_body = justfile.split("\n# Run install e2e tests", 1)[0]
+
+    assert 'PKG="packages/Capsem-$VERSION.pkg"' in install_body
+    assert 'open -W "$PKG"' not in install_body
+    assert 'installer -pkg "$PKG"' in install_body
+    assert '"$HOME/.capsem/bin/capsem" status' in install_body
+    assert '"$HOME/.capsem/bin/capsem" debug' in install_body
+
+
 def test_manifest_generation_public_path_is_capsem_admin() -> None:
     justfile = (PROJECT_ROOT / "justfile").read_text()
     public_docs = [

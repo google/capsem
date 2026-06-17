@@ -858,10 +858,12 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd _materialize-co
             "target/config" \
             "$VERSION"
         PKG="packages/Capsem-$VERSION.pkg"
-        echo "=== Opening installer ==="
-        open -W "$PKG"
-        echo "=== Starting service ==="
-        "$HOME/.capsem/bin/capsem" start || true
+        echo "=== Installing package ==="
+        if [ "$(id -u)" -eq 0 ]; then
+            installer -pkg "$PKG" -target /
+        else
+            sudo installer -pkg "$PKG" -target /
+        fi
     else
         echo "=== Building .deb ==="
         eval cargo tauri build --bundles deb $TAURI_FLAGS
@@ -891,6 +893,7 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd _materialize-co
         fi
     fi
     "$HOME/.capsem/bin/capsem" status
+    "$HOME/.capsem/bin/capsem" debug
     if [ "$OS" = "Darwin" ]; then
         echo "=== Opening Capsem.app ==="
         open /Applications/Capsem.app
