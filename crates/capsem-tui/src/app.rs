@@ -75,7 +75,7 @@ impl ControlAction {
             | Self::Stop { id: name }
             | Self::Delete { id: name } => name,
             Self::Purge { all: true } => "all sessions",
-            Self::Purge { all: false } => "temporary and broken VMs",
+            Self::Purge { all: false } => "temporary and broken sessions",
         }
     }
 }
@@ -641,11 +641,7 @@ fn service_needs_start(status: ServiceStatus) -> bool {
 }
 
 fn default_profile_index(state: &AppState) -> usize {
-    state
-        .profiles
-        .iter()
-        .position(|profile| profile.is_default)
-        .unwrap_or_default()
+    state.profiles.first().map(|_| 0).unwrap_or_default()
 }
 
 fn selected_profile_id(state: &AppState, index: usize) -> Option<String> {
@@ -670,7 +666,7 @@ pub fn resume_blocked_reason(session: &crate::model::SessionSummary) -> Option<&
             session
                 .resume_blocked_reason
                 .as_deref()
-                .unwrap_or("cannot resume: VM state is not resumable"),
+                .unwrap_or("cannot resume: session state is not resumable"),
         );
     }
     let status = session.profile_status.as_deref()?.to_ascii_lowercase();

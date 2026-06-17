@@ -31,14 +31,12 @@ pub fn fixture_state() -> AppState {
             ProfileOption {
                 id: "corp-default".to_string(),
                 name: "Corp Default".to_string(),
-                description: Some("default profile".to_string()),
-                is_default: true,
+                description: Some("coding workspace".to_string()),
             },
             ProfileOption {
                 id: "linux-builder".to_string(),
                 name: "Linux Builder".to_string(),
                 description: Some("kernel and distro work".to_string()),
-                is_default: false,
             },
         ],
         sessions: vec![

@@ -115,11 +115,10 @@ impl GatewayProvider {
         invoke_action(&self.client, &self.base_url, &token, action).await
     }
 
-    async fn profile_options(&self, token: &str, state: &AppState) -> Vec<ProfileOption> {
-        match fetch_profiles(&self.client, &self.base_url, token).await {
-            Ok(profiles) if !profiles.is_empty() => profiles,
-            _ => profiles_from_sessions(state),
-        }
+    async fn profile_options(&self, token: &str, _state: &AppState) -> Vec<ProfileOption> {
+        fetch_profiles(&self.client, &self.base_url, token)
+            .await
+            .unwrap_or_default()
     }
 }
 
@@ -226,26 +225,6 @@ fn status_response_to_state(status: StatusResponse, latency: Duration) -> AppSta
         sessions,
         profiles: Vec::new(),
     }
-}
-
-fn profiles_from_sessions(state: &AppState) -> Vec<ProfileOption> {
-    let mut profiles = Vec::new();
-    for session in &state.sessions {
-        if session.profile.is_empty()
-            || profiles
-                .iter()
-                .any(|profile: &ProfileOption| profile.id == session.profile)
-        {
-            continue;
-        }
-        profiles.push(ProfileOption {
-            id: session.profile.clone(),
-            name: session.profile.clone(),
-            description: None,
-            is_default: profiles.is_empty(),
-        });
-    }
-    profiles
 }
 
 fn vm_response_to_summary(vm: VmSummary) -> SessionSummary {
@@ -603,7 +582,6 @@ impl ProfilesResponse {
             .map(|record| {
                 let id = record.id;
                 ProfileOption {
-                    is_default: false,
                     id,
                     name: record.name,
                     description: Some(record.description),

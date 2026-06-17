@@ -38,6 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sessions.
 
 ### Changed (route surfaces and diagnostics)
+- Tightened the TUI session contract so profile launch options come only from
+  `/profiles/list`, no fallback profile is synthesized from stale session
+  rows, and user-facing TUI controls say sessions rather than VMs.
 - Removed the retired MCP tool `approved` field from profile MCP route
   responses; the UI/TUI contract now exposes only route-backed
   `permission_action` / `permission_source` decisions.

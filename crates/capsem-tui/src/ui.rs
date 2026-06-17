@@ -236,7 +236,7 @@ fn render_terminal_surface(
             Paragraph::new(vec![
                 Line::from(Span::styled("no sessions", muted_style())),
                 Line::from(Span::styled(
-                    "Press Enter to create a VM",
+                    "Press Enter to create a session",
                     status_base_style().add_modifier(Modifier::BOLD),
                 )),
             ])
@@ -304,7 +304,7 @@ fn render_inactive_session_surface(frame: &mut Frame<'_>, area: Rect, session: &
             status_base_style().add_modifier(Modifier::BOLD),
         )));
         lines.push(Line::from(Span::styled(
-            "Alt+d deletes this VM; Alt+p purges temporary/broken VMs",
+            "Alt+d deletes this session; Alt+p purges temporary/broken sessions",
             muted_style(),
         )));
     } else {
@@ -492,15 +492,20 @@ fn help_lines() -> Vec<Line<'static>> {
         help_row("Alt+Right", "next", "global", "switch session"),
         help_row("Alt+1..9", "jump", "global", "select by tab number"),
         help_row("Alt+l", "sessions", "global", "list sessions and status"),
-        help_row("Alt+i", "session info", "session", "active VM details"),
+        help_row("Alt+i", "session info", "session", "active session details"),
         help_row("Alt+n", "new", "global", "create from profile"),
-        help_row("Alt+f", "fork", "session", "fork active VM"),
-        help_row("Alt+s", "suspend", "session", "warm stop active VM"),
-        help_row("Alt+c", "checkpoint", "session", "save/checkpoint VM"),
-        help_row("Alt+r", "resume", "session", "resume inactive VM"),
-        help_row("Alt+t", "stop", "session", "stop active VM"),
-        help_row("Alt+d", "delete", "session", "delete active VM"),
-        help_row("Alt+p", "purge", "global", "purge temporary/broken VMs"),
+        help_row("Alt+f", "fork", "session", "fork active session"),
+        help_row("Alt+s", "suspend", "session", "warm stop active session"),
+        help_row("Alt+c", "checkpoint", "session", "save/checkpoint session"),
+        help_row("Alt+r", "resume", "session", "resume inactive session"),
+        help_row("Alt+t", "stop", "session", "stop active session"),
+        help_row("Alt+d", "delete", "session", "delete active session"),
+        help_row(
+            "Alt+p",
+            "purge",
+            "global",
+            "purge temporary/broken sessions",
+        ),
         help_row("Alt+q", "quit", "app", "plain q passes through"),
     ]
 }
@@ -535,7 +540,7 @@ fn create_lines(state: &AppState, draft: Option<&CreateDraft>) -> Vec<Line<'stat
     lines.push(overlay_line(create_hint));
     lines.push(overlay_line(""));
     lines.push(overlay_title("profiles"));
-    lines.push(table_header(&["Pick", "Profile", "Name", "Default"]));
+    lines.push(table_header(&["Pick", "Profile", "Name"]));
 
     if state.profiles.is_empty() {
         lines.push(focus_line("profiles unavailable"));
@@ -548,12 +553,10 @@ fn create_lines(state: &AppState, draft: Option<&CreateDraft>) -> Vec<Line<'stat
         .min(state.profiles.len().saturating_sub(1));
     for (index, profile) in state.profiles.iter().take(8).enumerate() {
         let marker = if index == selected { "▶" } else { " " };
-        let default = if profile.is_default { " default" } else { "" };
         let row = format!(
-            "{marker:<4} {:<20} {:<22}{}",
+            "{marker:<4} {:<20} {:<22}",
             truncate(&profile.id, 20),
             truncate(&profile.name, 22),
-            default
         );
         if index == selected {
             lines.push(focus_line(&row));

@@ -21,7 +21,6 @@ pub struct ProfileOption {
     pub id: String,
     pub name: String,
     pub description: Option<String>,
-    pub is_default: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

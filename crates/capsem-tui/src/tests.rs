@@ -241,7 +241,7 @@ fn corrupted_profile_session_blocks_resume_and_explains_recreate() {
     assert!(snapshot.contains("cannot resume: profile pin is corrupted"));
     assert!(!snapshot.contains("Press Enter to resume"));
     assert!(snapshot.contains("Press Enter to create a replacement"));
-    assert!(snapshot.contains("Alt+d deletes this VM"));
+    assert!(snapshot.contains("Alt+d deletes this session"));
 
     assert_eq!(
         app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
@@ -558,7 +558,7 @@ fn pending_create_focus_survives_until_new_session_appears() {
     assert_eq!(
         app.state().active_session_id,
         "profile-v2",
-        "focus should not move if the gateway refresh does not list the new VM yet"
+        "focus should not move if the gateway refresh does not list the new session yet"
     );
 
     let mut refreshed = fixture_state();
@@ -571,7 +571,7 @@ fn pending_create_focus_survives_until_new_session_appears() {
     assert_eq!(
         app.state().active_session_id,
         "code-2",
-        "pending create focus should apply on the first refresh that contains the new VM"
+        "pending create focus should apply on the first refresh that contains the new session"
     );
 }
 
@@ -634,7 +634,7 @@ fn esc_closes_modal_overlays_and_restores_vm_input() {
     assert_eq!(
         app.handle_key(key(KeyCode::Char('x'), KeyModifiers::NONE)),
         AppAction::Forward,
-        "plain VM input must forward after the modal closes"
+        "plain terminal input must forward after the modal closes"
     );
 }
 
@@ -693,7 +693,7 @@ fn purge_action_is_alt_p_and_requires_confirmation() {
 
     let snapshot = render_app_snapshot(&app, 100, 24).expect("render purge confirmation");
     assert!(snapshot.contains("purge"));
-    assert!(snapshot.contains("temporary and broken VMs"));
+    assert!(snapshot.contains("temporary and broken sessions"));
 
     assert_eq!(
         app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
@@ -861,7 +861,7 @@ fn gateway_status_can_resume_false_blocks_tui_resume_even_when_profile_ready() {
     .expect("parse service status");
     let mut app = App::new(state);
 
-    let snapshot = render_app_snapshot(&app, 100, 24).expect("render non-resumable VM");
+    let snapshot = render_app_snapshot(&app, 100, 24).expect("render non-resumable session");
     assert!(snapshot.contains("profile payload hash drift"));
     assert!(!snapshot.contains("Press Enter to resume"));
     assert_eq!(
@@ -964,6 +964,49 @@ async fn gateway_provider_does_not_invent_default_profile_when_profiles_fail() {
 }
 
 #[tokio::test]
+async fn gateway_provider_does_not_synthesize_profiles_from_sessions_when_profiles_fail() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind test gateway");
+    let addr = listener.local_addr().expect("local addr");
+    let body = gateway_status_body().to_string();
+    let server = tokio::spawn(async move {
+        for _ in 0..3 {
+            let (mut stream, _) = listener.accept().await.expect("accept request");
+            let request = read_http_request(&mut stream).await;
+            if request.contains("GET /token ") {
+                write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
+            } else if request.contains("GET /status ") {
+                write_json_response(&mut stream, &body).await;
+            } else {
+                assert!(
+                    request.contains("GET /profiles/list "),
+                    "unexpected request: {request:?}"
+                );
+                write_response(
+                    &mut stream,
+                    "502 Bad Gateway",
+                    r#"{"error":"service profile discovery unavailable"}"#,
+                )
+                .await;
+            }
+        }
+    });
+
+    let state = GatewayProvider::new(format!("http://{addr}"))
+        .load_async()
+        .await
+        .expect("load state over gateway");
+
+    assert_eq!(state.sessions.len(), 2);
+    assert!(
+        state.profiles.is_empty(),
+        "profile discovery failure must not synthesize launchable profiles from session rows"
+    );
+    server.await.expect("server task");
+}
+
+#[tokio::test]
 async fn gateway_provider_reuses_token_across_status_refreshes() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -1011,10 +1054,8 @@ async fn gateway_provider_reuses_token_across_status_refreshes() {
     assert_eq!(refreshed.profiles.len(), 2);
     assert_eq!(refreshed.profiles[0].id, "code");
     assert_eq!(refreshed.profiles[1].id, "co-work");
-    assert!(
-        !refreshed.profiles.iter().any(|profile| profile.is_default),
-        "current /profiles/list does not expose a default; TUI must not invent one"
-    );
+    assert_eq!(refreshed.profiles[0].name, "Code");
+    assert_eq!(refreshed.profiles[1].name, "Co-work");
 
     server.await.expect("server task");
 }
