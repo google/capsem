@@ -8,6 +8,16 @@ mod support_bundle;
 mod uninstall;
 mod update;
 
+#[cfg(test)]
+static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
+pub(crate) fn lock_test_env() -> std::sync::MutexGuard<'static, ()> {
+    TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 use anyhow::{anyhow, Context, Result};
 use clap::builder::styling::{AnsiColor, Color, Style, Styles};
 use clap::{Parser, Subcommand};
@@ -752,8 +762,7 @@ async fn check_service_health() -> Result<Vec<String>> {
         return Ok(issues);
     }
 
-    let home = crate::paths::capsem_home().unwrap_or_default();
-    let sock = home.join("run/service.sock");
+    let sock = cli_service_socket_path();
     let my_version = env!("CARGO_PKG_VERSION");
 
     // Check service version via UDS
@@ -784,8 +793,8 @@ async fn check_service_health() -> Result<Vec<String>> {
         None => issues.push("Service is STALE (socket dead or no /version endpoint)".into()),
     }
 
-    let port_path = home.join("run/gateway.port");
-    let token_path = home.join("run/gateway.token");
+    let port_path = cli_gateway_port_path();
+    let token_path = cli_gateway_token_path();
     match (
         std::fs::read_to_string(&port_path),
         std::fs::read_to_string(&token_path),
@@ -849,6 +858,37 @@ async fn check_service_health() -> Result<Vec<String>> {
     }
 
     Ok(issues)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CliRuntimePaths {
+    service_socket: PathBuf,
+    gateway_port: PathBuf,
+    gateway_token: PathBuf,
+}
+
+fn cli_runtime_paths_from_run_dir(run_dir: &std::path::Path) -> CliRuntimePaths {
+    CliRuntimePaths {
+        service_socket: run_dir.join("service.sock"),
+        gateway_port: run_dir.join("gateway.port"),
+        gateway_token: run_dir.join("gateway.token"),
+    }
+}
+
+fn cli_runtime_paths() -> CliRuntimePaths {
+    cli_runtime_paths_from_run_dir(&capsem_core::paths::capsem_run_dir())
+}
+
+fn cli_service_socket_path() -> PathBuf {
+    cli_runtime_paths().service_socket
+}
+
+fn cli_gateway_port_path() -> PathBuf {
+    cli_runtime_paths().gateway_port
+}
+
+fn cli_gateway_token_path() -> PathBuf {
+    cli_runtime_paths().gateway_token
 }
 
 async fn service_json(client: &UdsClient, path: &str) -> Option<serde_json::Value> {
@@ -1161,8 +1201,7 @@ async fn main() -> Result<()> {
             }
             // Check service + gateway connectivity and version sync
             if status.running {
-                let home = crate::paths::capsem_home().unwrap_or_default();
-                let sock = home.join("run/service.sock");
+                let sock = cli_service_socket_path();
                 let my_version = env!("CARGO_PKG_VERSION");
 
                 // Check service version via UDS
@@ -1187,8 +1226,8 @@ async fn main() -> Result<()> {
                     None => println!("Service:   STALE (socket dead or no /version endpoint)"),
                 }
 
-                let port_path = home.join("run/gateway.port");
-                let token_path = home.join("run/gateway.token");
+                let port_path = cli_gateway_port_path();
+                let token_path = cli_gateway_token_path();
                 match (
                     std::fs::read_to_string(&port_path),
                     std::fs::read_to_string(&token_path),
@@ -1246,8 +1285,7 @@ async fn main() -> Result<()> {
             }
 
             if status.running {
-                let home = crate::paths::capsem_home().unwrap_or_default();
-                let sock = home.join("run/service.sock");
+                let sock = cli_service_socket_path();
                 let status_client = client::UdsClient::new(sock, false);
                 println!();
                 match service_json(&status_client, "/profiles/status").await {
@@ -1265,8 +1303,7 @@ async fn main() -> Result<()> {
             // first command users reach for after "it doesn't work" is
             // `capsem status`. One-line banner + hint at `capsem logs`.
             if status.running {
-                let home = crate::paths::capsem_home().unwrap_or_default();
-                let sock = home.join("run/service.sock");
+                let sock = cli_service_socket_path();
                 let list_client = client::UdsClient::new(sock, false);
                 if let Ok(resp) = list_client
                     .get::<client::ApiResponse<client::ListResponse>>("/vms/list")
@@ -2214,6 +2251,16 @@ async fn handle_cp(client: &client::UdsClient, src: &str, dst: &str) -> Result<(
 mod tests {
     use super::*;
     use clap::Parser;
+
+    #[test]
+    fn cli_runtime_paths_are_derived_from_one_run_dir() {
+        let run_dir = tempfile::tempdir().unwrap();
+        let paths = cli_runtime_paths_from_run_dir(run_dir.path());
+
+        assert_eq!(paths.service_socket, run_dir.path().join("service.sock"));
+        assert_eq!(paths.gateway_port, run_dir.path().join("gateway.port"));
+        assert_eq!(paths.gateway_token, run_dir.path().join("gateway.token"));
+    }
 
     // -----------------------------------------------------------------------
     // CLI parsing

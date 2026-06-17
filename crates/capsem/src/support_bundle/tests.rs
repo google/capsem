@@ -5,12 +5,7 @@
 use std::fs;
 use std::io::Read;
 use std::path::Path;
-use std::sync::Mutex;
 use tempfile::TempDir;
-
-/// `CAPSEM_HOME` is a process-global env var; parallel test execution
-/// would race on its value. Serialize every test that touches it.
-static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 fn write(p: &Path, content: &[u8]) {
     fs::create_dir_all(p.parent().unwrap()).unwrap();
@@ -106,7 +101,7 @@ endpoint = "https://api.anthropic.com"
 
 #[test]
 fn bundle_happy_path_writes_tar_gz_with_manifest() {
-    let _g = ENV_LOCK.lock().unwrap();
+    let _g = crate::lock_test_env();
     let _dir = fake_capsem_home();
     let out = crate::support_bundle::run(None, 0, false, false).unwrap();
     assert!(out.exists(), "{}", out.display());
@@ -122,7 +117,7 @@ fn bundle_happy_path_writes_tar_gz_with_manifest() {
 
 #[test]
 fn bundle_redacts_secrets_in_settings_toml() {
-    let _g = ENV_LOCK.lock().unwrap();
+    let _g = crate::lock_test_env();
     let _dir = fake_capsem_home();
     let out = crate::support_bundle::run(None, 0, false, false).unwrap();
     let entries = read_tar_entries(&out);
@@ -146,7 +141,7 @@ fn bundle_redacts_secrets_in_settings_toml() {
 
 #[test]
 fn bundle_no_redact_keeps_secrets() {
-    let _g = ENV_LOCK.lock().unwrap();
+    let _g = crate::lock_test_env();
     let _dir = fake_capsem_home();
     let out = crate::support_bundle::run(None, 0, false, true /*no_redact*/).unwrap();
     let entries = read_tar_entries(&out);
@@ -164,7 +159,7 @@ fn bundle_no_redact_keeps_secrets() {
 
 #[test]
 fn bundle_excludes_gateway_token_even_when_present() {
-    let _g = ENV_LOCK.lock().unwrap();
+    let _g = crate::lock_test_env();
     let dir = fake_capsem_home();
     let home = dir.path();
     // Plant a gateway.token to make sure it's NOT in the bundle.
@@ -187,7 +182,7 @@ fn bundle_excludes_gateway_token_even_when_present() {
 
 #[test]
 fn bundle_marks_missing_files_in_manifest() {
-    let _g = ENV_LOCK.lock().unwrap();
+    let _g = crate::lock_test_env();
     let _dir = fake_capsem_home();
     // CAPSEM_HOME has no gateway.log, no tray.log -- expect missing entries.
     let out = crate::support_bundle::run(None, 0, false, false).unwrap();
@@ -212,7 +207,7 @@ fn bundle_marks_missing_files_in_manifest() {
 
 #[test]
 fn bundle_includes_asset_manifest_origin_provenance() {
-    let _g = ENV_LOCK.lock().unwrap();
+    let _g = crate::lock_test_env();
     let dir = fake_capsem_home();
     let home = dir.path();
     write(
@@ -260,7 +255,7 @@ fn bundle_includes_asset_manifest_origin_provenance() {
 
 #[test]
 fn bundle_includes_runtime_boundary_debug_contract() {
-    let _g = ENV_LOCK.lock().unwrap();
+    let _g = crate::lock_test_env();
     let _dir = fake_capsem_home();
     let out = crate::support_bundle::run(None, 0, false, false).unwrap();
     let entries = read_tar_entries(&out);
@@ -319,7 +314,7 @@ fn bundle_includes_runtime_boundary_debug_contract() {
 
 #[test]
 fn bundle_includes_supply_chain_debug_references() {
-    let _g = ENV_LOCK.lock().unwrap();
+    let _g = crate::lock_test_env();
     let _dir = fake_capsem_home();
     let out = crate::support_bundle::run(None, 0, false, false).unwrap();
     let entries = read_tar_entries(&out);
@@ -354,7 +349,7 @@ fn bundle_includes_supply_chain_debug_references() {
 fn bundle_config_diagnostics_include_profile_obom_evidence() {
     use capsem_core::net::policy_config::current_profile_arch;
 
-    let _g = ENV_LOCK.lock().unwrap();
+    let _g = crate::lock_test_env();
     let _home = fake_capsem_home();
     let profiles_dir = TempDir::new().unwrap();
     let profile_dir = profiles_dir.path().join("code");

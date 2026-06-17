@@ -2,8 +2,6 @@
 
 use super::*;
 
-static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 struct EnvGuard {
     key: &'static str,
     prev: Option<String>,
@@ -635,7 +633,7 @@ async fn connect_await_startup_eventually_times_out() {
 
 #[tokio::test]
 async fn request_does_not_auto_launch_after_explicit_stop_marker() {
-    let _lock = ENV_LOCK.lock().unwrap();
+    let _lock = crate::lock_test_env();
     let dir = tempfile::tempdir().unwrap();
     let run_dir = dir.path().join("run");
     std::fs::create_dir_all(&run_dir).unwrap();

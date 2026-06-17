@@ -700,7 +700,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn macos_stop_uses_bootout_so_keepalive_does_not_restart_service() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = crate::lock_test_env();
         let _home = EnvGuard::set("HOME", "/Users/tester");
         let (primary, fallback) = macos_stop_launchagent_plan(501);
 
@@ -858,9 +858,6 @@ mod tests {
 
     // -- test-isolation guard -------------------------------------------------
 
-    // Env mutation races across parallel tests; serialize writes.
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     struct EnvGuard {
         key: &'static str,
         prev: Option<String>,
@@ -890,7 +887,7 @@ mod tests {
 
     #[test]
     fn reject_test_isolation_env_accepts_clean_env() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = crate::lock_test_env();
         let _h = EnvGuard::unset("CAPSEM_HOME");
         let _r = EnvGuard::unset("CAPSEM_RUN_DIR");
         let _a = EnvGuard::unset("CAPSEM_ASSETS_DIR");
@@ -899,7 +896,7 @@ mod tests {
 
     #[test]
     fn explicit_stop_marker_roundtrips_under_run_dir() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = crate::lock_test_env();
         let dir = tempfile::tempdir().unwrap();
         let run_dir = dir.path().join("run");
         let _r = EnvGuard::set("CAPSEM_RUN_DIR", run_dir.to_str().unwrap());
@@ -918,7 +915,7 @@ mod tests {
 
     #[test]
     fn reject_test_isolation_env_refuses_capsem_home() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = crate::lock_test_env();
         let _h = EnvGuard::set("CAPSEM_HOME", "/tmp/fake");
         let _r = EnvGuard::unset("CAPSEM_RUN_DIR");
         let _a = EnvGuard::unset("CAPSEM_ASSETS_DIR");
@@ -936,7 +933,7 @@ mod tests {
     #[test]
     fn reject_test_isolation_env_ignores_empty() {
         // Empty value means "not set" per env_nonempty convention -- must not refuse.
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = crate::lock_test_env();
         let _h = EnvGuard::set("CAPSEM_HOME", "");
         let _r = EnvGuard::unset("CAPSEM_RUN_DIR");
         let _a = EnvGuard::unset("CAPSEM_ASSETS_DIR");
@@ -945,7 +942,7 @@ mod tests {
 
     #[test]
     fn reject_test_isolation_env_lists_all_set_vars() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = crate::lock_test_env();
         let _h = EnvGuard::set("CAPSEM_HOME", "/tmp/a");
         let _r = EnvGuard::set("CAPSEM_RUN_DIR", "/tmp/b");
         let _a = EnvGuard::set("CAPSEM_ASSETS_DIR", "/tmp/c");

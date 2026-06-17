@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Fixed CLI status/debug health checks so they use the same `CAPSEM_RUN_DIR`
+  socket and gateway files as the service client, preventing source and
+  installed runs from checking different Capsem runtimes.
 - Fixed the service file API control-channel contract so 1 MiB file
   read/write round trips no longer tear down the guest agent stream, and
   restored the initrd repack path to build guest agents from
