@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   checking project skills, site structure, profile-owned asset materialization,
   ruff/ty/skill validation, and retired escape-path names.
 - Added a dedicated Ironbank Claude CLI ledger gate that runs `ollama launch claude` through the VM profile and proves the model, tool, file, credential, and security ledger path.
+- Added a dedicated Ironbank Codex CLI ledger gate that runs direct Codex and
+  `ollama launch codex` through the VM profile and proves the model, tool,
+  file, credential, and security ledger path.
 - Added an Ironbank mock-server contract proving the single reusable local
   mock server serves the HTTP, HTTPS/SSE, DNS, OAuth, MCP, OpenAI, Anthropic,
   Gemini/AGY, and Ollama fixture surfaces used by release gates.
