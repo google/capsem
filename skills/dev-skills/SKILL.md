@@ -38,9 +38,9 @@ guest AI agents.
 
 ### No Escape-Hatch Skill Paths
 
-Do not add alternate skill/bootstrap validation modes such as `--fast`,
-`--check`, or `--dry-run`. Forked verification paths are how projects lose the
-real contract. The shared skill rail must be fast, hermetic, and complete
+Do not add alternate skill/bootstrap validation modes named fast, check, or
+dry-run behind separate flags. Forked verification paths are how projects lose
+the real contract. The shared skill rail must be fast, hermetic, and complete
 enough to run every time; if it is not, fix the rail instead of adding a bypass.
 
 ### Bank of Iron Feature Tribute

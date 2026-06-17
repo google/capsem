@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added an Ironbank mock-server contract proving the single reusable local
   mock server serves the HTTP, HTTPS/SSE, DNS, OAuth, MCP, OpenAI, Anthropic,
   Gemini/AGY, and Ollama fixture surfaces used by release gates.
+- Added a stable Ironbank capsem-doctor acceptance contract that ties the
+  named release gate to the full VM doctor ledger proof and shared mock server.
 - Added an Ironbank profile asset readiness gate proving profile cards can be
   built from route-owned asset status for `code` and `co-work`, including
   missing, ensure/download, shared cache reuse, hash-named assets, and manifest
