@@ -38,6 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sessions.
 
 ### Changed (route surfaces and diagnostics)
+- Removed the retired MCP tool `approved` field from profile MCP route
+  responses; the UI/TUI contract now exposes only route-backed
+  `permission_action` / `permission_source` decisions.
 - Cleaned the desktop stats/detail panes so HTTP/model bodies are loaded from
   the blob ledger rather than preview columns, credential broker rows display
   verbs/origins instead of substitution refs, and inspector presets use the

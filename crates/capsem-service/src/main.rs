@@ -5976,7 +5976,6 @@ async fn handle_profile_mcp_server_tools(
                 server_name: entry.server_name.clone(),
                 annotations: entry.annotations.as_ref().map(|a| a.to_mcp_json()),
                 pin_hash: Some(entry.pin_hash.clone()),
-                approved: entry.approved,
                 pin_changed: false, // Would need live catalog comparison.
                 permission_action: permission.action,
                 permission_source: permission.source,

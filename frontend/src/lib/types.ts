@@ -236,7 +236,6 @@ export interface McpToolInfo {
   server_name: string;
   annotations: ToolAnnotations | null;
   pin_hash: string | null;
-  approved: boolean;
   pin_changed: boolean;
   permission_action: ToolPermission;
   permission_source: string;

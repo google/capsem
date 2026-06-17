@@ -814,6 +814,7 @@ async fn profile_mcp_tool_edit_writes_profile_rule_and_mutation_ledger() {
     assert_eq!(tools[0]["namespaced_name"], "local__fetch_http");
     assert_eq!(tools[0]["permission_action"], "ask");
     assert_eq!(tools[0]["permission_source"], "profile_managed");
+    assert!(tools[0].get("approved").is_none(), "{tools}");
 }
 
 #[tokio::test]
@@ -924,6 +925,7 @@ async fn profile_mcp_default_edit_writes_default_rule_and_mutation_ledger() {
     assert_eq!(status, StatusCode::OK, "{tools}");
     assert_eq!(tools[0]["permission_action"], "ask");
     assert_eq!(tools[0]["permission_source"], "default");
+    assert!(tools[0].get("approved").is_none(), "{tools}");
 
     let (status, default_info) = route_request(
         app,

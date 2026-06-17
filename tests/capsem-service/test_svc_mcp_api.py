@@ -53,12 +53,13 @@ class TestMcpTools:
         for tool in resp:
             for key in (
                 "server_name", "original_name", "namespaced_name",
-                "description", "approved", "pin_changed",
+                "description", "pin_changed", "permission_action", "permission_source",
             ):
                 assert key in tool, f"tool missing '{key}': {tool}"
             assert tool["server_name"] == "local"
-            assert isinstance(tool["approved"], bool)
             assert isinstance(tool["pin_changed"], bool)
+            assert tool["permission_action"] in {"allow", "ask", "block"}
+            assert "approved" not in tool
 
     def test_tools_unknown_profile_server_rejected(self, client):
         """Profile/server tool listing must reject servers absent from the profile."""

@@ -27,8 +27,8 @@ const mockServers: McpServerInfo[] = [
 ];
 
 const mockTools: McpToolInfo[] = [
-  { namespaced_name: 'local__http_get', original_name: 'http_get', description: 'HTTP GET', server_name: 'local', annotations: { title: null, read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: true }, pin_hash: 'abc', approved: true, pin_changed: false, permission_action: 'allow', permission_source: 'default' },
-  { namespaced_name: 'external__search', original_name: 'search', description: 'Search', server_name: 'external', annotations: null, pin_hash: 'def', approved: false, pin_changed: true, permission_action: 'ask', permission_source: 'profile_managed' },
+  { namespaced_name: 'local__http_get', original_name: 'http_get', description: 'HTTP GET', server_name: 'local', annotations: { title: null, read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: true }, pin_hash: 'abc', pin_changed: false, permission_action: 'allow', permission_source: 'default' },
+  { namespaced_name: 'external__search', original_name: 'search', description: 'Search', server_name: 'external', annotations: null, pin_hash: 'def', pin_changed: true, permission_action: 'ask', permission_source: 'profile_managed' },
 ];
 
 vi.mock('../api', () => ({
