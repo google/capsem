@@ -796,6 +796,38 @@ impl Profile {
         })
     }
 
+    pub fn set_plugin_config(
+        &mut self,
+        plugin_id: &str,
+        config: SecurityPluginConfig,
+        actor: &str,
+    ) -> Result<ProfileMutationSummary, String> {
+        validate_profile_target("plugin id", plugin_id)?;
+        let profile_path = self.profile_dir.join("profile.toml");
+        let (old_hash, old_size) = file_hash_and_size(&profile_path)?;
+
+        self.config.plugins.insert(plugin_id.to_string(), config);
+        self.config.validate()?;
+        self.save()?;
+        let (new_hash, new_size) = file_hash_and_size(&profile_path)?;
+
+        Ok(ProfileMutationSummary {
+            profile_id: self.config.id.clone(),
+            actor: actor.to_string(),
+            category: "plugin".to_string(),
+            filename: "profile.toml".to_string(),
+            affected_path: self.profile_toml_relative_path(),
+            target_kind: "plugin".to_string(),
+            target_key: plugin_id.to_string(),
+            operation: "edit".to_string(),
+            rule_id: None,
+            old_hash: format!("blake3:{old_hash}"),
+            old_size,
+            new_hash: format!("blake3:{new_hash}"),
+            new_size,
+        })
+    }
+
     pub fn upsert_mcp_server(
         &mut self,
         server: crate::mcp::policy::McpManualServer,

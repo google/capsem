@@ -2278,6 +2278,12 @@ sigma = "corp/detection.yaml"
 
 #[tokio::test]
 async fn mounted_plugin_routes_control_profile_evaluation() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (config_root, _) = install_file_asset_profile_fixture(&dir);
+    let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
+    let _home_guard = EnvVarGuard::set("CAPSEM_HOME", dir.path());
+
     let state = make_test_state();
     let app = build_service_router(state);
     let eval_body = json!({
@@ -2753,6 +2759,11 @@ async fn handle_detection_rules_list_rejects_unknown_profiles() {
 
 #[tokio::test]
 async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluation() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (config_root, _) = install_file_asset_profile_fixture(&dir);
+    let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
+    let _home_guard = EnvVarGuard::set("CAPSEM_HOME", dir.path());
     let state = make_test_state();
 
     let Json(list) = handle_profile_plugins(State(Arc::clone(&state)), Path("code".to_string()))

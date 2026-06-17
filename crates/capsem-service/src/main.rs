@@ -6734,6 +6734,11 @@ fn effective_plugin_policy(
         .into_iter()
         .map(|(id, entry)| (id, entry.default_config))
         .collect();
+    if let Ok(profile) = profile_for_route(profile_id.to_string()) {
+        for (id, config) in &profile.config().plugins {
+            policy.insert(id.clone(), *config);
+        }
+    }
     if let Some(overrides) = state
         .plugin_policy_by_profile
         .lock()
@@ -7138,12 +7143,47 @@ async fn handle_profile_plugin_update(
     Json(update): Json<PluginUpdate>,
 ) -> Result<Json<PluginInfo>, AppError> {
     let scope = profile_plugin_scope(profile_id)?;
-    let info = update_plugin_for_scope(&state, plugin_id, scope.clone(), update)?;
+    let catalog = plugin_catalog();
+    let Some(catalog_entry) = catalog.get(&plugin_id).copied() else {
+        return Err(AppError(
+            StatusCode::NOT_FOUND,
+            format!("unknown plugin: {plugin_id}"),
+        ));
+    };
+    let mut config = effective_plugin_policy(&state, &scope.profile_id)
+        .get(&plugin_id)
+        .copied()
+        .unwrap_or(catalog_entry.default_config);
+    if let Some(mode) = update.mode {
+        config.mode = mode;
+    }
+    if let Some(detection_level) = update.detection_level {
+        config.detection_level = detection_level;
+    }
+
+    let mut profile = profile_for_route(scope.profile_id.clone())?;
+    let event = write_profile_mutation_event(
+        &state,
+        profile
+            .set_plugin_config(&plugin_id, config, "service-api")
+            .map_err(|error| AppError(StatusCode::BAD_REQUEST, error))?,
+    )
+    .await?;
+    log_profile_mutation_applied("profile_plugin_edit", &event);
+    state
+        .plugin_policy_by_profile
+        .lock()
+        .unwrap()
+        .entry(scope.profile_id.clone())
+        .or_default()
+        .insert(plugin_id.clone(), config);
     let _reload =
         handle_reload_config_for_profile(Arc::clone(&state), Some(&scope.profile_id)).await?;
-    Ok(info)
+    let info = plugin_info_for(&state, &plugin_id, scope)?;
+    Ok(Json(info))
 }
 
+#[cfg(test)]
 fn update_plugin_for_scope(
     state: &Arc<ServiceState>,
     plugin_id: String,

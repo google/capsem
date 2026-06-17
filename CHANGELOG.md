@@ -97,6 +97,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added service-level plugin route contract coverage so profile plugin list,
   info, edit, credential-broker detail, retry, and unknown-plugin responses
   prove the typed pre/post/logging stage surface through UDS.
+- Fixed profile plugin edits so `/profiles/{profile_id}/plugins/{plugin_id}/edit`
+  persists to the profile file, refreshes route-visible policy immediately, and
+  records a `profile_mutation_events` ledger row instead of using a runtime-only
+  override.
 - Added credential store lifecycle route coverage proving startup hydration,
   explicit broker retry, memory-only hot reads, empty-versus-ready status, and
   raw-secret absence from service/plugin route JSON.
