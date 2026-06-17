@@ -35,8 +35,14 @@ describe('user-facing session language contract', () => {
     expect(dashboard).toContain('openCustomizeProfile');
     expect(dashboard).toContain('profileAssetChecklist');
     expect(dashboard).toContain('VM assets');
+    expect(dashboard).toContain('profileAssetText(launcher.assets)');
+    expect(dashboard).toContain('launcher.assets?.ready === true');
+    expect(dashboard).toContain("onclick={() => ready ? createFromProfile(launcher.profile.id) : ensureProfileAssets(launcher.profile.id)}");
+    expect(dashboard).toContain("title={ready ? `New ${launcher.profile.name} session` : profileAssetText(launcher.assets)}");
     expect(dashboard).toContain("asset.status === 'present'");
+    expect(dashboard).toContain("asset.status === 'downloading'");
     expect(dashboard).toContain('<CheckCircle');
+    expect(dashboard).toContain('<DownloadSimple');
     expect(dashboard).not.toContain('Customize Session...');
     expect(dashboard).not.toContain('vmStore.showCreateModal = true');
   });
