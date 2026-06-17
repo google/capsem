@@ -54,7 +54,7 @@ export const TRACES_SQL = `
 export const TRACE_DETAIL_SQL = `
   SELECT id, timestamp, provider, model, thinking_content, text_content,
          input_tokens, output_tokens, duration_ms, estimated_cost_usd, stop_reason,
-         request_body_preview, system_prompt_preview, messages_count, tools_count
+         messages_count, tools_count
   FROM model_calls
   WHERE trace_id = ?
   ORDER BY id ASC
@@ -301,7 +301,7 @@ export const NET_TOP_DOMAINS_SQL = `
 export const NET_EVENTS_ALL_SQL = `
   SELECT id, timestamp, domain, port, decision, method, path, query,
          status_code, bytes_sent, bytes_received, duration_ms, matched_rule,
-         request_headers, response_headers, request_body_preview, response_body_preview
+         request_headers, response_headers
   FROM net_events
   ORDER BY id DESC
 `;
@@ -309,7 +309,7 @@ export const NET_EVENTS_ALL_SQL = `
 export const NET_EVENTS_SEARCH_SQL = `
   SELECT id, timestamp, domain, port, decision, method, path, query,
          status_code, bytes_sent, bytes_received, duration_ms, matched_rule,
-         request_headers, response_headers, request_body_preview, response_body_preview
+         request_headers, response_headers
   FROM net_events
   WHERE domain LIKE ? OR path LIKE ? OR method LIKE ?
   ORDER BY id DESC
@@ -372,7 +372,7 @@ export const PRESET_QUERIES: PresetQuery[] = [
   { label: 'Model calls', sql: 'SELECT timestamp, event_id, provider, model, input_tokens, output_tokens, estimated_cost_usd, trace_id FROM model_calls ORDER BY id DESC LIMIT 50' },
   { label: 'File events', sql: 'SELECT timestamp, event_id, action, path, size, trace_id FROM fs_events ORDER BY id DESC LIMIT 50' },
   { label: 'Process exec', sql: 'SELECT timestamp, event_id, source, command, exit_code, duration_ms, trace_id FROM exec_events ORDER BY id DESC LIMIT 50' },
-  { label: 'Credential substitutions', sql: 'SELECT timestamp, event_id, material_class, source, event_type, substitution_ref, outcome, provider FROM substitution_events ORDER BY id DESC LIMIT 50' },
+  { label: 'Credential broker events', sql: 'SELECT timestamp, event_id, material_class, source, event_type AS origin, outcome AS verb, provider FROM substitution_events ORDER BY id DESC LIMIT 50' },
 ];
 
 /**

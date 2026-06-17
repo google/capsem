@@ -163,8 +163,6 @@ export interface TraceModelCall {
   duration_ms: number;
   estimated_cost_usd: number;
   stop_reason: string | null;
-  request_body_preview: string | null;
-  system_prompt_preview: string | null;
   messages_count: number;
   tools_count: number;
 }

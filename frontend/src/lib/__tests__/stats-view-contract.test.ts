@@ -1,5 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import {
+  NET_EVENTS_ALL_SQL,
+  NET_EVENTS_SEARCH_SQL,
+  PRESET_QUERIES,
+  TRACE_DETAIL_SQL,
+} from '../sql';
 
 const source = readFileSync(
   new URL('../components/views/StatsView.svelte', import.meta.url),
@@ -71,6 +77,7 @@ describe('StatsView credential broker contract', () => {
 
     const credentialsBlock = source.slice(credentialsStart, securityStart);
     expect(credentialsBlock).toContain('brokerVerb(row)');
+    expect(source).toContain('text(row.verb).toLowerCase()');
     expect(credentialsBlock).toContain("columns={['Time', 'Verb', 'Source', 'Provider', 'Origin']}");
     expect(credentialsBlock).toContain('Captured');
     expect(credentialsBlock).toContain('Brokered');
@@ -79,6 +86,8 @@ describe('StatsView credential broker contract', () => {
     expect(credentialsBlock).not.toContain('References');
     expect(credentialsBlock).not.toContain('Outcome');
     expect(credentialsBlock).not.toContain('substitution_ref');
+    expect(credentialsBlock).not.toContain('confidence');
+    expect(credentialsBlock).not.toContain('algorithm');
 
     expect(source).toContain("'substitution_ref'");
     expect(source).toContain("'credential_ref'");
@@ -121,6 +130,31 @@ describe('StatsView detail drawer contract', () => {
     expect(source).not.toContain('request_preview');
     expect(source).not.toContain('response_preview');
     expect(source).not.toContain('text_content');
+  });
+});
+
+describe('Stats SQL contract', () => {
+  it('keeps legacy preview columns out of frontend stats and inspector presets', () => {
+    const queries = [
+      TRACE_DETAIL_SQL,
+      NET_EVENTS_ALL_SQL,
+      NET_EVENTS_SEARCH_SQL,
+      ...PRESET_QUERIES.map((preset) => preset.sql),
+    ].join('\n');
+
+    expect(queries).not.toContain('request_body_preview');
+    expect(queries).not.toContain('response_body_preview');
+    expect(queries).not.toContain('system_prompt_preview');
+  });
+
+  it('uses credential broker vocabulary in presets without exposing refs', () => {
+    const credentialPreset = PRESET_QUERIES.find((preset) => preset.label === 'Credential broker events');
+    expect(credentialPreset).toBeDefined();
+    expect(credentialPreset?.sql).toContain('outcome AS verb');
+    expect(credentialPreset?.sql).toContain('event_type AS origin');
+    expect(credentialPreset?.sql).not.toContain('substitution_ref');
+    expect(credentialPreset?.sql).not.toContain('credential_ref');
+    expect(PRESET_QUERIES.some((preset) => preset.label === 'Credential substitutions')).toBe(false);
   });
 });
 

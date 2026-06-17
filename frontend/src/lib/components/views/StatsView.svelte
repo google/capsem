@@ -321,7 +321,7 @@
                ORDER BY id DESC
                LIMIT 100`),
         query(`SELECT event_id, timestamp, material_class, source, event_type,
-                 algorithm, substitution_ref, outcome, provider, confidence,
+                 event_type AS origin, outcome AS verb, provider,
                  trace_id, context_json
                FROM substitution_events
                ORDER BY id DESC
@@ -377,8 +377,8 @@
   }
 
   function brokerVerb(row: Row): string {
-    const outcome = text(row.outcome).toLowerCase();
-    if (outcome === 'brokered' || outcome === 'captured' || outcome === 'injected' || outcome === 'error') return outcome;
+    const verb = text(row.verb).toLowerCase();
+    if (verb === 'brokered' || verb === 'captured' || verb === 'injected' || verb === 'error') return verb;
     return 'error';
   }
 
@@ -604,7 +604,7 @@
             <td class="px-4 py-2"><StatsBadge value={brokerVerb(row)} /></td>
             <td class="px-4 py-2 text-muted-foreground-1">{row.source}</td>
             <td class="px-4 py-2 text-foreground">{row.provider ?? '--'}</td>
-            <td class="px-4 py-2 font-mono text-xs text-muted-foreground-1">{row.event_type ?? '--'}</td>
+            <td class="px-4 py-2 font-mono text-xs text-muted-foreground-1">{row.origin ?? '--'}</td>
           {/snippet}
         </StatsEventList>
 
