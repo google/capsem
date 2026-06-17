@@ -61,6 +61,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tightened the TUI session contract so profile launch options come only from
   `/profiles/list`, no fallback profile is synthesized from stale session
   rows, and user-facing TUI controls say sessions rather than VMs.
+- Removed retired frontend policy vocabulary from settings origins and dead
+  network-policy IPC types so profile UI surfaces speak enforcement,
+  detection, plugins, MCP, and assets directly.
 - Removed the retired MCP tool `approved` field from profile MCP route
   responses; the UI/TUI contract now exposes only route-backed
   `permission_action` / `permission_source` decisions.

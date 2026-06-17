@@ -42,7 +42,7 @@ export enum McpTransport {
   Sse = 'sse',
 }
 
-export enum PolicySource {
+export enum SettingsSource {
   Default = 'default',
   User = 'user',
   Corp = 'corp',

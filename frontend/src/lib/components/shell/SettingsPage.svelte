@@ -26,7 +26,7 @@
     return sections.filter(s =>
       s.key !== 'appearance'
       && s.key !== 'app'
-      && !['ai', 'repository', 'security', 'vm', 'mcp', 'plugins', 'policy'].includes(s.key)
+      && !['ai', 'repository', 'security', 'vm', 'mcp', 'plugins'].includes(s.key)
     );
   });
 

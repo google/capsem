@@ -1,14 +1,5 @@
 // TypeScript types mirroring Rust structs for Tauri IPC.
 
-/** Response from get_network_policy. */
-export interface NetworkPolicyResponse {
-  allow: string[];
-  block: string[];
-  default_action: string;
-  corp_managed: boolean;
-  conflicts: string[];
-}
-
 /** Response from get_guest_config. */
 export interface GuestConfigResponse {
   env: Record<string, string>;
@@ -48,7 +39,7 @@ export type SettingType =
 export type SettingValue = boolean | number | string | { path: string; content: string } | string[] | number[];
 
 /** Where a setting's effective value came from (serde rename_all = "lowercase"). */
-export type PolicySource = 'default' | 'user' | 'corp';
+export type SettingsSource = 'default' | 'user' | 'corp';
 
 export type SettingsChangeValue = SettingValue | null;
 
@@ -93,7 +84,7 @@ export interface ResolvedSetting {
   setting_type: SettingType;
   default_value: SettingValue;
   effective_value: SettingValue;
-  source: PolicySource;
+  source: SettingsSource;
   modified: string | null;
   corp_locked: boolean;
   enabled_by: string | null;
@@ -277,7 +268,7 @@ export interface SettingsLeaf {
   setting_type: SettingType;
   default_value: SettingValue;
   effective_value: SettingValue;
-  source: PolicySource;
+  source: SettingsSource;
   modified: string | null;
   corp_locked: boolean;
   enabled_by: string | null;
