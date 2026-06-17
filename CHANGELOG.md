@@ -38,6 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sessions.
 
 ### Changed (route surfaces and diagnostics)
+- Added a config-layout gate that makes the settings/corp/profiles/docker/data
+  source contract executable and rejects host metadata or generated pins in
+  checked-in profile config.
 - Added an Ironbank Gemini API ledger gate proving public Gemini
   `streamGenerateContent` and `generateContent` traffic through the hermetic
   mock server records Google provider/protocol rows, tool calls, non-stream
