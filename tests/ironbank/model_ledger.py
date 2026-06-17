@@ -27,6 +27,7 @@ class ModelLedgerSpec:
     path: str
     model: str
     credential_provider: str | None = None
+    credential_source: str | None = None
 
 
 @dataclass(frozen=True)
@@ -86,7 +87,11 @@ def assert_model_ledger_exchange(spec: ModelLedgerSpec, run: ModelLedgerRun) -> 
         assert spec.tool_call_name in upstream_outputs
         for key in spec.call_args:
             assert key in upstream_outputs
-        command = spec.call_args.get("cmd") or spec.call_args.get("command")
+        command = (
+            spec.call_args.get("cmd")
+            or spec.call_args.get("command")
+            or spec.call_args.get("CommandLine")
+        )
         if isinstance(command, str):
             assert Path(command.rsplit(">", 1)[-1].strip()).name in upstream_outputs
         assert spec.call_response in upstream_inputs
@@ -210,6 +215,7 @@ def assert_model_ledger_exchange(spec: ModelLedgerSpec, run: ModelLedgerRun) -> 
         credential_refs = _assert_brokered_model_credentials(
             conn,
             provider=spec.credential_provider or spec.provider,
+            expected_source=spec.credential_source,
             model_rows=model_rows,
             tool_rows=tool_rows,
             response_rows=response_rows,
@@ -329,6 +335,7 @@ def assert_two_turn_model_ledger_exchange(
         credential_refs = _assert_brokered_model_credentials(
             conn,
             provider=spec.credential_provider or spec.provider,
+            expected_source=None,
             model_rows=model_rows,
             tool_rows=tool_rows,
             response_rows=response_rows,
@@ -718,6 +725,7 @@ def _assert_brokered_model_credentials(
     conn: sqlite3.Connection,
     *,
     provider: str,
+    expected_source: str | None,
     model_rows: list[sqlite3.Row],
     tool_rows: list[sqlite3.Row],
     response_rows: list[sqlite3.Row],
@@ -769,7 +777,7 @@ def _assert_brokered_model_credentials(
         "anthropic": "http.header.x-api-key",
         "google": "http.header.x-goog-api-key",
     }
-    expected_source = expected_sources.get(provider)
+    expected_source = expected_source or expected_sources.get(provider)
     assert expected_source is not None, provider
     assert expected_source in captured_sources, [dict(row) for row in rows]
 
@@ -787,7 +795,11 @@ def _assert_tool_output_file(
     *,
     credential_refs: set[str],
 ) -> None:
-    command = spec.call_args.get("cmd") or spec.call_args.get("command")
+    command = (
+        spec.call_args.get("cmd")
+        or spec.call_args.get("command")
+        or spec.call_args.get("CommandLine")
+    )
     if not isinstance(command, str):
         return
     match = re.search(r">\s*(/root/[^ ]+)", command)

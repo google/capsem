@@ -7,6 +7,7 @@ import textwrap
 
 from ironbank.model_client_config import (
     HERMETIC_AGY_MODEL,
+    HERMETIC_AGY_MODEL_DISPLAY,
     HERMETIC_ANTHROPIC_MODEL,
     HERMETIC_GEMINI_MODEL,
     HERMETIC_OPENAI_COMPAT_MODEL,
@@ -33,6 +34,7 @@ HERMETIC_OPENAI_PRICED_MODEL = {json.dumps(HERMETIC_OPENAI_PRICED_MODEL)}
 HERMETIC_ANTHROPIC_MODEL = {json.dumps(HERMETIC_ANTHROPIC_MODEL)}
 HERMETIC_GEMINI_MODEL = {json.dumps(HERMETIC_GEMINI_MODEL)}
 HERMETIC_AGY_MODEL = {json.dumps(HERMETIC_AGY_MODEL)}
+HERMETIC_AGY_MODEL_DISPLAY = {json.dumps(HERMETIC_AGY_MODEL_DISPLAY)}
 LIVE_OPENAI_RESPONSES_MODEL = {json.dumps(LIVE_OPENAI_RESPONSES_MODEL)}
 DNS_QNAME = "model.capsem.test"
 DNS_IP = socket.gethostbyname(DNS_QNAME)
@@ -60,7 +62,7 @@ def run_tool(arguments):
         return "Process exited with code 0"
     raise RuntimeError("unsupported tool args: " + json.dumps(arguments, sort_keys=True))
 
-def emit_result(provider, domain, path, model, output, reasoning, tool_call_name, call_args, call_response, credential_provider=None):
+def emit_result(provider, domain, path, model, output, reasoning, tool_call_name, call_args, call_response, credential_provider=None, credential_source=None):
     file_text = Path(TARGET).read_text(encoding="utf-8")
     result = {{
         "input": PROMPT,
@@ -71,6 +73,7 @@ def emit_result(provider, domain, path, model, output, reasoning, tool_call_name
         "call_response": call_response,
         "provider": provider,
         "credential_provider": credential_provider or provider,
+        "credential_source": credential_source,
         "domain": domain,
         "path": path,
         "model": model,
@@ -809,6 +812,8 @@ completed = subprocess.run(
     [
         "agy",
         "--dangerously-skip-permissions",
+        "--model",
+        HERMETIC_AGY_MODEL_DISPLAY,
         "-p",
         PROMPT,
         "--print-timeout",
@@ -831,12 +836,12 @@ if not Path(TARGET).exists():
         + (completed.stderr or "")[-12000:]
     )
 call_args = {
-    "TargetFile": TARGET,
-    "AbsolutePath": TARGET,
-    "Content": NONCE + "\\n",
-    "FileContent": NONCE + "\\n",
-    "Overwrite": True,
+    "CommandLine": "printf '%s\\n' " + NONCE + " > " + TARGET,
+    "Cwd": "/root",
+    "WaitMsBeforeAsync": 1000,
+    "toolSummary": "Write proof",
+    "toolAction": "Writing file",
 }
-emit_result("ollama", "127.0.0.1", "/api/chat", HERMETIC_OPENAI_COMPAT_MODEL, NONCE, "ledger reasoning", "write_to_file", call_args, "saved")
+emit_result("google", "daily-cloudcode-pa.googleapis.com", "/v1internal:streamGenerateContent", HERMETIC_AGY_MODEL, NONCE, "", "run_command", call_args, "The command completed successfully", credential_provider="google", credential_source="http.header.authorization")
 '''
     ).strip()

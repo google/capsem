@@ -119,6 +119,60 @@ data: {\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"ge
     );
 }
 
+#[test]
+fn stream_code_assist_response_envelope_preserves_tool_id_and_usage() {
+    let raw = br#"data: {"response":{"candidates":[{"content":{"parts":[{"functionCall":{"id":"call_0123456789ab","name":"run_command","args":{"CommandLine":"printf '%s\n' nonce > /root/poem.md","Cwd":"/root","WaitMsBeforeAsync":1000}}}],"role":"model"},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":31,"candidatesTokenCount":17,"thoughtsTokenCount":2},"modelVersion":"gemini-3.5-flash-low","responseId":"resp_0123456789ab"},"traceId":"trace_0123456789ab","metadata":{}}
+
+"#;
+
+    let mut sse_parser = SseParser::new();
+    let sse_events = sse_parser.feed(raw);
+
+    let mut parser = GoogleStreamParser::new();
+    let mut llm_events = Vec::new();
+    for sse in &sse_events {
+        llm_events.extend(parser.parse_event(sse));
+    }
+
+    let summary = collect_summary(&llm_events);
+    assert_eq!(summary.model.as_deref(), Some("gemini-3.5-flash-low"));
+    assert_eq!(summary.tool_calls.len(), 1);
+    assert_eq!(summary.tool_calls[0].call_id, "call_0123456789ab");
+    assert_eq!(summary.tool_calls[0].name, "run_command");
+    let args: serde_json::Value = serde_json::from_str(&summary.tool_calls[0].arguments).unwrap();
+    assert_eq!(args["CommandLine"], "printf '%s\n' nonce > /root/poem.md");
+    assert_eq!(args["Cwd"], "/root");
+    assert_eq!(args["WaitMsBeforeAsync"], 1000);
+    assert_eq!(summary.stop_reason, Some(StopReason::EndTurn));
+    assert_eq!(summary.input_tokens, Some(31));
+    assert_eq!(summary.output_tokens, Some(17));
+    assert_eq!(summary.usage_details.get("thinking"), Some(&2));
+}
+
+#[test]
+fn stream_code_assist_response_envelope_extracts_text() {
+    let raw = br#"data: {"response":{"candidates":[{"content":{"parts":[{"text":"Created the poem."}],"role":"model"},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":40,"candidatesTokenCount":8},"modelVersion":"gemini-3.5-flash-low"},"traceId":"trace_0123456789ab","metadata":{}}
+
+"#;
+
+    let mut sse_parser = SseParser::new();
+    let sse_events = sse_parser.feed(raw);
+
+    let mut parser = GoogleStreamParser::new();
+    let mut llm_events = Vec::new();
+    for sse in &sse_events {
+        llm_events.extend(parser.parse_event(sse));
+    }
+
+    let summary = collect_summary(&llm_events);
+    assert_eq!(summary.model.as_deref(), Some("gemini-3.5-flash-low"));
+    assert_eq!(summary.text, "Created the poem.");
+    assert_eq!(summary.tool_calls.len(), 0);
+    assert_eq!(summary.stop_reason, Some(StopReason::EndTurn));
+    assert_eq!(summary.input_tokens, Some(40));
+    assert_eq!(summary.output_tokens, Some(8));
+}
+
 // ── Stream parser: thinking ─────────────────────────────────────
 
 #[test]

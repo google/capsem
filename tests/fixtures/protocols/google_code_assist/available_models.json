@@ -16,6 +16,24 @@
       "tokenizerType": "QWEN2",
       "toolFormatterType": "TOOL_FORMATTER_TYPE_XML"
     },
+    "chat_20706": {
+      "addCursorToFindReplaceTarget": true,
+      "apiProvider": "API_PROVIDER_INTERNAL",
+      "isInternal": true,
+      "maxTokens": 16384,
+      "model": "MODEL_CHAT_20706",
+      "modelProvider": "MODEL_PROVIDER_GOOGLE",
+      "promptTemplaterType": "PROMPT_TEMPLATER_TYPE_CHATML",
+      "quotaInfo": {
+        "remainingFraction": 1
+      },
+      "requiresLeadInGeneration": true,
+      "supportsCumulativeContext": true,
+      "supportsEstimateTokenCounter": true,
+      "tabJumpPrintLineRange": true,
+      "tokenizerType": "QWEN2",
+      "toolFormatterType": "TOOL_FORMATTER_TYPE_XML"
+    },
     "claude-opus-4-6-thinking": {
       "apiProvider": "API_PROVIDER_ANTHROPIC_VERTEX",
       "displayName": "Claude Opus 4.6 (Thinking)",
@@ -146,6 +164,19 @@
           }
         }
       },
+      "modelProvider": "MODEL_PROVIDER_GOOGLE",
+      "quotaInfo": {
+        "remainingFraction": 1,
+        "resetTime": "2026-06-18T20:03:23Z"
+      },
+      "tokenizerType": "LLAMA_WITH_SPECIAL"
+    },
+    "gemini-3.1-flash-lite": {
+      "apiProvider": "API_PROVIDER_GOOGLE_GEMINI",
+      "displayName": "Gemini 3.1 Flash Lite",
+      "maxOutputTokens": 65535,
+      "maxTokens": 1048576,
+      "model": "MODEL_PLACEHOLDER_M50",
       "modelProvider": "MODEL_PROVIDER_GOOGLE",
       "quotaInfo": {
         "remainingFraction": 1,
@@ -495,6 +526,27 @@
       "thinkingBudget": 1001,
       "tokenizerType": "LLAMA_WITH_SPECIAL"
     },
+    "gemini-3.5-flash-extra-low": {
+      "apiProvider": "API_PROVIDER_GOOGLE_GEMINI",
+      "displayName": "Gemini 3.5 Flash (Low)",
+      "maxOutputTokens": 65536,
+      "maxTokens": 1048576,
+      "minThinkingBudget": 32,
+      "model": "MODEL_PLACEHOLDER_M187",
+      "modelProvider": "MODEL_PROVIDER_GOOGLE",
+      "quotaInfo": {
+        "remainingFraction": 1,
+        "resetTime": "2026-06-18T20:03:23Z"
+      },
+      "recommended": true,
+      "supportsImages": true,
+      "supportsThinking": true,
+      "supportsVideo": true,
+      "tagDescription": "Limited time",
+      "tagTitle": "Fast",
+      "thinkingBudget": 1000,
+      "tokenizerType": "LLAMA_WITH_SPECIAL"
+    },
     "gemini-3.5-flash-low": {
       "apiProvider": "API_PROVIDER_GOOGLE_GEMINI",
       "displayName": "Gemini 3.5 Flash (Medium)",
@@ -672,5 +724,65 @@
       "tokenizerType": "LLAMA_WITH_SPECIAL",
       "toolFormatterType": "TOOL_FORMATTER_TYPE_XML"
     }
-  }
+  },
+  "defaultAgentModelId": "gemini-3.5-flash-low",
+  "agentModelSorts": [
+    {
+      "displayName": "Recommended",
+      "groups": [
+        {
+          "modelIds": [
+            "gemini-3.5-flash-low",
+            "gemini-3-flash-agent",
+            "gemini-3.5-flash-extra-low",
+            "gemini-3.1-pro-low",
+            "gemini-pro-agent",
+            "claude-sonnet-4-6",
+            "claude-opus-4-6-thinking",
+            "gpt-oss-120b-medium"
+          ]
+        }
+      ]
+    }
+  ],
+  "tieredModelIds": {
+    "flashLite": [
+      "gemini-3.1-flash-lite"
+    ],
+    "flash": [
+      "gemini-3-flash-agent"
+    ],
+    "pro": [
+      "gemini-3.1-pro-low"
+    ]
+  },
+  "commandModelIds": [
+    "gemini-3-flash"
+  ],
+  "mqueryModelIds": [
+    "gemini-3.1-flash-lite"
+  ],
+  "imageGenerationModelIds": [
+    "gemini-3.1-flash-image"
+  ],
+  "deprecatedModelIds": {
+    "gemini-3.1-pro-high": {
+      "newModelId": "gemini-pro-agent",
+      "oldModelEnum": "MODEL_PLACEHOLDER_M37",
+      "newModelEnum": "MODEL_PLACEHOLDER_M16"
+    }
+  },
+  "audioTranscriptionModelIds": [
+    "models/proactive-observer"
+  ],
+  "webSearchModelIds": [
+    "gemini-3.1-flash-lite"
+  ],
+  "tabModelIds": [
+    "chat_20706",
+    "chat_23310"
+  ],
+  "commitMessageModelIds": [
+    "gemini-3.1-flash-lite"
+  ]
 }

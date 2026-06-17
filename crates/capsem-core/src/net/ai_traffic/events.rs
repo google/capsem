@@ -240,6 +240,7 @@ pub fn parse_non_streaming_usage(
 
     match kind {
         super::provider::ModelProtocol::Google => {
+            let json = google_response_envelope(&json);
             let model = json
                 .get("modelVersion")
                 .and_then(|v| v.as_str())
@@ -343,7 +344,9 @@ pub fn parse_non_streaming_tool_calls(
         return Vec::new();
     };
     match kind {
-        super::provider::ModelProtocol::Google => google_non_streaming_tool_calls(&json),
+        super::provider::ModelProtocol::Google => {
+            google_non_streaming_tool_calls(google_response_envelope(&json))
+        }
         super::provider::ModelProtocol::OpenAi => openai_non_streaming_tool_calls(&json),
         super::provider::ModelProtocol::Anthropic => anthropic_non_streaming_tool_calls(&json),
         _ => Vec::new(),
@@ -365,9 +368,17 @@ pub fn parse_non_streaming_response_summary(
         super::provider::ModelProtocol::Anthropic => {
             anthropic_non_streaming_response_summary(&json)
         }
-        super::provider::ModelProtocol::Google => google_non_streaming_response_summary(&json),
+        super::provider::ModelProtocol::Google => {
+            google_non_streaming_response_summary(google_response_envelope(&json))
+        }
         super::provider::ModelProtocol::Ollama => ollama_non_streaming_response_summary(&json),
     }
+}
+
+fn google_response_envelope(json: &serde_json::Value) -> &serde_json::Value {
+    json.get("response")
+        .filter(|response| response.is_object())
+        .unwrap_or(json)
 }
 
 fn parse_response_json(body: &[u8]) -> Option<serde_json::Value> {
@@ -414,9 +425,15 @@ fn google_non_streaming_tool_calls(json: &serde_json::Value) -> Vec<ToolCall> {
                 .map(|args| serde_json::to_string(args).unwrap_or_else(|_| "{}".to_string()))
                 .unwrap_or_else(|| "{}".to_string());
             let index = calls.len() as u32;
+            let call_id = function_call
+                .get("id")
+                .and_then(|id| id.as_str())
+                .map(str::to_string)
+                .filter(|id| !id.is_empty())
+                .unwrap_or_else(|| format!("gemini_{}_{}", name, index));
             calls.push(ToolCall {
                 index,
-                call_id: format!("gemini_{}_{}", name, index),
+                call_id,
                 name,
                 arguments: args,
             });

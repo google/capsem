@@ -375,6 +375,30 @@ fn non_streaming_google_usage() {
 }
 
 #[test]
+fn non_streaming_google_code_assist_usage_unwraps_response_envelope() {
+    let body = br#"{
+        "response": {
+            "modelVersion": "gemini-3.5-flash-low",
+            "usageMetadata": {
+                "promptTokenCount": 31,
+                "candidatesTokenCount": 17,
+                "thoughtsTokenCount": 2,
+                "totalTokenCount": 50
+            }
+        },
+        "traceId": "trace_0123456789ab",
+        "metadata": {}
+    }"#;
+
+    let (model, input, output, details) = parse_non_streaming_usage(ModelProtocol::Google, body);
+
+    assert_eq!(model.as_deref(), Some("gemini-3.5-flash-low"));
+    assert_eq!(input, Some(31));
+    assert_eq!(output, Some(17));
+    assert_eq!(details.get("thinking"), Some(&2));
+}
+
+#[test]
 fn non_streaming_google_tool_calls() {
     let body = br#"{
         "candidates": [{
@@ -398,6 +422,44 @@ fn non_streaming_google_tool_calls() {
     assert_eq!(calls[1].call_id, "gemini_read_file_1");
     assert_eq!(calls[1].name, "read_file");
     assert_eq!(calls[1].arguments, r#"{"path":"/workspace/README.md"}"#);
+}
+
+#[test]
+fn non_streaming_google_code_assist_tool_calls_keep_provider_call_id() {
+    let body = br#"{
+        "response": {
+            "candidates": [{
+                "content": {
+                    "parts": [{
+                        "functionCall": {
+                            "id": "call_0123456789ab",
+                            "name": "run_command",
+                            "args": {
+                                "CommandLine": "printf '%s\\n' abc > /root/agy.txt",
+                                "Cwd": "/root",
+                                "WaitMsBeforeAsync": 1000
+                            }
+                        }
+                    }]
+                }
+            }],
+            "modelVersion": "gemini-3.5-flash-low",
+            "usageMetadata": {"promptTokenCount": 31, "candidatesTokenCount": 17}
+        },
+        "traceId": "trace_0123456789ab",
+        "metadata": {}
+    }"#;
+
+    let calls = parse_non_streaming_tool_calls(ModelProtocol::Google, body);
+
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].index, 0);
+    assert_eq!(calls[0].call_id, "call_0123456789ab");
+    assert_eq!(calls[0].name, "run_command");
+    assert_eq!(
+        calls[0].arguments,
+        r#"{"CommandLine":"printf '%s\\n' abc > /root/agy.txt","Cwd":"/root","WaitMsBeforeAsync":1000}"#
+    );
 }
 
 #[test]

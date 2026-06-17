@@ -67,6 +67,7 @@ def assert_one_model_client(
         path=result["path"],
         model=result["model"],
         credential_provider=result.get("credential_provider"),
+        credential_source=result.get("credential_source"),
     )
     run = ModelLedgerRun(
         db_path=env.db_path,
@@ -105,6 +106,7 @@ def assert_live_model_client(
         path=result["path"],
         model=result["model"],
         credential_provider=result.get("credential_provider"),
+        credential_source=result.get("credential_source"),
     )
     run = ModelLedgerRun(
         db_path=env.db_path,

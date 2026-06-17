@@ -456,6 +456,10 @@ def _google_has_tool_response(payload: dict) -> bool:
     return "functionResponse" in raw
 
 
+def _google_is_checkpoint(payload: dict) -> bool:
+    return payload.get("requestType") == "checkpoint"
+
+
 def _google_write_target(payload: dict) -> tuple[str, str]:
     return _generic_write_target(payload, "agy")
 
@@ -465,33 +469,73 @@ def _google_stream_tool_body(
 ) -> bytes:
     payload = payload or {}
     token, path = _google_write_target(payload)
+    call_id = f"call_{token[:12]}" if re.fullmatch(r"[0-9a-f]{32}", token) else "call_ironbank"
+    response_id = f"agy_{token[:12]}" if re.fullmatch(r"[0-9a-f]{32}", token) else "agy_ironbank"
     args = {
-        "TargetFile": path,
-        "AbsolutePath": path,
-        "Content": f"{token}\n",
-        "FileContent": f"{token}\n",
-        "Overwrite": True,
-        "ArtifactMetadata": {
-            "Summary": "Write the Ironbank AGY proof token.",
-            "RequestFeedback": False,
-        },
+        "CommandLine": _shell_write_command(token, path),
+        "Cwd": "/root",
+        "WaitMsBeforeAsync": 1000,
         "toolSummary": "Write proof",
         "toolAction": "Writing file",
     }
     first = {
-        "candidates": [
-            {
-                "content": {
-                    "parts": [{"functionCall": {"name": "write_to_file", "args": args}}],
-                    "role": "model",
-                },
-                "finishReason": "STOP",
-            }
-        ],
-        "usageMetadata": {"promptTokenCount": 31, "candidatesTokenCount": 17},
-        "modelVersion": model,
+        "response": {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {
+                                "thoughtSignature": "capsem-agy-fixture-signature",
+                                "functionCall": {
+                                    "name": "run_command",
+                                    "args": args,
+                                    "id": call_id,
+                                },
+                            }
+                        ],
+                        "role": "model",
+                    },
+                }
+            ],
+            "usageMetadata": {
+                "promptTokenCount": 31,
+                "candidatesTokenCount": 17,
+                "thoughtsTokenCount": 2,
+                "totalTokenCount": 50,
+            },
+            "modelVersion": model,
+            "responseId": response_id,
+        },
+        "traceId": f"trace_{token[:12]}" if re.fullmatch(r"[0-9a-f]{32}", token) else "trace_ironbank",
+        "metadata": {},
     }
-    return f"data: {json.dumps(first, separators=(',', ':'))}\n\n".encode()
+    final = {
+        "response": {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [{"text": ""}],
+                        "role": "model",
+                    },
+                    "finishReason": "STOP",
+                }
+            ],
+            "usageMetadata": {
+                "promptTokenCount": 31,
+                "candidatesTokenCount": 17,
+                "thoughtsTokenCount": 2,
+                "totalTokenCount": 50,
+            },
+            "modelVersion": model,
+            "responseId": response_id,
+        },
+        "traceId": first["traceId"],
+        "metadata": {},
+    }
+    return (
+        f"data: {json.dumps(first, separators=(',', ':'))}\n\n"
+        f"data: {json.dumps(final, separators=(',', ':'))}\n\n"
+    ).encode()
 
 
 def _google_stream_final_body(
@@ -499,12 +543,84 @@ def _google_stream_final_body(
 ) -> bytes:
     payload = payload or {}
     token, _ = _google_write_target(payload)
+    response_id = f"agy_final_{token[:12]}" if re.fullmatch(r"[0-9a-f]{32}", token) else "agy_final"
+    final = {
+        "response": {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {"thoughtSignature": "capsem-agy-final-signature", "text": ""},
+                            {"text": token},
+                        ],
+                        "role": "model",
+                    },
+                    "finishReason": "STOP",
+                }
+            ],
+            "usageMetadata": {
+                "promptTokenCount": 7,
+                "candidatesTokenCount": 5,
+                "thoughtsTokenCount": 2,
+                "totalTokenCount": 14,
+            },
+            "modelVersion": model,
+            "responseId": response_id,
+        },
+        "traceId": f"trace_{token[:12]}" if re.fullmatch(r"[0-9a-f]{32}", token) else "trace_final",
+        "metadata": {},
+    }
+    return f"data: {json.dumps(final, separators=(',', ':'))}\n\n".encode()
+
+
+def _gemini_stream_tool_body(
+    payload: dict | None = None, model: str = "gemini-2.5-flash"
+) -> bytes:
+    payload = payload or {}
+    token, path = _generic_write_target(payload, "gemini")
+    args = {
+        "TargetFile": path,
+        "Content": token + "\n",
+    }
+    first = {
+        "candidates": [
+            {
+                "content": {
+                    "parts": [
+                        {
+                            "functionCall": {
+                                "name": "write_to_file",
+                                "args": args,
+                            }
+                        }
+                    ],
+                    "role": "model",
+                },
+                "finishReason": "STOP",
+            }
+        ],
+        "usageMetadata": {
+            "promptTokenCount": 31,
+            "candidatesTokenCount": 17,
+            "thoughtsTokenCount": 2,
+            "totalTokenCount": 50,
+        },
+        "modelVersion": model,
+    }
+    return f"data: {json.dumps(first, separators=(',', ':'))}\n\n".encode()
+
+
+def _gemini_stream_final_body(
+    payload: dict | None = None, model: str = "gemini-2.5-flash"
+) -> bytes:
+    payload = payload or {}
+    token, _ = _generic_write_target(payload, "gemini")
     final = {
         "candidates": [
             {
                 "content": {
                     "parts": [
-                        {"thought": True, "text": "ledger reasoning"},
+                        {"text": "ledger reasoning", "thought": True},
                         {"text": token},
                     ],
                     "role": "model",
@@ -521,6 +637,31 @@ def _google_stream_final_body(
         "modelVersion": model,
     }
     return f"data: {json.dumps(final, separators=(',', ':'))}\n\n".encode()
+
+
+def _google_stream_checkpoint_body(payload: dict | None = None) -> bytes:
+    payload = payload or {}
+    model = payload.get("model")
+    if not isinstance(model, str) or not model:
+        model = "gemini-3.1-flash-lite"
+    response = {
+        "response": {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [{"text": "Write Proof"}],
+                        "role": "model",
+                    },
+                    "finishReason": "STOP",
+                }
+            ],
+            "modelVersion": model,
+            "responseId": "agy_checkpoint",
+        },
+        "traceId": "trace_checkpoint",
+        "metadata": {},
+    }
+    return f"data: {json.dumps(response, separators=(',', ':'))}\n\n".encode()
 
 
 def _google_generate_content_payload(payload: dict | None = None) -> dict:
@@ -813,6 +954,27 @@ class MockHandler(BaseHTTPRequestHandler):
         return
 
     def _body(self) -> bytes:
+        if self.headers.get("transfer-encoding", "").lower() == "chunked":
+            chunks = []
+            while True:
+                size_line = self.rfile.readline()
+                if not size_line:
+                    break
+                size_text = size_line.split(b";", 1)[0].strip()
+                if not size_text:
+                    continue
+                size = int(size_text, 16)
+                if size == 0:
+                    while True:
+                        trailer = self.rfile.readline()
+                        if trailer in {b"\r\n", b"\n", b""}:
+                            break
+                    break
+                chunks.append(self.rfile.read(size))
+                self.rfile.read(2)
+            body = b"".join(chunks)
+            self._capsem_request_body = body
+            return body
         length = int(self.headers.get("content-length") or "0")
         body = self.rfile.read(length) if length else b""
         self._capsem_request_body = body
@@ -1079,6 +1241,9 @@ class MockHandler(BaseHTTPRequestHandler):
         elif path == "/v1internal:streamGenerateContent":
             payload = self._json_body()
             body = (
+                _google_stream_checkpoint_body(payload)
+                if _google_is_checkpoint(payload)
+                else
                 _google_stream_final_body(payload)
                 if _google_has_tool_response(payload)
                 else _google_stream_tool_body(payload)
@@ -1089,9 +1254,12 @@ class MockHandler(BaseHTTPRequestHandler):
             model = _google_model_from_path(path)
             if payload.get("tools"):
                 body = (
-                    _google_stream_final_body(payload, model)
+                    _google_stream_checkpoint_body(payload)
+                    if _google_is_checkpoint(payload)
+                    else
+                    _gemini_stream_final_body(payload, model)
                     if _google_has_tool_response(payload)
-                    else _google_stream_tool_body(payload, model)
+                    else _gemini_stream_tool_body(payload, model)
                 )
             else:
                 body = _google_stream_body()

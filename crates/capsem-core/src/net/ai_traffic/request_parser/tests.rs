@@ -268,6 +268,27 @@ fn google_function_response_preserves_bytes_verbatim() {
     );
 }
 
+#[test]
+fn google_code_assist_model_role_function_response_preserves_call_id() {
+    let body = br#"{
+        "request": {
+            "contents": [
+                {"parts": [{"text": "Write uuid4 hex value abc to /root/agy.txt."}], "role": "user"},
+                {"parts": [{"functionCall": {"id": "call_0123456789ab", "name": "run_command", "args": {"CommandLine": "printf '%s\\n' abc > /root/agy.txt"}}}], "role": "model"},
+                {"parts": [{"functionResponse": {"id": "call_0123456789ab", "name": "run_command", "response": {"output": "The command completed successfully."}}}], "role": "model"}
+            ]
+        }
+    }"#;
+
+    let meta = parse_request(ModelProtocol::Google, body);
+
+    assert_eq!(meta.tool_results.len(), 1);
+    assert_eq!(meta.tool_results[0].call_id, "call_0123456789ab");
+    assert!(meta.tool_results[0]
+        .content_preview
+        .contains("The command completed successfully"));
+}
+
 // ── Adversarial ─────────────────────────────────────────────────
 
 #[test]

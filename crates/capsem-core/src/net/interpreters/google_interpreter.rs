@@ -5,7 +5,8 @@
 //!
 //! SSE stream format: Each SSE event is a complete JSON object (not deltas).
 //! Parts contain `text`, `functionCall`, or `thought` fields.
-//! Gemini doesn't provide tool call IDs -- we generate synthetic ones.
+//! Gemini doesn't provide tool call IDs; Google Code Assist may provide
+//! `functionCall.id`, which we preserve for request/response correlation.
 
 use std::collections::BTreeMap;
 
@@ -78,6 +79,7 @@ mod wire {
 
     #[derive(Deserialize)]
     pub struct FunctionCall {
+        pub id: Option<String>,
         pub name: Option<String>,
         pub args: Option<Box<serde_json::value::RawValue>>,
     }
@@ -120,11 +122,20 @@ impl GoogleStreamParser {
             other => StopReason::Other(other.into()),
         }
     }
+
+    fn parse_stream_chunk(data: &str) -> Result<wire::StreamChunk, serde_json::Error> {
+        let json = serde_json::from_str::<serde_json::Value>(data)?;
+        if let Some(response) = json.get("response").filter(|value| value.is_object()) {
+            serde_json::from_value(response.clone())
+        } else {
+            serde_json::from_value(json)
+        }
+    }
 }
 
 impl ProviderStreamParser for GoogleStreamParser {
     fn parse_event(&mut self, sse: &SseEvent) -> Vec<LlmEvent> {
-        let Ok(chunk) = serde_json::from_str::<wire::StreamChunk>(&sse.data) else {
+        let Ok(chunk) = Self::parse_stream_chunk(&sse.data) else {
             return vec![LlmEvent::Unknown {
                 event_type: sse.event_type.clone(),
                 raw: sse.data.clone(),
@@ -182,10 +193,11 @@ impl ProviderStreamParser for GoogleStreamParser {
 
                                 let idx = self.block_index;
                                 self.block_index += 1;
-                                // Gemini doesn't return tool call IDs. Use the same deterministic
-                                // synthetic id shape as Google request parsing so follow-up
-                                // functionResponse rows can correlate with the model tool call.
-                                let call_id = format!("gemini_{}_{}", name, idx);
+                                let call_id = fc
+                                    .id
+                                    .clone()
+                                    .filter(|id| !id.is_empty())
+                                    .unwrap_or_else(|| format!("gemini_{}_{}", name, idx));
                                 events.push(LlmEvent::ToolCallStart {
                                     index: idx,
                                     call_id: call_id.clone(),

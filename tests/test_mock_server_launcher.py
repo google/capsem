@@ -197,6 +197,34 @@ def _get_json(url: str) -> dict:
     return body
 
 
+def _post_chunked_raw(host: str, port: int, path: str, value: object) -> str:
+    payload = json.dumps(value).encode()
+    first = payload[:17]
+    second = payload[17:]
+    request = (
+        f"POST {path} HTTP/1.1\r\n"
+        f"Host: {host}:{port}\r\n"
+        "User-Agent: capsem-test\r\n"
+        "Content-Type: application/json\r\n"
+        "Transfer-Encoding: chunked\r\n"
+        "\r\n"
+    ).encode()
+    request += f"{len(first):x}\r\n".encode() + first + b"\r\n"
+    request += f"{len(second):x}\r\n".encode() + second + b"\r\n0\r\n\r\n"
+    with socket.create_connection((host, port), timeout=2) as sock:
+        sock.sendall(request)
+        sock.shutdown(socket.SHUT_WR)
+        response = b""
+        while True:
+            chunk = sock.recv(65536)
+            if not chunk:
+                break
+            response += chunk
+    header, _, body = response.partition(b"\r\n\r\n")
+    assert b" 200 " in header, header.decode(errors="replace")
+    return body.decode()
+
+
 def test_mock_server_serves_ollama_launcher_probe_endpoints() -> None:
     proc = None
     try:
@@ -470,12 +498,252 @@ def test_mock_server_replays_recorded_agy_available_models() -> None:
         )
 
         models = payload["models"]
-        assert len(models) == 16
+        assert len(models) == 19
+        assert payload["defaultAgentModelId"] == "gemini-3.5-flash-low"
+        assert payload["defaultAgentModelId"] in models
+        assert payload["agentModelSorts"][0]["displayName"] == "Recommended"
+        assert (
+            payload["agentModelSorts"][0]["groups"][0]["modelIds"][0]
+            == payload["defaultAgentModelId"]
+        )
+        assert "gemini-3-flash-agent" in payload["tieredModelIds"]["flash"]
+        referenced_model_ids = {
+            payload["defaultAgentModelId"],
+            *payload["commandModelIds"],
+            *payload["mqueryModelIds"],
+            *payload["imageGenerationModelIds"],
+            *payload["webSearchModelIds"],
+            *payload["tabModelIds"],
+            *payload["commitMessageModelIds"],
+        }
+        for group in payload["agentModelSorts"]:
+            for bucket in group["groups"]:
+                referenced_model_ids.update(bucket["modelIds"])
+        for ids in payload["tieredModelIds"].values():
+            referenced_model_ids.update(ids)
+        assert referenced_model_ids <= set(models)
+        model_enums = {model["model"] for model in models.values()}
+        checkpoint_enums = set()
+        for model in models.values():
+            experiments = model.get("modelExperiments", {}).get("experiments", {})
+            for experiment in experiments.values():
+                value = experiment.get("stringValue")
+                if value:
+                    checkpoint_enums.update(
+                        re.findall(r'"checkpoint_model"\s*:\s*"(MODEL_[A-Z0-9_]+)"', value)
+                    )
+        assert checkpoint_enums <= model_enums
         assert models["gemini-3.5-flash-low"]["displayName"] == "Gemini 3.5 Flash (Medium)"
         assert models["gemini-3.5-flash-low"]["model"] == "MODEL_PLACEHOLDER_M20"
         assert models["gemini-3.5-flash-low"]["modelProvider"] == "MODEL_PROVIDER_GOOGLE"
         assert models["claude-sonnet-4-6"]["modelProvider"] == "MODEL_PROVIDER_ANTHROPIC"
         assert all(model["quotaInfo"]["remainingFraction"] == 1 for model in models.values())
+    finally:
+        stop_process(proc)
+
+
+def test_mock_server_replays_agy_code_assist_stream_envelope() -> None:
+    proc = None
+    try:
+        proc, ready = start_mock_server()
+        base_url = ready["base_url"]
+        token = "0123456789abcdef0123456789abcdef"
+        target = f"/root/agy-cli-{token}.txt"
+
+        stream = _post_raw(
+            f"{base_url}/v1internal:streamGenerateContent?alt=sse",
+            {
+                "request": {
+                    "contents": [
+                        {
+                            "role": "user",
+                            "parts": [
+                                {"text": f"Write uuid4 hex value {token} to {target}."}
+                            ],
+                        }
+                    ]
+                }
+            },
+        )
+
+        chunks = [
+            json.loads(chunk.removeprefix("data: ").strip())
+            for chunk in stream.split("\n\n")
+            if chunk.strip()
+        ]
+        assert len(chunks) == 2
+        assert all(set(chunk) == {"response", "traceId", "metadata"} for chunk in chunks)
+        first_response = chunks[0]["response"]
+        assert set(first_response) == {
+            "candidates",
+            "usageMetadata",
+            "modelVersion",
+            "responseId",
+        }
+        first_candidate = first_response["candidates"][0]
+        first_part = first_candidate["content"]["parts"][0]
+        function_call = first_part["functionCall"]
+        assert function_call["name"] == "run_command"
+        assert function_call["id"] == "call_0123456789ab"
+        assert function_call["args"]["Cwd"] == "/root"
+        assert function_call["args"]["WaitMsBeforeAsync"] == 1000
+        assert function_call["args"]["CommandLine"] == (
+            "printf '%s\\n' 0123456789abcdef0123456789abcdef "
+            "> /root/agy-cli-0123456789abcdef0123456789abcdef.txt"
+        )
+        assert first_candidate.get("finishReason") is None
+        assert first_response["usageMetadata"]["thoughtsTokenCount"] > 0
+
+        final_candidate = chunks[1]["response"]["candidates"][0]
+        assert final_candidate["finishReason"] == "STOP"
+        assert final_candidate["content"]["parts"] == [{"text": ""}]
+        assert chunks[1]["response"]["responseId"] == first_response["responseId"]
+    finally:
+        stop_process(proc)
+
+
+def test_mock_server_reads_agy_chunked_code_assist_body() -> None:
+    proc = None
+    try:
+        proc, ready = start_mock_server()
+        parsed = re.fullmatch(r"http://([^:]+):(\d+)", ready["base_url"])
+        assert parsed is not None
+        host, port_text = parsed.groups()
+        token = "abcdefabcdefabcdefabcdefabcdefab"
+        target = f"/root/agy-cli-{token}.txt"
+
+        stream = _post_chunked_raw(
+            host,
+            int(port_text),
+            "/v1internal:streamGenerateContent?alt=sse",
+            {
+                "request": {
+                    "contents": [
+                        {
+                            "role": "user",
+                            "parts": [
+                                {"text": f"Write uuid4 hex value {token} to {target}."}
+                            ],
+                        }
+                    ]
+                }
+            },
+        )
+
+        assert target in stream
+        assert token in stream
+        assert "/root/agy-output.txt" not in stream
+    finally:
+        stop_process(proc)
+
+
+def test_mock_server_replays_agy_checkpoint_without_duplicate_tool_call() -> None:
+    proc = None
+    try:
+        proc, ready = start_mock_server()
+        base_url = ready["base_url"]
+        token = "11111111111111111111111111111111"
+        target = f"/root/agy-cli-{token}.txt"
+
+        stream = _post_raw(
+            f"{base_url}/v1internal:streamGenerateContent?alt=sse",
+            {
+                "requestType": "checkpoint",
+                "model": "gemini-3.1-flash-lite",
+                "request": {
+                    "contents": [
+                        {
+                            "role": "user",
+                            "parts": [
+                                {"text": f"Write uuid4 hex value {token} to {target}."}
+                            ],
+                        }
+                    ],
+                    "systemInstruction": {
+                        "role": "user",
+                        "parts": [
+                            {
+                                "text": "Generate a short conversation title (3-5 words, title-cased, no prefix) describing the USER's intent."
+                            }
+                        ],
+                    },
+                },
+            },
+        )
+
+        chunks = [
+            json.loads(chunk.removeprefix("data: ").strip())
+            for chunk in stream.split("\n\n")
+            if chunk.strip()
+        ]
+        assert len(chunks) == 1
+        response = chunks[0]["response"]
+        assert response["modelVersion"] == "gemini-3.1-flash-lite"
+        assert "usageMetadata" not in response
+        candidate = response["candidates"][0]
+        assert candidate["finishReason"] == "STOP"
+        assert candidate["content"]["parts"] == [{"text": "Write Proof"}]
+        assert "functionCall" not in json.dumps(response)
+        assert target not in stream
+        assert token not in stream
+    finally:
+        stop_process(proc)
+
+
+def test_mock_server_replays_gemini_api_stream_without_code_assist_envelope() -> None:
+    proc = None
+    try:
+        proc, ready = start_mock_server()
+        base_url = ready["base_url"]
+        token = "22222222222222222222222222222222"
+        target = f"/root/gemini-api-{token}.txt"
+
+        stream = _post_raw(
+            f"{base_url}/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+            {
+                "contents": [
+                    {
+                        "role": "user",
+                        "parts": [
+                            {"text": f"Write uuid4 hex value {token} to {target}."}
+                        ],
+                    }
+                ],
+                "tools": [
+                    {
+                        "functionDeclarations": [
+                            {
+                                "name": "write_to_file",
+                                "parameters": {
+                                    "type": "object",
+                                    "properties": {
+                                        "TargetFile": {"type": "string"},
+                                        "Content": {"type": "string"},
+                                    },
+                                    "required": ["TargetFile", "Content"],
+                                },
+                            }
+                        ]
+                    }
+                ],
+            },
+        )
+
+        chunks = [
+            json.loads(chunk.removeprefix("data: ").strip())
+            for chunk in stream.split("\n\n")
+            if chunk.strip()
+        ]
+        assert len(chunks) == 1
+        assert "response" not in chunks[0]
+        assert chunks[0]["modelVersion"] == "gemini-2.5-flash"
+        candidate = chunks[0]["candidates"][0]
+        function_call = candidate["content"]["parts"][0]["functionCall"]
+        assert function_call["name"] == "write_to_file"
+        assert set(function_call["args"]) == {"TargetFile", "Content"}
+        assert function_call["args"]["TargetFile"] == target
+        assert function_call["args"]["Content"] == token + "\n"
+        assert "run_command" not in stream
     finally:
         stop_process(proc)
 

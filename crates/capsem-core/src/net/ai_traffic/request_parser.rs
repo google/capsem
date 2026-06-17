@@ -368,6 +368,7 @@ mod google_wire {
 
     #[derive(Deserialize)]
     pub struct FunctionResponse {
+        pub id: Option<String>,
         pub name: Option<String>,
         pub response: Option<Box<serde_json::value::RawValue>>,
     }
@@ -395,7 +396,8 @@ mod google_wire {
 }
 
 fn parse_google(body: &[u8]) -> RequestMeta {
-    let Ok(req) = serde_json::from_slice::<google_wire::Request>(body) else {
+    let body = google_request_body(body);
+    let Ok(req) = serde_json::from_slice::<google_wire::Request>(&body) else {
         return RequestMeta::default();
     };
 
@@ -412,13 +414,19 @@ fn parse_google(body: &[u8]) -> RequestMeta {
     let contents = req.contents.as_deref().unwrap_or(&[]);
     let messages_count = contents.len();
 
-    // Extract function responses from only the TRAILING function messages (the
-    // new ones the agent just appended). Multi-turn conversations re-send the
-    // full history, so iterating all messages would re-log previous tool results.
+    // Extract function responses from only the TRAILING messages that carry
+    // functionResponse parts. Multi-turn conversations re-send full history, so
+    // iterating all messages would re-log previous tool results. Google Code
+    // Assist may put these parts on role=model rather than role=function.
     let mut tool_results = Vec::new();
     let mut counter = 0usize;
     for content in contents.iter().rev() {
-        if content.role.as_deref() != Some("function") {
+        let has_function_response = content
+            .parts
+            .as_ref()
+            .map(|parts| parts.iter().any(|part| part.function_response.is_some()))
+            .unwrap_or(false);
+        if !has_function_response {
             break;
         }
         if let Some(parts) = &content.parts {
@@ -430,9 +438,13 @@ fn parse_google(body: &[u8]) -> RequestMeta {
                         .as_ref()
                         .map(|v| v.get().to_string())
                         .unwrap_or_default();
+                    let call_id = fr
+                        .id
+                        .clone()
+                        .filter(|value| !value.is_empty())
+                        .unwrap_or_else(|| format!("gemini_{}_{}", name, counter));
                     tool_results.push(ToolResultMeta {
-                        // Gemini doesn't have call_id -- generate unique IDs
-                        call_id: format!("gemini_{}_{}", name, counter),
+                        call_id,
                         content_preview: content_text,
                         is_error: false,
                     });
@@ -458,6 +470,16 @@ fn parse_google(body: &[u8]) -> RequestMeta {
         tools_count,
         tool_results,
     }
+}
+
+fn google_request_body(body: &[u8]) -> Vec<u8> {
+    let Ok(json) = serde_json::from_slice::<serde_json::Value>(body) else {
+        return body.to_vec();
+    };
+    let Some(request) = json.get("request").filter(|value| value.is_object()) else {
+        return body.to_vec();
+    };
+    serde_json::to_vec(request).unwrap_or_else(|_| body.to_vec())
 }
 
 // ── Ollama native ──────────────────────────────────────────────────

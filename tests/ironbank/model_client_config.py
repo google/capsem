@@ -8,6 +8,7 @@ HERMETIC_OPENAI_PRICED_MODEL = "gpt-5-nano"
 HERMETIC_ANTHROPIC_MODEL = "claude-sonnet-4-6"
 HERMETIC_GEMINI_MODEL = "gemini-2.5-flash"
 HERMETIC_AGY_MODEL = "gemini-3.5-flash-low"
+HERMETIC_AGY_MODEL_DISPLAY = "Gemini 3.5 Flash (Medium)"
 
 LIVE_OPENAI_RESPONSES_MODEL = "gpt-5-nano"
 LIVE_OPENAI_IMAGE_MODEL = "gpt-5.5"
