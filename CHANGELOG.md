@@ -55,6 +55,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a release compliance gate for SBOM, OBOM, and build-ledger evidence,
   clarifying that OBOMs describe base VM images while build ledgers remain
   debug evidence.
+- Exposed model request/response/tool-call validity facts in serialized
+  security events so route JSON matches the first-party CEL model facts used
+  by enforcement.
 - Added a config-layout gate that makes the settings/corp/profiles/docker/data
   source contract executable and rejects host metadata or generated pins in
   checked-in profile config.

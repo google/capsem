@@ -11,6 +11,7 @@ use capsem_logger::{
     SecurityDetectionLevel as LoggedDetectionLevel, SecurityRuleAction as LoggedRuleAction,
     SecurityRuleEvent, SubstitutionEvent, WriteOp,
 };
+use serde::ser::{SerializeStruct, Serializer};
 use serde::Serialize;
 use serde_json::json;
 use tracing::Instrument;
@@ -2071,13 +2072,46 @@ fn mcp_response_from_preview(preview: &str) -> Option<McpResponseSecurityEvent> 
     Some(McpResponseSecurityEvent { content })
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ModelSecurityEvent {
     pub provider: Option<String>,
     pub name: Option<String>,
     pub request_body: Option<String>,
     pub response_body: Option<String>,
     pub tool_calls: Option<String>,
+}
+
+impl Serialize for ModelSecurityEvent {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        #[derive(Serialize)]
+        struct ValidFact {
+            valid: bool,
+        }
+
+        let request = ValidFact {
+            valid: self.request_body.is_some() || self.tool_calls.is_some(),
+        };
+        let response = ValidFact {
+            valid: self.response_body.is_some(),
+        };
+        let tool_call = ValidFact {
+            valid: self.tool_calls.is_some(),
+        };
+
+        let mut state = serializer.serialize_struct("ModelSecurityEvent", 8)?;
+        state.serialize_field("provider", &self.provider)?;
+        state.serialize_field("name", &self.name)?;
+        state.serialize_field("request_body", &self.request_body)?;
+        state.serialize_field("response_body", &self.response_body)?;
+        state.serialize_field("tool_calls", &self.tool_calls)?;
+        state.serialize_field("request", &request)?;
+        state.serialize_field("response", &response)?;
+        state.serialize_field("tool_call", &tool_call)?;
+        state.end()
+    }
 }
 
 impl ModelSecurityEvent {
