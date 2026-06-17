@@ -72,6 +72,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   version evidence remain available through debug/status surfaces.
 - Replaced raw toolbar status colors with semantic UI tokens so service chrome
   follows the Capsem design contract.
+- Added frontend route-contract gates for the Sessions dashboard and profile
+  surfaces so the UI must keep using route-owned profile/session terminology,
+  asset readiness, enforcement, detection, plugins, MCP, and canonical detail
+  payloads.
 - Removed the retired MCP tool `approved` field from profile MCP route
   responses; the UI/TUI contract now exposes only route-backed
   `permission_action` / `permission_source` decisions.
