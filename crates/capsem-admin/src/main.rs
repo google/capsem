@@ -2718,10 +2718,55 @@ enforcement = "profiles/code/enforcement.toml"
             compile_rule_file("enforcement", &path, RuleFileSourceArg::User).expect("compile");
 
         assert_eq!(report.kind, "enforcement");
-        assert_eq!(report.compiled_rules, 6);
-        assert!(report.rules.iter().all(|rule| rule.default_rule));
+        let rule_ids = report
+            .rules
+            .iter()
+            .map(|rule| rule.rule_id.as_str())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            rule_ids,
+            BTreeSet::from([
+                "profiles.rules.capsem_mock_server",
+                "profiles.rules.default_http",
+                "profiles.rules.default_dns",
+                "profiles.rules.default_mcp",
+                "profiles.rules.default_model",
+                "profiles.rules.default_unknown_model_provider",
+                "profiles.rules.default_unknown_mcp_server",
+                "profiles.rules.default_file",
+                "profiles.rules.default_process",
+            ])
+        );
+        assert_eq!(report.compiled_rules, rule_ids.len());
+        assert_eq!(
+            report
+                .rules
+                .iter()
+                .filter(|rule| !rule.default_rule)
+                .map(|rule| rule.rule_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["profiles.rules.capsem_mock_server"]
+        );
         assert!(report.rules.iter().all(|rule| rule.action == "allow"));
         assert!(report.rules.iter().all(|rule| rule.priority > 0));
+        assert_eq!(
+            report
+                .rules
+                .iter()
+                .filter(|rule| rule.detection_level.is_some())
+                .map(|rule| (rule.rule_id.as_str(), rule.detection_level))
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([
+                (
+                    "profiles.rules.default_unknown_model_provider",
+                    Some("informational")
+                ),
+                (
+                    "profiles.rules.default_unknown_mcp_server",
+                    Some("informational")
+                ),
+            ])
+        );
     }
 
     #[test]
