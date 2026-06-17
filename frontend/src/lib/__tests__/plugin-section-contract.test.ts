@@ -30,4 +30,10 @@ describe('PluginSection route contract', () => {
     expect(source).toContain('Credential sources');
     expect(source).toContain('plugin.capabilities.credential_sources.join');
   });
+
+  it('does not make raw credential references the broker inventory identity', () => {
+    expect(source).toContain("credential.provider ?? 'Unknown provider'");
+    expect(source).toContain("Last seen {credential.last_seen ?? 'never'}");
+    expect(source).not.toContain('{credential.credential_ref}');
+  });
 });

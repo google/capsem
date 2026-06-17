@@ -74,6 +74,11 @@
     return `${runtime.event_count} events, ${runtime.detection_count} detections`;
   }
 
+  function formatMicros(micros: number): string {
+    if (micros < 1_000) return `${micros}us`;
+    return `${(micros / 1_000).toFixed(1)}ms`;
+  }
+
   let response = $state<PluginListResponse | null>(null);
   let credentialBrokerInfo = $state<CredentialBrokerInfo | null>(null);
   let loading = $state(true);
@@ -224,6 +229,9 @@
           <div class="min-w-0 text-xs text-muted-foreground-1">
             <p class="truncate">{runtimeSummary(plugin)}</p>
             <p class="truncate">blocks {plugin.runtime.block_count} · rewrites {plugin.runtime.rewrite_count}</p>
+            <p class="truncate">
+              runs {plugin.runtime.execution_count} · applied {plugin.runtime.applied_count} · latency max {formatMicros(plugin.runtime.max_duration_us)}
+            </p>
             {#if plugin.runtime.last_error}
               <p class="truncate text-destructive-foreground">{plugin.runtime.last_error}</p>
             {/if}
@@ -258,7 +266,7 @@
           <div class="mt-4 border border-card-line rounded-lg bg-layer p-4">
             <div class="flex items-start justify-between gap-x-4">
               <div>
-                <p class="text-sm font-medium text-foreground">Credential Broker</p>
+                <p class="text-sm font-medium text-foreground">{plugin.name}</p>
                 <p class="text-xs text-muted-foreground-1 mt-0.5">
                   {credentialBrokerInfo?.inventory.length ?? 0} credentials · profile {credentialBrokerInfo?.grants.profile_enabled ? 'enabled' : 'disabled'}
                 </p>
@@ -330,11 +338,11 @@
 
               {#if credentialBrokerInfo.inventory.length > 0}
                 <ul class="mt-4 divide-y divide-card-divider border border-line-2 rounded-md">
-                  {#each credentialBrokerInfo.inventory as credential (credential.credential_ref)}
+                  {#each credentialBrokerInfo.inventory as credential, index (`${credential.provider ?? 'unknown'}:${credential.last_seen ?? 'never'}:${index}`)}
                     <li class="grid grid-cols-[minmax(0,1fr)_6rem_6rem] gap-x-3 p-3 text-xs">
                       <div class="min-w-0">
-                        <p class="font-mono text-foreground truncate">{credential.credential_ref}</p>
-                        <p class="text-muted-foreground-2 truncate">{credential.provider ?? 'unknown'} · {credential.last_seen ?? 'never'}</p>
+                        <p class="font-medium text-foreground truncate">{credential.provider ?? 'Unknown provider'}</p>
+                        <p class="text-muted-foreground-2 truncate">Last seen {credential.last_seen ?? 'never'}</p>
                       </div>
                       <p class="text-muted-foreground-1">{credential.observed_count} seen</p>
                       <p class="text-muted-foreground-1">{credential.injected_count} used</p>
