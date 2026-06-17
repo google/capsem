@@ -60,29 +60,29 @@ impl Drop for DoctorMockServer {
     }
 }
 
-fn mock_server_runtime_path() -> Result<PathBuf> {
+fn mock_server_impl_path() -> Result<PathBuf> {
     let cwd_candidate = std::env::current_dir()
         .context("read current directory")?
-        .join("scripts/mock_server_runtime.py");
+        .join("scripts/mock_server_impl.py");
     if cwd_candidate.exists() {
         return Ok(cwd_candidate);
     }
 
     let manifest_candidate =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../scripts/mock_server_runtime.py");
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../scripts/mock_server_impl.py");
     if manifest_candidate.exists() {
         return manifest_candidate
             .canonicalize()
-            .context("resolve source-tree scripts/mock_server_runtime.py");
+            .context("resolve source-tree scripts/mock_server_impl.py");
     }
 
     Err(anyhow!(
-        "scripts/mock_server_runtime.py not found; restore the shared Python mock server runtime"
+        "scripts/mock_server_impl.py not found; restore the shared Python mock server implementation"
     ))
 }
 
 fn spawn_doctor_mock_server() -> Result<DoctorMockServer> {
-    let script = mock_server_runtime_path()?;
+    let script = mock_server_impl_path()?;
     let mut child = StdCommand::new("python3")
         .arg(&script)
         .arg("--addr")

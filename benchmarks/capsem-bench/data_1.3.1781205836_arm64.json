@@ -1492,7 +1492,7 @@
       "delete_ok": true
     }
   },
-  "mitm_local": {
+  "mock_server_protocol": {
     "version": "1.0",
     "base_url": "http://127.0.0.1:3713",
     "total_requests": 1000,

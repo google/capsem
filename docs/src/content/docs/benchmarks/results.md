@@ -83,7 +83,7 @@ WebSocket control fixture: echo `10` frames at `1,454.6` frames/sec with
 p50/p99.
 
 Historical release-scale local fixture artifact:
-`benchmarks/mitm-local/data_1.3.1781205836_arm64.json`.
+`benchmarks/mock-server-protocol/data_1.3.1781205836_arm64.json`.
 
 | Scenario | Success | Requests/sec | p50 | p99 |
 |---|---:|---:|---:|---:|
@@ -108,7 +108,7 @@ errors. `model_json_response`: `4,321.8` requests/sec, `13.9ms` p50,
 `30.7ms` p99. `credential_response`: `4,361.8` requests/sec, `13.8ms` p50,
 `30.2ms` p99, and the JSON artifact confirmed no raw synthetic credential was
 stored. This remains a host-control fixture only, archived as
-`benchmarks/mitm-local/control_host_direct_c64_model_credential_1.0.1780954707_arm64.json`.
+`benchmarks/mock-server-protocol/control_host_direct_c64_model_credential_1.0.1780954707_arm64.json`.
 
 ## DNS Load
 

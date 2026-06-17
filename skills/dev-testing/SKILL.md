@@ -75,7 +75,7 @@ not just checking dpkg output.
 
 ## Mock server boundary
 
-`scripts/mock_server_runtime.py` is the single reusable local fixture server for
+`scripts/mock_server_impl.py` is the single reusable local fixture server for
 benchmarks, doctor, protocol recording/replay, gateway/integration tests, and
 Ironbank. It owns mock protocol responses and deterministic local upstream
 behavior. Tests may contract it through `scripts/mock_server.py`,

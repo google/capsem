@@ -2,7 +2,7 @@
   "version": "0.3.0",
   "timestamp": 1780770405.9584372,
   "hostname": "Saphyr.local",
-  "mitm_local": {
+  "mock_server_protocol": {
     "version": "1.0",
     "base_url": "http://127.0.0.1:50233",
     "total_requests": 20,
@@ -183,8 +183,8 @@
   },
   "run_context": {
     "kind": "host_direct_control",
-    "note": "Direct host-to-capsem-debug-upstream control baseline; not through VM/MITM.",
-    "command": "PYTHONPATH=guest/artifacts uv run --with rich --with requests python -m capsem_bench mitm-local http://127.0.0.1:50233 20 1",
+    "note": "Direct host-to-mock-server control baseline; not through VM/MITM.",
+    "command": "PYTHONPATH=guest/artifacts uv run --with rich --with requests python -m capsem_bench mock-server-protocol http://127.0.0.1:50233 20 1",
     "arch": "arm64",
     "archived_at_unix": 1780770446.31937
   }

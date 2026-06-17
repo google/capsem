@@ -14,7 +14,7 @@ from typing import Any
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-MOCK_SERVER_BINARY = PROJECT_ROOT / "scripts" / "mock_server_runtime.py"
+MOCK_SERVER_BINARY = PROJECT_ROOT / "scripts" / "mock_server_impl.py"
 MOCK_SERVER_ADDR = "127.0.0.1:3713"
 MOCK_SERVER_LOCK = Path(tempfile.gettempdir()) / "capsem-mock-server-3713.lock"
 
@@ -98,7 +98,7 @@ def start_mock_server(
 ) -> tuple[subprocess.Popen[str], dict[str, Any]]:
     if not MOCK_SERVER_BINARY.exists():
         raise FileNotFoundError(
-            f"{MOCK_SERVER_BINARY} not found; restore scripts/mock_server_runtime.py"
+            f"{MOCK_SERVER_BINARY} not found; restore scripts/mock_server_impl.py"
         )
     lock_file = _acquire_lock(addr, timeout_s=timeout_s)
     deadline = time.monotonic() + timeout_s

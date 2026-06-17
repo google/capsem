@@ -60,6 +60,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a release compliance gate for SBOM, OBOM, and build-ledger evidence,
   clarifying that OBOMs describe base VM images while build ledgers remain
   debug evidence.
+- Renamed the private mock-server implementation and benchmark artifact
+  directory so release tests and docs refer to the single reusable
+  mock-server/protocol rail instead of retired MITM-local wording.
 - Exposed model request/response/tool-call validity facts in serialized
   security events so route JSON matches the first-party CEL model facts used
   by enforcement.

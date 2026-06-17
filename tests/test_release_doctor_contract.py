@@ -151,7 +151,7 @@ def test_release_scripts_use_shared_mock_server_helper() -> None:
 def test_mock_server_is_the_only_hermetic_fixture_server_contract() -> None:
     current_files = [
         PROJECT_ROOT / "scripts" / "mock_server.py",
-        PROJECT_ROOT / "scripts" / "mock_server_runtime.py",
+        PROJECT_ROOT / "scripts" / "mock_server_impl.py",
         PROJECT_ROOT / "tests" / "helpers" / "mock_server.py",
         PROJECT_ROOT / "guest" / "artifacts" / "capsem_bench" / "__main__.py",
         PROJECT_ROOT / "guest" / "artifacts" / "capsem_bench" / "helpers.py",

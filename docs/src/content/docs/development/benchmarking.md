@@ -166,8 +166,8 @@ capsem-bench dns-load 64 5
 Host-side benchmark artifacts can be validated and rendered with:
 
 ```bash
-uv run scripts/benchmark_report.py benchmarks/mcp-load/baseline.json benchmarks/dns-load/baseline.json benchmarks/mitm-local/control_host_direct_c64_model_credential_1.0.1780954707_arm64.json
-uv run --with matplotlib scripts/benchmark_report.py benchmarks/mcp-load/baseline.json benchmarks/dns-load/baseline.json benchmarks/mitm-local/control_host_direct_c64_model_credential_1.0.1780954707_arm64.json --plot benchmarks/load_baseline_report.png
+uv run scripts/benchmark_report.py benchmarks/mcp-load/baseline.json benchmarks/dns-load/baseline.json benchmarks/mock-server-protocol/control_host_direct_c64_model_credential_1.0.1780954707_arm64.json
+uv run --with matplotlib scripts/benchmark_report.py benchmarks/mcp-load/baseline.json benchmarks/dns-load/baseline.json benchmarks/mock-server-protocol/control_host_direct_c64_model_credential_1.0.1780954707_arm64.json --plot benchmarks/load_baseline_report.png
 ```
 
 ### Snapshot operations (`snapshot`)

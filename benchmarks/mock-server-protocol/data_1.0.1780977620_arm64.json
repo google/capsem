@@ -1,8 +1,8 @@
 {
   "version": "0.3.0",
   "timestamp": 1781017070.0901988,
-  "hostname": "mitm-local-166cc9a8",
-  "mitm_local": {
+  "hostname": "mock-server-protocol-166cc9a8",
+  "mock_server_protocol": {
     "version": "1.0",
     "base_url": "http://127.0.0.1:3713",
     "total_requests": 50000,
