@@ -28,8 +28,8 @@ pytestmark = pytest.mark.serial
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 RELEASE_PROTOCOL_SCENARIOS = ("model_json_response", "credential_response")
-RELEASE_PROTOCOL_REQUESTS = 1_000
-RELEASE_PROTOCOL_CONCURRENCY = 32
+RELEASE_PROTOCOL_REQUESTS = 50_000
+RELEASE_PROTOCOL_CONCURRENCY = 64
 
 
 def _project_version():

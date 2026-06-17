@@ -1,8 +1,12 @@
 import copy
+import importlib.util
+from pathlib import Path
 
 import pytest
 
 from helpers.benchmark_gates import validate_capsem_bench_result
+
+PROJECT_ROOT = Path(__file__).parent.parent
 
 
 def _valid_result():
@@ -165,6 +169,19 @@ def _valid_result():
 
 def test_validate_capsem_bench_result_accepts_healthy_result():
     validate_capsem_bench_result(_valid_result())
+
+
+def test_release_protocol_benchmark_uses_release_scale():
+    spec = importlib.util.spec_from_file_location(
+        "test_capsem_bench_baseline",
+        PROJECT_ROOT / "tests" / "capsem-serial" / "test_capsem_bench_baseline.py",
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    assert module.RELEASE_PROTOCOL_REQUESTS >= 50_000
+    assert module.RELEASE_PROTOCOL_CONCURRENCY == 64
 
 
 @pytest.mark.parametrize(

@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a dedicated Ironbank Codex CLI ledger gate that runs direct Codex and
   `ollama launch codex` through the VM profile and proves the model, tool,
   file, credential, and security ledger path.
+- Added fresh 1.3 release benchmark artifacts and docs for the VM-path
+  mock-server protocol, lifecycle, fork, disk, and EROFS/LZ4HC performance
+  gates.
 - Added an Ironbank mock-server contract proving the single reusable local
   mock server serves the HTTP, HTTPS/SSE, DNS, OAuth, MCP, OpenAI, Anthropic,
   Gemini/AGY, and Ollama fixture surfaces used by release gates.

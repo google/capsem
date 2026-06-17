@@ -44,21 +44,20 @@ CLI startup checks, so use them for rootfs comparisons and use doctor output
 for boot-regression gates.
 
 Historically, the two heaviest boot stages were network rule setup and Python
-virtualenv creation. The 1.3 network lane moved NAT setup to `iptables-nft`; a
-fresh network benchmark must be rerun on the final nft lane before publishing
-network-grade numbers.
+virtualenv creation. The 1.3 network lane moved NAT setup to `iptables-nft`;
+the current release benchmark below was recorded after that lane landed.
 
 ## Disk I/O
 
-Scratch disk performance on the VirtioFS-backed workspace from the previous
-host benchmark artifact:
+Scratch disk performance on the VirtioFS-backed workspace from the current
+release benchmark artifact:
 
 | Test | Throughput | IOPS | Duration |
 |------|-----------:|-----:|---------:|
-| Sequential write (1MB blocks) | 1,854 MB/s | - | 138ms |
-| Sequential read (1MB blocks) | 3,754 MB/s | - | 68ms |
-| Random 4K write (fdatasync) | 33 MB/s | 8,353 | 1,197ms |
-| Random 4K read | 279 MB/s | 71,440 | 140ms |
+| Sequential write (1MB blocks) | 2,111 MB/s | - | 121ms |
+| Sequential read (1MB blocks) | 4,139 MB/s | - | 62ms |
+| Random 4K write (fdatasync) | 30 MB/s | 7,752 | 1,290ms |
+| Random 4K read | 195 MB/s | 49,900 | 200ms |
 
 Sequential I/O benefits from VirtioFS pass-through to APFS. Random write IOPS
 are limited by per-write `fdatasync`, which reflects worst-case
@@ -68,21 +67,21 @@ database-style writes.
 
 Release network proof uses the shared `mock_server`, not public internet. The
 current VM artifact is
-`benchmarks/capsem-bench/data_1.3.1781205836_arm64.json` and was recorded
+`benchmarks/capsem-bench/data_1.3.1781720230_arm64.json` and was recorded
 through the profile-selected VM path against local HTTP, JSON model,
 credential-shaped, and WebSocket control fixtures.
 
 | Scenario | Success | Requests/sec | p50 | p99 |
 |---|---:|---:|---:|---:|
-| HTTP tiny response | 50/50 | 1,886.9 | 1.9ms | 8.3ms |
-| JSON model response | 1,000/1,000 | 2,810.4 | 8.8ms | 27.5ms |
-| credential-shaped response | 1,000/1,000 | 1,524.9 | 11.0ms | 64.9ms |
+| HTTP tiny response | 50/50 | 1,637.3 | 2.2ms | 9.3ms |
+| JSON model response | 50,000/50,000 | 2,336.5 | 24.0ms | 75.5ms |
+| credential-shaped response | 50,000/50,000 | 1,424.7 | 37.5ms | 133.0ms |
 
-WebSocket control fixture: echo `10` frames at `1,454.6` frames/sec with
-`0.2ms` p50 and `2.6ms` p99 latency; close control frame completed in `5.9ms`
+WebSocket control fixture: echo `10` frames at `560.0` frames/sec with
+`0.2ms` p50 and `3.2ms` p99 latency; close control frame completed in `3.9ms`
 p50/p99.
 
-Historical release-scale local fixture artifact:
+Previous release-scale local fixture artifact:
 `benchmarks/mock-server-protocol/data_1.3.1781205836_arm64.json`.
 
 | Scenario | Success | Requests/sec | p50 | p99 |
@@ -147,11 +146,11 @@ provision/exec/delete cycles on the same service instance.
 
 | Operation | Min | Mean | Max | Description |
 |-----------|----:|-----:|----:|-------------|
-| provision | 1,032.6ms | 1,034.3ms | 1,035.9ms | Create and boot a temporary VM |
-| exec_ready | 12.6ms | 12.8ms | 13.0ms | First ready check after provisioning |
-| exec | 10.3ms | 11.5ms | 12.3ms | Simple `echo ok` on running VM |
-| delete | 59.5ms | 60.8ms | 62.0ms | VM teardown request |
-| total | 1,115.1ms | 1,119.4ms | 1,121.8ms | Full lifecycle loop |
+| provision | 1,083.8ms | 1,084.7ms | 1,086.1ms | Create and boot a temporary VM |
+| exec_ready | 11.8ms | 12.3ms | 12.7ms | First ready check after provisioning |
+| exec | 9.6ms | 13.2ms | 18.1ms | Simple `echo ok` on running VM |
+| delete | 59.5ms | 61.0ms | 62.5ms | VM teardown request |
+| total | 1,167.0ms | 1,171.1ms | 1,175.6ms | Full lifecycle loop |
 
 Run:
 
@@ -165,10 +164,10 @@ Host-side latency for fork and boot-from-image over 3 cycles.
 
 | Metric | Min | Mean | Max | Gate | Description |
 |--------|----:|-----:|----:|-----:|-------------|
-| fork | 38.0ms | 40.5ms | 43.3ms | 500ms | APFS clonefile of rootfs overlay and workspace |
+| fork | 32.5ms | 36.1ms | 39.7ms | 500ms | APFS clonefile of rootfs overlay and workspace |
 | image_size | 11.8MB | 11.8MB | 11.8MB | 12MB | Actual allocated blocks |
-| boot_provision | 930.6ms | 948.6ms | 983.8ms | 1,200ms | Clone image into new session and boot |
-| boot_ready | 12.3ms | 12.6ms | 13.1ms | 1,200ms | First ready check after provisioning |
+| boot_provision | 936.9ms | 974.9ms | 996.1ms | 1,200ms | Clone image into new session and boot |
+| boot_ready | 11.3ms | 12.6ms | 13.7ms | 1,200ms | First ready check after provisioning |
 
 Run:
 
