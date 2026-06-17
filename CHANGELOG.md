@@ -65,6 +65,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stage, version, mode, detection level, counters, latency, and broker
   capabilities, while credential inventory uses provider/last-seen/counts
   instead of exposing raw BLAKE references as the primary identity.
+- Added service-side snapshot and DbWriter contract coverage proving snapshot
+  status/list routes are file/IPC-backed, ignore toxic `session.db` rows, and
+  keep per-session SQLite writes on the capsem-process `DbWriter` rail.
 - Added a session dashboard route gate proving defunct and incompatible
   sessions remain delete-only across list/status/info/resume/delete routes,
   and cleaned frontend session wording checks so stale VM labels cannot hide in
