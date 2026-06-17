@@ -38,6 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sessions.
 
 ### Changed (route surfaces and diagnostics)
+- Fixed installed asset cleanup so `manifest-origin.json` survives service
+  startup, preserving manifest origin/hash reporting while profile asset
+  readiness and `capsem update --assets` hydrate through the hash-named asset
+  rail.
 - Tightened the TUI session contract so profile launch options come only from
   `/profiles/list`, no fallback profile is synthesized from stale session
   rows, and user-facing TUI controls say sessions rather than VMs.

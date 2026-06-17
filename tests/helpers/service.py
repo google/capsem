@@ -192,9 +192,10 @@ def _rotate_artifacts(root, keep):
 class ServiceInstance:
     """A running capsem-service instance on an isolated socket."""
 
-    def __init__(self):
+    def __init__(self, *, assets_dir: Path | None = None):
         self.tmp_dir = Path(tempfile.mkdtemp(prefix="capsem-test-"))
         self.uds_path = self.tmp_dir / f"service-{uuid.uuid4().hex[:8]}.sock"
+        self.assets_dir = assets_dir
         self.profiles_dir = None
         self.proc = None
         self._log_file = None
@@ -206,8 +207,7 @@ class ServiceInstance:
         sign_binary(GATEWAY_BINARY)
         sign_binary(TRAY_BINARY)
 
-        arch = "arm64" if os.uname().machine == "arm64" else "x86_64"
-        assets_dir = ASSETS_DIR / arch
+        assets_dir = self.assets_dir or ASSETS_DIR
         if self.profiles_dir is None:
             self.profiles_dir = materialize_test_profiles(self.tmp_dir)
         if not self.profiles_dir.exists():

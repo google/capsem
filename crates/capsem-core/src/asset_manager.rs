@@ -483,7 +483,11 @@ where
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
 
-        if name_str == "manifest.json" || name_str.starts_with('.') || name_str.ends_with(".tmp") {
+        if name_str == "manifest.json"
+            || name_str == "manifest-origin.json"
+            || name_str.starts_with('.')
+            || name_str.ends_with(".tmp")
+        {
             continue;
         }
 
@@ -1425,6 +1429,27 @@ mod tests {
         assert!(base.join("vmlinuz-a65f925ebe0b0cc7").exists());
         assert!(!base.join("vmlinuz-deadbeef12345678").exists());
         assert!(base.join("manifest.json").exists());
+    }
+
+    #[test]
+    fn cleanup_preserves_manifest_origin_provenance() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+
+        std::fs::write(base.join("manifest.json"), SAMPLE_V2_MANIFEST).unwrap();
+        std::fs::write(
+            base.join("manifest-origin.json"),
+            br#"{"schema":"capsem.manifest_origin.v1","origin":"package"}"#,
+        )
+        .unwrap();
+        std::fs::write(base.join("rootfs-deadbeef12345678.erofs"), b"stale").unwrap();
+
+        let m = ManifestV2::from_json(SAMPLE_V2_MANIFEST).unwrap();
+        let removed = cleanup_unused_assets(base, &m).unwrap();
+
+        assert_eq!(removed, vec![base.join("rootfs-deadbeef12345678.erofs")]);
+        assert!(base.join("manifest.json").exists());
+        assert!(base.join("manifest-origin.json").exists());
     }
 
     #[test]
