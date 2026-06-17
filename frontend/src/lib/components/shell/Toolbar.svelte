@@ -219,7 +219,7 @@
           <!-- Status line -->
           <div class="border-t border-dropdown-border my-1"></div>
           <div class="flex items-center gap-x-2 px-3 py-1.5">
-            <span class="size-1.5 rounded-full {gatewayStore.connected ? 'bg-green-500' : gatewayStore.reachable ? 'bg-amber-500' : 'bg-red-500'}"></span>
+            <span class="size-1.5 rounded-full {gatewayStore.connected ? 'bg-primary' : gatewayStore.reachable ? 'bg-warning' : 'bg-destructive'}"></span>
             <span class="text-xs text-muted-foreground">
               {#if gatewayStore.connected}
                 Gateway {gatewayStore.version ?? ''} -- {vmStore.serviceStatus === 'running' ? `${vmStore.vms.length} session${vmStore.vms.length !== 1 ? 's' : ''}` : vmStore.serviceStatus === 'unavailable' ? 'service down' : 'service unknown'}

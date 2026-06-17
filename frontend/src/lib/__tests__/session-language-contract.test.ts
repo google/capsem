@@ -49,6 +49,15 @@ describe('user-facing session language contract', () => {
     expect(toolbar).not.toContain('VM Logs');
   });
 
+  it('uses semantic tokens for toolbar status chrome', () => {
+    expect(toolbar).toContain("'bg-primary'");
+    expect(toolbar).toContain("'bg-warning'");
+    expect(toolbar).toContain("'bg-destructive'");
+    expect(toolbar).not.toContain('bg-green-');
+    expect(toolbar).not.toContain('bg-amber-');
+    expect(toolbar).not.toContain('bg-red-');
+  });
+
   it('uses session wording in stats subtitles', () => {
     expect(stats).toContain('Session {vmId} database');
     expect(stats).not.toContain('VM {vmId} session database');

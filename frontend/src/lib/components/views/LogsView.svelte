@@ -89,7 +89,7 @@
 
   const levelClasses: Record<string, string> = {
     info: 'bg-primary/10 text-primary',
-    warn: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+    warn: 'bg-warning/10 text-warning',
     error: 'bg-destructive/10 text-destructive',
   };
 </script>
