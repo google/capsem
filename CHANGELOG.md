@@ -55,6 +55,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed gateway forwarding for session snapshot status/list routes and added
   route-contract coverage so the stats UI reads snapshot state through the
   explicit service route instead of hitting a gateway 404.
+- Added service-level plugin route contract coverage so profile plugin list,
+  info, edit, credential-broker detail, retry, and unknown-plugin responses
+  prove the typed pre/post/logging stage surface through UDS.
 - Added a session dashboard route gate proving defunct and incompatible
   sessions remain delete-only across list/status/info/resume/delete routes,
   and cleaned frontend session wording checks so stale VM labels cannot hide in
