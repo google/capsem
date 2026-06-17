@@ -6,6 +6,7 @@
 //! `&ServiceState` and moving it now would force `ServiceState` out of
 //! `main.rs` too -- that's the next sprint's job.
 
+use std::io::Read;
 use std::sync::Mutex;
 
 use axum::http::StatusCode;
@@ -70,13 +71,66 @@ pub fn identify_file_sync(
 ) -> (String, String, String, bool) {
     let mut session = magika.lock().unwrap();
     match session.identify_file_sync(path) {
-        Ok(ft) => extract_magika_info(&ft),
+        Ok(ft) => normalize_file_type(path, extract_magika_info(&ft)),
         Err(_) => (
             "unknown".into(),
             "application/octet-stream".into(),
             "unknown".into(),
             false,
         ),
+    }
+}
+
+fn normalize_file_type(
+    path: &std::path::Path,
+    detected: (String, String, String, bool),
+) -> (String, String, String, bool) {
+    let (label, mime, group, is_text) = detected;
+    if is_text || mime != "application/octet-stream" {
+        return (label, mime, group, is_text);
+    }
+    if has_plain_text_extension(path) && file_looks_utf8(path) {
+        return ("text".into(), "text/plain".into(), "text".into(), true);
+    }
+    (label, mime, group, is_text)
+}
+
+fn has_plain_text_extension(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| {
+            matches!(
+                ext.to_ascii_lowercase().as_str(),
+                "txt"
+                    | "text"
+                    | "md"
+                    | "markdown"
+                    | "log"
+                    | "json"
+                    | "toml"
+                    | "yaml"
+                    | "yml"
+                    | "csv"
+                    | "tsv"
+                    | "sh"
+                    | "py"
+                    | "js"
+                    | "ts"
+                    | "rs"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn file_looks_utf8(path: &std::path::Path) -> bool {
+    let mut file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(_) => return false,
+    };
+    let mut buf = Vec::with_capacity(8192);
+    match file.by_ref().take(8192).read_to_end(&mut buf) {
+        Ok(_) => std::str::from_utf8(&buf).is_ok(),
+        Err(_) => false,
     }
 }
 
@@ -220,10 +274,31 @@ mod tests {
         f.write_all(b"plain text content\n").unwrap();
         drop(f);
         let session = test_magika();
-        let (label, _mime, _group, is_text) = identify_file_sync(&session, &txt);
+        let (label, mime, _group, is_text) = identify_file_sync(&session, &txt);
         assert!(
             is_text,
             "ASCII text not recognized as text, got label={label}"
+        );
+        assert_eq!(mime, "text/plain");
+    }
+
+    #[test]
+    fn identify_file_sync_uses_extension_and_utf8_fallback_for_small_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let txt = dir.path().join("tiny.txt");
+        std::fs::write(&txt, b"x\n").unwrap();
+        let detected = normalize_file_type(
+            &txt,
+            (
+                "unknown".into(),
+                "application/octet-stream".into(),
+                "unknown".into(),
+                false,
+            ),
+        );
+        assert_eq!(
+            detected,
+            ("text".into(), "text/plain".into(), "text".into(), true)
         );
     }
 }

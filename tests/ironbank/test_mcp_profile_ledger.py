@@ -46,7 +46,6 @@ EXPECTED_MCP_TOOL_FIELDS = {
     "server_name",
     "annotations",
     "pin_hash",
-    "approved",
     "pin_changed",
     "permission_action",
     "permission_source",

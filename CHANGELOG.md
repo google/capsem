@@ -108,6 +108,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `file`, `process`, `ip`, `tcp`, and `udp` facts, default rules include
   unknown-model and unknown-MCP detections, and provider endpoint aliases are
   rejected in favor of explicit `allowed_remote_targets`.
+- Fixed Ironbank route contracts for MCP tools and file listings so profile
+  MCP routes assert the current permission-action shape and `.txt` uploads are
+  reported deterministically as text/plain instead of Magika-dependent
+  octet-stream.
 - Strengthened `/vms/create` and `/vms/{id}/resume` responses so provision
   routes return the session profile ID, lifecycle state, persistence bit,
   resumability, and valid action enum list alongside the VM ID and UDS path.

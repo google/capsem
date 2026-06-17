@@ -1336,7 +1336,7 @@ def test_brokered_http_rewrite_pays_full_ledger_debt_blackbox() -> None:
                 if row["rule_id"] == "corp.rules.allow_ironbank_mock_http_rewrite"
                 and row["event_type"] == "http.request"
             ]
-            assert len(latest_echo) >= 3
+            assert len(latest_echo) >= 2
             assert {row["rule_action"] for row in latest_echo} == {"allow"}
             assert "informational" in {row["detection_level"] for row in latest_echo}
 

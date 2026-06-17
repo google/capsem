@@ -69,7 +69,6 @@ EXPECTED_MCP_TOOL_FIELDS = {
     "server_name",
     "annotations",
     "pin_hash",
-    "approved",
     "pin_changed",
     "permission_action",
     "permission_source",
@@ -272,7 +271,6 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
             assert tool["server_name"] == "local"
             assert tool["namespaced_name"] == f"local__{tool_name}"
             assert tool["description"]
-            assert isinstance(tool["approved"], bool)
             assert tool["pin_changed"] is False
             assert tool["permission_action"] in {"allow", "ask", "block", "disable"}
             assert tool["permission_source"]
