@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added fresh 1.3 release benchmark artifacts and docs for the VM-path
   mock-server protocol, lifecycle, fork, disk, and EROFS/LZ4HC performance
   gates.
+- Added benchmark report output for sample counts, error rates, and a generated
+  1.3 release latency/throughput graph.
 - Added an Ironbank mock-server contract proving the single reusable local
   mock server serves the HTTP, HTTPS/SSE, DNS, OAuth, MCP, OpenAI, Anthropic,
   Gemini/AGY, and Ollama fixture surfaces used by release gates.

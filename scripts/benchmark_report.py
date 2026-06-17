@@ -151,13 +151,15 @@ def print_markdown(series: list[LoadSeries]) -> None:
 def print_count_markdown(series: list[CountSeries]) -> None:
     if not series:
         return
-    print("| source | bench | scenario | c | success | failed | rps | p50 ms | p99 ms |")
-    print("|---|---:|---|---:|---:|---:|---:|---:|---:|")
+    print("| source | bench | scenario | c | sample_count | success | failed | error_rate | rps | p50 ms | p99 ms |")
+    print("|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|")
     for item in series:
         for row in item.scenarios:
+            error_rate = (row.failed / row.total_requests) * 100
             print(
                 f"| {item.source} | {item.name} | {row.name} | {row.concurrency} | "
-                f"{row.successful}/{row.total_requests} | {row.failed} | "
+                f"{row.total_requests} | {row.successful}/{row.total_requests} | "
+                f"{row.failed} | {error_rate:.3f}% | "
                 f"{row.requests_per_sec:.1f} | {row.latency_ms.p50:.3f} | "
                 f"{row.latency_ms.p99:.3f} |"
             )

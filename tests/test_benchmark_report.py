@@ -99,6 +99,39 @@ def test_benchmark_report_extracts_mock_server_protocol_count_series(tmp_path):
     assert series[0].scenarios[0].latency_ms.p99 == 30.7
 
 
+def test_benchmark_report_prints_sample_count_and_error_rate(tmp_path, capsys):
+    module = _load_module()
+    artifact = tmp_path / "mock-server-protocol.json"
+    artifact.write_text(json.dumps({
+        "mock_server_protocol": {
+            "scenarios": [{
+                "name": "model_json_response",
+                "total_requests": 50000,
+                "concurrency": 64,
+                "successful": 49990,
+                "failed": 10,
+                "requests_per_sec": 4321.8,
+                "latency_ms": {
+                    "min": 0.3,
+                    "max": 49.3,
+                    "mean": 14.7,
+                    "p50": 13.9,
+                    "p95": 25.0,
+                    "p99": 30.7,
+                },
+            }],
+        },
+    }))
+
+    module.print_count_markdown(module.load_count_series([artifact]))
+
+    out = capsys.readouterr().out
+    assert "sample_count" in out
+    assert "error_rate" in out
+    assert "50000" in out
+    assert "0.020%" in out
+
+
 def test_benchmark_report_rejects_invalid_rows(tmp_path):
     module = _load_module()
     artifact = tmp_path / "bad.json"
