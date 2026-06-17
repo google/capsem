@@ -34,7 +34,6 @@ class TestFileIO:
         resp = client.post(f"/vms/{name}/files/read", {"path": "/root/empty.txt"})
         assert resp.get("content") == ""
 
-    @pytest.mark.skip(reason="slow, team will fix")
     def test_large(self, ready_vm):
         """1MB payload roundtrip."""
         client, name = ready_vm
@@ -43,7 +42,6 @@ class TestFileIO:
         resp = client.post(f"/vms/{name}/files/read", {"path": "/root/large.txt"})
         assert resp.get("content") == text
 
-    @pytest.mark.skip(reason="slow, team will fix")
     def test_overwrite(self, ready_vm):
         client, name = ready_vm
         client.post(f"/vms/{name}/files/write", {"path": "/root/ow.txt", "content": "first"})
@@ -51,7 +49,6 @@ class TestFileIO:
         resp = client.post(f"/vms/{name}/files/read", {"path": "/root/ow.txt"})
         assert resp.get("content") == "second"
 
-    @pytest.mark.skip(reason="slow, team will fix")
     def test_nested_path(self, ready_vm):
         client, name = ready_vm
         client.post(f"/vms/{name}/exec", {"command": "mkdir -p /root/deep/nested"})

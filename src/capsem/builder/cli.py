@@ -77,7 +77,7 @@ def validate_skills(skills_dir: str, json_output: bool) -> None:
 
 
 @cli.command()
-@click.argument("guest_dir", default="guest", type=click.Path(exists=False))
+@click.argument("guest_dir", default="config/docker/image", type=click.Path(exists=False))
 @click.option("--arch", default=None, help="Build for a single architecture only.")
 @click.option("--output", "output_dir", default="target/linux-agent", type=click.Path(),
               help="Output directory for agent binaries.")

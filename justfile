@@ -415,7 +415,7 @@ test: _bootstrap _install-tools _clean-stale _pnpm-install _generate-settings _c
     # arch compiles cleanly against musl, so a cross-arch regression surfaces
     # before the Docker-based cross-compile at Stage 7.
     echo "=== Cross-compile agent (both arches) ==="
-    uv run capsem-builder agent
+    uv run capsem-builder agent config/docker/image
 
     # ---- Stage 3: Rust tests + coverage -------------------------------------
     # Threshold is 65, not 100. Some files (uninstall, completions) are intentionally
@@ -1392,7 +1392,7 @@ _pack-initrd:
     fi
     if [ "$NEED_BUILD" = "true" ]; then
         echo "=== Cross-compile agent ==="
-        uv run capsem-builder agent --arch "$arch"
+        uv run capsem-builder agent config/docker/image --arch "$arch"
         echo ""
     else
         echo "=== Agent binaries up to date, skipping cross-compile ==="

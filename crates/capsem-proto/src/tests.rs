@@ -934,8 +934,8 @@ fn all_guest_variants_fit() {
 // -------------------------------------------------------------------
 
 #[test]
-fn max_frame_size_is_256kb() {
-    assert_eq!(max_frame_size(), 262_144);
+fn max_frame_size_is_2mib() {
+    assert_eq!(max_frame_size(), 2 * 1024 * 1024);
 }
 
 // -------------------------------------------------------------------
@@ -1006,12 +1006,12 @@ fn boot_config_zero_epoch() {
 }
 
 #[test]
-fn large_file_write_fits_in_frame() {
-    // A 200KB file should fit in the 256KB frame.
+fn one_mib_file_write_fits_in_frame() {
+    // The service file API promises a 1 MiB guest write round trip.
     let msg = HostToGuest::FileWrite {
         id: 1,
         path: "/workspace/ca-bundle.crt".into(),
-        data: vec![0x41; 200_000],
+        data: vec![0x41; 1_000_000],
         mode: 0o644,
     };
     let frame = encode_host_msg(&msg).unwrap();
@@ -1019,6 +1019,22 @@ fn large_file_write_fits_in_frame() {
     assert!(
         payload_len <= MAX_FRAME_SIZE as usize,
         "FileWrite payload is {payload_len} bytes, exceeds max {MAX_FRAME_SIZE}"
+    );
+}
+
+#[test]
+fn one_mib_file_content_fits_in_frame() {
+    // The service file API promises a 1 MiB guest read round trip.
+    let msg = GuestToHost::FileContent {
+        id: 1,
+        path: "/workspace/ca-bundle.crt".into(),
+        data: vec![0x41; 1_000_000],
+    };
+    let frame = encode_guest_msg(&msg).unwrap();
+    let payload_len = frame.len() - 4;
+    assert!(
+        payload_len <= MAX_FRAME_SIZE as usize,
+        "FileContent payload is {payload_len} bytes, exceeds max {MAX_FRAME_SIZE}"
     );
 }
 

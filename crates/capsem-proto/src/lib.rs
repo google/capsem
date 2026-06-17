@@ -21,9 +21,12 @@ use std::path::Path;
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
-/// Maximum size of a single control message frame (256KB).
-/// Generous buffer for large payloads like CA bundles and file writes.
-pub const MAX_FRAME_SIZE: u32 = 262_144;
+/// Maximum size of a single control message frame (2 MiB).
+///
+/// The service file API supports a 1 MiB black-box round trip through the
+/// guest control channel. Keep this bounded, but large enough that legitimate
+/// file import/export requests do not tear down the agent control stream.
+pub const MAX_FRAME_SIZE: u32 = 2 * 1024 * 1024;
 
 /// Maximum number of env vars allowed during boot handshake.
 pub const MAX_BOOT_ENV_VARS: usize = 128;

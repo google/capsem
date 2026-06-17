@@ -218,6 +218,15 @@ class TestParseToml:
             parse_toml(f)
 
 
+def test_load_guest_config_accepts_current_image_config_dir():
+    cfg = load_guest_config(PROJECT_ROOT / "config" / "docker" / "image")
+
+    assert "arm64" in cfg.build.architectures
+    assert cfg.build.architectures["arm64"].rust_target == "aarch64-unknown-linux-musl"
+    assert "x86_64" in cfg.build.architectures
+    assert cfg.profile_root_seed is False
+
+
 # ---------------------------------------------------------------------------
 # load_guest_config -- minimal
 # ---------------------------------------------------------------------------

@@ -53,7 +53,6 @@ class TestExec:
         resp = client.post(f"/vms/{name}/exec", {"command": "uname -s"})
         assert "Linux" in resp.get("stdout", "")
 
-    @pytest.mark.skip(reason="slow, team will fix")
     def test_timeout(self, ready_vm):
         """A command exceeding timeout should be killed and return an error."""
         client, name = ready_vm
@@ -62,7 +61,13 @@ class TestExec:
             {"command": "sleep 120", "timeout_secs": 2},
             timeout=10,
         )
-        assert resp is None or resp.get("exit_code", 0) != 0 or "timeout" in str(resp).lower()
+        message = str(resp).lower()
+        assert (
+            resp is None
+            or resp.get("exit_code", 0) != 0
+            or "timeout" in message
+            or "timed out" in message
+        )
 
     def test_exec_nonexistent_vm(self, service_env):
         client = service_env.client()

@@ -116,6 +116,24 @@ def test_agent_uses_profile_materialized_architecture(tmp_path: Path) -> None:
     assert cross_compile.call_args.args[0] == "aarch64-unknown-linux-musl"
 
 
+def test_agent_defaults_to_current_image_config() -> None:
+    arch = SimpleNamespace(rust_target="aarch64-unknown-linux-musl")
+    config = SimpleNamespace(build=SimpleNamespace(architectures={"arm64": arch}))
+
+    runner = CliRunner()
+    with (
+        patch("capsem.builder.cli.load_guest_config", return_value=config) as load_config,
+        patch("capsem.builder.docker.cross_compile_agent") as cross_compile,
+        patch("os.uname", return_value=SimpleNamespace(machine="arm64")),
+    ):
+        result = runner.invoke(cli, ["agent", "--arch", "arm64"])
+
+    assert result.exit_code == 0
+    load_config.assert_called_once_with(Path("config/docker/image"))
+    cross_compile.assert_called_once()
+    assert cross_compile.call_args.args[0] == "aarch64-unknown-linux-musl"
+
+
 TRIVY_JSON_FIXTURE = json.dumps({
     "Results": [{
         "Target": "test",
@@ -182,4 +200,3 @@ def test_audit_no_input_fails() -> None:
 
     assert result.exit_code != 0
     assert "no input" in result.output
-

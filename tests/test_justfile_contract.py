@@ -11,3 +11,5 @@ def test_justfile_does_not_expose_legacy_guest_dir_knob() -> None:
 
     assert "--guest-dir" not in justfile
     assert "capsem-builder build guest" not in justfile
+    assert "capsem-builder agent config/docker/image" in justfile
+    assert "capsem-builder agent --arch" not in justfile

@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Fixed the service file API control-channel contract so 1 MiB file
+  read/write round trips no longer tear down the guest agent stream, and
+  restored the initrd repack path to build guest agents from
+  `config/docker/image` instead of the removed `guest/config` tree.
 - Fixed `capsem stop` and other service-control commands so they stay pure
   local control operations and no longer start the background update/network
   refresh before dispatch.

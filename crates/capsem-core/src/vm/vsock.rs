@@ -125,8 +125,8 @@ mod tests {
     }
 
     #[test]
-    fn max_frame_size_is_256kb() {
-        assert_eq!(max_frame_size(), 262_144);
+    fn max_frame_size_is_2mib() {
+        assert_eq!(max_frame_size(), 2 * 1024 * 1024);
     }
 
     // -----------------------------------------------------------------------

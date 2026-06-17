@@ -89,11 +89,21 @@ def _load_vm_environment(config_dir: Path) -> VmEnvironmentConfig:
     return VmEnvironmentConfig.model_validate(data["environment"])
 
 
+def _resolve_config_dir(guest_dir: Path) -> Path:
+    materialized = guest_dir / "config"
+    if (materialized / "build.toml").is_file():
+        return materialized
+    if (guest_dir / "build.toml").is_file():
+        return guest_dir
+    return materialized
+
+
 def load_guest_config(guest_dir: Path) -> GuestImageConfig:
-    """Parse an admin-materialized backend image workspace.
+    """Parse an admin-materialized workspace or image config directory.
 
     Args:
-        guest_dir: Path to the generated workspace containing config/.
+        guest_dir: Path to a generated workspace containing config/, or to the
+            current image config directory containing build.toml.
 
     Returns:
         GuestImageConfig with all parsed and validated config.
@@ -102,7 +112,7 @@ def load_guest_config(guest_dir: Path) -> GuestImageConfig:
         FileNotFoundError: If config/build.toml is missing (required).
         pydantic.ValidationError: If any TOML file fails validation.
     """
-    config_dir = guest_dir / "config"
+    config_dir = _resolve_config_dir(guest_dir)
     profile_root = guest_dir / "profile-root"
     profile_build = guest_dir / "profile-build.sh"
     return GuestImageConfig(
