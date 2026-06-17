@@ -15,6 +15,22 @@ fn sched(session: &Path) -> AutoSnapshotScheduler {
     AutoSnapshotScheduler::new(session.to_path_buf(), 3, 4, Duration::from_secs(300))
 }
 
+#[test]
+fn scheduler_prefers_real_guest_workspace_over_compat_symlink() {
+    let tmp = tempfile::tempdir().unwrap();
+    let session = tmp.path();
+    std::fs::create_dir_all(session.join("guest/workspace")).unwrap();
+    std::fs::create_dir_all(session.join("guest/system")).unwrap();
+    std::fs::create_dir_all(session.join("auto_snapshots")).unwrap();
+    std::os::unix::fs::symlink("guest/workspace", session.join("workspace")).unwrap();
+    std::os::unix::fs::symlink("guest/system", session.join("system")).unwrap();
+
+    let s = sched(session);
+
+    assert_eq!(s.workspace_dir(), session.join("guest/workspace"));
+    assert_eq!(s.system_dir(), session.join("guest/system"));
+}
+
 fn workspace_entries(workspace: &Path) -> Vec<String> {
     let mut entries = walkdir::WalkDir::new(workspace)
         .follow_links(false)

@@ -243,6 +243,23 @@ def test_node_execution(output_dir):
     assert data["node"] is True
 
 
+def test_zstd_roundtrip_works(output_dir):
+    """zstd must compress and decompress bytes without changing content."""
+    payload = output_dir / "zstd_payload.txt"
+    compressed = output_dir / "zstd_payload.txt.zst"
+    restored = output_dir / "zstd_payload.roundtrip.txt"
+    payload.write_text("capsem-zstd-ok\n" * 64)
+
+    result = run(f"zstd -q -f {payload} -o {compressed}", timeout=15)
+    assert result.returncode == 0, f"zstd compress failed: {result.stdout}\n{result.stderr}"
+    assert compressed.exists(), f"{compressed} not created"
+
+    result = run(f"zstd -q -d -f {compressed} -o {restored}", timeout=15)
+    assert result.returncode == 0, f"zstd decompress failed: {result.stdout}\n{result.stderr}"
+    result = run(f"cmp {payload} {restored}")
+    assert result.returncode == 0, f"zstd roundtrip changed bytes: {result.stdout}\n{result.stderr}"
+
+
 def test_git_workflow(output_dir):
     """Git can init, configure, commit, and show log."""
     repo = output_dir / "git_test_repo"

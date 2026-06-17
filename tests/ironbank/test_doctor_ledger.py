@@ -216,7 +216,12 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
         stdout = exec_resp.get("stdout", "")
         stderr = exec_resp.get("stderr", "")
         output = stdout + stderr
-        assert exec_resp.get("exit_code") == 0, exec_resp
+        assert exec_resp.get("exit_code") == 0, (
+            f"capsem-doctor failed with exit {exec_resp.get('exit_code')}\n"
+            f"STDOUT:\n{stdout}\n"
+            f"STDERR:\n{stderr}\n"
+            f"response keys={sorted(exec_resp)}"
+        )
         assert "failed" not in output.lower()
         assert "capsem_test_oauth_access_0123456789abcdef" not in output
         assert "capsem_test_openai_api_key" not in output

@@ -267,7 +267,7 @@ def test_tls_cert_from_capsem_ca():
 # ---------------------------------------------------------------
 
 
-def test_curl_https_with_skip_verify():
+def test_curl_https_without_system_ca_validation():
     """curl through the local HTTP MITM rail must get a deterministic response."""
     local_url = _require_local_mock_url("/tiny", "local HTTP curl smoke")
     result = run(f"curl -sSI --connect-timeout 10 {local_url} 2>&1", timeout=20)
@@ -431,9 +431,9 @@ def test_local_http_gzip_decompression_path():
         f"unexpected decoded gzip byte count: {result.stdout}"
 
 
-def test_local_http_slow_chunk_stream():
+def test_local_http_delayed_chunk_stream():
     """Chunked response streaming must complete through the local MITM rail."""
-    local_url = _require_local_mock_url("/slow-chunks", "local chunk smoke")
+    local_url = _require_local_mock_url("/delayed-chunks", "local chunk smoke")
     result = run(
         f"curl -sS --connect-timeout 5 {local_url}",
         timeout=15,

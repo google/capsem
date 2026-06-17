@@ -62,6 +62,7 @@ fn pending_disconnect_errors_are_emitted_once_with_original_ids() {
         PendingRequest {
             json_id: Value::from(7),
             method: Some("tools/call".to_string()),
+            snapshot_revert_path: None,
         },
     );
     pending.insert(
@@ -69,6 +70,7 @@ fn pending_disconnect_errors_are_emitted_once_with_original_ids() {
         PendingRequest {
             json_id: Value::String("abc".to_string()),
             method: Some("resources/list".to_string()),
+            snapshot_revert_path: None,
         },
     );
 
@@ -156,4 +158,57 @@ fn large_json_line_preserved() {
     let lines: Vec<String> = buf.lines().map(|l| l.unwrap()).collect();
     assert_eq!(lines.len(), 1);
     assert!(lines[0].len() > 100_000);
+}
+
+#[test]
+fn extracts_snapshot_revert_path_from_tool_call() {
+    let line = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"snapshots_revert","arguments":{"path":"/root/poem.md","checkpoint":"cp-0"}}}"#;
+
+    assert_eq!(
+        extract_snapshot_revert_path(line).as_deref(),
+        Some("/root/poem.md")
+    );
+}
+
+#[test]
+fn extracts_namespaced_snapshot_revert_path_from_tool_call() {
+    let line = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"local__snapshots_revert","arguments":{"path":"poem.md","checkpoint":"cp-0"}}}"#;
+
+    assert_eq!(
+        extract_snapshot_revert_path(line).as_deref(),
+        Some("poem.md")
+    );
+}
+
+#[test]
+fn ignores_non_snapshot_tool_calls_for_guest_side_effects() {
+    let line = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"fetch_http","arguments":{"url":"https://example.com"}}}"#;
+
+    assert!(extract_snapshot_revert_path(line).is_none());
+}
+
+#[test]
+fn snapshot_delete_response_must_be_successful_deleted_action() {
+    let ok = br#"{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"{\"reverted\":true,\"action\":\"deleted\"}"}]}}"#;
+    let restored = br#"{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"{\"reverted\":true,\"action\":\"restored\"}"}]}}"#;
+    let error = br#"{"jsonrpc":"2.0","id":1,"error":{"code":-32603,"message":"nope"}}"#;
+
+    assert!(response_reports_snapshot_delete(ok));
+    assert!(!response_reports_snapshot_delete(restored));
+    assert!(!response_reports_snapshot_delete(error));
+}
+
+#[test]
+fn normalizes_guest_snapshot_paths_under_root_only() {
+    assert_eq!(
+        normalize_guest_snapshot_path("nested/file.txt").unwrap(),
+        std::path::PathBuf::from("/root/nested/file.txt")
+    );
+    assert_eq!(
+        normalize_guest_snapshot_path("/root/poem.md").unwrap(),
+        std::path::PathBuf::from("/root/poem.md")
+    );
+    assert!(normalize_guest_snapshot_path("../escape").is_none());
+    assert!(normalize_guest_snapshot_path("/etc/passwd").is_none());
+    assert!(normalize_guest_snapshot_path("bad\0path").is_none());
 }

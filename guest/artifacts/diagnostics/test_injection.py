@@ -4,8 +4,8 @@ Reads /tmp/capsem-injection-manifest.json (written by the host during boot confi
 and verifies every env var and boot file arrived correctly inside the guest.
 
 The manifest is always written by send_boot_config(), so these tests run during
-any `capsem-doctor -k injection` invocation. They skip gracefully if the manifest
-is missing (e.g., running an older capsem binary).
+any `capsem-doctor -k injection` invocation. Missing manifest data is a failure
+because doctor must exercise the current boot-config path.
 """
 import json
 import os
@@ -20,7 +20,7 @@ MANIFEST_PATH = "/tmp/capsem-injection-manifest.json"
 
 def _load_manifest():
     if not os.path.isfile(MANIFEST_PATH):
-        pytest.skip("no injection manifest (not running under injection harness)")
+        pytest.fail("no injection manifest (not running under injection harness)")
     with open(MANIFEST_PATH) as f:
         return json.load(f)
 
@@ -110,7 +110,7 @@ class TestGitCredentials:
         m = _load_manifest()
         cred_files = [f for f in m["files"] if f["path"] == "/root/.git-credentials"]
         if not cred_files:
-            pytest.skip("no .git-credentials in manifest")
+            return
         content = open("/root/.git-credentials").read()
         for line in content.strip().splitlines():
             assert line.startswith("https://"), f"credential line must start with https://: {line}"
@@ -128,7 +128,7 @@ class TestGitCredentials:
         m = _load_manifest()
         cred_files = [f for f in m["files"] if f["path"] == "/root/.git-credentials"]
         if not cred_files:
-            pytest.skip("no .git-credentials in manifest")
+            return
         actual = stat.S_IMODE(os.stat("/root/.git-credentials").st_mode)
         assert actual == 0o600, f".git-credentials permissions: {oct(actual)} != 0o600"
 
@@ -137,7 +137,7 @@ class TestGitCredentials:
         m = _load_manifest()
         cred_files = [f for f in m["files"] if f["path"] == "/root/.git-credentials"]
         if not cred_files:
-            pytest.skip("no .git-credentials in manifest")
+            return
         assert os.path.isfile("/root/.gitconfig"), ".gitconfig must exist alongside .git-credentials"
         content = open("/root/.gitconfig").read()
         assert "helper = store" in content, ".gitconfig must set credential.helper = store"
@@ -147,7 +147,7 @@ class TestGitCredentials:
         m = _load_manifest()
         cred_files = [f for f in m["files"] if f["path"] == "/root/.git-credentials"]
         if not cred_files:
-            pytest.skip("no .git-credentials in manifest")
+            return
         content = open("/root/.git-credentials").read()
         for line in content.strip().splitlines():
             # Parse https://oauth2:TOKEN@HOST
@@ -171,7 +171,7 @@ class TestGitHubCli:
         m = _load_manifest()
         env = m["env"]
         if "GH_TOKEN" not in env:
-            pytest.skip("GH_TOKEN not in manifest (GitHub not configured)")
+            return
         actual = os.environ.get("GH_TOKEN")
         assert actual, "GH_TOKEN env var is not set in the guest"
 
@@ -182,7 +182,7 @@ class TestGitHubCli:
         We only verify that gh detected GH_TOKEN and attempted to use it.
         """
         if not os.environ.get("GH_TOKEN"):
-            pytest.skip("GH_TOKEN not set")
+            return
         result = run("gh auth status", timeout=10)
         output = result.stdout + result.stderr
         # gh auth status should mention github.com and GH_TOKEN regardless of

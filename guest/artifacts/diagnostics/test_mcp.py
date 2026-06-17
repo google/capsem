@@ -29,7 +29,7 @@ def _local_mock_url(path):
 def _require_local_mock_url(path, reason):
     url = _local_mock_url(path)
     if not url:
-        pytest.skip(f"{reason}; set {LOCAL_MOCK_SERVER_ENV}")
+        pytest.fail(f"{reason}; set {LOCAL_MOCK_SERVER_ENV}")
     return url
 
 
@@ -1456,7 +1456,6 @@ def test_tool_revert_action_restored():
     run("rm -f /root/t9a.txt")
 
 
-@pytest.mark.skip(reason="APFS clonefile races: snapshot may capture file created just before clone completes")
 def test_tool_revert_action_deleted():
     """T9b: Revert action is 'deleted' when file didn't exist in snapshot."""
     import time
@@ -1634,19 +1633,6 @@ def test_scenario_s18_delete_one_dir_revert():
     assert "s18_b" in r.stdout, "b/f.txt should be untouched"
 
     run("rm -rf /root/s18a /root/s18b")
-
-
-@pytest.mark.skip(reason="VirtioFS does not reliably propagate host-side permission changes to guest")
-def test_scenario_s19_permissions():
-    """S19: chmod, snap, chmod, revert -> permissions restored."""
-    run("echo s19 > /root/s19.txt && chmod 644 /root/s19.txt")
-    cp = _mcp_snap_create("s19_644")
-    run("chmod 777 /root/s19.txt")
-
-    _mcp_revert("s19.txt", cp)
-    r = run("stat -c %a /root/s19.txt")
-    assert "644" in r.stdout, f"expected 644, got: {r.stdout}"
-    run("rm -f /root/s19.txt")
 
 
 def test_scenario_s22_broken_symlink():

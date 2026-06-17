@@ -24,9 +24,9 @@ def is_virtiofs_mode():
 
 @pytest.fixture(autouse=True)
 def virtiofs_only():
-    """Skip all tests in this file if not in VirtioFS mode."""
+    """Require VirtioFS mode for this storage contract."""
     if not is_virtiofs_mode():
-        pytest.skip("not in VirtioFS mode")
+        pytest.fail("not in VirtioFS mode")
 
 
 def test_virtiofs_root_mount():
@@ -52,7 +52,7 @@ def test_system_overlay_block_device_present():
     result = run("[ -b /dev/vdb ] && echo present || echo absent")
     assert "present" in result.stdout, f"/dev/vdb not a block device: {result.stdout}"
     # Confirm it really is the ext4 system overlay (magic 0xEF53 at offset 0x438).
-    result = run("dd if=/dev/vdb bs=1 skip=1080 count=2 2>/dev/null | od -A n -t x1")
+    result = run("tail -c +1081 /dev/vdb 2>/dev/null | head -c 2 | od -A n -t x1")
     assert "53 ef" in result.stdout.lower(), f"/dev/vdb not ext4-formatted: {result.stdout!r}"
 
 

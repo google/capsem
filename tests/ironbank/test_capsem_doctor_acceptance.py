@@ -14,6 +14,8 @@ from pathlib import Path
 
 
 DOCTOR_LEDGER = Path(__file__).with_name("test_doctor_ledger.py")
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DIAGNOSTICS_DIR = PROJECT_ROOT / "guest" / "artifacts" / "diagnostics"
 
 
 def test_capsem_doctor_gate_is_backed_by_full_ledger_proof() -> None:
@@ -59,3 +61,34 @@ def test_capsem_doctor_gate_is_backed_by_full_ledger_proof() -> None:
     presence_only = "presence" + " only"
     for forbidden in [dashdash_fast, smoke_only, presence_only]:
         assert forbidden not in source
+
+
+def test_capsem_doctor_guest_diagnostics_keep_functional_package_manager_proof() -> None:
+    runtimes = (DIAGNOSTICS_DIR / "test_runtimes.py").read_text(encoding="utf-8")
+
+    expected_proofs = [
+        "test_pip_install_works",
+        "pip install --no-index",
+        "capsem-pip-ok",
+        "test_uv_pip_install_works",
+        "uv pip install --python /root/.venv/bin/python",
+        "capsem-uv-wheel-ok",
+        "test_npm_install_global_works",
+        "npm install -g file:",
+        "capsem-npm-ok",
+        "test_npm_install_local_works",
+        "node -e 'const pkg = require",
+        "Works",
+        "test_apt_install_works",
+        "apt-get install -y -qq",
+        "capsem-apt-ok",
+        "test_node_execution",
+        "JSON.stringify({node: true",
+        "test_zstd_roundtrip_works",
+        "zstd -q -f",
+        "zstd -q -d -f",
+        "cmp ",
+    ]
+
+    for proof in expected_proofs:
+        assert proof in runtimes, proof

@@ -68,7 +68,7 @@ def test_mock_server_serves_slow_chunks_alias_for_doctor() -> None:
     proc = None
     try:
         proc, ready = start_mock_server()
-        with urlopen(f"{ready['base_url']}/slow-chunks", timeout=2) as response:
+        with urlopen(f"{ready['base_url']}/delayed-chunks", timeout=2) as response:
             body = response.read().decode()
             assert response.status == 200
             assert response.headers["content-type"] == "text/plain; charset=utf-8"

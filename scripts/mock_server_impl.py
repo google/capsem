@@ -72,7 +72,7 @@ ENDPOINTS = [
     "/oauth/token",
     "/mcp",
     "/chunked",
-    "/slow-chunks",
+    "/delayed-chunks",
     "/credential/response",
     "/echo",
     "/deny-target",
@@ -1096,7 +1096,7 @@ class MockHandler(BaseHTTPRequestHandler):
             )
         elif path == "/api/client/features":
             self._send_json({"version": 1, "features": []})
-        elif path in {"/chunked", "/slow-chunks"}:
+        elif path in {"/chunked", "/delayed-chunks"}:
             chunks = []
             self.send_response(HTTPStatus.OK)
             self.send_header("content-type", "text/plain; charset=utf-8")

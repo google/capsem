@@ -3,20 +3,31 @@
 import json
 import os
 import re
+from urllib.parse import urlsplit
 
 import pytest
 
 from conftest import run
 
-PUBLIC_NETWORK_SMOKE_ENV = "CAPSEM_RUN_PUBLIC_NETWORK_SMOKE"
+LOCAL_MOCK_SERVER_ENV = "CAPSEM_MOCK_SERVER_BASE_URL"
 SECRET_PATTERN = re.compile(
     r"(sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9_]{20,}|AIza[0-9A-Za-z_-]{20,})"
 )
 
 
-def _require_public_network_smoke(reason):
-    if os.environ.get(PUBLIC_NETWORK_SMOKE_ENV) != "1":
-        pytest.skip(f"{reason}; set {PUBLIC_NETWORK_SMOKE_ENV}=1")
+def _require_local_mock_url(path, reason):
+    base_url = os.environ.get(LOCAL_MOCK_SERVER_ENV)
+    if not base_url:
+        pytest.fail(f"{reason}; set {LOCAL_MOCK_SERVER_ENV}")
+    url = f"{base_url.rstrip('/')}/{path.lstrip('/')}"
+    parsed = urlsplit(url)
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    if parsed.scheme == "http" and port not in (80, 3128, 3713, 8080, 11434):
+        pytest.fail(
+            f"{reason}; local mock server port {port} is outside the "
+            "default HTTP upstream allowlist"
+        )
+    return url
 
 
 @pytest.mark.parametrize("cli", ["claude", "gemini", "codex"])
@@ -126,17 +137,16 @@ def test_antigravity_profile_config_seeded_without_credentials():
     assert not SECRET_PATTERN.search(json.dumps(settings, sort_keys=True))
 
 
-def test_google_ai_domain_allowed():
-    """Google AI domain must be reachable through the MITM proxy."""
-    _require_public_network_smoke("public Google AI domain smoke")
+def test_google_ai_local_fixture_allowed():
+    """Google AI-shaped local fixture must be reachable through the MITM proxy."""
+    local_url = _require_local_mock_url("/tiny", "local Google AI fixture smoke")
     result = run(
-        "curl -sI --connect-timeout 10 https://generativelanguage.googleapis.com 2>&1",
+        f"curl -sI --connect-timeout 10 {local_url} 2>&1",
         timeout=20,
     )
-    # TLS handshake should succeed, HTTP response received (even if 404/401)
     assert result.returncode == 0, (
-        f"Google AI domain should be allowed: {result.stdout}\n{result.stderr}"
+        f"local Google AI fixture should be allowed: {result.stdout}\n{result.stderr}"
     )
     assert "HTTP/" in result.stdout, (
-        f"no HTTP response from Google AI domain: {result.stdout}"
+        f"no HTTP response from local Google AI fixture: {result.stdout}"
     )

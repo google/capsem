@@ -502,7 +502,12 @@ async fn main() -> Result<()> {
     let (scheduler, workspace_dir) = match std::env::var("CAPSEM_SESSION_DIR") {
         Ok(session_dir) => {
             let session_path = PathBuf::from(&session_dir);
-            let ws = session_path.join("workspace");
+            let guest_ws = capsem_core::guest_share_dir(&session_path).join("workspace");
+            let ws = if guest_ws.exists() {
+                guest_ws
+            } else {
+                session_path.join("workspace")
+            };
             if ws.exists() {
                 let sched = AutoSnapshotScheduler::new(
                     session_path,

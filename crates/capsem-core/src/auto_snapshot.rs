@@ -95,11 +95,21 @@ impl AutoSnapshotScheduler {
     }
 
     fn workspace_dir(&self) -> PathBuf {
-        self.session_dir.join("workspace")
+        let guest_workspace = crate::guest_share_dir(&self.session_dir).join("workspace");
+        if guest_workspace.exists() {
+            guest_workspace
+        } else {
+            self.session_dir.join("workspace")
+        }
     }
 
     fn system_dir(&self) -> PathBuf {
-        self.session_dir.join("system")
+        let guest_system = crate::guest_share_dir(&self.session_dir).join("system");
+        if guest_system.exists() {
+            guest_system
+        } else {
+            self.session_dir.join("system")
+        }
     }
 
     fn ensure_snapshot_storage_outside_workspace(&self) -> anyhow::Result<()> {

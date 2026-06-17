@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added strict capsem-doctor Ironbank acceptance checks for functional package
+  manager proof, hermetic doctor fixtures, and no retired escape markers in the
+  installed diagnostic suite.
 - Added bootstrap and Justfile contract tests that prove release gates keep
   checking project skills, site structure, profile-owned asset materialization,
   ruff/ty/skill validation, and retired escape-path names.
@@ -47,6 +50,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   preserving a short interactive flush deadline.
 
 ### Fixed (session lifecycle)
+- Fixed MCP snapshot reverts that reported `action: deleted` through the tool
+  result while leaving the created file visible inside the guest workspace.
 - Fixed stale persistent sessions whose preserved boot logs show overlayfs
   `Stale file handle` / kernel panic failures so they are reconciled as
   `Defunct`, cannot be resumed, keep the original boot-failure reason in

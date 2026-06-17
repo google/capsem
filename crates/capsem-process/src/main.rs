@@ -336,7 +336,7 @@ async fn run_async_main_loop(
     ));
 
     // Start host file monitor to record fs_events.
-    let workspace_dir = session_dir.join("workspace");
+    let workspace_dir = capsem_core::guest_share_dir(&session_dir).join("workspace");
     match capsem_core::fs_monitor::FsMonitor::start(
         workspace_dir.clone(),
         workspace_dir.clone(),

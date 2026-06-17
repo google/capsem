@@ -951,12 +951,17 @@ pub fn handle_revert_file_with_security_event(
     } else {
         // File was created after checkpoint -- delete it.
         action = "deleted";
-        if current_file.exists() {
+        if current_exists {
             if let Err(e) = std::fs::remove_file(&current_file) {
                 return (
                     JsonRpcResponse::err(request_id, -32603, format!("failed to delete file: {e}")),
                     None,
                 );
+            }
+            if let Some(parent) = current_file.parent() {
+                if let Ok(dir) = std::fs::File::open(parent) {
+                    let _ = dir.sync_all();
+                }
             }
         }
     }

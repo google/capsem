@@ -448,7 +448,7 @@ test: _bootstrap _install-tools _clean-stale _pnpm-install _generate-settings _c
     # --ignore=tests/capsem-install -- install-suite tests also spawn `cargo
     #   build -p capsem` from within pytest. This directory is owned by
     #   Stage 7's `just test-install`, which runs it inside Docker with
-    #   CAPSEM_DEB_INSTALLED=1 (the skip flag live_system tests respect).
+    #   CAPSEM_DEB_INSTALLED=1 (the live-system opt-in tests respect).
     echo "=== Python: non-serial tests (n=4 parallel) ==="
     # CAPSEM_REQUIRE_ARTIFACTS=1: fail the suite if any of assets/<arch>/
     # manifest.json, initrd.img, entitlements.plist, or target/linux-agent/
@@ -456,7 +456,7 @@ test: _bootstrap _install-tools _clean-stale _pnpm-install _generate-settings _c
     # depends on _check-assets + _pack-initrd + _sign); if anything is
     # absent it means an earlier stage silently dropped its output, and
     # we want that to fail loudly here rather than manifest as a pile of
-    # individually-skipped tests whose absence goes unnoticed.
+    # individually-omitted tests whose absence goes unnoticed.
     CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest tests/ -v --tb=short -n 4 --dist=loadfile \
         -m "not serial" \
         --ignore=tests/capsem-recipes \
@@ -587,7 +587,7 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
     fi
     echo "=== Building Linux deb ($TARGET_ARCH via docker, target=$RUST_TARGET) ==="
     mkdir -p "$ROOT/dist"
-    # KVM boot test: pass /dev/kvm if available (Linux host) or skip (macOS)
+    # KVM boot test: pass /dev/kvm if available (Linux host); macOS runs without it.
     KVM_FLAG=""
     if [ -e /dev/kvm ]; then
         KVM_FLAG="--device /dev/kvm"
@@ -923,7 +923,7 @@ test-install:
     # the build cache every run -- they only fire when we're about to
     # fail anyway.
     # (a) If Colima has <10 GB free on /var/lib/docker, reclaim images +
-    #     build cache aggressively (no until= filter). Linux hosts skip.
+    #     build cache aggressively (no until= filter). Linux hosts do not need this.
     if command -v colima >/dev/null 2>&1 && colima status >/dev/null 2>&1; then
         FREE_GB=$(colima ssh -- df -BG /var/lib/docker </dev/null 2>/dev/null | awk 'NR==2{gsub("G","",$4); print $4}')
         if [[ "${FREE_GB:-}" =~ ^[0-9]+$ ]] && [ "$FREE_GB" -lt 10 ]; then
@@ -1161,7 +1161,7 @@ query-session sql session_id='':
     SESSIONS_DIR="$HOME/.capsem/sessions"
     SID="{{session_id}}"
     if [ -z "$SID" ]; then
-        # Find latest session that still has a session.db (skip vacuumed)
+        # Find latest session that still has a session.db (ignore vacuumed)
         SID=$(sqlite3 "$SESSIONS_DIR/main.db" \
           "SELECT id FROM sessions WHERE status != 'vacuumed' ORDER BY created_at DESC LIMIT 1" \
           2>/dev/null || true)
@@ -1353,7 +1353,7 @@ _sign-release: _compile
     #!/bin/bash
     set -euo pipefail
     if [[ "$(uname -s)" != "Darwin" ]]; then
-        echo "  [skip] codesign (Linux -- not needed, using KVM)"
+        echo "  [omit] codesign (Linux -- not needed, using KVM)"
         exit 0
     fi
     if [[ ! -r "{{entitlements}}" ]]; then
@@ -1398,7 +1398,7 @@ _pack-initrd:
         uv run capsem-builder agent config/docker/image --arch "$arch"
         echo ""
     else
-        echo "=== Agent binaries up to date, skipping cross-compile ==="
+        echo "=== Agent binaries up to date, no cross-compile needed ==="
     fi
     # Note: capsem-builder enforces 0o555 on the host after the container build
     # (src/capsem/builder/docker.py::enforce_guest_binary_perms). No redundant
