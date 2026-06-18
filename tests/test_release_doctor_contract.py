@@ -259,6 +259,36 @@ def test_runtime_credential_store_does_not_use_native_keychain() -> None:
     assert "default_credential_store_path()" in broker
 
 
+def test_installer_codesigns_helpers_with_stable_identifiers() -> None:
+    """Dev/package helper signatures must not get hash-derived identities.
+
+    Hash-derived ad-hoc identifiers make macOS authorization prompts repeat
+    after every rebuild. The installed helper binaries use stable Capsem
+    identifiers even when the signing identity is ad-hoc in local/dev builds.
+    """
+
+    postinstall = (PROJECT_ROOT / "scripts" / "pkg-scripts" / "postinstall").read_text()
+    simulate_install = (PROJECT_ROOT / "scripts" / "simulate-install.sh").read_text()
+    expected = [
+        "org.capsem.cli",
+        "org.capsem.service",
+        "org.capsem.process",
+        "org.capsem.tui",
+        "org.capsem.mcp",
+        "org.capsem.mcp.aggregator",
+        "org.capsem.mcp.builtin",
+        "org.capsem.gateway",
+        "org.capsem.tray",
+        "org.capsem.admin",
+    ]
+
+    for script in [postinstall, simulate_install]:
+        assert "codesign_identifier_for_bin()" in script
+        assert "codesign --sign - --identifier \"$identifier\"" in script
+        for identifier in expected:
+            assert identifier in script
+
+
 def test_desktop_shell_does_not_run_native_updater_or_background_https_check() -> None:
     """The GUI must not perform hidden native updater HTTPS work on startup.
 

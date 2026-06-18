@@ -200,4 +200,7 @@ def test_simulate_install_codesigns_macho_binaries_on_macos(tmp_path: Path) -> N
     log = log_path.read_text()
     assert "--entitlements" in log
     assert str(PROJECT_ROOT / "entitlements.plist") in log
+    assert "--identifier org.capsem.process" in log
+    assert "--identifier org.capsem.service" in log
+    assert "--identifier org.capsem.tui" in log
     assert str(capsem_home / "bin" / "capsem-process") in log

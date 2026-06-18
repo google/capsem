@@ -63,6 +63,22 @@ for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-mcp
     chmod 755 "$INSTALL_DIR/$bin"
 done
 
+codesign_identifier_for_bin() {
+    case "$(basename "$1")" in
+        capsem) echo "org.capsem.cli" ;;
+        capsem-service) echo "org.capsem.service" ;;
+        capsem-process) echo "org.capsem.process" ;;
+        capsem-tui) echo "org.capsem.tui" ;;
+        capsem-mcp) echo "org.capsem.mcp" ;;
+        capsem-mcp-aggregator) echo "org.capsem.mcp.aggregator" ;;
+        capsem-mcp-builtin) echo "org.capsem.mcp.builtin" ;;
+        capsem-gateway) echo "org.capsem.gateway" ;;
+        capsem-tray) echo "org.capsem.tray" ;;
+        capsem-admin) echo "org.capsem.admin" ;;
+        *) return 1 ;;
+    esac
+}
+
 # Codesign real macOS Mach-O binaries with Virtualization entitlements. Fake
 # shell-script binaries used by install tests are intentionally skipped.
 if [[ "$(uname -s)" == "Darwin" ]]; then
@@ -74,7 +90,8 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
                 echo "ERROR: entitlements.plist not found at $ENTITLEMENTS" >&2
                 exit 1
             fi
-            codesign --sign - --entitlements "$ENTITLEMENTS" --force "$bin"
+            identifier="$(codesign_identifier_for_bin "$bin")"
+            codesign --sign - --identifier "$identifier" --entitlements "$ENTITLEMENTS" --force "$bin"
         fi
     done
 fi

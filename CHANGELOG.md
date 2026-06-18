@@ -63,6 +63,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Fixed package and simulated installs to ad-hoc sign helper binaries with
+  stable `org.capsem.*` identifiers, preventing rebuilds from producing
+  hash-derived macOS code identities that can trigger repeated authorization
+  prompts.
 - Fixed the dev service/install asset rail so local service starts materialize
   a real installed-style assets directory and profile catalog instead of
   symlinking `~/.capsem/assets` to the worktree, preventing stale profile pins
