@@ -99,6 +99,65 @@ fn rejects_null_bytes() {
     assert!(validate_vm_id("vm\0id").is_err());
 }
 
+// --- terminal relay batching ---
+
+#[test]
+fn text_relay_batch_merges_until_the_size_cap_then_flushes() {
+    let mut pending = None;
+
+    assert!(queue_text_batch(&mut pending, String::new()).is_none());
+    assert!(pending.is_none(), "empty text frames must be ignored");
+    assert!(queue_text_batch(&mut pending, "ab".to_string()).is_none());
+    assert!(queue_text_batch(&mut pending, "cd".to_string()).is_none());
+    assert_text_batch(&pending, "abcd");
+
+    let fill = "x".repeat(TERMINAL_RELAY_BATCH_MAX_BYTES - 4);
+    let flushed = queue_text_batch(&mut pending, fill).expect("batch should flush at cap");
+    let expected = "abcd".to_string() + &"x".repeat(TERMINAL_RELAY_BATCH_MAX_BYTES - 4);
+    assert_text_batch(&Some(flushed), &expected);
+    assert!(
+        pending.is_none(),
+        "full text batch should leave no pending frame"
+    );
+}
+
+#[test]
+fn binary_relay_batch_merges_until_the_size_cap_then_flushes() {
+    let mut pending = None;
+
+    assert!(queue_binary_batch(&mut pending, Vec::new()).is_none());
+    assert!(pending.is_none(), "empty binary frames must be ignored");
+    assert!(queue_binary_batch(&mut pending, vec![1, 2]).is_none());
+    assert!(queue_binary_batch(&mut pending, vec![3, 4]).is_none());
+    assert_binary_batch(&pending, &[1, 2, 3, 4]);
+
+    let fill = vec![9; TERMINAL_RELAY_BATCH_MAX_BYTES - 4];
+    let flushed = queue_binary_batch(&mut pending, fill).expect("batch should flush at cap");
+    let mut expected = vec![1, 2, 3, 4];
+    expected.extend(std::iter::repeat_n(9, TERMINAL_RELAY_BATCH_MAX_BYTES - 4));
+    assert_binary_batch(&Some(flushed), &expected);
+    assert!(
+        pending.is_none(),
+        "full binary batch should leave no pending frame"
+    );
+}
+
+#[test]
+fn relay_batch_flushes_when_frame_type_changes() {
+    let mut pending = None;
+
+    assert!(queue_text_batch(&mut pending, "hello".to_string()).is_none());
+    let flushed = queue_binary_batch(&mut pending, vec![1, 2, 3])
+        .expect("binary frame should flush pending text first");
+    assert_text_batch(&Some(flushed), "hello");
+    assert_binary_batch(&pending, &[1, 2, 3]);
+
+    let flushed = queue_text_batch(&mut pending, "world".to_string())
+        .expect("text frame should flush pending binary first");
+    assert_binary_batch(&Some(flushed), &[1, 2, 3]);
+    assert_text_batch(&pending, "world");
+}
+
 // --- terminal_uds_path ---
 
 #[test]
@@ -876,4 +935,18 @@ async fn websocket_relay_sends_close_frame_on_uds_failure() {
     }
 
     sh.abort();
+}
+
+fn assert_text_batch(batch: &Option<TerminalRelayBatch>, expected: &str) {
+    match batch {
+        Some(TerminalRelayBatch::Text(text)) => assert_eq!(text, expected),
+        _ => panic!("expected text relay batch"),
+    }
+}
+
+fn assert_binary_batch(batch: &Option<TerminalRelayBatch>, expected: &[u8]) {
+    match batch {
+        Some(TerminalRelayBatch::Binary(bytes)) => assert_eq!(bytes, expected),
+        _ => panic!("expected binary relay batch"),
+    }
 }
