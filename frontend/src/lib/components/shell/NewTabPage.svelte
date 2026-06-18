@@ -441,20 +441,8 @@
               {/if}
             </span>
             <span class="min-w-0 flex-1">
-              <span class="flex items-center justify-between gap-x-3">
+              <span class="flex items-center gap-x-3">
                 <span class="text-sm font-semibold text-foreground truncate">{launcher.profile.name}</span>
-                <span class="shrink-0 inline-flex items-center gap-x-1 text-xs font-medium {ready ? 'text-primary' : 'text-muted-foreground-1'}" aria-label={profileAssetText(launcher.assets)}>
-                  {#if busy}
-                    <CircleNotch size={14} class="animate-spin" />
-                    {launcher.creating ? 'Creating' : launcher.ensuring || launcher.assets?.downloading ? 'Downloading' : 'Checking'}
-                  {:else if ready}
-                    <BracketsAngle size={14} />
-                    Start
-                  {:else}
-                    <DownloadSimple size={14} />
-                    Download
-                  {/if}
-                </span>
               </span>
               <span class="block text-xs text-muted-foreground-1 mt-1 line-clamp-2">{launcher.profile.description}</span>
               <span class="block text-[11px] text-muted-foreground-2 mt-2">{launcher.error ?? profileAssetText(launcher.assets)}</span>

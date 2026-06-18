@@ -69,6 +69,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed the retired top-level gateway `/status.assets` payload and added an
   Ironbank route guard so profile asset readiness can only come from
   profile-owned asset routes.
+- Fixed profile launcher cards so missing-asset and ready states expose one
+  route-owned action row instead of duplicating `Download`/`Start` in the card
+  header and footer.
 - Fixed package, Debian, and simulated installs so retired per-user config
   artifacts are removed before the service starts, keeping profile/corp/config
   ownership on the 1.3 rails.

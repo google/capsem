@@ -47,6 +47,12 @@ describe('user-facing session language contract', () => {
     expect(dashboard).not.toContain('vmStore.showCreateModal = true');
   });
 
+  it('does not duplicate profile actions in the card header and footer', () => {
+    expect(dashboard).toContain("title={ready ? `New ${launcher.profile.name} session` : profileAssetText(launcher.assets)}");
+    expect(dashboard).not.toContain('aria-label={profileAssetText(launcher.assets)}');
+    expect(dashboard).not.toContain('Start</span>');
+  });
+
   it('uses sessions in toolbar controls and keeps build stamp out of visible chrome', () => {
     expect(toolbar).toContain('Session Logs');
     expect(toolbar).toContain('session');
