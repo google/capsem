@@ -58,6 +58,19 @@ def test_install_e2e_materializes_config_before_repacking_package() -> None:
     assert "just _materialize-config" not in block
 
 
+def test_ci_materializes_runtime_profiles_after_generating_settings() -> None:
+    workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
+
+    generate_pos = workflow.find("bash scripts/generate-settings.sh")
+    materialize_pos = workflow.find("bash scripts/materialize-config.sh")
+    python_pos = workflow.find("Python schema tests with coverage")
+
+    assert generate_pos != -1
+    assert materialize_pos != -1
+    assert python_pos != -1
+    assert generate_pos < materialize_pos < python_pos
+
+
 def test_install_e2e_generates_manifest_through_admin_rail() -> None:
     script = (PROJECT_ROOT / "scripts" / "prepare-install-test-assets.sh").read_text()
 

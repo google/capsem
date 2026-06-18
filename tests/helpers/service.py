@@ -35,6 +35,9 @@ ARTIFACT_SKIP_NAMES = frozenset({
 })
 ARTIFACT_MAX_KEPT_DIRS = 20  # rotate: keep only the N most-recent failure dirs
 
+def _contains_profile_toml(profiles_dir: Path) -> bool:
+    return any(path.name == "profile.toml" for path in profiles_dir.glob("*/profile.toml"))
+
 
 def materialize_test_profiles(tmp_dir: Path) -> Path:
     """Copy generated runtime profiles into a test run directory.
@@ -45,10 +48,20 @@ def materialize_test_profiles(tmp_dir: Path) -> Path:
     """
     profiles_dir = tmp_dir / "config" / "profiles"
     if profiles_dir.exists():
+        if not _contains_profile_toml(profiles_dir):
+            raise RuntimeError(
+                f"generated profile directory contains no profile.toml: {profiles_dir}. "
+                "Run `just _materialize-config` or a just recipe that depends on it."
+            )
         return profiles_dir
     if not PROFILES_DIR.exists():
         raise RuntimeError(
             f"generated profile directory missing: {PROFILES_DIR}. "
+            "Run `just _materialize-config` or a just recipe that depends on it."
+        )
+    if not _contains_profile_toml(PROFILES_DIR):
+        raise RuntimeError(
+            f"generated profile directory contains no profile.toml: {PROFILES_DIR}. "
             "Run `just _materialize-config` or a just recipe that depends on it."
         )
     shutil.copytree(PROFILES_DIR, profiles_dir)
