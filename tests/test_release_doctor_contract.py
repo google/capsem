@@ -27,6 +27,18 @@ def _recipe_block(name: str) -> str:
     return "\n".join(lines[start:end])
 
 
+def _workflow_job_block(name: str) -> str:
+    lines = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text().splitlines()
+    start = next(i for i, line in enumerate(lines) if line == f"  {name}:")
+    end = len(lines)
+    for i in range(start + 1, len(lines)):
+        line = lines[i]
+        if line.startswith("  ") and not line.startswith("    ") and line.endswith(":"):
+            end = i
+            break
+    return "\n".join(lines[start:end])
+
+
 def test_smoke_runs_full_doctor_without_fast_escape_hatch() -> None:
     block = _recipe_block("smoke:")
 
@@ -59,16 +71,18 @@ def test_install_e2e_materializes_config_before_repacking_package() -> None:
 
 
 def test_ci_materializes_runtime_profiles_after_generating_settings() -> None:
-    workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
+    workflow = _workflow_job_block("test")
 
     generate_pos = workflow.find("bash scripts/generate-settings.sh")
+    prepare_assets_pos = workflow.find("bash scripts/prepare-install-test-assets.sh")
     materialize_pos = workflow.find("bash scripts/materialize-config.sh")
     python_pos = workflow.find("Python schema tests with coverage")
 
     assert generate_pos != -1
+    assert prepare_assets_pos != -1
     assert materialize_pos != -1
     assert python_pos != -1
-    assert generate_pos < materialize_pos < python_pos
+    assert generate_pos < prepare_assets_pos < materialize_pos < python_pos
 
 
 def test_install_e2e_generates_manifest_through_admin_rail() -> None:

@@ -125,6 +125,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - run: uv sync
       - run: bash scripts/generate-settings.sh
+      - run: bash scripts/prepare-install-test-assets.sh
       - run: bash scripts/materialize-config.sh
       - run: cd frontend && pnpm install --frozen-lockfile
       - run: cd frontend && pnpm run build
