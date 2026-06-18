@@ -864,10 +864,12 @@ impl DbReader {
         &self,
         model_call_id: i64,
     ) -> rusqlite::Result<Vec<ToolResponseEntry>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT call_id, content_preview, is_error, credential_ref
+        let credential_ref_col = self.optional_column_expr("tool_responses", "credential_ref");
+        let sql = format!(
+            "SELECT call_id, content_preview, is_error, {credential_ref_col}
              FROM tool_responses WHERE model_call_id = ?1",
-        )?;
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params![model_call_id], |row| {
             Ok(ToolResponseEntry {
                 call_id: row.get(0)?,
@@ -1355,12 +1357,19 @@ impl DbReader {
         })?;
 
         // Fetch all tool responses for this trace in one batch.
-        let mut tool_resps_stmt = self.conn.prepare(
-            "SELECT tr.model_call_id, tr.call_id, tr.content_preview, tr.is_error, tr.credential_ref
+        let tool_response_credential_ref_col =
+            if self.has_column("tool_responses", "credential_ref") {
+                "tr.credential_ref".to_string()
+            } else {
+                "NULL AS credential_ref".to_string()
+            };
+        let tool_response_sql = format!(
+            "SELECT tr.model_call_id, tr.call_id, tr.content_preview, tr.is_error, {tool_response_credential_ref_col}
              FROM tool_responses tr
              JOIN model_calls mc ON tr.model_call_id = mc.id
-             WHERE mc.trace_id = ?1",
-        )?;
+             WHERE mc.trace_id = ?1"
+        );
+        let mut tool_resps_stmt = self.conn.prepare(&tool_response_sql)?;
         let all_tool_resps = tool_resps_stmt.query_map(params![trace_id], |row| {
             Ok((
                 row.get::<_, i64>(0)?,
@@ -2431,6 +2440,39 @@ mod tests {
         assert_eq!(rs.len(), 2);
         assert!(!rs[0].is_error);
         assert!(rs[1].is_error);
+    }
+
+    #[test]
+    fn tool_responses_for_tolerates_old_schema_without_credential_ref() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("old-session.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute(
+                "CREATE TABLE tool_responses (
+                    id INTEGER PRIMARY KEY,
+                    model_call_id INTEGER NOT NULL,
+                    call_id TEXT NOT NULL,
+                    content_preview TEXT,
+                    is_error INTEGER NOT NULL DEFAULT 0
+                )",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO tool_responses (model_call_id, call_id, content_preview, is_error)
+                 VALUES (1, 'old-call', 'old-ok', 0)",
+                [],
+            )
+            .unwrap();
+        }
+
+        let reader = DbReader::open(&path).unwrap();
+        let responses = reader.tool_responses_for(1).unwrap();
+        assert_eq!(responses.len(), 1);
+        assert_eq!(responses[0].call_id, "old-call");
+        assert_eq!(responses[0].content_preview.as_deref(), Some("old-ok"));
+        assert_eq!(responses[0].credential_ref, None);
     }
 
     // -----------------------------------------------------------------------

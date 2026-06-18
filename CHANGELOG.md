@@ -34,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Fixed session trace detail reads for older ledgers whose `tool_responses`
+  table predates `credential_ref`, preserving tool response inspection instead
+  of failing the release fixture gate.
 - Fixed the Gemini/AGY stream parser so function-call argument JSON is parsed
   from raw response bytes instead of a normalized serde value, preserving the
   exact tool-call payload that enters the ledger.
