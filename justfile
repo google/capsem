@@ -387,6 +387,29 @@ test: _bootstrap _install-tools _clean-stale _pnpm-install _generate-settings _c
     acquire_exec_lock "{{justfile_directory()}}/target/capsem-test-execution.lock"
     rm -rf "$CAPSEM_HOME"
     mkdir -p "$CAPSEM_RUN_DIR" "$CAPSEM_HOME/sessions" "$CAPSEM_HOME/logs"
+    cleanup_test_capsem_home_service() {
+        PIDFILE="$CAPSEM_RUN_DIR/service.pid"
+        SOCKET="$CAPSEM_RUN_DIR/service.sock"
+        if [ -f "$PIDFILE" ]; then
+            OLD_PID=$(cat "$PIDFILE" 2>/dev/null || true)
+            if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
+                kill "$OLD_PID" 2>/dev/null || true
+                for _ in 1 2 3 4 5 6 7 8; do
+                    kill -0 "$OLD_PID" 2>/dev/null || break
+                    sleep 0.25
+                done
+                if kill -0 "$OLD_PID" 2>/dev/null; then
+                    CHILDREN=$(pgrep -P "$OLD_PID" 2>/dev/null || true)
+                    if [ -n "$CHILDREN" ]; then
+                        kill -9 $CHILDREN 2>/dev/null || true
+                    fi
+                    kill -9 "$OLD_PID" 2>/dev/null || true
+                fi
+            fi
+        fi
+        rm -f "$PIDFILE" "$SOCKET"
+    }
+    trap cleanup_test_capsem_home_service EXIT
 
     # ---- Stage 1: parallel fast-fail (audits + lint + frontend) -------------
     # Cheap, independent, most-common failure class. Clippy (not cargo check)
@@ -682,6 +705,29 @@ smoke: _install-tools _pnpm-install _check-assets _pack-initrd _materialize-conf
     # CAPSEM_HOME isolation was introduced.
     rm -rf "$CAPSEM_HOME"
     mkdir -p "$CAPSEM_RUN_DIR" "$CAPSEM_HOME/sessions" "$CAPSEM_HOME/logs"
+    cleanup_test_capsem_home_service() {
+        PIDFILE="$CAPSEM_RUN_DIR/service.pid"
+        SOCKET="$CAPSEM_RUN_DIR/service.sock"
+        if [ -f "$PIDFILE" ]; then
+            OLD_PID=$(cat "$PIDFILE" 2>/dev/null || true)
+            if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
+                kill "$OLD_PID" 2>/dev/null || true
+                for _ in 1 2 3 4 5 6 7 8; do
+                    kill -0 "$OLD_PID" 2>/dev/null || break
+                    sleep 0.25
+                done
+                if kill -0 "$OLD_PID" 2>/dev/null; then
+                    CHILDREN=$(pgrep -P "$OLD_PID" 2>/dev/null || true)
+                    if [ -n "$CHILDREN" ]; then
+                        kill -9 $CHILDREN 2>/dev/null || true
+                    fi
+                    kill -9 "$OLD_PID" 2>/dev/null || true
+                fi
+            fi
+        fi
+        rm -f "$PIDFILE" "$SOCKET"
+    }
+    trap cleanup_test_capsem_home_service EXIT
     just _ensure-service
     SMOKE_LOG="{{justfile_directory()}}/target/smoke.log"
     mkdir -p "$(dirname "$SMOKE_LOG")"

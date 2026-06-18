@@ -87,6 +87,16 @@ def test_ensure_service_uses_generated_profiles() -> None:
     assert "generated profiles missing" in block
 
 
+def test_isolated_test_recipes_trap_test_home_service_cleanup() -> None:
+    for recipe in ["test:", "smoke:"]:
+        block = _recipe_block(recipe)
+        assert "cleanup_test_capsem_home_service()" in block
+        assert "trap cleanup_test_capsem_home_service EXIT" in block
+        assert 'PIDFILE="$CAPSEM_RUN_DIR/service.pid"' in block
+        assert 'kill "$OLD_PID"' in block
+        assert 'pkill -f' not in block
+
+
 def test_release_workflow_uses_same_config_materializer() -> None:
     workflow = (PROJECT_ROOT / ".github/workflows/release.yaml").read_text()
 
