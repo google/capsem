@@ -32,6 +32,7 @@ CODEX_RESPONSES_TOOL_CALL_ID = "call_codex_write_poem"
 CODEX_RESPONSES_TOOL_ITEM_ID = "fc_codex_write_poem"
 CODEX_RESPONSES_TOOL_NAME = "exec_command"
 ANTHROPIC_TOOL_CALL_ID = "toolu_capsem_write_poem"
+ANTHROPIC_RELEASE_MODEL = "claude-sonnet-4-6"
 OLLAMA_TOOL_CALL_ID = "ollama_capsem_write_poem"
 HTML_ABOUT = """<!doctype html>
 <html>
@@ -697,7 +698,7 @@ def _anthropic_stream_body() -> bytes:
     return (
         'event: message_start\n'
         'data: {"type":"message_start","message":{"id":"msg_ironbank_01",'
-        '"model":"claude-sonnet-4-20250514",'
+        f'"model":"{ANTHROPIC_RELEASE_MODEL}",'
         '"usage":{"input_tokens":25,"output_tokens":1}}}\n\n'
         'event: content_block_start\n'
         'data: {"type":"content_block_start","index":0,'
@@ -719,7 +720,7 @@ def _anthropic_stream_body() -> bytes:
 
 
 def _anthropic_tool_use_stream_body(
-    model: str = "claude-sonnet-4-20250514",
+    model: str = ANTHROPIC_RELEASE_MODEL,
     payload: dict | None = None,
 ) -> bytes:
     tool_payload = _anthropic_tool_use_payload(model, payload)
@@ -752,7 +753,7 @@ def _anthropic_tool_use_stream_body(
 
 
 def _anthropic_final_stream_body(
-    model: str = "claude-sonnet-4-20250514",
+    model: str = ANTHROPIC_RELEASE_MODEL,
     payload: dict | None = None,
 ) -> bytes:
     final_payload = _anthropic_final_payload(model, payload)
@@ -790,7 +791,7 @@ def _anthropic_final_stream_body(
     ).encode()
 
 
-def _anthropic_message_payload(model: str = "claude-sonnet-4-20250514") -> dict:
+def _anthropic_message_payload(model: str = ANTHROPIC_RELEASE_MODEL) -> dict:
     return {
         "id": "msg_ironbank_01",
         "type": "message",
@@ -839,7 +840,7 @@ def _anthropic_tool_input(name: str, token: str, path: str) -> dict:
 
 
 def _anthropic_tool_use_payload(
-    model: str = "claude-sonnet-4-20250514",
+    model: str = ANTHROPIC_RELEASE_MODEL,
     payload: dict | None = None,
 ) -> dict:
     payload = payload or {}
@@ -865,7 +866,7 @@ def _anthropic_tool_use_payload(
 
 
 def _anthropic_final_payload(
-    model: str = "claude-sonnet-4-20250514",
+    model: str = ANTHROPIC_RELEASE_MODEL,
     payload: dict | None = None,
 ) -> dict:
     payload = payload or {}
@@ -1275,7 +1276,7 @@ class MockHandler(BaseHTTPRequestHandler):
             model = (
                 payload.get("model")
                 if isinstance(payload.get("model"), str)
-                else "claude-sonnet-4-20250514"
+                else ANTHROPIC_RELEASE_MODEL
             )
             if payload.get("stream") is True:
                 if _anthropic_has_tool_result(payload):

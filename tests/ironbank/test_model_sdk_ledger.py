@@ -17,6 +17,7 @@ from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXE
 from helpers.gateway import GatewayInstance, TcpHttpClient
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
 from helpers.service import ServiceInstance, wait_exec_ready, vm_name
+from ironbank.model_client_config import HERMETIC_ANTHROPIC_MODEL
 
 pytestmark = pytest.mark.integration
 
@@ -433,7 +434,7 @@ def _streaming_provider_probe_script(base_url: str) -> str:
         anthropic = post(
             cfg["anthropic_url"],
             {{
-                "model": "claude-sonnet-4-20250514",
+                "model": {json.dumps(HERMETIC_ANTHROPIC_MODEL)},
                 "max_tokens": 32,
                 "stream": True,
                 "messages": [{{"role": "user", "content": "stream a greeting"}}],
@@ -512,7 +513,7 @@ def _real_client_diversity_probe_script(base_url: str) -> str:
             api_key="".join(cfg["secrets"]["anthropic"]),
         )
         anthropic_message = anthropic_client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model={json.dumps(HERMETIC_ANTHROPIC_MODEL)},
             max_tokens=64,
             messages=[{{"role": "user", "content": "Write the Capsem ironbank poem."}}],
         )
@@ -1266,7 +1267,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             anthropic_stream = anthropic_stream_rows[-1]
             _assert_event_id(anthropic_stream["event_id"])
             assert anthropic_stream["provider"] == "unknown"
-            assert anthropic_stream["model"] == "claude-sonnet-4-20250514"
+            assert anthropic_stream["model"] == HERMETIC_ANTHROPIC_MODEL
             assert anthropic_stream["method"] == "POST"
             assert anthropic_stream["status_code"] == 200
             assert anthropic_stream["messages_count"] == 1
@@ -1683,7 +1684,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             assert real_client_line is not None, real_client_output
             real_client_result = json.loads(real_client_line.split("=", 1)[1])
             assert real_client_result == {
-                "anthropic_model": "claude-sonnet-4-20250514",
+                "anthropic_model": HERMETIC_ANTHROPIC_MODEL,
                 "anthropic_text": EXPECTED_POEM,
                 "anthropic_usage_total": 30,
                 "litellm_model": "gemma4:latest",
@@ -1723,7 +1724,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             assert {"/v1/messages", "/v1/chat/completions", "/api/chat"} <= set(by_path)
             anthropic_sdk_row = by_path["/v1/messages"]
             assert anthropic_sdk_row["provider"] == "unknown"
-            assert anthropic_sdk_row["model"] == "claude-sonnet-4-20250514"
+            assert anthropic_sdk_row["model"] == HERMETIC_ANTHROPIC_MODEL
             assert anthropic_sdk_row["messages_count"] == 1
             assert anthropic_sdk_row["tools_count"] == 0
             assert anthropic_sdk_row["input_tokens"] == 25
