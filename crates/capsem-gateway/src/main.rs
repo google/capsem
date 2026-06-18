@@ -67,7 +67,8 @@ pub struct AppState {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let run_dir = capsem_core::paths::capsem_run_dir();
+    let args = Args::parse();
+    let run_dir = gateway_run_dir(&args);
     let _ = std::fs::create_dir_all(&run_dir);
     let _telemetry_guard = capsem_core::telemetry::init(capsem_core::telemetry::TelemetryConfig {
         service: "capsem-gateway",
@@ -91,16 +92,6 @@ async fn main() -> Result<()> {
             "gateway panic"
         );
     }));
-
-    let args = Args::parse();
-
-    // Resolve run_dir in priority: --run-dir, then the shared capsem_run_dir
-    // helper (CAPSEM_RUN_DIR > <capsem_home>/run). Must match capsem-service
-    // so parent and child read/write the same gateway.{token,port,pid} files.
-    let run_dir = args
-        .run_dir
-        .clone()
-        .unwrap_or_else(capsem_core::paths::capsem_run_dir);
 
     // Companion guards: refuse to run without a live parent service, and
     // refuse if another gateway already holds the singleton lock for this
@@ -212,6 +203,12 @@ async fn main() -> Result<()> {
     auth_state.cleanup();
 
     Ok(())
+}
+
+fn gateway_run_dir(args: &Args) -> PathBuf {
+    args.run_dir
+        .clone()
+        .unwrap_or_else(capsem_core::paths::capsem_run_dir)
 }
 
 fn service_proxy_routes() -> Router<Arc<AppState>> {
@@ -511,6 +508,28 @@ mod tests {
     use tower::ServiceExt;
 
     use crate::status::StatusCache;
+
+    struct EnvGuard {
+        key: &'static str,
+        prev: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let prev = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, prev }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match &self.prev {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
 
     fn health_app(uds_path: &str) -> (axum::Router, Arc<AppState>) {
         let state = Arc::new(AppState {
@@ -1253,6 +1272,17 @@ mod tests {
     fn args_run_dir_override() {
         let a = Args::parse_from(["capsem-gateway", "--run-dir", "/tmp/capsem-run"]);
         assert_eq!(a.run_dir, Some(PathBuf::from("/tmp/capsem-run")));
+    }
+
+    #[test]
+    fn explicit_run_dir_decides_runtime_artifacts_even_with_env_override() {
+        let _guard = EnvGuard::set("CAPSEM_RUN_DIR", "/tmp/capsem-wrong-run");
+        let args = Args::parse_from(["capsem-gateway", "--run-dir", "/tmp/capsem-right-run"]);
+
+        assert_eq!(
+            gateway_run_dir(&args),
+            PathBuf::from("/tmp/capsem-right-run")
+        );
     }
 
     #[test]

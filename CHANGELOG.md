@@ -34,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Fixed gateway startup so an explicit `--run-dir` controls the log, token,
+  port, pid, and lock artifacts even when `CAPSEM_RUN_DIR` is set, restoring
+  isolated Ironbank gateway logging under parallel release tests.
 - Fixed the unknown model-endpoint integration gate so it asserts provider
   identity and wire protocol separately: undeclared OpenAI-shaped traffic stays
   provider `unknown` while still recording protocol `openai`.
