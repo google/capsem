@@ -51,6 +51,36 @@ def test_integration_script_uses_isolated_credential_broker_store():
     )
 
 
+def test_integration_script_discovers_profile_scoped_session_names(tmp_path):
+    module = load_integration_script()
+
+    sessions = tmp_path / "run" / "sessions"
+    sessions.mkdir(parents=True)
+    (sessions / "already-there").mkdir()
+    code = sessions / "code-1"
+    cowork = sessions / "co-work-1"
+    code.mkdir()
+    cowork.mkdir()
+    older = 1_700_000_000
+    newer = older + 10
+    os.utime(code, (older, older))
+    os.utime(cowork, (newer, newer))
+
+    discovered = module._new_session_dirs(sessions, {"already-there"})
+
+    assert [p.name for p in discovered] == ["co-work-1", "code-1"]
+
+
+def test_integration_script_does_not_require_legacy_tmp_suffix(tmp_path):
+    module = load_integration_script()
+
+    sessions = tmp_path / "run" / "sessions"
+    sessions.mkdir(parents=True)
+    (sessions / "code-1").mkdir()
+
+    assert [p.name for p in module._new_session_dirs(sessions, set())] == ["code-1"]
+
+
 def test_integration_model_fixture_command_is_bounded_and_asserts_output_file():
     module = load_integration_script()
 

@@ -327,6 +327,31 @@ class TestRunEndpoint:
         assert resp is not None
         assert resp.get("exit_code") == 42
 
+    def test_run_invocations_do_not_reuse_stopped_session_directory(self, client):
+        """Consecutive /run calls must get fresh profile-scoped sessions."""
+        marker = f"capsem-run-ephemeral-{uuid.uuid4().hex}"
+        write = client.post("/run", {
+            "command": f"echo {marker} > /root/.capsem_run_ephemeral_marker",
+            "profile_id": CODE_PROFILE_ID,
+            "timeout_secs": EXEC_TIMEOUT_SECS,
+        })
+        assert write is not None
+        assert write.get("exit_code") == 0
+
+        check = client.post("/run", {
+            "command": (
+                "test ! -f /root/.capsem_run_ephemeral_marker "
+                "&& echo CAPSEM_RUN_FRESH "
+                "|| { cat /root/.capsem_run_ephemeral_marker; exit 42; }"
+            ),
+            "profile_id": CODE_PROFILE_ID,
+            "timeout_secs": EXEC_TIMEOUT_SECS,
+        })
+        assert check is not None
+        assert check.get("exit_code") == 0, check
+        assert "CAPSEM_RUN_FRESH" in check.get("stdout", "")
+        assert marker not in check.get("stdout", "")
+
 
 class TestListPersistence:
 

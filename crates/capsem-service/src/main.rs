@@ -2679,6 +2679,32 @@ fn classify_attempt_decision(outcome: ProvisionAttemptOutcome, id: &str) -> Atte
     }
 }
 
+fn existing_session_names(state: &ServiceState) -> Vec<String> {
+    let mut existing: Vec<String> = state.instances.lock().unwrap().keys().cloned().collect();
+    existing.extend(
+        state
+            .persistent_registry
+            .lock()
+            .unwrap()
+            .list()
+            .map(|entry| entry.name.clone()),
+    );
+    for dir in [
+        state.run_dir.join("sessions"),
+        state.run_dir.join("persistent"),
+    ] {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            existing.extend(
+                entries
+                    .flatten()
+                    .filter(|entry| entry.file_type().map(|ty| ty.is_dir()).unwrap_or(false))
+                    .filter_map(|entry| entry.file_name().into_string().ok()),
+            );
+        }
+    }
+    existing
+}
+
 async fn handle_provision(
     State(state): State<Arc<ServiceState>>,
     Json(payload): Json<ProvisionRequest>,
@@ -2689,15 +2715,7 @@ async fn handle_provision(
     }
 
     let id = payload.name.clone().unwrap_or_else(|| {
-        let mut existing: Vec<String> = state.instances.lock().unwrap().keys().cloned().collect();
-        existing.extend(
-            state
-                .persistent_registry
-                .lock()
-                .unwrap()
-                .list()
-                .map(|entry| entry.name.clone()),
-        );
+        let existing = existing_session_names(&state);
         generate_profile_session_name(&profile_id, existing.iter().map(|s| s.as_str()))
     });
 
@@ -8807,15 +8825,7 @@ async fn handle_run(
     }
 
     let id = {
-        let mut existing: Vec<String> = state.instances.lock().unwrap().keys().cloned().collect();
-        existing.extend(
-            state
-                .persistent_registry
-                .lock()
-                .unwrap()
-                .list()
-                .map(|entry| entry.name.clone()),
-        );
+        let existing = existing_session_names(&state);
         generate_profile_session_name(&profile_id, existing.iter().map(|s| s.as_str()))
     };
 

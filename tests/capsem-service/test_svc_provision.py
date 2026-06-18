@@ -37,8 +37,11 @@ class TestProvision:
         first_id = first.get("id")
         second_id = second.get("id")
         try:
-            assert first_id == "code-1"
-            assert second_id == "code-2"
+            assert first_id.startswith("code-")
+            assert second_id.startswith("code-")
+            first_num = int(first_id.removeprefix("code-"))
+            second_num = int(second_id.removeprefix("code-"))
+            assert second_num == first_num + 1
             assert not first_id.startswith("tmp-")
             assert not second_id.startswith("tmp-")
         finally:

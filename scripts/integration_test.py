@@ -123,6 +123,17 @@ def _integration_runtime_env() -> dict[str, str]:
     }
 
 
+def _new_session_dirs(sessions_dir: Path, existing: set[str]) -> list[Path]:
+    """Return session directories created after `existing` was captured."""
+    if not sessions_dir.exists():
+        return []
+    return sorted(
+        (p for p in sessions_dir.iterdir() if p.is_dir() and p.name not in existing),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+
+
 def _vm_command(local_base_url: str) -> str:
     """Build the compound command executed inside the VM.
 
@@ -406,14 +417,9 @@ def run_vm(binary: str, assets_dir: str) -> tuple[str, int]:
     if proc.stdout.strip():
         print(proc.stdout.strip())
 
-    # Find the new session dir created during this invocation.
-    # `capsem run` uses the service's auto-generated `<adj>-<noun>-tmp` ID
-    # (see capsem-service/src/naming.rs::generate_tmp_name).
-    new_sessions = sorted(
-        (p for p in SESSIONS_DIR.iterdir() if p.name not in existing and p.name.endswith("-tmp")),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    ) if SESSIONS_DIR.exists() else []
+    # Find the new session dir created during this invocation. Session names
+    # are profile-scoped (`code-1`, `co-work-1`, ...), not legacy `*-tmp`.
+    new_sessions = _new_session_dirs(SESSIONS_DIR, existing)
 
     if not new_sessions:
         print(f"{RED}FAIL: no new session directory found in {SESSIONS_DIR}{RESET}")
