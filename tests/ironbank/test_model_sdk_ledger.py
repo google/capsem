@@ -399,7 +399,7 @@ def _unknown_mcp_probe_script(base_url: str) -> str:
 
 def _streaming_provider_probe_script(base_url: str) -> str:
     payload = {
-        "google_url": f"{base_url.rstrip('/')}/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+        "google_url": f"{base_url.rstrip('/')}/v1beta/models/gemini-3.5-flash:streamGenerateContent?alt=sse",
         "anthropic_url": f"{base_url.rstrip('/')}/v1/messages",
         "google_key_parts": ["capsem_test_google_stream_", "key_0123456789abcdef"],
         "anthropic_key_parts": ["capsem_test_anthropic_stream_", "key_0123456789abcdef"],
@@ -1226,7 +1226,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                     """
                     SELECT *
                     FROM model_calls
-                    WHERE path = '/v1beta/models/gemini-2.5-flash:streamGenerateContent'
+                    WHERE path = '/v1beta/models/gemini-3.5-flash:streamGenerateContent'
                     ORDER BY id
                     """
                 ).fetchall(),
@@ -1235,7 +1235,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             google_stream = google_stream_rows[-1]
             _assert_event_id(google_stream["event_id"])
             assert google_stream["provider"] == "unknown"
-            assert google_stream["model"] == "gemini-2.5-flash"
+            assert google_stream["model"] == "gemini-3.5-flash"
             assert google_stream["method"] == "POST"
             assert google_stream["status_code"] == 200
             assert google_stream["messages_count"] == 1
@@ -1411,7 +1411,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                     UNION
                     SELECT event_id FROM model_calls WHERE path = '/model/no-tool-call'
                     UNION
-                    SELECT event_id FROM model_calls WHERE path = '/v1beta/models/gemini-2.5-flash:streamGenerateContent'
+                    SELECT event_id FROM model_calls WHERE path = '/v1beta/models/gemini-3.5-flash:streamGenerateContent'
                     UNION
                     SELECT event_id FROM model_calls WHERE path = '/v1/messages'
                     UNION

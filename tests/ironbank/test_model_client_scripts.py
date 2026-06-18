@@ -1,5 +1,13 @@
-from ironbank.model_client_config import HERMETIC_AGY_MODEL_DISPLAY
-from ironbank.model_client_scripts import agy_cli_script
+from ironbank.model_client_config import HERMETIC_AGY_MODEL_DISPLAY, HERMETIC_GEMINI_MODEL
+from ironbank.model_client_scripts import agy_cli_script, gemini_api_script
+
+
+def test_gemini_replay_uses_release_target_model() -> None:
+    script = gemini_api_script("https://generativelanguage.googleapis.com")
+
+    assert HERMETIC_GEMINI_MODEL == "gemini-3.5-flash"
+    assert "gemini-3.5-flash" in script
+    assert "gemini-2.5-flash" not in script
 
 
 def test_agy_noninteractive_script_selects_model_explicitly() -> None:

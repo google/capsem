@@ -21,10 +21,10 @@ def test_gemini_api_streaming_and_nonstreaming_ledger_contract(
     assert result["provider"] == "google"
     assert result["credential_provider"] == "google"
     assert result["domain"] == "generativelanguage.googleapis.com"
-    assert result["path"] == "/v1beta/models/gemini-2.5-flash:streamGenerateContent"
-    assert result["model"] == "gemini-2.5-flash"
-    assert result["nonstream_path"] == "/v1beta/models/gemini-2.5-flash:generateContent"
-    assert result["nonstream_model"] == "gemini-2.5-flash"
+    assert result["path"] == "/v1beta/models/gemini-3.5-flash:streamGenerateContent"
+    assert result["model"] == "gemini-3.5-flash"
+    assert result["nonstream_path"] == "/v1beta/models/gemini-3.5-flash:generateContent"
+    assert result["nonstream_model"] == "gemini-3.5-flash"
     assert result["nonce"] in result["nonstream_text"]
 
     with closing(sqlite3.connect(f"file:{model_client_env.db_path}?mode=ro", uri=True)) as conn:

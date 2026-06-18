@@ -82,7 +82,7 @@ def test_mock_server_advertises_all_release_protocol_surfaces() -> None:
             "/v1/chat/completions",
             "/v1/responses",
             "/v1/messages",
-            "/v1beta/models/gemini-2.5-flash:streamGenerateContent",
+            "/v1beta/models/gemini-3.5-flash:streamGenerateContent",
             "/v1internal:streamGenerateContent",
             "/api/chat",
             "/oauth/authorize",
@@ -130,7 +130,7 @@ def test_mock_server_serves_release_protocol_fixtures_from_one_process() -> None
         assert anthropic["model"] == "claude-sonnet-4-6"
 
         gemini = _post_json(
-            f"{base_url}/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+            f"{base_url}/v1beta/models/gemini-3.5-flash:streamGenerateContent?alt=sse",
             {"contents": [{"role": "user", "parts": [{"text": "hello"}]}]},
         )
         assert "modelVersion" in gemini["_stream"]

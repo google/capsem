@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added an Ironbank guard that keeps the hermetic Gemini replay path on the
+  release-target `gemini-3.5-flash` model across script generation, mock-server
+  routing, pricing, and ledger assertions.
 - Added strict capsem-doctor Ironbank acceptance checks for functional package
   manager proof, hermetic doctor fixtures, and no retired escape markers in the
   installed diagnostic suite.

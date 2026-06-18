@@ -55,7 +55,7 @@ ENDPOINTS = [
     "/model/response",
     "/model/shape",
     "/model/no-tool-call",
-    "/v1beta/models/gemini-2.5-flash:streamGenerateContent",
+    "/v1beta/models/gemini-3.5-flash:streamGenerateContent",
     "/v1/chat/completions",
     "/v1/embeddings",
     "/v1/images/generations",
@@ -442,7 +442,7 @@ def _google_stream_body() -> bytes:
     return (
         'data: {"candidates":[{"content":{"parts":[{"text":"Hello"}],"role":"model"}}],'
         '"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":1},'
-        '"modelVersion":"gemini-2.5-flash"}\n\n'
+        '"modelVersion":"gemini-3.5-flash"}\n\n'
         'data: {"candidates":[{"content":{"parts":[{"text":" world!"}],"role":"model"}}],'
         '"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":3}}\n\n'
         'data: {"candidates":[{"content":{"parts":[{"text":""}],"role":"model"},'
@@ -574,7 +574,7 @@ def _google_stream_final_body(
 
 
 def _gemini_stream_tool_body(
-    payload: dict | None = None, model: str = "gemini-2.5-flash"
+    payload: dict | None = None, model: str = "gemini-3.5-flash"
 ) -> bytes:
     payload = payload or {}
     token, path = _generic_write_target(payload, "gemini")
@@ -611,7 +611,7 @@ def _gemini_stream_tool_body(
 
 
 def _gemini_stream_final_body(
-    payload: dict | None = None, model: str = "gemini-2.5-flash"
+    payload: dict | None = None, model: str = "gemini-3.5-flash"
 ) -> bytes:
     payload = payload or {}
     token, _ = _generic_write_target(payload, "gemini")
@@ -664,7 +664,9 @@ def _google_stream_checkpoint_body(payload: dict | None = None) -> bytes:
     return f"data: {json.dumps(response, separators=(',', ':'))}\n\n".encode()
 
 
-def _google_generate_content_payload(payload: dict | None = None) -> dict:
+def _google_generate_content_payload(
+    payload: dict | None = None, model: str = "gemini-3.5-flash"
+) -> dict:
     payload = payload or {}
     token, _ = _generic_write_target(payload, "gemini")
     return {
@@ -682,11 +684,11 @@ def _google_generate_content_payload(payload: dict | None = None) -> dict:
             "candidatesTokenCount": 7,
             "totalTokenCount": 18,
         },
-        "modelVersion": "gemini-2.5-flash",
+        "modelVersion": model,
     }
 
 
-def _google_model_from_path(path: str, fallback: str = "gemini-2.5-flash") -> str:
+def _google_model_from_path(path: str, fallback: str = "gemini-3.5-flash") -> str:
     match = re.search(r"/models/([^:]+):", path)
     return match.group(1) if match else fallback
 
@@ -1266,7 +1268,8 @@ class MockHandler(BaseHTTPRequestHandler):
             self._send(HTTPStatus.OK, body, "text/event-stream")
         elif path.endswith(":generateContent"):
             payload = self._json_body()
-            self._send_json(_google_generate_content_payload(payload))
+            model = _google_model_from_path(path)
+            self._send_json(_google_generate_content_payload(payload, model))
         elif path == "/v1/messages":
             payload = self._json_body()
             model = (
