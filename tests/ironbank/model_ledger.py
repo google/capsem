@@ -100,7 +100,8 @@ def assert_model_ledger_exchange(spec: ModelLedgerSpec, run: ModelLedgerRun) -> 
         expected_usage = [usage for usage in expected_usage if usage is not None]
         assert expected_usage, f"upstream transcript lacks usage for {spec.path}"
 
-        model_rows = conn.execute(
+        model_rows = _wait_for_rows(
+            conn,
             """
             SELECT *
             FROM model_calls
@@ -108,7 +109,9 @@ def assert_model_ledger_exchange(spec: ModelLedgerSpec, run: ModelLedgerRun) -> 
             ORDER BY id
             """,
             (spec.provider, spec.path, spec.model),
-        ).fetchall()
+            len(expected_usage),
+            label=f"model_calls for {spec.provider} {spec.path}",
+        )
         assert len(model_rows) >= len(expected_usage), (
             f"model_calls missing rows for {spec.provider} {spec.path}: "
             f"rows={len(model_rows)} usage={len(expected_usage)}"
@@ -542,9 +545,29 @@ def _latest_rows(
     params: tuple[Any, ...],
     count: int,
 ) -> list[sqlite3.Row]:
-    rows = conn.execute(query, params).fetchall()
-    assert len(rows) >= count, [dict(row) for row in rows]
+    rows = _wait_for_rows(conn, query, params, count, label="latest rows")
     return rows[-count:]
+
+
+def _wait_for_rows(
+    conn: sqlite3.Connection,
+    query: str,
+    params: tuple[Any, ...],
+    count: int,
+    *,
+    label: str,
+    timeout_s: float = 15.0,
+) -> list[sqlite3.Row]:
+    deadline = time.monotonic() + timeout_s
+    rows: list[sqlite3.Row] = []
+    while time.monotonic() < deadline:
+        rows = conn.execute(query, params).fetchall()
+        if len(rows) >= count:
+            return rows
+        time.sleep(0.25)
+    rows = conn.execute(query, params).fetchall()
+    assert len(rows) >= count, f"{label} missing rows: rows={len(rows)} expected={count}"
+    return rows
 
 
 def _load_upstream_records(path: Path, model_path: str) -> list[dict[str, Any]]:

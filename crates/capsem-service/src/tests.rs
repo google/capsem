@@ -131,6 +131,10 @@ fn test_profile_summary_cache() -> Vec<api::ProfileSummary> {
     build_profile_summary_cache().expect("test profile summary cache should build")
 }
 
+fn test_profile_rule_cache() -> Mutex<BTreeMap<String, Vec<api::EnforcementRuleInfo>>> {
+    Mutex::new(build_profile_rule_cache(None).expect("test profile rule cache should build"))
+}
+
 fn make_test_state() -> Arc<ServiceState> {
     let run_dir = PathBuf::from("/tmp/capsem-test-svc");
     let registry_path = run_dir.join("persistent_registry.json");
@@ -150,6 +154,7 @@ fn make_test_state() -> Arc<ServiceState> {
         magika: test_magika(),
         plugin_policy_by_profile: Mutex::new(HashMap::new()),
         profile_summary_cache: test_profile_summary_cache(),
+        profile_rule_cache: test_profile_rule_cache(),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
@@ -204,6 +209,7 @@ fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
         magika: test_magika(),
         plugin_policy_by_profile: Mutex::new(HashMap::new()),
         profile_summary_cache: test_profile_summary_cache(),
+        profile_rule_cache: test_profile_rule_cache(),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
@@ -1169,9 +1175,10 @@ async fn profile_enforcement_list_uses_profile_files_and_corp_not_user_settings(
     );
     capsem_core::net::policy_config::write_settings_file(&corp_path, &corp).unwrap();
 
-    let Json(response) = handle_enforcement_rules_list(Path("code".to_string()))
-        .await
-        .expect("profile and corp rules compile");
+    let Json(response) =
+        handle_enforcement_rules_list(State(make_test_state()), Path("code".to_string()))
+            .await
+            .expect("profile and corp rules compile");
 
     assert!(response
         .rules
@@ -2497,9 +2504,10 @@ async fn handle_enforcement_rules_list_returns_compiled_profile_rules() {
     let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
     let (_settings_guard, _, _) = install_empty_settings_env(&dir);
 
-    let Json(response) = handle_enforcement_rules_list(Path("code".to_string()))
-        .await
-        .expect("rules list should compile effective profile");
+    let Json(response) =
+        handle_enforcement_rules_list(State(make_test_state()), Path("code".to_string()))
+            .await
+            .expect("rules list should compile effective profile");
 
     assert_eq!(response.profile_id, "code");
     assert!(
@@ -2551,9 +2559,10 @@ async fn disabled_rules_are_listed_but_do_not_evaluate() {
     let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
     let (_settings_guard, _, _) = install_empty_settings_env(&dir);
 
-    let Json(response) = handle_enforcement_rules_list(Path("code".to_string()))
-        .await
-        .expect("rules list should include disabled rules");
+    let Json(response) =
+        handle_enforcement_rules_list(State(make_test_state()), Path("code".to_string()))
+            .await
+            .expect("rules list should include disabled rules");
     let disabled = response
         .rules
         .iter()
@@ -2587,9 +2596,10 @@ async fn disabled_rules_are_listed_but_do_not_evaluate() {
         "disabled rule must not participate in enforcement or detection"
     );
 
-    let Json(detection_response) = handle_detection_rules_list(Path("code".to_string()))
-        .await
-        .expect("detection rules list should include disabled detection rules");
+    let Json(detection_response) =
+        handle_detection_rules_list(State(make_test_state()), Path("code".to_string()))
+            .await
+            .expect("detection rules list should include disabled detection rules");
     assert!(detection_response
         .rules
         .iter()
@@ -2603,7 +2613,7 @@ async fn handle_enforcement_rules_list_rejects_unknown_profiles() {
     let dir = tempfile::tempdir().unwrap();
     let (config_root, _) = install_file_asset_profile_fixture(&dir);
     let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
-    let err = handle_enforcement_rules_list(Path("strict".to_string()))
+    let err = handle_enforcement_rules_list(State(make_test_state()), Path("strict".to_string()))
         .await
         .unwrap_err();
 
@@ -2620,7 +2630,7 @@ async fn handle_enforcement_info_summarizes_compiled_rules() {
     let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
     let (_settings_guard, _, _) = install_empty_settings_env(&dir);
 
-    let Json(info) = handle_enforcement_info(Path("code".to_string()))
+    let Json(info) = handle_enforcement_info(State(make_test_state()), Path("code".to_string()))
         .await
         .expect("info should summarize effective rules");
 
@@ -2641,7 +2651,7 @@ async fn handle_enforcement_info_rejects_unknown_profiles() {
     let dir = tempfile::tempdir().unwrap();
     let (config_root, _) = install_file_asset_profile_fixture(&dir);
     let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
-    let err = handle_enforcement_info(Path("strict".to_string()))
+    let err = handle_enforcement_info(State(make_test_state()), Path("strict".to_string()))
         .await
         .unwrap_err();
 
@@ -2674,9 +2684,10 @@ async fn handle_detection_rules_list_returns_detection_rules_only() {
     let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
     let (_settings_guard, _, _) = install_empty_settings_env(&dir);
 
-    let Json(response) = handle_detection_rules_list(Path("code".to_string()))
-        .await
-        .expect("detection rules list should compile effective profile");
+    let Json(response) =
+        handle_detection_rules_list(State(make_test_state()), Path("code".to_string()))
+            .await
+            .expect("detection rules list should compile effective profile");
 
     assert_eq!(response.profile_id, "code");
     assert!(
@@ -2705,7 +2716,7 @@ async fn handle_detection_info_summarizes_detection_rules_only() {
     let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
     let (_settings_guard, _, _) = install_empty_settings_env(&dir);
 
-    let Json(info) = handle_detection_info(Path("code".to_string()))
+    let Json(info) = handle_detection_info(State(make_test_state()), Path("code".to_string()))
         .await
         .expect("detection info should summarize effective detection rules");
 
@@ -2749,7 +2760,7 @@ async fn handle_detection_rules_list_rejects_unknown_profiles() {
     let dir = tempfile::tempdir().unwrap();
     let (config_root, _) = install_file_asset_profile_fixture(&dir);
     let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
-    let err = handle_detection_rules_list(Path("strict".to_string()))
+    let err = handle_detection_rules_list(State(make_test_state()), Path("strict".to_string()))
         .await
         .unwrap_err();
 
@@ -3448,6 +3459,18 @@ async fn enforcement_rule_endpoints_add_delete_reload_and_reject_invalid_rules_a
     .expect("valid profile enforcement rule should save");
     assert_eq!(saved.rule_id, "eicar_block");
     assert_eq!(saved.compiled_rule_id, "profiles.rules.eicar_block");
+    let Json(list_after_save) =
+        handle_enforcement_rules_list(State(Arc::clone(&state)), Path("code".to_string()))
+            .await
+            .expect("rules list cache should refresh after upsert");
+    assert!(
+        list_after_save
+            .rules
+            .iter()
+            .any(|rule| rule.rule_id == "profiles.rules.eicar_block"
+                && rule.action == capsem_core::net::policy_config::SecurityRuleAction::Block),
+        "upserted rule must be visible through cached rules/list route"
+    );
 
     let enforcement_path = config_root.join("profiles/code/enforcement.toml");
     let loaded =
@@ -3528,6 +3551,17 @@ async fn enforcement_rule_endpoints_add_delete_reload_and_reject_invalid_rules_a
     .expect("delete should remove existing rule");
     assert!(deleted.deleted);
     assert_eq!(deleted.rule_id, "eicar_block");
+    let Json(list_after_delete) =
+        handle_enforcement_rules_list(State(Arc::clone(&state)), Path("code".to_string()))
+            .await
+            .expect("rules list cache should refresh after delete");
+    assert!(
+        list_after_delete
+            .rules
+            .iter()
+            .all(|rule| rule.rule_id != "profiles.rules.eicar_block"),
+        "deleted rule must disappear from cached rules/list route"
+    );
     let loaded =
         SecurityRuleProfile::parse_toml(&std::fs::read_to_string(&enforcement_path).unwrap())
             .unwrap();
@@ -4697,6 +4731,7 @@ fn make_state_in(run_dir: PathBuf) -> Arc<ServiceState> {
         magika: test_magika(),
         plugin_policy_by_profile: Mutex::new(HashMap::new()),
         profile_summary_cache: test_profile_summary_cache(),
+        profile_rule_cache: test_profile_rule_cache(),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
@@ -5225,6 +5260,7 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         magika: test_magika(),
         plugin_policy_by_profile: Mutex::new(HashMap::new()),
         profile_summary_cache: test_profile_summary_cache(),
+        profile_rule_cache: test_profile_rule_cache(),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });
@@ -6806,6 +6842,7 @@ fn make_test_state_with_tempdir_at(
         magika: test_magika(),
         plugin_policy_by_profile: Mutex::new(HashMap::new()),
         profile_summary_cache: test_profile_summary_cache(),
+        profile_rule_cache: test_profile_rule_cache(),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });

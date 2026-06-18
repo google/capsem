@@ -162,6 +162,10 @@ struct ServiceState {
     /// Route-owned profile summaries loaded once at service startup. Hot
     /// profile routes must not re-read profile files or recompile rules.
     profile_summary_cache: Vec<api::ProfileSummary>,
+    /// Route-owned compiled rule DTOs loaded once at service startup and
+    /// refreshed by profile/corp mutation routes. Polling UI/TUI routes must
+    /// not parse profile TOML or compile CEL on every request.
+    profile_rule_cache: Mutex<BTreeMap<String, Vec<api::EnforcementRuleInfo>>>,
     /// Guards Apple VZ lifecycle edges across all VMs managed by this
     /// service. Cold starts and teardown take a read guard; save/restore take
     /// a write guard. That keeps checkpoint edges exclusive without
@@ -1593,6 +1597,20 @@ impl ServiceState {
         }
 
         Ok(targets.len())
+    }
+
+    fn refresh_profile_rule_cache(&self, profile_filter: Option<&str>) -> Result<()> {
+        let updates = build_profile_rule_cache(profile_filter)
+            .map_err(|error| anyhow!("refresh profile rule cache: {}", error.1))?;
+        let mut cache = self.profile_rule_cache.lock().unwrap();
+        if profile_filter.is_none() {
+            *cache = updates;
+        } else {
+            for (profile_id, rules) in updates {
+                cache.insert(profile_id, rules);
+            }
+        }
+        Ok(())
     }
 
     fn resolve_profile_asset_paths(
@@ -4073,6 +4091,9 @@ async fn handle_reload_config_for_profile(
     state
         .refresh_active_profiles(profile_filter)
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    state
+        .refresh_profile_rule_cache(profile_filter)
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     // Collect paths to broadcast to.
     let uds_paths = {
@@ -5230,6 +5251,28 @@ fn build_profile_summary_cache() -> Result<Vec<api::ProfileSummary>, AppError> {
         .profiles()
         .map(|profile| build_profile_summary(profile, catalog.source(), &user, &corp, 0))
         .collect::<Result<Vec<_>, AppError>>()
+}
+
+fn build_profile_rule_cache(
+    profile_filter: Option<&str>,
+) -> Result<BTreeMap<String, Vec<api::EnforcementRuleInfo>>, AppError> {
+    let catalog = load_profile_catalog_for_service()?;
+    let (_, corp) = capsem_core::net::policy_config::load_settings_and_corp_files();
+    let mut output = BTreeMap::new();
+    for manifest in catalog.profiles() {
+        if profile_filter
+            .map(|profile_id| profile_id != manifest.id)
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        let profile = profile_from_catalog_entry(manifest, catalog.source())?;
+        output.insert(
+            manifest.id.clone(),
+            list_enforcement_rules_for_profile_config(&profile, &corp)?,
+        );
+    }
+    Ok(output)
 }
 
 fn profile_summary_with_live_plugin_count(
@@ -7348,10 +7391,18 @@ fn append_compiled_rules(
     Ok(())
 }
 
+#[cfg(test)]
 fn profile_security_rule_profile_for_route(
     profile_id: &str,
 ) -> Result<SecurityRuleProfile, AppError> {
     let profile = profile_for_route(profile_id.to_string())?;
+    profile_security_rule_profile_for_config(&profile)
+}
+
+fn profile_security_rule_profile_for_config(
+    profile: &Profile,
+) -> Result<SecurityRuleProfile, AppError> {
+    let profile_id = profile.config().id.clone();
     profile
         .config()
         .security_rule_profile_from_files(profile.config_root())
@@ -7363,8 +7414,8 @@ fn profile_security_rule_profile_for_route(
         })
 }
 
-fn list_enforcement_rules_for_profile(
-    profile_id: &str,
+fn list_enforcement_rules_for_profile_config(
+    profile: &Profile,
     corp: &SettingsFile,
 ) -> Result<Vec<api::EnforcementRuleInfo>, AppError> {
     let mut rules = Vec::new();
@@ -7373,7 +7424,7 @@ fn list_enforcement_rules_for_profile(
         SecurityRuleSource::BuiltinDefault,
         ProviderRuleProfile::builtin_security_defaults(),
     )?;
-    let profile_rules = profile_security_rule_profile_for_route(profile_id)?;
+    let profile_rules = profile_security_rule_profile_for_config(profile)?;
     append_compiled_rules(&mut rules, SecurityRuleSource::User, profile_rules)?;
     append_compiled_rules(
         &mut rules,
@@ -7391,16 +7442,6 @@ fn list_enforcement_rules_for_profile(
             .then_with(|| left.rule_id.cmp(&right.rule_id))
     });
     Ok(rules)
-}
-
-fn list_detection_rules_for_profile(
-    profile_id: &str,
-    corp: &SettingsFile,
-) -> Result<Vec<api::DetectionRuleInfo>, AppError> {
-    Ok(list_enforcement_rules_for_profile(profile_id, corp)?
-        .into_iter()
-        .filter(|rule| rule.detection_level.is_some())
-        .collect())
 }
 
 fn enforcement_info_for_rules(
@@ -7432,43 +7473,69 @@ fn enforcement_info_for_rules(
     }
 }
 
+fn cached_rules_for_profile(
+    state: &ServiceState,
+    profile_id: &str,
+) -> Result<Vec<api::EnforcementRuleInfo>, AppError> {
+    if profile_id.is_empty() {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            "profile id must not be empty".to_string(),
+        ));
+    }
+    state
+        .profile_rule_cache
+        .lock()
+        .unwrap()
+        .get(profile_id)
+        .cloned()
+        .ok_or_else(|| {
+            AppError(
+                StatusCode::NOT_FOUND,
+                format!("profile not found: {profile_id}"),
+            )
+        })
+}
+
 async fn handle_enforcement_info(
+    State(state): State<Arc<ServiceState>>,
     Path(profile_id): Path<String>,
 ) -> Result<Json<api::EnforcementInfoResponse>, AppError> {
-    let profile_id = validate_profile_route_id(profile_id)?;
-    let (_, corp) = capsem_core::net::policy_config::load_settings_and_corp_files();
-    let rules = list_enforcement_rules_for_profile(&profile_id, &corp)?;
+    let rules = cached_rules_for_profile(&state, &profile_id)?;
     Ok(Json(enforcement_info_for_rules(profile_id, &rules)))
 }
 
 async fn handle_detection_info(
+    State(state): State<Arc<ServiceState>>,
     Path(profile_id): Path<String>,
 ) -> Result<Json<api::DetectionInfoResponse>, AppError> {
-    let profile_id = validate_profile_route_id(profile_id)?;
-    let (_, corp) = capsem_core::net::policy_config::load_settings_and_corp_files();
-    let rules = list_detection_rules_for_profile(&profile_id, &corp)?;
+    let rules = cached_rules_for_profile(&state, &profile_id)?
+        .into_iter()
+        .filter(|rule| rule.detection_level.is_some())
+        .collect::<Vec<_>>();
     Ok(Json(enforcement_info_for_rules(profile_id, &rules)))
 }
 
 async fn handle_enforcement_rules_list(
+    State(state): State<Arc<ServiceState>>,
     Path(profile_id): Path<String>,
 ) -> Result<Json<api::EnforcementRuleListResponse>, AppError> {
-    let profile_id = validate_profile_route_id(profile_id)?;
-    let (_, corp) = capsem_core::net::policy_config::load_settings_and_corp_files();
     Ok(Json(api::EnforcementRuleListResponse {
-        rules: list_enforcement_rules_for_profile(&profile_id, &corp)?,
-        profile_id,
+        rules: cached_rules_for_profile(&state, &profile_id)?,
+        profile_id: profile_id.clone(),
     }))
 }
 
 async fn handle_detection_rules_list(
+    State(state): State<Arc<ServiceState>>,
     Path(profile_id): Path<String>,
 ) -> Result<Json<api::DetectionRuleListResponse>, AppError> {
-    let profile_id = validate_profile_route_id(profile_id)?;
-    let (_, corp) = capsem_core::net::policy_config::load_settings_and_corp_files();
     Ok(Json(api::DetectionRuleListResponse {
-        rules: list_detection_rules_for_profile(&profile_id, &corp)?,
-        profile_id,
+        rules: cached_rules_for_profile(&state, &profile_id)?
+            .into_iter()
+            .filter(|rule| rule.detection_level.is_some())
+            .collect(),
+        profile_id: profile_id.clone(),
     }))
 }
 
@@ -7533,6 +7600,9 @@ async fn handle_enforcement_rule_upsert(
             AppError(StatusCode::BAD_REQUEST, error)
         })?;
     let event = write_profile_mutation_event(&state, summary).await?;
+    state
+        .refresh_profile_rule_cache(Some(&profile_id))
+        .map_err(|error| AppError(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
     log_profile_mutation_applied("enforcement_rule_upsert", &event);
     Ok(Json(EnforcementRuleResponse {
         rule_id,
@@ -7616,6 +7686,9 @@ async fn handle_detection_rule_upsert(
             AppError(StatusCode::BAD_REQUEST, error)
         })?;
     let event = write_profile_mutation_event(&state, summary).await?;
+    state
+        .refresh_profile_rule_cache(Some(&profile_id))
+        .map_err(|error| AppError(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
     log_profile_mutation_applied("detection_rule_upsert", &event);
     Ok(Json(EnforcementRuleResponse {
         rule_id,
@@ -7664,6 +7737,9 @@ async fn handle_enforcement_rule_delete(
             AppError(status, error)
         })?;
     let event = write_profile_mutation_event(&state, summary).await?;
+    state
+        .refresh_profile_rule_cache(Some(&profile_id))
+        .map_err(|error| AppError(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
     log_profile_mutation_applied("enforcement_rule_delete", &event);
     Ok(Json(EnforcementRuleDeleteResponse {
         rule_id,
@@ -7711,6 +7787,9 @@ async fn handle_detection_rule_delete(
             AppError(status, error)
         })?;
     let event = write_profile_mutation_event(&state, summary).await?;
+    state
+        .refresh_profile_rule_cache(Some(&profile_id))
+        .map_err(|error| AppError(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
     log_profile_mutation_applied("detection_rule_delete", &event);
     Ok(Json(EnforcementRuleDeleteResponse {
         rule_id,
@@ -9504,6 +9583,8 @@ async fn main() -> Result<()> {
     let profile_summary_cache = build_profile_summary_cache().map_err(|AppError(_, message)| {
         anyhow!("failed to build profile summary cache: {message}")
     })?;
+    let profile_rule_cache = build_profile_rule_cache(None)
+        .map_err(|AppError(_, message)| anyhow!("failed to build profile rule cache: {message}"))?;
     let state = Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
         persistent_registry: Mutex::new(persistent_registry),
@@ -9519,6 +9600,7 @@ async fn main() -> Result<()> {
         magika: Mutex::new(magika_session),
         plugin_policy_by_profile: Mutex::new(HashMap::new()),
         profile_summary_cache,
+        profile_rule_cache: Mutex::new(profile_rule_cache),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });

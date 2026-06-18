@@ -455,6 +455,7 @@ def test_hot_control_routes_have_latency_and_cpu_budgets() -> None:
         service.stop()
 
 
+@pytest.mark.serial
 def test_vm_session_lifecycle_routes_have_state_and_latency_budgets() -> None:
     service = ServiceInstance()
     gateway: GatewayInstance | None = None

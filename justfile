@@ -494,7 +494,10 @@ test: _bootstrap _install-tools _clean-stale _pnpm-install _generate-settings _c
         --cov=src/capsem --cov-report=xml:codecov-python.xml --cov-fail-under=90
 
     echo "=== Python: serial timing and benchmark tests ==="
-    CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest tests/capsem-serial/ -v --tb=short -m serial
+    CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest \
+        tests/capsem-serial/ \
+        tests/ironbank/test_route_health.py \
+        -v --tb=short -m serial
 
     echo "=== Python: Build chain tests (serial) ==="
     CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest tests/capsem-build-chain/ -v --tb=short
