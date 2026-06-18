@@ -203,6 +203,62 @@ def test_release_evidence_collector_ironbank_guard_ignores_fixture_words(tmp_pat
     }
 
 
+def test_release_evidence_collector_rejects_installed_keychain_helpers(tmp_path):
+    module = _load_module()
+    home = tmp_path / "home"
+    bin_dir = home / ".capsem" / "bin"
+    bin_dir.mkdir(parents=True)
+    (bin_dir / "capsem-service").write_bytes(b"clean service")
+    (bin_dir / "capsem-mcp-builtin").write_bytes(b"stale helper still opens org.capsem.credentials")
+
+    with pytest.raises(RuntimeError, match="Installed Capsem credential store guard failed"):
+        module._installed_credential_store_guard(home)
+
+
+def test_release_evidence_collector_records_clean_installed_binary_guard(tmp_path):
+    module = _load_module()
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "benchmarks").mkdir()
+    (root / "assets").mkdir()
+    (root / "assets" / "manifest.json").write_text("{}")
+    (root / "CHANGELOG.md").write_text("## [Unreleased]\n")
+    home = tmp_path / "home"
+    bin_dir = home / ".capsem" / "bin"
+    bin_dir.mkdir(parents=True)
+    for name in ["capsem-service", "capsem-mcp-builtin", "capsem-mcp-aggregator"]:
+        (bin_dir / name).write_bytes(f"clean {name}".encode())
+
+    def fake_run(args, cwd):
+        del cwd
+        command = " ".join(args)
+        if args[:2] == ["git", "status"]:
+            return module.CommandResult(command=command, returncode=0, stdout="", stderr="")
+        if args[:2] == ["git", "rev-parse"] and args[-1] == "HEAD":
+            return module.CommandResult(command=command, returncode=0, stdout="abc123\n", stderr="")
+        if args[:2] == ["git", "branch"]:
+            return module.CommandResult(
+                command=command, returncode=0, stdout="release/test\n", stderr=""
+            )
+        return module.CommandResult(command=command, returncode=1, stdout="", stderr="unexpected")
+
+    bundle = module.collect_evidence(
+        project_root=root,
+        output_root=tmp_path / "release",
+        timestamp="20260618T120004Z",
+        run_command=fake_run,
+        home=home,
+    )
+
+    manifest = json.loads((bundle / "manifest.json").read_text())
+    assert manifest["installed_credential_store_guard"] == {
+        "installed_bin_dir": str(bin_dir),
+        "files_scanned": 3,
+        "forbidden_findings": [],
+        "present": True,
+    }
+
+
 def test_release_evidence_collector_cli_default_output(tmp_path, monkeypatch):
     module = _load_module()
     root = tmp_path / "repo"

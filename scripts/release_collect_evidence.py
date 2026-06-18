@@ -32,6 +32,17 @@ class CommandResult:
 
 RunCommand = Callable[[list[str], Path], CommandResult]
 
+FORBIDDEN_INSTALLED_CREDENTIAL_MARKERS = [
+    b"CAPSEM_CREDENTIAL_BROKER_TEST_STORE",
+    b"org.capsem.credentials",
+    b"com.capsem.credential",
+    b"open default keychain",
+    b"credential_store_backend_native",
+    b"durable_store_write_native",
+    b"durable_store_read_native",
+    b"durable_store_hydrate_native",
+]
+
 
 def _run_command(args: list[str], cwd: Path) -> CommandResult:
     proc = subprocess.run(
@@ -265,6 +276,53 @@ def _ironbank_guard(project_root: Path) -> dict[str, Any]:
     }
 
 
+def _installed_credential_store_guard(home: Path) -> dict[str, Any]:
+    bin_dir = home / ".capsem" / "bin"
+    if not bin_dir.exists():
+        return {
+            "installed_bin_dir": str(bin_dir),
+            "files_scanned": 0,
+            "forbidden_findings": [],
+            "present": False,
+        }
+
+    findings: list[dict[str, Any]] = []
+    files_scanned = 0
+    for path in sorted(bin_dir.glob("capsem*")):
+        if not path.is_file():
+            continue
+        files_scanned += 1
+        try:
+            payload = path.read_bytes()
+        except OSError as error:
+            findings.append(
+                {
+                    "path": str(path),
+                    "marker": "read_error",
+                    "detail": str(error),
+                }
+            )
+            continue
+        for marker in FORBIDDEN_INSTALLED_CREDENTIAL_MARKERS:
+            if marker in payload:
+                findings.append(
+                    {
+                        "path": str(path),
+                        "marker": marker.decode("utf-8"),
+                    }
+                )
+
+    if findings:
+        rendered = ", ".join(f"{row['path']}:{row['marker']}" for row in findings)
+        raise RuntimeError(f"Installed Capsem credential store guard failed: {rendered}")
+    return {
+        "installed_bin_dir": str(bin_dir),
+        "files_scanned": files_scanned,
+        "forbidden_findings": findings,
+        "present": True,
+    }
+
+
 def _git_facts(project_root: Path, run_command: RunCommand) -> dict[str, Any]:
     status = run_command(["git", "status", "--short"], project_root)
     head = run_command(["git", "rev-parse", "HEAD"], project_root)
@@ -319,6 +377,7 @@ def collect_evidence(
     output_root: Path,
     timestamp: str | None = None,
     run_command: RunCommand = _run_command,
+    home: Path | None = None,
 ) -> Path:
     stamp = timestamp or _timestamp()
     bundle = output_root if output_root.name == stamp else output_root / stamp
@@ -329,6 +388,7 @@ def collect_evidence(
     manifest = _manifest_facts(project_root)
     files = _file_inventory(project_root)
     ironbank_guard = _ironbank_guard(project_root)
+    installed_credential_store_guard = _installed_credential_store_guard(home or Path.home())
 
     _write_text(bundle / "commands" / "git-status.txt", git["commands"]["status"]["stdout"])
     _write_text(bundle / "commands" / "git-head.txt", git["commands"]["head"]["stdout"])
@@ -349,6 +409,7 @@ def collect_evidence(
         },
         "manifest": manifest,
         "ironbank_guard": ironbank_guard,
+        "installed_credential_store_guard": installed_credential_store_guard,
         "benchmark_summaries": benchmark_summaries,
         "manual_gates_pending": MANUAL_GATES_PENDING,
         "files": files,

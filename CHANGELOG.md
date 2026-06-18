@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a release evidence guard that parses Ironbank tests and fails the
   bundle if release-proof tests use disabled-test markers such as `skip`,
   `skipif`, `slow`, optional markers, or `pytest.skip()`.
+- Added a release evidence guard that scans installed Capsem helper binaries
+  when present and fails if any active `~/.capsem/bin/capsem*` executable still
+  carries retired native Keychain credential-store markers.
 - Added a dedicated optional live-provider compatibility canary suite for
   OpenAI, Gemini, and Claude outside Ironbank; it reuses the model-client
   ledger assertions when operator credentials are present and stays inert when
