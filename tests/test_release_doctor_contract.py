@@ -225,6 +225,43 @@ def test_settings_generator_uses_current_config_authority() -> None:
     assert '"guest/config"' not in generator
 
 
+def test_runtime_credential_store_does_not_use_native_keychain() -> None:
+    runtime_files = [
+        PROJECT_ROOT / "crates" / "capsem-core" / "src" / "credential_broker.rs",
+        PROJECT_ROOT / "crates" / "capsem-service" / "src" / "main.rs",
+        PROJECT_ROOT / "crates" / "capsem" / "src" / "main.rs",
+        PROJECT_ROOT / "crates" / "capsem-gateway" / "src" / "main.rs",
+    ]
+    forbidden = [
+        "security find-generic-password",
+        "security add-generic-password",
+        "security delete-generic-password",
+        "keyring::",
+        "security_framework",
+        "SecKeychain",
+    ]
+
+    for path in runtime_files:
+        source = path.read_text()
+        for needle in forbidden:
+            assert needle not in source, f"{path} must not call native Keychain storage"
+
+    broker = runtime_files[0].read_text()
+    assert 'fn credential_store_backend_native() -> &\'static str {\n    "disk"\n}' in broker
+    assert "disk_credential_store_path()" in broker
+
+
+def test_changelog_does_not_advertise_keychain_credential_storage_for_1_3() -> None:
+    changelog = (PROJECT_ROOT / "CHANGELOG.md").read_text()
+    unreleased = changelog.split("## [Unreleased]", maxsplit=1)[1].split(
+        "\n## [", maxsplit=1
+    )[0]
+
+    assert "Keychain-backed credential broker store" in unreleased
+    assert "single `org.capsem.credentials` Keychain vault item" not in unreleased
+    assert "credential store/keychain" not in unreleased
+
+
 def test_frontend_coverage_runner_declares_its_provider() -> None:
     package_json = json.loads((PROJECT_ROOT / "frontend" / "package.json").read_text())
 

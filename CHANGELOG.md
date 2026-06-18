@@ -349,10 +349,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   logs, and credential inventory merges injected rows with their captured
   provider identity. Grouped CEL rule matches such as `a && (b || c)` now
   compile through the same profile rule path used by the HTTP rewrite proof.
-- Changed the macOS credential broker durable store to a single
-  `org.capsem.credentials` Keychain vault item so service startup/reload
-  hydrates captured credentials with one durable read instead of prompting once
-  for an index and again for each stored secret.
+- Changed the credential broker durable store to the same file-backed backend on
+  macOS and Linux for 1.3, so service startup/reload hydrates captured
+  credentials without native Keychain prompts.
 - Tightened HTTP body-handling ledger proof for gzip, chunked, SSE, truncated
   preview, and HTTPS override traffic. Decoded gzip responses now log the same
   materialized headers and body bytes delivered to the guest instead of stale
@@ -1278,9 +1277,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Provider-like behavior is no longer a settings object: profile/corp rules own
   enforcement and credential/plugin runtime status owns credential evidence.
 - Stopped the credential broker from writing brokered references into settings.
-  Observed credentials are stored in the credential store/keychain, emitted to
-  the substitution/security ledger, and can record provider discovery; settings
-  files no longer become a credential-reference inventory.
+  Observed credentials are stored behind the credential-store boundary, emitted
+  to the substitution/security ledger, and can record provider discovery;
+  settings files no longer become a credential-reference inventory.
 - Added a security-event engine that runs configured preprocess plugins before
   detection/enforcement, evaluates CEL once against the canonical event, then
   runs configured postprocess plugins only after the decision allows
