@@ -652,7 +652,7 @@ def _query(client, sql: str) -> list[dict[str, object]]:
     return [dict(zip(payload["columns"], row, strict=True)) for row in payload["rows"]]
 
 
-def test_stats_detail_routes_project_session_db_without_preview_theater() -> None:
+def test_agy_stats_detail_routes_project_session_db_without_preview_theater() -> None:
     service = ServiceInstance()
     try:
         session_dir = service.tmp_dir / "persistent" / SESSION_ID
