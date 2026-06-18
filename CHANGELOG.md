@@ -95,6 +95,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed macOS package and simulated install cleanup so stale
   `~/.capsem/bin.backup*` helpers carrying retired Keychain credential-store
   code are removed and fail the release evidence guard if they reappear.
+- Removed the desktop app's hidden native updater check and switched
+  Capsem-owned HTTP clients to webpki roots so startup/status paths do not
+  touch macOS platform trust or Keychain APIs outside the service contract.
 - Fixed the release docs gate by restoring `just docs` as the single command
   that builds both the docs site and the marketing site.
 - Fixed release telemetry docs and developer skills to identify

@@ -259,6 +259,61 @@ def test_runtime_credential_store_does_not_use_native_keychain() -> None:
     assert "default_credential_store_path()" in broker
 
 
+def test_desktop_shell_does_not_run_native_updater_or_background_https_check() -> None:
+    """The GUI must not perform hidden native updater HTTPS work on startup.
+
+    In 1.3 update checks go through the explicit service `/update/check` route.
+    The Tauri updater plugin brings its own HTTP stack and platform verifier,
+    which can touch macOS Keychain/trust APIs outside Capsem's service logs.
+    """
+
+    app_manifest = (PROJECT_ROOT / "crates" / "capsem-app" / "Cargo.toml").read_text()
+    app_source = (PROJECT_ROOT / "crates" / "capsem-app" / "src" / "main.rs").read_text()
+    tauri_conf = (PROJECT_ROOT / "crates" / "capsem-app" / "tauri.conf.json").read_text()
+    capabilities = (
+        PROJECT_ROOT / "crates" / "capsem-app" / "capabilities" / "default.json"
+    ).read_text()
+
+    forbidden = [
+        "tauri-plugin-updater",
+        "tauri_plugin_updater",
+        "UpdaterExt",
+        "check_for_update_with_prompt",
+        "check_for_app_update",
+        "createUpdaterArtifacts",
+        '"updater"',
+        "updater:default",
+    ]
+    for text in [app_manifest, app_source, tauri_conf, capabilities]:
+        for needle in forbidden:
+            assert needle not in text
+
+
+def test_rust_http_stack_uses_webpki_roots_not_platform_keychain_verifier() -> None:
+    """Runtime HTTP clients must not pull macOS platform trust/keychain APIs."""
+
+    manifest = (PROJECT_ROOT / "Cargo.toml").read_text()
+    reqwest_line = next(
+        line for line in manifest.splitlines() if line.startswith("reqwest = ")
+    )
+    assert 'version = "0.12"' in reqwest_line
+    assert "rustls-tls-webpki-roots" in reqwest_line
+    assert '"rustls"' not in reqwest_line
+
+    for package in ["rustls-platform-verifier", "native-tls", "security-framework"]:
+        result = subprocess.run(
+            ["cargo", "tree", "-i", package, "--workspace", "--edges", "normal"],
+            cwd=PROJECT_ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        if result.returncode != 0:
+            assert "did not match any packages" in result.stdout
+            continue
+        assert package not in result.stdout
+
+
 def test_stop_command_stays_before_status_and_credential_hydration() -> None:
     source = (PROJECT_ROOT / "crates" / "capsem" / "src" / "main.rs").read_text()
 

@@ -43,6 +43,7 @@ futures = { workspace = true }
 tokio-stream = { workspace = true }
 async-compression = { workspace = true }
 tokio-util = { workspace = true }
+sse-stream = { workspace = true }
 bytes = "1"
 serde_json = { workspace = true }
 uuid = { version = "1", features = ["v4"] }
@@ -50,7 +51,7 @@ flate2 = "1"
 regex = { workspace = true }
 scraper = "0.25"
 
-rmcp = { workspace = true, features = ["transport-streamable-http-client-reqwest", "transport-streamable-http-server", "transport-child-process", "reqwest"] }
+rmcp = { workspace = true, features = ["transport-streamable-http-client-reqwest", "transport-streamable-http-server", "transport-child-process"] }
 hickory-proto = { workspace = true }
 # Bounded LRU primitive used by `net::dns::cache` for the TTL-honoring
 # answer cache (T3.f). Pure-Rust, no_std-compatible, single small dep.

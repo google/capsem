@@ -3,7 +3,6 @@
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use serde::Serialize;
 use tauri::{Emitter, Manager};
 use tracing::{info, warn};
 use tracing_subscriber::prelude::*;
@@ -61,28 +60,6 @@ async fn open_url(url: String, app: tauri::AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-#[derive(Serialize)]
-struct UpdateInfo {
-    version: String,
-    current_version: String,
-}
-
-#[tauri::command]
-async fn check_for_app_update(app: tauri::AppHandle) -> Result<Option<UpdateInfo>, String> {
-    use tauri_plugin_updater::UpdaterExt;
-    let updater = app
-        .updater()
-        .map_err(|e| format!("updater unavailable: {e}"))?;
-    let update = updater
-        .check()
-        .await
-        .map_err(|e| format!("update check failed: {e}"))?;
-    Ok(update.map(|u| UpdateInfo {
-        version: u.version.clone(),
-        current_version: app.package_info().version.to_string(),
-    }))
-}
-
 // ---------- Deep link handling (--connect <vm_id>) ----------
 
 fn parse_flag(args: &[String], flag: &str) -> Option<String> {
@@ -131,52 +108,6 @@ fn build_deep_link_script(vm_id: &str, action: Option<&str>) -> String {
 
 fn dispatch_deep_link(window: &tauri::WebviewWindow, vm_id: &str, action: Option<&str>) {
     let _ = window.eval(build_deep_link_script(vm_id, action));
-}
-
-// ---------- Auto-update dialog ----------
-
-async fn check_for_update_with_prompt(app: tauri::AppHandle) {
-    use tauri_plugin_dialog::DialogExt;
-    use tauri_plugin_updater::UpdaterExt;
-
-    let Ok(updater) = app.updater() else { return };
-    let update = match updater.check().await {
-        Ok(Some(u)) => u,
-        Ok(None) => return,
-        Err(e) => {
-            info!("update check failed: {e:#}");
-            return;
-        }
-    };
-
-    let current = app.package_info().version.to_string();
-
-    // Bridge the callback-based `show()` to async via a oneshot: the user
-    // can leave the dialog open for seconds to minutes, and blocking_show()
-    // would hold a tauri/tokio runtime worker thread that whole time.
-    // spawn_blocking is also wrong here -- its bounded pool is meant for
-    // short I/O, not human-time waits. See /dev-rust-patterns "Blocking-
-    // in-async anti-pattern".
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    app.dialog()
-        .message(format!(
-            "Capsem {} is available (you have {current}). Download and install?",
-            update.version
-        ))
-        .title("Update Available")
-        .buttons(tauri_plugin_dialog::MessageDialogButtons::OkCancel)
-        .show(move |accepted| {
-            let _ = tx.send(accepted);
-        });
-    let accepted = rx.await.unwrap_or(false);
-    if !accepted {
-        return;
-    }
-    if let Err(e) = update.download_and_install(|_, _| {}, || {}).await {
-        tracing::error!("update failed: {e:#}");
-    } else {
-        app.restart();
-    }
 }
 
 // ---------- Log housekeeping ----------
@@ -329,7 +260,6 @@ fn main() {
     let initial_action = parse_action_arg(&cli_args);
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -346,11 +276,6 @@ fn main() {
             }
         }))
         .setup(move |app| {
-            let handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                check_for_update_with_prompt(handle).await;
-            });
-
             if let Some(id) = connect_id.clone() {
                 let action = initial_action.clone();
                 let window = app
@@ -370,7 +295,6 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             log_frontend,
             open_url,
-            check_for_app_update,
             dump_frontend_logs,
         ])
         .run(tauri::generate_context!())

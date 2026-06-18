@@ -4,18 +4,29 @@
 //! - HTTP: Streamable HTTP endpoint via `StreamableHttpClientTransport`
 //! - Stdio: Subprocess via `TokioChildProcess` (for local/builtin servers)
 
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use rmcp::model::{CallToolRequestParams, GetPromptRequestParams, ReadResourceRequestParams};
+use futures::{stream::BoxStream, StreamExt};
+use http::header::{ACCEPT, WWW_AUTHENTICATE};
+use http::{HeaderName, HeaderValue};
+use rmcp::model::{
+    CallToolRequestParams, ClientJsonRpcMessage, GetPromptRequestParams, JsonRpcMessage,
+    ReadResourceRequestParams, ServerJsonRpcMessage,
+};
 use rmcp::service::{Peer, RunningService};
 use rmcp::transport::child_process::TokioChildProcess;
 use rmcp::transport::streamable_http_client::{
-    StreamableHttpClientTransport, StreamableHttpClientTransportConfig,
+    AuthRequiredError, InsufficientScopeError, SseError, StreamableHttpClient,
+    StreamableHttpClientTransport, StreamableHttpClientTransportConfig, StreamableHttpError,
+    StreamableHttpPostResponse,
 };
 use rmcp::{RoleClient, ServiceExt};
+use sse_stream::{Sse, SseStream};
 use tracing::{debug, info, warn};
 
 use super::types::*;
@@ -58,6 +69,277 @@ fn next_peer_index(peer_count: usize, is_pool_safe: bool, counter: &AtomicUsize)
         return 0;
     }
     counter.fetch_add(1, Ordering::Relaxed) % peer_count
+}
+
+const MCP_HEADER_SESSION_ID: &str = "Mcp-Session-Id";
+const MCP_HEADER_LAST_EVENT_ID: &str = "Last-Event-Id";
+const MCP_HEADER_PROTOCOL_VERSION: &str = "MCP-Protocol-Version";
+const EVENT_STREAM_MIME_TYPE: &str = "text/event-stream";
+const JSON_MIME_TYPE: &str = "application/json";
+
+#[derive(Clone)]
+struct CapsemMcpHttpClient {
+    client: reqwest::Client,
+}
+
+impl CapsemMcpHttpClient {
+    fn new(client: reqwest::Client) -> Self {
+        Self { client }
+    }
+}
+
+fn apply_mcp_custom_headers(
+    mut builder: reqwest::RequestBuilder,
+    custom_headers: HashMap<HeaderName, HeaderValue>,
+) -> Result<reqwest::RequestBuilder, StreamableHttpError<reqwest::Error>> {
+    for (name, value) in custom_headers {
+        validate_mcp_custom_header(&name).map_err(StreamableHttpError::ReservedHeaderConflict)?;
+        builder = builder.header(name, value);
+    }
+    Ok(builder)
+}
+
+fn validate_mcp_custom_header(name: &HeaderName) -> Result<(), String> {
+    let reserved = [
+        "accept",
+        MCP_HEADER_SESSION_ID,
+        MCP_HEADER_PROTOCOL_VERSION,
+        MCP_HEADER_LAST_EVENT_ID,
+    ];
+    if reserved
+        .iter()
+        .any(|reserved| name.as_str().eq_ignore_ascii_case(reserved))
+        && !name
+            .as_str()
+            .eq_ignore_ascii_case(MCP_HEADER_PROTOCOL_VERSION)
+    {
+        return Err(name.to_string());
+    }
+    Ok(())
+}
+
+fn extract_mcp_scope_from_header(header: &str) -> Option<String> {
+    let header_lowercase = header.to_ascii_lowercase();
+    let scope_key = "scope=";
+    let pos = header_lowercase.find(scope_key)?;
+    let value_slice = &header[pos + scope_key.len()..];
+    if let Some(stripped) = value_slice.strip_prefix('"') {
+        let end_quote = stripped.find('"')?;
+        return Some(stripped[..end_quote].to_string());
+    }
+    let end = value_slice
+        .find(|c: char| c == ',' || c == ';' || c.is_whitespace())
+        .unwrap_or(value_slice.len());
+    (end > 0).then(|| value_slice[..end].to_string())
+}
+
+fn parse_mcp_json_rpc_error(body: &str) -> Option<ServerJsonRpcMessage> {
+    match serde_json::from_str::<ServerJsonRpcMessage>(body) {
+        Ok(message @ JsonRpcMessage::Error(_)) => Some(message),
+        _ => None,
+    }
+}
+
+impl StreamableHttpClient for CapsemMcpHttpClient {
+    type Error = reqwest::Error;
+
+    async fn get_stream(
+        &self,
+        uri: Arc<str>,
+        session_id: Arc<str>,
+        last_event_id: Option<String>,
+        auth_header: Option<String>,
+        custom_headers: HashMap<HeaderName, HeaderValue>,
+    ) -> Result<BoxStream<'static, Result<Sse, SseError>>, StreamableHttpError<Self::Error>> {
+        let mut request_builder = self
+            .client
+            .get(uri.as_ref())
+            .header(ACCEPT, [EVENT_STREAM_MIME_TYPE, JSON_MIME_TYPE].join(", "))
+            .header(MCP_HEADER_SESSION_ID, session_id.as_ref());
+        if let Some(last_event_id) = last_event_id {
+            request_builder = request_builder.header(MCP_HEADER_LAST_EVENT_ID, last_event_id);
+        }
+        if let Some(auth_header) = auth_header {
+            request_builder = request_builder.bearer_auth(auth_header);
+        }
+        request_builder = apply_mcp_custom_headers(request_builder, custom_headers)?;
+        let response = request_builder
+            .send()
+            .await
+            .map_err(StreamableHttpError::Client)?;
+        if response.status() == reqwest::StatusCode::METHOD_NOT_ALLOWED {
+            return Err(StreamableHttpError::ServerDoesNotSupportSse);
+        }
+        let response = response
+            .error_for_status()
+            .map_err(StreamableHttpError::Client)?;
+        match response.headers().get(reqwest::header::CONTENT_TYPE) {
+            Some(content_type) => {
+                if !content_type
+                    .as_bytes()
+                    .starts_with(EVENT_STREAM_MIME_TYPE.as_bytes())
+                    && !content_type
+                        .as_bytes()
+                        .starts_with(JSON_MIME_TYPE.as_bytes())
+                {
+                    return Err(StreamableHttpError::UnexpectedContentType(Some(
+                        String::from_utf8_lossy(content_type.as_bytes()).to_string(),
+                    )));
+                }
+            }
+            None => return Err(StreamableHttpError::UnexpectedContentType(None)),
+        }
+        Ok(SseStream::from_byte_stream(response.bytes_stream()).boxed())
+    }
+
+    async fn delete_session(
+        &self,
+        uri: Arc<str>,
+        session_id: Arc<str>,
+        auth_header: Option<String>,
+        custom_headers: HashMap<HeaderName, HeaderValue>,
+    ) -> Result<(), StreamableHttpError<Self::Error>> {
+        let mut request_builder = self
+            .client
+            .delete(uri.as_ref())
+            .header(MCP_HEADER_SESSION_ID, session_id.as_ref());
+        if let Some(auth_header) = auth_header {
+            request_builder = request_builder.bearer_auth(auth_header);
+        }
+        request_builder = apply_mcp_custom_headers(request_builder, custom_headers)?;
+        let response = request_builder
+            .send()
+            .await
+            .map_err(StreamableHttpError::Client)?;
+        if response.status() == reqwest::StatusCode::METHOD_NOT_ALLOWED {
+            tracing::debug!("this server doesn't support deleting session");
+            return Ok(());
+        }
+        response
+            .error_for_status()
+            .map_err(StreamableHttpError::Client)?;
+        Ok(())
+    }
+
+    async fn post_message(
+        &self,
+        uri: Arc<str>,
+        message: ClientJsonRpcMessage,
+        session_id: Option<Arc<str>>,
+        auth_header: Option<String>,
+        custom_headers: HashMap<HeaderName, HeaderValue>,
+    ) -> Result<StreamableHttpPostResponse, StreamableHttpError<Self::Error>> {
+        let mut request = self
+            .client
+            .post(uri.as_ref())
+            .header(ACCEPT, [EVENT_STREAM_MIME_TYPE, JSON_MIME_TYPE].join(", "));
+        if let Some(auth_header) = auth_header {
+            request = request.bearer_auth(auth_header);
+        }
+        request = apply_mcp_custom_headers(request, custom_headers)?;
+        let session_was_attached = session_id.is_some();
+        if let Some(session_id) = session_id {
+            request = request.header(MCP_HEADER_SESSION_ID, session_id.as_ref());
+        }
+        let response = request
+            .json(&message)
+            .send()
+            .await
+            .map_err(StreamableHttpError::Client)?;
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            if let Some(header) = response.headers().get(WWW_AUTHENTICATE) {
+                let header = header
+                    .to_str()
+                    .map_err(|_| {
+                        StreamableHttpError::UnexpectedServerResponse(Cow::from(
+                            "invalid www-authenticate header value",
+                        ))
+                    })?
+                    .to_string();
+                return Err(StreamableHttpError::AuthRequired(AuthRequiredError::new(
+                    header,
+                )));
+            }
+        }
+        if response.status() == reqwest::StatusCode::FORBIDDEN {
+            if let Some(header) = response.headers().get(WWW_AUTHENTICATE) {
+                let header_str = header.to_str().map_err(|_| {
+                    StreamableHttpError::UnexpectedServerResponse(Cow::from(
+                        "invalid www-authenticate header value",
+                    ))
+                })?;
+                return Err(StreamableHttpError::InsufficientScope(
+                    InsufficientScopeError::new(
+                        header_str.to_string(),
+                        extract_mcp_scope_from_header(header_str),
+                    ),
+                ));
+            }
+        }
+
+        let status = response.status();
+        if matches!(
+            status,
+            reqwest::StatusCode::ACCEPTED | reqwest::StatusCode::NO_CONTENT
+        ) {
+            return Ok(StreamableHttpPostResponse::Accepted);
+        }
+        if status == reqwest::StatusCode::NOT_FOUND && session_was_attached {
+            return Err(StreamableHttpError::SessionExpired);
+        }
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .map(|ct| String::from_utf8_lossy(ct.as_bytes()).to_string());
+        let session_id = response
+            .headers()
+            .get(MCP_HEADER_SESSION_ID)
+            .and_then(|value| value.to_str().ok())
+            .map(|value| value.to_string());
+
+        if !status.is_success() {
+            let body = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "<failed to read response body>".to_owned());
+            if content_type
+                .as_deref()
+                .is_some_and(|ct| ct.as_bytes().starts_with(JSON_MIME_TYPE.as_bytes()))
+            {
+                if let Some(message) = parse_mcp_json_rpc_error(&body) {
+                    return Ok(StreamableHttpPostResponse::Json(message, session_id));
+                }
+                tracing::warn!("HTTP {status}: could not parse JSON body as a JSON-RPC error");
+            }
+            return Err(StreamableHttpError::UnexpectedServerResponse(Cow::Owned(
+                format!("HTTP {status}: {body}"),
+            )));
+        }
+
+        match content_type.as_deref() {
+            Some(ct) if ct.as_bytes().starts_with(EVENT_STREAM_MIME_TYPE.as_bytes()) => {
+                Ok(StreamableHttpPostResponse::Sse(
+                    SseStream::from_byte_stream(response.bytes_stream()).boxed(),
+                    session_id,
+                ))
+            }
+            Some(ct) if ct.as_bytes().starts_with(JSON_MIME_TYPE.as_bytes()) => {
+                match response.json::<ServerJsonRpcMessage>().await {
+                    Ok(message) => Ok(StreamableHttpPostResponse::Json(message, session_id)),
+                    Err(error) => {
+                        tracing::warn!(
+                            "could not parse JSON response as ServerJsonRpcMessage, treating as accepted: {error}"
+                        );
+                        Ok(StreamableHttpPostResponse::Accepted)
+                    }
+                }
+            }
+            _ => {
+                tracing::error!("unexpected content type: {:?}", content_type);
+                Err(StreamableHttpError::UnexpectedContentType(content_type))
+            }
+        }
+    }
 }
 
 /// Manages host-side MCP server connections and provides a unified tool catalog.
@@ -309,8 +591,10 @@ impl McpServerManager {
             }
             config = config.custom_headers(headers);
         }
-        let transport =
-            StreamableHttpClientTransport::with_client(self.http_client.clone(), config);
+        let transport = StreamableHttpClientTransport::with_client(
+            CapsemMcpHttpClient::new(self.http_client.clone()),
+            config,
+        );
         ().serve(transport)
             .await
             .with_context(|| format!("failed to connect to HTTP MCP server '{}'", def.name))
