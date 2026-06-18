@@ -257,7 +257,9 @@ def test_changelog_does_not_advertise_keychain_credential_storage_for_1_3() -> N
         "\n## [", maxsplit=1
     )[0]
 
-    assert "Keychain-backed credential broker store" in unreleased
+    assert "Disabled the macOS Keychain-backed credential broker store" in unreleased
+    assert "file-backed durable storage" in unreleased
+    assert "Added credential broker plugin support with Keychain-backed storage" not in unreleased
     assert "single `org.capsem.credentials` Keychain vault item" not in unreleased
     assert "credential store/keychain" not in unreleased
 

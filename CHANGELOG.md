@@ -1359,9 +1359,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `SerializableSecurityEvent` as the public evaluated-event wire DTO:
   every first-party event root is present, absent roots serialize as `null`,
   and raw credential observation buffers are excluded.
-- Added credential broker plugin support with Keychain-backed storage on macOS
-  and BLAKE3 `credential:blake3:<hex>` references in broker runtime status,
-  logs, and `session.db`; raw credentials stay broker-private.
+- Added credential broker plugin support with file-backed durable storage and
+  BLAKE3 `credential:blake3:<hex>` references in broker runtime status, logs,
+  and `session.db`; raw credentials stay broker-private.
 - Added brokered credential capture from observed HTTP headers/body responses
   and `.env` files, plus upstream-only substitution of broker references for
   allowed HTTP materialization.

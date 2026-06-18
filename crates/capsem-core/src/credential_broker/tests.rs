@@ -78,6 +78,53 @@ fn credential_store_uses_disk_backend_by_default() {
 }
 
 #[test]
+fn default_credential_store_writes_capsem_home_disk_file() {
+    let _lock = TEST_ENV_LOCK.blocking_lock();
+    let dir = tempfile::tempdir().unwrap();
+    let capsem_home = dir.path().join("capsem-home");
+    let old_home_override = std::env::var("CAPSEM_HOME").ok();
+    let old_store = std::env::var(TEST_STORE_ENV).ok();
+    std::env::set_var("CAPSEM_HOME", &capsem_home);
+    std::env::remove_var(TEST_STORE_ENV);
+    CredentialStore::global().clear_for_test();
+
+    let observation = CredentialObservation {
+        provider: CredentialProvider::Google,
+        raw_value: "ya29.release-disk-store".to_string(),
+        source: "http.body.response.$.refresh_token".to_string(),
+        event_type: Some("http.response".to_string()),
+        trace_id: Some("trace-release-store".to_string()),
+        context_json: None,
+    };
+    let brokered = broker_observed_credential(&observation).unwrap();
+    let store_path = capsem_home
+        .join("credentials")
+        .join("credential-store.json");
+    let stored: std::collections::HashMap<String, String> =
+        serde_json::from_str(&std::fs::read_to_string(&store_path).unwrap()).unwrap();
+
+    assert_eq!(credential_store_status().backend, "disk");
+    assert_eq!(
+        stored.get(&credential_store_account(
+            CredentialProvider::Google,
+            &brokered.credential_ref
+        )),
+        Some(&"ya29.release-disk-store".to_string()),
+        "release credential storage must use the file-backed CAPSEM_HOME store"
+    );
+
+    CredentialStore::global().clear_for_test();
+    match old_home_override {
+        Some(v) => std::env::set_var("CAPSEM_HOME", v),
+        None => std::env::remove_var("CAPSEM_HOME"),
+    }
+    match old_store {
+        Some(v) => std::env::set_var(TEST_STORE_ENV, v),
+        None => std::env::remove_var(TEST_STORE_ENV),
+    }
+}
+
+#[test]
 fn env_parser_detects_ai_and_github_credentials() {
     let found = parse_env_credentials(
         "/workspace/.env",
