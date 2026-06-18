@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added a dedicated optional live-provider Ironbank canary gate for OpenAI,
+  Gemini, and Claude that reuses the model-client ledger assertions when
+  operator credentials are present and stays inert when no live keys are
+  configured.
 - Added an Ironbank guard that keeps Anthropic/Claude replay fixtures on the
   release-target `claude-sonnet-4-6` model across mock-server responses and SDK
   ledger assertions.

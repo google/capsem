@@ -12,6 +12,8 @@ from ironbank.model_client_config import (
     HERMETIC_GEMINI_MODEL,
     HERMETIC_OPENAI_COMPAT_MODEL,
     HERMETIC_OPENAI_PRICED_MODEL,
+    LIVE_CLAUDE_MODEL,
+    LIVE_GEMINI_TEXT_MODEL,
     LIVE_OPENAI_RESPONSES_MODEL,
 )
 
@@ -36,6 +38,8 @@ HERMETIC_GEMINI_MODEL = {json.dumps(HERMETIC_GEMINI_MODEL)}
 HERMETIC_AGY_MODEL = {json.dumps(HERMETIC_AGY_MODEL)}
 HERMETIC_AGY_MODEL_DISPLAY = {json.dumps(HERMETIC_AGY_MODEL_DISPLAY)}
 LIVE_OPENAI_RESPONSES_MODEL = {json.dumps(LIVE_OPENAI_RESPONSES_MODEL)}
+LIVE_GEMINI_TEXT_MODEL = {json.dumps(LIVE_GEMINI_TEXT_MODEL)}
+LIVE_CLAUDE_MODEL = {json.dumps(LIVE_CLAUDE_MODEL)}
 DNS_QNAME = "model.capsem.test"
 DNS_IP = socket.gethostbyname(DNS_QNAME)
 NONCE = uuid.uuid4().hex
@@ -438,6 +442,152 @@ output = (second.choices[0].message.content or "").strip()
 if NONCE not in output:
     raise SystemExit("live OpenAI chat output did not contain nonce: " + output)
 emit_result("openai", "api.openai.com", "/v1/chat/completions", MODEL, output, "", tool_item.function.name, call_args, call_response)
+'''
+    ).strip()
+
+
+def live_gemini_generate_content_script() -> str:
+    return textwrap.dedent(
+        common_result_script_prelude(
+            "https://generativelanguage.googleapis.com", "live-gemini-api"
+        )
+        + r'''
+MODEL = os.environ.get("CAPSEM_LIVE_GEMINI_MODEL", LIVE_GEMINI_TEXT_MODEL)
+API_KEY = os.environ.get("GEMINI_API_KEY") or os.environ["GOOGLE_API_KEY"]
+PATH = "/v1beta/models/" + MODEL + ":generateContent"
+tool_declaration = {
+    "functionDeclarations": [
+        {
+            "name": "write_to_file",
+            "description": "Write deterministic fixture text to disk.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "TargetFile": {"type": "string"},
+                    "Content": {"type": "string"},
+                },
+                "required": ["TargetFile", "Content"],
+            },
+        }
+    ]
+}
+
+def post(body):
+    req = urllib.request.Request(
+        BASE_URL + PATH,
+        data=json.dumps(body).encode(),
+        headers={"content-type": "application/json", "x-goog-api-key": API_KEY},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=90) as response:
+        return json.loads(response.read().decode())
+
+first = post({
+    "contents": [{"role": "user", "parts": [{"text": PROMPT}]}],
+    "tools": [tool_declaration],
+    "toolConfig": {
+        "functionCallingConfig": {
+            "mode": "ANY",
+            "allowedFunctionNames": ["write_to_file"],
+        }
+    },
+})
+function_call = next(
+    part["functionCall"]
+    for candidate in first.get("candidates", [])
+    for part in candidate.get("content", {}).get("parts", [])
+    if "functionCall" in part
+)
+call_args = function_call["args"]
+Path(call_args["TargetFile"]).write_text(call_args["Content"], encoding="utf-8")
+call_response = "Process exited with code 0"
+second = post({
+    "contents": [
+        {"role": "user", "parts": [{"text": PROMPT}]},
+        {"role": "model", "parts": [{"functionCall": function_call}]},
+        {
+            "role": "function",
+            "parts": [
+                {
+                    "functionResponse": {
+                        "name": function_call["name"],
+                        "response": {"content": call_response},
+                    }
+                }
+            ],
+        },
+    ],
+    "tools": [tool_declaration],
+})
+final_parts = [
+    part
+    for candidate in second.get("candidates", [])
+    for part in candidate.get("content", {}).get("parts", [])
+]
+output = next(part["text"] for part in final_parts if "text" in part and part.get("thought") is not True)
+reasoning = next((part["text"] for part in final_parts if part.get("thought") is True), "")
+if NONCE not in output:
+    raise SystemExit("live Gemini output did not contain nonce: " + output)
+emit_result("google", "generativelanguage.googleapis.com", PATH, MODEL, output, reasoning, function_call["name"], call_args, call_response)
+'''
+    ).strip()
+
+
+def live_claude_messages_script() -> str:
+    return textwrap.dedent(
+        common_result_script_prelude("https://api.anthropic.com", "live-claude-api")
+        + r'''
+MODEL = os.environ.get("CAPSEM_LIVE_CLAUDE_MODEL", LIVE_CLAUDE_MODEL)
+tools = [{
+    "name": "exec_command",
+    "description": "Write the requested UUID value to the requested file.",
+    "input_schema": {
+        "type": "object",
+        "properties": {"cmd": {"type": "string"}},
+        "required": ["cmd"],
+    },
+}]
+
+def post(body):
+    req = urllib.request.Request(
+        BASE_URL + "/v1/messages",
+        data=json.dumps(body).encode(),
+        headers={
+            "content-type": "application/json",
+            "x-api-key": os.environ["ANTHROPIC_API_KEY"],
+            "anthropic-version": "2023-06-01",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=90) as response:
+        return json.loads(response.read().decode())
+
+first = post({
+    "model": MODEL,
+    "max_tokens": 1024,
+    "messages": [{"role": "user", "content": PROMPT}],
+    "tools": tools,
+    "tool_choice": {"type": "tool", "name": "exec_command"},
+})
+tool_item = next(part for part in first["content"] if part["type"] == "tool_use")
+call_args = tool_item["input"]
+call_response = run_tool(call_args)
+second = post({
+    "model": MODEL,
+    "max_tokens": 1024,
+    "messages": [
+        {"role": "user", "content": PROMPT},
+        {"role": "assistant", "content": [tool_item]},
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": tool_item["id"], "content": call_response}]},
+        {"role": "user", "content": "Return exactly the uuid4 hex value that was written to disk."},
+    ],
+    "tools": tools,
+})
+output = next(part["text"] for part in second["content"] if part["type"] == "text").strip()
+reasoning = next((part.get("thinking", "") for part in second["content"] if part["type"] == "thinking"), "")
+if NONCE not in output:
+    raise SystemExit("live Claude output did not contain nonce: " + output)
+emit_result("anthropic", "api.anthropic.com", "/v1/messages", MODEL, output, reasoning, tool_item["name"], call_args, call_response)
 '''
     ).strip()
 

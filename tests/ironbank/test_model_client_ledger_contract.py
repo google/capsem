@@ -344,7 +344,12 @@ def live_model_client_env():
     session_id = vm_name("ironbank-live-model")
     vm_env = {
         key: value
-        for key in ("OPENAI_API_KEY", "GOOGLE_API_KEY", "GEMINI_API_KEY")
+        for key in (
+            "OPENAI_API_KEY",
+            "GOOGLE_API_KEY",
+            "GEMINI_API_KEY",
+            "ANTHROPIC_API_KEY",
+        )
         if (value := _live_provider_secret(key))
     }
     try:
@@ -360,7 +365,7 @@ def live_model_client_env():
                 priority = -100
                 detection_level = "informational"
                 reason = "Allow optional live-provider compatibility canaries when an operator explicitly provides credentials."
-                match = 'http.host.matches("(^|.*\\.)(openai\\.com|googleapis\\.com)$")'
+                match = 'http.host.matches("(^|.*\\.)(openai\\.com|googleapis\\.com|anthropic\\.com)$")'
                 """
             ).strip()
             + "\n",
