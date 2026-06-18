@@ -2,13 +2,14 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use super::{
-    apply_refresh_event, terminal_event_closes_connection, ConnectedTerminal, RefreshBridge,
-    RefreshEvent,
+    apply_refresh_event, handle_input_event_batch, terminal_event_closes_connection,
+    ConnectedTerminal, RefreshBridge, RefreshEvent,
 };
 use capsem_tui::app::App;
 use capsem_tui::fixture::offline_state;
 use capsem_tui::model::ServiceStatus;
 use capsem_tui::terminal::TerminalEvent;
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 
 #[test]
 fn terminal_failure_status_clears_connected_session() {
@@ -85,6 +86,57 @@ fn failed_refresh_event_marks_service_offline_without_blocking() {
     assert_eq!(app.state().service.reconnect_attempt, Some(1));
 }
 
+#[test]
+fn input_event_batch_drains_ready_events_before_redraw() {
+    let (queued_tx, queued_rx) = mpsc::channel();
+    for ch in ['b', 'c', 'd', 'e', 'f', 'g', 'h', 'i'] {
+        queued_tx
+            .send(Ok(key_event(ch)))
+            .expect("queue ready terminal input");
+    }
+    drop(queued_tx);
+
+    let mut handled = Vec::new();
+    let should_exit = handle_input_event_batch(Ok(key_event('a')), &queued_rx, |event| {
+        handled.push(key_char(event));
+        Ok(false)
+    })
+    .expect("drain ready input batch");
+
+    assert!(!should_exit);
+    assert_eq!(handled, vec!['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i']);
+    assert!(
+        queued_rx.try_recv().is_err(),
+        "all ready input must be handled before the TUI redraws"
+    );
+}
+
+#[test]
+fn input_event_batch_stops_on_exit_without_draining_extra_events() {
+    let (queued_tx, queued_rx) = mpsc::channel();
+    queued_tx
+        .send(Ok(key_event('b')))
+        .expect("queue exit event");
+    queued_tx
+        .send(Ok(key_event('c')))
+        .expect("queue event after exit");
+
+    let mut handled = Vec::new();
+    let should_exit = handle_input_event_batch(Ok(key_event('a')), &queued_rx, |event| {
+        let ch = key_char(event);
+        handled.push(ch);
+        Ok(ch == 'b')
+    })
+    .expect("stop ready input batch");
+
+    assert!(should_exit);
+    assert_eq!(handled, vec!['a', 'b']);
+    assert!(
+        queued_rx.try_recv().is_ok(),
+        "events after an exit action must remain untouched"
+    );
+}
+
 fn wait_for_refresh_events(bridge: &RefreshBridge) -> Vec<RefreshEvent> {
     let deadline = Instant::now() + Duration::from_millis(500);
     loop {
@@ -98,4 +150,18 @@ fn wait_for_refresh_events(bridge: &RefreshBridge) -> Vec<RefreshEvent> {
         );
         std::thread::sleep(Duration::from_millis(10));
     }
+}
+
+fn key_event(ch: char) -> Event {
+    Event::Key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE))
+}
+
+fn key_char(event: Event) -> char {
+    let Event::Key(key) = event else {
+        panic!("expected key event");
+    };
+    let KeyCode::Char(ch) = key.code else {
+        panic!("expected char key");
+    };
+    ch
 }

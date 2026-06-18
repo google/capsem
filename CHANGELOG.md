@@ -57,6 +57,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Fixed `capsem shell` input handling so bursty keypresses and paste input are
+  drained in one TUI cycle instead of being throttled to one event per 16ms
+  redraw tick.
 - Fixed the gateway architecture docs and developer skills to state the
   explicit-route/404 contract instead of describing a generic gateway
   forwarding path.

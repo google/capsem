@@ -245,18 +245,19 @@ fn run_loop(
             needs_draw = false;
         }
         match input_events.recv_timeout(UI_TICK_INTERVAL) {
-            Ok(Ok(event)) => {
-                if handle_terminal_event(
-                    event,
-                    app,
-                    terminal_bridge.as_ref(),
-                    control_bridge.as_ref(),
-                )? {
+            Ok(event) => {
+                if handle_input_event_batch(event, &input_events, |event| {
+                    handle_terminal_event(
+                        event,
+                        app,
+                        terminal_bridge.as_ref(),
+                        control_bridge.as_ref(),
+                    )
+                })? {
                     break;
                 }
                 needs_draw = true;
             }
-            Ok(Err(error)) => return Err(error).context("read terminal input event"),
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
@@ -272,6 +273,32 @@ fn spawn_input_reader() -> mpsc::Receiver<io::Result<Event>> {
         }
     });
     rx
+}
+
+fn handle_input_event_batch<F>(
+    first_event: io::Result<Event>,
+    input_events: &mpsc::Receiver<io::Result<Event>>,
+    mut handle: F,
+) -> Result<bool>
+where
+    F: FnMut(Event) -> Result<bool>,
+{
+    if handle_input_event_result(first_event, &mut handle)? {
+        return Ok(true);
+    }
+    while let Ok(event) = input_events.try_recv() {
+        if handle_input_event_result(event, &mut handle)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn handle_input_event_result<F>(event: io::Result<Event>, handle: &mut F) -> Result<bool>
+where
+    F: FnMut(Event) -> Result<bool>,
+{
+    handle(event.context("read terminal input event")?)
 }
 
 fn handle_terminal_event(
