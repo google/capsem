@@ -300,9 +300,17 @@ def test_rust_http_stack_uses_webpki_roots_not_platform_keychain_verifier() -> N
     assert "rustls-tls-webpki-roots" in reqwest_line
     assert '"rustls"' not in reqwest_line
 
+    service_manifest = (PROJECT_ROOT / "crates" / "capsem-service" / "Cargo.toml").read_text()
+    ort_line = next(
+        line for line in service_manifest.splitlines() if line.startswith("ort = ")
+    )
+    assert "default-features = false" in ort_line
+    assert '"tls-rustls"' in ort_line
+    assert '"tls-native"' not in ort_line
+
     for package in ["rustls-platform-verifier", "native-tls", "security-framework"]:
         result = subprocess.run(
-            ["cargo", "tree", "-i", package, "--workspace", "--edges", "normal"],
+            ["cargo", "tree", "-i", package, "--workspace", "--edges", "all"],
             cwd=PROJECT_ROOT,
             text=True,
             stdout=subprocess.PIPE,
