@@ -228,6 +228,7 @@ def test_settings_generator_uses_current_config_authority() -> None:
 def test_runtime_credential_store_does_not_use_native_keychain() -> None:
     runtime_files = [
         PROJECT_ROOT / "crates" / "capsem-core" / "src" / "credential_broker.rs",
+        PROJECT_ROOT / "crates" / "capsem" / "src" / "service_install.rs",
         PROJECT_ROOT / "crates" / "capsem-service" / "src" / "main.rs",
         PROJECT_ROOT / "crates" / "capsem" / "src" / "main.rs",
         PROJECT_ROOT / "crates" / "capsem-gateway" / "src" / "main.rs",

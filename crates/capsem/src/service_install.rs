@@ -721,6 +721,18 @@ mod tests {
         assert!(plist.contains("<key>CAPSEM_CREDENTIAL_STORE_PATH</key>"));
         assert!(plist
             .contains("<string>/Users/test/.capsem/credentials/credential-store.json</string>"));
+        let retired_test_store = concat!("CAPSEM_CREDENTIAL", "_BROKER_TEST_STORE");
+        let retired_keychain_namespace = concat!("org.capsem", ".credentials");
+        let retired_keychain_service = concat!("com.capsem", ".credential");
+        assert!(
+            !plist.contains(retired_test_store),
+            "installed service must not expose the retired credential test-store rail"
+        );
+        assert!(
+            !plist.contains(retired_keychain_namespace)
+                && !plist.contains(retired_keychain_service),
+            "installed service must not expose a native Keychain namespace"
+        );
         assert!(
             !plist.to_lowercase().contains("keychain"),
             "runtime LaunchAgent must not mention or select native Keychain storage"
