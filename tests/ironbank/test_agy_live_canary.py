@@ -7,7 +7,7 @@ is a hermetic release gate.
 
 from __future__ import annotations
 
-from tests.ironbank.test_live_provider_canaries import TRACKED_MANUAL_LIVE_CANARIES
+from tests.live_provider.test_live_provider_canaries import TRACKED_MANUAL_LIVE_CANARIES
 
 
 def test_agy_live_oauth_canary_is_tracked_as_manual() -> None:

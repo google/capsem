@@ -23,7 +23,7 @@ import pytest
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
 from helpers.service import ServiceInstance, wait_exec_ready, vm_name
-from ironbank.model_client_assertions import assert_live_model_client, assert_one_model_client
+from ironbank.model_client_assertions import assert_one_model_client
 from ironbank.model_client_config import HERMETIC_OPENAI_PRICED_MODEL
 from ironbank.model_ledger import _assert_event_id
 from ironbank.model_pricing import assert_model_call_price
@@ -35,8 +35,6 @@ from ironbank.model_client_scripts import (
     claude_streaming_api_script,
     codex_cli_script,
     codex_ollama_launch_script,
-    live_openai_chat_completions_script,
-    live_openai_responses_api_script,
     openai_embeddings_and_image_script,
     openai_responses_api_script,
     openai_two_tool_calls_script,
@@ -463,8 +461,9 @@ def _assert_openai_embeddings_and_image_ledger(model_client_env: ModelClientEnv)
                 ORDER BY id
                 """
             ).fetchall(),
-            lambda rows: {row["path"] for row in rows}
-            == {"/v1/embeddings", "/v1/images/generations"},
+            lambda rows: (
+                {row["path"] for row in rows} == {"/v1/embeddings", "/v1/images/generations"}
+            ),
         )
         by_path = {row["path"]: row for row in model_rows}
         assert set(by_path) == {"/v1/embeddings", "/v1/images/generations"}, [
@@ -484,18 +483,16 @@ def _assert_openai_embeddings_and_image_ledger(model_client_env: ModelClientEnv)
         assert embedding_model["model"] == result["embedding_model"], dict(embedding_model)
         assert embedding_model["input_tokens"] == 9, dict(embedding_model)
         assert embedding_model["output_tokens"] in {0, None}, dict(embedding_model)
-        assert result["embedding_input"] in (
-            embedding_model["request_body_preview"] or ""
-        ), dict(embedding_model)
+        assert result["embedding_input"] in (embedding_model["request_body_preview"] or ""), dict(
+            embedding_model
+        )
         assert image_model["model"] == result["image_model"], dict(image_model)
         assert image_model["input_tokens"] == 11, dict(image_model)
         assert image_model["output_tokens"] == 17, dict(image_model)
         assert result["image_prompt"] in (image_model["request_body_preview"] or ""), dict(
             image_model
         )
-        assert result["image_b64"] in (image_model["text_content"] or ""), dict(
-            image_model
-        )
+        assert result["image_b64"] in (image_model["text_content"] or ""), dict(image_model)
 
         net_rows = _eventually(
             lambda: conn.execute(
@@ -507,8 +504,9 @@ def _assert_openai_embeddings_and_image_ledger(model_client_env: ModelClientEnv)
                 ORDER BY id
                 """
             ).fetchall(),
-            lambda rows: {row["path"] for row in rows}
-            == {"/v1/embeddings", "/v1/images/generations"},
+            lambda rows: (
+                {row["path"] for row in rows} == {"/v1/embeddings", "/v1/images/generations"}
+            ),
         )
         net_by_path = {row["path"]: row for row in net_rows}
         assert set(net_by_path) == {"/v1/embeddings", "/v1/images/generations"}, [
@@ -527,16 +525,10 @@ def _assert_openai_embeddings_and_image_ledger(model_client_env: ModelClientEnv)
             assert raw_secret.lower() not in request_headers, dict(row)
             assert f"bearer {raw_secret.lower()}" not in request_headers, dict(row)
             if path == "/v1/embeddings":
-                assert result["embedding_input"] in (
-                    row["request_body_preview"] or ""
-                ), dict(row)
+                assert result["embedding_input"] in (row["request_body_preview"] or ""), dict(row)
             else:
-                assert result["image_prompt"] in (row["request_body_preview"] or ""), dict(
-                    row
-                )
-                assert result["image_b64"] in (row["response_body_preview"] or ""), dict(
-                    row
-                )
+                assert result["image_prompt"] in (row["request_body_preview"] or ""), dict(row)
+                assert result["image_b64"] in (row["response_body_preview"] or ""), dict(row)
 
         event_ids = [row["event_id"] for row in (*model_rows, *net_rows)]
         placeholders = ",".join("?" for _ in event_ids)
@@ -578,47 +570,9 @@ def _assert_openai_embeddings_and_image_ledger(model_client_env: ModelClientEnv)
         _assert_raw_absent_from_db(conn, raw_secret)
     for log_path in model_client_env.log_paths:
         if log_path.exists():
-            assert raw_secret not in log_path.read_text(
-                encoding="utf-8", errors="replace"
-            ), f"raw secret leaked in {log_path}"
-
-
-@pytest.mark.live_provider
-def test_live_openai_chat_completions_ledger_canary(
-    live_model_client_env: ModelClientEnv,
-):
-    openai_key = _live_provider_secret("OPENAI_API_KEY")
-    if not openai_key:
-        pytest.skip("OPENAI_API_KEY not provided for optional live-provider canary")
-    result = assert_live_model_client(
-        live_model_client_env,
-        live_openai_chat_completions_script(),
-        raw_secret=openai_key,
-        expected_credential_ref=_credential_ref_for_secret(openai_key),
-        expected_model_calls=2,
-        timeout_secs=240,
-    )
-    assert result["provider"] == "openai"
-    assert result["domain"] == "api.openai.com"
-    assert result["path"] == "/v1/chat/completions"
-
-
-@pytest.mark.live_provider
-def test_live_openai_responses_api_ledger_canary(live_model_client_env: ModelClientEnv):
-    openai_key = _live_provider_secret("OPENAI_API_KEY")
-    if not openai_key:
-        pytest.skip("OPENAI_API_KEY not provided for optional live-provider canary")
-    result = assert_live_model_client(
-        live_model_client_env,
-        live_openai_responses_api_script(),
-        raw_secret=openai_key,
-        expected_credential_ref=_credential_ref_for_secret(openai_key),
-        expected_model_calls=2,
-        timeout_secs=240,
-    )
-    assert result["provider"] == "openai"
-    assert result["domain"] == "api.openai.com"
-    assert result["path"] == "/v1/responses"
+            assert raw_secret not in log_path.read_text(encoding="utf-8", errors="replace"), (
+                f"raw secret leaked in {log_path}"
+            )
 
 
 def test_openai_two_tool_calls_have_exact_item_cardinality(
@@ -705,8 +659,9 @@ def test_openai_two_tool_calls_have_exact_item_cardinality(
                 ORDER BY id
                 """
             ).fetchall(),
-            lambda rows: expected_filenames
-            <= {row["name"] for row in rows if row["name"] is not None},
+            lambda rows: (
+                expected_filenames <= {row["name"] for row in rows if row["name"] is not None}
+            ),
             timeout_s=15,
         )
         net_rows = conn.execute(
@@ -823,14 +778,10 @@ def test_openai_two_tool_calls_have_exact_item_cardinality(
             assert len(trace_tool_calls) == 1, [dict(row) for row in tool_calls]
             assert trace_tool_calls[0]["call_id"] == expected["call_id"]
             assert json.loads(trace_tool_calls[0]["arguments"]) == expected["call_args"]
-            trace_tool_responses = [
-                row for row in tool_responses if row["trace_id"] == trace_id
-            ]
+            trace_tool_responses = [row for row in tool_responses if row["trace_id"] == trace_id]
             assert len(trace_tool_responses) == 1, [dict(row) for row in tool_responses]
             assert trace_tool_responses[0]["call_id"] == expected["call_id"]
-            assert expected["call_response"] in (
-                trace_tool_responses[0]["content_preview"] or ""
-            )
+            assert expected["call_response"] in (trace_tool_responses[0]["content_preview"] or "")
             created = [
                 row
                 for row in file_rows
@@ -861,22 +812,20 @@ def test_openai_two_tool_calls_have_exact_item_cardinality(
             "rows": [dict(row) for row in rule_rows],
         }
         assert all(
-            row["rule_action"]
-            in {"allow", "ask", "block", "preprocess", "rewrite", "postprocess"}
+            row["rule_action"] in {"allow", "ask", "block", "preprocess", "rewrite", "postprocess"}
             for row in rule_rows
         )
         assert all(
-            row["detection_level"]
-            in {"none", "informational", "low", "medium", "high", "critical"}
+            row["detection_level"] in {"none", "informational", "low", "medium", "high", "critical"}
             for row in rule_rows
         )
         assert all(json.loads(row["event_json"]) for row in rule_rows)
         assert all(json.loads(row["rule_json"]) for row in rule_rows)
     for log_path in model_client_env.log_paths:
         if log_path.exists():
-            assert raw_secret not in log_path.read_text(
-                encoding="utf-8", errors="replace"
-            ), f"raw secret leaked in {log_path}"
+            assert raw_secret not in log_path.read_text(encoding="utf-8", errors="replace"), (
+                f"raw secret leaked in {log_path}"
+            )
 
 
 def test_codex_cli_ledger_contract(model_client_env: ModelClientEnv):

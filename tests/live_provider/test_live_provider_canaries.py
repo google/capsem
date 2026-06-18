@@ -1,4 +1,4 @@
-"""Optional live-provider canaries for the Ironbank model ledger.
+"""Optional live-provider canaries for model ledger compatibility.
 
 These tests are compatibility diagnostics, not release proof. They run only
 when an operator explicitly provides provider credentials in the environment or
@@ -127,9 +127,7 @@ def test_optional_live_provider_canary_pays_ledger_debt(
         env,
         canary.script(),
         raw_secret=secret,
-        expected_credential_ref=_credential_ref_for_secret(
-            secret, provider=canary.provider
-        ),
+        expected_credential_ref=_credential_ref_for_secret(secret, provider=canary.provider),
         expected_model_calls=canary.expected_model_calls,
         timeout_secs=240,
     )

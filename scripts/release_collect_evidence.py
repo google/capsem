@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import subprocess
 from dataclasses import dataclass, asdict
@@ -163,6 +164,107 @@ def _manual_gates_markdown() -> str:
     return "\n".join(lines) + "\n"
 
 
+def _call_name(node: ast.AST) -> str | None:
+    parts: list[str] = []
+    current = node
+    while isinstance(current, ast.Attribute):
+        parts.append(current.attr)
+        current = current.value
+    if isinstance(current, ast.Name):
+        parts.append(current.id)
+        return ".".join(reversed(parts))
+    return None
+
+
+def _ironbank_disabled_test_findings(project_root: Path) -> list[dict[str, Any]]:
+    ironbank = project_root / "tests" / "ironbank"
+    if not ironbank.exists():
+        return []
+
+    findings: list[dict[str, Any]] = []
+    forbidden_markers = {
+        "pytest.mark.skip",
+        "pytest.mark.skipif",
+        "pytest.mark.slow",
+        "pytest.mark.optional",
+    }
+    forbidden_calls = {
+        "pytest.skip",
+        "pytest.importorskip",
+    }
+    for path in sorted(ironbank.glob("test_*.py")):
+        rel = str(path.relative_to(project_root))
+        try:
+            tree = ast.parse(path.read_text(), filename=str(path))
+        except SyntaxError as error:
+            findings.append(
+                {
+                    "path": rel,
+                    "line": error.lineno,
+                    "kind": "syntax_error",
+                    "symbol": error.msg,
+                }
+            )
+            continue
+
+        for node in ast.walk(tree):
+            decorators = getattr(node, "decorator_list", None)
+            if decorators:
+                for decorator in decorators:
+                    name = _call_name(
+                        decorator.func if isinstance(decorator, ast.Call) else decorator
+                    )
+                    if name in forbidden_markers:
+                        findings.append(
+                            {
+                                "path": rel,
+                                "line": getattr(decorator, "lineno", None),
+                                "kind": "forbidden_marker",
+                                "symbol": name,
+                            }
+                        )
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id == "pytestmark":
+                        name = _call_name(
+                            node.value.func if isinstance(node.value, ast.Call) else node.value
+                        )
+                        if name in forbidden_markers:
+                            findings.append(
+                                {
+                                    "path": rel,
+                                    "line": node.lineno,
+                                    "kind": "forbidden_pytestmark",
+                                    "symbol": name,
+                                }
+                            )
+            if isinstance(node, ast.Call):
+                name = _call_name(node.func)
+                if name in forbidden_calls:
+                    findings.append(
+                        {
+                            "path": rel,
+                            "line": node.lineno,
+                            "kind": "forbidden_call",
+                            "symbol": name,
+                        }
+                    )
+    return findings
+
+
+def _ironbank_guard(project_root: Path) -> dict[str, Any]:
+    ironbank = project_root / "tests" / "ironbank"
+    files_scanned = len(list(ironbank.glob("test_*.py"))) if ironbank.exists() else 0
+    findings = _ironbank_disabled_test_findings(project_root)
+    if findings:
+        rendered = ", ".join(f"{row['path']}:{row['line']} {row['symbol']}" for row in findings)
+        raise RuntimeError(f"Ironbank disabled-test guard failed: {rendered}")
+    return {
+        "files_scanned": files_scanned,
+        "disabled_test_findings": findings,
+    }
+
+
 def _git_facts(project_root: Path, run_command: RunCommand) -> dict[str, Any]:
     status = run_command(["git", "status", "--short"], project_root)
     head = run_command(["git", "rev-parse", "HEAD"], project_root)
@@ -182,9 +284,7 @@ def _git_facts(project_root: Path, run_command: RunCommand) -> dict[str, Any]:
 def _manifest_facts(project_root: Path) -> dict[str, Any]:
     manifest = _load_json(project_root / "assets" / "manifest.json") or {}
     assets = manifest.get("assets") if isinstance(manifest.get("assets"), dict) else {}
-    binaries = (
-        manifest.get("binaries") if isinstance(manifest.get("binaries"), dict) else {}
-    )
+    binaries = manifest.get("binaries") if isinstance(manifest.get("binaries"), dict) else {}
     return {
         "format": manifest.get("format"),
         "current_binary": binaries.get("current"),
@@ -228,6 +328,7 @@ def collect_evidence(
     benchmark_summaries = _benchmark_summaries(project_root)
     manifest = _manifest_facts(project_root)
     files = _file_inventory(project_root)
+    ironbank_guard = _ironbank_guard(project_root)
 
     _write_text(bundle / "commands" / "git-status.txt", git["commands"]["status"]["stdout"])
     _write_text(bundle / "commands" / "git-head.txt", git["commands"]["head"]["stdout"])
@@ -247,6 +348,7 @@ def collect_evidence(
             "dirty": git["dirty"],
         },
         "manifest": manifest,
+        "ironbank_guard": ironbank_guard,
         "benchmark_summaries": benchmark_summaries,
         "manual_gates_pending": MANUAL_GATES_PENDING,
         "files": files,

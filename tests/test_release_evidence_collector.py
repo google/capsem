@@ -5,6 +5,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = PROJECT_ROOT / "scripts" / "release_collect_evidence.py"
@@ -80,7 +82,9 @@ def test_release_evidence_collector_writes_honest_bundle(tmp_path):
         if args[:2] == ["git", "rev-parse"] and args[-1] == "HEAD":
             return module.CommandResult(command=command, returncode=0, stdout="abc123\n", stderr="")
         if args[:2] == ["git", "branch"]:
-            return module.CommandResult(command=command, returncode=0, stdout="release/test\n", stderr="")
+            return module.CommandResult(
+                command=command, returncode=0, stdout="release/test\n", stderr=""
+            )
         return module.CommandResult(command=command, returncode=1, stdout="", stderr="unexpected")
 
     bundle = module.collect_evidence(
@@ -98,6 +102,7 @@ def test_release_evidence_collector_writes_honest_bundle(tmp_path):
     assert manifest["manifest"]["format"] == 2
     assert manifest["manifest"]["current_binary"] == "1.3.test"
     assert manifest["manifest"]["current_assets"] == "2026.test"
+    assert manifest["ironbank_guard"]["disabled_test_findings"] == []
     assert manifest["benchmark_summaries"][0]["sample_count"] == 50_000
     assert manifest["benchmark_summaries"][0]["concurrency"] == 64
     assert manifest["manual_gates_pending"]
@@ -110,6 +115,92 @@ def test_release_evidence_collector_writes_honest_bundle(tmp_path):
     manual = (bundle / "manual-gates-pending.md").read_text()
     assert "macOS package install" in manual
     assert "AGY" in manual
+
+
+def test_release_evidence_collector_rejects_disabled_ironbank_tests(tmp_path):
+    module = _load_module()
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "benchmarks").mkdir()
+    (root / "assets").mkdir()
+    (root / "assets" / "manifest.json").write_text("{}")
+    (root / "CHANGELOG.md").write_text("## [Unreleased]\n")
+    ironbank = root / "tests" / "ironbank"
+    ironbank.mkdir(parents=True)
+    (ironbank / "test_bad.py").write_text(
+        "import pytest\n"
+        "@pytest.mark.skip(reason='nope')\n"
+        "def test_skip_marker():\n"
+        "    pass\n"
+        "def test_runtime_skip():\n"
+        "    pytest.skip('nope')\n"
+    )
+
+    def fake_run(args, cwd):
+        del cwd
+        command = " ".join(args)
+        if args[:2] == ["git", "status"]:
+            return module.CommandResult(command=command, returncode=0, stdout="", stderr="")
+        if args[:2] == ["git", "rev-parse"] and args[-1] == "HEAD":
+            return module.CommandResult(command=command, returncode=0, stdout="abc123\n", stderr="")
+        if args[:2] == ["git", "branch"]:
+            return module.CommandResult(
+                command=command, returncode=0, stdout="release/test\n", stderr=""
+            )
+        return module.CommandResult(command=command, returncode=1, stdout="", stderr="unexpected")
+
+    with pytest.raises(RuntimeError, match="Ironbank disabled-test guard failed"):
+        module.collect_evidence(
+            project_root=root,
+            output_root=tmp_path / "release",
+            timestamp="20260618T120002Z",
+            run_command=fake_run,
+        )
+
+
+def test_release_evidence_collector_ironbank_guard_ignores_fixture_words(tmp_path):
+    module = _load_module()
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "benchmarks").mkdir()
+    (root / "assets").mkdir()
+    (root / "assets" / "manifest.json").write_text("{}")
+    (root / "CHANGELOG.md").write_text("## [Unreleased]\n")
+    ironbank = root / "tests" / "ironbank"
+    ironbank.mkdir(parents=True)
+    (ironbank / "test_words.py").write_text(
+        "def test_fixture_words_are_not_disabled_tests():\n"
+        "    payload = {'mode': 'rewrite', 'fallback': True}\n"
+        "    marker_name = 'slow_sleep'\n"
+        "    assert payload['fallback'] is True\n"
+        "    assert marker_name.endswith('sleep')\n"
+    )
+
+    def fake_run(args, cwd):
+        del cwd
+        command = " ".join(args)
+        if args[:2] == ["git", "status"]:
+            return module.CommandResult(command=command, returncode=0, stdout="", stderr="")
+        if args[:2] == ["git", "rev-parse"] and args[-1] == "HEAD":
+            return module.CommandResult(command=command, returncode=0, stdout="abc123\n", stderr="")
+        if args[:2] == ["git", "branch"]:
+            return module.CommandResult(
+                command=command, returncode=0, stdout="release/test\n", stderr=""
+            )
+        return module.CommandResult(command=command, returncode=1, stdout="", stderr="unexpected")
+
+    bundle = module.collect_evidence(
+        project_root=root,
+        output_root=tmp_path / "release",
+        timestamp="20260618T120003Z",
+        run_command=fake_run,
+    )
+
+    manifest = json.loads((bundle / "manifest.json").read_text())
+    assert manifest["ironbank_guard"] == {
+        "disabled_test_findings": [],
+        "files_scanned": 1,
+    }
 
 
 def test_release_evidence_collector_cli_default_output(tmp_path, monkeypatch):
@@ -126,14 +217,16 @@ def test_release_evidence_collector_cli_default_output(tmp_path, monkeypatch):
 
     monkeypatch.setattr(module, "collect_evidence", fake_collect)
 
-    rc = module.main([
-        "--project-root",
-        str(root),
-        "--output",
-        str(tmp_path / "bundle"),
-        "--timestamp",
-        "20260618T120001Z",
-    ])
+    rc = module.main(
+        [
+            "--project-root",
+            str(root),
+            "--output",
+            str(tmp_path / "bundle"),
+            "--timestamp",
+            "20260618T120001Z",
+        ]
+    )
 
     assert rc == 0
     assert (tmp_path / "bundle" / "manifest.json").exists()
