@@ -7,6 +7,49 @@
 This is the active debug list for the 1.3 release loop. Older captured bugs in
 `tracker.md` are historical evidence; this file is the working queue.
 
+## Sprinty Reconciliation, 2026-06-18
+
+Sprinty is the execution ledger. This file is manual-loop evidence and must not
+be used to reopen work that Sprinty has closed with gates.
+
+### Closed In Sprinty
+
+- HTTP/body preview is no longer the forensic truth: S01-015 and S01-016 close
+  the 64 KiB/preview problem with `event_body_blobs`, 10 MiB bounded body
+  capture, SSE/body tests, and stats details reading `request_body` /
+  `response_body` from the blob ledger.
+- MCP ledger and unknown/profile MCP route proof are closed in S01-003; the
+  latest refresh includes Ironbank MCP, framed MCP, and capsem-mcp route/tool
+  suites with no phantom snapshot/tool-call burn matches.
+- Overlayfs stale-handle boot panic is closed in S03-009: old sessions are
+  defunct/non-resumable, fresh boot/suspend/resume proof exists, and the
+  original panic log evidence is captured.
+- Incompatible/defunct session action semantics are closed in S04-013:
+  service, CLI, TUI, and UI route contracts render those sessions as
+  delete-only/non-resumable with the exact mismatch or boot-failure reason.
+- New-session naming/focus is closed in S04-014: new sessions use
+  profile-scoped names such as `code-1`/`code-2`, not `tmp-*`, and automated
+  TUI/service/frontend gates prove focus behavior.
+- Full Ironbank route latency/CPU source gates are green for S05-007; hot
+  route p95s are in the millisecond range. The item remains open only for the
+  installed `capsem doctor` / manual installed-app proof through S04-004/S05-009.
+
+### Still Open For The Next Manual Loop
+
+- S04-004: user-present `just install`, then installed `capsem status` and
+  `capsem debug` proof. Avoid reinstalling outside an intentional manual window.
+- S05-009: installed CLI/TUI proof that `capsem stop` and service-stop do not
+  touch credential-store readiness or trigger a credential prompt. Source is now
+  file-backed only; installed app may still be stale until the next install.
+- S06-003: installed UI stats/detail smoke for HTTP/DNS/MCP/model/file/process,
+  credentials, enforcement, and detection. Source routes/frontend tests pass;
+  manual visual proof remains.
+- S06-008/S06-009/S06-010: installed AGY/TUI manual proof for keyboard
+  responsiveness, terminal control-sequence rendering, and AGY stats rendering.
+- S07-005: release signing / stable installed identity check. Keychain-backed
+  storage is disabled for 1.3, but signing stability remains a release audit
+  item before re-enabling native protected storage later.
+
 ## P0 Release Blockers
 
 - [ ] Security boundary cleanup blocks credential/model release readiness

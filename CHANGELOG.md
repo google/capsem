@@ -47,6 +47,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Clarified the 1.3 manual bug hotlist against the Sprinty release ledger so
+  closed work such as body blobs, MCP proof, overlay panic handling, and
+  session naming/action fixes are not accidentally reopened during final smoke.
 - Gitignored `.env.local` and `.env.ironbank` so live-provider canary
   credentials stay out of source control alongside the default `.env`.
 - Fixed gateway startup so an explicit `--run-dir` controls the log, token,
