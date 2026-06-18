@@ -448,15 +448,19 @@ def _assert_openai_embeddings_and_image_ledger(model_client_env: ModelClientEnv)
         assert result["image_model"] in image_upstream[0]["request_body"]
         assert result["image_b64"] in image_upstream[0]["response_body"]
 
-        model_rows = conn.execute(
-            """
-            SELECT *
-            FROM model_calls
-            WHERE provider = 'openai'
-              AND path IN ('/v1/embeddings', '/v1/images/generations')
-            ORDER BY id
-            """
-        ).fetchall()
+        model_rows = _eventually(
+            lambda: conn.execute(
+                """
+                SELECT *
+                FROM model_calls
+                WHERE provider = 'openai'
+                  AND path IN ('/v1/embeddings', '/v1/images/generations')
+                ORDER BY id
+                """
+            ).fetchall(),
+            lambda rows: {row["path"] for row in rows}
+            == {"/v1/embeddings", "/v1/images/generations"},
+        )
         by_path = {row["path"]: row for row in model_rows}
         assert set(by_path) == {"/v1/embeddings", "/v1/images/generations"}, [
             dict(row) for row in model_rows
@@ -488,15 +492,19 @@ def _assert_openai_embeddings_and_image_ledger(model_client_env: ModelClientEnv)
             image_model
         )
 
-        net_rows = conn.execute(
-            """
-            SELECT *
-            FROM net_events
-            WHERE domain = 'api.openai.com'
-              AND path IN ('/v1/embeddings', '/v1/images/generations')
-            ORDER BY id
-            """
-        ).fetchall()
+        net_rows = _eventually(
+            lambda: conn.execute(
+                """
+                SELECT *
+                FROM net_events
+                WHERE domain = 'api.openai.com'
+                  AND path IN ('/v1/embeddings', '/v1/images/generations')
+                ORDER BY id
+                """
+            ).fetchall(),
+            lambda rows: {row["path"] for row in rows}
+            == {"/v1/embeddings", "/v1/images/generations"},
+        )
         net_by_path = {row["path"]: row for row in net_rows}
         assert set(net_by_path) == {"/v1/embeddings", "/v1/images/generations"}, [
             dict(row) for row in net_rows
@@ -527,15 +535,18 @@ def _assert_openai_embeddings_and_image_ledger(model_client_env: ModelClientEnv)
 
         event_ids = [row["event_id"] for row in (*model_rows, *net_rows)]
         placeholders = ",".join("?" for _ in event_ids)
-        security_rows = conn.execute(
-            f"""
-            SELECT *
-            FROM security_rule_events
-            WHERE event_id IN ({placeholders})
-            ORDER BY id
-            """,
-            event_ids,
-        ).fetchall()
+        security_rows = _eventually(
+            lambda: conn.execute(
+                f"""
+                SELECT *
+                FROM security_rule_events
+                WHERE event_id IN ({placeholders})
+                ORDER BY id
+                """,
+                event_ids,
+            ).fetchall(),
+            lambda rows: {row["event_id"] for row in rows} >= set(event_ids),
+        )
         assert {row["event_id"] for row in security_rows} >= set(event_ids), {
             "event_ids": event_ids,
             "security_rows": [dict(row) for row in security_rows],
@@ -543,15 +554,18 @@ def _assert_openai_embeddings_and_image_ledger(model_client_env: ModelClientEnv)
         assert all(json.loads(row["event_json"]) for row in security_rows)
         assert all(json.loads(row["rule_json"]) for row in security_rows)
 
-        substitution_rows = conn.execute(
-            """
-            SELECT *
-            FROM substitution_events
-            WHERE substitution_ref = ?
-            ORDER BY id
-            """,
-            (expected_credential_ref,),
-        ).fetchall()
+        substitution_rows = _eventually(
+            lambda: conn.execute(
+                """
+                SELECT *
+                FROM substitution_events
+                WHERE substitution_ref = ?
+                ORDER BY id
+                """,
+                (expected_credential_ref,),
+            ).fetchall(),
+            lambda rows: {"captured", "brokered"} <= {row["outcome"] for row in rows},
+        )
         assert {"captured", "brokered"} <= {row["outcome"] for row in substitution_rows}, [
             dict(row) for row in substitution_rows
         ]
