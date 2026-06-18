@@ -649,12 +649,16 @@ def test_gateway_docs_describe_explicit_routes_not_generic_forwarding() -> None:
         for path in (
             PROJECT_ROOT / "docs" / "src" / "content" / "docs" / "architecture" / "service-api.md",
             PROJECT_ROOT / "skills" / "site-architecture" / "SKILL.md",
+            PROJECT_ROOT / "skills" / "frontend-design" / "SKILL.md",
         )
     )
 
     assert "Unknown routes must return 404" in docs
     assert "explicit route table" in docs
+    assert "`*` (fallback)" not in docs
     assert "transparent fallback" not in docs
+    assert "Transparent proxy" not in docs
+    assert "transparently" not in docs
     assert "generic path forwarding" not in docs
 
 

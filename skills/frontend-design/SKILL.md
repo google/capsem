@@ -147,9 +147,9 @@ export const exampleStore = new ExampleStore();
 
 ## View routing
 
-Chrome browser shell. Tabs = VMs, toolbar = controls. Views switched by `tabStore.active.view`:
+Chrome browser shell. Tabs = sessions, toolbar = controls. Views switched by `tabStore.active.view`:
 
-- `'new-tab'` -- VM list (NewTabPage), sortable table of mock/real VMs
+- `'new-tab'` -- session/profile dashboard (NewTabPage), sortable table of real sessions
 - `'terminal'` -- sandboxed iframe with xterm.js (VMFrame), one iframe per VM
 - `'settings'` -- appearance, general, security, network, storage, advanced, about
 - Future: `'exec'`, `'files'`, `'logs'`, `'inspector'` (sprint 02-03)
@@ -167,9 +167,11 @@ Key gateway endpoints:
 | `GET /` | Health check (no auth) |
 | `GET /status` | Aggregated VM status (1s cache TTL) |
 | `GET /terminal/{id}` | WebSocket terminal stream |
-| `*` (fallback) | Transparent proxy to capsem-service API |
+| Explicit allowlist | Profile, session, stats, enforcement, detection, plugin, MCP, credential, snapshot, and debug routes used by the UI/TUI |
 
-The gateway proxies all capsem-service HTTP endpoints (`/list`, `/provision`, `/exec/{id}`, `/info/{id}`, `/inspect/{id}`, etc.) transparently. SQL queries against session.db go through `/inspect/{id}`.
+The gateway forwards only routes that are deliberately registered in its route table.
+Unknown, retired, or misspelled routes must return 404 instead of falling through to
+capsem-service. SQL queries against session.db go through `/inspect/{id}`.
 
 Two databases, two strategies:
 

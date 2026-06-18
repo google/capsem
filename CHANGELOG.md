@@ -63,6 +63,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Fixed stale frontend development guidance that still described the gateway as
+  a transparent fallback proxy instead of the explicit route allowlist used by
+  the 1.3 UI/TUI contract.
 - Fixed package and simulated installs to ad-hoc sign helper binaries with
   stable `org.capsem.*` identifiers, preventing rebuilds from producing
   hash-derived macOS code identities that can trigger repeated authorization
