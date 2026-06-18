@@ -13,12 +13,6 @@ export interface TokenResponse {
   token: string;
 }
 
-export interface AssetHealth {
-  ready: boolean;
-  version?: string;
-  missing: string[];
-}
-
 // GET /status
 export interface StatusResponse {
   service: string; // "running" | "unavailable"
@@ -26,7 +20,6 @@ export interface StatusResponse {
   vm_count: number;
   vms: VmSummary[];
   resource_summary: ResourceSummary | null;
-  assets?: AssetHealth;
 }
 
 export interface VmSummary {

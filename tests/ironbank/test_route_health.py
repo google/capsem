@@ -37,6 +37,7 @@ class RouteContract:
     body: dict[str, Any] | None
     required_keys: set[str] | None
     response_kind: type
+    forbidden_keys: set[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -90,6 +91,8 @@ def _assert_contract(client: Any, contract: RouteContract) -> None:
     assert isinstance(payload, contract.response_kind), (contract.path, payload)
     if contract.required_keys is not None:
         assert contract.required_keys <= set(payload), (contract.path, payload)
+    if contract.forbidden_keys is not None:
+        assert contract.forbidden_keys.isdisjoint(payload), (contract.path, payload)
 
 
 def _assert_evaluation_decision(client: Any, *, profile: str, action: str) -> None:
@@ -428,8 +431,9 @@ def test_hot_control_routes_have_latency_and_cpu_budgets() -> None:
                 "GET",
                 "/status",
                 None,
-                {"gateway_version", "service", "vm_count", "assets", "profiles"},
+                {"gateway_version", "service", "vm_count", "profiles"},
                 dict,
+                {"assets"},
             ),
             RouteContract("GET", "/vms/list", None, {"sandboxes"}, dict),
             RouteContract("GET", "/profiles/list", None, {"profiles"}, dict),

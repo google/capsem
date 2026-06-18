@@ -66,6 +66,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed the retired global `/vms/list` asset-health payload so service and
   gateway status cannot report flat `vmlinuz/initrd/rootfs` readiness that
   contradicts profile-owned asset status.
+- Removed the retired top-level gateway `/status.assets` payload and added an
+  Ironbank route guard so profile asset readiness can only come from
+  profile-owned asset routes.
 - Fixed package, Debian, and simulated installs so retired per-user config
   artifacts are removed before the service starts, keeping profile/corp/config
   ownership on the 1.3 rails.

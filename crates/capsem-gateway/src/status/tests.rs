@@ -21,7 +21,6 @@ fn status_response_serializes() {
             stopped_count: 0,
             suspended_count: 0,
         }),
-        assets: None,
         profiles: None,
     };
 
@@ -30,6 +29,7 @@ fn status_response_serializes() {
     assert_eq!(json["vm_count"], 1);
     assert_eq!(json["vms"][0]["id"], "abc123");
     assert_eq!(json["resource_summary"]["total_ram_mb"], 2048);
+    assert!(json.get("assets").is_none());
 }
 
 #[test]
@@ -40,7 +40,6 @@ fn unavailable_response_shape() {
         vm_count: 0,
         vms: vec![],
         resource_summary: None,
-        assets: None,
         profiles: None,
     };
 
@@ -68,7 +67,6 @@ fn status_response_multiple_vms_resource_aggregation() {
             stopped_count: 1,
             suspended_count: 0,
         }),
-        assets: None,
         profiles: None,
     };
 
@@ -154,7 +152,6 @@ async fn cache_returns_fresh_data() {
         vm_count: 1,
         vms: vec![],
         resource_summary: None,
-        assets: None,
         profiles: None,
     };
 
@@ -183,7 +180,6 @@ async fn cache_expires_after_ttl() {
         vm_count: 0,
         vms: vec![],
         resource_summary: None,
-        assets: None,
         profiles: None,
     };
 
@@ -372,6 +368,57 @@ async fn fetch_status_preserves_profile_catalog_and_manifest_provenance() {
         profiles["profiles"][1]["missing_assets"][0]["kind"],
         "rootfs"
     );
+    h.abort();
+}
+
+#[tokio::test]
+async fn fetch_status_ignores_retired_global_asset_health() {
+    let mock = axum::Router::new()
+        .route(
+            "/vms/list",
+            axum::routing::get(|| async {
+                axum::Json(serde_json::json!({
+                    "sandboxes": [],
+                    "asset_health": {
+                        "ready": false,
+                        "version": "2026.0618.18",
+                        "missing": ["initrd.img"]
+                    }
+                }))
+            }),
+        )
+        .route(
+            "/profiles/status",
+            axum::routing::get(|| async {
+                axum::Json(serde_json::json!({
+                    "source": "directory",
+                    "profile_count": 1,
+                    "ready_count": 1,
+                    "profiles": [
+                        {
+                            "id": "code",
+                            "name": "Code",
+                            "ready": true,
+                            "missing_assets": [],
+                            "invalid_assets": [],
+                            "invalid_files": [],
+                            "errors": [],
+                            "asset_count": 3
+                        }
+                    ]
+                }))
+            }),
+        );
+    let (path, h, _d) = mock_uds(mock).await;
+
+    let state = test_app_state(&path);
+    let resp = fetch_status(&state).await;
+    let json = serde_json::to_value(&resp).unwrap();
+    assert!(
+        json.get("assets").is_none(),
+        "gateway /status must not expose retired top-level asset health"
+    );
+
     h.abort();
 }
 

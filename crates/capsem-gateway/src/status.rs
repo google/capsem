@@ -31,22 +31,12 @@ impl StatusCache {
 }
 
 #[derive(Serialize, Clone)]
-pub struct AssetHealth {
-    pub ready: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub version: Option<String>,
-    pub missing: Vec<String>,
-}
-
-#[derive(Serialize, Clone)]
 pub struct StatusResponse {
     pub service: String,
     pub gateway_version: String,
     pub vm_count: usize,
     pub vms: Vec<VmSummary>,
     pub resource_summary: Option<ResourceSummary>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub assets: Option<AssetHealth>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub profiles: Option<serde_json::Value>,
 }
@@ -185,20 +175,9 @@ pub async fn handle_status(State(state): State<Arc<AppState>>) -> Response {
 }
 
 #[derive(Deserialize)]
-struct ServiceAssetHealth {
-    ready: bool,
-    #[serde(default)]
-    version: Option<String>,
-    #[serde(default)]
-    missing: Vec<String>,
-}
-
-#[derive(Deserialize)]
 struct ListResponse {
     #[serde(rename = "sandboxes")]
     sessions: Vec<SessionInfo>,
-    #[serde(default)]
-    asset_health: Option<ServiceAssetHealth>,
 }
 
 #[derive(Deserialize)]
@@ -251,7 +230,6 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
         vm_count: 0,
         vms: vec![],
         resource_summary: None,
-        assets: None,
         profiles: None,
     };
 
@@ -309,11 +287,6 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
         });
     }
 
-    let assets = list.asset_health.map(|h| AssetHealth {
-        ready: h.ready,
-        version: h.version,
-        missing: h.missing,
-    });
     let profiles = fetch_profiles_status(state).await;
 
     StatusResponse {
@@ -328,7 +301,6 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
             stopped_count: stopped,
             suspended_count: suspended,
         }),
-        assets,
         profiles,
     }
 }
