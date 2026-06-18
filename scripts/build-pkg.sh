@@ -124,6 +124,23 @@ dst.write_text(json.dumps({
 PY
 }
 
+reject_retired_credential_store_markers() {
+    local path="${1:?reject_retired_credential_store_markers <path>}"
+    local marker
+    for marker in \
+        "CAPSEM_CREDENTIAL_BROKER_TEST_STORE" \
+        "org.capsem.credentials" \
+        "com.capsem.credential" \
+        "open default keychain" \
+        "security-framework/src/os/macos/keychain.rs"
+    do
+        if LC_ALL=C grep -aFq "$marker" "$path"; then
+            echo "ERROR: binary contains retired native Keychain credential-store marker: $path ($marker)" >&2
+            exit 1
+        fi
+    done
+}
+
 materialize_manifest_input() {
     local manifest_source="${1:?materialize_manifest_input <manifest_source> <dst>}"
     local dst="${2:?materialize_manifest_input <manifest_source> <dst>}"
@@ -161,6 +178,7 @@ mkdir -p "$SHARE_DIR/bin"
 for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin; do
     src="$BIN_DIR/$bin"
     if [ -f "$src" ]; then
+        reject_retired_credential_store_markers "$src"
         cp "$src" "$SHARE_DIR/bin/$bin"
         chmod 755 "$SHARE_DIR/bin/$bin"
     else

@@ -210,6 +210,53 @@ def test_macos_pkg_payload_is_closed_and_manifest_only_for_assets(tmp_path: Path
         output_pkg.unlink(missing_ok=True)
 
 
+def test_macos_pkg_rejects_retired_keychain_payload_binaries(tmp_path: Path) -> None:
+    app = tmp_path / "Capsem.app"
+    bin_dir = tmp_path / "bin"
+    assets_dir = tmp_path / "assets"
+    config_dir = tmp_path / "target-config"
+    manifest = tmp_path / "manifest.json"
+
+    _seed_app(app)
+    _seed_binaries(bin_dir)
+    _seed_config(config_dir)
+    _seed_manifest_and_local_assets(manifest, assets_dir)
+    (bin_dir / "capsem-service").write_text(
+        "#!/bin/sh\n"
+        "echo 'stale helper still opens org.capsem.credentials from the default keychain'\n"
+    )
+    (bin_dir / "capsem-service").chmod(0o755)
+
+    version = "9.9.11-keychain-test"
+    output_pkg = REPO_ROOT / "packages" / f"Capsem-{version}.pkg"
+    output_pkg.unlink(missing_ok=True)
+    try:
+        res = subprocess.run(
+            [
+                str(SCRIPT),
+                "--manifest",
+                str(manifest),
+                str(app),
+                str(bin_dir),
+                str(assets_dir),
+                str(config_dir),
+                version,
+            ],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert res.returncode != 0
+        combined = res.stdout + res.stderr
+        assert "retired native Keychain credential-store marker" in combined
+        assert "capsem-service" in combined
+        assert "org.capsem.credentials" in combined
+        assert not output_pkg.exists()
+    finally:
+        output_pkg.unlink(missing_ok=True)
+
+
 def test_macos_pkg_remote_manifest_override_records_source_and_payload(tmp_path: Path) -> None:
     app = tmp_path / "Capsem.app"
     bin_dir = tmp_path / "bin"
