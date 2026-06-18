@@ -229,6 +229,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the blob ledger rather than preview columns, credential broker rows display
   verbs/origins instead of substitution refs, and inspector presets use the
   same broker vocabulary as the session UI.
+- Tightened the desktop stats contract so user-facing detail controls say
+  session ledger instead of database, and MCP protocol cards no longer surface
+  credential-reference counts that belong to the credential broker view.
 - Added a service and gateway route-matrix gate for profile UI surfaces so
   `code` and `co-work` profile pages must expose assets, enforcement,
   detection, plugins, credential broker, and MCP routes without 404/501

@@ -65,7 +65,8 @@ describe('user-facing session language contract', () => {
   });
 
   it('uses session wording in stats subtitles', () => {
-    expect(stats).toContain('Session {vmId} database');
+    expect(stats).toContain('Session {vmId} ledger');
+    expect(stats).not.toContain('Session {vmId} database');
     expect(stats).not.toContain('VM {vmId} session database');
   });
 });

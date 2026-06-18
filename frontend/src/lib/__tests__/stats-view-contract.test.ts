@@ -93,6 +93,18 @@ describe('StatsView credential broker contract', () => {
     expect(source).toContain("'credential_ref'");
   });
 
+  it('keeps credential reference counts out of protocol tabs', () => {
+    const mcpStart = source.indexOf("{:else if activeTab === 'mcp'}");
+    const httpStart = source.indexOf("{:else if activeTab === 'http'}");
+    expect(mcpStart).toBeGreaterThan(-1);
+    expect(httpStart).toBeGreaterThan(mcpStart);
+
+    const mcpBlock = source.slice(mcpStart, httpStart);
+    expect(mcpBlock).toContain('Tool Calls');
+    expect(mcpBlock).not.toContain('Credential Refs');
+    expect(mcpBlock).not.toContain('credential_ref).length');
+  });
+
   it('counts captured, brokered, and injected credential verbs independently', () => {
     expect(source).toContain("brokerVerb(row) === 'captured'");
     expect(source).toContain("brokerVerb(row) === 'brokered'");
@@ -105,6 +117,13 @@ describe('StatsView credential broker contract', () => {
 });
 
 describe('StatsView detail drawer contract', () => {
+  it('uses ledger wording instead of exposing database implementation text', () => {
+    expect(source).toContain('Inspect session ledger');
+    expect(source).toContain('Session {vmId} ledger');
+    expect(source).not.toContain('Inspect session database');
+    expect(source).not.toContain('Session {vmId} database');
+  });
+
   it('does not render the selected event twice as raw JSON plus repeated fields', () => {
     expect(source).not.toContain("formatAndHighlight(detail.data, 'json')");
     expect(source).toContain('visibleDetailEntries(detail.data)');

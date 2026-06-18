@@ -363,6 +363,7 @@
 
   const mcpAllowed = $derived(mcpRows.filter(row => text(row.decision) === 'allowed').length);
   const mcpBlocked = $derived(mcpRows.filter(row => text(row.decision) !== 'allowed').length);
+  const mcpToolCalls = $derived(mcpRows.filter(row => isPresent(row.tool_name)).length);
   const httpAllowed = $derived(httpRows.filter(row => text(row.decision) === 'allowed').length);
   const httpDenied = $derived(httpRows.filter(row => text(row.decision) !== 'allowed').length);
   const dnsDenied = $derived(dnsRows.filter(row => text(row.decision) !== 'allowed').length);
@@ -426,8 +427,8 @@
         type="button"
         class="size-8 inline-flex items-center justify-center rounded-lg text-muted-foreground-1 hover:text-foreground hover:bg-muted-hover"
         onclick={inspectTab}
-        title="Inspect session database"
-        aria-label="Inspect session database"
+        title="Inspect session ledger"
+        aria-label="Inspect session ledger"
       >
         <Database size={17} />
       </button>
@@ -454,7 +455,7 @@
       <div class="flex items-center justify-between gap-x-3 mb-6">
         <div>
           <h2 class="text-xl font-medium text-foreground capitalize">{activeTab}</h2>
-          <p class="text-xs text-muted-foreground-1 mt-1">Session {vmId} database</p>
+          <p class="text-xs text-muted-foreground-1 mt-1">Session {vmId} ledger</p>
         </div>
         <button
           type="button"
@@ -502,7 +503,7 @@
           <MetricCard label="MCP Events" value={mcpRows.length.toLocaleString()} />
           <MetricCard label="Allowed" value={mcpAllowed.toLocaleString()} tone="primary" />
           <MetricCard label="Blocked/Error" value={mcpBlocked.toLocaleString()} tone="danger" />
-          <MetricCard label="Credential Refs" value={mcpRows.filter(row => row.credential_ref).length.toLocaleString()} />
+          <MetricCard label="Tool Calls" value={mcpToolCalls.toLocaleString()} />
         </div>
         <StatsEventList title="MCP Events" rows={mcpRows} columns={['Time', 'Server', 'Method', 'Tool', 'Decision']} onrow={(row) => { void showDetail('mcp', row); }}>
           {#snippet children(row: any)}
