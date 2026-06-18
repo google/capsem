@@ -897,7 +897,8 @@ async fn mitm_proxy_plain_http_unknown_openai_shape_emits_model_call() {
         "private gateway must emit one ModelCall"
     );
     let call = &model_calls[0].1;
-    assert_eq!(call.provider, "openai");
+    assert_eq!(call.provider, "unknown");
+    assert_eq!(call.protocol.as_deref(), Some("openai"));
     assert_eq!(call.model.as_deref(), Some("gpt-4.1"));
     assert_eq!(call.path, "/private/model-gateway");
     assert_eq!(call.status_code, Some(200));

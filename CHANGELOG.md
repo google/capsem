@@ -34,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Fixed the unknown model-endpoint integration gate so it asserts provider
+  identity and wire protocol separately: undeclared OpenAI-shaped traffic stays
+  provider `unknown` while still recording protocol `openai`.
 - Disabled the macOS Keychain-backed credential broker store for 1.3 and
   routed durable credential storage through the same file-backed store used on
   Linux, preventing repeated native Keychain prompts during normal service and
