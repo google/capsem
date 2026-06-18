@@ -42,7 +42,9 @@ def test_profile_card_buttons_follow_asset_readiness() -> None:
     assert "ready ? createFromProfile(launcher.profile.id) : ensureProfileAssets(launcher.profile.id)" in source
     assert "ready ? `New ${launcher.profile.name} session` : profileAssetText(launcher.assets)" in source
     assert "launcher.ensuring || launcher.assets?.downloading" in source
-    assert "{launcher.creating ? 'Creating' : launcher.ensuring || launcher.assets?.downloading ? 'Downloading' : 'Checking'}" in source
+    assert "New\n" in source
+    assert "Download\n" in source
+    assert "launcher.loading || launcher.creating || launcher.ensuring || launcher.assets?.downloading === true" in source
 
 
 def test_profile_asset_checklist_renders_all_route_statuses() -> None:
