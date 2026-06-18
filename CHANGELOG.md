@@ -63,6 +63,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Fixed the CI install-test asset preparation rail so placeholder initrds are
+  valid gzip-compressed cpio images and the macOS bootstrap asset hash suite
+  installs `b3sum` before verifying `B3SUMS`.
 - Fixed the macOS CI Python coverage gate so it no longer references the
   deleted `tests/test_mcp.py` file and includes the existing image-build
   backend test needed to keep the builder coverage threshold meaningful.

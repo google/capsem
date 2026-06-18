@@ -140,6 +140,7 @@ jobs:
         run: |
           cargo install cargo-llvm-cov --locked
           cargo install cargo-nextest --locked
+          cargo install b3sum --locked
 
       # Unit tests: all crates with coverage + JUnit XML for test analytics.
       # capsem-app (Tauri bin) is macOS-only; capsem-mcp-aggregator and

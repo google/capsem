@@ -103,9 +103,25 @@ def test_install_e2e_generates_manifest_through_admin_rail() -> None:
     assert "cargo run -p capsem-admin -- manifest generate" in script
     assert 'arm64|aarch64)' in script
     assert 'write_if_missing "$ASSETS_DIR/$arch/vmlinuz"' in script
-    assert 'write_if_missing "$ASSETS_DIR/$arch/initrd.img"' in script
+    assert 'create_minimal_initrd_if_missing "$ASSETS_DIR/$arch/initrd.img"' in script
+    assert 'write_if_missing "$ASSETS_DIR/$arch/initrd.img"' not in script
+    assert "cpio -o -H newc" in script
+    assert "gzip" in script
     assert 'write_if_missing "$ASSETS_DIR/$arch/rootfs.erofs"' in script
     assert "scripts/gen_manifest.py" not in script
+
+
+def test_ci_installs_b3sum_before_bootstrap_asset_hash_checks() -> None:
+    workflow = _workflow_job_block("test")
+
+    install_tools_pos = workflow.find("- name: Install tools")
+    b3sum_pos = workflow.find("cargo install b3sum --locked")
+    bootstrap_pos = workflow.find("uv run python -m pytest tests/capsem-bootstrap/")
+
+    assert install_tools_pos != -1
+    assert b3sum_pos != -1
+    assert bootstrap_pos != -1
+    assert install_tools_pos < b3sum_pos < bootstrap_pos
 
 
 def test_guest_network_doctor_is_hermetic_by_default() -> None:

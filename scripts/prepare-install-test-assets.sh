@@ -27,8 +27,25 @@ write_if_missing() {
     fi
 }
 
+create_minimal_initrd_if_missing() {
+    local path="${1:?create_minimal_initrd_if_missing <path>}"
+    if [ -f "$path" ] && gzip -t "$path" >/dev/null 2>&1; then
+        return
+    fi
+
+    install -d "$(dirname "$path")"
+    local workdir
+    workdir="$(mktemp -d)"
+    (
+        cd "$workdir"
+        printf '%s\n' "capsem install-test initrd $arch" > README
+        find . | cpio -o -H newc 2>/dev/null | gzip > "$path"
+    )
+    rm -rf "$workdir"
+}
+
 write_if_missing "$ASSETS_DIR/$arch/vmlinuz" "capsem install-test kernel $arch"
-write_if_missing "$ASSETS_DIR/$arch/initrd.img" "capsem install-test initrd $arch"
+create_minimal_initrd_if_missing "$ASSETS_DIR/$arch/initrd.img"
 write_if_missing "$ASSETS_DIR/$arch/rootfs.erofs" "capsem install-test rootfs $arch"
 
 rm -rf "$ASSETS_DIR/current"
