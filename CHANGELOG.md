@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added provider-specific Ironbank release gate entrypoints for OpenAI, AGY,
+  Gemini, and Claude so the Sprinty 1.3 provider matrix runs the named
+  hermetic replay tests directly instead of relying on consolidated test files.
 - Added a dedicated optional live-provider Ironbank canary gate for OpenAI,
   Gemini, and Claude that reuses the model-client ledger assertions when
   operator credentials are present and stays inert when no live keys are
