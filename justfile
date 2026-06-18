@@ -17,6 +17,7 @@
 #   build-ui         -> _pnpm-install (pnpm build + cargo build -p capsem-app, in lockstep)
 #   docs             -> _pnpm-install (build docs + marketing site release docs surfaces)
 #   run-ui *ARGS     -> build-ui (launch ./target/debug/capsem-app)
+#   test-frontend    -> frontend check + vitest + production build
 #   smoke            -> _install-tools + _pnpm-install + _check-assets + _pack-initrd + _materialize-config + _ensure-service
 #                       (audit, full doctor, injection, integration, parallel pytest groups)
 #   test             -> _install-tools + _clean-stale + _pnpm-install + _generate-settings
@@ -203,6 +204,15 @@ build-ui profile="debug": _pnpm-install
         echo ""
         echo "Built ./target/debug/capsem-app"
     fi
+
+# Frontend release gate used by Sprinty and docs.
+test-frontend: _pnpm-install
+    #!/bin/bash
+    set -euo pipefail
+    cd frontend
+    pnpm run check
+    pnpm run test
+    pnpm run build
 
 # Build both public documentation surfaces used by the release gate.
 docs: _pnpm-install

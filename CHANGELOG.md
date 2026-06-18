@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added bootstrap and Justfile contract tests that prove release gates keep
   checking project skills, site structure, profile-owned asset materialization,
   ruff/ty/skill validation, and retired escape-path names.
+- Added the explicit `just test-frontend` release gate so Sprinty, docs, and
+  local checks all use the same frontend check/test/build path.
 - Added a dedicated Ironbank Claude CLI ledger gate that runs `ollama launch claude` through the VM profile and proves the model, tool, file, credential, and security ledger path.
 - Added a dedicated Ironbank Codex CLI ledger gate that runs direct Codex and
   `ollama launch codex` through the VM profile and proves the model, tool,
