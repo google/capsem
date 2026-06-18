@@ -91,6 +91,8 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert "capsem-admin" in build_pkg
     assert "capsem-tui" in build_pkg
     assert "rm -rf /Applications/Capsem.app" in pkg_preinstall
+    assert "event=remove_user_app_payload" in pkg_preinstall
+    assert 'rm -rf "$USER_HOME/Applications/Capsem.app"' in pkg_preinstall
     assert "rm -rf /usr/local/share/capsem" in pkg_preinstall
     assert "pkill -9 -x capsem-app" in pkg_preinstall
     assert "capsem stop" not in pkg_preinstall

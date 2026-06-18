@@ -45,6 +45,11 @@ fi
 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=preinstall event=kill_gui"
 pkill -9 -x capsem-app 2>/dev/null || true
 
+if [ -n "${USER_HOME:-}" ] && [ "$USER_HOME" != "/" ]; then
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=preinstall event=remove_user_app_payload path=$USER_HOME/Applications/Capsem.app"
+    rm -rf "$USER_HOME/Applications/Capsem.app"
+fi
+
 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=preinstall event=remove_old_payload"
 rm -rf /Applications/Capsem.app
 rm -rf /usr/local/share/capsem
