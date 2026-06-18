@@ -304,6 +304,11 @@ def test_unknown_rust_target_is_w012(guest_valid: Path) -> None:
     assert "W012" in _codes(validate_guest(guest_valid))
 
 
-def test_real_guest_config_has_no_validation_errors() -> None:
-    errors = _errors(validate_guest(PROJECT_ROOT / "guest"))
-    assert errors == []
+def test_runtime_config_is_profile_owned_and_guest_config_stays_retired() -> None:
+    assert not (PROJECT_ROOT / "guest" / "config").exists()
+    for profile_id in ("code", "co-work"):
+        profile_dir = PROJECT_ROOT / "config" / "profiles" / profile_id
+        assert (profile_dir / "profile.toml").is_file()
+        assert (profile_dir / "enforcement.toml").is_file()
+        assert (profile_dir / "detection.yaml").is_file()
+        assert (profile_dir / "mcp.json").is_file()

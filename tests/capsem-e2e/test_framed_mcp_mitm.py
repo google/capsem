@@ -751,6 +751,18 @@ def test_framed_guest_mcp_builtin_http_policy_writes_mcp_and_net_rows():
         svc = _start_service()
         vm = None
         try:
+            allowed_port = allowed_url.rsplit(":", 1)[1]
+            _upsert_profile_enforcement_rule(
+                svc,
+                "allow_builtin_http_fixture",
+                action="allow",
+                match=(
+                    'http.host == "127.0.0.1" '
+                    f'&& tcp.port == "{allowed_port}" '
+                    '&& http.method == "HEAD"'
+                ),
+                reason="test allows the local built-in HTTP fixture explicitly",
+            )
             _upsert_profile_enforcement_rule(
                 svc,
                 "block_builtin_http",

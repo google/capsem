@@ -499,7 +499,7 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
         assert info["total_tool_calls"] == 0
 
         service_log = (service.tmp_dir / "service.log").read_text(encoding="utf-8")
-        gateway_log = (gateway.run_dir / "gateway.log").read_text(encoding="utf-8")
+        gateway_log = gateway.stop_and_read_log()
         assert f"/vms/{session_id}/inspect" in gateway_log
         assert "gateway.proxy.ok" in gateway_log
         assert "security_latest" in service_log or "/security/latest" in service_log

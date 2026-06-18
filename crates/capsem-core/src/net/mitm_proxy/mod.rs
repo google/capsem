@@ -264,24 +264,6 @@ fn ai_protocol_for_body_preview(body: &[u8]) -> Option<ModelProtocol> {
     None
 }
 
-fn ai_provider_for_body_preview(body: &[u8]) -> Option<ProviderKind> {
-    if body.len() > AI_BODY_CAPTURE_LIMIT {
-        return None;
-    }
-    let json: serde_json::Value = serde_json::from_slice(body).ok()?;
-    let model = json.get("model").and_then(|value| value.as_str())?;
-    if is_google_model_name(model) {
-        return Some(ProviderKind::Google);
-    }
-    if is_anthropic_model_name(model) {
-        return Some(ProviderKind::Anthropic);
-    }
-    if is_openai_model_name(model) {
-        return Some(ProviderKind::OpenAi);
-    }
-    None
-}
-
 fn should_sniff_unknown_model_body(
     ai_provider: Option<ProviderKind>,
     method: &http::Method,
@@ -1556,8 +1538,7 @@ async fn handle_request(
             if should_sniff_model {
                 if let Some(protocol) = ai_protocol_for_body_preview(&body_bytes) {
                     if effective_ai_provider.is_none() {
-                        effective_ai_provider = ai_provider_for_body_preview(&body_bytes)
-                            .or(Some(ProviderKind::Unknown));
+                        effective_ai_provider = Some(ProviderKind::Unknown);
                     }
                     effective_ai_protocol = Some(protocol);
                     sniffed_model_request = true;
@@ -2895,25 +2876,7 @@ match = 'http.host == "127.0.0.1"'
     }
 
     #[test]
-    fn provider_detection_infers_provider_only_from_recognized_model_name() {
-        assert_eq!(
-            ai_provider_for_body_preview(
-                br#"{"model":"gpt-4.1","messages":[{"role":"user","content":"hi"}]}"#
-            ),
-            Some(ProviderKind::OpenAi)
-        );
-        assert_eq!(
-            ai_provider_for_body_preview(
-                br#"{"model":"claude-3-5-sonnet","max_tokens":128,"messages":[{"role":"user","content":"hi"}]}"#
-            ),
-            Some(ProviderKind::Anthropic)
-        );
-        assert_eq!(
-            ai_provider_for_body_preview(
-                br#"{"model":"gemini-2.5-pro","contents":[{"parts":[{"text":"hi"}]}]}"#
-            ),
-            Some(ProviderKind::Google)
-        );
+    fn provider_detection_keeps_body_sniffing_protocol_only() {
         assert_eq!(
             ai_protocol_for_body_preview(
                 br#"{"model":"local-model","messages":[{"role":"user","content":"hi"}],"tools":[]}"#
@@ -2921,10 +2884,16 @@ match = 'http.host == "127.0.0.1"'
             Some(ModelProtocol::OpenAi)
         );
         assert_eq!(
-            ai_provider_for_body_preview(
-                br#"{"model":"local-model","messages":[{"role":"user","content":"hi"}],"tools":[]}"#
+            ai_identity_for_target_or_path(
+                &crate::net::policy_config::ModelEndpointRegistry::default(),
+                "127.0.0.1",
+                3713,
+                "/model/shape"
             ),
-            None
+            ModelTrafficIdentity {
+                provider: None,
+                protocol: None,
+            }
         );
     }
 

@@ -441,7 +441,7 @@ def test_plain_json_http_request_pays_full_ledger_debt_blackbox() -> None:
         assert session_stats["denied_requests"] == 0
 
         service_log = (service.tmp_dir / "service.log").read_text(encoding="utf-8")
-        gateway_log = (gateway.run_dir / "gateway.log").read_text(encoding="utf-8")
+        gateway_log = gateway.stop_and_read_log()
         assert "handle_exec" in service_log or "exec" in service_log
         assert "gateway.proxy.ok" in gateway_log
         assert f"/vms/{session_id}/inspect" in gateway_log
@@ -835,7 +835,7 @@ def test_http_body_handling_matrix_pays_full_ledger_debt_blackbox() -> None:
         assert session_stats["denied_requests"] == 0
 
         service_log = (service.tmp_dir / "service.log").read_text(encoding="utf-8")
-        gateway_log = (gateway.run_dir / "gateway.log").read_text(encoding="utf-8")
+        gateway_log = gateway.stop_and_read_log()
         assert "handle_exec" in service_log or "exec" in service_log
         assert "gateway.proxy.ok" in gateway_log
         assert f"/vms/{session_id}/inspect" in gateway_log
@@ -1349,7 +1349,7 @@ def test_brokered_http_rewrite_pays_full_ledger_debt_blackbox() -> None:
             assert by_event_type["http.request"] >= 3
 
         service_log = (service.tmp_dir / "service.log").read_text(encoding="utf-8")
-        gateway_log = (gateway.run_dir / "gateway.log").read_text(encoding="utf-8")
+        gateway_log = gateway.stop_and_read_log()
         assert "capsem_test_oauth_access_" not in service_log
         assert "capsem_test_oauth_refresh_" not in service_log
         assert "gateway.proxy.ok" in gateway_log
@@ -1625,7 +1625,7 @@ def test_denied_http_request_pays_full_ledger_debt_blackbox() -> None:
         assert session_stats["denied_requests"] >= 1
 
         service_log = (service.tmp_dir / "service.log").read_text(encoding="utf-8")
-        gateway_log = (gateway.run_dir / "gateway.log").read_text(encoding="utf-8")
+        gateway_log = gateway.stop_and_read_log()
         assert "handle_exec" in service_log or "exec" in service_log
         assert "gateway.proxy.ok" in gateway_log
         assert f"/vms/{session_id}/inspect" in gateway_log
@@ -1953,7 +1953,7 @@ def test_asked_http_request_pays_full_ledger_debt_blackbox() -> None:
         assert session_stats["denied_requests"] >= 1
 
         service_log = (service.tmp_dir / "service.log").read_text(encoding="utf-8")
-        gateway_log = (gateway.run_dir / "gateway.log").read_text(encoding="utf-8")
+        gateway_log = gateway.stop_and_read_log()
         assert "handle_exec" in service_log or "exec" in service_log
         assert "gateway.proxy.ok" in gateway_log
         assert f"/vms/{session_id}/inspect" in gateway_log

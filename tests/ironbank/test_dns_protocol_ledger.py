@@ -447,7 +447,7 @@ def test_dns_query_and_block_matrix_pays_full_ledger_debt_blackbox() -> None:
         process_log = (
             service.tmp_dir / "sessions" / session_id / "process.log"
         ).read_text(encoding="utf-8")
-        gateway_log = (gateway.run_dir / "gateway.log").read_text(encoding="utf-8")
+        gateway_log = gateway.stop_and_read_log()
         assert "handle_exec" in service_log or "exec" in service_log
         assert "dns" in process_log.lower()
         assert "gateway.proxy.ok" in gateway_log

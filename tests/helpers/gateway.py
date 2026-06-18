@@ -28,6 +28,8 @@ class GatewayInstance:
         self.frontend_dir = str(frontend_dir) if frontend_dir else None
         self.proc = None
         self._log_file = None
+        self._stdio_log_path = self.tmp_dir / "gateway-stdio.log"
+        self._log_path = self.tmp_dir / ".capsem" / "run" / "gateway.log"
         self.token = None
         self.port = None
 
@@ -53,9 +55,9 @@ class GatewayInstance:
         run_dir = self.tmp_dir / ".capsem" / "run"
         run_dir.mkdir(parents=True, exist_ok=True)
 
-        log_path = self.tmp_dir / "gateway.log"
+        log_path = self._log_path
         print(f"GATEWAY LOG: {log_path}")
-        self._log_file = open(log_path, "w")
+        self._log_file = open(self._stdio_log_path, "w")
 
         # capsem-gateway refuses to run without a live parent service (see
         # capsem-guard). Standalone test invocations pass the pytest worker PID
@@ -104,6 +106,11 @@ class GatewayInstance:
         self.stop()
         if log_path.exists():
             print(f"\n--- GATEWAY LOG ---\n{log_path.read_text()}\n---", file=sys.stderr)
+        if self._stdio_log_path.exists():
+            print(
+                f"\n--- GATEWAY STDIO ---\n{self._stdio_log_path.read_text()}\n---",
+                file=sys.stderr,
+            )
         raise RuntimeError("capsem-gateway failed to start within 10s")
 
     def stop(self):
@@ -114,8 +121,15 @@ class GatewayInstance:
             except subprocess.TimeoutExpired:
                 self.proc.kill()
                 self.proc.wait()
+            self.proc = None
         if self._log_file:
             self._log_file.close()
+            self._log_file = None
+
+    def stop_and_read_log(self) -> str:
+        """Stop the gateway so Rust's stdout/stderr log buffer is flushed."""
+        self.stop()
+        return self._log_path.read_text(encoding="utf-8") if self._log_path.exists() else ""
 
     @property
     def base_url(self) -> str:
@@ -128,6 +142,10 @@ class GatewayInstance:
     @property
     def run_dir(self) -> Path:
         return self.tmp_dir / ".capsem" / "run"
+
+    @property
+    def log_path(self) -> Path:
+        return self._log_path
 
 
 class TcpHttpClient:

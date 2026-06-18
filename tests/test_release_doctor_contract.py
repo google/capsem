@@ -355,8 +355,8 @@ def test_benchmark_release_path_wires_mock_server_and_forbids_http_skip() -> Non
     assert "CAPSEM_MOCK_SERVER_HTTPS_BASE_URL" in baseline
     assert "CAPSEM_BENCH_TOTAL_REQUESTS" in baseline
     assert "CAPSEM_BENCH_CONCURRENCY" in baseline
-    assert "RELEASE_PROTOCOL_REQUESTS = 1_000" in baseline
-    assert "RELEASE_PROTOCOL_CONCURRENCY = 32" in baseline
+    assert "RELEASE_PROTOCOL_REQUESTS = 50_000" in baseline
+    assert "RELEASE_PROTOCOL_CONCURRENCY = 64" in baseline
     assert "RELEASE_PROTOCOL_REQUESTS = 10" not in baseline
     assert "RELEASE_PROTOCOL_CONCURRENCY = 1" not in baseline
     assert "validate_capsem_bench_result(data)" in baseline
