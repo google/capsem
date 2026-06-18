@@ -180,8 +180,8 @@ jobs:
             tests/test_config.py \
             tests/test_docker.py \
             tests/test_doctor.py \
+            tests/test_image_build_backend.py \
             tests/test_manifest.py \
-            tests/test_mcp.py \
             tests/test_mock_server_launcher.py \
             tests/test_models.py \
             tests/test_protocol_fixture_recorder.py \

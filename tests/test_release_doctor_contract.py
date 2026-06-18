@@ -85,6 +85,18 @@ def test_ci_materializes_runtime_profiles_after_generating_settings() -> None:
     assert generate_pos < prepare_assets_pos < materialize_pos < python_pos
 
 
+def test_ci_python_schema_pytest_paths_exist() -> None:
+    workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
+    coverage_step = workflow.split("- name: Python schema tests with coverage", maxsplit=1)[
+        1
+    ].split("# Python integration tests", maxsplit=1)[0]
+    paths = sorted(set(re.findall(r"\btests/[^\s\\]+", coverage_step)))
+
+    missing = [path for path in paths if not (PROJECT_ROOT / path).exists()]
+
+    assert missing == []
+
+
 def test_install_e2e_generates_manifest_through_admin_rail() -> None:
     script = (PROJECT_ROOT / "scripts" / "prepare-install-test-assets.sh").read_text()
 

@@ -63,6 +63,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Fixed the macOS CI Python coverage gate so it no longer references the
+  deleted `tests/test_mcp.py` file and includes the existing image-build
+  backend test needed to keep the builder coverage threshold meaningful.
 - Fixed runtime profile materialization on CI hosts whose CPU architecture is
   not present in the checked-in asset manifest by falling back to the
   manifest's sole available architecture while keeping explicit `CAPSEM_ARCH`
