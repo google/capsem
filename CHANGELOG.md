@@ -34,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Updated the frontend Astro/Svelte integration dependencies to patched
+  Astro/Vite versions so the release `pnpm audit` gate is clean during
+  `just test`.
 - Fixed bootstrap's Colima readiness check so `colima is not running` no longer
   matches the word `running` and skips the Docker VM startup path during
   `just test`.
