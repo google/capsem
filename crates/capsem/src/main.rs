@@ -1105,6 +1105,23 @@ fn should_refresh_update_cache_for_command(command: &Commands) -> bool {
     )
 }
 
+fn command_is_handled_before_service_api(command: &Commands) -> bool {
+    matches!(
+        command,
+        Commands::Misc(
+            MiscCommands::Version
+                | MiscCommands::Install
+                | MiscCommands::Status
+                | MiscCommands::Start
+                | MiscCommands::Stop
+                | MiscCommands::Update { .. }
+                | MiscCommands::Completions { .. }
+                | MiscCommands::Uninstall { .. }
+                | MiscCommands::SupportBundle { .. }
+        )
+    )
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -2529,6 +2546,43 @@ mod tests {
         let cli = Cli::parse_from(["capsem", "list"]);
         let command = cli.command.as_ref().expect("parsed command");
         assert!(should_refresh_update_cache_for_command(command));
+    }
+
+    #[test]
+    fn service_control_commands_do_not_cross_service_api_boundary() {
+        for args in [
+            &["capsem", "install"][..],
+            &["capsem", "status"][..],
+            &["capsem", "start"][..],
+            &["capsem", "stop"][..],
+            &["capsem", "debug"][..],
+            &["capsem", "completions", "zsh"][..],
+            &["capsem", "uninstall", "--yes"][..],
+            &["capsem", "update", "--yes"][..],
+        ] {
+            let cli = Cli::parse_from(args);
+            let command = cli.command.as_ref().expect("parsed command");
+            assert!(
+                command_is_handled_before_service_api(command),
+                "{args:?} must be handled before UDS/service API construction so service control cannot depend on profile, status, or credential-store readiness"
+            );
+        }
+    }
+
+    #[test]
+    fn session_commands_cross_service_api_boundary() {
+        for args in [
+            &["capsem", "list"][..],
+            &["capsem", "exec", "code-1", "true"][..],
+            &["capsem", "assets", "status"][..],
+        ] {
+            let cli = Cli::parse_from(args);
+            let command = cli.command.as_ref().expect("parsed command");
+            assert!(
+                !command_is_handled_before_service_api(command),
+                "{args:?} should keep using the service API"
+            );
+        }
     }
 
     #[test]

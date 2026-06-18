@@ -56,6 +56,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   routed durable credential storage through the same file-backed store used on
   Linux, preventing repeated native Keychain prompts during normal service and
   TUI use.
+- Added a CLI boundary guard proving `capsem stop` and the other service-control
+  commands are handled before UDS/service API construction, so they cannot
+  depend on profile, status, or credential-store readiness.
 - Stabilized credential broker telemetry-hook tests under the full coverage
   gate by waiting for DB-visible ledger rows instead of relying on a
   one-second sleep window.
