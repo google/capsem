@@ -46,11 +46,6 @@ impl Drop for EnvGuard {
 }
 
 #[test]
-fn credential_store_namespace_is_capsem_org() {
-    assert_eq!(credential_store_namespace(), "org.capsem.credentials");
-}
-
-#[test]
 fn credential_store_uses_disk_backend_by_default() {
     let _lock = TEST_ENV_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();

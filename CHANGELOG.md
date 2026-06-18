@@ -62,6 +62,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   routed durable credential storage through the same file-backed store used on
   Linux, preventing repeated native credential prompts during normal service and
   TUI use.
+- Removed the last runtime credential-store vault namespace vestige so 1.3
+  exposes only the file-backed durable credential store, with no Keychain-shaped
+  `org.capsem.credentials` runtime contract left behind.
 - Fixed the macOS LaunchAgent install contract so installed services explicitly
   pin `CAPSEM_CREDENTIAL_STORE_PATH` to the file-backed credential store.
 - Fixed the release docs gate by restoring `just docs` as the single command

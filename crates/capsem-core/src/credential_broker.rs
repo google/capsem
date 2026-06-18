@@ -11,7 +11,6 @@ use crate::net::ai_traffic::provider::ProviderKind;
 use crate::net::policy_config::SecurityRuleSet;
 use crate::security_engine::RuntimeSecurityEventType;
 
-const CREDENTIAL_STORE_NAMESPACE: &str = "org.capsem.credentials";
 pub(crate) const STORE_PATH_ENV: &str = "CAPSEM_CREDENTIAL_STORE_PATH";
 #[cfg(test)]
 pub(crate) static TEST_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -408,10 +407,6 @@ pub fn hydrate_credential_runtime_cache_from_durable_store() -> Result<usize, St
 
 pub fn credential_store_status() -> CredentialStoreStatus {
     CredentialStore::global().status()
-}
-
-pub const fn credential_store_namespace() -> &'static str {
-    CREDENTIAL_STORE_NAMESPACE
 }
 
 fn credential_provider_from_str(provider: &str) -> Option<CredentialProvider> {

@@ -234,6 +234,8 @@ def test_runtime_credential_store_does_not_use_native_keychain() -> None:
     ]
     forbidden = [
         "CAPSEM_CREDENTIAL_BROKER_TEST_STORE",
+        "org.capsem.credentials",
+        "com.capsem.credential",
         "credential_store_backend_native",
         "durable_store_write_native",
         "durable_store_read_native",
