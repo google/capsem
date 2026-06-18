@@ -14,7 +14,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 SCHEMA_PATH = PROJECT_ROOT / "config" / "settings" / "schema.generated.json"
 DEFAULTS_PATH = PROJECT_ROOT / "config" / "settings" / "ui-metadata.generated.json"
 MOCK_PATH = PROJECT_ROOT / "frontend" / "src" / "lib" / "mock-settings.generated.ts"
-GUEST_DIR = PROJECT_ROOT / "guest"
+IMAGE_CONFIG_DIR = PROJECT_ROOT / "config" / "docker" / "image"
 
 
 def main():
@@ -23,7 +23,7 @@ def main():
     print(f"Wrote {SCHEMA_PATH}")
     print(f"  Size: {SCHEMA_PATH.stat().st_size} bytes")
 
-    config = load_guest_config(GUEST_DIR)
+    config = load_guest_config(IMAGE_CONFIG_DIR)
     defaults = generate_defaults_json(config)
     DEFAULTS_PATH.write_text(json.dumps(defaults, indent=2) + "\n")
     print(f"Wrote {DEFAULTS_PATH}")

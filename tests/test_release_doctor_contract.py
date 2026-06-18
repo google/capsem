@@ -217,6 +217,14 @@ def test_frontend_generated_settings_use_one_shared_rail() -> None:
     assert "uv run python scripts/generate_schema.py" not in just
 
 
+def test_settings_generator_uses_current_config_authority() -> None:
+    generator = (PROJECT_ROOT / "scripts" / "generate_schema.py").read_text()
+
+    assert 'PROJECT_ROOT / "config" / "docker" / "image"' in generator
+    assert 'PROJECT_ROOT / "guest"' not in generator
+    assert '"guest/config"' not in generator
+
+
 def test_frontend_coverage_runner_declares_its_provider() -> None:
     package_json = json.loads((PROJECT_ROOT / "frontend" / "package.json").read_text())
 

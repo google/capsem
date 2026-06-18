@@ -34,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Fixed the generated settings/schema rail so it reads the current
+  `config/docker/image` authority instead of the removed `guest/config` tree,
+  keeping `just test` and CI on the same profile-derived build inputs.
 - Fixed CLI status/debug health checks so they use the same `CAPSEM_RUN_DIR`
   socket and gateway files as the service client, preventing source and
   installed runs from checking different Capsem runtimes.
