@@ -19,7 +19,7 @@ def test_frontend_uses_current_route_vocabulary_not_retired_policy_vm_terms() ->
 
     assert "Sessions" in dashboard
     assert "Failed to create session" in dashboard
-    assert "Session {vmId} database" in stats
+    assert "Session {vmId} ledger" in stats
     assert "Session Logs" in toolbar
 
     combined = "\n".join([dashboard, profile, stats, toolbar])
