@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added a release evidence collector that writes a timestamped 1.3 audit bundle
+  with git, manifest, benchmark, file-inventory, and pending manual-gate facts.
 - Added provider-specific Ironbank release gate entrypoints for OpenAI, AGY,
   Gemini, and Claude so the Sprinty 1.3 provider matrix runs the named
   hermetic replay tests directly instead of relying on consolidated test files.
