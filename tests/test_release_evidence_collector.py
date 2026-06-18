@@ -92,6 +92,7 @@ def test_release_evidence_collector_writes_honest_bundle(tmp_path):
         output_root=tmp_path / "release",
         timestamp="20260618T120000Z",
         run_command=fake_run,
+        home=tmp_path / "clean-home",
     )
 
     manifest = json.loads((bundle / "manifest.json").read_text())
@@ -194,6 +195,7 @@ def test_release_evidence_collector_ironbank_guard_ignores_fixture_words(tmp_pat
         output_root=tmp_path / "release",
         timestamp="20260618T120003Z",
         run_command=fake_run,
+        home=tmp_path / "clean-home",
     )
 
     manifest = json.loads((bundle / "manifest.json").read_text())
@@ -226,6 +228,19 @@ def test_release_evidence_collector_rejects_stale_keychain_backup_helpers(tmp_pa
     (backup_dir / "capsem-mcp-builtin").write_bytes(
         b"retired helper still opens org.capsem.credentials"
     )
+
+    with pytest.raises(RuntimeError, match="Installed Capsem credential store guard failed"):
+        module._installed_credential_store_guard(home)
+
+
+def test_release_evidence_collector_rejects_retired_python_admin_bundle(tmp_path):
+    module = _load_module()
+    home = tmp_path / "home"
+    bin_dir = home / ".capsem" / "bin"
+    retired_bundle = bin_dir / "capsem-admin-python"
+    retired_bundle.mkdir(parents=True)
+    (bin_dir / "capsem-service").write_bytes(b"clean service")
+    (retired_bundle / "service_settings.py").write_bytes(b"KEYCHAIN = 'keychain'")
 
     with pytest.raises(RuntimeError, match="Installed Capsem credential store guard failed"):
         module._installed_credential_store_guard(home)

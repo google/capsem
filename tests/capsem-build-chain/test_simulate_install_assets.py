@@ -137,6 +137,29 @@ def test_simulate_install_removes_retired_binary_backups(tmp_path: Path) -> None
     assert not backup.exists()
 
 
+def test_simulate_install_removes_retired_python_admin_bundle(tmp_path: Path) -> None:
+    bin_src = tmp_path / "bin"
+    capsem_home = tmp_path / "home"
+    assets = tmp_path / "assets"
+    config = _write_config(tmp_path / "target-config")
+    _write_fake_bins(bin_src)
+    _write_assets(assets, "1111111111111111")
+    retired_bundle = capsem_home / "bin" / "capsem-admin-python"
+    retired_bundle.mkdir(parents=True)
+    (retired_bundle / "stale.py").write_text("KEYCHAIN = 'keychain'\n")
+    env = {
+        **os.environ,
+        "CAPSEM_HOME": str(capsem_home),
+        "CAPSEM_RUN_DIR": str(capsem_home / "run"),
+    }
+
+    subprocess.run(
+        ["bash", str(SCRIPT), str(bin_src), str(assets), str(config)], env=env, check=True
+    )
+
+    assert not retired_bundle.exists()
+
+
 def test_simulate_install_codesigns_macho_binaries_on_macos(tmp_path: Path) -> None:
     bin_src = tmp_path / "bin"
     capsem_home = tmp_path / "home"

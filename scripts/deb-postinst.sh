@@ -41,6 +41,8 @@ echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=start user=$TARG
 retired_user_config="user"".toml"
 rm -f "$CAPSEM_DIR/$retired_user_config" "$CAPSEM_DIR/service.toml"
 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=retired_config_removed"
+rm -rf "$CAPSEM_DIR/bin/capsem-admin-python"
+echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=retired_python_admin_bundle_removed"
 
 # Copy the package-selected manifest and provenance. VM asset payloads are
 # external to the package and are reconciled by the service from this manifest.

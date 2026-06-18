@@ -291,9 +291,19 @@ def _installed_credential_store_guard(home: Path) -> dict[str, Any]:
     findings: list[dict[str, Any]] = []
     files_scanned = 0
     for directory in scan_dirs:
+        candidates: list[Path] = []
         for path in sorted(directory.glob("capsem*")):
-            if not path.is_file():
-                continue
+            if path.is_file():
+                candidates.append(path)
+            elif path.name == "capsem-admin-python":
+                findings.append(
+                    {
+                        "path": str(path),
+                        "marker": "retired_python_admin_bundle",
+                    }
+                )
+                candidates.extend(sorted(child for child in path.rglob("*") if child.is_file()))
+        for path in candidates:
             files_scanned += 1
             try:
                 payload = path.read_bytes()

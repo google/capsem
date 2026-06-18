@@ -81,6 +81,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed package, Debian, and simulated installs so retired per-user config
   artifacts are removed before the service starts, keeping profile/corp/config
   ownership on the 1.3 rails.
+- Fixed package, Debian, and simulated installs so the retired
+  `capsem-admin-python` bundle is removed from `~/.capsem/bin`, preventing old
+  1.2 builder/keychain code from lingering in installed trees.
 - Fixed `capsem shell` input handling so bursty keypresses and paste input are
   drained in one TUI cycle instead of being throttled to one event per 16ms
   redraw tick.

@@ -70,6 +70,19 @@ def test_installers_remove_retired_user_and_service_config_rails() -> None:
         assert "retired_config_removed" in text
 
 
+def test_installers_remove_retired_python_admin_bundle() -> None:
+    scripts = [
+        PROJECT_ROOT / "scripts" / "pkg-scripts" / "postinstall",
+        PROJECT_ROOT / "scripts" / "deb-postinst.sh",
+        PROJECT_ROOT / "scripts" / "simulate-install.sh",
+    ]
+
+    for path in scripts:
+        text = path.read_text()
+        assert "capsem-admin-python" in text
+        assert "retired_python_admin_bundle_removed" in text
+
+
 def test_manifest_generation_public_path_is_capsem_admin() -> None:
     justfile = (PROJECT_ROOT / "justfile").read_text()
     public_docs = [
