@@ -259,6 +259,43 @@ def test_runtime_credential_store_does_not_use_native_keychain() -> None:
     assert "default_credential_store_path()" in broker
 
 
+def test_stop_command_stays_before_status_and_credential_hydration() -> None:
+    source = (PROJECT_ROOT / "crates" / "capsem" / "src" / "main.rs").read_text()
+
+    stop_arm = re.search(
+        r"Commands::Misc\(MiscCommands::Stop\) => \{\n(?P<body>.*?)\n        \}",
+        source,
+        re.DOTALL,
+    )
+    assert stop_arm is not None
+    body = stop_arm.group("body")
+
+    assert "service_install::stop_service().await?" in body
+    assert "println!(\"Service stopped.\");" in body
+    assert "return Ok(());" in body
+
+    forbidden = [
+        "UdsClient",
+        "client::UdsClient",
+        "service_json",
+        "/profiles/status",
+        "/corp/info",
+        "/vms/list",
+        "credential",
+        "status_client",
+        "list_client",
+        "try_ensure_service",
+    ]
+    for needle in forbidden:
+        assert needle not in body, f"`capsem stop` must not touch {needle}"
+
+    client_creation = source.find("let client = UdsClient::new")
+    stop_position = source.find("Commands::Misc(MiscCommands::Stop)")
+    assert stop_position != -1
+    assert client_creation != -1
+    assert stop_position < client_creation
+
+
 def test_changelog_does_not_advertise_keychain_credential_storage_for_1_3() -> None:
     changelog = (PROJECT_ROOT / "CHANGELOG.md").read_text()
     unreleased = changelog.split("## [Unreleased]", maxsplit=1)[1].split(
