@@ -37,6 +37,8 @@ echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=start user=$USER 
 
 # Create user-level directory layout. Remove stale asset symlinks from dev
 # installs so this package never writes through to an old worktree.
+rm -rf "$CAPSEM_DIR"/bin.backup*
+echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=retired_binary_backups_removed"
 mkdir -p "$CAPSEM_DIR/bin" "$CAPSEM_DIR/run"
 if [ -L "$CAPSEM_DIR/assets" ]; then
     rm "$CAPSEM_DIR/assets"

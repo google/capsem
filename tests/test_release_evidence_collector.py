@@ -215,6 +215,22 @@ def test_release_evidence_collector_rejects_installed_keychain_helpers(tmp_path)
         module._installed_credential_store_guard(home)
 
 
+def test_release_evidence_collector_rejects_stale_keychain_backup_helpers(tmp_path):
+    module = _load_module()
+    home = tmp_path / "home"
+    bin_dir = home / ".capsem" / "bin"
+    backup_dir = home / ".capsem" / "bin.backup.20260618T145156Z.mcp-keychain"
+    bin_dir.mkdir(parents=True)
+    backup_dir.mkdir(parents=True)
+    (bin_dir / "capsem-service").write_bytes(b"clean service")
+    (backup_dir / "capsem-mcp-builtin").write_bytes(
+        b"retired helper still opens org.capsem.credentials"
+    )
+
+    with pytest.raises(RuntimeError, match="Installed Capsem credential store guard failed"):
+        module._installed_credential_store_guard(home)
+
+
 def test_release_evidence_collector_records_clean_installed_binary_guard(tmp_path):
     module = _load_module()
     root = tmp_path / "repo"

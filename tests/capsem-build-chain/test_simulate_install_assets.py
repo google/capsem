@@ -114,6 +114,29 @@ def test_reinstall_updates_initrd_when_only_initrd_hash_changes(tmp_path: Path) 
     assert not (capsem_home / "assets" / arch / arch).exists()
 
 
+def test_simulate_install_removes_retired_binary_backups(tmp_path: Path) -> None:
+    bin_src = tmp_path / "bin"
+    capsem_home = tmp_path / "home"
+    assets = tmp_path / "assets"
+    config = _write_config(tmp_path / "target-config")
+    _write_fake_bins(bin_src)
+    _write_assets(assets, "1111111111111111")
+    backup = capsem_home / "bin.backup.20260618T145156Z.mcp-keychain"
+    backup.mkdir(parents=True)
+    (backup / "capsem-mcp-builtin").write_text("retired org.capsem.credentials helper")
+    env = {
+        **os.environ,
+        "CAPSEM_HOME": str(capsem_home),
+        "CAPSEM_RUN_DIR": str(capsem_home / "run"),
+    }
+
+    subprocess.run(
+        ["bash", str(SCRIPT), str(bin_src), str(assets), str(config)], env=env, check=True
+    )
+
+    assert not backup.exists()
+
+
 def test_simulate_install_codesigns_macho_binaries_on_macos(tmp_path: Path) -> None:
     bin_src = tmp_path / "bin"
     capsem_home = tmp_path / "home"

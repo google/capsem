@@ -34,6 +34,7 @@ for name in capsem-service capsem-tray capsem-gateway capsem-process capsem-mcp-
     pkill -9 -f "$INSTALL_DIR/$name" 2>/dev/null || true
 done
 
+rm -rf "$CAPSEM_HOME_DIR"/bin.backup*
 mkdir -p "$INSTALL_DIR" "$RUN_DIR"
 # Remove dev symlink if present (just _ensure-service creates one)
 if [[ -L "$ASSETS_DST" ]]; then

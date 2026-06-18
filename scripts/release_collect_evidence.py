@@ -278,7 +278,9 @@ def _ironbank_guard(project_root: Path) -> dict[str, Any]:
 
 def _installed_credential_store_guard(home: Path) -> dict[str, Any]:
     bin_dir = home / ".capsem" / "bin"
-    if not bin_dir.exists():
+    capsem_dir = home / ".capsem"
+    scan_dirs = [path for path in [bin_dir, *sorted(capsem_dir.glob("bin.backup*"))] if path.exists()]
+    if not scan_dirs:
         return {
             "installed_bin_dir": str(bin_dir),
             "files_scanned": 0,
@@ -288,29 +290,30 @@ def _installed_credential_store_guard(home: Path) -> dict[str, Any]:
 
     findings: list[dict[str, Any]] = []
     files_scanned = 0
-    for path in sorted(bin_dir.glob("capsem*")):
-        if not path.is_file():
-            continue
-        files_scanned += 1
-        try:
-            payload = path.read_bytes()
-        except OSError as error:
-            findings.append(
-                {
-                    "path": str(path),
-                    "marker": "read_error",
-                    "detail": str(error),
-                }
-            )
-            continue
-        for marker in FORBIDDEN_INSTALLED_CREDENTIAL_MARKERS:
-            if marker in payload:
+    for directory in scan_dirs:
+        for path in sorted(directory.glob("capsem*")):
+            if not path.is_file():
+                continue
+            files_scanned += 1
+            try:
+                payload = path.read_bytes()
+            except OSError as error:
                 findings.append(
                     {
                         "path": str(path),
-                        "marker": marker.decode("utf-8"),
+                        "marker": "read_error",
+                        "detail": str(error),
                     }
                 )
+                continue
+            for marker in FORBIDDEN_INSTALLED_CREDENTIAL_MARKERS:
+                if marker in payload:
+                    findings.append(
+                        {
+                            "path": str(path),
+                            "marker": marker.decode("utf-8"),
+                        }
+                    )
 
     if findings:
         rendered = ", ".join(f"{row['path']}:{row['marker']}" for row in findings)

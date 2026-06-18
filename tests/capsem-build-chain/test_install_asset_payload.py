@@ -158,6 +158,8 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert "event=assets_hydrated" in pkg_postinstall
     assert "event=asset_hydration_failed" in pkg_postinstall
     assert "event=assets_copied" not in pkg_postinstall
+    assert 'rm -rf "$CAPSEM_DIR"/bin.backup*' in pkg_postinstall
+    assert "event=retired_binary_backups_removed" in pkg_postinstall
 
 
 def test_macos_postinstall_adds_capsem_bin_to_fish_path() -> None:
