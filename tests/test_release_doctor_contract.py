@@ -512,6 +512,21 @@ def test_builder_has_no_legacy_ai_provider_authoring_rail() -> None:
     )
 
 
+def test_gateway_docs_describe_explicit_routes_not_generic_forwarding() -> None:
+    docs = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (
+            PROJECT_ROOT / "docs" / "src" / "content" / "docs" / "architecture" / "service-api.md",
+            PROJECT_ROOT / "skills" / "site-architecture" / "SKILL.md",
+        )
+    )
+
+    assert "Unknown routes must return 404" in docs
+    assert "explicit route table" in docs
+    assert "transparent fallback" not in docs
+    assert "generic path forwarding" not in docs
+
+
 def test_config_contract_has_no_admin_or_registry_authority() -> None:
     assert not (PROJECT_ROOT / "config" / "admin").exists()
     assert (PROJECT_ROOT / "config" / "settings" / "settings.toml").is_file()

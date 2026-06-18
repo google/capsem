@@ -49,6 +49,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Fixed the gateway architecture docs and developer skills to state the
+  explicit-route/404 contract instead of describing a generic gateway
+  forwarding path.
 - Clarified the 1.3 manual bug hotlist against the Sprinty release ledger so
   closed work such as body blobs, MCP proof, overlay panic handling, and
   session naming/action fixes are not accidentally reopened during final smoke.

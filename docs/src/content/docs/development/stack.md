@@ -116,7 +116,7 @@ The UI lives in `frontend/` and is built by pnpm. The build chain:
 
 1. **pnpm install** -- installs npm dependencies (Astro, Svelte, Tailwind, Preline, xterm.js, LayerChart, sql.js)
 2. **astro build** -- compiles `.astro` and `.svelte` files into static HTML/JS/CSS in `frontend/dist/`
-3. The built frontend is served by capsem-gateway over HTTP (and bundled into capsem-app as offline fallback)
+3. The built frontend is served by capsem-gateway over HTTP and bundled into capsem-app for the service-unavailable screen.
 
 The frontend stack:
 
@@ -144,7 +144,7 @@ The Rust workspace produces multiple binaries. Six host binaries and the Tauri d
 | `capsem-mcp` | `capsem-mcp` | MCP server: stdio, bridges AI agent tool calls to service |
 | `capsem-gateway` | `capsem-gateway` | HTTP gateway: TCP:19222, proxies to service, WebSocket terminal |
 | `capsem-tray` | `capsem-tray` | System tray: polls gateway, shows VM status |
-| `capsem-app` | `capsem-app` | Thin Tauri webview: points at gateway, bundled frontend fallback |
+| `capsem-app` | `capsem-app` | Thin Tauri webview: points at gateway, bundled frontend for the service-unavailable screen |
 | `capsem-proto` | (lib) | Shared protocol types (host-guest, service-process IPC) |
 | `capsem-logger` | (lib) | Session DB schema and async writer (SQLite) |
 
