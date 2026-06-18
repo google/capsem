@@ -8,19 +8,57 @@ CONFIG_ROOT="${CAPSEM_CONFIG_ROOT:-$ROOT/config}"
 MANIFEST="${CAPSEM_ASSET_MANIFEST:-$ROOT/$ASSETS_DIR/manifest.json}"
 ASSETS_PATH="${CAPSEM_ASSETS_PATH:-$ROOT/$ASSETS_DIR}"
 
-arch="${CAPSEM_ARCH:-$(uname -m)}"
-case "$arch" in
-    arm64|aarch64)
-        arch="arm64"
-        ;;
-    x86_64|amd64)
-        arch="x86_64"
-        ;;
-    *)
-        echo "ERROR: unsupported materialize arch: $arch" >&2
+normalize_arch() {
+    local arch="$1"
+    case "$arch" in
+        arm64|aarch64)
+            echo "arm64"
+            ;;
+        x86_64|amd64)
+            echo "x86_64"
+            ;;
+        *)
+            echo "ERROR: unsupported materialize arch: $arch" >&2
+            return 1
+            ;;
+    esac
+}
+
+manifest_arches="$(
+    python3 - "$MANIFEST" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+manifest = json.loads(Path(sys.argv[1]).read_text())
+current = manifest["assets"]["current"]
+arches = manifest["assets"]["releases"][current]["arches"]
+for arch in sorted(arches):
+    print(arch)
+PY
+)"
+
+arch_source="host"
+if [ -n "${CAPSEM_ARCH:-}" ]; then
+    arch_source="CAPSEM_ARCH"
+    arch="$(normalize_arch "$CAPSEM_ARCH")"
+else
+    arch="$(normalize_arch "$(uname -m)")"
+fi
+
+if ! printf '%s\n' "$manifest_arches" | grep -Fxq "$arch"; then
+    manifest_arch_count="$(printf '%s\n' "$manifest_arches" | grep -c .)"
+    if [ "$arch_source" = "host" ] && [ "$manifest_arch_count" = "1" ]; then
+        fallback_arch="$(printf '%s\n' "$manifest_arches" | awk 'NF { print; exit }')"
+        echo "  host arch $arch is not present in $MANIFEST; using sole manifest arch $fallback_arch"
+        arch="$fallback_arch"
+    else
+        echo "ERROR: materialize arch $arch from $arch_source is not present in $MANIFEST" >&2
+        echo "available manifest arches:" >&2
+        printf '  %s\n' $manifest_arches >&2
         exit 1
-        ;;
-esac
+    fi
+fi
 
 echo "=== Materialize runtime config ==="
 rm -rf "$ROOT/target/config"

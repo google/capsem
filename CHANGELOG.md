@@ -63,6 +63,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Fixed runtime profile materialization on CI hosts whose CPU architecture is
+  not present in the checked-in asset manifest by falling back to the
+  manifest's sole available architecture while keeping explicit `CAPSEM_ARCH`
+  overrides strict.
 - Fixed stale frontend development guidance that still described the gateway as
   a transparent fallback proxy instead of the explicit route allowlist used by
   the 1.3 UI/TUI contract.

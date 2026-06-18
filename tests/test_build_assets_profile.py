@@ -59,12 +59,24 @@ def test_materialize_config_uses_admin_profile_command() -> None:
 
     script = (PROJECT_ROOT / "scripts" / "materialize-config.sh").read_text()
     assert "cargo run -p capsem-admin -- profile materialize" in script
-    assert "case \"$arch\" in" in script
+    assert "normalize_arch()" in script
+    assert 'case "$arch" in' in script
     assert 'arm64|aarch64)' in script
     assert "--config-root" in script
     assert "--manifest" in script
     assert "--output-root" in script
     assert "target/config" in script
+
+
+def test_materialize_config_falls_back_to_sole_manifest_arch_for_ci_runner() -> None:
+    script = (PROJECT_ROOT / "scripts" / "materialize-config.sh").read_text()
+
+    assert 'manifest["assets"]["current"]' in script
+    assert 'manifest["assets"]["releases"][current]["arches"]' in script
+    assert 'if [ "$arch_source" = "host" ] && [ "$manifest_arch_count" = "1" ]; then' in script
+    assert "using sole manifest arch" in script
+    assert 'arch_source="CAPSEM_ARCH"' in script
+    assert "materialize arch $arch from $arch_source is not present" in script
 
 
 def test_materialize_config_materializes_entire_checked_in_profile_catalog() -> None:
