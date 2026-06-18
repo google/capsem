@@ -70,6 +70,10 @@ pub fn generate_plist(
     let gateway_bin = xml_escape(&gateway_bin.display().to_string());
     let tray_bin = xml_escape(&tray_bin.display().to_string());
     let assets_dir = xml_escape(&assets_dir.display().to_string());
+    let credential_store_path = xml_escape(&format!(
+        "{}/.capsem/credentials/credential-store.json",
+        home
+    ));
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -77,6 +81,11 @@ pub fn generate_plist(
 <dict>
     <key>Label</key>
     <string>com.capsem.service</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>CAPSEM_CREDENTIAL_STORE_PATH</key>
+        <string>{credential_store_path}</string>
+    </dict>
     <key>ProgramArguments</key>
     <array>
         <string>{service_bin}</string>
@@ -695,6 +704,27 @@ mod tests {
         assert!(plist.contains("<key>KeepAlive</key>"));
         assert!(plist.contains("<true/>"));
         assert!(plist.contains("<key>RunAtLoad</key>"));
+    }
+
+    #[test]
+    fn test_generate_plist_pins_file_backed_credential_store() {
+        let plist = generate_plist(
+            Path::new("/Users/test/.capsem/bin/capsem-service"),
+            Path::new("/Users/test/.capsem/bin/capsem-process"),
+            Path::new("/Users/test/.capsem/bin/capsem-gateway"),
+            Path::new("/Users/test/.capsem/bin/capsem-tray"),
+            Path::new("/Users/test/.capsem/assets"),
+            "/Users/test",
+        );
+
+        assert!(plist.contains("<key>EnvironmentVariables</key>"));
+        assert!(plist.contains("<key>CAPSEM_CREDENTIAL_STORE_PATH</key>"));
+        assert!(plist
+            .contains("<string>/Users/test/.capsem/credentials/credential-store.json</string>"));
+        assert!(
+            !plist.to_lowercase().contains("keychain"),
+            "runtime LaunchAgent must not mention or select native Keychain storage"
+        );
     }
 
     #[cfg(target_os = "macos")]

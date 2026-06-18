@@ -62,6 +62,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   routed durable credential storage through the same file-backed store used on
   Linux, preventing repeated native credential prompts during normal service and
   TUI use.
+- Fixed the macOS LaunchAgent install contract so installed services explicitly
+  pin `CAPSEM_CREDENTIAL_STORE_PATH` to the file-backed credential store.
 - Added a CLI boundary guard proving `capsem stop` and the other service-control
   commands are handled before UDS/service API construction, so they cannot
   depend on profile, status, or credential-store readiness.

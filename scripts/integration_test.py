@@ -103,10 +103,9 @@ def _profile_env() -> dict[str, str]:
 def _test_isolation_env() -> dict[str, str]:
     """Environment that keeps black-box integration tests hermetic.
 
-    The credential broker must not touch the developer's native keychain during
-    release gates. Native storage belongs to installed/manual runs; tests use
-    an isolated JSON store inside CAPSEM_HOME so captured credentials can be
-    asserted without host prompts or hidden state.
+    The credential broker must not touch the developer's native keychain.
+    Tests use an isolated JSON store inside CAPSEM_HOME so captured credentials
+    can be asserted without host prompts or hidden state.
     """
     return {
         "CAPSEM_CREDENTIAL_STORE_PATH": str(
