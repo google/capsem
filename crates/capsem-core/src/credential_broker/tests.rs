@@ -47,10 +47,34 @@ impl Drop for EnvGuard {
 
 #[test]
 fn credential_store_namespace_is_capsem_org() {
+    assert_eq!(credential_store_namespace(), "org.capsem.credentials");
+}
+
+#[test]
+fn credential_store_uses_disk_backend_by_default() {
+    let _lock = TEST_ENV_LOCK.blocking_lock();
+    let dir = tempfile::tempdir().unwrap();
+    let old_home_override = std::env::var("CAPSEM_HOME").ok();
+    let old_store = std::env::var(TEST_STORE_ENV).ok();
+    std::env::set_var("CAPSEM_HOME", dir.path().join("capsem-home"));
+    std::env::remove_var(TEST_STORE_ENV);
+    CredentialStore::global().clear_for_test();
+
     assert_eq!(
-        credential_broker_keychain_service(),
-        "org.capsem.credentials"
+        credential_store_status().backend,
+        "disk",
+        "default credential storage must not touch the native macOS Keychain"
     );
+
+    CredentialStore::global().clear_for_test();
+    match old_home_override {
+        Some(v) => std::env::set_var("CAPSEM_HOME", v),
+        None => std::env::remove_var("CAPSEM_HOME"),
+    }
+    match old_store {
+        Some(v) => std::env::set_var(TEST_STORE_ENV, v),
+        None => std::env::remove_var(TEST_STORE_ENV),
+    }
 }
 
 #[test]
@@ -332,8 +356,8 @@ fn broker_stores_secret_without_writing_user_settings() {
     let brokered = broker_observed_credential(&obs).unwrap();
     assert!(is_broker_reference(&brokered.credential_ref));
     assert_eq!(
-        brokered.keychain_account,
-        keychain_account(CredentialProvider::Github, &brokered.credential_ref)
+        brokered.store_account,
+        credential_store_account(CredentialProvider::Github, &brokered.credential_ref)
     );
 
     assert!(

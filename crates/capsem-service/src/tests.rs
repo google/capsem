@@ -3179,7 +3179,7 @@ async fn credential_broker_reload_route_rehydrates_store_and_returns_same_contra
 
     let credential_ref = capsem_logger::credential_reference("google", "ya29.reload-route");
     let store_json = serde_json::json!({
-        capsem_core::credential_broker::keychain_account(
+        capsem_core::credential_broker::credential_store_account(
             capsem_core::credential_broker::CredentialProvider::Google,
             &credential_ref,
         ): "ya29.reload-route"

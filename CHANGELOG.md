@@ -34,6 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Disabled the macOS Keychain-backed credential broker store for 1.3 and
+  routed durable credential storage through the same file-backed store used on
+  Linux, preventing repeated native Keychain prompts during normal service and
+  TUI use.
 - Stabilized credential broker telemetry-hook tests under the full coverage
   gate by waiting for DB-visible ledger rows instead of relying on a
   one-second sleep window.

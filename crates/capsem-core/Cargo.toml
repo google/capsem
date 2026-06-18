@@ -76,7 +76,6 @@ objc2-foundation = { workspace = true }
 block2 = { workspace = true }
 dispatch2 = { workspace = true }
 core-foundation-sys = "0.8"
-security-framework = "3.7"
 
 [lints]
 workspace = true

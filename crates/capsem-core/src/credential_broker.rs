@@ -11,17 +11,12 @@ use crate::net::ai_traffic::provider::ProviderKind;
 use crate::net::policy_config::SecurityRuleSet;
 use crate::security_engine::RuntimeSecurityEventType;
 
-#[cfg(target_os = "macos")]
-const KEYCHAIN_SERVICE: &str = "org.capsem.credentials";
-#[cfg(target_os = "macos")]
-const KEYCHAIN_VAULT_ACCOUNT: &str = "__capsem_credential_vault_v1";
+const CREDENTIAL_STORE_NAMESPACE: &str = "org.capsem.credentials";
 pub(crate) const TEST_STORE_ENV: &str = "CAPSEM_CREDENTIAL_BROKER_TEST_STORE";
 #[cfg(test)]
 pub(crate) static TEST_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static TEST_STORE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 static CREDENTIAL_STORE: OnceLock<CredentialStore> = OnceLock::new();
-#[cfg(target_os = "macos")]
-static KEYCHAIN_VAULT_CACHE: OnceLock<Mutex<Option<HashMap<String, String>>>> = OnceLock::new();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -61,7 +56,7 @@ impl CredentialProvider {
 /// substitution reads the in-memory cache first, capture writes RAM first and
 /// then durable storage, and startup/reload hydrates RAM from durable storage.
 /// UI/status callers must use the memory-only status helpers so they cannot
-/// accidentally hammer Keychain.
+/// accidentally read durable credential storage.
 pub struct CredentialStore {
     cache: Mutex<HashMap<String, String>>,
     durable_lock: Mutex<()>,
@@ -329,7 +324,7 @@ pub struct CredentialInjection {
 pub struct BrokeredCredential {
     pub provider: CredentialProvider,
     pub credential_ref: String,
-    pub keychain_account: String,
+    pub store_account: String,
 }
 
 impl CredentialObservation {
@@ -378,7 +373,7 @@ pub fn broker_observed_credential(
     observation: &CredentialObservation,
 ) -> Result<BrokeredCredential, String> {
     let credential_ref = observation.credential_ref();
-    let keychain_account = keychain_account(observation.provider, &credential_ref);
+    let store_account = credential_store_account(observation.provider, &credential_ref);
     CredentialStore::global().capture(
         observation.provider,
         &credential_ref,
@@ -387,7 +382,7 @@ pub fn broker_observed_credential(
     Ok(BrokeredCredential {
         provider: observation.provider,
         credential_ref,
-        keychain_account,
+        store_account,
     })
 }
 
@@ -415,14 +410,8 @@ pub fn credential_store_status() -> CredentialStoreStatus {
     CredentialStore::global().status()
 }
 
-#[cfg(target_os = "macos")]
-pub const fn credential_broker_keychain_service() -> &'static str {
-    KEYCHAIN_SERVICE
-}
-
-#[cfg(not(target_os = "macos"))]
-pub const fn credential_broker_keychain_service() -> &'static str {
-    "org.capsem.credentials"
+pub const fn credential_store_namespace() -> &'static str {
+    CREDENTIAL_STORE_NAMESPACE
 }
 
 fn credential_provider_from_str(provider: &str) -> Option<CredentialProvider> {
@@ -436,7 +425,7 @@ fn credential_provider_from_str(provider: &str) -> Option<CredentialProvider> {
     }
 }
 
-pub fn keychain_account(provider: CredentialProvider, credential_ref: &str) -> String {
+pub fn credential_store_account(provider: CredentialProvider, credential_ref: &str) -> String {
     format!("{}:{credential_ref}", provider.as_str())
 }
 
@@ -1145,7 +1134,7 @@ fn json_escape(value: &str) -> String {
 }
 
 fn credential_store_key(provider: CredentialProvider, credential_ref: &str) -> String {
-    keychain_account(provider, credential_ref)
+    credential_store_account(provider, credential_ref)
 }
 
 fn credential_store_backend() -> &'static str {
@@ -1155,12 +1144,6 @@ fn credential_store_backend() -> &'static str {
     credential_store_backend_native()
 }
 
-#[cfg(target_os = "macos")]
-fn credential_store_backend_native() -> &'static str {
-    "keychain"
-}
-
-#[cfg(not(target_os = "macos"))]
 fn credential_store_backend_native() -> &'static str {
     "disk"
 }
@@ -1208,7 +1191,6 @@ fn test_store_path() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-#[cfg(not(target_os = "macos"))]
 fn disk_credential_store_path() -> PathBuf {
     crate::paths::capsem_home()
         .join("credentials")
@@ -1226,7 +1208,7 @@ fn disk_store_write(
         .map_err(|_| "credential disk store lock poisoned".to_string())?;
     let mut map = disk_store_load(path)?;
     map.insert(
-        keychain_account(provider, credential_ref),
+        credential_store_account(provider, credential_ref),
         raw_value.to_string(),
     );
     if let Some(parent) = path.parent() {
@@ -1249,7 +1231,7 @@ fn disk_store_read(
         .lock()
         .map_err(|_| "credential disk store lock poisoned".to_string())?;
     let map = disk_store_load(path)?;
-    let account = keychain_account(provider, credential_ref);
+    let account = credential_store_account(provider, credential_ref);
     map.get(&account)
         .cloned()
         .ok_or_else(|| format!("credential reference not found in disk store: {account}"))
@@ -1287,24 +1269,6 @@ fn disk_store_load(path: &PathBuf) -> Result<HashMap<String, String>, String> {
     serde_json::from_str(&text).map_err(|e| format!("parse credential disk store: {e}"))
 }
 
-#[cfg(target_os = "macos")]
-fn durable_store_write_native(
-    provider: CredentialProvider,
-    credential_ref: &str,
-    raw_value: &str,
-) -> Result<(), String> {
-    let mut vault = keychain_read_vault().unwrap_or_else(|error| {
-        warn!(error = %error, "credential store: rebuilding empty keychain vault");
-        HashMap::new()
-    });
-    vault.insert(
-        keychain_account(provider, credential_ref),
-        raw_value.to_string(),
-    );
-    keychain_write_vault(&vault)
-}
-
-#[cfg(not(target_os = "macos"))]
 fn durable_store_write_native(
     provider: CredentialProvider,
     credential_ref: &str,
@@ -1318,20 +1282,6 @@ fn durable_store_write_native(
     )
 }
 
-#[cfg(target_os = "macos")]
-fn durable_store_read_native(
-    provider: CredentialProvider,
-    credential_ref: &str,
-) -> Result<String, String> {
-    let vault = keychain_read_vault()?;
-    let account = keychain_account(provider, credential_ref);
-    vault
-        .get(&account)
-        .cloned()
-        .ok_or_else(|| format!("credential reference not found in keychain vault: {account}"))
-}
-
-#[cfg(not(target_os = "macos"))]
 fn durable_store_read_native(
     provider: CredentialProvider,
     credential_ref: &str,
@@ -1339,24 +1289,6 @@ fn durable_store_read_native(
     disk_store_read(&disk_credential_store_path(), provider, credential_ref)
 }
 
-#[cfg(target_os = "macos")]
-fn durable_store_hydrate_native() -> Result<Vec<(CredentialProvider, String, String)>, String> {
-    let vault = keychain_read_vault()?;
-    let mut hydrated = Vec::new();
-    for (account, raw_value) in vault {
-        let Some((provider, credential_ref)) = parse_credential_store_account(&account) else {
-            warn!(
-                account,
-                "credential store: ignoring malformed keychain vault account"
-            );
-            continue;
-        };
-        hydrated.push((provider, credential_ref.to_string(), raw_value));
-    }
-    Ok(hydrated)
-}
-
-#[cfg(not(target_os = "macos"))]
 fn durable_store_hydrate_native() -> Result<Vec<(CredentialProvider, String, String)>, String> {
     disk_store_hydrate(&disk_credential_store_path())
 }
@@ -1377,64 +1309,6 @@ fn restrict_secret_file(path: &PathBuf) -> Result<(), String> {
 #[cfg(not(unix))]
 fn restrict_secret_file(_path: &PathBuf) -> Result<(), String> {
     Ok(())
-}
-
-#[cfg(target_os = "macos")]
-fn keychain_read_vault() -> Result<HashMap<String, String>, String> {
-    let cache = KEYCHAIN_VAULT_CACHE.get_or_init(|| Mutex::new(None));
-    let mut guard = cache
-        .lock()
-        .map_err(|_| "credential keychain vault cache lock poisoned".to_string())?;
-    if let Some(vault) = guard.as_ref() {
-        return Ok(vault.clone());
-    }
-    match keychain_read_account(KEYCHAIN_VAULT_ACCOUNT) {
-        Ok(raw) => {
-            let vault: HashMap<String, String> =
-                serde_json::from_str(&raw).map_err(|e| format!("parse keychain vault: {e}"))?;
-            *guard = Some(vault.clone());
-            Ok(vault)
-        }
-        Err(_) => {
-            let vault = HashMap::new();
-            *guard = Some(vault.clone());
-            Ok(vault)
-        }
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn keychain_write_vault(vault: &HashMap<String, String>) -> Result<(), String> {
-    let raw = serde_json::to_string(vault).map_err(|e| format!("serialize keychain vault: {e}"))?;
-    keychain_write_account(KEYCHAIN_VAULT_ACCOUNT, &raw)?;
-    let cache = KEYCHAIN_VAULT_CACHE.get_or_init(|| Mutex::new(None));
-    let mut guard = cache
-        .lock()
-        .map_err(|_| "credential keychain vault cache lock poisoned".to_string())?;
-    *guard = Some(vault.clone());
-    Ok(())
-}
-
-#[cfg(target_os = "macos")]
-fn keychain_read_account(account: &str) -> Result<String, String> {
-    use security_framework::os::macos::keychain::SecKeychain;
-
-    let keychain = SecKeychain::default().map_err(|e| format!("open default keychain: {e}"))?;
-    let (password, _) = keychain
-        .find_generic_password(KEYCHAIN_SERVICE, account)
-        .map_err(|e| format!("read credential from keychain: {e}"))?;
-    String::from_utf8(password.as_ref().to_vec())
-        .map_err(|e| format!("credential in keychain is not UTF-8: {e}"))
-}
-
-#[cfg(target_os = "macos")]
-fn keychain_write_account(account: &str, raw_value: &str) -> Result<(), String> {
-    use security_framework::os::macos::keychain::SecKeychain;
-
-    let keychain = SecKeychain::default().map_err(|e| format!("open default keychain: {e}"))?;
-    keychain
-        .set_generic_password(KEYCHAIN_SERVICE, account, raw_value.as_bytes())
-        .map_err(|e| format!("write credential to keychain: {e}"))
 }
 
 #[cfg(test)]
