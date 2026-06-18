@@ -66,6 +66,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pin `CAPSEM_CREDENTIAL_STORE_PATH` to the file-backed credential store.
 - Fixed the release docs gate by restoring `just docs` as the single command
   that builds both the docs site and the marketing site.
+- Fixed the CLI service-boundary regression guard so its test-only helper no
+  longer trips release clippy as dead production code.
 - Added a CLI boundary guard proving `capsem stop` and the other service-control
   commands are handled before UDS/service API construction, so they cannot
   depend on profile, status, or credential-store readiness.

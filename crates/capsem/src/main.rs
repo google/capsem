@@ -1105,6 +1105,7 @@ fn should_refresh_update_cache_for_command(command: &Commands) -> bool {
     )
 }
 
+#[cfg(test)]
 fn command_is_handled_before_service_api(command: &Commands) -> bool {
     matches!(
         command,
