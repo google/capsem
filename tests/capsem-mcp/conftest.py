@@ -142,8 +142,8 @@ def _start_capsem_service():
     env["CAPSEM_HOME"] = str(tmp_dir)
     env["HOME"] = str(tmp_dir)
     env["CAPSEM_PROFILES_DIR"] = str(materialize_test_profiles(tmp_dir))
-    env["CAPSEM_CREDENTIAL_BROKER_TEST_STORE"] = str(
-        tmp_dir / "credential-broker-store.json"
+    env["CAPSEM_CREDENTIAL_STORE_PATH"] = str(
+        tmp_dir / "credential-store.json"
     )
 
     log_path = tmp_dir / "service.log"

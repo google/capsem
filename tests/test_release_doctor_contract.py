@@ -233,6 +233,11 @@ def test_runtime_credential_store_does_not_use_native_keychain() -> None:
         PROJECT_ROOT / "crates" / "capsem-gateway" / "src" / "main.rs",
     ]
     forbidden = [
+        "CAPSEM_CREDENTIAL_BROKER_TEST_STORE",
+        "credential_store_backend_native",
+        "durable_store_write_native",
+        "durable_store_read_native",
+        "durable_store_hydrate_native",
         "security find-generic-password",
         "security add-generic-password",
         "security delete-generic-password",
@@ -247,8 +252,8 @@ def test_runtime_credential_store_does_not_use_native_keychain() -> None:
             assert needle not in source, f"{path} must not call native Keychain storage"
 
     broker = runtime_files[0].read_text()
-    assert 'fn credential_store_backend_native() -> &\'static str {\n    "disk"\n}' in broker
-    assert "disk_credential_store_path()" in broker
+    assert "CAPSEM_CREDENTIAL_STORE_PATH" in broker
+    assert "default_credential_store_path()" in broker
 
 
 def test_changelog_does_not_advertise_keychain_credential_storage_for_1_3() -> None:

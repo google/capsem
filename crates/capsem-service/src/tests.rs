@@ -15,7 +15,7 @@ fn process_env_allowlist_forwards_mcp_timeout_knobs() {
 
     for key in [
         "CAPSEM_CORP_CONFIG",
-        "CAPSEM_CREDENTIAL_BROKER_TEST_STORE",
+        "CAPSEM_CREDENTIAL_STORE_PATH",
         "CAPSEM_MCP_DEFAULT_TIMEOUT_SECS",
         "CAPSEM_MCP_TOOL_CALL_TIMEOUT_SECS",
         "CAPSEM_MCP_TOOL_CALL_TIMEOUT_CEILING_SECS",
@@ -3137,7 +3137,7 @@ async fn service_status_reports_ready_empty_credential_store_without_inventory_c
     let _lock = SETTINGS_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let _store_guard = EnvVarGuard::set(
-        "CAPSEM_CREDENTIAL_BROKER_TEST_STORE",
+        "CAPSEM_CREDENTIAL_STORE_PATH",
         dir.path().join("credential-store.json"),
     );
     capsem_core::credential_broker::hydrate_credential_runtime_cache_from_durable_store().unwrap();
@@ -3165,7 +3165,7 @@ async fn credential_broker_reload_route_rehydrates_store_and_returns_same_contra
     let _lock = SETTINGS_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let test_store = dir.path().join("credential-store.json");
-    let _store_guard = EnvVarGuard::set("CAPSEM_CREDENTIAL_BROKER_TEST_STORE", test_store.clone());
+    let _store_guard = EnvVarGuard::set("CAPSEM_CREDENTIAL_STORE_PATH", test_store.clone());
     let state = make_test_state();
     let app = build_service_router(Arc::clone(&state));
     let session_dir = dir.path().join("sessions").join("broker-reload-vm");
@@ -3226,7 +3226,7 @@ async fn credential_broker_reload_route_rehydrates_store_and_returns_same_contra
     .await;
     assert_eq!(status, StatusCode::OK, "{before}");
     assert_eq!(before["plugin_id"], "credential_broker");
-    assert_eq!(before["store"]["backend"], "test_disk");
+    assert_eq!(before["store"]["backend"], "disk_override");
     assert_eq!(before["inventory"][0]["credential_ref"], credential_ref);
     assert_eq!(before["inventory"][0]["replay_available"], false);
 
@@ -3241,7 +3241,7 @@ async fn credential_broker_reload_route_rehydrates_store_and_returns_same_contra
     assert_eq!(after["plugin_id"], "credential_broker");
     assert_eq!(after["store"]["ready"], true);
     assert_eq!(after["store"]["status"], "ready");
-    assert_eq!(after["store"]["backend"], "test_disk");
+    assert_eq!(after["store"]["backend"], "disk_override");
     assert_eq!(after["store"]["last_hydrated_count"], 1);
     assert!(after["store"]["last_hydrated_unix_ms"].as_u64().is_some());
     assert_eq!(after["inventory"][0]["credential_ref"], credential_ref);

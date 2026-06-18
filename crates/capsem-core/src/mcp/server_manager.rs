@@ -800,7 +800,7 @@ mod tests {
         let _lock = crate::credential_broker::TEST_ENV_LOCK.lock().await;
         let dir = tempfile::tempdir().unwrap();
         let _store_guard = EnvVarGuard::set(
-            crate::credential_broker::TEST_STORE_ENV,
+            crate::credential_broker::STORE_PATH_ENV,
             dir.path().join("store.json"),
         );
         let harness = crate::test_support::mcp::spawn_recording_mcp_server()
@@ -884,7 +884,7 @@ mod tests {
         let _lock = crate::credential_broker::TEST_ENV_LOCK.lock().await;
         let dir = tempfile::tempdir().unwrap();
         let _store_guard = EnvVarGuard::set(
-            crate::credential_broker::TEST_STORE_ENV,
+            crate::credential_broker::STORE_PATH_ENV,
             dir.path().join("store.json"),
         );
         let harness = crate::test_support::mcp::spawn_recording_mcp_server()

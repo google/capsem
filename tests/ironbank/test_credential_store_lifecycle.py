@@ -43,7 +43,7 @@ def test_credential_store_retry_and_hot_status_reads_pay_lifecycle_debt_blackbox
     try:
         service.start()
         client = service.client()
-        store_path = Path(service.tmp_dir) / "credential-broker-store.json"
+        store_path = Path(service.tmp_dir) / "credential-store.json"
         store_path.write_text(
             json.dumps({f"{provider}:{credential_ref}": raw_credential}, indent=2),
             encoding="utf-8",
@@ -64,7 +64,7 @@ def test_credential_store_retry_and_hot_status_reads_pay_lifecycle_debt_blackbox
 
         before = client.get(detail_path)
         assert before["plugin_id"] == "credential_broker"
-        assert before["store"]["backend"] == "test_disk"
+        assert before["store"]["backend"] == "disk_override"
         assert before["store"]["ready"] is True
         assert before["store"]["status"] == "ready"
         assert before["store"]["cached_count"] == 0

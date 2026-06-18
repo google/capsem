@@ -46,8 +46,8 @@ def test_integration_script_uses_isolated_credential_broker_store():
 
     env = module._test_isolation_env()
 
-    assert env["CAPSEM_CREDENTIAL_BROKER_TEST_STORE"] == str(
-        module.INTEGRATION_HOME / "run" / "credential-broker-test-store.json"
+    assert env["CAPSEM_CREDENTIAL_STORE_PATH"] == str(
+        module.INTEGRATION_HOME / "run" / "credential-store.json"
     )
 
 

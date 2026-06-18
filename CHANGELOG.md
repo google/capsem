@@ -57,7 +57,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provider `unknown` while still recording protocol `openai`.
 - Disabled the macOS Keychain-backed credential broker store for 1.3 and
   routed durable credential storage through the same file-backed store used on
-  Linux, preventing repeated native Keychain prompts during normal service and
+  Linux, preventing repeated native credential prompts during normal service and
   TUI use.
 - Added a CLI boundary guard proving `capsem stop` and the other service-control
   commands are handled before UDS/service API construction, so they cannot
@@ -367,7 +367,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   compile through the same profile rule path used by the HTTP rewrite proof.
 - Changed the credential broker durable store to the same file-backed backend on
   macOS and Linux for 1.3, so service startup/reload hydrates captured
-  credentials without native Keychain prompts.
+  credentials without native credential prompts.
 - Tightened HTTP body-handling ledger proof for gzip, chunked, SSE, truncated
   preview, and HTTPS override traffic. Decoded gzip responses now log the same
   materialized headers and body bytes delivered to the guest instead of stale

@@ -31,7 +31,7 @@ def _credential_reference(provider: str, raw_credential: str) -> str:
 
 def _write_test_store(service_env: Any, *, provider: str, raw_credential: str) -> str:
     credential_ref = _credential_reference(provider, raw_credential)
-    store_path = Path(service_env.tmp_dir) / "credential-broker-store.json"
+    store_path = Path(service_env.tmp_dir) / "credential-store.json"
     store_path.write_text(
         json.dumps({f"{provider}:{credential_ref}": raw_credential}, indent=2),
         encoding="utf-8",
@@ -65,7 +65,7 @@ def test_credential_broker_retry_loads_store_once_and_hot_reads_are_memory_only(
     )
 
     before = client.get(f"/profiles/{PROFILE}/plugins/credential_broker/credentials/info")
-    assert before["store"]["backend"] == "test_disk"
+    assert before["store"]["backend"] == "disk_override"
     assert before["store"]["ready"] is True
     assert before["store"]["status"] == "ready"
     assert before["store"]["last_error"] is None
@@ -92,7 +92,7 @@ def test_credential_broker_retry_loads_store_once_and_hot_reads_are_memory_only(
         f"/profiles/{PROFILE}/plugins/credential_broker/credentials/reload",
         {},
     )
-    assert reloaded["store"]["backend"] == "test_disk"
+    assert reloaded["store"]["backend"] == "disk_override"
     assert reloaded["store"]["ready"] is True
     assert reloaded["store"]["status"] == "ready"
     assert reloaded["store"]["last_error"] is None

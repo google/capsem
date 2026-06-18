@@ -114,8 +114,8 @@ const PROCESS_ENV_ALLOWLIST: &[&str] = &[
     "CAPSEM_HOME",
     "CAPSEM_CORP_CONFIG",
     // Hermetic integration/Ironbank rail: keeps credential broker tests out of
-    // the user's macOS Keychain while exercising the real broker path.
-    "CAPSEM_CREDENTIAL_BROKER_TEST_STORE",
+    // the developer's normal credential file while exercising the real broker path.
+    "CAPSEM_CREDENTIAL_STORE_PATH",
     // Tunable: bounded MITM MCP endpoint in-flight handler cap.
     "CAPSEM_MCP_INFLIGHT",
     // Tunable: pool size for the local builtin MCP server (rmcp stdio funnel).

@@ -109,8 +109,8 @@ def _test_isolation_env() -> dict[str, str]:
     asserted without host prompts or hidden state.
     """
     return {
-        "CAPSEM_CREDENTIAL_BROKER_TEST_STORE": str(
-            INTEGRATION_HOME / "run" / "credential-broker-test-store.json"
+        "CAPSEM_CREDENTIAL_STORE_PATH": str(
+            INTEGRATION_HOME / "run" / "credential-store.json"
         )
     }
 

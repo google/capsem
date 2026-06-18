@@ -1198,7 +1198,7 @@ fn brokered_api_key_ref_stays_out_of_guest_env() {
     let store_path = dir.path().join("credential-store.json");
     let _settings_home_guard = EnvVarGuard::set("CAPSEM_HOME", dir.path());
     let _home_guard = EnvVarGuard::set("HOME", dir.path());
-    let _store_guard = EnvVarGuard::set(crate::credential_broker::TEST_STORE_ENV, &store_path);
+    let _store_guard = EnvVarGuard::set(crate::credential_broker::STORE_PATH_ENV, &store_path);
 
     let obs = crate::credential_broker::CredentialObservation {
         provider: crate::credential_broker::CredentialProvider::Anthropic,
@@ -1237,7 +1237,7 @@ fn brokered_google_api_key_ref_stays_out_of_guest_env() {
     let store_path = dir.path().join("credential-store.json");
     let _settings_home_guard = EnvVarGuard::set("CAPSEM_HOME", dir.path());
     let _home_guard = EnvVarGuard::set("HOME", dir.path());
-    let _store_guard = EnvVarGuard::set(crate::credential_broker::TEST_STORE_ENV, &store_path);
+    let _store_guard = EnvVarGuard::set(crate::credential_broker::STORE_PATH_ENV, &store_path);
 
     let obs = crate::credential_broker::CredentialObservation {
         provider: crate::credential_broker::CredentialProvider::Google,
@@ -1277,7 +1277,7 @@ fn brokered_openai_key_does_not_write_settings_or_raw_secret() {
     let store_path = dir.path().join("credential-store.json");
     let _settings_home_guard = EnvVarGuard::set("CAPSEM_HOME", dir.path());
     let _home_guard = EnvVarGuard::set("HOME", dir.path());
-    let _store_guard = EnvVarGuard::set(crate::credential_broker::TEST_STORE_ENV, &store_path);
+    let _store_guard = EnvVarGuard::set(crate::credential_broker::STORE_PATH_ENV, &store_path);
 
     let obs = crate::credential_broker::CredentialObservation {
         provider: crate::credential_broker::CredentialProvider::OpenAi,
@@ -1315,7 +1315,7 @@ fn brokered_provider_discovery_does_not_mutate_settings() {
 
     let _settings_home_guard = EnvVarGuard::set("CAPSEM_HOME", dir.path());
     let _home_guard = EnvVarGuard::set("HOME", dir.path());
-    let _store_guard = EnvVarGuard::set(crate::credential_broker::TEST_STORE_ENV, &store_path);
+    let _store_guard = EnvVarGuard::set(crate::credential_broker::STORE_PATH_ENV, &store_path);
 
     let obs = crate::credential_broker::CredentialObservation {
         provider: crate::credential_broker::CredentialProvider::OpenAi,

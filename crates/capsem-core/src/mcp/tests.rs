@@ -328,7 +328,7 @@ fn credential_broker_resolves_mcp_oauth_material_by_reference() {
     let _lock = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
     let _store_guard = EnvVarGuard::set(
-        crate::credential_broker::TEST_STORE_ENV,
+        crate::credential_broker::STORE_PATH_ENV,
         dir.path().join("store.json"),
     );
     let observation = crate::credential_broker::CredentialObservation {

@@ -382,10 +382,10 @@ mod tests {
         ) -> Self {
             let old_home_override = std::env::var("CAPSEM_HOME").ok();
             let old_home = std::env::var("HOME").ok();
-            let old_store = std::env::var(crate::credential_broker::TEST_STORE_ENV).ok();
+            let old_store = std::env::var(crate::credential_broker::STORE_PATH_ENV).ok();
             std::env::set_var("CAPSEM_HOME", capsem_home);
             std::env::set_var("HOME", home);
-            std::env::set_var(crate::credential_broker::TEST_STORE_ENV, test_store);
+            std::env::set_var(crate::credential_broker::STORE_PATH_ENV, test_store);
             Self {
                 old_home_override,
                 old_home,
@@ -405,8 +405,8 @@ mod tests {
                 None => std::env::remove_var("HOME"),
             }
             match &self.old_store {
-                Some(v) => std::env::set_var(crate::credential_broker::TEST_STORE_ENV, v),
-                None => std::env::remove_var(crate::credential_broker::TEST_STORE_ENV),
+                Some(v) => std::env::set_var(crate::credential_broker::STORE_PATH_ENV, v),
+                None => std::env::remove_var(crate::credential_broker::STORE_PATH_ENV),
             }
         }
     }

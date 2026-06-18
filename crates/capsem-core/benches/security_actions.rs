@@ -25,7 +25,7 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use std::collections::BTreeMap;
 use std::time::SystemTime;
 
-const TEST_STORE_ENV: &str = "CAPSEM_CREDENTIAL_BROKER_TEST_STORE";
+const STORE_PATH_ENV: &str = "CAPSEM_CREDENTIAL_STORE_PATH";
 
 struct EnvVarGuard {
     key: &'static str,
@@ -75,7 +75,7 @@ fn brokered_header_event() -> (SecurityEvent, tempfile::TempDir, Vec<EnvVarGuard
     std::fs::write(capsem_home.join("settings.toml"), "").unwrap();
     std::fs::write(&corp_config, "").unwrap();
     let guards = vec![
-        EnvVarGuard::set(TEST_STORE_ENV, store_path.as_os_str()),
+        EnvVarGuard::set(STORE_PATH_ENV, store_path.as_os_str()),
         EnvVarGuard::set("CAPSEM_HOME", capsem_home.as_os_str()),
         EnvVarGuard::set("CAPSEM_CORP_CONFIG", corp_config.as_os_str()),
     ];
@@ -115,7 +115,7 @@ fn brokered_mcp_auth_ref() -> (String, tempfile::TempDir, Vec<EnvVarGuard>) {
     std::fs::write(capsem_home.join("settings.toml"), "").unwrap();
     std::fs::write(&corp_config, "").unwrap();
     let guards = vec![
-        EnvVarGuard::set(TEST_STORE_ENV, store_path.as_os_str()),
+        EnvVarGuard::set(STORE_PATH_ENV, store_path.as_os_str()),
         EnvVarGuard::set("CAPSEM_HOME", capsem_home.as_os_str()),
         EnvVarGuard::set("CAPSEM_CORP_CONFIG", corp_config.as_os_str()),
     ];

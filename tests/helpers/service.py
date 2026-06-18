@@ -221,8 +221,8 @@ class ServiceInstance:
         env["CAPSEM_RUN_DIR"] = str(self.tmp_dir)
         env["CAPSEM_HOME"] = str(self.tmp_dir)
         env["CAPSEM_PROFILES_DIR"] = str(self.profiles_dir)
-        env["CAPSEM_CREDENTIAL_BROKER_TEST_STORE"] = str(
-            self.tmp_dir / "credential-broker-store.json"
+        env["CAPSEM_CREDENTIAL_STORE_PATH"] = str(
+            self.tmp_dir / "credential-store.json"
         )
         env["HOME"] = str(self.tmp_dir)
 

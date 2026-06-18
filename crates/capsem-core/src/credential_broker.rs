@@ -12,7 +12,7 @@ use crate::net::policy_config::SecurityRuleSet;
 use crate::security_engine::RuntimeSecurityEventType;
 
 const CREDENTIAL_STORE_NAMESPACE: &str = "org.capsem.credentials";
-pub(crate) const TEST_STORE_ENV: &str = "CAPSEM_CREDENTIAL_BROKER_TEST_STORE";
+pub(crate) const STORE_PATH_ENV: &str = "CAPSEM_CREDENTIAL_STORE_PATH";
 #[cfg(test)]
 pub(crate) static TEST_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static TEST_STORE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -1138,13 +1138,9 @@ fn credential_store_key(provider: CredentialProvider, credential_ref: &str) -> S
 }
 
 fn credential_store_backend() -> &'static str {
-    if test_store_path().is_some() {
-        return "test_disk";
+    if credential_store_path_override().is_some() {
+        return "disk_override";
     }
-    credential_store_backend_native()
-}
-
-fn credential_store_backend_native() -> &'static str {
     "disk"
 }
 
@@ -1162,36 +1158,36 @@ fn durable_store_write(
     credential_ref: &str,
     raw_value: &str,
 ) -> Result<(), String> {
-    if let Some(path) = test_store_path() {
+    if let Some(path) = credential_store_path_override() {
         return disk_store_write(&path, provider, credential_ref, raw_value);
     }
-    durable_store_write_native(provider, credential_ref, raw_value)
+    durable_store_write_default(provider, credential_ref, raw_value)
 }
 
 fn durable_store_read(
     provider: CredentialProvider,
     credential_ref: &str,
 ) -> Result<String, String> {
-    if let Some(path) = test_store_path() {
+    if let Some(path) = credential_store_path_override() {
         return disk_store_read(&path, provider, credential_ref);
     }
-    durable_store_read_native(provider, credential_ref)
+    durable_store_read_default(provider, credential_ref)
 }
 
 fn durable_store_hydrate() -> Result<Vec<(CredentialProvider, String, String)>, String> {
-    if let Some(path) = test_store_path() {
+    if let Some(path) = credential_store_path_override() {
         return disk_store_hydrate(&path);
     }
-    durable_store_hydrate_native()
+    durable_store_hydrate_default()
 }
 
-fn test_store_path() -> Option<PathBuf> {
-    std::env::var_os(TEST_STORE_ENV)
+fn credential_store_path_override() -> Option<PathBuf> {
+    std::env::var_os(STORE_PATH_ENV)
         .filter(|v| !v.is_empty())
         .map(PathBuf::from)
 }
 
-fn disk_credential_store_path() -> PathBuf {
+fn default_credential_store_path() -> PathBuf {
     crate::paths::capsem_home()
         .join("credentials")
         .join("credential-store.json")
@@ -1269,28 +1265,28 @@ fn disk_store_load(path: &PathBuf) -> Result<HashMap<String, String>, String> {
     serde_json::from_str(&text).map_err(|e| format!("parse credential disk store: {e}"))
 }
 
-fn durable_store_write_native(
+fn durable_store_write_default(
     provider: CredentialProvider,
     credential_ref: &str,
     raw_value: &str,
 ) -> Result<(), String> {
     disk_store_write(
-        &disk_credential_store_path(),
+        &default_credential_store_path(),
         provider,
         credential_ref,
         raw_value,
     )
 }
 
-fn durable_store_read_native(
+fn durable_store_read_default(
     provider: CredentialProvider,
     credential_ref: &str,
 ) -> Result<String, String> {
-    disk_store_read(&disk_credential_store_path(), provider, credential_ref)
+    disk_store_read(&default_credential_store_path(), provider, credential_ref)
 }
 
-fn durable_store_hydrate_native() -> Result<Vec<(CredentialProvider, String, String)>, String> {
-    disk_store_hydrate(&disk_credential_store_path())
+fn durable_store_hydrate_default() -> Result<Vec<(CredentialProvider, String, String)>, String> {
+    disk_store_hydrate(&default_credential_store_path())
 }
 
 fn parse_credential_store_account(account: &str) -> Option<(CredentialProvider, &str)> {
