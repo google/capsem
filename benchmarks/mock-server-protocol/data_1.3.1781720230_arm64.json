@@ -1,7 +1,7 @@
 {
   "version": "0.3.0",
-  "timestamp": 1781783197.2023818,
-  "hostname": "mock-server-protocol-a70567ba",
+  "timestamp": 1781785964.2158413,
+  "hostname": "mock-server-protocol-b09457a6",
   "mock_server_protocol": {
     "version": "1.0",
     "base_url": "http://127.0.0.1:3713",
@@ -21,17 +21,17 @@
         "concurrency": 64,
         "successful": 50000,
         "failed": 0,
-        "total_duration_ms": 16703.7,
-        "requests_per_sec": 2993.3,
+        "total_duration_ms": 16826.9,
+        "requests_per_sec": 2971.4,
         "transfer_bytes": 29300000,
-        "bytes_per_sec": 1754099.8,
+        "bytes_per_sec": 1741260.9,
         "latency_ms": {
           "min": 0.8,
-          "max": 101.5,
-          "mean": 20.9,
-          "p50": 18.9,
-          "p95": 43.1,
-          "p99": 57.2
+          "max": 109.4,
+          "mean": 21.1,
+          "p50": 19.0,
+          "p95": 43.7,
+          "p99": 57.3
         },
         "errors": {}
       },
@@ -43,17 +43,17 @@
         "concurrency": 64,
         "successful": 50000,
         "failed": 0,
-        "total_duration_ms": 31207.4,
-        "requests_per_sec": 1602.2,
+        "total_duration_ms": 31833.8,
+        "requests_per_sec": 1570.7,
         "transfer_bytes": 11950000,
-        "bytes_per_sec": 382922.6,
+        "bytes_per_sec": 375387.6,
         "latency_ms": {
           "min": 0.9,
-          "max": 219.2,
-          "mean": 39.5,
-          "p50": 33.5,
-          "p95": 86.4,
-          "p99": 108.5
+          "max": 203.8,
+          "mean": 40.1,
+          "p50": 33.2,
+          "p95": 90.8,
+          "p99": 120.3
         },
         "errors": {},
         "secret_shaped_fixture_seen": true,
@@ -67,8 +67,8 @@
         "skipped": false,
         "frames": 10,
         "failed": false,
-        "duration_ms": 4.1,
-        "frames_per_sec": 2421.6,
+        "duration_ms": 4.2,
+        "frames_per_sec": 2380.1,
         "latency_ms": {
           "min": 0.2,
           "max": 0.2,
@@ -84,20 +84,20 @@
         "skipped": false,
         "frames": 1,
         "failed": false,
-        "duration_ms": 2.0,
-        "frames_per_sec": 503.3,
+        "duration_ms": 25.3,
+        "frames_per_sec": 39.4,
         "latency_ms": {
-          "min": 2.0,
-          "max": 2.0,
-          "mean": 2.0,
-          "p50": 2.0,
-          "p95": 2.0,
-          "p99": 2.0
+          "min": 25.3,
+          "max": 25.3,
+          "mean": 25.3,
+          "p50": 25.3,
+          "p95": 25.3,
+          "p99": 25.3
         }
       }
     ]
   },
-  "host_recorded_at": 1781783252.48102,
+  "host_recorded_at": 1781786020.1253881,
   "arch": "arm64",
   "mock_server_base_url": "http://127.0.0.1:3713"
 }
