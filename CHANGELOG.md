@@ -34,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Stabilized credential broker telemetry-hook tests under the full coverage
+  gate by waiting for DB-visible ledger rows instead of relying on a
+  one-second sleep window.
 - Fixed session trace detail reads for older ledgers whose `tool_responses`
   table predates `credential_ref`, preserving tool response inspection instead
   of failing the release fixture gate.

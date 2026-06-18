@@ -8,6 +8,20 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+async fn wait_for_db(
+    db_path: &std::path::Path,
+    mut predicate: impl FnMut(&rusqlite::Connection) -> bool,
+) -> bool {
+    for _ in 0..250 {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        let conn = rusqlite::Connection::open(db_path).unwrap();
+        if predicate(&conn) {
+            return true;
+        }
+    }
+    false
+}
+
 fn req_stats(preview: &[u8]) -> Arc<Mutex<BodyStats>> {
     Arc::new(Mutex::new(BodyStats {
         bytes: preview.len() as u64,
@@ -661,10 +675,7 @@ async fn hook_writes_substitution_event_and_shared_credential_ref() {
         hook.on_response_end(&mut c);
     }
 
-    let mut seen = false;
-    for _ in 0..50 {
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let seen = wait_for_db(&db_path, |conn| {
         let net_count: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM net_events WHERE credential_ref = ?1",
@@ -686,11 +697,9 @@ async fn hook_writes_substitution_event_and_shared_credential_ref() {
                 |row| row.get(0),
             )
             .unwrap();
-        if net_count == 1 && captured_count == 1 && brokered_count == 1 {
-            seen = true;
-            break;
-        }
-    }
+        net_count == 1 && captured_count == 1 && brokered_count == 1
+    })
+    .await;
 
     assert!(
         seen,
@@ -887,10 +896,7 @@ async fn hook_writes_injected_substitution_event_for_broker_ref_replay() {
         hook.on_response_end(&mut c);
     }
 
-    let mut seen = false;
-    for _ in 0..50 {
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let seen = wait_for_db(&db_path, |conn| {
         let injected_count: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM substitution_events WHERE substitution_ref = ?1 AND outcome = 'injected'",
@@ -905,11 +911,9 @@ async fn hook_writes_injected_substitution_event_for_broker_ref_replay() {
                 |row| row.get(0),
             )
             .unwrap();
-        if injected_count == 1 && net_count == 1 {
-            seen = true;
-            break;
-        }
-    }
+        injected_count == 1 && net_count == 1
+    })
+    .await;
 
     assert!(
         seen,
@@ -972,10 +976,7 @@ async fn hook_detects_response_body_token_exchange_and_redacts_preview() {
         hook.on_response_end(&mut c);
     }
 
-    let mut seen = false;
-    for _ in 0..50 {
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let seen = wait_for_db(&db_path, |conn| {
         let row: Option<(String, String)> = conn
             .query_row(
                 "SELECT credential_ref, response_body_preview FROM net_events WHERE domain = 'api.github.com'",
@@ -984,7 +985,7 @@ async fn hook_detects_response_body_token_exchange_and_redacts_preview() {
             )
             .ok();
         let Some((credential_ref, preview)) = row else {
-            continue;
+            return false;
         };
         let outcomes: Vec<String> = conn
             .prepare(
@@ -998,11 +999,9 @@ async fn hook_detects_response_body_token_exchange_and_redacts_preview() {
         assert!(credential_ref.starts_with("credential:blake3:"));
         assert!(preview.contains("credential:blake3:"));
         assert!(!preview.contains(raw));
-        if outcomes == ["brokered", "captured"] {
-            seen = true;
-            break;
-        }
-    }
+        outcomes == ["brokered", "captured"]
+    })
+    .await;
 
     assert!(
         seen,
