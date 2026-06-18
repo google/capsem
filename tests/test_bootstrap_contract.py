@@ -47,6 +47,13 @@ def test_bootstrap_runs_full_doctor_fix_without_a_parallel_check_mode() -> None:
     assert "dry-run" not in bootstrap.lower()
 
 
+def test_bootstrap_uses_colima_exit_status_not_running_text() -> None:
+    bootstrap = _read("bootstrap.sh")
+
+    assert "colima status >/dev/null 2>&1" in bootstrap
+    assert 'colima status 2>&1 | grep -qi "running"' not in bootstrap
+
+
 def test_just_test_invokes_bootstrap_and_release_quality_gates() -> None:
     justfile = _read("justfile")
 

@@ -631,8 +631,8 @@ async fn connect_await_startup_eventually_times_out() {
     );
 }
 
-#[tokio::test]
-async fn request_does_not_auto_launch_after_explicit_stop_marker() {
+#[test]
+fn request_does_not_auto_launch_after_explicit_stop_marker() {
     let _lock = crate::lock_test_env();
     let dir = tempfile::tempdir().unwrap();
     let run_dir = dir.path().join("run");
@@ -641,9 +641,11 @@ async fn request_does_not_auto_launch_after_explicit_stop_marker() {
 
     std::fs::write(service_install::explicit_stop_marker_path(), b"stopped\n").unwrap();
     let client = UdsClient::new(run_dir.join("missing.sock"), true);
-    let err = client
-        .get::<serde_json::Value>("/status")
-        .await
+    let err = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(client.get::<serde_json::Value>("/status"))
         .unwrap_err();
     let msg = format!("{err:#}");
 

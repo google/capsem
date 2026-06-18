@@ -34,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Fixed bootstrap's Colima readiness check so `colima is not running` no longer
+  matches the word `running` and skips the Docker VM startup path during
+  `just test`.
 - Fixed the generated settings/schema rail so it reads the current
   `config/docker/image` authority instead of the removed `guest/config` tree,
   keeping `just test` and CI on the same profile-derived build inputs.

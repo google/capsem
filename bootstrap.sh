@@ -198,7 +198,7 @@ case "$(uname -s)" in
             fi
             # Start Colima if installed but not running. Doctor's fix can't
             # do this -- it would just print the suggestion and fail.
-            if command -v colima >/dev/null 2>&1 && ! colima status 2>&1 | grep -qi "running"; then
+            if command -v colima >/dev/null 2>&1 && ! colima status >/dev/null 2>&1; then
                 if confirm "start Colima now (vz, 16 GB, 8 CPU -- needed for build-assets + tauri install-test)"; then
                     colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8
                 fi
