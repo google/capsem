@@ -60,7 +60,7 @@ CREATE TABLE net_events (
     matched_rule TEXT,                -- which policy rule matched
     request_headers TEXT,             -- JSON (allowlisted verbatim, others hashed)
     response_headers TEXT,
-    request_body_preview TEXT,        -- first N bytes
+    request_body_preview TEXT,        -- compact display field only
     response_body_preview TEXT,
     conn_type TEXT DEFAULT 'https'
 );
@@ -83,7 +83,7 @@ CREATE TABLE model_calls (
     messages_count INTEGER DEFAULT 0,
     tools_count INTEGER DEFAULT 0,
     request_bytes INTEGER DEFAULT 0,
-    request_body_preview TEXT,
+    request_body_preview TEXT,        -- compact display field only
     message_id TEXT,                  -- "msg_..." (Anthropic), "chatcmpl-..." (OpenAI)
     status_code INTEGER,
     text_content TEXT,                -- full response text
@@ -138,8 +138,8 @@ CREATE TABLE mcp_calls (
     method TEXT NOT NULL,              -- "tools/list", "tools/call"
     tool_name TEXT,                    -- namespaced: "github__search"
     request_id TEXT,
-    request_preview TEXT,              -- first 256KB
-    response_preview TEXT,             -- first 256KB
+    request_preview TEXT,              -- compact display field only
+    response_preview TEXT,             -- compact display field only
     decision TEXT NOT NULL,            -- "allowed", "warned", "denied", "error"
     duration_ms INTEGER DEFAULT 0,
     error_message TEXT,
@@ -148,6 +148,11 @@ CREATE TABLE mcp_calls (
     bytes_received INTEGER DEFAULT 0
 );
 ```
+
+Full HTTP/model/MCP request and response bodies live in `event_body_blobs`,
+keyed by `event_id`, `source_table`, and `direction`. When debugging payload
+content, query that table first; preview columns are for fast UI scans and are
+not the forensic source of truth.
 
 ### fs_events -- filesystem changes in guest workspace
 

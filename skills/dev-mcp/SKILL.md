@@ -258,7 +258,11 @@ All use namespace prefix `builtin` (e.g., `builtin__http_get`).
 
 ### Telemetry (mcp_calls table)
 
-Every request/response logged with: timestamp, server_name, method, tool_name, request/response preview (256KB cap), decision, duration_ms, error_message, process_name, bytes sent/received.
+Every request/response logged with: timestamp, server_name, method, tool_name,
+compact request/response display fields, decision, duration_ms, error_message,
+process_name, bytes sent/received. Full MCP request/response payloads share the
+same `event_body_blobs` ledger table as HTTP and model traffic; do not add a
+second MCP-only body rail.
 
 Read `references/mcp-wire.md` for the full wire format details.
 

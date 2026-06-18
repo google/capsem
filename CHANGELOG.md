@@ -69,8 +69,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `org.capsem.credentials` runtime contract left behind.
 - Fixed the macOS LaunchAgent install contract so installed services explicitly
   pin `CAPSEM_CREDENTIAL_STORE_PATH` to the file-backed credential store.
+- Fixed macOS package preinstall so it no longer invokes the previously
+  installed `capsem stop` binary, preventing stale Keychain-backed installs from
+  prompting before the file-backed 1.3 payload replaces them.
 - Fixed the release docs gate by restoring `just docs` as the single command
   that builds both the docs site and the marketing site.
+- Fixed release telemetry docs and developer skills to identify
+  `event_body_blobs` as the forensic HTTP/model/MCP body source, with preview
+  fields documented only as compact UI display fields.
 - Fixed the CLI service-boundary regression guard so its test-only helper no
   longer trips release clippy as dead production code.
 - Added a CLI boundary guard proving `capsem stop` and the other service-control

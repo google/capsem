@@ -65,7 +65,7 @@ The host MITM proxy receives each connection on vsock:5002 and runs a full inspe
 graph TD
     A["vsock:5002 connection"] --> B["TLS ClientHello<br/>extract SNI domain"]
     B --> E["Complete TLS handshake<br/>mint leaf cert for domain"]
-    E --> F["Parse HTTP request<br/>method + path + headers + body preview"]
+    E --> F["Parse HTTP request<br/>method + path + headers + bounded body capture"]
     F --> S["Build SecurityEvent<br/>HTTP + optional model roots"]
     S --> P["Preprocess plugins"]
     P --> G{"SecurityRuleSet<br/>CEL over SecurityEvent"}
@@ -162,9 +162,14 @@ Every proxied request is logged to the per-VM `session.db`:
 | `bytes_sent` | Request body size |
 | `bytes_received` | Response body size |
 | `duration_ms` | End-to-end latency |
-| `request_body_preview` | First 4 KB of request body |
-| `response_body_preview` | First 4 KB of response body |
+| `request_body_preview` | Compact display field for quick scans |
+| `response_body_preview` | Compact display field for quick scans |
 | `matched_rule` | The security rule id that matched |
+
+Full captured HTTP, model, and MCP request/response bodies are stored in the
+`event_body_blobs` ledger table with BLAKE3 hashes, original/stored byte
+counts, and truncation flags. The preview columns are for UI scanability; the
+blob table is the forensic body source.
 
 For AI provider traffic (Anthropic, OpenAI, Google), the proxy also parses SSE streams to extract model calls, token usage, tool calls, and estimated cost. See [Session Telemetry](/architecture/session-telemetry/) for the full schema.
 
@@ -176,8 +181,9 @@ DNS queries are logged separately in `dns_events` with `qname`, `qtype`,
 | Scenario | Outcome | Why |
 |----------|---------|-----|
 | HTTPS to blocked domain (`api.openai.com`) | 403 Forbidden | Matching `block` rule |
-| HTTP port 80 (`http://google.com`) | Connection refused | Only port 443 is redirected |
-| Non-standard port (`https://google.com:8443`) | Connection refused | Only port 443 is redirected |
+| HTTP port 80 (`http://google.com`) | Redirected to the plain-HTTP listener | Profile/corp CEL rules still decide the request |
+| Dev proxy ports (3128, 3713, 8080, 11434) | Redirected to the plain-HTTP listener | Local model/proxy traffic stays on the same security rail |
+| Other non-standard ports (`https://google.com:8443`) | Connection refused | Only declared intercept ports are redirected |
 | Direct IP (`https://1.1.1.1`) | Connection refused | No real NIC; dummy0 has no real route |
 | POST to allowed domain with block rule | 403 Forbidden | HTTP-level rule blocks the method |
 

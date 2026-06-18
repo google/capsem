@@ -93,6 +93,9 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert "rm -rf /Applications/Capsem.app" in pkg_preinstall
     assert "rm -rf /usr/local/share/capsem" in pkg_preinstall
     assert "pkill -9 -x capsem-app" in pkg_preinstall
+    assert "capsem stop" not in pkg_preinstall
+    assert "$CAPSEM_DIR/bin/capsem" not in pkg_preinstall
+    assert "event=stop_existing_service" not in pkg_preinstall
     assert 'INSTALL_LOG="$CAPSEM_DIR/logs/install.log"' in pkg_preinstall
     assert 'INSTALL_RUN_LOG="$CAPSEM_DIR/logs/install-$INSTALL_RUN_ID.log"' in pkg_preinstall
     assert 'install-current-run' in pkg_preinstall

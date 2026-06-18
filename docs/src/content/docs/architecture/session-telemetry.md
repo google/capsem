@@ -62,6 +62,15 @@ erDiagram
         int rcode
         text decision
     }
+    event_body_blobs {
+        int id PK
+        text event_id
+        text event_type
+        text source_table
+        text direction
+        text body_hash
+        blob body
+    }
     security_rule_events {
         int id PK
         text event_id
@@ -105,6 +114,9 @@ erDiagram
     model_calls ||--o{ tool_calls : "has"
     model_calls ||--o{ tool_responses : "has"
     net_events ||--o{ security_rule_events : "event_id"
+    net_events ||--o{ event_body_blobs : "event_id"
+    model_calls ||--o{ event_body_blobs : "event_id"
+    mcp_calls ||--o{ event_body_blobs : "event_id"
     mcp_calls ||--o{ security_rule_events : "event_id"
     dns_events ||--o{ security_rule_events : "event_id"
     security_rule_events ||--o{ security_ask_events : "event_id"
@@ -136,8 +148,8 @@ Every HTTP request through the MITM proxy, whether allowed or denied.
 | `matched_rule` | TEXT | Compatibility helper; security rule truth is in `security_rule_events` |
 | `request_headers` | TEXT | Request headers (when body logging enabled) |
 | `response_headers` | TEXT | Response headers |
-| `request_body_preview` | TEXT | First 4 KB of request body |
-| `response_body_preview` | TEXT | First 4 KB of response body |
+| `request_body_preview` | TEXT | Compact display field; forensic body truth is in `event_body_blobs` |
+| `response_body_preview` | TEXT | Compact display field; forensic body truth is in `event_body_blobs` |
 | `conn_type` | TEXT | Default `https`, `https-mitm` for proxied |
 | `policy_mode` | TEXT | Transport-local policy mode hint, when set |
 | `policy_action` | TEXT | Denormalized transport hint; `security_rule_events.rule_action` is rule truth |
@@ -165,7 +177,7 @@ AI provider API calls with parsed response metadata.
 | `messages_count` | INTEGER | Number of messages in request |
 | `tools_count` | INTEGER | Number of tools in request |
 | `request_bytes` | INTEGER | Request body size |
-| `request_body_preview` | TEXT | First 4 KB of request body |
+| `request_body_preview` | TEXT | Compact display field; forensic body truth is in `event_body_blobs` |
 | `message_id` | TEXT | Provider message ID |
 | `status_code` | INTEGER | HTTP status |
 | `text_content` | TEXT | Concatenated text output |
@@ -178,6 +190,32 @@ AI provider API calls with parsed response metadata.
 | `estimated_cost_usd` | REAL | Cost estimate from pricing table |
 | `trace_id` | TEXT | Links multi-turn agent conversations |
 | `usage_details` | TEXT | JSON: `{"cache_read": 800, "thinking": 200}` |
+
+### event_body_blobs
+
+Full captured request and response bodies for HTTP, model, and MCP events. The
+primary protocol tables keep compact display fields for table scans; forensic
+body truth lives here and joins by `event_id` plus `direction`.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER PK | Auto-increment |
+| `event_id` | TEXT | 12-hex event id from `net_events`, `model_calls`, or `mcp_calls` |
+| `event_type` | TEXT | Canonical event type such as `http.request`, `model.call`, or `mcp.tool_call` |
+| `source_table` | TEXT | `net_events`, `model_calls`, or `mcp_calls` |
+| `direction` | TEXT | `request` or `response` |
+| `content_type` | TEXT | MIME type or protocol content type, when known |
+| `original_bytes` | INTEGER | Full body byte count observed at the boundary |
+| `stored_bytes` | INTEGER | Bytes persisted in `body` |
+| `truncated` | INTEGER | `1` when the persisted body hit the capture limit |
+| `body_hash` | TEXT | `blake3:*` hash of the observed body bytes |
+| `body` | BLOB | Captured body bytes, currently bounded to 10 MB per direction |
+| `trace_id` | TEXT | Cross-table correlation ID |
+| `created_at` | TEXT | Insert timestamp |
+
+The UI and debug routes may render parsed JSON, text, or binary summaries from
+this table, but they must not invent a second body source. If a compact preview
+and a blob disagree, the blob table is the ledger.
 
 ### tool_calls
 
@@ -220,8 +258,8 @@ MCP JSON-RPC tool invocations through the guest MCP relay and host MITM MCP endp
 | `method` | TEXT | JSON-RPC method (`tools/call`, `tools/list`, etc.) |
 | `tool_name` | TEXT | Tool name (for `tools/call`) |
 | `request_id` | TEXT | JSON-RPC request ID |
-| `request_preview` | TEXT | Truncated request body |
-| `response_preview` | TEXT | Truncated response body |
+| `request_preview` | TEXT | Compact display field; forensic body truth is in `event_body_blobs` |
+| `response_preview` | TEXT | Compact display field; forensic body truth is in `event_body_blobs` |
 | `decision` | TEXT | `allowed`, `denied`, `error` |
 | `duration_ms` | INTEGER | Call duration |
 | `error_message` | TEXT | Error details if failed |

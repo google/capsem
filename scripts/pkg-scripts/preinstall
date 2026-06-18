@@ -31,10 +31,6 @@ echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=preinstall event=start user=${USER:
 
 if [ -n "${USER:-}" ] && [ "$USER" != "root" ]; then
     PLIST="$USER_HOME/Library/LaunchAgents/com.capsem.service.plist"
-    if [ -x "$CAPSEM_DIR/bin/capsem" ]; then
-        echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=preinstall event=stop_existing_service"
-        su "$USER" -c "$CAPSEM_DIR/bin/capsem stop" 2>/dev/null || true
-    fi
     if [ -f "$PLIST" ]; then
         echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=preinstall event=unload_launch_agent path=$PLIST"
         launchctl bootout "gui/$(id -u "$USER")" "$PLIST" 2>/dev/null || \

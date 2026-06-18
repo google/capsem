@@ -271,6 +271,51 @@ def test_changelog_does_not_advertise_keychain_credential_storage_for_1_3() -> N
     assert "credential store/keychain" not in unreleased
 
 
+def test_release_docs_identify_body_blobs_as_forensic_truth() -> None:
+    telemetry = (
+        PROJECT_ROOT
+        / "docs"
+        / "src"
+        / "content"
+        / "docs"
+        / "architecture"
+        / "session-telemetry.md"
+    ).read_text()
+    network = (
+        PROJECT_ROOT
+        / "docs"
+        / "src"
+        / "content"
+        / "docs"
+        / "security"
+        / "network-isolation.md"
+    ).read_text()
+    debug_skill = (PROJECT_ROOT / "skills" / "dev-session-debug" / "SKILL.md").read_text()
+    mcp_skill = (PROJECT_ROOT / "skills" / "dev-mcp" / "SKILL.md").read_text()
+
+    for text in (telemetry, network, debug_skill, mcp_skill):
+        assert "event_body_blobs" in text
+
+    assert "forensic" in telemetry
+    assert "body truth is in `event_body_blobs`" in telemetry
+    assert "blob table is the ledger" in telemetry
+    assert "blob table is the forensic body source" in network
+    assert "not the forensic source of truth" in debug_skill
+    assert "MCP-only body rail" in mcp_skill
+
+    stale_claims = [
+        "| `request_body_preview` | TEXT | First 4 KB of request body |",
+        "| `response_body_preview` | TEXT | First 4 KB of response body |",
+        "| `request_body_preview` | First 4 KB of request body |",
+        "| `response_body_preview` | First 4 KB of response body |",
+        "request_preview TEXT,              -- first 256KB",
+        "response_preview TEXT,             -- first 256KB",
+    ]
+    combined = "\n".join([telemetry, network, debug_skill, mcp_skill])
+    for claim in stale_claims:
+        assert claim not in combined
+
+
 def test_frontend_coverage_runner_declares_its_provider() -> None:
     package_json = json.loads((PROJECT_ROOT / "frontend" / "package.json").read_text())
 

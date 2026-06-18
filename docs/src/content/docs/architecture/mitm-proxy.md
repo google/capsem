@@ -249,7 +249,7 @@ Telemetry is emitted asynchronously after the response body completes (not durin
 
 | Event type | When | Data |
 |-----------|------|------|
-| `NetEvent` | Every HTTP request | Domain, method, path, status, bytes, latency, decision, body previews |
+| `NetEvent` | Every HTTP request | Domain, method, path, status, bytes, latency, decision, compact display fields, body blob references |
 | `ModelCall` | AI provider requests only | Provider, model, tokens, cost, tool calls, text content, trace_id |
 
 The `TelemetryBody` wrapper around the hyper response body triggers `tokio::spawn(emitter.emit())` when the body stream reaches EOF.
