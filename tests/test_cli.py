@@ -89,12 +89,70 @@ def test_doctor_runs_profile_contract() -> None:
     assert mock.call_args.kwargs["profile_id"] == "code"
 
 
+def test_doctor_fails_when_any_check_fails() -> None:
+    from capsem.builder.doctor import CheckResult
+
+    runner = CliRunner()
+    with patch("capsem.builder.doctor.run_all_checks") as mock:
+        mock.return_value = [
+            CheckResult(
+                name="profile-contract",
+                passed=False,
+                detail="profile missing",
+                fix="restore config/profiles/code/profile.toml",
+            )
+        ]
+        result = runner.invoke(cli, ["doctor", "--profile", "code"])
+
+    assert result.exit_code == 1
+    assert "profile missing" in result.output
+    assert "restore config/profiles/code/profile.toml" in result.output
+
+
 def test_doctor_rejects_positional_guest_dir() -> None:
     runner = CliRunner()
     result = runner.invoke(cli, ["doctor", "guest/"])
 
     assert result.exit_code != 0
     assert "unexpected extra argument" in result.output.lower()
+
+
+def test_validate_skills_json_output() -> None:
+    report = SimpleNamespace(
+        model_dump_json=lambda indent: json.dumps(
+            {
+                "root": "skills",
+                "skill_count": 2,
+                "skill_names": ["dev-testing", "ironbank"],
+                "indent": indent,
+            },
+            indent=indent,
+        )
+    )
+    runner = CliRunner()
+
+    with patch("capsem.builder.skills.validate_skill_library", return_value=report) as validate:
+        result = runner.invoke(cli, ["validate-skills", "skills", "--json"])
+
+    assert result.exit_code == 0
+    validate.assert_called_once_with(Path("skills"))
+    payload = json.loads(result.output)
+    assert payload["skill_count"] == 2
+    assert payload["skill_names"] == ["dev-testing", "ironbank"]
+    assert payload["indent"] == 2
+
+
+def test_validate_skills_reports_validation_error() -> None:
+    runner = CliRunner()
+
+    with patch(
+        "capsem.builder.skills.validate_skill_library",
+        side_effect=ValueError("broken skill contract"),
+    ):
+        result = runner.invoke(cli, ["validate-skills", "skills"])
+
+    assert result.exit_code == 1
+    assert "broken skill contract" in result.output
 
 
 def test_agent_uses_profile_materialized_architecture(tmp_path: Path) -> None:
@@ -132,6 +190,50 @@ def test_agent_defaults_to_current_image_config() -> None:
     load_config.assert_called_once_with(Path("config/docker/image"))
     cross_compile.assert_called_once()
     assert cross_compile.call_args.args[0] == "aarch64-unknown-linux-musl"
+
+
+def test_agent_fails_when_guest_dir_is_missing(tmp_path: Path) -> None:
+    missing = tmp_path / "missing"
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["agent", str(missing)])
+
+    assert result.exit_code == 1
+    assert f"directory not found: {missing}" in result.output
+
+
+def test_agent_fails_for_arch_not_in_materialized_config(tmp_path: Path) -> None:
+    guest = tmp_path / "materialized"
+    guest.mkdir()
+    arch = SimpleNamespace(rust_target="aarch64-unknown-linux-musl")
+    config = SimpleNamespace(build=SimpleNamespace(architectures={"arm64": arch}))
+    runner = CliRunner()
+
+    with patch("capsem.builder.cli.load_guest_config", return_value=config):
+        result = runner.invoke(cli, ["agent", str(guest), "--arch", "x86_64"])
+
+    assert result.exit_code == 1
+    assert "architecture 'x86_64' not in config" in result.output
+
+
+def test_agent_reports_cross_compile_error(tmp_path: Path) -> None:
+    guest = tmp_path / "materialized"
+    guest.mkdir()
+    arch = SimpleNamespace(rust_target="aarch64-unknown-linux-musl")
+    config = SimpleNamespace(build=SimpleNamespace(architectures={"arm64": arch}))
+    runner = CliRunner()
+
+    with (
+        patch("capsem.builder.cli.load_guest_config", return_value=config),
+        patch(
+            "capsem.builder.docker.cross_compile_agent",
+            side_effect=RuntimeError("toolchain exploded"),
+        ),
+    ):
+        result = runner.invoke(cli, ["agent", str(guest), "--arch", "arm64"])
+
+    assert result.exit_code == 1
+    assert "toolchain exploded" in result.output
 
 
 TRIVY_JSON_FIXTURE = json.dumps({
@@ -200,3 +302,12 @@ def test_audit_no_input_fails() -> None:
 
     assert result.exit_code != 0
     assert "no input" in result.output
+
+
+def test_audit_invalid_scanner_payload_fails() -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["audit", "--scanner", "trivy"], input="{")
+
+    assert result.exit_code == 1
+    assert "error:" in result.output
