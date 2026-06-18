@@ -15,6 +15,7 @@
 #   exec +CMD        -> run-service (one-shot command in a fresh temp VM)
 #   build-assets     -> _install-tools + _clean-stale + inline doctor (kernel + rootfs via capsem-admin)
 #   build-ui         -> _pnpm-install (pnpm build + cargo build -p capsem-app, in lockstep)
+#   docs             -> _pnpm-install (build docs + marketing site release docs surfaces)
 #   run-ui *ARGS     -> build-ui (launch ./target/debug/capsem-app)
 #   smoke            -> _install-tools + _pnpm-install + _check-assets + _pack-initrd + _materialize-config + _ensure-service
 #                       (audit, full doctor, injection, integration, parallel pytest groups)
@@ -211,6 +212,11 @@ build-ui profile="debug": _pnpm-install
         echo ""
         echo "Built ./target/debug/capsem-app"
     fi
+
+# Build both public documentation surfaces used by the release gate.
+docs: _pnpm-install
+    pnpm --dir docs run build
+    pnpm --dir site run build
 
 # Run the Tauri desktop app after a clean frontend+binary rebuild.
 # Pass extra args after `--`: `just run-ui -- --connect <vm-id>`.

@@ -49,3 +49,14 @@ def test_justfile_and_scripts_do_not_reintroduce_retired_escape_paths() -> None:
         text = path.read_text()
         for needle in retired:
             assert needle not in text, f"{needle!r} still appears in {path}"
+
+
+def test_justfile_exposes_docs_release_gate() -> None:
+    justfile = (PROJECT_ROOT / "justfile").read_text()
+
+    assert "\ndocs: _pnpm-install\n" in justfile
+    docs_block = justfile.split("\ndocs: _pnpm-install\n", maxsplit=1)[1].split(
+        "\n\n", maxsplit=1
+    )[0]
+    assert "pnpm --dir docs run build" in docs_block
+    assert "pnpm --dir site run build" in docs_block
