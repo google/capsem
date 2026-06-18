@@ -121,33 +121,32 @@ This is the active debug list for the 1.3 release loop. Older captured bugs in
   - VM asset blobs must not be embedded in installer payloads.
   - Package tests must fail if rootfs/initrd/kernel blobs enter the package.
 
-- [ ] Credential broker Keychain namespace/prompt storm
+- [ ] Credential broker durable store prompt storm
   - Manual evidence: macOS prompts repeatedly for credential items named
     `com.capsem.credential`, `com.capsem.credentials`, and
     `org.capsem.credentials` during release testing.
-  - Canonical production Keychain service namespace is
-    `org.capsem.credentials` because the product identity is `capsem.org`.
-    `com.capsem.credential` and `com.capsem.credentials` are legacy/wrong and
-    must not be used by new broker writes. If migration is needed, it must be
-    explicit, one-shot, tested, and silent after completion.
-  - The broker must not ask Keychain on every security event. Capture/injection
-    needs per-process caching/singleflight/batching so one AGY/Claude/Codex
-    session does not trigger a prompt storm.
-  - Keychain access must be memory-first and out of status/UI hot paths.
-    Once a credential is captured, the broker must keep enough material in
-    process memory to keep active agents authenticating without touching
-    Keychain on every event. Keychain is durable backing for startup/reload or
-    real substitution cache misses, not a per-request dependency. It is
-    acceptable for macOS to ask for Keychain access when the user deliberately
-    loads credentials; it is not acceptable for stats/status refreshes to
-    hammer Keychain or prompt repeatedly after "Always Allow".
-  - Linux currently uses a restricted disk-backed durable credential store
-    behind the same opaque `CredentialStore` object until we add a real Linux
-    secret backend. Release debt: replace the Linux disk backend with native
-    protected storage while preserving the `CredentialStore` API.
-  - Proof must include a macOS-keychain contract test around service/account
-    naming, a test-store equivalent proving repeated broker resolution does
-    not hit the backing store per event, and route/plugin runtime counters that
+  - 1.3 decision: native macOS Keychain storage is disabled. The credential
+    broker uses the same restricted file-backed durable store as Linux:
+    `$CAPSEM_HOME/credentials/credential-store.json`, behind the same opaque
+    `CredentialStore` API.
+  - Release contract: runtime code must not call `security`,
+    `security_framework`, `keyring`, or `SecKeychain` for brokered credentials.
+    Re-enabling native protected storage is post-1.3 work and must be a new
+    explicit sprint with tests.
+  - The broker must not touch durable storage on every security event.
+    Capture/injection needs per-process caching/singleflight/batching so one
+    AGY/Claude/Codex session does not perform per-request durable-store I/O.
+  - Durable access must be memory-first and out of status/UI hot paths. Once a
+    credential is captured, the broker must keep enough material in process
+    memory to keep active agents authenticating without touching disk on every
+    event.
+  - Linux currently uses the same restricted disk-backed durable credential
+    store until we add a real Linux secret backend. Release debt: replace the
+    Linux disk backend with native protected storage while preserving the
+    `CredentialStore` API.
+  - Proof must include a no-native-keychain runtime contract test, a test-store
+    equivalent proving repeated broker resolution does not hit the backing
+    store per event, and route/plugin runtime counters that
     expose cache hits/misses without raw secrets.
   - 2026-06-13 proof slice: credential storage now goes through the opaque
     `CredentialStore` object. Runtime capture writes memory first, durable
