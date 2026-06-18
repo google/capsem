@@ -1452,6 +1452,7 @@ impl ServiceState {
     ///
     /// In v2 mode (manifest present): resolves hash-based filenames from manifest.
     /// In dev mode (no manifest): finds assets by logical name in arch subdirs.
+    #[cfg(test)]
     fn resolve_asset_paths(&self) -> Result<capsem_core::asset_manager::ResolvedAssets> {
         let arch = if cfg!(target_arch = "aarch64") {
             "arm64"
@@ -3077,38 +3078,9 @@ async fn handle_list(State(state): State<Arc<ServiceState>>) -> Json<ListRespons
         sandboxes.push(info);
     }
 
-    // Check asset health
-    let asset_health = match state.resolve_asset_paths() {
-        Ok(resolved) => {
-            let mut missing = Vec::new();
-            if !resolved.kernel.exists() {
-                missing.push("vmlinuz".to_string());
-            }
-            if !resolved.initrd.exists() {
-                missing.push("initrd.img".to_string());
-            }
-            if !resolved.rootfs.exists() {
-                missing.push(
-                    resolved
-                        .rootfs
-                        .file_name()
-                        .and_then(|name| name.to_str())
-                        .unwrap_or("rootfs")
-                        .to_string(),
-                );
-            }
-            Some(AssetHealth {
-                ready: missing.is_empty(),
-                version: Some(resolved.asset_version),
-                missing,
-            })
-        }
-        Err(_) => None,
-    };
-
     Json(ListResponse {
         sandboxes,
-        asset_health,
+        asset_health: None,
     })
 }
 

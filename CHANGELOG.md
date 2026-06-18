@@ -63,6 +63,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a real installed-style assets directory and profile catalog instead of
   symlinking `~/.capsem/assets` to the worktree, preventing stale profile pins
   from mixing with fresh assets in the UI.
+- Removed the retired global `/vms/list` asset-health payload so service and
+  gateway status cannot report flat `vmlinuz/initrd/rootfs` readiness that
+  contradicts profile-owned asset status.
 - Fixed package, Debian, and simulated installs so retired per-user config
   artifacts are removed before the service starts, keeping profile/corp/config
   ownership on the 1.3 rails.

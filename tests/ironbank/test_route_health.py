@@ -245,7 +245,7 @@ def _service_route_contracts() -> list[RouteContract]:
     return [
         RouteContract("GET", "/status", None, {"components", "ready", "service", "version"}, dict),
         RouteContract("GET", "/version", None, {"version"}, dict),
-        RouteContract("GET", "/vms/list", None, {"sandboxes", "asset_health"}, dict),
+        RouteContract("GET", "/vms/list", None, {"sandboxes"}, dict),
         RouteContract("POST", "/purge", {}, {"purged", "persistent_purged", "ephemeral_purged"}, dict),
         RouteContract("GET", "/profiles/list", None, {"profiles"}, dict),
         RouteContract(
@@ -499,7 +499,7 @@ def test_vm_session_lifecycle_routes_have_state_and_latency_budgets() -> None:
             for contract in (
                 RouteContract("GET", f"/vms/{source_id}/status", None, {"id", "status"}, dict),
                 RouteContract("GET", f"/vms/{source_id}/info", None, {"id", "status"}, dict),
-                RouteContract("GET", "/vms/list", None, {"sandboxes", "asset_health"}, dict),
+                RouteContract("GET", "/vms/list", None, {"sandboxes"}, dict),
             ):
                 timing = _measure_route(
                     f"{client_label} {contract.path}",

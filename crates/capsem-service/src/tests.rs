@@ -1378,6 +1378,48 @@ fn profile_catalog_status_reports_directory_catalog_readiness() {
     );
 }
 
+#[tokio::test]
+async fn vm_list_omits_legacy_global_asset_health_when_profiles_are_authoritative() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (config_root, _) = install_file_asset_profile_fixture(&dir);
+    let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
+    let state = make_asset_state(dir.path().join("assets"));
+    let profile =
+        capsem_core::net::policy_config::Profile::load_from_dir(config_root.join("profiles/code"))
+            .unwrap();
+    profile
+        .download_assets(
+            &state.assets_dir,
+            capsem_core::net::policy_config::current_profile_arch(),
+        )
+        .unwrap();
+    let app = build_service_router(state);
+
+    let (status, profiles) = route_request(
+        app.clone(),
+        axum::http::Method::GET,
+        "/profiles/status",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{profiles}");
+    assert_eq!(profiles["ready_count"], 1, "{profiles}");
+    assert_eq!(
+        profiles["profiles"][0]["missing_assets"],
+        json!([]),
+        "{profiles}"
+    );
+
+    let (status, list) = route_request(app, axum::http::Method::GET, "/vms/list", None).await;
+    assert_eq!(status, StatusCode::OK, "{list}");
+    assert!(
+        list.get("asset_health").is_none(),
+        "/vms/list must not emit retired flat asset health once profiles own assets: {list}"
+    );
+}
+
 #[test]
 fn checked_in_profile_catalog_status_reports_code_and_co_work() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
