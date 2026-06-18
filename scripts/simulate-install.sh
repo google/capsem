@@ -35,6 +35,9 @@ for name in capsem-service capsem-tray capsem-gateway capsem-process capsem-mcp-
 done
 
 rm -rf "$CAPSEM_HOME_DIR"/bin.backup*
+retired_user_config="user"".toml"
+rm -f "$CAPSEM_HOME_DIR/$retired_user_config" "$CAPSEM_HOME_DIR/service.toml"
+echo "event=retired_config_removed"
 mkdir -p "$INSTALL_DIR" "$RUN_DIR"
 # Remove dev symlink if present (just _ensure-service creates one)
 if [[ -L "$ASSETS_DST" ]]; then

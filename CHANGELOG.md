@@ -57,6 +57,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Fixed the dev service/install asset rail so local service starts materialize
+  a real installed-style assets directory and profile catalog instead of
+  symlinking `~/.capsem/assets` to the worktree, preventing stale profile pins
+  from mixing with fresh assets in the UI.
+- Fixed package, Debian, and simulated installs so retired per-user config
+  artifacts are removed before the service starts, keeping profile/corp/config
+  ownership on the 1.3 rails.
 - Fixed `capsem shell` input handling so bursty keypresses and paste input are
   drained in one TUI cycle instead of being throttled to one event per 16ms
   redraw tick.

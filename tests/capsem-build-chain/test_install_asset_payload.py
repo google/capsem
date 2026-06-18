@@ -6,9 +6,20 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
+def _just_recipe_block(name: str) -> str:
+    lines = (PROJECT_ROOT / "justfile").read_text().splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith(name))
+    end = len(lines)
+    for i in range(start + 1, len(lines)):
+        line = lines[i]
+        if line and not line.startswith((" ", "\t", "#")):
+            end = i
+            break
+    return "\n".join(lines[start:end])
+
+
 def test_just_install_does_not_sync_assets_after_installer() -> None:
-    justfile = (PROJECT_ROOT / "justfile").read_text()
-    install_body = justfile.split("\n# Run install e2e tests", 1)[0]
+    install_body = _just_recipe_block("install:")
 
     assert "Syncing local dev assets" not in install_body
     assert "scripts/sync-dev-assets.sh" not in install_body
@@ -18,19 +29,45 @@ def test_just_install_does_not_sync_assets_after_installer() -> None:
     assert "bash scripts/repack-deb.sh --manifest" in install_body
     assert '--manifest "{{assets_dir}}/manifest.json"' in install_body
     assert '"target/config"' in install_body
-    assert 'NEW="1.3.$(date +%s)"' in install_body
+    assert "install: _pnpm-install _stamp-version _check-assets _pack-initrd _materialize-config" in install_body
     assert "pkill -9 -x capsem-app" in install_body
 
 
 def test_just_install_invokes_package_without_gui_installer_block() -> None:
-    justfile = (PROJECT_ROOT / "justfile").read_text()
-    install_body = justfile.split("\n# Run install e2e tests", 1)[0]
+    install_body = _just_recipe_block("install:")
 
     assert 'PKG="packages/Capsem-$VERSION.pkg"' in install_body
     assert 'open -W "$PKG"' not in install_body
     assert 'installer -pkg "$PKG"' in install_body
     assert '"$HOME/.capsem/bin/capsem" status' in install_body
     assert '"$HOME/.capsem/bin/capsem" debug' in install_body
+
+
+def test_dev_service_does_not_replace_installed_assets_with_worktree_symlink() -> None:
+    justfile = (PROJECT_ROOT / "justfile").read_text()
+    ensure_body = justfile.split("_ensure-service: _sign", 1)[1].split(
+        "\n# Start service daemon", 1
+    )[0]
+
+    assert "ln -sfn" not in ensure_body
+    assert "assets.installed" not in ensure_body
+    assert "Symlinked $ASSETS_LINK" not in ensure_body
+    assert "sync-dev-assets.sh" in ensure_body
+    assert "retired_config_removed" in ensure_body
+
+
+def test_installers_remove_retired_user_and_service_config_rails() -> None:
+    scripts = [
+        PROJECT_ROOT / "scripts" / "pkg-scripts" / "postinstall",
+        PROJECT_ROOT / "scripts" / "deb-postinst.sh",
+        PROJECT_ROOT / "scripts" / "simulate-install.sh",
+    ]
+
+    for path in scripts:
+        text = path.read_text()
+        assert 'retired_user_config="user"".toml"' in text
+        assert '"$CAPSEM_DIR/service.toml"' in text or '"$CAPSEM_HOME_DIR/service.toml"' in text
+        assert "retired_config_removed" in text
 
 
 def test_manifest_generation_public_path_is_capsem_admin() -> None:

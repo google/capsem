@@ -38,6 +38,9 @@ ln -sf "$(basename "$INSTALL_RUN_LOG")" "$CAPSEM_DIR/logs/install-latest.log"
 chown -R "$TARGET_USER:$(id -gn "$TARGET_USER")" "$CAPSEM_DIR/logs"
 exec > >(tee -a "$INSTALL_LOG" "$INSTALL_RUN_LOG") 2>&1
 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=start user=$TARGET_USER install_run_id=$INSTALL_RUN_ID install_run_log=$INSTALL_RUN_LOG"
+retired_user_config="user"".toml"
+rm -f "$CAPSEM_DIR/$retired_user_config" "$CAPSEM_DIR/service.toml"
+echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=retired_config_removed"
 
 # Copy the package-selected manifest and provenance. VM asset payloads are
 # external to the package and are reconciled by the service from this manifest.

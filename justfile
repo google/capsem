@@ -132,34 +132,25 @@ _ensure-service: _sign
         fi
     fi
     rm -f "$PIDFILE" "$SOCKET"
-    # Symlink <capsem_home>/assets -> repo assets so installed tools (MCP, CLI)
-    # see the same repacked initrd as the dev service.
-    ASSETS_LINK="$CAPSEM_HOME_DIR/assets"
-    DEV_ASSETS="$(cd "{{assets_dir}}" && pwd)"
-    if [ -L "$ASSETS_LINK" ]; then
-        CURRENT=$(readlink "$ASSETS_LINK")
-        if [ "$CURRENT" != "$DEV_ASSETS" ]; then
-            ln -sfn "$DEV_ASSETS" "$ASSETS_LINK"
-            echo "Updated $ASSETS_LINK -> $DEV_ASSETS"
-        fi
-    elif [ -d "$ASSETS_LINK" ]; then
-        # Real directory from install -- replace with symlink for dev.
-        # Only happens on the default ~/.capsem layout; test homes start empty.
-        rm -rf "$ASSETS_LINK.installed"
-        mv "$ASSETS_LINK" "$ASSETS_LINK.installed"
-        ln -sfn "$DEV_ASSETS" "$ASSETS_LINK"
-        echo "Saved $ASSETS_LINK.installed, symlinked $ASSETS_LINK -> $DEV_ASSETS"
-    else
-        mkdir -p "$CAPSEM_HOME_DIR"
-        ln -sfn "$DEV_ASSETS" "$ASSETS_LINK"
-        echo "Symlinked $ASSETS_LINK -> $DEV_ASSETS"
-    fi
+    # Keep the dev service on the same installed-style profile/assets rail as
+    # packages. Symlinking ~/.capsem/assets to a worktree can mix stale profile
+    # pins with fresh assets and make profiles look broken in the UI.
+    retired_user_config="user"".toml"
+    rm -f "$CAPSEM_HOME_DIR/$retired_user_config" "$CAPSEM_HOME_DIR/service.toml"
+    echo "event=retired_config_removed"
+    ASSETS_DIR="$CAPSEM_HOME_DIR/assets"
+    bash "$ROOT/scripts/sync-dev-assets.sh" "{{assets_dir}}" "$ASSETS_DIR"
+    PROFILES_DIR="$CAPSEM_HOME_DIR/profiles"
+    rm -rf "$PROFILES_DIR"
+    mkdir -p "$PROFILES_DIR"
+    cp -R "$GENERATED_PROFILES/." "$PROFILES_DIR/"
+    echo "event=dev_profile_assets_materialized assets=$ASSETS_DIR profiles=$PROFILES_DIR"
     echo "Starting capsem-service (CAPSEM_HOME=$CAPSEM_HOME_DIR)..."
     # Close fd 3 on the service; otherwise the backgrounded service inherits
     # the execution-lock fd from `just smoke` / `just test` and keeps the
     # flock held after the outer shell exits, blocking subsequent runs.
     nohup env CAPSEM_PROFILES_DIR="$GENERATED_PROFILES" RUST_LOG=capsem=debug {{service_binary}} \
-        --assets-dir {{assets_dir}}/$arch \
+        --assets-dir "$ASSETS_DIR" \
         --process-binary {{process_binary}} \
         --foreground 3>&- >/dev/null 2>&1 &
     SVC_PID=$!

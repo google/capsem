@@ -26,18 +26,14 @@ if [[ ! -d "$SRC/$ARCH" ]]; then
     exit 1
 fi
 
-# Short-circuit when ~/.capsem/assets is a symlink back to this repo's assets/.
-# Remove a stale symlink to another worktree before copying; otherwise mkdir/cp
-# silently populate the wrong tree and the installed service reports missing
-# hash-named assets.
-if [[ -e "$DST" && "$SRC" -ef "$DST" ]]; then
-    echo "Skipped sync: $DST resolves to $SRC (symlinked dev layout)"
-    exit 0
+if [[ -L "$DST" ]]; then
+    echo "Removing asset symlink: $DST -> $(readlink "$DST")"
+    rm "$DST"
 fi
 
-if [[ -L "$DST" ]]; then
-    echo "Removing stale asset symlink: $DST -> $(readlink "$DST")"
-    rm "$DST"
+if [[ -e "$DST" && "$SRC" -ef "$DST" ]]; then
+    echo "ERROR: source and destination assets directories must be distinct: $SRC" >&2
+    exit 1
 fi
 
 mkdir -p "$DST/$ARCH"

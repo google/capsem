@@ -79,12 +79,35 @@ def test_sync_dev_assets_replaces_stale_assets_symlink(tmp_path: Path) -> None:
         check=True,
     )
 
-    assert "Removing stale asset symlink" in result.stdout
+    assert "Removing asset symlink" in result.stdout
     assert not dst.is_symlink()
     assert (dst / "manifest.json").exists()
     assert (dst / arch / "rootfs-feedfacefeedface.erofs").exists()
     assert not (dst / arch / arch).exists()
     assert not (stale_target / "manifest.json").exists()
+
+
+def test_sync_dev_assets_replaces_symlink_back_to_source(tmp_path: Path) -> None:
+    src = tmp_path / "src-assets"
+    dst = tmp_path / "installed-assets"
+    arch = _write_assets(src)
+    dst.symlink_to(src, target_is_directory=True)
+
+    result = subprocess.run(
+        ["bash", str(SCRIPT), str(src), str(dst)],
+        cwd=PROJECT_ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+    )
+
+    assert "Removing asset symlink" in result.stdout
+    assert not dst.is_symlink()
+    assert (dst / "manifest.json").exists()
+    assert (dst / arch / "rootfs-feedfacefeedface.erofs").exists()
+    assert src.is_dir()
+    assert (src / "manifest.json").exists()
 
 
 def test_sync_dev_assets_materializes_hash_names_from_literal_build_output(
