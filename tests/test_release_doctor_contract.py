@@ -271,6 +271,16 @@ def test_pr_ci_python_coverage_is_not_a_monolithic_vm_tree_rerun() -> None:
     assert "--cov=src/capsem" in coverage_step
 
 
+def test_live_provider_dotenv_files_are_gitignored() -> None:
+    for name in [".env", ".env.local", ".env.ironbank"]:
+        ignored = subprocess.run(
+            ["git", "check-ignore", "-q", name],
+            cwd=PROJECT_ROOT,
+            check=False,
+        )
+        assert ignored.returncode == 0, f"{name} must be gitignored before live canaries"
+
+
 def test_pr_ci_non_vm_python_tests_prepare_assets_and_signed_binaries() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
     block = workflow.split("- name: Python integration tests (non-VM suites)", maxsplit=1)[

@@ -34,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Gitignored `.env.local` and `.env.ironbank` so live-provider canary
+  credentials stay out of source control alongside the default `.env`.
 - Fixed gateway startup so an explicit `--run-dir` controls the log, token,
   port, pid, and lock artifacts even when `CAPSEM_RUN_DIR` is set, restoring
   isolated Ironbank gateway logging under parallel release tests.

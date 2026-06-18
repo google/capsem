@@ -6,6 +6,8 @@ test-artifacts/
 /lib/
 dist/
 .env
+.env.local
+.env.ironbank
 .venv
 archive/
 .credentials.json
