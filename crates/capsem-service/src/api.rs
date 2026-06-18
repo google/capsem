@@ -457,18 +457,8 @@ pub struct RunRequest {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct AssetHealth {
-    pub ready: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub version: Option<String>,
-    pub missing: Vec<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
 pub struct ListResponse {
     pub sandboxes: Vec<SandboxInfo>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub asset_health: Option<AssetHealth>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -809,10 +799,7 @@ mod tests {
 
     #[test]
     fn list_response_empty() {
-        let r = ListResponse {
-            sandboxes: vec![],
-            asset_health: None,
-        };
+        let r = ListResponse { sandboxes: vec![] };
         let json = serde_json::to_string(&r).unwrap();
         let r2: ListResponse = serde_json::from_str(&json).unwrap();
         assert!(r2.sandboxes.is_empty());
@@ -843,7 +830,6 @@ mod tests {
                     false,
                 ),
             ],
-            asset_health: None,
         };
         let json = serde_json::to_string(&r).unwrap();
         let r2: ListResponse = serde_json::from_str(&json).unwrap();

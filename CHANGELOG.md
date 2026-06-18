@@ -69,6 +69,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed the retired top-level gateway `/status.assets` payload and added an
   Ironbank route guard so profile asset readiness can only come from
   profile-owned asset routes.
+- Removed the retired service `ListResponse.asset_health` compatibility field
+  so `/vms/list` can only report sessions, never stale global VM asset health.
 - Fixed profile launcher cards so missing-asset and ready states expose one
   route-owned action row instead of duplicating `Download`/`Start` in the card
   header and footer.

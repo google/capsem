@@ -3078,10 +3078,7 @@ async fn handle_list(State(state): State<Arc<ServiceState>>) -> Json<ListRespons
         sandboxes.push(info);
     }
 
-    Json(ListResponse {
-        sandboxes,
-        asset_health: None,
-    })
+    Json(ListResponse { sandboxes })
 }
 
 async fn handle_info(
