@@ -55,10 +55,13 @@ echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=layout_ready caps
 # Copy companion binaries from pkg payload
 for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin; do
     src="$PKG_SHARE/bin/$bin"
-    if [ -f "$src" ]; then
-        cp "$src" "$CAPSEM_DIR/bin/$bin"
-        chmod 755 "$CAPSEM_DIR/bin/$bin"
+    if [ ! -f "$src" ]; then
+        echo "capsem: packaged binary missing: $src" >&2
+        echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=binary_missing bin=$bin src=$src"
+        exit 1
     fi
+    cp "$src" "$CAPSEM_DIR/bin/$bin"
+    chmod 755 "$CAPSEM_DIR/bin/$bin"
 done
 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=binaries_copied"
 

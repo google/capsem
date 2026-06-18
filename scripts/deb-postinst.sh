@@ -67,9 +67,12 @@ fi
 
 # Symlink system binaries into user dir
 for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin; do
-    if [ -f "/usr/bin/$bin" ]; then
-        ln -sf "/usr/bin/$bin" "$CAPSEM_DIR/bin/$bin"
+    if [ ! -f "/usr/bin/$bin" ]; then
+        echo "capsem: packaged binary missing: /usr/bin/$bin" >&2
+        echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=binary_missing bin=$bin src=/usr/bin/$bin"
+        exit 1
     fi
+    ln -sf "/usr/bin/$bin" "$CAPSEM_DIR/bin/$bin"
 done
 
 # Fix ownership

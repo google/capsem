@@ -178,6 +178,8 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert "event=assets_hydrated" in deb_postinst
     assert "event=asset_hydration_failed" in deb_postinst
     assert "event=assets_copied" not in deb_postinst
+    assert 'echo "capsem: packaged binary missing: /usr/bin/$bin" >&2' in deb_postinst
+    assert "event=binary_missing bin=$bin" in deb_postinst
     assert 'INSTALL_LOG="$CAPSEM_DIR/logs/install.log"' in deb_postinst
     assert 'INSTALL_RUN_LOG="$CAPSEM_DIR/logs/install-$INSTALL_RUN_ID.log"' in deb_postinst
     assert 'install-current-run' in deb_postinst
@@ -197,6 +199,8 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert "event=assets_hydrated" in pkg_postinstall
     assert "event=asset_hydration_failed" in pkg_postinstall
     assert "event=assets_copied" not in pkg_postinstall
+    assert 'echo "capsem: packaged binary missing: $src" >&2' in pkg_postinstall
+    assert "event=binary_missing bin=$bin" in pkg_postinstall
     assert 'rm -rf "$CAPSEM_DIR"/bin.backup*' in pkg_postinstall
     assert "event=retired_binary_backups_removed" in pkg_postinstall
 
