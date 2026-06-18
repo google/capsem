@@ -120,8 +120,8 @@ data: {\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"ge
 }
 
 #[test]
-fn stream_code_assist_response_envelope_preserves_tool_id_and_usage() {
-    let raw = br#"data: {"response":{"candidates":[{"content":{"parts":[{"functionCall":{"id":"call_0123456789ab","name":"run_command","args":{"CommandLine":"printf '%s\n' nonce > /root/poem.md","Cwd":"/root","WaitMsBeforeAsync":1000}}}],"role":"model"},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":31,"candidatesTokenCount":17,"thoughtsTokenCount":2},"modelVersion":"gemini-3.5-flash-low","responseId":"resp_0123456789ab"},"traceId":"trace_0123456789ab","metadata":{}}
+fn stream_code_assist_response_envelope_preserves_tool_id_args_and_usage() {
+    let raw = br#"data: {"response":{"candidates":[{"content":{"parts":[{"functionCall":{"id":"call_0123456789ab","name":"run_command","args":{"CommandLine" : "printf '%s\n' nonce > /root/poem.md" , "Cwd":"/root","WaitMsBeforeAsync":1000}}}],"role":"model"},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":31,"candidatesTokenCount":17,"thoughtsTokenCount":2},"modelVersion":"gemini-3.5-flash-low","responseId":"resp_0123456789ab"},"traceId":"trace_0123456789ab","metadata":{}}
 
 "#;
 
@@ -139,6 +139,10 @@ fn stream_code_assist_response_envelope_preserves_tool_id_and_usage() {
     assert_eq!(summary.tool_calls.len(), 1);
     assert_eq!(summary.tool_calls[0].call_id, "call_0123456789ab");
     assert_eq!(summary.tool_calls[0].name, "run_command");
+    assert_eq!(
+        summary.tool_calls[0].arguments,
+        r#"{"CommandLine" : "printf '%s\n' nonce > /root/poem.md" , "Cwd":"/root","WaitMsBeforeAsync":1000}"#
+    );
     let args: serde_json::Value = serde_json::from_str(&summary.tool_calls[0].arguments).unwrap();
     assert_eq!(args["CommandLine"], "printf '%s\n' nonce > /root/poem.md");
     assert_eq!(args["Cwd"], "/root");

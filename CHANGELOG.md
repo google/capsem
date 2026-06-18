@@ -34,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Fixed the Gemini/AGY stream parser so function-call argument JSON is parsed
+  from raw response bytes instead of a normalized serde value, preserving the
+  exact tool-call payload that enters the ledger.
 - Updated the frontend Astro/Svelte integration dependencies to patched
   Astro/Vite versions so the release `pnpm audit` gate is clean during
   `just test`.

@@ -50,6 +50,11 @@ mod wire {
     use serde::Deserialize;
 
     #[derive(Deserialize)]
+    pub struct StreamEnvelope {
+        pub response: Option<Box<serde_json::value::RawValue>>,
+    }
+
+    #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     pub struct StreamChunk {
         pub candidates: Option<Vec<Candidate>>,
@@ -124,11 +129,11 @@ impl GoogleStreamParser {
     }
 
     fn parse_stream_chunk(data: &str) -> Result<wire::StreamChunk, serde_json::Error> {
-        let json = serde_json::from_str::<serde_json::Value>(data)?;
-        if let Some(response) = json.get("response").filter(|value| value.is_object()) {
-            serde_json::from_value(response.clone())
+        let envelope = serde_json::from_str::<wire::StreamEnvelope>(data)?;
+        if let Some(response) = envelope.response {
+            serde_json::from_str(response.get())
         } else {
-            serde_json::from_value(json)
+            serde_json::from_str(data)
         }
     }
 }
