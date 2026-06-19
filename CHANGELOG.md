@@ -72,6 +72,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   coverage stress, and macOS CI coverage upload prerequisites so the release
   gate no longer depends on runner scheduling, excessive coverage-load socket
   traffic, or missing checksum tools.
+- Fixed the IPC schema-mismatch handshake regression test so it keeps the
+  responder socket alive until the initiator observes the typed mismatch under
+  the macOS nextest runner.
 - Fixed the CI install-test asset preparation rail so placeholder initrds are
   valid gzip-compressed cpio images and the macOS bootstrap asset hash suite
   installs `b3sum` before verifying `B3SUMS`.
