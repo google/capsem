@@ -105,8 +105,9 @@ def test_install_e2e_generates_manifest_through_admin_rail() -> None:
     assert 'write_if_missing "$ASSETS_DIR/$arch/vmlinuz"' in script
     assert 'create_minimal_initrd_if_missing "$ASSETS_DIR/$arch/initrd.img"' in script
     assert 'write_if_missing "$ASSETS_DIR/$arch/initrd.img"' not in script
-    assert "cpio -o -H newc" in script
-    assert "gzip" in script
+    assert "cpio -o -H newc" not in script
+    assert "gzip.open" in script
+    assert "TRAILER!!!" in script
     assert 'write_if_missing "$ASSETS_DIR/$arch/rootfs.erofs"' in script
     assert "scripts/gen_manifest.py" not in script
 

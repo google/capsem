@@ -34,14 +34,50 @@ create_minimal_initrd_if_missing() {
     fi
 
     install -d "$(dirname "$path")"
-    local workdir
-    workdir="$(mktemp -d)"
-    (
-        cd "$workdir"
-        printf '%s\n' "capsem install-test initrd $arch" > README
-        find . | cpio -o -H newc 2>/dev/null | gzip > "$path"
-    )
-    rm -rf "$workdir"
+    python3 - "$path" "$arch" <<'PY'
+import gzip
+import sys
+import time
+from pathlib import Path
+
+
+def _pad4(length: int) -> bytes:
+    return b"\0" * ((4 - (length % 4)) % 4)
+
+
+def _newc_record(name: str, data: bytes, mode: int, ino: int) -> bytes:
+    name_bytes = name.encode("utf-8") + b"\0"
+    fields = [
+        ino,
+        mode,
+        0,
+        0,
+        1,
+        int(time.time()),
+        len(data),
+        0,
+        0,
+        0,
+        0,
+        len(name_bytes),
+        0,
+    ]
+    header = b"070701" + "".join(f"{field:08x}" for field in fields).encode("ascii")
+    return header + name_bytes + _pad4(len(header) + len(name_bytes)) + data + _pad4(len(data))
+
+
+out = Path(sys.argv[1])
+arch = sys.argv[2]
+payload = _newc_record(
+    "README",
+    f"capsem install-test initrd {arch}\n".encode("utf-8"),
+    0o100644,
+    1,
+)
+payload += _newc_record("TRAILER!!!", b"", 0, 2)
+with gzip.open(out, "wb", compresslevel=9) as fh:
+    fh.write(payload)
+PY
 }
 
 write_if_missing "$ASSETS_DIR/$arch/vmlinuz" "capsem install-test kernel $arch"
