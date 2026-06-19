@@ -68,6 +68,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed Linux release-test regressions in the KVM pause/stop harness and PTY
   bridge concurrency proof so CI verifies the intended lifecycle and full-duplex
   contracts without racy or unbounded test behavior.
+- Fixed terminal WebSocket burst coalescing and macOS CI coverage upload
+  prerequisites so the release gate no longer depends on runner scheduling or
+  missing checksum tools.
 - Fixed the CI install-test asset preparation rail so placeholder initrds are
   valid gzip-compressed cpio images and the macOS bootstrap asset hash suite
   installs `b3sum` before verifying `B3SUMS`.

@@ -142,6 +142,12 @@ jobs:
           cargo install cargo-llvm-cov --locked
           cargo install cargo-nextest --locked
           cargo install b3sum --locked
+          if ! command -v sha256sum >/dev/null 2>&1; then
+            mkdir -p "$HOME/.local/bin"
+            printf '%s\n' '#!/bin/sh' 'exec shasum -a 256 "$@"' > "$HOME/.local/bin/sha256sum"
+            chmod +x "$HOME/.local/bin/sha256sum"
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          fi
 
       # Unit tests: all crates with coverage + JUnit XML for test analytics.
       # capsem-app (Tauri bin) is macOS-only; capsem-mcp-aggregator and

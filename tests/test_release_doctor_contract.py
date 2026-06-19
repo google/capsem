@@ -126,6 +126,21 @@ def test_ci_installs_b3sum_before_bootstrap_asset_hash_checks() -> None:
     assert install_tools_pos < b3sum_pos < bootstrap_pos
 
 
+def test_ci_provides_sha256sum_before_codecov_uploads_on_macos() -> None:
+    workflow = _workflow_job_block("test")
+
+    install_tools_pos = workflow.find("- name: Install tools")
+    sha256sum_pos = workflow.find(
+        'printf \'%s\\n\' \'#!/bin/sh\' \'exec shasum -a 256 "$@"\''
+    )
+    codecov_pos = workflow.find("Upload Rust unit test coverage")
+
+    assert install_tools_pos != -1
+    assert sha256sum_pos != -1
+    assert codecov_pos != -1
+    assert install_tools_pos < sha256sum_pos < codecov_pos
+
+
 def test_guest_network_doctor_is_hermetic_by_default() -> None:
     diagnostics = PROJECT_ROOT / "guest" / "artifacts" / "diagnostics" / "test_network.py"
     source = diagnostics.read_text()

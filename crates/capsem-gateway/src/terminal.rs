@@ -14,7 +14,7 @@ use tokio_tungstenite::{client_async, tungstenite::protocol::Message as Tungsten
 use crate::AppState;
 
 const TERMINAL_RELAY_BATCH_MAX_BYTES: usize = 64 * 1024;
-const TERMINAL_RELAY_BATCH_FLUSH: Duration = Duration::from_millis(4);
+const TERMINAL_RELAY_BATCH_FLUSH: Duration = Duration::from_millis(16);
 
 enum TerminalRelayBatch {
     Text(String),
