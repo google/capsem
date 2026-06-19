@@ -666,12 +666,15 @@ mod tests {
     fn stop_unblocks_paused_vcpus() {
         let control = Arc::new(VcpuControl::new(1));
         let c = Arc::clone(&control);
-        let handle = std::thread::spawn(move || {
+        let handle = std::thread::spawn(move || loop {
+            if c.is_stopped() {
+                break true;
+            }
             #[cfg(target_arch = "x86_64")]
             c.wait_if_paused(0, || Ok(snapshot(0))).unwrap();
             #[cfg(not(target_arch = "x86_64"))]
             c.wait_if_paused();
-            c.is_stopped()
+            std::thread::yield_now();
         });
 
         control.request_pause(Duration::from_secs(1)).unwrap();

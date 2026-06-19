@@ -2179,14 +2179,20 @@ mod tests {
 
     #[test]
     fn bridge_loop_concurrency_no_deadlock() {
-        use std::os::unix::io::AsRawFd;
+        use std::os::unix::io::IntoRawFd;
         use std::os::unix::net::UnixStream;
 
         let (mut master_host, master_guest) = UnixStream::pair().unwrap();
         let (mut vsock_host, vsock_guest) = UnixStream::pair().unwrap();
 
-        let master_fd = master_guest.as_raw_fd();
-        let vsock_fd = vsock_guest.as_raw_fd();
+        let timeout = std::time::Duration::from_secs(5);
+        master_host.set_read_timeout(Some(timeout)).unwrap();
+        master_host.set_write_timeout(Some(timeout)).unwrap();
+        vsock_host.set_read_timeout(Some(timeout)).unwrap();
+        vsock_host.set_write_timeout(Some(timeout)).unwrap();
+
+        let master_fd = master_guest.into_raw_fd();
+        let vsock_fd = vsock_guest.into_raw_fd();
 
         let _bridge_thread = std::thread::spawn(move || {
             bridge_loop(master_fd, vsock_fd);
@@ -2199,6 +2205,8 @@ mod tests {
 
         let mut master_host_read = master_host.try_clone().unwrap();
         let mut vsock_host_read = vsock_host.try_clone().unwrap();
+        master_host_read.set_read_timeout(Some(timeout)).unwrap();
+        vsock_host_read.set_read_timeout(Some(timeout)).unwrap();
 
         let t_master_write = std::thread::spawn({
             let test_data = test_data.clone();
