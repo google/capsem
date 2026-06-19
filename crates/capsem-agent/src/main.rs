@@ -2198,9 +2198,10 @@ mod tests {
             bridge_loop(master_fd, vsock_fd);
         });
 
-        // 1MB ensures internal buffers (usually 8KB) fill up, triggering backpressure
-        // and testing deadlock immunity.
-        let data_size = 1024 * 1024;
+        // 128 KiB is still well above the bridge copy buffer, so this forces
+        // repeated reads/writes and backpressure without making llvm-cov Linux
+        // spend tens of seconds moving megabytes through paired socketpairs.
+        let data_size = 128 * 1024;
         let test_data = vec![0x42u8; data_size];
 
         let mut master_host_read = master_host.try_clone().unwrap();

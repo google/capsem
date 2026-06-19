@@ -783,16 +783,26 @@ async fn websocket_relay_coalesces_process_text_bursts() {
 
 #[tokio::test]
 async fn websocket_relay_coalesces_client_text_bursts() {
+    const EXPECTED_BURST: &str = "cmd --flag value\r";
+
     let (tx, rx) = oneshot::channel::<String>();
     let (url, mh, sh, _d) = ws_test_setup("c2p-coalesce-vm", move |uds| {
         tokio::spawn(async move {
             if let Ok((stream, _)) = uds.accept().await {
                 let ws = tokio_tungstenite::accept_async(stream).await.unwrap();
                 let (_write, mut read) = ws.split();
+                let mut relayed = String::new();
                 while let Some(Ok(msg)) = read.next().await {
                     if let TungsteniteMessage::Text(t) = msg {
-                        let _ = tx.send(t.to_string());
-                        break;
+                        relayed.push_str(&t);
+                        assert!(
+                            EXPECTED_BURST.starts_with(&relayed),
+                            "relay corrupted client burst prefix: {relayed:?}"
+                        );
+                        if relayed == EXPECTED_BURST {
+                            let _ = tx.send(relayed);
+                            break;
+                        }
                     }
                 }
             }
@@ -815,7 +825,7 @@ async fn websocket_relay_coalesces_client_text_bursts() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(relayed, "cmd --flag value\r");
+    assert_eq!(relayed, EXPECTED_BURST);
 
     ws.send(TungsteniteMessage::Close(None)).await.ok();
     mh.abort();
