@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added a frontend vocabulary guard that scans product source for retired 1.3
+  UI/API strings such as VM dashboard wording, policy labels, preview fields,
+  raw credential hashes, and 404/501 placeholders.
 - Added a release evidence collector that writes a timestamped 1.3 audit bundle
   with git, manifest, benchmark, file-inventory, and pending manual-gate facts.
 - Added provider-specific Ironbank release gate entrypoints for OpenAI, AGY,
