@@ -66,6 +66,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Fixed the DNS security ledger unit test so it drains the async DB writer
+  before reading joined DNS/security-rule rows, avoiding Linux coverage timing
+  flakes without weakening the ledger assertion.
 - Fixed Linux CI coverage so the KVM/unit lane has bounded timeout guards
   instead of hanging indefinitely without a named test failure.
 - Fixed Linux release-test regressions in the KVM pause/stop harness and PTY

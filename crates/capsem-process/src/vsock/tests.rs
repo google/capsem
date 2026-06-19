@@ -453,6 +453,10 @@ match = 'dns.qname == "api.openai.com" && dns.qtype == "1"'
     let event_id = emit_dns_security_write_and_rules(&db, &security_rules, event)
         .await
         .expect("event id allocated");
+    let db_for_flush = Arc::clone(&db);
+    tokio::task::spawn_blocking(move || db_for_flush.shutdown_blocking())
+        .await
+        .expect("db writer flush task joined");
 
     let reader = capsem_logger::DbReader::open(&db_path).unwrap();
     let rows: serde_json::Value = serde_json::from_str(
@@ -466,7 +470,9 @@ match = 'dns.qname == "api.openai.com" && dns.qtype == "1"'
             .expect("joined DNS rule ledger row"),
     )
     .unwrap();
-    let row = rows["rows"][0].as_array().expect("one joined row");
+    let rows = rows["rows"].as_array().expect("joined row array");
+    assert_eq!(rows.len(), 1, "expected one joined row, got {rows:?}");
+    let row = rows[0].as_array().expect("one joined row");
 
     assert_eq!(row[0].as_str(), Some(event_id.as_str()));
     assert_eq!(row[1].as_str(), Some(event_id.as_str()));
