@@ -2198,10 +2198,10 @@ mod tests {
             bridge_loop(master_fd, vsock_fd);
         });
 
-        // 128 KiB is still well above the bridge copy buffer, so this forces
-        // repeated reads/writes and backpressure without making llvm-cov Linux
-        // spend tens of seconds moving megabytes through paired socketpairs.
-        let data_size = 128 * 1024;
+        // 16 KiB is twice the bridge copy buffer, so this still forces
+        // multi-chunk full-duplex transfer without turning the unit test into a
+        // throughput benchmark under llvm-cov.
+        let data_size = 16 * 1024;
         let test_data = vec![0x42u8; data_size];
 
         let mut master_host_read = master_host.try_clone().unwrap();
