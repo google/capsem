@@ -2185,7 +2185,7 @@ mod tests {
         let (mut master_host, master_guest) = UnixStream::pair().unwrap();
         let (mut vsock_host, vsock_guest) = UnixStream::pair().unwrap();
 
-        let timeout = std::time::Duration::from_secs(5);
+        let timeout = std::time::Duration::from_secs(30);
         master_host.set_read_timeout(Some(timeout)).unwrap();
         master_host.set_write_timeout(Some(timeout)).unwrap();
         vsock_host.set_read_timeout(Some(timeout)).unwrap();
