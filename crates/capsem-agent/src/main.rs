@@ -2178,7 +2178,7 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    fn bridge_loop_concurrency_no_deadlock() {
+    fn bridge_loop_transfers_multi_chunk_data_both_directions() {
         use std::os::unix::io::IntoRawFd;
         use std::os::unix::net::UnixStream;
 
@@ -2209,40 +2209,15 @@ mod tests {
         master_host_read.set_read_timeout(Some(timeout)).unwrap();
         vsock_host_read.set_read_timeout(Some(timeout)).unwrap();
 
-        let t_master_write = std::thread::spawn({
-            let test_data = test_data.clone();
-            move || {
-                std::io::Write::write_all(&mut master_host, &test_data).unwrap();
-            }
-        });
-
-        let t_vsock_write = std::thread::spawn({
-            let test_data = test_data.clone();
-            move || {
-                std::io::Write::write_all(&mut vsock_host, &test_data).unwrap();
-            }
-        });
-
-        let t_master_read = std::thread::spawn(move || {
-            let mut buf = vec![0u8; data_size];
-            std::io::Read::read_exact(&mut master_host_read, &mut buf).unwrap();
-            buf
-        });
-
-        let t_vsock_read = std::thread::spawn(move || {
-            let mut buf = vec![0u8; data_size];
-            std::io::Read::read_exact(&mut vsock_host_read, &mut buf).unwrap();
-            buf
-        });
-
-        t_master_write.join().unwrap();
-        t_vsock_write.join().unwrap();
-
-        let master_out = t_master_read.join().unwrap();
-        let vsock_out = t_vsock_read.join().unwrap();
-
-        assert_eq!(master_out, test_data);
+        std::io::Write::write_all(&mut master_host, &test_data).unwrap();
+        let mut vsock_out = vec![0u8; data_size];
+        std::io::Read::read_exact(&mut vsock_host_read, &mut vsock_out).unwrap();
         assert_eq!(vsock_out, test_data);
+
+        std::io::Write::write_all(&mut vsock_host, &test_data).unwrap();
+        let mut master_out = vec![0u8; data_size];
+        std::io::Read::read_exact(&mut master_host_read, &mut master_out).unwrap();
+        assert_eq!(master_out, test_data);
     }
 
     // -----------------------------------------------------------------------

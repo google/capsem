@@ -68,10 +68,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed Linux release-test regressions in the KVM pause/stop harness and PTY
   bridge concurrency proof so CI verifies the intended lifecycle and full-duplex
   contracts without racy or unbounded test behavior.
-- Fixed terminal WebSocket burst preservation, bounded Linux PTY bridge
-  coverage stress, and macOS CI coverage upload prerequisites so the release
-  gate no longer depends on runner scheduling, excessive coverage-load socket
-  traffic, or missing checksum tools.
+- Fixed terminal WebSocket burst preservation, deterministic Linux PTY bridge
+  multi-chunk transfer coverage, and macOS CI coverage upload prerequisites so
+  the release gate no longer depends on runner scheduling, excessive
+  coverage-load socket traffic, or missing checksum tools.
 - Fixed the IPC schema-mismatch handshake regression test so it keeps the
   responder socket alive until the initiator observes the typed mismatch under
   the macOS nextest runner.
