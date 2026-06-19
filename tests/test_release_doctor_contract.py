@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import tomllib
 from pathlib import Path
 
 
@@ -527,6 +528,26 @@ def test_pr_ci_coverage_reports_without_local_threshold_abort() -> None:
     assert "coverage-summary.txt" in workflow
     assert "codecov-linux.json" in workflow
     assert "coverage-summary-linux.txt" in workflow
+
+
+def test_linux_ci_coverage_cannot_hang_without_a_named_failure() -> None:
+    workflow = _workflow_job_block("test-linux")
+    nextest = tomllib.loads((PROJECT_ROOT / ".config" / "nextest.toml").read_text())
+
+    coverage_step = workflow.split(
+        "- name: Unit tests (KVM backend) with coverage", maxsplit=1
+    )[1].split("- name: Upload Linux coverage", maxsplit=1)[0]
+    slow_timeout = nextest["profile"]["ci"]["slow-timeout"]
+
+    assert "timeout-minutes:" in coverage_step
+    assert "cargo llvm-cov nextest" in coverage_step
+    assert "--profile ci" in coverage_step
+    assert slow_timeout == {
+        "period": "120s",
+        "terminate-after": 3,
+        "grace-period": "10s",
+        "on-timeout": "fail",
+    }
 
 
 def test_pr_ci_python_coverage_is_not_a_monolithic_vm_tree_rerun() -> None:

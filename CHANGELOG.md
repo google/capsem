@@ -63,6 +63,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Fixed Linux CI coverage so the KVM/unit lane has bounded timeout guards
+  instead of hanging indefinitely without a named test failure.
 - Fixed the CI install-test asset preparation rail so placeholder initrds are
   valid gzip-compressed cpio images and the macOS bootstrap asset hash suite
   installs `b3sum` before verifying `B3SUMS`.

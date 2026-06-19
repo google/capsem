@@ -43,6 +43,7 @@ jobs:
       # capsem-app (Tauri shell) and capsem-tray (macOS muda menu-bar) are macOS-only; every
       # other host crate is portable and runs here so it gets Linux-specific regression coverage.
       - name: Unit tests (KVM backend) with coverage
+        timeout-minutes: 45
         run: |
           cargo llvm-cov nextest --no-cfg-coverage --profile ci --codecov --output-path codecov-linux.json -p capsem-core -p capsem-admin -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-process
           cargo llvm-cov report --summary-only -p capsem-core -p capsem-admin -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-process 2>&1 | tee coverage-summary-linux.txt
