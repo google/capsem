@@ -54,6 +54,15 @@ def test_no_npm_global_in_path():
     )
 
 
+def test_codex_sandbox_prerequisite_bubblewrap_available():
+    """Codex should not fall back to bundled sandbox helpers because bwrap is missing."""
+    result = run("command -v bwrap && bwrap --version", timeout=10)
+    assert result.returncode == 0, (
+        f"bubblewrap/bwrap missing from PATH: {result.stdout} {result.stderr}"
+    )
+    assert "bubblewrap" in result.stdout.lower()
+
+
 def test_npm_prefix_is_opt_ai_clis():
     """npm global prefix must point to /opt/ai-clis."""
     result = run("npm config get prefix")

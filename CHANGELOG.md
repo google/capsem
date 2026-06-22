@@ -71,6 +71,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Fixed Codex sandbox prerequisites in shipped profiles by adding Bubblewrap
+  to profile-owned apt packages and capsem-doctor checks, preventing Codex from
+  falling back to bundled sandbox helpers because `bwrap` is missing.
 - Fixed runtime `/root/.local/bin` shims for curl-installed AI CLIs so
   Claude/AGY doctor checks see the same user-local command path that survives
   the writable `/root` mount.

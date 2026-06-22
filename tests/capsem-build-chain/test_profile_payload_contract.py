@@ -22,6 +22,29 @@ def _profile_payload(profile_dir: Path) -> tuple[dict, Path, Path]:
     return profile, build_path, requirements_path
 
 
+def _package_lines(path: Path) -> set[str]:
+    return {
+        line.strip()
+        for line in path.read_text().splitlines()
+        if line.strip() and not line.startswith("#")
+    }
+
+
+def test_profiles_package_ai_cli_sandbox_prerequisites() -> None:
+    failures: list[str] = []
+    for profile_dir in sorted(PROFILES_DIR.iterdir()):
+        if not profile_dir.is_dir():
+            continue
+        profile = tomllib.loads((profile_dir / "profile.toml").read_text())
+        profile_id = profile["id"]
+        apt_path = PROJECT_ROOT / "config" / profile["files"]["apt_packages"]["path"]
+        apt_packages = _package_lines(apt_path)
+        if "bubblewrap" not in apt_packages:
+            failures.append(f"{profile_id}: apt packages do not include bubblewrap")
+
+    assert not failures, "invalid AI CLI sandbox prerequisite contract:\n" + "\n".join(failures)
+
+
 def test_profiles_ship_ollama_without_cuda_payload_bloat() -> None:
     failures: list[str] = []
     for profile_dir in sorted(PROFILES_DIR.iterdir()):
@@ -29,11 +52,7 @@ def test_profiles_ship_ollama_without_cuda_payload_bloat() -> None:
             continue
         profile, build_path, requirements_path = _profile_payload(profile_dir)
         build_script = build_path.read_text()
-        requirements = {
-            line.strip()
-            for line in requirements_path.read_text().splitlines()
-            if line.strip() and not line.startswith("#")
-        }
+        requirements = _package_lines(requirements_path)
 
         profile_id = profile["id"]
         if "https://ollama.com/install.sh" not in build_script:
