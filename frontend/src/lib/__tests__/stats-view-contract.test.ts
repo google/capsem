@@ -165,6 +165,31 @@ describe('StatsView detail drawer contract', () => {
     expect(source).not.toContain('response_preview');
     expect(source).not.toContain('text_content');
   });
+
+  it('keeps body ledger metadata out of the generic field grid', () => {
+    expect(source).toContain('DETAIL_BODY_METADATA_KEYS');
+    expect(source).toContain('payloadSectionMeta(section, detail.data)');
+    expect(source).toContain('Original');
+    expect(source).toContain('Stored');
+    expect(source).toContain('Truncated');
+    expect(source).toContain('Hash');
+    expect(source).toContain('&& !DETAIL_BODY_METADATA_KEYS.has(key)');
+  });
+
+  it('renders compact structured snapshots instead of null-heavy security projections', () => {
+    expect(source).toContain('compactJsonForDisplay(detail.data.rule_json)');
+    expect(source).toContain('compactJsonForDisplay(detail.data.event_json)');
+    expect(source).toContain('stripEmptyDetailValues');
+    expect(source).not.toContain("formatAndHighlight(detail.data.event_json, 'json')");
+    expect(source).not.toContain("formatAndHighlight(detail.data.rule_json, 'json')");
+  });
+
+  it('gives detail fields enough room to wrap without overlapping values', () => {
+    expect(source).toContain('w-[560px]');
+    expect(source).toContain('minmax(0,1fr)');
+    expect(source).toContain('overflow-wrap:anywhere');
+    expect(source).toContain('Event Fields');
+  });
 });
 
 describe('Stats SQL contract', () => {

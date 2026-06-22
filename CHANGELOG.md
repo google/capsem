@@ -77,6 +77,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed file-event credential attribution so ordinary model-created files keep
   their trace correlation without inheriting unrelated HTTP/OAuth credential
   references from the same agent turn.
+- Fixed the session stats detail drawer so body ledger metadata is separated
+  from event fields, long hashes wrap cleanly, and security snapshots render
+  compact non-null JSON instead of dense null-heavy projections.
 - Fixed the DNS security ledger unit test so it drains the async DB writer
   before reading joined DNS/security-rule rows, avoiding Linux coverage timing
   flakes without weakening the ledger assertion.

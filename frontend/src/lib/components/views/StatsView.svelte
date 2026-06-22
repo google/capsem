@@ -140,6 +140,19 @@
     'event_json',
   ]);
 
+  const DETAIL_BODY_METADATA_KEYS = new Set([
+    'request_body_content_type',
+    'request_body_original_bytes',
+    'request_body_stored_bytes',
+    'request_body_truncated',
+    'request_body_hash',
+    'response_body_content_type',
+    'response_body_original_bytes',
+    'response_body_stored_bytes',
+    'response_body_truncated',
+    'response_body_hash',
+  ]);
+
   const DETAIL_HIDDEN_KEYS = new Set([
     'substitution_ref',
     'credential_ref',
@@ -163,6 +176,7 @@
       isPresent(value)
       && !DETAIL_PAYLOAD_KEYS.has(key)
       && !DETAIL_STRUCTURED_KEYS.has(key)
+      && !DETAIL_BODY_METADATA_KEYS.has(key)
       && !DETAIL_HIDDEN_KEYS.has(key)
     ));
   }
@@ -176,6 +190,25 @@
         value,
         lang: detailPayloadLang(key, value),
       }));
+  }
+
+  function payloadSectionMeta(
+    section: { key: string },
+    obj: Record<string, unknown>,
+  ): { label: string; value: string }[] {
+    const prefix = section.key;
+    return [
+      { label: 'Content Type', value: text(obj[`${prefix}_content_type`]) },
+      { label: 'Original', value: formatBodyBytes(obj[`${prefix}_original_bytes`]) },
+      { label: 'Stored', value: formatBodyBytes(obj[`${prefix}_stored_bytes`]) },
+      { label: 'Truncated', value: number(obj[`${prefix}_truncated`]) === 1 ? 'yes' : 'no' },
+      { label: 'Hash', value: text(obj[`${prefix}_hash`]) },
+    ].filter(row => row.value.length > 0);
+  }
+
+  function formatBodyBytes(value: unknown): string {
+    if (!isPresent(value)) return '';
+    return formatBytes(number(value));
   }
 
   function detailPayloadLang(key: string, value: unknown): string {
@@ -198,6 +231,40 @@
     if (value == null) return 'NULL';
     if (typeof value === 'object') return JSON.stringify(value);
     return String(value);
+  }
+
+  function parseMaybeJson(value: unknown): unknown {
+    if (typeof value !== 'string') return value;
+    const normalized = normalizePayloadContent(value);
+    const trimmed = normalized.trim();
+    if (!trimmed) return value;
+    if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return normalized;
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return normalized;
+    }
+  }
+
+  function stripEmptyDetailValues(value: unknown): unknown {
+    if (Array.isArray(value)) {
+      return value
+        .map(item => stripEmptyDetailValues(item))
+        .filter(isPresent);
+    }
+    if (value && typeof value === 'object') {
+      const compact: Record<string, unknown> = {};
+      for (const [key, child] of Object.entries(value)) {
+        const stripped = stripEmptyDetailValues(child);
+        if (isPresent(stripped)) compact[key] = stripped;
+      }
+      return compact;
+    }
+    return value;
+  }
+
+  function compactJsonForDisplay(value: unknown): unknown {
+    return stripEmptyDetailValues(parseMaybeJson(value));
   }
 
   function normalizePayloadContent(content: string): string {
@@ -650,7 +717,7 @@
   </main>
 
   {#if detail}
-    <div class="w-[460px] shrink-0 border-s border-line-2 flex flex-col overflow-hidden bg-background">
+    <div class="w-[560px] shrink-0 border-s border-line-2 flex flex-col overflow-hidden bg-background">
       <div class="flex items-center gap-2 px-3 py-2 border-b border-line-2 bg-surface">
         <span class="text-xs font-semibold flex-1 truncate capitalize text-foreground">{detail.type}</span>
         <button class="p-1 rounded hover:bg-muted-hover text-muted-foreground-1 hover:text-foreground" onclick={() => detail = null} aria-label="Close detail panel">
@@ -659,27 +726,36 @@
       </div>
       <div class="flex-1 overflow-auto p-3 text-xs space-y-3">
         <div class="space-y-1">
+          <div class="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Event Fields</div>
           {#each visibleDetailEntries(detail.data) as [key, value]}
-            <div class="grid grid-cols-[130px_1fr] gap-x-2">
+            <div class="grid grid-cols-[minmax(120px,160px)_minmax(0,1fr)] gap-x-2">
               <span class="text-muted-foreground">{key}</span>
-              <span class="font-mono text-foreground break-all">{formatDetailValue(value)}</span>
+              <span class="detail-value font-mono text-foreground">{formatDetailValue(value)}</span>
             </div>
           {/each}
         </div>
         {#each detailPayloadSections(detail.data) as section (section.key)}
           <div>
             <div class="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">{section.label}</div>
+            <div class="mb-1 grid grid-cols-2 gap-x-2 gap-y-1 text-[10px] text-muted-foreground-1">
+              {#each payloadSectionMeta(section, detail.data) as row}
+                <div class="min-w-0">
+                  <span class="uppercase tracking-wider">{row.label}</span>
+                  <span class="detail-value ms-1 font-mono text-foreground">{row.value}</span>
+                </div>
+              {/each}
+            </div>
             <div class="detail-shiki rounded overflow-auto max-h-80 bg-background-1">{@html formatAndHighlight(section.value, section.lang)}</div>
           </div>
         {/each}
         {#if detail.type === 'security' || detail.type === 'detection' || detail.type === 'enforcement'}
           <div>
             <div class="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Rule Snapshot</div>
-            <div class="detail-shiki rounded overflow-auto max-h-64 bg-background-1">{@html formatAndHighlight(detail.data.rule_json, 'json')}</div>
+            <div class="detail-shiki rounded overflow-auto max-h-64 bg-background-1">{@html formatAndHighlight(compactJsonForDisplay(detail.data.rule_json), 'json')}</div>
           </div>
           <div>
             <div class="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Matched Event</div>
-            <div class="detail-shiki rounded overflow-auto max-h-80 bg-background-1">{@html formatAndHighlight(detail.data.event_json, 'json')}</div>
+            <div class="detail-shiki rounded overflow-auto max-h-80 bg-background-1">{@html formatAndHighlight(compactJsonForDisplay(detail.data.event_json), 'json')}</div>
           </div>
         {/if}
       </div>
@@ -694,5 +770,10 @@
     background: transparent !important;
     font-size: 11px;
     line-height: 1.5;
+  }
+
+  .detail-value {
+    overflow-wrap:anywhere;
+    word-break: normal;
   }
 </style>
