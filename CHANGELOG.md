@@ -71,6 +71,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Fixed runtime `/root/.local/bin` shims for curl-installed AI CLIs so
+  Claude/AGY doctor checks see the same user-local command path that survives
+  the writable `/root` mount.
 - Fixed default Codex profile seeds so shipped profiles no longer force a
   hidden local Ollama provider or startup update checks, and added release
   doctor/profile-payload guards to keep that drift from returning.

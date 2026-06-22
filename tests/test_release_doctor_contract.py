@@ -940,6 +940,15 @@ def test_guest_runtime_doctor_package_probes_are_hermetic() -> None:
     assert "--python /root/.venv/bin/python" in source
 
 
+def test_capsem_init_recreates_user_local_ai_cli_shims() -> None:
+    """Curl-installed AI CLIs must keep the user-local shim expected by doctors."""
+    init = (PROJECT_ROOT / "guest" / "artifacts" / "capsem-init").read_text()
+
+    assert "for cli in claude agy; do" in init
+    assert "ln -sf \"/usr/local/bin/$cli\" \"/newroot/root/.local/bin/$cli\"" in init
+    assert "chroot /newroot /bin/chmod 555 \"/root/.local/bin/$cli\"" in init
+
+
 def test_profile_codex_config_does_not_force_local_ollama() -> None:
     """Checked-in default profile seeds must not silently select Ollama for Codex."""
     for profile_dir in sorted((PROJECT_ROOT / "config" / "profiles").iterdir()):

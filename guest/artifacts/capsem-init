@@ -255,6 +255,16 @@ if [ -d /newroot/usr/local/share/capsem/profile-root ]; then
     boot_mark "profile_root_seed"
 fi
 
+# Curl-installed AI CLIs are promoted to /usr/local/bin at image build time
+# because /root is mounted fresh at runtime. Recreate the user-local shims that
+# their own doctor/config checks expect after the runtime /root mount exists.
+for cli in claude agy; do
+    if [ -x "/newroot/usr/local/bin/$cli" ]; then
+        ln -sf "/usr/local/bin/$cli" "/newroot/root/.local/bin/$cli"
+        chroot /newroot /bin/chmod 555 "/root/.local/bin/$cli"
+    fi
+done
+
 chroot /newroot /bin/chmod 755 /
 
 # Remove legacy HTTP sources.list if present (belt-and-suspenders).

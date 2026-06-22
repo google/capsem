@@ -72,6 +72,16 @@ def test_ai_cli_in_login_shell(cli):
     )
 
 
+@pytest.mark.parametrize("cli", ["claude", "agy"])
+def test_user_local_ai_cli_shim_survives_runtime_root_mount(cli):
+    """Curl-installed CLIs must keep the user-local shim their doctors expect."""
+    result = run(f"readlink -f /root/.local/bin/{cli}", timeout=10)
+    assert result.returncode == 0, (
+        f"/root/.local/bin/{cli} shim missing: {result.stdout} {result.stderr}"
+    )
+    assert result.stdout.strip() == f"/usr/local/bin/{cli}"
+
+
 @pytest.mark.parametrize("cli", ["gemini", "claude", "codex"])
 def test_ai_cli_help(cli):
     """AI CLI --help must execute without runtime errors."""
