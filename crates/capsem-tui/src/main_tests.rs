@@ -112,6 +112,31 @@ fn input_event_batch_drains_ready_events_before_redraw() {
 }
 
 #[test]
+fn input_event_batch_is_bounded_so_rendering_cannot_starve() {
+    let (queued_tx, queued_rx) = mpsc::channel();
+    for _ in 1..=(super::MAX_INPUT_EVENTS_PER_TICK + 10) {
+        queued_tx
+            .send(Ok(key_event('x')))
+            .expect("queue terminal input flood");
+    }
+    drop(queued_tx);
+
+    let mut handled = 0usize;
+    let should_exit = handle_input_event_batch(Ok(key_event('x')), &queued_rx, |_event| {
+        handled += 1;
+        Ok(false)
+    })
+    .expect("handle bounded input batch");
+
+    assert!(!should_exit);
+    assert_eq!(handled, super::MAX_INPUT_EVENTS_PER_TICK);
+    assert!(
+        queued_rx.try_recv().is_ok(),
+        "input floods must yield back to the render/gateway loop after one bounded batch"
+    );
+}
+
+#[test]
 fn input_event_batch_stops_on_exit_without_draining_extra_events() {
     let (queued_tx, queued_rx) = mpsc::channel();
     queued_tx

@@ -9,6 +9,7 @@ use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 
 const MAX_SCROLLBACK_LINES: usize = 2_000;
+const MAX_TERMINAL_INPUTS_PER_SEND: usize = 128;
 
 #[derive(Debug)]
 pub struct TerminalBridge {
@@ -240,13 +241,15 @@ async fn run_terminal_connection(
                 let Some(input) = input else {
                     break;
                 };
-                let message = match input {
-                    TerminalInput::Bytes(bytes) => Message::Binary(bytes.into()),
-                    TerminalInput::Resize { cols, rows } => Message::Text(resize_message(cols, rows).into()),
-                };
-                if let Err(error) = write.send(message).await {
-                    send_status(&events, &session_id, format!("send failed: {error:#}"));
-                    break;
+                for input in coalesced_terminal_inputs(input, &mut input_rx) {
+                    let message = match input {
+                        TerminalInput::Bytes(bytes) => Message::Binary(bytes.into()),
+                        TerminalInput::Resize { cols, rows } => Message::Text(resize_message(cols, rows).into()),
+                    };
+                    if let Err(error) = write.send(message).await {
+                        send_status(&events, &session_id, format!("send failed: {error:#}"));
+                        return;
+                    }
                 }
             }
             message = read.next() => {
@@ -276,6 +279,27 @@ async fn run_terminal_connection(
             }
         }
     }
+}
+
+fn coalesced_terminal_inputs(
+    first: TerminalInput,
+    input_rx: &mut tokio_mpsc::UnboundedReceiver<TerminalInput>,
+) -> Vec<TerminalInput> {
+    let mut inputs = vec![first];
+    let mut consumed = 1usize;
+    while consumed < MAX_TERMINAL_INPUTS_PER_SEND {
+        let Ok(input) = input_rx.try_recv() else {
+            break;
+        };
+        consumed += 1;
+        match (inputs.last_mut(), input) {
+            (Some(TerminalInput::Bytes(previous)), TerminalInput::Bytes(mut bytes)) => {
+                previous.append(&mut bytes);
+            }
+            (_, input) => inputs.push(input),
+        }
+    }
+    inputs
 }
 
 async fn fetch_token(client: &reqwest::Client, base_url: &str) -> anyhow::Result<String> {

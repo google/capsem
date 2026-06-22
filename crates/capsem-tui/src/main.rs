@@ -25,6 +25,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
 const UI_TICK_INTERVAL: Duration = Duration::from_millis(16);
+const MAX_INPUT_EVENTS_PER_TICK: usize = 128;
 
 #[derive(Parser)]
 #[command(author, version, about = "Capsem terminal control UI")]
@@ -283,13 +284,18 @@ fn handle_input_event_batch<F>(
 where
     F: FnMut(Event) -> Result<bool>,
 {
+    let mut handled = 1usize;
     if handle_input_event_result(first_event, &mut handle)? {
         return Ok(true);
     }
-    while let Ok(event) = input_events.try_recv() {
+    while handled < MAX_INPUT_EVENTS_PER_TICK {
+        let Ok(event) = input_events.try_recv() else {
+            break;
+        };
         if handle_input_event_result(event, &mut handle)? {
             return Ok(true);
         }
+        handled += 1;
     }
     Ok(false)
 }

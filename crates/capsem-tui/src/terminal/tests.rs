@@ -2,7 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::{
     key_to_terminal_bytes, push_coalesced_event, run_terminal_manager, TerminalColor,
-    TerminalCommand, TerminalEvent, TerminalSurface,
+    coalesced_terminal_inputs, TerminalCommand, TerminalEvent, TerminalInput, TerminalSurface,
 };
 
 #[test]
@@ -133,6 +133,54 @@ fn terminal_events_coalesce_adjacent_output() {
             session_id: "vm-1".into(),
             bytes: b"hello".to_vec()
         }]
+    );
+}
+
+#[test]
+fn terminal_inputs_coalesce_adjacent_bytes_without_crossing_resize_boundaries() {
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    tx.send(TerminalInput::Bytes(b"b".to_vec()))
+        .expect("queue adjacent bytes");
+    tx.send(TerminalInput::Bytes(b"c".to_vec()))
+        .expect("queue adjacent bytes");
+    tx.send(TerminalInput::Resize { cols: 100, rows: 24 })
+        .expect("queue resize boundary");
+    tx.send(TerminalInput::Bytes(b"d".to_vec()))
+        .expect("queue bytes after resize");
+    tx.send(TerminalInput::Bytes(b"e".to_vec()))
+        .expect("queue bytes after resize");
+
+    let inputs = coalesced_terminal_inputs(TerminalInput::Bytes(b"a".to_vec()), &mut rx);
+
+    assert_eq!(
+        inputs,
+        vec![
+            TerminalInput::Bytes(b"abc".to_vec()),
+            TerminalInput::Resize { cols: 100, rows: 24 },
+            TerminalInput::Bytes(b"de".to_vec()),
+        ]
+    );
+}
+
+#[test]
+fn terminal_input_coalescing_is_bounded_even_for_all_byte_floods() {
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    for _ in 1..=(super::MAX_TERMINAL_INPUTS_PER_SEND + 10) {
+        tx.send(TerminalInput::Bytes(b"x".to_vec()))
+            .expect("queue byte flood");
+    }
+    drop(tx);
+
+    let inputs = coalesced_terminal_inputs(TerminalInput::Bytes(b"x".to_vec()), &mut rx);
+
+    assert_eq!(inputs.len(), 1);
+    let TerminalInput::Bytes(bytes) = &inputs[0] else {
+        panic!("expected coalesced byte input");
+    };
+    assert_eq!(bytes.len(), super::MAX_TERMINAL_INPUTS_PER_SEND);
+    assert!(
+        rx.try_recv().is_ok(),
+        "terminal byte floods must yield back to the websocket read loop"
     );
 }
 
