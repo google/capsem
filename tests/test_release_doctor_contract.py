@@ -940,6 +940,27 @@ def test_guest_runtime_doctor_package_probes_are_hermetic() -> None:
     assert "--python /root/.venv/bin/python" in source
 
 
+def test_profile_codex_config_does_not_force_local_ollama() -> None:
+    """Checked-in default profile seeds must not silently select Ollama for Codex."""
+    for profile_dir in sorted((PROJECT_ROOT / "config" / "profiles").iterdir()):
+        if not profile_dir.is_dir():
+            continue
+        config_path = profile_dir / "root" / "root" / ".codex" / "config.toml"
+        if not config_path.exists():
+            continue
+        config = tomllib.loads(config_path.read_text())
+        assert config.get("model_provider") not in {"local_ollama", "ollama"}, (
+            f"{config_path} must not force a local Ollama model provider"
+        )
+        providers = config.get("model_providers") or {}
+        assert "local_ollama" not in providers, (
+            f"{config_path} must not declare a hidden local_ollama provider"
+        )
+        assert "ollama" not in providers, (
+            f"{config_path} must not declare a hidden ollama provider"
+        )
+
+
 def test_guest_virtiofs_pip_probe_is_hermetic() -> None:
     source = (
         PROJECT_ROOT / "guest" / "artifacts" / "diagnostics" / "test_virtiofs.py"

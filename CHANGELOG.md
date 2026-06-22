@@ -71,6 +71,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Fixed default Codex profile seeds so shipped profiles no longer force a
+  hidden local Ollama provider or startup update checks, and added release
+  doctor/profile-payload guards to keep that drift from returning.
 - Fixed tool-call ledger contract tests so tool responses must reference both
   their matching tool-call ID in the same trace and the exact model exchange
   row that consumed the tool response.

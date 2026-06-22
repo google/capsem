@@ -127,17 +127,16 @@ def test_profiles_package_scriptable_local_model_agent_bootstrap() -> None:
 
         codex_path = root_dir / "root/.codex/config.toml"
         codex = tomllib.loads(codex_path.read_text())
-        if codex.get("model") != "gemma4:latest":
-            failures.append(f"{profile_id}: Codex model is not gemma4:latest")
-        if codex.get("model_provider") != "local_ollama":
-            failures.append(f"{profile_id}: Codex model_provider is not local_ollama")
-        local_ollama = codex.get("model_providers", {}).get("local_ollama", {})
-        if local_ollama.get("name") != "Ollama":
-            failures.append(f"{profile_id}: Codex local_ollama provider name is wrong")
-        if local_ollama.get("base_url") != "http://127.0.0.1:11434/v1":
-            failures.append(f"{profile_id}: Codex local_ollama base_url is wrong")
-        if "env_key" in local_ollama:
-            failures.append(f"{profile_id}: Codex local_ollama must not require a baked API key")
+        if codex.get("model_provider") in {"local_ollama", "ollama"}:
+            failures.append(f"{profile_id}: Codex default must not force Ollama")
+        providers = codex.get("model_providers", {})
+        if "local_ollama" in providers or "ollama" in providers:
+            failures.append(f"{profile_id}: Codex config must not hide an Ollama provider")
+        if codex.get("check_for_update_on_startup") is not False:
+            failures.append(f"{profile_id}: Codex startup update checks must be disabled")
+        analytics = codex.get("analytics", {})
+        if analytics.get("enabled") is not False:
+            failures.append(f"{profile_id}: Codex analytics must be disabled")
 
         agy_config_path = root_dir / "root/.gemini/config/config.json"
         if not agy_config_path.is_file():

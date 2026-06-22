@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import tomllib
 from urllib.parse import urlsplit
 
 import pytest
@@ -135,6 +136,22 @@ def test_antigravity_profile_config_seeded_without_credentials():
     assert settings["colorScheme"] == "dark"
     assert "/root" in settings["trustedWorkspaces"]
     assert not SECRET_PATTERN.search(json.dumps(settings, sort_keys=True))
+
+
+def test_codex_profile_config_uses_first_party_defaults_without_local_ollama():
+    """Default Codex profile config must not force a local Ollama provider."""
+    result = run("cat /root/.codex/config.toml")
+    assert result.returncode == 0, f"missing Codex profile config: {result.stderr}"
+    assert not SECRET_PATTERN.search(result.stdout), "secret-like value found in Codex config"
+    config = tomllib.loads(result.stdout)
+
+    assert config.get("model_provider") not in {"local_ollama", "ollama"}, (
+        "Codex default profile must not be preconfigured to Ollama; local providers "
+        "belong behind explicit profile/rule/user selection."
+    )
+    providers = config.get("model_providers") or {}
+    assert "local_ollama" not in providers
+    assert "ollama" not in providers
 
 
 def test_google_ai_local_fixture_allowed():
