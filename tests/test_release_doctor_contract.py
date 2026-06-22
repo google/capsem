@@ -928,7 +928,6 @@ def test_guest_runtime_doctor_package_probes_are_hermetic() -> None:
         "uv pip install humanize",
         "npm install -g cowsay",
         "npm install lodash",
-        "apt-get update",
         "apt-get install -y -qq htop",
     ]
     for fragment in forbidden_fragments:
@@ -940,6 +939,22 @@ def test_guest_runtime_doctor_package_probes_are_hermetic() -> None:
     assert "--python /root/.venv/bin/python" in source
 
 
+def test_guest_runtime_doctor_remote_apt_https_probe_is_release_gate() -> None:
+    """Doctor must catch runtime apt HTTPS/CA breakage, not just local .deb installs."""
+    source = (
+        PROJECT_ROOT / "guest" / "artifacts" / "diagnostics" / "test_runtimes.py"
+    ).read_text()
+
+    assert "def test_remote_apt_https_install_works" in source
+    assert "apt-get " in source
+    assert "update 2>&1" in source
+    assert "https://deb.debian.org" in source
+    assert "Certificate verification failed" in source
+    assert "No system certificates available" in source
+    assert "apt-get install -y -qq --no-install-recommends hello" in source
+    assert "Hello, world!" in source
+
+
 def test_capsem_init_recreates_user_local_ai_cli_shims() -> None:
     """Curl-installed AI CLIs must keep the user-local shim expected by doctors."""
     init = (PROJECT_ROOT / "guest" / "artifacts" / "capsem-init").read_text()
@@ -947,6 +962,22 @@ def test_capsem_init_recreates_user_local_ai_cli_shims() -> None:
     assert "for cli in claude agy; do" in init
     assert "ln -sf \"/usr/local/bin/$cli\" \"/newroot/root/.local/bin/$cli\"" in init
     assert "chroot /newroot /bin/chmod 555 \"/root/.local/bin/$cli\"" in init
+
+
+def test_capsem_init_keeps_etc_traversable_for_apt_sandbox() -> None:
+    """The `_apt` sandbox must be able to read the TLS trust bundle under /etc."""
+    init = (PROJECT_ROOT / "guest" / "artifacts" / "capsem-init").read_text()
+
+    profile_seed_pos = init.find("projecting profile root seed")
+    final_etc_chmod_pos = init.rfind("chmod 755 /newroot/etc")
+    launch_pos = init.find("chroot /newroot \"$AGENT_PATH\"")
+
+    assert "chmod 755 /newroot" in init
+    assert profile_seed_pos != -1
+    assert final_etc_chmod_pos != -1
+    assert launch_pos != -1
+    assert profile_seed_pos < final_etc_chmod_pos < launch_pos
+    assert "TLS trust lives under `/etc/ssl/certs`" in init
 
 
 def test_profile_codex_config_does_not_force_local_ollama() -> None:

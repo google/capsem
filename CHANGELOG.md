@@ -80,6 +80,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed runtime `/root/.local/bin` shims for curl-installed AI CLIs so
   Claude/AGY doctor checks see the same user-local command path that survives
   the writable `/root` mount.
+- Fixed runtime apt HTTPS installs by keeping `/etc` traversable for apt's
+  `_apt` sandbox after profile-root projection, and added a capsem-doctor gate
+  that fetches and runs a real remote Debian package.
 - Fixed default Codex profile seeds so shipped profiles no longer force a
   hidden local Ollama provider or startup update checks, and added release
   doctor/profile-payload guards to keep that drift from returning.

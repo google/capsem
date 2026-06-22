@@ -181,6 +181,9 @@ fi
 # staging directory. Unprivileged tools such as apt's `_apt` sandbox must be
 # able to traverse `/` even though most writes remain constrained elsewhere.
 chmod 755 /newroot
+# Some exported rootfs images preserve `/etc` as root-only. That breaks apt's
+# sandboxed `_apt` user because TLS trust lives under `/etc/ssl/certs`.
+chmod 755 /newroot/etc
 
 # Mount virtual filesystems fresh in the new root.
 # /proc, /sys, /dev exist as empty dirs from docker export.
@@ -254,6 +257,10 @@ if [ -d /newroot/usr/local/share/capsem/profile-root ]; then
     }
     boot_mark "profile_root_seed"
 fi
+
+# The profile root seed may carry `/etc` metadata. Re-assert traversal after
+# projection so apt's `_apt` sandbox can always read the TLS trust bundle.
+chmod 755 /newroot/etc
 
 # Curl-installed AI CLIs are promoted to /usr/local/bin at image build time
 # because /root is mounted fresh at runtime. Recreate the user-local shims that

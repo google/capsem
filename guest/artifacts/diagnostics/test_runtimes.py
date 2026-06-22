@@ -188,6 +188,33 @@ def test_apt_install_works(output_dir):
     assert "capsem-apt-ok" in result.stdout
 
 
+def test_remote_apt_https_install_works():
+    """Runtime apt must fetch over HTTPS, install, and run the package."""
+    update = run(
+        "apt-get "
+        "-o Acquire::Check-Valid-Until=false "
+        "-o Acquire::Check-Date=false "
+        "update 2>&1",
+        timeout=180,
+    )
+    assert update.returncode == 0, f"remote apt-get update failed:\n{update.stdout}"
+    assert "https://deb.debian.org" in update.stdout, (
+        f"runtime apt sources did not use HTTPS debian.org:\n{update.stdout}"
+    )
+    assert "Certificate verification failed" not in update.stdout
+    assert "No system certificates available" not in update.stdout
+
+    install = run(
+        "DEBIAN_FRONTEND=noninteractive "
+        "apt-get install -y -qq --no-install-recommends hello 2>&1",
+        timeout=180,
+    )
+    assert install.returncode == 0, f"remote apt install failed:\n{install.stdout}"
+    hello = run("hello", timeout=15)
+    assert hello.returncode == 0, f"remote apt package binary failed:\n{hello.stdout}\n{hello.stderr}"
+    assert "Hello, world!" in hello.stdout
+
+
 def test_tmux_works():
     """tmux must launch and list sessions."""
     result = run("tmux new-session -d -s test-session 2>&1 && tmux list-sessions 2>&1 && tmux kill-session -t test-session 2>&1", timeout=10)
