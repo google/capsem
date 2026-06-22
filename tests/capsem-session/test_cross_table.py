@@ -17,14 +17,27 @@ def test_tool_calls_reference_model_calls(session_db):
 
 
 def test_tool_responses_reference_valid_call_id(session_db):
-    """tool_responses.call_id should reference a valid tool_calls.call_id."""
+    """tool_responses.call_id should reference a valid tool_calls.call_id in the same trace."""
     orphans = session_db.execute("""
-        SELECT tr.id, tr.call_id
+        SELECT tr.id, tr.call_id, tr.trace_id
         FROM tool_responses tr
-        LEFT JOIN tool_calls tc ON tr.call_id = tc.call_id
+        LEFT JOIN tool_calls tc
+          ON tr.call_id = tc.call_id
+         AND tr.trace_id = tc.trace_id
         WHERE tc.call_id IS NULL
     """).fetchall()
     assert len(orphans) == 0, f"Orphan tool_responses (no matching tool_call): {orphans}"
+
+
+def test_tool_responses_reference_model_calls(session_db):
+    """tool_responses.model_call_id should reference the model exchange that consumed it."""
+    orphans = session_db.execute("""
+        SELECT tr.id, tr.model_call_id, tr.call_id
+        FROM tool_responses tr
+        LEFT JOIN model_calls mc ON tr.model_call_id = mc.id
+        WHERE mc.id IS NULL
+    """).fetchall()
+    assert len(orphans) == 0, f"Orphan tool_responses (no matching model_call): {orphans}"
 
 
 def test_mcp_tool_calls_are_direct_tool_evidence(session_db):

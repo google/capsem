@@ -71,6 +71,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Fixed tool-call ledger contract tests so tool responses must reference both
+  their matching tool-call ID in the same trace and the exact model exchange
+  row that consumed the tool response.
 - Fixed the DNS security ledger unit test so it drains the async DB writer
   before reading joined DNS/security-rule rows, avoiding Linux coverage timing
   flakes without weakening the ledger assertion.

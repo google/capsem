@@ -19,14 +19,26 @@ class TestCrossTableForeignKeys:
         )
 
     def test_tool_responses_call_fk(self, exhaust_db):
-        """tool_responses.call_id references a valid tool_calls.call_id."""
+        """tool_responses.call_id references a valid tool_calls.call_id in the same trace."""
         orphans = exhaust_db.execute("""
-            SELECT tr.id, tr.call_id FROM tool_responses tr
-            WHERE tr.call_id IS NOT NULL
-            AND tr.call_id NOT IN (SELECT call_id FROM tool_calls)
+            SELECT tr.id, tr.call_id, tr.trace_id FROM tool_responses tr
+            LEFT JOIN tool_calls tc
+              ON tr.call_id = tc.call_id
+             AND tr.trace_id = tc.trace_id
+            WHERE tc.call_id IS NULL
         """).fetchall()
         assert len(orphans) == 0, (
             f"tool_responses with invalid call_id: {[dict(r) for r in orphans]}"
+        )
+
+    def test_tool_responses_model_call_fk(self, exhaust_db):
+        """tool_responses.model_call_id references the model exchange that consumed it."""
+        orphans = exhaust_db.execute("""
+            SELECT tr.id, tr.model_call_id, tr.call_id FROM tool_responses tr
+            WHERE tr.model_call_id NOT IN (SELECT id FROM model_calls)
+        """).fetchall()
+        assert len(orphans) == 0, (
+            f"tool_responses with invalid model_call_id: {[dict(r) for r in orphans]}"
         )
 
     def test_mcp_origin_tool_calls_fk(self, exhaust_db):

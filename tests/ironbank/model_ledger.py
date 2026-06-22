@@ -380,12 +380,20 @@ def assert_two_turn_model_ledger_exchange(
             assert len(trace_tool_calls) == 1, [dict(row) for row in tool_rows]
             assert trace_tool_calls[0]["call_id"] == (turn.call_id or trace_tool_calls[0]["call_id"])
             assert json.loads(trace_tool_calls[0]["arguments"]) == turn.call_args
+            tool_call_model_ids = {row["model_call_id"] for row in trace_tool_calls}
+            assert tool_call_model_ids <= {row["id"] for row in trace_model_calls}, [
+                dict(row) for row in trace_tool_calls
+            ]
 
             trace_tool_responses = [
                 row for row in response_rows if row["trace_id"] == trace_id
             ]
             assert len(trace_tool_responses) == 1, [dict(row) for row in response_rows]
             assert trace_tool_responses[0]["call_id"] == trace_tool_calls[0]["call_id"]
+            assert trace_tool_responses[0]["model_call_id"] == trace_model_calls[-1]["id"], {
+                "tool_response": dict(trace_tool_responses[0]),
+                "model_calls": [dict(row) for row in trace_model_calls],
+            }
             assert turn.call_response in (trace_tool_responses[0]["content_preview"] or "")
 
             file_row = _assert_created_file_row(
@@ -487,6 +495,10 @@ def assert_live_model_ledger_exchange(
         assert len(response_rows) == 1, [dict(row) for row in response_rows]
         response_row = response_rows[0]
         assert response_row["is_error"] == 0
+        assert response_row["model_call_id"] == final_model["id"], {
+            "tool_response": dict(response_row),
+            "final_model": dict(final_model),
+        }
         assert response_row["trace_id"] == final_model["trace_id"]
         assert spec.call_response in (response_row["content_preview"] or "")
 
