@@ -74,6 +74,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed tool-call ledger contract tests so tool responses must reference both
   their matching tool-call ID in the same trace and the exact model exchange
   row that consumed the tool response.
+- Fixed file-event credential attribution so ordinary model-created files keep
+  their trace correlation without inheriting unrelated HTTP/OAuth credential
+  references from the same agent turn.
 - Fixed the DNS security ledger unit test so it drains the async DB writer
   before reading joined DNS/security-rule rows, avoiding Linux coverage timing
   flakes without weakening the ledger assertion.

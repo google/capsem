@@ -790,7 +790,7 @@ def test_openai_two_tool_calls_have_exact_item_cardinality(
             assert len(created) == 1, [dict(row) for row in file_rows]
             assert created[0]["size"] == len((expected["nonce"] + "\n").encode())
             assert created[0]["directory"] == ".", dict(created[0])
-            assert created[0]["credential_ref"] == credential_ref, dict(created[0])
+            assert created[0]["credential_ref"] is None, dict(created[0])
             file_event_ids.append(created[0]["event_id"])
 
         event_ids = [row["event_id"] for row in [*model_calls, *net_rows, dns]]

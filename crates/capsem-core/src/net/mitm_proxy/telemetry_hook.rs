@@ -607,7 +607,6 @@ pub fn maybe_build_model_call(
         } else if !is_tool_use {
             state.complete_trace(&tid);
         }
-        state.register_trace_credential(&tid, req_ctx.credential_ref.as_deref());
         tid
     };
     for tool_call in &mut tool_calls {

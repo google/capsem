@@ -113,36 +113,3 @@ fn trace_state_keeps_file_hints_after_tool_trace_completes() {
         Some("trace_file")
     );
 }
-
-#[test]
-fn trace_state_keeps_trace_credentials_for_late_file_events() {
-    let mut state = TraceState::new();
-    state.register_trace_credential(
-        "trace_credential",
-        Some("credential:blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
-    );
-    state.complete_trace("trace_credential");
-
-    assert_eq!(
-        state.lookup_trace_credential("trace_credential").as_deref(),
-        Some("credential:blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-    );
-}
-
-#[test]
-fn trace_state_preserves_first_credential_for_async_file_attribution() {
-    let mut state = TraceState::new();
-    state.register_trace_credential(
-        "trace_credential",
-        Some("credential:blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
-    );
-    state.register_trace_credential(
-        "trace_credential",
-        Some("credential:blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
-    );
-
-    assert_eq!(
-        state.lookup_trace_credential("trace_credential").as_deref(),
-        Some("credential:blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-    );
-}

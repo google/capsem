@@ -859,10 +859,9 @@ def _assert_tool_output_file(
     assert rows, f"missing fs_events for tool output {path}"
     assert any(row["action"] in {"created", "modified", "export"} for row in rows)
     assert all(row["name"] in {path, None} for row in rows)
-    if credential_refs:
-        assert any(row["credential_ref"] in credential_refs for row in rows), [
-            dict(row) for row in rows
-        ]
+    assert all(row["credential_ref"] is None for row in rows), [
+        dict(row) for row in rows
+    ]
 
 
 def _assert_created_file_row(
@@ -895,8 +894,7 @@ def _assert_created_file_row(
     assert row["path"] == path, dict(row)
     assert row["directory"] == ".", dict(row)
     assert row["size"] == len(file_content.encode()), dict(row)
-    if credential_refs:
-        assert row["credential_ref"] in credential_refs, dict(row)
+    assert row["credential_ref"] is None, dict(row)
     return row
 
 
