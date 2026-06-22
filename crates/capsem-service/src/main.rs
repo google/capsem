@@ -3604,6 +3604,11 @@ fn session_db_triage(db_path: &std::path::Path, limit: usize) -> anyhow::Result<
         "SELECT timestamp, server_name, method, decision, policy_mode, policy_action, \
                 policy_rule, policy_reason, error_message, duration_ms \
          FROM mcp_calls WHERE decision IN ('denied','error') OR error_message IS NOT NULL \
+         UNION ALL \
+         SELECT timestamp, server_name, method, decision, policy_mode, policy_action, \
+                policy_rule, policy_reason, error_message, duration_ms \
+         FROM tool_calls \
+         WHERE origin = 'mcp' AND (decision IN ('denied','error') OR error_message IS NOT NULL) \
          ORDER BY timestamp DESC LIMIT {limit}"
     );
     let exec_failures_sql = format!(
@@ -6315,7 +6320,7 @@ async fn handle_inspect(
 
 /// `GET /vms/{id}/timeline?trace_id=<X>&since=10m&limit=200&layers=mcp,exec,...`
 /// -- unified time-ordered event stream for one session, joining
-/// `exec_events`, `mcp_calls`, `net_events`, `fs_events`, and
+/// `exec_events`, MCP protocol/tool rows, `net_events`, `fs_events`, and
 /// `model_calls` via UNION ALL. Used by the `capsem_timeline` MCP tool.
 ///
 /// W6 added `trace_id` to every layer; this handler filters with
@@ -6361,17 +6366,18 @@ async fn handle_timeline(
         );
     }
     if layers.contains(&"mcp") {
-        // F7: include the originating model_call's tool_calls.call_id when
-        // an mcp_call serviced a model tool_use, so the timeline shows
-        // "model X tool_use Y -> mcp_call Z" inline. Best-effort LEFT JOIN
-        // -- mcp_calls without a tool_calls peer just show NULL.
         parts.push(
-            "SELECT m.timestamp AS timestamp, 'mcp' AS layer, m.id AS ref, \
-             m.server_name || '/' || COALESCE(m.tool_name, m.method) || \
-                COALESCE(' (call_id=' || tc.call_id || ')', '') AS summary, \
-             NULL AS status, m.duration_ms AS duration_ms, m.trace_id AS trace_id \
+            "SELECT m.timestamp AS timestamp, 'mcp' AS layer, m.event_id AS ref, \
+             m.server_name || '/' || COALESCE(m.tool_name, m.method) AS summary, \
+             m.decision AS status, m.duration_ms AS duration_ms, m.trace_id AS trace_id \
              FROM mcp_calls m \
-             LEFT JOIN tool_calls tc ON tc.mcp_call_id = m.id"
+             UNION ALL \
+             SELECT COALESCE(NULLIF(tc.timestamp, ''), '1970-01-01T00:00:00Z') AS timestamp, \
+             'mcp' AS layer, tc.event_id AS ref, \
+             tc.server_name || '/' || tc.tool_name || COALESCE(' (call_id=' || tc.call_id || ')', '') AS summary, \
+             tc.decision AS status, tc.duration_ms AS duration_ms, tc.trace_id AS trace_id \
+             FROM tool_calls tc \
+             WHERE tc.origin = 'mcp'"
                 .to_string(),
         );
     }
@@ -9056,8 +9062,27 @@ async fn handle_run(
                     );
                 }
                 let file_events = reader.file_event_count().unwrap_or(0);
-                let mcp_calls = reader.raw_mcp_call_count().unwrap_or(0);
-                let _ = idx.update_session_summary(&id, 0, 0, 0.0, 0, mcp_calls, file_events);
+                let (input_tokens, output_tokens, cost, tool_calls) = reader
+                    .session_stats()
+                    .map(|stats| {
+                        (
+                            stats.total_input_tokens,
+                            stats.total_output_tokens,
+                            stats.total_estimated_cost_usd,
+                            stats.total_tool_calls,
+                        )
+                    })
+                    .unwrap_or((0, 0, 0.0, 0));
+                let mcp_protocol_events = reader.raw_mcp_call_count().unwrap_or(0);
+                let _ = idx.update_session_summary(
+                    &id,
+                    input_tokens,
+                    output_tokens,
+                    cost,
+                    tool_calls,
+                    mcp_protocol_events,
+                    file_events,
+                );
             }
         }
         let _ = idx.update_status(&id, "stopped", Some(&capsem_core::session::now_iso()));

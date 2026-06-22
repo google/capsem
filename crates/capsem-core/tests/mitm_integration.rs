@@ -971,17 +971,27 @@ async fn mitm_proxy_plain_http_unknown_mcp_shape_emits_mcp_call() {
     let mcp_calls = reader.recent_mcp_calls(10).unwrap();
     assert_eq!(
         mcp_calls.len(),
-        1,
-        "unknown remote MCP-over-HTTP must emit one McpCall"
+        0,
+        "MCP tools/call is a tool invocation and must not be duplicated in mcp_calls"
     );
-    let call = &mcp_calls[0];
-    assert_eq!(call.method, "tools/call");
-    assert_eq!(call.tool_name.as_deref(), Some("search_web"));
+    let tool_calls = reader.recent_tool_calls(10).unwrap();
+    assert_eq!(
+        tool_calls.len(),
+        1,
+        "unknown remote MCP-over-HTTP must emit one unified tool_calls row"
+    );
+    let call = &tool_calls[0];
+    assert_eq!(call.origin, "mcp");
+    assert_eq!(call.model_call_id, None);
+    assert_eq!(call.method.as_deref(), Some("tools/call"));
+    assert_eq!(call.tool_name, "search_web");
     assert_eq!(call.request_id.as_deref(), Some("call-1"));
     assert_eq!(call.decision, "allowed");
     assert_eq!(call.bytes_sent, req_body_len as u64);
     assert!(
-        call.server_name.contains("127.0.0.1"),
+        call.server_name
+            .as_deref()
+            .is_some_and(|name| name.contains("127.0.0.1")),
         "observed MCP server identity should include host/path: {:?}",
         call.server_name
     );
@@ -1033,12 +1043,20 @@ match = 'mcp.tool_call.name == "search_web"'
     let mcp_calls = reader.recent_mcp_calls(10).unwrap();
     assert_eq!(
         mcp_calls.len(),
-        1,
-        "denied unknown MCP-over-HTTP must still emit one McpCall"
+        0,
+        "denied MCP tools/call must not be duplicated in mcp_calls"
     );
-    let call = &mcp_calls[0];
-    assert_eq!(call.method, "tools/call");
-    assert_eq!(call.tool_name.as_deref(), Some("search_web"));
+    let tool_calls = reader.recent_tool_calls(10).unwrap();
+    assert_eq!(
+        tool_calls.len(),
+        1,
+        "denied unknown MCP-over-HTTP must still emit one unified tool_calls row"
+    );
+    let call = &tool_calls[0];
+    assert_eq!(call.origin, "mcp");
+    assert_eq!(call.model_call_id, None);
+    assert_eq!(call.method.as_deref(), Some("tools/call"));
+    assert_eq!(call.tool_name, "search_web");
     assert_eq!(call.decision, "denied");
     assert_eq!(
         call.policy_rule.as_deref(),

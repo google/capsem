@@ -6,12 +6,12 @@ pytestmark = pytest.mark.session
 
 
 def test_tool_calls_reference_model_calls(session_db):
-    """tool_calls.model_call_id should reference a valid model_calls.id."""
+    """Model-attached tool_calls.model_call_id should reference model_calls.id."""
     orphans = session_db.execute("""
         SELECT tc.id, tc.model_call_id
         FROM tool_calls tc
         LEFT JOIN model_calls mc ON tc.model_call_id = mc.id
-        WHERE mc.id IS NULL
+        WHERE tc.model_call_id IS NOT NULL AND mc.id IS NULL
     """).fetchall()
     assert len(orphans) == 0, f"Orphan tool_calls (no matching model_call): {orphans}"
 
@@ -27,15 +27,15 @@ def test_tool_responses_reference_valid_call_id(session_db):
     assert len(orphans) == 0, f"Orphan tool_responses (no matching tool_call): {orphans}"
 
 
-def test_mcp_tool_calls_reference_mcp_calls(session_db):
-    """tool_calls with origin='mcp' should have a valid mcp_call_id."""
+def test_mcp_tool_calls_are_direct_tool_evidence(session_db):
+    """MCP-origin tool invocations live in tool_calls, not mcp_calls."""
     orphans = session_db.execute("""
         SELECT tc.id, tc.mcp_call_id
         FROM tool_calls tc
         LEFT JOIN mcp_calls mc ON tc.mcp_call_id = mc.id
         WHERE tc.origin = 'mcp' AND tc.mcp_call_id IS NOT NULL AND mc.id IS NULL
     """).fetchall()
-    assert len(orphans) == 0, f"MCP tool_calls with invalid mcp_call_id: {orphans}"
+    assert len(orphans) == 0, f"MCP-origin tool_calls with invalid protocol link: {orphans}"
 
 
 def test_snapshots_are_not_cross_table_activity(session_db):

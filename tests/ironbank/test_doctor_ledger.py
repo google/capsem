@@ -454,10 +454,11 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
             row["method"]
             for row in conn.execute("SELECT DISTINCT method FROM mcp_calls").fetchall()
         }
-        assert {"initialize", "tools/list", "tools/call"}.issubset(mcp_methods)
+        assert {"initialize", "tools/list"}.issubset(mcp_methods)
+        assert "tools/call" not in mcp_methods
         mcp_call = _single(
             conn,
-            "SELECT * FROM mcp_calls WHERE method = 'tools/call' ORDER BY id DESC LIMIT 1",
+            "SELECT * FROM tool_calls WHERE origin = 'mcp' AND method = 'tools/call' ORDER BY id DESC LIMIT 1",
         )
         _assert_ledger_id(mcp_call["event_id"])
         assert mcp_call["decision"] in {"allowed", "denied", "ask", "error"}
@@ -465,15 +466,16 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
         assert mcp_call["tool_name"]
         assert mcp_call["process_name"] != "MainThread"
         assert mcp_call["bytes_sent"] > 0
-        assert mcp_call["request_preview"]
+        assert mcp_call["arguments"]
 
         mcp_fetch = _single(
             conn,
             """
             SELECT *
-            FROM mcp_calls
+            FROM tool_calls
             WHERE method = 'tools/call'
               AND tool_name LIKE '%fetch_http%'
+              AND origin = 'mcp'
             ORDER BY id DESC
             LIMIT 1
             """,
@@ -484,7 +486,7 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
         assert mcp_fetch["decision"] == "allowed"
         assert mcp_fetch["bytes_sent"] > 0
         assert mcp_fetch["bytes_received"] > 0
-        assert "fetch_http" in mcp_fetch["request_preview"]
+        assert "fetch_http" in mcp_fetch["arguments"]
         assert "Capsem local pagination fixture" in (mcp_fetch["response_preview"] or "")
 
         mcp_net = _single(

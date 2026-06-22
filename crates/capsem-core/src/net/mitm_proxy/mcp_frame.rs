@@ -2,7 +2,8 @@
 //!
 //! Guest-originated MCP reaches the MITM endpoint as bounded JSON-RPC frames
 //! on vsock:5002. The MITM owns parsing, policy decisions, dispatch through
-//! the low-privilege aggregator, and `mcp_calls` telemetry.
+//! the low-privilege aggregator, `mcp_calls` protocol telemetry, and
+//! `tool_calls origin = mcp` for actual tool invocations.
 
 use std::collections::HashSet;
 use std::fmt;
@@ -44,7 +45,8 @@ pub(super) async fn serve(
 ///
 /// Host-facing routes use this when they invoke a profile MCP tool on behalf
 /// of the user. They must not call the aggregator directly, because the
-/// `mcp_calls` row and matching security-rule rows are the audit contract.
+/// `mcp_calls`/`tool_calls` ledger rows and matching security-rule rows are
+/// the audit contract.
 pub async fn dispatch_logged_mcp_request(
     endpoint: Arc<McpEndpointState>,
     db: Arc<DbWriter>,

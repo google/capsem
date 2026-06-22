@@ -200,11 +200,10 @@ pub fn extract_model_from_path(path: &str) -> Option<String> {
 ///   cleaner but premature until next-gen unifies tool tracking.
 /// - **Heuristic-only**: uses `__` as MCP namespace separator. If a native
 ///   tool name contains `__`, it would be misclassified as mcp_proxy.
-/// - **No correlation to mcp_calls**: the `mcp_call_id` column in
-///   `tool_calls` is defined but never populated. There is no mechanism to
-///   link a model_call's tool_call entry to the corresponding mcp_calls row.
-///   Next-gen should propagate a shared call_id or request_id through the
-///   guest MCP endpoint.
+/// - **Best-effort correlation**: the canonical tool ledger is `tool_calls`.
+///   Model-native rows attach to their `model_calls.id`; MCP-observed rows use
+///   `origin = "mcp"` and may be orphan/direct evidence when no model response
+///   was visible.
 pub fn tool_origin(name: &str) -> &'static str {
     if crate::mcp::builtin_tools::is_builtin_tool(name) {
         "local"

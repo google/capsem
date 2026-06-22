@@ -2032,6 +2032,22 @@ fn sample_mcp_call(server: &str, decision: &str) -> McpCall {
     }
 }
 
+fn mcp_tool_rows(reader: &DbReader) -> Vec<BTreeMap<String, serde_json::Value>> {
+    let json = reader
+        .query_raw(
+            "SELECT event_id, timestamp, server_name, method, tool_name, request_id,
+                    arguments AS request_preview, response_preview, decision, duration_ms,
+                    error_message, process_name, bytes_sent, bytes_received, policy_mode,
+                    policy_action, policy_rule, policy_reason, origin
+             FROM tool_calls
+             WHERE origin = 'mcp'
+             ORDER BY id DESC",
+        )
+        .unwrap();
+    let (_, rows) = parse_query_result(&json);
+    rows
+}
+
 fn decision_to_policy_action(decision: &str) -> &'static str {
     match decision {
         "denied" => "deny",
@@ -2051,23 +2067,21 @@ async fn mcp_call_roundtrip() {
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
-    let calls = reader.recent_mcp_calls(10).unwrap();
+    let calls = mcp_tool_rows(&reader);
     assert_eq!(calls.len(), 1);
     let c = &calls[0];
-    assert_eq!(c.server_name, "github");
-    assert_eq!(c.method, "tools/call");
-    assert_eq!(c.tool_name.as_deref(), Some("github__search_repos"));
-    assert_eq!(c.request_id.as_deref(), Some("req-1"));
-    assert_eq!(c.decision, "allowed");
-    assert_eq!(c.duration_ms, 250);
-    assert_eq!(c.process_name.as_deref(), Some("claude"));
-    assert_eq!(c.policy_mode.as_deref(), Some("audit_only"));
-    assert_eq!(c.policy_action.as_deref(), Some("allow"));
-    assert_eq!(
-        c.policy_rule.as_deref(),
-        Some("mcp.tool.github__search_repos")
-    );
-    assert_eq!(c.policy_reason.as_deref(), Some("local policy allowed"));
+    assert_eq!(c["server_name"], "github");
+    assert_eq!(c["method"], "tools/call");
+    assert_eq!(c["tool_name"], "github__search_repos");
+    assert_eq!(c["request_id"], "req-1");
+    assert_eq!(c["decision"], "allowed");
+    assert_eq!(c["duration_ms"], 250);
+    assert_eq!(c["process_name"], "claude");
+    assert_eq!(c["policy_mode"], "audit_only");
+    assert_eq!(c["policy_action"], "allow");
+    assert_eq!(c["policy_rule"], "mcp.tool.github__search_repos");
+    assert_eq!(c["policy_reason"], "local policy allowed");
+    assert_eq!(reader.recent_mcp_calls(10).unwrap().len(), 0);
 }
 
 #[tokio::test]
@@ -2089,21 +2103,35 @@ async fn mcp_call_search() {
 
     let reader = DbReader::open(&path).unwrap();
 
-    // Search by server_name
-    let results = reader.search_mcp_calls("github", 10).unwrap();
-    assert_eq!(results.len(), 2);
+    let rows = mcp_tool_rows(&reader);
+    assert_eq!(
+        rows.iter()
+            .filter(|row| row["server_name"] == "github")
+            .count(),
+        2
+    );
 
-    // Search by tool_name
-    let results = reader.search_mcp_calls("search_repos", 10).unwrap();
-    assert_eq!(results.len(), 3); // all have search_repos in tool_name
+    assert_eq!(
+        rows.iter()
+            .filter(|row| row["tool_name"].as_str().unwrap().contains("search_repos"))
+            .count(),
+        3
+    );
 
-    // Search by method
-    let results = reader.search_mcp_calls("tools/call", 10).unwrap();
-    assert_eq!(results.len(), 3);
+    assert_eq!(
+        rows.iter()
+            .filter(|row| row["method"] == "tools/call")
+            .count(),
+        3
+    );
 
-    // No match
-    let results = reader.search_mcp_calls("nonexistent", 10).unwrap();
-    assert_eq!(results.len(), 0);
+    assert_eq!(
+        rows.iter()
+            .filter(|row| row["tool_name"].as_str().unwrap().contains("nonexistent"))
+            .count(),
+        0
+    );
+    assert_eq!(reader.search_mcp_calls("tools/call", 10).unwrap().len(), 0);
 }
 
 #[tokio::test]
@@ -2178,10 +2206,10 @@ async fn mcp_call_cap_field_truncation() {
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
-    let calls = reader.recent_mcp_calls(1).unwrap();
+    let calls = mcp_tool_rows(&reader);
     assert_eq!(calls.len(), 1);
     // Preview should be truncated to MAX_FIELD_BYTES (256KB)
-    let preview = calls[0].request_preview.as_ref().unwrap();
+    let preview = calls[0]["request_preview"].as_str().unwrap();
     assert!(
         preview.len() <= 256 * 1024,
         "preview not capped: {}",
@@ -2209,8 +2237,9 @@ async fn mcp_schema_migration_idempotent() {
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
-    let calls = reader.recent_mcp_calls(10).unwrap();
+    let calls = mcp_tool_rows(&reader);
     assert_eq!(calls.len(), 2);
+    assert_eq!(reader.recent_mcp_calls(10).unwrap().len(), 0);
 }
 
 #[tokio::test]
@@ -2226,10 +2255,10 @@ async fn mcp_call_bytes_roundtrip() {
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
-    let calls = reader.recent_mcp_calls(10).unwrap();
+    let calls = mcp_tool_rows(&reader);
     assert_eq!(calls.len(), 1);
-    assert_eq!(calls[0].bytes_sent, 1024);
-    assert_eq!(calls[0].bytes_received, 4096);
+    assert_eq!(calls[0]["bytes_sent"], 1024);
+    assert_eq!(calls[0]["bytes_received"], 4096);
 }
 
 #[tokio::test]
@@ -2247,9 +2276,9 @@ async fn mcp_call_full_preview_not_truncated() {
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
-    let calls = reader.recent_mcp_calls(10).unwrap();
-    assert_eq!(calls[0].request_preview.as_ref().unwrap().len(), 10_000);
-    assert_eq!(calls[0].response_preview.as_ref().unwrap().len(), 10_000);
+    let calls = mcp_tool_rows(&reader);
+    assert_eq!(calls[0]["request_preview"].as_str().unwrap().len(), 10_000);
+    assert_eq!(calls[0]["response_preview"].as_str().unwrap().len(), 10_000);
 }
 
 #[tokio::test]
@@ -2266,8 +2295,8 @@ async fn mcp_call_huge_payload_truncated_at_256kb() {
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
-    let calls = reader.recent_mcp_calls(10).unwrap();
-    let stored = calls[0].request_preview.as_ref().unwrap();
+    let calls = mcp_tool_rows(&reader);
+    let stored = calls[0]["request_preview"].as_str().unwrap();
     assert!(stored.len() <= 256 * 1024);
 }
 
@@ -2285,9 +2314,9 @@ async fn mcp_call_200_char_payload_not_truncated() {
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
-    let calls = reader.recent_mcp_calls(10).unwrap();
-    assert_eq!(calls[0].request_preview.as_ref().unwrap().len(), 200);
-    assert_eq!(calls[0].request_preview.as_ref().unwrap(), &preview);
+    let calls = mcp_tool_rows(&reader);
+    assert_eq!(calls[0]["request_preview"].as_str().unwrap().len(), 200);
+    assert_eq!(calls[0]["request_preview"].as_str().unwrap(), &preview);
 }
 
 // ── File event tests ──────────────────────────────────────────────────
@@ -3060,8 +3089,8 @@ async fn ignored_try_write_return_value_causes_silent_loss() {
 /// Creates:
 /// - model_call 1: native tool "bash" (origin=native) + tool_response for "toolu_prev"
 /// - model_call 2: MCP tool "mcp__capsem__fetch_http" (origin=mcp_proxy) + tool_response
-/// - mcp_call: tools/call fetch_http (matches the MCP tool above)
-/// - mcp_call: tools/list (no tool_name -- discovery call)
+/// - tool_call origin=mcp: tools/call fetch_http (from MCP transport evidence)
+/// - mcp_call: tools/list (protocol discovery, not a user tool call)
 async fn setup_dedup_scenario(writer: &DbWriter) {
     // Model call 1: native tool "bash"
     let mut call1 = sample_model_call("anthropic");
@@ -3119,49 +3148,38 @@ async fn setup_dedup_scenario(writer: &DbWriter) {
 
 const TOOL_COUNT_SQL: &str = "
     SELECT
-        (SELECT COUNT(*) FROM tool_calls WHERE origin = 'native')
-      + (SELECT COUNT(*) FROM mcp_calls WHERE tool_name IS NOT NULL) as cnt
+        COUNT(*) as cnt
+    FROM tool_calls
+    WHERE origin IN ('native', 'mcp', 'builtin', 'local')
 ";
 
 const TOOLS_STATS_SQL: &str = "
     SELECT
-        (SELECT COUNT(*) FROM tool_calls WHERE origin = 'native') + (SELECT COUNT(*) FROM mcp_calls) as total,
+        (SELECT COUNT(*) FROM tool_calls WHERE origin IN ('native', 'mcp', 'builtin', 'local')) as total,
         (SELECT COUNT(*) FROM tool_calls WHERE origin = 'native') as native,
-        (SELECT COUNT(*) FROM mcp_calls) as mcp,
-        (SELECT COUNT(*) FROM mcp_calls WHERE decision = 'allowed') as allowed,
-        (SELECT COUNT(*) FROM mcp_calls WHERE decision != 'allowed') as denied
+        (SELECT COUNT(*) FROM tool_calls WHERE origin = 'mcp') as mcp,
+        (SELECT COUNT(*) FROM tool_calls WHERE origin IN ('native', 'mcp', 'builtin', 'local') AND decision = 'allowed') as allowed,
+        (SELECT COUNT(*) FROM tool_calls WHERE origin IN ('native', 'mcp', 'builtin', 'local') AND decision != 'allowed') as denied
 ";
 
 const TOOLS_TOP_TOOLS_SQL: &str = "
-    SELECT tool_name, cnt, source FROM (
-        SELECT tc.tool_name, COUNT(*) as cnt, 'native' as source
-        FROM tool_calls tc
-        WHERE tc.origin = 'native'
-        GROUP BY tc.tool_name
-        UNION ALL
-        SELECT tool_name, COUNT(*) as cnt, 'mcp' as source
-        FROM mcp_calls
-        WHERE tool_name IS NOT NULL
-        GROUP BY tool_name
-    )
+    SELECT tool_name, COUNT(*) as cnt, origin as source
+    FROM tool_calls
+    WHERE origin IN ('native', 'mcp', 'builtin', 'local')
+    GROUP BY tool_name, origin
     ORDER BY cnt DESC
     LIMIT 10
 ";
 
 const TOOLS_OVER_TIME_SQL: &str = "
-    WITH all_calls AS (
-        SELECT mc.timestamp, 'native' as source
-        FROM tool_calls tc
-        JOIN model_calls mc ON tc.model_call_id = mc.id
-        WHERE tc.origin = 'native'
-        UNION ALL
-        SELECT timestamp, 'mcp' as source
-        FROM mcp_calls
-    ),
-    numbered AS (
+    WITH numbered AS (
         SELECT source,
             (ROW_NUMBER() OVER (ORDER BY timestamp) - 1) / 5 as bucket
-        FROM all_calls
+        FROM (
+            SELECT COALESCE(NULLIF(timestamp, ''), '1970-01-01T00:00:00Z') as timestamp, origin as source
+            FROM tool_calls
+            WHERE origin IN ('native', 'mcp', 'builtin', 'local')
+        )
     )
     SELECT bucket,
         SUM(CASE WHEN source = 'native' THEN 1 ELSE 0 END) as native,
@@ -3172,53 +3190,53 @@ const TOOLS_OVER_TIME_SQL: &str = "
 ";
 
 const TOOLS_UNIFIED_SQL: &str = "
-    SELECT timestamp, process_name, server_name, tool_name, method,
+    SELECT event_id, timestamp, process_name, server_name, tool_name, method,
            decision, duration_ms, bytes, arguments, response_preview,
            error_message, source
     FROM (
-        SELECT mc.timestamp, NULL as process_name, 'local' as server_name,
-               tc.tool_name, NULL as method, 'allowed' as decision,
-               mc.duration_ms,
-               COALESCE(LENGTH(tc.arguments), 0) as bytes,
-               tc.arguments, tr.content_preview as response_preview,
-               NULL as error_message, 'native' as source
+        SELECT tc.event_id,
+               COALESCE(NULLIF(tc.timestamp, ''), mc.timestamp) as timestamp,
+               tc.process_name,
+               COALESCE(tc.server_name, 'model') as server_name,
+               tc.tool_name,
+               tc.method,
+               tc.decision,
+               COALESCE(tc.duration_ms, mc.duration_ms, 0) as duration_ms,
+               COALESCE(LENGTH(tc.arguments), 0) + COALESCE(LENGTH(COALESCE(tc.response_preview, tr.content_preview)), 0) as bytes,
+               tc.arguments,
+               COALESCE(tc.response_preview, tr.content_preview) as response_preview,
+               tc.error_message,
+               tc.origin as source
         FROM tool_calls tc
-        JOIN model_calls mc ON tc.model_call_id = mc.id
+        LEFT JOIN model_calls mc ON tc.model_call_id = mc.id
         LEFT JOIN tool_responses tr ON tc.call_id = tr.call_id
-        WHERE tc.origin = 'native'
-        UNION ALL
-        SELECT timestamp, process_name, server_name, tool_name, method,
-               decision, duration_ms,
-               COALESCE(LENGTH(request_preview), 0) + COALESCE(LENGTH(response_preview), 0) as bytes,
-               request_preview as arguments, response_preview,
-               error_message, 'mcp' as source
-        FROM mcp_calls
+        WHERE origin IN ('native', 'mcp', 'builtin', 'local')
     )
     ORDER BY timestamp DESC
 ";
 
 const TOOLS_UNIFIED_SEARCH_SQL: &str = "
-    SELECT timestamp, process_name, server_name, tool_name, method,
+    SELECT event_id, timestamp, process_name, server_name, tool_name, method,
            decision, duration_ms, bytes, arguments, response_preview,
            error_message, source
     FROM (
-        SELECT mc.timestamp, NULL as process_name, 'local' as server_name,
-               tc.tool_name, NULL as method, 'allowed' as decision,
-               mc.duration_ms,
-               COALESCE(LENGTH(tc.arguments), 0) as bytes,
-               tc.arguments, tr.content_preview as response_preview,
-               NULL as error_message, 'native' as source
+        SELECT tc.event_id,
+               COALESCE(NULLIF(tc.timestamp, ''), mc.timestamp) as timestamp,
+               tc.process_name,
+               COALESCE(tc.server_name, 'model') as server_name,
+               tc.tool_name,
+               tc.method,
+               tc.decision,
+               COALESCE(tc.duration_ms, mc.duration_ms, 0) as duration_ms,
+               COALESCE(LENGTH(tc.arguments), 0) + COALESCE(LENGTH(COALESCE(tc.response_preview, tr.content_preview)), 0) as bytes,
+               tc.arguments,
+               COALESCE(tc.response_preview, tr.content_preview) as response_preview,
+               tc.error_message,
+               tc.origin as source
         FROM tool_calls tc
-        JOIN model_calls mc ON tc.model_call_id = mc.id
+        LEFT JOIN model_calls mc ON tc.model_call_id = mc.id
         LEFT JOIN tool_responses tr ON tc.call_id = tr.call_id
-        WHERE tc.origin = 'native'
-        UNION ALL
-        SELECT timestamp, process_name, server_name, tool_name, method,
-               decision, duration_ms,
-               COALESCE(LENGTH(request_preview), 0) + COALESCE(LENGTH(response_preview), 0) as bytes,
-               request_preview as arguments, response_preview,
-               error_message, 'mcp' as source
-        FROM mcp_calls
+        WHERE origin IN ('native', 'mcp', 'builtin', 'local')
     )
     WHERE tool_name LIKE ? OR method LIKE ? OR server_name LIKE ? OR process_name LIKE ?
     ORDER BY timestamp DESC
@@ -3266,7 +3284,7 @@ async fn tool_unified_no_duplicates() {
     assert_eq!(bash_rows.len(), 1, "bash should appear exactly once");
     assert_eq!(bash_rows[0]["source"], "native");
 
-    // "fetch_http" should appear once (from mcp_calls, source=mcp)
+    // "fetch_http" should appear once (from tool_calls origin=mcp)
     let fetch_rows: Vec<_> = rows
         .iter()
         .filter(|r| r["tool_name"].as_str() == Some("fetch_http"))
@@ -3285,12 +3303,16 @@ async fn tool_unified_no_duplicates() {
         "mcp_proxy tool_call should be filtered out"
     );
 
-    // tools/list should appear (MCP discovery, no tool_name)
+    // tools/list is protocol discovery, not a user tool call.
     let list_rows: Vec<_> = rows
         .iter()
         .filter(|r| r["method"].as_str() == Some("tools/list"))
         .collect();
-    assert_eq!(list_rows.len(), 1, "tools/list MCP call should be present");
+    assert_eq!(
+        list_rows.len(),
+        0,
+        "tools/list must not appear as a tool call"
+    );
 }
 
 #[tokio::test]
@@ -3335,10 +3357,10 @@ async fn tool_stats_no_double_counting() {
         1,
         "native should be 1 (only bash)"
     );
-    // mcp = 2 (tools/call fetch_http + tools/list)
-    assert_eq!(r["mcp"].as_i64().unwrap(), 2, "mcp should be 2");
-    // total = native + mcp = 3
-    assert_eq!(r["total"].as_i64().unwrap(), 3, "total should be 3");
+    // mcp = 1 (tools/call fetch_http only; tools/list is protocol evidence)
+    assert_eq!(r["mcp"].as_i64().unwrap(), 1, "mcp should be 1");
+    // total = native + mcp = 2
+    assert_eq!(r["total"].as_i64().unwrap(), 2, "total should be 2");
 }
 
 #[tokio::test]

@@ -1192,10 +1192,11 @@ fn mcp_call_insert_populates_row() {
         });
     }
 
-    struct McpCallRow {
+    struct ToolCallRow {
+        origin: String,
         server: String,
         method: String,
-        tool: Option<String>,
+        tool: String,
         decision: String,
         sent: i64,
         recv: i64,
@@ -1208,29 +1209,31 @@ fn mcp_call_insert_populates_row() {
     let conn = rusqlite::Connection::open(&db_path).unwrap();
     let row = conn
         .query_row(
-            "SELECT server_name, method, tool_name, decision, bytes_sent, bytes_received,
+            "SELECT origin, server_name, method, tool_name, decision, bytes_sent, bytes_received,
                 policy_mode, policy_action, policy_rule, policy_reason
-         FROM mcp_calls",
+         FROM tool_calls",
             [],
             |r| {
-                Ok(McpCallRow {
-                    server: r.get(0)?,
-                    method: r.get(1)?,
-                    tool: r.get(2)?,
-                    decision: r.get(3)?,
-                    sent: r.get(4)?,
-                    recv: r.get(5)?,
-                    mode: r.get(6)?,
-                    action: r.get(7)?,
-                    rule: r.get(8)?,
-                    reason: r.get(9)?,
+                Ok(ToolCallRow {
+                    origin: r.get(0)?,
+                    server: r.get(1)?,
+                    method: r.get(2)?,
+                    tool: r.get(3)?,
+                    decision: r.get(4)?,
+                    sent: r.get(5)?,
+                    recv: r.get(6)?,
+                    mode: r.get(7)?,
+                    action: r.get(8)?,
+                    rule: r.get(9)?,
+                    reason: r.get(10)?,
                 })
             },
         )
         .unwrap();
+    assert_eq!(row.origin, "mcp");
     assert_eq!(row.server, "github");
     assert_eq!(row.method, "tools/call");
-    assert_eq!(row.tool.as_deref(), Some("list_issues"));
+    assert_eq!(row.tool, "list_issues");
     assert_eq!(row.decision, "allowed");
     assert_eq!(row.sent, 64);
     assert_eq!(row.recv, 128);

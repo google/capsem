@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  MCP_USER_TOOL_CALL_WHERE,
   TRACES_SQL,
+  TOOL_CALL_LEDGER_WHERE,
   TOOL_COUNT_SQL,
   TOOLS_OVER_TIME_SQL,
   TOOLS_STATS_SQL,
@@ -12,7 +12,7 @@ import {
 } from '../sql';
 
 describe('MCP stats SQL', () => {
-  it('uses the user MCP call predicate for headline and tool-list queries', () => {
+  it('uses the canonical tool_calls ledger predicate for headline and tool-list queries', () => {
     const queries = [
       TOOL_COUNT_SQL,
       TOOLS_STATS_SQL,
@@ -24,8 +24,10 @@ describe('MCP stats SQL', () => {
     ];
 
     for (const query of queries) {
-      expect(query).toContain(MCP_USER_TOOL_CALL_WHERE.trim());
+      expect(query).toContain(TOOL_CALL_LEDGER_WHERE.trim());
     }
+    expect(TOOLS_UNIFIED_SQL).toContain('FROM tool_calls');
+    expect(TOOLS_UNIFIED_SQL).not.toContain('FROM mcp_calls');
   });
 });
 

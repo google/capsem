@@ -6,6 +6,7 @@
   import { getShikiHighlighter, resolveShikiTheme, ensureShikiLang, ensureShikiTheme, type ShikiHighlighter } from '../../shiki.ts';
   import { themeStore } from '../../stores/theme.svelte.ts';
   import { tabStore } from '../../stores/tabs.svelte.ts';
+  import { TOOLS_UNIFIED_SQL } from '../../sql';
   import MetricCard from './stats/MetricCard.svelte';
   import StatsBadge from './stats/StatsBadge.svelte';
   import StatsEventList from './stats/StatsEventList.svelte';
@@ -23,7 +24,7 @@
 
   let { vmId }: { vmId: string } = $props();
 
-  type StatsTab = 'model' | 'mcp' | 'http' | 'dns' | 'files' | 'process' | 'credentials' | 'security';
+  type StatsTab = 'model' | 'tools' | 'http' | 'dns' | 'files' | 'process' | 'credentials' | 'security';
   type DetailSelection = { type: string; data: Record<string, unknown> };
   type Row = Record<string, any>;
   const SECURITY_ACTIONS: api.SecurityRuleAction[] = ['allow', 'ask', 'block', 'preprocess', 'rewrite', 'postprocess'];
@@ -38,7 +39,7 @@
 
   let modelStats = $state<Row[]>([]);
   let modelRows = $state<Row[]>([]);
-  let mcpRows = $state<Row[]>([]);
+  let toolRows = $state<Row[]>([]);
   let httpRows = $state<Row[]>([]);
   let dnsRows = $state<Row[]>([]);
   let fileRows = $state<Row[]>([]);
@@ -259,7 +260,7 @@
       const [
         modelStatsRows,
         modelEventRows,
-        mcpEventRows,
+        toolEventRows,
         httpEventRows,
         dnsEventRows,
         fsEventRows,
@@ -286,12 +287,7 @@
                FROM model_calls
                ORDER BY id DESC
                LIMIT 200`),
-        query(`SELECT event_id, timestamp, server_name, method, tool_name, request_id,
-                 decision, duration_ms, bytes_sent, bytes_received, policy_rule,
-                 trace_id, credential_ref, error_message
-               FROM mcp_calls
-               ORDER BY id DESC
-               LIMIT 200`),
+        query(`${TOOLS_UNIFIED_SQL} LIMIT 200`),
         query(`SELECT event_id, timestamp, domain, port, method, path, query, status_code,
                  decision, duration_ms, bytes_sent, bytes_received, matched_rule, policy_rule,
                  trace_id, credential_ref, request_headers, response_headers
@@ -333,7 +329,7 @@
       ]);
       modelStats = modelStatsRows;
       modelRows = modelEventRows;
-      mcpRows = mcpEventRows;
+      toolRows = toolEventRows;
       httpRows = httpEventRows;
       dnsRows = dnsEventRows;
       fileRows = fsEventRows;
@@ -361,9 +357,9 @@
   const modelOutput = $derived(modelStats.reduce((sum, row) => sum + number(row.output_tokens), 0));
   const modelCost = $derived(modelStats.reduce((sum, row) => sum + number(row.estimated_cost_usd), 0));
 
-  const mcpAllowed = $derived(mcpRows.filter(row => text(row.decision) === 'allowed').length);
-  const mcpBlocked = $derived(mcpRows.filter(row => text(row.decision) !== 'allowed').length);
-  const mcpToolCalls = $derived(mcpRows.filter(row => isPresent(row.tool_name)).length);
+  const toolBlocked = $derived(toolRows.filter(row => text(row.decision) !== 'allowed').length);
+  const nativeToolCalls = $derived(toolRows.filter(row => text(row.source) === 'native').length);
+  const mcpToolCalls = $derived(toolRows.filter(row => text(row.source) === 'mcp').length);
   const httpAllowed = $derived(httpRows.filter(row => text(row.decision) === 'allowed').length);
   const httpDenied = $derived(httpRows.filter(row => text(row.decision) !== 'allowed').length);
   const dnsDenied = $derived(dnsRows.filter(row => text(row.decision) !== 'allowed').length);
@@ -409,7 +405,7 @@
 
   const navItems: { id: StatsTab; label: string; icon: any }[] = [
     { id: 'model', label: 'Model', icon: Brain },
-    { id: 'mcp', label: 'MCP', icon: Wrench },
+    { id: 'tools', label: 'Tools', icon: Wrench },
     { id: 'http', label: 'HTTP', icon: Globe },
     { id: 'dns', label: 'DNS', icon: DotsThreeCircle },
     { id: 'files', label: 'Files', icon: FileText },
@@ -498,19 +494,19 @@
           {/snippet}
         </StatsEventList>
 
-      {:else if activeTab === 'mcp'}
+      {:else if activeTab === 'tools'}
         <div class="grid grid-cols-4 gap-3 mb-6">
-          <MetricCard label="MCP Events" value={mcpRows.length.toLocaleString()} />
-          <MetricCard label="Allowed" value={mcpAllowed.toLocaleString()} tone="primary" />
-          <MetricCard label="Blocked/Error" value={mcpBlocked.toLocaleString()} tone="danger" />
-          <MetricCard label="Tool Calls" value={mcpToolCalls.toLocaleString()} />
+          <MetricCard label="Tool Calls" value={toolRows.length.toLocaleString()} />
+          <MetricCard label="Model Origin" value={nativeToolCalls.toLocaleString()} />
+          <MetricCard label="MCP Origin" value={mcpToolCalls.toLocaleString()} />
+          <MetricCard label="Blocked/Error" value={toolBlocked.toLocaleString()} tone="danger" />
         </div>
-        <StatsEventList title="MCP Events" rows={mcpRows} columns={['Time', 'Server', 'Method', 'Tool', 'Decision']} onrow={(row) => { void showDetail('mcp', row); }}>
+        <StatsEventList title="Tool Calls" rows={toolRows} columns={['Time', 'Origin', 'Tool', 'Server', 'Decision']} onrow={(row) => { void showDetail('tool', row); }}>
           {#snippet children(row: any)}
             <td class="px-4 py-2 text-muted-foreground">{formatTime(row.timestamp)}</td>
-            <td class="px-4 py-2 text-foreground">{row.server_name}</td>
-            <td class="px-4 py-2 font-mono text-xs text-muted-foreground-1">{row.method}</td>
+            <td class="px-4 py-2 text-foreground">{row.source}</td>
             <td class="px-4 py-2 font-mono text-xs text-foreground">{row.tool_name ?? '--'}</td>
+            <td class="px-4 py-2 font-mono text-xs text-muted-foreground-1">{row.server_name ?? row.method ?? '--'}</td>
             <td class="px-4 py-2"><StatsBadge value={text(row.decision)} kind="decision" /></td>
           {/snippet}
         </StatsEventList>

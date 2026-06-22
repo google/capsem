@@ -115,7 +115,7 @@ pub struct MitmProxyConfig {
     pub pipeline: Arc<pipeline::Pipeline>,
     /// T3 framed MCP endpoint on the MITM listener. Dispatch state lives
     /// here so the low-privilege aggregator remains DB-free while MITM
-    /// owns policy, timeouts, and `mcp_calls` telemetry.
+    /// owns policy, timeouts, protocol telemetry, and MCP-origin `tool_calls`.
     pub mcp_endpoint: Option<Arc<McpEndpointState>>,
 }
 

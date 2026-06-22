@@ -256,6 +256,37 @@ def _wait_for_mcp_row(db_path: Path, predicate, timeout: float = 20.0):
     pytest.fail(f"timed out waiting for mcp_calls row; rows={rows}")
 
 
+def _query_tool_rows(db_path: Path):
+    if not db_path.exists():
+        return []
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        return conn.execute(
+            """
+            SELECT request_id, method, server_name, tool_name, decision,
+                   process_name, policy_action, policy_rule, error_message,
+                   arguments, response_preview, model_call_id, origin
+            FROM tool_calls
+            WHERE origin IN ('native', 'mcp', 'builtin', 'local')
+            ORDER BY id
+            """
+        ).fetchall()
+    finally:
+        conn.close()
+
+
+def _wait_for_tool_row(db_path: Path, predicate, timeout: float = 20.0):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        for row in _query_tool_rows(db_path):
+            if predicate(row):
+                return row
+        time.sleep(0.2)
+    rows = [dict(row) for row in _query_tool_rows(db_path)]
+    pytest.fail(f"timed out waiting for tool_calls row; rows={rows}")
+
+
 def _query_net_rows(db_path: Path):
     if not db_path.exists():
         return []
@@ -379,7 +410,6 @@ sys.exit(proc.returncode)
         for request_id, method in {
             "1": "initialize",
             "2": "tools/list",
-            "3": "tools/call",
             "4": "resources/list",
             "5": "prompts/list",
         }.items():
@@ -393,6 +423,16 @@ sys.exit(proc.returncode)
             assert row["policy_mode"] == "security_event"
             assert row["policy_action"] == "allow"
 
+        echo = _wait_for_tool_row(
+            db_path,
+            lambda r: r["request_id"] == "3" and r["origin"] == "mcp",
+        )
+        assert echo["method"] == "tools/call"
+        assert echo["decision"] == "allowed"
+        assert echo["process_name"] == "python3"
+        assert echo["policy_action"] == "allow"
+        assert echo["model_call_id"] is None
+
         rows = _query_mcp_rows(db_path)
         notifications = [
             row for row in rows if row["request_id"] is None and row["method"] == "notifications/initialized"
@@ -403,11 +443,11 @@ sys.exit(proc.returncode)
             if row["request_id"] is None:
                 continue
             counts[row["request_id"]] = counts.get(row["request_id"], 0) + 1
-        assert counts == {"1": 1, "2": 1, "3": 1, "4": 1, "5": 1}
-        echo = [r for r in rows if r["request_id"] == "3"][0]
+        assert counts == {"1": 1, "2": 1, "4": 1, "5": 1}
         assert echo["tool_name"] == "local__echo"
         assert echo["server_name"] == "local"
-        assert "framed-e2e" in echo["request_preview"]
+        assert "framed-e2e" in echo["arguments"]
+        assert "framed-e2e" in echo["response_preview"]
     finally:
         if vm is not None:
             _delete_vm(svc, vm)

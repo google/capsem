@@ -314,10 +314,19 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
                 "local__fetch_http",
             }
 
-            before_mcp_rows = _json_tool_result(
+            before_protocol_rows = _json_tool_result(
                 mcp.call_tool(
                     "capsem_inspect",
                     {"id": session_id, "sql": "SELECT COUNT(*) AS count FROM mcp_calls"},
+                )
+            )["rows"][0][0]
+            before_tool_rows = _json_tool_result(
+                mcp.call_tool(
+                    "capsem_inspect",
+                    {
+                        "id": session_id,
+                        "sql": "SELECT COUNT(*) AS count FROM tool_calls WHERE origin = 'mcp'",
+                    },
                 )
             )["rows"][0][0]
             call_payload = _json_tool_result(
@@ -365,31 +374,33 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
             assert fork_info["status"] in {"Stopped", "stopped", "paused", "created"}
 
             with closing(_connect_session_db(service, session_id)) as conn:
-                mcp_rows = _eventually(
+                tool_rows = _eventually(
                     lambda: _rows(
                         conn,
                         """
                         SELECT event_id, server_name, method, tool_name, decision,
-                               bytes_sent, bytes_received, request_preview,
+                               bytes_sent, bytes_received, arguments AS request_preview,
                                response_preview, trace_id
-                        FROM mcp_calls
+                        FROM tool_calls
+                        WHERE origin = 'mcp'
                         ORDER BY id
                         """,
                     ),
-                    lambda rows: len(rows) == before_mcp_rows + 1,
+                    lambda rows: len(rows) == before_tool_rows + 1,
                 )
-                assert len(mcp_rows) == before_mcp_rows + 1
-                mcp_row = mcp_rows[-1]
-                _assert_event_id(mcp_row["event_id"])
-                assert mcp_row["server_name"] == "local"
-                assert mcp_row["method"] == "tools/call"
-                assert mcp_row["tool_name"] in {"http_headers", "local__http_headers"}
-                assert mcp_row["decision"] == "allowed"
-                assert mcp_row["bytes_sent"] > 0
-                assert mcp_row["bytes_received"] > 0
-                assert "local__http_headers" in mcp_row["request_preview"]
-                assert "Status: 200 OK" in mcp_row["response_preview"]
-                assert mcp_row["trace_id"]
+                assert len(tool_rows) == before_tool_rows + 1
+                assert conn.execute("SELECT COUNT(*) FROM mcp_calls").fetchone()[0] == before_protocol_rows
+                tool_row = tool_rows[-1]
+                _assert_event_id(tool_row["event_id"])
+                assert tool_row["server_name"] == "local"
+                assert tool_row["method"] == "tools/call"
+                assert tool_row["tool_name"] in {"http_headers", "local__http_headers"}
+                assert tool_row["decision"] == "allowed"
+                assert tool_row["bytes_sent"] > 0
+                assert tool_row["bytes_received"] > 0
+                assert "local__http_headers" in tool_row["request_preview"]
+                assert "Status: 200 OK" in tool_row["response_preview"]
+                assert tool_row["trace_id"]
 
                 fs_rows = _rows(
                     conn,
@@ -449,7 +460,7 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
                     WHERE event_id = ?
                     ORDER BY id
                     """,
-                    (mcp_row["event_id"],),
+                    (tool_row["event_id"],),
                 )
                 assert security_rows
                 assert {row["event_type"] for row in security_rows} == {"mcp.tool_call"}
@@ -460,7 +471,7 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
                     for row in security_rows
                 )
                 for row in security_rows:
-                    assert row["trace_id"] == mcp_row["trace_id"]
+                    assert row["trace_id"] == tool_row["trace_id"]
                     event = json.loads(row["event_json"])
                     rule = json.loads(row["rule_json"])
                     assert event["event_type"] == "mcp.tool_call"
@@ -471,30 +482,30 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
                     }
                     assert rule["name"]
 
-            route_mcp_rows = _json_tool_result(
+            route_tool_rows = _json_tool_result(
                 mcp.call_tool(
                     "capsem_inspect",
                     {
                         "id": session_id,
                         "sql": (
                             "SELECT server_name, method, tool_name, decision "
-                            "FROM mcp_calls ORDER BY id"
+                            "FROM tool_calls WHERE origin = 'mcp' ORDER BY id"
                         ),
                     },
                 )
             )
-            assert route_mcp_rows["columns"] == [
+            assert route_tool_rows["columns"] == [
                 "server_name",
                 "method",
                 "tool_name",
                 "decision",
             ]
-            assert route_mcp_rows["rows"][-1] == [
+            assert route_tool_rows["rows"][-1] == [
                 "local",
                 "tools/call",
                 "http_headers",
                 "allowed",
-            ] or route_mcp_rows["rows"][-1] == [
+            ] or route_tool_rows["rows"][-1] == [
                 "local",
                 "tools/call",
                 "local__http_headers",

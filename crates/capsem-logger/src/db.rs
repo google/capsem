@@ -225,11 +225,27 @@ mod tests {
         writer.write(crate::WriteOp::McpCall(mcp)).await;
         drop(writer);
 
-        let reader = DbReader::open(&p).unwrap();
-        let calls = reader.recent_mcp_calls(10).unwrap();
-        assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].server_name, "builtin");
-        assert_eq!(calls[0].tool_name.as_deref(), Some("fetch_http"));
+        let conn = rusqlite::Connection::open(&p).unwrap();
+        let (origin, server, method, tool, decision): (String, String, String, String, String) =
+            conn.query_row(
+                "SELECT origin, server_name, method, tool_name, decision FROM tool_calls",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(origin, "mcp");
+        assert_eq!(server, "builtin");
+        assert_eq!(method, "tools/call");
+        assert_eq!(tool, "fetch_http");
+        assert_eq!(decision, "allowed");
 
         std::fs::remove_file(&p).ok();
     }

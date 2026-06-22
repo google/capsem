@@ -3,7 +3,7 @@
 
 // -- Stats bar (polled every 2s) ------------------------------------------
 
-export const MCP_USER_TOOL_CALL_WHERE = "method = 'tools/call' AND tool_name IS NOT NULL AND tool_name NOT LIKE 'local__snapshots_%'";
+export const TOOL_CALL_LEDGER_WHERE = "origin IN ('native', 'mcp', 'builtin', 'local')";
 
 export const MODEL_STATS_SQL = `
   SELECT
@@ -16,8 +16,9 @@ export const MODEL_STATS_SQL = `
 
 export const TOOL_COUNT_SQL = `
   SELECT
-    (SELECT COUNT(*) FROM tool_calls WHERE origin = 'native')
-  + (SELECT COUNT(*) FROM mcp_calls WHERE ${MCP_USER_TOOL_CALL_WHERE}) as cnt
+    COUNT(*) as cnt
+  FROM tool_calls
+  WHERE ${TOOL_CALL_LEDGER_WHERE}
 `;
 
 // -- Models tab (trace viewer) --------------------------------------------
@@ -42,8 +43,7 @@ export const TRACES_SQL = `
     COALESCE(SUM(mc.duration_ms), 0) as total_duration_ms,
     COALESCE(SUM(mc.estimated_cost_usd), 0.0) as total_cost,
     (SELECT COUNT(*) FROM tool_calls tc
-     JOIN model_calls mc2 ON tc.model_call_id = mc2.id
-     WHERE mc2.trace_id = t.trace_id) as total_tool_calls,
+     WHERE tc.trace_id = t.trace_id AND ${TOOL_CALL_LEDGER_WHERE}) as total_tool_calls,
     (SELECT stop_reason FROM model_calls m4 WHERE m4.trace_id = t.trace_id ORDER BY m4.id DESC LIMIT 1) as stop_reason
   FROM top_traces t
   JOIN model_calls mc ON mc.trace_id = t.trace_id
@@ -63,9 +63,8 @@ export const TRACE_DETAIL_SQL = `
 export const TRACE_TOOL_CALLS_SQL = `
   SELECT tc.id, tc.model_call_id, tc.call_index, tc.call_id, tc.tool_name, tc.arguments, tc.origin
   FROM tool_calls tc
-  JOIN model_calls mc ON tc.model_call_id = mc.id
-  WHERE mc.trace_id = ?
-  ORDER BY tc.model_call_id, tc.call_index
+  WHERE tc.trace_id = ? AND ${TOOL_CALL_LEDGER_WHERE}
+  ORDER BY COALESCE(tc.model_call_id, 0), tc.call_index
 `;
 
 export const TRACE_TOOL_RESPONSES_SQL = `
@@ -79,53 +78,40 @@ export const TRACE_TOOL_RESPONSES_SQL = `
 
 export const TOOLS_STATS_SQL = `
   SELECT
-    (SELECT COUNT(*) FROM tool_calls WHERE origin = 'native') + (SELECT COUNT(*) FROM mcp_calls WHERE ${MCP_USER_TOOL_CALL_WHERE}) as total,
+    (SELECT COUNT(*) FROM tool_calls WHERE ${TOOL_CALL_LEDGER_WHERE}) as total,
     (SELECT COUNT(*) FROM tool_calls WHERE origin = 'native') as native,
-    (SELECT COUNT(*) FROM mcp_calls WHERE ${MCP_USER_TOOL_CALL_WHERE}) as mcp,
-    (SELECT COUNT(*) FROM mcp_calls WHERE ${MCP_USER_TOOL_CALL_WHERE} AND decision = 'allowed') as allowed,
-    (SELECT COUNT(*) FROM mcp_calls WHERE ${MCP_USER_TOOL_CALL_WHERE} AND decision != 'allowed') as denied
+    (SELECT COUNT(*) FROM tool_calls WHERE origin = 'mcp') as mcp,
+    (SELECT COUNT(*) FROM tool_calls WHERE ${TOOL_CALL_LEDGER_WHERE} AND decision = 'allowed') as allowed,
+    (SELECT COUNT(*) FROM tool_calls WHERE ${TOOL_CALL_LEDGER_WHERE} AND decision != 'allowed') as denied
 `;
 
 export const TOOLS_TOP_TOOLS_SQL = `
-  SELECT tool_name, cnt, source FROM (
-    SELECT tc.tool_name, COUNT(*) as cnt, 'native' as source
-    FROM tool_calls tc
-    WHERE tc.origin = 'native'
-    GROUP BY tc.tool_name
-    UNION ALL
-    SELECT tool_name, COUNT(*) as cnt, 'mcp' as source
-    FROM mcp_calls
-    WHERE ${MCP_USER_TOOL_CALL_WHERE}
-    GROUP BY tool_name
-  )
+  SELECT tool_name, COUNT(*) as cnt, origin as source
+  FROM tool_calls
+  WHERE ${TOOL_CALL_LEDGER_WHERE}
+  GROUP BY tool_name, origin
   ORDER BY cnt DESC
   LIMIT 10
 `;
 
 export const TOOLS_TOP_SERVERS_SQL = `
   SELECT server_name, COUNT(*) as cnt
-  FROM mcp_calls
-  WHERE ${MCP_USER_TOOL_CALL_WHERE}
+  FROM tool_calls
+  WHERE ${TOOL_CALL_LEDGER_WHERE} AND server_name IS NOT NULL
   GROUP BY server_name
   ORDER BY cnt DESC
   LIMIT 8
 `;
 
 export const TOOLS_OVER_TIME_SQL = `
-  WITH all_calls AS (
-    SELECT mc.timestamp, 'native' as source
-    FROM tool_calls tc
-    JOIN model_calls mc ON tc.model_call_id = mc.id
-    WHERE tc.origin = 'native'
-    UNION ALL
-    SELECT timestamp, 'mcp' as source
-    FROM mcp_calls
-    WHERE ${MCP_USER_TOOL_CALL_WHERE}
-  ),
-  numbered AS (
+  WITH numbered AS (
     SELECT source,
       (ROW_NUMBER() OVER (ORDER BY timestamp) - 1) / 5 as bucket
-    FROM all_calls
+    FROM (
+      SELECT COALESCE(NULLIF(timestamp, ''), '1970-01-01T00:00:00Z') as timestamp, origin as source
+      FROM tool_calls
+      WHERE ${TOOL_CALL_LEDGER_WHERE}
+    )
   )
   SELECT bucket,
     SUM(CASE WHEN source = 'native' THEN 1 ELSE 0 END) as native,
@@ -138,55 +124,53 @@ export const TOOLS_OVER_TIME_SQL = `
 // -- Tools tab (unified native + MCP) ----------------------------------------
 
 export const TOOLS_UNIFIED_SQL = `
-  SELECT timestamp, process_name, server_name, tool_name, method,
+  SELECT event_id, timestamp, process_name, server_name, tool_name, method,
          decision, duration_ms, bytes, arguments, response_preview,
          error_message, source
   FROM (
-    SELECT mc.timestamp, NULL as process_name, 'local' as server_name,
-           tc.tool_name, NULL as method, 'allowed' as decision,
-           mc.duration_ms,
-           COALESCE(LENGTH(tc.arguments), 0) as bytes,
-           tc.arguments, tr.content_preview as response_preview,
-           NULL as error_message, 'native' as source
+    SELECT tc.event_id,
+           COALESCE(NULLIF(tc.timestamp, ''), mc.timestamp) as timestamp,
+           tc.process_name,
+           COALESCE(tc.server_name, 'model') as server_name,
+           tc.tool_name,
+           tc.method,
+           tc.decision,
+           COALESCE(tc.duration_ms, mc.duration_ms, 0) as duration_ms,
+           COALESCE(LENGTH(tc.arguments), 0) + COALESCE(LENGTH(COALESCE(tc.response_preview, tr.content_preview)), 0) as bytes,
+           tc.arguments,
+           COALESCE(tc.response_preview, tr.content_preview) as response_preview,
+           tc.error_message,
+           tc.origin as source
     FROM tool_calls tc
-    JOIN model_calls mc ON tc.model_call_id = mc.id
+    LEFT JOIN model_calls mc ON tc.model_call_id = mc.id
     LEFT JOIN tool_responses tr ON tc.call_id = tr.call_id
-    WHERE tc.origin = 'native'
-    UNION ALL
-    SELECT timestamp, process_name, server_name, tool_name, method,
-           decision, duration_ms,
-           COALESCE(LENGTH(request_preview), 0) + COALESCE(LENGTH(response_preview), 0) as bytes,
-           request_preview as arguments, response_preview,
-           error_message, 'mcp' as source
-    FROM mcp_calls
-    WHERE ${MCP_USER_TOOL_CALL_WHERE}
+    WHERE ${TOOL_CALL_LEDGER_WHERE}
   )
   ORDER BY timestamp DESC
 `;
 
 export const TOOLS_UNIFIED_SEARCH_SQL = `
-  SELECT timestamp, process_name, server_name, tool_name, method,
+  SELECT event_id, timestamp, process_name, server_name, tool_name, method,
          decision, duration_ms, bytes, arguments, response_preview,
          error_message, source
   FROM (
-    SELECT mc.timestamp, NULL as process_name, 'local' as server_name,
-           tc.tool_name, NULL as method, 'allowed' as decision,
-           mc.duration_ms,
-           COALESCE(LENGTH(tc.arguments), 0) as bytes,
-           tc.arguments, tr.content_preview as response_preview,
-           NULL as error_message, 'native' as source
+    SELECT tc.event_id,
+           COALESCE(NULLIF(tc.timestamp, ''), mc.timestamp) as timestamp,
+           tc.process_name,
+           COALESCE(tc.server_name, 'model') as server_name,
+           tc.tool_name,
+           tc.method,
+           tc.decision,
+           COALESCE(tc.duration_ms, mc.duration_ms, 0) as duration_ms,
+           COALESCE(LENGTH(tc.arguments), 0) + COALESCE(LENGTH(COALESCE(tc.response_preview, tr.content_preview)), 0) as bytes,
+           tc.arguments,
+           COALESCE(tc.response_preview, tr.content_preview) as response_preview,
+           tc.error_message,
+           tc.origin as source
     FROM tool_calls tc
-    JOIN model_calls mc ON tc.model_call_id = mc.id
+    LEFT JOIN model_calls mc ON tc.model_call_id = mc.id
     LEFT JOIN tool_responses tr ON tc.call_id = tr.call_id
-    WHERE tc.origin = 'native'
-    UNION ALL
-    SELECT timestamp, process_name, server_name, tool_name, method,
-           decision, duration_ms,
-           COALESCE(LENGTH(request_preview), 0) + COALESCE(LENGTH(response_preview), 0) as bytes,
-           request_preview as arguments, response_preview,
-           error_message, 'mcp' as source
-    FROM mcp_calls
-    WHERE ${MCP_USER_TOOL_CALL_WHERE}
+    WHERE ${TOOL_CALL_LEDGER_WHERE}
   )
   WHERE tool_name LIKE ? OR method LIKE ? OR server_name LIKE ? OR process_name LIKE ?
   ORDER BY timestamp DESC
@@ -368,7 +352,7 @@ export const PRESET_QUERIES: PresetQuery[] = [
   { label: 'Security ledger', sql: 'SELECT timestamp_unix_ms, event_id, event_type, rule_id, rule_action, detection_level, trace_id FROM security_rule_events ORDER BY timestamp_unix_ms DESC LIMIT 50' },
   { label: 'HTTP requests', sql: 'SELECT timestamp, event_id, method, domain, path, status_code, decision, duration_ms, matched_rule FROM net_events ORDER BY id DESC LIMIT 50' },
   { label: 'DNS queries', sql: 'SELECT timestamp, event_id, qname, qtype, rcode, decision, matched_rule, policy_rule FROM dns_events ORDER BY id DESC LIMIT 50' },
-  { label: 'MCP calls', sql: 'SELECT timestamp, event_id, server_name, method, tool_name, decision, duration_ms, policy_rule FROM mcp_calls ORDER BY id DESC LIMIT 50' },
+  { label: 'Tool calls', sql: "SELECT timestamp, event_id, origin, server_name, method, tool_name, decision, duration_ms, policy_rule FROM tool_calls WHERE origin IN ('native', 'mcp', 'builtin', 'local') ORDER BY id DESC LIMIT 50" },
   { label: 'Model calls', sql: 'SELECT timestamp, event_id, provider, model, input_tokens, output_tokens, estimated_cost_usd, trace_id FROM model_calls ORDER BY id DESC LIMIT 50' },
   { label: 'File events', sql: 'SELECT timestamp, event_id, action, path, size, trace_id FROM fs_events ORDER BY id DESC LIMIT 50' },
   { label: 'Process exec', sql: 'SELECT timestamp, event_id, source, command, exit_code, duration_ms, trace_id FROM exec_events ORDER BY id DESC LIMIT 50' },

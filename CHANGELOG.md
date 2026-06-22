@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added the unified tool-call ledger contract: MCP `tools/call` observations
+  now write to `tool_calls origin = 'mcp'` with request/response payloads,
+  protocol-only MCP messages remain in `mcp_calls`, old SQLite constraints are
+  migrated to allow orphan/direct tool evidence, and the UI/Inspector/Ironbank
+  contracts read user-facing tools from the single `tool_calls` table.
 - Added a frontend vocabulary guard that scans product source for retired 1.3
   UI/API strings such as VM dashboard wording, policy labels, preview fields,
   raw credential hashes, and 404/501 placeholders.

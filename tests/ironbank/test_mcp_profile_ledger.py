@@ -242,7 +242,10 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
             assert mcp_http_tool == route_http_tool
 
             with _connect_session_db(service.tmp_dir / "sessions", session_id) as conn:
-                before_count = conn.execute("SELECT COUNT(*) FROM mcp_calls").fetchone()[0]
+                before_protocol_count = conn.execute("SELECT COUNT(*) FROM mcp_calls").fetchone()[0]
+                before_tool_count = conn.execute(
+                    "SELECT COUNT(*) FROM tool_calls WHERE origin = 'mcp'"
+                ).fetchone()[0]
 
             call_envelope = _json_tool_result(
                 mcp.call_tool(
@@ -261,34 +264,39 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
             assert "content-type:" in call_text.lower()
 
         with _connect_session_db(service.tmp_dir / "sessions", session_id) as conn:
-            mcp_rows = _eventually(
+            tool_rows = _eventually(
                 lambda: _rows(
                     conn,
                     """
                     SELECT event_id, server_name, method, tool_name, decision,
-                           bytes_sent, bytes_received, request_preview,
+                           bytes_sent, bytes_received, arguments AS request_preview,
                            response_preview, trace_id
-                    FROM mcp_calls
+                    FROM tool_calls
                     WHERE method = 'tools/call'
                       AND tool_name IN ('http_headers', 'local__http_headers')
+                      AND origin = 'mcp'
                     ORDER BY id DESC
                     LIMIT 1
                     """,
                 ),
                 lambda rows: len(rows) == 1,
             )
-            mcp_row = mcp_rows[0]
-            assert conn.execute("SELECT COUNT(*) FROM mcp_calls").fetchone()[0] == before_count + 1
-            _assert_event_id(mcp_row["event_id"])
-            assert mcp_row["server_name"] == "local"
-            assert mcp_row["method"] == "tools/call"
-            assert mcp_row["tool_name"] in {"http_headers", "local__http_headers"}
-            assert mcp_row["decision"] == "allowed"
-            assert mcp_row["bytes_sent"] > 0
-            assert mcp_row["bytes_received"] > 0
-            assert "local__http_headers" in mcp_row["request_preview"]
-            assert "Status: 200 OK" in mcp_row["response_preview"]
-            assert mcp_row["trace_id"]
+            tool_row = tool_rows[0]
+            assert conn.execute("SELECT COUNT(*) FROM mcp_calls").fetchone()[0] == before_protocol_count
+            assert (
+                conn.execute("SELECT COUNT(*) FROM tool_calls WHERE origin = 'mcp'").fetchone()[0]
+                == before_tool_count + 1
+            )
+            _assert_event_id(tool_row["event_id"])
+            assert tool_row["server_name"] == "local"
+            assert tool_row["method"] == "tools/call"
+            assert tool_row["tool_name"] in {"http_headers", "local__http_headers"}
+            assert tool_row["decision"] == "allowed"
+            assert tool_row["bytes_sent"] > 0
+            assert tool_row["bytes_received"] > 0
+            assert "local__http_headers" in tool_row["request_preview"]
+            assert "Status: 200 OK" in tool_row["response_preview"]
+            assert tool_row["trace_id"]
 
             net_rows = _rows(
                 conn,

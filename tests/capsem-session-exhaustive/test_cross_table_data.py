@@ -19,18 +19,18 @@ class TestCrossTableForeignKeys:
         )
 
     def test_tool_responses_call_fk(self, exhaust_db):
-        """tool_responses.call_id references a valid tool_calls.id."""
+        """tool_responses.call_id references a valid tool_calls.call_id."""
         orphans = exhaust_db.execute("""
             SELECT tr.id, tr.call_id FROM tool_responses tr
             WHERE tr.call_id IS NOT NULL
-            AND tr.call_id NOT IN (SELECT id FROM tool_calls)
+            AND tr.call_id NOT IN (SELECT call_id FROM tool_calls)
         """).fetchall()
         assert len(orphans) == 0, (
             f"tool_responses with invalid call_id: {[dict(r) for r in orphans]}"
         )
 
     def test_mcp_origin_tool_calls_fk(self, exhaust_db):
-        """tool_calls with origin='mcp' have a valid mcp_call_id FK."""
+        """MCP-origin tool_calls may carry an optional protocol-row link."""
         orphans = exhaust_db.execute("""
             SELECT tc.id, tc.mcp_call_id FROM tool_calls tc
             WHERE tc.origin = 'mcp'

@@ -29,7 +29,7 @@ def test_mcp_call_builtin_http_headers_pays_full_ledger(shared_vm, mcp_session):
         before_count = _inspect(
             mcp_session,
             vm_name,
-            "SELECT COUNT(*) AS count FROM mcp_calls",
+            "SELECT COUNT(*) AS count FROM tool_calls WHERE origin = 'mcp'",
         )[0]["count"]
 
         servers = _json_tool_result(mcp_session.call_tool("capsem_mcp_servers"))
@@ -52,7 +52,7 @@ def test_mcp_call_builtin_http_headers_pays_full_ledger(shared_vm, mcp_session):
         after_list_count = _inspect(
             mcp_session,
             vm_name,
-            "SELECT COUNT(*) AS count FROM mcp_calls",
+            "SELECT COUNT(*) AS count FROM tool_calls WHERE origin = 'mcp'",
         )[0]["count"]
         assert after_list_count == before_count, "tool listing must not emit phantom calls"
 
@@ -79,10 +79,11 @@ def test_mcp_call_builtin_http_headers_pays_full_ledger(shared_vm, mcp_session):
             vm_name,
             """
             SELECT event_id, server_name, method, tool_name, decision,
-                   bytes_sent, bytes_received, request_preview, response_preview,
-                   trace_id
-            FROM mcp_calls
+                   bytes_sent, bytes_received, arguments AS request_preview,
+                   response_preview, trace_id, model_call_id, origin
+            FROM tool_calls
             WHERE method = 'tools/call'
+              AND origin = 'mcp'
               AND tool_name IN ('http_headers', 'local__http_headers')
             ORDER BY id DESC
             LIMIT 1
@@ -90,6 +91,8 @@ def test_mcp_call_builtin_http_headers_pays_full_ledger(shared_vm, mcp_session):
         )
         assert len(mcp_rows) == 1
         mcp_row = mcp_rows[0]
+        assert mcp_row["origin"] == "mcp"
+        assert mcp_row["model_call_id"] is None
         assert mcp_row["server_name"] == "local"
         assert mcp_row["tool_name"] in {"http_headers", "local__http_headers"}
         assert mcp_row["decision"] == "allowed"

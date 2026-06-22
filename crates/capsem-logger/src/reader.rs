@@ -95,6 +95,31 @@ pub struct McpToolUsage {
     pub total_duration_ms: u64,
 }
 
+/// A user/security tool-call ledger row from `tool_calls`.
+#[derive(Debug, Clone, Serialize)]
+pub struct ToolCallLedgerEntry {
+    pub id: i64,
+    pub event_id: String,
+    pub timestamp: String,
+    pub model_call_id: Option<i64>,
+    pub origin: String,
+    pub server_name: Option<String>,
+    pub method: Option<String>,
+    pub request_id: Option<String>,
+    pub call_id: String,
+    pub tool_name: String,
+    pub arguments: Option<String>,
+    pub response_preview: Option<String>,
+    pub decision: String,
+    pub duration_ms: u64,
+    pub error_message: Option<String>,
+    pub bytes_sent: u64,
+    pub bytes_received: u64,
+    pub policy_rule: Option<String>,
+    pub trace_id: Option<String>,
+    pub credential_ref: Option<String>,
+}
+
 /// Summary of a trace (one agent turn) aggregated from grouped model calls.
 #[derive(Debug, Clone, Serialize)]
 pub struct TraceSummary {
@@ -259,8 +284,7 @@ const MCP_CALL_COLUMNS_BASE: &str = "timestamp, server_name, method, tool_name, 
      policy_mode, policy_action, policy_rule, policy_reason,
      trace_id";
 
-const USER_MCP_CALL_FILTER: &str =
-    "method = 'tools/call' AND tool_name IS NOT NULL AND tool_name NOT LIKE 'local__snapshots_%'";
+const TOOL_CALL_LEDGER_FILTER: &str = "origin IN ('native', 'mcp', 'builtin', 'local')";
 
 /// Parse a model_calls row into (id, ModelCall). Column order must match MODEL_CALL_COLUMNS.
 fn read_model_call_row(row: &Row<'_>) -> rusqlite::Result<(i64, ModelCall)> {
@@ -948,11 +972,11 @@ impl DbReader {
             .unwrap_or_default();
 
         // Total tool calls.
-        let total_tool_calls: u64 =
-            self.conn
-                .query_row("SELECT COUNT(*) FROM tool_calls", [], |row| {
-                    row.get::<_, i64>(0).map(|n| n as u64)
-                })?;
+        let total_tool_calls: u64 = self.conn.query_row(
+            &format!("SELECT COUNT(*) FROM tool_calls WHERE {TOOL_CALL_LEDGER_FILTER}"),
+            [],
+            |row| row.get::<_, i64>(0).map(|n| n as u64),
+        )?;
 
         Ok(SessionStats {
             net_total,
@@ -1167,13 +1191,14 @@ impl DbReader {
 
     /// Tool usage frequency (from tool_calls table).
     pub fn tool_usage_frequency(&self, limit: usize) -> rusqlite::Result<Vec<ToolUsageCount>> {
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare(&format!(
             "SELECT tool_name, COUNT(*) as cnt
              FROM tool_calls
+             WHERE {TOOL_CALL_LEDGER_FILTER}
              GROUP BY tool_name
              ORDER BY cnt DESC
              LIMIT ?1",
-        )?;
+        ))?;
         let rows = stmt.query_map(params![limit as i64], |row| {
             Ok(ToolUsageCount {
                 tool_name: row.get(0)?,
@@ -1195,15 +1220,17 @@ impl DbReader {
 
     /// Tool usage with response byte and duration stats from model_calls.
     pub fn tool_usage_with_stats(&self, limit: usize) -> rusqlite::Result<Vec<ToolUsageWithStats>> {
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare(&format!(
             "SELECT tc.tool_name, COUNT(*) as cnt,
-                    COALESCE(SUM(mc.response_bytes), 0),
-                    COALESCE(SUM(mc.duration_ms), 0)
+                    COALESCE(SUM(LENGTH(COALESCE(tc.response_preview, tr.content_preview, ''))), 0),
+                    COALESCE(SUM(COALESCE(tc.duration_ms, mc.duration_ms, 0)), 0)
              FROM tool_calls tc
-             JOIN model_calls mc ON tc.model_call_id = mc.id
+             LEFT JOIN model_calls mc ON tc.model_call_id = mc.id
+             LEFT JOIN tool_responses tr ON tc.call_id = tr.call_id
+             WHERE {TOOL_CALL_LEDGER_FILTER}
              GROUP BY tc.tool_name
              ORDER BY cnt DESC LIMIT ?1",
-        )?;
+        ))?;
         let rows = stmt.query_map(params![limit as i64], |row| {
             Ok(ToolUsageWithStats {
                 tool_name: row.get(0)?,
@@ -1215,17 +1242,16 @@ impl DbReader {
         rows.collect()
     }
 
-    /// MCP tool usage grouped by tool_name with duration and response size.
+    /// MCP-origin tool usage grouped by tool_name with duration and response size.
     pub fn mcp_tool_usage(&self, limit: usize) -> rusqlite::Result<Vec<McpToolUsage>> {
-        let sql = format!(
-            "SELECT tool_name, server_name, COUNT(*) as cnt,
+        let sql = "SELECT tool_name, server_name, COUNT(*) as cnt,
                     COALESCE(SUM(LENGTH(response_preview)), 0),
                     COALESCE(SUM(duration_ms), 0)
-             FROM mcp_calls
-             WHERE {USER_MCP_CALL_FILTER}
+             FROM tool_calls
+             WHERE origin = 'mcp'
              GROUP BY tool_name
              ORDER BY cnt DESC LIMIT ?1"
-        );
+            .to_string();
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params![limit as i64], |row| {
             Ok(McpToolUsage {
@@ -1508,18 +1534,56 @@ impl DbReader {
         rows.collect()
     }
 
+    /// Query the user-facing tool-call ledger, ordered newest first.
+    pub fn recent_tool_calls(&self, limit: usize) -> rusqlite::Result<Vec<ToolCallLedgerEntry>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, event_id, timestamp, model_call_id, origin, server_name, method,
+                    request_id, call_id, tool_name, arguments, response_preview, decision,
+                    duration_ms, error_message, bytes_sent, bytes_received, policy_rule,
+                    trace_id, credential_ref
+             FROM tool_calls
+             WHERE origin IN ('native', 'mcp', 'builtin', 'local')
+             ORDER BY id DESC
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit as i64], |row| {
+            Ok(ToolCallLedgerEntry {
+                id: row.get(0)?,
+                event_id: row.get(1)?,
+                timestamp: row.get(2)?,
+                model_call_id: row.get(3)?,
+                origin: row.get(4)?,
+                server_name: row.get(5)?,
+                method: row.get(6)?,
+                request_id: row.get(7)?,
+                call_id: row.get(8)?,
+                tool_name: row.get(9)?,
+                arguments: row.get(10)?,
+                response_preview: row.get(11)?,
+                decision: row.get(12)?,
+                duration_ms: row.get::<_, i64>(13)? as u64,
+                error_message: row.get(14)?,
+                bytes_sent: row.get::<_, i64>(15)? as u64,
+                bytes_received: row.get::<_, i64>(16)? as u64,
+                policy_rule: row.get(17)?,
+                trace_id: row.get(18)?,
+                credential_ref: row.get(19)?,
+            })
+        })?;
+        rows.collect()
+    }
+
     /// Aggregate MCP call statistics. All aggregation done in SQL.
     pub fn mcp_call_stats(&self) -> rusqlite::Result<McpCallStats> {
-        let totals_sql = format!(
-            "SELECT
+        let totals_sql = "SELECT
                 COUNT(*),
                 COALESCE(SUM(CASE WHEN decision = 'allowed' THEN 1 ELSE 0 END), 0),
                 COALESCE(SUM(CASE WHEN decision = 'warned' THEN 1 ELSE 0 END), 0),
                 COALESCE(SUM(CASE WHEN decision = 'denied' THEN 1 ELSE 0 END), 0),
                 COALESCE(SUM(CASE WHEN decision = 'error' THEN 1 ELSE 0 END), 0)
-             FROM mcp_calls
-             WHERE {USER_MCP_CALL_FILTER}"
-        );
+             FROM tool_calls
+             WHERE origin = 'mcp'"
+            .to_string();
         let (total, allowed, warned, denied, errored) =
             self.conn.query_row(&totals_sql, [], |row| {
                 Ok((
@@ -1531,16 +1595,15 @@ impl DbReader {
                 ))
             })?;
 
-        let by_server_sql = format!(
-            "SELECT server_name,
+        let by_server_sql = "SELECT server_name,
                     COUNT(*) as cnt,
                     SUM(CASE WHEN decision = 'denied' THEN 1 ELSE 0 END),
                     SUM(CASE WHEN decision = 'warned' THEN 1 ELSE 0 END)
-             FROM mcp_calls
-             WHERE {USER_MCP_CALL_FILTER}
+             FROM tool_calls
+             WHERE origin = 'mcp'
              GROUP BY server_name
              ORDER BY cnt DESC, server_name ASC"
-        );
+            .to_string();
         let mut stmt = self.conn.prepare(&by_server_sql)?;
         let by_server = stmt.query_map([], |row| {
             Ok(McpServerCallCount {
@@ -2317,10 +2380,12 @@ mod tests {
                  VALUES
                     ('2026-01-01T00:00:00Z', 'capsem', 'initialize', NULL, 'allowed', 1),
                     ('2026-01-01T00:00:01Z', 'capsem', 'notifications/initialized', NULL, 'allowed', 1),
-                    ('2026-01-01T00:00:02Z', 'capsem', 'tools/list', NULL, 'allowed', 1),
-                    ('2026-01-01T00:00:03Z', 'capsem', 'tools/call', 'local__snapshots_changes', 'allowed', 4),
-                    ('2026-01-01T00:00:04Z', 'capsem', 'tools/call', 'local__fetch_http', 'allowed', 9),
-                    ('2026-01-01T00:00:05Z', 'github', 'tools/call', 'github__search', 'denied', 11);",
+                    ('2026-01-01T00:00:02Z', 'capsem', 'tools/list', NULL, 'allowed', 1);
+                 INSERT INTO tool_calls (timestamp, origin, server_name, method, call_index, call_id, tool_name, arguments, decision, duration_ms)
+                 VALUES
+                    ('2026-01-01T00:00:04Z', 'mcp', 'capsem', 'tools/call', 0, 'mcp-1', 'local__fetch_http', '{}', 'allowed', 9),
+                    ('2026-01-01T00:00:05Z', 'mcp', 'github', 'tools/call', 0, 'mcp-2', 'github__search', '{}', 'denied', 11),
+                    ('2026-01-01T00:00:06Z', 'native', 'model', NULL, 0, 'native-1', 'bash', '{}', 'allowed', 1);",
             )
             .unwrap();
 
@@ -2333,6 +2398,50 @@ mod tests {
         assert_eq!(stats.by_server[0].count, 1);
         assert_eq!(stats.by_server[1].server_name, "github");
         assert_eq!(stats.by_server[1].count, 1);
+    }
+
+    #[test]
+    fn recent_tool_calls_reads_unified_model_and_mcp_rows() {
+        let r = DbReader::open_in_memory().unwrap();
+        r.conn
+            .execute_batch(
+                "INSERT INTO tool_calls (
+                    id, event_id, timestamp, model_call_id, origin, server_name, method,
+                    request_id, call_index, call_id, tool_name, arguments, response_preview,
+                    decision, duration_ms, bytes_sent, bytes_received, policy_rule, trace_id
+                 ) VALUES
+                    (100, 'aaaaaaaaaaaa', '2026-01-01T00:00:01Z', 1, 'native', 'model', NULL,
+                     NULL, 0, 'call-model', 'write_file', '{\"path\":\"poem.md\"}',
+                     'ok', 'allowed', 7, 10, 20, NULL, 'trace-model'),
+                    (101, 'bbbbbbbbbbbb', '2026-01-01T00:00:02Z', NULL, 'mcp', 'capsem', 'tools/call',
+                     'req-1', 0, 'req-1', 'local__fetch_http', '{\"url\":\"https://example.com\"}',
+                     '{\"status\":200}', 'denied', 9, 30, 40, 'profiles.rules.block_fetch', 'trace-mcp');",
+            )
+            .unwrap();
+
+        let rows = r.recent_tool_calls(10).unwrap();
+        let mcp = rows.iter().find(|row| row.origin == "mcp").unwrap();
+        assert_eq!(mcp.event_id, "bbbbbbbbbbbb");
+        assert_eq!(mcp.model_call_id, None);
+        assert_eq!(mcp.server_name.as_deref(), Some("capsem"));
+        assert_eq!(mcp.method.as_deref(), Some("tools/call"));
+        assert_eq!(mcp.request_id.as_deref(), Some("req-1"));
+        assert_eq!(mcp.tool_name, "local__fetch_http");
+        assert_eq!(
+            mcp.arguments.as_deref(),
+            Some("{\"url\":\"https://example.com\"}")
+        );
+        assert_eq!(mcp.response_preview.as_deref(), Some("{\"status\":200}"));
+        assert_eq!(mcp.decision, "denied");
+        assert_eq!(
+            mcp.policy_rule.as_deref(),
+            Some("profiles.rules.block_fetch")
+        );
+
+        let native = rows.iter().find(|row| row.origin == "native").unwrap();
+        assert_eq!(native.model_call_id, Some(1));
+        assert_eq!(native.tool_name, "write_file");
+        assert_eq!(native.response_preview.as_deref(), Some("ok"));
     }
 
     #[test]
@@ -2349,7 +2458,7 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(r.mcp_call_stats().unwrap().total, 1);
+        assert_eq!(r.mcp_call_stats().unwrap().total, 0);
         assert_eq!(r.raw_mcp_call_count().unwrap(), 4);
     }
 

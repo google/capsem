@@ -1329,17 +1329,34 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                     """,
                     (observed_mcp_server,),
                 ).fetchall(),
-                lambda rows: len(rows) >= 3,
+                lambda rows: len(rows) >= 2,
             )
             observed_methods = {row["method"] for row in observed_mcp_rows}
-            assert {"initialize", "tools/list", "tools/call"} <= observed_methods
-            assert sum(1 for row in observed_mcp_rows if row["method"] == "tools/call") == 1
-            assert all(row["tool_name"] is None for row in observed_mcp_rows if row["method"] != "tools/call")
+            assert {"initialize", "tools/list"} <= observed_methods
+            assert "tools/call" not in observed_methods
+            assert all(row["tool_name"] is None for row in observed_mcp_rows)
             observed_mcp_trace_ids = {row["trace_id"] for row in observed_mcp_rows}
             assert len(observed_mcp_trace_ids) == 1
             assert None not in observed_mcp_trace_ids
-            observed_tool_call = next(
-                row for row in observed_mcp_rows if row["method"] == "tools/call"
+            observed_tool_call = _eventually(
+                lambda: conn.execute(
+                    """
+                    SELECT *
+                    FROM tool_calls
+                    WHERE origin = 'mcp'
+                      AND server_name = ?
+                      AND method = 'tools/call'
+                      AND tool_name = 'fixture_lookup'
+                    ORDER BY id DESC
+                    """,
+                    (observed_mcp_server,),
+                ).fetchall(),
+                lambda rows: len(rows) == 1,
+            )[0]
+            assert observed_tool_call["model_call_id"] is None
+            assert observed_tool_call["origin"] == "mcp"
+            assert observed_tool_call["call_id"] == (
+                observed_tool_call["request_id"] or observed_tool_call["event_id"]
             )
             _assert_event_id(observed_tool_call["event_id"])
             assert observed_tool_call["tool_name"] == "fixture_lookup"
@@ -1350,8 +1367,8 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             assert observed_tool_call["tool_name"] in {row["tool_name"] for row in tool_rows}
             assert observed_tool_call["bytes_sent"] > 0
             assert observed_tool_call["bytes_received"] > 0
-            assert "fixture_lookup" in (observed_tool_call["request_preview"] or "")
-            observed_tool_request = json.loads(observed_tool_call["request_preview"])
+            assert "fixture_lookup" in (observed_tool_call["arguments"] or "")
+            observed_tool_request = json.loads(observed_tool_call["arguments"])
             assert observed_tool_request["jsonrpc"] == "2.0"
             assert observed_tool_request["method"] == "tools/call"
             assert observed_tool_request["params"]["name"] == "fixture_lookup"
@@ -1417,6 +1434,8 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                     SELECT event_id FROM model_calls WHERE path = '/v1/messages'
                     UNION
                     SELECT event_id FROM mcp_calls WHERE server_name = 'observed:127.0.0.1:3713/mcp'
+                    UNION
+                    SELECT event_id FROM tool_calls WHERE origin = 'mcp' AND server_name = 'observed:127.0.0.1:3713/mcp'
                     UNION
                     SELECT event_id FROM net_events WHERE path = '/v1/chat/completions'
                 )

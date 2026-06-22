@@ -277,12 +277,11 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
                     """,
                     (observed_server,),
                 ).fetchall(),
-                lambda rows: len(rows) == 3,
+                lambda rows: len(rows) == 2,
             )
             assert [row["method"] for row in mcp_rows] == [
                 "initialize",
                 "tools/list",
-                "tools/call",
             ]
             trace_ids = {row["trace_id"] for row in mcp_rows}
             assert len(trace_ids) == 1
@@ -301,10 +300,9 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
                 assert row["trace_id"] == trace_id
                 assert row["credential_ref"] is None
 
-            initialize_row, list_row, call_row = mcp_rows
+            initialize_row, list_row = mcp_rows
             assert initialize_row["tool_name"] is None
             assert list_row["tool_name"] is None
-            assert call_row["tool_name"] == "fixture_lookup"
 
             list_request = json.loads(list_row["request_preview"])
             list_response = json.loads(list_row["response_preview"])
@@ -315,7 +313,37 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
                 "fetch_http",
             }
 
-            call_request = json.loads(call_row["request_preview"])
+            call_row = _eventually(
+                lambda: conn.execute(
+                    """
+                    SELECT *
+                    FROM tool_calls
+                    WHERE origin = 'mcp'
+                      AND server_name = ?
+                      AND method = 'tools/call'
+                      AND tool_name = 'fixture_lookup'
+                    ORDER BY id DESC
+                    """,
+                    (observed_server,),
+                ).fetchall(),
+                lambda rows: len(rows) == 1,
+            )[0]
+            _event_id(call_row["event_id"])
+            assert call_row["model_call_id"] is None
+            assert call_row["provider"] == ""
+            assert call_row["status"] == "responded"
+            assert call_row["tool_name"] == "fixture_lookup"
+            assert call_row["decision"] == "allowed"
+            assert call_row["duration_ms"] >= 0
+            assert call_row["error_message"] is None
+            assert call_row["bytes_sent"] > 0
+            assert call_row["bytes_received"] > 0
+            assert call_row["policy_action"] == "allow"
+            assert call_row["policy_rule"] == "corp.rules.allow_ironbank_mock_mcp_server"
+            assert call_row["trace_id"] == trace_id
+            assert call_row["credential_ref"] is None
+
+            call_request = json.loads(call_row["arguments"])
             call_response = json.loads(call_row["response_preview"])
             assert call_request == {
                 "jsonrpc": "2.0",
@@ -335,7 +363,7 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
                 WHERE event_id IN (?, ?, ?)
                 ORDER BY id
                 """,
-                tuple(row["event_id"] for row in mcp_rows),
+                (initialize_row["event_id"], list_row["event_id"], call_row["event_id"]),
             ).fetchall()
             assert security_rows
             security_by_event: dict[str, list[sqlite3.Row]] = {}
@@ -392,13 +420,13 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
                 {"type": "text", "text": "capsem-mock-server:mcp:fixture_lookup"}
             ]
 
-            model_tool_count = conn.execute(
-                "SELECT COUNT(*) FROM tool_calls WHERE tool_name = 'fixture_lookup'"
+            mcp_tool_count = conn.execute(
+                "SELECT COUNT(*) FROM tool_calls WHERE origin = 'mcp' AND tool_name = 'fixture_lookup'"
             ).fetchone()[0]
             model_tool_response_count = conn.execute(
                 "SELECT COUNT(*) FROM tool_responses"
             ).fetchone()[0]
-            assert model_tool_count == 0
+            assert mcp_tool_count == 1
             assert model_tool_response_count == 0
 
         uds_rows = _query_rows(
@@ -412,9 +440,22 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
             ORDER BY id
             """,
         )
-        assert [row["method"] for row in uds_rows] == ["initialize", "tools/list", "tools/call"]
-        assert uds_rows[2]["tool_name"] == "fixture_lookup"
-        assert uds_rows[2]["policy_rule"] == "corp.rules.allow_ironbank_mock_mcp_server"
+        assert [row["method"] for row in uds_rows] == ["initialize", "tools/list"]
+        uds_tool_rows = _query_rows(
+            client,
+            session_id,
+            f"""
+            SELECT event_id, server_name, method, tool_name, decision,
+                   policy_action, policy_rule, trace_id
+            FROM tool_calls
+            WHERE origin = 'mcp' AND server_name = '{observed_server}'
+            ORDER BY id
+            """,
+        )
+        assert len(uds_tool_rows) == 1
+        assert uds_tool_rows[0]["method"] == "tools/call"
+        assert uds_tool_rows[0]["tool_name"] == "fixture_lookup"
+        assert uds_tool_rows[0]["policy_rule"] == "corp.rules.allow_ironbank_mock_mcp_server"
 
         assert gateway_client is not None
         gateway_rows = gateway_client.post(
@@ -422,8 +463,8 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
             {
                 "sql": (
                     "SELECT event_id, server_name, method, tool_name, decision, "
-                    "policy_action, policy_rule, trace_id FROM mcp_calls "
-                    f"WHERE server_name = '{observed_server}' ORDER BY id"
+                    "policy_action, policy_rule, trace_id FROM tool_calls "
+                    f"WHERE origin = 'mcp' AND server_name = '{observed_server}' ORDER BY id"
                 )
             },
             timeout=30,
@@ -441,7 +482,7 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
         ]
         assert gateway_rows["rows"] == [
             [row["event_id"], row["server_name"], row["method"], row["tool_name"], row["decision"], row["policy_action"], row["policy_rule"], row["trace_id"]]
-            for row in uds_rows
+            for row in uds_tool_rows
         ]
 
         timeline = client.get(f"/vms/{session_id}/timeline?layers=mcp&limit=50", timeout=30)
@@ -453,14 +494,18 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
             dict(zip(timeline["columns"], row, strict=True)) for row in timeline["rows"]
         ]
         timeline_summaries = {row["summary"] for row in timeline_rows}
-        assert f"{observed_server}/fixture_lookup" in timeline_summaries
+        assert any(
+            summary.startswith(f"{observed_server}/fixture_lookup")
+            for summary in timeline_summaries
+        )
         assert f"{observed_server}/tools/list" in timeline_summaries
 
         security_latest = client.get(f"/vms/{session_id}/security/latest?limit=100", timeout=30)
         assert isinstance(security_latest, list)
         latest_ids = {row["event_id"] for row in security_latest}
         assert {row["event_id"] for row in uds_rows} <= latest_ids
-        latest_call_rows = [row for row in security_latest if row["event_id"] == uds_rows[2]["event_id"]]
+        assert {row["event_id"] for row in uds_tool_rows} <= latest_ids
+        latest_call_rows = [row for row in security_latest if row["event_id"] == uds_tool_rows[0]["event_id"]]
         assert any(row["event_type"] == "mcp.tool_call" for row in latest_call_rows)
         assert any(
             row["rule_id"] == "corp.rules.allow_ironbank_mock_mcp_server"
@@ -496,7 +541,7 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
         )
         assert info["profile_id"] == CODE_PROFILE_ID
         assert info["total_mcp_calls"] == 1
-        assert info["total_tool_calls"] == 0
+        assert info["total_tool_calls"] == 1
 
         service_log = (service.tmp_dir / "service.log").read_text(encoding="utf-8")
         gateway_log = gateway.stop_and_read_log()

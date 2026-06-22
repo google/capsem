@@ -656,12 +656,14 @@ fn insert_model_call(
         let tc_trace = tc.trace_id.clone().or_else(|| call.trace_id.clone());
         conn.execute(
             "INSERT INTO tool_calls (
-                event_id, model_call_id, provider, status, call_index, call_id,
-                tool_name, arguments, origin, trace_id, credential_ref
+                event_id, timestamp, model_call_id, provider, status, call_index, call_id,
+                tool_name, arguments, origin, server_name, decision, duration_ms,
+                trace_id, credential_ref
              )
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             params![
                 new_event_id(),
+                timestamp,
                 model_call_id,
                 call.provider,
                 "observed",
@@ -670,6 +672,9 @@ fn insert_model_call(
                 tc.tool_name,
                 tc.arguments,
                 tc.origin,
+                "model",
+                "allowed",
+                call.duration_ms as i64,
                 tc_trace,
                 call.credential_ref,
             ],
@@ -830,6 +835,67 @@ fn insert_mcp_call(conn: &Connection, call: &McpCall) -> rusqlite::Result<()> {
     let req_preview = cap_field(&call.request_preview);
     let resp_preview = cap_field(&call.response_preview);
     let event_id = call.event_id.clone().unwrap_or_else(new_event_id);
+    if call.method == "tools/call" {
+        let tool_name = call.tool_name.as_deref().unwrap_or("");
+        conn.execute(
+            "INSERT INTO tool_calls (
+                event_id, timestamp, model_call_id, provider, status, call_index, call_id,
+                tool_name, arguments, response_preview, origin, server_name, method, request_id,
+                decision, duration_ms, error_message, process_name, bytes_sent, bytes_received,
+                policy_mode, policy_action, policy_rule, policy_reason, trace_id, credential_ref
+            )
+             VALUES (?1, ?2, NULL, '', ?3, 0, ?4, ?5, ?6, ?7, 'mcp', ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
+            params![
+                &event_id,
+                &timestamp,
+                if call.error_message.is_some() { "error" } else { "responded" },
+                call.request_id.as_deref().unwrap_or(&event_id),
+                tool_name,
+                req_preview.as_deref(),
+                resp_preview.as_deref(),
+                &call.server_name,
+                &call.method,
+                call.request_id.as_deref(),
+                &call.decision,
+                call.duration_ms as i64,
+                call.error_message.as_deref(),
+                call.process_name.as_deref(),
+                call.bytes_sent as i64,
+                call.bytes_received as i64,
+                call.policy_mode.as_deref(),
+                call.policy_action.as_deref(),
+                call.policy_rule.as_deref(),
+                call.policy_reason.as_deref(),
+                call.trace_id.as_deref(),
+                call.credential_ref.as_deref(),
+            ],
+        )?;
+        insert_event_body_blob(
+            conn,
+            EventBodyBlob {
+                event_id: &event_id,
+                event_type: "mcp.tool_call",
+                source_table: "tool_calls",
+                direction: "request",
+                content_type: Some("application/json"),
+                body: call.request_preview.as_deref(),
+                trace_id: call.trace_id.as_deref(),
+            },
+        )?;
+        insert_event_body_blob(
+            conn,
+            EventBodyBlob {
+                event_id: &event_id,
+                event_type: "mcp.tool_call",
+                source_table: "tool_calls",
+                direction: "response",
+                content_type: Some("application/json"),
+                body: call.response_preview.as_deref(),
+                trace_id: call.trace_id.as_deref(),
+            },
+        )?;
+        return Ok(());
+    }
     conn.execute(
         "INSERT INTO mcp_calls (
             event_id, timestamp, server_name, method, tool_name, request_id,

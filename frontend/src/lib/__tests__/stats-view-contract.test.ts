@@ -41,7 +41,22 @@ describe('StatsView snapshot boundary', () => {
     expect(source).not.toContain("id: 'snapshots'");
     expect(source).not.toContain('snapshot_events');
     expect(source).not.toContain('Snapshot Events');
-    expect(source).toContain("id: 'mcp'");
+    expect(source).toContain("id: 'tools'");
+  });
+});
+
+describe('StatsView tool-call contract', () => {
+  it('exposes one user-facing tool-call ledger instead of an MCP activity panel', () => {
+    expect(source).toContain("type StatsTab = 'model' | 'tools'");
+    expect(source).toContain("label: 'Tools'");
+    expect(source).toContain('TOOLS_UNIFIED_SQL');
+    expect(source).toContain('Tool Calls');
+    expect(source).toContain('Model Origin');
+    expect(source).toContain('MCP Origin');
+    expect(source).toContain("void showDetail('tool', row)");
+    expect(source).not.toContain("label: 'MCP'");
+    expect(source).not.toContain("activeTab === 'mcp'");
+    expect(source).not.toContain('MCP Events');
   });
 });
 
@@ -94,15 +109,15 @@ describe('StatsView credential broker contract', () => {
   });
 
   it('keeps credential reference counts out of protocol tabs', () => {
-    const mcpStart = source.indexOf("{:else if activeTab === 'mcp'}");
+    const toolsStart = source.indexOf("{:else if activeTab === 'tools'}");
     const httpStart = source.indexOf("{:else if activeTab === 'http'}");
-    expect(mcpStart).toBeGreaterThan(-1);
-    expect(httpStart).toBeGreaterThan(mcpStart);
+    expect(toolsStart).toBeGreaterThan(-1);
+    expect(httpStart).toBeGreaterThan(toolsStart);
 
-    const mcpBlock = source.slice(mcpStart, httpStart);
-    expect(mcpBlock).toContain('Tool Calls');
-    expect(mcpBlock).not.toContain('Credential Refs');
-    expect(mcpBlock).not.toContain('credential_ref).length');
+    const toolsBlock = source.slice(toolsStart, httpStart);
+    expect(toolsBlock).toContain('Tool Calls');
+    expect(toolsBlock).not.toContain('Credential Refs');
+    expect(toolsBlock).not.toContain('credential_ref).length');
   });
 
   it('counts captured, brokered, and injected credential verbs independently', () => {
@@ -142,7 +157,7 @@ describe('StatsView detail drawer contract', () => {
     expect(source).toContain("'request_body'");
     expect(source).toContain("'response_body'");
     expect(source).toContain("void showDetail('model', row)");
-    expect(source).toContain("void showDetail('mcp', row)");
+    expect(source).toContain("void showDetail('tool', row)");
     expect(source).toContain("void showDetail('http', row)");
     expect(source).not.toContain('request_body_preview');
     expect(source).not.toContain('response_body_preview');

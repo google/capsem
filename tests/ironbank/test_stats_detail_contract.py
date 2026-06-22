@@ -162,6 +162,36 @@ def _create_schema(conn: sqlite3.Connection) -> None:
             trace_id TEXT,
             credential_ref TEXT
         );
+        CREATE TABLE tool_calls (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            model_call_id INTEGER,
+            provider TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'observed',
+            call_index INTEGER NOT NULL,
+            call_id TEXT NOT NULL,
+            tool_name TEXT NOT NULL,
+            arguments TEXT,
+            response_preview TEXT,
+            origin TEXT NOT NULL DEFAULT 'native',
+            mcp_call_id INTEGER,
+            server_name TEXT,
+            method TEXT,
+            request_id TEXT,
+            decision TEXT NOT NULL DEFAULT 'allowed',
+            duration_ms INTEGER DEFAULT 0,
+            error_message TEXT,
+            process_name TEXT,
+            bytes_sent INTEGER DEFAULT 0,
+            bytes_received INTEGER DEFAULT 0,
+            policy_mode TEXT,
+            policy_action TEXT,
+            policy_rule TEXT,
+            policy_reason TEXT,
+            trace_id TEXT,
+            credential_ref TEXT
+        );
         CREATE TABLE event_body_blobs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             event_id TEXT NOT NULL,
@@ -393,7 +423,7 @@ def _seed_session_db(db_path: Path) -> None:
                 (
                     MCP_EVENT_ID,
                     "mcp.tool_call",
-                    "mcp_calls",
+                    "tool_calls",
                     "response",
                     "application/json",
                     len(mcp_response.encode()),
@@ -447,22 +477,29 @@ def _seed_session_db(db_path: Path) -> None:
         )
         conn.execute(
             """
-            INSERT INTO mcp_calls (
-                event_id, timestamp, server_name, method, tool_name, request_id,
-                request_preview, response_preview, decision, duration_ms,
-                process_name, bytes_sent, bytes_received, policy_rule, trace_id,
+            INSERT INTO tool_calls (
+                event_id, timestamp, model_call_id, provider, status, call_index,
+                call_id, tool_name, arguments, response_preview, origin, server_name,
+                method, request_id, decision, duration_ms, process_name, bytes_sent,
+                bytes_received, policy_rule, trace_id,
                 credential_ref
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 MCP_EVENT_ID,
                 "2026-06-17T20:11:20Z",
-                "builtin",
-                "tools/call",
-                "create_file",
+                None,
+                "",
+                "responded",
+                0,
                 "mcp-req-1",
+                "create_file",
                 json.dumps({"name": "create_file", "arguments": {"path": "/root/poeme.md"}}),
                 mcp_response,
+                "mcp",
+                "builtin",
+                "tools/call",
+                "mcp-req-1",
                 "allowed",
                 12,
                 "agy",
@@ -738,21 +775,22 @@ def test_agy_stats_detail_routes_project_session_db_without_preview_theater() ->
             }
         ]
 
-        mcp_rows = _query(
+        tool_rows = _query(
             client,
             """
             SELECT event_id, server_name, method, tool_name, request_id,
                    decision, duration_ms, bytes_sent, bytes_received,
                    policy_rule, trace_id, credential_ref, error_message
-            FROM mcp_calls
+            FROM tool_calls
+            WHERE origin = 'mcp'
             ORDER BY id DESC
             """,
         )
-        assert mcp_rows[0]["server_name"] == "builtin"
-        assert mcp_rows[0]["method"] == "tools/call"
-        assert mcp_rows[0]["tool_name"] == "create_file"
-        assert mcp_rows[0]["policy_rule"] == "profiles.rules.default_mcp"
-        assert mcp_rows[0]["error_message"] is None
+        assert tool_rows[0]["server_name"] == "builtin"
+        assert tool_rows[0]["method"] == "tools/call"
+        assert tool_rows[0]["tool_name"] == "create_file"
+        assert tool_rows[0]["policy_rule"] == "profiles.rules.default_mcp"
+        assert tool_rows[0]["error_message"] is None
 
         dns_rows = _query(
             client,
