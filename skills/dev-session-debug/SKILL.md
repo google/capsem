@@ -1,11 +1,11 @@
 ---
 name: dev-session-debug
-description: Debugging Capsem session databases -- the telemetry pipeline output. Use when inspecting session.db, diagnosing missing or incorrect telemetry, understanding table schemas, checking data quality, or correlating events across tables. Covers all 6 session tables, the main.db rollup, the inspect-session tool, and common data quality issues.
+description: Debugging Capsem session databases -- the telemetry pipeline output. Use when inspecting session.db, diagnosing missing or incorrect telemetry, understanding table schemas, checking data quality, or correlating events across tables. Covers the session ledger tables, the main.db rollup, the inspect-session tool, and common data quality issues.
 ---
 
 # Session Database Debugging
 
-Every Capsem VM session produces a SQLite database at `~/.capsem/sessions/<id>/session.db` with 6 tables capturing all telemetry. A global `~/.capsem/main.db` aggregates stats across sessions.
+Every Capsem VM session produces a SQLite database at `~/.capsem/sessions/<id>/session.db` with ledger tables capturing telemetry. A global `~/.capsem/main.db` aggregates stats across sessions.
 
 ## Quick inspection
 
@@ -35,9 +35,17 @@ just inspect-session <id>         # Specific session (use full ID from list)
 just inspect-session -n 10        # Show 10 preview rows per table
 ```
 
-Checks: table existence, row counts, tool lifecycle integrity (orphaned tool_calls), AI provider correlation (net_events vs model_calls), NULL detection in critical fields, MCP correlation.
+Checks: table existence, row counts, tool lifecycle integrity (orphaned tool_calls/tool_responses), AI provider correlation (net_events vs model_calls), NULL detection in critical fields, and optional MCP transport correlation.
 
 ## Session database tables (session.db)
+
+The model/tool contract is intentionally one ledger:
+
+- `model_calls` is one row per model exchange: request sent to the provider and response received from it.
+- `model_items` is the ordered item ledger for request, reasoning, response, tool_call, and tool_response content inside those exchanges.
+- `tool_calls` is the canonical user/security tool-call ledger for all origins (`native`, `mcp`, `builtin`, `local`). User-facing tool counts and CEL tool evidence come from this table.
+- `tool_responses` records tool result content sent back to a model. A response row must match a `tool_calls.call_id` in the same trace.
+- `mcp_calls` is protocol evidence for visible MCP transport frames only. It is not the user/security tool-call ledger, and an MCP-origin tool call must also appear in `tool_calls`.
 
 ### net_events -- one row per HTTP request through MITM proxy
 
@@ -101,34 +109,63 @@ CREATE TABLE model_calls (
 
 Only emitted for actual LLM API paths (`/v1/messages`, `/v1/chat/completions`, `/v1beta/models/*/`). Health checks, auth endpoints don't create rows.
 
-### tool_calls -- tool invocations extracted from model responses
+### tool_calls -- canonical tool invocation ledger
 
 ```sql
 CREATE TABLE tool_calls (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    model_call_id INTEGER NOT NULL,   -- FK to model_calls.id
+    event_id TEXT NOT NULL,           -- 12 hex chars
+    timestamp TEXT NOT NULL,
+    model_call_id INTEGER,            -- model_calls.id that emitted the tool call when model-visible
+    provider TEXT NOT NULL,
+    status TEXT NOT NULL,             -- "requested", "observed", "responded", "error"
     call_index INTEGER NOT NULL,      -- position in response
     call_id TEXT NOT NULL,            -- "toolu_..." (Anthropic), "call_..." (OpenAI)
     tool_name TEXT NOT NULL,
     arguments TEXT,                   -- JSON string
-    origin TEXT NOT NULL DEFAULT 'native',  -- "native" or "mcp"
-    mcp_call_id INTEGER              -- FK to mcp_calls.id if origin=mcp
+    response_preview TEXT,
+    origin TEXT NOT NULL DEFAULT 'native',  -- "native", "mcp", "builtin", or "local"
+    mcp_call_id INTEGER,              -- optional protocol evidence link when origin=mcp
+    server_name TEXT,
+    method TEXT,
+    request_id TEXT,
+    decision TEXT NOT NULL,
+    duration_ms INTEGER DEFAULT 0,
+    error_message TEXT,
+    process_name TEXT,
+    bytes_sent INTEGER DEFAULT 0,
+    bytes_received INTEGER DEFAULT 0,
+    policy_mode TEXT,
+    policy_action TEXT,
+    policy_rule TEXT,
+    policy_reason TEXT,
+    trace_id TEXT,
+    credential_ref TEXT
 );
 ```
+
+For model-emitted tool calls, `model_call_id` points to the model exchange
+whose response emitted that tool call. It is not a trace-level guess.
 
 ### tool_responses -- results sent back for tool calls
 
 ```sql
 CREATE TABLE tool_responses (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    model_call_id INTEGER NOT NULL,
+    model_call_id INTEGER NOT NULL,   -- model_calls.id whose request consumed the tool result
     call_id TEXT NOT NULL,            -- matches tool_calls.call_id
     content_preview TEXT,
-    is_error INTEGER DEFAULT 0
+    is_error INTEGER DEFAULT 0,
+    trace_id TEXT,
+    credential_ref TEXT
 );
 ```
 
-### mcp_calls -- Guest MCP endpoint requests
+`tool_responses.model_call_id` points to the later model exchange that carried
+the tool result back to the model. The same `call_id` must match a
+`tool_calls.call_id` in the same trace.
+
+### mcp_calls -- MCP transport evidence
 
 ```sql
 CREATE TABLE mcp_calls (
@@ -148,6 +185,9 @@ CREATE TABLE mcp_calls (
     bytes_received INTEGER DEFAULT 0
 );
 ```
+
+Use `mcp_calls` when debugging transport framing, request ids, and raw MCP
+policy evidence. Use `tool_calls` for product/user/security tool activity.
 
 Full HTTP/model/MCP request and response bodies live in `event_body_blobs`,
 keyed by `event_id`, `source_table`, and `direction`. When debugging payload
@@ -172,8 +212,8 @@ Global rollup at `~/.capsem/main.db`. Key tables:
 
 - **sessions** -- one row per session: id, mode, status, timestamps, aggregated counts (total_requests, allowed/denied, tokens, cost, tool_calls, mcp_calls, file_events)
 - **ai_usage** -- per-session per-provider aggregates (call_count, tokens, cost, duration)
-- **tool_usage** -- per-session per-tool aggregates
-- **mcp_usage** -- per-session per-MCP-tool aggregates
+- **tool_usage** -- per-session per-tool aggregates from the canonical tool ledger
+- **mcp_usage** -- per-session MCP transport aggregates when protocol frames are visible
 
 Rollup happens when a session ends.
 
@@ -198,9 +238,13 @@ Rollup happens when a session ends.
 - Vsock port 5005 connection failed
 - VM shut down before 100ms debouncer flushed (add `sleep 1`)
 
+### Empty tool_calls
+- No AI agent invoked tools during the session, or model/MCP tool evidence failed to parse.
+- User-facing tool activity must be in `tool_calls` regardless of whether the origin is native model output, MCP, builtin, or local.
+
 ### Empty mcp_calls
-- No AI agent invoked MCP tools during the session
-- Guest MCP endpoint not started (check for MITM MCP endpoint startup in process logs)
+- No visible MCP transport frames were observed, or the guest MCP endpoint was not started.
+- This can be valid for direct model-native tool calls. Check `tool_calls` before assuming no user tool activity happened.
 
 ### Cost is zero
 - Model not found in pricing table (`config/data/genai-prices.json`)
@@ -215,7 +259,7 @@ Rollup happens when a session ends.
 - Snapshot system (create, revert, compact, list)
 - Telemetry pipeline (model_calls extraction, tool_calls, cost)
 
-The inspect output now includes an **MCP tool usage breakdown** showing per-tool call counts, decisions, and average duration. Check it after MCP changes to verify tools return `allowed` with reasonable latency (not 0ms errors or multi-second hangs).
+The inspect output now includes a tool usage breakdown from `tool_calls` plus MCP transport evidence when present. Check it after MCP changes to verify user tools return `allowed` with reasonable latency and that MCP-origin rows link back to protocol evidence when available.
 
 ## Ad-hoc SQL queries
 
@@ -231,8 +275,11 @@ just query-session "SELECT provider, SUM(input_tokens) as in_tok, SUM(output_tok
 # Find orphaned tool calls
 just query-session "SELECT tc.call_id, tc.tool_name FROM tool_calls tc LEFT JOIN tool_responses tr ON tc.call_id = tr.call_id WHERE tr.id IS NULL"
 
-# MCP tool usage breakdown (snapshot, http, etc.)
-just query-session "SELECT tool_name, decision, COUNT(*) as cnt, ROUND(AVG(duration_ms),1) as avg_ms FROM mcp_calls WHERE tool_name IS NOT NULL GROUP BY tool_name, decision ORDER BY cnt DESC"
+# MCP-origin user tool usage breakdown (snapshot, http, etc.)
+just query-session "SELECT tool_name, decision, COUNT(*) as cnt, ROUND(AVG(duration_ms),1) as avg_ms FROM tool_calls WHERE origin = 'mcp' AND tool_name IS NOT NULL GROUP BY tool_name, decision ORDER BY cnt DESC"
+
+# MCP transport frame breakdown when protocol debugging is needed
+just query-session "SELECT method, tool_name, decision, COUNT(*) as cnt FROM mcp_calls GROUP BY method, tool_name, decision ORDER BY cnt DESC"
 
 # Check fs_events actions
 just query-session "SELECT action, COUNT(*) FROM fs_events GROUP BY action"

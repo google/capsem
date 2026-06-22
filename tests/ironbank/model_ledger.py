@@ -380,10 +380,12 @@ def assert_two_turn_model_ledger_exchange(
             assert len(trace_tool_calls) == 1, [dict(row) for row in tool_rows]
             assert trace_tool_calls[0]["call_id"] == (turn.call_id or trace_tool_calls[0]["call_id"])
             assert json.loads(trace_tool_calls[0]["arguments"]) == turn.call_args
-            tool_call_model_ids = {row["model_call_id"] for row in trace_tool_calls}
-            assert tool_call_model_ids <= {row["id"] for row in trace_model_calls}, [
-                dict(row) for row in trace_tool_calls
-            ]
+            # The tool call is evidence emitted by the model response in the
+            # first exchange of this trace. It must not float at trace scope.
+            assert trace_tool_calls[0]["model_call_id"] == trace_model_calls[0]["id"], {
+                "tool_call": dict(trace_tool_calls[0]),
+                "model_calls": [dict(row) for row in trace_model_calls],
+            }
 
             trace_tool_responses = [
                 row for row in response_rows if row["trace_id"] == trace_id
@@ -480,6 +482,10 @@ def assert_live_model_ledger_exchange(
         assert json.loads(tool_row["arguments"]) == spec.call_args
         assert tool_row["origin"] in {"native", "mcp"}
         assert tool_row["trace_id"]
+        assert tool_row["model_call_id"] == model_rows[0]["id"], {
+            "tool_call": dict(tool_row),
+            "model_calls": [dict(row) for row in model_rows],
+        }
 
         response_rows = _latest_rows(
             conn,
