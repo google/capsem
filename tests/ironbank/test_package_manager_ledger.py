@@ -167,6 +167,17 @@ def _package_probe_script() -> str:
         apt-get install -y -qq "$work/ironbank-apt-tool.deb" >/tmp/ironbank-apt.log 2>&1
         ironbank-apt-tool "$work/payload.txt"
 
+        apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Check-Date=false update \
+          >/tmp/ironbank-remote-apt-update.log 2>&1
+        if grep -E 'Certificate verification failed|No system certificates available' /tmp/ironbank-remote-apt-update.log; then
+          cat /tmp/ironbank-remote-apt-update.log
+          exit 1
+        fi
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends hello \
+          >/tmp/ironbank-remote-apt-install.log 2>&1
+        printf 'IRONBANK:remote-apt:'
+        hello | head -n 1
+
         if command -v zstd >/dev/null 2>&1; then
           zstd -q -f "$work/payload.txt" -o "$work/zstd/payload.txt.zst"
           zstd -q -d -f "$work/zstd/payload.txt.zst" -o "$work/zstd/payload.roundtrip.txt"
@@ -228,6 +239,7 @@ def test_package_managers_pay_their_ledger_debt_blackbox():
             "IRONBANK:npm:npm:realm",
             "IRONBANK:npx:npm:realm",
             "IRONBANK:apt:apt:ironbank-package-bytes",
+            "IRONBANK:remote-apt:Hello, world!",
             "IRONBANK:complete:apt+npm+npx+node+pip+uv",
         }
         assert expected_lines <= set(stdout.splitlines()), stdout
@@ -262,6 +274,7 @@ def test_package_managers_pay_their_ledger_debt_blackbox():
                     WHERE argv LIKE '%pip install%'
                        OR argv LIKE '%uv pip install%'
                        OR argv LIKE '%npm install%'
+                       OR argv LIKE '%apt-get%update%'
                        OR argv LIKE '%apt-get install%'
                        OR exe LIKE '%/node'
                        OR exe LIKE '%/python3'
@@ -276,6 +289,7 @@ def test_package_managers_pay_their_ledger_debt_blackbox():
             assert "uv pip install" in audit_text
             assert "npm install -g" in audit_text
             assert "apt-get install" in audit_text
+            assert "apt-get -o Acquire::Check-Valid-Until=false" in audit_text
             for row in package_audit_rows[:20]:
                 _assert_ledger_id(row["event_id"])
                 assert row["pid"] > 0
@@ -331,6 +345,66 @@ def test_package_managers_pay_their_ledger_debt_blackbox():
                 assert event_json["file"]["import_name"] == script_name
                 assert event_json["file"]["import_path"] == script_name
                 assert event_json["decision"]["effective"] == "allow"
+
+            remote_net_rows = _eventually(
+                lambda: conn.execute(
+                    """
+                    SELECT *
+                    FROM net_events
+                    WHERE domain LIKE '%debian.org%'
+                    ORDER BY id
+                    """
+                ).fetchall(),
+                lambda rows: len(rows) >= 1,
+                timeout_s=30,
+            )
+            assert any(row["domain"] == "deb.debian.org" for row in remote_net_rows)
+            assert any(row["status_code"] and row["status_code"] < 500 for row in remote_net_rows)
+            for row in remote_net_rows:
+                _assert_ledger_id(row["event_id"])
+                assert row["method"] in {"GET", "HEAD"}
+                assert row["decision"] == "allowed"
+                assert row["credential_ref"] is None
+
+            remote_dns_rows = _eventually(
+                lambda: conn.execute(
+                    """
+                    SELECT *
+                    FROM dns_events
+                    WHERE qname LIKE '%debian.org%'
+                    ORDER BY id
+                    """
+                ).fetchall(),
+                lambda rows: len(rows) >= 1,
+                timeout_s=30,
+            )
+            qnames = {row["qname"].rstrip(".") for row in remote_dns_rows}
+            assert any("deb.debian.org" in qname for qname in qnames), qnames
+            for row in remote_dns_rows:
+                _assert_ledger_id(row["event_id"])
+                assert row["qtype"] in {1, 28, 33, 65}
+                assert row["rcode"] == 0
+                assert row["decision"] == "allowed"
+
+            remote_security_rows = conn.execute(
+                """
+                SELECT *
+                FROM security_rule_events
+                WHERE event_id IN (
+                    SELECT event_id FROM net_events WHERE domain LIKE '%debian.org%'
+                    UNION
+                    SELECT event_id FROM dns_events WHERE qname LIKE '%debian.org%'
+                )
+                ORDER BY id
+                """
+            ).fetchall()
+            assert remote_security_rows
+            remote_rule_ids = {row["rule_id"] for row in remote_security_rows}
+            assert "profiles.rules.default_http" in remote_rule_ids
+            assert "profiles.rules.default_dns" in remote_rule_ids
+            for row in remote_security_rows:
+                assert row["rule_action"] == "allow"
+                assert json.loads(row["event_json"])["decision"]["effective"] == "allow"
         finally:
             conn.close()
 

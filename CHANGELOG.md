@@ -40,6 +40,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added strict capsem-doctor Ironbank acceptance checks for functional package
   manager proof, hermetic doctor fixtures, and no retired escape markers in the
   installed diagnostic suite.
+- Added a remote HTTPS apt Ironbank package-manager gate that installs and
+  runs a Debian package through Capsem, then verifies process, file, HTTP, DNS,
+  and security ledger rows.
 - Added bootstrap and Justfile contract tests that prove release gates keep
   checking project skills, site structure, profile-owned asset materialization,
   ruff/ty/skill validation, and retired escape-path names.
