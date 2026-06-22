@@ -136,7 +136,16 @@ def test_profiles_package_claude_bypass_permissions_bootstrap() -> None:
     assert not failures, "invalid Claude permissions bootstrap contract:\n" + "\n".join(failures)
 
 
-def test_profiles_package_scriptable_local_model_agent_bootstrap() -> None:
+FORBIDDEN_SHIPPED_PROVIDER_FRAGMENTS = (
+    "127.0.0.1:11434",
+    "localhost:11434",
+    "CAPSEM_MOCK_SERVER",
+    '"provider": "ollama"',
+    '"baseUrl": "http://127.0.0.1:11434"',
+)
+
+
+def test_profiles_package_scriptable_agent_bootstrap_without_local_provider_leakage() -> None:
     failures: list[str] = []
     for profile_dir in sorted(PROFILES_DIR.iterdir()):
         if not profile_dir.is_dir():
@@ -163,14 +172,10 @@ def test_profiles_package_scriptable_local_model_agent_bootstrap() -> None:
         else:
             agy_config = json.loads(agy_config_path.read_text())
             ai = agy_config.get("ai", {})
-            if ai.get("provider") != "ollama":
-                failures.append(f"{profile_id}: AGY provider is not ollama")
-            if ai.get("baseUrl") != "http://127.0.0.1:11434":
-                failures.append(f"{profile_id}: AGY baseUrl is not local Ollama")
-            if ai.get("model") != "gemma4:latest":
-                failures.append(f"{profile_id}: AGY model is not gemma4:latest")
-            if ai.get("contextLength") != 8192:
-                failures.append(f"{profile_id}: AGY contextLength is not 8192")
+            if ai:
+                failures.append(
+                    f"{profile_id}: AGY config must not force a model provider"
+                )
             if "auth" in ai or "token" in json.dumps(ai).lower():
                 failures.append(f"{profile_id}: AGY local model config bakes auth material")
 
@@ -195,7 +200,26 @@ def test_profiles_package_scriptable_local_model_agent_bootstrap() -> None:
             if "auth" in agy_cli_settings or "token" in json.dumps(agy_cli_settings).lower():
                 failures.append(f"{profile_id}: AGY CLI settings bake auth material")
 
-    assert not failures, "invalid local model agent bootstrap contract:\n" + "\n".join(failures)
+    assert not failures, "invalid scriptable agent bootstrap contract:\n" + "\n".join(failures)
+
+
+def test_shipped_profile_roots_do_not_contain_test_or_local_provider_overrides() -> None:
+    failures: list[str] = []
+    for profile_dir in sorted(PROFILES_DIR.iterdir()):
+        if not profile_dir.is_dir():
+            continue
+        profile_id = profile_dir.name
+        root_dir = profile_dir / "root"
+        for path in sorted(root_dir.rglob("*")):
+            if not path.is_file():
+                continue
+            text = path.read_text(errors="ignore")
+            for fragment in FORBIDDEN_SHIPPED_PROVIDER_FRAGMENTS:
+                if fragment in text:
+                    rel = path.relative_to(root_dir).as_posix()
+                    failures.append(f"{profile_id}: {rel} contains {fragment!r}")
+
+    assert not failures, "profile root provider leakage:\n" + "\n".join(failures)
 
 
 def test_profile_root_manifests_pin_exactly_the_shipped_root_payload() -> None:

@@ -3,8 +3,8 @@
   "files": [
     {
       "path": "root/.antigravity/config.json",
-      "hash": "blake3:98e5a1ada9e176cc6e4576abb70891ed3057416e7129670d42e0ed90c98835de",
-      "size": 141
+      "hash": "blake3:a7c4d54776fcb179f048728766a52d75dc450cc2a5072b7e2c238aa9b2cff3b6",
+      "size": 3
     },
     {
       "path": "root/.antigravity/settings.json",
@@ -43,8 +43,8 @@
     },
     {
       "path": "root/.gemini/config/config.json",
-      "hash": "blake3:98e5a1ada9e176cc6e4576abb70891ed3057416e7129670d42e0ed90c98835de",
-      "size": 141
+      "hash": "blake3:a7c4d54776fcb179f048728766a52d75dc450cc2a5072b7e2c238aa9b2cff3b6",
+      "size": 3
     },
     {
       "path": "root/.gemini/projects.json",

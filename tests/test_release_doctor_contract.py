@@ -980,8 +980,15 @@ def test_capsem_init_keeps_etc_traversable_for_apt_sandbox() -> None:
     assert "TLS trust lives under `/etc/ssl/certs`" in init
 
 
-def test_profile_codex_config_does_not_force_local_ollama() -> None:
-    """Checked-in default profile seeds must not silently select Ollama for Codex."""
+def test_profile_roots_do_not_force_local_or_mock_model_providers() -> None:
+    """Checked-in profile seeds must not silently select local/test model providers."""
+    forbidden_fragments = (
+        "127.0.0.1:11434",
+        "localhost:11434",
+        "CAPSEM_MOCK_SERVER",
+        '"provider": "ollama"',
+        '"baseUrl": "http://127.0.0.1:11434"',
+    )
     for profile_dir in sorted((PROJECT_ROOT / "config" / "profiles").iterdir()):
         if not profile_dir.is_dir():
             continue
@@ -999,6 +1006,13 @@ def test_profile_codex_config_does_not_force_local_ollama() -> None:
         assert "ollama" not in providers, (
             f"{config_path} must not declare a hidden ollama provider"
         )
+        root_dir = profile_dir / "root"
+        for payload in sorted(root_dir.rglob("*")):
+            if not payload.is_file():
+                continue
+            text = payload.read_text(errors="ignore")
+            for fragment in forbidden_fragments:
+                assert fragment not in text, f"{payload} contains {fragment!r}"
 
 
 def test_guest_virtiofs_pip_probe_is_hermetic() -> None:

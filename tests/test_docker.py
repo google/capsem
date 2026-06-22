@@ -1458,6 +1458,25 @@ class TestPrepareBuildContext:
         assert (context_dir / "profile-root/root/.codex/config.toml").is_file()
         assert "Credentials are brokered by Capsem" in (context_dir / "tips.txt").read_text()
 
+        forbidden_fragments = (
+            "127.0.0.1:11434",
+            "localhost:11434",
+            "CAPSEM_MOCK_SERVER",
+            '"provider": "ollama"',
+            '"baseUrl": "http://127.0.0.1:11434"',
+        )
+        leaked = []
+        for payload in sorted((context_dir / "profile-root").rglob("*")):
+            if not payload.is_file():
+                continue
+            text = payload.read_text(errors="ignore")
+            for fragment in forbidden_fragments:
+                if fragment in text:
+                    leaked.append(
+                        f"{payload.relative_to(context_dir / 'profile-root')}: {fragment}"
+                    )
+        assert leaked == []
+
     def test_rootfs_dockerfile_content(self, real_config, tmp_path):
         context_dir = tmp_path / "ctx"
         context_dir.mkdir()

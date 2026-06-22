@@ -1040,6 +1040,7 @@ fn check_profile_root_manifest(path: &Path) -> Result<Vec<LocalAssetCheckReport>
     }
     let mut reports = Vec::new();
     for entry in manifest.files {
+        validate_profile_root_payload_content(&root_dir.join(&entry.path), &entry.path)?;
         reports.push(check_exact_local_asset(
             &root_dir.join(&entry.path),
             "profile-root",
@@ -1049,6 +1050,28 @@ fn check_profile_root_manifest(path: &Path) -> Result<Vec<LocalAssetCheckReport>
         )?);
     }
     Ok(reports)
+}
+
+fn validate_profile_root_payload_content(path: &Path, logical_name: &str) -> Result<()> {
+    let payload =
+        fs::read(path).with_context(|| format!("read profile root payload {}", path.display()))?;
+    let text = String::from_utf8_lossy(&payload);
+    for forbidden in [
+        "127.0.0.1:11434",
+        "localhost:11434",
+        "CAPSEM_MOCK_SERVER",
+        "\"provider\": \"ollama\"",
+        "\"baseUrl\": \"http://127.0.0.1:11434\"",
+    ] {
+        if text.contains(forbidden) {
+            return Err(anyhow!(
+                "profile root provider override {} contains forbidden test/local provider fragment {}",
+                logical_name,
+                forbidden
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn collect_profile_root_files(root_dir: &Path) -> Result<BTreeSet<String>> {
@@ -1767,6 +1790,10 @@ fn materialize_image_workspace(args: &ImageWorkspaceArgs) -> Result<ImageWorkspa
     let arches = selected_profile_arches(&profile, args.arch.as_deref())?;
 
     let workspace = &args.output;
+    if workspace.exists() {
+        fs::remove_dir_all(workspace)
+            .with_context(|| format!("remove stale image workspace {}", workspace.display()))?;
+    }
     let workspace_config_root = workspace.join("config");
     let workspace_guest_dir = workspace.join("guest");
     let workspace_profile_path = workspace_config_root
@@ -3197,6 +3224,70 @@ decision = "block"
     }
 
     #[test]
+    fn profile_check_rejects_local_model_provider_profile_root_payloads() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config_root = temp.path().join("config");
+        let profile_dir = config_root.join("profiles/code");
+        let profile_root = profile_dir.join("root");
+        fs::create_dir_all(profile_root.join("root/.gemini/config")).expect("profile root");
+        let payload = br#"{
+  "ai": {
+    "provider": "ollama",
+    "baseUrl": "http://127.0.0.1:11434",
+    "model": "gemma4:latest"
+  }
+}
+"#;
+        fs::write(
+            profile_root.join("root/.gemini/config/config.json"),
+            payload,
+        )
+        .expect("agy config");
+        let root_manifest = format!(
+            r#"{{
+  "format": "capsem.profile-root.v1",
+  "files": [
+    {{
+      "path": "root/.gemini/config/config.json",
+      "hash": "blake3:{}",
+      "size": {}
+    }}
+  ]
+}}
+"#,
+            blake3::hash(payload).to_hex(),
+            payload.len()
+        );
+        fs::write(profile_dir.join("root.manifest.json"), root_manifest).expect("root manifest");
+        let mut profile = ProfileConfigFile::builtin_primary();
+        profile.rule_files.enforcement = None;
+        profile.rule_files.sigma = None;
+        profile.assets.arch.retain(|arch, _| arch == "arm64");
+        profile.files = Default::default();
+        profile.files.root_manifest =
+            Some(capsem_core::net::policy_config::ProfileFileDescriptor {
+                path: "profiles/code/root.manifest.json".to_string(),
+                hash: None,
+                size: None,
+            });
+        let profile_path = profile_dir.join("profile.toml");
+        fs::write(&profile_path, toml::to_string(&profile).unwrap()).expect("profile");
+
+        let error = check_profile(&ProfileCheckArgs {
+            path: profile_path,
+            config_root: Some(config_root),
+            arch: Some("arm64".to_string()),
+            json: true,
+        })
+        .expect_err("local provider profile root payload rejected");
+
+        assert!(
+            format!("{error:#}").contains("profile root provider override"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
     fn image_verify_rejects_profile_manifest_pin_drift() {
         let temp = tempfile::tempdir().expect("tempdir");
         let output = temp.path().join("assets");
@@ -3568,6 +3659,46 @@ decision = "block"
         .expect("copied workspace profile validates and owns every pinned payload");
         assert_eq!(copied.validation.profile_id, "code");
         assert!(copied.profile_files.iter().all(|file| file.present));
+    }
+
+    #[test]
+    fn image_workspace_removes_stale_profile_root_payloads_before_materializing() {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let repo_root = manifest_dir
+            .parent()
+            .and_then(Path::parent)
+            .expect("repo root");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let output = temp.path().join("workspace");
+        let stale_profile_root = output
+            .join("guest/profile-root/root/.gemini/config/config.json");
+        fs::create_dir_all(stale_profile_root.parent().unwrap()).expect("stale parent");
+        fs::write(
+            &stale_profile_root,
+            r#"{"ai":{"provider":"ollama","baseUrl":"http://127.0.0.1:11434"}}"#,
+        )
+        .expect("stale provider override");
+        let stale_deleted_file = output.join("guest/profile-root/root/.stale-local-provider.json");
+        fs::write(&stale_deleted_file, r#"{"provider":"ollama"}"#).expect("stale file");
+
+        let args = ImageWorkspaceArgs {
+            profile: repo_root.join("config/profiles/code/profile.toml"),
+            config_root: repo_root.join("config"),
+            guest_dir: repo_root.join("guest"),
+            output: output.clone(),
+            arch: Some("arm64".to_string()),
+            json: true,
+        };
+
+        materialize_image_workspace(&args).expect("workspace");
+
+        let materialized_config =
+            fs::read_to_string(&stale_profile_root).expect("materialized AGY provider config");
+        assert_eq!(materialized_config.trim(), "{}");
+        assert!(
+            !stale_deleted_file.exists(),
+            "removed profile-root payloads must not survive into rebuilt image workspaces"
+        );
     }
 
     #[test]

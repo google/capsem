@@ -120,12 +120,9 @@ def _agent_bootstrap_probe_script() -> str:
         assert "/root" in agy_settings["trustedWorkspaces"]
 
         agy_config = json.loads(raw_config["agy_config"])
-        assert agy_config["ai"]["provider"] == "ollama"
-        assert agy_config["ai"]["baseUrl"] == "http://127.0.0.1:11434"
-        assert agy_config["ai"]["model"] == "gemma4:latest"
-        assert agy_config["ai"]["contextLength"] == 8192
+        assert "ai" not in agy_config, agy_config
         agy_product_config = json.loads(raw_config["agy_product_config"])
-        assert agy_product_config["ai"] == agy_config["ai"]
+        assert "ai" not in agy_product_config, agy_product_config
         agy_cli_settings = json.loads(raw_config["agy_cli_settings"])
         assert "toolPermission" not in agy_cli_settings
         assert "/root" in agy_cli_settings["trustedWorkspaces"]
