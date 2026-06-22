@@ -11,6 +11,10 @@ const source = readFileSync(
   new URL('../components/views/StatsView.svelte', import.meta.url),
   'utf8',
 );
+const detailSource = readFileSync(
+  new URL('../stats-detail.ts', import.meta.url),
+  'utf8',
+);
 
 describe('StatsView process contract', () => {
   it('distinguishes command executions from process observations', () => {
@@ -104,8 +108,8 @@ describe('StatsView credential broker contract', () => {
     expect(credentialsBlock).not.toContain('confidence');
     expect(credentialsBlock).not.toContain('algorithm');
 
-    expect(source).toContain("'substitution_ref'");
-    expect(source).toContain("'credential_ref'");
+    expect(detailSource).toContain("'substitution_ref'");
+    expect(detailSource).toContain("'credential_ref'");
   });
 
   it('keeps credential reference counts out of protocol tabs', () => {
@@ -146,16 +150,17 @@ describe('StatsView detail drawer contract', () => {
   });
 
   it('uses payload-aware syntax highlighting instead of forcing every payload through JSON', () => {
-    expect(source).toContain('detailPayloadLang(key, value)');
+    expect(detailSource).toContain('detailPayloadLang(key, value)');
     expect(source).toContain("ensureShikiLang('http')");
-    expect(source).toContain("if (key.endsWith('_headers')) return 'http';");
+    expect(detailSource).toContain("if (key.endsWith('_headers')) return 'http';");
     expect(source).not.toContain("lang: 'json',");
   });
 
   it('loads body payloads from event_body_blobs instead of preview columns', () => {
     expect(source).toContain('FROM event_body_blobs');
-    expect(source).toContain("'request_body'");
-    expect(source).toContain("'response_body'");
+    expect(detailSource).toContain("'request_body'");
+    expect(detailSource).toContain("'response_body'");
+    expect(source).toContain('`${direction}_body`');
     expect(source).toContain("void showDetail('model', row)");
     expect(source).toContain("void showDetail('tool', row)");
     expect(source).toContain("void showDetail('http', row)");
@@ -167,19 +172,19 @@ describe('StatsView detail drawer contract', () => {
   });
 
   it('keeps body ledger metadata out of the generic field grid', () => {
-    expect(source).toContain('DETAIL_BODY_METADATA_KEYS');
+    expect(detailSource).toContain('DETAIL_BODY_METADATA_KEYS');
     expect(source).toContain('payloadSectionMeta(section, detail.data)');
     expect(source).toContain('Original');
     expect(source).toContain('Stored');
     expect(source).toContain('Truncated');
     expect(source).toContain('Hash');
-    expect(source).toContain('&& !DETAIL_BODY_METADATA_KEYS.has(key)');
+    expect(detailSource).toContain('&& !DETAIL_BODY_METADATA_KEYS.has(key)');
   });
 
   it('renders compact structured snapshots instead of null-heavy security projections', () => {
     expect(source).toContain('compactJsonForDisplay(detail.data.rule_json)');
     expect(source).toContain('compactJsonForDisplay(detail.data.event_json)');
-    expect(source).toContain('stripEmptyDetailValues');
+    expect(detailSource).toContain('stripEmptyDetailValues');
     expect(source).not.toContain("formatAndHighlight(detail.data.event_json, 'json')");
     expect(source).not.toContain("formatAndHighlight(detail.data.rule_json, 'json')");
   });

@@ -4,6 +4,13 @@
   import type { InspectResponse } from '../../types/gateway';
   import { formatBytes, formatDuration, formatTime } from '../../format';
   import { getShikiHighlighter, resolveShikiTheme, ensureShikiLang, ensureShikiTheme, type ShikiHighlighter } from '../../shiki.ts';
+  import {
+    compactJsonForDisplay,
+    detailPayloadSections,
+    formatDetailValue,
+    normalizePayloadContent,
+    visibleDetailEntries,
+  } from '../../stats-detail';
   import { themeStore } from '../../stores/theme.svelte.ts';
   import { tabStore } from '../../stores/tabs.svelte.ts';
   import { TOOLS_UNIFIED_SQL } from '../../sql';
@@ -123,73 +130,10 @@
     return new Date(value).toISOString();
   }
 
-  function entries(obj: Record<string, unknown>): [string, unknown][] {
-    return Object.entries(obj);
-  }
-
-  const DETAIL_PAYLOAD_KEYS = new Set([
-    'request_headers',
-    'response_headers',
-    'request_body',
-    'response_body',
-    'context_json',
-  ]);
-
-  const DETAIL_STRUCTURED_KEYS = new Set([
-    'rule_json',
-    'event_json',
-  ]);
-
-  const DETAIL_BODY_METADATA_KEYS = new Set([
-    'request_body_content_type',
-    'request_body_original_bytes',
-    'request_body_stored_bytes',
-    'request_body_truncated',
-    'request_body_hash',
-    'response_body_content_type',
-    'response_body_original_bytes',
-    'response_body_stored_bytes',
-    'response_body_truncated',
-    'response_body_hash',
-  ]);
-
-  const DETAIL_HIDDEN_KEYS = new Set([
-    'substitution_ref',
-    'credential_ref',
-  ]);
-
   function isPresent(value: unknown): boolean {
     if (value == null) return false;
     if (typeof value === 'string') return value.trim().length > 0;
     return true;
-  }
-
-  function labelForDetailKey(key: string): string {
-    return key
-      .split('_')
-      .map(part => part.charAt(0).toUpperCase() + part.slice(1))
-      .join(' ');
-  }
-
-  function visibleDetailEntries(obj: Record<string, unknown>): [string, unknown][] {
-    return entries(obj).filter(([key, value]) => (
-      isPresent(value)
-      && !DETAIL_PAYLOAD_KEYS.has(key)
-      && !DETAIL_STRUCTURED_KEYS.has(key)
-      && !DETAIL_BODY_METADATA_KEYS.has(key)
-      && !DETAIL_HIDDEN_KEYS.has(key)
-    ));
-  }
-
-  function detailPayloadSections(obj: Record<string, unknown>): { key: string; label: string; value: unknown; lang: string }[] {
-    return entries(obj)
-      .filter(([key, value]) => DETAIL_PAYLOAD_KEYS.has(key) && isPresent(value))
-      .map(([key, value]) => ({
-        key,
-        label: labelForDetailKey(key),
-        value,
-        lang: detailPayloadLang(key, value),
-      }));
   }
 
   function payloadSectionMeta(
@@ -211,83 +155,6 @@
     return formatBytes(number(value));
   }
 
-  function detailPayloadLang(key: string, value: unknown): string {
-    if (key.endsWith('_headers')) return 'http';
-    if (key === 'context_json') return 'json';
-    const content = normalizePayloadContent(typeof value === 'string' ? value : JSON.stringify(value));
-    const trimmed = content.trim();
-    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-      try {
-        JSON.parse(trimmed);
-        return 'json';
-      } catch {
-        return 'text';
-      }
-    }
-    return 'text';
-  }
-
-  function formatDetailValue(value: unknown): string {
-    if (value == null) return 'NULL';
-    if (typeof value === 'object') return JSON.stringify(value);
-    return String(value);
-  }
-
-  function parseMaybeJson(value: unknown): unknown {
-    if (typeof value !== 'string') return value;
-    const normalized = normalizePayloadContent(value);
-    const trimmed = normalized.trim();
-    if (!trimmed) return value;
-    if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return normalized;
-    try {
-      return JSON.parse(trimmed);
-    } catch {
-      return normalized;
-    }
-  }
-
-  function stripEmptyDetailValues(value: unknown): unknown {
-    if (Array.isArray(value)) {
-      return value
-        .map(item => stripEmptyDetailValues(item))
-        .filter(isPresent);
-    }
-    if (value && typeof value === 'object') {
-      const compact: Record<string, unknown> = {};
-      for (const [key, child] of Object.entries(value)) {
-        const stripped = stripEmptyDetailValues(child);
-        if (isPresent(stripped)) compact[key] = stripped;
-      }
-      return compact;
-    }
-    return value;
-  }
-
-  function compactJsonForDisplay(value: unknown): unknown {
-    return stripEmptyDetailValues(parseMaybeJson(value));
-  }
-
-  function normalizePayloadContent(content: string): string {
-    const trimmed = content.trim();
-    if (!trimmed) return content;
-    if (
-      (trimmed.startsWith('{') || trimmed.startsWith('['))
-      && (trimmed.includes('\\"') || trimmed.includes('\\n') || trimmed.includes('\\t'))
-    ) {
-      const unescaped = trimmed
-        .replace(/\\n/g, '\n')
-        .replace(/\\r/g, '\r')
-        .replace(/\\t/g, '\t')
-        .replace(/\\"/g, '"');
-      try {
-        JSON.parse(unescaped);
-        return unescaped;
-      } catch {
-        return content;
-      }
-    }
-    return content;
-  }
 
   function formatAndHighlight(value: unknown, lang?: string): string {
     shikiTick;
