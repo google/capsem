@@ -185,6 +185,9 @@ struct ServiceState {
     /// by explicit MCP discovery routes. Hot MCP list routes must not read the
     /// tool cache JSON from disk.
     mcp_tool_cache: Mutex<Vec<ToolCacheEntry>>,
+    /// Route-owned security ledger projection. Routes must not open SQLite to
+    /// rebuild status/latest views; SQLite is durable persistence and recovery.
+    security_route_projection: Mutex<SecurityRouteProjection>,
     /// Guards Apple VZ lifecycle edges across all VMs managed by this
     /// service. Cold starts and teardown take a read guard; save/restore take
     /// a write guard. That keeps checkpoint edges exclusive without
@@ -6721,24 +6724,11 @@ async fn handle_security_latest(
     Path(id): Path<String>,
     Query(params): Query<SecurityLedgerQuery>,
 ) -> Result<Json<Vec<capsem_logger::SecurityRuleEvent>>, AppError> {
-    let session_dir = resolve_session_dir(&state, &id)?;
-    let db_path = session_dir.join("session.db");
     let limit = params.limit.unwrap_or(100).min(2000);
-
-    let reader = capsem_logger::DbReader::open(&db_path).map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to open DB: {e}"),
-        )
-    })?;
-    let items = reader.recent_security_rule_events(limit).map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("query failed: {e}"),
-        )
-    })?;
-
-    Ok(Json(items))
+    let _ = resolve_session_dir(&state, &id)?;
+    Ok(Json(security_projection_latest_for_vm(
+        &state, &id, limit, false,
+    )?))
 }
 
 /// GET /vms/{id}/security/status -- security rule ledger aggregates.
@@ -6746,23 +6736,8 @@ async fn handle_security_info(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Result<Json<capsem_logger::SecurityRuleStats>, AppError> {
-    let session_dir = resolve_session_dir(&state, &id)?;
-    let db_path = session_dir.join("session.db");
-
-    let reader = capsem_logger::DbReader::open(&db_path).map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to open DB: {e}"),
-        )
-    })?;
-    let stats = reader.security_rule_stats().map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("query failed: {e}"),
-        )
-    })?;
-
-    Ok(Json(stats))
+    let _ = resolve_session_dir(&state, &id)?;
+    Ok(Json(security_projection_stats_for_vm(&state, &id)?))
 }
 
 fn service_session_dirs(state: &ServiceState) -> Vec<(String, PathBuf)> {
@@ -6815,29 +6790,150 @@ fn is_detection_rule_event(event: &capsem_logger::SecurityRuleEvent) -> bool {
     event.detection_level != capsem_logger::SecurityDetectionLevel::None
 }
 
+#[derive(Clone, Debug, Default)]
+struct SecurityRouteProjection {
+    sessions: BTreeMap<String, SecuritySessionProjection>,
+}
+
+#[derive(Clone, Debug)]
+struct SecuritySessionProjection {
+    latest: Vec<capsem_logger::SecurityRuleEvent>,
+    stats: capsem_logger::SecurityRuleStats,
+}
+
+impl Default for SecuritySessionProjection {
+    fn default() -> Self {
+        Self {
+            latest: Vec::new(),
+            stats: empty_security_rule_stats(),
+        }
+    }
+}
+
+fn empty_security_rule_stats() -> capsem_logger::SecurityRuleStats {
+    capsem_logger::SecurityRuleStats {
+        total: 0,
+        by_action: Vec::new(),
+        by_event_type: Vec::new(),
+        by_level: Vec::new(),
+        by_rule: Vec::new(),
+    }
+}
+
+fn rebuild_security_route_projection(
+    state: &ServiceState,
+) -> Result<SecurityRouteProjection, AppError> {
+    let mut projection = SecurityRouteProjection::default();
+    for (vm_id, session_dir) in service_session_dirs(state) {
+        let db_path = session_dir.join("session.db");
+        if !db_path.exists() {
+            continue;
+        }
+        let reader = capsem_logger::DbReader::open(&db_path).map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to open security projection DB for {vm_id}: {error}"),
+            )
+        })?;
+        let latest = reader.recent_security_rule_events(2000).map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to read security projection latest for {vm_id}: {error}"),
+            )
+        })?;
+        let stats = reader.security_rule_stats().map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to read security projection stats for {vm_id}: {error}"),
+            )
+        })?;
+        projection
+            .sessions
+            .insert(vm_id, SecuritySessionProjection { latest, stats });
+    }
+    *state.security_route_projection.lock().map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("security projection lock poisoned: {error}"),
+        )
+    })? = projection.clone();
+    Ok(projection)
+}
+
+fn security_route_projection(state: &ServiceState) -> Result<SecurityRouteProjection, AppError> {
+    state
+        .security_route_projection
+        .lock()
+        .map(|projection| projection.clone())
+        .map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("security projection lock poisoned: {error}"),
+            )
+        })
+}
+
+fn security_projection_latest_for_vm(
+    state: &ServiceState,
+    vm_id: &str,
+    limit: usize,
+    detection_only: bool,
+) -> Result<Vec<capsem_logger::SecurityRuleEvent>, AppError> {
+    let projection = security_route_projection(state)?;
+    let Some(session) = projection.sessions.get(vm_id) else {
+        return Ok(Vec::new());
+    };
+    Ok(session
+        .latest
+        .iter()
+        .filter(|event| !detection_only || is_detection_rule_event(event))
+        .take(limit)
+        .cloned()
+        .collect())
+}
+
+fn security_projection_stats_for_vm(
+    state: &ServiceState,
+    vm_id: &str,
+) -> Result<capsem_logger::SecurityRuleStats, AppError> {
+    let projection = security_route_projection(state)?;
+    Ok(projection
+        .sessions
+        .get(vm_id)
+        .map(|session| session.stats.clone())
+        .unwrap_or_else(empty_security_rule_stats))
+}
+
+fn security_projection_detection_count(stats: &capsem_logger::SecurityRuleStats) -> u64 {
+    stats
+        .by_level
+        .iter()
+        .filter(|count| count.detection_level != "none")
+        .map(|count| count.count)
+        .sum()
+}
+
+async fn security_projection_refresh_loop(state: Arc<ServiceState>) {
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+    loop {
+        interval.tick().await;
+        if let Err(error) = rebuild_security_route_projection(&state) {
+            warn!(
+                error = %error.1,
+                "security route projection refresh failed"
+            );
+        }
+    }
+}
+
 async fn handle_service_security_latest(
     State(state): State<Arc<ServiceState>>,
     Query(params): Query<SecurityLedgerQuery>,
 ) -> Result<Json<Vec<serde_json::Value>>, AppError> {
     let limit = params.limit.unwrap_or(100).min(2000);
     let mut rows = Vec::new();
-    for (vm_id, session_dir) in service_session_dirs(&state) {
-        let db_path = session_dir.join("session.db");
-        if !db_path.exists() {
-            continue;
-        }
-        let reader = capsem_logger::DbReader::open(&db_path).map_err(|e| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to open DB for {vm_id}: {e}"),
-            )
-        })?;
-        for event in reader.recent_security_rule_events(limit).map_err(|e| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("query failed for {vm_id}: {e}"),
-            )
-        })? {
+    for (vm_id, session) in security_route_projection(&state)?.sessions {
+        for event in session.latest.into_iter().take(limit) {
             rows.push(json!({ "vm_id": vm_id, "event": event }));
         }
     }
@@ -6856,23 +6952,8 @@ async fn handle_service_detection_latest(
 ) -> Result<Json<Vec<serde_json::Value>>, AppError> {
     let limit = params.limit.unwrap_or(100).min(2000);
     let mut rows = Vec::new();
-    for (vm_id, session_dir) in service_session_dirs(&state) {
-        let db_path = session_dir.join("session.db");
-        if !db_path.exists() {
-            continue;
-        }
-        let reader = capsem_logger::DbReader::open(&db_path).map_err(|e| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to open DB for {vm_id}: {e}"),
-            )
-        })?;
-        for event in reader.recent_security_rule_events(limit).map_err(|e| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("query failed for {vm_id}: {e}"),
-            )
-        })? {
+    for (vm_id, session) in security_route_projection(&state)?.sessions {
+        for event in session.latest.into_iter().take(limit) {
             if is_detection_rule_event(&event) {
                 rows.push(json!({ "vm_id": vm_id, "event": event }));
             }
@@ -6892,23 +6973,8 @@ async fn handle_service_security_status(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let mut total = 0_u64;
     let mut sessions = Vec::new();
-    for (vm_id, session_dir) in service_session_dirs(&state) {
-        let db_path = session_dir.join("session.db");
-        if !db_path.exists() {
-            continue;
-        }
-        let reader = capsem_logger::DbReader::open(&db_path).map_err(|e| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to open DB for {vm_id}: {e}"),
-            )
-        })?;
-        let stats = reader.security_rule_stats().map_err(|e| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("query failed for {vm_id}: {e}"),
-            )
-        })?;
+    for (vm_id, session) in security_route_projection(&state)?.sessions {
+        let stats = session.stats;
         total += stats.total;
         sessions.push(json!({ "vm_id": vm_id, "stats": stats }));
     }
@@ -6920,27 +6986,8 @@ async fn handle_service_detection_status(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let mut total = 0_u64;
     let mut sessions = Vec::new();
-    for (vm_id, session_dir) in service_session_dirs(&state) {
-        let db_path = session_dir.join("session.db");
-        if !db_path.exists() {
-            continue;
-        }
-        let reader = capsem_logger::DbReader::open(&db_path).map_err(|e| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to open DB for {vm_id}: {e}"),
-            )
-        })?;
-        let events = reader.recent_security_rule_events(2000).map_err(|e| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("query failed for {vm_id}: {e}"),
-            )
-        })?;
-        let count = events
-            .iter()
-            .filter(|event| is_detection_rule_event(event))
-            .count() as u64;
+    for (vm_id, session) in security_route_projection(&state)?.sessions {
+        let count = security_projection_detection_count(&session.stats);
         total += count;
         sessions.push(json!({ "vm_id": vm_id, "total": count }));
     }
@@ -9904,12 +9951,22 @@ async fn main() -> Result<()> {
         profile_rule_cache: Mutex::new(profile_rule_cache),
         profile_plugin_policy_cache: Mutex::new(profile_plugin_policy_cache),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
+        security_route_projection: Mutex::new(SecurityRouteProjection::default()),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });
     rebuild_profile_status_cache(&state).map_err(|AppError(_, message)| {
         anyhow!("failed to build profile status cache: {message}")
     })?;
+    rebuild_security_route_projection(&state).map_err(|AppError(_, message)| {
+        anyhow!("failed to build security route projection: {message}")
+    })?;
+    {
+        let state_for_security_projection = Arc::clone(&state);
+        tokio::spawn(async move {
+            security_projection_refresh_loop(state_for_security_projection).await;
+        });
+    }
     state.reconcile_persistent_defunct_from_logs();
 
     {

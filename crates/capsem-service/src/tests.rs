@@ -171,6 +171,7 @@ fn make_test_state() -> Arc<ServiceState> {
         profile_rule_cache: test_profile_rule_cache(),
         profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
+        security_route_projection: Mutex::new(SecurityRouteProjection::default()),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
@@ -230,6 +231,7 @@ fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
         profile_rule_cache: test_profile_rule_cache(),
         profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
+        security_route_projection: Mutex::new(SecurityRouteProjection::default()),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
@@ -1219,7 +1221,7 @@ async fn profile_enforcement_list_uses_profile_files_and_corp_not_user_settings(
 }
 
 #[tokio::test]
-async fn security_latest_returns_full_session_db_rule_ledger_rows() {
+async fn security_routes_use_memory_projection_not_session_db() {
     let state = make_test_state();
     let dir = tempfile::tempdir().unwrap();
     let session_dir = dir.path().join("sessions").join("vm-ledger");
@@ -1232,9 +1234,10 @@ async fn security_latest_returns_full_session_db_rule_ledger_rows() {
     );
 
     let db_path = session_dir.join("session.db");
-    let writer = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
-    writer
-        .write(capsem_logger::WriteOp::SecurityRuleEvent(
+    let db_path_for_writer = db_path.clone();
+    tokio::task::spawn_blocking(move || {
+        let writer = capsem_logger::DbWriter::open(&db_path_for_writer, 16).unwrap();
+        writer.write_blocking(capsem_logger::WriteOp::SecurityRuleEvent(
             capsem_logger::SecurityRuleEvent::new(
                 1_789_000_123_456,
                 "abcdef123456",
@@ -1246,17 +1249,21 @@ async fn security_latest_returns_full_session_db_rule_ledger_rows() {
             .with_rule_action(capsem_logger::SecurityRuleAction::Allow)
             .with_detection_level(capsem_logger::SecurityDetectionLevel::Informational)
             .with_trace_id("trace_ollama"),
-        ))
-        .await;
-    drop(writer);
+        ));
+        writer.shutdown_blocking();
+    })
+    .await
+    .unwrap();
+    rebuild_security_route_projection(&state).expect("projection hydrates from session DB");
+    std::fs::rename(&db_path, session_dir.join("session.db.projection-proof")).unwrap();
 
     let Json(events) = handle_security_latest(
-        State(state),
+        State(Arc::clone(&state)),
         Path("vm-ledger".to_string()),
         Query(SecurityLedgerQuery { limit: Some(10) }),
     )
     .await
-    .expect("security latest reads session.db");
+    .expect("security latest uses memory projection");
 
     assert_eq!(events.len(), 1);
     let event = &events[0];
@@ -1271,6 +1278,13 @@ async fn security_latest_returns_full_session_db_rule_ledger_rows() {
     assert!(event.rule_json.contains("ollama_model_api_observed"));
     assert!(event.event_json.contains(r#""provider":"ollama""#));
     assert_eq!(event.trace_id.as_deref(), Some("trace_ollama"));
+
+    let Json(stats) = handle_security_info(State(state), Path("vm-ledger".to_string()))
+        .await
+        .expect("security status uses memory projection");
+    assert_eq!(stats.total, 1);
+    assert_eq!(stats.by_action[0].rule_action, "allow");
+    assert_eq!(stats.by_level[0].detection_level, "informational");
 }
 
 #[test]
@@ -4817,6 +4831,7 @@ fn make_state_in(run_dir: PathBuf) -> Arc<ServiceState> {
         profile_rule_cache: test_profile_rule_cache(),
         profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
+        security_route_projection: Mutex::new(SecurityRouteProjection::default()),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
@@ -5350,6 +5365,7 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         profile_rule_cache: test_profile_rule_cache(),
         profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
+        security_route_projection: Mutex::new(SecurityRouteProjection::default()),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });
@@ -6978,6 +6994,7 @@ fn make_test_state_with_tempdir_at(
         profile_rule_cache: test_profile_rule_cache(),
         profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
+        security_route_projection: Mutex::new(SecurityRouteProjection::default()),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });
