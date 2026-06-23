@@ -74,6 +74,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Fixed the dashboard session list so it refreshes explicitly, keeps long
+  session lists scrollable, groups broken sessions below healthy sessions, and
+  exposes a route-backed purge action instead of leaving stale broken rows mixed
+  into the main list.
 - Fixed TUI and tray session creation so default new-session actions route
   through profile-scoped service naming (`code-1`, `co-work-1`, etc.) instead
   of legacy `tmp-*` session creation, while preserving explicit custom names.

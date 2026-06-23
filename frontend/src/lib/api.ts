@@ -549,6 +549,11 @@ export async function deleteVm(id: string): Promise<void> {
   await _delete(`/vms/${encodeURIComponent(id)}/delete`);
 }
 
+export async function purge(): Promise<Record<string, unknown>> {
+  const resp = await _post('/purge', {});
+  return await resp.json();
+}
+
 export async function resumeVm(name: string): Promise<void> {
   await _post(`/vms/${encodeURIComponent(name)}/resume`);
 }

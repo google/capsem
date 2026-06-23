@@ -59,6 +59,22 @@ def test_profile_asset_checklist_renders_all_route_statuses() -> None:
     assert "{asset.kind ?? asset.name}" in source
 
 
+def test_dashboard_groups_broken_sessions_and_exposes_refresh_and_purge() -> None:
+    source = read(DASHBOARD)
+
+    assert "healthySessions" in source
+    assert "brokenSessions" in source
+    assert "isBrokenSession" in source
+    assert "Broken sessions" in source
+    assert "Purge broken" in source
+    assert "refreshDashboard" in source
+    assert "handlePurgeBroken" in source
+    assert "overflow-y-auto" in source
+    assert "max-h-[50vh]" in source
+    assert "vmStore.refresh()" in source
+    assert "api.purge()" in source
+
+
 def test_profile_and_asset_api_routes_are_profile_scoped() -> None:
     source = read(API)
 

@@ -82,6 +82,8 @@
   }
 
   let allVms = $derived(sortVms(vmStore.vms));
+  let healthySessions = $derived(allVms.filter(vm => !isBrokenSession(vm)));
+  let brokenSessions = $derived(allVms.filter(isBrokenSession));
 
   const statusColor: Record<string, string> = {
     Running: 'bg-primary text-primary-foreground',
@@ -94,6 +96,10 @@
 
   function statusBadge(status: string): string {
     return statusColor[status] ?? 'bg-muted text-muted-foreground-1';
+  }
+
+  function isBrokenSession(vm: VmSummary): boolean {
+    return vm.status === 'Defunct' || vm.status === 'Incompatible';
   }
 
   // --- Modal state ---
@@ -145,20 +151,6 @@
     const baseName = vm.name ?? vm.id;
     const name = prompt('Fork name:', `${baseName}-fork`);
     if (name?.trim()) await vmStore.fork(vm.id, { name: name.trim() });
-  }
-
-  function generatedVmName(profileId: string): string {
-    const safeProfile = profileId
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9-]+/g, '-')
-      .replace(/^-+|-+$/g, '') || 'session';
-    const existing = new Set(vmStore.vms.map(vm => (vm.name ?? vm.id).toLowerCase()));
-    for (let index = 1; index < 10000; index += 1) {
-      const candidate = `${safeProfile}-${index}`;
-      if (!existing.has(candidate)) return candidate;
-    }
-    return `${safeProfile}-10000`;
   }
 
   let creatingVm = $state(false);
@@ -242,6 +234,18 @@
     }
   }
 
+  async function refreshDashboard() {
+    statsLoading = true;
+    await Promise.all([
+      vmStore.refresh(),
+      loadProfileLaunchers(),
+      api.getStats()
+        .then(stats => { globalStats = stats.global; })
+        .catch(() => { globalStats = null; }),
+    ]);
+    statsLoading = false;
+  }
+
   function parseApiError(e: unknown): string {
     if (!(e instanceof Error)) return 'An unexpected error occurred';
     const msg = e.message;
@@ -271,7 +275,6 @@
     try {
       const { id, name } = await vmStore.provision({
         profile_id: profileId,
-        name: generatedVmName(profileId),
         ram_mb: 2048,
         cpus: 2,
         persistent: true,
@@ -309,11 +312,21 @@
   function openCustomizeProfile(profileId: string) {
     vmStore.openCreateModal(profileId);
   }
+
+  async function handlePurgeBroken() {
+    actionError = null;
+    try {
+      await api.purge();
+      await vmStore.refresh();
+    } catch (err) {
+      actionError = parseApiError(err);
+    }
+  }
 </script>
 
 {#snippet sessionTable(vms: VmSummary[])}
   <div class="flex flex-col">
-    <div class="overflow-x-auto [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-thumb]:rounded-none [&::-webkit-scrollbar-track]:bg-scrollbar-track [&::-webkit-scrollbar-thumb]:bg-scrollbar-thumb">
+    <div class="max-h-[50vh] overflow-y-auto overflow-x-auto [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-thumb]:rounded-none [&::-webkit-scrollbar-track]:bg-scrollbar-track [&::-webkit-scrollbar-thumb]:bg-scrollbar-thumb">
       <table class="min-w-full">
         <thead class="border-b border-table-line">
           <tr>
@@ -394,10 +407,19 @@
   </div>
 {/snippet}
 
-<div class="p-6 max-w-5xl mx-auto">
+<div class="h-full overflow-y-auto p-6 max-w-5xl mx-auto">
   <!-- Sessions header -->
   <div class="flex items-center justify-between mb-6">
     <h2 class="text-2xl font-bold text-foreground">Sessions</h2>
+    <button
+      type="button"
+      class="inline-flex items-center justify-center gap-x-2 rounded-lg bg-surface border border-line-2 px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted-hover focus:outline-hidden disabled:opacity-50 disabled:pointer-events-none"
+      onclick={refreshDashboard}
+      disabled={profilesLoading || statsLoading || vmStore.acting}
+      title="Refresh dashboard"
+    >
+      Refresh
+    </button>
   </div>
 
   <!-- Profile launchers -->
@@ -530,7 +552,27 @@
       <p class="text-muted-foreground-1 text-sm">No sessions</p>
     </div>
   {:else}
-    {@render sessionTable(allVms)}
+    {#if healthySessions.length > 0}
+      {@render sessionTable(healthySessions)}
+    {/if}
+    {#if brokenSessions.length > 0}
+      <div class="mt-6 flex items-center justify-between gap-x-3">
+        <h3 class="text-xs font-semibold text-muted-foreground-1 uppercase tracking-wider">Broken sessions</h3>
+        <button
+          type="button"
+          class="inline-flex items-center justify-center gap-x-2 rounded-lg bg-surface border border-line-2 px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted-hover focus:outline-hidden disabled:opacity-50 disabled:pointer-events-none"
+          onclick={handlePurgeBroken}
+          disabled={vmStore.acting}
+          title="Purge temporary and broken sessions"
+        >
+          <Trash size={14} />
+          Purge broken
+        </button>
+      </div>
+      <div class="mt-3">
+        {@render sessionTable(brokenSessions)}
+      </div>
+    {/if}
   {/if}
 
   <!-- Statistics -->
