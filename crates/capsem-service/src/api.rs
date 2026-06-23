@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 
-/// Response for GET /stats -- full main.db dump in one call.
-#[derive(Serialize, Debug)]
+/// Response for GET /stats -- global session stats from the service projection.
+#[derive(Serialize, Debug, Clone)]
 pub struct StatsResponse {
     pub global: GlobalStats,
     pub sessions: Vec<SessionRecord>,

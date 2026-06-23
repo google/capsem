@@ -171,6 +171,7 @@ fn make_test_state() -> Arc<ServiceState> {
         profile_rule_cache: test_profile_rule_cache(),
         profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
+        stats_route_projection: Mutex::new(empty_stats_route_projection()),
         security_route_projection: Mutex::new(SecurityRouteProjection::default()),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
@@ -231,6 +232,7 @@ fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
         profile_rule_cache: test_profile_rule_cache(),
         profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
+        stats_route_projection: Mutex::new(empty_stats_route_projection()),
         security_route_projection: Mutex::new(SecurityRouteProjection::default()),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
@@ -4831,6 +4833,7 @@ fn make_state_in(run_dir: PathBuf) -> Arc<ServiceState> {
         profile_rule_cache: test_profile_rule_cache(),
         profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
+        stats_route_projection: Mutex::new(empty_stats_route_projection()),
         security_route_projection: Mutex::new(SecurityRouteProjection::default()),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
@@ -5365,6 +5368,7 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         profile_rule_cache: test_profile_rule_cache(),
         profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
+        stats_route_projection: Mutex::new(empty_stats_route_projection()),
         security_route_projection: Mutex::new(SecurityRouteProjection::default()),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
@@ -6780,14 +6784,23 @@ async fn handle_stats_returns_global_data() {
     drop(idx);
 
     let (state, _dir) = make_test_state_with_tempdir_at(dir);
+    rebuild_stats_route_projection(&state).expect("stats projection hydrates during service boot");
+    std::fs::rename(
+        sessions_dir.join("main.db"),
+        sessions_dir.join("main.db.projection-proof"),
+    )
+    .unwrap();
     let result = handle_stats(State(state)).await;
     assert!(result.is_ok());
-    let resp = result.unwrap().0;
-    assert_eq!(resp.global.total_sessions, 1);
-    assert_eq!(resp.global.total_input_tokens, 10000);
-    assert_eq!(resp.global.total_estimated_cost, 0.42);
-    assert_eq!(resp.sessions.len(), 1);
-    assert_eq!(resp.sessions[0].id, "20260412-120000-abcd");
+    let response = result.unwrap().into_response();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let resp: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(resp["global"]["total_sessions"], 1);
+    assert_eq!(resp["global"]["total_input_tokens"], 10000);
+    assert_eq!(resp["global"]["total_estimated_cost"], 0.42);
+    assert_eq!(resp["sessions"].as_array().unwrap().len(), 1);
+    assert_eq!(resp["sessions"][0]["id"], "20260412-120000-abcd");
 }
 
 // -----------------------------------------------------------------------
@@ -6998,6 +7011,7 @@ fn make_test_state_with_tempdir_at(
         profile_rule_cache: test_profile_rule_cache(),
         profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
+        stats_route_projection: Mutex::new(empty_stats_route_projection()),
         security_route_projection: Mutex::new(SecurityRouteProjection::default()),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),

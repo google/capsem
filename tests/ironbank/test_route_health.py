@@ -313,6 +313,8 @@ def _assert_timing_budget(timing: RouteTiming, *, p95_ms: float, max_ms: float, 
 def _hot_route_budget(path: str, *, gateway: bool = False) -> tuple[float, float, float]:
     if path.endswith("/assets/status"):
         return (3.0 if not gateway else 4.0, 8.0 if not gateway else 10.0, 0.10)
+    if path == "/stats":
+        return (2.0 if not gateway else 3.0, 5.0 if not gateway else 8.0, 0.08)
     return (
         12.0 if not gateway else 15.0,
         30.0 if not gateway else 35.0,
@@ -324,6 +326,7 @@ def _hot_route_contracts(profile: str) -> list[RouteContract]:
     return [
         RouteContract("GET", "/status", None, {"ready", "service"}, dict),
         RouteContract("GET", "/vms/list", None, {"sandboxes"}, dict),
+        RouteContract("GET", "/stats", None, {"global", "sessions"}, dict),
         RouteContract("GET", "/profiles/list", None, {"profiles"}, dict),
         RouteContract(
             "GET",
@@ -603,6 +606,7 @@ def test_hot_control_routes_have_latency_and_cpu_budgets() -> None:
                 {"profile_count", "profiles", "ready_count"},
                 dict,
             ),
+            RouteContract("GET", "/stats", None, {"global", "sessions"}, dict),
             *_hot_route_contracts(CODE_PROFILE_ID)[4:],
         ]
         for contract in hot_gateway_routes:

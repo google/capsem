@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use axum::{
+    body::Bytes,
     extract::{Path, Query, State},
     response::IntoResponse,
     routing::{delete, get, patch, post, put},
@@ -185,6 +186,10 @@ struct ServiceState {
     /// by explicit MCP discovery routes. Hot MCP list routes must not read the
     /// tool cache JSON from disk.
     mcp_tool_cache: Mutex<Vec<ToolCacheEntry>>,
+    /// Route-owned global stats projection loaded at service startup. `/stats`
+    /// must not open main.db or reserialize the same body on request; live
+    /// updates need the writer-to-projection rail tracked in S05-014.
+    stats_route_projection: Mutex<StatsRouteProjection>,
     /// Route-owned security ledger projection. Routes must not open SQLite to
     /// rebuild status/latest views; SQLite is durable persistence and recovery.
     security_route_projection: Mutex<SecurityRouteProjection>,
@@ -3346,50 +3351,16 @@ async fn handle_vm_fork_status(
     vm_operation_status(state, id, "fork").await
 }
 
-/// GET /stats -- return full main.db aggregation in one response.
+/// GET /stats -- return the boot-loaded global stats projection.
 async fn handle_stats(
     State(state): State<Arc<ServiceState>>,
-) -> Result<Json<StatsResponse>, AppError> {
-    let db_path = state.main_db_path();
-    let index = capsem_core::session::SessionIndex::open(&db_path).map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to open main.db: {e}"),
-        )
-    })?;
-
-    let global = index.global_stats().map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("global_stats: {e}"),
-        )
-    })?;
-    let sessions = index
-        .recent(100)
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("recent: {e}")))?;
-    let top_providers = index.top_providers(20).map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("top_providers: {e}"),
-        )
-    })?;
-    let top_tools = index
-        .top_tools(20)
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("top_tools: {e}")))?;
-    let top_mcp_tools = index.top_mcp_tools(20).map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("top_mcp_tools: {e}"),
-        )
-    })?;
-
-    Ok(Json(StatsResponse {
-        global,
-        sessions,
-        top_providers,
-        top_tools,
-        top_mcp_tools,
-    }))
+) -> Result<impl IntoResponse, AppError> {
+    let projection = stats_route_projection(&state)?;
+    Ok((
+        StatusCode::OK,
+        [(axum::http::header::CONTENT_TYPE, "application/json")],
+        projection.body.clone(),
+    ))
 }
 
 async fn handle_logs(
@@ -6847,6 +6818,117 @@ fn security_route_projection(state: &ServiceState) -> Result<SecurityRouteProjec
         })
 }
 
+fn empty_stats_response() -> StatsResponse {
+    StatsResponse {
+        global: capsem_core::session::GlobalStats {
+            total_sessions: 0,
+            total_input_tokens: 0,
+            total_output_tokens: 0,
+            total_estimated_cost: 0.0,
+            total_tool_calls: 0,
+            total_mcp_calls: 0,
+            total_file_events: 0,
+            total_requests: 0,
+            total_allowed: 0,
+            total_denied: 0,
+        },
+        sessions: Vec::new(),
+        top_providers: Vec::new(),
+        top_tools: Vec::new(),
+        top_mcp_tools: Vec::new(),
+    }
+}
+
+#[derive(Clone, Debug)]
+struct StatsRouteProjection {
+    body: Bytes,
+}
+
+fn stats_route_projection_from_response(
+    response: StatsResponse,
+) -> Result<StatsRouteProjection, AppError> {
+    let json = serde_json::to_string(&response).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to serialize stats route projection: {error}"),
+        )
+    })?;
+    Ok(StatsRouteProjection {
+        body: Bytes::from(json),
+    })
+}
+
+fn empty_stats_route_projection() -> StatsRouteProjection {
+    stats_route_projection_from_response(empty_stats_response())
+        .expect("empty stats projection must serialize")
+}
+
+fn read_stats_response_from_main_db(db_path: &StdPath) -> Result<StatsResponse, AppError> {
+    let index = capsem_core::session::SessionIndex::open(db_path).map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to open main.db for stats projection: {e}"),
+        )
+    })?;
+    Ok(StatsResponse {
+        global: index.global_stats().map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("global_stats projection: {e}"),
+            )
+        })?,
+        sessions: index.recent(100).map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("recent stats projection: {e}"),
+            )
+        })?,
+        top_providers: index.top_providers(20).map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("top_providers stats projection: {e}"),
+            )
+        })?,
+        top_tools: index.top_tools(20).map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("top_tools stats projection: {e}"),
+            )
+        })?,
+        top_mcp_tools: index.top_mcp_tools(20).map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("top_mcp_tools stats projection: {e}"),
+            )
+        })?,
+    })
+}
+
+fn rebuild_stats_route_projection(state: &ServiceState) -> Result<StatsRouteProjection, AppError> {
+    let response = read_stats_response_from_main_db(&state.main_db_path())?;
+    let projection = stats_route_projection_from_response(response)?;
+    *state.stats_route_projection.lock().map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("stats projection lock poisoned: {error}"),
+        )
+    })? = projection.clone();
+    Ok(projection)
+}
+
+fn stats_route_projection(state: &ServiceState) -> Result<StatsRouteProjection, AppError> {
+    state
+        .stats_route_projection
+        .lock()
+        .map(|projection| projection.clone())
+        .map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("stats projection lock poisoned: {error}"),
+            )
+        })
+}
+
 fn security_projection_latest_for_vm(
     state: &ServiceState,
     vm_id: &str,
@@ -6885,19 +6967,6 @@ fn security_projection_detection_count(stats: &capsem_logger::SecurityRuleStats)
         .filter(|count| count.detection_level != "none")
         .map(|count| count.count)
         .sum()
-}
-
-async fn security_projection_refresh_loop(state: Arc<ServiceState>) {
-    let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
-    loop {
-        interval.tick().await;
-        if let Err(error) = rebuild_security_route_projection(&state) {
-            warn!(
-                error = %error.1,
-                "security route projection refresh failed"
-            );
-        }
-    }
 }
 
 async fn handle_service_security_latest(
@@ -9925,6 +9994,7 @@ async fn main() -> Result<()> {
         profile_rule_cache: Mutex::new(profile_rule_cache),
         profile_plugin_policy_cache: Mutex::new(profile_plugin_policy_cache),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
+        stats_route_projection: Mutex::new(empty_stats_route_projection()),
         security_route_projection: Mutex::new(SecurityRouteProjection::default()),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
@@ -9932,15 +10002,12 @@ async fn main() -> Result<()> {
     rebuild_profile_status_cache(&state).map_err(|AppError(_, message)| {
         anyhow!("failed to build profile status cache: {message}")
     })?;
+    rebuild_stats_route_projection(&state).map_err(|AppError(_, message)| {
+        anyhow!("failed to build stats route projection: {message}")
+    })?;
     rebuild_security_route_projection(&state).map_err(|AppError(_, message)| {
         anyhow!("failed to build security route projection: {message}")
     })?;
-    {
-        let state_for_security_projection = Arc::clone(&state);
-        tokio::spawn(async move {
-            security_projection_refresh_loop(state_for_security_projection).await;
-        });
-    }
     state.reconcile_persistent_defunct_from_logs();
 
     {
