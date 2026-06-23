@@ -330,14 +330,17 @@ async fn invoke_action(
     match action {
         ControlAction::StartService => start_service().await,
         ControlAction::CreateSession { name, profile_id } => {
+            let mut body = serde_json::json!({
+                "persistent": true,
+                "profile_id": profile_id,
+            });
+            if let Some(name) = name {
+                body["name"] = serde_json::Value::String(name.clone());
+            }
             let response = client
                 .post(join_url(base_url, &["vms", "create"])?)
                 .bearer_auth(token)
-                .json(&serde_json::json!({
-                    "name": name,
-                    "persistent": true,
-                    "profile_id": profile_id,
-                }))
+                .json(&body)
                 .send()
                 .await
                 .context("create capsem session")?;

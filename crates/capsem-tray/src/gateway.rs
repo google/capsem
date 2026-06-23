@@ -184,10 +184,7 @@ impl GatewayClient {
             .client
             .post(format!("{}/vms/create", self.base_url()))
             .header(AUTHORIZATION, self.auth_header())
-            // Empty body == ephemeral VM with user's configured defaults
-            // (vm.resources.ram_gb, vm.resources.cpu_count). The service
-            // resolves missing fields from merged VM settings.
-            .json(&serde_json::json!({ "persistent": false }))
+            .json(&serde_json::json!({ "profile_id": "code" }))
             .send()
             .await
             .context("gateway request failed")?;
@@ -453,12 +450,16 @@ mod tests {
 
     #[tokio::test]
     async fn provision_temp_returns_id() {
-        let (base, _, handle) =
+        let (base, captures, handle) =
             spawn_http_probe("POST", "/vms/create", 200, r#"{"id":"vm-new"}"#).await;
         let client = GatewayClient::new_with_base_url(base, "tok".into());
         let id = client.provision_temp().await.unwrap();
         handle.await.unwrap();
         assert_eq!(id, "vm-new");
+        let request = captures.lock().unwrap().join("\n");
+        assert!(request.contains(r#""profile_id":"code""#), "{request}");
+        assert!(!request.contains(r#""name":"#), "{request}");
+        assert!(!request.contains(r#""persistent":false"#), "{request}");
     }
 
     #[tokio::test]

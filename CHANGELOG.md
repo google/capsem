@@ -74,6 +74,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Fixed TUI and tray session creation so default new-session actions route
+  through profile-scoped service naming (`code-1`, `co-work-1`, etc.) instead
+  of legacy `tmp-*` session creation, while preserving explicit custom names.
 - Fixed the tray menu so a stopped service status cannot expose dashboard,
   session list, new-session, or connect actions that would route into dead
   service state.

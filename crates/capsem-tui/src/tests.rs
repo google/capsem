@@ -443,8 +443,25 @@ fn create_overlay_selects_profile_and_edits_prefilled_name() {
     assert_eq!(
         app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
         AppAction::Invoke(ControlAction::CreateSession {
-            name: "linux-builder-1-proof".to_string(),
+            name: Some("linux-builder-1-proof".to_string()),
             profile_id: "linux-builder".to_string()
+        })
+    );
+}
+
+#[test]
+fn create_overlay_default_name_lets_service_assign_profile_scoped_id() {
+    let mut app = App::new(fixture_state());
+
+    assert_eq!(
+        app.handle_key(key(KeyCode::Char('n'), KeyModifiers::ALT)),
+        AppAction::Consumed
+    );
+    assert_eq!(
+        app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
+        AppAction::Invoke(ControlAction::CreateSession {
+            name: None,
+            profile_id: "corp-default".to_string()
         })
     );
 }
@@ -1161,7 +1178,7 @@ async fn gateway_provider_invokes_named_profile_create_over_authenticated_gatewa
 
     let outcome = GatewayProvider::new(format!("http://{addr}"))
         .invoke_async(&ControlAction::CreateSession {
-            name: "code-1-proof".to_string(),
+            name: Some("code-1-proof".to_string()),
             profile_id: "co-work".to_string(),
         })
         .await
@@ -1169,6 +1186,44 @@ async fn gateway_provider_invokes_named_profile_create_over_authenticated_gatewa
 
     assert_eq!(outcome.message, "created code-1-proof");
     assert_eq!(outcome.focus_session.as_deref(), Some("code-1-proof"));
+    server.await.expect("server task");
+}
+
+#[tokio::test]
+async fn gateway_provider_omits_generated_create_name_for_service_owned_counter() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind test gateway");
+    let addr = listener.local_addr().expect("local addr");
+    let server = tokio::spawn(async move {
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().await.expect("accept request");
+            let request = read_http_request(&mut stream).await;
+            if request.contains("GET /token ") {
+                write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
+            } else {
+                assert!(
+                    request.contains("POST /vms/create "),
+                    "unexpected request: {request:?}"
+                );
+                assert!(!request.contains(r#""name":"#), "{request}");
+                assert!(request.contains(r#""persistent":true"#));
+                assert!(request.contains(r#""profile_id":"code""#));
+                write_json_response(&mut stream, r#"{"id":"code-7"}"#).await;
+            }
+        }
+    });
+
+    let outcome = GatewayProvider::new(format!("http://{addr}"))
+        .invoke_async(&ControlAction::CreateSession {
+            name: None,
+            profile_id: "code".to_string(),
+        })
+        .await
+        .expect("invoke create");
+
+    assert_eq!(outcome.message, "created code-7");
+    assert_eq!(outcome.focus_session.as_deref(), Some("code-7"));
     server.await.expect("server task");
 }
 

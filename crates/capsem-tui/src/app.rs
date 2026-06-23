@@ -25,7 +25,10 @@ pub enum AppOverlay {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ControlAction {
     StartService,
-    CreateSession { name: String, profile_id: String },
+    CreateSession {
+        name: Option<String>,
+        profile_id: String,
+    },
     Fork { id: String, name: String },
     Resume { name: String },
     Checkpoint { id: String },
@@ -67,7 +70,10 @@ impl ControlAction {
     pub fn target(&self) -> &str {
         match self {
             Self::StartService => "Capsem service",
-            Self::CreateSession { name, .. } => name,
+            Self::CreateSession {
+                name: Some(name), ..
+            } => name,
+            Self::CreateSession { profile_id, .. } => profile_id,
             Self::Fork { name, .. } => name,
             Self::Resume { name }
             | Self::Checkpoint { id: name }
@@ -514,6 +520,8 @@ impl App {
                 else {
                     return AppAction::Consumed;
                 };
+                let generated = next_profile_session_name(&self.state, draft.selected_profile);
+                let name = (name != generated).then_some(name);
                 self.create_draft = None;
                 self.overlay = AppOverlay::None;
                 AppAction::Invoke(ControlAction::CreateSession { name, profile_id })
