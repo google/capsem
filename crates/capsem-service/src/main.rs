@@ -193,6 +193,9 @@ struct ServiceState {
     /// Route-owned security ledger projection. Routes must not open SQLite to
     /// rebuild status/latest views; SQLite is durable persistence and recovery.
     security_route_projection: Mutex<SecurityRouteProjection>,
+    /// Route-owned command/process history projection. `/history*` routes must
+    /// not open `session.db`; SQLite is durable persistence and recovery.
+    history_route_projection: Mutex<HistoryRouteProjection>,
     /// Guards Apple VZ lifecycle edges across all VMs managed by this
     /// service. Cold starts and teardown take a read guard; save/restore take
     /// a write guard. That keeps checkpoint edges exclusive without
@@ -3892,11 +3895,13 @@ async fn handle_exec(
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     let id_val = state.next_job_id();
+    let command = payload.command;
+    let started_at = std::time::Instant::now();
     let res = send_ipc_command(
         &uds_path,
         ServiceToProcess::Exec {
             id: id_val,
-            command: payload.command,
+            command: command.clone(),
         },
         payload.timeout_secs,
     )
@@ -3909,13 +3914,30 @@ async fn handle_exec(
             stderr,
             exit_code,
             ..
-        } => Ok(Json(ExecResponse {
-            stdout: String::from_utf8(stdout)
-                .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
-            stderr: String::from_utf8(stderr)
-                .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
-            exit_code,
-        })),
+        } => {
+            let duration_ms = started_at
+                .elapsed()
+                .as_millis()
+                .try_into()
+                .unwrap_or(u64::MAX);
+            push_exec_history_projection(
+                &state,
+                &id,
+                id_val,
+                command,
+                exit_code,
+                duration_ms,
+                &stdout,
+                &stderr,
+            )?;
+            Ok(Json(ExecResponse {
+                stdout: String::from_utf8(stdout)
+                    .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
+                stderr: String::from_utf8(stderr)
+                    .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
+                exit_code,
+            }))
+        }
         _ => Err(AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
             "unexpected IPC response for exec".to_string(),
@@ -6825,6 +6847,202 @@ fn security_route_projection(state: &ServiceState) -> Result<SecurityRouteProjec
         })
 }
 
+#[derive(Clone, Debug, Default)]
+struct HistoryRouteProjection {
+    sessions: BTreeMap<String, HistorySessionProjection>,
+}
+
+#[derive(Clone, Debug)]
+struct HistorySessionProjection {
+    entries: Vec<capsem_logger::HistoryEntry>,
+    processes: Vec<capsem_logger::ProcessEntry>,
+    counts: capsem_logger::HistoryCounts,
+}
+
+impl Default for HistorySessionProjection {
+    fn default() -> Self {
+        Self {
+            entries: Vec::new(),
+            processes: Vec::new(),
+            counts: capsem_logger::HistoryCounts {
+                exec_count: 0,
+                audit_count: 0,
+            },
+        }
+    }
+}
+
+fn rebuild_history_route_projection(
+    state: &ServiceState,
+) -> Result<HistoryRouteProjection, AppError> {
+    let mut projection = HistoryRouteProjection::default();
+    for (vm_id, session_dir) in service_session_dirs(state) {
+        let db_path = session_dir.join("session.db");
+        if !db_path.exists() {
+            continue;
+        }
+        let reader = capsem_logger::DbReader::open(&db_path).map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to open history projection DB for {vm_id}: {error}"),
+            )
+        })?;
+        let (entries, _) = reader
+            .history(usize::MAX, 0, None, "all")
+            .map_err(|error| {
+                AppError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("failed to read history projection entries for {vm_id}: {error}"),
+                )
+            })?;
+        let processes = reader
+            .history_processes(i64::MAX as usize)
+            .map_err(|error| {
+                AppError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("failed to read history projection processes for {vm_id}: {error}"),
+                )
+            })?;
+        let counts = reader.history_counts().map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to read history projection counts for {vm_id}: {error}"),
+            )
+        })?;
+        projection.sessions.insert(
+            vm_id,
+            HistorySessionProjection {
+                entries,
+                processes,
+                counts,
+            },
+        );
+    }
+    *state.history_route_projection.lock().map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("history projection lock poisoned: {error}"),
+        )
+    })? = projection.clone();
+    Ok(projection)
+}
+
+fn history_route_projection(state: &ServiceState) -> Result<HistoryRouteProjection, AppError> {
+    state
+        .history_route_projection
+        .lock()
+        .map(|projection| projection.clone())
+        .map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("history projection lock poisoned: {error}"),
+            )
+        })
+}
+
+fn history_projection_for_vm(
+    state: &ServiceState,
+    id: &str,
+) -> Result<HistorySessionProjection, AppError> {
+    let _ = resolve_session_dir(state, id)?;
+    Ok(history_route_projection(state)?
+        .sessions
+        .get(id)
+        .cloned()
+        .unwrap_or_default())
+}
+
+fn history_entry_matches_search(entry: &capsem_logger::HistoryEntry, query: &str) -> bool {
+    entry.command.contains(query)
+        || entry
+            .stdout_preview
+            .as_deref()
+            .is_some_and(|value| value.contains(query))
+        || entry
+            .stderr_preview
+            .as_deref()
+            .is_some_and(|value| value.contains(query))
+        || entry.details.to_string().contains(query)
+}
+
+fn query_history_projection(
+    session: &HistorySessionProjection,
+    params: &api::HistoryQuery,
+) -> api::HistoryResponse {
+    let mut entries = session
+        .entries
+        .iter()
+        .filter(|entry| params.layer == "all" || entry.layer == params.layer)
+        .filter(|entry| {
+            params
+                .search
+                .as_deref()
+                .map_or(true, |query| history_entry_matches_search(entry, query))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    entries.sort_by(|left, right| right.timestamp.cmp(&left.timestamp));
+    let total = entries.len() as u64;
+    let commands = entries
+        .into_iter()
+        .skip(params.offset)
+        .take(params.limit)
+        .collect::<Vec<_>>();
+    let has_more = (params.offset + commands.len()) < total as usize;
+    api::HistoryResponse {
+        commands,
+        total,
+        has_more,
+    }
+}
+
+fn preview_utf8(bytes: &[u8]) -> Option<String> {
+    if bytes.is_empty() {
+        None
+    } else {
+        Some(String::from_utf8_lossy(bytes).to_string())
+    }
+}
+
+fn push_exec_history_projection(
+    state: &ServiceState,
+    vm_id: &str,
+    exec_id: u64,
+    command: String,
+    exit_code: i32,
+    duration_ms: u64,
+    stdout: &[u8],
+    stderr: &[u8],
+) -> Result<(), AppError> {
+    let timestamp = capsem_core::session::now_iso();
+    let entry = capsem_logger::HistoryEntry {
+        timestamp,
+        layer: "exec".to_string(),
+        command,
+        exit_code: Some(exit_code),
+        duration_ms: Some(duration_ms),
+        stdout_preview: preview_utf8(stdout),
+        stderr_preview: preview_utf8(stderr),
+        details: json!({
+            "exec_id": exec_id,
+            "source": "api",
+            "trace_id": null,
+            "process_name": null,
+            "mcp_call_id": null,
+        }),
+    };
+    let mut projection = state.history_route_projection.lock().map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("history projection lock poisoned: {error}"),
+        )
+    })?;
+    let session = projection.sessions.entry(vm_id.to_string()).or_default();
+    session.entries.insert(0, entry);
+    session.counts.exec_count = session.counts.exec_count.saturating_add(1);
+    Ok(())
+}
+
 fn empty_stats_response() -> StatsResponse {
     StatsResponse {
         global: capsem_core::session::GlobalStats {
@@ -8471,36 +8689,8 @@ async fn handle_history(
     Path(id): Path<String>,
     Query(params): Query<api::HistoryQuery>,
 ) -> Result<Json<api::HistoryResponse>, AppError> {
-    let session_dir = resolve_session_dir(&state, &id)?;
-    let db_path = session_dir.join("session.db");
-
-    let reader = capsem_logger::DbReader::open(&db_path).map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to open DB: {e}"),
-        )
-    })?;
-
-    let (commands, total) = reader
-        .history(
-            params.limit,
-            params.offset,
-            params.search.as_deref(),
-            &params.layer,
-        )
-        .map_err(|e| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("query failed: {e}"),
-            )
-        })?;
-
-    let has_more = (params.offset + commands.len()) < total as usize;
-    Ok(Json(api::HistoryResponse {
-        commands,
-        total,
-        has_more,
-    }))
+    let session = history_projection_for_vm(&state, &id)?;
+    Ok(Json(query_history_projection(&session, &params)))
 }
 
 /// GET /vms/{id}/history/processes -- process-centric view of audit events.
@@ -8508,23 +8698,8 @@ async fn handle_history_processes(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Result<Json<api::HistoryProcessesResponse>, AppError> {
-    let session_dir = resolve_session_dir(&state, &id)?;
-    let db_path = session_dir.join("session.db");
-
-    let reader = capsem_logger::DbReader::open(&db_path).map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to open DB: {e}"),
-        )
-    })?;
-
-    let processes = reader.history_processes(100).map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("query failed: {e}"),
-        )
-    })?;
-
+    let session = history_projection_for_vm(&state, &id)?;
+    let processes = session.processes.into_iter().take(100).collect();
     Ok(Json(api::HistoryProcessesResponse { processes }))
 }
 
@@ -8533,26 +8708,10 @@ async fn handle_history_counts(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Result<Json<api::HistoryCountsResponse>, AppError> {
-    let session_dir = resolve_session_dir(&state, &id)?;
-    let db_path = session_dir.join("session.db");
-
-    let reader = capsem_logger::DbReader::open(&db_path).map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to open DB: {e}"),
-        )
-    })?;
-
-    let counts = reader.history_counts().map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("query failed: {e}"),
-        )
-    })?;
-
+    let session = history_projection_for_vm(&state, &id)?;
     Ok(Json(api::HistoryCountsResponse {
-        exec_count: counts.exec_count,
-        audit_count: counts.audit_count,
+        exec_count: session.counts.exec_count,
+        audit_count: session.counts.audit_count,
     }))
 }
 
@@ -10052,6 +10211,7 @@ async fn main() -> Result<()> {
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
         stats_route_projection: Mutex::new(empty_stats_route_projection()),
         security_route_projection: Mutex::new(SecurityRouteProjection::default()),
+        history_route_projection: Mutex::new(HistoryRouteProjection::default()),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });
@@ -10063,6 +10223,9 @@ async fn main() -> Result<()> {
     })?;
     rebuild_security_route_projection(&state).map_err(|AppError(_, message)| {
         anyhow!("failed to build security route projection: {message}")
+    })?;
+    rebuild_history_route_projection(&state).map_err(|AppError(_, message)| {
+        anyhow!("failed to build history route projection: {message}")
     })?;
     state.reconcile_persistent_defunct_from_logs();
 

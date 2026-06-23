@@ -173,6 +173,7 @@ fn make_test_state() -> Arc<ServiceState> {
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
         stats_route_projection: Mutex::new(empty_stats_route_projection()),
         security_route_projection: Mutex::new(SecurityRouteProjection::default()),
+        history_route_projection: Mutex::new(HistoryRouteProjection::default()),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
@@ -234,6 +235,7 @@ fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
         stats_route_projection: Mutex::new(empty_stats_route_projection()),
         security_route_projection: Mutex::new(SecurityRouteProjection::default()),
+        history_route_projection: Mutex::new(HistoryRouteProjection::default()),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
@@ -1287,6 +1289,183 @@ async fn security_routes_use_memory_projection_not_session_db() {
     assert_eq!(stats.total, 1);
     assert_eq!(stats.by_action[0].rule_action, "allow");
     assert_eq!(stats.by_level[0].detection_level, "informational");
+}
+
+#[tokio::test]
+async fn history_routes_use_memory_projection_not_session_db() {
+    let state = make_test_state();
+    let app = build_service_router(Arc::clone(&state));
+    let dir = tempfile::tempdir().unwrap();
+    let session_dir = dir.path().join("sessions").join("history-vm");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    insert_fake_instance_with_session_dir(
+        &state,
+        "history-vm",
+        std::process::id(),
+        session_dir.clone(),
+    );
+
+    let db_path = session_dir.join("session.db");
+    let marker = "history-projection-marker";
+    let writer = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
+    writer
+        .write(capsem_logger::WriteOp::ExecEvent(
+            capsem_logger::ExecEvent {
+                event_id: None,
+                timestamp: std::time::SystemTime::now(),
+                exec_id: 41,
+                command: format!("echo {marker}"),
+                source: "api".to_string(),
+                mcp_call_id: None,
+                trace_id: Some("trace-history".to_string()),
+                process_name: Some("bash".to_string()),
+                credential_ref: None,
+            },
+        ))
+        .await;
+    writer
+        .write(capsem_logger::WriteOp::ExecEventComplete(
+            capsem_logger::ExecEventComplete {
+                exec_id: 41,
+                exit_code: 0,
+                duration_ms: 17,
+                stdout_preview: Some(format!("{marker}\n")),
+                stderr_preview: None,
+                stdout_bytes: (marker.len() + 1) as u64,
+                stderr_bytes: 0,
+                pid: Some(123),
+            },
+        ))
+        .await;
+    writer
+        .write(capsem_logger::WriteOp::AuditEvent(
+            capsem_logger::AuditEvent {
+                event_id: None,
+                timestamp: std::time::SystemTime::now(),
+                pid: 123,
+                ppid: 1,
+                uid: 0,
+                exe: "/usr/bin/bash".to_string(),
+                comm: Some("bash".to_string()),
+                argv: format!("bash -lc 'echo {marker}'"),
+                cwd: Some("/root".to_string()),
+                tty: None,
+                session_id: Some(1),
+                audit_id: Some("audit-history".to_string()),
+                exec_event_id: Some(41),
+                parent_exe: Some("/usr/bin/sh".to_string()),
+                trace_id: Some("trace-history".to_string()),
+                credential_ref: None,
+            },
+        ))
+        .await;
+    writer.shutdown_blocking();
+
+    let reader = capsem_logger::DbReader::open(&db_path).unwrap();
+    let direct_counts = reader.history_counts().unwrap();
+    assert_eq!(direct_counts.exec_count, 1);
+    assert_eq!(direct_counts.audit_count, 1);
+    rebuild_history_route_projection(&state).unwrap();
+    std::fs::rename(&db_path, session_dir.join("session.db.route-must-not-open")).unwrap();
+
+    let (status, counts) = route_request(
+        app.clone(),
+        axum::http::Method::GET,
+        "/vms/history-vm/history/counts",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{counts}");
+    assert_eq!(counts["exec_count"], 1);
+    assert_eq!(counts["audit_count"], 1);
+
+    let (status, history) = route_request(
+        app.clone(),
+        axum::http::Method::GET,
+        &format!("/vms/history-vm/history?search={marker}&limit=10"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{history}");
+    assert_eq!(history["total"], 2);
+    let commands = history["commands"].as_array().unwrap();
+    assert_eq!(commands.len(), 2, "{history}");
+    assert!(commands.iter().any(|entry| entry["layer"] == "exec"
+        && entry["command"].as_str().unwrap().contains(marker)
+        && entry["stdout_preview"].as_str().unwrap().contains(marker)));
+    assert!(commands.iter().any(|entry| entry["layer"] == "audit"
+        && entry["command"].as_str().unwrap().contains(marker)
+        && entry["details"]["exe"] == "/usr/bin/bash"));
+
+    let (status, processes) = route_request(
+        app,
+        axum::http::Method::GET,
+        "/vms/history-vm/history/processes",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{processes}");
+    assert_eq!(processes["processes"][0]["exe"], "/usr/bin/bash");
+    assert_eq!(processes["processes"][0]["command_count"], 1);
+}
+
+#[tokio::test]
+async fn live_exec_history_projection_does_not_require_session_db() {
+    let state = make_test_state();
+    let app = build_service_router(Arc::clone(&state));
+    let dir = tempfile::tempdir().unwrap();
+    let session_dir = dir.path().join("sessions").join("live-history-vm");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    insert_fake_instance_with_session_dir(
+        &state,
+        "live-history-vm",
+        std::process::id(),
+        session_dir.clone(),
+    );
+
+    let marker = "live-history-projection-marker";
+    push_exec_history_projection(
+        &state,
+        "live-history-vm",
+        77,
+        format!("printf {marker}"),
+        0,
+        3,
+        marker.as_bytes(),
+        b"",
+    )
+    .unwrap();
+    assert!(
+        !session_dir.join("session.db").exists(),
+        "live route projection must not create or require session.db"
+    );
+
+    let (status, counts) = route_request(
+        app.clone(),
+        axum::http::Method::GET,
+        "/vms/live-history-vm/history/counts",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{counts}");
+    assert_eq!(counts["exec_count"], 1);
+    assert_eq!(counts["audit_count"], 0);
+
+    let (status, history) = route_request(
+        app,
+        axum::http::Method::GET,
+        &format!("/vms/live-history-vm/history?search={marker}&layer=exec"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{history}");
+    assert_eq!(history["total"], 1);
+    assert_eq!(history["commands"][0]["layer"], "exec");
+    assert!(history["commands"][0]["command"]
+        .as_str()
+        .unwrap()
+        .contains(marker));
+    assert_eq!(history["commands"][0]["details"]["exec_id"], 77);
 }
 
 #[test]
@@ -4910,6 +5089,7 @@ fn make_state_in(run_dir: PathBuf) -> Arc<ServiceState> {
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
         stats_route_projection: Mutex::new(empty_stats_route_projection()),
         security_route_projection: Mutex::new(SecurityRouteProjection::default()),
+        history_route_projection: Mutex::new(HistoryRouteProjection::default()),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
@@ -5445,6 +5625,7 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
         stats_route_projection: Mutex::new(empty_stats_route_projection()),
         security_route_projection: Mutex::new(SecurityRouteProjection::default()),
+        history_route_projection: Mutex::new(HistoryRouteProjection::default()),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });
@@ -7088,6 +7269,7 @@ fn make_test_state_with_tempdir_at(
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
         stats_route_projection: Mutex::new(empty_stats_route_projection()),
         security_route_projection: Mutex::new(SecurityRouteProjection::default()),
+        history_route_projection: Mutex::new(HistoryRouteProjection::default()),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });
