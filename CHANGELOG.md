@@ -74,6 +74,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Fixed Ironbank plugin ledger assertions so hot plugin-list routes stay
+  config-only while per-plugin detail routes prove runtime execution counters.
 - Fixed profile shell bootstrap payloads so shipped profiles put
   `/root/.local/bin` ahead of `/usr/local/bin`, keeping Claude/Codex/AGY
   user-local CLI installs on the path used by interactive shells and doctor

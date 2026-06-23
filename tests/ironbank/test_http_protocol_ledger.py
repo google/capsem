@@ -1283,7 +1283,18 @@ def test_brokered_http_rewrite_pays_full_ledger_debt_blackbox() -> None:
             plugins = client.get(f"/profiles/{CODE_PROFILE_ID}/plugins/list", timeout=30)
             assert plugins is not None
             by_plugin = {plugin["id"]: plugin for plugin in plugins["plugins"]}
-            broker_runtime = by_plugin["credential_broker"]["runtime"]
+            broker_list_runtime = by_plugin["credential_broker"]["runtime"]
+            assert broker_list_runtime["enabled"] is True
+            assert broker_list_runtime["execution_count"] == 0
+            assert broker_list_runtime["applied_count"] == 0
+            assert broker_list_runtime["detection_count"] == 0
+
+            broker_plugin = client.get(
+                f"/profiles/{CODE_PROFILE_ID}/plugins/credential_broker/info",
+                timeout=30,
+            )
+            broker_runtime = broker_plugin["runtime"]
+            assert broker_plugin["id"] == "credential_broker"
             assert broker_runtime["enabled"] is True
             assert broker_runtime["execution_count"] >= 3
             assert broker_runtime["applied_count"] >= 2

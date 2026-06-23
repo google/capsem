@@ -1601,8 +1601,16 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             plugins = client.get(f"/profiles/{CODE_PROFILE_ID}/plugins/list", timeout=30)
             assert plugins is not None
             by_plugin = {plugin["id"]: plugin for plugin in plugins["plugins"]}
-            broker_runtime = by_plugin["credential_broker"]["runtime"]
-            sanitizer_runtime = by_plugin["log_sanitizer"]["runtime"]
+            assert by_plugin["credential_broker"]["runtime"]["execution_count"] == 0
+            assert by_plugin["log_sanitizer"]["runtime"]["execution_count"] == 0
+            broker_runtime = client.get(
+                f"/profiles/{CODE_PROFILE_ID}/plugins/credential_broker/info",
+                timeout=30,
+            )["runtime"]
+            sanitizer_runtime = client.get(
+                f"/profiles/{CODE_PROFILE_ID}/plugins/log_sanitizer/info",
+                timeout=30,
+            )["runtime"]
             for runtime in (broker_runtime, sanitizer_runtime):
                 assert runtime["enabled"] is True
                 assert runtime["execution_count"] > 0

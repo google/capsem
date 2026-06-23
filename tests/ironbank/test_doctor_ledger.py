@@ -827,7 +827,13 @@ def test_runtime_plugin_action_matrix_pays_file_import_ledger_debt():
         by_id = {plugin["id"]: plugin for plugin in plugins["plugins"]}
         assert by_id["dummy_pre_eicar"]["runtime"]["enabled"] is False
         assert by_id["dummy_post_allow"]["runtime"]["enabled"] is True
-        assert by_id["dummy_post_allow"]["runtime"]["execution_count"] >= 1
+        assert by_id["dummy_post_allow"]["runtime"]["execution_count"] == 0
+        dummy_post_detail = client.get(
+            f"/profiles/{CODE_PROFILE_ID}/plugins/dummy_post_allow/info",
+            timeout=30,
+        )
+        assert dummy_post_detail["runtime"]["enabled"] is True
+        assert dummy_post_detail["runtime"]["execution_count"] >= 1
         conn.close()
     finally:
         if client is not None:
