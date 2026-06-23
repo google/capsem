@@ -135,6 +135,14 @@ fn test_profile_rule_cache() -> Mutex<BTreeMap<String, Vec<api::EnforcementRuleI
     Mutex::new(build_profile_rule_cache(None).expect("test profile rule cache should build"))
 }
 
+fn test_profile_plugin_policy_cache(
+) -> Mutex<BTreeMap<String, BTreeMap<String, SecurityPluginConfig>>> {
+    Mutex::new(
+        build_profile_plugin_policy_cache(None)
+            .expect("test profile plugin policy cache should build"),
+    )
+}
+
 fn make_test_state() -> Arc<ServiceState> {
     let run_dir = PathBuf::from("/tmp/capsem-test-svc");
     let registry_path = run_dir.join("persistent_registry.json");
@@ -155,6 +163,7 @@ fn make_test_state() -> Arc<ServiceState> {
         plugin_policy_by_profile: Mutex::new(HashMap::new()),
         profile_summary_cache: test_profile_summary_cache(),
         profile_rule_cache: test_profile_rule_cache(),
+        profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
@@ -210,6 +219,7 @@ fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
         plugin_policy_by_profile: Mutex::new(HashMap::new()),
         profile_summary_cache: test_profile_summary_cache(),
         profile_rule_cache: test_profile_rule_cache(),
+        profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
@@ -1526,7 +1536,7 @@ match = 'mcp.tool_call.name == "local__echo"'
     let Json(plugin_info) = update_plugin_for_scope(
         &state,
         "dummy_pre_eicar".to_string(),
-        profile_plugin_scope("code".to_string()).unwrap(),
+        profile_plugin_scope(&state, "code".to_string()).unwrap(),
         PluginUpdate {
             mode: Some(capsem_core::net::policy_config::SecurityPluginMode::Block),
             detection_level: Some(capsem_core::net::policy_config::DetectionLevel::Critical),
@@ -3339,7 +3349,7 @@ async fn credential_broker_plugin_runtime_reports_session_db_captures() {
     writer.shutdown_blocking();
 
     let (status, list) = route_request(
-        app,
+        app.clone(),
         axum::http::Method::GET,
         "/profiles/code/plugins/list",
         None,
@@ -3435,7 +3445,7 @@ async fn plugin_runtime_reports_execution_latency_from_security_ledger_payloads(
     writer.shutdown_blocking();
 
     let (status, list) = route_request(
-        app,
+        app.clone(),
         axum::http::Method::GET,
         "/profiles/code/plugins/list",
         None,
@@ -3450,21 +3460,36 @@ async fn plugin_runtime_reports_execution_latency_from_security_ledger_payloads(
         .find(|plugin| plugin["id"] == "log_sanitizer")
         .expect("log sanitizer plugin is listed");
     assert_eq!(
-        sanitizer["runtime"]["execution_count"], 1,
+        sanitizer["runtime"]["execution_count"], 0,
+        "plugin list is a hot config route and must not hydrate runtime DB scans"
+    );
+
+    let (status, sanitizer_detail) = route_request(
+        app.clone(),
+        axum::http::Method::GET,
+        "/profiles/code/plugins/log_sanitizer/info",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{sanitizer_detail}");
+    assert_eq!(
+        sanitizer_detail["runtime"]["execution_count"], 1,
         "multiple rule rows for one security event must not double-count one plugin execution"
     );
-    assert_eq!(sanitizer["runtime"]["applied_count"], 1);
-    assert_eq!(sanitizer["runtime"]["skipped_count"], 0);
-    assert_eq!(sanitizer["runtime"]["detection_count"], 1);
-    assert_eq!(sanitizer["runtime"]["total_duration_us"], 77);
-    assert_eq!(sanitizer["runtime"]["max_duration_us"], 77);
+    assert_eq!(sanitizer_detail["runtime"]["applied_count"], 1);
+    assert_eq!(sanitizer_detail["runtime"]["skipped_count"], 0);
+    assert_eq!(sanitizer_detail["runtime"]["detection_count"], 1);
+    assert_eq!(sanitizer_detail["runtime"]["total_duration_us"], 77);
+    assert_eq!(sanitizer_detail["runtime"]["max_duration_us"], 77);
 
-    let broker = list["plugins"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|plugin| plugin["id"] == "credential_broker")
-        .expect("credential broker plugin is listed");
+    let (status, broker) = route_request(
+        app,
+        axum::http::Method::GET,
+        "/profiles/code/plugins/credential_broker/info",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{broker}");
     assert_eq!(broker["runtime"]["execution_count"], 1);
     assert_eq!(broker["runtime"]["applied_count"], 0);
     assert_eq!(broker["runtime"]["skipped_count"], 1);
@@ -4774,6 +4799,7 @@ fn make_state_in(run_dir: PathBuf) -> Arc<ServiceState> {
         plugin_policy_by_profile: Mutex::new(HashMap::new()),
         profile_summary_cache: test_profile_summary_cache(),
         profile_rule_cache: test_profile_rule_cache(),
+        profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
@@ -5303,6 +5329,7 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         plugin_policy_by_profile: Mutex::new(HashMap::new()),
         profile_summary_cache: test_profile_summary_cache(),
         profile_rule_cache: test_profile_rule_cache(),
+        profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });
@@ -6885,6 +6912,7 @@ fn make_test_state_with_tempdir_at(
         plugin_policy_by_profile: Mutex::new(HashMap::new()),
         profile_summary_cache: test_profile_summary_cache(),
         profile_rule_cache: test_profile_rule_cache(),
+        profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });

@@ -166,6 +166,10 @@ struct ServiceState {
     /// refreshed by profile/corp mutation routes. Polling UI/TUI routes must
     /// not parse profile TOML or compile CEL on every request.
     profile_rule_cache: Mutex<BTreeMap<String, Vec<api::EnforcementRuleInfo>>>,
+    /// Route-owned profile plugin configs loaded once at service startup and
+    /// refreshed by profile/corp mutation routes. Hot plugin/profile routes
+    /// must not re-read profile TOML just to list effective plugin modes.
+    profile_plugin_policy_cache: Mutex<BTreeMap<String, BTreeMap<String, SecurityPluginConfig>>>,
     /// Guards Apple VZ lifecycle edges across all VMs managed by this
     /// service. Cold starts and teardown take a read guard; save/restore take
     /// a write guard. That keeps checkpoint edges exclusive without
@@ -1609,6 +1613,20 @@ impl ServiceState {
         } else {
             for (profile_id, rules) in updates {
                 cache.insert(profile_id, rules);
+            }
+        }
+        Ok(())
+    }
+
+    fn refresh_profile_plugin_policy_cache(&self, profile_filter: Option<&str>) -> Result<()> {
+        let updates = build_profile_plugin_policy_cache(profile_filter)
+            .map_err(|error| anyhow!("refresh profile plugin cache: {}", error.1))?;
+        let mut cache = self.profile_plugin_policy_cache.lock().unwrap();
+        if profile_filter.is_none() {
+            *cache = updates;
+        } else {
+            for (profile_id, plugins) in updates {
+                cache.insert(profile_id, plugins);
             }
         }
         Ok(())
@@ -4068,6 +4086,9 @@ async fn handle_reload_config_for_profile(
     state
         .refresh_profile_rule_cache(profile_filter)
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    state
+        .refresh_profile_plugin_policy_cache(profile_filter)
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     // Collect paths to broadcast to.
     let uds_paths = {
@@ -5245,6 +5266,23 @@ fn build_profile_rule_cache(
             manifest.id.clone(),
             list_enforcement_rules_for_profile_config(&profile, &corp)?,
         );
+    }
+    Ok(output)
+}
+
+fn build_profile_plugin_policy_cache(
+    profile_filter: Option<&str>,
+) -> Result<BTreeMap<String, BTreeMap<String, SecurityPluginConfig>>, AppError> {
+    let catalog = load_profile_catalog_for_service()?;
+    let mut output = BTreeMap::new();
+    for manifest in catalog.profiles() {
+        if profile_filter
+            .map(|profile_id| profile_id != manifest.id)
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        output.insert(manifest.id.clone(), manifest.plugins.clone());
     }
     Ok(output)
 }
@@ -6755,10 +6793,33 @@ fn plugin_catalog() -> BTreeMap<String, PluginCatalogEntry> {
     ])
 }
 
-fn profile_plugin_scope(profile_id: String) -> Result<PluginScope, AppError> {
+fn validate_profile_route_id_from_state(
+    state: &ServiceState,
+    profile_id: String,
+) -> Result<String, AppError> {
+    if profile_id.is_empty() {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            "profile id must not be empty".to_string(),
+        ));
+    }
+    if !state
+        .profile_summary_cache
+        .iter()
+        .any(|summary| summary.id == profile_id)
+    {
+        return Err(AppError(
+            StatusCode::NOT_FOUND,
+            format!("profile not found: {profile_id}"),
+        ));
+    }
+    Ok(profile_id)
+}
+
+fn profile_plugin_scope(state: &ServiceState, profile_id: String) -> Result<PluginScope, AppError> {
     Ok(PluginScope {
         kind: PluginScopeKind::Profile,
-        profile_id: validate_profile_route_id(profile_id)?,
+        profile_id: validate_profile_route_id_from_state(state, profile_id)?,
     })
 }
 
@@ -6770,8 +6831,13 @@ fn effective_plugin_policy(
         .into_iter()
         .map(|(id, entry)| (id, entry.default_config))
         .collect();
-    if let Ok(profile) = profile_for_route(profile_id.to_string()) {
-        for (id, config) in &profile.config().plugins {
+    if let Some(profile_policy) = state
+        .profile_plugin_policy_cache
+        .lock()
+        .unwrap()
+        .get(profile_id)
+    {
+        for (id, config) in profile_policy {
             policy.insert(id.clone(), *config);
         }
     }
@@ -6792,6 +6858,7 @@ fn plugin_info_for(
     state: &ServiceState,
     plugin_id: &str,
     scope: PluginScope,
+    include_runtime: bool,
 ) -> Result<PluginInfo, AppError> {
     let catalog = plugin_catalog();
     let Some(catalog_entry) = catalog.get(plugin_id).copied() else {
@@ -6811,7 +6878,11 @@ fn plugin_info_for(
         .unwrap()
         .get(&scope.profile_id)
         .is_some_and(|policy| policy.contains_key(plugin_id));
-    let runtime = plugin_runtime_status(state, &scope.profile_id, plugin_id, config);
+    let runtime = if include_runtime {
+        plugin_runtime_status(state, &scope.profile_id, plugin_id, config)
+    } else {
+        plugin_runtime_config_status(config)
+    };
     let detail_routes = plugin_detail_routes(plugin_id, &scope);
     Ok(PluginInfo {
         id: plugin_id.to_string(),
@@ -6899,7 +6970,16 @@ fn plugin_runtime_status(
     plugin_id: &str,
     config: SecurityPluginConfig,
 ) -> PluginRuntimeStatus {
-    let mut status = PluginRuntimeStatus {
+    let mut status = plugin_runtime_config_status(config);
+    hydrate_plugin_execution_runtime(state, profile_id, plugin_id, &mut status);
+    if plugin_id == "credential_broker" {
+        hydrate_credential_broker_runtime(state, profile_id, &mut status);
+    }
+    status
+}
+
+fn plugin_runtime_config_status(config: SecurityPluginConfig) -> PluginRuntimeStatus {
+    PluginRuntimeStatus {
         enabled: config.mode != SecurityPluginMode::Disable,
         event_count: 0,
         execution_count: 0,
@@ -6912,12 +6992,7 @@ fn plugin_runtime_status(
         rewrite_count: 0,
         last_error: None,
         brokered_credentials: Vec::new(),
-    };
-    hydrate_plugin_execution_runtime(state, profile_id, plugin_id, &mut status);
-    if plugin_id == "credential_broker" {
-        hydrate_credential_broker_runtime(state, profile_id, &mut status);
     }
-    status
 }
 
 fn hydrate_plugin_execution_runtime(
@@ -7084,14 +7159,14 @@ async fn handle_profile_plugins(
     State(state): State<Arc<ServiceState>>,
     Path(profile_id): Path<String>,
 ) -> Result<Json<PluginListResponse>, AppError> {
-    list_plugins_for_scope(&state, profile_plugin_scope(profile_id)?)
+    list_plugins_for_scope(&state, profile_plugin_scope(&state, profile_id)?)
 }
 
 async fn handle_profile_plugins_info(
     State(state): State<Arc<ServiceState>>,
     Path(profile_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let scope = profile_plugin_scope(profile_id)?;
+    let scope = profile_plugin_scope(&state, profile_id)?;
     let plugins = effective_plugin_policy(&state, &scope.profile_id);
     Ok(Json(json!({
         "scope": scope,
@@ -7107,7 +7182,7 @@ async fn handle_profile_credential_broker_credentials_info(
     State(state): State<Arc<ServiceState>>,
     Path(profile_id): Path<String>,
 ) -> Result<Json<CredentialBrokerDetailResponse>, AppError> {
-    let scope = profile_plugin_scope(profile_id)?;
+    let scope = profile_plugin_scope(&state, profile_id)?;
     let config = effective_plugin_policy(&state, &scope.profile_id)
         .get("credential_broker")
         .copied()
@@ -7157,7 +7232,7 @@ fn list_plugins_for_scope(
 ) -> Result<Json<PluginListResponse>, AppError> {
     let mut plugins = Vec::new();
     for plugin_id in plugin_catalog().keys() {
-        plugins.push(plugin_info_for(state, plugin_id, scope.clone())?);
+        plugins.push(plugin_info_for(state, plugin_id, scope.clone(), false)?);
     }
     Ok(Json(PluginListResponse { scope, plugins }))
 }
@@ -7169,7 +7244,8 @@ async fn handle_profile_plugin_info(
     Ok(Json(plugin_info_for(
         &state,
         &plugin_id,
-        profile_plugin_scope(profile_id)?,
+        profile_plugin_scope(&state, profile_id)?,
+        true,
     )?))
 }
 
@@ -7178,7 +7254,7 @@ async fn handle_profile_plugin_update(
     Path((profile_id, plugin_id)): Path<(String, String)>,
     Json(update): Json<PluginUpdate>,
 ) -> Result<Json<PluginInfo>, AppError> {
-    let scope = profile_plugin_scope(profile_id)?;
+    let scope = profile_plugin_scope(&state, profile_id)?;
     let catalog = plugin_catalog();
     let Some(catalog_entry) = catalog.get(&plugin_id).copied() else {
         return Err(AppError(
@@ -7215,7 +7291,7 @@ async fn handle_profile_plugin_update(
         .insert(plugin_id.clone(), config);
     let _reload =
         handle_reload_config_for_profile(Arc::clone(&state), Some(&scope.profile_id)).await?;
-    let info = plugin_info_for(&state, &plugin_id, scope)?;
+    let info = plugin_info_for(&state, &plugin_id, scope, true)?;
     Ok(Json(info))
 }
 
@@ -7250,7 +7326,7 @@ fn update_plugin_for_scope(
         .entry(scope.profile_id.clone())
         .or_default()
         .insert(plugin_id.clone(), config);
-    Ok(Json(plugin_info_for(state, &plugin_id, scope)?))
+    Ok(Json(plugin_info_for(state, &plugin_id, scope, true)?))
 }
 
 #[derive(Debug, Default)]
@@ -9579,6 +9655,10 @@ async fn main() -> Result<()> {
     })?;
     let profile_rule_cache = build_profile_rule_cache(None)
         .map_err(|AppError(_, message)| anyhow!("failed to build profile rule cache: {message}"))?;
+    let profile_plugin_policy_cache =
+        build_profile_plugin_policy_cache(None).map_err(|AppError(_, message)| {
+            anyhow!("failed to build profile plugin cache: {message}")
+        })?;
     let state = Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
         persistent_registry: Mutex::new(persistent_registry),
@@ -9595,6 +9675,7 @@ async fn main() -> Result<()> {
         plugin_policy_by_profile: Mutex::new(HashMap::new()),
         profile_summary_cache,
         profile_rule_cache: Mutex::new(profile_rule_cache),
+        profile_plugin_policy_cache: Mutex::new(profile_plugin_policy_cache),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });

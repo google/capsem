@@ -118,6 +118,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed the session stats detail drawer so body ledger metadata is separated
   from event fields, long hashes wrap cleanly, and security snapshots render
   compact non-null JSON instead of dense null-heavy projections.
+- Fixed the profile plugin list hot path so UI/TUI polling reads cached plugin
+  configuration instead of scanning session databases for runtime counters;
+  per-plugin detail routes still hydrate live ledger counters.
 - Fixed the DNS security ledger unit test so it drains the async DB writer
   before reading joined DNS/security-rule rows, avoiding Linux coverage timing
   flakes without weakening the ledger assertion.
