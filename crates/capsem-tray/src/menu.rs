@@ -40,6 +40,10 @@ pub(crate) enum MenuEntry {
 
 /// Compute the menu structure for a gateway status response.
 pub(crate) fn menu_spec(status: &StatusResponse) -> Vec<MenuEntry> {
+    if status.service.to_ascii_lowercase() != "running" {
+        return unavailable_spec();
+    }
+
     let mut entries = Vec::new();
 
     // Status line at the top
@@ -257,6 +261,16 @@ mod tests {
         }
     }
 
+    fn make_service_status(service: &str, vms: Vec<VmSummary>) -> StatusResponse {
+        let vm_count = vms.len() as u32;
+        StatusResponse {
+            service: service.into(),
+            vm_count,
+            vms,
+            latency_ms: Some(5),
+        }
+    }
+
     fn named_vm(id: &str, name: &str, status: &str) -> VmSummary {
         VmSummary {
             id: id.into(),
@@ -434,6 +448,24 @@ mod tests {
         assert!(ids.contains(&"new-session".into()));
         assert!(ids.contains(&"open".into()));
         assert!(ids.contains(&"quit".into()));
+    }
+
+    #[test]
+    fn spec_non_running_service_does_not_offer_dead_session_actions() {
+        let spec = menu_spec(&make_service_status(
+            "stopped",
+            vec![named_vm("n1", "dev", "running")],
+        ));
+        let ids = collect_ids(&spec);
+
+        assert_eq!(ids, vec!["status", "quit"]);
+        assert!(!ids.contains(&"header-sessions".into()));
+        assert!(!ids.contains(&"connect:n1".into()));
+        assert!(!ids.contains(&"new-session".into()));
+        assert!(!ids.contains(&"open".into()));
+        assert!(
+            matches!(&spec[0], MenuEntry::Item { label, enabled: false, .. } if label == "Disconnected")
+        );
     }
 
     #[test]

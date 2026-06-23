@@ -74,6 +74,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Fixed the tray menu so a stopped service status cannot expose dashboard,
+  session list, new-session, or connect actions that would route into dead
+  service state.
 - Fixed the stats Tools panel so model-native tool calls from active minimal
   `tool_calls` ledgers render from the unified tool table instead of appearing
   empty in AGY/Claude sessions that already recorded the tool rows.
