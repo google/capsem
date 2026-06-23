@@ -3670,8 +3670,7 @@ decision = "block"
             .expect("repo root");
         let temp = tempfile::tempdir().expect("tempdir");
         let output = temp.path().join("workspace");
-        let stale_profile_root = output
-            .join("guest/profile-root/root/.gemini/config/config.json");
+        let stale_profile_root = output.join("guest/profile-root/root/.gemini/config/config.json");
         fs::create_dir_all(stale_profile_root.parent().unwrap()).expect("stale parent");
         fs::write(
             &stale_profile_root,

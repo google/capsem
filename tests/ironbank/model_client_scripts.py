@@ -821,13 +821,37 @@ def codex_cli_script(base_url: str) -> str:
         common_result_script_prelude(base_url, "codex-cli")
         + r'''
 codex_config = Path("/root/.codex/config.toml")
-codex_text = codex_config.read_text(encoding="utf-8")
-codex_text = codex_text.replace('base_url = "http://127.0.0.1:11434/v1"', 'base_url = "' + BASE_URL + '/v1"')
-if 'env_key = "OPENAI_API_KEY"' not in codex_text:
-    codex_text = codex_text.replace('base_url = "' + BASE_URL + '/v1"', 'base_url = "' + BASE_URL + '/v1"\nenv_key = "OPENAI_API_KEY"')
-if "check_for_update_on_startup" not in codex_text:
-    codex_text += "\ncheck_for_update_on_startup = false\n[analytics]\nenabled = false\n"
-codex_config.write_text(codex_text, encoding="utf-8")
+codex_config.write_text(
+    "\n".join([
+        'model = "' + HERMETIC_OPENAI_COMPAT_MODEL + '"',
+        'model_provider = "capsem-ironbank"',
+        'check_for_update_on_startup = false',
+        '',
+        '[analytics]',
+        'enabled = false',
+        '',
+        '[otel]',
+        'exporter = "none"',
+        'metrics_exporter = "none"',
+        'trace_exporter = "none"',
+        '',
+        '[features]',
+        'plugins = false',
+        'plugin_sharing = false',
+        '',
+        '[mcp_servers.capsem]',
+        'command = "/run/capsem-mcp-server"',
+        '',
+        '[model_providers.capsem-ironbank]',
+        'name = "Ironbank OpenAI-compatible fixture"',
+        'base_url = "' + BASE_URL + '/v1"',
+        'env_key = "OPENAI_API_KEY"',
+        'wire_api = "responses"',
+        'supports_websockets = false',
+        '',
+    ]),
+    encoding="utf-8",
+)
 env = os.environ.copy()
 env["HOME"] = "/root"
 env["NO_COLOR"] = "1"

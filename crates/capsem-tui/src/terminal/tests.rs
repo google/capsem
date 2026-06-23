@@ -1,8 +1,8 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::{
-    key_to_terminal_bytes, push_coalesced_event, run_terminal_manager, TerminalColor,
-    coalesced_terminal_inputs, TerminalCommand, TerminalEvent, TerminalInput, TerminalSurface,
+    coalesced_terminal_inputs, key_to_terminal_bytes, push_coalesced_event, run_terminal_manager,
+    TerminalColor, TerminalCommand, TerminalEvent, TerminalInput, TerminalSurface,
 };
 
 #[test]
@@ -143,8 +143,11 @@ fn terminal_inputs_coalesce_adjacent_bytes_without_crossing_resize_boundaries() 
         .expect("queue adjacent bytes");
     tx.send(TerminalInput::Bytes(b"c".to_vec()))
         .expect("queue adjacent bytes");
-    tx.send(TerminalInput::Resize { cols: 100, rows: 24 })
-        .expect("queue resize boundary");
+    tx.send(TerminalInput::Resize {
+        cols: 100,
+        rows: 24,
+    })
+    .expect("queue resize boundary");
     tx.send(TerminalInput::Bytes(b"d".to_vec()))
         .expect("queue bytes after resize");
     tx.send(TerminalInput::Bytes(b"e".to_vec()))
@@ -156,7 +159,10 @@ fn terminal_inputs_coalesce_adjacent_bytes_without_crossing_resize_boundaries() 
         inputs,
         vec![
             TerminalInput::Bytes(b"abc".to_vec()),
-            TerminalInput::Resize { cols: 100, rows: 24 },
+            TerminalInput::Resize {
+                cols: 100,
+                rows: 24
+            },
             TerminalInput::Bytes(b"de".to_vec()),
         ]
     );

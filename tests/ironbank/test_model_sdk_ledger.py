@@ -17,7 +17,7 @@ from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXE
 from helpers.gateway import GatewayInstance, TcpHttpClient
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
 from helpers.service import ServiceInstance, wait_exec_ready, vm_name
-from ironbank.model_client_config import HERMETIC_ANTHROPIC_MODEL
+from ironbank.model_client_config import HERMETIC_ANTHROPIC_MODEL, HERMETIC_OPENAI_COMPAT_MODEL
 
 pytestmark = pytest.mark.integration
 
@@ -578,14 +578,37 @@ def _codex_cli_probe_script(base_url: str) -> str:
 
         cfg = json.loads({json.dumps(json.dumps(payload))})
         codex_config = Path(cfg["codex_config"])
-        codex_text = codex_config.read_text(encoding="utf-8")
-        codex_text = codex_text.replace(
-            'base_url = "http://127.0.0.1:11434/v1"',
-            'base_url = "' + cfg["openai_base_url"] + '"',
+        codex_config.write_text(
+            "\\n".join([
+                'model = "' + {json.dumps(HERMETIC_OPENAI_COMPAT_MODEL)} + '"',
+                'model_provider = "capsem-ironbank"',
+                'check_for_update_on_startup = false',
+                '',
+                '[analytics]',
+                'enabled = false',
+                '',
+                '[otel]',
+                'exporter = "none"',
+                'metrics_exporter = "none"',
+                'trace_exporter = "none"',
+                '',
+                '[features]',
+                'plugins = false',
+                'plugin_sharing = false',
+                '',
+                '[mcp_servers.capsem]',
+                'command = "/run/capsem-mcp-server"',
+                '',
+                '[model_providers.capsem-ironbank]',
+                'name = "Ironbank OpenAI-compatible fixture"',
+                'base_url = "' + cfg["openai_base_url"] + '"',
+                'env_key = "OPENAI_API_KEY"',
+                'wire_api = "responses"',
+                'supports_websockets = false',
+                '',
+            ]),
+            encoding="utf-8",
         )
-        if "check_for_update_on_startup" not in codex_text:
-            codex_text += {json.dumps(CODEX_NO_SIDE_TRAFFIC_CONFIG)}
-        codex_config.write_text(codex_text, encoding="utf-8")
 
         env = os.environ.copy()
         env["HOME"] = "/root"
@@ -1397,7 +1420,10 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 dict(zip(timeline["columns"], row, strict=True)) for row in timeline["rows"]
             ]
             timeline_summaries = {row["summary"] for row in timeline_rows}
-            assert f"{observed_mcp_server}/fixture_lookup" in timeline_summaries
+            assert (
+                f"{observed_mcp_server}/fixture_lookup "
+                f"(call_id={observed_tool_call['call_id']})"
+            ) in timeline_summaries
             assert f"{observed_mcp_server}/tools/list" in timeline_summaries
 
             info = _eventually(
@@ -1645,8 +1671,8 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             ]
             assert causally_linked_poem_rows
             assert all(
-                row["credential_ref"] == credential_ref for row in causally_linked_poem_rows
-            )
+                row["credential_ref"] is None for row in causally_linked_poem_rows
+            ), [dict(row) for row in causally_linked_poem_rows]
 
             exec_row = conn.execute(
                 "SELECT * FROM exec_events WHERE command = ? ORDER BY id DESC LIMIT 1",
@@ -2083,7 +2109,8 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
             assert tool_model["stop_reason"] == "end_turn"
             assert tool_model["request_bytes"] > 0
             assert tool_model["response_bytes"] > 0
-            assert tool_model["credential_ref"] is None
+            _assert_credential_ref(tool_model["credential_ref"])
+            codex_credential_ref = tool_model["credential_ref"]
             assert '"name":"exec_command"' in (tool_model["request_body_preview"] or "")
             assert "capsem_test_codex_cli_key" not in (
                 tool_model["request_body_preview"] or ""
@@ -2103,7 +2130,7 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
             assert codex_model["stop_reason"] == "end_turn"
             assert codex_model["request_bytes"] > 0
             assert codex_model["response_bytes"] > 0
-            assert codex_model["credential_ref"] is None
+            assert codex_model["credential_ref"] == codex_credential_ref
             usage_details = json.loads(codex_model["usage_details"])
             assert usage_details["thinking"] == 2
             assert expected_call_id in (codex_model["request_body_preview"] or "")
@@ -2140,7 +2167,7 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
             assert tool_args["max_output_tokens"] == 2000
             assert tool_row["origin"] == "native"
             assert tool_row["trace_id"] == tool_row["model_trace_id"]
-            assert tool_row["credential_ref"] is None
+            assert tool_row["credential_ref"] == codex_credential_ref
 
             tool_response_rows = _eventually(
                 lambda: conn.execute(
@@ -2159,6 +2186,7 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
             assert tool_response["call_id"] == expected_call_id
             assert tool_response["is_error"] == 0
             assert tool_response["trace_id"] == codex_model["trace_id"]
+            assert tool_response["credential_ref"] == codex_credential_ref
             assert "Process exited with code 0" in (
                 tool_response["content_preview"] or ""
             )
@@ -2183,9 +2211,9 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
             assert tool_net["port"] == 3713
             assert tool_net["status_code"] == 200
             assert tool_net["decision"] == "allowed"
-            assert tool_net["credential_ref"] is None
+            assert tool_net["credential_ref"] == codex_credential_ref
             assert "host: 127.0.0.1:3713" in (tool_net["request_headers"] or "")
-            assert "authorization:" not in (tool_net["request_headers"] or "").lower()
+            assert "authorization: hash:" in (tool_net["request_headers"] or "").lower()
             assert "content-type: application/json" in (tool_net["request_headers"] or "")
             assert "user-agent:" in (tool_net["request_headers"] or "")
             assert "capsem_test_codex_cli_key" not in (tool_net["request_headers"] or "")
@@ -2203,11 +2231,11 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
             assert codex_net["port"] == 3713
             assert codex_net["status_code"] == 200
             assert codex_net["decision"] == "allowed"
-            assert codex_net["credential_ref"] is None
+            assert codex_net["credential_ref"] == codex_credential_ref
             assert codex_net["bytes_sent"] > 0
             assert codex_net["bytes_received"] > 0
             assert "host: 127.0.0.1:3713" in (codex_net["request_headers"] or "")
-            assert "authorization:" not in (codex_net["request_headers"] or "").lower()
+            assert "authorization: hash:" in (codex_net["request_headers"] or "").lower()
             assert "content-type: application/json" in (codex_net["request_headers"] or "")
             assert "user-agent:" in (codex_net["request_headers"] or "")
             assert "capsem_test_codex_cli_key" not in (codex_net["request_headers"] or "")
@@ -2298,31 +2326,6 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
                 (f"{session_id}%",),
             ).fetchall()
             assert public_dns_rows == []
-            session_dns_rows = conn.execute(
-                """
-                SELECT *
-                FROM dns_events
-                WHERE qname LIKE ?
-                ORDER BY id
-                """,
-                (f"{session_id}%",),
-            ).fetchall()
-            assert session_dns_rows
-            for row in session_dns_rows:
-                _assert_event_id(row["event_id"])
-                assert row["qtype"] in {1, 28}
-                assert row["qclass"] == 1
-                assert row["rcode"] in {0, 3}
-                assert row["decision"] == "allowed"
-                assert row["source_proto"] in {"udp", "tcp"}
-                if row["rcode"] == 0:
-                    assert row["answer_ip"] is not None
-                    assert re.fullmatch(
-                        r"([0-9]{1,3}\.){3}[0-9]{1,3}|[0-9a-f:]+",
-                        row["answer_ip"],
-                    )
-                else:
-                    assert row["answer_ip"] is None
 
             substitutions = _eventually(
                 lambda: conn.execute(

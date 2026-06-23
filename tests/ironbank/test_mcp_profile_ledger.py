@@ -328,7 +328,7 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
                 WHERE event_id = ?
                 ORDER BY id
                 """,
-                (mcp_row["event_id"],),
+                (tool_row["event_id"],),
             )
             assert security_rows
             assert any(row["event_type"] == "mcp.tool_call" for row in security_rows)
@@ -337,7 +337,7 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
             assert all(
                 row["detection_level"] in {"none", "informational"} for row in security_rows
             )
-            assert all(row["trace_id"] == mcp_row["trace_id"] for row in security_rows)
+            assert all(row["trace_id"] == tool_row["trace_id"] for row in security_rows)
             for row in security_rows:
                 event = json.loads(row["event_json"])
                 rule = json.loads(row["rule_json"])
