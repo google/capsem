@@ -6731,6 +6731,13 @@ fn profile_session_dirs(state: &ServiceState, profile_id: &str) -> Vec<(String, 
     sessions.into_iter().collect()
 }
 
+fn profile_session_ids(state: &ServiceState, profile_id: &str) -> HashSet<String> {
+    profile_session_dirs(state, profile_id)
+        .into_iter()
+        .map(|(vm_id, _)| vm_id)
+        .collect()
+}
+
 fn is_detection_rule_event(event: &capsem_logger::SecurityRuleEvent) -> bool {
     event.detection_level != capsem_logger::SecurityDetectionLevel::None
 }
@@ -7314,30 +7321,21 @@ fn hydrate_plugin_execution_runtime(
     plugin_id: &str,
     status: &mut PluginRuntimeStatus,
 ) {
+    let profile_sessions = profile_session_ids(state, profile_id);
+    let projection = match security_route_projection(state) {
+        Ok(projection) => projection,
+        Err(error) => {
+            status.last_error = Some(format!("failed to read security projection: {}", error.1));
+            return;
+        }
+    };
     let mut seen_executions = HashSet::<(String, String)>::new();
     let mut seen_detections = HashSet::<(String, String)>::new();
-    for (vm_id, session_dir) in profile_session_dirs(state, profile_id) {
-        let db_path = session_dir.join("session.db");
-        if !db_path.exists() {
+    for (vm_id, session) in projection.sessions {
+        if !profile_sessions.contains(&vm_id) {
             continue;
         }
-        let reader = match capsem_logger::DbReader::open(&db_path) {
-            Ok(reader) => reader,
-            Err(error) => {
-                status.last_error = Some(format!("failed to open session DB for {vm_id}: {error}"));
-                continue;
-            }
-        };
-        let events = match reader.recent_security_rule_events(5000) {
-            Ok(events) => events,
-            Err(error) => {
-                status.last_error = Some(format!(
-                    "failed to read plugin execution rows for {vm_id}: {error}"
-                ));
-                continue;
-            }
-        };
-        for event in events {
+        for event in session.latest {
             let Ok(payload) = serde_json::from_str::<serde_json::Value>(&event.event_json) else {
                 status.last_error = Some(format!(
                     "failed to parse plugin execution payload for {}",
@@ -7406,61 +7404,119 @@ fn hydrate_plugin_execution_runtime(
     }
 }
 
+fn credential_ref_from_security_payload(value: &serde_json::Value) -> Option<String> {
+    value
+        .get("credential_ref")
+        .or_else(|| value.get("substitution_ref"))
+        .or_else(|| value.get("reference"))
+        .or_else(|| value.get("ref"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+}
+
+fn credential_provider_from_security_payload(value: &serde_json::Value) -> Option<String> {
+    value
+        .get("provider")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+}
+
+fn merge_brokered_credential_status(
+    credentials: &mut BTreeMap<(Option<String>, String), BrokeredCredentialStatus>,
+    provider: Option<String>,
+    credential_ref: String,
+    observed_delta: u64,
+    injected_delta: u64,
+    last_seen: Option<String>,
+) {
+    let key = (provider.clone(), credential_ref.clone());
+    let replay_available = capsem_core::credential_broker::broker_reference_replay_available(
+        provider.as_deref(),
+        &credential_ref,
+    );
+    credentials
+        .entry(key)
+        .and_modify(|existing| {
+            existing.observed_count = existing.observed_count.saturating_add(observed_delta);
+            existing.injected_count = existing.injected_count.saturating_add(injected_delta);
+            existing.replay_available |= replay_available;
+            if last_seen.as_deref() > existing.last_seen.as_deref() {
+                existing.last_seen = last_seen.clone();
+            }
+        })
+        .or_insert(BrokeredCredentialStatus {
+            provider,
+            credential_ref,
+            observed_count: observed_delta,
+            injected_count: injected_delta,
+            replay_available,
+            last_seen,
+        });
+}
+
 fn hydrate_credential_broker_runtime(
     state: &ServiceState,
     profile_id: &str,
     status: &mut PluginRuntimeStatus,
 ) {
+    let profile_sessions = profile_session_ids(state, profile_id);
+    let projection = match security_route_projection(state) {
+        Ok(projection) => projection,
+        Err(error) => {
+            status.last_error = Some(format!("failed to read security projection: {}", error.1));
+            return;
+        }
+    };
     let mut credentials: BTreeMap<(Option<String>, String), BrokeredCredentialStatus> =
         BTreeMap::new();
-    for (vm_id, session_dir) in profile_session_dirs(state, profile_id) {
-        let db_path = session_dir.join("session.db");
-        if !db_path.exists() {
+    let mut seen = HashSet::<(String, String, String, String)>::new();
+    for (vm_id, session) in projection.sessions {
+        if !profile_sessions.contains(&vm_id) {
             continue;
         }
-        let reader = match capsem_logger::DbReader::open(&db_path) {
-            Ok(reader) => reader,
-            Err(error) => {
-                status.last_error = Some(format!("failed to open session DB for {vm_id}: {error}"));
-                continue;
-            }
-        };
-        let rows = match reader.brokered_credential_stats() {
-            Ok(rows) => rows,
-            Err(error) => {
+        for event in session.latest {
+            let Ok(payload) = serde_json::from_str::<serde_json::Value>(&event.event_json) else {
                 status.last_error = Some(format!(
-                    "failed to read credential broker rows for {vm_id}: {error}"
+                    "failed to parse credential broker payload for {}",
+                    event.event_id
                 ));
                 continue;
-            }
-        };
-        for row in rows {
-            status.event_count += row.observed_count;
-            status.rewrite_count += row.injected_count;
-            let key = (row.provider.clone(), row.credential_ref.clone());
-            let replay_available =
-                capsem_core::credential_broker::broker_reference_replay_available(
-                    row.provider.as_deref(),
-                    &row.credential_ref,
-                );
-            credentials
-                .entry(key)
-                .and_modify(|existing| {
-                    existing.observed_count += row.observed_count;
-                    existing.injected_count += row.injected_count;
-                    existing.replay_available |= replay_available;
-                    if row.last_seen.as_deref() > existing.last_seen.as_deref() {
-                        existing.last_seen = row.last_seen.clone();
+            };
+            for (field, observed_delta, injected_delta) in [
+                ("credential_observations", 1_u64, 0_u64),
+                ("credential_injections", 0_u64, 1_u64),
+            ] {
+                let Some(items) = payload.get(field).and_then(serde_json::Value::as_array) else {
+                    continue;
+                };
+                for item in items {
+                    let Some(credential_ref) = credential_ref_from_security_payload(item) else {
+                        continue;
+                    };
+                    let source = item
+                        .get("source")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("");
+                    if !seen.insert((
+                        event.event_id.clone(),
+                        field.to_string(),
+                        credential_ref.clone(),
+                        source.to_string(),
+                    )) {
+                        continue;
                     }
-                })
-                .or_insert(BrokeredCredentialStatus {
-                    provider: row.provider,
-                    credential_ref: row.credential_ref,
-                    observed_count: row.observed_count,
-                    injected_count: row.injected_count,
-                    replay_available,
-                    last_seen: row.last_seen,
-                });
+                    status.event_count = status.event_count.saturating_add(1);
+                    status.rewrite_count = status.rewrite_count.saturating_add(injected_delta);
+                    merge_brokered_credential_status(
+                        &mut credentials,
+                        credential_provider_from_security_payload(item),
+                        credential_ref,
+                        observed_delta,
+                        injected_delta,
+                        Some(event.timestamp_unix_ms.to_string()),
+                    );
+                }
+            }
         }
     }
     let mut values: Vec<_> = credentials.into_values().collect();

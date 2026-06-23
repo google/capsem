@@ -3283,32 +3283,49 @@ async fn credential_broker_reload_route_rehydrates_store_and_returns_same_contra
     )
     .unwrap();
 
-    let writer = capsem_logger::DbWriter::open(&session_dir.join("session.db"), 16).unwrap();
+    let event_json = format!(
+        r#"{{
+            "event_type": "http.request",
+            "credential_observations": [
+                {{
+                    "provider": "google",
+                    "source": "http.body.response.$.access_token",
+                    "event_type": "http.request",
+                    "trace_id": null,
+                    "context_json": {{"domain":"oauth2.googleapis.com"}},
+                    "credential_ref": "{credential_ref}"
+                }}
+            ],
+            "credential_injections": []
+        }}"#
+    );
+    let session_db = session_dir.join("session.db");
+    let writer = capsem_logger::DbWriter::open(&session_db, 16).unwrap();
     writer
-        .write(capsem_logger::WriteOp::SubstitutionEvent(
-            capsem_logger::SubstitutionEvent {
-                event_id: Some("abcd1234ef56".to_string()),
-                timestamp: std::time::SystemTime::now(),
-                material_class: "credential".to_string(),
-                source: "http.body.response.$.access_token".to_string(),
-                event_type: Some("http.response".to_string()),
-                algorithm: "blake3".to_string(),
-                substitution_ref: credential_ref.clone(),
-                outcome: "captured".to_string(),
-                provider: Some("google".to_string()),
-                confidence: None,
-                trace_id: None,
-                context_json: Some(r#"{"domain":"oauth2.googleapis.com"}"#.to_string()),
-            },
+        .write(capsem_logger::WriteOp::SecurityRuleEvent(
+            capsem_logger::SecurityRuleEvent::new(
+                1_789_000_123_456,
+                "abcd1234ef56",
+                "http.request",
+                "profiles.rules.default_http",
+                r#"{"name":"default_http"}"#,
+                event_json,
+            ),
         ))
         .await;
     writer.shutdown_blocking();
-    let direct_rows = capsem_logger::DbReader::open(&session_dir.join("session.db"))
+    let direct_rows = capsem_logger::DbReader::open(&session_db)
         .unwrap()
-        .brokered_credential_stats()
+        .recent_security_rule_events(10)
         .unwrap();
     assert_eq!(direct_rows.len(), 1);
-    assert_eq!(direct_rows[0].credential_ref, credential_ref);
+    assert!(direct_rows[0].event_json.contains(&credential_ref));
+    rebuild_security_route_projection(&state).unwrap();
+    std::fs::rename(
+        &session_db,
+        session_dir.join("session.db.route-must-not-open"),
+    )
+    .unwrap();
 
     let (status, before) = route_request(
         app.clone(),
@@ -3342,7 +3359,7 @@ async fn credential_broker_reload_route_rehydrates_store_and_returns_same_contra
 }
 
 #[tokio::test]
-async fn credential_broker_plugin_runtime_reports_session_db_captures() {
+async fn credential_broker_plugin_runtime_reports_security_projection_activity() {
     let state = make_test_state();
     let app = build_service_router(Arc::clone(&state));
     let dir = tempfile::tempdir().unwrap();
@@ -3355,28 +3372,59 @@ async fn credential_broker_plugin_runtime_reports_session_db_captures() {
         session_dir.clone(),
     );
 
-    let writer = capsem_logger::DbWriter::open(&session_dir.join("session.db"), 16).unwrap();
+    let event_json = r#"{
+        "event_type": "http.request",
+        "credential_observations": [
+            {
+                "provider": "google",
+                "source": "http.body.response.$.access_token",
+                "event_type": "http.request",
+                "trace_id": null,
+                "context_json": {"domain":"oauth2.googleapis.com"},
+                "credential_ref": "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111"
+            }
+        ],
+        "credential_injections": [
+            {
+                "provider": "google",
+                "source": "http.request.header.authorization",
+                "event_type": "http.request",
+                "trace_id": null,
+                "context_json": {"domain":"generativelanguage.googleapis.com"},
+                "credential_ref": "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111"
+            }
+        ]
+    }"#;
+    let session_db = session_dir.join("session.db");
+    let writer = capsem_logger::DbWriter::open(&session_db, 16).unwrap();
     writer
-        .write(capsem_logger::WriteOp::SubstitutionEvent(
-            capsem_logger::SubstitutionEvent {
-                event_id: Some("abc123def456".to_string()),
-                timestamp: std::time::SystemTime::now(),
-                material_class: "credential".to_string(),
-                source: "http.body.response.$.access_token".to_string(),
-                event_type: Some("http.response".to_string()),
-                algorithm: "blake3".to_string(),
-                substitution_ref:
-                    "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111"
-                        .to_string(),
-                outcome: "captured".to_string(),
-                provider: Some("google".to_string()),
-                confidence: None,
-                trace_id: None,
-                context_json: Some(r#"{"domain":"oauth2.googleapis.com"}"#.to_string()),
-            },
+        .write(capsem_logger::WriteOp::SecurityRuleEvent(
+            capsem_logger::SecurityRuleEvent::new(
+                1_789_000_123_456,
+                "abc123def456",
+                "http.request",
+                "profiles.rules.default_http",
+                r#"{"name":"default_http"}"#,
+                event_json,
+            ),
         ))
         .await;
     writer.shutdown_blocking();
+    let direct_rows = capsem_logger::DbReader::open(&session_db)
+        .unwrap()
+        .recent_security_rule_events(10)
+        .unwrap();
+    assert_eq!(direct_rows.len(), 1);
+    assert!(direct_rows[0]
+        .event_json
+        .contains("credential_observations"));
+    let projection = rebuild_security_route_projection(&state).unwrap();
+    assert_eq!(projection.sessions["broker-vm"].latest.len(), 1);
+    std::fs::rename(
+        &session_db,
+        session_dir.join("session.db.route-must-not-open"),
+    )
+    .unwrap();
 
     let (status, list) = route_request(
         app.clone(),
@@ -3392,8 +3440,21 @@ async fn credential_broker_plugin_runtime_reports_session_db_captures() {
         .iter()
         .find(|plugin| plugin["id"] == "credential_broker")
         .expect("credential broker plugin is listed");
-    assert_eq!(broker["runtime"]["event_count"], 1);
-    assert_eq!(broker["runtime"]["rewrite_count"], 0);
+    assert_eq!(
+        broker["runtime"]["event_count"], 0,
+        "plugin list is a hot config route and must not hydrate runtime ledgers"
+    );
+
+    let (status, broker) = route_request(
+        app,
+        axum::http::Method::GET,
+        "/profiles/code/plugins/credential_broker/info",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{broker}");
+    assert_eq!(broker["runtime"]["event_count"], 2);
+    assert_eq!(broker["runtime"]["rewrite_count"], 1);
     assert_eq!(
         broker["runtime"]["brokered_credentials"][0]["credential_ref"],
         "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111"
@@ -3403,8 +3464,16 @@ async fn credential_broker_plugin_runtime_reports_session_db_captures() {
         "google"
     );
     assert_eq!(
+        broker["runtime"]["brokered_credentials"][0]["observed_count"],
+        1
+    );
+    assert_eq!(
+        broker["runtime"]["brokered_credentials"][0]["injected_count"],
+        1
+    );
+    assert_eq!(
         broker["runtime"]["brokered_credentials"][0]["replay_available"], false,
-        "DB evidence alone must not imply the broker can replay the credential"
+        "security event evidence alone must not imply the broker can replay the credential"
     );
 }
 
@@ -3473,6 +3542,12 @@ async fn plugin_runtime_reports_execution_latency_from_security_ledger_payloads(
             .await;
     }
     writer.shutdown_blocking();
+    rebuild_security_route_projection(&state).unwrap();
+    std::fs::rename(
+        session_dir.join("session.db"),
+        session_dir.join("session.db.route-must-not-open"),
+    )
+    .unwrap();
 
     let (status, list) = route_request(
         app.clone(),
