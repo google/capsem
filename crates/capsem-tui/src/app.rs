@@ -29,13 +29,28 @@ pub enum ControlAction {
         name: Option<String>,
         profile_id: String,
     },
-    Fork { id: String, name: String },
-    Resume { name: String },
-    Checkpoint { id: String },
-    Suspend { id: String },
-    Stop { id: String },
-    Delete { id: String },
-    Purge { all: bool },
+    Fork {
+        id: String,
+        name: String,
+    },
+    Resume {
+        name: String,
+    },
+    Checkpoint {
+        id: String,
+    },
+    Suspend {
+        id: String,
+    },
+    Stop {
+        id: String,
+    },
+    Delete {
+        id: String,
+    },
+    Purge {
+        all: bool,
+    },
 }
 
 impl ControlAction {
