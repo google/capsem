@@ -131,6 +131,10 @@ fn test_profile_summary_cache() -> Vec<api::ProfileSummary> {
     build_profile_summary_cache().expect("test profile summary cache should build")
 }
 
+fn test_profile_cache() -> BTreeMap<String, Profile> {
+    build_profile_cache().expect("test profile cache should build")
+}
+
 fn test_profile_rule_cache() -> Mutex<BTreeMap<String, Vec<api::EnforcementRuleInfo>>> {
     Mutex::new(build_profile_rule_cache(None).expect("test profile rule cache should build"))
 }
@@ -161,9 +165,12 @@ fn make_test_state() -> Arc<ServiceState> {
         asset_status_path,
         magika: test_magika(),
         plugin_policy_by_profile: Mutex::new(HashMap::new()),
-        profile_summary_cache: test_profile_summary_cache(),
+        profile_summary_cache: Mutex::new(test_profile_summary_cache()),
+        profile_cache: Mutex::new(test_profile_cache()),
+        profile_status_cache: Mutex::new(None),
         profile_rule_cache: test_profile_rule_cache(),
         profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
+        mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
@@ -217,9 +224,12 @@ fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
         asset_status_path,
         magika: test_magika(),
         plugin_policy_by_profile: Mutex::new(HashMap::new()),
-        profile_summary_cache: test_profile_summary_cache(),
+        profile_summary_cache: Mutex::new(test_profile_summary_cache()),
+        profile_cache: Mutex::new(test_profile_cache()),
+        profile_status_cache: Mutex::new(None),
         profile_rule_cache: test_profile_rule_cache(),
         profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
+        mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
@@ -1982,7 +1992,8 @@ async fn profile_mcp_info_summarizes_profile_mcp_config() {
     };
     capsem_core::net::policy_config::write_settings_file(&user_path, &settings).unwrap();
 
-    let Json(info) = handle_profile_mcp_info(Path("code".to_string()))
+    let state = make_test_state();
+    let Json(info) = handle_profile_mcp_info(State(state), Path("code".to_string()))
         .await
         .expect("mcp info should summarize profile mcp config");
 
@@ -1994,10 +2005,13 @@ async fn profile_mcp_info_summarizes_profile_mcp_config() {
 
 #[tokio::test]
 async fn profile_mcp_tools_reject_unknown_profile_server() {
-    let err =
-        handle_profile_mcp_server_tools(Path(("code".to_string(), "settings-only".to_string())))
-            .await
-            .expect_err("profile MCP tools must reject servers not configured in the profile");
+    let state = make_test_state();
+    let err = handle_profile_mcp_server_tools(
+        State(state),
+        Path(("code".to_string(), "settings-only".to_string())),
+    )
+    .await
+    .expect_err("profile MCP tools must reject servers not configured in the profile");
 
     assert_eq!(err.0, StatusCode::NOT_FOUND);
     assert!(err.1.contains("MCP server not found in profile code"));
@@ -4797,9 +4811,12 @@ fn make_state_in(run_dir: PathBuf) -> Arc<ServiceState> {
         asset_status_path,
         magika: test_magika(),
         plugin_policy_by_profile: Mutex::new(HashMap::new()),
-        profile_summary_cache: test_profile_summary_cache(),
+        profile_summary_cache: Mutex::new(test_profile_summary_cache()),
+        profile_cache: Mutex::new(test_profile_cache()),
+        profile_status_cache: Mutex::new(None),
         profile_rule_cache: test_profile_rule_cache(),
         profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
+        mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
@@ -5327,9 +5344,12 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         asset_status_path,
         magika: test_magika(),
         plugin_policy_by_profile: Mutex::new(HashMap::new()),
-        profile_summary_cache: test_profile_summary_cache(),
+        profile_summary_cache: Mutex::new(test_profile_summary_cache()),
+        profile_cache: Mutex::new(test_profile_cache()),
+        profile_status_cache: Mutex::new(None),
         profile_rule_cache: test_profile_rule_cache(),
         profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
+        mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });
@@ -6507,6 +6527,48 @@ fn sandbox_info_new_defaults_telemetry_to_none() {
     assert!(info.uptime_secs.is_none());
 }
 
+#[tokio::test]
+async fn vm_list_is_in_memory_only_but_vm_info_reads_session_telemetry() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let session_dir = state.run_dir.join("sessions/list-hot-vm");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    let file_event = capsem_logger::FileEvent {
+        event_id: Some("abcdef123456".into()),
+        timestamp: std::time::SystemTime::now(),
+        action: capsem_logger::FileAction::Created,
+        path: "/root/list-hot-proof.txt".into(),
+        size: Some(12),
+        trace_id: Some("tracelisthot".into()),
+        credential_ref: None,
+    };
+    let db_path = session_dir.join("session.db");
+    tokio::task::spawn_blocking(move || {
+        let writer = capsem_logger::DbWriter::open(&db_path, 8).unwrap();
+        writer.write_blocking(capsem_logger::WriteOp::FileEvent(file_event));
+        writer.shutdown_blocking();
+    })
+    .await
+    .unwrap();
+    insert_fake_instance_with_session_dir(&state, "list-hot-vm", 4242, session_dir);
+
+    let Json(list) = handle_list(State(Arc::clone(&state))).await;
+    let listed = list
+        .sandboxes
+        .iter()
+        .find(|vm| vm.id == "list-hot-vm")
+        .expect("running VM listed");
+    assert!(
+        listed.total_input_tokens.is_none(),
+        "/vms/list is a hot route and must not read session.db telemetry"
+    );
+    assert!(listed.model_call_count.is_none());
+
+    let Json(info) = handle_info(State(state), Path("list-hot-vm".into()))
+        .await
+        .expect("detail route reads session telemetry");
+    assert_eq!(info.total_file_events, Some(1));
+}
+
 #[test]
 fn vm_lifecycle_available_actions_are_contractual() {
     use api::VmAction;
@@ -6910,9 +6972,12 @@ fn make_test_state_with_tempdir_at(
         asset_status_path,
         magika: test_magika(),
         plugin_policy_by_profile: Mutex::new(HashMap::new()),
-        profile_summary_cache: test_profile_summary_cache(),
+        profile_summary_cache: Mutex::new(test_profile_summary_cache()),
+        profile_cache: Mutex::new(test_profile_cache()),
+        profile_status_cache: Mutex::new(None),
         profile_rule_cache: test_profile_rule_cache(),
         profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
+        mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });

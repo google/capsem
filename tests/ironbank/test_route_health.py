@@ -8,6 +8,9 @@ quietly regresses into CPU-bound work such as hashing VM assets on a poll path.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import http.client
+import json
+import socket
 import statistics
 import time
 from typing import Any, Callable
@@ -60,6 +63,92 @@ class RouteTiming:
     @property
     def max_ms(self) -> float:
         return max(self.samples_ms)
+
+
+class UnixHttpConnection(http.client.HTTPConnection):
+    """Persistent HTTP/1.1 client over a Unix domain socket.
+
+    The route-health benchmark must measure Capsem, not `curl` process startup.
+    """
+
+    def __init__(self, socket_path: str, *, timeout: float = 5.0):
+        super().__init__("localhost", timeout=timeout)
+        self.socket_path = socket_path
+
+    def connect(self) -> None:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(self.timeout)
+        sock.connect(self.socket_path)
+        self.sock = sock
+
+
+class PersistentJsonClient:
+    def __init__(
+        self,
+        connection_factory: Callable[[], http.client.HTTPConnection],
+        *,
+        auth_token: str | None = None,
+    ):
+        self._connection_factory = connection_factory
+        self._conn = connection_factory()
+        self._auth_token = auth_token
+
+    def get(self, path: str, timeout: int = 20) -> Any:
+        return self._request("GET", path, None, timeout=timeout)
+
+    def post(self, path: str, body: dict[str, Any] | None = None, timeout: int = 20) -> Any:
+        return self._request("POST", path, body, timeout=timeout)
+
+    def close(self) -> None:
+        self._conn.close()
+
+    def _request(
+        self,
+        method: str,
+        path: str,
+        body: dict[str, Any] | None,
+        *,
+        timeout: int,
+    ) -> Any:
+        payload = None if body is None else json.dumps(body).encode("utf-8")
+        headers = {"Content-Type": "application/json", "Connection": "keep-alive"}
+        if self._auth_token is not None:
+            headers["Authorization"] = f"Bearer {self._auth_token}"
+        self._conn.timeout = timeout
+        try:
+            return self._request_once(method, path, payload, headers)
+        except (http.client.RemoteDisconnected, BrokenPipeError, ConnectionResetError):
+            self._conn.close()
+            self._conn = self._connection_factory()
+            return self._request_once(method, path, payload, headers)
+
+    def _request_once(
+        self,
+        method: str,
+        path: str,
+        payload: bytes | None,
+        headers: dict[str, str],
+    ) -> Any:
+        self._conn.request(method, path, body=payload, headers=headers)
+        response = self._conn.getresponse()
+        raw = response.read()
+        assert 200 <= response.status < 300, (method, path, response.status, raw[:500])
+        if not raw:
+            return None
+        return json.loads(raw.decode("utf-8"))
+
+
+def _fast_service_client(service: ServiceInstance) -> PersistentJsonClient:
+    return PersistentJsonClient(lambda: UnixHttpConnection(str(service.uds_path)))
+
+
+def _fast_gateway_client(gateway: GatewayInstance) -> PersistentJsonClient:
+    assert gateway.port is not None
+    assert gateway.token is not None
+    return PersistentJsonClient(
+        lambda: http.client.HTTPConnection("127.0.0.1", gateway.port, timeout=5.0),
+        auth_token=gateway.token,
+    )
 
 
 def _enforcement_payload(action: str = "block") -> dict[str, Any]:
@@ -145,7 +234,7 @@ def _measure_route(
     *,
     service_proc: psutil.Process,
     gateway_proc: psutil.Process | None = None,
-    samples: int = 8,
+    samples: int = 64,
 ) -> RouteTiming:
     for _ in range(2):
         call()
@@ -219,6 +308,99 @@ def _assert_timing_budget(timing: RouteTiming, *, p95_ms: float, max_ms: float, 
         assert timing.gateway_cpu_s <= cpu_s, (
             f"{timing.label} gateway CPU={timing.gateway_cpu_s:.3f}s > {cpu_s:.3f}s"
         )
+
+
+def _hot_route_budget(path: str, *, gateway: bool = False) -> tuple[float, float, float]:
+    if path.endswith("/assets/status"):
+        return (3.0 if not gateway else 4.0, 8.0 if not gateway else 10.0, 0.10)
+    return (
+        12.0 if not gateway else 15.0,
+        30.0 if not gateway else 35.0,
+        0.05 if not gateway else 0.06,
+    )
+
+
+def _hot_route_contracts(profile: str) -> list[RouteContract]:
+    return [
+        RouteContract("GET", "/status", None, {"ready", "service"}, dict),
+        RouteContract("GET", "/vms/list", None, {"sandboxes"}, dict),
+        RouteContract("GET", "/profiles/list", None, {"profiles"}, dict),
+        RouteContract(
+            "GET",
+            "/profiles/status",
+            None,
+            {"profile_count", "profiles", "ready_count"},
+            dict,
+        ),
+        RouteContract(
+            "GET",
+            f"/profiles/{profile}/assets/status",
+            None,
+            {"profile_id", "ready", "assets"},
+            dict,
+        ),
+        RouteContract(
+            "GET",
+            f"/profiles/{profile}/plugins/list",
+            None,
+            {"scope", "plugins"},
+            dict,
+        ),
+        RouteContract(
+            "GET",
+            f"/profiles/{profile}/plugins/info",
+            None,
+            {"scope", "plugin_count", "enabled_count"},
+            dict,
+        ),
+        RouteContract(
+            "GET",
+            f"/profiles/{profile}/enforcement/info",
+            None,
+            {"profile_id", "rule_count", "action_counts"},
+            dict,
+        ),
+        RouteContract(
+            "GET",
+            f"/profiles/{profile}/enforcement/rules/list",
+            None,
+            {"profile_id", "rules"},
+            dict,
+        ),
+        RouteContract(
+            "GET",
+            f"/profiles/{profile}/detection/info",
+            None,
+            {"profile_id", "rule_count", "detection_rule_count"},
+            dict,
+        ),
+        RouteContract(
+            "GET",
+            f"/profiles/{profile}/detection/rules/list",
+            None,
+            {"profile_id", "rules"},
+            dict,
+        ),
+        RouteContract(
+            "GET",
+            f"/profiles/{profile}/mcp/info",
+            None,
+            {"profile_id", "server_count", "builtin_local_enabled"},
+            dict,
+        ),
+        RouteContract(
+            "GET",
+            f"/profiles/{profile}/mcp/default/info",
+            None,
+            {"action", "source", "rule_id"},
+            dict,
+        ),
+        RouteContract("GET", f"/profiles/{profile}/mcp/servers/list", None, None, list),
+        RouteContract("GET", f"/profiles/{profile}/mcp/servers/local/tools/list", None, None, list),
+        RouteContract("GET", "/security/status", None, {"sessions", "total"}, dict),
+        RouteContract("GET", "/enforcement/status", None, {"sessions", "total"}, dict),
+        RouteContract("GET", "/detection/status", None, {"sessions", "total"}, dict),
+    ]
 
 
 def _assert_vm_row(
@@ -381,50 +563,27 @@ def test_control_route_contracts_exist_for_ui_tui_blocking_and_vm_surfaces() -> 
 def test_hot_control_routes_have_latency_and_cpu_budgets() -> None:
     service = ServiceInstance()
     gateway: GatewayInstance | None = None
+    fast_service_client: PersistentJsonClient | None = None
+    fast_gateway_client: PersistentJsonClient | None = None
     try:
         service.start()
         gateway = GatewayInstance(uds_path=service.uds_path)
         gateway.start()
-        service_client = service.client()
-        gateway_client = TcpHttpClient(gateway.base_url, gateway.token)
+        fast_service_client = _fast_service_client(service)
+        fast_gateway_client = _fast_gateway_client(gateway)
         assert service.proc is not None
         assert gateway.proc is not None
         service_proc = psutil.Process(service.proc.pid)
         gateway_proc = psutil.Process(gateway.proc.pid)
 
-        hot_service_routes = [
-            RouteContract("GET", "/status", None, {"ready", "service"}, dict),
-            RouteContract("GET", "/vms/list", None, {"sandboxes"}, dict),
-            RouteContract("GET", "/profiles/list", None, {"profiles"}, dict),
-            RouteContract(
-                "GET",
-                "/profiles/status",
-                None,
-                {"profile_count", "profiles", "ready_count"},
-                dict,
-            ),
-            RouteContract(
-                "GET",
-                f"/profiles/{CODE_PROFILE_ID}/plugins/list",
-                None,
-                {"scope", "plugins"},
-                dict,
-            ),
-            RouteContract(
-                "GET",
-                f"/profiles/{CODE_PROFILE_ID}/enforcement/rules/list",
-                None,
-                {"profile_id", "rules"},
-                dict,
-            ),
-        ]
-        for contract in hot_service_routes:
+        for contract in _hot_route_contracts(CODE_PROFILE_ID):
             timing = _measure_route(
                 f"service {contract.path}",
-                lambda c=contract: _assert_contract(service_client, c),
+                lambda c=contract: _assert_contract(fast_service_client, c),
                 service_proc=service_proc,
             )
-            _assert_timing_budget(timing, p95_ms=150.0, max_ms=250.0, cpu_s=0.20)
+            p95_ms, max_ms, cpu_s = _hot_route_budget(contract.path)
+            _assert_timing_budget(timing, p95_ms=p95_ms, max_ms=max_ms, cpu_s=cpu_s)
 
         hot_gateway_routes = [
             RouteContract(
@@ -444,16 +603,22 @@ def test_hot_control_routes_have_latency_and_cpu_budgets() -> None:
                 {"profile_count", "profiles", "ready_count"},
                 dict,
             ),
+            *_hot_route_contracts(CODE_PROFILE_ID)[4:],
         ]
         for contract in hot_gateway_routes:
             timing = _measure_route(
                 f"gateway {contract.path}",
-                lambda c=contract: _assert_contract(gateway_client, c),
+                lambda c=contract: _assert_contract(fast_gateway_client, c),
                 service_proc=service_proc,
                 gateway_proc=gateway_proc,
             )
-            _assert_timing_budget(timing, p95_ms=250.0, max_ms=350.0, cpu_s=0.25)
+            p95_ms, max_ms, cpu_s = _hot_route_budget(contract.path, gateway=True)
+            _assert_timing_budget(timing, p95_ms=p95_ms, max_ms=max_ms, cpu_s=cpu_s)
     finally:
+        if fast_service_client is not None:
+            fast_service_client.close()
+        if fast_gateway_client is not None:
+            fast_gateway_client.close()
         if gateway is not None:
             gateway.stop()
         service.stop()

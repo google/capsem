@@ -7,7 +7,10 @@ use axum::{
 };
 use capsem_core::poll::{poll_until, PollOpts};
 use capsem_core::{
-    mcp::policy::{McpManualServer, McpProfileConfig},
+    mcp::{
+        policy::{McpManualServer, McpProfileConfig},
+        ToolCacheEntry,
+    },
     net::policy_config::{
         skill_id_for_path, ActiveProfileFile, CompiledSecurityRule, DetectionLevel, Profile,
         ProfileAssetDescriptor, ProfileCatalog, ProfileCatalogSource, ProfileConfigFile,
@@ -161,7 +164,15 @@ struct ServiceState {
     plugin_policy_by_profile: Mutex<HashMap<String, BTreeMap<String, SecurityPluginConfig>>>,
     /// Route-owned profile summaries loaded once at service startup. Hot
     /// profile routes must not re-read profile files or recompile rules.
-    profile_summary_cache: Vec<api::ProfileSummary>,
+    profile_summary_cache: Mutex<Vec<api::ProfileSummary>>,
+    /// Route-owned full profile objects loaded once at service startup.
+    /// Hot profile/MCP routes must not reload profile files from disk.
+    profile_cache: Mutex<BTreeMap<String, Profile>>,
+    /// Route-owned profile readiness snapshot loaded once at service startup
+    /// and refreshed by explicit profile/asset mutation routes. Hot status
+    /// routes must not re-read profile TOML, re-hash assets, or validate the
+    /// manifest on every UI/TUI poll.
+    profile_status_cache: Mutex<Option<ProfileStatusCache>>,
     /// Route-owned compiled rule DTOs loaded once at service startup and
     /// refreshed by profile/corp mutation routes. Polling UI/TUI routes must
     /// not parse profile TOML or compile CEL on every request.
@@ -170,6 +181,10 @@ struct ServiceState {
     /// refreshed by profile/corp mutation routes. Hot plugin/profile routes
     /// must not re-read profile TOML just to list effective plugin modes.
     profile_plugin_policy_cache: Mutex<BTreeMap<String, BTreeMap<String, SecurityPluginConfig>>>,
+    /// Route-owned MCP tool cache loaded once at service startup and refreshed
+    /// by explicit MCP discovery routes. Hot MCP list routes must not read the
+    /// tool cache JSON from disk.
+    mcp_tool_cache: Mutex<Vec<ToolCacheEntry>>,
     /// Guards Apple VZ lifecycle edges across all VMs managed by this
     /// service. Cold starts and teardown take a read guard; save/restore take
     /// a write guard. That keeps checkpoint edges exclusive without
@@ -2971,7 +2986,8 @@ async fn provision_attempt(
 }
 
 /// Attach live telemetry from session.db to a SandboxInfo.
-/// Shared by handle_list (all VMs) and handle_info (single VM).
+/// This is intentionally reserved for explicit detail/ledger routes. Hot
+/// polling routes such as `/vms/list` must stay in-memory only.
 fn enrich_telemetry(info: &mut SandboxInfo, session_dir: &std::path::Path) {
     let db_path = session_dir.join("session.db");
     if let Ok(reader) = capsem_logger::DbReader::open(&db_path) {
@@ -3028,7 +3044,9 @@ async fn handle_list(State(state): State<Arc<ServiceState>>) -> Json<ListRespons
     state.reconcile_persistent_defunct_from_logs();
     let mut sandboxes: Vec<SandboxInfo> = Vec::new();
 
-    // Running instances (with live telemetry)
+    // Running instances. Keep this list route in-memory only; callers that
+    // need ledger-backed counters use `/vms/{id}/info` or explicit stats
+    // routes instead of making every UI/TUI poll open session.db.
     {
         let instances = state.instances.lock().unwrap();
         for i in instances.values() {
@@ -3051,7 +3069,6 @@ async fn handle_list(State(state): State<Arc<ServiceState>>) -> Json<ListRespons
             info.uptime_secs = Some(i.start_time.elapsed().as_secs());
             info.can_resume = false;
             info.refresh_available_actions();
-            enrich_telemetry(&mut info, &i.session_dir);
             sandboxes.push(info);
         }
     }
@@ -4875,8 +4892,15 @@ async fn handle_profile_assets_status(
     Path(profile_id): Path<String>,
     State(state): State<Arc<ServiceState>>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let profile = profile_for_route(profile_id)?;
-    Ok(Json(profile_status_value(&state, &profile)))
+    let profile_id = validate_profile_route_id(profile_id)?;
+    let cache = profile_status_cache(&state)?;
+    let status = cache.profiles.get(&profile_id).cloned().ok_or_else(|| {
+        AppError(
+            StatusCode::NOT_FOUND,
+            format!("profile not found: {profile_id}"),
+        )
+    })?;
+    Ok(Json(refresh_reconcile_fields(&state, status)))
 }
 
 /// POST /profiles/{profile_id}/assets/ensure -- download missing/corrupt
@@ -4886,9 +4910,15 @@ async fn handle_profile_assets_ensure(
     Path(profile_id): Path<String>,
     State(state): State<Arc<ServiceState>>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    let profile_id = validate_profile_route_id(profile_id)?;
     let profile = profile_for_route(profile_id)?;
     let ensure_result = ensure_profile_assets_for_state(Arc::clone(&state), profile.config()).await;
-    let mut status = profile_status_value(&state, &profile);
+    let cache = rebuild_profile_status_cache(&state)?;
+    let mut status = cache
+        .profiles
+        .get(profile.config().id.as_str())
+        .cloned()
+        .unwrap_or_else(|| profile_status_value(&state, &profile));
     if let Some(obj) = status.as_object_mut() {
         match ensure_result {
             Ok(downloaded) => {
@@ -4902,7 +4932,7 @@ async fn handle_profile_assets_ensure(
             }
         }
     }
-    Ok(Json(status))
+    Ok(Json(refresh_reconcile_fields(&state, status)))
 }
 
 async fn handle_profile_assets_info(
@@ -5111,10 +5141,25 @@ fn profile_for_route(profile_id: String) -> Result<Profile, AppError> {
     }
 }
 
+#[derive(Clone, Debug)]
+struct ProfileStatusCache {
+    catalog: serde_json::Value,
+    profiles: BTreeMap<String, serde_json::Value>,
+}
+
+#[cfg(test)]
 fn profile_catalog_status_value(
     state: &ServiceState,
     catalog: &ProfileCatalog,
 ) -> serde_json::Value {
+    build_profile_status_cache(state, catalog).catalog
+}
+
+fn build_profile_status_cache(
+    state: &ServiceState,
+    catalog: &ProfileCatalog,
+) -> ProfileStatusCache {
+    let mut profile_statuses = BTreeMap::new();
     let profiles = catalog
         .profiles()
         .map(|profile| {
@@ -5131,6 +5176,7 @@ fn profile_catalog_status_value(
                         "errors": [error.1],
                     })
                 });
+            profile_statuses.insert(profile.id.clone(), status.clone());
             let missing = status["missing_assets"].clone();
             json!({
                 "id": profile.id,
@@ -5152,13 +5198,64 @@ fn profile_catalog_status_value(
         .iter()
         .filter(|profile| profile["ready"].as_bool().unwrap_or(false))
         .count();
-    json!({
+    let catalog_status = json!({
         "source": profile_catalog_source_label(catalog.source()),
         "asset_manifest": asset_manifest_status_value(state),
         "profile_count": profiles.len(),
         "ready_count": ready_count,
         "profiles": profiles,
-    })
+    });
+    ProfileStatusCache {
+        catalog: catalog_status,
+        profiles: profile_statuses,
+    }
+}
+
+fn refresh_reconcile_fields(
+    state: &ServiceState,
+    mut value: serde_json::Value,
+) -> serde_json::Value {
+    let reconcile = state
+        .asset_reconcile
+        .lock()
+        .map(|s| s.clone())
+        .unwrap_or_default();
+    if let Some(obj) = value.as_object_mut() {
+        if obj.contains_key("downloading") {
+            obj.insert("downloading".to_string(), json!(reconcile.in_progress));
+        }
+    }
+    append_asset_reconcile_status(&mut value, &reconcile);
+    value
+}
+
+fn rebuild_profile_status_cache(state: &ServiceState) -> Result<ProfileStatusCache, AppError> {
+    let catalog = load_profile_catalog_for_service()?;
+    let cache = build_profile_status_cache(state, &catalog);
+    *state.profile_status_cache.lock().map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("profile status cache lock poisoned: {error}"),
+        )
+    })? = Some(cache.clone());
+    Ok(cache)
+}
+
+fn profile_status_cache(state: &ServiceState) -> Result<ProfileStatusCache, AppError> {
+    if let Some(cache) = state
+        .profile_status_cache
+        .lock()
+        .map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("profile status cache lock poisoned: {error}"),
+            )
+        })?
+        .clone()
+    {
+        return Ok(cache);
+    }
+    rebuild_profile_status_cache(state)
 }
 
 fn validate_profile_route_id(profile_id: String) -> Result<String, AppError> {
@@ -5248,6 +5345,87 @@ fn build_profile_summary_cache() -> Result<Vec<api::ProfileSummary>, AppError> {
         .collect::<Result<Vec<_>, AppError>>()
 }
 
+fn build_profile_cache() -> Result<BTreeMap<String, Profile>, AppError> {
+    let catalog = load_profile_catalog_for_service()?;
+    let mut profiles = BTreeMap::new();
+    for manifest in catalog.profiles() {
+        profiles.insert(
+            manifest.id.clone(),
+            profile_from_catalog_entry(manifest, catalog.source())?,
+        );
+    }
+    Ok(profiles)
+}
+
+fn cached_profile_for_route(state: &ServiceState, profile_id: String) -> Result<Profile, AppError> {
+    if profile_id.is_empty() {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            "profile id must not be empty".to_string(),
+        ));
+    }
+    state
+        .profile_cache
+        .lock()
+        .map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("profile cache lock poisoned: {error}"),
+            )
+        })?
+        .get(&profile_id)
+        .cloned()
+        .ok_or_else(|| {
+            AppError(
+                StatusCode::NOT_FOUND,
+                format!("profile not found: {profile_id}"),
+            )
+        })
+}
+
+fn refresh_profile_route_caches(state: &ServiceState) -> Result<(), AppError> {
+    let profile_summary_cache = build_profile_summary_cache()?;
+    let profile_cache = build_profile_cache()?;
+    let profile_rule_cache = build_profile_rule_cache(None)?;
+    let profile_plugin_policy_cache = build_profile_plugin_policy_cache(None)?;
+    let status_cache = {
+        let catalog = load_profile_catalog_for_service()?;
+        build_profile_status_cache(state, &catalog)
+    };
+
+    *state.profile_summary_cache.lock().map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("profile summary cache lock poisoned: {error}"),
+        )
+    })? = profile_summary_cache;
+    *state.profile_cache.lock().map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("profile cache lock poisoned: {error}"),
+        )
+    })? = profile_cache;
+    *state.profile_rule_cache.lock().map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("profile rule cache lock poisoned: {error}"),
+        )
+    })? = profile_rule_cache;
+    *state.profile_plugin_policy_cache.lock().map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("profile plugin cache lock poisoned: {error}"),
+        )
+    })? = profile_plugin_policy_cache;
+    *state.profile_status_cache.lock().map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("profile status cache lock poisoned: {error}"),
+        )
+    })? = Some(status_cache);
+    Ok(())
+}
+
 fn build_profile_rule_cache(
     profile_filter: Option<&str>,
 ) -> Result<BTreeMap<String, Vec<api::EnforcementRuleInfo>>, AppError> {
@@ -5301,6 +5479,13 @@ async fn handle_profiles_list(
 ) -> Result<Json<api::ProfilesListResponse>, AppError> {
     let profiles = state
         .profile_summary_cache
+        .lock()
+        .map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("profile summary cache lock poisoned: {error}"),
+            )
+        })?
         .iter()
         .map(|summary| profile_summary_with_live_plugin_count(&state, summary))
         .collect();
@@ -5310,17 +5495,17 @@ async fn handle_profiles_list(
 async fn handle_profiles_status(
     State(state): State<Arc<ServiceState>>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let catalog = load_profile_catalog_for_service()?;
-    Ok(Json(profile_catalog_status_value(&state, &catalog)))
+    let cache = profile_status_cache(&state)?;
+    Ok(Json(refresh_reconcile_fields(&state, cache.catalog)))
 }
 
 async fn handle_profiles_reload(
     State(state): State<Arc<ServiceState>>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let catalog = load_profile_catalog_for_service()?;
+    let cache = rebuild_profile_status_cache(&state)?;
     Ok(Json(json!({
         "reloaded": true,
-        "catalog": profile_catalog_status_value(&state, &catalog),
+        "catalog": refresh_reconcile_fields(&state, cache.catalog),
     })))
 }
 
@@ -5337,6 +5522,13 @@ async fn handle_profile_info(
     })?;
     let summary = state
         .profile_summary_cache
+        .lock()
+        .map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("profile summary cache lock poisoned: {error}"),
+            )
+        })?
         .iter()
         .find(|summary| summary.id == manifest.id)
         .map(|summary| profile_summary_with_live_plugin_count(&state, summary))
@@ -5674,9 +5866,11 @@ fn resolve_mcp_tool_id(server_id: &str, tool_id: &str) -> Result<String, AppErro
 
 /// GET /profiles/:profile_id/mcp/servers/list -- list profile MCP servers with status.
 async fn handle_profile_mcp_info(
+    State(state): State<Arc<ServiceState>>,
     Path(profile_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let profile = profile_manifest_for_route(profile_id)?;
+    let profile = cached_profile_for_route(&state, profile_id)?;
+    let profile = profile.config();
     let mcp = profile.mcp.as_ref();
     let builtin_local_enabled = mcp
         .and_then(|mcp| mcp.server_enabled.get("local").copied())
@@ -5817,6 +6011,7 @@ async fn write_profile_mutation_event(
         .write(capsem_logger::WriteOp::ProfileMutationEvent(event.clone()))
         .await;
     writer.shutdown_blocking();
+    refresh_profile_route_caches(state)?;
     log_profile_mutation_applied("profile_mutation_ledger", &event);
     Ok(event)
 }
@@ -6024,12 +6219,13 @@ async fn handle_profile_mcp_server_delete(
 }
 
 async fn handle_profile_mcp_servers(
+    State(state): State<Arc<ServiceState>>,
     Path(profile_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let profile = profile_manifest_for_route(profile_id)?;
-    use capsem_core::mcp::{build_profile_server_list, load_tool_cache};
+    let profile = cached_profile_for_route(&state, profile_id)?;
+    use capsem_core::mcp::build_profile_server_list;
 
-    let profile_mcp = profile.mcp.clone().unwrap_or_default();
+    let profile_mcp = profile.config().mcp.clone().unwrap_or_default();
 
     // Include the "local" builtin server if the binary exists.
     let builtin_bin = std::env::current_exe()
@@ -6040,7 +6236,11 @@ async fn handle_profile_mcp_servers(
         builtin_bin.as_deref(),
         std::collections::HashMap::new(),
     );
-    let cache = load_tool_cache();
+    let cache = state
+        .mcp_tool_cache
+        .lock()
+        .map(|cache| cache.clone())
+        .unwrap_or_default();
 
     let resp: Vec<api::McpServerInfoResponse> = servers
         .iter()
@@ -6064,9 +6264,10 @@ async fn handle_profile_mcp_servers(
 
 /// GET /profiles/:profile_id/mcp/default/info -- read the profile MCP default permission.
 async fn handle_profile_mcp_default_info(
+    State(state): State<Arc<ServiceState>>,
     Path(profile_id): Path<String>,
 ) -> Result<Json<api::McpDefaultPermissionResponse>, AppError> {
-    let profile = profile_for_route(profile_id)?;
+    let profile = cached_profile_for_route(&state, profile_id)?;
     let permission = profile.mcp_default_permission().map_err(|error| {
         AppError(
             StatusCode::BAD_REQUEST,
@@ -6082,6 +6283,7 @@ async fn handle_profile_mcp_default_info(
 
 /// GET /profiles/:profile_id/mcp/servers/:server_id/tools/list -- list one server's tools.
 async fn handle_profile_mcp_server_tools(
+    State(state): State<Arc<ServiceState>>,
     Path((profile_id, server_id)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     if server_id.is_empty() {
@@ -6090,11 +6292,22 @@ async fn handle_profile_mcp_server_tools(
             "MCP server id must not be empty".to_string(),
         ));
     }
-    ensure_profile_mcp_server(profile_id.clone(), &server_id)?;
-    let profile = profile_for_route(profile_id)?;
-    use capsem_core::mcp::load_tool_cache;
+    let profile = cached_profile_for_route(&state, profile_id)?;
+    if !profile_mcp_server_configured(profile.config(), &server_id) {
+        return Err(AppError(
+            StatusCode::NOT_FOUND,
+            format!(
+                "MCP server not found in profile {}: {server_id}",
+                profile.config().id
+            ),
+        ));
+    }
 
-    let cache = load_tool_cache();
+    let cache = state
+        .mcp_tool_cache
+        .lock()
+        .map(|cache| cache.clone())
+        .unwrap_or_default();
     let resp: Result<Vec<api::McpToolInfoResponse>, AppError> = cache
         .iter()
         .filter(|entry| entry.server_name == server_id)
@@ -6150,6 +6363,9 @@ async fn handle_profile_mcp_server_refresh(
         let id = state.next_job_id();
         let _ =
             send_ipc_command(uds_path, ServiceToProcess::McpRefreshTools { id }, Some(30)).await;
+    }
+    if let Ok(mut cache) = state.mcp_tool_cache.lock() {
+        *cache = capsem_core::mcp::load_tool_cache();
     }
     Ok(Json(
         serde_json::json!({"success": true, "server_id": server_id, "instances": uds_paths.len()}),
@@ -6805,6 +7021,13 @@ fn validate_profile_route_id_from_state(
     }
     if !state
         .profile_summary_cache
+        .lock()
+        .map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("profile summary cache lock poisoned: {error}"),
+            )
+        })?
         .iter()
         .any(|summary| summary.id == profile_id)
     {
@@ -9653,6 +9876,8 @@ async fn main() -> Result<()> {
     let profile_summary_cache = build_profile_summary_cache().map_err(|AppError(_, message)| {
         anyhow!("failed to build profile summary cache: {message}")
     })?;
+    let profile_cache = build_profile_cache()
+        .map_err(|AppError(_, message)| anyhow!("failed to build profile cache: {message}"))?;
     let profile_rule_cache = build_profile_rule_cache(None)
         .map_err(|AppError(_, message)| anyhow!("failed to build profile rule cache: {message}"))?;
     let profile_plugin_policy_cache =
@@ -9673,12 +9898,18 @@ async fn main() -> Result<()> {
         asset_status_path,
         magika: Mutex::new(magika_session),
         plugin_policy_by_profile: Mutex::new(HashMap::new()),
-        profile_summary_cache,
+        profile_summary_cache: Mutex::new(profile_summary_cache),
+        profile_cache: Mutex::new(profile_cache),
+        profile_status_cache: Mutex::new(None),
         profile_rule_cache: Mutex::new(profile_rule_cache),
         profile_plugin_policy_cache: Mutex::new(profile_plugin_policy_cache),
+        mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });
+    rebuild_profile_status_cache(&state).map_err(|AppError(_, message)| {
+        anyhow!("failed to build profile status cache: {message}")
+    })?;
     state.reconcile_persistent_defunct_from_logs();
 
     {
