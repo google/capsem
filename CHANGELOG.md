@@ -74,6 +74,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Fixed profile shell bootstrap payloads so shipped profiles put
+  `/root/.local/bin` ahead of `/usr/local/bin`, keeping Claude/Codex/AGY
+  user-local CLI installs on the path used by interactive shells and doctor
+  checks.
 - Fixed the dashboard session list so it refreshes explicitly, keeps long
   session lists scrollable, groups broken sessions below healthy sessions, and
   exposes a route-backed purge action instead of leaving stale broken rows mixed

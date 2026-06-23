@@ -132,6 +132,21 @@ def test_profiles_package_claude_bypass_permissions_bootstrap() -> None:
             failures.append(
                 f"{profile_id}: build script does not promote CLI binaries to /usr/local/bin"
             )
+        shell_paths = {
+            "root/.bashrc": profile_dir / "root/root/.bashrc",
+            "root/.profile": profile_dir / "root/root/.profile",
+        }
+        for rel, shell_path in shell_paths.items():
+            if not shell_path.is_file():
+                failures.append(f"{profile_id}: missing {rel}")
+                continue
+            shell = shell_path.read_text()
+            if 'PATH="/root/.local/bin:/usr/local/bin:' not in shell:
+                failures.append(
+                    f"{profile_id}: {rel} must put /root/.local/bin before /usr/local/bin"
+                )
+            if "export PATH" not in shell:
+                failures.append(f"{profile_id}: {rel} does not export PATH")
 
     assert not failures, "invalid Claude permissions bootstrap contract:\n" + "\n".join(failures)
 
@@ -234,6 +249,7 @@ def test_profile_root_manifests_pin_exactly_the_shipped_root_payload() -> None:
     )
     required_payloads = {
         "root/.antigravity/settings.json",
+        "root/.bashrc",
         "root/.claude.json",
         "root/.claude/settings.json",
         "root/.claude/settings.local.json",
@@ -241,6 +257,7 @@ def test_profile_root_manifests_pin_exactly_the_shipped_root_payload() -> None:
         "root/.gemini/antigravity-cli/settings.json",
         "root/.gemini/config/config.json",
         "root/.mcp.json",
+        "root/.profile",
     }
 
     for profile_dir in sorted(PROFILES_DIR.iterdir()):

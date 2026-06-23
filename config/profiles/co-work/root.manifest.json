@@ -12,6 +12,11 @@
       "size": 148
     },
     {
+      "path": "root/.bashrc",
+      "hash": "blake3:09a4a264dd5cd5255769acc1f6ee341a3d0adcac8a65a3d1c64570e8eae255a9",
+      "size": 178
+    },
+    {
       "path": "root/.claude.json",
       "hash": "blake3:72cffdfb37c41367018d13de7d2bb5c267f960437fcf9a29a0fe8bd33dbe572d",
       "size": 334
@@ -65,6 +70,11 @@
       "path": "root/.mcp.json",
       "hash": "blake3:44dbee07dcb89910a47cd195f6b324d51260b2f4e34a13a8bd85e2e5039ea67b",
       "size": 90
+    },
+    {
+      "path": "root/.profile",
+      "hash": "blake3:7aa9e6b34c2cab8369de83325be60d79cc3c72a0d6887023b680d24ca6380867",
+      "size": 170
     },
     {
       "path": "etc/hosts",
