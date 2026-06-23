@@ -3,7 +3,7 @@
 
 // -- Stats bar (polled every 2s) ------------------------------------------
 
-export const TOOL_CALL_LEDGER_WHERE = "origin IN ('native', 'mcp', 'builtin', 'local')";
+export const TOOL_CALL_LEDGER_WHERE = "origin IN ('native', 'mcp', 'builtin', 'local', 'mcp_proxy')";
 
 export const MODEL_STATS_SQL = `
   SELECT
@@ -147,6 +147,26 @@ export const TOOLS_UNIFIED_SQL = `
     WHERE ${TOOL_CALL_LEDGER_WHERE}
   )
   ORDER BY timestamp DESC
+`;
+
+export const TOOLS_UNIFIED_MINIMAL_SQL = `
+  SELECT tc.event_id,
+         COALESCE(mc.timestamp, '') as timestamp,
+         NULL as process_name,
+         'model' as server_name,
+         tc.tool_name,
+         NULL as method,
+         'allowed' as decision,
+         COALESCE(mc.duration_ms, 0) as duration_ms,
+         COALESCE(LENGTH(tc.arguments), 0) as bytes,
+         tc.arguments,
+         NULL as response_preview,
+         NULL as error_message,
+         tc.origin as source
+  FROM tool_calls tc
+  LEFT JOIN model_calls mc ON tc.model_call_id = mc.id
+  WHERE ${TOOL_CALL_LEDGER_WHERE}
+  ORDER BY COALESCE(mc.timestamp, '') DESC, tc.id DESC
 `;
 
 export const TOOLS_UNIFIED_SEARCH_SQL = `

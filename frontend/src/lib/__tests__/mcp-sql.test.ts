@@ -7,6 +7,7 @@ import {
   TOOLS_STATS_SQL,
   TOOLS_TOP_SERVERS_SQL,
   TOOLS_TOP_TOOLS_SQL,
+  TOOLS_UNIFIED_MINIMAL_SQL,
   TOOLS_UNIFIED_SEARCH_SQL,
   TOOLS_UNIFIED_SQL,
 } from '../sql';
@@ -20,6 +21,7 @@ describe('MCP stats SQL', () => {
       TOOLS_TOP_SERVERS_SQL,
       TOOLS_OVER_TIME_SQL,
       TOOLS_UNIFIED_SQL,
+      TOOLS_UNIFIED_MINIMAL_SQL,
       TOOLS_UNIFIED_SEARCH_SQL,
     ];
 
@@ -27,7 +29,9 @@ describe('MCP stats SQL', () => {
       expect(query).toContain(TOOL_CALL_LEDGER_WHERE.trim());
     }
     expect(TOOLS_UNIFIED_SQL).toContain('FROM tool_calls');
+    expect(TOOLS_UNIFIED_MINIMAL_SQL).toContain('FROM tool_calls');
     expect(TOOLS_UNIFIED_SQL).not.toContain('FROM mcp_calls');
+    expect(TOOLS_UNIFIED_MINIMAL_SQL).not.toContain('FROM mcp_calls');
   });
 });
 

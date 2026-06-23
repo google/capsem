@@ -13,7 +13,7 @@
   } from '../../stats-detail';
   import { themeStore } from '../../stores/theme.svelte.ts';
   import { tabStore } from '../../stores/tabs.svelte.ts';
-  import { TOOLS_UNIFIED_SQL } from '../../sql';
+  import { TOOLS_UNIFIED_MINIMAL_SQL, TOOLS_UNIFIED_SQL } from '../../sql';
   import MetricCard from './stats/MetricCard.svelte';
   import StatsBadge from './stats/StatsBadge.svelte';
   import StatsEventList from './stats/StatsEventList.svelte';
@@ -78,6 +78,21 @@
 
   async function query(sql: string): Promise<Row[]> {
     return toObjects(await api.inspectQuery(vmId, sql));
+  }
+
+  function isMissingToolLedgerColumn(error: unknown): boolean {
+    return error instanceof Error && /no such column/i.test(error.message);
+  }
+
+  async function queryToolRows(): Promise<Row[]> {
+    try {
+      return await query(`${TOOLS_UNIFIED_SQL} LIMIT 200`);
+    } catch (primaryError) {
+      if (!isMissingToolLedgerColumn(primaryError)) {
+        throw primaryError;
+      }
+      return await query(`${TOOLS_UNIFIED_MINIMAL_SQL} LIMIT 200`);
+    }
   }
 
   function safeEventId(value: unknown): string | null {
@@ -221,7 +236,7 @@
                FROM model_calls
                ORDER BY id DESC
                LIMIT 200`),
-        query(`${TOOLS_UNIFIED_SQL} LIMIT 200`),
+        queryToolRows(),
         query(`SELECT event_id, timestamp, domain, port, method, path, query, status_code,
                  decision, duration_ms, bytes_sent, bytes_received, matched_rule, policy_rule,
                  trace_id, credential_ref, request_headers, response_headers

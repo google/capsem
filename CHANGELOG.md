@@ -74,6 +74,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Fixed the stats Tools panel so model-native tool calls from active minimal
+  `tool_calls` ledgers render from the unified tool table instead of appearing
+  empty in AGY/Claude sessions that already recorded the tool rows.
 - Fixed TUI terminal responsiveness under bursty keyboard/paste input by
   bounding per-tick input draining and coalescing adjacent terminal bytes before
   websocket sends, matching the browser terminal's coalescing rail.
