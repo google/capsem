@@ -2988,31 +2988,6 @@ async fn provision_attempt(
     }
 }
 
-/// Attach live telemetry from session.db to a SandboxInfo.
-/// This is intentionally reserved for explicit detail/ledger routes. Hot
-/// polling routes such as `/vms/list` must stay in-memory only.
-fn enrich_telemetry(info: &mut SandboxInfo, session_dir: &std::path::Path) {
-    let db_path = session_dir.join("session.db");
-    if let Ok(reader) = capsem_logger::DbReader::open(&db_path) {
-        if let Ok(stats) = reader.session_stats() {
-            info.total_input_tokens = Some(stats.total_input_tokens);
-            info.total_output_tokens = Some(stats.total_output_tokens);
-            info.total_estimated_cost = Some(stats.total_estimated_cost_usd);
-            info.total_tool_calls = Some(stats.total_tool_calls);
-            info.total_requests = Some(stats.net_total);
-            info.allowed_requests = Some(stats.net_allowed);
-            info.denied_requests = Some(stats.net_denied);
-            info.model_call_count = Some(stats.model_call_count);
-        }
-        if let Ok(fc) = reader.file_event_count() {
-            info.total_file_events = Some(fc);
-        }
-        if let Ok(mcp) = reader.mcp_call_stats() {
-            info.total_mcp_calls = Some(mcp.total);
-        }
-    }
-}
-
 #[cfg(unix)]
 fn physical_bytes(metadata: &std::fs::Metadata) -> u64 {
     use std::os::unix::fs::MetadataExt;
@@ -3155,7 +3130,6 @@ async fn handle_info(
             }
         };
         if let (Some(mut info), Some(dir)) = (instance_data, session_dir) {
-            enrich_telemetry(&mut info, &dir);
             info.storage = storage_diagnostics(&dir);
             return Ok(Json(info));
         }

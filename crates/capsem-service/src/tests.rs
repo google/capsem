@@ -6544,7 +6544,7 @@ fn sandbox_info_new_defaults_telemetry_to_none() {
 }
 
 #[tokio::test]
-async fn vm_list_is_in_memory_only_but_vm_info_reads_session_telemetry() {
+async fn vm_list_and_info_are_in_memory_only() {
     let (state, _dir) = make_test_state_with_tempdir();
     let session_dir = state.run_dir.join("sessions/list-hot-vm");
     std::fs::create_dir_all(&session_dir).unwrap();
@@ -6581,8 +6581,12 @@ async fn vm_list_is_in_memory_only_but_vm_info_reads_session_telemetry() {
 
     let Json(info) = handle_info(State(state), Path("list-hot-vm".into()))
         .await
-        .expect("detail route reads session telemetry");
-    assert_eq!(info.total_file_events, Some(1));
+        .expect("detail route stays lifecycle/storage only");
+    assert!(
+        info.total_file_events.is_none(),
+        "/vms/{{id}}/info must not read session.db telemetry; use stats/projection routes"
+    );
+    assert!(info.model_call_count.is_none());
 }
 
 #[test]
