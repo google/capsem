@@ -75,9 +75,11 @@ def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
 
 
 def _query_rows(client, session_id: str, sql: str) -> list[dict]:
-    payload = client.post(f"/vms/{session_id}/inspect", {"sql": sql}, timeout=30)
-    assert set(payload) == {"columns", "rows"}
-    return [dict(zip(payload["columns"], row, strict=True)) for row in payload["rows"]]
+    db_path = Path(client.socket_path).parent / "sessions" / session_id / "session.db"
+    assert db_path.exists(), f"session DB missing at {db_path}"
+    with closing(sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)) as conn:
+        conn.row_factory = sqlite3.Row
+        return [dict(row) for row in conn.execute(sql).fetchall()]
 
 
 def _event_id(value: object) -> str:
@@ -457,34 +459,6 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
         assert uds_tool_rows[0]["tool_name"] == "fixture_lookup"
         assert uds_tool_rows[0]["policy_rule"] == "corp.rules.allow_ironbank_mock_mcp_server"
 
-        assert gateway_client is not None
-        gateway_rows = gateway_client.post(
-            f"/vms/{session_id}/inspect",
-            {
-                "sql": (
-                    "SELECT event_id, server_name, method, tool_name, decision, "
-                    "policy_action, policy_rule, trace_id FROM tool_calls "
-                    f"WHERE origin = 'mcp' AND server_name = '{observed_server}' ORDER BY id"
-                )
-            },
-            timeout=30,
-        )
-        assert set(gateway_rows) == {"columns", "rows"}
-        assert gateway_rows["columns"] == [
-            "event_id",
-            "server_name",
-            "method",
-            "tool_name",
-            "decision",
-            "policy_action",
-            "policy_rule",
-            "trace_id",
-        ]
-        assert gateway_rows["rows"] == [
-            [row["event_id"], row["server_name"], row["method"], row["tool_name"], row["decision"], row["policy_action"], row["policy_rule"], row["trace_id"]]
-            for row in uds_tool_rows
-        ]
-
         timeline = client.get(f"/vms/{session_id}/timeline?layers=mcp&limit=50", timeout=30)
         assert set(timeline) == {"columns", "rows"}
         assert {"timestamp", "layer", "ref", "summary", "status", "duration_ms"} <= set(
@@ -545,7 +519,6 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
 
         service_log = (service.tmp_dir / "service.log").read_text(encoding="utf-8")
         gateway_log = gateway.stop_and_read_log()
-        assert f"/vms/{session_id}/inspect" in gateway_log
         assert "gateway.proxy.ok" in gateway_log
         assert "security_latest" in service_log or "/security/latest" in service_log
         assert "mcp" in service_log.lower()

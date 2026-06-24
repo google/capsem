@@ -73,9 +73,11 @@ def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
 
 
 def _query_rows(client, session_id: str, sql: str) -> list[dict]:
-    payload = client.post(f"/vms/{session_id}/inspect", {"sql": sql}, timeout=30)
-    assert set(payload) == {"columns", "rows"}
-    return [dict(zip(payload["columns"], row, strict=True)) for row in payload["rows"]]
+    db_path = Path(client.socket_path).parent / "sessions" / session_id / "session.db"
+    assert db_path.exists(), f"session DB missing at {db_path}"
+    with closing(sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)) as conn:
+        conn.row_factory = sqlite3.Row
+        return [dict(row) for row in conn.execute(sql).fetchall()]
 
 
 def _event_id(value: object) -> str:
@@ -393,35 +395,6 @@ def test_dns_query_and_block_matrix_pays_full_ledger_debt_blackbox() -> None:
         assert next(row for row in uds_rows if row["qname"] == allowed_qname)["event_id"] == allowed_event_id
         assert next(row for row in uds_rows if row["qname"] == blocked_qname)["event_id"] == blocked_event_id
 
-        gateway_rows = gateway_client.post(
-            f"/vms/{session_id}/inspect",
-            {
-                "sql": (
-                    "SELECT event_id, qname, qtype, qclass, rcode, answer_ip, decision, "
-                    "matched_rule, source_proto, policy_action, policy_rule, trace_id "
-                    "FROM dns_events "
-                    f"WHERE qname IN ('{allowed_qname}', '{blocked_qname}') "
-                    "ORDER BY qname"
-                )
-            },
-            timeout=30,
-        )
-        assert gateway_rows["columns"] == [
-            "event_id",
-            "qname",
-            "qtype",
-            "qclass",
-            "rcode",
-            "answer_ip",
-            "decision",
-            "matched_rule",
-            "source_proto",
-            "policy_action",
-            "policy_rule",
-            "trace_id",
-        ]
-        assert len(gateway_rows["rows"]) == 2
-
         security_latest = client.get(f"/vms/{session_id}/security/latest?limit=100", timeout=30)
         latest_by_rule = {(row["event_id"], row["rule_id"]): row for row in security_latest}
         assert latest_by_rule[(allowed_event_id, "corp.rules.allow_ironbank_dns_fixture")][
@@ -451,7 +424,6 @@ def test_dns_query_and_block_matrix_pays_full_ledger_debt_blackbox() -> None:
         assert "handle_exec" in service_log or "exec" in service_log
         assert "dns" in process_log.lower()
         assert "gateway.proxy.ok" in gateway_log
-        assert f"/vms/{session_id}/inspect" in gateway_log
     finally:
         stop_process(mock_proc)
         if client is not None:

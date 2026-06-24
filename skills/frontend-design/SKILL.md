@@ -152,7 +152,7 @@ Chrome browser shell. Tabs = sessions, toolbar = controls. Views switched by `ta
 - `'new-tab'` -- session/profile dashboard (NewTabPage), sortable table of real sessions
 - `'terminal'` -- sandboxed iframe with xterm.js (VMFrame), one iframe per VM
 - `'settings'` -- appearance, general, security, network, storage, advanced, about
-- Future: `'exec'`, `'files'`, `'logs'`, `'inspector'` (sprint 02-03)
+- Future: focused typed views for logs/debug surfaces as needed.
 
 Tab store (`stores/tabs.svelte.ts`): `openVM()` creates a terminal tab or activates existing.
 
@@ -171,14 +171,19 @@ Key gateway endpoints:
 
 The gateway forwards only routes that are deliberately registered in its route table.
 Unknown, retired, or misspelled routes must return 404 instead of falling through to
-capsem-service. SQL queries against session.db go through `/inspect/{id}`.
+capsem-service.
 
-Two databases, two strategies:
+Typed data contract:
 
-- **Per-session** (session.db): SQL queries via `/inspect/{id}` endpoint. Use `queryAll<T>()` / `queryOne<T>()` helpers from `db.ts`.
-- **Cross-session** (main.db): dedicated API commands
+- **Per-session telemetry**: use typed routes such as `/vms/{id}/stats/detail`,
+  `/vms/{id}/timeline`, `/vms/{id}/security/latest`,
+  `/vms/{id}/detection/latest`, and protocol-specific routes.
+- **Cross-session state**: use dedicated service routes such as `/status`,
+  `/stats`, `/vms/list`, and profile/plugin/MCP routes.
+- **Never add frontend raw SQL helpers**. The old Inspector and `/inspect`
+  surfaces are burned; UI code reflects typed API contracts only.
 
-Both work identically in mock mode (sql.js runs against fixtures).
+Mocks must exercise the same typed routes the product uses.
 
 ## Code reuse
 
@@ -187,4 +192,4 @@ Before creating new components, stores, or helpers, check what exists:
 - **Components** (`frontend/src/lib/components/`): extend existing patterns
 - **Views** (`frontend/src/lib/views/`): main view containers with sub-views
 - **Models** (`frontend/src/lib/models/`): pure TS business logic (no Svelte deps)
-- **Helpers** (`api.ts`, `db.ts`, `sql.ts`, `types.ts`): use existing formatters and types
+- **Helpers** (`api.ts`, `types.ts`): use existing typed route clients, formatters, and types

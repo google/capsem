@@ -114,9 +114,11 @@ def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
 
 
 def _query_rows(client, session_id: str, sql: str) -> list[dict]:
-    payload = client.post(f"/vms/{session_id}/inspect", {"sql": sql}, timeout=30)
-    assert set(payload) == {"columns", "rows"}
-    return [dict(zip(payload["columns"], row, strict=True)) for row in payload["rows"]]
+    db_path = Path(client.socket_path).parent / "sessions" / session_id / "session.db"
+    assert db_path.exists(), f"session DB missing at {db_path}"
+    with closing(sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)) as conn:
+        conn.row_factory = sqlite3.Row
+        return [dict(row) for row in conn.execute(sql).fetchall()]
 
 
 def _event_id(value: object) -> str:
@@ -375,33 +377,6 @@ def test_plain_json_http_request_pays_full_ledger_debt_blackbox() -> None:
         assert uds_rows[0]["request_body_preview"] == result["request_body"]
         assert json.loads(uds_rows[0]["response_body_preview"])["path"] == "/echo"
 
-        status, gateway_body = gateway_client.get_status_and_body(
-            f"/vms/{session_id}/inspect",
-            timeout=30,
-            extra_headers={"content-type": "application/json"},
-        )
-        assert status == 405 or status == 400
-        gateway_rows = gateway_client.post(
-            f"/vms/{session_id}/inspect",
-            {
-                "sql": (
-                    "SELECT event_id, method, path, status_code, decision, trace_id "
-                    f"FROM net_events WHERE event_id = '{event_id}'"
-                )
-            },
-            timeout=30,
-        )
-        assert set(gateway_rows) == {"columns", "rows"}
-        assert gateway_rows["columns"] == [
-            "event_id",
-            "method",
-            "path",
-            "status_code",
-            "decision",
-            "trace_id",
-        ]
-        assert gateway_rows["rows"] == [[event_id, "POST", "/echo", 200, "allowed", net["trace_id"]]]
-
         timeline = client.get(
             f"/vms/{session_id}/timeline?trace_id={net['trace_id']}&layers=net&limit=10",
             timeout=30,
@@ -444,8 +419,6 @@ def test_plain_json_http_request_pays_full_ledger_debt_blackbox() -> None:
         gateway_log = gateway.stop_and_read_log()
         assert "handle_exec" in service_log or "exec" in service_log
         assert "gateway.proxy.ok" in gateway_log
-        assert f"/vms/{session_id}/inspect" in gateway_log
-        assert gateway_body == ""
     finally:
         stop_process(mock_proc)
         if client is not None:
@@ -786,28 +759,6 @@ def test_http_body_handling_matrix_pays_full_ledger_debt_blackbox() -> None:
             assert {row["decision"] for row in uds_rows} == {"allowed"}
             assert any(row["conn_type"] == "https-mitm" for row in uds_rows)
 
-            gateway_rows = gateway_client.post(
-                f"/vms/{session_id}/inspect",
-                {
-                    "sql": (
-                        "SELECT path, query, status_code, decision, conn_type "
-                        "FROM net_events WHERE query IN "
-                        "('case=gzip','case=chunked','case=sse','case=truncated-preview','case=https') "
-                        "ORDER BY query"
-                    )
-                },
-                timeout=30,
-            )
-            assert gateway_rows["columns"] == [
-                "path",
-                "query",
-                "status_code",
-                "decision",
-                "conn_type",
-            ]
-            assert len(gateway_rows["rows"]) == 5
-            assert [row[2] for row in gateway_rows["rows"]] == [200, 200, 200, 200, 200]
-
             security_latest = client.get(f"/vms/{session_id}/security/latest?limit=100", timeout=30)
             latest_rows = [
                 row
@@ -838,7 +789,6 @@ def test_http_body_handling_matrix_pays_full_ledger_debt_blackbox() -> None:
         gateway_log = gateway.stop_and_read_log()
         assert "handle_exec" in service_log or "exec" in service_log
         assert "gateway.proxy.ok" in gateway_log
-        assert f"/vms/{session_id}/inspect" in gateway_log
     finally:
         stop_process(mock_proc)
         if client is not None:
@@ -1243,27 +1193,6 @@ def test_brokered_http_rewrite_pays_full_ledger_debt_blackbox() -> None:
             assert all("capsem_test_oauth_access_" not in (row["request_headers"] or "") for row in uds_rows)
             assert all("credential:blake3:" not in (row["request_headers"] or "") for row in uds_rows)
 
-            gateway_rows = gateway_client.post(
-                f"/vms/{session_id}/inspect",
-                {
-                    "sql": (
-                        "SELECT event_id, method, path, status_code, decision, credential_ref "
-                        "FROM net_events WHERE path = '/echo' ORDER BY id"
-                    )
-                },
-                timeout=30,
-            )
-            assert gateway_rows["columns"] == [
-                "event_id",
-                "method",
-                "path",
-                "status_code",
-                "decision",
-                "credential_ref",
-            ]
-            assert len(gateway_rows["rows"]) == 2
-            assert {row[5] for row in gateway_rows["rows"]} == {credential_ref}
-
             broker_reload = client.post(
                 f"/profiles/{CODE_PROFILE_ID}/plugins/credential_broker/credentials/reload",
                 {},
@@ -1364,7 +1293,6 @@ def test_brokered_http_rewrite_pays_full_ledger_debt_blackbox() -> None:
         assert "capsem_test_oauth_access_" not in service_log
         assert "capsem_test_oauth_refresh_" not in service_log
         assert "gateway.proxy.ok" in gateway_log
-        assert f"/vms/{session_id}/inspect" in gateway_log
     finally:
         stop_process(mock_proc)
         if client is not None:
@@ -1598,18 +1526,6 @@ def test_denied_http_request_pays_full_ledger_debt_blackbox() -> None:
         assert uds_rows[0]["request_body_preview"] == result["request_body"]
         assert uds_rows[0]["response_body_preview"] == result["body"]
 
-        gateway_rows = gateway_client.post(
-            f"/vms/{session_id}/inspect",
-            {
-                "sql": (
-                    "SELECT event_id, method, path, status_code, decision, trace_id "
-                    f"FROM net_events WHERE event_id = '{event_id}'"
-                )
-            },
-            timeout=30,
-        )
-        assert gateway_rows["rows"] == [[event_id, "POST", "/deny-target", 403, "denied", net["trace_id"]]]
-
         security_latest = client.get(f"/vms/{session_id}/security/latest?limit=50", timeout=30)
         latest_row = next(
             row
@@ -1639,7 +1555,6 @@ def test_denied_http_request_pays_full_ledger_debt_blackbox() -> None:
         gateway_log = gateway.stop_and_read_log()
         assert "handle_exec" in service_log or "exec" in service_log
         assert "gateway.proxy.ok" in gateway_log
-        assert f"/vms/{session_id}/inspect" in gateway_log
     finally:
         stop_process(mock_proc)
         if client is not None:
@@ -1918,26 +1833,6 @@ def test_asked_http_request_pays_full_ledger_debt_blackbox() -> None:
             }
         ]
 
-        gateway_ask_rows = gateway_client.post(
-            f"/vms/{session_id}/inspect",
-            {
-                "sql": (
-                    "SELECT ask_id, event_id, rule_id, status, trace_id "
-                    f"FROM security_ask_events WHERE ask_id = '{ask_id}'"
-                )
-            },
-            timeout=30,
-        )
-        assert gateway_ask_rows["rows"] == [
-            [
-                ask_id,
-                event_id,
-                "corp.rules.ask_ironbank_mock_http",
-                "pending",
-                net["trace_id"],
-            ]
-        ]
-
         security_latest = client.get(f"/vms/{session_id}/security/latest?limit=50", timeout=30)
         latest_row = next(
             row
@@ -1967,7 +1862,6 @@ def test_asked_http_request_pays_full_ledger_debt_blackbox() -> None:
         gateway_log = gateway.stop_and_read_log()
         assert "handle_exec" in service_log or "exec" in service_log
         assert "gateway.proxy.ok" in gateway_log
-        assert f"/vms/{session_id}/inspect" in gateway_log
     finally:
         stop_process(mock_proc)
         if client is not None:

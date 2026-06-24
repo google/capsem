@@ -35,8 +35,6 @@ EXPECTED_CAPSEM_MCP_TOOLS = {
     "capsem_fork",
     "capsem_host_logs",
     "capsem_info",
-    "capsem_inspect",
-    "capsem_inspect_schema",
     "capsem_list",
     "capsem_mcp_call",
     "capsem_mcp_servers",
@@ -283,18 +281,6 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
             assert exec_payload["stdout"] == nonce
             assert exec_payload["stderr"] == ""
 
-            schema = content_text(mcp.call_tool("capsem_inspect_schema"))
-            assert "CREATE TABLE IF NOT EXISTS mcp_calls" in schema
-            assert "CREATE TABLE IF NOT EXISTS fs_events" in schema
-            inspect_payload = _json_tool_result(
-                mcp.call_tool(
-                    "capsem_inspect",
-                    {"id": session_id, "sql": "SELECT COUNT(*) AS count FROM exec_events"},
-                )
-            )
-            assert inspect_payload["columns"] == ["count"]
-            assert inspect_payload["rows"][0][0] >= 1
-
             route_servers = client.get(
                 f"/profiles/{CODE_PROFILE_ID}/mcp/servers/list",
                 timeout=30,
@@ -314,21 +300,12 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
                 "local__fetch_http",
             }
 
-            before_protocol_rows = _json_tool_result(
-                mcp.call_tool(
-                    "capsem_inspect",
-                    {"id": session_id, "sql": "SELECT COUNT(*) AS count FROM mcp_calls"},
-                )
-            )["rows"][0][0]
-            before_tool_rows = _json_tool_result(
-                mcp.call_tool(
-                    "capsem_inspect",
-                    {
-                        "id": session_id,
-                        "sql": "SELECT COUNT(*) AS count FROM tool_calls WHERE origin = 'mcp'",
-                    },
-                )
-            )["rows"][0][0]
+            with closing(_connect_session_db(service, session_id)) as conn:
+                before_protocol_rows = conn.execute("SELECT COUNT(*) FROM mcp_calls").fetchone()[0]
+                before_tool_rows = conn.execute(
+                    "SELECT COUNT(*) FROM tool_calls WHERE origin = 'mcp'"
+                ).fetchone()[0]
+
             call_payload = _json_tool_result(
                 mcp.call_tool(
                     "capsem_mcp_call",
@@ -481,36 +458,6 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
                         "local__http_headers",
                     }
                     assert rule["name"]
-
-            route_tool_rows = _json_tool_result(
-                mcp.call_tool(
-                    "capsem_inspect",
-                    {
-                        "id": session_id,
-                        "sql": (
-                            "SELECT server_name, method, tool_name, decision "
-                            "FROM tool_calls WHERE origin = 'mcp' ORDER BY id"
-                        ),
-                    },
-                )
-            )
-            assert route_tool_rows["columns"] == [
-                "server_name",
-                "method",
-                "tool_name",
-                "decision",
-            ]
-            assert route_tool_rows["rows"][-1] == [
-                "local",
-                "tools/call",
-                "http_headers",
-                "allowed",
-            ] or route_tool_rows["rows"][-1] == [
-                "local",
-                "tools/call",
-                "local__http_headers",
-                "allowed",
-            ]
 
             security_latest = client.get(f"/vms/{session_id}/security/latest?limit=100", timeout=30)
             assert any(row["event_type"] == "mcp.tool_call" for row in security_latest)

@@ -2,11 +2,13 @@
 
 The desktop stats UI must be a projection of session.db and public routes, not
 invented preview fields or duplicated payload renderings. This test seeds a
-real session database, then reads it only through capsem-service routes.
+real session database, uses direct fixture DB reads as the oracle, and verifies
+the public route emits the typed projection.
 """
 
 from __future__ import annotations
 
+from contextlib import closing
 import json
 import platform
 import sqlite3
@@ -684,9 +686,16 @@ def _seed_session_db(db_path: Path) -> None:
 
 
 def _query(client, sql: str) -> list[dict[str, object]]:
-    payload = client.post(f"/vms/{SESSION_ID}/inspect", {"sql": sql}, timeout=30)
-    assert set(payload) == {"columns", "rows"}, payload
-    return [dict(zip(payload["columns"], row, strict=True)) for row in payload["rows"]]
+    root = Path(client.socket_path).parent
+    candidates = [
+        root / "sessions" / SESSION_ID / "session.db",
+        root / "persistent" / SESSION_ID / "session.db",
+    ]
+    db_path = next((path for path in candidates if path.exists()), candidates[0])
+    assert db_path.exists(), f"session DB missing at {db_path}"
+    with closing(sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)) as conn:
+        conn.row_factory = sqlite3.Row
+        return [dict(row) for row in conn.execute(sql).fetchall()]
 
 
 def test_agy_stats_detail_routes_project_session_db_without_preview_theater() -> None:
