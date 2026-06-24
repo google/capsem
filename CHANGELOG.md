@@ -326,6 +326,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sessions.
 
 ### Changed (route surfaces and diagnostics)
+- Clarified the release architecture and developer skills so the documented
+  service routes use the explicit `/vms/...` contract, VM asset manifests use
+  BLAKE3/origin reporting instead of local minisign theater, and `tool_calls`
+  is named as the canonical tool ledger while `mcp_calls` is transport
+  evidence.
 - Added a release compliance gate for SBOM, OBOM, and build-ledger evidence,
   clarifying that OBOMs describe base VM images while build ledgers remain
   debug evidence.

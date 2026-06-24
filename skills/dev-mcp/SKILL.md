@@ -1,6 +1,6 @@
 ---
 name: dev-mcp
-description: MCP development for Capsem. Covers the capsem-mcp host MCP server (AI agent sandbox control via stdio), the guest MCP relay and host MITM MCP endpoint (tool routing to external servers via framed vsock), and using capsem MCP tools for fast debugging. Use when working on the MCP server, endpoint, tool routing, policy evaluation, mcp_calls telemetry, or when you need to debug anything inside a VM. Also use this skill when capsem MCP tools are available and you want to understand the fastest way to test changes interactively.
+description: MCP development for Capsem. Covers the capsem-mcp host MCP server (AI agent sandbox control via stdio), the guest MCP relay and host MITM MCP endpoint (tool routing to external servers via framed vsock), and using capsem MCP tools for fast debugging. Use when working on the MCP server, endpoint, tool routing, policy evaluation, canonical tool_calls telemetry, MCP transport evidence, or when you need to debug anything inside a VM. Also use this skill when capsem MCP tools are available and you want to understand the fastest way to test changes interactively.
 ---
 
 # MCP in Capsem
@@ -150,7 +150,7 @@ The guest MCP path is not a single process. `capsem-process` (the per-VM host pr
 
 Rationale: isolating external-server connections in a low-privilege subprocess means a compromised third-party MCP server cannot reach the host filesystem or the session DB. The built-in tool server runs in its own process for the same reason.
 
-Wire protocol between `capsem-process` and the aggregator: **length-prefixed msgpack frames** on stdio (`[4-byte big-endian length][msgpack payload]`). Between the aggregator and the built-in server: **stdio MCP** (standard JSON-RPC per line). Between the in-guest AI agent and `capsem-process`: `/run/capsem-mcp-server` relays stdio JSON-RPC as bounded framed MCP records over **vsock port 5002**. MCP calls pass through the MITM parser/interpreter and write MITM-owned `mcp_calls`.
+Wire protocol between `capsem-process` and the aggregator: **length-prefixed msgpack frames** on stdio (`[4-byte big-endian length][msgpack payload]`). Between the aggregator and the built-in server: **stdio MCP** (standard JSON-RPC per line). Between the in-guest AI agent and `capsem-process`: `/run/capsem-mcp-server` relays stdio JSON-RPC as bounded framed MCP records over **vsock port 5002**. Tool activity writes the canonical `tool_calls` ledger. Visible MCP frames may also write `mcp_calls` as transport evidence, but `mcp_calls` is not the product/security tool ledger.
 
 Binaries land in `~/.capsem/bin/` at install time: `capsem-mcp-aggregator`, `capsem-mcp-builtin`.
 
@@ -171,8 +171,8 @@ Framed guest MCP over `vsock:5002` must be tested as the default transport, not 
 ```
 Guest (Claude/Gemini) -> capsem-mcp-server (stdin/stdout relay)
   -> framed vsock:5002 -> MITM MCP endpoint (capsem-core)
-  -> Policy check -> Route to: builtin tools | external MCP servers (via rmcp)
-  -> Telemetry -> session.db mcp_calls table
+  -> SecurityEvent rule check -> Route to: builtin tools | external MCP servers (via rmcp)
+  -> Telemetry -> session.db tool_calls table, plus optional mcp_calls transport evidence
 ```
 
 ### Wire format
@@ -219,7 +219,7 @@ The endpoint parses the namespace to route to the correct server.
 1. Parse MCP frame into typed `SecurityEvent` MCP fields.
 2. Apply the shared security engine plugin/rule rail.
 3. Dispatch only if the effective action allows it.
-4. Log MCP protocol row plus matched security rule rows.
+4. Log canonical tool row, optional MCP protocol row, and matched security rule rows.
 ```
 
 Config hierarchy: corp config constrains profile config. Profile config owns
@@ -253,7 +253,15 @@ All use namespace prefix `builtin` (e.g., `builtin__http_get`).
 | `crates/capsem-core/src/mcp/mod.rs` | Tool cache, server detection, collision detection |
 | `crates/capsem-agent/src/mcp_server.rs` | capsem-mcp-server binary (stdin/stdout relay) |
 
-### Telemetry (mcp_calls table)
+### Telemetry (tool_calls and mcp_calls)
+
+`tool_calls` is the canonical user/security ledger for all tool origins:
+model-native, built-in/local, and MCP-origin. UI counts, CEL rules, and
+forensic tool activity must use this table.
+
+`mcp_calls` is MCP transport evidence only. It helps debug framing, JSON-RPC ids,
+server routing, and protocol errors. A visible MCP `tools/call` without a
+matching `tool_calls` row is a bug.
 
 Every request/response logged with: timestamp, server_name, method, tool_name,
 compact request/response display fields, decision, duration_ms, error_message,

@@ -130,7 +130,9 @@ Two threads handle the relay:
 
 ## Tool routing (host endpoint)
 
-The MITM MCP endpoint receives framed JSON-RPC over vsock:5002, applies MCP policy, records `mcp_calls`, and routes requests through the aggregator:
+The MITM MCP endpoint receives framed JSON-RPC over vsock:5002, normalizes the
+frame into the shared `SecurityEvent` rule rail, records protocol evidence, and
+routes allowed requests through the aggregator:
 
 ```mermaid
 graph TD
@@ -169,11 +171,18 @@ fields such as `mcp.method`, `mcp.server.name`, `mcp.tool_call.name`, and
 
 The MCP gateway does not own a separate decision provider. Its job is to parse
 MCP, attach typed MCP fields to `SecurityEvent`, call the shared security
-engine, and log the protocol row plus any `security_rule_events` matches.
+engine, and log transport evidence plus any `security_rule_events` matches.
 
-## MCP call logging
+## Tool and MCP logging
 
-Every `tools/call` request is logged to the session database `mcp_calls` table:
+The product/security tool ledger is `tool_calls`. Every model-native,
+built-in/local, or MCP-origin tool invocation must appear there with an origin
+such as `native`, `builtin`, `local`, `mcp`, or `mcp_proxy`. A visible MCP
+transport frame may also create an `mcp_calls` row, but that row is protocol
+evidence, not the user-facing tool truth. An MCP `tools/call` without a matching
+`tool_calls` row is a serious telemetry bug.
+
+`mcp_calls` records framed MCP transport details:
 
 | Column | Source |
 |--------|--------|
@@ -189,7 +198,7 @@ Every `tools/call` request is logged to the session database `mcp_calls` table:
 | `event_id` | 12-hex primary event id used to join `security_rule_events` |
 
 See [Session Telemetry](/architecture/session-telemetry/) for the full
-`mcp_calls` schema and rule-ledger joins.
+`tool_calls`, `tool_responses`, and `mcp_calls` schemas and rule-ledger joins.
 
 ## Endpoint runtime state
 

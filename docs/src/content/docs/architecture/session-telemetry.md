@@ -219,7 +219,10 @@ and a blob disagree, the blob table is the ledger.
 
 ### tool_calls
 
-Tool invocations extracted from model responses. One row per `tool_use` content block.
+Canonical product/security tool invocation ledger. One row per model-native,
+built-in/local, or MCP-origin tool invocation. User-facing tool counts, CEL tool
+evidence, and forensic tool activity start here; `mcp_calls` is only protocol
+transport evidence.
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -229,8 +232,8 @@ Tool invocations extracted from model responses. One row per `tool_use` content 
 | `call_id` | TEXT | Provider-assigned call ID |
 | `tool_name` | TEXT | Tool name |
 | `arguments` | TEXT | JSON arguments |
-| `origin` | TEXT | `native`, `local`, `mcp_proxy` |
-| `mcp_call_id` | INTEGER | FK to `mcp_calls` (reserved, not yet populated) |
+| `origin` | TEXT | `native`, `mcp`, `builtin`, `local`, or `mcp_proxy` |
+| `mcp_call_id` | INTEGER | Optional FK to `mcp_calls` when visible MCP transport evidence exists |
 | `trace_id` | TEXT | Cross-table correlation ID |
 
 ### tool_responses
@@ -248,7 +251,11 @@ Tool results from subsequent requests (matched by `call_id`).
 
 ### mcp_calls
 
-MCP JSON-RPC tool invocations through the guest MCP relay and host MITM MCP endpoint (framed vsock:5002).
+MCP JSON-RPC transport evidence through the guest MCP relay and host MITM MCP
+endpoint (framed vsock:5002). This is not the user/security tool ledger. A
+`tools/call` row here must correlate to `tool_calls`; if it does not, the
+session has protocol evidence without canonical tool evidence and should be
+treated as a bug or detection signal.
 
 | Column | Type | Description |
 |--------|------|-------------|

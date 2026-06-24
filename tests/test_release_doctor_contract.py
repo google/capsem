@@ -519,6 +519,58 @@ def test_release_docs_identify_body_blobs_as_forensic_truth() -> None:
         assert claim not in combined
 
 
+def test_release_docs_reject_old_service_routes_and_manifest_signing() -> None:
+    architecture_skill = (PROJECT_ROOT / "skills" / "site-architecture" / "SKILL.md").read_text()
+    release_skill = (PROJECT_ROOT / "skills" / "release-process" / "SKILL.md").read_text()
+
+    current_service_table = architecture_skill.split("### Service HTTP API", maxsplit=1)[1].split(
+        "### MCP tools", maxsplit=1
+    )[0]
+    for retired in [
+        "`/provision`",
+        "`/list`",
+        "`/info/{id}`",
+        "`/stop/{id}`",
+        "`/resume/{name}`",
+        "`/persist/{id}`",
+        "`/write_file/{id}`",
+        "`/read_file/{id}?path=...`",
+    ]:
+        assert retired not in current_service_table
+
+    assert "`/vms/create`" in current_service_table
+    assert "`/vms/list`" in current_service_table
+    assert "`/vms/{id}/status`" in current_service_table
+    assert "Unknown routes must\nreturn 404" in current_service_table
+
+    assert "Do not resurrect local VM manifest signing" in release_skill
+    for stale in [
+        "Install manifest-signing tools before signing",
+        "Local manifest signing is part of setup",
+        "bootstrap.sh` must install `minisign`",
+        "Sign package payload manifest",
+    ]:
+        assert stale not in release_skill
+
+
+def test_release_docs_name_tool_calls_as_canonical_tool_ledger() -> None:
+    docs = [
+        PROJECT_ROOT / "docs" / "src" / "content" / "docs" / "architecture" / "mcp-gateway.md",
+        PROJECT_ROOT / "docs" / "src" / "content" / "docs" / "architecture" / "session-telemetry.md",
+        PROJECT_ROOT / "skills" / "dev-mcp" / "SKILL.md",
+        PROJECT_ROOT / "skills" / "dev-session-debug" / "SKILL.md",
+    ]
+    combined = "\n".join(path.read_text() for path in docs)
+
+    assert "tool_calls` is the canonical" in combined
+    assert "mcp_calls` is protocol evidence" in combined or "mcp_calls` is MCP transport evidence" in combined
+    assert "not the user/security tool ledger" in combined
+    assert "An MCP `tools/call` without a matching" in combined
+    assert "mcp_calls table" not in (PROJECT_ROOT / "skills" / "dev-mcp" / "SKILL.md").read_text().split(
+        "### Telemetry", maxsplit=1
+    )[0]
+
+
 def test_frontend_coverage_runner_declares_its_provider() -> None:
     package_json = json.loads((PROJECT_ROOT / "frontend" / "package.json").read_text())
 

@@ -12,7 +12,12 @@ Capsem sandboxes AI agents in air-gapped Linux VMs on macOS using Apple's Virtua
 **Host-side:**
 - **capsem-service** (daemon): always-running background service. Axum HTTP server over Unix Domain Socket (`~/.capsem/run/service.sock`). Manages VM lifecycle, routes API calls to per-VM processes.
 - **capsem-process** (per-VM): one process per sandbox. Boots the VM, bridges vsock connections (terminal + control), manages structured jobs (exec, file I/O) via a job store.
-- **capsem** (CLI): user-facing CLI. **Everything is ephemeral unless asked otherwise.** `capsem shell` (no args) = temp VM + auto-destroy on exit. `capsem create -n <name>` = persistent VM (detached). `capsem create` (no name) = ephemeral VM (detached). `capsem shell <id>` = attach to existing. Talks to capsem-service over UDS HTTP.
+- **capsem** (CLI): user-facing CLI. Sessions are created from profiles and
+  named by the service (`<profile-id>-N` unless the user supplies a name).
+  `capsem shell` opens the TUI/session picker, creates or attaches through the
+  service, and talks to capsem-service over UDS HTTP. User-facing copy says
+  sessions; implementation/debug output may say VM when describing the
+  virtualization layer.
 - **capsem-mcp** (MCP server): stdio-based MCP server for AI agents (Claude Code, Gemini CLI). Bridges MCP tool calls to capsem-service HTTP API.
 - **capsem-gateway** (HTTP gateway): TCP-to-UDS reverse proxy (default port 19222). Bearer token auth, CORS, 10MB body limit. Provides an explicit route table plus `/status` (cached 1s) and `/terminal/{id}` (WebSocket relay to per-VM UDS). Unknown routes return 404; the frontend and tray app connect through the gateway. Writes runtime files to `~/.capsem/run/` (gateway.token, gateway.port, gateway.pid).
 - **capsem-app** (Tauri GUI): thin webview shell. Connects to gateway at `http://127.0.0.1:19222`. No VM logic, no capsem-core dependency. Only 2 IPC commands: `open_url` (opens URL in system browser) and `check_for_app_update` (Tauri updater). Bundles `frontend/dist` so the app can render the service-unavailable screen when gateway is unreachable.
@@ -66,25 +71,33 @@ Tray app  -> capsem-gateway (TCP)-> HTTP/UDS -> capsem-service
 
 ### Service HTTP API
 
+The service and gateway expose one explicit route table. Unknown routes must
+return 404; do not add compatibility aliases or generic gateway forwarding. The full
+contract lives in `docs/src/content/docs/architecture/service-api.md`; the
+common session routes are:
+
 | Method | Path | Purpose |
 |--------|------|---------|
-| POST | `/provision` | Create a new sandbox VM (set `persistent: true` for named VMs) |
-| GET | `/list` | List all sandboxes (running + stopped persistent) |
-| GET | `/info/{id}` | Sandbox details (config, status, persistent) |
-| POST | `/exec/{id}` | Execute command, return stdout/stderr/exit_code |
-| POST | `/run` | One-shot: provision temp VM, exec command, destroy, return output |
-| POST | `/stop/{id}` | Stop VM (persistent: preserve state; ephemeral: destroy) |
-| POST | `/resume/{name}` | Resume a stopped persistent VM |
-| POST | `/persist/{id}` | Convert running ephemeral VM to persistent |
-| POST | `/purge` | Kill all temp VMs (set `all: true` to include persistent) |
-| POST | `/write_file/{id}` | Write file to guest |
-| GET | `/read_file/{id}?path=...` | Read file from guest |
-| GET | `/logs/{id}` | Serial/boot logs |
-| DELETE | `/delete/{id}` | Destroy VM and wipe all state |
-| POST | `/fork/{id}` | Fork a VM into a reusable image |
-| GET | `/images` | List all user images |
-| GET | `/images/{name}` | Inspect a specific image |
-| DELETE | `/images/{name}` | Delete an image |
+| POST | `/vms/create` | Create a session from a profile |
+| GET | `/vms/list` | List sessions and profile/status metadata |
+| GET | `/vms/{id}/info` | Session identity, profile, config, and diagnostics |
+| GET | `/vms/{id}/status` | Hot in-memory runtime state and counters |
+| POST | `/vms/{id}/exec` | Execute command, return stdout/stderr/exit_code |
+| POST | `/run` | One-shot create + exec + destroy through the same service path |
+| POST | `/vms/{id}/stop` | Stop a running session |
+| POST | `/vms/{id}/pause` | Pause/suspend a running session |
+| POST | `/vms/{id}/start` | Start a stopped session |
+| POST | `/vms/{id}/resume` | Resume a paused/stopped session |
+| POST | `/vms/{id}/save` | Save current session state |
+| POST | `/vms/{id}/fork` | Fork a session into reusable state |
+| DELETE | `/vms/{id}/delete` | Destroy session and wipe state |
+| POST | `/purge` | Delete defunct/incompatible service state |
+| POST | `/vms/{id}/files/write` | Write file to guest |
+| POST | `/vms/{id}/files/read` | Read file from guest |
+| GET | `/vms/{id}/files/list` | List guest files |
+| GET | `/vms/{id}/files/content` | Download file content |
+| POST | `/vms/{id}/files/content` | Upload file content |
+| GET | `/vms/{id}/logs` | Serial/boot logs |
 
 ### MCP tools (capsem-mcp)
 
@@ -265,9 +278,14 @@ content; credentials are brokered at runtime.
 
 **Auto-launch cascade**: capsem-service starts -> spawns capsem-gateway (port 19222) + capsem-tray. All three are separate processes.
 
-**Self-update**: `capsem update` checks GitHub for new manifest, downloads assets in background. Binary swap deferred. Background update-check cache (`update-check.json`, 24h TTL) refreshes on every CLI command.
+**Self-update**: `capsem update` checks GitHub for a new manifest, downloads
+assets in background, and reports manifest origin/hash through service status.
+Binary swap is deferred. Background update-check cache (`update-check.json`,
+24h TTL) refreshes on every CLI command.
 
-Key source files: `crates/capsem/src/setup.rs`, `paths.rs`, `service_install.rs`, `update.rs`, `uninstall.rs`.
+Key source files: `crates/capsem/src/paths.rs`,
+`crates/capsem/src/service_install.rs`, `crates/capsem/src/update.rs`, and
+`crates/capsem/src/uninstall.rs`.
 
 ## Key source files
 
