@@ -6745,10 +6745,10 @@ struct SecurityLedgerQuery {
 
 /// GET /vms/{id}/security/latest -- latest security rule ledger rows.
 ///
-/// This is intentionally regenerated from the session DB. It returns the full
-/// stored row, including the rule snapshot and normalized SecurityEvent
-/// payload that matched, because active rules may have changed by the time a
-/// responder investigates the event.
+/// This returns the service-owned route projection hydrated from the ledger.
+/// Rows include the stored rule snapshot and normalized SecurityEvent payload
+/// that matched, because active rules may have changed by the time a responder
+/// investigates the event.
 async fn handle_security_latest(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,

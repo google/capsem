@@ -902,7 +902,7 @@ def test_agy_stats_detail_routes_project_session_db_without_preview_theater() ->
             f"/vms/{SESSION_ID}/enforcement/latest?limit=10",
             timeout=30,
         )
-        assert detection_latest == latest
+        assert detection_latest == [latest[1]]
         assert enforcement_latest == latest
     finally:
         service.stop()
