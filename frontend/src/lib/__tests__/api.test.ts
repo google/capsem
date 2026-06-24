@@ -71,16 +71,34 @@ describe('api', () => {
   // ---- init / healthCheck ----
 
   describe('init', () => {
-    it('returns connected=true when health and token succeed', async () => {
+    it('returns connected=true when health token and service status succeed', async () => {
       mockFetch
         .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
-        .mockReturnValueOnce(jsonResponse({ token: 'tok123' }));
+        .mockReturnValueOnce(jsonResponse({ token: 'tok123' }))
+        .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
 
       const result = await api.init();
       expect(result.connected).toBe(true);
       expect(result.reachable).toBe(true);
       expect(result.version).toBe('1.0.0');
+      expect(result.reason).toBe('ok');
       expect(api.isConnected()).toBe(true);
+      expect(mockFetch.mock.calls[2][0]).toContain('/status');
+      expect(mockFetch.mock.calls[2][1].headers.Authorization).toBe('Bearer tok123');
+    });
+
+    it('returns connected=false when gateway is reachable but service status is unavailable', async () => {
+      mockFetch
+        .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
+        .mockReturnValueOnce(jsonResponse({ token: 'tok123' }))
+        .mockReturnValueOnce(jsonResponse({ service: 'unavailable', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
+
+      const result = await api.init();
+      expect(result.connected).toBe(false);
+      expect(result.reachable).toBe(true);
+      expect(result.version).toBe('1.0.0');
+      expect(result.reason).toBe('service_unavailable');
+      expect(api.isConnected()).toBe(false);
     });
 
     it('returns connected=false when health fails', async () => {
@@ -89,6 +107,7 @@ describe('api', () => {
       const result = await api.init();
       expect(result.connected).toBe(false);
       expect(result.reachable).toBe(false);
+      expect(result.reason).toBe('offline');
       expect(api.isConnected()).toBe(false);
     });
 
@@ -100,6 +119,7 @@ describe('api', () => {
       const result = await api.init();
       expect(result.connected).toBe(false);
       expect(result.reachable).toBe(true);
+      expect(result.reason).toBe('auth');
     });
 
     it('returns connected=false on network error', async () => {
@@ -108,13 +128,36 @@ describe('api', () => {
       const result = await api.init();
       expect(result.connected).toBe(false);
       expect(result.reachable).toBe(false);
+      expect(result.reason).toBe('offline');
     });
   });
 
   describe('healthCheck', () => {
-    it('returns true on 200', async () => {
-      mockFetch.mockReturnValueOnce(jsonResponse({ ok: true }));
+    it('returns true when gateway health and service status are running', async () => {
+      mockFetch
+        .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
+        .mockReturnValueOnce(jsonResponse({ token: 'tok' }))
+        .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
+      await api.init();
+
+      mockFetch
+        .mockReturnValueOnce(jsonResponse({ ok: true }))
+        .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
       expect(await api.healthCheck()).toBe(true);
+    });
+
+    it('returns false when gateway health is ok but service status is unavailable', async () => {
+      mockFetch
+        .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
+        .mockReturnValueOnce(jsonResponse({ token: 'tok' }))
+        .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
+      await api.init();
+
+      mockFetch
+        .mockReturnValueOnce(jsonResponse({ ok: true }))
+        .mockReturnValueOnce(jsonResponse({ service: 'unavailable', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
+      expect(await api.healthCheck()).toBe(false);
+      expect(api.isConnected()).toBe(false);
     });
 
     it('returns false on 500', async () => {
@@ -144,7 +187,8 @@ describe('api', () => {
     it('debugSnapshot reads status, profiles status, and corp info routes', async () => {
       mockFetch
         .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
-        .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
+        .mockReturnValueOnce(jsonResponse({ token: 'tok' }))
+        .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
       await api.init();
 
       mockFetch
@@ -172,7 +216,8 @@ describe('api', () => {
       // Connect first.
       mockFetch
         .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
-        .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
+        .mockReturnValueOnce(jsonResponse({ token: 'tok' }))
+        .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
       await api.init();
     });
 
@@ -268,7 +313,8 @@ describe('api', () => {
     beforeEach(async () => {
       mockFetch
         .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
-        .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
+        .mockReturnValueOnce(jsonResponse({ token: 'tok' }))
+        .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
       await api.init();
     });
 
@@ -385,7 +431,8 @@ describe('api', () => {
     beforeEach(async () => {
       mockFetch
         .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
-        .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
+        .mockReturnValueOnce(jsonResponse({ token: 'tok' }))
+        .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
       await api.init();
     });
 
@@ -419,7 +466,8 @@ describe('api', () => {
     beforeEach(async () => {
       mockFetch
         .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
-        .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
+        .mockReturnValueOnce(jsonResponse({ token: 'tok' }))
+        .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
       await api.init();
     });
 
@@ -443,7 +491,8 @@ describe('api', () => {
     beforeEach(async () => {
       mockFetch
         .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
-        .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
+        .mockReturnValueOnce(jsonResponse({ token: 'tok' }))
+        .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
       await api.init();
     });
 
@@ -582,7 +631,8 @@ describe('api', () => {
     beforeEach(async () => {
       mockFetch
         .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
-        .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
+        .mockReturnValueOnce(jsonResponse({ token: 'tok' }))
+        .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
       await api.init();
     });
 
@@ -635,7 +685,8 @@ describe('api', () => {
     beforeEach(async () => {
       mockFetch
         .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
-        .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
+        .mockReturnValueOnce(jsonResponse({ token: 'tok' }))
+        .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
       await api.init();
     });
 
@@ -689,7 +740,8 @@ describe('api', () => {
     beforeEach(async () => {
       mockFetch
         .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
-        .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
+        .mockReturnValueOnce(jsonResponse({ token: 'tok' }))
+        .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
       await api.init();
     });
 
@@ -722,7 +774,8 @@ describe('api', () => {
     beforeEach(async () => {
       mockFetch
         .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
-        .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
+        .mockReturnValueOnce(jsonResponse({ token: 'tok' }))
+        .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
       await api.init();
     });
 
@@ -904,7 +957,8 @@ describe('api', () => {
     beforeEach(async () => {
       mockFetch
         .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
-        .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
+        .mockReturnValueOnce(jsonResponse({ token: 'tok' }))
+        .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
       await api.init();
     });
 
@@ -927,7 +981,8 @@ describe('api', () => {
     it('getMcpDefaultPermission sends GET /profiles/{profile_id}/mcp/default/info', async () => {
       mockFetch
         .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
-        .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
+        .mockReturnValueOnce(jsonResponse({ token: 'tok' }))
+        .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
       await api.init();
 
       const permission = { action: 'allow', source: 'default', rule_id: 'default.mcp' };
@@ -942,7 +997,8 @@ describe('api', () => {
       // Re-connect after the disconnected test above.
       mockFetch
         .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
-        .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
+        .mockReturnValueOnce(jsonResponse({ token: 'tok' }))
+        .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
       await api.init();
 
       const tools = [{ namespaced_name: 'bash', server_name: 'system' }];
@@ -956,7 +1012,8 @@ describe('api', () => {
     it('refreshMcpTools sends POST /profiles/{profile_id}/mcp/servers/{server_id}/refresh', async () => {
       mockFetch
         .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
-        .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
+        .mockReturnValueOnce(jsonResponse({ token: 'tok' }))
+        .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
       await api.init();
 
       mockFetch.mockReturnValueOnce(jsonResponse(null));
@@ -968,7 +1025,8 @@ describe('api', () => {
     it('updateMcpToolPermission sends PATCH /profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/edit', async () => {
       mockFetch
         .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
-        .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
+        .mockReturnValueOnce(jsonResponse({ token: 'tok' }))
+        .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
       await api.init();
 
       mockFetch.mockReturnValueOnce(jsonResponse(null));
@@ -982,7 +1040,8 @@ describe('api', () => {
     it('updateMcpDefaultPermission sends PATCH /profiles/{profile_id}/mcp/default/edit', async () => {
       mockFetch
         .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
-        .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
+        .mockReturnValueOnce(jsonResponse({ token: 'tok' }))
+        .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
       await api.init();
 
       mockFetch.mockReturnValueOnce(jsonResponse(null));
@@ -996,7 +1055,8 @@ describe('api', () => {
     it('callMcpTool sends POST /profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/call', async () => {
       mockFetch
         .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
-        .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
+        .mockReturnValueOnce(jsonResponse({ token: 'tok' }))
+        .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
       await api.init();
 
       mockFetch.mockReturnValueOnce(jsonResponse({ result: 'ok' }));
@@ -1009,7 +1069,8 @@ describe('api', () => {
     it('getVmSnapshotStatus reads the snapshot route instead of session SQL', async () => {
       mockFetch
         .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
-        .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
+        .mockReturnValueOnce(jsonResponse({ token: 'tok' }))
+        .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
       await api.init();
 
       mockFetch.mockReturnValueOnce(jsonResponse({
@@ -1028,7 +1089,8 @@ describe('api', () => {
     it('listVmSnapshots reads the snapshot list route', async () => {
       mockFetch
         .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
-        .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
+        .mockReturnValueOnce(jsonResponse({ token: 'tok' }))
+        .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
       await api.init();
 
       mockFetch.mockReturnValueOnce(jsonResponse({
@@ -1055,7 +1117,8 @@ describe('api', () => {
     it('vmStatus returns running VM status when connected', async () => {
       mockFetch
         .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
-        .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
+        .mockReturnValueOnce(jsonResponse({ token: 'tok' }))
+        .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
       await api.init();
 
       mockFetch.mockReturnValueOnce(jsonResponse({
@@ -1081,7 +1144,8 @@ describe('api', () => {
     it('getVmState with id sends GET /vms/{id}/status', async () => {
       mockFetch
         .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
-        .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
+        .mockReturnValueOnce(jsonResponse({ token: 'tok' }))
+        .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
       await api.init();
 
       mockFetch.mockReturnValueOnce(jsonResponse({
@@ -1119,7 +1183,8 @@ describe('api', () => {
       vi.useFakeTimers();
       mockFetch
         .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
-        .mockReturnValueOnce(jsonResponse({ token: 'old-token' }));
+        .mockReturnValueOnce(jsonResponse({ token: 'old-token' }))
+        .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
       await api.init();
       expect(mockWsUrls.at(-1)).toContain('token=old-token');
 
@@ -1138,7 +1203,8 @@ describe('api', () => {
     beforeEach(async () => {
       mockFetch
         .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
-        .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
+        .mockReturnValueOnce(jsonResponse({ token: 'tok' }))
+        .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
       await api.init();
     });
 
@@ -1195,7 +1261,8 @@ describe('api', () => {
     it('sends POST /profiles/{profile_id}/reload', async () => {
       mockFetch
         .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
-        .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
+        .mockReturnValueOnce(jsonResponse({ token: 'tok' }))
+        .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
       await api.init();
 
       mockFetch.mockReturnValueOnce(jsonResponse(null));
@@ -1210,7 +1277,8 @@ describe('api', () => {
     beforeEach(async () => {
       mockFetch
         .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
-        .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
+        .mockReturnValueOnce(jsonResponse({ token: 'tok' }))
+        .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
       await api.init();
     });
 
@@ -1238,7 +1306,8 @@ describe('api', () => {
     it('sends GET /images', async () => {
       mockFetch
         .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
-        .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
+        .mockReturnValueOnce(jsonResponse({ token: 'tok' }))
+        .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
       await api.init();
 
       mockFetch.mockReturnValueOnce(jsonResponse({ images: [{ name: 'code' }] }));

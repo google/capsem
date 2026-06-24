@@ -67,6 +67,7 @@ export type InitResult = {
   connected: boolean;
   reachable: boolean;
   version: string | null;
+  reason: 'ok' | 'offline' | 'auth' | 'service_unavailable';
 };
 
 export type PluginMode = 'allow' | 'ask' | 'block' | 'disable' | 'rewrite';
@@ -331,7 +332,7 @@ export async function init(): Promise<InitResult> {
     if (!healthResp.ok) {
       _connected = false;
       
-      return { connected: false, reachable: false, version: null };
+      return { connected: false, reachable: false, version: null, reason: 'offline' };
     }
     const health: HealthResponse = await healthResp.json();
 
@@ -340,20 +341,43 @@ export async function init(): Promise<InitResult> {
     if (!tokenResp.ok) {
       _connected = false;
       
-      return { connected: false, reachable: true, version: health.version };
+      return { connected: false, reachable: true, version: health.version, reason: 'auth' };
     }
     const tokenData: TokenResponse = await tokenResp.json();
     _applyToken(tokenData.token);
 
+    const serviceRunning = await _serviceStatusRunning();
+    if (!serviceRunning) {
+      _connected = false;
+      console.log('[api] init: gateway reachable but service status is unavailable');
+      return { connected: false, reachable: true, version: health.version, reason: 'service_unavailable' };
+    }
+
     _connected = true;
-    console.log('[api] init OK: connected, token acquired, version=%s', health.version);
+    console.log('[api] init OK: connected, token acquired, service running, version=%s', health.version);
     _connectEventWs();
-    return { connected: true, reachable: true, version: health.version };
+    return { connected: true, reachable: true, version: health.version, reason: 'ok' };
   } catch {
     _connected = false;
     _token = null;
     
-    return { connected: false, reachable: false, version: null };
+    return { connected: false, reachable: false, version: null, reason: 'offline' };
+  }
+}
+
+async function _serviceStatusRunning(): Promise<boolean> {
+  if (!_token) return false;
+  try {
+    const resp = await fetch(`${_baseUrl}/status`, {
+      headers: {
+        Authorization: `Bearer ${_token}`,
+      },
+    });
+    if (!resp.ok) return false;
+    const status: StatusResponse = await resp.json();
+    return status.service === 'running';
+  } catch {
+    return false;
   }
 }
 
@@ -390,8 +414,13 @@ async function _refreshToken(): Promise<boolean> {
 export async function healthCheck(): Promise<boolean> {
   try {
     const resp = await fetch(`${_baseUrl}/health`);
-    if (!resp.ok) return false;
-    return true;
+    if (!resp.ok) {
+      _connected = false;
+      return false;
+    }
+    const serviceRunning = await _serviceStatusRunning();
+    _connected = serviceRunning;
+    return serviceRunning;
   } catch {
     _connected = false;
     

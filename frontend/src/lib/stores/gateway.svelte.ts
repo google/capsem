@@ -6,6 +6,20 @@ import * as api from '../api';
 const HEALTH_CHECK_INTERVAL = 10000;
 const MAX_BACKOFF = 60000;
 
+function initError(result: api.InitResult): string | null {
+  if (result.connected) return null;
+  switch (result.reason) {
+    case 'auth':
+      return 'No auth';
+    case 'service_unavailable':
+      return 'Service unavailable';
+    case 'offline':
+    case 'ok':
+    default:
+      return 'Offline';
+  }
+}
+
 class GatewayStore {
   connected = $state(false);
   reachable = $state(false);
@@ -23,7 +37,7 @@ class GatewayStore {
       this.connected = result.connected;
       this.reachable = result.reachable;
       this.version = result.version;
-      this.error = result.connected ? null : result.reachable ? 'No auth' : 'Offline';
+      this.error = initError(result);
       this.#failCount = result.connected ? 0 : 1;
       this.scheduleHealthCheck();
     } catch (e) {
@@ -65,7 +79,7 @@ class GatewayStore {
         this.error = null;
         this.#failCount = 0;
       } else {
-        this.error = result.reachable ? 'No auth' : 'Offline';
+        this.error = initError(result);
         this.#failCount = Math.min(this.#failCount + 1, 6);
       }
     } else {
