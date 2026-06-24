@@ -357,9 +357,9 @@ def _hot_route_budget(path: str, *, gateway: bool = False) -> tuple[float, float
             0.10 if gateway else 0.08,
         )
     return (
-        12.0 if not gateway else 15.0,
-        30.0 if not gateway else 35.0,
-        0.05 if not gateway else 0.06,
+        2.0 if not gateway else 3.0,
+        5.0 if not gateway else 8.0,
+        0.05 if not gateway else 0.08,
     )
 
 
