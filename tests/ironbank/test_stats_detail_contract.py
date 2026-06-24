@@ -35,6 +35,9 @@ CRED_EVENT_ID = "abc123def456"
 SEC_EVENT_ID = "123abc456def"
 CREDENTIAL_REF = "credential:blake3:" + "1" * 64
 BLAKE3_HASH = "blake3:" + "2" * 64
+EXPECTED_REQUEST_BODY = {"prompt": "write the ledger poem", "nonce": "stats-detail"}
+EXPECTED_REQUEST_BODY_TEXT = json.dumps(EXPECTED_REQUEST_BODY)
+EXPECTED_MODEL_RESPONSE = "Thought for 2s.\nCreated /root/poeme.md with a ledger poem."
 
 
 def _profile_contract(tmp_dir: Path) -> dict[str, object]:
@@ -313,9 +316,9 @@ def _create_schema(conn: sqlite3.Connection) -> None:
 
 
 def _seed_session_db(db_path: Path) -> None:
-    request_body = json.dumps({"prompt": "write the ledger poem", "nonce": "stats-detail"})
+    request_body = EXPECTED_REQUEST_BODY_TEXT
     full_response = json.dumps({"poem": "ironbank-" + ("x" * 70_000) + "-tail"})
-    model_response = "Thought for 2s.\nCreated /root/poeme.md with a ledger poem."
+    model_response = EXPECTED_MODEL_RESPONSE
     mcp_response = json.dumps({"content": [{"type": "text", "text": "created poeme.md"}]})
     rule_json = json.dumps(
         {
@@ -407,6 +410,20 @@ def _seed_session_db(db_path: Path) -> None:
                     full_response.encode(),
                     TRACE_ID,
                     "2026-06-17T20:11:18.404198Z",
+                ),
+                (
+                    MODEL_EVENT_ID,
+                    "model.call",
+                    "model_calls",
+                    "request",
+                    "application/json",
+                    len(request_body.encode()),
+                    len(request_body.encode()),
+                    0,
+                    BLAKE3_HASH,
+                    request_body.encode(),
+                    TRACE_ID,
+                    "2026-06-17T20:11:18.904098Z",
                 ),
                 (
                     MODEL_EVENT_ID,
@@ -756,6 +773,31 @@ def test_agy_stats_detail_routes_project_session_db_without_preview_theater() ->
         assert bodies["response"]["truncated"] == 0
         assert str(bodies["response"]["body_hash"]).startswith("blake3:")
 
+        model_body_rows = _query(
+            client,
+            f"""
+            SELECT direction, content_type, original_bytes, stored_bytes,
+                   truncated, body_hash, CAST(body AS TEXT) AS body
+            FROM event_body_blobs
+            WHERE event_id = '{MODEL_EVENT_ID}'
+            ORDER BY direction
+            """,
+        )
+        model_bodies = {row["direction"]: row for row in model_body_rows}
+        assert set(model_bodies) == {"request", "response"}
+        assert json.loads(model_bodies["request"]["body"]) == EXPECTED_REQUEST_BODY
+        assert model_bodies["request"]["content_type"] == "application/json"
+        assert model_bodies["request"]["stored_bytes"] == len(
+            EXPECTED_REQUEST_BODY_TEXT.encode()
+        )
+        assert model_bodies["request"]["truncated"] == 0
+        assert model_bodies["response"]["body"] == EXPECTED_MODEL_RESPONSE
+        assert model_bodies["response"]["content_type"] == "text/plain"
+        assert model_bodies["response"]["stored_bytes"] == len(
+            EXPECTED_MODEL_RESPONSE.encode()
+        )
+        assert model_bodies["response"]["truncated"] == 0
+
         model_rows = _query(
             client,
             """
@@ -904,5 +946,33 @@ def test_agy_stats_detail_routes_project_session_db_without_preview_theater() ->
         )
         assert detection_latest == [latest[1]]
         assert enforcement_latest == latest
+
+        detail = client.get(f"/vms/{SESSION_ID}/stats/detail", timeout=30)
+        assert "request_body_preview" not in json.dumps(detail)
+        assert "response_body_preview" not in json.dumps(detail)
+        route_http_blobs = detail["body_blobs"][HTTP_EVENT_ID]
+        assert {row["direction"] for row in route_http_blobs} == {"request", "response"}
+        route_http_response = next(
+            row for row in route_http_blobs if row["direction"] == "response"
+        )
+        assert route_http_response["body"].endswith("-tail\"}")
+        assert route_http_response["original_bytes"] > 65_536
+        assert route_http_response["stored_bytes"] == route_http_response["original_bytes"]
+        assert route_http_response["truncated"] == 0
+
+        route_model_blobs = detail["body_blobs"][MODEL_EVENT_ID]
+        assert {row["direction"] for row in route_model_blobs} == {"request", "response"}
+        route_model_request = next(
+            row for row in route_model_blobs if row["direction"] == "request"
+        )
+        route_model_response = next(
+            row for row in route_model_blobs if row["direction"] == "response"
+        )
+        assert json.loads(route_model_request["body"]) == EXPECTED_REQUEST_BODY
+        assert route_model_request["content_type"] == "application/json"
+        assert route_model_request["truncated"] == 0
+        assert route_model_response["body"] == EXPECTED_MODEL_RESPONSE
+        assert route_model_response["content_type"] == "text/plain"
+        assert route_model_response["truncated"] == 0
     finally:
         service.stop()
