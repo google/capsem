@@ -8100,6 +8100,16 @@ fn apply_live_session_counters_from_projection(
         .and_then(serde_json::Value::as_array)
         .cloned()
         .unwrap_or_default();
+    let model_events = payload
+        .get("model_events")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let model_stats = payload
+        .get("model_stats")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
     let file_events = payload
         .get("file_events")
         .and_then(serde_json::Value::as_array)
@@ -8121,6 +8131,40 @@ fn apply_live_session_counters_from_projection(
         info.total_requests = Some(total_requests);
         info.allowed_requests = Some(allowed_requests);
         info.denied_requests = Some(total_requests.saturating_sub(allowed_requests));
+    }
+    if !model_events.is_empty() {
+        info.model_call_count = Some(model_events.len() as u64);
+        info.total_input_tokens = Some(
+            model_events
+                .iter()
+                .filter_map(|event| {
+                    event
+                        .get("input_tokens")
+                        .and_then(serde_json::Value::as_u64)
+                })
+                .sum(),
+        );
+        info.total_output_tokens = Some(
+            model_events
+                .iter()
+                .filter_map(|event| {
+                    event
+                        .get("output_tokens")
+                        .and_then(serde_json::Value::as_u64)
+                })
+                .sum(),
+        );
+    }
+    if !model_stats.is_empty() {
+        info.total_estimated_cost = Some(
+            model_stats
+                .iter()
+                .filter_map(|stat| {
+                    stat.get("estimated_cost_usd")
+                        .and_then(serde_json::Value::as_f64)
+                })
+                .sum(),
+        );
     }
     if file_events > 0 {
         info.total_file_events = Some(file_events);
