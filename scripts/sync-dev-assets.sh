@@ -40,6 +40,28 @@ mkdir -p "$DST/$ARCH"
 
 cp "$SRC/manifest.json" "$DST/manifest.json.tmp"
 mv "$DST/manifest.json.tmp" "$DST/manifest.json"
+python3 - "$SRC/manifest.json" "$DST/manifest-origin.json" <<'PY'
+import json
+import pathlib
+import sys
+
+manifest = pathlib.Path(sys.argv[1]).resolve()
+dst = pathlib.Path(sys.argv[2])
+tmp = dst.with_suffix(dst.suffix + ".tmp")
+tmp.write_text(
+    json.dumps(
+        {
+            "schema": "capsem.manifest_origin.v1",
+            "origin": "local-dev-sync",
+            "source": str(manifest),
+        },
+        sort_keys=True,
+    )
+    + "\n",
+    encoding="utf-8",
+)
+tmp.replace(dst)
+PY
 
 # Materialize the installed layout from the manifest. Local build output may
 # be literal (`rootfs.erofs`) while downloaded/reconciled output is
