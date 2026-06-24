@@ -154,7 +154,12 @@ fn test_profile_mutation_writer(run_dir: &StdPath) -> Arc<capsem_logger::DbWrite
 }
 
 fn test_projection_refresh_tx() -> mpsc::Sender<ProjectionRefreshRequest> {
-    let (tx, _rx) = mpsc::channel(1);
+    let (tx, mut rx) = mpsc::channel::<ProjectionRefreshRequest>(16);
+    std::thread::spawn(move || {
+        while let Some(request) = rx.blocking_recv() {
+            let _ = request.reply.send(Ok(()));
+        }
+    });
     tx
 }
 
