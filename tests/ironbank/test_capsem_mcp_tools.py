@@ -40,6 +40,7 @@ EXPECTED_CAPSEM_MCP_TOOLS = {
     "capsem_mcp_servers",
     "capsem_mcp_tools",
     "capsem_panics",
+    "capsem_persist",
     "capsem_purge",
     "capsem_read_file",
     "capsem_resume",
@@ -147,9 +148,17 @@ def _eventually(query, predicate, timeout: float = 20.0):
 def _connect_session_db(service: ServiceInstance, session_id: str):
     candidates = [
         service.tmp_dir / "sessions" / session_id / "session.db",
+        service.tmp_dir / "persistent" / session_id / "session.db",
     ]
-    db_path = next((path for path in candidates if path.exists()), candidates[0])
-    assert db_path.exists(), f"session DB missing at {db_path}"
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        db_path = next((path for path in candidates if path.exists()), None)
+        if db_path is not None:
+            break
+        time.sleep(0.1)
+    else:
+        db_path = None
+    assert db_path is not None, f"session DB missing at {candidates}"
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     return conn

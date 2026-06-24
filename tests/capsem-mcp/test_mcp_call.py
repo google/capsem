@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+import time
 import uuid
 
 import pytest
@@ -18,8 +19,20 @@ def _json_tool_result(result):
 
 def _ledger_rows(service_uds_path, vm_name, sql, params=()):
     """Read the isolated test session ledger directly, not through product routes."""
-    db_path = service_uds_path.parent / "sessions" / vm_name / "session.db"
-    conn = sqlite3.connect(db_path)
+    candidates = [
+        service_uds_path.parent / "sessions" / vm_name / "session.db",
+        service_uds_path.parent / "persistent" / vm_name / "session.db",
+    ]
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        db_path = next((path for path in candidates if path.exists()), None)
+        if db_path is not None:
+            break
+        time.sleep(0.1)
+    else:
+        db_path = None
+    assert db_path is not None, f"session ledger missing at {candidates}"
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     try:
         conn.row_factory = sqlite3.Row
         return [dict(row) for row in conn.execute(sql, params).fetchall()]
