@@ -154,9 +154,11 @@ fn query_string<S: AsRef<str>>(params: &[(&str, Option<S>)]) -> String {
 
 /// Body for POST /vms/create.
 fn build_create_body(params: &CreateParams) -> Value {
+    let persistent = params.name.is_some() || params.from.is_some();
     let mut body = json!({
         "name": params.name,
         "profile_id": DEFAULT_PROFILE_ID,
+        "persistent": persistent,
     });
     if let Some(ram) = params.ram_mb {
         body["ram_mb"] = json!(ram);
@@ -192,6 +194,11 @@ fn build_fork_body(params: &ForkParams) -> Value {
         "name": params.name,
         "description": params.description,
     })
+}
+
+/// Body for POST /vms/{id}/save.
+fn build_persist_body(params: &PersistParams) -> Value {
+    json!({ "name": params.name })
 }
 
 /// Body for POST /purge.
@@ -431,6 +438,14 @@ struct ForkParams {
     name: String,
     /// Optional description
     description: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
+struct PersistParams {
+    /// ID or name of the running session to save
+    id: String,
+    /// Name for the saved session
+    name: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
@@ -833,6 +848,22 @@ impl CapsemHandler {
                 &format!("/vms/{}/resume", params.name),
                 Some(json!({})),
             )
+            .await;
+        format_service_response(resp)
+    }
+
+    #[tool(
+        name = "capsem_persist",
+        description = "Save a running session under a stable name"
+    )]
+    async fn persist(
+        &self,
+        Parameters(params): Parameters<PersistParams>,
+    ) -> Result<String, String> {
+        let body = build_persist_body(&params);
+        let resp = self
+            .client
+            .request::<Value, Value>("POST", &format!("/vms/{}/save", params.id), Some(body))
             .await;
         format_service_response(resp)
     }

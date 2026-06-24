@@ -451,6 +451,7 @@ fn tool_router_registers_all_tools() {
         "capsem_stop",
         "capsem_suspend",
         "capsem_resume",
+        "capsem_persist",
         "capsem_purge",
         "capsem_run",
         "capsem_vm_logs",
@@ -480,8 +481,6 @@ fn tool_router_registers_all_tools() {
 fn tool_descriptions_do_not_expose_old_lifecycle_semantics() {
     let tools = CapsemHandler::tool_router();
     let banned = [
-        concat!("capsem_", "persist"),
-        concat!("pers", "istent"),
         concat!("ephem", "eral"),
         concat!("tempor", "ary"),
         "temp vm",
@@ -695,24 +694,33 @@ fn format_service_response_array_value_is_ok() {
 // -----------------------------------------------------------------------
 
 #[test]
-fn create_body_with_requested_name_does_not_set_lifecycle_flags() {
+fn create_body_with_requested_name_is_persistent() {
     let p = CreateParams {
         name: Some("dev".into()),
         ..Default::default()
     };
     let body = build_create_body(&p);
     assert_eq!(body["name"], "dev");
-    let old_lifecycle_key = ["pers", "istent"].concat();
-    assert!(body.get(old_lifecycle_key.as_str()).is_none());
+    assert_eq!(body["persistent"], true);
 }
 
 #[test]
-fn create_body_without_requested_name_leaves_naming_to_service() {
+fn create_body_without_requested_name_is_temporary() {
     let p = CreateParams::default();
     let body = build_create_body(&p);
     assert!(body["name"].is_null());
-    let old_lifecycle_key = ["pers", "istent"].concat();
-    assert!(body.get(old_lifecycle_key.as_str()).is_none());
+    assert_eq!(body["persistent"], false);
+}
+
+#[test]
+fn create_body_from_clone_source_is_persistent() {
+    let p = CreateParams {
+        from: Some("src-vm".into()),
+        ..Default::default()
+    };
+    let body = build_create_body(&p);
+    assert_eq!(body["from"], "src-vm");
+    assert_eq!(body["persistent"], true);
 }
 
 #[test]
