@@ -7525,6 +7525,12 @@ async fn stats_detail_route_uses_memory_projection_not_session_db() {
     assert_eq!(body["model_stats"][0]["model"], "gemini-3.5-flash");
     assert_eq!(body["model_events"][0]["event_id"], "abc123abc123");
     assert_eq!(body["model_events"][0]["input_tokens"], 12);
+    assert!(body["model_events"][0]
+        .get("request_body_preview")
+        .is_none());
+    assert!(body["model_events"][0]
+        .get("response_body_preview")
+        .is_none());
     assert_eq!(body["tool_events"][0]["tool_name"], "Create");
     assert_eq!(
         body["tool_events"][0]["arguments"],
@@ -7534,6 +7540,24 @@ async fn stats_detail_route_uses_memory_projection_not_session_db() {
     assert_eq!(
         body["http_events"][0]["domain"],
         "generativelanguage.googleapis.com"
+    );
+    assert!(body["http_events"][0].get("request_body_preview").is_none());
+    assert!(body["http_events"][0].get("response_body_preview").is_none());
+    assert_eq!(
+        body["body_blobs"]["abc123abc123"][0]["direction"],
+        "request"
+    );
+    assert_eq!(
+        body["body_blobs"]["abc123abc123"][0]["body"],
+        r#"{"contents":[{"text":"write full bounded body"}]}"#
+    );
+    assert_eq!(
+        body["body_blobs"]["abc123abc123"][1]["direction"],
+        "response"
+    );
+    assert_eq!(
+        body["body_blobs"]["abc123abc123"][1]["body"],
+        r#"{"candidates":[{"content":{"parts":[{"text":"created poem.md"}]}}]}"#
     );
     assert_eq!(
         body["body_blobs"]["def456def456"][0]["direction"],
