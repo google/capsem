@@ -35,6 +35,7 @@ use std::path::{Path as StdPath, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::net::UnixListener;
+use tokio::sync::{mpsc, oneshot};
 use tokio_unix_ipc::{channel_from_std, Receiver, Sender};
 use tower_http::trace::TraceLayer;
 use tracing::{error, info, warn, Instrument};
@@ -136,6 +137,10 @@ const PROCESS_ENV_ALLOWLIST: &[&str] = &[
 const ACTIVE_PROFILE_DIR: &str = "vm";
 const ACTIVE_PROFILE_FILE: &str = "active_profile.toml";
 
+struct ProjectionRefreshRequest {
+    reply: oneshot::Sender<Result<(), String>>,
+}
+
 // ---------------------------------------------------------------------------
 // Service state
 // ---------------------------------------------------------------------------
@@ -210,6 +215,10 @@ struct ServiceState {
     /// Profile/MCP/rule/plugin edit routes enqueue here; they must never open
     /// SQLite directly.
     profile_mutation_writer: Arc<capsem_logger::DbWriter>,
+    /// Service-owned projection refresh worker. Route handlers send bounded
+    /// refresh requests after operations that can make session.db advance;
+    /// the worker owns DB reads so hot route response builders stay memory-only.
+    projection_refresh_tx: mpsc::Sender<ProjectionRefreshRequest>,
     /// Guards Apple VZ lifecycle edges across all VMs managed by this
     /// service. Cold starts and teardown take a read guard; save/restore take
     /// a write guard. That keeps checkpoint edges exclusive without
@@ -2389,6 +2398,8 @@ async fn log_file_boundary(
     .await
     .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
+    request_projection_refresh(state).await?;
+
     match res {
         ProcessToService::LogFileBoundaryResult {
             success: true,
@@ -3073,6 +3084,13 @@ async fn handle_list(State(state): State<Arc<ServiceState>>) -> Json<ListRespons
             info.uptime_secs = Some(i.start_time.elapsed().as_secs());
             info.can_resume = false;
             info.refresh_available_actions();
+            if let Err(error) = apply_live_session_counters_from_projection(&state, &mut info) {
+                warn!(
+                    vm_id = i.id.as_str(),
+                    error = %error.1,
+                    "failed to apply live session counters to list row"
+                );
+            }
             sandboxes.push(info);
         }
     }
@@ -3156,6 +3174,13 @@ async fn handle_info(
             }
         };
         if let (Some(mut info), Some(dir)) = (instance_data, session_dir) {
+            if let Err(error) = apply_live_session_counters_from_projection(&state, &mut info) {
+                warn!(
+                    vm_id = info.id.as_str(),
+                    error = %error.1,
+                    "failed to apply live session counters to info row"
+                );
+            }
             info.storage = storage_diagnostics(&dir);
             return Ok(Json(info));
         }
@@ -4051,6 +4076,7 @@ async fn handle_exec(
                     trace_id: None,
                 },
             )?;
+            request_projection_refresh(&state).await?;
             Ok(Json(ExecResponse {
                 stdout: String::from_utf8(stdout)
                     .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
@@ -6813,9 +6839,15 @@ async fn handle_security_latest(
 ) -> Result<Json<Vec<capsem_logger::SecurityRuleEvent>>, AppError> {
     let limit = params.limit.unwrap_or(100).min(2000);
     let _ = resolve_session_dir(&state, &id)?;
-    Ok(Json(security_projection_latest_for_vm(
-        &state, &id, limit, false,
-    )?))
+    let rows = security_projection_latest_for_vm(&state, &id, limit, false)?;
+    info!(
+        route = "/vms/{id}/security/latest",
+        vm_id = id.as_str(),
+        limit,
+        row_count = rows.len(),
+        "security_latest"
+    );
+    Ok(Json(rows))
 }
 
 /// GET /vms/{id}/detection/latest -- latest detection-bearing rule rows.
@@ -6906,6 +6938,7 @@ struct SecurityRouteProjection {
 struct SecuritySessionProjection {
     latest: Vec<capsem_logger::SecurityRuleEvent>,
     stats: capsem_logger::SecurityRuleStats,
+    brokered_credentials: Vec<capsem_logger::BrokeredCredentialStat>,
 }
 
 impl Default for SecuritySessionProjection {
@@ -6913,6 +6946,7 @@ impl Default for SecuritySessionProjection {
         Self {
             latest: Vec::new(),
             stats: empty_security_rule_stats(),
+            brokered_credentials: Vec::new(),
         }
     }
 }
@@ -6984,9 +7018,35 @@ fn rebuild_security_route_projection(
                 }
             }
         };
-        projection
-            .sessions
-            .insert(vm_id, SecuritySessionProjection { latest, stats });
+        let brokered_credentials = match reader.brokered_credential_stats() {
+            Ok(credentials) => credentials,
+            Err(error) => {
+                let message = error.to_string();
+                if is_missing_optional_ledger_shape(&message) {
+                    warn!(
+                        vm_id,
+                        error = %message,
+                        "security projection skipped missing brokered credential stats"
+                    );
+                    Vec::new()
+                } else {
+                    return Err(AppError(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!(
+                            "failed to read brokered credential projection for {vm_id}: {error}"
+                        ),
+                    ));
+                }
+            }
+        };
+        projection.sessions.insert(
+            vm_id,
+            SecuritySessionProjection {
+                latest,
+                stats,
+                brokered_credentials,
+            },
+        );
     }
     *state.security_route_projection.lock().map_err(|error| {
         AppError(
@@ -8024,6 +8084,106 @@ fn stats_route_projection(state: &ServiceState) -> Result<StatsRouteProjection, 
         })
 }
 
+fn apply_live_session_counters_from_projection(
+    state: &ServiceState,
+    info: &mut SandboxInfo,
+) -> Result<(), AppError> {
+    let projection = stats_detail_route_projection(state)?;
+    let Some(body) = projection.sessions.get(&info.id) else {
+        return Ok(());
+    };
+    let Ok(payload) = serde_json::from_slice::<serde_json::Value>(body) else {
+        return Ok(());
+    };
+    let http_events = payload
+        .get("http_events")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let file_events = payload
+        .get("file_events")
+        .and_then(serde_json::Value::as_array)
+        .map(|events| events.len() as u64)
+        .unwrap_or(0);
+    let tool_events = payload
+        .get("tool_events")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let total_requests = http_events.len() as u64;
+    let allowed_requests = http_events
+        .iter()
+        .filter(|event| {
+            event.get("decision").and_then(serde_json::Value::as_str) == Some("allowed")
+        })
+        .count() as u64;
+    if total_requests > 0 {
+        info.total_requests = Some(total_requests);
+        info.allowed_requests = Some(allowed_requests);
+        info.denied_requests = Some(total_requests.saturating_sub(allowed_requests));
+    }
+    if file_events > 0 {
+        info.total_file_events = Some(file_events);
+    }
+    if !tool_events.is_empty() {
+        info.total_tool_calls = Some(tool_events.len() as u64);
+        info.total_mcp_calls = Some(
+            tool_events
+                .iter()
+                .filter(|event| {
+                    event.get("source").and_then(serde_json::Value::as_str) == Some("mcp")
+                })
+                .count() as u64,
+        );
+    }
+    Ok(())
+}
+
+fn refresh_session_ledger_route_projections(state: &ServiceState) -> Result<(), AppError> {
+    if let Ok(mut cache) = state.mcp_tool_cache.lock() {
+        *cache = capsem_core::mcp::load_tool_cache();
+    }
+    rebuild_stats_detail_route_projection(state)?;
+    rebuild_security_route_projection(state)?;
+    rebuild_history_route_projection(state)?;
+    rebuild_timeline_route_projection(state)?;
+    Ok(())
+}
+
+fn spawn_projection_refresh_worker(
+    state: Arc<ServiceState>,
+    mut rx: mpsc::Receiver<ProjectionRefreshRequest>,
+) {
+    tokio::spawn(async move {
+        while let Some(request) = rx.recv().await {
+            let result = refresh_session_ledger_route_projections(&state).map_err(|error| error.1);
+            let _ = request.reply.send(result);
+        }
+    });
+}
+
+async fn request_projection_refresh(state: &Arc<ServiceState>) -> Result<(), AppError> {
+    let (reply, rx) = oneshot::channel();
+    state
+        .projection_refresh_tx
+        .send(ProjectionRefreshRequest { reply })
+        .await
+        .map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("projection refresh worker unavailable: {error}"),
+            )
+        })?;
+    rx.await
+        .map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("projection refresh worker dropped response: {error}"),
+            )
+        })?
+        .map_err(|message| AppError(StatusCode::INTERNAL_SERVER_ERROR, message))
+}
+
 fn security_projection_latest_for_vm(
     state: &ServiceState,
     vm_id: &str,
@@ -8562,6 +8722,24 @@ fn hydrate_credential_broker_runtime(
         if !profile_sessions.contains(&vm_id) {
             continue;
         }
+        for credential in &session.brokered_credentials {
+            merge_brokered_credential_status(
+                &mut credentials,
+                credential.provider.clone(),
+                credential.credential_ref.clone(),
+                credential.observed_count,
+                credential.injected_count,
+                credential.last_seen.clone(),
+            );
+            status.event_count = status.event_count.saturating_add(
+                credential
+                    .observed_count
+                    .saturating_add(credential.injected_count),
+            );
+            status.rewrite_count = status
+                .rewrite_count
+                .saturating_add(credential.injected_count);
+        }
         for event in session.latest {
             let Ok(payload) = serde_json::from_str::<serde_json::Value>(&event.event_json) else {
                 status.last_error = Some(format!(
@@ -8680,6 +8858,7 @@ async fn handle_profile_credential_broker_credentials_reload(
             "credential store retry failed"
         ),
     }
+    request_projection_refresh(&state).await?;
     handle_profile_credential_broker_credentials_info(State(state), Path(profile_id)).await
 }
 
@@ -10978,6 +11157,7 @@ async fn main() -> Result<()> {
         capsem_logger::DbWriter::open(&main_db_path_for_run_dir(&run_dir), 64)
             .context("open profile mutation ledger writer")?,
     );
+    let (projection_refresh_tx, projection_refresh_rx) = mpsc::channel(16);
     let state = Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
         persistent_registry: Mutex::new(persistent_registry),
@@ -11005,6 +11185,7 @@ async fn main() -> Result<()> {
         timeline_route_projection: Mutex::new(TimelineRouteProjection::default()),
         triage_route_projection: Mutex::new(TriageRouteProjection::default()),
         profile_mutation_writer,
+        projection_refresh_tx,
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });
@@ -11029,6 +11210,7 @@ async fn main() -> Result<()> {
     rebuild_triage_route_projection(&state).map_err(|AppError(_, message)| {
         anyhow!("failed to build triage route projection: {message}")
     })?;
+    spawn_projection_refresh_worker(Arc::clone(&state), projection_refresh_rx);
     state.reconcile_persistent_defunct_from_logs();
 
     {

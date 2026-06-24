@@ -14,9 +14,9 @@ pub use events::{
     CREDENTIAL_REF_PREFIX,
 };
 pub use reader::{
-    validate_select_only, DbReader, DomainCount, FileEventStats, HistoryCounts, HistoryEntry,
-    McpCallStats, McpServerCallCount, McpToolUsage, NetEventCounts, ProcessEntry,
-    ProviderTokenUsage, SecurityRuleActionCount, SecurityRuleDetectionLevelCount,
+    validate_select_only, BrokeredCredentialStat, DbReader, DomainCount, FileEventStats,
+    HistoryCounts, HistoryEntry, McpCallStats, McpServerCallCount, McpToolUsage, NetEventCounts,
+    ProcessEntry, ProviderTokenUsage, SecurityRuleActionCount, SecurityRuleDetectionLevelCount,
     SecurityRuleEventTypeCount, SecurityRuleStats, SecurityRuleStatsByRule, SessionStats,
     TimeBucket, ToolUsageCount, ToolUsageWithStats, TraceDetail, TraceModelCall, TraceSummary,
 };

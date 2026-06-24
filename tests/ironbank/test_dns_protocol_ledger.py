@@ -111,6 +111,12 @@ def _records(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
 
 
+def _prove_gateway_proxy(gateway_client: TcpHttpClient) -> None:
+    vm_list = gateway_client.get("/vms/list", timeout=30)
+    assert isinstance(vm_list, dict)
+    assert "sandboxes" in vm_list
+
+
 def test_dns_query_and_block_matrix_pays_full_ledger_debt_blackbox() -> None:
     assert MOCK_SERVER_BINARY.exists(), f"{MOCK_SERVER_BINARY} missing"
     assert ASSETS_DIR.exists(), f"{ASSETS_DIR} missing; build VM assets before Ironbank"
@@ -163,6 +169,7 @@ def test_dns_query_and_block_matrix_pays_full_ledger_debt_blackbox() -> None:
         gateway = GatewayInstance(uds_path=service.uds_path)
         gateway.start()
         gateway_client = TcpHttpClient(gateway.base_url, gateway.token)
+        _prove_gateway_proxy(gateway_client)
 
         create = client.post(
             "/vms/create",

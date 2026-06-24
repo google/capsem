@@ -25,6 +25,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ASSETS_DIR = PROJECT_ROOT / "assets"
 PROFILES_DIR = PROJECT_ROOT / "target" / "config" / "profiles"
 
+
+def _prove_gateway_proxy(gateway_client: TcpHttpClient) -> None:
+    vm_list = gateway_client.get("/vms/list", timeout=30)
+    assert isinstance(vm_list, dict)
+    assert "sandboxes" in vm_list
+
 EXPECTED_NET_COLUMNS = {
     "id",
     "event_id",
@@ -203,6 +209,7 @@ def test_plain_json_http_request_pays_full_ledger_debt_blackbox() -> None:
         gateway = GatewayInstance(uds_path=service.uds_path)
         gateway.start()
         gateway_client = TcpHttpClient(gateway.base_url, gateway.token)
+        _prove_gateway_proxy(gateway_client)
 
         create = client.post(
             "/vms/create",
@@ -494,6 +501,7 @@ def test_http_body_handling_matrix_pays_full_ledger_debt_blackbox() -> None:
         gateway = GatewayInstance(uds_path=service.uds_path)
         gateway.start()
         gateway_client = TcpHttpClient(gateway.base_url, gateway.token)
+        _prove_gateway_proxy(gateway_client)
 
         create = client.post(
             "/vms/create",
@@ -857,6 +865,7 @@ def test_brokered_http_rewrite_pays_full_ledger_debt_blackbox() -> None:
         gateway = GatewayInstance(uds_path=service.uds_path)
         gateway.start()
         gateway_client = TcpHttpClient(gateway.base_url, gateway.token)
+        _prove_gateway_proxy(gateway_client)
 
         create = client.post(
             "/vms/create",
@@ -1361,6 +1370,7 @@ def test_denied_http_request_pays_full_ledger_debt_blackbox() -> None:
         gateway = GatewayInstance(uds_path=service.uds_path)
         gateway.start()
         gateway_client = TcpHttpClient(gateway.base_url, gateway.token)
+        _prove_gateway_proxy(gateway_client)
 
         create = client.post(
             "/vms/create",
@@ -1623,6 +1633,7 @@ def test_asked_http_request_pays_full_ledger_debt_blackbox() -> None:
         gateway = GatewayInstance(uds_path=service.uds_path)
         gateway.start()
         gateway_client = TcpHttpClient(gateway.base_url, gateway.token)
+        _prove_gateway_proxy(gateway_client)
 
         create = client.post(
             "/vms/create",
