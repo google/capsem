@@ -196,6 +196,9 @@ struct ServiceState {
     /// Route-owned command/process history projection. `/history*` routes must
     /// not open `session.db`; SQLite is durable persistence and recovery.
     history_route_projection: Mutex<HistoryRouteProjection>,
+    /// Route-owned protocol timeline projection. `/timeline` must filter an
+    /// in-memory row set rather than composing SQL on every request.
+    timeline_route_projection: Mutex<TimelineRouteProjection>,
     /// Guards Apple VZ lifecycle edges across all VMs managed by this
     /// service. Cold starts and teardown take a read guard; save/restore take
     /// a write guard. That keeps checkpoint edges exclusive without
@@ -6543,20 +6546,17 @@ async fn handle_inspect(
 }
 
 /// `GET /vms/{id}/timeline?trace_id=<X>&since=10m&limit=200&layers=mcp,exec,...`
-/// -- unified time-ordered event stream for one session, joining
-/// `exec_events`, MCP protocol/tool rows, `net_events`, `fs_events`, and
-/// `model_calls` via UNION ALL. Used by the `capsem_timeline` MCP tool.
+/// -- unified time-ordered event stream for one session, filtered from the
+/// in-memory timeline projection. Used by the `capsem_timeline` MCP tool.
 ///
 /// W6 added `trace_id` to every layer; this handler filters with
-/// `WHERE trace_id = ? OR trace_id IS NULL` so rows that pre-date W4's
-/// trace propagation still surface for the user.
+/// with matching `trace_id` or pre-W4 NULL trace rows so older rows still
+/// surface for the user.
 async fn handle_timeline(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
     axum::extract::Query(params): axum::extract::Query<TimelineQuery>,
 ) -> Result<impl IntoResponse, AppError> {
-    let db_path = resolve_session_dir(&state, &id)?.join("session.db");
-
     let limit = params.limit.unwrap_or(200).min(2000);
     let since_filter = params
         .since
@@ -6581,89 +6581,43 @@ async fn handle_timeline(
         })
         .unwrap_or_else(|| ALLOWED_LAYERS.to_vec());
 
-    let mut parts: Vec<String> = Vec::new();
-    if layers.contains(&"exec") {
-        parts.push(
-            "SELECT timestamp, 'exec' AS layer, exec_id AS ref, command AS summary, \
-             exit_code AS status, duration_ms, trace_id FROM exec_events"
-                .to_string(),
-        );
-    }
-    if layers.contains(&"mcp") {
-        parts.push(
-            "SELECT m.timestamp AS timestamp, 'mcp' AS layer, m.event_id AS ref, \
-             m.server_name || '/' || COALESCE(m.tool_name, m.method) AS summary, \
-             m.decision AS status, m.duration_ms AS duration_ms, m.trace_id AS trace_id \
-             FROM mcp_calls m \
-             UNION ALL \
-             SELECT COALESCE(NULLIF(tc.timestamp, ''), '1970-01-01T00:00:00Z') AS timestamp, \
-             'mcp' AS layer, tc.event_id AS ref, \
-             tc.server_name || '/' || tc.tool_name || COALESCE(' (call_id=' || tc.call_id || ')', '') AS summary, \
-             tc.decision AS status, tc.duration_ms AS duration_ms, tc.trace_id AS trace_id \
-             FROM tool_calls tc \
-             WHERE tc.origin = 'mcp'"
-                .to_string(),
-        );
-    }
-    if layers.contains(&"net") {
-        parts.push(
-            "SELECT timestamp, 'net' AS layer, id AS ref, \
-             COALESCE(method, 'GET') || ' ' || domain || COALESCE(path, '') AS summary, \
-             status_code AS status, duration_ms, trace_id FROM net_events"
-                .to_string(),
-        );
-    }
-    if layers.contains(&"fs") {
-        parts.push(
-            "SELECT timestamp, 'fs' AS layer, id AS ref, action || ' ' || path AS summary, \
-             NULL AS status, NULL AS duration_ms, trace_id FROM fs_events"
-                .to_string(),
-        );
-    }
-    if layers.contains(&"model") {
-        parts.push(
-            "SELECT timestamp, 'model' AS layer, id AS ref, \
-             provider || '/' || COALESCE(model, '?') AS summary, \
-             status_code AS status, duration_ms, trace_id FROM model_calls"
-                .to_string(),
-        );
-    }
-
-    if parts.is_empty() {
+    if layers.is_empty() {
         return Err(AppError(
             StatusCode::BAD_REQUEST,
             "no layers selected".into(),
         ));
     }
 
-    let mut sql = parts.join(" UNION ALL ");
-    let mut filters: Vec<String> = Vec::new();
-    if let Some(t) = &params.trace_id {
-        // Match the row's trace_id OR pre-W4 NULL rows. Quote/escape via
-        // SQLite's standard string-literal doubling.
-        let safe = t.replace('\'', "''");
-        filters.push(format!("(trace_id = '{safe}' OR trace_id IS NULL)"));
-    }
-    if let Some(s) = since_filter {
-        // RFC3339 string comparison works because timestamps share format.
-        let cutoff = secs_to_rfc3339(s);
-        filters.push(format!("timestamp >= '{cutoff}'"));
-    }
-    if !filters.is_empty() {
-        sql = format!("SELECT * FROM ({sql}) WHERE {}", filters.join(" AND "));
-    }
-    sql.push_str(&format!(" ORDER BY timestamp ASC LIMIT {limit}"));
-
-    let reader = capsem_logger::DbReader::open(&db_path).map_err(|e| {
+    let _ = resolve_session_dir(&state, &id)?;
+    let cutoff = since_filter.map(secs_to_rfc3339);
+    let rows = timeline_route_projection(&state)?
+        .sessions
+        .get(&id)
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|row| layers.contains(&row.layer.as_str()))
+        .filter(|row| {
+            params.trace_id.as_deref().map_or(true, |trace_id| {
+                row.trace_id.as_deref() == Some(trace_id) || row.trace_id.is_none()
+            })
+        })
+        .filter(|row| {
+            cutoff
+                .as_deref()
+                .map_or(true, |cutoff| row.timestamp.as_str() >= cutoff)
+        })
+        .take(limit)
+        .map(|row| row.to_values())
+        .collect::<Vec<_>>();
+    let json_str = serde_json::to_string(&json!({
+        "columns": TIMELINE_COLUMNS,
+        "rows": rows,
+    }))
+    .map_err(|error| {
         AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to open DB: {e}"),
-        )
-    })?;
-    let json_str = reader.query_raw(&sql).map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("timeline query failed: {e}"),
+            format!("timeline projection serialization failed: {error}"),
         )
     })?;
 
@@ -6949,6 +6903,203 @@ fn history_route_projection(state: &ServiceState) -> Result<HistoryRouteProjecti
             AppError(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("history projection lock poisoned: {error}"),
+            )
+        })
+}
+
+const TIMELINE_RECOVERY_LIMIT: usize = 50_000;
+const TIMELINE_COLUMNS: [&str; 7] = [
+    "timestamp",
+    "layer",
+    "ref",
+    "summary",
+    "status",
+    "duration_ms",
+    "trace_id",
+];
+
+#[derive(Clone, Debug, Default)]
+struct TimelineRouteProjection {
+    sessions: BTreeMap<String, Vec<TimelineProjectionRow>>,
+}
+
+#[derive(Clone, Debug)]
+struct TimelineProjectionRow {
+    timestamp: String,
+    layer: String,
+    ref_value: serde_json::Value,
+    summary: String,
+    status: serde_json::Value,
+    duration_ms: serde_json::Value,
+    trace_id: Option<String>,
+}
+
+impl TimelineProjectionRow {
+    fn to_values(&self) -> Vec<serde_json::Value> {
+        vec![
+            json!(self.timestamp),
+            json!(self.layer),
+            self.ref_value.clone(),
+            json!(self.summary),
+            self.status.clone(),
+            self.duration_ms.clone(),
+            self.trace_id
+                .as_ref()
+                .map(|trace_id| json!(trace_id))
+                .unwrap_or(serde_json::Value::Null),
+        ]
+    }
+}
+
+fn timeline_base_sql() -> String {
+    let parts = [
+        "SELECT timestamp, 'exec' AS layer, exec_id AS ref, command AS summary, \
+         exit_code AS status, duration_ms, trace_id FROM exec_events",
+        "SELECT m.timestamp AS timestamp, 'mcp' AS layer, m.event_id AS ref, \
+         m.server_name || '/' || COALESCE(m.tool_name, m.method) AS summary, \
+         m.decision AS status, m.duration_ms AS duration_ms, m.trace_id AS trace_id \
+         FROM mcp_calls m \
+         UNION ALL \
+         SELECT COALESCE(NULLIF(tc.timestamp, ''), '1970-01-01T00:00:00Z') AS timestamp, \
+         'mcp' AS layer, tc.event_id AS ref, \
+         tc.server_name || '/' || tc.tool_name || COALESCE(' (call_id=' || tc.call_id || ')', '') AS summary, \
+         tc.decision AS status, tc.duration_ms AS duration_ms, tc.trace_id AS trace_id \
+         FROM tool_calls tc \
+         WHERE tc.origin = 'mcp'",
+        "SELECT timestamp, 'net' AS layer, id AS ref, \
+         COALESCE(method, 'GET') || ' ' || domain || COALESCE(path, '') AS summary, \
+         status_code AS status, duration_ms, trace_id FROM net_events",
+        "SELECT timestamp, 'fs' AS layer, id AS ref, action || ' ' || path AS summary, \
+         NULL AS status, NULL AS duration_ms, trace_id FROM fs_events",
+        "SELECT timestamp, 'model' AS layer, id AS ref, \
+         provider || '/' || COALESCE(model, '?') AS summary, \
+         status_code AS status, duration_ms, trace_id FROM model_calls",
+    ];
+    format!(
+        "SELECT * FROM ({}) ORDER BY timestamp ASC LIMIT {TIMELINE_RECOVERY_LIMIT}",
+        parts.join(" UNION ALL ")
+    )
+}
+
+fn json_value_as_string(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::String(value) => Some(value.clone()),
+        serde_json::Value::Number(value) => Some(value.to_string()),
+        serde_json::Value::Bool(value) => Some(value.to_string()),
+        _ => None,
+    }
+}
+
+fn timeline_rows_from_query_json(raw: serde_json::Value) -> Vec<TimelineProjectionRow> {
+    let columns = raw
+        .get("columns")
+        .and_then(|value| value.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let rows = raw
+        .get("rows")
+        .and_then(|value| value.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let column_index = |name: &str| {
+        columns
+            .iter()
+            .position(|column| column.as_str() == Some(name))
+    };
+    let Some(timestamp_idx) = column_index("timestamp") else {
+        return Vec::new();
+    };
+    let Some(layer_idx) = column_index("layer") else {
+        return Vec::new();
+    };
+    let Some(ref_idx) = column_index("ref") else {
+        return Vec::new();
+    };
+    let Some(summary_idx) = column_index("summary") else {
+        return Vec::new();
+    };
+    let Some(status_idx) = column_index("status") else {
+        return Vec::new();
+    };
+    let Some(duration_idx) = column_index("duration_ms") else {
+        return Vec::new();
+    };
+    let Some(trace_idx) = column_index("trace_id") else {
+        return Vec::new();
+    };
+
+    rows.into_iter()
+        .filter_map(|row| {
+            let row = row.as_array()?;
+            Some(TimelineProjectionRow {
+                timestamp: json_value_as_string(row.get(timestamp_idx)?)?,
+                layer: json_value_as_string(row.get(layer_idx)?)?,
+                ref_value: row.get(ref_idx).cloned().unwrap_or(serde_json::Value::Null),
+                summary: json_value_as_string(row.get(summary_idx)?)?,
+                status: row
+                    .get(status_idx)
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
+                duration_ms: row
+                    .get(duration_idx)
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
+                trace_id: row.get(trace_idx).and_then(json_value_as_string),
+            })
+        })
+        .collect()
+}
+
+fn rebuild_timeline_route_projection(
+    state: &ServiceState,
+) -> Result<TimelineRouteProjection, AppError> {
+    let mut projection = TimelineRouteProjection::default();
+    let sql = timeline_base_sql();
+    for (vm_id, session_dir) in service_session_dirs(state) {
+        let db_path = session_dir.join("session.db");
+        if !db_path.exists() {
+            continue;
+        }
+        let reader = capsem_logger::DbReader::open(&db_path).map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to open timeline projection DB for {vm_id}: {error}"),
+            )
+        })?;
+        let raw = reader.query_raw(&sql).map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to read timeline projection for {vm_id}: {error}"),
+            )
+        })?;
+        let raw = serde_json::from_str::<serde_json::Value>(&raw).map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to parse timeline projection for {vm_id}: {error}"),
+            )
+        })?;
+        projection
+            .sessions
+            .insert(vm_id, timeline_rows_from_query_json(raw));
+    }
+    *state.timeline_route_projection.lock().map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("timeline projection lock poisoned: {error}"),
+        )
+    })? = projection.clone();
+    Ok(projection)
+}
+
+fn timeline_route_projection(state: &ServiceState) -> Result<TimelineRouteProjection, AppError> {
+    state
+        .timeline_route_projection
+        .lock()
+        .map(|projection| projection.clone())
+        .map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("timeline projection lock poisoned: {error}"),
             )
         })
 }
@@ -10225,6 +10376,7 @@ async fn main() -> Result<()> {
         stats_route_projection: Mutex::new(empty_stats_route_projection()),
         security_route_projection: Mutex::new(SecurityRouteProjection::default()),
         history_route_projection: Mutex::new(HistoryRouteProjection::default()),
+        timeline_route_projection: Mutex::new(TimelineRouteProjection::default()),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });
@@ -10239,6 +10391,9 @@ async fn main() -> Result<()> {
     })?;
     rebuild_history_route_projection(&state).map_err(|AppError(_, message)| {
         anyhow!("failed to build history route projection: {message}")
+    })?;
+    rebuild_timeline_route_projection(&state).map_err(|AppError(_, message)| {
+        anyhow!("failed to build timeline route projection: {message}")
     })?;
     state.reconcile_persistent_defunct_from_logs();
 

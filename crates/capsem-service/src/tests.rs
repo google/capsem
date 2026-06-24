@@ -174,6 +174,7 @@ fn make_test_state() -> Arc<ServiceState> {
         stats_route_projection: Mutex::new(empty_stats_route_projection()),
         security_route_projection: Mutex::new(SecurityRouteProjection::default()),
         history_route_projection: Mutex::new(HistoryRouteProjection::default()),
+        timeline_route_projection: Mutex::new(TimelineRouteProjection::default()),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
@@ -236,6 +237,7 @@ fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
         stats_route_projection: Mutex::new(empty_stats_route_projection()),
         security_route_projection: Mutex::new(SecurityRouteProjection::default()),
         history_route_projection: Mutex::new(HistoryRouteProjection::default()),
+        timeline_route_projection: Mutex::new(TimelineRouteProjection::default()),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
@@ -1492,6 +1494,121 @@ async fn detection_latest_route_filters_non_detection_rule_rows() {
     assert!(enforcement_rows
         .iter()
         .any(|row| row["event_id"] == "bbbbbb000000"));
+}
+
+#[tokio::test]
+async fn timeline_route_uses_memory_projection_not_session_db() {
+    let state = make_test_state();
+    let app = build_service_router(Arc::clone(&state));
+    let dir = tempfile::tempdir().unwrap();
+    let session_dir = dir.path().join("sessions").join("timeline-vm");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    insert_fake_instance_with_session_dir(
+        &state,
+        "timeline-vm",
+        std::process::id(),
+        session_dir.clone(),
+    );
+
+    let db_path = session_dir.join("session.db");
+    let writer = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
+    writer
+        .write(capsem_logger::WriteOp::ExecEvent(
+            capsem_logger::ExecEvent {
+                event_id: Some("ccc111000000".to_string()),
+                timestamp: std::time::SystemTime::now(),
+                exec_id: 77,
+                command: "echo timeline-marker".to_string(),
+                source: "api".to_string(),
+                mcp_call_id: None,
+                trace_id: Some("trace-timeline".to_string()),
+                process_name: Some("bash".to_string()),
+                credential_ref: None,
+            },
+        ))
+        .await;
+    writer
+        .write(capsem_logger::WriteOp::ExecEventComplete(
+            capsem_logger::ExecEventComplete {
+                exec_id: 77,
+                exit_code: 0,
+                duration_ms: 11,
+                stdout_preview: Some("timeline-marker\n".to_string()),
+                stderr_preview: None,
+                stdout_bytes: 16,
+                stderr_bytes: 0,
+                pid: Some(456),
+            },
+        ))
+        .await;
+    writer
+        .write(capsem_logger::WriteOp::NetEvent(capsem_logger::NetEvent {
+            event_id: Some("ddd222000000".to_string()),
+            timestamp: std::time::SystemTime::now(),
+            domain: "127.0.0.1".to_string(),
+            port: 3713,
+            decision: capsem_logger::Decision::Allowed,
+            process_name: Some("curl".to_string()),
+            pid: Some(456),
+            method: Some("POST".to_string()),
+            path: Some("/echo".to_string()),
+            query: None,
+            status_code: Some(200),
+            bytes_sent: 2,
+            bytes_received: 17,
+            duration_ms: 9,
+            matched_rule: Some("profiles.rules.default_http".to_string()),
+            request_headers: None,
+            response_headers: None,
+            request_body_preview: Some("{}".to_string()),
+            response_body_preview: Some(r#"{"ok":true}"#.to_string()),
+            conn_type: Some("http".to_string()),
+            policy_mode: None,
+            policy_action: Some("allow".to_string()),
+            policy_rule: Some("profiles.rules.default_http".to_string()),
+            policy_reason: None,
+            trace_id: Some("trace-timeline".to_string()),
+            credential_ref: None,
+        }))
+        .await;
+    writer.shutdown_blocking();
+
+    rebuild_timeline_route_projection(&state).unwrap();
+    std::fs::rename(&db_path, session_dir.join("session.db.route-must-not-open")).unwrap();
+
+    let (status, timeline) = route_request(
+        app,
+        axum::http::Method::GET,
+        "/vms/timeline-vm/timeline?trace_id=trace-timeline&layers=exec,net&limit=20",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{timeline}");
+    assert_eq!(
+        timeline["columns"],
+        json!([
+            "timestamp",
+            "layer",
+            "ref",
+            "summary",
+            "status",
+            "duration_ms",
+            "trace_id"
+        ])
+    );
+    let rows = timeline["rows"].as_array().unwrap();
+    assert!(rows.iter().any(|row| row[1] == "exec"
+        && row[2] == 77
+        && row[3] == "echo timeline-marker"
+        && row[4] == 0
+        && row[5] == 11
+        && row[6] == "trace-timeline"));
+    assert!(rows.iter().any(|row| row[1] == "net"
+        && row[2] == 1
+        && row[3] == "POST 127.0.0.1/echo"
+        && row[4] == 200
+        && row[5] == 9
+        && row[6] == "trace-timeline"));
 }
 
 #[tokio::test]
@@ -5175,6 +5292,7 @@ fn make_state_in(run_dir: PathBuf) -> Arc<ServiceState> {
         stats_route_projection: Mutex::new(empty_stats_route_projection()),
         security_route_projection: Mutex::new(SecurityRouteProjection::default()),
         history_route_projection: Mutex::new(HistoryRouteProjection::default()),
+        timeline_route_projection: Mutex::new(TimelineRouteProjection::default()),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
@@ -5711,6 +5829,7 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         stats_route_projection: Mutex::new(empty_stats_route_projection()),
         security_route_projection: Mutex::new(SecurityRouteProjection::default()),
         history_route_projection: Mutex::new(HistoryRouteProjection::default()),
+        timeline_route_projection: Mutex::new(TimelineRouteProjection::default()),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });
@@ -7355,6 +7474,7 @@ fn make_test_state_with_tempdir_at(
         stats_route_projection: Mutex::new(empty_stats_route_projection()),
         security_route_projection: Mutex::new(SecurityRouteProjection::default()),
         history_route_projection: Mutex::new(HistoryRouteProjection::default()),
+        timeline_route_projection: Mutex::new(TimelineRouteProjection::default()),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });

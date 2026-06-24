@@ -74,6 +74,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Fixed the per-session timeline route so it filters the service's in-memory
+  timeline projection instead of opening `session.db` on the request path.
 - Fixed Ironbank plugin ledger assertions so hot plugin-list routes stay
   config-only while per-plugin detail routes prove runtime execution counters.
 - Fixed profile shell bootstrap payloads so shipped profiles put
