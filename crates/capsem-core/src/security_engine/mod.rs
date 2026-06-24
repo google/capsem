@@ -823,6 +823,26 @@ pub async fn emit_matching_security_rules_with_plugins(
     emit_matching_security_rules(db, event_id, event_type, rules, &event, timestamp_unix_ms).await
 }
 
+pub fn emit_matching_security_rules_with_plugins_blocking(
+    db: &DbWriter,
+    event_id: SecurityEventId,
+    event_type: RuntimeSecurityEventType,
+    rules: &SecurityRuleSet,
+    plugin_policy: BTreeMap<String, SecurityPluginConfig>,
+    event: SecurityEvent,
+    timestamp_unix_ms: i64,
+) -> Result<usize, String> {
+    let event = prepare_event_for_security_rule_ledger(plugin_policy, event)?;
+    emit_matching_security_rules_blocking(
+        db,
+        event_id,
+        event_type,
+        rules,
+        &event,
+        timestamp_unix_ms,
+    )
+}
+
 fn prepare_event_for_security_rule_ledger(
     plugin_policy: BTreeMap<String, SecurityPluginConfig>,
     mut event: SecurityEvent,

@@ -225,6 +225,7 @@ pub(crate) async fn handle_ipc_connection(
                 let job_store = job_store.clone();
                 let ctrl_tx = ctrl_tx.clone();
                 let ipc_tx_out = ipc_tx_out.clone();
+                let db = Arc::clone(&net_state.db);
                 tokio::spawn(async move {
                     info!(id, command, "Received Exec command via IPC");
                     let (j_tx, j_rx) = oneshot::channel();
@@ -258,6 +259,8 @@ pub(crate) async fn handle_ipc_connection(
                             stderr,
                             exit_code,
                         }) => {
+                            db.flush_after_quiescence(std::time::Duration::from_millis(5))
+                                .await;
                             info!(id, exit_code, "Sending ExecResult back via IPC");
                             capsem_core::try_send!(
                                 "ipc_exec_result",
@@ -272,6 +275,8 @@ pub(crate) async fn handle_ipc_connection(
                             );
                         }
                         Ok(JobResult::Error { message }) => {
+                            db.flush_after_quiescence(std::time::Duration::from_millis(5))
+                                .await;
                             error!(id, message, "Sending Exec error back via IPC");
                             capsem_core::try_send!(
                                 "ipc_exec_result_err",

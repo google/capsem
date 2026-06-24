@@ -45,8 +45,9 @@ use crate::net::ai_traffic::provider::{
 use crate::net::ai_traffic::{request_parser, TraceState};
 use crate::net::policy_config::SecurityRuleSet;
 use crate::security_engine::{
-    emit_matching_security_rules_with_plugins, emit_security_write, HttpSecurityEvent,
-    IpSecurityEvent, ModelSecurityEvent, RuntimeSecurityEventType, SecurityEvent, TcpSecurityEvent,
+    emit_matching_security_rules_with_plugins_blocking, emit_security_write_blocking,
+    HttpSecurityEvent, IpSecurityEvent, ModelSecurityEvent, RuntimeSecurityEventType,
+    SecurityEvent, TcpSecurityEvent,
 };
 
 /// Per-request snapshot of the request-side fields that the response
@@ -246,62 +247,50 @@ impl ChunkHook for TelemetryHook {
 
         log_outcome(&req_ctx);
 
-        // Spawn DB writes so the body completion path doesn't block
-        // on backpressure.
         let db = Arc::clone(&self.deps.db);
-        let security_rules = Arc::clone(&self.deps.security_rules);
-        let plugin_policy = Arc::clone(&self.deps.plugin_policy);
+        let rules = self.deps.security_rules.read().unwrap().clone();
+        let plugin_policy = self.deps.plugin_policy.read().unwrap().clone();
+        let credential_injections = req_ctx.credential_injections.clone();
+        let broker_db = Arc::clone(&db);
+        let broker_rules = rules.clone();
+        let broker_observations = credential_observations.clone();
+        let broker_injections = credential_injections.clone();
         tokio::spawn(async move {
-            let rules = security_rules.read().unwrap().clone();
-            let credential_injections = req_ctx.credential_injections.clone();
-            log_brokered_injections(&db, &rules, credential_injections.clone()).await;
-            broker_and_log_observations(&db, &rules, credential_observations.clone()).await;
-            let net_security_event = security_event_from_net_event(&net_event)
-                .with_credential_observations(credential_observations)
-                .with_credential_injections(credential_injections);
-            if let Some(event_id) = emit_security_write(&db, WriteOp::NetEvent(net_event)).await {
-                let plugin_policy = {
-                    let guard = plugin_policy.read().unwrap();
-                    guard.clone()
-                };
-                if let Err(error) = emit_matching_security_rules_with_plugins(
+            log_brokered_injections(&broker_db, &broker_rules, broker_injections).await;
+            broker_and_log_observations(&broker_db, &broker_rules, broker_observations).await;
+        });
+        let net_security_event = security_event_from_net_event(&net_event)
+            .with_credential_observations(credential_observations)
+            .with_credential_injections(credential_injections);
+        if let Some(event_id) = emit_security_write_blocking(&db, WriteOp::NetEvent(net_event)) {
+            if let Err(error) = emit_matching_security_rules_with_plugins_blocking(
+                &db,
+                event_id,
+                RuntimeSecurityEventType::HttpRequest,
+                &rules,
+                plugin_policy.clone(),
+                net_security_event,
+                current_unix_ms(),
+            ) {
+                warn!(error = %error, "failed to emit HTTP security rule ledger rows");
+            }
+        }
+        if let Some(mc) = model_call {
+            let model_security_event = security_event_from_model_call(&mc);
+            if let Some(event_id) = emit_security_write_blocking(&db, WriteOp::ModelCall(mc)) {
+                if let Err(error) = emit_matching_security_rules_with_plugins_blocking(
                     &db,
                     event_id,
-                    RuntimeSecurityEventType::HttpRequest,
+                    RuntimeSecurityEventType::ModelCall,
                     &rules,
                     plugin_policy,
-                    net_security_event,
+                    model_security_event,
                     current_unix_ms(),
-                )
-                .await
-                {
-                    warn!(error = %error, "failed to emit HTTP security rule ledger rows");
+                ) {
+                    warn!(error = %error, "failed to emit model security rule ledger rows");
                 }
             }
-            if let Some(mc) = model_call {
-                let model_security_event = security_event_from_model_call(&mc);
-                if let Some(event_id) = emit_security_write(&db, WriteOp::ModelCall(mc)).await {
-                    let rules = security_rules.read().unwrap().clone();
-                    let plugin_policy = {
-                        let guard = plugin_policy.read().unwrap();
-                        guard.clone()
-                    };
-                    if let Err(error) = emit_matching_security_rules_with_plugins(
-                        &db,
-                        event_id,
-                        RuntimeSecurityEventType::ModelCall,
-                        &rules,
-                        plugin_policy,
-                        model_security_event,
-                        current_unix_ms(),
-                    )
-                    .await
-                    {
-                        warn!(error = %error, "failed to emit model security rule ledger rows");
-                    }
-                }
-            }
-        });
+        }
     }
 }
 

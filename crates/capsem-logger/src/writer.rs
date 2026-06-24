@@ -97,6 +97,12 @@ pub enum WriteOp {
     ProfileMutationEvent(ProfileMutationEvent),
 }
 
+#[derive(Debug)]
+enum WriterMessage {
+    Op(WriteOp),
+    Flush(tokio::sync::oneshot::Sender<()>),
+}
+
 impl WriteOp {
     /// Ensure a primary emitted event has a stable 12-lower-hex id before it
     /// reaches SQLite. Rule ledger rows already point at a triggering event and
@@ -161,7 +167,7 @@ pub struct DbWriter {
     /// Stored sender. `shutdown_blocking` takes it out; `write` clones it
     /// under the lock and releases the lock before `.await` so hot-path
     /// latency is unaffected. Cloning an mpsc::Sender is cheap (it's an Arc).
-    tx: std::sync::Mutex<Option<tokio::sync::mpsc::Sender<WriteOp>>>,
+    tx: std::sync::Mutex<Option<tokio::sync::mpsc::Sender<WriterMessage>>>,
     join_handle: std::sync::Mutex<Option<std::thread::JoinHandle<()>>>,
     db_path: PathBuf,
 }
@@ -216,7 +222,7 @@ impl DbWriter {
     }
 
     /// Clone the stored sender so async work can happen outside the lock.
-    fn clone_sender(&self) -> Option<tokio::sync::mpsc::Sender<WriteOp>> {
+    fn clone_sender(&self) -> Option<tokio::sync::mpsc::Sender<WriterMessage>> {
         self.tx.lock().unwrap().clone()
     }
 
@@ -230,7 +236,11 @@ impl DbWriter {
         );
         let started = Instant::now();
         if let Some(tx) = self.clone_sender() {
-            match tx.send(op).instrument(span.clone()).await {
+            match tx
+                .send(WriterMessage::Op(op))
+                .instrument(span.clone())
+                .await
+            {
                 Ok(()) => {
                     record_enqueue(started, "queued", &span);
                 }
@@ -258,7 +268,7 @@ impl DbWriter {
             .lock()
             .unwrap()
             .as_ref()
-            .is_some_and(|tx| tx.try_send(op).is_ok());
+            .is_some_and(|tx| tx.try_send(WriterMessage::Op(op)).is_ok());
         record_enqueue(
             started,
             if accepted { "queued" } else { "full_or_closed" },
@@ -267,9 +277,11 @@ impl DbWriter {
         accepted
     }
 
-    /// Blocking send for synchronous producer threads that must not drop
-    /// security events. Do not call from Tokio async tasks; async callers
-    /// should use `write().await` so the runtime can schedule fairly.
+    /// Blocking send for synchronous producer paths that must not drop
+    /// security events. This deliberately avoids Tokio's `blocking_send`,
+    /// which panics when called from a runtime worker. Backpressure is still
+    /// honored: if the queue is full, this thread waits until the writer
+    /// drains capacity instead of dropping the event.
     pub fn write_blocking(&self, op: WriteOp) {
         let span = tracing::debug_span!(
             target: "capsem.db",
@@ -279,15 +291,54 @@ impl DbWriter {
         );
         let started = Instant::now();
         if let Some(tx) = self.clone_sender() {
-            if let Err(e) = tx.blocking_send(op) {
-                record_enqueue(started, "closed", &span);
-                warn!(error = %e, "db writer channel closed, dropping blocking write op");
-            } else {
-                record_enqueue(started, "queued", &span);
+            let mut message = WriterMessage::Op(op);
+            loop {
+                match tx.try_send(message) {
+                    Ok(()) => {
+                        record_enqueue(started, "queued", &span);
+                        break;
+                    }
+                    Err(tokio::sync::mpsc::error::TrySendError::Full(returned)) => {
+                        message = returned;
+                        std::thread::sleep(std::time::Duration::from_millis(1));
+                    }
+                    Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                        record_enqueue(started, "closed", &span);
+                        warn!("db writer channel closed, dropping blocking write op");
+                        break;
+                    }
+                }
             }
         } else {
             record_enqueue(started, "missing_sender", &span);
         }
+    }
+
+    /// Wait until the writer thread has committed every operation enqueued
+    /// before this barrier. This is non-destructive: unlike shutdown, it keeps
+    /// the writer alive for future events.
+    pub async fn flush(&self) {
+        if let Some(tx) = self.clone_sender() {
+            let (reply, rx) = tokio::sync::oneshot::channel();
+            if let Err(e) = tx.send(WriterMessage::Flush(reply)).await {
+                warn!(error = %e, "db writer channel closed, dropping flush barrier");
+                return;
+            }
+            if let Err(e) = rx.await {
+                warn!(error = %e, "db writer flush barrier dropped before ack");
+            }
+        }
+    }
+
+    /// Wait for short-lived producers to enqueue their final rows, then flush
+    /// the writer queue. Use at external command boundaries where the guest
+    /// process can exit a few milliseconds before host-side socket closeout
+    /// telemetry has finished enqueueing its ledger rows.
+    pub async fn flush_after_quiescence(&self, settle: std::time::Duration) {
+        if !settle.is_zero() {
+            tokio::time::sleep(settle).await;
+        }
+        self.flush().await;
     }
 
     /// Deterministically shut down the writer thread: drop the stored
@@ -330,20 +381,33 @@ impl Drop for DbWriter {
 }
 
 /// The writer thread loop: block-then-drain batching.
-fn writer_loop(conn: Connection, mut rx: tokio::sync::mpsc::Receiver<WriteOp>) {
+fn writer_loop(conn: Connection, mut rx: tokio::sync::mpsc::Receiver<WriterMessage>) {
     let mut model_item_dedup = load_model_item_dedup(&conn);
 
     // 1. Block until at least one op arrives. Returns None when all
     //    Senders are dropped (clean shutdown) and ends the loop.
-    while let Some(first_op) = rx.blocking_recv() {
+    while let Some(first_message) = rx.blocking_recv() {
         let mut batch = Vec::with_capacity(128);
-        batch.push(first_op);
+        let mut flush_barriers = Vec::new();
+        match first_message {
+            WriterMessage::Op(op) => batch.push(op),
+            WriterMessage::Flush(reply) => flush_barriers.push(reply),
+        }
 
         // 2. Drain any ops already queued (non-blocking).
-        while let Ok(op) = rx.try_recv() {
-            batch.push(op);
-            if batch.len() >= 128 {
-                break;
+        while flush_barriers.is_empty() {
+            match rx.try_recv() {
+                Ok(WriterMessage::Op(op)) => {
+                    batch.push(op);
+                    if batch.len() >= 128 {
+                        break;
+                    }
+                }
+                Ok(WriterMessage::Flush(reply)) => {
+                    flush_barriers.push(reply);
+                    break;
+                }
+                Err(_) => break,
             }
         }
 
@@ -357,11 +421,17 @@ fn writer_loop(conn: Connection, mut rx: tokio::sync::mpsc::Receiver<WriteOp>) {
             status = tracing::field::Empty,
         );
         let started = Instant::now();
-        if let Err(e) = span.in_scope(|| execute_batch(&conn, &batch, &mut model_item_dedup)) {
+        if batch.is_empty() {
+            record_batch(started, batch_size, batch_bucket, "ok", &span);
+        } else if let Err(e) = span.in_scope(|| execute_batch(&conn, &batch, &mut model_item_dedup))
+        {
             record_batch(started, batch_size, batch_bucket, "error", &span);
             warn!(error = %e, count = batch.len(), "db write batch failed");
         } else {
             record_batch(started, batch_size, batch_bucket, "ok", &span);
+        }
+        for reply in flush_barriers {
+            let _ = reply.send(());
         }
     }
 

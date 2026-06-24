@@ -38,7 +38,7 @@ use tokio::net::UnixListener;
 use tokio::sync::{mpsc, oneshot};
 use tokio_unix_ipc::{channel_from_std, Receiver, Sender};
 use tower_http::trace::TraceLayer;
-use tracing::{debug, error, info, warn, Instrument};
+use tracing::{error, info, warn, Instrument};
 
 mod startup;
 
@@ -137,7 +137,14 @@ const PROCESS_ENV_ALLOWLIST: &[&str] = &[
 const ACTIVE_PROFILE_DIR: &str = "vm";
 const ACTIVE_PROFILE_FILE: &str = "active_profile.toml";
 
+#[derive(Clone, Debug)]
+enum ProjectionRefreshScope {
+    Full,
+    ExecCompletion { vm_id: String },
+}
+
 struct ProjectionRefreshRequest {
+    scope: ProjectionRefreshScope,
     reply: oneshot::Sender<Result<(), String>>,
 }
 
@@ -199,6 +206,10 @@ struct ServiceState {
     /// fixed ledger views from memory; they must not issue raw SQL through
     /// `/inspect` or open `session.db` on the request path.
     stats_detail_route_projection: Mutex<StatsDetailRouteProjection>,
+    /// Route-owned compact live counters for list/status surfaces. This is
+    /// intentionally much smaller than stats detail so command completion can
+    /// refresh counters without reserializing rich inspector payloads.
+    live_session_counter_projection: Mutex<BTreeMap<String, LiveSessionCounters>>,
     /// Route-owned security ledger projection. Routes must not open SQLite to
     /// rebuild status/latest views; SQLite is durable persistence and recovery.
     security_route_projection: Mutex<SecurityRouteProjection>,
@@ -4078,7 +4089,11 @@ async fn handle_exec(
                     trace_id: None,
                 },
             )?;
-            schedule_projection_refresh(&state, "exec");
+            request_projection_refresh_with_scope(
+                &state,
+                ProjectionRefreshScope::ExecCompletion { vm_id: id.clone() },
+            )
+            .await?;
             Ok(Json(ExecResponse {
                 stdout: String::from_utf8(stdout)
                     .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
@@ -6970,88 +6985,94 @@ fn is_missing_optional_ledger_shape(message: &str) -> bool {
     message.contains("no such table:") || message.contains("no such column:")
 }
 
+fn read_security_session_projection_from_session_db(
+    vm_id: &str,
+    db_path: &StdPath,
+) -> Result<Option<SecuritySessionProjection>, AppError> {
+    if !db_path.exists() {
+        return Ok(None);
+    }
+    let reader = capsem_logger::DbReader::open(db_path).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to open security projection DB for {vm_id}: {error}"),
+        )
+    })?;
+    let latest = match reader.recent_security_rule_events(2000) {
+        Ok(latest) => latest,
+        Err(error) => {
+            let message = error.to_string();
+            if is_missing_optional_ledger_shape(&message) {
+                warn!(
+                    vm_id,
+                    error = %message,
+                    "security projection skipped missing ledger latest"
+                );
+                Vec::new()
+            } else {
+                return Err(AppError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("failed to read security projection latest for {vm_id}: {error}"),
+                ));
+            }
+        }
+    };
+    let stats = match reader.security_rule_stats() {
+        Ok(stats) => stats,
+        Err(error) => {
+            let message = error.to_string();
+            if is_missing_optional_ledger_shape(&message) {
+                warn!(
+                    vm_id,
+                    error = %message,
+                    "security projection skipped missing ledger stats"
+                );
+                empty_security_rule_stats()
+            } else {
+                return Err(AppError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("failed to read security projection stats for {vm_id}: {error}"),
+                ));
+            }
+        }
+    };
+    let brokered_credentials = match reader.brokered_credential_stats() {
+        Ok(credentials) => credentials,
+        Err(error) => {
+            let message = error.to_string();
+            if is_missing_optional_ledger_shape(&message) {
+                warn!(
+                    vm_id,
+                    error = %message,
+                    "security projection skipped missing brokered credential stats"
+                );
+                Vec::new()
+            } else {
+                return Err(AppError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("failed to read brokered credential projection for {vm_id}: {error}"),
+                ));
+            }
+        }
+    };
+    Ok(Some(SecuritySessionProjection {
+        latest,
+        stats,
+        brokered_credentials,
+    }))
+}
+
 fn rebuild_security_route_projection(
     state: &ServiceState,
 ) -> Result<SecurityRouteProjection, AppError> {
     let mut projection = SecurityRouteProjection::default();
     for (vm_id, session_dir) in service_session_dirs(state) {
         let db_path = session_dir.join("session.db");
-        if !db_path.exists() {
+        let Some(session) = read_security_session_projection_from_session_db(&vm_id, &db_path)?
+        else {
             continue;
-        }
-        let reader = capsem_logger::DbReader::open(&db_path).map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to open security projection DB for {vm_id}: {error}"),
-            )
-        })?;
-        let latest = match reader.recent_security_rule_events(2000) {
-            Ok(latest) => latest,
-            Err(error) => {
-                let message = error.to_string();
-                if is_missing_optional_ledger_shape(&message) {
-                    warn!(
-                        vm_id,
-                        error = %message,
-                        "security projection skipped missing ledger latest"
-                    );
-                    Vec::new()
-                } else {
-                    return Err(AppError(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        format!("failed to read security projection latest for {vm_id}: {error}"),
-                    ));
-                }
-            }
         };
-        let stats = match reader.security_rule_stats() {
-            Ok(stats) => stats,
-            Err(error) => {
-                let message = error.to_string();
-                if is_missing_optional_ledger_shape(&message) {
-                    warn!(
-                        vm_id,
-                        error = %message,
-                        "security projection skipped missing ledger stats"
-                    );
-                    empty_security_rule_stats()
-                } else {
-                    return Err(AppError(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        format!("failed to read security projection stats for {vm_id}: {error}"),
-                    ));
-                }
-            }
-        };
-        let brokered_credentials = match reader.brokered_credential_stats() {
-            Ok(credentials) => credentials,
-            Err(error) => {
-                let message = error.to_string();
-                if is_missing_optional_ledger_shape(&message) {
-                    warn!(
-                        vm_id,
-                        error = %message,
-                        "security projection skipped missing brokered credential stats"
-                    );
-                    Vec::new()
-                } else {
-                    return Err(AppError(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        format!(
-                            "failed to read brokered credential projection for {vm_id}: {error}"
-                        ),
-                    ));
-                }
-            }
-        };
-        projection.sessions.insert(
-            vm_id,
-            SecuritySessionProjection {
-                latest,
-                stats,
-                brokered_credentials,
-            },
-        );
+        projection.sessions.insert(vm_id, session);
     }
     *state.security_route_projection.lock().map_err(|error| {
         AppError(
@@ -7060,6 +7081,27 @@ fn rebuild_security_route_projection(
         )
     })? = projection.clone();
     Ok(projection)
+}
+
+fn rebuild_security_route_projection_for_session(
+    state: &ServiceState,
+    vm_id: &str,
+) -> Result<(), AppError> {
+    let session_dir = resolve_session_dir(state, vm_id)?;
+    let db_path = session_dir.join("session.db");
+    let session = read_security_session_projection_from_session_db(vm_id, &db_path)?;
+    let mut projection = state.security_route_projection.lock().map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("security projection lock poisoned: {error}"),
+        )
+    })?;
+    if let Some(session) = session {
+        projection.sessions.insert(vm_id.to_string(), session);
+    } else {
+        projection.sessions.remove(vm_id);
+    }
+    Ok(())
 }
 
 fn security_route_projection(state: &ServiceState) -> Result<SecurityRouteProjection, AppError> {
@@ -7358,6 +7400,12 @@ struct TimelineRouteProjection {
 }
 
 #[derive(Clone, Debug)]
+struct LiveSessionCounters {
+    stats: capsem_logger::SessionStats,
+    total_mcp_calls: u64,
+}
+
+#[derive(Clone, Debug)]
 struct TimelineProjectionRow {
     timestamp: String,
     layer: String,
@@ -7484,6 +7532,47 @@ fn timeline_rows_from_query_json(raw: serde_json::Value) -> Vec<TimelineProjecti
         .collect()
 }
 
+fn read_timeline_projection_rows_from_session_db(
+    vm_id: &str,
+    db_path: &StdPath,
+    sql: &str,
+) -> Result<Option<Vec<TimelineProjectionRow>>, AppError> {
+    if !db_path.exists() {
+        return Ok(None);
+    }
+    let reader = capsem_logger::DbReader::open(db_path).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to open timeline projection DB for {vm_id}: {error}"),
+        )
+    })?;
+    let raw = match reader.query_raw(sql) {
+        Ok(raw) => raw,
+        Err(error) => {
+            let message = error.to_string();
+            if is_missing_optional_ledger_shape(&message) {
+                warn!(
+                    vm_id,
+                    error = %message,
+                    "timeline projection skipped missing ledger shape"
+                );
+                return Ok(Some(Vec::new()));
+            }
+            return Err(AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to read timeline projection for {vm_id}: {error}"),
+            ));
+        }
+    };
+    let raw = serde_json::from_str::<serde_json::Value>(&raw).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to parse timeline projection for {vm_id}: {error}"),
+        )
+    })?;
+    Ok(Some(timeline_rows_from_query_json(raw)))
+}
+
 fn rebuild_timeline_route_projection(
     state: &ServiceState,
 ) -> Result<TimelineRouteProjection, AppError> {
@@ -7491,43 +7580,11 @@ fn rebuild_timeline_route_projection(
     let sql = timeline_base_sql();
     for (vm_id, session_dir) in service_session_dirs(state) {
         let db_path = session_dir.join("session.db");
-        if !db_path.exists() {
+        let Some(rows) = read_timeline_projection_rows_from_session_db(&vm_id, &db_path, &sql)?
+        else {
             continue;
-        }
-        let reader = capsem_logger::DbReader::open(&db_path).map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to open timeline projection DB for {vm_id}: {error}"),
-            )
-        })?;
-        let raw = match reader.query_raw(&sql) {
-            Ok(raw) => raw,
-            Err(error) => {
-                let message = error.to_string();
-                if is_missing_optional_ledger_shape(&message) {
-                    warn!(
-                        vm_id,
-                        error = %message,
-                        "timeline projection skipped missing ledger shape"
-                    );
-                    projection.sessions.insert(vm_id, Vec::new());
-                    continue;
-                }
-                return Err(AppError(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("failed to read timeline projection for {vm_id}: {error}"),
-                ));
-            }
         };
-        let raw = serde_json::from_str::<serde_json::Value>(&raw).map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to parse timeline projection for {vm_id}: {error}"),
-            )
-        })?;
-        projection
-            .sessions
-            .insert(vm_id, timeline_rows_from_query_json(raw));
+        projection.sessions.insert(vm_id, rows);
     }
     *state.timeline_route_projection.lock().map_err(|error| {
         AppError(
@@ -7536,6 +7593,121 @@ fn rebuild_timeline_route_projection(
         )
     })? = projection.clone();
     Ok(projection)
+}
+
+fn rebuild_timeline_route_projection_for_session(
+    state: &ServiceState,
+    vm_id: &str,
+) -> Result<(), AppError> {
+    let session_dir = resolve_session_dir(state, vm_id)?;
+    let db_path = session_dir.join("session.db");
+    let sql = timeline_base_sql();
+    let rows = read_timeline_projection_rows_from_session_db(vm_id, &db_path, &sql)?;
+    let mut projection = state.timeline_route_projection.lock().map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("timeline projection lock poisoned: {error}"),
+        )
+    })?;
+    if let Some(rows) = rows {
+        projection.sessions.insert(vm_id.to_string(), rows);
+    } else {
+        projection.sessions.remove(vm_id);
+    }
+    Ok(())
+}
+
+fn rebuild_live_session_counter_projection(
+    state: &ServiceState,
+) -> Result<BTreeMap<String, LiveSessionCounters>, AppError> {
+    let mut projection = BTreeMap::new();
+    for (vm_id, session_dir) in service_session_dirs(state) {
+        let db_path = session_dir.join("session.db");
+        let Some(counters) = read_live_session_counters_from_session_db(&vm_id, &db_path)? else {
+            continue;
+        };
+        projection.insert(vm_id, counters);
+    }
+    *state
+        .live_session_counter_projection
+        .lock()
+        .map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("live session counter projection lock poisoned: {error}"),
+            )
+        })? = projection.clone();
+    Ok(projection)
+}
+
+fn read_live_session_counters_from_session_db(
+    vm_id: &str,
+    db_path: &StdPath,
+) -> Result<Option<LiveSessionCounters>, AppError> {
+    if !db_path.exists() {
+        return Ok(None);
+    }
+    let reader = capsem_logger::DbReader::open(db_path).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to open session counter projection DB for {vm_id}: {error}"),
+        )
+    })?;
+    let stats = reader.session_stats().map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to read session counter projection for {vm_id}: {error}"),
+        )
+    })?;
+    let mcp_stats = reader.mcp_call_stats().map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to read MCP counter projection for {vm_id}: {error}"),
+        )
+    })?;
+    Ok(Some(LiveSessionCounters {
+        stats,
+        total_mcp_calls: mcp_stats.total,
+    }))
+}
+
+fn rebuild_live_session_counter_projection_for_session(
+    state: &ServiceState,
+    vm_id: &str,
+) -> Result<(), AppError> {
+    let session_dir = resolve_session_dir(state, vm_id)?;
+    let db_path = session_dir.join("session.db");
+    let counters = read_live_session_counters_from_session_db(vm_id, &db_path)?;
+    let mut projection = state
+        .live_session_counter_projection
+        .lock()
+        .map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("live session counter projection lock poisoned: {error}"),
+            )
+        })?;
+    if let Some(counters) = counters {
+        projection.insert(vm_id.to_string(), counters);
+    } else {
+        projection.remove(vm_id);
+    }
+    Ok(())
+}
+
+fn live_session_counter_projection(
+    state: &ServiceState,
+) -> Result<BTreeMap<String, LiveSessionCounters>, AppError> {
+    state
+        .live_session_counter_projection
+        .lock()
+        .map(|projection| projection.clone())
+        .map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("live session counter projection lock poisoned: {error}"),
+            )
+        })
 }
 
 fn timeline_route_projection(state: &ServiceState) -> Result<TimelineRouteProjection, AppError> {
@@ -8089,6 +8261,26 @@ fn apply_live_session_counters_from_projection(
     state: &ServiceState,
     info: &mut SandboxInfo,
 ) -> Result<(), AppError> {
+    if let Some(counters) = live_session_counter_projection(state)?.get(&info.id) {
+        let stats = &counters.stats;
+        if stats.net_total > 0 {
+            info.total_requests = Some(stats.net_total);
+            info.allowed_requests = Some(stats.net_allowed);
+            info.denied_requests = Some(stats.net_denied);
+        }
+        if stats.model_call_count > 0 {
+            info.model_call_count = Some(stats.model_call_count);
+            info.total_input_tokens = Some(stats.total_input_tokens);
+            info.total_output_tokens = Some(stats.total_output_tokens);
+            info.total_estimated_cost = Some(stats.total_estimated_cost_usd);
+        }
+        if stats.total_tool_calls > 0 {
+            info.total_tool_calls = Some(stats.total_tool_calls);
+        }
+        if counters.total_mcp_calls > 0 {
+            info.total_mcp_calls = Some(counters.total_mcp_calls);
+        }
+    }
     let projection = stats_detail_route_projection(state)?;
     let Some(body) = projection.sessions.get(&info.id) else {
         return Ok(());
@@ -8189,9 +8381,17 @@ fn refresh_session_ledger_route_projections(state: &ServiceState) -> Result<(), 
         *cache = capsem_core::mcp::load_tool_cache();
     }
     rebuild_stats_detail_route_projection(state)?;
+    rebuild_live_session_counter_projection(state)?;
     rebuild_security_route_projection(state)?;
     rebuild_history_route_projection(state)?;
     rebuild_timeline_route_projection(state)?;
+    Ok(())
+}
+
+fn refresh_exec_route_projections(state: &ServiceState, vm_id: &str) -> Result<(), AppError> {
+    rebuild_live_session_counter_projection_for_session(state, vm_id)?;
+    rebuild_security_route_projection_for_session(state, vm_id)?;
+    rebuild_timeline_route_projection_for_session(state, vm_id)?;
     Ok(())
 }
 
@@ -8202,8 +8402,17 @@ fn spawn_projection_refresh_worker(
     tokio::spawn(async move {
         while let Some(request) = rx.recv().await {
             let state = Arc::clone(&state);
+            let scope = request.scope;
             let result = match tokio::task::spawn_blocking(move || {
-                refresh_session_ledger_route_projections(&state).map_err(|error| error.1)
+                match scope {
+                    ProjectionRefreshScope::Full => {
+                        refresh_session_ledger_route_projections(&state)
+                    }
+                    ProjectionRefreshScope::ExecCompletion { vm_id } => {
+                        refresh_exec_route_projections(&state, &vm_id)
+                    }
+                }
+                .map_err(|error| error.1)
             })
             .await
             {
@@ -8216,10 +8425,17 @@ fn spawn_projection_refresh_worker(
 }
 
 async fn request_projection_refresh(state: &Arc<ServiceState>) -> Result<(), AppError> {
+    request_projection_refresh_with_scope(state, ProjectionRefreshScope::Full).await
+}
+
+async fn request_projection_refresh_with_scope(
+    state: &Arc<ServiceState>,
+    scope: ProjectionRefreshScope,
+) -> Result<(), AppError> {
     let (reply, rx) = oneshot::channel();
     state
         .projection_refresh_tx
-        .send(ProjectionRefreshRequest { reply })
+        .send(ProjectionRefreshRequest { scope, reply })
         .await
         .map_err(|error| {
             AppError(
@@ -8235,34 +8451,6 @@ async fn request_projection_refresh(state: &Arc<ServiceState>) -> Result<(), App
             )
         })?
         .map_err(|message| AppError(StatusCode::INTERNAL_SERVER_ERROR, message))
-}
-
-fn schedule_projection_refresh(state: &Arc<ServiceState>, reason: &'static str) {
-    let tx = state.projection_refresh_tx.clone();
-    tokio::spawn(async move {
-        let (reply, rx) = oneshot::channel();
-        if let Err(error) = tx.send(ProjectionRefreshRequest { reply }).await {
-            warn!(
-                reason,
-                error = %error,
-                "projection refresh worker unavailable"
-            );
-            return;
-        }
-        match rx.await {
-            Ok(Ok(())) => debug!(reason, "projection refresh completed"),
-            Ok(Err(error)) => warn!(
-                reason,
-                error = %error,
-                "projection refresh failed"
-            ),
-            Err(error) => warn!(
-                reason,
-                error = %error,
-                "projection refresh worker dropped response"
-            ),
-        }
-    });
 }
 
 fn security_projection_latest_for_vm(
@@ -11261,6 +11449,7 @@ async fn main() -> Result<()> {
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
         stats_route_projection: Mutex::new(empty_stats_route_projection()),
         stats_detail_route_projection: Mutex::new(empty_stats_detail_route_projection()),
+        live_session_counter_projection: Mutex::new(BTreeMap::new()),
         security_route_projection: Mutex::new(SecurityRouteProjection::default()),
         history_route_projection: Mutex::new(HistoryRouteProjection::default()),
         timeline_route_projection: Mutex::new(TimelineRouteProjection::default()),
@@ -11278,6 +11467,9 @@ async fn main() -> Result<()> {
     })?;
     rebuild_stats_detail_route_projection(&state).map_err(|AppError(_, message)| {
         anyhow!("failed to build stats detail route projection: {message}")
+    })?;
+    rebuild_live_session_counter_projection(&state).map_err(|AppError(_, message)| {
+        anyhow!("failed to build live session counter projection: {message}")
     })?;
     rebuild_security_route_projection(&state).map_err(|AppError(_, message)| {
         anyhow!("failed to build security route projection: {message}")
