@@ -11,14 +11,14 @@ use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime};
 
 use anyhow::{bail, Context, Result};
-use capsem_logger::{DbWriter, Decision, McpCall, WriteOp};
+use capsem_logger::{DbWriter, Decision, McpCall, SecurityRuleEvent, WriteOp};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing::{debug, warn};
 
 use crate::mcp::types::{parse_namespaced, parse_resource_uri, JsonRpcRequest, JsonRpcResponse};
 use crate::net::policy_config::SecurityRuleSet;
 use crate::security_engine::{
-    emit_matching_security_rules, emit_security_write, evaluate_security_boundary,
+    emit_matching_security_rules_with_decision, emit_security_write, evaluate_security_boundary,
     McpSecurityEvent, RuntimeSecurityEventType, SecurityEnforcementAction,
     SecurityEnforcementDecision, SecurityEvent,
 };
@@ -47,12 +47,19 @@ pub(super) async fn serve(
 /// of the user. They must not call the aggregator directly, because the
 /// `mcp_calls`/`tool_calls` ledger rows and matching security-rule rows are
 /// the audit contract.
+#[derive(Debug, Clone)]
+pub struct LoggedMcpResponse {
+    pub response: JsonRpcResponse,
+    pub event_id: Option<String>,
+    pub security_rule_events: Vec<SecurityRuleEvent>,
+}
+
 pub async fn dispatch_logged_mcp_request(
     endpoint: Arc<McpEndpointState>,
     db: Arc<DbWriter>,
     request: JsonRpcRequest,
     process_name: String,
-) -> Option<JsonRpcResponse> {
+) -> Option<LoggedMcpResponse> {
     let summary = interpret_mcp_method(&request);
     let runtime_event_type = runtime_mcp_event_type(&summary.method);
     let request_decision = evaluate_mcp_security_event(
@@ -62,7 +69,7 @@ pub async fn dispatch_logged_mcp_request(
 
     if !request_decision.is_allowed() {
         let response = policy_blocked_response(request.id.clone(), "request", &request_decision);
-        log_mcp_call_with_policy(
+        let emission = log_mcp_call_with_policy(
             &db,
             &endpoint.security_rules,
             &request,
@@ -72,7 +79,11 @@ pub async fn dispatch_logged_mcp_request(
             McpCallPolicyFields::from(&request_decision),
         )
         .await;
-        return Some(response);
+        return Some(LoggedMcpResponse {
+            response,
+            event_id: emission.event_id,
+            security_rule_events: emission.security_rule_events,
+        });
     }
 
     let start = Instant::now();
@@ -98,7 +109,7 @@ pub async fn dispatch_logged_mcp_request(
     } else {
         policy_blocked_response(request.id.clone(), "response", &final_decision)
     };
-    log_mcp_call_with_policy(
+    let emission = log_mcp_call_with_policy(
         &db,
         &endpoint.security_rules,
         &request,
@@ -108,7 +119,11 @@ pub async fn dispatch_logged_mcp_request(
         McpCallPolicyFields::from(&final_decision),
     )
     .await;
-    Some(response)
+    Some(LoggedMcpResponse {
+        response,
+        event_id: emission.event_id,
+        security_rule_events: emission.security_rule_events,
+    })
 }
 
 async fn serve_io<I>(
@@ -538,6 +553,12 @@ impl From<&SecurityEnforcementDecision> for McpCallPolicyFields {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+struct LoggedMcpEmission {
+    event_id: Option<String>,
+    security_rule_events: Vec<SecurityRuleEvent>,
+}
+
 async fn log_mcp_call_with_policy(
     db: &DbWriter,
     security_rules: &Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>,
@@ -546,7 +567,7 @@ async fn log_mcp_call_with_policy(
     process_name: &str,
     duration_ms: u64,
     policy_fields: McpCallPolicyFields,
-) {
+) -> LoggedMcpEmission {
     let (server_name, tool_name) = mcp_log_attribution(req);
     let decision = if policy_fields
         .policy_action
@@ -613,9 +634,9 @@ async fn log_mcp_call_with_policy(
     let security_event = security_event_from_mcp_call(&call);
     if let Some(event_id) = emit_security_write(db, WriteOp::McpCall(call)).await {
         let rules = security_rules.read().unwrap().clone();
-        if let Err(error) = emit_matching_security_rules(
+        match emit_matching_security_rules_with_decision(
             db,
-            event_id,
+            event_id.clone(),
             runtime_mcp_event_type(&req.method),
             &rules,
             &security_event,
@@ -623,9 +644,22 @@ async fn log_mcp_call_with_policy(
         )
         .await
         {
-            warn!(error = %error, "failed to emit MCP security rule ledger rows");
+            Ok(emission) => {
+                return LoggedMcpEmission {
+                    event_id: Some(event_id.as_str().to_string()),
+                    security_rule_events: emission.rule_events,
+                };
+            }
+            Err(error) => {
+                warn!(error = %error, "failed to emit MCP security rule ledger rows");
+                return LoggedMcpEmission {
+                    event_id: Some(event_id.as_str().to_string()),
+                    security_rule_events: Vec::new(),
+                };
+            }
         }
     }
+    LoggedMcpEmission::default()
 }
 
 fn security_event_from_mcp_call(call: &McpCall) -> SecurityEvent {

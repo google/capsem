@@ -379,7 +379,7 @@ async fn run_async_main_loop(
             .to_string_lossy()
             .to_string(),
     );
-    let mcp_servers = runtime_config.mcp_servers(builtin_bin.as_deref(), builtin_env);
+    let mcp_servers = runtime_config.mcp_servers(builtin_bin.as_deref(), builtin_env.clone());
     let snap_auto_max = 10usize;
     let snap_manual_max = 12usize;
     let snap_interval = 300u64;
@@ -686,6 +686,8 @@ async fn run_async_main_loop(
         let net_c = Arc::clone(&net_state);
         let mcp_c = Arc::clone(&mcp_runtime);
         let runtime_source_c = runtime_source.clone();
+        let builtin_bin_c = builtin_bin.clone();
+        let builtin_env_c = builtin_env.clone();
         let sched_c = Arc::clone(&scheduler);
         let ready_c = Arc::clone(&vm_ready);
 
@@ -699,6 +701,8 @@ async fn run_async_main_loop(
                 net_c,
                 mcp_c,
                 runtime_source_c,
+                builtin_bin_c,
+                builtin_env_c,
                 sched_c,
                 ready_c,
             )

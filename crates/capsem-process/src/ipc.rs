@@ -1,5 +1,7 @@
 use anyhow::Result;
 use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -54,6 +56,8 @@ pub(crate) async fn handle_ipc_connection(
     net_state: Arc<capsem_core::SandboxNetworkState>,
     mcp_runtime: Arc<McpRuntime>,
     runtime_source: RuntimeProfileSource,
+    mcp_builtin_binary: Option<PathBuf>,
+    mcp_builtin_env: HashMap<String, String>,
     snapshot_scheduler: SharedSnapshotScheduler,
     vm_ready: Arc<AtomicBool>,
 ) -> Result<()> {
@@ -735,6 +739,8 @@ pub(crate) async fn handle_ipc_connection(
                 let mcp = Arc::clone(&mcp_runtime);
                 let ipc_tx_out = ipc_tx_out.clone();
                 let runtime_source = runtime_source.clone();
+                let mcp_builtin_binary = mcp_builtin_binary.clone();
+                let mcp_builtin_env = mcp_builtin_env.clone();
                 tokio::spawn(async move {
                     let runtime_config = match runtime_source.load() {
                         Ok(config) => config,
@@ -753,7 +759,7 @@ pub(crate) async fn handle_ipc_connection(
                         }
                     };
                     let servers =
-                        runtime_config.mcp_servers(None, std::collections::HashMap::new());
+                        runtime_config.mcp_servers(mcp_builtin_binary.as_deref(), mcp_builtin_env);
                     match mcp.aggregator.refresh(servers).await {
                         Ok(()) => {
                             capsem_core::try_send!(
@@ -831,10 +837,21 @@ pub(crate) async fn handle_ipc_connection(
                     .await;
                     let result_json = response
                         .as_ref()
-                        .and_then(|result| serde_json::to_string(result).ok());
+                        .and_then(|result| serde_json::to_string(&result.response).ok());
+                    let event_id = response.as_ref().and_then(|result| result.event_id.clone());
+                    let security_rule_events_json = response
+                        .as_ref()
+                        .map(|result| {
+                            result
+                                .security_rule_events
+                                .iter()
+                                .filter_map(|event| serde_json::to_string(event).ok())
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
                     let error = response
                         .as_ref()
-                        .and_then(|result| result.error.as_ref())
+                        .and_then(|result| result.response.error.as_ref())
                         .map(|error| error.message.clone())
                         .or_else(|| {
                             response
@@ -847,6 +864,8 @@ pub(crate) async fn handle_ipc_connection(
                             .send(ProcessToService::McpCallToolResult {
                                 id,
                                 result_json,
+                                event_id,
+                                security_rule_events_json,
                                 error
                             })
                             .await

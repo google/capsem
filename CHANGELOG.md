@@ -74,6 +74,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Fixed live MCP tool-call security projection so `capsem_mcp_call` emits
+  through the existing security DB writer and mirrors the exact
+  `security_rule_events` rows into service memory for `/security/latest` and
+  `/security/status`, without route-time SQLite reads or a second writer.
 - Fixed the session stats Tools tab to count all model-origin tool calls
   (`native`, `builtin`, and `local`) separately from protocol-origin tool
   transport (`mcp`/`mcp_proxy`) instead of presenting an MCP-only activity

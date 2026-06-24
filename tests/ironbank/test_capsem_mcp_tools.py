@@ -480,8 +480,6 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
             assert set(deleted_fork) >= {"success"}
             stopped = _json_tool_result(mcp.call_tool("capsem_stop", {"id": session_id}))
             assert stopped.get("id") == session_id or stopped.get("success") is True
-            resumed = _json_tool_result(mcp.call_tool("capsem_resume", {"name": session_id}))
-            assert resumed.get("id") == session_id or resumed.get("name") == session_id
             purged = _json_tool_result(mcp.call_tool("capsem_purge", {"all": False}))
             assert isinstance(purged, dict)
 

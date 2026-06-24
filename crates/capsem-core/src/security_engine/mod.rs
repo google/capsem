@@ -846,6 +846,7 @@ pub struct SecurityRuleEmission {
     pub emitted: usize,
     pub enforcement: SecurityEnforcementDecision,
     pub event: SecurityEvent,
+    pub rule_events: Vec<SecurityRuleEvent>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -938,6 +939,7 @@ pub async fn emit_matching_security_rules_with_decision(
     let mut emitted = 0;
     let enriched_event = event_with_rule_detections(event, evaluation.detections());
     let mut decision_state = enriched_event.decision.clone();
+    let mut rule_events = Vec::new();
     for rule in decision_transition_rules(&evaluation) {
         emit_security_decision_transition(
             db,
@@ -951,15 +953,16 @@ pub async fn emit_matching_security_rules_with_decision(
         .await?;
     }
     for rule in evaluation.matched_rules() {
-        emit_security_rule_match(
-            db,
+        let rule_event = security_rule_event(
             event_id.clone(),
             event_type,
             rule,
             &enriched_event,
             timestamp_unix_ms,
-        )
-        .await?;
+        )?;
+        trace_security_rule_match(&rule_event, rule);
+        emit_security_write(db, WriteOp::SecurityRuleEvent(rule_event.clone())).await;
+        rule_events.push(rule_event);
         emitted += 1;
     }
     if matches!(enforcement.action, SecurityEnforcementAction::Ask) {
@@ -981,6 +984,7 @@ pub async fn emit_matching_security_rules_with_decision(
         emitted,
         enforcement,
         event: enriched_event,
+        rule_events,
     })
 }
 
@@ -1017,6 +1021,7 @@ pub fn emit_matching_security_rules_with_decision_blocking(
     let mut emitted = 0;
     let enriched_event = event_with_rule_detections(event, evaluation.detections());
     let mut decision_state = enriched_event.decision.clone();
+    let mut rule_events = Vec::new();
     for rule in decision_transition_rules(&evaluation) {
         emit_security_decision_transition_blocking(
             db,
@@ -1029,14 +1034,16 @@ pub fn emit_matching_security_rules_with_decision_blocking(
         )?;
     }
     for rule in evaluation.matched_rules() {
-        emit_security_rule_match_blocking(
-            db,
+        let rule_event = security_rule_event(
             event_id.clone(),
             event_type,
             rule,
             &enriched_event,
             timestamp_unix_ms,
         )?;
+        trace_security_rule_match(&rule_event, rule);
+        emit_security_write_blocking(db, WriteOp::SecurityRuleEvent(rule_event.clone()));
+        rule_events.push(rule_event);
         emitted += 1;
     }
     if matches!(enforcement.action, SecurityEnforcementAction::Ask) {
@@ -1057,6 +1064,7 @@ pub fn emit_matching_security_rules_with_decision_blocking(
         emitted,
         enforcement,
         event: enriched_event,
+        rule_events,
     })
 }
 

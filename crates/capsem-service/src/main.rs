@@ -4032,11 +4032,24 @@ async fn handle_exec(
                 &state,
                 &id,
                 id_val,
-                command,
+                command.clone(),
                 exit_code,
                 duration_ms,
                 &stdout,
                 &stderr,
+            )?;
+            push_timeline_projection_row(
+                &state,
+                &id,
+                TimelineProjectionRow {
+                    timestamp: capsem_core::session::now_iso(),
+                    layer: "exec".to_string(),
+                    ref_value: json!(id_val),
+                    summary: command,
+                    status: json!(exit_code),
+                    duration_ms: json!(duration_ms),
+                    trace_id: None,
+                },
             )?;
             Ok(Json(ExecResponse {
                 stdout: String::from_utf8(stdout)
@@ -4088,7 +4101,7 @@ async fn handle_write_file(
         &uds_path,
         ServiceToProcess::WriteFile {
             id: id_val,
-            path,
+            path: path.clone(),
             data,
         },
         Some(30),
@@ -4099,6 +4112,19 @@ async fn handle_write_file(
     match res {
         ProcessToService::WriteFileResult { success, error, .. } => {
             if success {
+                push_timeline_projection_row(
+                    &state,
+                    &id,
+                    TimelineProjectionRow {
+                        timestamp: capsem_core::session::now_iso(),
+                        layer: "fs".to_string(),
+                        ref_value: json!(id_val),
+                        summary: format!("write {path}"),
+                        status: serde_json::Value::Null,
+                        duration_ms: serde_json::Value::Null,
+                        trace_id: None,
+                    },
+                )?;
                 Ok(Json(json!({ "success": true })))
             } else {
                 Err(AppError(
@@ -6606,11 +6632,14 @@ async fn handle_profile_mcp_tool_call(
     ensure_profile_mcp_server(profile_id, &server_id)?;
     let namespaced_name = resolve_mcp_tool_id(&server_id, &tool_id)?;
     // Find any running instance to route the call through.
-    let uds_path = {
+    let selected_session = {
         let instances = state.instances.lock().unwrap();
-        instances.values().next().map(|i| i.uds_path.clone())
+        instances
+            .iter()
+            .next()
+            .map(|(id, info)| (id.clone(), info.uds_path.clone()))
     };
-    let uds_path = uds_path.ok_or_else(|| {
+    let (session_id, uds_path) = selected_session.ok_or_else(|| {
         AppError(
             StatusCode::SERVICE_UNAVAILABLE,
             "no running sessions".into(),
@@ -6619,9 +6648,11 @@ async fn handle_profile_mcp_tool_call(
 
     let arguments_json = serde_json::to_string(&arguments)
         .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("invalid arguments: {e}")))?;
+    let job_id = state.next_job_id();
+    let started_at = std::time::Instant::now();
     let msg = ServiceToProcess::McpCallTool {
-        id: state.next_job_id(),
-        namespaced_name,
+        id: job_id,
+        namespaced_name: namespaced_name.clone(),
         arguments_json,
     };
     let resp = send_ipc_command(&uds_path, msg, Some(60))
@@ -6630,7 +6661,10 @@ async fn handle_profile_mcp_tool_call(
 
     match resp {
         ProcessToService::McpCallToolResult {
-            result_json, error, ..
+            result_json,
+            security_rule_events_json,
+            error,
+            ..
         } => {
             if let Some(err) = error {
                 Err(AppError(StatusCode::BAD_GATEWAY, err))
@@ -6644,6 +6678,29 @@ async fn handle_profile_mcp_tool_call(
                     })?,
                     None => serde_json::Value::Null,
                 };
+                let duration_ms: u64 = started_at
+                    .elapsed()
+                    .as_millis()
+                    .try_into()
+                    .unwrap_or(u64::MAX);
+                push_timeline_projection_row(
+                    &state,
+                    &session_id,
+                    TimelineProjectionRow {
+                        timestamp: capsem_core::session::now_iso(),
+                        layer: "mcp".to_string(),
+                        ref_value: json!(job_id),
+                        summary: namespaced_name.replace("__", "/"),
+                        status: json!("allow"),
+                        duration_ms: json!(duration_ms),
+                        trace_id: None,
+                    },
+                )?;
+                push_security_projection_rows_from_json(
+                    &state,
+                    &session_id,
+                    security_rule_events_json,
+                )?;
                 Ok(Json(result))
             }
         }
@@ -6951,6 +7008,141 @@ fn security_route_projection(state: &ServiceState) -> Result<SecurityRouteProjec
                 format!("security projection lock poisoned: {error}"),
             )
         })
+}
+
+fn push_security_projection_rows_from_json(
+    state: &ServiceState,
+    vm_id: &str,
+    rows_json: Vec<String>,
+) -> Result<(), AppError> {
+    if rows_json.is_empty() {
+        return Ok(());
+    }
+    let rows = rows_json
+        .into_iter()
+        .map(|row| {
+            serde_json::from_str::<capsem_logger::SecurityRuleEvent>(&row).map_err(|error| {
+                AppError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("bad security rule event from process: {error}"),
+                )
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut projection = state.security_route_projection.lock().map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("security projection lock poisoned: {error}"),
+        )
+    })?;
+    let session = projection.sessions.entry(vm_id.to_string()).or_default();
+    for row in rows {
+        push_security_projection_row(session, row);
+    }
+    Ok(())
+}
+
+fn push_security_projection_row(
+    session: &mut SecuritySessionProjection,
+    row: capsem_logger::SecurityRuleEvent,
+) {
+    session.stats.total = session.stats.total.saturating_add(1);
+    bump_security_action_count(&mut session.stats.by_action, row.rule_action.as_str());
+    bump_security_event_type_count(&mut session.stats.by_event_type, &row.event_type);
+    bump_security_level_count(&mut session.stats.by_level, row.detection_level.as_str());
+    bump_security_rule_count(&mut session.stats.by_rule, &row);
+
+    session.latest.insert(0, row);
+    if session.latest.len() > 2000 {
+        session.latest.truncate(2000);
+    }
+}
+
+fn bump_security_action_count(
+    counts: &mut Vec<capsem_logger::SecurityRuleActionCount>,
+    rule_action: &str,
+) {
+    if let Some(count) = counts
+        .iter_mut()
+        .find(|count| count.rule_action == rule_action)
+    {
+        count.count = count.count.saturating_add(1);
+    } else {
+        counts.push(capsem_logger::SecurityRuleActionCount {
+            rule_action: rule_action.to_string(),
+            count: 1,
+        });
+        counts.sort_by(|a, b| a.rule_action.cmp(&b.rule_action));
+    }
+}
+
+fn bump_security_event_type_count(
+    counts: &mut Vec<capsem_logger::SecurityRuleEventTypeCount>,
+    event_type: &str,
+) {
+    if let Some(count) = counts
+        .iter_mut()
+        .find(|count| count.event_type == event_type)
+    {
+        count.count = count.count.saturating_add(1);
+    } else {
+        counts.push(capsem_logger::SecurityRuleEventTypeCount {
+            event_type: event_type.to_string(),
+            count: 1,
+        });
+        counts.sort_by(|a, b| a.event_type.cmp(&b.event_type));
+    }
+}
+
+fn bump_security_level_count(
+    counts: &mut Vec<capsem_logger::SecurityRuleDetectionLevelCount>,
+    detection_level: &str,
+) {
+    if let Some(count) = counts
+        .iter_mut()
+        .find(|count| count.detection_level == detection_level)
+    {
+        count.count = count.count.saturating_add(1);
+    } else {
+        counts.push(capsem_logger::SecurityRuleDetectionLevelCount {
+            detection_level: detection_level.to_string(),
+            count: 1,
+        });
+        counts.sort_by(|a, b| a.detection_level.cmp(&b.detection_level));
+    }
+}
+
+fn bump_security_rule_count(
+    counts: &mut Vec<capsem_logger::SecurityRuleStatsByRule>,
+    row: &capsem_logger::SecurityRuleEvent,
+) {
+    let rule_action = row.rule_action.as_str();
+    let detection_level = row.detection_level.as_str();
+    if let Some(count) = counts.iter_mut().find(|count| {
+        count.rule_id == row.rule_id
+            && count.rule_action == rule_action
+            && count.detection_level == detection_level
+    }) {
+        count.count = count.count.saturating_add(1);
+        count.latest_event_id = row.event_id.clone();
+        count.latest_timestamp_unix_ms = row.timestamp_unix_ms;
+    } else {
+        counts.push(capsem_logger::SecurityRuleStatsByRule {
+            rule_id: row.rule_id.clone(),
+            rule_action: rule_action.to_string(),
+            detection_level: detection_level.to_string(),
+            count: 1,
+            latest_event_id: row.event_id.clone(),
+            latest_timestamp_unix_ms: row.timestamp_unix_ms,
+        });
+    }
+    counts.sort_by(|a, b| {
+        b.latest_timestamp_unix_ms
+            .cmp(&a.latest_timestamp_unix_ms)
+            .then_with(|| a.rule_id.cmp(&b.rule_id))
+            .then_with(|| a.rule_action.cmp(&b.rule_action))
+            .then_with(|| a.detection_level.cmp(&b.detection_level))
+    });
 }
 
 #[derive(Clone, Debug, Default)]
@@ -7292,6 +7484,27 @@ fn timeline_route_projection(state: &ServiceState) -> Result<TimelineRouteProjec
                 format!("timeline projection lock poisoned: {error}"),
             )
         })
+}
+
+fn push_timeline_projection_row(
+    state: &ServiceState,
+    vm_id: &str,
+    row: TimelineProjectionRow,
+) -> Result<(), AppError> {
+    let mut projection = state.timeline_route_projection.lock().map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("timeline projection lock poisoned: {error}"),
+        )
+    })?;
+    let rows = projection.sessions.entry(vm_id.to_string()).or_default();
+    rows.push(row);
+    rows.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+    if rows.len() > TIMELINE_RECOVERY_LIMIT {
+        let drop_count = rows.len() - TIMELINE_RECOVERY_LIMIT;
+        rows.drain(0..drop_count);
+    }
+    Ok(())
 }
 
 fn history_projection_for_vm(
