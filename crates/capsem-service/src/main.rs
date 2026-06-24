@@ -3004,6 +3004,13 @@ async fn provision_attempt(
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
         if ready_path.exists() {
+            if let Err(error) = request_projection_refresh(state).await {
+                warn!(
+                    id,
+                    error = %error.1,
+                    "failed to refresh route projections after VM boot"
+                );
+            }
             return ProvisionAttemptOutcome::Ready { uds_path };
         }
         let still_alive = state.instances.lock().unwrap().contains_key(id);
@@ -10507,6 +10514,13 @@ async fn handle_resume(
                                     ),
                                 ));
                             }
+                            if let Err(error) = request_projection_refresh(&state).await {
+                                warn!(
+                                    cold_id,
+                                    error = %error.1,
+                                    "failed to refresh route projections after cold resume"
+                                );
+                            }
                             state.clear_resume_checkpoint(&cold_id);
                             return provision_response_for_running(&state, cold_id, cold_uds_path)
                                 .map(Json);
@@ -10529,6 +10543,13 @@ async fn handle_resume(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("resume failed: {e}"),
                 ));
+            }
+            if let Err(error) = request_projection_refresh(&state).await {
+                warn!(
+                    id,
+                    error = %error.1,
+                    "failed to refresh route projections after resume"
+                );
             }
             state.clear_resume_checkpoint(&id);
             provision_response_for_running(&state, id, uds_path).map(Json)

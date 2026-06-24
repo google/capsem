@@ -46,6 +46,43 @@ async fn await_exec_result(j_rx: oneshot::Receiver<JobResult>) -> Result<JobResu
         .map_err(|_| "Exec result channel closed".to_string())
 }
 
+fn guest_write_ledger_path(path: &str) -> String {
+    path.strip_prefix("/root/")
+        .or_else(|| path.strip_prefix("/workspace/"))
+        .unwrap_or(path)
+        .to_string()
+}
+
+fn emit_guest_write_file_event(
+    net_state: &capsem_core::SandboxNetworkState,
+    runtime_source: &RuntimeProfileSource,
+    path: &str,
+    size: usize,
+) {
+    let Ok(runtime) = runtime_source.load() else {
+        warn!(
+            path,
+            "failed to load runtime profile for guest write file ledger"
+        );
+        return;
+    };
+    let trace_id = capsem_core::telemetry::ambient_capsem_trace_id();
+    let event = capsem_logger::FileEvent {
+        event_id: None,
+        timestamp: std::time::SystemTime::now(),
+        action: capsem_logger::FileAction::Created,
+        path: guest_write_ledger_path(path),
+        size: Some(size as u64),
+        trace_id,
+        credential_ref: None,
+    };
+    capsem_core::security_engine::emit_file_security_write_and_rules_blocking(
+        &net_state.db,
+        &runtime.security_rules,
+        event,
+    );
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn handle_ipc_connection(
     stream: tokio::net::UnixStream,
@@ -319,6 +356,8 @@ pub(crate) async fn handle_ipc_connection(
                 let job_store = job_store.clone();
                 let ctrl_tx = ctrl_tx.clone();
                 let ipc_tx_out = ipc_tx_out.clone();
+                let net_state = net_state.clone();
+                let runtime_source = runtime_source.clone();
                 tokio::spawn(async move {
                     info!(
                         id,
@@ -372,6 +411,15 @@ pub(crate) async fn handle_ipc_connection(
                     };
                     match result {
                         Ok(Ok(JobResult::WriteFile { success, error })) => {
+                            if success {
+                                emit_guest_write_file_event(
+                                    &net_state,
+                                    &runtime_source,
+                                    &path,
+                                    data.len(),
+                                );
+                                net_state.db.flush().await;
+                            }
                             info!(id, success, "Sending WriteFileResult back via IPC");
                             capsem_core::try_send!(
                                 "ipc_write_file_result",

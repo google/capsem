@@ -87,6 +87,37 @@ fn classify_write_file() {
 }
 
 #[test]
+fn guest_write_ledger_path_strips_guest_root_prefix() {
+    assert_eq!(
+        guest_write_ledger_path("/root/poem.md"),
+        "poem.md",
+        "session fs_events store guest-root relative paths"
+    );
+    assert_eq!(
+        guest_write_ledger_path("/root/nested/poem.md"),
+        "nested/poem.md"
+    );
+}
+
+#[test]
+fn guest_write_ledger_path_strips_workspace_prefix() {
+    assert_eq!(
+        guest_write_ledger_path("/workspace/out.txt"),
+        "out.txt",
+        "workspace writes use the same relative ledger shape as the fs monitor"
+    );
+}
+
+#[test]
+fn guest_write_ledger_path_preserves_unknown_absolute_paths() {
+    assert_eq!(
+        guest_write_ledger_path("/tmp/out.txt"),
+        "/tmp/out.txt",
+        "unknown absolute paths stay explicit instead of being silently rewritten"
+    );
+}
+
+#[test]
 fn classify_read_file() {
     assert_eq!(
         classify_ipc_message(&ServiceToProcess::ReadFile {
