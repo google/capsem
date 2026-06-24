@@ -78,6 +78,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   timeline projection instead of opening `session.db` on the request path.
 - Fixed the triage route so session-scoped diagnostics are served from a
   route-owned memory projection instead of querying `session.db` per request.
+- Fixed the one-shot `/run` route so it stops the session without reopening
+  `session.db` to synthesize counters on the request path.
+- Tightened the route-authored rule ledger regression so latest security and
+  detection routes are asserted against an already-hydrated projection after
+  `session.db` has been moved away.
 - Fixed Ironbank plugin ledger assertions so hot plugin-list routes stay
   config-only while per-plugin detail routes prove runtime execution counters.
 - Fixed profile shell bootstrap payloads so shipped profiles put

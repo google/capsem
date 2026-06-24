@@ -9858,9 +9858,9 @@ async fn handle_run(
     .await;
 
     // 5. Tear down VM process and build response. shutdown_vm_process
-    // blocks until the process is actually gone -- the leak detector
-    // (and downstream session-DB reads) need that guarantee. Graceful so
-    // the DbWriter has a chance to flush before we read session.db at step 6.
+    // blocks until the process is actually gone -- the leak detector needs
+    // that guarantee. Route handlers must not mine session.db before returning;
+    // durable telemetry is recovered by the projection/ledger rails.
     let _ = shutdown_vm_process(&state, &id, true).await?;
 
     let response = match exec_result {
@@ -9886,45 +9886,9 @@ async fn handle_run(
         )),
     };
 
-    // 6. Roll up session counters before returning, so callers see consistent
-    //    data in main.db. shutdown_vm_process above already awaited exit, so
-    //    the DbWriter has flushed.
+    // 6. Mark the one-shot session stopped. Counters remain ledger-owned; do
+    // not open session.db from this route to synthesize summaries.
     if let Some(idx) = index {
-        let session_db_path = session_dir.join("session.db");
-        if session_db_path.exists() {
-            if let Ok(reader) = capsem_logger::DbReader::open(&session_db_path) {
-                if let Ok(counts) = reader.net_event_counts() {
-                    let _ = idx.update_request_counts(
-                        &id,
-                        counts.total as u64,
-                        counts.allowed as u64,
-                        counts.denied as u64,
-                    );
-                }
-                let file_events = reader.file_event_count().unwrap_or(0);
-                let (input_tokens, output_tokens, cost, tool_calls) = reader
-                    .session_stats()
-                    .map(|stats| {
-                        (
-                            stats.total_input_tokens,
-                            stats.total_output_tokens,
-                            stats.total_estimated_cost_usd,
-                            stats.total_tool_calls,
-                        )
-                    })
-                    .unwrap_or((0, 0, 0.0, 0));
-                let mcp_protocol_events = reader.raw_mcp_call_count().unwrap_or(0);
-                let _ = idx.update_session_summary(
-                    &id,
-                    input_tokens,
-                    output_tokens,
-                    cost,
-                    tool_calls,
-                    mcp_protocol_events,
-                    file_events,
-                );
-            }
-        }
         let _ = idx.update_status(&id, "stopped", Some(&capsem_core::session::now_iso()));
     }
 

@@ -4423,6 +4423,10 @@ async fn route_authored_detection_rule_triggers_runtime_ledger_and_latest_routes
         emitted >= 1,
         "route-authored detection and profile default rules may both emit"
     );
+    rebuild_security_route_projection(&state).expect("security projection hydrates ledger rows");
+    let moved_db = session_dir.join("session.moved.db");
+    std::fs::rename(session_dir.join("session.db"), &moved_db)
+        .expect("latest routes must not need session.db after projection hydration");
 
     let latest_response = app
         .clone()
