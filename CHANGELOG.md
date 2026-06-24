@@ -74,6 +74,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Fixed the session stats Tools tab to count all model-origin tool calls
+  (`native`, `builtin`, and `local`) separately from protocol-origin tool
+  transport (`mcp`/`mcp_proxy`) instead of presenting an MCP-only activity
+  metric.
 - Fixed the frontend VM provision contract so profile-owned CPU/RAM defaults
   stay service-owned when creating sessions from the dashboard or quick-create
   paths.

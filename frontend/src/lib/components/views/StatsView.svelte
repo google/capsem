@@ -200,9 +200,11 @@
   const modelOutput = $derived(modelStats.reduce((sum, row) => sum + number(row.output_tokens), 0));
   const modelCost = $derived(modelStats.reduce((sum, row) => sum + number(row.estimated_cost_usd), 0));
 
+  const MODEL_TOOL_ORIGINS = ['native', 'builtin', 'local'];
+  const PROTOCOL_TOOL_ORIGINS = ['mcp', 'mcp_proxy'];
   const toolBlocked = $derived(toolRows.filter(row => text(row.decision) !== 'allowed').length);
-  const nativeToolCalls = $derived(toolRows.filter(row => text(row.source) === 'native').length);
-  const mcpToolCalls = $derived(toolRows.filter(row => text(row.source) === 'mcp').length);
+  const modelOriginToolCalls = $derived(toolRows.filter(row => MODEL_TOOL_ORIGINS.includes(text(row.source))).length);
+  const protocolOriginToolCalls = $derived(toolRows.filter(row => PROTOCOL_TOOL_ORIGINS.includes(text(row.source))).length);
   const httpAllowed = $derived(httpRows.filter(row => text(row.decision) === 'allowed').length);
   const httpDenied = $derived(httpRows.filter(row => text(row.decision) !== 'allowed').length);
   const dnsDenied = $derived(dnsRows.filter(row => text(row.decision) !== 'allowed').length);
@@ -331,8 +333,8 @@
       {:else if activeTab === 'tools'}
         <div class="grid grid-cols-4 gap-3 mb-6">
           <MetricCard label="Tool Calls" value={toolRows.length.toLocaleString()} />
-          <MetricCard label="Model Origin" value={nativeToolCalls.toLocaleString()} />
-          <MetricCard label="MCP Origin" value={mcpToolCalls.toLocaleString()} />
+          <MetricCard label="Model Origin" value={modelOriginToolCalls.toLocaleString()} />
+          <MetricCard label="Protocol Origin" value={protocolOriginToolCalls.toLocaleString()} />
           <MetricCard label="Blocked/Error" value={toolBlocked.toLocaleString()} tone="danger" />
         </div>
         <StatsEventList title="Tool Calls" rows={toolRows} columns={['Time', 'Origin', 'Tool', 'Server', 'Decision']} onrow={(row) => { void showDetail('tool', row); }}>

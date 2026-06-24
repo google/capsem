@@ -55,7 +55,9 @@ describe('StatsView tool-call contract', () => {
     expect(source).toContain('toolRows = detailRows.tool_events');
     expect(source).toContain('Tool Calls');
     expect(source).toContain('Model Origin');
-    expect(source).toContain('MCP Origin');
+    expect(source).toContain('Protocol Origin');
+    expect(source).toContain("MODEL_TOOL_ORIGINS.includes(text(row.source))");
+    expect(source).toContain("PROTOCOL_TOOL_ORIGINS.includes(text(row.source))");
     expect(source).toContain("void showDetail('tool', row)");
     expect(source).not.toContain("label: 'MCP'");
     expect(source).not.toContain("activeTab === 'mcp'");
