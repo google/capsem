@@ -5406,7 +5406,10 @@ fn profile_status_cache(state: &ServiceState) -> Result<ProfileStatusCache, AppE
         })?
         .clone()
     {
-        return Ok(cache);
+        let current_manifest = asset_manifest_status_value(state);
+        if cache.catalog.get("asset_manifest") == Some(&current_manifest) {
+            return Ok(cache);
+        }
     }
     rebuild_profile_status_cache(state)
 }
