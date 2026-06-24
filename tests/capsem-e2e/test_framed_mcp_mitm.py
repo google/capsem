@@ -2,7 +2,8 @@
 
 These tests exercise the real guest `/run/capsem-mcp-server` bridge with
 the default framed transport. Traffic goes through the MITM listener on
-vsock:5002 and writes `mcp_calls` from the MITM frame layer.
+vsock:5002. Protocol evidence such as initialize/list/resource frames writes
+`mcp_calls`; actual tool invocations write the canonical `tool_calls` ledger.
 """
 
 import base64
@@ -747,9 +748,14 @@ print(json.dumps({"responses": responses, "stderr": proc.stderr.read()}))
 '''
         proc = _start_cli_exec(svc, vm, _guest_python(script), timeout=40)
 
-        _wait_for_mcp_row(
+        _wait_for_tool_row(
             db_path,
-            lambda r: r["request_id"] == "2" and r["decision"] == "allowed",
+            lambda r: (
+                r["request_id"] == "2"
+                and r["origin"] == "mcp"
+                and r["tool_name"] == "local__echo"
+                and r["decision"] == "allowed"
+            ),
         )
 
         _upsert_profile_enforcement_rule(
@@ -769,13 +775,18 @@ print(json.dumps({"responses": responses, "stderr": proc.stderr.read()}))
             "MCP request blocked by security rule"
         )
 
-        denied = _wait_for_mcp_row(
+        denied = _wait_for_tool_row(
             db_path,
-            lambda r: r["request_id"] == "3" and r["decision"] == "denied",
+            lambda r: (
+                r["request_id"] == "3"
+                and r["origin"] == "mcp"
+                and r["tool_name"] == "local__echo"
+                and r["decision"] == "denied"
+            ),
         )
         assert denied["policy_action"] == "block"
         assert denied["policy_rule"] == "profiles.rules.block_local_echo"
-        assert "after-reload" in denied["request_preview"]
+        assert "after-reload" in denied["arguments"]
     finally:
         if proc is not None and proc.poll() is None:
             proc.kill()
@@ -861,14 +872,22 @@ sys.exit(proc.returncode)
             )
 
             db_path = _session_db(svc, vm)
-            allowed_mcp = _wait_for_mcp_row(
+            allowed_mcp = _wait_for_tool_row(
                 db_path,
-                lambda r: r["request_id"] == "2" and r["tool_name"] == "local__http_headers",
+                lambda r: (
+                    r["request_id"] == "2"
+                    and r["origin"] == "mcp"
+                    and r["tool_name"] == "local__http_headers"
+                ),
             )
             assert allowed_mcp["decision"] == "allowed"
-            blocked_mcp = _wait_for_mcp_row(
+            blocked_mcp = _wait_for_tool_row(
                 db_path,
-                lambda r: r["request_id"] == "3" and r["tool_name"] == "local__http_headers",
+                lambda r: (
+                    r["request_id"] == "3"
+                    and r["origin"] == "mcp"
+                    and r["tool_name"] == "local__http_headers"
+                ),
             )
             assert blocked_mcp["decision"] == "allowed"
             assert "blocked-builtin-http.invalid" in (blocked_mcp["response_preview"] or "")
@@ -956,13 +975,14 @@ print(json.dumps({"results": results}))
 
         db_path = _session_db(svc, vm)
         for parent in ["mcp_parent_a", "mcp_parent_b", "mcp_parent_c"]:
-            row = _wait_for_mcp_row(
+            row = _wait_for_tool_row(
                 db_path,
                 lambda r, parent=parent: (
                     r["method"] == "tools/call"
                     and r["process_name"] == parent
-                    and r["request_preview"]
-                    and parent in r["request_preview"]
+                    and r["origin"] == "mcp"
+                    and r["arguments"]
+                    and parent in r["arguments"]
                 ),
             )
             assert row["tool_name"] == "local__echo"
@@ -1014,13 +1034,17 @@ sys.exit(proc.returncode)
         assert f"{server_name}__fixture_lookup" in json.dumps(responses[2]["result"])
         assert "capsem-mock-server:mcp:fixture_lookup" in json.dumps(responses[3]["result"])
 
-        row = _wait_for_mcp_row(
+        row = _wait_for_tool_row(
             _session_db(svc, vm),
-            lambda r: r["request_id"] == "3" and r["decision"] == "allowed",
+            lambda r: (
+                r["request_id"] == "3"
+                and r["origin"] == "mcp"
+                and r["decision"] == "allowed"
+            ),
         )
         assert row["server_name"] == server_name
         assert row["tool_name"] == f"{server_name}__fixture_lookup"
-        assert "external-ok" in row["request_preview"]
+        assert "external-ok" in row["arguments"]
         assert "capsem-mock-server:mcp:fixture_lookup" in row["response_preview"]
     finally:
         if vm is not None:
@@ -1073,9 +1097,13 @@ sys.exit(proc.returncode)
         assert f"{server_name}__slow_sleep" in json.dumps(responses[2]["result"])
         assert responses[3]["error"]["message"].startswith("MCP request timed out")
 
-        timeout_row = _wait_for_mcp_row(
+        timeout_row = _wait_for_tool_row(
             _session_db(svc, vm),
-            lambda r: r["request_id"] == "3" and r["decision"] == "error",
+            lambda r: (
+                r["request_id"] == "3"
+                and r["origin"] == "mcp"
+                and r["decision"] == "error"
+            ),
         )
         assert timeout_row["server_name"] == server_name
         assert timeout_row["tool_name"] == f"{server_name}__slow_sleep"
