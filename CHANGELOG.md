@@ -74,6 +74,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Tightened the Ironbank route-health gate so profile enforcement and detection
+  evaluate routes are benchmarked for latency and CPU along with status/list
+  routes, preventing decision-path regressions from hiding outside hot-route
+  tests.
 - Fixed exec-route latency by moving session-ledger projection refreshes off
   the async route worker and returning command results without waiting for a
   full SQLite projection rebuild; serial provision-to-exec gates now pass at

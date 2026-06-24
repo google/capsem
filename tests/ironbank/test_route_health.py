@@ -339,6 +339,15 @@ def _hot_route_budget(path: str, *, gateway: bool = False) -> tuple[float, float
             8.0 if not gateway else 10.0,
             0.10 if not gateway else 0.14,
         )
+    if path.endswith("/evaluate"):
+        # Rule evaluation is not a passive poll route, but it is the enforcement
+        # control plane and must stay memory/compiler-cache backed. This catches
+        # accidental route-time SQLite or rule-file reloads on every decision.
+        return (
+            2.0 if not gateway else 3.0,
+            5.0 if not gateway else 8.0,
+            0.08 if not gateway else 0.12,
+        )
     if "/plugins/" in path and (path.endswith("/info") or path.endswith("/credentials/info")):
         # Plugin and credential inventory routes hydrate runtime counters from
         # in-memory projections. Keep them off Keychain/SQLite/hashing paths.
@@ -426,6 +435,20 @@ def _hot_route_contracts(profile: str) -> list[RouteContract]:
             dict,
         ),
         RouteContract(
+            "POST",
+            f"/profiles/{profile}/enforcement/evaluate",
+            _enforcement_payload("block"),
+            {"event"},
+            dict,
+        ),
+        RouteContract(
+            "POST",
+            f"/profiles/{profile}/enforcement/evaluate",
+            _enforcement_payload("ask"),
+            {"event"},
+            dict,
+        ),
+        RouteContract(
             "GET",
             f"/profiles/{profile}/detection/info",
             None,
@@ -437,6 +460,13 @@ def _hot_route_contracts(profile: str) -> list[RouteContract]:
             f"/profiles/{profile}/detection/rules/list",
             None,
             {"profile_id", "rules"},
+            dict,
+        ),
+        RouteContract(
+            "POST",
+            f"/profiles/{profile}/detection/evaluate",
+            _enforcement_payload("allow"),
+            {"event"},
             dict,
         ),
         RouteContract(
