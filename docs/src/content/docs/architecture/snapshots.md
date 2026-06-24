@@ -132,7 +132,7 @@ Snapshot state is exposed through VM routes:
 
 The session ledger still records real user/security activity around snapshots:
 
-- Explicit MCP snapshot tool calls are `mcp_calls`.
+- Explicit MCP snapshot tool calls are `tool_calls` rows with `origin = 'mcp'`.
 - File changes caused by `snapshots_revert` are `fs_events` with action
   `restored`.
 - Automatic background snapshot captures emit structured process logs, not

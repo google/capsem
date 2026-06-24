@@ -9,7 +9,6 @@ EXPECTED_TABLES = [
     "model_calls",
     "tool_calls",
     "tool_responses",
-    "mcp_calls",
     "fs_events",
 ]
 
@@ -30,4 +29,5 @@ def test_all_tables_present(lifecycle_db):
     ]
     for table in EXPECTED_TABLES:
         assert table in tables, f"Missing table: {table} (found: {tables})"
+    assert "mcp_calls" not in tables
     assert "snapshot_events" not in tables

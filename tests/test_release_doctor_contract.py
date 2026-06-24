@@ -563,12 +563,8 @@ def test_release_docs_name_tool_calls_as_canonical_tool_ledger() -> None:
     combined = "\n".join(path.read_text() for path in docs)
 
     assert "tool_calls` is the canonical" in combined
-    assert "mcp_calls` is protocol evidence" in combined or "mcp_calls` is MCP transport evidence" in combined
-    assert "not the user/security tool ledger" in combined
+    assert "mcp_calls" not in combined
     assert "An MCP `tools/call` without a matching" in combined
-    assert "mcp_calls table" not in (PROJECT_ROOT / "skills" / "dev-mcp" / "SKILL.md").read_text().split(
-        "### Telemetry", maxsplit=1
-    )[0]
 
 
 def test_frontend_coverage_runner_declares_its_provider() -> None:

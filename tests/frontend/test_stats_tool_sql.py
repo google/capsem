@@ -53,7 +53,6 @@ def test_tools_minimal_sql_reads_agy_native_tools_from_minimal_tool_call_schema(
                 tool_name TEXT NOT NULL,
                 arguments TEXT,
                 origin TEXT NOT NULL DEFAULT 'native',
-                mcp_call_id INTEGER,
                 trace_id TEXT,
                 credential_ref TEXT
             );

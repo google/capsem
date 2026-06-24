@@ -177,28 +177,14 @@ engine, and log transport evidence plus any `security_rule_events` matches.
 
 The product/security tool ledger is `tool_calls`. Every model-native,
 built-in/local, or MCP-origin tool invocation must appear there with an origin
-such as `native`, `builtin`, `local`, `mcp`, or `mcp_proxy`. A visible MCP
-transport frame may also create an `mcp_calls` row, but that row is protocol
-evidence, not the user-facing tool truth. An MCP `tools/call` without a matching
-`tool_calls` row is a serious telemetry bug.
-
-`mcp_calls` records framed MCP transport details:
-
-| Column | Source |
-|--------|--------|
-| `server_name` | `builtin`, `file`, or external server name |
-| `method` | JSON-RPC method (`tools/call`, `tools/list`, etc.) |
-| `tool_name` | Tool name from request params |
-| `decision` | Terminal transport result: `allowed`, `denied`, or `error` |
-| `duration_ms` | End-to-end call duration |
-| `request_preview` | Truncated request body |
-| `response_preview` | Truncated response body |
-| `process_name` | Guest process from metadata line |
-| `trace_id` | Cross-table correlation ID |
-| `event_id` | 12-hex primary event id used to join `security_rule_events` |
+such as `native`, `builtin`, `local`, `mcp`, or `mcp_proxy`. Visible MCP
+protocol facts such as initialize/list/resource frames are represented as typed
+security events and matching `security_rule_events`, not as a second tool-call
+ledger. An MCP `tools/call` without a matching `tool_calls` row is a serious
+telemetry bug.
 
 See [Session Telemetry](/architecture/session-telemetry/) for the full
-`tool_calls`, `tool_responses`, and `mcp_calls` schemas and rule-ledger joins.
+`tool_calls`, `tool_responses`, and security-rule ledger joins.
 
 ## Endpoint runtime state
 

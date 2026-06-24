@@ -724,7 +724,7 @@ function emptyStats(): StatsResponse {
   return {
     global: {
       total_sessions: 0, total_input_tokens: 0, total_output_tokens: 0,
-      total_estimated_cost: 0, total_tool_calls: 0, total_mcp_calls: 0,
+      total_estimated_cost: 0, total_tool_calls: 0,
       total_file_events: 0, total_requests: 0, total_allowed: 0, total_denied: 0,
     },
     sessions: [], top_providers: [], top_tools: [], top_mcp_tools: [],

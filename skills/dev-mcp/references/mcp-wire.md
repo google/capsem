@@ -163,26 +163,10 @@ pub struct ToolAnnotations {
 
 ## Telemetry
 
-Every request logged to `mcp_calls` table:
-
-```sql
-CREATE TABLE mcp_calls (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp TEXT NOT NULL,
-    server_name TEXT NOT NULL,
-    method TEXT NOT NULL,
-    tool_name TEXT,
-    request_id TEXT,
-    request_preview TEXT,     -- first 256KB
-    response_preview TEXT,    -- first 256KB
-    decision TEXT NOT NULL,   -- "allowed", "warned", "denied", "error"
-    duration_ms INTEGER DEFAULT 0,
-    error_message TEXT,
-    process_name TEXT,
-    bytes_sent INTEGER DEFAULT 0,
-    bytes_received INTEGER DEFAULT 0
-);
-```
+Every MCP-origin `tools/call` is logged to the canonical `tool_calls` table with
+`origin = 'mcp'`, `server_name`, `method`, `request_id`, policy fields, byte
+counts, and trace id. Non-tool protocol frames are typed security events and
+rule-ledger rows.
 
 Decision logic: policy block -> "denied", error -> "error", success -> "allowed".
 

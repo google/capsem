@@ -56,7 +56,7 @@ or source install flow.
 | `capsem_host_logs` | `name`, `grep?`, `tail?`, `maxBytes?` | Read an allowlisted host log by symbolic name: `service`, `mcp`, `gateway`, `tray`, or `app`. |
 | `capsem_panics` | `since?`, `limit?`, `id?` | Extract structured Rust panics and backtraces from recent host logs. |
 | `capsem_triage` | `since?`, `limit?`, `id?` | Summarize recent panics, dropped IPC frames, server errors, and slow operations. |
-| `capsem_timeline` | `id`, `traceId?`, `since?`, `limit?`, `layers?` | Render a time-ordered session timeline across exec, MCP, network, filesystem, and model events. |
+| `capsem_timeline` | `id`, `traceId?`, `since?`, `limit?`, `layers?` | Render a time-ordered session timeline across exec, tool, network, filesystem, and model events. |
 
 ## MCP aggregator
 
@@ -89,7 +89,7 @@ telemetry) without having to drive `capsem_exec` by hand.
 ```json
 { "tool": "capsem_create", "arguments": { "name": "dev" } }
 { "tool": "capsem_exec",   "arguments": { "id": "<id>", "command": "capsem-doctor -k net" } }
-{ "tool": "capsem_timeline", "arguments": { "id": "<id>", "layers": "net,model,mcp,fs", "limit": 50 } }
+{ "tool": "capsem_timeline", "arguments": { "id": "<id>", "layers": "net,model,tool,fs", "limit": 50 } }
 ```
 
 **Fork a template and boot from it:**

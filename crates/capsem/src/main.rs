@@ -678,9 +678,6 @@ fn print_session_info(info: &SessionInfo) {
         if let Some(tc) = info.total_tool_calls {
             println!("  Tool Calls:    {}", tc);
         }
-        if let Some(mc) = info.total_mcp_calls {
-            println!("  MCP Calls:     {}", mc);
-        }
         if info.total_requests.is_some() || info.allowed_requests.is_some() {
             let total = info.total_requests.unwrap_or(0);
             let allowed = info.allowed_requests.unwrap_or(0);

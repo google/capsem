@@ -35,7 +35,6 @@ def test_capsem_doctor_gate_is_backed_by_full_ledger_proof() -> None:
     for table in [
         "net_events",
         "dns_events",
-        "mcp_calls",
         "model_calls",
         "tool_calls",
         "fs_events",

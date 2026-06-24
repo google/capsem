@@ -115,7 +115,7 @@ Key metrics: per-operation latency in ms. Regressions in `create` usually mean t
 1. Run snapshot benchmark: `just run "capsem-bench snapshot"`
 2. Check per-stage timing: `RUST_LOG=capsem=debug just run "capsem-bench snapshot"` -- look for `snapshot_into_slot timing` log lines showing `clone_ws_ms`, `clone_sys_ms`, `hash_ms`
 3. Check session data: `just inspect-session` -- MCP tool usage section shows avg duration per snapshot operation
-4. Query detailed durations: `just query-session "SELECT tool_name, duration_ms FROM mcp_calls WHERE tool_name LIKE 'snapshot%' ORDER BY duration_ms DESC LIMIT 20"`
+4. Query detailed durations: `just query-session "SELECT tool_name, duration_ms FROM tool_calls WHERE origin = 'mcp' AND tool_name LIKE 'snapshot%' ORDER BY duration_ms DESC LIMIT 20"`
 
 Common causes:
 - **clone_ws_ms high**: Large workspace, or APFS clonefile falling back to byte copy
@@ -322,7 +322,7 @@ about MITM/Security Engine response cost instead of raw guest curl wall time.
 The keep-alive lane also guards against bursty same-millisecond logging
 collapsing `security_events` rows. DNS artifacts additionally verify
 `dns_events` policy fields and security-log qname projection. MCP artifacts
-verify `mcp_calls` policy fields and request-id-matched server/tool log
+verify `tool_calls` policy fields and request-id-matched server/tool log
 projection.
 
 ### When to run

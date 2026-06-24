@@ -41,14 +41,11 @@ def test_tool_responses_reference_model_calls(session_db):
 
 
 def test_mcp_tool_calls_are_direct_tool_evidence(session_db):
-    """MCP-origin tool invocations live in tool_calls, not mcp_calls."""
-    orphans = session_db.execute("""
-        SELECT tc.id, tc.mcp_call_id
-        FROM tool_calls tc
-        LEFT JOIN mcp_calls mc ON tc.mcp_call_id = mc.id
-        WHERE tc.origin = 'mcp' AND tc.mcp_call_id IS NOT NULL AND mc.id IS NULL
-    """).fetchall()
-    assert len(orphans) == 0, f"MCP-origin tool_calls with invalid protocol link: {orphans}"
+    """MCP-origin tool invocations live directly in tool_calls."""
+    rows = session_db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='mcp_calls'"
+    ).fetchall()
+    assert rows == []
 
 
 def test_snapshots_are_not_cross_table_activity(session_db):

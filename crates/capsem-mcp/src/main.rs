@@ -535,7 +535,7 @@ struct TimelineMcpParams {
     since: Option<String>,
     /// Max rows. Default 200, max 2000.
     limit: Option<u64>,
-    /// Comma-separated subset of layers: "exec,mcp,net,fs,model".
+    /// Comma-separated subset of layers: "exec,tool,net,fs,model".
     /// Default all.
     layers: Option<String>,
 }
@@ -699,7 +699,7 @@ impl CapsemHandler {
 
     #[tool(
         name = "capsem_timeline",
-        description = "Render a unified time-ordered timeline for a session, joining exec/mcp/net/fs/model events. Optional traceId filter follows one logical operation across layers (W6 added trace_id to every table; pre-W4 rows are NULL and surface alongside). Layers default to all five; pass a subset like `exec,mcp` to scope. Use this AFTER capsem_triage / capsem_panics narrow the window."
+        description = "Render a unified time-ordered timeline for a session, joining exec/tool/net/fs/model events. Optional traceId filter follows one logical operation across layers (W6 added trace_id to every table; pre-W4 rows are NULL and surface alongside). Layers default to all five; pass a subset like `exec,tool` to scope. Use this AFTER capsem_triage / capsem_panics narrow the window."
     )]
     async fn timeline(
         &self,

@@ -35,7 +35,7 @@ With a failing test in hand, investigate. Do not skip this step. Common diagnost
 ```
 capsem_panics { since: "1h" }       # any Rust panic in any host log? -> rank highest
 capsem_triage { id: "vm-1" }        # ranked recent ipc-warns + 4xx/5xx + slow_ops + session.db errors
-capsem_timeline { id: "vm-1", trace_id: "<X>" }   # follow ONE logical operation across exec/mcp/net/fs/model
+capsem_timeline { id: "vm-1", trace_id: "<X>" }   # follow ONE logical operation across exec/tool/net/fs/model
 ```
 
 These read post-W2 JSON logs (`~/.capsem/run/{service,mcp,gateway,tray}.log` + capsem-app's latest jsonl) and post-W6 session.db tables. The W4 `target=fs op=fsync duration_ms=...` markers feed `capsem_triage`'s slow-op rank; the W3 schema_hash check appears in `capsem_panics` output as `IPC handshake failed; refusing connection` events. Always start with `capsem_panics` -- a single panic outranks a hundred warns.
@@ -81,7 +81,7 @@ just inspect-session   # Check net_events for domain, decision, status_code
 
 **Build pipeline issues**: Check `target/build.log` -- all build infrastructure (runner, code signing, generation scripts) logs here. The runner (`scripts/run_signed.sh`) and `_generate-settings` recipe both append to this file. Never write diagnostics to stdout from build scripts (it contaminates binary output like `mcp-export`).
 
-**Telemetry pipeline issues**: The six tables (net_events, model_calls, tool_calls, tool_responses, mcp_calls, fs_events) each have their own pipeline. If a table is empty or has wrong data:
+**Telemetry pipeline issues**: The canonical session ledgers (net_events, model_calls, tool_calls, tool_responses, fs_events, dns_events, security_rule_events) each have their own boundary. If a table is empty or has wrong data:
 - Check if the guest daemon started (boot logs)
 - Check if the vsock connection was accepted (host logs)
 - Check timing -- did the VM shut down before the debouncer flushed? (add `sleep 1`)

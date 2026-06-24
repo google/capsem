@@ -1144,7 +1144,6 @@ fn exec_event_insert_then_update_roundtrip() {
                     exec_id: 42,
                     command: "ls -la".into(),
                     source: "mcp".into(),
-                    mcp_call_id: Some(7),
                     trace_id: Some("t1".into()),
                     process_name: Some("capsem".into()),
                     credential_ref: None,

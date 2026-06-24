@@ -45,7 +45,7 @@ The model/tool contract is intentionally one ledger:
 - `model_items` is the ordered item ledger for request, reasoning, response, tool_call, and tool_response content inside those exchanges.
 - `tool_calls` is the canonical user/security tool-call ledger for all origins (`native`, `mcp`, `builtin`, `local`). User-facing tool counts and CEL tool evidence come from this table.
 - `tool_responses` records tool result content sent back to a model. A response row must match a `tool_calls.call_id` in the same trace.
-- `mcp_calls` is protocol evidence for visible MCP transport frames only. It is not the user/security tool-call ledger, and an MCP-origin tool call must also appear in `tool_calls`.
+- MCP protocol facts are typed security events. MCP-origin `tools/call` activity must appear in `tool_calls` with `origin = 'mcp'`.
 
 ### net_events -- one row per HTTP request through MITM proxy
 
@@ -125,7 +125,6 @@ CREATE TABLE tool_calls (
     arguments TEXT,                   -- JSON string
     response_preview TEXT,
     origin TEXT NOT NULL DEFAULT 'native',  -- "native", "mcp", "builtin", or "local"
-    mcp_call_id INTEGER,              -- optional protocol evidence link when origin=mcp
     server_name TEXT,
     method TEXT,
     request_id TEXT,
@@ -165,29 +164,9 @@ CREATE TABLE tool_responses (
 the tool result back to the model. The same `call_id` must match a
 `tool_calls.call_id` in the same trace.
 
-### mcp_calls -- MCP transport evidence
-
-```sql
-CREATE TABLE mcp_calls (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp TEXT NOT NULL,
-    server_name TEXT NOT NULL,         -- "github", "builtin", "gateway"
-    method TEXT NOT NULL,              -- "tools/list", "tools/call"
-    tool_name TEXT,                    -- namespaced: "github__search"
-    request_id TEXT,
-    request_preview TEXT,              -- compact display field only
-    response_preview TEXT,             -- compact display field only
-    decision TEXT NOT NULL,            -- "allowed", "warned", "denied", "error"
-    duration_ms INTEGER DEFAULT 0,
-    error_message TEXT,
-    process_name TEXT,
-    bytes_sent INTEGER DEFAULT 0,
-    bytes_received INTEGER DEFAULT 0
-);
-```
-
-Use `mcp_calls` when debugging transport framing, request ids, and raw MCP
-policy evidence. Use `tool_calls` for product/user/security tool activity.
+MCP initialize/list/resource protocol evidence is available through
+`security_rule_events.event_json`. Use `tool_calls` for product/user/security
+tool activity.
 
 Full HTTP/model/MCP request and response bodies live in `event_body_blobs`,
 keyed by `event_id`, `source_table`, and `direction`. When debugging payload
@@ -210,7 +189,7 @@ CREATE TABLE fs_events (
 
 Global rollup at `~/.capsem/main.db`. Key tables:
 
-- **sessions** -- one row per session: id, mode, status, timestamps, aggregated counts (total_requests, allowed/denied, tokens, cost, tool_calls, mcp_calls, file_events)
+- **sessions** -- one row per session: id, mode, status, timestamps, aggregated counts (total_requests, allowed/denied, tokens, cost, tool_calls, file_events)
 - **ai_usage** -- per-session per-provider aggregates (call_count, tokens, cost, duration)
 - **tool_usage** -- per-session per-tool aggregates from the canonical tool ledger
 - **mcp_usage** -- per-session MCP transport aggregates when protocol frames are visible
@@ -242,9 +221,9 @@ Rollup happens when a session ends.
 - No AI agent invoked tools during the session, or model/MCP tool evidence failed to parse.
 - User-facing tool activity must be in `tool_calls` regardless of whether the origin is native model output, MCP, builtin, or local.
 
-### Empty mcp_calls
-- No visible MCP transport frames were observed, or the guest MCP endpoint was not started.
-- This can be valid for direct model-native tool calls. Check `tool_calls` before assuming no user tool activity happened.
+### Empty MCP-origin tool_calls
+- No visible MCP `tools/call` activity was observed, or the guest MCP endpoint was not started.
+- This can be valid for direct model-native tool calls. Check native `tool_calls` before assuming no user tool activity happened.
 
 ### Cost is zero
 - Model not found in pricing table (`config/data/genai-prices.json`)
@@ -278,8 +257,8 @@ just query-session "SELECT tc.call_id, tc.tool_name FROM tool_calls tc LEFT JOIN
 # MCP-origin user tool usage breakdown (snapshot, http, etc.)
 just query-session "SELECT tool_name, decision, COUNT(*) as cnt, ROUND(AVG(duration_ms),1) as avg_ms FROM tool_calls WHERE origin = 'mcp' AND tool_name IS NOT NULL GROUP BY tool_name, decision ORDER BY cnt DESC"
 
-# MCP transport frame breakdown when protocol debugging is needed
-just query-session "SELECT method, tool_name, decision, COUNT(*) as cnt FROM mcp_calls GROUP BY method, tool_name, decision ORDER BY cnt DESC"
+# MCP-origin tool usage breakdown
+just query-session "SELECT method, tool_name, decision, COUNT(*) as cnt FROM tool_calls WHERE origin = 'mcp' GROUP BY method, tool_name, decision ORDER BY cnt DESC"
 
 # Check fs_events actions
 just query-session "SELECT action, COUNT(*) FROM fs_events GROUP BY action"

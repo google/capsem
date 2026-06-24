@@ -1,5 +1,5 @@
 //! Provider/protocol-specific interpreters: consume L2 events from the
-//! parsers module and emit L3 semantic events (model_calls / mcp_calls
+//! parsers module and emit L3 semantic events (model calls / tool calls
 //! summaries, tool-use deltas, etc).
 //!
 //! Each interpreter lives in its own file with a sibling `tests.rs`. They

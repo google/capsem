@@ -3655,15 +3655,12 @@ fn session_db_triage(db_path: &std::path::Path, limit: usize) -> anyhow::Result<
          FROM net_events WHERE decision = 'denied' OR status_code >= 500 \
          ORDER BY timestamp DESC LIMIT {limit}"
     );
-    let mcp_errors_sql = format!(
+    let tool_errors_sql = format!(
         "SELECT timestamp, server_name, method, decision, policy_mode, policy_action, \
                 policy_rule, policy_reason, error_message, duration_ms \
-         FROM mcp_calls WHERE decision IN ('denied','error') OR error_message IS NOT NULL \
-         UNION ALL \
-         SELECT timestamp, server_name, method, decision, policy_mode, policy_action, \
-                policy_rule, policy_reason, error_message, duration_ms \
          FROM tool_calls \
-         WHERE origin = 'mcp' AND (decision IN ('denied','error') OR error_message IS NOT NULL) \
+         WHERE origin IN ('native', 'mcp', 'builtin', 'local') \
+           AND (decision IN ('denied','error') OR error_message IS NOT NULL) \
          ORDER BY timestamp DESC LIMIT {limit}"
     );
     let exec_failures_sql = format!(
@@ -3675,21 +3672,21 @@ fn session_db_triage(db_path: &std::path::Path, limit: usize) -> anyhow::Result<
     let denied_net = reader
         .query_raw(&denied_net_sql)
         .unwrap_or_else(|_| "[]".into());
-    let mcp_errors = reader
-        .query_raw(&mcp_errors_sql)
+    let tool_errors = reader
+        .query_raw(&tool_errors_sql)
         .unwrap_or_else(|_| "[]".into());
     let exec_failures = reader
         .query_raw(&exec_failures_sql)
         .unwrap_or_else(|_| "[]".into());
 
     let denied_net_v: serde_json::Value = serde_json::from_str(&denied_net).unwrap_or_default();
-    let mcp_errors_v: serde_json::Value = serde_json::from_str(&mcp_errors).unwrap_or_default();
+    let tool_errors_v: serde_json::Value = serde_json::from_str(&tool_errors).unwrap_or_default();
     let exec_failures_v: serde_json::Value =
         serde_json::from_str(&exec_failures).unwrap_or_default();
 
     Ok(serde_json::json!({
         "denied_net": denied_net_v,
-        "mcp_errors": mcp_errors_v,
+        "tool_errors": tool_errors_v,
         "exec_failures": exec_failures_v,
     }))
 }
@@ -6741,7 +6738,7 @@ async fn handle_profile_mcp_tool_call(
                     &session_id,
                     TimelineProjectionRow {
                         timestamp: capsem_core::session::now_iso(),
-                        layer: "mcp".to_string(),
+                        layer: "tool".to_string(),
                         ref_value: json!(job_id),
                         summary: namespaced_name.replace("__", "/"),
                         status: json!("allow"),
@@ -6764,7 +6761,7 @@ async fn handle_profile_mcp_tool_call(
     }
 }
 
-/// `GET /vms/{id}/timeline?trace_id=<X>&since=10m&limit=200&layers=mcp,exec,...`
+/// `GET /vms/{id}/timeline?trace_id=<X>&since=10m&limit=200&layers=tool,exec,...`
 /// -- unified time-ordered event stream for one session, filtered from the
 /// in-memory timeline projection. Used by the `capsem_timeline` MCP tool.
 ///
@@ -6788,7 +6785,7 @@ async fn handle_timeline(
     // a hard allowlist BEFORE building SQL so even a future careless
     // copy-paste of this format!() can't leak attacker-supplied
     // tokens into the query string.
-    const ALLOWED_LAYERS: &[&str] = &["exec", "mcp", "net", "fs", "model"];
+    const ALLOWED_LAYERS: &[&str] = &["exec", "tool", "net", "fs", "model"];
     let layers: Vec<&str> = params
         .layers
         .as_deref()
@@ -7409,7 +7406,6 @@ struct TimelineRouteProjection {
 #[derive(Clone, Debug)]
 struct LiveSessionCounters {
     stats: capsem_logger::SessionStats,
-    total_mcp_calls: u64,
 }
 
 fn empty_live_session_counters() -> LiveSessionCounters {
@@ -7429,7 +7425,6 @@ fn empty_live_session_counters() -> LiveSessionCounters {
             total_tool_calls: 0,
             total_estimated_cost_usd: 0.0,
         },
-        total_mcp_calls: 0,
     }
 }
 
@@ -7465,17 +7460,12 @@ fn timeline_base_sql() -> String {
     let parts = [
         "SELECT timestamp, 'exec' AS layer, exec_id AS ref, command AS summary, \
          exit_code AS status, duration_ms, trace_id FROM exec_events",
-        "SELECT m.timestamp AS timestamp, 'mcp' AS layer, m.event_id AS ref, \
-         m.server_name || '/' || COALESCE(m.tool_name, m.method) AS summary, \
-         m.decision AS status, m.duration_ms AS duration_ms, m.trace_id AS trace_id \
-         FROM mcp_calls m \
-         UNION ALL \
-         SELECT COALESCE(NULLIF(tc.timestamp, ''), '1970-01-01T00:00:00Z') AS timestamp, \
-         'mcp' AS layer, tc.event_id AS ref, \
-         tc.server_name || '/' || tc.tool_name || COALESCE(' (call_id=' || tc.call_id || ')', '') AS summary, \
+        "SELECT COALESCE(NULLIF(tc.timestamp, ''), '1970-01-01T00:00:00Z') AS timestamp, \
+         'tool' AS layer, tc.event_id AS ref, \
+         COALESCE(tc.server_name, tc.origin) || '/' || tc.tool_name || COALESCE(' (call_id=' || tc.call_id || ')', '') AS summary, \
          tc.decision AS status, tc.duration_ms AS duration_ms, tc.trace_id AS trace_id \
          FROM tool_calls tc \
-         WHERE tc.origin = 'mcp'",
+         WHERE tc.origin IN ('native', 'mcp', 'builtin', 'local')",
         "SELECT timestamp, 'net' AS layer, id AS ref, \
          COALESCE(method, 'GET') || ' ' || domain || COALESCE(path, '') AS summary, \
          status_code AS status, duration_ms, trace_id FROM net_events",
@@ -7699,36 +7689,7 @@ fn read_live_session_counters_from_session_db(
             ));
         }
     };
-    let mcp_stats = match reader.mcp_call_stats() {
-        Ok(stats) => stats,
-        Err(error) => {
-            let message = error.to_string();
-            if is_missing_optional_ledger_shape(&message) {
-                warn!(
-                    vm_id,
-                    error = %message,
-                    "live session counter projection skipped missing MCP stats"
-                );
-                capsem_logger::McpCallStats {
-                    total: 0,
-                    allowed: 0,
-                    warned: 0,
-                    denied: 0,
-                    errored: 0,
-                    by_server: Vec::new(),
-                }
-            } else {
-                return Err(AppError(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("failed to read MCP counter projection for {vm_id}: {error}"),
-                ));
-            }
-        }
-    };
-    Ok(Some(LiveSessionCounters {
-        stats,
-        total_mcp_calls: mcp_stats.total,
-    }))
+    Ok(Some(LiveSessionCounters { stats }))
 }
 
 fn rebuild_live_session_counter_projection_for_session(
@@ -7896,7 +7857,6 @@ fn push_exec_history_projection(
             "source": "api",
             "trace_id": null,
             "process_name": null,
-            "mcp_call_id": null,
         }),
     };
     let mut projection = state.history_route_projection.lock().map_err(|error| {
@@ -7919,7 +7879,6 @@ fn empty_stats_response() -> StatsResponse {
             total_output_tokens: 0,
             total_estimated_cost: 0.0,
             total_tool_calls: 0,
-            total_mcp_calls: 0,
             total_file_events: 0,
             total_requests: 0,
             total_allowed: 0,
@@ -8337,9 +8296,6 @@ fn apply_live_session_counters_from_projection(
         if stats.total_tool_calls > 0 {
             info.total_tool_calls = Some(stats.total_tool_calls);
         }
-        if counters.total_mcp_calls > 0 {
-            info.total_mcp_calls = Some(counters.total_mcp_calls);
-        }
     }
     let projection = stats_detail_route_projection(state)?;
     let Some(body) = projection.sessions.get(&info.id) else {
@@ -8424,14 +8380,6 @@ fn apply_live_session_counters_from_projection(
     }
     if !tool_events.is_empty() {
         info.total_tool_calls = Some(tool_events.len() as u64);
-        info.total_mcp_calls = Some(
-            tool_events
-                .iter()
-                .filter(|event| {
-                    event.get("source").and_then(serde_json::Value::as_str) == Some("mcp")
-                })
-                .count() as u64,
-        );
     }
     Ok(())
 }

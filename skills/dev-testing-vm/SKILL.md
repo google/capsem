@@ -51,7 +51,7 @@ just inspect-session --list       # List recent sessions
 just inspect-session -n 10        # Show 10 preview rows per table
 ```
 
-Checks: all 6 tables exist (net_events, model_calls, tool_calls, tool_responses, mcp_calls, fs_events), row counts, orphaned tool_calls, AI-provider consistency.
+Checks: session ledgers exist (net_events, model_calls, tool_calls, tool_responses, fs_events, dns_events, security_rule_events), row counts, orphaned tool_calls, AI-provider consistency.
 
 ## Verifying telemetry pipelines
 
@@ -60,7 +60,7 @@ Each pipeline can be tested with a targeted VM command:
 - **fs_events**: `just run 'touch /root/test.txt && sleep 1'` then `just inspect-session`
 - **net_events**: `just run 'curl -s https://api.anthropic.com/ && sleep 1'`
 - **model_calls/tool_calls**: boot interactively, run `claude -p "what is 2+2"`
-- **mcp_calls**: boot interactively, run `claude -p "use fetch to get https://example.com"`
+- **MCP-origin tool_calls**: boot interactively, run `claude -p "use fetch to get https://example.com"` and query `tool_calls WHERE origin = 'mcp'`
 
 If events are missing: check boot logs for daemon startup, vsock connection acceptance, and whether the VM lived long enough for the debouncer to flush (add `sleep 1`).
 

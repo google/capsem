@@ -40,7 +40,7 @@ When the capsem MCP server is configured in your AI CLI, you have direct VM cont
 | `capsem_panics` | since?, limit? | **Run FIRST when investigating an unexplained failure.** Structured panic + backtrace extractor across `~/.capsem/run/{service,mcp,gateway,tray}.log` and capsem-app's latest jsonl. Returns `[{ ts, binary, thread, location, message, frames }]` with home-dir paths redacted. |
 | `capsem_triage` | id?, since?, limit? | Opinionated ranked summary of recent panics, dropped IPC frames (`target=ipc` warns from W1), 4xx/5xx server errors (`target=service`), and slow operations (>500ms). With `id`: also queries session.db for denied net + mcp errors + exec failures. |
 | `capsem_host_logs` | name, grep?, tail?, maxBytes? | Read a host log by symbolic name. Names: `service`, `mcp`, `gateway`, `tray`, `app` (latest jsonl in `~/.capsem/logs/`). Hard-coded allowlist; no path traversal. |
-| `capsem_timeline` | id, traceId?, since?, limit?, layers? | Unified time-ordered event stream for a session, joining exec/mcp/net/fs/model events. Filter by `traceId` to follow one logical operation across layers. |
+| `capsem_timeline` | id, traceId?, since?, limit?, layers? | Unified time-ordered event stream for a session, joining exec/tool/net/fs/model events. Filter by `traceId` to follow one logical operation across layers. |
 
 ### Debug workflow
 
@@ -73,7 +73,7 @@ capsem_timeline { id: "vm-1", layers: "net", limit: 10 }
 
 **Verify telemetry pipeline:**
 ```
-capsem_timeline { id: "vm-1", layers: "mcp,fs", limit: 50 }
+capsem_timeline { id: "vm-1", layers: "tool,fs", limit: 50 }
 ```
 
 **Read guest runtime state:**
@@ -149,7 +149,7 @@ The guest MCP path is not a single process. `capsem-process` (the per-VM host pr
 
 Rationale: isolating external-server connections in a low-privilege subprocess means a compromised third-party MCP server cannot reach the host filesystem or the session DB. The built-in tool server runs in its own process for the same reason.
 
-Wire protocol between `capsem-process` and the aggregator: **length-prefixed msgpack frames** on stdio (`[4-byte big-endian length][msgpack payload]`). Between the aggregator and the built-in server: **stdio MCP** (standard JSON-RPC per line). Between the in-guest AI agent and `capsem-process`: `/run/capsem-mcp-server` relays stdio JSON-RPC as bounded framed MCP records over **vsock port 5002**. Tool activity writes the canonical `tool_calls` ledger. Visible MCP frames may also write `mcp_calls` as transport evidence, but `mcp_calls` is not the product/security tool ledger.
+Wire protocol between `capsem-process` and the aggregator: **length-prefixed msgpack frames** on stdio (`[4-byte big-endian length][msgpack payload]`). Between the aggregator and the built-in server: **stdio MCP** (standard JSON-RPC per line). Between the in-guest AI agent and `capsem-process`: `/run/capsem-mcp-server` relays stdio JSON-RPC as bounded framed MCP records over **vsock port 5002**. Tool activity writes the canonical `tool_calls` ledger. Visible MCP protocol facts are represented as typed security events and `security_rule_events`.
 
 Binaries land in `~/.capsem/bin/` at install time: `capsem-mcp-aggregator`, `capsem-mcp-builtin`.
 
@@ -171,7 +171,7 @@ Framed guest MCP over `vsock:5002` must be tested as the default transport, not 
 Guest (Claude/Gemini) -> capsem-mcp-server (stdin/stdout relay)
   -> framed vsock:5002 -> MITM MCP endpoint (capsem-core)
   -> SecurityEvent rule check -> Route to: builtin tools | external MCP servers (via rmcp)
-  -> Telemetry -> session.db tool_calls table, plus optional mcp_calls transport evidence
+  -> Telemetry -> session.db tool_calls table plus security_rule_events protocol evidence
 ```
 
 ### Wire format
@@ -252,15 +252,14 @@ All use namespace prefix `builtin` (e.g., `builtin__http_get`).
 | `crates/capsem-core/src/mcp/mod.rs` | Tool cache, server detection, collision detection |
 | `crates/capsem-agent/src/mcp_server.rs` | capsem-mcp-server binary (stdin/stdout relay) |
 
-### Telemetry (tool_calls and mcp_calls)
+### Telemetry (tool_calls and security events)
 
 `tool_calls` is the canonical user/security ledger for all tool origins:
 model-native, built-in/local, and MCP-origin. UI counts, CEL rules, and
 forensic tool activity must use this table.
 
-`mcp_calls` is MCP transport evidence only. It helps debug framing, JSON-RPC ids,
-server routing, and protocol errors. A visible MCP `tools/call` without a
-matching `tool_calls` row is a bug.
+MCP protocol facts such as initialize/list/resource frames are security events.
+A visible MCP `tools/call` without a matching `tool_calls` row is a bug.
 
 Every request/response logged with: timestamp, server_name, method, tool_name,
 compact request/response display fields, decision, duration_ms, error_message,
@@ -319,7 +318,7 @@ Boot interactively, run a workload, then inspect telemetry:
 ```bash
 just run
 # (in another terminal)
-just inspect-session <vm_id> "SELECT * FROM mcp_calls"
+just inspect-session <vm_id> "SELECT * FROM tool_calls WHERE origin = 'mcp'"
 ```
 
 Or use MCP tools directly (see "Fast debugging" section above) for the same workflow without leaving Claude Code.

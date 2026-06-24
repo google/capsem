@@ -99,7 +99,6 @@ def test_session_event_writes_stay_behind_dbwriter():
         "dns_events",
         "exec_events",
         "fs_events",
-        "mcp_calls",
         "model_calls",
         "net_events",
         "profile_mutation_events",

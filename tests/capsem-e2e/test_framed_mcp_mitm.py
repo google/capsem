@@ -3,7 +3,8 @@
 These tests exercise the real guest `/run/capsem-mcp-server` bridge with
 the default framed transport. Traffic goes through the MITM listener on
 vsock:5002. Protocol evidence such as initialize/list/resource frames writes
-`mcp_calls`; actual tool invocations write the canonical `tool_calls` ledger.
+security-rule events; actual tool invocations write the canonical `tool_calls`
+ledger.
 """
 
 import base64
@@ -227,34 +228,92 @@ def _session_db(svc: ServiceInstance, vm: str, *, persistent: bool = False) -> P
     return svc.tmp_dir / kind / vm / "session.db"
 
 
-def _query_mcp_rows(db_path: Path):
+def _event_json_value(event: dict, *paths: tuple[str, ...]):
+    for path in paths:
+        cur = event
+        for key in path:
+            if not isinstance(cur, dict) or key not in cur:
+                cur = None
+                break
+            cur = cur[key]
+        if cur is not None:
+            return cur
+    return None
+
+
+def _query_mcp_event_rows(db_path: Path):
     if not db_path.exists():
         return []
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     try:
-        return conn.execute(
+        rows = conn.execute(
             """
-            SELECT request_id, method, server_name, tool_name, decision,
-                   process_name, policy_mode, policy_action, policy_rule,
-                   policy_reason, error_message, request_preview, response_preview
-            FROM mcp_calls
+            SELECT event_type, rule_action, rule_id, event_json
+            FROM security_rule_events
+            WHERE event_type LIKE 'mcp.%'
             ORDER BY id
             """
         ).fetchall()
+        out = []
+        for row in rows:
+            event = json.loads(row["event_json"])
+            mcp = event.get("mcp") or {}
+            request = mcp.get("request") or {}
+            response = mcp.get("response") or {}
+            tool_call = mcp.get("tool_call") or {}
+            decision = event.get("decision") or {}
+            out.append({
+                "request_id": _event_json_value(
+                    event,
+                    ("mcp", "request", "id"),
+                    ("mcp", "id"),
+                ),
+                "method": _event_json_value(
+                    event,
+                    ("mcp", "request", "method"),
+                    ("mcp", "method"),
+                ),
+                "server_name": _event_json_value(
+                    event,
+                    ("mcp", "server", "name"),
+                    ("mcp", "server_name"),
+                ),
+                "tool_name": _event_json_value(
+                    event,
+                    ("mcp", "tool_call", "name"),
+                    ("mcp", "tool_name"),
+                ),
+                "decision": decision.get("effective") or decision.get("action") or row["rule_action"],
+                "process_name": _event_json_value(event, ("process", "name")),
+                "policy_mode": "security_event",
+                "policy_action": row["rule_action"],
+                "policy_rule": row["rule_id"],
+                "policy_reason": None,
+                "error_message": _event_json_value(
+                    event,
+                    ("mcp", "error", "message"),
+                    ("error", "message"),
+                ),
+                "request_preview": json.dumps(request, sort_keys=True),
+                "response_preview": json.dumps(response, sort_keys=True),
+                "event_type": row["event_type"],
+                "raw_tool_call": tool_call,
+            })
+        return out
     finally:
         conn.close()
 
 
-def _wait_for_mcp_row(db_path: Path, predicate, timeout: float = 20.0):
+def _wait_for_mcp_event_row(db_path: Path, predicate, timeout: float = 20.0):
     deadline = time.time() + timeout
     while time.time() < deadline:
-        for row in _query_mcp_rows(db_path):
+        for row in _query_mcp_event_rows(db_path):
             if predicate(row):
                 return row
         time.sleep(0.2)
-    rows = [dict(row) for row in _query_mcp_rows(db_path)]
-    pytest.fail(f"timed out waiting for mcp_calls row; rows={rows}")
+    rows = [dict(row) for row in _query_mcp_event_rows(db_path)]
+    pytest.fail(f"timed out waiting for MCP security event row; rows={rows}")
 
 
 def _query_tool_rows(db_path: Path):
@@ -414,7 +473,7 @@ sys.exit(proc.returncode)
             "4": "resources/list",
             "5": "prompts/list",
         }.items():
-            row = _wait_for_mcp_row(
+            row = _wait_for_mcp_event_row(
                 db_path,
                 lambda r, request_id=request_id: r["request_id"] == request_id,
             )
@@ -434,7 +493,7 @@ sys.exit(proc.returncode)
         assert echo["policy_action"] == "allow"
         assert echo["model_call_id"] is None
 
-        rows = _query_mcp_rows(db_path)
+        rows = _query_mcp_event_rows(db_path)
         notifications = [
             row for row in rows if row["request_id"] is None and row["method"] == "notifications/initialized"
         ]
@@ -509,11 +568,11 @@ sys.exit(proc.returncode)
         assert len(responses) == 3, "notifications must not produce JSON-RPC responses"
 
         db_path = _session_db(svc, vm)
-        init = _wait_for_mcp_row(db_path, lambda r: r["request_id"] == "init-string")
-        tools = _wait_for_mcp_row(db_path, lambda r: r["request_id"] == "tools-list-string")
+        init = _wait_for_mcp_event_row(db_path, lambda r: r["request_id"] == "init-string")
+        tools = _wait_for_mcp_event_row(db_path, lambda r: r["request_id"] == "tools-list-string")
         assert init["method"] == "initialize"
         assert tools["method"] == "tools/list"
-        rows = _query_mcp_rows(db_path)
+        rows = _query_mcp_event_rows(db_path)
         assert {row["request_id"] for row in rows if row["request_id"] is not None} == {
             "init-string",
             "tools-list-string",
@@ -580,9 +639,9 @@ sys.exit(proc.returncode)
         )
 
         db_path = _session_db(svc, vm)
-        row = _wait_for_mcp_row(db_path, lambda r: r["request_id"] == "after-oversized")
+        row = _wait_for_mcp_event_row(db_path, lambda r: r["request_id"] == "after-oversized")
         assert row["method"] == "initialize"
-        assert all(row["request_id"] != "too-big" for row in _query_mcp_rows(db_path))
+        assert all(row["request_id"] != "too-big" for row in _query_mcp_event_rows(db_path))
     finally:
         if vm is not None:
             _delete_vm(svc, vm)
@@ -685,7 +744,7 @@ print(json.dumps({
             "capsem-mcp-mitm-endpoint"
         )
 
-        row = _wait_for_mcp_row(
+        row = _wait_for_mcp_event_row(
             _session_db(svc, vm),
             lambda r: (
                 r["request_id"] == "after-corrupt"
@@ -1158,7 +1217,7 @@ sys.exit(proc.returncode)
             "MCP request timed out"
         )
 
-        timeout_row = _wait_for_mcp_row(
+        timeout_row = _wait_for_mcp_event_row(
             _session_db(svc, vm),
             lambda r: (
                 r["request_id"] == "slow-resource-request" and r["decision"] == "error"
@@ -1206,11 +1265,11 @@ def test_framed_guest_mcp_reconnects_after_persistent_resume():
         assert "local__echo" in json.dumps(_responses_by_id(second.stdout)["after-resume-list"])
 
         db_path = _session_db(svc, vm, persistent=True)
-        before = _wait_for_mcp_row(
+        before = _wait_for_mcp_event_row(
             db_path,
             lambda r: r["request_id"] == "before-resume-list",
         )
-        after = _wait_for_mcp_row(
+        after = _wait_for_mcp_event_row(
             db_path,
             lambda r: r["request_id"] == "after-resume-list",
         )

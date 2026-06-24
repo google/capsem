@@ -1342,25 +1342,12 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 assert row["credential_ref"] in valid_tool_credential_refs
 
             observed_mcp_server = "observed:127.0.0.1:3713/mcp"
-            observed_mcp_rows = _eventually(
-                lambda: conn.execute(
-                    """
-                    SELECT *
-                    FROM mcp_calls
-                    WHERE server_name = ?
-                    ORDER BY id
-                    """,
-                    (observed_mcp_server,),
-                ).fetchall(),
-                lambda rows: len(rows) >= 2,
-            )
-            observed_methods = {row["method"] for row in observed_mcp_rows}
-            assert {"initialize", "tools/list"} <= observed_methods
-            assert "tools/call" not in observed_methods
-            assert all(row["tool_name"] is None for row in observed_mcp_rows)
-            observed_mcp_trace_ids = {row["trace_id"] for row in observed_mcp_rows}
-            assert len(observed_mcp_trace_ids) == 1
-            assert None not in observed_mcp_trace_ids
+            assert "mcp_calls" not in {
+                row["name"]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                ).fetchall()
+            }
             observed_tool_call = _eventually(
                 lambda: conn.execute(
                     """
@@ -1411,7 +1398,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             _assert_event_id(observed_tool_list["event_id"])
             assert "fixture_lookup" in (observed_tool_list["response_preview"] or "")
 
-            timeline = client.get(f"/vms/{session_id}/timeline?layers=mcp&limit=50", timeout=30)
+            timeline = client.get(f"/vms/{session_id}/timeline?layers=tool&limit=50", timeout=30)
             assert set(timeline) == {"columns", "rows"}
             assert {"timestamp", "layer", "ref", "summary", "status", "duration_ms"} <= set(
                 timeline["columns"]
@@ -1424,7 +1411,6 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 f"{observed_mcp_server}/fixture_lookup "
                 f"(call_id={observed_tool_call['call_id']})"
             ) in timeline_summaries
-            assert f"{observed_mcp_server}/tools/list" in timeline_summaries
 
             info = _eventually(
                 lambda: client.get(f"/vms/{session_id}/info", timeout=30),
@@ -1458,8 +1444,6 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                     SELECT event_id FROM model_calls WHERE path = '/v1beta/models/gemini-3.5-flash:streamGenerateContent'
                     UNION
                     SELECT event_id FROM model_calls WHERE path = '/v1/messages'
-                    UNION
-                    SELECT event_id FROM mcp_calls WHERE server_name = 'observed:127.0.0.1:3713/mcp'
                     UNION
                     SELECT event_id FROM tool_calls WHERE origin = 'mcp' AND server_name = 'observed:127.0.0.1:3713/mcp'
                     UNION

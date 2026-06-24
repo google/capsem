@@ -172,8 +172,6 @@ pub struct SandboxInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_tool_calls: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub total_mcp_calls: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub total_requests: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub allowed_requests: Option<u64>,
@@ -230,7 +228,6 @@ impl SandboxInfo {
             total_output_tokens: None,
             total_estimated_cost: None,
             total_tool_calls: None,
-            total_mcp_calls: None,
             total_requests: None,
             allowed_requests: None,
             denied_requests: None,

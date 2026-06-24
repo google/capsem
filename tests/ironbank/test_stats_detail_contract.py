@@ -144,29 +144,6 @@ def _create_schema(conn: sqlite3.Connection) -> None:
             usage_details TEXT,
             credential_ref TEXT
         );
-        CREATE TABLE mcp_calls (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_id TEXT NOT NULL,
-            timestamp TEXT NOT NULL,
-            server_name TEXT NOT NULL,
-            method TEXT NOT NULL,
-            tool_name TEXT,
-            request_id TEXT,
-            request_preview TEXT,
-            response_preview TEXT,
-            decision TEXT NOT NULL,
-            duration_ms INTEGER DEFAULT 0,
-            error_message TEXT,
-            process_name TEXT,
-            bytes_sent INTEGER DEFAULT 0,
-            bytes_received INTEGER DEFAULT 0,
-            policy_mode TEXT,
-            policy_action TEXT,
-            policy_rule TEXT,
-            policy_reason TEXT,
-            trace_id TEXT,
-            credential_ref TEXT
-        );
         CREATE TABLE tool_calls (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             event_id TEXT NOT NULL,
@@ -180,7 +157,6 @@ def _create_schema(conn: sqlite3.Connection) -> None:
             arguments TEXT,
             response_preview TEXT,
             origin TEXT NOT NULL DEFAULT 'native',
-            mcp_call_id INTEGER,
             server_name TEXT,
             method TEXT,
             request_id TEXT,
@@ -258,7 +234,6 @@ def _create_schema(conn: sqlite3.Connection) -> None:
             stdout_bytes INTEGER DEFAULT 0,
             stderr_bytes INTEGER DEFAULT 0,
             source TEXT NOT NULL DEFAULT 'api',
-            mcp_call_id INTEGER,
             trace_id TEXT,
             process_name TEXT,
             pid INTEGER,

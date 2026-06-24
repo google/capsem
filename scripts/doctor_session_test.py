@@ -221,35 +221,24 @@ def verify_session(session_id: str) -> bool:
         if "deleted" in action_map:
             r.ok(f"deleted fs_events: {action_map['deleted']}")
 
-    # -- mcp_calls ---------------------------------------------------------
-    print(f"\n{BOLD}mcp_calls{RESET}")
-    mcp_count = conn.execute("SELECT COUNT(*) FROM mcp_calls").fetchone()[0]
+    # -- MCP-origin tool_calls ---------------------------------------------
+    print(f"\n{BOLD}MCP-origin tool_calls{RESET}")
+    mcp_table = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='mcp_calls'"
+    ).fetchone()
+    r.check(
+        mcp_table is None,
+        "mcp_calls table absent",
+        "mcp_calls table still exists; tool invocations must use tool_calls",
+    )
+    mcp_count = conn.execute(
+        "SELECT COUNT(*) FROM tool_calls WHERE origin = 'mcp'"
+    ).fetchone()[0]
     r.check(
         mcp_count > 0,
-        f"{mcp_count} mcp_calls recorded",
-        "no mcp_calls recorded (guest MCP endpoint may not be logging)",
+        f"{mcp_count} MCP-origin tool_calls recorded",
+        "no MCP-origin tool_calls recorded (guest MCP endpoint may not be logging)",
     )
-
-    if mcp_count > 0:
-        mcp_methods = conn.execute(
-            "SELECT DISTINCT method FROM mcp_calls"
-        ).fetchall()
-        methods = {row["method"] for row in mcp_methods}
-        r.check(
-            "initialize" in methods,
-            "MCP initialize logged",
-            "MCP initialize NOT logged",
-        )
-        r.check(
-            "tools/list" in methods,
-            "MCP tools/list logged",
-            "MCP tools/list NOT logged",
-        )
-        r.check(
-            "tools/call" in methods,
-            "MCP tools/call logged",
-            "MCP tools/call NOT logged",
-        )
 
     # -- model_calls -------------------------------------------------------
     print(f"\n{BOLD}model_calls{RESET}")
@@ -330,11 +319,6 @@ def verify_session(session_id: str) -> bool:
                 "main.db total_requests = 0 (rollup failed)",
             )
             r.check(
-                row["total_mcp_calls"] > 0,
-                f"main.db total_mcp_calls = {row['total_mcp_calls']}",
-                "main.db total_mcp_calls = 0 (rollup failed)",
-            )
-            r.check(
                 row["total_tool_calls"] > 0,
                 f"main.db total_tool_calls = {row['total_tool_calls']}",
                 "main.db total_tool_calls = 0 (rollup failed)",
@@ -344,7 +328,6 @@ def verify_session(session_id: str) -> bool:
             sconn = sqlite3.connect(str(SESSIONS_DIR / session_id / "session.db"))
             actual_fs = sconn.execute("SELECT COUNT(*) FROM fs_events").fetchone()[0]
             actual_net = sconn.execute("SELECT COUNT(*) FROM net_events").fetchone()[0]
-            actual_mcp = sconn.execute("SELECT COUNT(*) FROM mcp_calls").fetchone()[0]
             actual_tools = sconn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0]
             sconn.close()
 
@@ -357,11 +340,6 @@ def verify_session(session_id: str) -> bool:
                 row["total_requests"] == actual_net,
                 f"rollup total_requests ({row['total_requests']}) matches session.db ({actual_net})",
                 f"rollup total_requests ({row['total_requests']}) != session.db ({actual_net})",
-            )
-            r.check(
-                row["total_mcp_calls"] == actual_mcp,
-                f"rollup total_mcp_calls ({row['total_mcp_calls']}) matches session.db ({actual_mcp})",
-                f"rollup total_mcp_calls ({row['total_mcp_calls']}) != session.db ({actual_mcp})",
             )
             r.check(
                 row["total_tool_calls"] == actual_tools,

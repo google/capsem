@@ -29,7 +29,6 @@ pub(super) const SESSION_SCHEMA: &str = "
         total_output_tokens INTEGER NOT NULL DEFAULT 0,
         total_estimated_cost REAL NOT NULL DEFAULT 0.0,
         total_tool_calls INTEGER NOT NULL DEFAULT 0,
-        total_mcp_calls INTEGER NOT NULL DEFAULT 0,
         total_file_events INTEGER NOT NULL DEFAULT 0,
         compressed_size_bytes INTEGER,
         vacuumed_at TEXT,
@@ -164,11 +163,11 @@ impl SessionIndex {
             "INSERT INTO sessions (id, mode, command, status, created_at, stopped_at,
                 scratch_disk_size_gb, ram_bytes, total_requests, allowed_requests, denied_requests,
                 total_input_tokens, total_output_tokens, total_estimated_cost,
-                total_tool_calls, total_mcp_calls, total_file_events,
+                total_tool_calls, total_file_events,
                 compressed_size_bytes, vacuumed_at,
                 storage_mode, rootfs_hash, rootfs_version, forked_from, persistent,
                 exec_count, audit_event_count)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
             params![
                 record.id,
                 record.mode,
@@ -185,7 +184,6 @@ impl SessionIndex {
                 record.total_output_tokens as i64,
                 record.total_estimated_cost,
                 record.total_tool_calls as i64,
-                record.total_mcp_calls as i64,
                 record.total_file_events as i64,
                 record.compressed_size_bytes.map(|v| v as i64),
                 record.vacuumed_at,
@@ -244,7 +242,7 @@ impl SessionIndex {
     const SESSION_COLUMNS: &str = "id, mode, command, status, created_at, stopped_at,
          scratch_disk_size_gb, ram_bytes, total_requests, allowed_requests, denied_requests,
          total_input_tokens, total_output_tokens, total_estimated_cost,
-         total_tool_calls, total_mcp_calls, total_file_events,
+         total_tool_calls, total_file_events,
          compressed_size_bytes, vacuumed_at,
          storage_mode, rootfs_hash, rootfs_version, forked_from, persistent,
          exec_count, audit_event_count";
@@ -267,19 +265,18 @@ impl SessionIndex {
             total_output_tokens: row.get::<_, i64>(12)? as u64,
             total_estimated_cost: row.get::<_, f64>(13)?,
             total_tool_calls: row.get::<_, i64>(14)? as u64,
-            total_mcp_calls: row.get::<_, i64>(15)? as u64,
-            total_file_events: row.get::<_, i64>(16)? as u64,
-            compressed_size_bytes: row.get::<_, Option<i64>>(17)?.map(|v| v as u64),
-            vacuumed_at: row.get(18)?,
+            total_file_events: row.get::<_, i64>(15)? as u64,
+            compressed_size_bytes: row.get::<_, Option<i64>>(16)?.map(|v| v as u64),
+            vacuumed_at: row.get(17)?,
             storage_mode: row
-                .get::<_, Option<String>>(19)?
+                .get::<_, Option<String>>(18)?
                 .unwrap_or_else(|| "block".to_string()),
-            rootfs_hash: row.get(20)?,
-            rootfs_version: row.get(21)?,
-            forked_from: row.get(22)?,
-            persistent: row.get::<_, Option<bool>>(23)?.unwrap_or(false),
-            exec_count: row.get::<_, Option<i64>>(24)?.unwrap_or(0) as u64,
-            audit_event_count: row.get::<_, Option<i64>>(25)?.unwrap_or(0) as u64,
+            rootfs_hash: row.get(19)?,
+            rootfs_version: row.get(20)?,
+            forked_from: row.get(21)?,
+            persistent: row.get::<_, Option<bool>>(22)?.unwrap_or(false),
+            exec_count: row.get::<_, Option<i64>>(23)?.unwrap_or(0) as u64,
+            audit_event_count: row.get::<_, Option<i64>>(24)?.unwrap_or(0) as u64,
         })
     }
 
@@ -533,7 +530,6 @@ impl SessionIndex {
                 COALESCE(SUM(total_output_tokens), 0),
                 COALESCE(SUM(total_estimated_cost), 0.0),
                 COALESCE(SUM(total_tool_calls), 0),
-                COALESCE(SUM(total_mcp_calls), 0),
                 COALESCE(SUM(total_file_events), 0),
                 COALESCE(SUM(total_requests), 0),
                 COALESCE(SUM(allowed_requests), 0),
@@ -547,11 +543,10 @@ impl SessionIndex {
                     total_output_tokens: row.get::<_, i64>(2)? as u64,
                     total_estimated_cost: row.get::<_, f64>(3)?,
                     total_tool_calls: row.get::<_, i64>(4)? as u64,
-                    total_mcp_calls: row.get::<_, i64>(5)? as u64,
-                    total_file_events: row.get::<_, i64>(6)? as u64,
-                    total_requests: row.get::<_, i64>(7)? as u64,
-                    total_allowed: row.get::<_, i64>(8)? as u64,
-                    total_denied: row.get::<_, i64>(9)? as u64,
+                    total_file_events: row.get::<_, i64>(5)? as u64,
+                    total_requests: row.get::<_, i64>(6)? as u64,
+                    total_allowed: row.get::<_, i64>(7)? as u64,
+                    total_denied: row.get::<_, i64>(8)? as u64,
                 })
             },
         )
@@ -745,7 +740,6 @@ impl SessionIndex {
         output_tokens: u64,
         cost: f64,
         tool_calls: u64,
-        mcp_calls: u64,
         file_events: u64,
     ) -> rusqlite::Result<()> {
         self.conn.execute(
@@ -754,15 +748,13 @@ impl SessionIndex {
                 total_output_tokens = ?2,
                 total_estimated_cost = ?3,
                 total_tool_calls = ?4,
-                total_mcp_calls = ?5,
-                total_file_events = ?6
-             WHERE id = ?7",
+                total_file_events = ?5
+             WHERE id = ?6",
             params![
                 input_tokens as i64,
                 output_tokens as i64,
                 cost,
                 tool_calls as i64,
-                mcp_calls as i64,
                 file_events as i64,
                 id,
             ],
@@ -882,7 +874,6 @@ mod tests {
             total_output_tokens: 0,
             total_estimated_cost: 0.0,
             total_tool_calls: tool_calls,
-            total_mcp_calls: 0,
             total_file_events: 0,
             compressed_size_bytes: None,
             vacuumed_at: None,

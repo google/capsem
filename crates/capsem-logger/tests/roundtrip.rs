@@ -2066,7 +2066,7 @@ fn decision_to_policy_action(decision: &str) -> &'static str {
 }
 
 #[tokio::test]
-async fn mcp_call_roundtrip() {
+async fn tool_call_roundtrip_from_mcp_observation() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("mcp.db");
     let writer = DbWriter::open(&path, 64).unwrap();
@@ -2091,11 +2091,11 @@ async fn mcp_call_roundtrip() {
     assert_eq!(c["policy_action"], "allow");
     assert_eq!(c["policy_rule"], "mcp.tool.github__search_repos");
     assert_eq!(c["policy_reason"], "local policy allowed");
-    assert_eq!(reader.recent_mcp_calls(10).unwrap().len(), 0);
+    assert_eq!(reader.recent_tool_calls(10).unwrap().len(), 1);
 }
 
 #[tokio::test]
-async fn mcp_call_search() {
+async fn tool_call_search_from_unified_ledger() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("mcp-search.db");
     let writer = DbWriter::open(&path, 64).unwrap();
@@ -2141,11 +2141,11 @@ async fn mcp_call_search() {
             .count(),
         0
     );
-    assert_eq!(reader.search_mcp_calls("tools/call", 10).unwrap().len(), 0);
+    assert_eq!(reader.recent_tool_calls(10).unwrap().len(), 3);
 }
 
 #[tokio::test]
-async fn mcp_call_stats() {
+async fn tool_call_stats() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("mcp-stats.db");
     let writer = DbWriter::open(&path, 64).unwrap();
@@ -2172,7 +2172,7 @@ async fn mcp_call_stats() {
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
-    let stats = reader.mcp_call_stats().unwrap();
+    let stats = reader.tool_call_stats().unwrap();
 
     assert_eq!(stats.total, 5);
     assert_eq!(stats.allowed, 2);
@@ -2191,14 +2191,14 @@ async fn mcp_call_stats() {
 }
 
 #[tokio::test]
-async fn mcp_call_stats_empty_db() {
+async fn tool_call_stats_empty_db() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("mcp-empty.db");
     let writer = DbWriter::open(&path, 64).unwrap();
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
-    let stats = reader.mcp_call_stats().unwrap();
+    let stats = reader.tool_call_stats().unwrap();
     assert_eq!(stats.total, 0);
     assert_eq!(stats.allowed, 0);
     assert_eq!(stats.by_server.len(), 0);
@@ -2249,7 +2249,7 @@ async fn mcp_schema_migration_idempotent() {
     let reader = DbReader::open(&path).unwrap();
     let calls = mcp_tool_rows(&reader);
     assert_eq!(calls.len(), 2);
-    assert_eq!(reader.recent_mcp_calls(10).unwrap().len(), 0);
+    assert_eq!(reader.recent_tool_calls(10).unwrap().len(), 2);
 }
 
 #[tokio::test]
@@ -3089,7 +3089,7 @@ async fn ignored_try_write_return_value_causes_silent_loss() {
 
 // ========================================================================
 // Phase 2: End-to-end SQL dedup tests
-// Injects data into tool_calls + mcp_calls + tool_responses, then runs
+// Injects data into tool_calls + tool_responses, then runs
 // the exact SQL from frontend/src/lib/sql.ts to verify dedup + response
 // joining.
 // ========================================================================
@@ -3562,7 +3562,7 @@ async fn tool_unified_empty_tables() {
 }
 
 #[tokio::test]
-async fn tool_unified_only_mcp_calls() {
+async fn tool_unified_counts_mcp_origin_rows() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("dedup-mcp-only.db");
     let writer = DbWriter::open(&path, 64).unwrap();

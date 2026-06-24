@@ -5,7 +5,7 @@ verify every event type is logged in the session DB.
 Exercises:
   1. fs_events   -- create, modify, and delete files inside the VM
   2. net_events   -- curl an allowed domain + a denied domain (policy enforcement)
-  3. mcp_calls    -- run capsem-doctor MCP tests (init, tools/list, fetch, grep)
+  3. tool_calls   -- run capsem-doctor MCP tests and record tool invocations
   4. model_calls  -- call the local OpenAI-compatible mock fixture
   5. tool_calls   -- validate tool-call ledger shape when model fixtures emit it
   6. main.db      -- rollup counters match session.db actuals
@@ -170,7 +170,7 @@ def _vm_command(local_base_url: str) -> str:
         f" {bytes_url}"
     ),
 
-    # -- mcp_calls: capsem-doctor MCP test subset --
+    # -- tool_calls: capsem-doctor MCP test subset --
     "capsem-doctor -k mcp",
 
     # -- model_calls: deterministic local OpenAI-compatible fixture --
@@ -605,80 +605,67 @@ def verify_session(session_id: str) -> bool:
         f"expected both allowed and denied decisions, got: {dict(decision_map)}",
     )
 
-    # ── mcp_calls ────────────────────────────────────────────────────
-    print(f"\n{BOLD}mcp_calls{RESET}")
-    mcp_count = conn.execute("SELECT COUNT(*) FROM mcp_calls").fetchone()[0]
+    # ── MCP-origin tool_calls ────────────────────────────────────────
+    print(f"\n{BOLD}MCP-origin tool_calls{RESET}")
+    mcp_table = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='mcp_calls'"
+    ).fetchone()
     r.check(
-        mcp_count > 0,
-        f"{mcp_count} mcp_calls recorded",
-        "no mcp_calls recorded",
+        mcp_table is None,
+        "mcp_calls table absent",
+        "mcp_calls table still exists; tool calls must be canonical",
+    )
+    mcp_tool_count = conn.execute(
+        "SELECT COUNT(*) FROM tool_calls WHERE origin = 'mcp'"
+    ).fetchone()[0]
+    r.check(
+        mcp_tool_count > 0,
+        f"{mcp_tool_count} MCP-origin tool_calls recorded",
+        "no MCP-origin tool_calls recorded",
     )
 
-    # Expect at least: initialize, tools/list, and several tools/call.
-    mcp_methods = conn.execute(
-        "SELECT DISTINCT method FROM mcp_calls"
-    ).fetchall()
-    methods = {row["method"] for row in mcp_methods}
-    r.check(
-        "initialize" in methods,
-        "MCP initialize logged",
-        "MCP initialize NOT logged",
-    )
-    r.check(
-        "tools/list" in methods,
-        "MCP tools/list logged",
-        "MCP tools/list NOT logged",
-    )
-    r.check(
-        "tools/call" in methods,
-        "MCP tools/call logged",
-        "MCP tools/call NOT logged",
-    )
-
-    # fetch_http tool calls (logged as builtin__fetch_http).
     fetch_calls = conn.execute(
-        "SELECT COUNT(*) FROM mcp_calls WHERE tool_name LIKE '%fetch_http%'"
+        "SELECT COUNT(*) FROM tool_calls"
+        " WHERE origin = 'mcp' AND tool_name LIKE '%fetch_http%'"
     ).fetchone()[0]
     r.check(
         fetch_calls >= 2,
-        f"{fetch_calls} fetch_http MCP calls (allowed + blocked)",
-        f"only {fetch_calls} fetch_http calls (expected >= 2)",
+        f"{fetch_calls} fetch_http tool calls (allowed + blocked)",
+        f"only {fetch_calls} fetch_http tool calls (expected >= 2)",
     )
 
-    # Blocked-domain tests return isError in the MCP result (not a JSON-RPC
-    # error), so the gateway logs them as "allowed".  Verify the response
-    # preview contains "blocked" for at least one call.
     blocked_in_preview = conn.execute(
-        "SELECT COUNT(*) FROM mcp_calls"
-        " WHERE response_preview LIKE '%blocked%'"
-        "    OR response_preview LIKE '%isError%'"
+        "SELECT COUNT(*) FROM tool_calls"
+        " WHERE origin = 'mcp'"
+        "   AND (response_preview LIKE '%blocked%' OR response_preview LIKE '%isError%')"
     ).fetchone()[0]
     r.check(
         blocked_in_preview >= 1,
-        f"{blocked_in_preview} MCP calls with blocked-domain responses",
-        "no MCP responses mention blocking (capsem-doctor blocked tests may have failed)",
+        f"{blocked_in_preview} tool calls with blocked-domain responses",
+        "no tool call responses mention blocking (capsem-doctor blocked tests may have failed)",
     )
 
-    # Bug 2: MCP data completeness -- request_preview must not be truncated
     preview_rows = conn.execute(
-        "SELECT id, request_preview FROM mcp_calls WHERE method='tools/call'"
+        "SELECT id, request_preview FROM tool_calls WHERE origin = 'mcp'"
     ).fetchall()
-    bad_previews = [row["id"] for row in preview_rows
-                    if not row["request_preview"] or len(row["request_preview"]) <= 10]
+    bad_previews = [
+        row["id"]
+        for row in preview_rows
+        if not row["request_preview"] or len(row["request_preview"]) <= 10
+    ]
     r.check(
         len(bad_previews) == 0,
-        f"all {len(preview_rows)} mcp tools/call have meaningful request_preview",
-        f"{len(bad_previews)} mcp tools/call have empty/tiny request_preview (ids: {bad_previews[:5]})",
+        f"all {len(preview_rows)} MCP-origin tool_calls have meaningful request_preview",
+        f"{len(bad_previews)} MCP-origin tool_calls have empty/tiny request_preview (ids: {bad_previews[:5]})",
     )
 
-    # Bug 2: bytes tracking
     mcp_with_bytes = conn.execute(
-        "SELECT COUNT(*) FROM mcp_calls WHERE method='tools/call' AND bytes_sent > 0"
+        "SELECT COUNT(*) FROM tool_calls WHERE origin = 'mcp' AND bytes_sent > 0"
     ).fetchone()[0]
     r.check(
         mcp_with_bytes > 0,
-        f"{mcp_with_bytes} mcp tools/call have bytes_sent > 0",
-        "no mcp tools/call with bytes_sent -- byte tracking broken",
+        f"{mcp_with_bytes} MCP-origin tool_calls have bytes_sent > 0",
+        "no MCP-origin tool_calls with bytes_sent -- byte tracking broken",
     )
 
     # Bug 3: builtin HTTP in net_events
@@ -693,12 +680,13 @@ def verify_session(session_id: str) -> bool:
 
     # Bug 4: process_name
     bad_proc = conn.execute(
-        "SELECT COUNT(*) FROM mcp_calls WHERE process_name = 'MainThread'"
+        "SELECT COUNT(*) FROM tool_calls"
+        " WHERE origin = 'mcp' AND process_name = 'MainThread'"
     ).fetchone()[0]
     r.check(
         bad_proc == 0,
-        "no mcp_calls with process_name='MainThread'",
-        f"{bad_proc} mcp_calls have process_name='MainThread'",
+        "no MCP-origin tool_calls with process_name='MainThread'",
+        f"{bad_proc} MCP-origin tool_calls have process_name='MainThread'",
     )
 
     # ── model_calls ──────────────────────────────────────────────────
@@ -810,16 +798,16 @@ def verify_session(session_id: str) -> bool:
                 "main.db total_requests = 0 (rollup failed)",
             )
             r.check(
-                row["total_mcp_calls"] > 0,
-                f"main.db total_mcp_calls = {row['total_mcp_calls']}",
-                "main.db total_mcp_calls = 0 (rollup failed)",
+                row["total_tool_calls"] > 0,
+                f"main.db total_tool_calls = {row['total_tool_calls']}",
+                "main.db total_tool_calls = 0 (rollup failed)",
             )
 
             # Cross-check: main.db rollup matches session.db actuals.
             sconn = sqlite3.connect(str(SESSIONS_DIR / session_id / "session.db"))
             actual_fs = sconn.execute("SELECT COUNT(*) FROM fs_events").fetchone()[0]
             actual_net = sconn.execute("SELECT COUNT(*) FROM net_events").fetchone()[0]
-            actual_mcp = sconn.execute("SELECT COUNT(*) FROM mcp_calls").fetchone()[0]
+            actual_tools = sconn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0]
             sconn.close()
 
             r.check(
@@ -833,9 +821,9 @@ def verify_session(session_id: str) -> bool:
                 f"main.db total_requests ({row['total_requests']}) != session.db ({actual_net})",
             )
             r.check(
-                row["total_mcp_calls"] == actual_mcp,
-                f"main.db total_mcp_calls ({row['total_mcp_calls']}) matches session.db ({actual_mcp})",
-                f"main.db total_mcp_calls ({row['total_mcp_calls']}) != session.db ({actual_mcp})",
+                row["total_tool_calls"] == actual_tools,
+                f"main.db total_tool_calls ({row['total_tool_calls']}) matches session.db ({actual_tools})",
+                f"main.db total_tool_calls ({row['total_tool_calls']}) != session.db ({actual_tools})",
             )
         else:
             r.fail(f"session {session_id} not found in main.db")

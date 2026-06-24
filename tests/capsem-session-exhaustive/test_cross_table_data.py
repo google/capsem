@@ -42,16 +42,11 @@ class TestCrossTableForeignKeys:
         )
 
     def test_mcp_origin_tool_calls_fk(self, exhaust_db):
-        """MCP-origin tool_calls may carry an optional protocol-row link."""
-        orphans = exhaust_db.execute("""
-            SELECT tc.id, tc.mcp_call_id FROM tool_calls tc
-            WHERE tc.origin = 'mcp'
-            AND tc.mcp_call_id IS NOT NULL
-            AND tc.mcp_call_id NOT IN (SELECT id FROM mcp_calls)
-        """).fetchall()
-        assert len(orphans) == 0, (
-            f"MCP tool_calls with invalid mcp_call_id: {[dict(r) for r in orphans]}"
-        )
+        """MCP-origin tool_calls are the protocol evidence; no side table exists."""
+        rows = exhaust_db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='mcp_calls'"
+        ).fetchall()
+        assert rows == []
 
     def test_all_tables_have_id_column(self, exhaust_db):
         """All session.db tables have an 'id' primary key column."""

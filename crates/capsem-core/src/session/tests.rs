@@ -56,7 +56,6 @@ fn sample_record(id: &str, status: &str) -> SessionRecord {
         total_output_tokens: 0,
         total_estimated_cost: 0.0,
         total_tool_calls: 0,
-        total_mcp_calls: 0,
         total_file_events: 0,
         compressed_size_bytes: None,
         vacuumed_at: None,
@@ -625,7 +624,6 @@ fn new_columns_default_to_zero() {
     assert_eq!(records[0].total_output_tokens, 0);
     assert_eq!(records[0].total_estimated_cost, 0.0);
     assert_eq!(records[0].total_tool_calls, 0);
-    assert_eq!(records[0].total_mcp_calls, 0);
     assert_eq!(records[0].total_file_events, 0);
 }
 
@@ -636,14 +634,13 @@ fn update_session_summary_works() {
     let idx = SessionIndex::open_in_memory().unwrap();
     idx.create_session(&sample_record("20260225-143052-a7f3", "running"))
         .unwrap();
-    idx.update_session_summary("20260225-143052-a7f3", 1000, 500, 0.15, 42, 5, 100)
+    idx.update_session_summary("20260225-143052-a7f3", 1000, 500, 0.15, 42, 100)
         .unwrap();
     let records = idx.recent(1).unwrap();
     assert_eq!(records[0].total_input_tokens, 1000);
     assert_eq!(records[0].total_output_tokens, 500);
     assert!((records[0].total_estimated_cost - 0.15).abs() < 1e-6);
     assert_eq!(records[0].total_tool_calls, 42);
-    assert_eq!(records[0].total_mcp_calls, 5);
     assert_eq!(records[0].total_file_events, 100);
 }
 
@@ -666,7 +663,6 @@ fn global_stats_multi_session() {
     r1.total_output_tokens = 500;
     r1.total_estimated_cost = 0.10;
     r1.total_tool_calls = 20;
-    r1.total_mcp_calls = 3;
     r1.total_file_events = 50;
     r1.total_requests = 10;
     r1.allowed_requests = 8;
@@ -679,7 +675,6 @@ fn global_stats_multi_session() {
     r2.total_output_tokens = 1000;
     r2.total_estimated_cost = 0.20;
     r2.total_tool_calls = 30;
-    r2.total_mcp_calls = 7;
     r2.total_file_events = 25;
     r2.total_requests = 5;
     r2.allowed_requests = 4;
@@ -692,7 +687,6 @@ fn global_stats_multi_session() {
     assert_eq!(gs.total_output_tokens, 1500);
     assert!((gs.total_estimated_cost - 0.30).abs() < 1e-6);
     assert_eq!(gs.total_tool_calls, 50);
-    assert_eq!(gs.total_mcp_calls, 10);
     assert_eq!(gs.total_file_events, 75);
     assert_eq!(gs.total_requests, 15);
     assert_eq!(gs.total_allowed, 12);
@@ -895,7 +889,6 @@ fn schema_upgrade_from_v4_preserves_data() {
             total_output_tokens INTEGER NOT NULL DEFAULT 0,
             total_estimated_cost REAL NOT NULL DEFAULT 0.0,
             total_tool_calls INTEGER NOT NULL DEFAULT 0,
-            total_mcp_calls INTEGER NOT NULL DEFAULT 0,
             total_file_events INTEGER NOT NULL DEFAULT 0,
             compressed_size_bytes INTEGER,
             vacuumed_at TEXT,
@@ -958,7 +951,6 @@ fn schema_upgrade_from_v2_preserves_data() {
             total_output_tokens INTEGER NOT NULL DEFAULT 0,
             total_estimated_cost REAL NOT NULL DEFAULT 0.0,
             total_tool_calls INTEGER NOT NULL DEFAULT 0,
-            total_mcp_calls INTEGER NOT NULL DEFAULT 0,
             total_file_events INTEGER NOT NULL DEFAULT 0
         );
         CREATE TABLE ai_usage (session_id TEXT, provider TEXT, call_count INTEGER DEFAULT 0, input_tokens INTEGER DEFAULT 0, output_tokens INTEGER DEFAULT 0, estimated_cost REAL DEFAULT 0.0, total_duration_ms INTEGER DEFAULT 0, PRIMARY KEY (session_id, provider));

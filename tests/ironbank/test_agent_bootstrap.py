@@ -40,7 +40,6 @@ EXPECTED_EXEC_COLUMNS = {
     "stdout_bytes",
     "stderr_bytes",
     "source",
-    "mcp_call_id",
     "trace_id",
     "process_name",
     "pid",

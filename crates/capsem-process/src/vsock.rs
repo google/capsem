@@ -464,7 +464,6 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                                 exec_id: id,
                                 command: command.clone(),
                                 source: "api".into(),
-                                mcp_call_id: None,
                                 trace_id,
                                 process_name: None,
                                 credential_ref: None,

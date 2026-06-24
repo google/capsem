@@ -317,7 +317,12 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
             }
 
             with closing(_connect_session_db(service, session_id)) as conn:
-                before_protocol_rows = conn.execute("SELECT COUNT(*) FROM mcp_calls").fetchone()[0]
+                assert "mcp_calls" not in {
+                    row["name"]
+                    for row in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    ).fetchall()
+                }
                 before_tool_rows = conn.execute(
                     "SELECT COUNT(*) FROM tool_calls WHERE origin = 'mcp'"
                 ).fetchone()[0]
@@ -340,7 +345,7 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
             timeline = _json_tool_result(
                 mcp.call_tool(
                     "capsem_timeline",
-                    {"id": session_id, "layers": "exec,fs,mcp", "limit": 50},
+                    {"id": session_id, "layers": "exec,fs,tool", "limit": 50},
                 )
             )
             assert set(timeline) == {"columns", "rows"}
@@ -349,7 +354,7 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
             assert any(row["layer"] == "exec" and nonce in row["summary"] for row in timeline_rows)
             assert any(row["layer"] == "fs" and guest_path in row["summary"] for row in timeline_rows)
             assert any(
-                row["layer"] == "mcp" and "http_headers" in row["summary"]
+                row["layer"] == "tool" and "http_headers" in row["summary"]
                 for row in timeline_rows
             )
 
@@ -382,7 +387,6 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
                     lambda rows: len(rows) == before_tool_rows + 1,
                 )
                 assert len(tool_rows) == before_tool_rows + 1
-                assert conn.execute("SELECT COUNT(*) FROM mcp_calls").fetchone()[0] == before_protocol_rows
                 tool_row = tool_rows[-1]
                 _assert_event_id(tool_row["event_id"])
                 assert tool_row["server_name"] == "local"

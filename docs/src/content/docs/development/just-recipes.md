@@ -67,8 +67,9 @@ LIMIT 20;"
 just query-session "
 SELECT m.event_id, m.server_name, m.method, m.tool_name, m.decision,
        s.rule_id, s.rule_action, s.detection_level
-FROM mcp_calls m
-JOIN security_rule_events s ON s.event_id = m.event_id
+FROM tool_calls m
+LEFT JOIN security_rule_events s ON s.event_id = m.event_id
+WHERE m.origin = 'mcp'
 ORDER BY m.id DESC
 LIMIT 20;"
 ```

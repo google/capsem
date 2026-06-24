@@ -91,7 +91,7 @@ pub const CREATE_SCHEMA: &str = "
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         event_id TEXT NOT NULL CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask')),
-        source_table TEXT NOT NULL CHECK (source_table IN ('net_events', 'model_calls', 'tool_calls', 'mcp_calls')),
+        source_table TEXT NOT NULL CHECK (source_table IN ('net_events', 'model_calls', 'tool_calls')),
         direction TEXT NOT NULL CHECK (direction IN ('request', 'response')),
         content_type TEXT,
         original_bytes INTEGER NOT NULL CHECK (original_bytes >= 0),
@@ -123,7 +123,6 @@ pub const CREATE_SCHEMA: &str = "
         arguments TEXT,
         response_preview TEXT,
         origin TEXT NOT NULL DEFAULT 'native',
-        mcp_call_id INTEGER,
         server_name TEXT,
         method TEXT,
         request_id TEXT,
@@ -190,34 +189,6 @@ pub const CREATE_SCHEMA: &str = "
     CREATE INDEX IF NOT EXISTS idx_model_items_provider_path_model
         ON model_items(provider, path, model);
 
-    CREATE TABLE IF NOT EXISTS mcp_calls (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
-        timestamp TEXT NOT NULL,
-        server_name TEXT NOT NULL,
-        method TEXT NOT NULL,
-        tool_name TEXT,
-        request_id TEXT,
-        request_preview TEXT,
-        response_preview TEXT,
-        decision TEXT NOT NULL,
-        duration_ms INTEGER DEFAULT 0,
-        error_message TEXT,
-        process_name TEXT,
-        bytes_sent INTEGER DEFAULT 0,
-        bytes_received INTEGER DEFAULT 0,
-        policy_mode TEXT,
-        policy_action TEXT,
-        policy_rule TEXT,
-        policy_reason TEXT,
-        trace_id TEXT,
-        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_mcp_calls_server
-        ON mcp_calls(server_name);
-    CREATE INDEX IF NOT EXISTS idx_mcp_calls_timestamp
-        ON mcp_calls(timestamp);
     CREATE INDEX IF NOT EXISTS idx_tool_calls_call_id
         ON tool_calls(call_id);
     CREATE INDEX IF NOT EXISTS idx_tool_responses_call_id
@@ -254,7 +225,6 @@ pub const CREATE_SCHEMA: &str = "
         stdout_bytes INTEGER DEFAULT 0,
         stderr_bytes INTEGER DEFAULT 0,
         source TEXT NOT NULL DEFAULT 'api',
-        mcp_call_id INTEGER,
         trace_id TEXT,
         process_name TEXT,
         pid INTEGER,
@@ -511,7 +481,6 @@ fn rebuild_tool_calls_nullable_model_call(conn: &Connection) {
             arguments TEXT,
             response_preview TEXT,
             origin TEXT NOT NULL DEFAULT 'native',
-            mcp_call_id INTEGER,
             server_name TEXT,
             method TEXT,
             request_id TEXT,
@@ -530,14 +499,14 @@ fn rebuild_tool_calls_nullable_model_call(conn: &Connection) {
         );
         INSERT INTO tool_calls_new (
             id, event_id, timestamp, model_call_id, provider, status, call_index, call_id,
-            tool_name, arguments, response_preview, origin, mcp_call_id, server_name, method,
+            tool_name, arguments, response_preview, origin, server_name, method,
             request_id, decision, duration_ms, error_message, process_name, bytes_sent,
             bytes_received, policy_mode, policy_action, policy_rule, policy_reason,
             trace_id, credential_ref
         )
         SELECT
             id, event_id, timestamp, model_call_id, provider, status, call_index, call_id,
-            tool_name, arguments, response_preview, origin, mcp_call_id, server_name, method,
+            tool_name, arguments, response_preview, origin, server_name, method,
             request_id, decision, duration_ms, error_message, process_name, bytes_sent,
             bytes_received, policy_mode, policy_action, policy_rule, policy_reason,
             trace_id, credential_ref
@@ -560,7 +529,7 @@ fn rebuild_event_body_blobs_source_check(conn: &Connection) {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             event_id TEXT NOT NULL CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
             event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask')),
-            source_table TEXT NOT NULL CHECK (source_table IN ('net_events', 'model_calls', 'tool_calls', 'mcp_calls')),
+            source_table TEXT NOT NULL CHECK (source_table IN ('net_events', 'model_calls', 'tool_calls')),
             direction TEXT NOT NULL CHECK (direction IN ('request', 'response')),
             content_type TEXT,
             original_bytes INTEGER NOT NULL CHECK (original_bytes >= 0),
@@ -597,41 +566,14 @@ pub fn migrate(conn: &Connection) {
         "CREATE INDEX IF NOT EXISTS idx_model_calls_trace_id ON model_calls(trace_id)",
         [],
     );
-    // Add mcp_calls table if not present (for DBs created before this feature).
-    let _ = conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS mcp_calls (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp TEXT NOT NULL,
-            server_name TEXT NOT NULL,
-            method TEXT NOT NULL,
-            tool_name TEXT,
-            request_id TEXT,
-            request_preview TEXT,
-            response_preview TEXT,
-            decision TEXT NOT NULL,
-            duration_ms INTEGER DEFAULT 0,
-            error_message TEXT,
-            process_name TEXT,
-            bytes_sent INTEGER DEFAULT 0,
-            bytes_received INTEGER DEFAULT 0,
-            policy_mode TEXT,
-            policy_action TEXT,
-            policy_rule TEXT,
-            policy_reason TEXT,
-            trace_id TEXT
-        );
-        CREATE INDEX IF NOT EXISTS idx_mcp_calls_server ON mcp_calls(server_name);
-        CREATE INDEX IF NOT EXISTS idx_mcp_calls_timestamp ON mcp_calls(timestamp);",
-    );
     // Replace cache_read_tokens with usage_details TEXT column.
     // SQLite doesn't support DROP COLUMN before 3.35, so just add the new one.
     let _ = conn.execute("ALTER TABLE model_calls ADD COLUMN usage_details TEXT", []);
-    // Add origin + mcp_call_id columns to tool_calls (for DBs created before this feature).
+    // Add unified tool ledger columns to tool_calls (for DBs created before this feature).
     let _ = conn.execute(
         "ALTER TABLE tool_calls ADD COLUMN origin TEXT NOT NULL DEFAULT 'native'",
         [],
     );
-    let _ = conn.execute("ALTER TABLE tool_calls ADD COLUMN mcp_call_id INTEGER", []);
     let _ = conn.execute(
         "ALTER TABLE tool_calls ADD COLUMN event_id TEXT NOT NULL DEFAULT '000000000000' CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]')",
         [],
@@ -682,20 +624,6 @@ pub fn migrate(conn: &Connection) {
     let _ = conn.execute("ALTER TABLE tool_calls ADD COLUMN policy_rule TEXT", []);
     let _ = conn.execute("ALTER TABLE tool_calls ADD COLUMN policy_reason TEXT", []);
     rebuild_tool_calls_nullable_model_call(conn);
-    // Add bytes_sent/bytes_received to mcp_calls (for DBs created before this feature).
-    let _ = conn.execute(
-        "ALTER TABLE mcp_calls ADD COLUMN bytes_sent INTEGER DEFAULT 0",
-        [],
-    );
-    let _ = conn.execute(
-        "ALTER TABLE mcp_calls ADD COLUMN bytes_received INTEGER DEFAULT 0",
-        [],
-    );
-    // Add policy decision metadata to mcp_calls (for DBs created before T2).
-    let _ = conn.execute("ALTER TABLE mcp_calls ADD COLUMN policy_mode TEXT", []);
-    let _ = conn.execute("ALTER TABLE mcp_calls ADD COLUMN policy_action TEXT", []);
-    let _ = conn.execute("ALTER TABLE mcp_calls ADD COLUMN policy_rule TEXT", []);
-    let _ = conn.execute("ALTER TABLE mcp_calls ADD COLUMN policy_reason TEXT", []);
     // Add policy decision metadata to net_events for security rule HTTP/DNS audit.
     let _ = conn.execute("ALTER TABLE net_events ADD COLUMN policy_mode TEXT", []);
     let _ = conn.execute("ALTER TABLE net_events ADD COLUMN policy_action TEXT", []);
@@ -739,7 +667,7 @@ pub fn migrate(conn: &Connection) {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             event_id TEXT NOT NULL CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
             event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask')),
-            source_table TEXT NOT NULL CHECK (source_table IN ('net_events', 'model_calls', 'tool_calls', 'mcp_calls')),
+            source_table TEXT NOT NULL CHECK (source_table IN ('net_events', 'model_calls', 'tool_calls')),
             direction TEXT NOT NULL CHECK (direction IN ('request', 'response')),
             content_type TEXT,
             original_bytes INTEGER NOT NULL CHECK (original_bytes >= 0),
@@ -786,7 +714,6 @@ pub fn migrate(conn: &Connection) {
             stdout_bytes INTEGER DEFAULT 0,
             stderr_bytes INTEGER DEFAULT 0,
             source TEXT NOT NULL DEFAULT 'api',
-            mcp_call_id INTEGER,
             trace_id TEXT,
             process_name TEXT,
             pid INTEGER
@@ -869,7 +796,6 @@ pub fn migrate(conn: &Connection) {
     // pre-date W4's trace propagation; downstream queries handle that
     // gracefully (`WHERE trace_id = ? OR trace_id IS NULL`).
     for tbl in [
-        "mcp_calls",
         "net_events",
         "fs_events",
         "tool_calls",
@@ -886,7 +812,6 @@ pub fn migrate(conn: &Connection) {
     for tbl in [
         "net_events",
         "model_calls",
-        "mcp_calls",
         "fs_events",
         "exec_events",
         "tool_responses",
@@ -908,7 +833,6 @@ pub fn migrate(conn: &Connection) {
     for tbl in [
         "net_events",
         "model_calls",
-        "mcp_calls",
         "fs_events",
         "exec_events",
         "dns_events",
@@ -1117,29 +1041,6 @@ mod tests {
     }
 
     #[test]
-    fn migrate_mcp_calls_idempotent() {
-        let conn = Connection::open_in_memory().unwrap();
-        create_tables(&conn).unwrap();
-        migrate(&conn);
-        migrate(&conn);
-        // Verify mcp_calls table exists.
-        conn.execute(
-            "INSERT INTO mcp_calls (timestamp, server_name, method, decision)
-             VALUES ('2024-01-01T00:00:00Z', 'github', 'tools/list', 'allowed')",
-            [],
-        )
-        .unwrap();
-        let server: String = conn
-            .query_row(
-                "SELECT server_name FROM mcp_calls WHERE server_name = 'github'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(server, "github");
-    }
-
-    #[test]
     fn create_tables_includes_fs_events() {
         let conn = Connection::open_in_memory().unwrap();
         create_tables(&conn).unwrap();
@@ -1187,7 +1088,7 @@ mod tests {
         create_tables(&conn).unwrap();
         migrate(&conn);
         migrate(&conn);
-        // Verify origin and mcp_call_id columns exist by inserting a row.
+        // Verify origin/server/method columns exist by inserting one unified MCP-origin row.
         conn.execute(
             "INSERT INTO model_calls (timestamp, provider, method, path)
              VALUES ('2024-01-01T00:00:00Z', 'test', 'POST', '/v1')",
@@ -1196,8 +1097,9 @@ mod tests {
         .unwrap();
         let mc_id = conn.last_insert_rowid();
         conn.execute(
-            "INSERT INTO tool_calls (model_call_id, call_index, call_id, tool_name, origin, mcp_call_id)
-             VALUES (?1, 0, 'call_01', 'fetch_http', 'mcp', NULL)",
+            "INSERT INTO tool_calls (
+                model_call_id, call_index, call_id, tool_name, origin, server_name, method
+             ) VALUES (?1, 0, 'call_01', 'fetch_http', 'mcp', 'local', 'tools/call')",
             [mc_id],
         )
         .unwrap();
@@ -1263,7 +1165,7 @@ mod tests {
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 event_id TEXT NOT NULL CHECK (length(event_id) = 12),
                 event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call')),
-                source_table TEXT NOT NULL CHECK (source_table IN ('net_events', 'model_calls', 'mcp_calls')),
+                source_table TEXT NOT NULL CHECK (source_table IN ('net_events', 'model_calls')),
                 direction TEXT NOT NULL CHECK (direction IN ('request', 'response')),
                 content_type TEXT,
                 original_bytes INTEGER NOT NULL CHECK (original_bytes >= 0),
@@ -1314,7 +1216,6 @@ mod tests {
         for table in [
             "net_events",
             "model_calls",
-            "mcp_calls",
             "fs_events",
             "exec_events",
             "dns_events",
@@ -1345,7 +1246,6 @@ mod tests {
         for table in [
             "net_events",
             "model_calls",
-            "mcp_calls",
             "fs_events",
             "exec_events",
             "dns_events",
@@ -1808,61 +1708,6 @@ mod tests {
         apply_reader_pragmas(&conn).unwrap();
     }
 
-    #[test]
-    fn migrate_mcp_calls_bytes_idempotent() {
-        let conn = Connection::open_in_memory().unwrap();
-        create_tables(&conn).unwrap();
-        migrate(&conn);
-        migrate(&conn);
-        // Verify bytes_sent/bytes_received columns exist.
-        conn.execute(
-            "INSERT INTO mcp_calls (timestamp, server_name, method, decision, bytes_sent, bytes_received)
-             VALUES ('2026-01-01T00:00:00Z', 'test', 'tools/list', 'allowed', 1024, 2048)",
-            [],
-        )
-        .unwrap();
-        let (sent, recv): (i64, i64) = conn
-            .query_row(
-                "SELECT bytes_sent, bytes_received FROM mcp_calls WHERE server_name = 'test'",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .unwrap();
-        assert_eq!(sent, 1024);
-        assert_eq!(recv, 2048);
-    }
-
-    #[test]
-    fn migrate_mcp_calls_policy_fields_idempotent() {
-        let conn = Connection::open_in_memory().unwrap();
-        create_tables(&conn).unwrap();
-        migrate(&conn);
-        migrate(&conn);
-        conn.execute(
-            "INSERT INTO mcp_calls (
-                timestamp, server_name, method, decision,
-                policy_mode, policy_action, policy_rule, policy_reason
-             )
-             VALUES (
-                '2026-01-01T00:00:00Z', 'github', 'tools/list', 'allowed',
-                'audit_only', 'deny', 'mcp.tool.github__delete_repo', 'local policy block'
-             )",
-            [],
-        )
-        .unwrap();
-        let (mode, action, rule, reason): (String, String, String, String) = conn
-            .query_row(
-                "SELECT policy_mode, policy_action, policy_rule, policy_reason
-                 FROM mcp_calls WHERE server_name = 'github'",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-            )
-            .unwrap();
-        assert_eq!(mode, "audit_only");
-        assert_eq!(action, "deny");
-        assert_eq!(rule, "mcp.tool.github__delete_repo");
-        assert_eq!(reason, "local policy block");
-    }
 
     #[test]
     fn create_tables_keeps_snapshots_out_of_session_db() {

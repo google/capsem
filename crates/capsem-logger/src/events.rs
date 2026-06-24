@@ -679,7 +679,6 @@ pub struct ExecEvent {
     pub command: String,
     /// Request origin: "mcp", "cli", "api", "frontend".
     pub source: String,
-    pub mcp_call_id: Option<u64>,
     pub trace_id: Option<String>,
     pub process_name: Option<String>,
     #[serde(default)]

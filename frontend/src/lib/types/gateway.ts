@@ -37,7 +37,6 @@ export interface VmSummary {
   total_output_tokens?: number;
   total_estimated_cost?: number;
   total_tool_calls?: number;
-  total_mcp_calls?: number;
   total_requests?: number;
   allowed_requests?: number;
   denied_requests?: number;
@@ -79,7 +78,6 @@ export interface SandboxInfo {
   total_output_tokens?: number;
   total_estimated_cost?: number;
   total_tool_calls?: number;
-  total_mcp_calls?: number;
   total_requests?: number;
   allowed_requests?: number;
   denied_requests?: number;
@@ -208,7 +206,6 @@ export interface GlobalStats {
   total_output_tokens: number;
   total_estimated_cost: number;
   total_tool_calls: number;
-  total_mcp_calls: number;
   total_file_events: number;
   total_requests: number;
   total_allowed: number;
@@ -231,7 +228,6 @@ export interface SessionRecord {
   total_output_tokens: number;
   total_estimated_cost: number;
   total_tool_calls: number;
-  total_mcp_calls: number;
   total_file_events: number;
   compressed_size_bytes: number | null;
   vacuumed_at: string | null;

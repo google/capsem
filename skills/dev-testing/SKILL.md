@@ -389,8 +389,11 @@ MCP tools are for fast, targeted checks during development. Just recipes are for
 -- Check network events for a domain
 SELECT * FROM net_events WHERE domain LIKE '%example%' ORDER BY timestamp DESC LIMIT 10;
 
--- Verify MCP tool calls were logged
-SELECT server_name, tool_name, decision, duration_ms FROM mcp_calls ORDER BY timestamp DESC;
+-- Verify MCP-origin tool calls were logged
+SELECT server_name, tool_name, decision, duration_ms
+FROM tool_calls
+WHERE origin = 'mcp'
+ORDER BY timestamp DESC;
 
 -- Check model API calls
 SELECT provider, model, status_code, duration_ms FROM model_calls ORDER BY timestamp DESC;
@@ -404,7 +407,7 @@ SELECT operation, path, success FROM fs_events ORDER BY timestamp DESC LIMIT 20;
 After any change touching guest binaries, network policy, telemetry, MCP, or VM lifecycle:
 
 1. `just run "capsem-doctor"` -- verifies sandbox integrity inside the VM
-2. After telemetry/logging changes: run a real session and verify with `just inspect-session` that all 6 tables (net_events, model_calls, tool_calls, tool_responses, mcp_calls, fs_events) are populated correctly
+2. After telemetry/logging changes: run a real session and verify with `just inspect-session` that net_events, model_calls, tool_calls, tool_responses, fs_events, dns_events, and security_rule_events are populated correctly for the exercised protocols
 
 ## When tests fail
 

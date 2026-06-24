@@ -129,8 +129,6 @@ pub struct SessionInfo {
     #[serde(default)]
     pub total_tool_calls: Option<u64>,
     #[serde(default)]
-    pub total_mcp_calls: Option<u64>,
-    #[serde(default)]
     pub total_requests: Option<u64>,
     #[serde(default)]
     pub allowed_requests: Option<u64>,

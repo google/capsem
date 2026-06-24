@@ -978,70 +978,7 @@ fn insert_mcp_call(conn: &Connection, call: &McpCall) -> rusqlite::Result<()> {
         )?;
         return Ok(());
     }
-    conn.execute(
-        "INSERT INTO mcp_calls (
-            event_id, timestamp, server_name, method, tool_name, request_id,
-            request_preview, response_preview, decision,
-            duration_ms, error_message, process_name,
-            bytes_sent, bytes_received,
-            policy_mode, policy_action, policy_rule, policy_reason,
-            trace_id, credential_ref
-         )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
-        params![
-            event_id,
-            timestamp,
-            call.server_name,
-            call.method,
-            call.tool_name,
-            call.request_id,
-            req_preview,
-            resp_preview,
-            call.decision,
-            call.duration_ms as i64,
-            call.error_message,
-            call.process_name,
-            call.bytes_sent as i64,
-            call.bytes_received as i64,
-            call.policy_mode,
-            call.policy_action,
-            call.policy_rule,
-            call.policy_reason,
-            call.trace_id,
-            call.credential_ref,
-        ],
-    )?;
-    let event_type = if call.method == "tools/list" {
-        "mcp.tool_list"
-    } else if call.method == "tools/call" {
-        "mcp.tool_call"
-    } else {
-        "mcp.event"
-    };
-    insert_event_body_blob(
-        conn,
-        EventBodyBlob {
-            event_id: &event_id,
-            event_type,
-            source_table: "mcp_calls",
-            direction: "request",
-            content_type: Some("application/json"),
-            body: call.request_preview.as_deref(),
-            trace_id: call.trace_id.as_deref(),
-        },
-    )?;
-    insert_event_body_blob(
-        conn,
-        EventBodyBlob {
-            event_id: &event_id,
-            event_type,
-            source_table: "mcp_calls",
-            direction: "response",
-            content_type: Some("application/json"),
-            body: call.response_preview.as_deref(),
-            trace_id: call.trace_id.as_deref(),
-        },
-    )?;
+    let _ = (event_id, timestamp, req_preview, resp_preview);
     Ok(())
 }
 
@@ -1106,16 +1043,15 @@ fn insert_exec_event(conn: &Connection, event: &ExecEvent) -> rusqlite::Result<(
     let timestamp = format_timestamp(event.timestamp);
     conn.execute(
         "INSERT INTO exec_events (
-            event_id, timestamp, exec_id, command, source, mcp_call_id, trace_id, process_name, credential_ref
+            event_id, timestamp, exec_id, command, source, trace_id, process_name, credential_ref
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         params![
             event.event_id.clone().unwrap_or_else(new_event_id),
             timestamp,
             event.exec_id as i64,
             event.command,
             event.source,
-            event.mcp_call_id.map(|id| id as i64),
             event.trace_id,
             event.process_name,
             event.credential_ref,

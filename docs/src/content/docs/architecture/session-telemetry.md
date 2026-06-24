@@ -45,15 +45,6 @@ erDiagram
         text call_id
         text content_preview
     }
-    mcp_calls {
-        int id PK
-        text event_id
-        text server_name
-        text method
-        text tool_name
-        text decision
-        int duration_ms
-    }
     dns_events {
         int id PK
         text event_id
@@ -116,8 +107,6 @@ erDiagram
     net_events ||--o{ security_rule_events : "event_id"
     net_events ||--o{ event_body_blobs : "event_id"
     model_calls ||--o{ event_body_blobs : "event_id"
-    mcp_calls ||--o{ event_body_blobs : "event_id"
-    mcp_calls ||--o{ security_rule_events : "event_id"
     dns_events ||--o{ security_rule_events : "event_id"
     security_rule_events ||--o{ security_ask_events : "event_id"
 ```
@@ -193,16 +182,16 @@ AI provider API calls with parsed response metadata.
 
 ### event_body_blobs
 
-Full captured request and response bodies for HTTP, model, and MCP events. The
+Full captured request and response bodies for HTTP, model, and tool events. The
 primary protocol tables keep compact display fields for table scans; forensic
 body truth lives here and joins by `event_id` plus `direction`.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | INTEGER PK | Auto-increment |
-| `event_id` | TEXT | 12-hex event id from `net_events`, `model_calls`, or `mcp_calls` |
+| `event_id` | TEXT | 12-hex event id from `net_events`, `model_calls`, or `tool_calls` |
 | `event_type` | TEXT | Canonical event type such as `http.request`, `model.call`, or `mcp.tool_call` |
-| `source_table` | TEXT | `net_events`, `model_calls`, or `mcp_calls` |
+| `source_table` | TEXT | `net_events`, `model_calls`, or `tool_calls` |
 | `direction` | TEXT | `request` or `response` |
 | `content_type` | TEXT | MIME type or protocol content type, when known |
 | `original_bytes` | INTEGER | Full body byte count observed at the boundary |
@@ -221,8 +210,7 @@ and a blob disagree, the blob table is the ledger.
 
 Canonical product/security tool invocation ledger. One row per model-native,
 built-in/local, or MCP-origin tool invocation. User-facing tool counts, CEL tool
-evidence, and forensic tool activity start here; `mcp_calls` is only protocol
-transport evidence.
+evidence, and forensic tool activity start here.
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -233,7 +221,6 @@ transport evidence.
 | `tool_name` | TEXT | Tool name |
 | `arguments` | TEXT | JSON arguments |
 | `origin` | TEXT | `native`, `mcp`, `builtin`, `local`, or `mcp_proxy` |
-| `mcp_call_id` | INTEGER | Optional FK to `mcp_calls` when visible MCP transport evidence exists |
 | `trace_id` | TEXT | Cross-table correlation ID |
 
 ### tool_responses
@@ -247,36 +234,6 @@ Tool results from subsequent requests (matched by `call_id`).
 | `call_id` | TEXT | Matches `tool_calls.call_id` |
 | `content_preview` | TEXT | Truncated tool result |
 | `is_error` | INTEGER | Boolean: 1 if tool returned error |
-| `trace_id` | TEXT | Cross-table correlation ID |
-
-### mcp_calls
-
-MCP JSON-RPC transport evidence through the guest MCP relay and host MITM MCP
-endpoint (framed vsock:5002). This is not the user/security tool ledger. A
-`tools/call` row here must correlate to `tool_calls`; if it does not, the
-session has protocol evidence without canonical tool evidence and should be
-treated as a bug or detection signal.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | INTEGER PK | Auto-increment |
-| `timestamp` | TEXT | ISO 8601 |
-| `server_name` | TEXT | MCP server name (e.g. `builtin`, `github`) |
-| `method` | TEXT | JSON-RPC method (`tools/call`, `tools/list`, etc.) |
-| `tool_name` | TEXT | Tool name (for `tools/call`) |
-| `request_id` | TEXT | JSON-RPC request ID |
-| `request_preview` | TEXT | Compact display field; forensic body truth is in `event_body_blobs` |
-| `response_preview` | TEXT | Compact display field; forensic body truth is in `event_body_blobs` |
-| `decision` | TEXT | `allowed`, `denied`, `error` |
-| `duration_ms` | INTEGER | Call duration |
-| `error_message` | TEXT | Error details if failed |
-| `process_name` | TEXT | Guest process |
-| `bytes_sent` | INTEGER | Request size |
-| `bytes_received` | INTEGER | Response size |
-| `policy_mode` | TEXT | Transport-local policy mode hint, when set |
-| `policy_action` | TEXT | Denormalized transport hint; `security_rule_events.rule_action` is rule truth |
-| `policy_rule` | TEXT | Denormalized transport hint; `security_rule_events.rule_id` is rule truth |
-| `policy_reason` | TEXT | Denormalized transport hint; `security_rule_events.rule_json` is rule truth |
 | `trace_id` | TEXT | Cross-table correlation ID |
 
 ### dns_events
@@ -363,7 +320,6 @@ Commands executed through Capsem service APIs and MCP tools.
 | `stdout_bytes` | INTEGER | Full stdout byte count |
 | `stderr_bytes` | INTEGER | Full stderr byte count |
 | `source` | TEXT | Source path, usually `api` or MCP |
-| `mcp_call_id` | INTEGER | Related `mcp_calls.id`, when known |
 | `trace_id` | TEXT | Cross-table correlation ID |
 | `process_name` | TEXT | Guest process name, when known |
 | `pid` | INTEGER | Guest process ID, when known |
@@ -454,7 +410,7 @@ graph LR
 |---------|--------|----------|
 | `WriteOp::NetEvent` | MITM proxy | `net_events` |
 | `WriteOp::ModelCall` | MITM proxy (AI traffic) | `model_calls` + `tool_calls` + `tool_responses` |
-| `WriteOp::McpCall` | MITM MCP endpoint | `mcp_calls` |
+| `WriteOp::McpCall` | MITM MCP endpoint | `tool_calls` for `tools/call`; `security_rule_events` for protocol evidence |
 | `WriteOp::ExecEvent` / `ExecEventComplete` | Service exec path | `exec_events` |
 | `WriteOp::AuditEvent` | Guest audit stream | `audit_events` |
 | `WriteOp::FileEvent` | VirtioFS watcher | `fs_events` |
@@ -512,15 +468,16 @@ ORDER BY d.id DESC
 LIMIT 20;"
 ```
 
-### MCP Join
+### MCP-Origin Tool Join
 
 ```bash
 just query-session "
-SELECT m.event_id, m.server_name, m.method, m.tool_name, m.decision,
-       s.rule_id, s.rule_action, s.detection_level, m.error_message
-FROM mcp_calls m
-JOIN security_rule_events s ON s.event_id = m.event_id
-ORDER BY m.id DESC
+SELECT t.event_id, t.server_name, t.method, t.tool_name, t.decision,
+       s.rule_id, s.rule_action, s.detection_level, t.error_message
+FROM tool_calls t
+LEFT JOIN security_rule_events s ON s.event_id = t.event_id
+WHERE t.origin = 'mcp'
+ORDER BY t.id DESC
 LIMIT 20;"
 ```
 

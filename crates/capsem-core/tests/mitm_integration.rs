@@ -908,7 +908,7 @@ async fn mitm_proxy_plain_http_unknown_openai_shape_emits_model_call() {
 }
 
 #[tokio::test]
-async fn mitm_proxy_plain_http_unknown_mcp_shape_emits_mcp_call() {
+async fn mitm_proxy_plain_http_unknown_mcp_shape_emits_tool_call() {
     let req_body = br#"{"jsonrpc":"2.0","id":"call-1","method":"tools/call","params":{"name":"search_web","arguments":{"q":"capsem"}}}"#;
     let req_body_len = req_body.len();
 
@@ -968,12 +968,6 @@ async fn mitm_proxy_plain_http_unknown_mcp_shape_emits_mcp_call() {
     );
     assert_eq!(net_events[0].path.as_deref(), Some("/remote-mcp"));
 
-    let mcp_calls = reader.recent_mcp_calls(10).unwrap();
-    assert_eq!(
-        mcp_calls.len(),
-        0,
-        "MCP tools/call is a tool invocation and must not be duplicated in mcp_calls"
-    );
     let tool_calls = reader.recent_tool_calls(10).unwrap();
     assert_eq!(
         tool_calls.len(),
@@ -998,7 +992,7 @@ async fn mitm_proxy_plain_http_unknown_mcp_shape_emits_mcp_call() {
 }
 
 #[tokio::test]
-async fn mitm_proxy_plain_http_unknown_mcp_shape_can_be_blocked_by_mcp_rule() {
+async fn mitm_proxy_plain_http_unknown_mcp_tool_call_can_be_blocked_by_rule() {
     let req_body = br#"{"jsonrpc":"2.0","id":"call-2","method":"tools/call","params":{"name":"search_web","arguments":{"q":"capsem"}}}"#;
     let req_body_len = req_body.len();
 
@@ -1040,12 +1034,6 @@ match = 'mcp.tool_call.name == "search_web"'
     );
 
     let reader = db.reader().unwrap();
-    let mcp_calls = reader.recent_mcp_calls(10).unwrap();
-    assert_eq!(
-        mcp_calls.len(),
-        0,
-        "denied MCP tools/call must not be duplicated in mcp_calls"
-    );
     let tool_calls = reader.recent_tool_calls(10).unwrap();
     assert_eq!(
         tool_calls.len(),

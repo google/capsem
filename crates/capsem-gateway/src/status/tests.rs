@@ -220,7 +220,6 @@ fn test_vm(id: &str, name: Option<&str>, status: VmLifecycleState, persistent: b
         total_output_tokens: None,
         total_estimated_cost: None,
         total_tool_calls: None,
-        total_mcp_calls: None,
         total_requests: None,
         allowed_requests: None,
         denied_requests: None,
@@ -616,8 +615,6 @@ async fn fetch_status_passes_through_telemetry() {
     assert_eq!(vm.total_estimated_cost, Some(0.99));
     assert_eq!(vm.total_tool_calls, Some(10));
     assert_eq!(vm.model_call_count, Some(5));
-    // Fields not in JSON should be None
-    assert_eq!(vm.total_mcp_calls, None);
     assert_eq!(vm.total_file_events, None);
     h.abort();
 }

@@ -281,10 +281,15 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
             assert tool["permission_source"]
 
         conn = _connect_session_db(service.tmp_dir / "sessions", session_id)
+        assert "mcp_calls" not in {
+            row["name"]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
         for table in (
             "net_events",
             "dns_events",
-            "mcp_calls",
             "model_calls",
             "tool_calls",
             "fs_events",
@@ -450,12 +455,6 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
         assert tool_call["credential_ref"] == model_call["credential_ref"]
         assert tool_call["trace_id"] == model_call["trace_id"]
 
-        mcp_methods = {
-            row["method"]
-            for row in conn.execute("SELECT DISTINCT method FROM mcp_calls").fetchall()
-        }
-        assert {"initialize", "tools/list"}.issubset(mcp_methods)
-        assert "tools/call" not in mcp_methods
         mcp_call = _single(
             conn,
             "SELECT * FROM tool_calls WHERE origin = 'mcp' AND method = 'tools/call' ORDER BY id DESC LIMIT 1",

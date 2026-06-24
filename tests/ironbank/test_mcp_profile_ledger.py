@@ -242,7 +242,12 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
             assert mcp_http_tool == route_http_tool
 
             with _connect_session_db(service.tmp_dir / "sessions", session_id) as conn:
-                before_protocol_count = conn.execute("SELECT COUNT(*) FROM mcp_calls").fetchone()[0]
+                assert "mcp_calls" not in {
+                    row["name"]
+                    for row in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    ).fetchall()
+                }
                 before_tool_count = conn.execute(
                     "SELECT COUNT(*) FROM tool_calls WHERE origin = 'mcp'"
                 ).fetchone()[0]
@@ -282,7 +287,6 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
                 lambda rows: len(rows) == 1,
             )
             tool_row = tool_rows[0]
-            assert conn.execute("SELECT COUNT(*) FROM mcp_calls").fetchone()[0] == before_protocol_count
             assert (
                 conn.execute("SELECT COUNT(*) FROM tool_calls WHERE origin = 'mcp'").fetchone()[0]
                 == before_tool_count + 1

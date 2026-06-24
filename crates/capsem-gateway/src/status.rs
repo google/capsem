@@ -80,8 +80,6 @@ pub struct VmSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_tool_calls: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub total_mcp_calls: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub total_requests: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub allowed_requests: Option<u64>,
@@ -205,8 +203,6 @@ struct SessionInfo {
     #[serde(default)]
     total_tool_calls: Option<u64>,
     #[serde(default)]
-    total_mcp_calls: Option<u64>,
-    #[serde(default)]
     total_requests: Option<u64>,
     #[serde(default)]
     allowed_requests: Option<u64>,
@@ -275,7 +271,6 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
             total_output_tokens: sess.total_output_tokens,
             total_estimated_cost: sess.total_estimated_cost,
             total_tool_calls: sess.total_tool_calls,
-            total_mcp_calls: sess.total_mcp_calls,
             total_requests: sess.total_requests,
             allowed_requests: sess.allowed_requests,
             denied_requests: sess.denied_requests,
