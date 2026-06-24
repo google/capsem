@@ -235,6 +235,7 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         .route("/purge", post(proxy::handle_proxy))
         .route("/run", post(proxy::handle_proxy))
         .route("/stats", get(proxy::handle_proxy))
+        .route("/vms/{id}/stats/detail", get(proxy::handle_proxy))
         .route("/service-logs", get(proxy::handle_proxy))
         .route("/triage", get(proxy::handle_proxy))
         .route("/panics", get(proxy::handle_proxy))
@@ -671,6 +672,7 @@ mod tests {
             ("GET", "/vms/test-vm/history/processes"),
             ("GET", "/vms/test-vm/history/counts"),
             ("GET", "/vms/test-vm/history/transcript"),
+            ("GET", "/vms/test-vm/stats/detail"),
             ("GET", "/vms/test-vm/timeline"),
             ("POST", "/vms/test-vm/stop"),
             ("POST", "/vms/test-vm/pause"),

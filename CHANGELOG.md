@@ -74,6 +74,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Fixed the gateway route table so the Stats view can reach
+  `/vms/{id}/stats/detail` through the installed app instead of receiving a
+  404, and added a route-health gate that exercises the stats-detail contract
+  through both service and gateway.
 - Fixed profile shell bootstrap so fresh VMs keep `/opt/ai-clis/bin` on PATH
   ahead of durable `/usr/local/bin` and `/root/.local/bin`, restoring
   out-of-the-box Gemini, Codex, and global npm package-manager diagnostics.

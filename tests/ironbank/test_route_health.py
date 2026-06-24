@@ -761,6 +761,24 @@ def test_vm_session_lifecycle_routes_have_state_and_latency_budgets() -> None:
             for contract in (
                 RouteContract("GET", f"/vms/{source_id}/status", None, {"id", "status"}, dict),
                 RouteContract("GET", f"/vms/{source_id}/info", None, {"id", "status"}, dict),
+                RouteContract(
+                    "GET",
+                    f"/vms/{source_id}/stats/detail",
+                    None,
+                    {
+                        "model_stats",
+                        "model_events",
+                        "tool_events",
+                        "http_events",
+                        "dns_events",
+                        "file_events",
+                        "process_events",
+                        "audit_events",
+                        "credential_events",
+                        "body_blobs",
+                    },
+                    dict,
+                ),
                 RouteContract("GET", "/vms/list", None, {"sandboxes"}, dict),
             ):
                 timing = _measure_route(
