@@ -81,32 +81,6 @@ fn queue_binary_batch(
     }
 }
 
-async fn send_batch_to_process<W>(writer: &mut W, batch: TerminalRelayBatch) -> bool
-where
-    W: Sink<TungsteniteMessage> + Unpin,
-{
-    match batch {
-        TerminalRelayBatch::Text(text) => writer
-            .send(TungsteniteMessage::Text(text.into()))
-            .await
-            .is_ok(),
-        TerminalRelayBatch::Binary(bytes) => writer
-            .send(TungsteniteMessage::Binary(bytes.into()))
-            .await
-            .is_ok(),
-    }
-}
-
-async fn flush_batch_to_process<W>(writer: &mut W, pending: &mut Option<TerminalRelayBatch>) -> bool
-where
-    W: Sink<TungsteniteMessage> + Unpin,
-{
-    match pending.take() {
-        Some(batch) => send_batch_to_process(writer, batch).await,
-        None => true,
-    }
-}
-
 async fn send_batch_to_client<W>(writer: &mut W, batch: TerminalRelayBatch) -> bool
 where
     W: Sink<Message> + Unpin,
@@ -218,41 +192,28 @@ async fn handle_socket(mut client_ws: WebSocket, uds_path: PathBuf) {
     let (mut process_write, mut process_read) = process_ws.split();
 
     let mut c2p = tokio::spawn(async move {
-        let mut pending: Option<TerminalRelayBatch> = None;
         loop {
-            let msg = if pending.is_some() {
-                match timeout(TERMINAL_RELAY_BATCH_FLUSH, client_read.next()).await {
-                    Ok(msg) => msg,
-                    Err(_) => {
-                        if !flush_batch_to_process(&mut process_write, &mut pending).await {
-                            break;
-                        }
-                        continue;
-                    }
-                }
-            } else {
-                client_read.next().await
-            };
+            let msg = client_read.next().await;
             match msg {
                 Some(Ok(Message::Text(t))) => {
-                    let s: String = t.to_string();
-                    if let Some(batch) = queue_text_batch(&mut pending, s) {
-                        if !send_batch_to_process(&mut process_write, batch).await {
-                            break;
-                        }
+                    if process_write
+                        .send(TungsteniteMessage::Text(t.to_string().into()))
+                        .await
+                        .is_err()
+                    {
+                        break;
                     }
                 }
                 Some(Ok(Message::Binary(b))) => {
-                    if let Some(batch) = queue_binary_batch(&mut pending, b.to_vec()) {
-                        if !send_batch_to_process(&mut process_write, batch).await {
-                            break;
-                        }
+                    if process_write
+                        .send(TungsteniteMessage::Binary(b.to_vec().into()))
+                        .await
+                        .is_err()
+                    {
+                        break;
                     }
                 }
                 Some(Ok(Message::Ping(p))) => {
-                    if !flush_batch_to_process(&mut process_write, &mut pending).await {
-                        break;
-                    }
                     let vec = p.to_vec();
                     if process_write
                         .send(TungsteniteMessage::Ping(vec.into()))
@@ -263,9 +224,6 @@ async fn handle_socket(mut client_ws: WebSocket, uds_path: PathBuf) {
                     }
                 }
                 Some(Ok(Message::Pong(p))) => {
-                    if !flush_batch_to_process(&mut process_write, &mut pending).await {
-                        break;
-                    }
                     let vec = p.to_vec();
                     if process_write
                         .send(TungsteniteMessage::Pong(vec.into()))
@@ -276,9 +234,6 @@ async fn handle_socket(mut client_ws: WebSocket, uds_path: PathBuf) {
                     }
                 }
                 Some(Ok(Message::Close(c))) => {
-                    if !flush_batch_to_process(&mut process_write, &mut pending).await {
-                        break;
-                    }
                     let frame = c.map(|f| tokio_tungstenite::tungstenite::protocol::CloseFrame {
                         code: tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::from(f.code),
                         reason: f.reason.to_string().into(),
@@ -287,11 +242,9 @@ async fn handle_socket(mut client_ws: WebSocket, uds_path: PathBuf) {
                     break;
                 }
                 Some(Err(_)) => {
-                    let _ = flush_batch_to_process(&mut process_write, &mut pending).await;
                     break;
                 }
                 None => {
-                    let _ = flush_batch_to_process(&mut process_write, &mut pending).await;
                     break;
                 }
             }

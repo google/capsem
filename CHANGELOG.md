@@ -112,6 +112,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed TUI terminal responsiveness under bursty keyboard/paste input by
   bounding per-tick input draining and coalescing adjacent terminal bytes before
   websocket sends, matching the browser terminal's coalescing rail.
+- Fixed gateway terminal input relay latency by forwarding client keystrokes to
+  the VM immediately while preserving coalesced VM-output rendering.
 - Fixed Codex sandbox prerequisites in shipped profiles by adding Bubblewrap
   to profile-owned apt packages and capsem-doctor checks, preventing Codex from
   falling back to bundled sandbox helpers because `bwrap` is missing.

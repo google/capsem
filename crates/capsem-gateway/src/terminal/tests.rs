@@ -782,6 +782,41 @@ async fn websocket_relay_coalesces_process_text_bursts() {
 }
 
 #[tokio::test]
+async fn websocket_relay_forwards_single_client_input_without_batch_delay() {
+    let (tx, rx) = oneshot::channel::<Vec<u8>>();
+    let (url, mh, sh, _d) = ws_test_setup("c2p-low-latency-vm", move |uds| {
+        tokio::spawn(async move {
+            if let Ok((stream, _)) = uds.accept().await {
+                let ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+                let (_write, mut read) = ws.split();
+                while let Some(Ok(msg)) = read.next().await {
+                    if let TungsteniteMessage::Binary(bytes) = msg {
+                        let _ = tx.send(bytes.to_vec());
+                        break;
+                    }
+                }
+            }
+        })
+    })
+    .await;
+
+    let (mut ws, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+    ws.send(TungsteniteMessage::Binary(vec![b'a'].into()))
+        .await
+        .unwrap();
+
+    let relayed = tokio::time::timeout(TERMINAL_RELAY_BATCH_FLUSH / 2, rx)
+        .await
+        .expect("single terminal input must not wait for the relay batch flush interval")
+        .unwrap();
+    assert_eq!(relayed, vec![b'a']);
+
+    ws.send(TungsteniteMessage::Close(None)).await.ok();
+    mh.abort();
+    sh.abort();
+}
+
+#[tokio::test]
 async fn websocket_relay_coalesces_client_text_bursts() {
     const EXPECTED_BURST: &str = "cmd --flag value\r";
 
