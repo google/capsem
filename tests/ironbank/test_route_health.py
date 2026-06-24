@@ -330,6 +330,23 @@ def _hot_route_budget(path: str, *, gateway: bool = False) -> tuple[float, float
             5.0 if not gateway else 8.0,
             0.08 if not gateway else 0.12,
         )
+    if path.endswith("/latest"):
+        # Latest ledgers are projection backed. They can be a larger array than
+        # status routes, but route-time SQLite reads would show up immediately
+        # in this loop.
+        return (
+            3.0 if not gateway else 4.0,
+            8.0 if not gateway else 10.0,
+            0.10 if not gateway else 0.14,
+        )
+    if "/plugins/" in path and (path.endswith("/info") or path.endswith("/credentials/info")):
+        # Plugin and credential inventory routes hydrate runtime counters from
+        # in-memory projections. Keep them off Keychain/SQLite/hashing paths.
+        return (
+            3.0 if not gateway else 4.0,
+            8.0 if not gateway else 10.0,
+            0.10 if not gateway else 0.14,
+        )
     if path == "/stats":
         # `/stats` is byte-projection backed, but it is still one of the
         # larger hot JSON bodies. Keep the latency budget tight and allow a
@@ -382,6 +399,20 @@ def _hot_route_contracts(profile: str) -> list[RouteContract]:
         ),
         RouteContract(
             "GET",
+            f"/profiles/{profile}/plugins/credential_broker/info",
+            None,
+            {"id", "name", "description", "stage", "config", "runtime"},
+            dict,
+        ),
+        RouteContract(
+            "GET",
+            f"/profiles/{profile}/plugins/credential_broker/credentials/info",
+            None,
+            {"scope", "plugin_id", "store", "inventory", "grants", "corp_constraints"},
+            dict,
+        ),
+        RouteContract(
+            "GET",
             f"/profiles/{profile}/enforcement/info",
             None,
             {"profile_id", "rule_count", "action_counts"},
@@ -425,8 +456,11 @@ def _hot_route_contracts(profile: str) -> list[RouteContract]:
         RouteContract("GET", f"/profiles/{profile}/mcp/servers/list", None, None, list),
         RouteContract("GET", f"/profiles/{profile}/mcp/servers/local/tools/list", None, None, list),
         RouteContract("GET", "/security/status", None, {"sessions", "total"}, dict),
+        RouteContract("GET", "/security/latest", None, None, list),
         RouteContract("GET", "/enforcement/status", None, {"sessions", "total"}, dict),
+        RouteContract("GET", "/enforcement/latest", None, None, list),
         RouteContract("GET", "/detection/status", None, {"sessions", "total"}, dict),
+        RouteContract("GET", "/detection/latest", None, None, list),
     ]
 
 
