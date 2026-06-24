@@ -18,6 +18,7 @@ pub enum Action {
     Fork(String),
     NewSession,
     OpenUi,
+    StartService,
     Quit,
 }
 
@@ -40,7 +41,7 @@ pub(crate) enum MenuEntry {
 
 /// Compute the menu structure for a gateway status response.
 pub(crate) fn menu_spec(status: &StatusResponse) -> Vec<MenuEntry> {
-    if !status.service.eq_ignore_ascii_case("running") {
+    if !service_available(status) {
         return unavailable_spec();
     }
 
@@ -162,11 +163,21 @@ pub(crate) fn unavailable_spec() -> Vec<MenuEntry> {
         },
         MenuEntry::Separator,
         MenuEntry::Item {
+            id: "start-service".into(),
+            label: "Start Service".into(),
+            enabled: true,
+        },
+        MenuEntry::Separator,
+        MenuEntry::Item {
             id: "quit".into(),
             label: "Quit".into(),
             enabled: true,
         },
     ]
+}
+
+pub(crate) fn service_available(status: &StatusResponse) -> bool {
+    status.service.eq_ignore_ascii_case("running")
 }
 
 // -- muda rendering (requires macOS main thread) --
@@ -235,6 +246,7 @@ pub fn parse_action(id: &MenuId) -> Option<Action> {
     match s {
         "new-session" => Some(Action::NewSession),
         "open" => Some(Action::OpenUi),
+        "start-service" => Some(Action::StartService),
         "quit" => Some(Action::Quit),
         _ => None,
     }
@@ -382,6 +394,14 @@ mod tests {
     }
 
     #[test]
+    fn parse_start_service() {
+        assert_eq!(
+            parse_action(&MenuId::new("start-service")),
+            Some(Action::StartService)
+        );
+    }
+
+    #[test]
     fn parse_quit() {
         assert_eq!(parse_action(&MenuId::new("quit")), Some(Action::Quit));
     }
@@ -458,7 +478,7 @@ mod tests {
         ));
         let ids = collect_ids(&spec);
 
-        assert_eq!(ids, vec!["status", "quit"]);
+        assert_eq!(ids, vec!["status", "start-service", "quit"]);
         assert!(!ids.contains(&"header-sessions".into()));
         assert!(!ids.contains(&"connect:n1".into()));
         assert!(!ids.contains(&"new-session".into()));
@@ -551,7 +571,7 @@ mod tests {
     fn unavailable_spec_has_disconnected_and_quit() {
         let spec = unavailable_spec();
         let ids = collect_ids(&spec);
-        assert_eq!(ids, vec!["status", "quit"]);
+        assert_eq!(ids, vec!["status", "start-service", "quit"]);
         // status shows "Disconnected" and is disabled
         assert!(
             matches!(&spec[0], MenuEntry::Item { label, enabled: false, .. } if label == "Disconnected")
