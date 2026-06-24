@@ -4056,12 +4056,14 @@ async fn handle_exec(
             push_exec_history_projection(
                 &state,
                 &id,
-                id_val,
-                command.clone(),
-                exit_code,
-                duration_ms,
-                &stdout,
-                &stderr,
+                ExecHistoryProjectionInput {
+                    exec_id: id_val,
+                    command: command.clone(),
+                    exit_code,
+                    duration_ms,
+                    stdout: &stdout,
+                    stderr: &stderr,
+                },
             )?;
             push_timeline_projection_row(
                 &state,
@@ -6793,14 +6795,14 @@ async fn handle_timeline(
         .into_iter()
         .filter(|row| layers.contains(&row.layer.as_str()))
         .filter(|row| {
-            params.trace_id.as_deref().map_or(true, |trace_id| {
+            params.trace_id.as_deref().is_none_or(|trace_id| {
                 row.trace_id.as_deref() == Some(trace_id) || row.trace_id.is_none()
             })
         })
         .filter(|row| {
             cutoff
                 .as_deref()
-                .map_or(true, |cutoff| row.timestamp.as_str() >= cutoff)
+                .is_none_or(|cutoff| row.timestamp.as_str() >= cutoff)
         })
         .take(limit)
         .map(|row| row.to_values())
@@ -7607,7 +7609,7 @@ fn query_history_projection(
             params
                 .search
                 .as_deref()
-                .map_or(true, |query| history_entry_matches_search(entry, query))
+                .is_none_or(|query| history_entry_matches_search(entry, query))
         })
         .cloned()
         .collect::<Vec<_>>();
@@ -7634,27 +7636,31 @@ fn preview_utf8(bytes: &[u8]) -> Option<String> {
     }
 }
 
-fn push_exec_history_projection(
-    state: &ServiceState,
-    vm_id: &str,
+struct ExecHistoryProjectionInput<'a> {
     exec_id: u64,
     command: String,
     exit_code: i32,
     duration_ms: u64,
-    stdout: &[u8],
-    stderr: &[u8],
+    stdout: &'a [u8],
+    stderr: &'a [u8],
+}
+
+fn push_exec_history_projection(
+    state: &ServiceState,
+    vm_id: &str,
+    input: ExecHistoryProjectionInput<'_>,
 ) -> Result<(), AppError> {
     let timestamp = capsem_core::session::now_iso();
     let entry = capsem_logger::HistoryEntry {
         timestamp,
         layer: "exec".to_string(),
-        command,
-        exit_code: Some(exit_code),
-        duration_ms: Some(duration_ms),
-        stdout_preview: preview_utf8(stdout),
-        stderr_preview: preview_utf8(stderr),
+        command: input.command,
+        exit_code: Some(input.exit_code),
+        duration_ms: Some(input.duration_ms),
+        stdout_preview: preview_utf8(input.stdout),
+        stderr_preview: preview_utf8(input.stderr),
         details: json!({
-            "exec_id": exec_id,
+            "exec_id": input.exec_id,
             "source": "api",
             "trace_id": null,
             "process_name": null,
@@ -7699,17 +7705,9 @@ struct StatsRouteProjection {
     body: Bytes,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 struct StatsDetailRouteProjection {
     sessions: BTreeMap<String, Bytes>,
-}
-
-impl Default for StatsDetailRouteProjection {
-    fn default() -> Self {
-        Self {
-            sessions: BTreeMap::new(),
-        }
-    }
 }
 
 fn stats_route_projection_from_response(

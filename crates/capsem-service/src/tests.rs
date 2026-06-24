@@ -153,6 +153,11 @@ fn test_profile_mutation_writer(run_dir: &StdPath) -> Arc<capsem_logger::DbWrite
     Arc::new(capsem_logger::DbWriter::open(&db_path, 64).unwrap())
 }
 
+fn test_projection_refresh_tx() -> mpsc::Sender<ProjectionRefreshRequest> {
+    let (tx, _rx) = mpsc::channel(1);
+    tx
+}
+
 fn make_test_state() -> Arc<ServiceState> {
     let run_dir = PathBuf::from("/tmp/capsem-test-svc");
     let registry_path = run_dir.join("persistent_registry.json");
@@ -184,6 +189,7 @@ fn make_test_state() -> Arc<ServiceState> {
         timeline_route_projection: Mutex::new(TimelineRouteProjection::default()),
         triage_route_projection: Mutex::new(TriageRouteProjection::default()),
         profile_mutation_writer: test_profile_mutation_writer(&run_dir),
+        projection_refresh_tx: test_projection_refresh_tx(),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
@@ -250,6 +256,7 @@ fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
         timeline_route_projection: Mutex::new(TimelineRouteProjection::default()),
         triage_route_projection: Mutex::new(TriageRouteProjection::default()),
         profile_mutation_writer: test_profile_mutation_writer(&run_dir),
+        projection_refresh_tx: test_projection_refresh_tx(),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
@@ -1847,12 +1854,14 @@ async fn live_exec_history_projection_does_not_require_session_db() {
     push_exec_history_projection(
         &state,
         "live-history-vm",
-        77,
-        format!("printf {marker}"),
-        0,
-        3,
-        marker.as_bytes(),
-        b"",
+        ExecHistoryProjectionInput {
+            exec_id: 77,
+            command: format!("printf {marker}"),
+            exit_code: 0,
+            duration_ms: 3,
+            stdout: marker.as_bytes(),
+            stderr: b"",
+        },
     )
     .unwrap();
     assert!(
@@ -5520,6 +5529,7 @@ fn make_state_in(run_dir: PathBuf) -> Arc<ServiceState> {
         timeline_route_projection: Mutex::new(TimelineRouteProjection::default()),
         triage_route_projection: Mutex::new(TriageRouteProjection::default()),
         profile_mutation_writer: test_profile_mutation_writer(&run_dir),
+        projection_refresh_tx: test_projection_refresh_tx(),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
@@ -6052,6 +6062,7 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         timeline_route_projection: Mutex::new(TimelineRouteProjection::default()),
         triage_route_projection: Mutex::new(TriageRouteProjection::default()),
         profile_mutation_writer: test_profile_mutation_writer(&run_dir),
+        projection_refresh_tx: test_projection_refresh_tx(),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });
@@ -7752,6 +7763,7 @@ fn make_test_state_with_tempdir_at(
         timeline_route_projection: Mutex::new(TimelineRouteProjection::default()),
         triage_route_projection: Mutex::new(TriageRouteProjection::default()),
         profile_mutation_writer: test_profile_mutation_writer(&run_dir),
+        projection_refresh_tx: test_projection_refresh_tx(),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });
