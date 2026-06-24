@@ -175,6 +175,7 @@ fn make_test_state() -> Arc<ServiceState> {
         security_route_projection: Mutex::new(SecurityRouteProjection::default()),
         history_route_projection: Mutex::new(HistoryRouteProjection::default()),
         timeline_route_projection: Mutex::new(TimelineRouteProjection::default()),
+        triage_route_projection: Mutex::new(TriageRouteProjection::default()),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
@@ -238,6 +239,7 @@ fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
         security_route_projection: Mutex::new(SecurityRouteProjection::default()),
         history_route_projection: Mutex::new(HistoryRouteProjection::default()),
         timeline_route_projection: Mutex::new(TimelineRouteProjection::default()),
+        triage_route_projection: Mutex::new(TriageRouteProjection::default()),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
@@ -1609,6 +1611,206 @@ async fn timeline_route_uses_memory_projection_not_session_db() {
         && row[4] == 200
         && row[5] == 9
         && row[6] == "trace-timeline"));
+}
+
+#[tokio::test]
+async fn triage_route_uses_memory_projection_not_session_db() {
+    let state = make_test_state();
+    let app = build_service_router(Arc::clone(&state));
+    let dir = tempfile::tempdir().unwrap();
+    let session_dir = dir.path().join("sessions").join("triage-vm");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    insert_fake_instance_with_session_dir(
+        &state,
+        "triage-vm",
+        std::process::id(),
+        session_dir.clone(),
+    );
+
+    let db_path = session_dir.join("session.db");
+    let writer = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
+    writer
+        .write(capsem_logger::WriteOp::NetEvent(capsem_logger::NetEvent {
+            event_id: Some("aaa111000000".to_string()),
+            timestamp: std::time::SystemTime::now(),
+            domain: "evil.test".to_string(),
+            port: 443,
+            decision: capsem_logger::Decision::Denied,
+            process_name: Some("curl".to_string()),
+            pid: Some(789),
+            method: Some("GET".to_string()),
+            path: Some("/blocked".to_string()),
+            query: None,
+            status_code: Some(403),
+            bytes_sent: 3,
+            bytes_received: 0,
+            duration_ms: 13,
+            matched_rule: Some("corp.rules.block_evil".to_string()),
+            request_headers: None,
+            response_headers: None,
+            request_body_preview: None,
+            response_body_preview: None,
+            conn_type: Some("http".to_string()),
+            policy_mode: None,
+            policy_action: Some("block".to_string()),
+            policy_rule: Some("corp.rules.block_evil".to_string()),
+            policy_reason: Some("test denied net".to_string()),
+            trace_id: Some("trace-triage".to_string()),
+            credential_ref: None,
+        }))
+        .await;
+    writer
+        .write(capsem_logger::WriteOp::McpCall(capsem_logger::McpCall {
+            event_id: Some("bbb111000000".to_string()),
+            timestamp: std::time::SystemTime::now(),
+            server_name: "local".to_string(),
+            method: "tools/call".to_string(),
+            tool_name: Some("fetch_http".to_string()),
+            request_id: Some("mcp-request-1".to_string()),
+            request_preview: Some(r#"{"url":"https://evil.test"}"#.to_string()),
+            response_preview: None,
+            decision: "error".to_string(),
+            duration_ms: 17,
+            error_message: Some("boom".to_string()),
+            process_name: Some("agent".to_string()),
+            bytes_sent: 33,
+            bytes_received: 0,
+            policy_mode: Some("enforce".to_string()),
+            policy_action: Some("block".to_string()),
+            policy_rule: Some("profiles.rules.mcp_local_fetch_http".to_string()),
+            policy_reason: Some("test mcp error".to_string()),
+            trace_id: Some("trace-triage".to_string()),
+            credential_ref: None,
+        }))
+        .await;
+    writer
+        .write(capsem_logger::WriteOp::ExecEvent(
+            capsem_logger::ExecEvent {
+                event_id: Some("ccc111000000".to_string()),
+                timestamp: std::time::SystemTime::now(),
+                exec_id: 91,
+                command: "false".to_string(),
+                source: "api".to_string(),
+                mcp_call_id: None,
+                trace_id: Some("trace-triage".to_string()),
+                process_name: Some("bash".to_string()),
+                credential_ref: None,
+            },
+        ))
+        .await;
+    writer
+        .write(capsem_logger::WriteOp::ExecEventComplete(
+            capsem_logger::ExecEventComplete {
+                exec_id: 91,
+                exit_code: 2,
+                duration_ms: 19,
+                stdout_preview: None,
+                stderr_preview: Some("failed\n".to_string()),
+                stdout_bytes: 0,
+                stderr_bytes: 7,
+                pid: Some(789),
+            },
+        ))
+        .await;
+    writer.shutdown_blocking();
+
+    let direct_triage = session_db_triage(&db_path, 5).unwrap();
+    assert_eq!(
+        direct_triage["denied_net"]["rows"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1,
+        "{direct_triage}"
+    );
+    assert_eq!(
+        direct_triage["mcp_errors"]["rows"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1,
+        "{direct_triage}"
+    );
+    assert_eq!(
+        direct_triage["exec_failures"]["rows"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1,
+        "{direct_triage}"
+    );
+
+    rebuild_triage_route_projection(&state).unwrap();
+    std::fs::rename(&db_path, session_dir.join("session.db.route-must-not-open")).unwrap();
+
+    let (status, triage) = route_request(
+        app,
+        axum::http::Method::GET,
+        "/triage?id=triage-vm&limit=5",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{triage}");
+    assert_eq!(triage["session_id"], "triage-vm");
+    assert_eq!(
+        triage["session"]["denied_net"]["columns"],
+        json!([
+            "timestamp",
+            "domain",
+            "decision",
+            "status_code",
+            "duration_ms"
+        ])
+    );
+    let denied_net = triage["session"]["denied_net"]["rows"].as_array().unwrap();
+    assert_eq!(denied_net.len(), 1, "{triage}");
+    assert_eq!(denied_net[0][1], "evil.test");
+    assert_eq!(denied_net[0][2], "denied");
+    assert_eq!(denied_net[0][3], 403);
+    assert_eq!(denied_net[0][4], 13);
+
+    assert_eq!(
+        triage["session"]["mcp_errors"]["columns"],
+        json!([
+            "timestamp",
+            "server_name",
+            "method",
+            "decision",
+            "policy_mode",
+            "policy_action",
+            "policy_rule",
+            "policy_reason",
+            "error_message",
+            "duration_ms"
+        ])
+    );
+    let mcp_errors = triage["session"]["mcp_errors"]["rows"].as_array().unwrap();
+    assert_eq!(mcp_errors.len(), 1, "{triage}");
+    assert_eq!(mcp_errors[0][1], "local");
+    assert_eq!(mcp_errors[0][2], "tools/call");
+    assert_eq!(mcp_errors[0][3], "error");
+    assert_eq!(mcp_errors[0][5], "block");
+    assert_eq!(mcp_errors[0][8], "boom");
+    assert_eq!(mcp_errors[0][9], 17);
+
+    assert_eq!(
+        triage["session"]["exec_failures"]["columns"],
+        json!([
+            "timestamp",
+            "exec_id",
+            "command",
+            "exit_code",
+            "duration_ms"
+        ])
+    );
+    let exec_failures = triage["session"]["exec_failures"]["rows"]
+        .as_array()
+        .unwrap();
+    assert_eq!(exec_failures.len(), 1, "{triage}");
+    assert_eq!(exec_failures[0][1], 91);
+    assert_eq!(exec_failures[0][2], "false");
+    assert_eq!(exec_failures[0][3], 2);
+    assert_eq!(exec_failures[0][4], 19);
 }
 
 #[tokio::test]
@@ -5293,6 +5495,7 @@ fn make_state_in(run_dir: PathBuf) -> Arc<ServiceState> {
         security_route_projection: Mutex::new(SecurityRouteProjection::default()),
         history_route_projection: Mutex::new(HistoryRouteProjection::default()),
         timeline_route_projection: Mutex::new(TimelineRouteProjection::default()),
+        triage_route_projection: Mutex::new(TriageRouteProjection::default()),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
@@ -5830,6 +6033,7 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         security_route_projection: Mutex::new(SecurityRouteProjection::default()),
         history_route_projection: Mutex::new(HistoryRouteProjection::default()),
         timeline_route_projection: Mutex::new(TimelineRouteProjection::default()),
+        triage_route_projection: Mutex::new(TriageRouteProjection::default()),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });
@@ -7475,6 +7679,7 @@ fn make_test_state_with_tempdir_at(
         security_route_projection: Mutex::new(SecurityRouteProjection::default()),
         history_route_projection: Mutex::new(HistoryRouteProjection::default()),
         timeline_route_projection: Mutex::new(TimelineRouteProjection::default()),
+        triage_route_projection: Mutex::new(TriageRouteProjection::default()),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });

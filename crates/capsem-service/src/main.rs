@@ -199,6 +199,9 @@ struct ServiceState {
     /// Route-owned protocol timeline projection. `/timeline` must filter an
     /// in-memory row set rather than composing SQL on every request.
     timeline_route_projection: Mutex<TimelineRouteProjection>,
+    /// Route-owned session triage projection. `/triage?id=...` is a support
+    /// route, but it still must not open `session.db` on the request path.
+    triage_route_projection: Mutex<TriageRouteProjection>,
     /// Guards Apple VZ lifecycle edges across all VMs managed by this
     /// service. Cold starts and teardown take a read guard; save/restore take
     /// a write guard. That keeps checkpoint edges exclusive without
@@ -3510,24 +3513,11 @@ async fn handle_triage(
     errors.truncate(limit);
     slow_ops.truncate(limit);
 
-    // F6: when `id` is set, query session.db for session-scoped error
-    // signals. Best-effort -- a missing or vacuumed DB just leaves the
+    // F6: when `id` is set, add session-scoped error signals from the
+    // in-memory route projection. Best-effort -- missing sessions leave the
     // session block empty, the host-side triage still returns.
     let session_block = if let Some(ref vm_id) = params.id {
-        let db_path = {
-            let instances = state.instances.lock().unwrap();
-            instances
-                .get(vm_id)
-                .map(|i| i.session_dir.join("session.db"))
-        };
-        if let Some(path) = db_path {
-            session_db_triage(&path, limit).unwrap_or_else(|e| {
-                tracing::warn!(target: "service", vm = %vm_id, error = %e, "session-db triage skipped");
-                serde_json::json!({})
-            })
-        } else {
-            serde_json::json!({ "missing": true, "reason": "session not found" })
-        }
+        triage_projection_for_vm(&state, vm_id, limit)?
     } else {
         serde_json::json!({})
     };
@@ -3580,8 +3570,8 @@ async fn handle_triage(
     Ok(axum::Json(out))
 }
 
-/// F6: scoped session.db queries for triage. Returns the JSON object
-/// embedded under `session` in the /triage response.
+/// F6: scoped session.db queries for triage projection recovery. This may run
+/// at startup/recovery, never on the `/triage` request path.
 fn session_db_triage(db_path: &std::path::Path, limit: usize) -> anyhow::Result<serde_json::Value> {
     let reader = capsem_logger::DbReader::open(db_path)?;
     let denied_net_sql = format!(
@@ -3626,6 +3616,88 @@ fn session_db_triage(db_path: &std::path::Path, limit: usize) -> anyhow::Result<
         "mcp_errors": mcp_errors_v,
         "exec_failures": exec_failures_v,
     }))
+}
+
+const TRIAGE_RECOVERY_LIMIT: usize = 1_000;
+
+#[derive(Clone, Debug, Default)]
+struct TriageRouteProjection {
+    sessions: BTreeMap<String, serde_json::Value>,
+}
+
+fn limit_columnar_query_json(value: &serde_json::Value, limit: usize) -> serde_json::Value {
+    let columns = value.get("columns").cloned().unwrap_or_else(|| json!([]));
+    let rows = value
+        .get("rows")
+        .and_then(|value| value.as_array())
+        .map(|rows| rows.iter().take(limit).cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
+    json!({
+        "columns": columns,
+        "rows": rows,
+    })
+}
+
+fn limit_triage_session_block(value: &serde_json::Value, limit: usize) -> serde_json::Value {
+    json!({
+        "denied_net": limit_columnar_query_json(&value["denied_net"], limit),
+        "mcp_errors": limit_columnar_query_json(&value["mcp_errors"], limit),
+        "exec_failures": limit_columnar_query_json(&value["exec_failures"], limit),
+    })
+}
+
+fn rebuild_triage_route_projection(
+    state: &ServiceState,
+) -> Result<TriageRouteProjection, AppError> {
+    let mut projection = TriageRouteProjection::default();
+    for (vm_id, session_dir) in service_session_dirs(state) {
+        let db_path = session_dir.join("session.db");
+        if !db_path.exists() {
+            continue;
+        }
+        let session = session_db_triage(&db_path, TRIAGE_RECOVERY_LIMIT).map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to build triage projection for {vm_id}: {error}"),
+            )
+        })?;
+        projection.sessions.insert(vm_id, session);
+    }
+    *state.triage_route_projection.lock().map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("triage projection lock poisoned: {error}"),
+        )
+    })? = projection.clone();
+    Ok(projection)
+}
+
+fn triage_route_projection(state: &ServiceState) -> Result<TriageRouteProjection, AppError> {
+    state
+        .triage_route_projection
+        .lock()
+        .map(|projection| projection.clone())
+        .map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("triage projection lock poisoned: {error}"),
+            )
+        })
+}
+
+fn triage_projection_for_vm(
+    state: &ServiceState,
+    vm_id: &str,
+    limit: usize,
+) -> Result<serde_json::Value, AppError> {
+    if resolve_session_dir(state, vm_id).is_err() {
+        return Ok(json!({ "missing": true, "reason": "session not found" }));
+    }
+    Ok(triage_route_projection(state)?
+        .sessions
+        .get(vm_id)
+        .map(|value| limit_triage_session_block(value, limit))
+        .unwrap_or_else(|| json!({})))
 }
 
 #[derive(Deserialize, Debug, Default)]
@@ -10377,6 +10449,7 @@ async fn main() -> Result<()> {
         security_route_projection: Mutex::new(SecurityRouteProjection::default()),
         history_route_projection: Mutex::new(HistoryRouteProjection::default()),
         timeline_route_projection: Mutex::new(TimelineRouteProjection::default()),
+        triage_route_projection: Mutex::new(TriageRouteProjection::default()),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });
@@ -10394,6 +10467,9 @@ async fn main() -> Result<()> {
     })?;
     rebuild_timeline_route_projection(&state).map_err(|AppError(_, message)| {
         anyhow!("failed to build timeline route projection: {message}")
+    })?;
+    rebuild_triage_route_projection(&state).map_err(|AppError(_, message)| {
+        anyhow!("failed to build triage route projection: {message}")
     })?;
     state.reconcile_persistent_defunct_from_logs();
 
