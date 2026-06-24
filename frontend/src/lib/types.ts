@@ -416,9 +416,3 @@ export interface FileContentResult {
   blob: Blob;
   size: number;
 }
-
-/** A preset SQL query for the inspector. */
-export interface PresetQuery {
-  label: string;
-  sql: string;
-}

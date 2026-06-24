@@ -8,7 +8,6 @@ import type {
   ProvisionRequest,
   ProvisionResponse,
   ExecResponse,
-  InspectResponse,
   ReadFileResponse,
   ForkRequest,
   ForkResponse,
@@ -610,20 +609,6 @@ export async function execCommand(
     timeout_secs: timeoutSecs,
   });
   return await resp.json();
-}
-
-export async function inspectQuery(id: string, sql: string): Promise<InspectResponse> {
-  if (!_connected) return { columns: [], rows: [] };
-  try {
-    const resp = await _post(`/vms/${encodeURIComponent(id)}/inspect`, { sql });
-    return await resp.json();
-  } catch (err) {
-    if (isNetworkError(err)) {
-      _connected = false;
-      return { columns: [], rows: [] };
-    }
-    throw err;
-  }
 }
 
 export type StatsDetailRow = Record<string, unknown>;

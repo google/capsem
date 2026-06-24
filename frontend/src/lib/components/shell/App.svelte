@@ -13,14 +13,13 @@
   const loadLogs = () => import('../views/LogsView.svelte').then(m => m.default);
   const loadServiceLogs = () => import('../views/ServiceLogsView.svelte').then(m => m.default);
   const loadFiles = () => import('../views/FilesView.svelte').then(m => m.default);
-  const loadInspector = () => import('../views/InspectorView.svelte').then(m => m.default);
   const loadCreateDialog = () => import('./CreateSandboxDialog.svelte').then(m => m.default);
   import { tabStore } from '../../stores/tabs.svelte.ts';
   import { gatewayStore } from '../../stores/gateway.svelte.ts';
   import { vmStore } from '../../stores/vms.svelte.ts';
   import { openUrl } from '../../api';
 
-  const vmViews = ['terminal', 'stats', 'logs', 'files', 'inspector'] as const;
+  const vmViews = ['terminal', 'stats', 'logs', 'files'] as const;
 
   function generatedVmName(profileId: string): string {
     const safeProfile = profileId
@@ -179,10 +178,6 @@
               {:else if tab.view === 'files'}
                 <div class="absolute inset-0">
                   {#await loadFiles() then Component}<Component vmId={tab.vmId} />{/await}
-                </div>
-              {:else if tab.view === 'inspector'}
-                <div class="absolute inset-0">
-                  {#await loadInspector() then Component}<Component vmId={tab.vmId} />{/await}
                 </div>
               {/if}
             </div>

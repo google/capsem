@@ -299,15 +299,6 @@ describe('api', () => {
       expect(body.content).toBe('data');
     });
 
-    it('inspectQuery sends POST /vms/{id}/inspect', async () => {
-      mockFetch.mockReturnValueOnce(jsonResponse({ columns: ['n'], rows: [[1]] }));
-      const result = await api.inspectQuery('vm-1', 'SELECT 1 as n');
-      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/vms/vm-1/inspect');
-      expect(result.columns).toEqual(['n']);
-      expect(result.rows).toEqual([[1]]);
-    });
-
     it('getVmStatsDetail sends GET /vms/{id}/stats/detail', async () => {
       mockFetch.mockReturnValueOnce(jsonResponse({
         model_stats: [{ provider: 'google', call_count: 1 }],

@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import {
   NET_EVENTS_ALL_SQL,
   NET_EVENTS_SEARCH_SQL,
-  PRESET_QUERIES,
   TRACE_DETAIL_SQL,
 } from '../sql';
 
@@ -53,7 +52,7 @@ describe('StatsView tool-call contract', () => {
   it('exposes one user-facing tool-call ledger instead of an MCP activity panel', () => {
     expect(source).toContain("type StatsTab = 'model' | 'tools'");
     expect(source).toContain("label: 'Tools'");
-    expect(source).toContain('TOOLS_UNIFIED_SQL');
+    expect(source).toContain('toolRows = detailRows.tool_events');
     expect(source).toContain('Tool Calls');
     expect(source).toContain('Model Origin');
     expect(source).toContain('MCP Origin');
@@ -70,7 +69,7 @@ describe('StatsView credential broker contract', () => {
     expect(source).toContain("label: 'Credentials'");
     expect(source).toContain('Credential Broker Events');
     expect(source).toContain("type: 'credential broker event'");
-    expect(source).toContain('substitution_events');
+    expect(source).toContain('substitutionRows = detailRows.credential_events');
     expect(source).toContain('Captured');
     expect(source).toContain('Brokered');
     expect(source).toContain('Injected');
@@ -137,8 +136,8 @@ describe('StatsView credential broker contract', () => {
 
 describe('StatsView detail drawer contract', () => {
   it('uses ledger wording instead of exposing database implementation text', () => {
-    expect(source).toContain('Inspect session ledger');
     expect(source).toContain('Session {vmId} ledger');
+    expect(source).not.toContain('Inspect session ledger');
     expect(source).not.toContain('Inspect session database');
     expect(source).not.toContain('Session {vmId} database');
   });
@@ -157,7 +156,8 @@ describe('StatsView detail drawer contract', () => {
   });
 
   it('loads body payloads from event_body_blobs instead of preview columns', () => {
-    expect(source).toContain('FROM event_body_blobs');
+    expect(source).toContain('api.getVmStatsDetail(vmId)');
+    expect(source).toContain('bodyBlobs = detailRows.body_blobs');
     expect(detailSource).toContain("'request_body'");
     expect(detailSource).toContain("'response_body'");
     expect(source).toContain('`${direction}_body`');
@@ -198,12 +198,11 @@ describe('StatsView detail drawer contract', () => {
 });
 
 describe('Stats SQL contract', () => {
-  it('keeps legacy preview columns out of frontend stats and inspector presets', () => {
+  it('keeps legacy preview columns out of frontend stats', () => {
     const queries = [
       TRACE_DETAIL_SQL,
       NET_EVENTS_ALL_SQL,
       NET_EVENTS_SEARCH_SQL,
-      ...PRESET_QUERIES.map((preset) => preset.sql),
     ].join('\n');
 
     expect(queries).not.toContain('request_body_preview');
@@ -211,14 +210,11 @@ describe('Stats SQL contract', () => {
     expect(queries).not.toContain('system_prompt_preview');
   });
 
-  it('uses credential broker vocabulary in presets without exposing refs', () => {
-    const credentialPreset = PRESET_QUERIES.find((preset) => preset.label === 'Credential broker events');
-    expect(credentialPreset).toBeDefined();
-    expect(credentialPreset?.sql).toContain('outcome AS verb');
-    expect(credentialPreset?.sql).toContain('event_type AS origin');
-    expect(credentialPreset?.sql).not.toContain('substitution_ref');
-    expect(credentialPreset?.sql).not.toContain('credential_ref');
-    expect(PRESET_QUERIES.some((preset) => preset.label === 'Credential substitutions')).toBe(false);
+  it('does not expose raw SQL inspection as a frontend session surface', () => {
+    expect(source).not.toContain('InspectorView');
+    expect(source).not.toContain('inspectQuery');
+    expect(source).not.toContain('/inspect');
+    expect(source).not.toContain('PRESET_QUERIES');
   });
 });
 

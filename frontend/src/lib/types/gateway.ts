@@ -162,16 +162,6 @@ export interface ExecResponse {
   exit_code: number;
 }
 
-// POST /vms/{id}/inspect
-export interface InspectRequest {
-  sql: string;
-}
-
-export interface InspectResponse {
-  columns: string[];
-  rows: (Record<string, string | number | null> | (string | number | null)[])[];
-}
-
 // POST /vms/{id}/files/read
 export interface ReadFileRequest {
   path: string;
