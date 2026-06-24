@@ -206,6 +206,10 @@ struct ServiceState {
     /// Route-owned session triage projection. `/triage?id=...` is a support
     /// route, but it still must not open `session.db` on the request path.
     triage_route_projection: Mutex<TriageRouteProjection>,
+    /// Service-owned writer for the profile mutation ledger in main.db.
+    /// Profile/MCP/rule/plugin edit routes enqueue here; they must never open
+    /// SQLite directly.
+    profile_mutation_writer: Arc<capsem_logger::DbWriter>,
     /// Guards Apple VZ lifecycle edges across all VMs managed by this
     /// service. Cold starts and teardown take a read guard; save/restore take
     /// a write guard. That keeps checkpoint edges exclusive without
@@ -613,11 +617,7 @@ impl ServiceState {
     /// Path to main.db (global session index).
     /// Layout: run_dir = ~/.capsem/run, main.db lives at ~/.capsem/sessions/main.db.
     fn main_db_path(&self) -> PathBuf {
-        self.run_dir
-            .parent()
-            .unwrap_or(self.run_dir.as_path())
-            .join("sessions")
-            .join("main.db")
+        main_db_path_for_run_dir(&self.run_dir)
     }
 
     fn next_job_id(&self) -> u64 {
@@ -1797,6 +1797,14 @@ impl ServiceState {
             Err(err) => (status, false, Some(err.to_string())),
         }
     }
+}
+
+fn main_db_path_for_run_dir(run_dir: &StdPath) -> PathBuf {
+    run_dir
+        .parent()
+        .unwrap_or(run_dir)
+        .join("sessions")
+        .join("main.db")
 }
 
 fn gib(bytes: u64) -> u64 {
@@ -4961,16 +4969,15 @@ where
 async fn handle_profile_assets_status(
     Path(profile_id): Path<String>,
     State(state): State<Arc<ServiceState>>,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<axum::response::Response, AppError> {
     let profile_id = validate_profile_route_id(profile_id)?;
-    let cache = profile_status_cache(&state)?;
-    let status = cache.profiles.get(&profile_id).cloned().ok_or_else(|| {
-        AppError(
-            StatusCode::NOT_FOUND,
-            format!("profile not found: {profile_id}"),
-        )
-    })?;
-    Ok(Json(refresh_reconcile_fields(&state, status)))
+    if !asset_reconcile_has_route_fields(&state) {
+        if let Some(body) = cached_profile_status_body_for_route(&state, &profile_id)? {
+            return Ok(json_bytes_response(body));
+        }
+    }
+    let status = cached_profile_status_for_route(&state, &profile_id)?;
+    Ok(Json(refresh_reconcile_fields(&state, status)).into_response())
 }
 
 /// POST /profiles/{profile_id}/assets/ensure -- download missing/corrupt
@@ -5215,6 +5222,7 @@ fn profile_for_route(profile_id: String) -> Result<Profile, AppError> {
 struct ProfileStatusCache {
     catalog: serde_json::Value,
     profiles: BTreeMap<String, serde_json::Value>,
+    profile_bodies: BTreeMap<String, Bytes>,
 }
 
 #[cfg(test)]
@@ -5230,6 +5238,7 @@ fn build_profile_status_cache(
     catalog: &ProfileCatalog,
 ) -> ProfileStatusCache {
     let mut profile_statuses = BTreeMap::new();
+    let mut profile_bodies = BTreeMap::new();
     let profiles = catalog
         .profiles()
         .map(|profile| {
@@ -5247,6 +5256,10 @@ fn build_profile_status_cache(
                     })
                 });
             profile_statuses.insert(profile.id.clone(), status.clone());
+            profile_bodies.insert(
+                profile.id.clone(),
+                Bytes::from(serde_json::to_vec(&status).unwrap_or_default()),
+            );
             let missing = status["missing_assets"].clone();
             json!({
                 "id": profile.id,
@@ -5278,7 +5291,30 @@ fn build_profile_status_cache(
     ProfileStatusCache {
         catalog: catalog_status,
         profiles: profile_statuses,
+        profile_bodies,
     }
+}
+
+fn asset_reconcile_has_route_fields(state: &ServiceState) -> bool {
+    state
+        .asset_reconcile
+        .lock()
+        .map(|reconcile| {
+            reconcile.in_progress
+                || reconcile.current_asset.is_some()
+                || reconcile.last_downloaded.is_some()
+                || reconcile.last_error.is_some()
+        })
+        .unwrap_or(true)
+}
+
+fn json_bytes_response(body: Bytes) -> axum::response::Response {
+    (
+        StatusCode::OK,
+        [(axum::http::header::CONTENT_TYPE, "application/json")],
+        body,
+    )
+        .into_response()
 }
 
 fn refresh_reconcile_fields(
@@ -5326,6 +5362,59 @@ fn profile_status_cache(state: &ServiceState) -> Result<ProfileStatusCache, AppE
         return Ok(cache);
     }
     rebuild_profile_status_cache(state)
+}
+
+fn cached_profile_status_for_route(
+    state: &ServiceState,
+    profile_id: &str,
+) -> Result<serde_json::Value, AppError> {
+    let cached = state
+        .profile_status_cache
+        .lock()
+        .map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("profile status cache lock poisoned: {error}"),
+            )
+        })?
+        .as_ref()
+        .and_then(|cache| cache.profiles.get(profile_id).cloned());
+    if let Some(status) = cached {
+        return Ok(status);
+    }
+
+    let cache = rebuild_profile_status_cache(state)?;
+    cache.profiles.get(profile_id).cloned().ok_or_else(|| {
+        AppError(
+            StatusCode::NOT_FOUND,
+            format!("profile not found: {profile_id}"),
+        )
+    })
+}
+
+fn cached_profile_status_body_for_route(
+    state: &ServiceState,
+    profile_id: &str,
+) -> Result<Option<Bytes>, AppError> {
+    let guard = state.profile_status_cache.lock().map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("profile status cache lock poisoned: {error}"),
+        )
+    })?;
+    let Some(cache) = guard.as_ref() else {
+        return Ok(None);
+    };
+    if let Some(body) = cache.profile_bodies.get(profile_id).cloned() {
+        return Ok(Some(body));
+    }
+    if cache.profiles.contains_key(profile_id) {
+        return Ok(None);
+    }
+    Err(AppError(
+        StatusCode::NOT_FOUND,
+        format!("profile not found: {profile_id}"),
+    ))
 }
 
 fn validate_profile_route_id(profile_id: String) -> Result<String, AppError> {
@@ -6055,32 +6144,10 @@ async fn write_profile_mutation_event(
         None,
         None,
     );
-    let writer = capsem_logger::DbWriter::open(&state.main_db_path(), 64).map_err(|error| {
-        error!(
-            target: "capsem.profile_mutation",
-            profile_id = %event.profile_id,
-            mutation_id = %event.mutation_id,
-            actor = %event.actor,
-            category = %event.category,
-            filename = %event.filename,
-            affected_path = %event.affected_path,
-            target_kind = %event.target_kind,
-            target_key = %event.target_key,
-            operation = %event.operation,
-            rule_id = event.rule_id.as_deref().unwrap_or(""),
-            status = %event.status.as_str(),
-            error = %error,
-            "profile mutation ledger open failed"
-        );
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("open profile mutation ledger: {error}"),
-        )
-    })?;
-    writer
+    state
+        .profile_mutation_writer
         .write(capsem_logger::WriteOp::ProfileMutationEvent(event.clone()))
         .await;
-    writer.shutdown_blocking();
     refresh_profile_route_caches(state)?;
     log_profile_mutation_applied("profile_mutation_ledger", &event);
     Ok(event)
@@ -10610,6 +10677,10 @@ async fn main() -> Result<()> {
         build_profile_plugin_policy_cache(None).map_err(|AppError(_, message)| {
             anyhow!("failed to build profile plugin cache: {message}")
         })?;
+    let profile_mutation_writer = Arc::new(
+        capsem_logger::DbWriter::open(&main_db_path_for_run_dir(&run_dir), 64)
+            .context("open profile mutation ledger writer")?,
+    );
     let state = Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
         persistent_registry: Mutex::new(persistent_registry),
@@ -10636,6 +10707,7 @@ async fn main() -> Result<()> {
         history_route_projection: Mutex::new(HistoryRouteProjection::default()),
         timeline_route_projection: Mutex::new(TimelineRouteProjection::default()),
         triage_route_projection: Mutex::new(TriageRouteProjection::default()),
+        profile_mutation_writer,
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });

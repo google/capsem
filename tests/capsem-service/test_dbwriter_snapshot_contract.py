@@ -162,7 +162,9 @@ def test_dbwriter_and_snapshot_source_boundaries_are_single_rail() -> None:
 
     assert 'DbWriter::open(&resolve_session_dir(&state' not in service_prod
     assert 'DbWriter::open(&session_dir.join("session.db")' not in service_prod
-    assert "DbWriter::open(&state.main_db_path()" in service_prod
+    assert "profile_mutation_writer: Arc<capsem_logger::DbWriter>" in service_prod
+    assert "DbWriter::open(&main_db_path_for_run_dir(&run_dir)" in service_prod
+    assert "DbWriter::open(&state.main_db_path()" not in service_prod
     assert 'session_dir.join("session.db")' in service_prod
     assert "snapshot_status_from_session_dir(&session_dir)" in service_prod
     assert "send_ipc_command(" in service_prod

@@ -147,6 +147,12 @@ fn test_profile_plugin_policy_cache(
     )
 }
 
+fn test_profile_mutation_writer(run_dir: &StdPath) -> Arc<capsem_logger::DbWriter> {
+    let db_path = main_db_path_for_run_dir(run_dir);
+    std::fs::create_dir_all(db_path.parent().expect("main.db has parent")).unwrap();
+    Arc::new(capsem_logger::DbWriter::open(&db_path, 64).unwrap())
+}
+
 fn make_test_state() -> Arc<ServiceState> {
     let run_dir = PathBuf::from("/tmp/capsem-test-svc");
     let registry_path = run_dir.join("persistent_registry.json");
@@ -156,7 +162,7 @@ fn make_test_state() -> Arc<ServiceState> {
         persistent_registry: Mutex::new(PersistentRegistry::load(registry_path)),
         process_binary: PathBuf::from("/nonexistent/capsem-process"),
         assets_dir: PathBuf::from("/nonexistent/assets"),
-        run_dir,
+        run_dir: run_dir.clone(),
         job_counter: AtomicU64::new(1),
         manifest: None,
         current_version: "0.0.0".into(),
@@ -177,6 +183,7 @@ fn make_test_state() -> Arc<ServiceState> {
         history_route_projection: Mutex::new(HistoryRouteProjection::default()),
         timeline_route_projection: Mutex::new(TimelineRouteProjection::default()),
         triage_route_projection: Mutex::new(TriageRouteProjection::default()),
+        profile_mutation_writer: test_profile_mutation_writer(&run_dir),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
@@ -221,7 +228,7 @@ fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
         )),
         process_binary: PathBuf::from("/nonexistent/capsem-process"),
         assets_dir,
-        run_dir,
+        run_dir: run_dir.clone(),
         job_counter: AtomicU64::new(1),
         manifest,
         current_version: "0.0.0".into(),
@@ -242,6 +249,7 @@ fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
         history_route_projection: Mutex::new(HistoryRouteProjection::default()),
         timeline_route_projection: Mutex::new(TimelineRouteProjection::default()),
         triage_route_projection: Mutex::new(TriageRouteProjection::default()),
+        profile_mutation_writer: test_profile_mutation_writer(&run_dir),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
@@ -661,20 +669,22 @@ async fn profile_asset_status_download_and_corruption_checks_use_profile_pins() 
         std::fs::set_permissions(&rootfs_target, std::fs::Permissions::from_mode(0o644)).unwrap();
     }
     std::fs::write(&rootfs_target, b"corrupted-rootfs").unwrap();
-    let (status, corrupted) = route_request(
+    let (status, cached_after_tamper) = route_request(
         app.clone(),
         axum::http::Method::GET,
         "/profiles/code/assets/status",
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{corrupted}");
-    assert_eq!(corrupted["ready"], false);
-    assert!(corrupted["invalid_assets"]
+    assert_eq!(status, StatusCode::OK, "{cached_after_tamper}");
+    assert_eq!(
+        cached_after_tamper["ready"], true,
+        "hot asset status is cache-backed and must not re-hash large assets per route poll"
+    );
+    assert!(cached_after_tamper["invalid_assets"]
         .as_array()
         .unwrap()
-        .iter()
-        .any(|asset| asset["kind"] == "rootfs" && asset["valid"] == false));
+        .is_empty());
 
     let (status, repaired) = route_request(
         app,
@@ -2227,6 +2237,7 @@ async fn profile_ui_route_matrix_is_registered_for_all_profiles() {
     let co_work = materialized_test_profile_for("co-work");
     install_test_profile_catalog(&state, &code);
     install_test_profile_catalog(&state, &co_work);
+    refresh_profile_route_caches(&state).expect("test profile cache refreshes");
     let routes = [
         (axum::http::Method::GET, "/profiles/{profile}/info"),
         (axum::http::Method::GET, "/profiles/{profile}/assets/status"),
@@ -4628,6 +4639,7 @@ async fn mounted_service_ledger_routes_read_real_session_db_rows() {
     .unwrap();
     writer.shutdown_blocking();
     assert_eq!(emitted, 1);
+    rebuild_security_route_projection(&state).unwrap();
 
     for uri in [
         "/security/latest?limit=10",
@@ -5482,7 +5494,7 @@ fn make_state_in(run_dir: PathBuf) -> Arc<ServiceState> {
         persistent_registry: Mutex::new(PersistentRegistry::load(registry_path)),
         process_binary: PathBuf::from("/nonexistent/capsem-process"),
         assets_dir: PathBuf::from("/nonexistent/assets"),
-        run_dir,
+        run_dir: run_dir.clone(),
         job_counter: AtomicU64::new(1),
         manifest: None,
         current_version: "0.0.0".into(),
@@ -5503,6 +5515,7 @@ fn make_state_in(run_dir: PathBuf) -> Arc<ServiceState> {
         history_route_projection: Mutex::new(HistoryRouteProjection::default()),
         timeline_route_projection: Mutex::new(TimelineRouteProjection::default()),
         triage_route_projection: Mutex::new(TriageRouteProjection::default()),
+        profile_mutation_writer: test_profile_mutation_writer(&run_dir),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
@@ -6013,7 +6026,7 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         persistent_registry: Mutex::new(PersistentRegistry::load(registry_path)),
         process_binary: PathBuf::from("/nonexistent/capsem-process"),
         assets_dir: dir.path().join("assets"),
-        run_dir,
+        run_dir: run_dir.clone(),
         job_counter: AtomicU64::new(1),
         manifest: None,
         current_version: "0.0.0".into(),
@@ -6034,6 +6047,7 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         history_route_projection: Mutex::new(HistoryRouteProjection::default()),
         timeline_route_projection: Mutex::new(TimelineRouteProjection::default()),
         triage_route_projection: Mutex::new(TriageRouteProjection::default()),
+        profile_mutation_writer: test_profile_mutation_writer(&run_dir),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });
@@ -7686,7 +7700,7 @@ fn make_test_state_with_tempdir_at(
         persistent_registry: Mutex::new(PersistentRegistry::load(registry_path)),
         process_binary: PathBuf::from("/nonexistent/capsem-process"),
         assets_dir: run_dir.join("assets"),
-        run_dir,
+        run_dir: run_dir.clone(),
         job_counter: AtomicU64::new(1),
         manifest: None,
         current_version: "0.0.0".into(),
@@ -7707,6 +7721,7 @@ fn make_test_state_with_tempdir_at(
         history_route_projection: Mutex::new(HistoryRouteProjection::default()),
         timeline_route_projection: Mutex::new(TimelineRouteProjection::default()),
         triage_route_projection: Mutex::new(TriageRouteProjection::default()),
+        profile_mutation_writer: test_profile_mutation_writer(&run_dir),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });

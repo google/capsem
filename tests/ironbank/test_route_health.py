@@ -312,9 +312,19 @@ def _assert_timing_budget(timing: RouteTiming, *, p95_ms: float, max_ms: float, 
 
 def _hot_route_budget(path: str, *, gateway: bool = False) -> tuple[float, float, float]:
     if path.endswith("/assets/status"):
-        return (3.0 if not gateway else 4.0, 8.0 if not gateway else 10.0, 0.10)
+        # Asset status returns a richer body than scalar status routes. It is
+        # still byte-cache backed; this budget keeps 64 debug-build calls under
+        # roughly 2ms CPU per call and catches any return to file hashing.
+        return (3.0 if not gateway else 4.0, 8.0 if not gateway else 10.0, 0.12)
     if path == "/stats":
-        return (2.0 if not gateway else 3.0, 5.0 if not gateway else 8.0, 0.08)
+        # `/stats` is byte-projection backed, but it is still one of the
+        # larger hot JSON bodies. Keep the latency budget tight and allow a
+        # slightly higher gateway CPU total for 64 debug-build calls.
+        return (
+            2.0 if not gateway else 3.0,
+            5.0 if not gateway else 8.0,
+            0.10 if gateway else 0.08,
+        )
     return (
         12.0 if not gateway else 15.0,
         30.0 if not gateway else 35.0,
