@@ -6698,6 +6698,19 @@ async fn handle_security_latest(
     )?))
 }
 
+/// GET /vms/{id}/detection/latest -- latest detection-bearing rule rows.
+async fn handle_detection_latest(
+    State(state): State<Arc<ServiceState>>,
+    Path(id): Path<String>,
+    Query(params): Query<SecurityLedgerQuery>,
+) -> Result<Json<Vec<capsem_logger::SecurityRuleEvent>>, AppError> {
+    let limit = params.limit.unwrap_or(100).min(2000);
+    let _ = resolve_session_dir(&state, &id)?;
+    Ok(Json(security_projection_latest_for_vm(
+        &state, &id, limit, true,
+    )?))
+}
+
 /// GET /vms/{id}/security/status -- security rule ledger aggregates.
 async fn handle_security_info(
     State(state): State<Arc<ServiceState>>,
@@ -9734,7 +9747,7 @@ fn build_service_router(state: Arc<ServiceState>) -> Router {
         .route("/vms/{id}/timeline", get(handle_timeline))
         .route("/vms/{id}/security/latest", get(handle_security_latest))
         .route("/vms/{id}/security/status", get(handle_security_info))
-        .route("/vms/{id}/detection/latest", get(handle_security_latest))
+        .route("/vms/{id}/detection/latest", get(handle_detection_latest))
         .route("/vms/{id}/detection/status", get(handle_security_info))
         .route("/vms/{id}/enforcement/latest", get(handle_security_latest))
         .route("/vms/{id}/enforcement/status", get(handle_security_info))

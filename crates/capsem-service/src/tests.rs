@@ -1410,6 +1410,91 @@ async fn history_routes_use_memory_projection_not_session_db() {
 }
 
 #[tokio::test]
+async fn detection_latest_route_filters_non_detection_rule_rows() {
+    let state = make_test_state();
+    let app = build_service_router(Arc::clone(&state));
+    let dir = tempfile::tempdir().unwrap();
+    let session_dir = dir.path().join("sessions").join("detect-vm");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    insert_fake_instance_with_session_dir(
+        &state,
+        "detect-vm",
+        std::process::id(),
+        session_dir.clone(),
+    );
+
+    let db_path = session_dir.join("session.db");
+    let writer = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
+    writer
+        .write(capsem_logger::WriteOp::SecurityRuleEvent(
+            capsem_logger::SecurityRuleEvent::new(
+                1_789_000_123_456,
+                "aaaaaa000000",
+                "http.request",
+                "profiles.rules.default_http",
+                r#"{"name":"default_http"}"#,
+                r#"{"event_type":"http.request"}"#,
+            )
+            .with_rule_action(capsem_logger::SecurityRuleAction::Allow),
+        ))
+        .await;
+    writer
+        .write(capsem_logger::WriteOp::SecurityRuleEvent(
+            capsem_logger::SecurityRuleEvent::new(
+                1_789_000_123_457,
+                "bbbbbb000000",
+                "model.call",
+                "profiles.rules.ai_unknown_provider",
+                r#"{"name":"ai_unknown_provider"}"#,
+                r#"{"event_type":"model.call","model":{"provider":"unknown"}}"#,
+            )
+            .with_rule_action(capsem_logger::SecurityRuleAction::Allow)
+            .with_detection_level(capsem_logger::SecurityDetectionLevel::High),
+        ))
+        .await;
+    writer.shutdown_blocking();
+    let direct_rows = capsem_logger::DbReader::open(&db_path)
+        .unwrap()
+        .recent_security_rule_events(10)
+        .unwrap();
+    assert_eq!(direct_rows.len(), 2);
+    assert!(direct_rows.iter().any(|row| row.event_id == "bbbbbb000000"
+        && row.detection_level == capsem_logger::SecurityDetectionLevel::High));
+    rebuild_security_route_projection(&state).unwrap();
+    std::fs::rename(&db_path, session_dir.join("session.db.route-must-not-open")).unwrap();
+
+    let (status, detection) = route_request(
+        app.clone(),
+        axum::http::Method::GET,
+        "/vms/detect-vm/detection/latest?limit=10",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{detection}");
+    let detection_rows = detection.as_array().unwrap();
+    assert_eq!(detection_rows.len(), 1, "{detection}");
+    assert_eq!(detection_rows[0]["event_id"], "bbbbbb000000");
+    assert_eq!(detection_rows[0]["detection_level"], "high");
+
+    let (status, enforcement) = route_request(
+        app,
+        axum::http::Method::GET,
+        "/vms/detect-vm/enforcement/latest?limit=10",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{enforcement}");
+    let enforcement_rows = enforcement.as_array().unwrap();
+    assert_eq!(enforcement_rows.len(), 2, "{enforcement}");
+    assert!(enforcement_rows
+        .iter()
+        .any(|row| row["event_id"] == "aaaaaa000000"));
+    assert!(enforcement_rows
+        .iter()
+        .any(|row| row["event_id"] == "bbbbbb000000"));
+}
+
+#[tokio::test]
 async fn live_exec_history_projection_does_not_require_session_db() {
     let state = make_test_state();
     let app = build_service_router(Arc::clone(&state));

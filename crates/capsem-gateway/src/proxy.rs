@@ -47,7 +47,7 @@ pub async fn handle_proxy(State(state): State<Arc<AppState>>, req: Request) -> R
         error = tracing::field::Empty,
     );
     let _span_guard = span.enter();
-    tracing::info!(
+    tracing::debug!(
         target: "capsem_gateway",
         "gateway.proxy.start"
     );
@@ -76,7 +76,7 @@ pub async fn handle_proxy(State(state): State<Arc<AppState>>, req: Request) -> R
         Ok(resp) => {
             span.record("status", resp.status().as_u16());
             span.record("latency_ms", started.elapsed().as_millis() as u64);
-            tracing::info!(
+            tracing::debug!(
                 target: "capsem_gateway",
                 "gateway.proxy.ok"
             );
