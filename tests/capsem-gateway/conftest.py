@@ -241,8 +241,6 @@ class MockServiceHandler(BaseHTTPRequestHandler):
             self._send_json({"content": "mock file content"})
         elif path_only.startswith("/vms/") and path_only.endswith("/files/content"):
             self._send_json({"success": True, "size": len(body)})
-        elif path_only.startswith("/vms/") and path_only.endswith("/inspect"):
-            self._send_json({"columns": [], "rows": []})
         elif path_only.startswith("/vms/") and path_only.endswith("/save"):
             self._send_json({"ok": True})
         elif path_only == "/purge":

@@ -67,10 +67,25 @@ class TestProxyEndpointCoverage:
         resp = gw_client.post("/vms/vm-001/files/read", {"path": "/root/test.txt"})
         assert resp is not None
 
-    def test_post_inspect(self, gw_client):
-        """POST /vms/{id}/inspect returns SQL query results."""
-        resp = gw_client.post("/vms/vm-001/inspect", {"query": "SELECT 1"})
-        assert resp is not None
+    def test_post_inspect_not_forwarded(self, gw_client):
+        """Raw SQL inspection is not a gateway product route."""
+        result = subprocess.run(
+            [
+                "curl", "-s", "-S",
+                "-o", "/dev/null",
+                "-w", "%{http_code}",
+                "-X", "POST",
+                "-H", "Content-Type: application/json",
+                "-H", f"Authorization: Bearer {gw_client.token}",
+                "-d", '{"sql":"SELECT 1"}',
+                f"{gw_client.base_url}/vms/vm-001/inspect",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert result.returncode == 0
+        assert result.stdout.strip() == "404"
 
     def test_post_persist(self, gw_client):
         """POST /vms/{id}/save converts ephemeral to persistent."""

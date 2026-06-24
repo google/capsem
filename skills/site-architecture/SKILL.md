@@ -80,7 +80,6 @@ Tray app  -> capsem-gateway (TCP)-> HTTP/UDS -> capsem-service
 | POST | `/write_file/{id}` | Write file to guest |
 | GET | `/read_file/{id}?path=...` | Read file from guest |
 | GET | `/logs/{id}` | Serial/boot logs |
-| POST | `/inspect/{id}` | Raw SQL query against session.db |
 | DELETE | `/delete/{id}` | Destroy VM and wipe all state |
 | POST | `/fork/{id}` | Fork a VM into a reusable image |
 | GET | `/images` | List all user images |
@@ -89,7 +88,10 @@ Tray app  -> capsem-gateway (TCP)-> HTTP/UDS -> capsem-service
 
 ### MCP tools (capsem-mcp)
 
-21 tools: `capsem_create` (env + image params), `capsem_list`, `capsem_info`, `capsem_exec` (timeout param), `capsem_run`, `capsem_stop`, `capsem_resume`, `capsem_persist`, `capsem_purge`, `capsem_read_file`, `capsem_write_file`, `capsem_vm_logs` (grep + tail), `capsem_service_logs` (grep + tail), `capsem_inspect_schema`, `capsem_inspect`, `capsem_delete`, `capsem_version`, `capsem_fork`, `capsem_image_list`, `capsem_image_inspect`, `capsem_image_delete`.
+MCP tools include `capsem_create`, `capsem_list`, `capsem_info`, `capsem_exec`,
+`capsem_run`, lifecycle tools, file read/write, logs, timeline, triage,
+version, fork, and profile MCP tools. Raw SQL inspection tools are not part of
+the product surface; telemetry access must use typed routes.
 
 ## Host-guest communication
 

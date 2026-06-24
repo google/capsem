@@ -7,7 +7,7 @@ pytestmark = pytest.mark.mcp
 EXPECTED_TOOLS = {
     "capsem_create", "capsem_list", "capsem_info",
     "capsem_exec", "capsem_read_file", "capsem_write_file",
-    "capsem_inspect_schema", "capsem_inspect", "capsem_delete",
+    "capsem_delete",
     "capsem_stop", "capsem_suspend", "capsem_resume", "capsem_persist",
     "capsem_purge", "capsem_run", "capsem_vm_logs",
     "capsem_service_logs", "capsem_version",
@@ -22,6 +22,8 @@ def test_all_tools_discovered(mcp_session):
     tools = {t["name"] for t in resp["result"]["tools"]}
     missing = EXPECTED_TOOLS - tools
     assert not missing, f"Missing tools: {missing}"
+    assert "capsem_inspect" not in tools
+    assert "capsem_inspect_schema" not in tools
 
 
 def test_tool_schemas_have_type(mcp_session):
@@ -67,5 +69,3 @@ def test_fork_schema_fields(mcp_session):
     assert "id" in props, "Missing 'id' in fork schema"
     assert "name" in props, "Missing 'name' in fork schema"
     assert "description" in props, "Missing 'description' in fork schema"
-
-

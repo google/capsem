@@ -349,8 +349,6 @@ When the capsem MCP server is configured, Claude Code has direct VM control via 
 | `capsem_resume` | Resume a stopped persistent VM |
 | `capsem_read_file` | Read a file from the guest filesystem |
 | `capsem_write_file` | Write a file into the guest |
-| `capsem_inspect_schema` | Get session.db table schema |
-| `capsem_inspect` | Run SQL against session.db (telemetry) |
 | `capsem_list` | Show all VMs (running + stopped persistent) |
 | `capsem_info` | VM details (config, status, persistent, PID) |
 | `capsem_delete` | Destroy VM and wipe all state |
@@ -368,7 +366,7 @@ When the capsem MCP server is configured, Claude Code has direct VM control via 
 **Iterative debugging** (long-lived VM):
 1. **Create**: `capsem_create` -- boots a fresh VM in ~10s
 2. **Test**: `capsem_exec` with the command you want to verify (e.g., `capsem-doctor -k net`, `cat /etc/resolv.conf`, `curl https://example.com`)
-3. **Inspect**: `capsem_read_file` to check config files, logs; `capsem_inspect` to query telemetry tables
+3. **Inspect**: `capsem_read_file` to check config files/logs; typed stats, timeline, security, detection, and enforcement routes for telemetry
 4. **Iterate**: fix code on host, rebuild (`just build`), create a new VM to test again
 5. **Cleanup**: `capsem_delete` when done
 
@@ -378,7 +376,7 @@ When the capsem MCP server is configured, Claude Code has direct VM control via 
 |----------|-----|
 | Quick check: "does this command work in the guest?" | `capsem_run` |
 | Read a guest file to understand state | `capsem_read_file` |
-| Verify telemetry was recorded correctly | `capsem_inspect` with SQL query |
+| Verify telemetry was recorded correctly | typed stats/timeline/security routes or Ironbank direct ledger reads |
 | Full regression suite | `just test` |
 | Build + boot + validate in one shot | `just smoke` |
 | Benchmark performance | `just benchmark` |

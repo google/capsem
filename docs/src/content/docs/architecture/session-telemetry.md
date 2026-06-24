@@ -592,36 +592,37 @@ The `DbReader` provides pre-built aggregate queries:
 
 | Access point | Protocol | Query type |
 |-------------|----------|------------|
-| `capsem inspect <id> "SQL"` | CLI -> service HTTP `/vms/{id}/inspect` | Raw SQL (read-only) |
 | `capsem info <id> --stats` | CLI -> service HTTP `/vms/{id}/info` | Pre-built `SessionStats` |
-| MCP `capsem_inspect` | MCP -> service HTTP `/vms/{id}/inspect` | Raw SQL (read-only) |
-| MCP `capsem_inspect_schema` | MCP -> service HTTP | Table schemas for LLM context |
-| Frontend Stats tab | Gateway -> `/vms/{id}/inspect` plus VM-scoped security ledger routes | Per-table summaries and event inspection |
-| Frontend Inspector tab | Gateway -> `/vms/{id}/inspect` | Raw read-only SQL with presets for current tables |
+| Frontend Stats tab | Gateway -> typed VM-scoped projection routes | Per-table summaries and event inspection |
+| MCP `capsem_timeline` | MCP -> service HTTP `/vms/{id}/timeline` | Typed time-ordered event stream |
+| MCP logs/triage tools | MCP -> typed service routes | Logs, panic triage, and operational diagnostics |
 
-The `/inspect` endpoint executes arbitrary SQL against the session database in read-only mode (`query_only` pragma). The reader connection uses separate pragmas from the writer.
+Capsem does not expose arbitrary SQL over HTTP, gateway, frontend, or MCP.
+`session.db` is the durable ledger and can be inspected directly by a developer
+when doing local forensics, but product routes serve typed in-memory projections
+or typed recovery snapshots rather than opening SQLite on request.
 
 ## Frontend Stats And Inspection
 
 The VM **Stats** tab is ledger/database backed. It does not infer security
-state from profile config or live rules. It reads protocol tables through
-`POST /vms/{id}/inspect` and reads rule truth through VM-scoped ledger routes:
+state from profile config or live rules. It reads typed service projections
+hydrated from the ledger and VM-scoped rule routes:
 
 | Stats tab | Primary source |
 |-----------|----------------|
 | Model | `model_calls` |
-| MCP | `mcp_calls` |
+| Tools | `tool_calls` |
 | HTTP | `net_events` |
 | DNS | `dns_events` |
 | Files | `fs_events` |
-| Process | `exec_events`, `audit_events`, `substitution_events` |
+| Process | `exec_events`, `audit_events` |
+| Credentials | `substitution_events` |
 | Security | `/vms/{id}/security/latest`, `/vms/{id}/security/status`, `/vms/{id}/detection/latest`, `/vms/{id}/enforcement/latest` |
 | Snapshots | `/vms/{id}/snapshots/status`, `/vms/{id}/snapshots/list` |
 
-The **Inspector** tab is the raw read-only SQL escape hatch for forensics. Its
-presets point at current session tables such as `security_rule_events`,
-`net_events`, `dns_events`, `mcp_calls`, `model_calls`, `fs_events`,
-`exec_events`, and `substitution_events`.
+The old raw SQL Inspector tab and `/vms/{id}/inspect` route were removed. Add
+new typed projections when the UI, TUI, MCP, or CLI needs more ledger evidence;
+do not reintroduce a general SQL proxy.
 
 ## Per-VM isolation
 

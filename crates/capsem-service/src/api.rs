@@ -579,18 +579,6 @@ pub struct McpToolInfoResponse {
     pub permission_source: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct InspectRequest {
-    pub sql: String,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-#[allow(dead_code)]
-pub struct InspectResponse {
-    pub columns: Vec<String>,
-    pub rows: Vec<Vec<serde_json::Value>>,
-}
-
 /// Query parameters for GET /vms/{id}/history.
 #[derive(Deserialize, Debug)]
 #[allow(dead_code)]
@@ -985,29 +973,6 @@ mod tests {
         let json = serde_json::to_string(&r).unwrap();
         let r2: ReadFileResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(r2.content, "file contents");
-    }
-
-    // -----------------------------------------------------------------------
-    // Inspect
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn inspect_request_roundtrip() {
-        let json = json!({"sql": "SELECT count(*) FROM net_events"});
-        let r: InspectRequest = serde_json::from_value(json).unwrap();
-        assert_eq!(r.sql, "SELECT count(*) FROM net_events");
-    }
-
-    #[test]
-    fn inspect_response_roundtrip() {
-        let r = InspectResponse {
-            columns: vec!["name".into(), "count".into()],
-            rows: vec![vec![json!("net_events"), json!(42)]],
-        };
-        let json = serde_json::to_string(&r).unwrap();
-        let r2: InspectResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(r2.columns.len(), 2);
-        assert_eq!(r2.rows[0][1], json!(42));
     }
 
     // -----------------------------------------------------------------------

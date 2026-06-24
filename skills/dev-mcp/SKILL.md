@@ -7,7 +7,7 @@ description: MCP development for Capsem. Covers the capsem-mcp host MCP server (
 
 Capsem has two MCP components:
 
-1. **capsem-mcp** (host): MCP server over stdio that lets AI agents (Claude Code, Gemini CLI) control sandboxes -- create/delete VMs, exec commands, read/write files, query telemetry. Bridges to capsem-service HTTP API over UDS.
+1. **capsem-mcp** (host): MCP server over stdio that lets AI agents (Claude Code, Gemini CLI) control sandboxes -- create/delete VMs, exec commands, read/write files, and read typed telemetry routes. Bridges to capsem-service HTTP API over UDS.
 2. **Guest MCP relay + MITM MCP endpoint**: bridges AI agents running inside a guest VM to external MCP servers on the host via framed MCP records over vsock port 5002.
 
 ## Using capsem MCP tools for fast debugging
@@ -32,8 +32,6 @@ When the capsem MCP server is configured in your AI CLI, you have direct VM cont
 | `capsem_vm_logs` | id, grep?, tail? | Serial + process logs. grep filters lines, tail limits to last N. |
 | `capsem_terminal_snapshot` | id, source?, grep?, tail? | Render a text snapshot of a session terminal/log surface from serial/process logs with ANSI cleanup. |
 | `capsem_service_logs` | grep?, tail? | Service daemon logs (last ~100KB). grep + tail filters. |
-| `capsem_inspect_schema` | -- | session.db CREATE TABLE statements |
-| `capsem_inspect` | id, sql | Raw SQL against session.db |
 | `capsem_delete` | id | Destroy VM and wipe all state |
 | `capsem_version` | -- | MCP server version + service connectivity status |
 | `capsem_fork` | id, name, description? | Fork a running/stopped VM into a new stopped persistent session (use as a reusable template). |
@@ -55,7 +53,7 @@ capsem_run { command: "capsem-doctor -k net" }
 1. capsem_create        -- boot a fresh sandbox (add name for persistence)
 2. capsem_exec          -- run the thing you want to test
 3. capsem_read_file     -- check config, logs, state
-4. capsem_inspect       -- query telemetry tables
+4. capsem_timeline      -- inspect typed telemetry without raw SQL
 5. (fix code on host, rebuild with `just build`)
 6. capsem_delete        -- tear down
 7. repeat from 1
@@ -71,13 +69,12 @@ capsem_exec { id: "vm-1", command: "capsem-doctor -k net" }
 **Check network policy enforcement:**
 ```
 capsem_exec { id: "vm-1", command: "curl -s https://blocked-domain.com" }
-capsem_inspect { id: "vm-1", sql: "SELECT domain, action, status_code FROM net_events ORDER BY timestamp DESC LIMIT 10" }
+capsem_timeline { id: "vm-1", layers: "net", limit: 10 }
 ```
 
 **Verify telemetry pipeline:**
 ```
-capsem_inspect { id: "vm-1", sql: "SELECT server_name, tool_name, decision, duration_ms FROM mcp_calls ORDER BY timestamp DESC" }
-capsem_inspect { id: "vm-1", sql: "SELECT COUNT(*) as n, operation FROM fs_events GROUP BY operation" }
+capsem_timeline { id: "vm-1", layers: "mcp,fs", limit: 50 }
 ```
 
 **Read guest runtime state:**
@@ -98,7 +95,7 @@ capsem_exec { id: "vm-1", command: "chmod +x /tmp/test.sh && /tmp/test.sh" }
 |----------|-----|
 | Quick check: "does this work in the guest?" | `capsem_exec` |
 | Read a guest file to understand state | `capsem_read_file` |
-| Verify telemetry was recorded | `capsem_inspect` with SQL |
+| Verify telemetry was recorded | typed telemetry routes or Ironbank direct ledger reads |
 | Run capsem-doctor diagnostics | `capsem_exec` with `capsem-doctor` |
 | Full regression suite | `just test` |
 | Build + boot + validate in one shot | `just smoke` |

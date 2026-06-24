@@ -555,12 +555,6 @@ struct HostLogsMcpParams {
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
-struct InspectParams {
-    id: String,
-    sql: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
 struct McpToolsParams {
     /// Filter tools by server name (optional)
     server: Option<String>,
@@ -802,30 +796,6 @@ impl CapsemHandler {
         let resp = self
             .client
             .request::<FileWriteParams, Value>("POST", &path, Some(params))
-            .await;
-        format_service_response(resp)
-    }
-
-    #[tool(
-        name = "capsem_inspect_schema",
-        description = "Get CREATE TABLE statements for all telemetry DB tables. Call before capsem_inspect"
-    )]
-    async fn inspect_schema(&self) -> Result<String, String> {
-        Ok(capsem_logger::schema::CREATE_SCHEMA.to_string())
-    }
-
-    #[tool(
-        name = "capsem_inspect",
-        description = "Run a SQL query against a session's telemetry database. Returns columns and rows"
-    )]
-    async fn inspect(
-        &self,
-        Parameters(params): Parameters<InspectParams>,
-    ) -> Result<String, String> {
-        let path = format!("/vms/{}/inspect", params.id);
-        let resp = self
-            .client
-            .request::<InspectParams, Value>("POST", &path, Some(params))
             .await;
         format_service_response(resp)
     }

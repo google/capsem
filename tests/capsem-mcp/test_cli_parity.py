@@ -47,8 +47,6 @@ MCP_TO_CLI: dict[str, str | tuple[None, str]] = {
     # MCP-only: bridges / AI-caller helpers with no CLI analog
     "capsem_read_file":       (None, "file I/O reserved for AI callers; CLI users drop into `capsem shell`"),
     "capsem_write_file":      (None, "file I/O reserved for AI callers; CLI users drop into `capsem shell`"),
-    "capsem_inspect":         (None, "SQL query tool for AI callers; CLI users `sqlite3` the session DB directly"),
-    "capsem_inspect_schema":  (None, "paired with capsem_inspect; AI callers need schemas before querying"),
     "capsem_service_logs":    (None, "no CLI equivalent yet -- candidate for `capsem service logs`"),
     "capsem_panics":          (None, "host diagnostic triage tool; no CLI equivalent yet"),
     "capsem_triage":          (None, "host diagnostic triage summary; no CLI equivalent yet"),

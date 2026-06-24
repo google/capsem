@@ -6592,56 +6592,6 @@ async fn handle_profile_mcp_tool_call(
     }
 }
 
-async fn handle_inspect(
-    State(state): State<Arc<ServiceState>>,
-    Path(id): Path<String>,
-    Json(payload): Json<InspectRequest>,
-) -> Result<impl IntoResponse, AppError> {
-    // _main sentinel routes to the global session index (main.db).
-    if id == "_main" {
-        let db_path = state.main_db_path();
-        let index = capsem_core::session::SessionIndex::open(&db_path).map_err(|e| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to open main.db: {e}"),
-            )
-        })?;
-        let json_str = index.query_raw(&payload.sql, &[]).map_err(|e| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("query failed: {e}"),
-            )
-        })?;
-        return Ok((
-            axum::http::StatusCode::OK,
-            [(axum::http::header::CONTENT_TYPE, "application/json")],
-            json_str,
-        ));
-    }
-
-    let db_path = resolve_session_dir(&state, &id)?.join("session.db");
-
-    let reader = capsem_logger::DbReader::open(&db_path).map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to open DB: {e}"),
-        )
-    })?;
-
-    let json_str = reader.query_raw(&payload.sql).map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("query failed: {e}"),
-        )
-    })?;
-
-    Ok((
-        axum::http::StatusCode::OK,
-        [(axum::http::header::CONTENT_TYPE, "application/json")],
-        json_str,
-    ))
-}
-
 /// `GET /vms/{id}/timeline?trace_id=<X>&since=10m&limit=200&layers=mcp,exec,...`
 /// -- unified time-ordered event stream for one session, filtered from the
 /// in-memory timeline projection. Used by the `capsem_timeline` MCP tool.
@@ -10232,7 +10182,6 @@ fn build_service_router(state: Arc<ServiceState>) -> Router {
         )
         .route("/vms/{id}/snapshots/list", get(handle_vm_snapshots_list))
         .route("/vms/{id}/logs", get(handle_logs))
-        .route("/vms/{id}/inspect", post(handle_inspect))
         .route("/vms/{id}/exec", post(handle_exec))
         .route("/vms/{id}/files/write", post(handle_write_file))
         .route("/vms/{id}/files/read", post(handle_read_file))

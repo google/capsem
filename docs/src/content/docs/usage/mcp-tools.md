@@ -51,8 +51,6 @@ or source install flow.
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
-| `capsem_inspect_schema` | -- | Get CREATE TABLE statements for all session telemetry tables. Call before `capsem_inspect` to know what columns are available. |
-| `capsem_inspect` | `id`, `sql` | Run a read-only SQL query against a session's telemetry database. Returns columns and rows. |
 | `capsem_vm_logs` | `id`, `grep?`, `tail?` | Serial + process logs for a session. `grep` filters lines, `tail` limits to last N lines. |
 | `capsem_service_logs` | `grep?`, `tail?` | Latest `capsem-service` logs (last ~100 KB). `grep` + `tail` filters. |
 | `capsem_host_logs` | `name`, `grep?`, `tail?`, `maxBytes?` | Read an allowlisted host log by symbolic name: `service`, `mcp`, `gateway`, `tray`, or `app`. |
@@ -91,7 +89,7 @@ telemetry) without having to drive `capsem_exec` by hand.
 ```json
 { "tool": "capsem_create", "arguments": { "name": "dev" } }
 { "tool": "capsem_exec",   "arguments": { "id": "<id>", "command": "capsem-doctor -k net" } }
-{ "tool": "capsem_inspect", "arguments": { "id": "<id>", "sql": "SELECT domain, decision, status_code FROM net_events ORDER BY timestamp DESC LIMIT 10" } }
+{ "tool": "capsem_timeline", "arguments": { "id": "<id>", "layers": "net,model,mcp,fs", "limit": 50 } }
 ```
 
 **Fork a template and boot from it:**

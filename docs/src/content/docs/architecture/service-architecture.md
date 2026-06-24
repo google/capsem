@@ -182,7 +182,6 @@ the root.
 | GET/POST | `/vms/{id}/files/content` | Download or upload file content |
 | GET | `/vms/{id}/files/list` | List guest files through the file API |
 | GET | `/vms/{id}/logs` | Serial/boot logs |
-| POST | `/vms/{id}/inspect` | SQL query against session.db |
 | GET | `/vms/{id}/timeline` | VM event timeline |
 | GET | `/vms/{id}/history` | Session history summary |
 | GET | `/vms/{id}/history/processes` | Process history |

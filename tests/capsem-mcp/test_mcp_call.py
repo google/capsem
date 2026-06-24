@@ -1,6 +1,7 @@
 """capsem_mcp_call: route tool invocations through a running VM's aggregator."""
 
 import json
+import sqlite3
 import uuid
 
 import pytest
@@ -15,19 +16,21 @@ def _json_tool_result(result):
     return json.loads(content_text(result))
 
 
-def _inspect(mcp_session, vm_name, sql):
-    result = mcp_session.call_tool("capsem_inspect", {"id": vm_name, "sql": sql})
-    payload = json.loads(content_text(result))
-    return [dict(zip(payload["columns"], row, strict=True)) for row in payload["rows"]]
+def _ledger_rows(service_uds_path, vm_name, sql, params=()):
+    """Read the isolated test session ledger directly, not through product routes."""
+    db_path = service_uds_path.parent / "sessions" / vm_name / "session.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        return [dict(row) for row in conn.execute(sql, params).fetchall()]
 
 
-def test_mcp_call_builtin_http_headers_pays_full_ledger(shared_vm, mcp_session):
+def test_mcp_call_builtin_http_headers_pays_full_ledger(capsem_service, shared_vm, mcp_session):
     """Host MCP -> service profile route -> VM aggregator -> DB/security ledger."""
     vm_name, _ = shared_vm
     mock_proc, ready = start_mock_server()
     try:
-        before_count = _inspect(
-            mcp_session,
+        before_count = _ledger_rows(
+            capsem_service,
             vm_name,
             "SELECT COUNT(*) AS count FROM tool_calls WHERE origin = 'mcp'",
         )[0]["count"]
@@ -49,8 +52,8 @@ def test_mcp_call_builtin_http_headers_pays_full_ledger(shared_vm, mcp_session):
         assert http_headers["permission_source"]
         assert http_headers["pin_changed"] is False
 
-        after_list_count = _inspect(
-            mcp_session,
+        after_list_count = _ledger_rows(
+            capsem_service,
             vm_name,
             "SELECT COUNT(*) AS count FROM tool_calls WHERE origin = 'mcp'",
         )[0]["count"]
@@ -74,8 +77,8 @@ def test_mcp_call_builtin_http_headers_pays_full_ledger(shared_vm, mcp_session):
         assert "Status: 200 OK" in call_text
         assert "content-type:" in call_text.lower()
 
-        mcp_rows = _inspect(
-            mcp_session,
+        mcp_rows = _ledger_rows(
+            capsem_service,
             vm_name,
             """
             SELECT event_id, server_name, method, tool_name, decision,
@@ -103,8 +106,8 @@ def test_mcp_call_builtin_http_headers_pays_full_ledger(shared_vm, mcp_session):
         assert "Status: 200 OK" in mcp_row["response_preview"]
         assert mcp_row["trace_id"]
 
-        net_rows = _inspect(
-            mcp_session,
+        net_rows = _ledger_rows(
+            capsem_service,
             vm_name,
             """
             SELECT event_id, domain, method, path, status_code, decision,
@@ -125,16 +128,17 @@ def test_mcp_call_builtin_http_headers_pays_full_ledger(shared_vm, mcp_session):
         assert net_row["bytes_received"] > 0
         assert isinstance(net_row["event_id"], str) and len(net_row["event_id"]) == 12
 
-        security_rows = _inspect(
-            mcp_session,
+        security_rows = _ledger_rows(
+            capsem_service,
             vm_name,
             f"""
             SELECT event_type, rule_id, rule_action, detection_level,
                    event_json, rule_json
             FROM security_rule_events
-            WHERE event_id = '{mcp_row["event_id"]}'
+            WHERE event_id = ?
             ORDER BY id
             """,
+            (mcp_row["event_id"],),
         )
         assert security_rows
         assert any(row["event_type"] == "mcp.tool_call" for row in security_rows)

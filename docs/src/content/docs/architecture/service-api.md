@@ -162,7 +162,6 @@ describes virtualization state.
 | `POST` | `/vms/{id}/fork` | Fork a session. |
 | `GET` | `/vms/{id}/fork/status` | Fork progress/status. |
 | `GET` | `/vms/{id}/logs` | Session log stream. |
-| `POST` | `/vms/{id}/inspect` | Run an explicit inspection operation. |
 | `POST` | `/vms/{id}/exec` | Execute a command through the audited control path. |
 | `POST` | `/vms/{id}/files/write` | Write a file through the audited control path. |
 | `POST` | `/vms/{id}/files/read` | Read a file through the audited control path. |

@@ -104,13 +104,6 @@ fn file_write_params_roundtrip() {
 }
 
 #[test]
-fn inspect_params_roundtrip() {
-    let json = json!({"id": "vm-1", "sql": "SELECT 1"});
-    let p: InspectParams = serde_json::from_value(json).unwrap();
-    assert_eq!(p.sql, "SELECT 1");
-}
-
-#[test]
 fn id_params_roundtrip() {
     let json = json!({"id": "my-vm"});
     let p: IdParams = serde_json::from_value(json).unwrap();
@@ -436,18 +429,6 @@ fn uds_path_override_logic() {
 }
 
 // -----------------------------------------------------------------------
-// inspect_schema
-// -----------------------------------------------------------------------
-
-#[test]
-fn inspect_schema_contains_create_table() {
-    let schema = capsem_logger::schema::CREATE_SCHEMA;
-    assert!(schema.contains("CREATE TABLE"));
-    assert!(schema.contains("net_events"));
-    assert!(schema.contains("model_calls"));
-}
-
-// -----------------------------------------------------------------------
 // Tool router
 // -----------------------------------------------------------------------
 
@@ -466,8 +447,6 @@ fn tool_router_registers_all_tools() {
         "capsem_exec",
         "capsem_read_file",
         "capsem_write_file",
-        "capsem_inspect_schema",
-        "capsem_inspect",
         "capsem_delete",
         "capsem_stop",
         "capsem_suspend",
@@ -598,14 +577,6 @@ fn file_write_params_path_traversal() {
 }
 
 #[test]
-fn inspect_params_sql_injection() {
-    let json = json!({"id": "vm-1", "sql": "SELECT 1; DROP TABLE net_events; --"});
-    let p: InspectParams = serde_json::from_value(json).unwrap();
-    assert!(p.sql.contains("DROP TABLE"));
-    // Backend MUST use read-only connection
-}
-
-#[test]
 fn create_params_with_env() {
     let json = json!({"name": "test", "env": {"API_KEY": "sk-123", "DEBUG": "true"}});
     let p: CreateParams = serde_json::from_value(json).unwrap();
@@ -645,28 +616,6 @@ fn id_params_with_null_bytes() {
 }
 
 // -----------------------------------------------------------------------
-// inspect_schema validates
-// -----------------------------------------------------------------------
-
-#[test]
-fn inspect_schema_has_all_tables() {
-    let schema = capsem_logger::schema::CREATE_SCHEMA;
-    for table in [
-        "net_events",
-        "model_calls",
-        "tool_calls",
-        "tool_responses",
-        "mcp_calls",
-        "fs_events",
-    ] {
-        assert!(schema.contains(table), "Missing table in schema: {table}");
-    }
-    assert!(
-        !schema.contains("CREATE TABLE IF NOT EXISTS snapshot_events"),
-        "hypervisor snapshot state must not be part of session.db activity"
-    );
-}
-
 // -----------------------------------------------------------------------
 // format_service_response: the common dispatch shape
 // -----------------------------------------------------------------------

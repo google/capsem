@@ -85,8 +85,6 @@ sequenceDiagram
 | `capsem_panics` | Extract structured panics and backtraces from host logs | `GET /panics` |
 | `capsem_triage` | Summarize recent panics, IPC drops, server errors, and slow ops | `GET /triage` |
 | `capsem_timeline` | Render a time-ordered session timeline by event layer and trace ID | `GET /vms/{id}/timeline` |
-| `capsem_inspect_schema` | Get CREATE TABLE statements for telemetry DB | Schema constant |
-| `capsem_inspect` | Run SQL query against VM's session.db | `POST /vms/{id}/inspect` |
 | `capsem_version` | MCP server version and service connectivity | Local + service |
 | `capsem_mcp_servers` | List configured guest MCP servers | Service MCP IPC |
 | `capsem_mcp_tools` | List discovered guest MCP tools | Service MCP IPC |
