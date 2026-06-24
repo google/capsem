@@ -40,7 +40,6 @@ EXPECTED_CAPSEM_MCP_TOOLS = {
     "capsem_mcp_servers",
     "capsem_mcp_tools",
     "capsem_panics",
-    "capsem_persist",
     "capsem_purge",
     "capsem_read_file",
     "capsem_resume",
@@ -148,7 +147,6 @@ def _eventually(query, predicate, timeout: float = 20.0):
 def _connect_session_db(service: ServiceInstance, session_id: str):
     candidates = [
         service.tmp_dir / "sessions" / session_id / "session.db",
-        service.tmp_dir / "persistent" / session_id / "session.db",
     ]
     db_path = next((path for path in candidates if path.exists()), candidates[0])
     assert db_path.exists(), f"session DB missing at {db_path}"
@@ -235,13 +233,13 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
             assert set(triage["host"]) == {"errors", "panics", "slow_ops"}
             assert isinstance(triage["rank"], list)
             service_logs = content_text(mcp.call_tool("capsem_service_logs", {"tail": 20}))
-            assert "service-logs" in service_logs
             assert '"level"' in service_logs
+            assert '"target":"capsem_service"' in service_logs
             host_logs = content_text(
                 mcp.call_tool("capsem_host_logs", {"name": "service", "tail": 20})
             )
-            assert "service-logs" in host_logs
             assert '"level"' in host_logs
+            assert '"target":"capsem_service"' in host_logs
 
             created = _json_tool_result(
                 mcp.call_tool(
@@ -288,6 +286,15 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
             mcp_servers = _json_tool_result(mcp.call_tool("capsem_mcp_servers"))
             assert mcp_servers == route_servers
             assert any(server["name"] == "local" for server in mcp_servers)
+
+            refreshed = client.post(
+                f"/profiles/{CODE_PROFILE_ID}/mcp/servers/local/refresh",
+                {},
+                timeout=30,
+            )
+            assert isinstance(refreshed, dict)
+            assert refreshed.get("success") is True
+            assert refreshed.get("server_id") == "local"
 
             route_tools = client.get(
                 f"/profiles/{CODE_PROFILE_ID}/mcp/servers/local/tools/list",

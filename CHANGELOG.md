@@ -78,6 +78,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`native`, `builtin`, and `local`) separately from protocol-origin tool
   transport (`mcp`/`mcp_proxy`) instead of presenting an MCP-only activity
   metric.
+- Removed retired `capsem-mcp` lifecycle semantics: the host MCP server no
+  longer registers `capsem_persist`, no longer sends create-time lifecycle
+  flags, and its tool descriptions now reflect profile-owned sessions.
 - Fixed the frontend VM provision contract so profile-owned CPU/RAM defaults
   stay service-owned when creating sessions from the dashboard or quick-create
   paths.

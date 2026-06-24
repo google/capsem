@@ -154,11 +154,9 @@ fn query_string<S: AsRef<str>>(params: &[(&str, Option<S>)]) -> String {
 
 /// Body for POST /vms/create.
 fn build_create_body(params: &CreateParams) -> Value {
-    let persistent = params.name.is_some();
     let mut body = json!({
         "name": params.name,
         "profile_id": DEFAULT_PROFILE_ID,
-        "persistent": persistent,
     });
     if let Some(ram) = params.ram_mb {
         body["ram_mb"] = json!(ram);
@@ -175,7 +173,7 @@ fn build_create_body(params: &CreateParams) -> Value {
     body
 }
 
-/// Body for POST /run (fresh temporary session).
+/// Body for POST /run.
 fn build_run_body(params: &RunParams) -> Value {
     let mut body = json!({
         "command": params.command,
@@ -194,11 +192,6 @@ fn build_fork_body(params: &ForkParams) -> Value {
         "name": params.name,
         "description": params.description,
     })
-}
-
-/// Body for POST /vms/{id}/save.
-fn build_persist_body(params: &PersistParams) -> Value {
-    json!({ "name": params.name })
 }
 
 /// Body for POST /purge.
@@ -414,8 +407,7 @@ struct IdParams {
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
 struct CreateParams {
-    /// Name for the session. Named sessions are persistent ("if you name it, you keep it").
-    /// If omitted, creates a temporary session.
+    /// Optional requested session name. If omitted, the service assigns a profile-scoped name.
     name: Option<String>,
     #[serde(rename = "ramMb")]
     #[schemars(rename = "ramMb")]
@@ -426,7 +418,7 @@ struct CreateParams {
     version: Option<String>,
     /// Environment variables to inject into the guest (e.g. {"API_KEY": "sk-..."})
     env: Option<HashMap<String, String>>,
-    /// Clone state from an existing persistent session. The new session inherits
+    /// Clone state from an existing session. The new session inherits
     /// the source's disk state (workspace, rootfs overlay, session.db).
     from: Option<String>,
 }
@@ -443,21 +435,13 @@ struct ForkParams {
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
 struct NameParams {
-    /// Name of the persistent session
-    name: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
-struct PersistParams {
-    /// ID of the running ephemeral session
-    id: String,
-    /// Name to assign (makes it persistent)
+    /// Session name or id
     name: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
 struct PurgeParams {
-    /// Set to true to also destroy persistent sessions
+    /// Set to true to purge every stopped/broken session the service considers purgeable
     #[serde(default)]
     all: Option<bool>,
 }
@@ -572,7 +556,7 @@ struct McpCallParams {
 impl CapsemHandler {
     #[tool(
         name = "capsem_list",
-        description = "List all sessions (running and stopped persistent) with ID, name, status, RAM, CPUs, uptime, and telemetry"
+        description = "List sessions with ID, name, profile, status, resources, uptime, and telemetry"
     )]
     async fn list(&self) -> Result<String, String> {
         let resp = self
@@ -724,7 +708,7 @@ impl CapsemHandler {
 
     #[tool(
         name = "capsem_create",
-        description = "Create a new session. Named sessions are persistent. Returns session ID. RAM/CPU default to the user's configured VM settings (vm.resources.ram_gb / cpu_count) when unspecified. If name already exists, returns error -- use capsem_resume instead"
+        description = "Create a new profile-owned session. Returns session ID. RAM/CPU default to the selected profile when unspecified. If name already exists, returns an error."
     )]
     async fn create(&self, Parameters(params): Parameters<CreateParams>) -> Result<String, String> {
         info!(?params, "capsem_create tool called");
@@ -741,7 +725,7 @@ impl CapsemHandler {
 
     #[tool(
         name = "capsem_info",
-        description = "Get session details: ID, name, status, persistent, RAM, CPUs, version, and telemetry"
+        description = "Get session details: ID, name, profile, status, resources, version, and telemetry"
     )]
     async fn info(&self, Parameters(params): Parameters<IdParams>) -> Result<String, String> {
         let resp = self
@@ -802,7 +786,7 @@ impl CapsemHandler {
 
     #[tool(
         name = "capsem_delete",
-        description = "Delete a session permanently. Destroys all state including persistent data"
+        description = "Delete a session and destroy its state"
     )]
     async fn delete(&self, Parameters(params): Parameters<IdParams>) -> Result<String, String> {
         let resp = self
@@ -812,10 +796,7 @@ impl CapsemHandler {
         format_service_response(resp)
     }
 
-    #[tool(
-        name = "capsem_stop",
-        description = "Stop a session. Persistent sessions preserve their state; ephemeral sessions are destroyed"
-    )]
+    #[tool(name = "capsem_stop", description = "Stop a session")]
     async fn stop(&self, Parameters(params): Parameters<IdParams>) -> Result<String, String> {
         let resp = self
             .client
@@ -826,7 +807,7 @@ impl CapsemHandler {
 
     #[tool(
         name = "capsem_suspend",
-        description = "Suspend a session. Saves RAM and CPU state. Requires persistent session"
+        description = "Pause a session by saving RAM and CPU state"
     )]
     async fn suspend(&self, Parameters(params): Parameters<IdParams>) -> Result<String, String> {
         let resp = self
@@ -842,7 +823,7 @@ impl CapsemHandler {
 
     #[tool(
         name = "capsem_resume",
-        description = "Resume a stopped persistent session or get ID of a running one. Returns session ID"
+        description = "Resume a stopped session or get the ID of a running one"
     )]
     async fn resume(&self, Parameters(params): Parameters<NameParams>) -> Result<String, String> {
         let resp = self
@@ -857,24 +838,8 @@ impl CapsemHandler {
     }
 
     #[tool(
-        name = "capsem_persist",
-        description = "Convert a running ephemeral session to a persistent named session"
-    )]
-    async fn persist(
-        &self,
-        Parameters(params): Parameters<PersistParams>,
-    ) -> Result<String, String> {
-        let body = build_persist_body(&params);
-        let resp = self
-            .client
-            .request::<Value, Value>("POST", &format!("/vms/{}/save", params.id), Some(body))
-            .await;
-        format_service_response(resp)
-    }
-
-    #[tool(
         name = "capsem_purge",
-        description = "Kill all temporary sessions. Set all=true to also destroy persistent sessions"
+        description = "Purge stopped, broken, incompatible, or otherwise purgeable sessions"
     )]
     async fn purge(&self, Parameters(params): Parameters<PurgeParams>) -> Result<String, String> {
         let body = build_purge_body(&params);
@@ -887,7 +852,7 @@ impl CapsemHandler {
 
     #[tool(
         name = "capsem_run",
-        description = "Run a command in a fresh temporary session. Session is auto-provisioned and destroyed. Returns stdout, stderr, exit_code"
+        description = "Run a command in a fresh profile-owned session managed by the service. Returns stdout, stderr, exit_code"
     )]
     async fn run(&self, Parameters(params): Parameters<RunParams>) -> Result<String, String> {
         let body = build_run_body(&params);
@@ -900,7 +865,7 @@ impl CapsemHandler {
 
     #[tool(
         name = "capsem_fork",
-        description = "Fork a running or stopped session into a new stopped persistent session"
+        description = "Fork a running or stopped session into a new stopped session"
     )]
     async fn fork(&self, Parameters(params): Parameters<ForkParams>) -> Result<String, String> {
         info!(?params, "capsem_fork tool called");

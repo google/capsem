@@ -18,15 +18,14 @@ When the capsem MCP server is configured in your AI CLI, you have direct VM cont
 
 | Tool | Parameters | What it does |
 |------|-----------|-------------|
-| `capsem_create` | name?, ramMb?, cpuCount?, env?, image? | Boot a fresh VM (~10s). Named VMs are persistent. env = `{"KEY": "VALUE"}` for guest injection. image = boot from a forked template. |
-| `capsem_run` | command, timeout? | One-shot: boot temp VM, exec command, destroy, return output |
-| `capsem_list` | -- | List all VMs (running + stopped persistent) |
-| `capsem_info` | id | VM config, status, persistent, PID |
+| `capsem_create` | name?, ramMb?, cpuCount?, env?, from? | Create a profile-owned session. env = `{"KEY": "VALUE"}` for guest injection. from = clone from another session. |
+| `capsem_run` | command, timeout? | One-shot: ask the service to create a fresh profile-owned session, exec command, and return output |
+| `capsem_list` | -- | List sessions |
+| `capsem_info` | id | Session profile, status, resources, version, telemetry |
 | `capsem_exec` | id, command, timeout? | Run command in guest, get stdout/stderr/exit_code. No default command timeout; pass `timeout` only when the user asked for a deadline. |
-| `capsem_stop` | id | Stop VM (persistent: preserve state; ephemeral: destroy) |
-| `capsem_resume` | name | Resume a stopped persistent VM |
-| `capsem_persist` | id, name | Convert running ephemeral VM to persistent |
-| `capsem_purge` | all? | Kill all temp VMs (all=true includes persistent) |
+| `capsem_stop` | id | Stop a session |
+| `capsem_resume` | name | Resume a stopped session or return the running session id |
+| `capsem_purge` | all? | Purge stopped, broken, incompatible, or otherwise purgeable sessions |
 | `capsem_read_file` | id, path | Read file content from guest |
 | `capsem_write_file` | id, path, content | Write file into guest |
 | `capsem_vm_logs` | id, grep?, tail? | Serial + process logs. grep filters lines, tail limits to last N. |
@@ -34,7 +33,7 @@ When the capsem MCP server is configured in your AI CLI, you have direct VM cont
 | `capsem_service_logs` | grep?, tail? | Service daemon logs (last ~100KB). grep + tail filters. |
 | `capsem_delete` | id | Destroy VM and wipe all state |
 | `capsem_version` | -- | MCP server version + service connectivity status |
-| `capsem_fork` | id, name, description? | Fork a running/stopped VM into a new stopped persistent session (use as a reusable template). |
+| `capsem_fork` | id, name, description? | Fork a running/stopped session into a new stopped session. |
 | `capsem_mcp_connectors` | profile? | List Profile V2 `mcpServers` entries for the selected or requested profile. |
 | `capsem_mcp_add` | id, profile?, disabled?, type?, command?, args?, env?, url?, headers?, bearerToken?, credential_refs?, allowed_tools? | Add a standard MCP server entry plus Capsem governance metadata to a user profile. |
 | `capsem_mcp_delete` | id, profile? | Delete a direct user Profile V2 MCP server entry. |
@@ -50,7 +49,7 @@ When the capsem MCP server is configured in your AI CLI, you have direct VM cont
 capsem_run { command: "capsem-doctor -k net" }
 
 -- Iterative debugging (long-lived VM):
-1. capsem_create        -- boot a fresh sandbox (add name for persistence)
+1. capsem_create        -- boot a fresh sandbox
 2. capsem_exec          -- run the thing you want to test
 3. capsem_read_file     -- check config, logs, state
 4. capsem_timeline      -- inspect typed telemetry without raw SQL

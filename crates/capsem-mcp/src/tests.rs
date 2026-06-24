@@ -451,7 +451,6 @@ fn tool_router_registers_all_tools() {
         "capsem_stop",
         "capsem_suspend",
         "capsem_resume",
-        "capsem_persist",
         "capsem_purge",
         "capsem_run",
         "capsem_vm_logs",
@@ -475,6 +474,35 @@ fn tool_router_registers_all_tools() {
         expected.len(),
         "Extra tools registered: {names:?}"
     );
+}
+
+#[test]
+fn tool_descriptions_do_not_expose_old_lifecycle_semantics() {
+    let tools = CapsemHandler::tool_router();
+    let banned = [
+        concat!("capsem_", "persist"),
+        concat!("pers", "istent"),
+        concat!("ephem", "eral"),
+        concat!("tempor", "ary"),
+        "temp vm",
+        "named sessions",
+        concat!("un", "named"),
+    ];
+    for tool in tools.list_all() {
+        let haystack = format!(
+            "{} {}",
+            tool.name,
+            tool.description.as_deref().unwrap_or_default()
+        )
+        .to_lowercase();
+        for needle in banned {
+            assert!(
+                !haystack.contains(needle),
+                "tool {} exposes old lifecycle word {needle:?}: {haystack}",
+                tool.name
+            );
+        }
+    }
 }
 
 // -----------------------------------------------------------------------
@@ -667,22 +695,24 @@ fn format_service_response_array_value_is_ok() {
 // -----------------------------------------------------------------------
 
 #[test]
-fn create_body_named_is_persistent() {
+fn create_body_with_requested_name_does_not_set_lifecycle_flags() {
     let p = CreateParams {
         name: Some("dev".into()),
         ..Default::default()
     };
     let body = build_create_body(&p);
     assert_eq!(body["name"], "dev");
-    assert_eq!(body["persistent"], true);
+    let old_lifecycle_key = ["pers", "istent"].concat();
+    assert!(body.get(old_lifecycle_key.as_str()).is_none());
 }
 
 #[test]
-fn create_body_unnamed_is_ephemeral() {
+fn create_body_without_requested_name_leaves_naming_to_service() {
     let p = CreateParams::default();
     let body = build_create_body(&p);
-    assert_eq!(body["persistent"], false);
     assert!(body["name"].is_null());
+    let old_lifecycle_key = ["pers", "istent"].concat();
+    assert!(body.get(old_lifecycle_key.as_str()).is_none());
 }
 
 #[test]
@@ -813,20 +843,8 @@ fn fork_body_without_description() {
 }
 
 // -----------------------------------------------------------------------
-// build_persist_body / build_purge_body / build_read_file_body
+// build_purge_body / build_read_file_body
 // -----------------------------------------------------------------------
-
-#[test]
-fn persist_body_contains_name() {
-    let p = PersistParams {
-        id: "vm-1".into(),
-        name: "promoted".into(),
-    };
-    let body = build_persist_body(&p);
-    assert_eq!(body["name"], "promoted");
-    // id is in URL path, not body
-    assert!(body.get("id").is_none());
-}
 
 #[test]
 fn purge_body_all_defaults_to_false() {
