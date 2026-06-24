@@ -5,6 +5,10 @@ const dashboard = readFileSync(
   new URL('../components/shell/NewTabPage.svelte', import.meta.url),
   'utf8',
 );
+const appShell = readFileSync(
+  new URL('../components/shell/App.svelte', import.meta.url),
+  'utf8',
+);
 const toolbar = readFileSync(
   new URL('../components/shell/Toolbar.svelte', import.meta.url),
   'utf8',
@@ -51,6 +55,17 @@ describe('user-facing session language contract', () => {
     expect(dashboard).toContain("title={ready ? `New ${launcher.profile.name} session` : profileAssetText(launcher.assets)}");
     expect(dashboard).not.toContain('aria-label={profileAssetText(launcher.assets)}');
     expect(dashboard).not.toContain('Start</span>');
+  });
+
+  it('lets the service own quick-create session names and profile resources', () => {
+    const quickCreateSources = [dashboard, appShell].join('\n');
+    expect(quickCreateSources).not.toContain('generatedVmName');
+    expect(quickCreateSources).not.toContain('name: generatedVmName');
+    expect(quickCreateSources).not.toContain('ram_mb: 2048');
+    expect(quickCreateSources).not.toContain('cpus: 2');
+    expect(dashboard).toContain('profile_id: profileId');
+    expect(appShell).toContain("profile_id: 'code'");
+    expect(quickCreateSources).toContain('persistent: true');
   });
 
   it('uses sessions in toolbar controls and keeps build stamp out of visible chrome', () => {

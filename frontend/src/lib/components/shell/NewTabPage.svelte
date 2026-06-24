@@ -275,8 +275,6 @@
     try {
       const { id, name } = await vmStore.provision({
         profile_id: profileId,
-        ram_mb: 2048,
-        cpus: 2,
         persistent: true,
       });
       console.log('[NewTabPage] provision OK id=%s name=%s', id, name);

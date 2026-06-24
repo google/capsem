@@ -21,20 +21,6 @@
 
   const vmViews = ['terminal', 'stats', 'logs', 'files'] as const;
 
-  function generatedVmName(profileId: string): string {
-    const safeProfile = profileId
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9-]+/g, '-')
-      .replace(/^-+|-+$/g, '') || 'session';
-    const existing = new Set(vmStore.vms.map(vm => (vm.name ?? vm.id).toLowerCase()));
-    for (let index = 1; index < 10000; index += 1) {
-      const candidate = `${safeProfile}-${index}`;
-      if (!existing.has(candidate)) return candidate;
-    }
-    return `${safeProfile}-10000`;
-  }
-
   function handleExternalLinkClick(e: MouseEvent) {
     const a = (e.target as Element | null)?.closest('a');
     if (!a) return;
@@ -52,9 +38,6 @@
       try {
         const { id, name } = await vmStore.provision({
           profile_id: 'code',
-          name: generatedVmName('code'),
-          ram_mb: 2048,
-          cpus: 2,
           persistent: true,
         });
         tabStore.openVM(id, name);
