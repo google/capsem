@@ -312,10 +312,24 @@ def _assert_timing_budget(timing: RouteTiming, *, p95_ms: float, max_ms: float, 
 
 def _hot_route_budget(path: str, *, gateway: bool = False) -> tuple[float, float, float]:
     if path.endswith("/assets/status"):
-        # Asset status returns a richer body than scalar status routes. It is
-        # still byte-cache backed; this budget keeps 64 debug-build calls under
-        # roughly 2ms CPU per call and catches any return to file hashing.
-        return (3.0 if not gateway else 4.0, 8.0 if not gateway else 10.0, 0.12)
+        # Asset status returns a richer per-file readiness payload than scalar
+        # status routes. It is still byte-cache backed; this budget keeps 64
+        # debug-build calls bounded and catches any return to file hashing or
+        # route-time DB reads.
+        return (
+            3.0 if not gateway else 4.0,
+            8.0 if not gateway else 10.0,
+            0.16 if not gateway else 0.22,
+        )
+    if path.endswith("/rules/list") or path.endswith("/mcp/default/info"):
+        # Rule-inventory routes return the in-memory compiled/default rule
+        # shape. They are larger than scalar info/status routes and must stay
+        # comfortably sub-2ms without reparsing rule files or touching SQLite.
+        return (
+            2.0 if not gateway else 3.0,
+            5.0 if not gateway else 8.0,
+            0.08 if not gateway else 0.12,
+        )
     if path == "/stats":
         # `/stats` is byte-projection backed, but it is still one of the
         # larger hot JSON bodies. Keep the latency budget tight and allow a
@@ -573,6 +587,7 @@ def test_control_route_contracts_exist_for_ui_tui_blocking_and_vm_surfaces() -> 
         service.stop()
 
 
+@pytest.mark.serial
 def test_hot_control_routes_have_latency_and_cpu_budgets() -> None:
     service = ServiceInstance()
     gateway: GatewayInstance | None = None

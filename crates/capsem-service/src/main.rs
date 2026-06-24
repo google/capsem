@@ -5299,12 +5299,7 @@ fn asset_reconcile_has_route_fields(state: &ServiceState) -> bool {
     state
         .asset_reconcile
         .lock()
-        .map(|reconcile| {
-            reconcile.in_progress
-                || reconcile.current_asset.is_some()
-                || reconcile.last_downloaded.is_some()
-                || reconcile.last_error.is_some()
-        })
+        .map(|reconcile| reconcile.in_progress || reconcile.current_asset.is_some())
         .unwrap_or(true)
 }
 
@@ -6875,6 +6870,10 @@ fn empty_security_rule_stats() -> capsem_logger::SecurityRuleStats {
     }
 }
 
+fn is_missing_optional_ledger_shape(message: &str) -> bool {
+    message.contains("no such table:") || message.contains("no such column:")
+}
+
 fn rebuild_security_route_projection(
     state: &ServiceState,
 ) -> Result<SecurityRouteProjection, AppError> {
@@ -6890,18 +6889,44 @@ fn rebuild_security_route_projection(
                 format!("failed to open security projection DB for {vm_id}: {error}"),
             )
         })?;
-        let latest = reader.recent_security_rule_events(2000).map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to read security projection latest for {vm_id}: {error}"),
-            )
-        })?;
-        let stats = reader.security_rule_stats().map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to read security projection stats for {vm_id}: {error}"),
-            )
-        })?;
+        let latest = match reader.recent_security_rule_events(2000) {
+            Ok(latest) => latest,
+            Err(error) => {
+                let message = error.to_string();
+                if is_missing_optional_ledger_shape(&message) {
+                    warn!(
+                        vm_id,
+                        error = %message,
+                        "security projection skipped missing ledger latest"
+                    );
+                    Vec::new()
+                } else {
+                    return Err(AppError(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("failed to read security projection latest for {vm_id}: {error}"),
+                    ));
+                }
+            }
+        };
+        let stats = match reader.security_rule_stats() {
+            Ok(stats) => stats,
+            Err(error) => {
+                let message = error.to_string();
+                if is_missing_optional_ledger_shape(&message) {
+                    warn!(
+                        vm_id,
+                        error = %message,
+                        "security projection skipped missing ledger stats"
+                    );
+                    empty_security_rule_stats()
+                } else {
+                    return Err(AppError(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("failed to read security projection stats for {vm_id}: {error}"),
+                    ));
+                }
+            }
+        };
         projection
             .sessions
             .insert(vm_id, SecuritySessionProjection { latest, stats });
@@ -6968,28 +6993,66 @@ fn rebuild_history_route_projection(
                 format!("failed to open history projection DB for {vm_id}: {error}"),
             )
         })?;
-        let (entries, _) = reader
-            .history(usize::MAX, 0, None, "all")
-            .map_err(|error| {
-                AppError(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("failed to read history projection entries for {vm_id}: {error}"),
-                )
-            })?;
-        let processes = reader
-            .history_processes(i64::MAX as usize)
-            .map_err(|error| {
-                AppError(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("failed to read history projection processes for {vm_id}: {error}"),
-                )
-            })?;
-        let counts = reader.history_counts().map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to read history projection counts for {vm_id}: {error}"),
-            )
-        })?;
+        let (entries, _) = match reader.history(usize::MAX, 0, None, "all") {
+            Ok(history) => history,
+            Err(error) => {
+                let message = error.to_string();
+                if is_missing_optional_ledger_shape(&message) {
+                    warn!(
+                        vm_id,
+                        error = %message,
+                        "history projection skipped missing ledger entries"
+                    );
+                    (Vec::new(), 0)
+                } else {
+                    return Err(AppError(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("failed to read history projection entries for {vm_id}: {error}"),
+                    ));
+                }
+            }
+        };
+        let processes = match reader.history_processes(i64::MAX as usize) {
+            Ok(processes) => processes,
+            Err(error) => {
+                let message = error.to_string();
+                if is_missing_optional_ledger_shape(&message) {
+                    warn!(
+                        vm_id,
+                        error = %message,
+                        "history projection skipped missing ledger processes"
+                    );
+                    Vec::new()
+                } else {
+                    return Err(AppError(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("failed to read history projection processes for {vm_id}: {error}"),
+                    ));
+                }
+            }
+        };
+        let counts = match reader.history_counts() {
+            Ok(counts) => counts,
+            Err(error) => {
+                let message = error.to_string();
+                if is_missing_optional_ledger_shape(&message) {
+                    warn!(
+                        vm_id,
+                        error = %message,
+                        "history projection skipped missing ledger counts"
+                    );
+                    capsem_logger::HistoryCounts {
+                        exec_count: 0,
+                        audit_count: 0,
+                    }
+                } else {
+                    return Err(AppError(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("failed to read history projection counts for {vm_id}: {error}"),
+                    ));
+                }
+            }
+        };
         projection.sessions.insert(
             vm_id,
             HistorySessionProjection {
@@ -7180,12 +7243,25 @@ fn rebuild_timeline_route_projection(
                 format!("failed to open timeline projection DB for {vm_id}: {error}"),
             )
         })?;
-        let raw = reader.query_raw(&sql).map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to read timeline projection for {vm_id}: {error}"),
-            )
-        })?;
+        let raw = match reader.query_raw(&sql) {
+            Ok(raw) => raw,
+            Err(error) => {
+                let message = error.to_string();
+                if is_missing_optional_ledger_shape(&message) {
+                    warn!(
+                        vm_id,
+                        error = %message,
+                        "timeline projection skipped missing ledger shape"
+                    );
+                    projection.sessions.insert(vm_id, Vec::new());
+                    continue;
+                }
+                return Err(AppError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("failed to read timeline projection for {vm_id}: {error}"),
+                ));
+            }
+        };
         let raw = serde_json::from_str::<serde_json::Value>(&raw).map_err(|error| {
             AppError(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -7536,12 +7612,20 @@ fn query_raw_objects(
     reader: &capsem_logger::DbReader,
     sql: &str,
 ) -> Result<Vec<serde_json::Value>, AppError> {
-    let raw = reader.query_raw(sql).map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("stats detail projection query failed: {error}"),
-        )
-    })?;
+    let raw = match reader.query_raw(sql) {
+        Ok(raw) => raw,
+        Err(error) => {
+            let message = error.to_string();
+            if is_missing_optional_ledger_shape(&message) {
+                warn!(error = %message, "stats detail projection skipped missing ledger shape");
+                return Ok(Vec::new());
+            }
+            return Err(AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("stats detail projection query failed: {message}"),
+            ));
+        }
+    };
     let raw: serde_json::Value = serde_json::from_str(&raw).map_err(|error| {
         AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -10405,7 +10489,7 @@ fn build_service_router(state: Arc<ServiceState>) -> Router {
             "/vms/{id}/files/content",
             get(handle_download_file).post(handle_upload_file),
         )
-        .layer(TraceLayer::new_for_http())
+        .layer(TraceLayer::new_for_http().on_request(()).on_response(()))
         .with_state(state)
 }
 
