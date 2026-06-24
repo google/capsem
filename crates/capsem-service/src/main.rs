@@ -38,7 +38,7 @@ use tokio::net::UnixListener;
 use tokio::sync::{mpsc, oneshot};
 use tokio_unix_ipc::{channel_from_std, Receiver, Sender};
 use tower_http::trace::TraceLayer;
-use tracing::{error, info, warn, Instrument};
+use tracing::{debug, error, info, warn, Instrument};
 
 mod startup;
 
@@ -4078,7 +4078,7 @@ async fn handle_exec(
                     trace_id: None,
                 },
             )?;
-            request_projection_refresh(&state).await?;
+            schedule_projection_refresh(&state, "exec");
             Ok(Json(ExecResponse {
                 stdout: String::from_utf8(stdout)
                     .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
@@ -8201,7 +8201,15 @@ fn spawn_projection_refresh_worker(
 ) {
     tokio::spawn(async move {
         while let Some(request) = rx.recv().await {
-            let result = refresh_session_ledger_route_projections(&state).map_err(|error| error.1);
+            let state = Arc::clone(&state);
+            let result = match tokio::task::spawn_blocking(move || {
+                refresh_session_ledger_route_projections(&state).map_err(|error| error.1)
+            })
+            .await
+            {
+                Ok(result) => result,
+                Err(error) => Err(format!("projection refresh task failed: {error}")),
+            };
             let _ = request.reply.send(result);
         }
     });
@@ -8227,6 +8235,34 @@ async fn request_projection_refresh(state: &Arc<ServiceState>) -> Result<(), App
             )
         })?
         .map_err(|message| AppError(StatusCode::INTERNAL_SERVER_ERROR, message))
+}
+
+fn schedule_projection_refresh(state: &Arc<ServiceState>, reason: &'static str) {
+    let tx = state.projection_refresh_tx.clone();
+    tokio::spawn(async move {
+        let (reply, rx) = oneshot::channel();
+        if let Err(error) = tx.send(ProjectionRefreshRequest { reply }).await {
+            warn!(
+                reason,
+                error = %error,
+                "projection refresh worker unavailable"
+            );
+            return;
+        }
+        match rx.await {
+            Ok(Ok(())) => debug!(reason, "projection refresh completed"),
+            Ok(Err(error)) => warn!(
+                reason,
+                error = %error,
+                "projection refresh failed"
+            ),
+            Err(error) => warn!(
+                reason,
+                error = %error,
+                "projection refresh worker dropped response"
+            ),
+        }
+    });
 }
 
 fn security_projection_latest_for_vm(

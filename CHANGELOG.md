@@ -74,6 +74,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Fixed exec-route latency by moving session-ledger projection refreshes off
+  the async route worker and returning command results without waiting for a
+  full SQLite projection rebuild; serial provision-to-exec gates now pass at
+  about 1s, including the three-live-VM gate.
 - Fixed live MCP tool-call security projection so `capsem_mcp_call` emits
   through the existing security DB writer and mirrors the exact
   `security_rule_events` rows into service memory for `/security/latest` and
