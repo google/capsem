@@ -74,6 +74,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Fixed profile shell bootstrap so fresh VMs keep `/opt/ai-clis/bin` on PATH
+  ahead of durable `/usr/local/bin` and `/root/.local/bin`, restoring
+  out-of-the-box Gemini, Codex, and global npm package-manager diagnostics.
 - Fixed service startup projection hydration so incomplete or stale per-session
   ledgers degrade to empty live counters instead of preventing the service from
   accepting routes; snapshot routes remain file-backed and ignore session DB

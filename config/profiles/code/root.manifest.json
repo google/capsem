@@ -13,8 +13,8 @@
     },
     {
       "path": "root/.bashrc",
-      "hash": "blake3:d431c5f52cdafe6c755c2c6d20453899f93aae892d64611a70cb777849c1553a",
-      "size": 178
+      "hash": "blake3:7ad5196787ac166388600069d0276fcd9f1a62ec9e898755e75288b11626706d",
+      "size": 195
     },
     {
       "path": "root/.claude.json",
@@ -73,8 +73,8 @@
     },
     {
       "path": "root/.profile",
-      "hash": "blake3:33b8aa7bb9b61210f21295479958c9fc4f7dbee32a2f7916727b9bf3b3b25e50",
-      "size": 170
+      "hash": "blake3:d9de24fcebe2f237bb4c1ec977592d47f4a3b7de654f23f2f51d983372fbbd55",
+      "size": 187
     },
     {
       "path": "etc/hosts",

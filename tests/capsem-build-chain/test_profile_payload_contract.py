@@ -156,9 +156,11 @@ def test_profiles_package_claude_bypass_permissions_bootstrap() -> None:
                 failures.append(f"{profile_id}: missing {rel}")
                 continue
             shell = shell_path.read_text()
-            if 'PATH="/usr/local/bin:/root/.local/bin:' not in shell:
+            expected_path_prefix = 'PATH="/opt/ai-clis/bin:/usr/local/bin:/root/.local/bin:'
+            if expected_path_prefix not in shell:
                 failures.append(
-                    f"{profile_id}: {rel} must put durable /usr/local/bin before /root/.local/bin"
+                    f"{profile_id}: {rel} must keep /opt/ai-clis/bin on PATH "
+                    "before durable /usr/local/bin and /root/.local/bin"
                 )
             if "export PATH" not in shell:
                 failures.append(f"{profile_id}: {rel} does not export PATH")
