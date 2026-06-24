@@ -7412,6 +7412,27 @@ struct LiveSessionCounters {
     total_mcp_calls: u64,
 }
 
+fn empty_live_session_counters() -> LiveSessionCounters {
+    LiveSessionCounters {
+        stats: capsem_logger::SessionStats {
+            net_total: 0,
+            net_allowed: 0,
+            net_denied: 0,
+            net_error: 0,
+            net_bytes_sent: 0,
+            net_bytes_received: 0,
+            model_call_count: 0,
+            total_input_tokens: 0,
+            total_output_tokens: 0,
+            total_usage_details: BTreeMap::new(),
+            total_model_duration_ms: 0,
+            total_tool_calls: 0,
+            total_estimated_cost_usd: 0.0,
+        },
+        total_mcp_calls: 0,
+    }
+}
+
 #[derive(Clone, Debug)]
 struct TimelineProjectionRow {
     timestamp: String,
@@ -7660,18 +7681,50 @@ fn read_live_session_counters_from_session_db(
             format!("failed to open session counter projection DB for {vm_id}: {error}"),
         )
     })?;
-    let stats = reader.session_stats().map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to read session counter projection for {vm_id}: {error}"),
-        )
-    })?;
-    let mcp_stats = reader.mcp_call_stats().map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to read MCP counter projection for {vm_id}: {error}"),
-        )
-    })?;
+    let stats = match reader.session_stats() {
+        Ok(stats) => stats,
+        Err(error) => {
+            let message = error.to_string();
+            if is_missing_optional_ledger_shape(&message) {
+                warn!(
+                    vm_id,
+                    error = %message,
+                    "live session counter projection skipped missing ledger stats"
+                );
+                return Ok(Some(empty_live_session_counters()));
+            }
+            return Err(AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to read session counter projection for {vm_id}: {error}"),
+            ));
+        }
+    };
+    let mcp_stats = match reader.mcp_call_stats() {
+        Ok(stats) => stats,
+        Err(error) => {
+            let message = error.to_string();
+            if is_missing_optional_ledger_shape(&message) {
+                warn!(
+                    vm_id,
+                    error = %message,
+                    "live session counter projection skipped missing MCP stats"
+                );
+                capsem_logger::McpCallStats {
+                    total: 0,
+                    allowed: 0,
+                    warned: 0,
+                    denied: 0,
+                    errored: 0,
+                    by_server: Vec::new(),
+                }
+            } else {
+                return Err(AppError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("failed to read MCP counter projection for {vm_id}: {error}"),
+                ));
+            }
+        }
+    };
     Ok(Some(LiveSessionCounters {
         stats,
         total_mcp_calls: mcp_stats.total,

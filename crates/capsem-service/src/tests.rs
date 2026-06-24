@@ -7542,7 +7542,9 @@ async fn stats_detail_route_uses_memory_projection_not_session_db() {
         "generativelanguage.googleapis.com"
     );
     assert!(body["http_events"][0].get("request_body_preview").is_none());
-    assert!(body["http_events"][0].get("response_body_preview").is_none());
+    assert!(body["http_events"][0]
+        .get("response_body_preview")
+        .is_none());
     assert_eq!(
         body["body_blobs"]["abc123abc123"][0]["direction"],
         "request"

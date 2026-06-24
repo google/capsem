@@ -74,6 +74,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Fixed service startup projection hydration so incomplete or stale per-session
+  ledgers degrade to empty live counters instead of preventing the service from
+  accepting routes; snapshot routes remain file-backed and ignore session DB
+  activity.
 - Tightened the Ironbank route-health gate so profile enforcement and detection
   evaluate routes are benchmarked for latency and CPU along with status/list
   routes, preventing decision-path regressions from hiding outside hot-route
