@@ -52,13 +52,15 @@ export function labelForDetailKey(key: string): string {
 }
 
 export function visibleDetailEntries(obj: Record<string, unknown>): [string, unknown][] {
-  return Object.entries(obj).filter(([key, value]) => (
-    isPresent(value)
-    && !DETAIL_PAYLOAD_KEYS.has(key)
-    && !DETAIL_STRUCTURED_KEYS.has(key)
-    && !DETAIL_BODY_METADATA_KEYS.has(key)
-    && !DETAIL_HIDDEN_KEYS.has(key)
-  ));
+  return Object.entries(obj)
+    .filter(([key]) => (
+      !DETAIL_PAYLOAD_KEYS.has(key)
+      && !DETAIL_STRUCTURED_KEYS.has(key)
+      && !DETAIL_BODY_METADATA_KEYS.has(key)
+      && !DETAIL_HIDDEN_KEYS.has(key)
+    ))
+    .map(([key, value]) => [key, stripEmptyDetailValues(value)] as [string, unknown])
+    .filter(([, value]) => isPresent(value));
 }
 
 export function detailPayloadSections(obj: Record<string, unknown>): DetailPayloadSection[] {
@@ -90,7 +92,7 @@ export function detailPayloadLang(key: string, value: unknown): string {
 
 export function formatDetailValue(value: unknown): string {
   if (value == null) return 'NULL';
-  if (typeof value === 'object') return JSON.stringify(value);
+  if (typeof value === 'object') return JSON.stringify(stripEmptyDetailValues(value));
   return String(value);
 }
 

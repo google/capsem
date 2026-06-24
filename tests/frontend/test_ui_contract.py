@@ -53,7 +53,8 @@ def test_profile_page_exposes_enforcement_detection_plugins_mcp_assets() -> None
 def test_detail_panes_render_one_canonical_payload_view_without_preview_duplicates() -> None:
     source = read("lib/components/views/StatsView.svelte")
 
-    assert "event_body_blobs" in source
+    assert "bodyBlobs = detailRows.body_blobs" in source
+    assert "event_body_blobs" not in source
     assert "showDetail" in source
     assert "detailPayloadSections" in source
     assert "visibleDetailEntries" in source

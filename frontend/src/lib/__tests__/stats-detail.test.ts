@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   compactJsonForDisplay,
   detailPayloadSections,
+  formatDetailValue,
   visibleDetailEntries,
 } from '../stats-detail';
 
@@ -54,6 +55,35 @@ describe('stats detail helpers', () => {
       ['event_id', '87868a03279a'],
       ['status_code', 200],
     ]);
+  });
+
+  it('renders nested object fields without null-only branches', () => {
+    const fields = visibleDetailEntries({
+      event_id: 'file123456789',
+      file: {
+        read_path: null,
+        read_name: null,
+        write_path: '.gemini/antigravity-cli/conversations',
+        write_name: 'conversations',
+        write_content: null,
+      },
+      http: null,
+      detections: [],
+    });
+
+    expect(fields).toEqual([
+      ['event_id', 'file123456789'],
+      [
+        'file',
+        {
+          write_path: '.gemini/antigravity-cli/conversations',
+          write_name: 'conversations',
+        },
+      ],
+    ]);
+    expect(formatDetailValue(fields[1][1])).toBe(
+      '{"write_path":".gemini/antigravity-cli/conversations","write_name":"conversations"}',
+    );
   });
 
   it('classifies payload sections without duplicating them into the field grid', () => {
