@@ -80,6 +80,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed stats detail drawers so nested event objects are compacted before
   rendering, keeping file/security rows focused on present ledger facts instead
   of showing null-only branches.
+- Fixed HTTP/model body recording so compact preview fields stay separate from
+  full bounded `event_body_blobs` storage while still using the single
+  `DbWriter` security-event/session ledger.
 - Fixed the Stats UI ledger path so HTTP, DNS, model, tool, file, process,
   credential, and body-detail rows come from a typed per-session route
   projection instead of sending raw SQL through `/vms/{id}/inspect`.

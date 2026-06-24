@@ -527,6 +527,10 @@ pub struct NetEvent {
     pub response_headers: Option<String>,
     pub request_body_preview: Option<String>,
     pub response_body_preview: Option<String>,
+    #[serde(default)]
+    pub request_body_full: Option<String>,
+    #[serde(default)]
+    pub response_body_full: Option<String>,
     pub conn_type: Option<String>,
     #[serde(default)]
     pub policy_mode: Option<String>,
@@ -635,11 +639,15 @@ pub struct ModelCall {
     pub tools_count: usize,
     pub request_bytes: u64,
     pub request_body_preview: Option<String>,
+    #[serde(default)]
+    pub request_body_full: Option<String>,
     // Response metadata
     pub message_id: Option<String>,
     pub status_code: Option<u16>,
     pub text_content: Option<String>,
     pub thinking_content: Option<String>,
+    #[serde(default)]
+    pub response_body_full: Option<String>,
     pub stop_reason: Option<String>,
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
@@ -859,6 +867,8 @@ mod tests {
             response_headers: None,
             request_body_preview: None,
             response_body_preview: None,
+            request_body_full: None,
+            response_body_full: None,
             conn_type: None,
             policy_mode: None,
             policy_action: None,

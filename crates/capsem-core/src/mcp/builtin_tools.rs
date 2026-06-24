@@ -280,6 +280,8 @@ async fn emit_net_event(
             response_headers: None,
             request_body_preview: None,
             response_body_preview: None,
+            request_body_full: None,
+            response_body_full: None,
             conn_type: Some(BUILTIN_PROCESS_NAME.to_string()),
             policy_mode: Some("security_event".to_string()),
             policy_action: Some(enforcement.action.as_str().to_string()),

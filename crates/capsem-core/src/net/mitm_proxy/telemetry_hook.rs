@@ -324,11 +324,13 @@ pub fn build_net_event(
         };
         (st.bytes, preview)
     };
+    let req_full = req_preview.clone();
     let resp_preview = if resp_stats.preview.is_empty() {
         None
     } else {
         Some(String::from_utf8_lossy(&resp_stats.preview).into_owned())
     };
+    let resp_full = resp_preview.clone();
 
     NetEvent {
         event_id: None,
@@ -350,6 +352,8 @@ pub fn build_net_event(
         response_headers: req_ctx.response_headers.clone(),
         request_body_preview: req_preview,
         response_body_preview: resp_preview,
+        request_body_full: req_full,
+        response_body_full: resp_full,
         conn_type: Some(req_ctx.conn_type.to_string()),
         policy_mode: req_ctx.policy_mode.clone(),
         policy_action: req_ctx.policy_action.clone(),
@@ -645,6 +649,11 @@ pub fn maybe_build_model_call(
         tools_count: tool_calls.len(),
         request_bytes: bytes_sent,
         request_body_preview,
+        request_body_full: if req_body_bytes.is_empty() {
+            None
+        } else {
+            Some(String::from_utf8_lossy(&req_body_bytes).into_owned())
+        },
         message_id: summary.as_ref().and_then(|s| s.message_id.clone()),
         status_code: req_ctx.status_code,
         text_content: summary
@@ -657,6 +666,11 @@ pub fn maybe_build_model_call(
             .map(|s| s.thinking.clone())
             .or_else(|| response_summary.as_ref().map(|s| s.thinking.clone()))
             .filter(|s| !s.is_empty()),
+        response_body_full: if resp_stats.preview.is_empty() {
+            None
+        } else {
+            Some(String::from_utf8_lossy(&resp_stats.preview).into_owned())
+        },
         stop_reason: stop_reason_str,
         input_tokens,
         output_tokens,

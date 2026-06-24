@@ -92,10 +92,12 @@ fn net_event_stores_bounded_body_blobs_and_small_previews() {
     let event_id = "abc123def456".to_string();
     let trace_id = "trace-body-blob".to_string();
     let request_body = format!("{{\"prompt\":\"{}\"}}", "r".repeat(MAX_FIELD_BYTES + 1024));
+    let request_preview = "{\"prompt\":\"short\"}".to_string();
     let response_body = format!(
         "event: message\ndata: {}\n\n",
         "s".repeat(MAX_BODY_BLOB_BYTES + 128)
     );
+    let response_preview = "event: message\ndata: short\n\n".to_string();
     let response_hash = blake3_bytes_ref(response_body.as_bytes());
 
     {
@@ -123,8 +125,10 @@ fn net_event_stores_bounded_body_blobs_and_small_previews() {
                     matched_rule: Some("profiles.rules.ai_google_http_googleapis".into()),
                     request_headers: Some("content-type: application/json".into()),
                     response_headers: Some("content-type: text/event-stream".into()),
-                    request_body_preview: Some(request_body.clone()),
-                    response_body_preview: Some(response_body.clone()),
+                    request_body_preview: Some(request_preview.clone()),
+                    response_body_preview: Some(response_preview.clone()),
+                    request_body_full: Some(request_body.clone()),
+                    response_body_full: Some(response_body.clone()),
                     conn_type: Some("https-mitm".into()),
                     policy_mode: None,
                     policy_action: Some("allow".into()),
@@ -145,8 +149,8 @@ fn net_event_stores_bounded_body_blobs_and_small_previews() {
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .unwrap();
-    assert_eq!(stored_request_preview.len(), MAX_FIELD_BYTES);
-    assert_eq!(stored_response_preview.len(), MAX_FIELD_BYTES);
+    assert_eq!(stored_request_preview, request_preview);
+    assert_eq!(stored_response_preview, response_preview);
 
     struct StoredBlob {
         direction: String,
@@ -1020,6 +1024,8 @@ fn brokered_substitution_persists_reference_and_not_secret() {
                     response_headers: None,
                     request_body_preview: None,
                     response_body_preview: None,
+                    request_body_full: None,
+                    response_body_full: None,
                     conn_type: Some("https".into()),
                     policy_mode: None,
                     policy_action: None,

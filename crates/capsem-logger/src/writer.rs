@@ -547,7 +547,10 @@ fn insert_net_event(conn: &Connection, event: &NetEvent) -> rusqlite::Result<()>
                 .request_headers
                 .as_deref()
                 .and_then(content_type_from_headers),
-            body: event.request_body_preview.as_deref(),
+            body: event
+                .request_body_full
+                .as_deref()
+                .or(event.request_body_preview.as_deref()),
             trace_id: event.trace_id.as_deref(),
         },
     )?;
@@ -562,7 +565,10 @@ fn insert_net_event(conn: &Connection, event: &NetEvent) -> rusqlite::Result<()>
                 .response_headers
                 .as_deref()
                 .and_then(content_type_from_headers),
-            body: event.response_body_preview.as_deref(),
+            body: event
+                .response_body_full
+                .as_deref()
+                .or(event.response_body_preview.as_deref()),
             trace_id: event.trace_id.as_deref(),
         },
     )?;
@@ -632,7 +638,10 @@ fn insert_model_call(
             source_table: "model_calls",
             direction: "request",
             content_type: Some("application/json"),
-            body: call.request_body_preview.as_deref(),
+            body: call
+                .request_body_full
+                .as_deref()
+                .or(call.request_body_preview.as_deref()),
             trace_id: call.trace_id.as_deref(),
         },
     )?;
@@ -644,7 +653,10 @@ fn insert_model_call(
             source_table: "model_calls",
             direction: "response",
             content_type: None,
-            body: call.text_content.as_deref(),
+            body: call
+                .response_body_full
+                .as_deref()
+                .or(call.text_content.as_deref()),
             trace_id: call.trace_id.as_deref(),
         },
     )?;

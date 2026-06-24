@@ -1576,6 +1576,8 @@ async fn timeline_route_uses_memory_projection_not_session_db() {
             response_headers: None,
             request_body_preview: Some("{}".to_string()),
             response_body_preview: Some(r#"{"ok":true}"#.to_string()),
+            request_body_full: Some("{}".to_string()),
+            response_body_full: Some(r#"{"ok":true}"#.to_string()),
             conn_type: Some("http".to_string()),
             policy_mode: None,
             policy_action: Some("allow".to_string()),
@@ -1662,6 +1664,8 @@ async fn triage_route_uses_memory_projection_not_session_db() {
             response_headers: None,
             request_body_preview: None,
             response_body_preview: None,
+            request_body_full: None,
+            response_body_full: None,
             conn_type: Some("http".to_string()),
             policy_mode: None,
             policy_action: Some("block".to_string()),
@@ -7409,10 +7413,17 @@ async fn stats_detail_route_uses_memory_projection_not_session_db() {
                 tools_count: 1,
                 request_bytes: 32,
                 request_body_preview: Some(r#"{"contents":[{"text":"write"}]}"#.to_string()),
+                request_body_full: Some(
+                    r#"{"contents":[{"text":"write full bounded body"}]}"#.to_string(),
+                ),
                 message_id: Some("msg-1".to_string()),
                 status_code: Some(200),
                 text_content: Some("created poem.md".to_string()),
                 thinking_content: Some("plan file write".to_string()),
+                response_body_full: Some(
+                    r#"{"candidates":[{"content":{"parts":[{"text":"created poem.md"}]}}]}"#
+                        .to_string(),
+                ),
                 stop_reason: Some("end_turn".to_string()),
                 input_tokens: Some(12),
                 output_tokens: Some(7),
@@ -7461,6 +7472,13 @@ async fn stats_detail_route_uses_memory_projection_not_session_db() {
             response_headers: Some("content-type: application/json".to_string()),
             request_body_preview: Some(r#"{"model":"gemini-3.5-flash"}"#.to_string()),
             response_body_preview: Some(r#"{"ok":true}"#.to_string()),
+            request_body_full: Some(
+                r#"{"model":"gemini-3.5-flash","contents":[{"text":"write full body"}]}"#
+                    .to_string(),
+            ),
+            response_body_full: Some(
+                r#"{"ok":true,"body":"full response body from gateway"}"#.to_string(),
+            ),
             conn_type: Some("https".to_string()),
             policy_mode: None,
             policy_action: Some("allow".to_string()),
@@ -7502,8 +7520,20 @@ async fn stats_detail_route_uses_memory_projection_not_session_db() {
         "request"
     );
     assert_eq!(
+        body["body_blobs"]["def456def456"][0]["body"],
+        r#"{"model":"gemini-3.5-flash","contents":[{"text":"write full body"}]}"#
+    );
+    assert_eq!(
+        body["body_blobs"]["def456def456"][0]["stored_bytes"],
+        r#"{"model":"gemini-3.5-flash","contents":[{"text":"write full body"}]}"#.len()
+    );
+    assert_eq!(
         body["body_blobs"]["def456def456"][1]["direction"],
         "response"
+    );
+    assert_eq!(
+        body["body_blobs"]["def456def456"][1]["body"],
+        r#"{"ok":true,"body":"full response body from gateway"}"#
     );
 }
 

@@ -627,6 +627,8 @@ pub async fn handle_connection(vsock_fd: RawFd, config: Arc<MitmProxyConfig>) {
                 response_headers: None,
                 request_body_preview: None,
                 response_body_preview: None,
+                request_body_full: None,
+                response_body_full: None,
                 conn_type: Some("https-mitm".to_string()),
                 policy_mode: None,
                 policy_action: None,
