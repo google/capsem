@@ -19,9 +19,12 @@ def _json_tool_result(result):
 def _ledger_rows(service_uds_path, vm_name, sql, params=()):
     """Read the isolated test session ledger directly, not through product routes."""
     db_path = service_uds_path.parent / "sessions" / vm_name / "session.db"
-    with sqlite3.connect(db_path) as conn:
+    conn = sqlite3.connect(db_path)
+    try:
         conn.row_factory = sqlite3.Row
         return [dict(row) for row in conn.execute(sql, params).fetchall()]
+    finally:
+        conn.close()
 
 
 def test_mcp_call_builtin_http_headers_pays_full_ledger(capsem_service, shared_vm, mcp_session):
@@ -131,7 +134,7 @@ def test_mcp_call_builtin_http_headers_pays_full_ledger(capsem_service, shared_v
         security_rows = _ledger_rows(
             capsem_service,
             vm_name,
-            f"""
+            """
             SELECT event_type, rule_id, rule_action, detection_level,
                    event_json, rule_json
             FROM security_rule_events

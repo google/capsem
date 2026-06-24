@@ -40,7 +40,7 @@ pub(crate) enum MenuEntry {
 
 /// Compute the menu structure for a gateway status response.
 pub(crate) fn menu_spec(status: &StatusResponse) -> Vec<MenuEntry> {
-    if status.service.to_ascii_lowercase() != "running" {
+    if !status.service.eq_ignore_ascii_case("running") {
         return unavailable_spec();
     }
 
