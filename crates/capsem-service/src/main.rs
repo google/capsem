@@ -35,7 +35,6 @@ use std::path::{Path as StdPath, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::net::UnixListener;
-use tokio::sync::{mpsc, oneshot};
 use tokio_unix_ipc::{channel_from_std, Receiver, Sender};
 use tower_http::trace::TraceLayer;
 use tracing::{error, info, warn, Instrument};
@@ -137,17 +136,6 @@ const PROCESS_ENV_ALLOWLIST: &[&str] = &[
 const ACTIVE_PROFILE_DIR: &str = "vm";
 const ACTIVE_PROFILE_FILE: &str = "active_profile.toml";
 
-#[derive(Clone, Debug)]
-enum ProjectionRefreshScope {
-    Full,
-    ExecCompletion { vm_id: String },
-}
-
-struct ProjectionRefreshRequest {
-    scope: ProjectionRefreshScope,
-    reply: oneshot::Sender<Result<(), String>>,
-}
-
 // ---------------------------------------------------------------------------
 // Service state
 // ---------------------------------------------------------------------------
@@ -226,10 +214,6 @@ struct ServiceState {
     /// Profile/MCP/rule/plugin edit routes enqueue here; they must never open
     /// SQLite directly.
     profile_mutation_writer: Arc<capsem_logger::DbWriter>,
-    /// Service-owned projection refresh worker. Route handlers send bounded
-    /// refresh requests after operations that can make session.db advance;
-    /// the worker owns DB reads so hot route response builders stay memory-only.
-    projection_refresh_tx: mpsc::Sender<ProjectionRefreshRequest>,
     /// Guards Apple VZ lifecycle edges across all VMs managed by this
     /// service. Cold starts and teardown take a read guard; save/restore take
     /// a write guard. That keeps checkpoint edges exclusive without
@@ -2409,8 +2393,6 @@ async fn log_file_boundary(
     .await
     .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
-    request_projection_refresh(state).await?;
-
     match res {
         ProcessToService::LogFileBoundaryResult {
             success: true,
@@ -3004,13 +2986,6 @@ async fn provision_attempt(
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
         if ready_path.exists() {
-            if let Err(error) = request_projection_refresh(state).await {
-                warn!(
-                    id,
-                    error = %error.1,
-                    "failed to refresh route projections after VM boot"
-                );
-            }
             return ProvisionAttemptOutcome::Ready { uds_path };
         }
         let still_alive = state.instances.lock().unwrap().contains_key(id);
@@ -4093,11 +4068,6 @@ async fn handle_exec(
                     trace_id: None,
                 },
             )?;
-            request_projection_refresh_with_scope(
-                &state,
-                ProjectionRefreshScope::ExecCompletion { vm_id: id.clone() },
-            )
-            .await?;
             Ok(Json(ExecResponse {
                 stdout: String::from_utf8(stdout)
                     .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
@@ -7087,27 +7057,6 @@ fn rebuild_security_route_projection(
     Ok(projection)
 }
 
-fn rebuild_security_route_projection_for_session(
-    state: &ServiceState,
-    vm_id: &str,
-) -> Result<(), AppError> {
-    let session_dir = resolve_session_dir(state, vm_id)?;
-    let db_path = session_dir.join("session.db");
-    let session = read_security_session_projection_from_session_db(vm_id, &db_path)?;
-    let mut projection = state.security_route_projection.lock().map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("security projection lock poisoned: {error}"),
-        )
-    })?;
-    if let Some(session) = session {
-        projection.sessions.insert(vm_id.to_string(), session);
-    } else {
-        projection.sessions.remove(vm_id);
-    }
-    Ok(())
-}
-
 fn security_route_projection(state: &ServiceState) -> Result<SecurityRouteProjection, AppError> {
     state
         .security_route_projection
@@ -7465,7 +7414,7 @@ fn timeline_base_sql() -> String {
          COALESCE(tc.server_name, tc.origin) || '/' || tc.tool_name || COALESCE(' (call_id=' || tc.call_id || ')', '') AS summary, \
          tc.decision AS status, tc.duration_ms AS duration_ms, tc.trace_id AS trace_id \
          FROM tool_calls tc \
-         WHERE tc.origin IN ('native', 'mcp', 'builtin', 'local')",
+         WHERE tc.origin IN ('model', 'native', 'mcp', 'builtin', 'local', 'mcp_proxy')",
         "SELECT timestamp, 'net' AS layer, id AS ref, \
          COALESCE(method, 'GET') || ' ' || domain || COALESCE(path, '') AS summary, \
          status_code AS status, duration_ms, trace_id FROM net_events",
@@ -7613,28 +7562,6 @@ fn rebuild_timeline_route_projection(
     Ok(projection)
 }
 
-fn rebuild_timeline_route_projection_for_session(
-    state: &ServiceState,
-    vm_id: &str,
-) -> Result<(), AppError> {
-    let session_dir = resolve_session_dir(state, vm_id)?;
-    let db_path = session_dir.join("session.db");
-    let sql = timeline_base_sql();
-    let rows = read_timeline_projection_rows_from_session_db(vm_id, &db_path, &sql)?;
-    let mut projection = state.timeline_route_projection.lock().map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("timeline projection lock poisoned: {error}"),
-        )
-    })?;
-    if let Some(rows) = rows {
-        projection.sessions.insert(vm_id.to_string(), rows);
-    } else {
-        projection.sessions.remove(vm_id);
-    }
-    Ok(())
-}
-
 fn rebuild_live_session_counter_projection(
     state: &ServiceState,
 ) -> Result<BTreeMap<String, LiveSessionCounters>, AppError> {
@@ -7690,30 +7617,6 @@ fn read_live_session_counters_from_session_db(
         }
     };
     Ok(Some(LiveSessionCounters { stats }))
-}
-
-fn rebuild_live_session_counter_projection_for_session(
-    state: &ServiceState,
-    vm_id: &str,
-) -> Result<(), AppError> {
-    let session_dir = resolve_session_dir(state, vm_id)?;
-    let db_path = session_dir.join("session.db");
-    let counters = read_live_session_counters_from_session_db(vm_id, &db_path)?;
-    let mut projection = state
-        .live_session_counter_projection
-        .lock()
-        .map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("live session counter projection lock poisoned: {error}"),
-            )
-        })?;
-    if let Some(counters) = counters {
-        projection.insert(vm_id.to_string(), counters);
-    } else {
-        projection.remove(vm_id);
-    }
-    Ok(())
 }
 
 fn live_session_counter_projection(
@@ -7979,7 +7882,7 @@ LIMIT 200
 "#;
 
 const STATS_DETAIL_TOOL_EVENTS_SQL: &str = r#"
-SELECT event_id, timestamp, process_name, server_name, tool_name, method,
+SELECT event_id, timestamp, process_name, server_name, tool_name, method, call_id,
        decision, duration_ms, bytes, arguments, response_preview,
        error_message, source
 FROM (
@@ -7989,6 +7892,7 @@ FROM (
            COALESCE(tc.server_name, 'model') AS server_name,
            tc.tool_name,
            tc.method,
+           tc.call_id,
            tc.decision,
            COALESCE(tc.duration_ms, mc.duration_ms, 0) AS duration_ms,
            COALESCE(LENGTH(tc.arguments), 0) + COALESCE(LENGTH(COALESCE(tc.response_preview, tr.content_preview)), 0) AS bytes,
@@ -7999,7 +7903,7 @@ FROM (
     FROM tool_calls tc
     LEFT JOIN model_calls mc ON tc.model_call_id = mc.id
     LEFT JOIN tool_responses tr ON tc.call_id = tr.call_id
-    WHERE tc.origin IN ('native', 'mcp', 'builtin', 'local', 'mcp_proxy')
+    WHERE tc.origin IN ('model', 'native', 'mcp', 'builtin', 'local', 'mcp_proxy')
 )
 ORDER BY timestamp DESC
 LIMIT 200
@@ -8222,6 +8126,58 @@ fn rebuild_stats_route_projection(state: &ServiceState) -> Result<StatsRouteProj
     Ok(projection)
 }
 
+fn hydrate_startup_route_projections(state: &ServiceState) -> Result<(), AppError> {
+    rebuild_profile_status_cache(state).map_err(|AppError(status, message)| {
+        AppError(
+            status,
+            format!("failed to build profile status cache: {message}"),
+        )
+    })?;
+    rebuild_stats_route_projection(state).map_err(|AppError(status, message)| {
+        AppError(
+            status,
+            format!("failed to build stats route projection: {message}"),
+        )
+    })?;
+    rebuild_stats_detail_route_projection(state).map_err(|AppError(status, message)| {
+        AppError(
+            status,
+            format!("failed to build stats detail route projection: {message}"),
+        )
+    })?;
+    rebuild_live_session_counter_projection(state).map_err(|AppError(status, message)| {
+        AppError(
+            status,
+            format!("failed to build live session counter projection: {message}"),
+        )
+    })?;
+    rebuild_security_route_projection(state).map_err(|AppError(status, message)| {
+        AppError(
+            status,
+            format!("failed to build security route projection: {message}"),
+        )
+    })?;
+    rebuild_history_route_projection(state).map_err(|AppError(status, message)| {
+        AppError(
+            status,
+            format!("failed to build history route projection: {message}"),
+        )
+    })?;
+    rebuild_timeline_route_projection(state).map_err(|AppError(status, message)| {
+        AppError(
+            status,
+            format!("failed to build timeline route projection: {message}"),
+        )
+    })?;
+    rebuild_triage_route_projection(state).map_err(|AppError(status, message)| {
+        AppError(
+            status,
+            format!("failed to build triage route projection: {message}"),
+        )
+    })?;
+    Ok(())
+}
+
 fn rebuild_stats_detail_route_projection(
     state: &ServiceState,
 ) -> Result<StatsDetailRouteProjection, AppError> {
@@ -8382,83 +8338,6 @@ fn apply_live_session_counters_from_projection(
         info.total_tool_calls = Some(tool_events.len() as u64);
     }
     Ok(())
-}
-
-fn refresh_session_ledger_route_projections(state: &ServiceState) -> Result<(), AppError> {
-    if let Ok(mut cache) = state.mcp_tool_cache.lock() {
-        *cache = capsem_core::mcp::load_tool_cache();
-    }
-    rebuild_stats_detail_route_projection(state)?;
-    rebuild_live_session_counter_projection(state)?;
-    rebuild_security_route_projection(state)?;
-    rebuild_history_route_projection(state)?;
-    rebuild_timeline_route_projection(state)?;
-    Ok(())
-}
-
-fn refresh_exec_route_projections(state: &ServiceState, vm_id: &str) -> Result<(), AppError> {
-    rebuild_live_session_counter_projection_for_session(state, vm_id)?;
-    rebuild_security_route_projection_for_session(state, vm_id)?;
-    rebuild_timeline_route_projection_for_session(state, vm_id)?;
-    Ok(())
-}
-
-fn spawn_projection_refresh_worker(
-    state: Arc<ServiceState>,
-    mut rx: mpsc::Receiver<ProjectionRefreshRequest>,
-) {
-    tokio::spawn(async move {
-        while let Some(request) = rx.recv().await {
-            let state = Arc::clone(&state);
-            let scope = request.scope;
-            let result = match tokio::task::spawn_blocking(move || {
-                match scope {
-                    ProjectionRefreshScope::Full => {
-                        refresh_session_ledger_route_projections(&state)
-                    }
-                    ProjectionRefreshScope::ExecCompletion { vm_id } => {
-                        refresh_exec_route_projections(&state, &vm_id)
-                    }
-                }
-                .map_err(|error| error.1)
-            })
-            .await
-            {
-                Ok(result) => result,
-                Err(error) => Err(format!("projection refresh task failed: {error}")),
-            };
-            let _ = request.reply.send(result);
-        }
-    });
-}
-
-async fn request_projection_refresh(state: &Arc<ServiceState>) -> Result<(), AppError> {
-    request_projection_refresh_with_scope(state, ProjectionRefreshScope::Full).await
-}
-
-async fn request_projection_refresh_with_scope(
-    state: &Arc<ServiceState>,
-    scope: ProjectionRefreshScope,
-) -> Result<(), AppError> {
-    let (reply, rx) = oneshot::channel();
-    state
-        .projection_refresh_tx
-        .send(ProjectionRefreshRequest { scope, reply })
-        .await
-        .map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("projection refresh worker unavailable: {error}"),
-            )
-        })?;
-    rx.await
-        .map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("projection refresh worker dropped response: {error}"),
-            )
-        })?
-        .map_err(|message| AppError(StatusCode::INTERNAL_SERVER_ERROR, message))
 }
 
 fn security_projection_latest_for_vm(
@@ -9135,7 +9014,6 @@ async fn handle_profile_credential_broker_credentials_reload(
             "credential store retry failed"
         ),
     }
-    request_projection_refresh(&state).await?;
     handle_profile_credential_broker_credentials_info(State(state), Path(profile_id)).await
 }
 
@@ -10515,13 +10393,6 @@ async fn handle_resume(
                                     ),
                                 ));
                             }
-                            if let Err(error) = request_projection_refresh(&state).await {
-                                warn!(
-                                    cold_id,
-                                    error = %error.1,
-                                    "failed to refresh route projections after cold resume"
-                                );
-                            }
                             state.clear_resume_checkpoint(&cold_id);
                             return provision_response_for_running(&state, cold_id, cold_uds_path)
                                 .map(Json);
@@ -10544,13 +10415,6 @@ async fn handle_resume(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("resume failed: {e}"),
                 ));
-            }
-            if let Err(error) = request_projection_refresh(&state).await {
-                warn!(
-                    id,
-                    error = %error.1,
-                    "failed to refresh route projections after resume"
-                );
             }
             state.clear_resume_checkpoint(&id);
             provision_response_for_running(&state, id, uds_path).map(Json)
@@ -11448,7 +11312,6 @@ async fn main() -> Result<()> {
         capsem_logger::DbWriter::open(&main_db_path_for_run_dir(&run_dir), 64)
             .context("open profile mutation ledger writer")?,
     );
-    let (projection_refresh_tx, projection_refresh_rx) = mpsc::channel(16);
     let state = Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
         persistent_registry: Mutex::new(persistent_registry),
@@ -11477,35 +11340,11 @@ async fn main() -> Result<()> {
         timeline_route_projection: Mutex::new(TimelineRouteProjection::default()),
         triage_route_projection: Mutex::new(TriageRouteProjection::default()),
         profile_mutation_writer,
-        projection_refresh_tx,
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });
-    rebuild_profile_status_cache(&state).map_err(|AppError(_, message)| {
-        anyhow!("failed to build profile status cache: {message}")
-    })?;
-    rebuild_stats_route_projection(&state).map_err(|AppError(_, message)| {
-        anyhow!("failed to build stats route projection: {message}")
-    })?;
-    rebuild_stats_detail_route_projection(&state).map_err(|AppError(_, message)| {
-        anyhow!("failed to build stats detail route projection: {message}")
-    })?;
-    rebuild_live_session_counter_projection(&state).map_err(|AppError(_, message)| {
-        anyhow!("failed to build live session counter projection: {message}")
-    })?;
-    rebuild_security_route_projection(&state).map_err(|AppError(_, message)| {
-        anyhow!("failed to build security route projection: {message}")
-    })?;
-    rebuild_history_route_projection(&state).map_err(|AppError(_, message)| {
-        anyhow!("failed to build history route projection: {message}")
-    })?;
-    rebuild_timeline_route_projection(&state).map_err(|AppError(_, message)| {
-        anyhow!("failed to build timeline route projection: {message}")
-    })?;
-    rebuild_triage_route_projection(&state).map_err(|AppError(_, message)| {
-        anyhow!("failed to build triage route projection: {message}")
-    })?;
-    spawn_projection_refresh_worker(Arc::clone(&state), projection_refresh_rx);
+    hydrate_startup_route_projections(&state)
+        .map_err(|AppError(_, message)| anyhow!("{message}"))?;
     state.reconcile_persistent_defunct_from_logs();
 
     {

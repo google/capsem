@@ -1135,6 +1135,8 @@ fn security_decision_event(
         event_json: serde_json::to_string(&security_event_forensic_json(event))
             .map_err(|error| format!("serialize security decision event payload: {error}"))?,
         trace_id: event.trace_id(),
+        turn_id: event.trace_id(),
+        credential_ref: event.credential_ref.clone(),
     })
 }
 
@@ -1335,6 +1337,8 @@ pub fn security_rule_event(
         event_json: serde_json::to_string(&security_event_forensic_json(event))
             .map_err(|error| format!("serialize security event payload: {error}"))?,
         trace_id: event.trace_id(),
+        turn_id: event.trace_id(),
+        credential_ref: event.credential_ref.clone(),
     })
 }
 
@@ -1628,9 +1632,9 @@ fn logger_write_credential_ref(op: &WriteOp) -> Option<String> {
         WriteOp::AuditEvent(event) => event.credential_ref.clone(),
         WriteOp::DnsEvent(event) => event.credential_ref.clone(),
         WriteOp::SubstitutionEvent(event) => Some(event.substitution_ref.clone()),
-        WriteOp::SecurityRuleEvent(_) => None,
+        WriteOp::SecurityRuleEvent(event) => event.credential_ref.clone(),
         WriteOp::SecurityAskEvent(_) => None,
-        WriteOp::SecurityDecisionEvent(_) => None,
+        WriteOp::SecurityDecisionEvent(event) => event.credential_ref.clone(),
         WriteOp::ProfileMutationEvent(_) => None,
     }
 }

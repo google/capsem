@@ -52,6 +52,7 @@ pub const CREATE_SCHEMA: &str = "
         policy_rule TEXT,
         policy_reason TEXT,
         trace_id TEXT,
+        turn_id TEXT,
         credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
     );
 
@@ -83,6 +84,7 @@ pub const CREATE_SCHEMA: &str = "
         response_bytes INTEGER DEFAULT 0,
         estimated_cost_usd REAL DEFAULT 0,
         trace_id TEXT,
+        turn_id TEXT,
         usage_details TEXT,
         credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
     );
@@ -100,6 +102,7 @@ pub const CREATE_SCHEMA: &str = "
         body_hash TEXT NOT NULL CHECK (length(body_hash) = 71 AND body_hash GLOB 'blake3:[0-9a-f]*'),
         body BLOB NOT NULL,
         trace_id TEXT,
+        turn_id TEXT,
         created_at TEXT NOT NULL,
         UNIQUE(event_id, source_table, direction)
     );
@@ -137,6 +140,7 @@ pub const CREATE_SCHEMA: &str = "
         policy_rule TEXT,
         policy_reason TEXT,
         trace_id TEXT,
+        turn_id TEXT,
         credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
     );
 
@@ -147,6 +151,7 @@ pub const CREATE_SCHEMA: &str = "
         content_preview TEXT,
         is_error INTEGER DEFAULT 0,
         trace_id TEXT,
+        turn_id TEXT,
         credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
     );
 
@@ -172,6 +177,7 @@ pub const CREATE_SCHEMA: &str = "
         model TEXT,
         path TEXT NOT NULL,
         trace_id TEXT,
+        turn_id TEXT,
         kind TEXT NOT NULL CHECK (kind IN ('request', 'reasoning', 'response', 'tool_call', 'tool_response')),
         item_index INTEGER NOT NULL,
         call_id TEXT NOT NULL DEFAULT '',
@@ -204,6 +210,7 @@ pub const CREATE_SCHEMA: &str = "
         name TEXT,
         size INTEGER,
         trace_id TEXT,
+        turn_id TEXT,
         credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
     );
 
@@ -226,6 +233,7 @@ pub const CREATE_SCHEMA: &str = "
         stderr_bytes INTEGER DEFAULT 0,
         source TEXT NOT NULL DEFAULT 'api',
         trace_id TEXT,
+        turn_id TEXT,
         process_name TEXT,
         pid INTEGER,
         credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
@@ -254,6 +262,7 @@ pub const CREATE_SCHEMA: &str = "
         process_name TEXT,
         upstream_resolver_ms INTEGER DEFAULT 0,
         trace_id TEXT,
+        turn_id TEXT,
         policy_mode TEXT,
         policy_action TEXT,
         policy_rule TEXT,
@@ -289,6 +298,7 @@ pub const CREATE_SCHEMA: &str = "
         exec_event_id INTEGER,
         parent_exe TEXT,
         trace_id TEXT,
+        turn_id TEXT,
         credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
     );
     CREATE INDEX IF NOT EXISTS idx_audit_events_timestamp
@@ -313,6 +323,7 @@ pub const CREATE_SCHEMA: &str = "
         provider TEXT,
         confidence REAL,
         trace_id TEXT,
+        turn_id TEXT,
         context_json TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_substitution_events_timestamp
@@ -332,7 +343,9 @@ pub const CREATE_SCHEMA: &str = "
         detection_level TEXT NOT NULL DEFAULT 'none' CHECK (detection_level IN ('none', 'informational', 'low', 'medium', 'high', 'critical')),
         rule_json TEXT NOT NULL CHECK (json_valid(rule_json)),
         event_json TEXT NOT NULL CHECK (json_valid(event_json)),
-        trace_id TEXT
+        trace_id TEXT,
+        turn_id TEXT,
+        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
     );
     CREATE INDEX IF NOT EXISTS idx_security_rule_events_timestamp
         ON security_rule_events(timestamp_unix_ms);
@@ -357,7 +370,9 @@ pub const CREATE_SCHEMA: &str = "
         effective_decision TEXT NOT NULL CHECK (effective_decision IN ('allow', 'ask', 'block')),
         reason TEXT,
         event_json TEXT NOT NULL CHECK (json_valid(event_json)),
-        trace_id TEXT
+        trace_id TEXT,
+        turn_id TEXT,
+        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
     );
     CREATE INDEX IF NOT EXISTS idx_security_decision_events_timestamp
         ON security_decision_events(timestamp_unix_ms);
@@ -538,16 +553,17 @@ fn rebuild_event_body_blobs_source_check(conn: &Connection) {
             body_hash TEXT NOT NULL CHECK (length(body_hash) = 71 AND body_hash GLOB 'blake3:[0-9a-f]*'),
             body BLOB NOT NULL,
             trace_id TEXT,
+            turn_id TEXT,
             created_at TEXT NOT NULL,
             UNIQUE(event_id, source_table, direction)
         );
         INSERT INTO event_body_blobs_new (
             id, event_id, event_type, source_table, direction, content_type,
-            original_bytes, stored_bytes, truncated, body_hash, body, trace_id, created_at
+            original_bytes, stored_bytes, truncated, body_hash, body, trace_id, turn_id, created_at
         )
         SELECT
             id, event_id, event_type, source_table, direction, content_type,
-            original_bytes, stored_bytes, truncated, body_hash, body, trace_id, created_at
+            original_bytes, stored_bytes, truncated, body_hash, body, trace_id, turn_id, created_at
         FROM event_body_blobs;
         DROP TABLE event_body_blobs;
         ALTER TABLE event_body_blobs_new RENAME TO event_body_blobs;",
@@ -557,6 +573,40 @@ fn rebuild_event_body_blobs_source_check(conn: &Connection) {
 /// Migrate existing databases to add new columns/tables.
 /// Idempotent: safe to call on databases that already have the changes.
 pub fn migrate(conn: &Connection) {
+    for tbl in [
+        "net_events",
+        "model_calls",
+        "model_items",
+        "tool_calls",
+        "tool_responses",
+        "event_body_blobs",
+        "fs_events",
+        "exec_events",
+        "dns_events",
+        "audit_events",
+        "substitution_events",
+        "security_rule_events",
+        "security_decision_events",
+        "security_ask_events",
+    ] {
+        let _ = conn.execute(&format!("ALTER TABLE {tbl} ADD COLUMN turn_id TEXT"), []);
+        let _ = conn.execute(
+            &format!("CREATE INDEX IF NOT EXISTS idx_{tbl}_turn_id ON {tbl}(turn_id)"),
+            [],
+        );
+    }
+    for tbl in ["security_rule_events", "security_decision_events"] {
+        let _ = conn.execute(
+            &format!("ALTER TABLE {tbl} ADD COLUMN credential_ref TEXT {CREDENTIAL_REF_CHECK}"),
+            [],
+        );
+        let _ = conn.execute(
+            &format!(
+                "CREATE INDEX IF NOT EXISTS idx_{tbl}_credential_ref ON {tbl}(credential_ref)"
+            ),
+            [],
+        );
+    }
     let _ = conn.execute("ALTER TABLE model_calls ADD COLUMN trace_id TEXT", []);
     let _ = conn.execute(
         &format!("ALTER TABLE model_calls ADD COLUMN protocol TEXT {MODEL_PROTOCOL_CHECK}"),
@@ -1222,6 +1272,8 @@ mod tests {
             "audit_events",
             "tool_calls",
             "tool_responses",
+            "security_rule_events",
+            "security_decision_events",
         ] {
             let mut stmt = conn
                 .prepare(&format!("PRAGMA table_info({table})"))
@@ -1234,6 +1286,40 @@ mod tests {
             assert!(
                 cols.iter().any(|col| col == "credential_ref"),
                 "{table} missing top-level shared credential_ref column: {cols:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn create_tables_include_shared_turn_id_columns() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+
+        for table in [
+            "net_events",
+            "model_calls",
+            "model_items",
+            "tool_calls",
+            "tool_responses",
+            "event_body_blobs",
+            "fs_events",
+            "exec_events",
+            "dns_events",
+            "audit_events",
+            "security_rule_events",
+            "security_decision_events",
+        ] {
+            let mut stmt = conn
+                .prepare(&format!("PRAGMA table_info({table})"))
+                .unwrap();
+            let cols: Vec<String> = stmt
+                .query_map([], |row| row.get::<_, String>(1))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect();
+            assert!(
+                cols.iter().any(|col| col == "turn_id"),
+                "{table} missing first-class turn_id column: {cols:?}"
             );
         }
     }
@@ -1707,7 +1793,6 @@ mod tests {
         let conn = Connection::open_with_flags(&path, flags).unwrap();
         apply_reader_pragmas(&conn).unwrap();
     }
-
 
     #[test]
     fn create_tables_keeps_snapshots_out_of_session_db() {

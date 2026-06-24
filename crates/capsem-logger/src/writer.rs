@@ -574,9 +574,9 @@ fn insert_net_event(conn: &Connection, event: &NetEvent) -> rusqlite::Result<()>
             request_headers, response_headers,
             request_body_preview, response_body_preview, conn_type,
             policy_mode, policy_action, policy_rule, policy_reason,
-            trace_id, credential_ref
+            trace_id, turn_id, credential_ref
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)",
         params![
             event_id,
             timestamp,
@@ -603,6 +603,7 @@ fn insert_net_event(conn: &Connection, event: &NetEvent) -> rusqlite::Result<()>
             event.policy_rule,
             event.policy_reason,
             event.trace_id,
+            event.trace_id,
             event.credential_ref,
         ],
     )?;
@@ -622,6 +623,7 @@ fn insert_net_event(conn: &Connection, event: &NetEvent) -> rusqlite::Result<()>
                 .as_deref()
                 .or(event.request_body_preview.as_deref()),
             trace_id: event.trace_id.as_deref(),
+            turn_id: event.trace_id.as_deref(),
         },
     )?;
     insert_event_body_blob(
@@ -640,6 +642,7 @@ fn insert_net_event(conn: &Connection, event: &NetEvent) -> rusqlite::Result<()>
                 .as_deref()
                 .or(event.response_body_preview.as_deref()),
             trace_id: event.trace_id.as_deref(),
+            turn_id: event.trace_id.as_deref(),
         },
     )?;
     Ok(())
@@ -665,9 +668,9 @@ fn insert_model_call(
             message_id, status_code, text_content, thinking_content,
             stop_reason, input_tokens, output_tokens,
             duration_ms, response_bytes, estimated_cost_usd, trace_id,
-            usage_details, credential_ref
+            usage_details, credential_ref, turn_id
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29)",
         params![
             event_id,
             timestamp,
@@ -697,6 +700,7 @@ fn insert_model_call(
             call.trace_id,
             if call.usage_details.is_empty() { None } else { Some(serde_json::to_string(&call.usage_details).unwrap_or_default()) },
             call.credential_ref,
+            call.trace_id,
         ],
     )?;
     let model_call_id = conn.last_insert_rowid();
@@ -713,6 +717,7 @@ fn insert_model_call(
                 .as_deref()
                 .or(call.request_body_preview.as_deref()),
             trace_id: call.trace_id.as_deref(),
+            turn_id: call.trace_id.as_deref(),
         },
     )?;
     insert_event_body_blob(
@@ -728,6 +733,7 @@ fn insert_model_call(
                 .as_deref()
                 .or(call.text_content.as_deref()),
             trace_id: call.trace_id.as_deref(),
+            turn_id: call.trace_id.as_deref(),
         },
     )?;
     insert_model_items(conn, model_call_id, call, &timestamp, model_item_dedup)?;
@@ -740,9 +746,9 @@ fn insert_model_call(
             "INSERT INTO tool_calls (
                 event_id, timestamp, model_call_id, provider, status, call_index, call_id,
                 tool_name, arguments, origin, server_name, decision, duration_ms,
-                trace_id, credential_ref
+                trace_id, turn_id, credential_ref
              )
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             params![
                 new_event_id(),
                 timestamp,
@@ -758,6 +764,7 @@ fn insert_model_call(
                 "allowed",
                 call.duration_ms as i64,
                 tc_trace,
+                call.trace_id,
                 call.credential_ref,
             ],
         )?;
@@ -770,14 +777,15 @@ fn insert_model_call(
             .clone()
             .or_else(|| call.credential_ref.clone());
         conn.execute(
-            "INSERT INTO tool_responses (model_call_id, call_id, content_preview, is_error, trace_id, credential_ref)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO tool_responses (model_call_id, call_id, content_preview, is_error, trace_id, turn_id, credential_ref)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 model_call_id,
                 tr.call_id,
                 tr.content_preview,
                 tr.is_error as i64,
                 tr_trace,
+                call.trace_id,
                 tr_credential_ref,
             ],
         )?;
@@ -821,9 +829,9 @@ fn insert_model_items(
             "INSERT OR IGNORE INTO model_items (
                 event_id, model_call_id, timestamp, provider, model, path, trace_id,
                 kind, item_index, call_id, tool_name, arguments, content,
-                content_hash, credential_ref
+                content_hash, credential_ref, turn_id
              )
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             params![
                 new_event_id(),
                 model_call_id,
@@ -840,6 +848,7 @@ fn insert_model_items(
                 content,
                 content_hash,
                 call.credential_ref,
+                call.trace_id,
             ],
         )?;
         Ok(())
@@ -883,8 +892,8 @@ fn insert_file_event(conn: &Connection, event: &FileEvent) -> rusqlite::Result<(
     let timestamp = format_timestamp(event.timestamp);
     let (directory, name) = split_event_path(&event.path);
     conn.execute(
-        "INSERT INTO fs_events (event_id, timestamp, action, path, directory, name, size, trace_id, credential_ref)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        "INSERT INTO fs_events (event_id, timestamp, action, path, directory, name, size, trace_id, turn_id, credential_ref)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         params![
             event.event_id.clone().unwrap_or_else(new_event_id),
             timestamp,
@@ -893,6 +902,7 @@ fn insert_file_event(conn: &Connection, event: &FileEvent) -> rusqlite::Result<(
             directory,
             name,
             event.size.map(|s| s as i64),
+            event.trace_id,
             event.trace_id,
             event.credential_ref,
         ],
@@ -924,9 +934,9 @@ fn insert_mcp_call(conn: &Connection, call: &McpCall) -> rusqlite::Result<()> {
                 event_id, timestamp, model_call_id, provider, status, call_index, call_id,
                 tool_name, arguments, response_preview, origin, server_name, method, request_id,
                 decision, duration_ms, error_message, process_name, bytes_sent, bytes_received,
-                policy_mode, policy_action, policy_rule, policy_reason, trace_id, credential_ref
+                policy_mode, policy_action, policy_rule, policy_reason, trace_id, turn_id, credential_ref
             )
-             VALUES (?1, ?2, NULL, '', ?3, 0, ?4, ?5, ?6, ?7, 'mcp', ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
+             VALUES (?1, ?2, NULL, '', ?3, 0, ?4, ?5, ?6, ?7, 'mcp', ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
             params![
                 &event_id,
                 &timestamp,
@@ -949,6 +959,7 @@ fn insert_mcp_call(conn: &Connection, call: &McpCall) -> rusqlite::Result<()> {
                 call.policy_rule.as_deref(),
                 call.policy_reason.as_deref(),
                 call.trace_id.as_deref(),
+                call.trace_id.as_deref(),
                 call.credential_ref.as_deref(),
             ],
         )?;
@@ -962,6 +973,7 @@ fn insert_mcp_call(conn: &Connection, call: &McpCall) -> rusqlite::Result<()> {
                 content_type: Some("application/json"),
                 body: call.request_preview.as_deref(),
                 trace_id: call.trace_id.as_deref(),
+                turn_id: call.trace_id.as_deref(),
             },
         )?;
         insert_event_body_blob(
@@ -974,6 +986,7 @@ fn insert_mcp_call(conn: &Connection, call: &McpCall) -> rusqlite::Result<()> {
                 content_type: Some("application/json"),
                 body: call.response_preview.as_deref(),
                 trace_id: call.trace_id.as_deref(),
+                turn_id: call.trace_id.as_deref(),
             },
         )?;
         return Ok(());
@@ -1001,6 +1014,7 @@ struct EventBodyBlob<'a> {
     content_type: Option<&'a str>,
     body: Option<&'a str>,
     trace_id: Option<&'a str>,
+    turn_id: Option<&'a str>,
 }
 
 fn insert_event_body_blob(conn: &Connection, blob: EventBodyBlob<'_>) -> rusqlite::Result<()> {
@@ -1018,9 +1032,9 @@ fn insert_event_body_blob(conn: &Connection, blob: EventBodyBlob<'_>) -> rusqlit
         "INSERT OR REPLACE INTO event_body_blobs (
             event_id, event_type, source_table, direction, content_type,
             original_bytes, stored_bytes, truncated, body_hash, body,
-            trace_id, created_at
+            trace_id, turn_id, created_at
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         params![
             blob.event_id,
             blob.event_type,
@@ -1033,6 +1047,7 @@ fn insert_event_body_blob(conn: &Connection, blob: EventBodyBlob<'_>) -> rusqlit
             blake3_bytes_ref(bytes),
             stored,
             blob.trace_id,
+            blob.turn_id,
             created_at,
         ],
     )?;
@@ -1043,15 +1058,16 @@ fn insert_exec_event(conn: &Connection, event: &ExecEvent) -> rusqlite::Result<(
     let timestamp = format_timestamp(event.timestamp);
     conn.execute(
         "INSERT INTO exec_events (
-            event_id, timestamp, exec_id, command, source, trace_id, process_name, credential_ref
+            event_id, timestamp, exec_id, command, source, trace_id, turn_id, process_name, credential_ref
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![
             event.event_id.clone().unwrap_or_else(new_event_id),
             timestamp,
             event.exec_id as i64,
             event.command,
             event.source,
+            event.trace_id,
             event.trace_id,
             event.process_name,
             event.credential_ref,
@@ -1092,10 +1108,10 @@ fn insert_dns_event(conn: &Connection, event: &DnsEvent) -> rusqlite::Result<()>
     conn.execute(
         "INSERT INTO dns_events (
             event_id, timestamp, qname, qtype, qclass, rcode, decision, matched_rule,
-            answer_ip, source_proto, process_name, upstream_resolver_ms, trace_id,
+            answer_ip, source_proto, process_name, upstream_resolver_ms, trace_id, turn_id,
             policy_mode, policy_action, policy_rule, policy_reason, credential_ref
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
         params![
             event.event_id.clone().unwrap_or_else(new_event_id),
             timestamp,
@@ -1109,6 +1125,7 @@ fn insert_dns_event(conn: &Connection, event: &DnsEvent) -> rusqlite::Result<()>
             event.source_proto,
             event.process_name,
             event.upstream_resolver_ms as i64,
+            event.trace_id,
             event.trace_id,
             event.policy_mode,
             event.policy_action,
@@ -1125,9 +1142,9 @@ fn insert_audit_event(conn: &Connection, event: &AuditEvent) -> rusqlite::Result
     conn.execute(
         "INSERT INTO audit_events (
             event_id, timestamp, pid, ppid, uid, exe, comm, argv, cwd,
-            session_id, tty, audit_id, exec_event_id, parent_exe, trace_id, credential_ref
+            session_id, tty, audit_id, exec_event_id, parent_exe, trace_id, turn_id, credential_ref
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
         params![
             event.event_id.clone().unwrap_or_else(new_event_id),
             timestamp,
@@ -1144,6 +1161,7 @@ fn insert_audit_event(conn: &Connection, event: &AuditEvent) -> rusqlite::Result
             event.exec_event_id,
             event.parent_exe,
             event.trace_id,
+            event.trace_id,
             event.credential_ref,
         ],
     )?;
@@ -1155,9 +1173,9 @@ fn insert_substitution_event(conn: &Connection, event: &SubstitutionEvent) -> ru
     conn.execute(
         "INSERT INTO substitution_events (
             event_id, timestamp, material_class, source, event_type, algorithm,
-            substitution_ref, outcome, provider, confidence, trace_id, context_json
+            substitution_ref, outcome, provider, confidence, trace_id, turn_id, context_json
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         params![
             event.event_id.clone().unwrap_or_else(new_event_id),
             timestamp,
@@ -1169,6 +1187,7 @@ fn insert_substitution_event(conn: &Connection, event: &SubstitutionEvent) -> ru
             event.outcome,
             event.provider,
             event.confidence,
+            event.trace_id,
             event.trace_id,
             event.context_json,
         ],
@@ -1183,9 +1202,9 @@ fn insert_security_rule_event(
     conn.execute(
         "INSERT INTO security_rule_events (
             timestamp_unix_ms, event_id, event_type, rule_id,
-            rule_action, detection_level, rule_json, event_json, trace_id
+            rule_action, detection_level, rule_json, event_json, trace_id, turn_id, credential_ref
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         params![
             event.timestamp_unix_ms,
             event.event_id,
@@ -1196,6 +1215,8 @@ fn insert_security_rule_event(
             event.rule_json,
             event.event_json,
             event.trace_id,
+            event.turn_id,
+            event.credential_ref,
         ],
     )?;
     Ok(())
@@ -1234,9 +1255,9 @@ fn insert_security_decision_event(
         "INSERT INTO security_decision_events (
             timestamp_unix_ms, event_id, event_type, stage, actor,
             rule_id, plugin_id, previous_decision, requested_decision,
-            effective_decision, reason, event_json, trace_id
+            effective_decision, reason, event_json, trace_id, turn_id, credential_ref
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         params![
             event.timestamp_unix_ms,
             event.event_id,
@@ -1251,6 +1272,8 @@ fn insert_security_decision_event(
             event.reason,
             event.event_json,
             event.trace_id,
+            event.turn_id,
+            event.credential_ref,
         ],
     )?;
     Ok(())

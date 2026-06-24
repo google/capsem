@@ -153,16 +153,6 @@ fn test_profile_mutation_writer(run_dir: &StdPath) -> Arc<capsem_logger::DbWrite
     Arc::new(capsem_logger::DbWriter::open(&db_path, 64).unwrap())
 }
 
-fn test_projection_refresh_tx() -> mpsc::Sender<ProjectionRefreshRequest> {
-    let (tx, mut rx) = mpsc::channel::<ProjectionRefreshRequest>(16);
-    std::thread::spawn(move || {
-        while let Some(request) = rx.blocking_recv() {
-            let _ = request.reply.send(Ok(()));
-        }
-    });
-    tx
-}
-
 fn make_test_state() -> Arc<ServiceState> {
     let run_dir = PathBuf::from("/tmp/capsem-test-svc");
     let registry_path = run_dir.join("persistent_registry.json");
@@ -195,7 +185,6 @@ fn make_test_state() -> Arc<ServiceState> {
         timeline_route_projection: Mutex::new(TimelineRouteProjection::default()),
         triage_route_projection: Mutex::new(TriageRouteProjection::default()),
         profile_mutation_writer: test_profile_mutation_writer(&run_dir),
-        projection_refresh_tx: test_projection_refresh_tx(),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
@@ -263,7 +252,6 @@ fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
         timeline_route_projection: Mutex::new(TimelineRouteProjection::default()),
         triage_route_projection: Mutex::new(TriageRouteProjection::default()),
         profile_mutation_writer: test_profile_mutation_writer(&run_dir),
-        projection_refresh_tx: test_projection_refresh_tx(),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
@@ -1838,6 +1826,292 @@ async fn triage_route_uses_memory_projection_not_session_db() {
     assert_eq!(exec_failures[0][2], "false");
     assert_eq!(exec_failures[0][3], 2);
     assert_eq!(exec_failures[0][4], 19);
+}
+
+#[tokio::test]
+async fn winterfell_startup_rehydrates_route_projections_from_session_ledgers() {
+    let dir = tempfile::tempdir().unwrap();
+    let sessions_dir = dir.path().join("sessions");
+    std::fs::create_dir_all(&sessions_dir).unwrap();
+    let idx = capsem_core::session::SessionIndex::open(&sessions_dir.join("main.db")).unwrap();
+    idx.create_session(&capsem_core::session::SessionRecord {
+        id: "winterfell-vm".to_string(),
+        mode: "virtiofs".to_string(),
+        command: Some("winterfell".to_string()),
+        status: "running".to_string(),
+        created_at: "2026-06-24T00:00:00Z".to_string(),
+        stopped_at: None,
+        scratch_disk_size_gb: 16,
+        ram_bytes: 4_294_967_296,
+        total_requests: 0,
+        allowed_requests: 0,
+        denied_requests: 0,
+        total_input_tokens: 0,
+        total_output_tokens: 0,
+        total_estimated_cost: 0.0,
+        total_tool_calls: 0,
+        total_file_events: 0,
+        compressed_size_bytes: None,
+        vacuumed_at: None,
+        storage_mode: "virtiofs".to_string(),
+        rootfs_hash: None,
+        rootfs_version: None,
+        forked_from: None,
+        persistent: false,
+        exec_count: 0,
+        audit_event_count: 0,
+    })
+    .unwrap();
+    drop(idx);
+
+    let (state, _dir) = make_test_state_with_tempdir_at(dir);
+    let app = build_service_router(Arc::clone(&state));
+    let session_dir = sessions_dir.join("winterfell-vm");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    insert_fake_instance_with_session_dir(
+        &state,
+        "winterfell-vm",
+        std::process::id(),
+        session_dir.clone(),
+    );
+
+    let db_path = session_dir.join("session.db");
+    let writer = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
+    writer.write_blocking(capsem_logger::WriteOp::SecurityRuleEvent(
+        capsem_logger::SecurityRuleEvent::new(
+            1_789_000_223_456,
+            "abcdef123450",
+            "model.call",
+            "profiles.rules.ai_unknown_provider",
+            r#"{"name":"ai_unknown_provider","match":"model.provider == \"unknown\""}"#,
+            r#"{"event_type":"model.call","model":{"provider":"unknown"}}"#,
+        )
+        .with_rule_action(capsem_logger::SecurityRuleAction::Allow)
+        .with_detection_level(capsem_logger::SecurityDetectionLevel::High)
+        .with_trace_id("trace-winterfell")
+        .with_turn_id("trace-winterfell")
+        .with_credential_ref(
+            "credential:blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ),
+    ));
+    writer.write_blocking(capsem_logger::WriteOp::ExecEvent(
+        capsem_logger::ExecEvent {
+            event_id: Some("abcdef123451".to_string()),
+            timestamp: std::time::SystemTime::now(),
+            exec_id: 501,
+            command: "echo winterfell".to_string(),
+            source: "api".to_string(),
+            trace_id: Some("trace-winterfell".to_string()),
+            process_name: Some("bash".to_string()),
+            credential_ref: None,
+        },
+    ));
+    writer.write_blocking(capsem_logger::WriteOp::ExecEventComplete(
+        capsem_logger::ExecEventComplete {
+            exec_id: 501,
+            exit_code: 0,
+            duration_ms: 12,
+            stdout_preview: Some("winterfell\n".to_string()),
+            stderr_preview: None,
+            stdout_bytes: 11,
+            stderr_bytes: 0,
+            pid: Some(777),
+        },
+    ));
+    writer.write_blocking(capsem_logger::WriteOp::NetEvent(capsem_logger::NetEvent {
+        event_id: Some("abcdef123452".to_string()),
+        timestamp: std::time::SystemTime::now(),
+        domain: "mock.capsem.test".to_string(),
+        port: 443,
+        decision: capsem_logger::Decision::Allowed,
+        process_name: Some("codex".to_string()),
+        pid: Some(777),
+        method: Some("POST".to_string()),
+        path: Some("/v1/responses".to_string()),
+        query: None,
+        status_code: Some(200),
+        bytes_sent: 44,
+        bytes_received: 55,
+        duration_ms: 8,
+        matched_rule: Some("profiles.rules.default_http".to_string()),
+        request_headers: Some("content-type: application/json".to_string()),
+        response_headers: Some("content-type: application/json".to_string()),
+        request_body_preview: Some(r#"{"input":"winterfell"}"#.to_string()),
+        response_body_preview: Some(r#"{"output_text":"the wall holds"}"#.to_string()),
+        request_body_full: Some(r#"{"input":"winterfell"}"#.to_string()),
+        response_body_full: Some(r#"{"output_text":"the wall holds"}"#.to_string()),
+        conn_type: Some("https".to_string()),
+        policy_mode: None,
+        policy_action: Some("allow".to_string()),
+        policy_rule: Some("profiles.rules.default_http".to_string()),
+        policy_reason: None,
+        trace_id: Some("trace-winterfell".to_string()),
+        credential_ref: Some(
+            "credential:blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                .to_string(),
+        ),
+    }));
+    writer.write_blocking(capsem_logger::WriteOp::ModelCall(
+        capsem_logger::ModelCall {
+            event_id: Some("abcdef123453".to_string()),
+            timestamp: std::time::SystemTime::now(),
+            provider: "openai".to_string(),
+            protocol: Some("openai".to_string()),
+            model: Some("gpt-5-nano".to_string()),
+            process_name: Some("codex".to_string()),
+            pid: Some(777),
+            method: "POST".to_string(),
+            path: "/v1/responses".to_string(),
+            stream: false,
+            system_prompt_preview: None,
+            messages_count: 1,
+            tools_count: 1,
+            request_bytes: 64,
+            request_body_preview: Some(r#"{"input":"write winterfell"}"#.to_string()),
+            request_body_full: Some(r#"{"input":"write winterfell"}"#.to_string()),
+            message_id: Some("msg-winterfell".to_string()),
+            status_code: Some(200),
+            text_content: Some("the wall holds".to_string()),
+            thinking_content: Some("prepare ledger proof".to_string()),
+            response_body_full: Some(r#"{"output_text":"the wall holds"}"#.to_string()),
+            stop_reason: Some("end_turn".to_string()),
+            input_tokens: Some(9),
+            output_tokens: Some(4),
+            usage_details: BTreeMap::new(),
+            duration_ms: 31,
+            response_bytes: 33,
+            estimated_cost_usd: 0.00001,
+            trace_id: Some("trace-winterfell".to_string()),
+            credential_ref: Some("credential:blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string()),
+            tool_calls: vec![capsem_logger::ToolCallEntry {
+                call_index: 0,
+                call_id: "tool-winterfell".to_string(),
+                tool_name: "Write".to_string(),
+                arguments: Some(r#"{"path":"/root/winterfell.md"}"#.to_string()),
+                origin: "model".to_string(),
+                trace_id: Some("trace-winterfell".to_string()),
+            }],
+            tool_responses: vec![capsem_logger::ToolResponseEntry {
+                call_id: "tool-winterfell".to_string(),
+                content_preview: Some("Wrote winterfell.md".to_string()),
+                is_error: false,
+                trace_id: Some("trace-winterfell".to_string()),
+                credential_ref: Some("credential:blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string()),
+            }],
+        },
+    ));
+    writer.flush().await;
+    tokio::task::spawn_blocking(move || writer.shutdown_blocking())
+        .await
+        .unwrap();
+    let direct_rows = capsem_logger::DbReader::open(&db_path)
+        .unwrap()
+        .query_raw(
+            "SELECT \
+             (SELECT COUNT(*) FROM model_calls), \
+             (SELECT COUNT(*) FROM net_events), \
+             (SELECT COUNT(*) FROM exec_events), \
+             (SELECT COUNT(*) FROM security_rule_events)",
+        )
+        .unwrap();
+    assert_eq!(
+        direct_rows,
+        r#"{"columns":["(SELECT COUNT(*) FROM model_calls)","(SELECT COUNT(*) FROM net_events)","(SELECT COUNT(*) FROM exec_events)","(SELECT COUNT(*) FROM security_rule_events)"],"rows":[[1,1,1,1]]}"#
+    );
+
+    hydrate_startup_route_projections(&state).expect("startup rehydrates route projections");
+    std::fs::rename(
+        sessions_dir.join("main.db"),
+        sessions_dir.join("main.db.route-must-not-open"),
+    )
+    .unwrap();
+    std::fs::rename(&db_path, session_dir.join("session.db.route-must-not-open")).unwrap();
+
+    let (status, stats) = route_request(app.clone(), axum::http::Method::GET, "/stats", None).await;
+    assert_eq!(status, StatusCode::OK, "{stats}");
+    assert_eq!(stats["global"]["total_sessions"], 1);
+    assert_eq!(stats["sessions"][0]["id"], "winterfell-vm");
+
+    let (status, detail) = route_request(
+        app.clone(),
+        axum::http::Method::GET,
+        "/vms/winterfell-vm/stats/detail",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{detail}");
+    assert_eq!(
+        detail["model_events"][0]["event_id"], "abcdef123453",
+        "{detail}"
+    );
+    assert_eq!(detail["model_events"][0]["provider"], "openai", "{detail}");
+    assert_eq!(detail["model_events"][0]["input_tokens"], 9, "{detail}");
+    assert_eq!(
+        detail["tool_events"][0]["call_id"], "tool-winterfell",
+        "{detail}"
+    );
+    assert_eq!(detail["tool_events"][0]["tool_name"], "Write", "{detail}");
+    assert_eq!(
+        detail["body_blobs"]["abcdef123453"][0]["body"],
+        r#"{"input":"write winterfell"}"#
+    );
+
+    let (status, security) = route_request(
+        app.clone(),
+        axum::http::Method::GET,
+        "/vms/winterfell-vm/security/latest?limit=10",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{security}");
+    assert_eq!(security[0]["event_id"], "abcdef123450");
+    assert_eq!(security[0]["turn_id"], "trace-winterfell");
+    assert_eq!(
+        security[0]["credential_ref"],
+        "credential:blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    );
+
+    let (status, history) = route_request(
+        app.clone(),
+        axum::http::Method::GET,
+        "/vms/winterfell-vm/history/counts",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{history}");
+    assert_eq!(history["exec_count"], 1);
+
+    let (status, timeline) = route_request(
+        app,
+        axum::http::Method::GET,
+        "/vms/winterfell-vm/timeline?trace_id=trace-winterfell&layers=exec,net,model,tool&limit=20",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{timeline}");
+    let rows = timeline["rows"].as_array().unwrap();
+    assert!(
+        rows.iter()
+            .any(|row| row[1] == "exec" && row[3] == "echo winterfell"),
+        "{timeline}"
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row[1] == "net" && row[3] == "POST mock.capsem.test/v1/responses"),
+        "{timeline}"
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row[1] == "model" && row[3] == "openai/gpt-5-nano"),
+        "{timeline}"
+    );
+    assert!(
+        rows.iter().any(|row| row[1] == "tool"
+            && row[3].as_str().is_some_and(
+                |summary| summary.contains("Write") && summary.contains("tool-winterfell")
+            )),
+        "{timeline}"
+    );
 }
 
 #[tokio::test]
@@ -5534,7 +5808,6 @@ fn make_state_in(run_dir: PathBuf) -> Arc<ServiceState> {
         timeline_route_projection: Mutex::new(TimelineRouteProjection::default()),
         triage_route_projection: Mutex::new(TriageRouteProjection::default()),
         profile_mutation_writer: test_profile_mutation_writer(&run_dir),
-        projection_refresh_tx: test_projection_refresh_tx(),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
@@ -6068,7 +6341,6 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         timeline_route_projection: Mutex::new(TimelineRouteProjection::default()),
         triage_route_projection: Mutex::new(TriageRouteProjection::default()),
         profile_mutation_writer: test_profile_mutation_writer(&run_dir),
-        projection_refresh_tx: test_projection_refresh_tx(),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });
@@ -7794,7 +8066,6 @@ fn make_test_state_with_tempdir_at(
         timeline_route_projection: Mutex::new(TimelineRouteProjection::default()),
         triage_route_projection: Mutex::new(TriageRouteProjection::default()),
         profile_mutation_writer: test_profile_mutation_writer(&run_dir),
-        projection_refresh_tx: test_projection_refresh_tx(),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });
@@ -8155,6 +8426,45 @@ async fn download_logs_file_export_before_returning_response() {
         }
         other => panic!("download must log file export before response, got {other:?}"),
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn download_file_content_does_not_request_projection_refresh() {
+    let dir = tempfile::tempdir().unwrap();
+    let (state, _state_dir) = make_test_state_with_tempdir();
+    let (_ipc_dir, uds_path, ipc) = spawn_file_boundary_ipc(1).await;
+    setup_vm_with_workspace_and_uds(&state, dir.path(), "fast-file-vm", uds_path);
+    std::fs::write(
+        dir.path().join("session/guest/workspace/latency.txt"),
+        b"file content must not wait on projection rebuild",
+    )
+    .unwrap();
+
+    let response = tokio::time::timeout(
+        std::time::Duration::from_millis(250),
+        handle_download_file(
+            State(state),
+            Path("fast-file-vm".to_string()),
+            Query(FileContentQuery {
+                path: "latency.txt".to_string(),
+            }),
+        ),
+    )
+    .await
+    .expect("file content route waited for projection refresh")
+    .expect("download should succeed after boundary log");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let messages = ipc.await.unwrap();
+    assert_eq!(messages.len(), 1);
+    assert!(matches!(
+        &messages[0],
+        ServiceToProcess::LogFileBoundary {
+            action: FileBoundaryAction::Export,
+            path,
+            ..
+        } if path == "latency.txt"
+    ));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

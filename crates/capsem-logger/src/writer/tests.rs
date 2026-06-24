@@ -520,6 +520,8 @@ async fn security_rule_event_roundtrip_preserves_forensic_snapshot() {
                     r#"{"common":{"event_type":"model.call"},"model":{"provider":"openai"}}"#
                         .into(),
                 trace_id: Some("trace_abc".into()),
+                turn_id: Some("turn_abc".into()),
+                credential_ref: Some(crate::events::credential_reference("openai", "sk-test")),
             },
         ))
         .await;
@@ -541,6 +543,12 @@ async fn security_rule_event_roundtrip_preserves_forensic_snapshot() {
     );
     assert!(events[0].rule_json.contains("openai_api_block"));
     assert!(events[0].event_json.contains("model.call"));
+    assert_eq!(events[0].trace_id.as_deref(), Some("trace_abc"));
+    assert_eq!(events[0].turn_id.as_deref(), Some("turn_abc"));
+    assert!(events[0]
+        .credential_ref
+        .as_deref()
+        .is_some_and(crate::events::is_credential_reference));
 }
 
 #[tokio::test]
@@ -723,16 +731,28 @@ async fn security_decision_event_roundtrip_preserves_explicit_transition() {
                 reason: Some("EICAR test seed observed".into()),
                 event_json: r#"{"file":{"import":{"name":"eicar.txt"}}}"#.into(),
                 trace_id: Some("trace_eicar".into()),
+                turn_id: Some("turn_eicar".into()),
+                credential_ref: Some(crate::events::credential_reference("github", "ghp-test")),
             },
         ))
         .await;
     drop(writer);
 
     let conn = rusqlite::Connection::open(&db_path).unwrap();
-    let row: (String, String, String, String, String, String, String) = conn
+    let row: (
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+    ) = conn
         .query_row(
             "SELECT stage, actor, previous_decision, requested_decision,
-                    effective_decision, reason, trace_id
+                    effective_decision, reason, trace_id, turn_id, credential_ref
              FROM security_decision_events WHERE event_id = 'abcdef123456'",
             [],
             |row| {
@@ -744,6 +764,8 @@ async fn security_decision_event_roundtrip_preserves_explicit_transition() {
                     row.get(4)?,
                     row.get(5)?,
                     row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
                 ))
             },
         )
@@ -758,6 +780,8 @@ async fn security_decision_event_roundtrip_preserves_explicit_transition() {
             "block".into(),
             "EICAR test seed observed".into(),
             "trace_eicar".into(),
+            "turn_eicar".into(),
+            crate::events::credential_reference("github", "ghp-test"),
         )
     );
 }
@@ -805,6 +829,8 @@ async fn security_rule_stats_are_regenerated_from_session_db() {
                     rule_json: "{}".into(),
                     event_json: "{}".into(),
                     trace_id: None,
+                    turn_id: None,
+                    credential_ref: None,
                 },
             ))
             .await;

@@ -168,6 +168,10 @@ pub struct SecurityDecisionEvent {
     pub event_json: String,
     #[serde(default)]
     pub trace_id: Option<String>,
+    #[serde(default)]
+    pub turn_id: Option<String>,
+    #[serde(default)]
+    pub credential_ref: Option<String>,
 }
 
 /// A stored security rule match. This is the source for runtime `latest`
@@ -188,6 +192,10 @@ pub struct SecurityRuleEvent {
     pub event_json: String,
     #[serde(default)]
     pub trace_id: Option<String>,
+    #[serde(default)]
+    pub turn_id: Option<String>,
+    #[serde(default)]
+    pub credential_ref: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -358,6 +366,8 @@ impl SecurityRuleEvent {
             rule_json: rule_json.into(),
             event_json: event_json.into(),
             trace_id: None,
+            turn_id: None,
+            credential_ref: None,
         }
     }
 
@@ -373,6 +383,16 @@ impl SecurityRuleEvent {
 
     pub fn with_trace_id(mut self, trace_id: impl Into<String>) -> Self {
         self.trace_id = Some(trace_id.into());
+        self
+    }
+
+    pub fn with_turn_id(mut self, turn_id: impl Into<String>) -> Self {
+        self.turn_id = Some(turn_id.into());
+        self
+    }
+
+    pub fn with_credential_ref(mut self, credential_ref: impl Into<String>) -> Self {
+        self.credential_ref = Some(credential_ref.into());
         self
     }
 }

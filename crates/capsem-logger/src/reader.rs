@@ -668,7 +668,8 @@ impl DbReader {
     ) -> rusqlite::Result<Vec<SecurityRuleEvent>> {
         let mut stmt = self.conn.prepare(
             "SELECT timestamp_unix_ms, event_id, event_type, rule_id,
-                    rule_action, detection_level, rule_json, event_json, trace_id
+                    rule_action, detection_level, rule_json, event_json, trace_id,
+                    turn_id, credential_ref
              FROM security_rule_events
              ORDER BY timestamp_unix_ms DESC, id DESC
              LIMIT ?1",
@@ -1790,6 +1791,8 @@ fn read_security_rule_event_row(row: &Row<'_>) -> rusqlite::Result<SecurityRuleE
         rule_json: row.get(6)?,
         event_json: row.get(7)?,
         trace_id: row.get(8)?,
+        turn_id: row.get(9)?,
+        credential_ref: row.get(10)?,
     })
 }
 
