@@ -1,7 +1,10 @@
 {
+  "installMethod": "native",
+  "autoUpdates": false,
   "hasCompletedOnboarding": true,
   "hasTrustDialogAccepted": true,
   "hasTrustDialogHooksAccepted": true,
+  "autoUpdatesProtectedForNative": true,
   "shiftEnterKeyBindingInstalled": true,
   "theme": "dark",
   "numStartups": 1,

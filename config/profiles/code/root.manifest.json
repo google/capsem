@@ -18,8 +18,8 @@
     },
     {
       "path": "root/.claude.json",
-      "hash": "blake3:72cffdfb37c41367018d13de7d2bb5c267f960437fcf9a29a0fe8bd33dbe572d",
-      "size": 334
+      "hash": "blake3:f37eca99c369738462f882e006cf0febc1bcf552e6d4e3e64a831f03fbe8a3a6",
+      "size": 428
     },
     {
       "path": "root/.claude/settings.json",

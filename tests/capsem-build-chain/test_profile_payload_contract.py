@@ -126,6 +126,21 @@ def test_profiles_package_claude_bypass_permissions_bootstrap() -> None:
             failures.append(
                 f"{profile_id}: Claude defaultMode is {default_mode!r}, expected bypassPermissions"
             )
+        state_path = profile_dir / "root/root/.claude.json"
+        if not state_path.is_file():
+            failures.append(f"{profile_id}: missing root/.claude.json")
+        else:
+            state = json.loads(state_path.read_text())
+            if state.get("installMethod") != "native":
+                failures.append(
+                    f"{profile_id}: Claude installMethod is {state.get('installMethod')!r}, expected native"
+                )
+            if state.get("autoUpdates") is not False:
+                failures.append(f"{profile_id}: Claude autoUpdates must be false")
+            if state.get("autoUpdatesProtectedForNative") is not True:
+                failures.append(
+                    f"{profile_id}: Claude autoUpdatesProtectedForNative must be true"
+                )
         if 'install_from_url "https://claude.ai/install.sh" "claude"' not in build_script:
             failures.append(f"{profile_id}: build script does not install Claude")
         if 'install -m 555 "/root/.local/bin/$name" "/usr/local/bin/$name"' not in build_script:
