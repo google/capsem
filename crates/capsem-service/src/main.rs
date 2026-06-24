@@ -10001,7 +10001,6 @@ async fn handle_run(
     let cpus = resources.cpus;
     let scratch_disk_size_gb = resources.scratch_disk_size_gb;
 
-    let ram_bytes = ram_mb * 1024 * 1024;
     let session_dir = state.run_dir.join("sessions").join(&id);
 
     // 1. Provision ephemeral VM. `provision_sandbox` is synchronous and
@@ -10071,51 +10070,9 @@ async fn handle_run(
         }
     }
 
-    // 2. Register session in main.db
-    let sessions_db_dir = state
-        .run_dir
-        .parent()
-        .unwrap_or(state.run_dir.as_path())
-        .join("sessions");
-    let _ = std::fs::create_dir_all(&sessions_db_dir);
-    let index = capsem_core::session::SessionIndex::open(&sessions_db_dir.join("main.db")).ok();
-    if let Some(ref idx) = index {
-        let record = capsem_core::session::SessionRecord {
-            id: id.clone(),
-            mode: "run".to_string(),
-            command: Some(payload.command.clone()),
-            status: "running".to_string(),
-            created_at: capsem_core::session::now_iso(),
-            stopped_at: None,
-            scratch_disk_size_gb,
-            ram_bytes,
-            total_requests: 0,
-            allowed_requests: 0,
-            denied_requests: 0,
-            total_input_tokens: 0,
-            total_output_tokens: 0,
-            total_estimated_cost: 0.0,
-            total_tool_calls: 0,
-            total_mcp_calls: 0,
-            total_file_events: 0,
-            compressed_size_bytes: None,
-            vacuumed_at: None,
-            storage_mode: "virtiofs".to_string(),
-            rootfs_hash: None,
-            rootfs_version: Some(state.current_version.clone()),
-            forked_from: None,
-            persistent: false,
-            exec_count: 0,
-            audit_event_count: 0,
-        };
-        if let Err(e) = idx.create_session(&record) {
-            tracing::warn!("failed to register session in main.db: {e}");
-        }
-    }
-
     let uds_path = state.instance_socket_path(&id);
 
-    // 4. Execute command
+    // 2. Execute command.
     let job_id = state.next_job_id();
     let exec_result = send_ipc_command(
         &uds_path,
@@ -10127,7 +10084,7 @@ async fn handle_run(
     )
     .await;
 
-    // 5. Tear down VM process and build response. shutdown_vm_process
+    // 3. Tear down VM process and build response. shutdown_vm_process
     // blocks until the process is actually gone -- the leak detector needs
     // that guarantee. Route handlers must not mine session.db before returning;
     // durable telemetry is recovered by the projection/ledger rails.
@@ -10155,12 +10112,6 @@ async fn handle_run(
             format!("exec failed: {e}"),
         )),
     };
-
-    // 6. Mark the one-shot session stopped. Counters remain ledger-owned; do
-    // not open session.db from this route to synthesize summaries.
-    if let Some(idx) = index {
-        let _ = idx.update_status(&id, "stopped", Some(&capsem_core::session::now_iso()));
-    }
 
     response
 }
