@@ -148,6 +148,19 @@ def test_profiles_package_claude_bypass_permissions_bootstrap() -> None:
             if "export PATH" not in shell:
                 failures.append(f"{profile_id}: {rel} does not export PATH")
 
+        claude_shim_rel = "root/.local/bin/claude"
+        claude_shim_path = profile_dir / "root" / claude_shim_rel
+        if not claude_shim_path.is_file():
+            failures.append(f"{profile_id}: missing {claude_shim_rel}")
+        else:
+            shim = claude_shim_path.read_text()
+            if 'exec /usr/local/bin/claude "$@"' not in shim:
+                failures.append(
+                    f"{profile_id}: {claude_shim_rel} must exec the promoted /usr/local/bin/claude"
+                )
+            if not (claude_shim_path.stat().st_mode & 0o111):
+                failures.append(f"{profile_id}: {claude_shim_rel} is not executable")
+
     assert not failures, "invalid Claude permissions bootstrap contract:\n" + "\n".join(failures)
 
 
@@ -254,6 +267,7 @@ def test_profile_root_manifests_pin_exactly_the_shipped_root_payload() -> None:
         "root/.claude/settings.json",
         "root/.claude/settings.local.json",
         "root/.codex/config.toml",
+        "root/.local/bin/claude",
         "root/.gemini/antigravity-cli/settings.json",
         "root/.gemini/config/config.json",
         "root/.mcp.json",

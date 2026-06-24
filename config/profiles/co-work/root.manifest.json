@@ -37,6 +37,11 @@
       "size": 122
     },
     {
+      "path": "root/.local/bin/claude",
+      "hash": "blake3:3f20700253e0559ca8f59367dd6b017a3d87b465b36435936172fc6ad9d83c12",
+      "size": 42
+    },
+    {
       "path": "root/.gemini/installation_id",
       "hash": "blake3:5a70807784783b42a4e973003b6117a81666411dd5cb4c0ae52bee01baae2cdd",
       "size": 52
