@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import * as api from '../../api';
-  import type { InspectResponse } from '../../types/gateway';
   import { formatBytes, formatDuration, formatTime } from '../../format';
   import { getShikiHighlighter, resolveShikiTheme, ensureShikiLang, ensureShikiTheme, type ShikiHighlighter } from '../../shiki.ts';
   import {
@@ -12,8 +11,6 @@
     visibleDetailEntries,
   } from '../../stats-detail';
   import { themeStore } from '../../stores/theme.svelte.ts';
-  import { tabStore } from '../../stores/tabs.svelte.ts';
-  import { TOOLS_UNIFIED_MINIMAL_SQL, TOOLS_UNIFIED_SQL } from '../../sql';
   import MetricCard from './stats/MetricCard.svelte';
   import StatsBadge from './stats/StatsBadge.svelte';
   import StatsEventList from './stats/StatsEventList.svelte';
@@ -24,7 +21,6 @@
   import Globe from 'phosphor-svelte/lib/Globe';
   import FileText from 'phosphor-svelte/lib/FileText';
   import ShieldCheck from 'phosphor-svelte/lib/ShieldCheck';
-  import Database from 'phosphor-svelte/lib/Database';
   import Terminal from 'phosphor-svelte/lib/Terminal';
   import DotsThreeCircle from 'phosphor-svelte/lib/DotsThreeCircle';
   import Fingerprint from 'phosphor-svelte/lib/Fingerprint';
@@ -57,43 +53,7 @@
   let detectionLatest = $state<api.SecurityRuleEvent[]>([]);
   let enforcementLatest = $state<api.SecurityRuleEvent[]>([]);
   let securityStatus = $state<api.SecurityRuleStats | null>(null);
-
-  function inspectTab() {
-    const current = tabStore.active;
-    if (current?.vmId === vmId) {
-      tabStore.updateView(current.id, 'inspector');
-    } else {
-      tabStore.add('inspector', 'Inspector', vmId);
-    }
-  }
-
-  function toObjects(resp: InspectResponse): Row[] {
-    return resp.rows.map((row: any) => {
-      if (!Array.isArray(row)) return row;
-      const obj: Row = {};
-      resp.columns.forEach((col, index) => { obj[col] = row[index]; });
-      return obj;
-    });
-  }
-
-  async function query(sql: string): Promise<Row[]> {
-    return toObjects(await api.inspectQuery(vmId, sql));
-  }
-
-  function isMissingToolLedgerColumn(error: unknown): boolean {
-    return error instanceof Error && /no such column/i.test(error.message);
-  }
-
-  async function queryToolRows(): Promise<Row[]> {
-    try {
-      return await query(`${TOOLS_UNIFIED_SQL} LIMIT 200`);
-    } catch (primaryError) {
-      if (!isMissingToolLedgerColumn(primaryError)) {
-        throw primaryError;
-      }
-      return await query(`${TOOLS_UNIFIED_MINIMAL_SQL} LIMIT 200`);
-    }
-  }
+  let bodyBlobs = $state<Record<string, Row[]>>({});
 
   function safeEventId(value: unknown): string | null {
     const id = text(value);
@@ -105,17 +65,7 @@
     const eventId = safeEventId(row.event_id);
     if (!eventId) return;
 
-    let bodyRows: Row[] = [];
-    try {
-      bodyRows = await query(`SELECT direction, content_type, original_bytes,
-                     stored_bytes, truncated, body_hash, CAST(body AS TEXT) AS body
-                   FROM event_body_blobs
-                   WHERE event_id = '${eventId}'
-                   ORDER BY direction`);
-    } catch (e) {
-      error = e instanceof Error ? e.message : 'Failed to load event body ledger';
-      return;
-    }
+    const bodyRows = bodyBlobs[eventId] ?? [];
     if (bodyRows.length === 0) return;
 
     const enriched: Row = { ...row };
@@ -207,84 +157,28 @@
     error = null;
     try {
       const [
-        modelStatsRows,
-        modelEventRows,
-        toolEventRows,
-        httpEventRows,
-        dnsEventRows,
-        fsEventRows,
-        processEventRows,
-        auditEventRows,
-        substitutionEventRows,
+        detailRows,
         secLatest,
         secStatus,
         detLatest,
         enfLatest,
       ] = await Promise.all([
-        query(`SELECT provider, COALESCE(model, 'unknown') AS model,
-                 COUNT(*) AS call_count,
-                 COALESCE(SUM(input_tokens), 0) AS input_tokens,
-                 COALESCE(SUM(output_tokens), 0) AS output_tokens,
-                 COALESCE(SUM(estimated_cost_usd), 0.0) AS estimated_cost_usd,
-                 COALESCE(SUM(duration_ms), 0) AS duration_ms
-               FROM model_calls
-               GROUP BY provider, model
-               ORDER BY call_count DESC, provider ASC`),
-        query(`SELECT event_id, timestamp, provider, model, method, path, status_code,
-                 input_tokens, output_tokens, duration_ms, response_bytes,
-                 stop_reason, trace_id, credential_ref
-               FROM model_calls
-               ORDER BY id DESC
-               LIMIT 200`),
-        queryToolRows(),
-        query(`SELECT event_id, timestamp, domain, port, method, path, query, status_code,
-                 decision, duration_ms, bytes_sent, bytes_received, matched_rule, policy_rule,
-                 trace_id, credential_ref, request_headers, response_headers
-               FROM net_events
-               ORDER BY id DESC
-               LIMIT 200`),
-        query(`SELECT event_id, timestamp, qname, qtype, qclass, rcode, decision,
-                 matched_rule, policy_rule, source_proto, process_name,
-                 upstream_resolver_ms, trace_id, credential_ref
-               FROM dns_events
-               ORDER BY id DESC
-               LIMIT 200`),
-        query(`SELECT event_id, timestamp, action, path, size, trace_id, credential_ref
-               FROM fs_events
-               ORDER BY id DESC
-               LIMIT 200`),
-        query(`SELECT event_id, timestamp, exec_id, command, exit_code, duration_ms,
-                 stdout_bytes, stderr_bytes, source, process_name, pid, trace_id,
-                 credential_ref
-               FROM exec_events
-               ORDER BY id DESC
-               LIMIT 100`),
-        query(`SELECT event_id, timestamp, pid, ppid, uid, exe, comm, argv, cwd,
-                 exit_code, session_id, tty, audit_id, exec_event_id, parent_exe,
-                 trace_id, credential_ref
-               FROM audit_events
-               ORDER BY id DESC
-               LIMIT 100`),
-        query(`SELECT event_id, timestamp, material_class, source, event_type,
-                 event_type AS origin, outcome AS verb, provider,
-                 trace_id, context_json
-               FROM substitution_events
-               ORDER BY id DESC
-               LIMIT 100`),
+        api.getVmStatsDetail(vmId),
         api.getVmSecurityLatest(vmId, 200),
         api.getVmSecurityStatus(vmId),
         api.getVmDetectionLatest(vmId, 200),
         api.getVmEnforcementLatest(vmId, 200),
       ]);
-      modelStats = modelStatsRows;
-      modelRows = modelEventRows;
-      toolRows = toolEventRows;
-      httpRows = httpEventRows;
-      dnsRows = dnsEventRows;
-      fileRows = fsEventRows;
-      processRows = processEventRows;
-      auditRows = auditEventRows;
-      substitutionRows = substitutionEventRows;
+      modelStats = detailRows.model_stats as Row[];
+      modelRows = detailRows.model_events as Row[];
+      toolRows = detailRows.tool_events as Row[];
+      httpRows = detailRows.http_events as Row[];
+      dnsRows = detailRows.dns_events as Row[];
+      fileRows = detailRows.file_events as Row[];
+      processRows = detailRows.process_events as Row[];
+      auditRows = detailRows.audit_events as Row[];
+      substitutionRows = detailRows.credential_events as Row[];
+      bodyBlobs = detailRows.body_blobs as Record<string, Row[]>;
       securityLatest = secLatest;
       securityStatus = secStatus;
       detectionLatest = detLatest;
@@ -366,17 +260,8 @@
 
 <div class="flex h-full">
   <aside class="w-56 shrink-0 border-e border-line-2 bg-background overflow-y-auto py-4">
-    <div class="px-5 mb-4 flex items-center justify-between gap-x-2">
+    <div class="px-5 mb-4">
       <h1 class="text-xl font-bold text-foreground">Stats</h1>
-      <button
-        type="button"
-        class="size-8 inline-flex items-center justify-center rounded-lg text-muted-foreground-1 hover:text-foreground hover:bg-muted-hover"
-        onclick={inspectTab}
-        title="Inspect session ledger"
-        aria-label="Inspect session ledger"
-      >
-        <Database size={17} />
-      </button>
     </div>
     <nav class="space-y-0.5 px-3">
       {#each navItems as item (item.id)}

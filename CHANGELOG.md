@@ -74,6 +74,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Fixed the Stats UI ledger path so HTTP, DNS, model, tool, file, process,
+  credential, and body-detail rows come from a typed per-session route
+  projection instead of sending raw SQL through `/vms/{id}/inspect`.
 - Fixed the per-session timeline route so it filters the service's in-memory
   timeline projection instead of opening `session.db` on the request path.
 - Fixed the triage route so session-scoped diagnostics are served from a

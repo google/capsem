@@ -626,6 +626,47 @@ export async function inspectQuery(id: string, sql: string): Promise<InspectResp
   }
 }
 
+export type StatsDetailRow = Record<string, unknown>;
+
+export interface VmStatsDetailResponse {
+  model_stats: StatsDetailRow[];
+  model_events: StatsDetailRow[];
+  tool_events: StatsDetailRow[];
+  http_events: StatsDetailRow[];
+  dns_events: StatsDetailRow[];
+  file_events: StatsDetailRow[];
+  process_events: StatsDetailRow[];
+  audit_events: StatsDetailRow[];
+  credential_events: StatsDetailRow[];
+  body_blobs: Record<string, StatsDetailRow[]>;
+}
+
+export async function getVmStatsDetail(id: string): Promise<VmStatsDetailResponse> {
+  const empty: VmStatsDetailResponse = {
+    model_stats: [],
+    model_events: [],
+    tool_events: [],
+    http_events: [],
+    dns_events: [],
+    file_events: [],
+    process_events: [],
+    audit_events: [],
+    credential_events: [],
+    body_blobs: {},
+  };
+  if (!_connected) return empty;
+  try {
+    const resp = await _get(`/vms/${encodeURIComponent(id)}/stats/detail`);
+    return { ...empty, ...(await resp.json()) };
+  } catch (err) {
+    if (isNetworkError(err)) {
+      _connected = false;
+      return empty;
+    }
+    throw err;
+  }
+}
+
 export async function readFile(id: string, path: string): Promise<ReadFileResponse> {
   const resp = await _post(`/vms/${encodeURIComponent(id)}/files/read`, { path });
   return await resp.json();

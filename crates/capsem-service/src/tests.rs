@@ -172,6 +172,7 @@ fn make_test_state() -> Arc<ServiceState> {
         profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
         stats_route_projection: Mutex::new(empty_stats_route_projection()),
+        stats_detail_route_projection: Mutex::new(empty_stats_detail_route_projection()),
         security_route_projection: Mutex::new(SecurityRouteProjection::default()),
         history_route_projection: Mutex::new(HistoryRouteProjection::default()),
         timeline_route_projection: Mutex::new(TimelineRouteProjection::default()),
@@ -236,6 +237,7 @@ fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
         profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
         stats_route_projection: Mutex::new(empty_stats_route_projection()),
+        stats_detail_route_projection: Mutex::new(empty_stats_detail_route_projection()),
         security_route_projection: Mutex::new(SecurityRouteProjection::default()),
         history_route_projection: Mutex::new(HistoryRouteProjection::default()),
         timeline_route_projection: Mutex::new(TimelineRouteProjection::default()),
@@ -5496,6 +5498,7 @@ fn make_state_in(run_dir: PathBuf) -> Arc<ServiceState> {
         profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
         stats_route_projection: Mutex::new(empty_stats_route_projection()),
+        stats_detail_route_projection: Mutex::new(empty_stats_detail_route_projection()),
         security_route_projection: Mutex::new(SecurityRouteProjection::default()),
         history_route_projection: Mutex::new(HistoryRouteProjection::default()),
         timeline_route_projection: Mutex::new(TimelineRouteProjection::default()),
@@ -6034,6 +6037,7 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
         stats_route_projection: Mutex::new(empty_stats_route_projection()),
+        stats_detail_route_projection: Mutex::new(empty_stats_detail_route_projection()),
         security_route_projection: Mutex::new(SecurityRouteProjection::default()),
         history_route_projection: Mutex::new(HistoryRouteProjection::default()),
         timeline_route_projection: Mutex::new(TimelineRouteProjection::default()),
@@ -7471,6 +7475,138 @@ async fn handle_stats_returns_global_data() {
     assert_eq!(resp["sessions"][0]["id"], "20260412-120000-abcd");
 }
 
+#[tokio::test]
+async fn stats_detail_route_uses_memory_projection_not_session_db() {
+    let state = make_test_state();
+    let app = build_service_router(Arc::clone(&state));
+    let dir = tempfile::tempdir().unwrap();
+    let session_dir = dir.path().join("sessions").join("stats-detail-vm");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    insert_fake_instance_with_session_dir(
+        &state,
+        "stats-detail-vm",
+        std::process::id(),
+        session_dir.clone(),
+    );
+
+    let db_path = session_dir.join("session.db");
+    let writer = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
+    writer
+        .write(capsem_logger::WriteOp::ModelCall(
+            capsem_logger::ModelCall {
+                event_id: Some("abc123abc123".to_string()),
+                timestamp: std::time::SystemTime::now(),
+                provider: "google".to_string(),
+                protocol: Some("google".to_string()),
+                model: Some("gemini-3.5-flash".to_string()),
+                process_name: Some("agy".to_string()),
+                pid: Some(42),
+                method: "POST".to_string(),
+                path: "/v1internal:streamGenerateContent".to_string(),
+                stream: true,
+                system_prompt_preview: None,
+                messages_count: 1,
+                tools_count: 1,
+                request_bytes: 32,
+                request_body_preview: Some(r#"{"contents":[{"text":"write"}]}"#.to_string()),
+                message_id: Some("msg-1".to_string()),
+                status_code: Some(200),
+                text_content: Some("created poem.md".to_string()),
+                thinking_content: Some("plan file write".to_string()),
+                stop_reason: Some("end_turn".to_string()),
+                input_tokens: Some(12),
+                output_tokens: Some(7),
+                usage_details: BTreeMap::new(),
+                duration_ms: 25,
+                response_bytes: 64,
+                estimated_cost_usd: 0.001,
+                trace_id: Some("trace-stats-detail".to_string()),
+                credential_ref: None,
+                tool_calls: vec![capsem_logger::ToolCallEntry {
+                    call_index: 0,
+                    call_id: "tool-1".to_string(),
+                    tool_name: "Create".to_string(),
+                    arguments: Some(r#"{"path":"/root/poem.md"}"#.to_string()),
+                    origin: "native".to_string(),
+                    trace_id: Some("trace-stats-detail".to_string()),
+                }],
+                tool_responses: vec![capsem_logger::ToolResponseEntry {
+                    call_id: "tool-1".to_string(),
+                    content_preview: Some("Wrote 4 lines to poem.md".to_string()),
+                    is_error: false,
+                    trace_id: Some("trace-stats-detail".to_string()),
+                    credential_ref: None,
+                }],
+            },
+        ))
+        .await;
+    writer
+        .write(capsem_logger::WriteOp::NetEvent(capsem_logger::NetEvent {
+            event_id: Some("def456def456".to_string()),
+            timestamp: std::time::SystemTime::now(),
+            domain: "generativelanguage.googleapis.com".to_string(),
+            port: 443,
+            decision: capsem_logger::Decision::Allowed,
+            process_name: Some("agy".to_string()),
+            pid: Some(42),
+            method: Some("POST".to_string()),
+            path: Some("/v1internal:streamGenerateContent".to_string()),
+            query: None,
+            status_code: Some(200),
+            bytes_sent: 32,
+            bytes_received: 64,
+            duration_ms: 21,
+            matched_rule: Some("profiles.rules.ai_google_http_googleapis".to_string()),
+            request_headers: Some("content-type: application/json".to_string()),
+            response_headers: Some("content-type: application/json".to_string()),
+            request_body_preview: Some(r#"{"model":"gemini-3.5-flash"}"#.to_string()),
+            response_body_preview: Some(r#"{"ok":true}"#.to_string()),
+            conn_type: Some("https".to_string()),
+            policy_mode: None,
+            policy_action: Some("allow".to_string()),
+            policy_rule: Some("profiles.rules.ai_google_http_googleapis".to_string()),
+            policy_reason: None,
+            trace_id: Some("trace-stats-detail".to_string()),
+            credential_ref: None,
+        }))
+        .await;
+    writer.shutdown_blocking();
+
+    rebuild_stats_detail_route_projection(&state).expect("stats detail projection hydrates");
+    std::fs::rename(&db_path, session_dir.join("session.db.route-must-not-open")).unwrap();
+
+    let (status, body) = route_request(
+        app,
+        axum::http::Method::GET,
+        "/vms/stats-detail-vm/stats/detail",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["model_stats"][0]["provider"], "google");
+    assert_eq!(body["model_stats"][0]["model"], "gemini-3.5-flash");
+    assert_eq!(body["model_events"][0]["event_id"], "abc123abc123");
+    assert_eq!(body["model_events"][0]["input_tokens"], 12);
+    assert_eq!(body["tool_events"][0]["tool_name"], "Create");
+    assert_eq!(
+        body["tool_events"][0]["arguments"],
+        r#"{"path":"/root/poem.md"}"#
+    );
+    assert_eq!(body["http_events"][0]["event_id"], "def456def456");
+    assert_eq!(
+        body["http_events"][0]["domain"],
+        "generativelanguage.googleapis.com"
+    );
+    assert_eq!(
+        body["body_blobs"]["def456def456"][0]["direction"],
+        "request"
+    );
+    assert_eq!(
+        body["body_blobs"]["def456def456"][1]["direction"],
+        "response"
+    );
+}
+
 // -----------------------------------------------------------------------
 // Settings handler tests
 // -----------------------------------------------------------------------
@@ -7680,6 +7816,7 @@ fn make_test_state_with_tempdir_at(
         profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
         stats_route_projection: Mutex::new(empty_stats_route_projection()),
+        stats_detail_route_projection: Mutex::new(empty_stats_detail_route_projection()),
         security_route_projection: Mutex::new(SecurityRouteProjection::default()),
         history_route_projection: Mutex::new(HistoryRouteProjection::default()),
         timeline_route_projection: Mutex::new(TimelineRouteProjection::default()),

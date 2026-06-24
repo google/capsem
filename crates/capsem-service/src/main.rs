@@ -190,6 +190,10 @@ struct ServiceState {
     /// must not open main.db or reserialize the same body on request; live
     /// updates need the writer-to-projection rail tracked in S05-014.
     stats_route_projection: Mutex<StatsRouteProjection>,
+    /// Route-owned session stats/detail projection. UI stats routes consume
+    /// fixed ledger views from memory; they must not issue raw SQL through
+    /// `/inspect` or open `session.db` on the request path.
+    stats_detail_route_projection: Mutex<StatsDetailRouteProjection>,
     /// Route-owned security ledger projection. Routes must not open SQLite to
     /// rebuild status/latest views; SQLite is durable persistence and recovery.
     security_route_projection: Mutex<SecurityRouteProjection>,
@@ -3369,6 +3373,27 @@ async fn handle_stats(
         StatusCode::OK,
         [(axum::http::header::CONTENT_TYPE, "application/json")],
         projection.body.clone(),
+    ))
+}
+
+/// GET /vms/{id}/stats/detail -- return fixed UI stats/detail ledgers from
+/// the boot-loaded route projection. This intentionally replaces the Stats
+/// tab's old raw `/inspect` SQL dependency.
+async fn handle_stats_detail(
+    State(state): State<Arc<ServiceState>>,
+    Path(id): Path<String>,
+) -> Result<impl IntoResponse, AppError> {
+    let _ = resolve_session_dir(&state, &id)?;
+    let projection = stats_detail_route_projection(&state)?;
+    let body = projection
+        .sessions
+        .get(&id)
+        .cloned()
+        .unwrap_or_else(|| Bytes::from_static(br#"{"model_stats":[],"model_events":[],"tool_events":[],"http_events":[],"dns_events":[],"file_events":[],"process_events":[],"audit_events":[],"credential_events":[],"body_blobs":{}}"#));
+    Ok((
+        StatusCode::OK,
+        [(axum::http::header::CONTENT_TYPE, "application/json")],
+        body,
     ))
 }
 
@@ -7305,6 +7330,19 @@ struct StatsRouteProjection {
     body: Bytes,
 }
 
+#[derive(Clone, Debug)]
+struct StatsDetailRouteProjection {
+    sessions: BTreeMap<String, Bytes>,
+}
+
+impl Default for StatsDetailRouteProjection {
+    fn default() -> Self {
+        Self {
+            sessions: BTreeMap::new(),
+        }
+    }
+}
+
 fn stats_route_projection_from_response(
     response: StatsResponse,
 ) -> Result<StatsRouteProjection, AppError> {
@@ -7322,6 +7360,247 @@ fn stats_route_projection_from_response(
 fn empty_stats_route_projection() -> StatsRouteProjection {
     stats_route_projection_from_response(empty_stats_response())
         .expect("empty stats projection must serialize")
+}
+
+fn empty_stats_detail_payload() -> serde_json::Value {
+    json!({
+        "model_stats": [],
+        "model_events": [],
+        "tool_events": [],
+        "http_events": [],
+        "dns_events": [],
+        "file_events": [],
+        "process_events": [],
+        "audit_events": [],
+        "credential_events": [],
+        "body_blobs": {},
+    })
+}
+
+fn stats_detail_projection_from_sessions(
+    sessions: BTreeMap<String, serde_json::Value>,
+) -> Result<StatsDetailRouteProjection, AppError> {
+    let mut serialized = BTreeMap::new();
+    for (id, payload) in sessions {
+        let body = serde_json::to_vec(&payload).map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to serialize stats detail projection: {error}"),
+            )
+        })?;
+        serialized.insert(id, Bytes::from(body));
+    }
+    Ok(StatsDetailRouteProjection {
+        sessions: serialized,
+    })
+}
+
+fn empty_stats_detail_route_projection() -> StatsDetailRouteProjection {
+    StatsDetailRouteProjection::default()
+}
+
+const STATS_DETAIL_MODEL_STATS_SQL: &str = r#"
+SELECT provider, COALESCE(model, 'unknown') AS model,
+       COUNT(*) AS call_count,
+       COALESCE(SUM(input_tokens), 0) AS input_tokens,
+       COALESCE(SUM(output_tokens), 0) AS output_tokens,
+       COALESCE(SUM(estimated_cost_usd), 0.0) AS estimated_cost_usd,
+       COALESCE(SUM(duration_ms), 0) AS duration_ms
+FROM model_calls
+GROUP BY provider, model
+ORDER BY call_count DESC, provider ASC
+"#;
+
+const STATS_DETAIL_MODEL_EVENTS_SQL: &str = r#"
+SELECT event_id, timestamp, provider, model, method, path, status_code,
+       input_tokens, output_tokens, duration_ms, response_bytes,
+       stop_reason, trace_id, credential_ref
+FROM model_calls
+ORDER BY id DESC
+LIMIT 200
+"#;
+
+const STATS_DETAIL_TOOL_EVENTS_SQL: &str = r#"
+SELECT event_id, timestamp, process_name, server_name, tool_name, method,
+       decision, duration_ms, bytes, arguments, response_preview,
+       error_message, source
+FROM (
+    SELECT tc.event_id,
+           COALESCE(NULLIF(tc.timestamp, ''), mc.timestamp) AS timestamp,
+           tc.process_name,
+           COALESCE(tc.server_name, 'model') AS server_name,
+           tc.tool_name,
+           tc.method,
+           tc.decision,
+           COALESCE(tc.duration_ms, mc.duration_ms, 0) AS duration_ms,
+           COALESCE(LENGTH(tc.arguments), 0) + COALESCE(LENGTH(COALESCE(tc.response_preview, tr.content_preview)), 0) AS bytes,
+           tc.arguments,
+           COALESCE(tc.response_preview, tr.content_preview) AS response_preview,
+           tc.error_message,
+           tc.origin AS source
+    FROM tool_calls tc
+    LEFT JOIN model_calls mc ON tc.model_call_id = mc.id
+    LEFT JOIN tool_responses tr ON tc.call_id = tr.call_id
+    WHERE tc.origin IN ('native', 'mcp', 'builtin', 'local', 'mcp_proxy')
+)
+ORDER BY timestamp DESC
+LIMIT 200
+"#;
+
+const STATS_DETAIL_HTTP_EVENTS_SQL: &str = r#"
+SELECT event_id, timestamp, domain, port, method, path, query, status_code,
+       decision, duration_ms, bytes_sent, bytes_received, matched_rule, policy_rule,
+       trace_id, credential_ref, request_headers, response_headers
+FROM net_events
+ORDER BY id DESC
+LIMIT 200
+"#;
+
+const STATS_DETAIL_DNS_EVENTS_SQL: &str = r#"
+SELECT event_id, timestamp, qname, qtype, qclass, rcode, decision,
+       matched_rule, policy_rule, source_proto, process_name,
+       upstream_resolver_ms, trace_id, credential_ref
+FROM dns_events
+ORDER BY id DESC
+LIMIT 200
+"#;
+
+const STATS_DETAIL_FILE_EVENTS_SQL: &str = r#"
+SELECT event_id, timestamp, action, path, size, trace_id, credential_ref
+FROM fs_events
+ORDER BY id DESC
+LIMIT 200
+"#;
+
+const STATS_DETAIL_PROCESS_EVENTS_SQL: &str = r#"
+SELECT event_id, timestamp, exec_id, command, exit_code, duration_ms,
+       stdout_bytes, stderr_bytes, source, process_name, pid, trace_id,
+       credential_ref
+FROM exec_events
+ORDER BY id DESC
+LIMIT 100
+"#;
+
+const STATS_DETAIL_AUDIT_EVENTS_SQL: &str = r#"
+SELECT event_id, timestamp, pid, ppid, uid, exe, comm, argv, cwd,
+       exit_code, session_id, tty, audit_id, exec_event_id, parent_exe,
+       trace_id, credential_ref
+FROM audit_events
+ORDER BY id DESC
+LIMIT 100
+"#;
+
+const STATS_DETAIL_CREDENTIAL_EVENTS_SQL: &str = r#"
+SELECT event_id, timestamp, material_class, source, event_type,
+       event_type AS origin, outcome AS verb, provider,
+       trace_id, context_json
+FROM substitution_events
+ORDER BY id DESC
+LIMIT 100
+"#;
+
+const STATS_DETAIL_BODY_BLOBS_SQL: &str = r#"
+SELECT event_id, direction, content_type, original_bytes,
+       stored_bytes, truncated, body_hash, CAST(body AS TEXT) AS body
+FROM event_body_blobs
+WHERE event_id IN (
+    SELECT event_id FROM net_events WHERE event_id IS NOT NULL ORDER BY id DESC LIMIT 200
+)
+OR event_id IN (
+    SELECT event_id FROM model_calls WHERE event_id IS NOT NULL ORDER BY id DESC LIMIT 200
+)
+OR event_id IN (
+    SELECT event_id FROM tool_calls WHERE event_id IS NOT NULL ORDER BY id DESC LIMIT 200
+)
+ORDER BY event_id, direction
+"#;
+
+fn query_raw_objects(
+    reader: &capsem_logger::DbReader,
+    sql: &str,
+) -> Result<Vec<serde_json::Value>, AppError> {
+    let raw = reader.query_raw(sql).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("stats detail projection query failed: {error}"),
+        )
+    })?;
+    let raw: serde_json::Value = serde_json::from_str(&raw).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("stats detail projection returned invalid json: {error}"),
+        )
+    })?;
+    let columns: Vec<String> = raw
+        .get("columns")
+        .and_then(|value| value.as_array())
+        .map(|columns| {
+            columns
+                .iter()
+                .filter_map(|value| value.as_str().map(ToOwned::to_owned))
+                .collect()
+        })
+        .unwrap_or_default();
+    let rows = raw
+        .get("rows")
+        .and_then(|value| value.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let mut objects = Vec::with_capacity(rows.len());
+    for row in rows {
+        let values = row.as_array().cloned().unwrap_or_default();
+        let mut object = serde_json::Map::new();
+        for (index, column) in columns.iter().enumerate() {
+            object.insert(
+                column.clone(),
+                values
+                    .get(index)
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
+            );
+        }
+        objects.push(serde_json::Value::Object(object));
+    }
+    Ok(objects)
+}
+
+fn body_blob_map(rows: Vec<serde_json::Value>) -> serde_json::Value {
+    let mut by_event = serde_json::Map::new();
+    for row in rows {
+        let Some(event_id) = row.get("event_id").and_then(|value| value.as_str()) else {
+            continue;
+        };
+        let entry = by_event
+            .entry(event_id.to_string())
+            .or_insert_with(|| serde_json::Value::Array(Vec::new()));
+        if let serde_json::Value::Array(rows) = entry {
+            rows.push(row);
+        }
+    }
+    serde_json::Value::Object(by_event)
+}
+
+fn read_stats_detail_payload_from_session_db(
+    db_path: &StdPath,
+) -> Result<serde_json::Value, AppError> {
+    let reader = capsem_logger::DbReader::open(db_path).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to open session.db for stats detail projection: {error}"),
+        )
+    })?;
+    Ok(json!({
+        "model_stats": query_raw_objects(&reader, STATS_DETAIL_MODEL_STATS_SQL)?,
+        "model_events": query_raw_objects(&reader, STATS_DETAIL_MODEL_EVENTS_SQL)?,
+        "tool_events": query_raw_objects(&reader, STATS_DETAIL_TOOL_EVENTS_SQL)?,
+        "http_events": query_raw_objects(&reader, STATS_DETAIL_HTTP_EVENTS_SQL)?,
+        "dns_events": query_raw_objects(&reader, STATS_DETAIL_DNS_EVENTS_SQL)?,
+        "file_events": query_raw_objects(&reader, STATS_DETAIL_FILE_EVENTS_SQL)?,
+        "process_events": query_raw_objects(&reader, STATS_DETAIL_PROCESS_EVENTS_SQL)?,
+        "audit_events": query_raw_objects(&reader, STATS_DETAIL_AUDIT_EVENTS_SQL)?,
+        "credential_events": query_raw_objects(&reader, STATS_DETAIL_CREDENTIAL_EVENTS_SQL)?,
+        "body_blobs": body_blob_map(query_raw_objects(&reader, STATS_DETAIL_BODY_BLOBS_SQL)?),
+    }))
 }
 
 fn read_stats_response_from_main_db(db_path: &StdPath) -> Result<StatsResponse, AppError> {
@@ -7375,6 +7654,47 @@ fn rebuild_stats_route_projection(state: &ServiceState) -> Result<StatsRouteProj
         )
     })? = projection.clone();
     Ok(projection)
+}
+
+fn rebuild_stats_detail_route_projection(
+    state: &ServiceState,
+) -> Result<StatsDetailRouteProjection, AppError> {
+    let mut sessions = BTreeMap::new();
+    for (vm_id, session_dir) in service_session_dirs(state) {
+        let db_path = session_dir.join("session.db");
+        let payload = if db_path.exists() {
+            read_stats_detail_payload_from_session_db(&db_path)?
+        } else {
+            empty_stats_detail_payload()
+        };
+        sessions.insert(vm_id, payload);
+    }
+    let projection = stats_detail_projection_from_sessions(sessions)?;
+    *state
+        .stats_detail_route_projection
+        .lock()
+        .map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("stats detail projection lock poisoned: {error}"),
+            )
+        })? = projection.clone();
+    Ok(projection)
+}
+
+fn stats_detail_route_projection(
+    state: &ServiceState,
+) -> Result<StatsDetailRouteProjection, AppError> {
+    state
+        .stats_detail_route_projection
+        .lock()
+        .map(|projection| projection.clone())
+        .map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("stats detail projection lock poisoned: {error}"),
+            )
+        })
 }
 
 fn stats_route_projection(state: &ServiceState) -> Result<StatsRouteProjection, AppError> {
@@ -9927,6 +10247,7 @@ fn build_service_router(state: Arc<ServiceState>) -> Router {
         .route("/purge", post(handle_purge))
         .route("/run", post(handle_run))
         .route("/stats", get(handle_stats))
+        .route("/vms/{id}/stats/detail", get(handle_stats_detail))
         .route("/service-logs", get(handle_service_logs))
         .route("/triage", get(handle_triage))
         .route("/panics", get(handle_panics))
@@ -10410,6 +10731,7 @@ async fn main() -> Result<()> {
         profile_plugin_policy_cache: Mutex::new(profile_plugin_policy_cache),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
         stats_route_projection: Mutex::new(empty_stats_route_projection()),
+        stats_detail_route_projection: Mutex::new(empty_stats_detail_route_projection()),
         security_route_projection: Mutex::new(SecurityRouteProjection::default()),
         history_route_projection: Mutex::new(HistoryRouteProjection::default()),
         timeline_route_projection: Mutex::new(TimelineRouteProjection::default()),
@@ -10422,6 +10744,9 @@ async fn main() -> Result<()> {
     })?;
     rebuild_stats_route_projection(&state).map_err(|AppError(_, message)| {
         anyhow!("failed to build stats route projection: {message}")
+    })?;
+    rebuild_stats_detail_route_projection(&state).map_err(|AppError(_, message)| {
+        anyhow!("failed to build stats detail route projection: {message}")
     })?;
     rebuild_security_route_projection(&state).map_err(|AppError(_, message)| {
         anyhow!("failed to build security route projection: {message}")
