@@ -237,6 +237,24 @@ describe('api', () => {
       expect(JSON.parse(call[1].body).profile_id).toBe('code');
     });
 
+    it('provisionVm accepts profile-owned resource defaults', async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({ id: 'code-1' }));
+      const result = await api.provisionVm({
+        profile_id: 'code',
+        persistent: true,
+      });
+
+      expect(result.id).toBe('code-1');
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      const body = JSON.parse(call[1].body);
+      expect(body).toEqual({
+        profile_id: 'code',
+        persistent: true,
+      });
+      expect(body).not.toHaveProperty('ram_mb');
+      expect(body).not.toHaveProperty('cpus');
+    });
+
     it('refreshes a rotated gateway token and retries VM creation once', async () => {
       mockFetch
         .mockReturnValueOnce(textResponse('{"error":"unauthorized"}', 401))

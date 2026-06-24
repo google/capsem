@@ -77,6 +77,9 @@ def _seed_mcp_tool_cache(service_env: Any) -> None:
 
 def test_profile_security_routes_expose_single_contract(client: Any, service_env: Any) -> None:
     _seed_mcp_tool_cache(service_env)
+    refresh = client.post(f"/profiles/{PROFILE}/mcp/servers/{SERVER}/refresh")
+    assert refresh["success"] is True
+    assert refresh["server_id"] == SERVER
 
     enforcement = client.get(f"/profiles/{PROFILE}/enforcement/rules/list")
     detection = client.get(f"/profiles/{PROFILE}/detection/rules/list")

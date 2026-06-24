@@ -133,8 +133,8 @@ export interface VmOperationStatusResponse {
 export interface ProvisionRequest {
   profile_id: string;
   name?: string;
-  ram_mb: number;
-  cpus: number;
+  ram_mb?: number;
+  cpus?: number;
   persistent: boolean;
   env?: Record<string, string>;
   from?: string;

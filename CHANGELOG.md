@@ -74,6 +74,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Fixed the frontend VM provision contract so profile-owned CPU/RAM defaults
+  stay service-owned when creating sessions from the dashboard or quick-create
+  paths.
 - Fixed stats detail drawers so nested event objects are compacted before
   rendering, keeping file/security rows focused on present ledger facts instead
   of showing null-only branches.
