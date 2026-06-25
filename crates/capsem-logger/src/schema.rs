@@ -1366,7 +1366,7 @@ mod tests {
     }
 
     #[test]
-    fn db_mem_disk_create_memory_tables_mirrors_hot_ledger_schema() {
+    fn db_mem_tables_match_schema() {
         let conn = Connection::open_in_memory().unwrap();
         create_tables(&conn).unwrap();
         migrate(&conn);
