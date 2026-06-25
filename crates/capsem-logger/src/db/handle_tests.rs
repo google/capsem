@@ -4,7 +4,10 @@ use std::time::SystemTime;
 use serde_json::json;
 
 use super::*;
-use crate::events::{Decision, NetEvent};
+use crate::events::{
+    credential_reference, Decision, NetEvent, SecurityDetectionLevel, SecurityRuleAction,
+    SecurityRuleEvent,
+};
 use crate::WriteOp;
 
 const DB_BOUNDARY_RATIONALE: &str = "DB boundary contract: capsem-logger owns DB execution/storage; callers own query intent only. See AGENTS.md and skills/dev-testing/SKILL.md.";
@@ -235,6 +238,92 @@ async fn db_handle_query_uses_worker_not_runtime_block() {
         ticks.expect("ticker task should complete"),
         100,
         "DbHandle::query must await a DB-owned worker instead of blocking the tokio runtime. {DB_BOUNDARY_RATIONALE}"
+    );
+}
+
+#[tokio::test]
+async fn db_handle_write_persists_exact_event_fields() {
+    let p = temp_db_path("write-security-event-fields");
+    let db = DbHandle::open(&p).expect("open handle");
+    db.ready().await.expect("db ready");
+    let credential_ref = credential_reference("test", "not-a-real-secret");
+    let rule_json = r#"{"name":"db_write_exact","match":"http.host == 'example.com'"}"#;
+    let event_json = r#"{"event_type":"http.request","http":{"host":"example.com"}}"#;
+
+    db.write(WriteOp::SecurityRuleEvent(
+        SecurityRuleEvent::new(
+            1_771_000_001,
+            "abcdef123456",
+            "http.request",
+            "profiles.rules.db_write_exact",
+            rule_json,
+            event_json,
+        )
+        .with_rule_action(SecurityRuleAction::Block)
+        .with_detection_level(SecurityDetectionLevel::High)
+        .with_trace_id("trace-write-security")
+        .with_turn_id("turn-write-security")
+        .with_credential_ref(credential_ref.clone()),
+    ))
+    .await
+    .expect("write(security event) must use the logger-owned writer path");
+
+    let raw = db
+        .query(
+            "SELECT timestamp_unix_ms, event_id, event_type, rule_id, rule_action,
+                    detection_level, rule_json, event_json, trace_id, turn_id,
+                    credential_ref
+             FROM security_rule_events WHERE event_id = ?",
+            &[json!("abcdef123456")],
+        )
+        .await
+        .expect("query written security event");
+    let value: serde_json::Value = serde_json::from_str(&raw).expect("query JSON");
+
+    assert_eq!(
+        value["rows"],
+        json!([[
+            1_771_000_001_i64,
+            "abcdef123456",
+            "http.request",
+            "profiles.rules.db_write_exact",
+            "block",
+            "high",
+            rule_json,
+            event_json,
+            "trace-write-security",
+            "turn-write-security",
+            credential_ref
+        ]]),
+        "db.write(event) must persist exact security ledger fields. {DB_BOUNDARY_RATIONALE}"
+    );
+}
+
+#[tokio::test]
+async fn db_handle_write_then_query_observes_event() {
+    let p = temp_db_path("write-then-query-observes-event");
+    let db = DbHandle::open(&p).expect("open handle");
+    db.ready().await.expect("db ready");
+
+    db.write(WriteOp::NetEvent(make_net_event(
+        "observed-write.example",
+        Decision::Allowed,
+    )))
+    .await
+    .expect("write event through DbHandle");
+
+    let raw = db
+        .query(
+            "SELECT domain, decision, trace_id FROM net_events WHERE domain = ?",
+            &[json!("observed-write.example")],
+        )
+        .await
+        .expect("query written event through DbHandle");
+    let value: serde_json::Value = serde_json::from_str(&raw).expect("query JSON");
+    assert_eq!(
+        value["rows"],
+        json!([["observed-write.example", "allowed", "trace-db-handle"]]),
+        "DbHandle::write must be visible through DbHandle::query without route projections. {DB_BOUNDARY_RATIONALE}"
     );
 }
 

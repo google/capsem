@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added a public `DbHandle::write` contract test proving security ledger
+  events persist exact rule/action/detection/trace/turn/credential fields.
 - Added a public `DbHandle::query` contract test proving bind parameters,
   deterministic column/row JSON, and the DB-owned route output cap.
 - Added explicit logger DB contract tests with failure messages that point back
