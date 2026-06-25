@@ -44,6 +44,8 @@ private/
 
 # Dev setup sentinel (written by just doctor)
 .dev-setup
+.sprinty/
+.sprinty-*/
 
 # Coverage output
 coverage/

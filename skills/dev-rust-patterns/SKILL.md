@@ -45,6 +45,27 @@ let result = tokio::task::spawn_blocking(move || {
 - `tokio::sync::broadcast` for fan-out (serial output to multiple subscribers)
 - `tokio::sync::oneshot` for single-response request-reply (control messages)
 
+### Logger DB boundary
+
+`capsem-logger` owns SQLite connection/thread/storage mechanics. Rust service,
+gateway, MCP, UI, and benchmark code must not call `rusqlite::Connection::open`
+or `DbReader::open` directly for telemetry/security ledgers, and must not add
+service-owned projection caches.
+
+Callers may own query intent, but the DB object owns execution:
+
+```rust
+db.ready().await?;
+db.query(sql, params).await?;
+db.write(event).await?;
+```
+
+Do not hide route SQL by adding route-specific helpers to `DbWriter`; the DB
+writer is not a product route registry. Put connection threads, `mem`/disk
+tables, batching, flushing, rehydration, WAL tuning, and future FTS5/search in
+the DB layer. Empty tables are fine. Missing tables or columns are schema
+contract failures and must not be converted into empty results.
+
 ### Coalescing buffer
 
 Terminal output uses a `CoalesceBuffer` (8ms window, 64KB cap) to batch small vsock reads into larger writes. This prevents xterm.js from choking on thousands of tiny updates. The pattern: accumulate into a buffer, flush on timer or size threshold.

@@ -2,6 +2,10 @@
 
 Sandboxes AI agents in air-gapped Linux VMs on macOS using Apple's Virtualization.framework. Runs as a daemon service (like Docker). Built with Rust and Astro.
 
+Shared agent invariants live in `AGENTS.md`. Read that file too; it is the
+Codex/Claude/Gemini common contract for DB boundaries, skills, and release
+discipline.
+
 ## Quick Start
 
 ```bash

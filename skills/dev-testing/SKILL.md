@@ -77,15 +77,32 @@ not just checking dpkg output.
 
 Telemetry and security ledgers are database-owned. Service routes, UI handlers,
 MCP helpers, and benchmark harnesses must not build their own logged-data
-projection caches. They call typed logger DB APIs (or a DB query API while a
-typed reader is being added). The logger DB object owns any hot `mem`/disk
-split, write buffering, reload-from-disk behavior, and future FTS5/search
-tables.
+projection caches and must not open SQLite directly. They may own query intent
+(for example the fields a route needs), but they call the logger DB object to
+execute it. The logger DB object owns connection threads, `mem`/disk table
+layout, write buffering, flush, reload-from-disk behavior, WAL tuning, and
+future FTS5/search tables.
+
+Do not move route-specific SQL into `DbWriter` or turn the DB layer into a pile
+of route helper methods such as `stats_detail_payload()` just to hide SQL. The
+boundary is execution and storage mechanics:
+
+```rust
+db.ready().await?;
+db.query(sql, params).await?;
+db.write(event).await?;
+```
+
+Empty table means empty result. Missing table or column means the schema
+contract is broken and must fail loudly; never add compatibility branches that
+treat missing ledger shape as empty data.
 
 Regression tests must guard the boundary. If a route needs ledger data, add a
 test that proves the route uses the DB object and a source guard that rejects
 raw `rusqlite` opens, direct `DbReader::open`, and service-owned projection
-state in production route code.
+state in production route code. Add a companion guard that prevents
+route-specific DB writer methods or missing-schema fallbacks from being
+introduced.
 
 ## Mock server boundary
 

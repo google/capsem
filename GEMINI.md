@@ -2,6 +2,10 @@
 
 Native macOS app that sandboxes AI agents in Linux VMs using Apple's Virtualization.framework. Built with Rust, Tauri 2.0, and Astro.
 
+Shared agent invariants live in `AGENTS.md`. Read that file too; it is the
+Codex/Claude/Gemini common contract for DB boundaries, skills, and release
+discipline.
+
 ## Skills -- LOAD BEFORE CODING
 
 Skills contain hard-won lessons and project-specific patterns. **Before writing or modifying code, load the relevant skill.** Skipping skills leads to repeated bugs (e.g., blocking async, serde_json::Value on hot paths, missing VM tests).

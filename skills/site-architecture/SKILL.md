@@ -218,7 +218,7 @@ The guest is air-gapped. No real NIC, no real DNS, no direct internet access.
 4. Host network intercept terminates TLS using per-domain minted certs (signed by static Capsem CA)
 5. Host parses HTTP/model facts into a `SecurityEvent` and calls the shared security engine
 6. Runtime materialization forwards allowed bytes to upstream
-7. Logging plugins produce a ledger-safe projection for session DB, routes, and UI stats
+7. Logging plugins produce ledger-safe event output for the logger DB
 
 ### Network/security policy
 
@@ -231,9 +231,24 @@ The guest is air-gapped. No real NIC, no real DNS, no direct internet access.
   `SecurityEvent`; there is no domain-policy, HTTP-policy, or MCP-policy
   decision provider.
 - Credential capture/injection belongs to the credential broker plugin.
-  Durable log projection belongs to logging plugins such as `log_sanitizer`.
-  Network formatters, DB readers, frontend transforms, and debug harnesses must
-  not implement credential handling.
+  Durable ledger materialization belongs to the logger DB boundary after
+  logging plugins such as `log_sanitizer` produce ledger-safe events. Network
+  formatters, service routes, frontend transforms, and debug harnesses must not
+  implement credential handling or logged-data caches.
+
+### Logger DB boundary
+
+`capsem-logger` owns SQLite connections and storage mechanics. Routes,
+service code, MCP helpers, UI handlers, and benchmarks must not call
+`rusqlite::Connection::open` or `DbReader::open` directly and must not maintain
+their own telemetry/security projection caches. They call a logger DB object to
+run queries and writes.
+
+The DB layer owns connection threads, `mem`/disk table layout, batching, flush,
+rehydration, WAL tuning, and future FTS5/search. It does not own product route
+semantics by hardcoding route-specific helper methods in `DbWriter`; callers may
+own query intent while the DB object owns execution. Missing ledger tables or
+columns are schema-contract failures, not empty data.
 
 ### MITM CA
 

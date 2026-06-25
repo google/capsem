@@ -356,6 +356,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sessions.
 
 ### Changed (route surfaces and diagnostics)
+- Clarified the shared agent, testing, debugging, architecture, and Rust
+  guidance for the logger DB boundary: routes may own query intent, but only
+  the logger DB object owns SQLite execution, connection threads, mem/disk
+  layout, batching, flush, rehydration, and schema failures.
 - Clarified the release architecture and developer skills so the documented
   service routes use the explicit `/vms/...` contract, VM asset manifests use
   BLAKE3/origin reporting instead of local minisign theater, and `tool_calls`

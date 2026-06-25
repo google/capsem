@@ -89,8 +89,14 @@ just inspect-session   # Check net_events for domain, decision, status_code
 For route latency or stale stats, do not add service-owned logged-data
 projections. Logged-data hot state belongs inside the logger DB object as
 table-level `mem`/disk ownership with DB-layer tests and benchmarks. Service
-routes call typed logger DB APIs or a DB query API; production service code must
-not open rusqlite connections or `DbReader` directly.
+routes may describe the query they need, but production service code must not
+open rusqlite connections or `DbReader` directly.
+
+Do not "fix" route latency by hardcoding route-specific query helpers in
+`DbWriter`, by adding service caches, or by swallowing missing tables/columns as
+empty data. The correct diagnosis target is the DB object: connection/thread
+ownership, `mem`/disk layout, batching, flush, rehydration, and query execution.
+If the schema is missing, surface the broken ledger contract.
 
 Write down what you find. The diagnosis should explain *why* the bug exists, not just *where* the symptom appears.
 
