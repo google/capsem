@@ -1,12 +1,9 @@
 //! Session management: unique session IDs, session index DB, and lifecycle.
 
-mod index;
 mod maintenance;
-mod types;
 
-pub use index::*;
+pub use capsem_logger::{
+    epoch_to_iso, generate_session_id, is_valid_session_id, now_iso, GlobalStats, McpToolSummary,
+    ProviderSummary, SessionIndex, SessionRecord, ToolSummary,
+};
 pub use maintenance::*;
-pub use types::*;
-
-#[cfg(test)]
-mod tests;

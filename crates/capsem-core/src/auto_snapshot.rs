@@ -908,47 +908,13 @@ pub fn clone_sandbox_state(src_session_dir: &Path, dst_session_dir: &Path) -> an
 }
 
 fn clone_session_db_snapshot(src: &Path, dst: &Path) -> anyhow::Result<()> {
-    if dst.exists() {
-        std::fs::remove_file(dst)
-            .with_context(|| format!("failed to remove existing {}", dst.display()))?;
-    }
-    if let Some(parent) = dst.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create {}", parent.display()))?;
-    }
-
-    let src_conn = rusqlite::Connection::open_with_flags(
-        src,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
-            | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX
-            | rusqlite::OpenFlags::SQLITE_OPEN_URI,
-    )
-    .with_context(|| format!("failed to open source session db {}", src.display()))?;
-
-    let escaped = dst
-        .to_string_lossy()
-        .replace('\\', "\\\\")
-        .replace('\'', "''");
-    src_conn
-        .execute_batch(&format!("VACUUM INTO '{}';", escaped))
-        .with_context(|| format!("failed to vacuum session db into {}", dst.display()))?;
-
-    let dst_conn = rusqlite::Connection::open_with_flags(
-        dst,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )
-    .with_context(|| format!("failed to open cloned session db {}", dst.display()))?;
-    dst_conn
-        .pragma_query_value(None, "quick_check", |row| row.get::<_, String>(0))
-        .and_then(|result| {
-            if result == "ok" {
-                Ok(())
-            } else {
-                Err(rusqlite::Error::InvalidQuery)
-            }
-        })
-        .context("cloned session db failed quick_check")?;
-    Ok(())
+    capsem_logger::snapshot_session_db(src, dst).with_context(|| {
+        format!(
+            "failed to snapshot session db {} into {}",
+            src.display(),
+            dst.display()
+        )
+    })
 }
 
 /// Simple ISO 8601 timestamp from epoch seconds (no chrono dependency).

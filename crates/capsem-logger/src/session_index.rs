@@ -2,7 +2,7 @@ use std::path::Path;
 
 use rusqlite::{params, Connection};
 
-use super::types::*;
+use crate::session_types::*;
 
 /// Session index database wrapping `~/.capsem/sessions/main.db`.
 pub struct SessionIndex {
@@ -10,9 +10,9 @@ pub struct SessionIndex {
 }
 
 /// Current schema version for main.db.
-pub(super) const SCHEMA_VERSION: u32 = 7;
+pub const SCHEMA_VERSION: u32 = 7;
 
-pub(super) const SESSION_SCHEMA: &str = "
+pub const SESSION_SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
         mode TEXT NOT NULL,
@@ -846,9 +846,12 @@ impl SessionIndex {
 }
 
 #[cfg(test)]
-mod tests {
+mod tests;
+
+#[cfg(test)]
+mod retention_tests {
     use super::*;
-    use crate::session::types::SessionRecord;
+    use crate::session_types::SessionRecord;
 
     fn make_session(
         id: &str,

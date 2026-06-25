@@ -18,3 +18,10 @@ Release-critical VM, security, network, model, MCP, credential, doctor, and
 benchmark work owes Ironbank coverage under `tests/ironbank/`. Those tests
 exercise public routes and runtime evidence; they must not become parser-only
 or Rust-internal proof.
+
+## Citadel Guards
+
+`tests/citadel/` stores architectural regression guards: source-level tests for
+mistakes the project has already paid for once. These are not optional lint
+nits. When a Citadel guard trips, read the failure text and the linked skill or
+contract before editing around it.

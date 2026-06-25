@@ -10,6 +10,7 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+anyhow = { workspace = true }
 rusqlite = { workspace = true }
 humantime = { workspace = true }
 tokio = { workspace = true }

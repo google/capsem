@@ -3392,7 +3392,7 @@ async fn handle_stats_detail(
     let session_dir = resolve_session_dir(&state, &id)?;
     let db_path = session_dir.join("session.db");
     let payload = if db_path.exists() {
-        read_stats_detail_payload_from_session_db(&db_path)?
+        read_stats_detail_payload_from_session_db(&id, &db_path)?
     } else {
         empty_stats_detail_payload()
     };
@@ -3608,7 +3608,13 @@ async fn handle_triage(
 }
 
 fn session_db_triage(db_path: &std::path::Path, limit: usize) -> anyhow::Result<serde_json::Value> {
-    let reader = capsem_logger::SessionDb::new(db_path).reader()?;
+    let db = capsem_logger::DbHandle::open(db_path);
+    db.ready().with_context(|| {
+        format!(
+            "failed to open session ledger for triage: {}",
+            db_path.display()
+        )
+    })?;
     let denied_net_sql = format!(
         "SELECT timestamp, domain, decision, status_code, duration_ms \
          FROM net_events WHERE decision = 'denied' OR status_code >= 500 \
@@ -3628,20 +3634,30 @@ fn session_db_triage(db_path: &std::path::Path, limit: usize) -> anyhow::Result<
          ORDER BY timestamp DESC LIMIT {limit}"
     );
 
-    let denied_net = reader
-        .query_raw(&denied_net_sql)
-        .unwrap_or_else(|_| "[]".into());
-    let tool_errors = reader
-        .query_raw(&tool_errors_sql)
-        .unwrap_or_else(|_| "[]".into());
-    let exec_failures = reader
-        .query_raw(&exec_failures_sql)
-        .unwrap_or_else(|_| "[]".into());
+    let read_query = |query_name: &str, sql: &str| -> anyhow::Result<serde_json::Value> {
+        let raw = db.query_raw(sql).map_err(|error| {
+            error!(
+                query_name,
+                db_path = %db_path.display(),
+                error = %error,
+                "session triage ledger query failed"
+            );
+            anyhow!("session triage query {query_name} failed: {error}")
+        })?;
+        serde_json::from_str(&raw).map_err(|error| {
+            error!(
+                query_name,
+                db_path = %db_path.display(),
+                error = %error,
+                "session triage ledger query returned invalid JSON"
+            );
+            anyhow!("session triage query {query_name} returned invalid JSON: {error}")
+        })
+    };
 
-    let denied_net_v: serde_json::Value = serde_json::from_str(&denied_net).unwrap_or_default();
-    let tool_errors_v: serde_json::Value = serde_json::from_str(&tool_errors).unwrap_or_default();
-    let exec_failures_v: serde_json::Value =
-        serde_json::from_str(&exec_failures).unwrap_or_default();
+    let denied_net_v = read_query("denied_net", &denied_net_sql)?;
+    let tool_errors_v = read_query("tool_errors", &tool_errors_sql)?;
+    let exec_failures_v = read_query("exec_failures", &exec_failures_sql)?;
 
     Ok(serde_json::json!({
         "denied_net": denied_net_v,
@@ -6813,8 +6829,26 @@ fn empty_security_rule_stats() -> capsem_logger::SecurityRuleStats {
     }
 }
 
-fn is_missing_optional_ledger_shape(message: &str) -> bool {
-    message.contains("no such table:") || message.contains("no such column:")
+fn ledger_route_error(
+    vm_id: &str,
+    ledger: &str,
+    operation: &str,
+    db_path: &StdPath,
+    error: impl std::fmt::Display,
+) -> AppError {
+    let error = error.to_string();
+    error!(
+        vm_id,
+        ledger,
+        operation,
+        db_path = %db_path.display(),
+        error = %error,
+        "session ledger route DB operation failed"
+    );
+    AppError(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        format!("failed to {operation} {ledger} ledger for {vm_id}: {error}"),
+    )
 }
 
 fn read_security_session_ledger(
@@ -6824,71 +6858,26 @@ fn read_security_session_ledger(
     if !db_path.exists() {
         return Ok(None);
     }
-    let reader = capsem_logger::SessionDb::new(db_path)
-        .reader()
+    let db = capsem_logger::DbHandle::open(db_path);
+    db.ready()
+        .map_err(|error| ledger_route_error(vm_id, "security", "open", db_path, error))?;
+    let latest = db
+        .with_reader(|reader| reader.recent_security_rule_events(2000))
+        .map_err(|error| ledger_route_error(vm_id, "security", "read latest", db_path, error))?;
+    let stats = db
+        .with_reader(|reader| reader.security_rule_stats())
+        .map_err(|error| ledger_route_error(vm_id, "security", "read stats", db_path, error))?;
+    let brokered_credentials = db
+        .with_reader(|reader| reader.brokered_credential_stats())
         .map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to open security ledger DB for {vm_id}: {error}"),
+            ledger_route_error(
+                vm_id,
+                "security",
+                "read brokered credential stats",
+                db_path,
+                error,
             )
         })?;
-    let latest = match reader.recent_security_rule_events(2000) {
-        Ok(latest) => latest,
-        Err(error) => {
-            let message = error.to_string();
-            if is_missing_optional_ledger_shape(&message) {
-                warn!(
-                    vm_id,
-                    error = %message,
-                    "security ledger skipped missing latest shape"
-                );
-                Vec::new()
-            } else {
-                return Err(AppError(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("failed to read security ledger latest for {vm_id}: {error}"),
-                ));
-            }
-        }
-    };
-    let stats = match reader.security_rule_stats() {
-        Ok(stats) => stats,
-        Err(error) => {
-            let message = error.to_string();
-            if is_missing_optional_ledger_shape(&message) {
-                warn!(
-                    vm_id,
-                    error = %message,
-                    "security ledger skipped missing stats shape"
-                );
-                empty_security_rule_stats()
-            } else {
-                return Err(AppError(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("failed to read security ledger stats for {vm_id}: {error}"),
-                ));
-            }
-        }
-    };
-    let brokered_credentials = match reader.brokered_credential_stats() {
-        Ok(credentials) => credentials,
-        Err(error) => {
-            let message = error.to_string();
-            if is_missing_optional_ledger_shape(&message) {
-                warn!(
-                    vm_id,
-                    error = %message,
-                    "security ledger skipped missing brokered credential stats shape"
-                );
-                Vec::new()
-            } else {
-                return Err(AppError(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("failed to read brokered credential ledger for {vm_id}: {error}"),
-                ));
-            }
-        }
-    };
     Ok(Some(SecuritySessionLedger {
         latest,
         stats,
@@ -6938,74 +6927,18 @@ fn read_history_session_ledger(
     if !db_path.exists() {
         return Ok(None);
     }
-    let reader = capsem_logger::SessionDb::new(db_path)
-        .reader()
-        .map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to open history ledger DB for {vm_id}: {error}"),
-            )
-        })?;
-    let (entries, _) = match reader.history(usize::MAX, 0, None, "all") {
-        Ok(history) => history,
-        Err(error) => {
-            let message = error.to_string();
-            if is_missing_optional_ledger_shape(&message) {
-                warn!(
-                    vm_id,
-                    error = %message,
-                    "history ledger skipped missing entries shape"
-                );
-                (Vec::new(), 0)
-            } else {
-                return Err(AppError(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("failed to read history ledger entries for {vm_id}: {error}"),
-                ));
-            }
-        }
-    };
-    let processes = match reader.history_processes(i64::MAX as usize) {
-        Ok(processes) => processes,
-        Err(error) => {
-            let message = error.to_string();
-            if is_missing_optional_ledger_shape(&message) {
-                warn!(
-                    vm_id,
-                    error = %message,
-                    "history ledger skipped missing processes shape"
-                );
-                Vec::new()
-            } else {
-                return Err(AppError(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("failed to read history ledger processes for {vm_id}: {error}"),
-                ));
-            }
-        }
-    };
-    let counts = match reader.history_counts() {
-        Ok(counts) => counts,
-        Err(error) => {
-            let message = error.to_string();
-            if is_missing_optional_ledger_shape(&message) {
-                warn!(
-                    vm_id,
-                    error = %message,
-                    "history ledger skipped missing counts shape"
-                );
-                capsem_logger::HistoryCounts {
-                    exec_count: 0,
-                    audit_count: 0,
-                }
-            } else {
-                return Err(AppError(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("failed to read history ledger counts for {vm_id}: {error}"),
-                ));
-            }
-        }
-    };
+    let db = capsem_logger::DbHandle::open(db_path);
+    db.ready()
+        .map_err(|error| ledger_route_error(vm_id, "history", "open", db_path, error))?;
+    let (entries, _) = db
+        .with_reader(|reader| reader.history(usize::MAX, 0, None, "all"))
+        .map_err(|error| ledger_route_error(vm_id, "history", "read entries", db_path, error))?;
+    let processes = db
+        .with_reader(|reader| reader.history_processes(i64::MAX as usize))
+        .map_err(|error| ledger_route_error(vm_id, "history", "read processes", db_path, error))?;
+    let counts = db
+        .with_reader(|reader| reader.history_counts())
+        .map_err(|error| ledger_route_error(vm_id, "history", "read counts", db_path, error))?;
     Ok(Some(HistorySessionLedger {
         entries,
         processes,
@@ -7027,26 +6960,6 @@ const TIMELINE_COLUMNS: [&str; 7] = [
 #[derive(Clone, Debug)]
 struct LiveSessionCounters {
     stats: capsem_logger::SessionStats,
-}
-
-fn empty_live_session_counters() -> LiveSessionCounters {
-    LiveSessionCounters {
-        stats: capsem_logger::SessionStats {
-            net_total: 0,
-            net_allowed: 0,
-            net_denied: 0,
-            net_error: 0,
-            net_bytes_sent: 0,
-            net_bytes_received: 0,
-            model_call_count: 0,
-            total_input_tokens: 0,
-            total_output_tokens: 0,
-            total_usage_details: BTreeMap::new(),
-            total_model_duration_ms: 0,
-            total_tool_calls: 0,
-            total_estimated_cost_usd: 0.0,
-        },
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -7179,33 +7092,21 @@ fn read_timeline_rows_from_session_db(
     if !db_path.exists() {
         return Ok(None);
     }
-    let reader = capsem_logger::SessionDb::new(db_path)
-        .reader()
-        .map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to open timeline ledger DB for {vm_id}: {error}"),
-            )
-        })?;
-    let raw = match reader.query_raw(sql) {
-        Ok(raw) => raw,
-        Err(error) => {
-            let message = error.to_string();
-            if is_missing_optional_ledger_shape(&message) {
-                warn!(
-                    vm_id,
-                    error = %message,
-                    "timeline ledger skipped missing shape"
-                );
-                return Ok(Some(Vec::new()));
-            }
-            return Err(AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to read timeline ledger for {vm_id}: {error}"),
-            ));
-        }
-    };
+    let db = capsem_logger::DbHandle::open(db_path);
+    db.ready()
+        .map_err(|error| ledger_route_error(vm_id, "timeline", "open", db_path, error))?;
+    let raw = db
+        .query_raw(sql)
+        .map_err(|error| ledger_route_error(vm_id, "timeline", "query", db_path, error))?;
     let raw = serde_json::from_str::<serde_json::Value>(&raw).map_err(|error| {
+        error!(
+            vm_id,
+            ledger = "timeline",
+            operation = "parse query json",
+            db_path = %db_path.display(),
+            error = %error,
+            "session ledger route DB operation failed"
+        );
         AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("failed to parse timeline ledger for {vm_id}: {error}"),
@@ -7221,32 +7122,14 @@ fn read_live_session_counters_from_session_db(
     if !db_path.exists() {
         return Ok(None);
     }
-    let reader = capsem_logger::SessionDb::new(db_path)
-        .reader()
+    let db = capsem_logger::DbHandle::open(db_path);
+    db.ready()
+        .map_err(|error| ledger_route_error(vm_id, "session counter", "open", db_path, error))?;
+    let stats = db
+        .with_reader(|reader| reader.session_stats())
         .map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to open session counter ledger DB for {vm_id}: {error}"),
-            )
+            ledger_route_error(vm_id, "session counter", "read stats", db_path, error)
         })?;
-    let stats = match reader.session_stats() {
-        Ok(stats) => stats,
-        Err(error) => {
-            let message = error.to_string();
-            if is_missing_optional_ledger_shape(&message) {
-                warn!(
-                    vm_id,
-                    error = %message,
-                    "live session counter ledger skipped missing stats shape"
-                );
-                return Ok(Some(empty_live_session_counters()));
-            }
-            return Err(AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to read session counter ledger for {vm_id}: {error}"),
-            ));
-        }
-    };
     Ok(Some(LiveSessionCounters { stats }))
 }
 
@@ -7439,24 +7322,37 @@ ORDER BY event_id, direction
 "#;
 
 fn query_raw_objects(
-    reader: &capsem_logger::DbReader,
+    vm_id: &str,
+    db_path: &StdPath,
+    db: &capsem_logger::DbHandle,
+    query_name: &str,
     sql: &str,
 ) -> Result<Vec<serde_json::Value>, AppError> {
-    let raw = match reader.query_raw(sql) {
-        Ok(raw) => raw,
-        Err(error) => {
-            let message = error.to_string();
-            if is_missing_optional_ledger_shape(&message) {
-                warn!(error = %message, "stats detail ledger skipped missing shape");
-                return Ok(Vec::new());
-            }
-            return Err(AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("stats detail ledger query failed: {message}"),
-            ));
-        }
-    };
+    let raw = db.query_raw(sql).map_err(|error| {
+        error!(
+            vm_id,
+            ledger = "stats_detail",
+            operation = "query",
+            query_name,
+            db_path = %db_path.display(),
+            error = %error,
+            "session ledger route DB operation failed"
+        );
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("stats detail ledger query {query_name} failed: {error}"),
+        )
+    })?;
     let raw: serde_json::Value = serde_json::from_str(&raw).map_err(|error| {
+        error!(
+            vm_id,
+            ledger = "stats_detail",
+            operation = "parse query json",
+            query_name,
+            db_path = %db_path.display(),
+            error = %error,
+            "session ledger route DB operation failed"
+        );
         AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("stats detail ledger returned invalid json: {error}"),
@@ -7512,27 +7408,23 @@ fn body_blob_map(rows: Vec<serde_json::Value>) -> serde_json::Value {
 }
 
 fn read_stats_detail_payload_from_session_db(
+    vm_id: &str,
     db_path: &StdPath,
 ) -> Result<serde_json::Value, AppError> {
-    let reader = capsem_logger::SessionDb::new(db_path)
-        .reader()
-        .map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to open session.db for stats detail ledger: {error}"),
-            )
-        })?;
+    let db = capsem_logger::DbHandle::open(db_path);
+    db.ready()
+        .map_err(|error| ledger_route_error(vm_id, "stats_detail", "open", db_path, error))?;
     Ok(json!({
-        "model_stats": query_raw_objects(&reader, STATS_DETAIL_MODEL_STATS_SQL)?,
-        "model_events": query_raw_objects(&reader, STATS_DETAIL_MODEL_EVENTS_SQL)?,
-        "tool_events": query_raw_objects(&reader, STATS_DETAIL_TOOL_EVENTS_SQL)?,
-        "http_events": query_raw_objects(&reader, STATS_DETAIL_HTTP_EVENTS_SQL)?,
-        "dns_events": query_raw_objects(&reader, STATS_DETAIL_DNS_EVENTS_SQL)?,
-        "file_events": query_raw_objects(&reader, STATS_DETAIL_FILE_EVENTS_SQL)?,
-        "process_events": query_raw_objects(&reader, STATS_DETAIL_PROCESS_EVENTS_SQL)?,
-        "audit_events": query_raw_objects(&reader, STATS_DETAIL_AUDIT_EVENTS_SQL)?,
-        "credential_events": query_raw_objects(&reader, STATS_DETAIL_CREDENTIAL_EVENTS_SQL)?,
-        "body_blobs": body_blob_map(query_raw_objects(&reader, STATS_DETAIL_BODY_BLOBS_SQL)?),
+        "model_stats": query_raw_objects(vm_id, db_path, &db, "model_stats", STATS_DETAIL_MODEL_STATS_SQL)?,
+        "model_events": query_raw_objects(vm_id, db_path, &db, "model_events", STATS_DETAIL_MODEL_EVENTS_SQL)?,
+        "tool_events": query_raw_objects(vm_id, db_path, &db, "tool_events", STATS_DETAIL_TOOL_EVENTS_SQL)?,
+        "http_events": query_raw_objects(vm_id, db_path, &db, "http_events", STATS_DETAIL_HTTP_EVENTS_SQL)?,
+        "dns_events": query_raw_objects(vm_id, db_path, &db, "dns_events", STATS_DETAIL_DNS_EVENTS_SQL)?,
+        "file_events": query_raw_objects(vm_id, db_path, &db, "file_events", STATS_DETAIL_FILE_EVENTS_SQL)?,
+        "process_events": query_raw_objects(vm_id, db_path, &db, "process_events", STATS_DETAIL_PROCESS_EVENTS_SQL)?,
+        "audit_events": query_raw_objects(vm_id, db_path, &db, "audit_events", STATS_DETAIL_AUDIT_EVENTS_SQL)?,
+        "credential_events": query_raw_objects(vm_id, db_path, &db, "credential_events", STATS_DETAIL_CREDENTIAL_EVENTS_SQL)?,
+        "body_blobs": body_blob_map(query_raw_objects(vm_id, db_path, &db, "body_blobs", STATS_DETAIL_BODY_BLOBS_SQL)?),
     }))
 }
 
@@ -7614,7 +7506,7 @@ fn apply_live_session_counters_from_ledger(
         }
     }
     let payload = if db_path.exists() {
-        read_stats_detail_payload_from_session_db(&db_path)?
+        read_stats_detail_payload_from_session_db(&info.id, &db_path)?
     } else {
         return Ok(());
     };
