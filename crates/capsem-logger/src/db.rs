@@ -98,6 +98,7 @@ struct DbHandleInner {
     reader_tx: mpsc::Sender<ReadRequest>,
     reader_join: Mutex<Option<JoinHandle<()>>>,
     writer: Arc<DbWriter>,
+    ready_cache: Mutex<Option<DbResult<()>>>,
 }
 
 impl Drop for DbHandleInner {
@@ -145,6 +146,7 @@ impl DbHandle {
                 reader_tx,
                 reader_join: Mutex::new(Some(reader_join)),
                 writer,
+                ready_cache: Mutex::new(None),
             }),
         })
     }
@@ -168,6 +170,16 @@ impl DbHandle {
     /// internal storage strategy.
     pub async fn ready(&self) -> DbResult<()> {
         let started = Instant::now();
+        if let Some(cached) = self.inner.ready_cache.lock().unwrap().clone() {
+            tracing::debug!(
+                db_path = %self.inner.path.display(),
+                operation = "ready",
+                cached = true,
+                duration_ms = elapsed_ms(started),
+                "session db handle operation completed"
+            );
+            return cached;
+        }
         let (reply, rx) = tokio::sync::oneshot::channel();
         self.inner
             .reader_tx
@@ -200,6 +212,7 @@ impl DbHandle {
                 "session db handle operation failed"
             ),
         }
+        *self.inner.ready_cache.lock().unwrap() = Some(result.clone());
         result
     }
 
@@ -360,15 +373,18 @@ impl DbHandle {
 
 fn reader_loop(path: PathBuf, rx: mpsc::Receiver<ReadRequest>) {
     let started = Instant::now();
-    if let Err(error) = DbReader::open(&path) {
-        tracing::error!(
-            db_path = %path.display(),
-            operation = "reader_worker_open",
-            error = %error,
-            "session db reader worker failed"
-        );
-        return;
-    }
+    let reader = match DbReader::open(&path) {
+        Ok(reader) => reader,
+        Err(error) => {
+            tracing::error!(
+                db_path = %path.display(),
+                operation = "reader_worker_open",
+                error = %error,
+                "session db reader worker failed"
+            );
+            return;
+        }
+    };
     tracing::debug!(
         db_path = %path.display(),
         operation = "reader_worker_open",
@@ -380,9 +396,7 @@ fn reader_loop(path: PathBuf, rx: mpsc::Receiver<ReadRequest>) {
         match request {
             ReadRequest::Ready { reply } => {
                 let started = Instant::now();
-                let result = DbReader::open(&path)
-                    .map_err(|error| error.to_string())
-                    .and_then(|reader| reader.ready());
+                let result = reader.ready();
                 match &result {
                     Ok(()) => tracing::debug!(
                         db_path = %path.display(),
@@ -404,9 +418,7 @@ fn reader_loop(path: PathBuf, rx: mpsc::Receiver<ReadRequest>) {
                 let started = Instant::now();
                 let sql_hash = sql_fingerprint(&sql);
                 let params_count = params.len();
-                let result = DbReader::open(&path)
-                    .map_err(|error| error.to_string())
-                    .and_then(|reader| reader.query_raw_with_params(&sql, &params));
+                let result = reader.query_raw_with_params(&sql, &params);
                 match &result {
                     Ok(_) => tracing::debug!(
                         db_path = %path.display(),

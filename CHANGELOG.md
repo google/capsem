@@ -97,6 +97,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Fixed logger DB read latency by reusing the DB-owned reader connection,
+  moving read-query timeouts to SQLite's progress handler, and caching DB
+  readiness after validation; the Ironbank route gate now measures `/stats`
+  at about 0.8ms p95 through the service and about 1.1ms p95 through the
+  gateway.
 - Fixed stats-detail session routes so a missing or broken session ledger fails
   loudly through the logger DB handle instead of fabricating empty model, tool,
   HTTP, DNS, file, process, credential, and security data.

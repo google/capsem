@@ -1,8 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 
 use rusqlite::{params, Connection, OpenFlags, Row};
 use serde::{Deserialize, Serialize};
@@ -408,6 +406,30 @@ impl DbReader {
         }
     }
 
+    fn with_query_timeout<F>(&self, run_query: F) -> Result<String, String>
+    where
+        F: FnOnce() -> Result<String, String>,
+    {
+        const TIMEOUT_MS: u64 = 5_000;
+        const PROGRESS_OPS: i32 = 10_000;
+
+        let deadline = Instant::now() + Duration::from_millis(TIMEOUT_MS);
+        self.conn.progress_handler(
+            PROGRESS_OPS,
+            Some(move || Instant::now() >= deadline),
+        );
+        let result = run_query();
+        self.conn.progress_handler(0, None::<fn() -> bool>);
+
+        result.map_err(|e| {
+            if e.contains("interrupted") {
+                "query timed out after 5 seconds".to_string()
+            } else {
+                e
+            }
+        })
+    }
+
     fn model_call_columns(&self) -> String {
         format!(
             "id, timestamp, provider, {}, {}, {}, usage_details, {}",
@@ -431,39 +453,7 @@ impl DbReader {
         validate_select_only(sql)?;
 
         const MAX_ROWS: usize = 10_000;
-        const TIMEOUT_MS: u64 = 5_000;
-        const POLL_MS: u64 = 100;
-
-        // Set up interrupt timer.
-        let interrupt_handle = self.conn.get_interrupt_handle();
-        let done = Arc::new(AtomicBool::new(false));
-        let done_clone = Arc::clone(&done);
-        let timer = std::thread::spawn(move || {
-            let polls = TIMEOUT_MS / POLL_MS;
-            for _ in 0..polls {
-                std::thread::sleep(std::time::Duration::from_millis(POLL_MS));
-                if done_clone.load(Ordering::Relaxed) {
-                    return;
-                }
-            }
-            if !done_clone.load(Ordering::Relaxed) {
-                interrupt_handle.interrupt();
-            }
-        });
-
-        let result = self.query_raw_inner(sql, MAX_ROWS);
-
-        // Signal timer to stop and wait for it.
-        done.store(true, Ordering::Relaxed);
-        let _ = timer.join();
-
-        result.map_err(|e| {
-            if e.contains("interrupted") {
-                "query timed out after 5 seconds".to_string()
-            } else {
-                e
-            }
-        })
+        self.with_query_timeout(|| self.query_raw_inner(sql, MAX_ROWS))
     }
 
     /// Execute an arbitrary read-only SQL query with bind parameters and return JSON.
@@ -476,37 +466,7 @@ impl DbReader {
         validate_select_only(sql)?;
 
         const MAX_ROWS: usize = 10_000;
-        const TIMEOUT_MS: u64 = 5_000;
-        const POLL_MS: u64 = 100;
-
-        let interrupt_handle = self.conn.get_interrupt_handle();
-        let done = Arc::new(AtomicBool::new(false));
-        let done_clone = Arc::clone(&done);
-        let timer = std::thread::spawn(move || {
-            let polls = TIMEOUT_MS / POLL_MS;
-            for _ in 0..polls {
-                std::thread::sleep(std::time::Duration::from_millis(POLL_MS));
-                if done_clone.load(Ordering::Relaxed) {
-                    return;
-                }
-            }
-            if !done_clone.load(Ordering::Relaxed) {
-                interrupt_handle.interrupt();
-            }
-        });
-
-        let result = self.query_raw_params_inner(sql, params, MAX_ROWS);
-
-        done.store(true, Ordering::Relaxed);
-        let _ = timer.join();
-
-        result.map_err(|e| {
-            if e.contains("interrupted") {
-                "query timed out after 5 seconds".to_string()
-            } else {
-                e
-            }
-        })
+        self.with_query_timeout(|| self.query_raw_params_inner(sql, params, MAX_ROWS))
     }
 
     fn query_raw_inner(&self, sql: &str, max_rows: usize) -> Result<String, String> {
@@ -1982,6 +1942,27 @@ mod tests {
     }
 
     #[test]
+    fn query_raw_with_params_does_not_pay_timeout_poll_on_success() {
+        let reader = setup_reader_with_data();
+        let started = std::time::Instant::now();
+
+        for _ in 0..8 {
+            let json_str = reader
+                .query_raw_with_params("SELECT COUNT(*) AS cnt FROM net_events", &[])
+                .unwrap();
+            let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+            assert_eq!(parsed["rows"][0][0], 2);
+        }
+
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < std::time::Duration::from_millis(80),
+            "successful DB queries must not wait for the 100ms timeout poll; elapsed={elapsed:?}. \
+             The route latency contract depends on the DB layer returning immediately when SQLite is done."
+        );
+    }
+
+    #[test]
     fn validate_select_only_allows_select() {
         assert!(validate_select_only("SELECT 1").is_ok());
         assert!(validate_select_only("  select * from foo").is_ok());
@@ -2286,7 +2267,9 @@ mod tests {
         assert_eq!(s.total_input_tokens, 100 + 50 + 30);
         assert_eq!(s.total_output_tokens, 200 + 75 + 60);
         assert_eq!(s.total_model_duration_ms, 1500 + 800 + 400);
-        assert_eq!(s.total_tool_calls, 3);
+        // Session stats report the unified tool ledger: model-native tool
+        // calls plus MCP-origin calls observed at the boundary.
+        assert_eq!(s.total_tool_calls, 5);
         // Floating point sum — allow tiny tolerance.
         assert!((s.total_estimated_cost_usd - 0.018).abs() < 1e-9);
     }

@@ -33,7 +33,7 @@ use serde_json::json;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path as StdPath, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use tokio::net::UnixListener;
 use tokio_unix_ipc::{channel_from_std, Receiver, Sender};
 use tower_http::trace::TraceLayer;
@@ -8535,7 +8535,7 @@ struct PluginCatalogEntry {
     version: &'static str,
 }
 
-fn plugin_catalog() -> BTreeMap<String, PluginCatalogEntry> {
+static PLUGIN_CATALOG: LazyLock<BTreeMap<String, PluginCatalogEntry>> = LazyLock::new(|| {
     BTreeMap::from([
         (
             "credential_broker".to_string(),
@@ -8579,6 +8579,10 @@ fn plugin_catalog() -> BTreeMap<String, PluginCatalogEntry> {
             },
         ),
     ])
+});
+
+fn plugin_catalog() -> &'static BTreeMap<String, PluginCatalogEntry> {
+    &PLUGIN_CATALOG
 }
 
 fn validate_profile_route_id_from_state(
@@ -8623,8 +8627,8 @@ fn effective_plugin_policy(
     profile_id: &str,
 ) -> BTreeMap<String, SecurityPluginConfig> {
     let mut policy: BTreeMap<_, _> = plugin_catalog()
-        .into_iter()
-        .map(|(id, entry)| (id, entry.default_config))
+        .iter()
+        .map(|(id, entry)| (id.clone(), entry.default_config))
         .collect();
     if let Some(profile_policy) = state
         .profile_plugin_policy_cache
