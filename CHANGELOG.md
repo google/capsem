@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added public session-telemetry documentation for the `turn_id` /
+  `model_call_id` / `tool_call_id` identity graph and mirrored the same
+  debugging contract in the session DB developer skill.
 - Added a public `DbHandle::write` contract test proving security ledger
   events persist exact rule/action/detection/trace/turn/credential fields.
 - Added a public `DbHandle::query` contract test proving bind parameters,

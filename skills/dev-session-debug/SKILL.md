@@ -47,6 +47,50 @@ The model/tool contract is intentionally one ledger:
 - `tool_responses` records tool result content sent back to a model. A response row must match a `tool_calls.call_id` in the same trace.
 - MCP protocol facts are typed security events. MCP-origin `tools/call` activity must appear in `tool_calls` with `origin = 'mcp'`.
 
+### Identity graph
+
+Use this graph when correlating model, tool, and security rows:
+
+```mermaid
+flowchart TD
+    Session["session_id<br/>one Capsem session database"]
+    Turn["turn_id<br/>one user-visible agent turn"]
+    ModelA["model_call_id<br/>model exchange A"]
+    ModelB["model_call_id<br/>model exchange B"]
+    ToolA["tool_call_id<br/>logical tool invocation A"]
+    ToolB["tool_call_id<br/>logical tool invocation B"]
+    ToolAResponse["tool response<br/>same tool_call_id as A"]
+    ToolBResponse["tool response<br/>same tool_call_id as B"]
+    EventRows["event_id rows<br/>http, dns, file, process, security"]
+
+    Session --> Turn
+    Turn --> ModelA
+    Turn --> ModelB
+    ModelA -->|"may emit N"| ToolA
+    ModelA -->|"may emit N"| ToolB
+    ToolA --> ToolAResponse
+    ToolB --> ToolBResponse
+    Turn --> EventRows
+    ToolA --> EventRows
+    ToolB --> EventRows
+```
+
+Definitions:
+
+- `event_id` identifies one emitted ledger/security event row.
+- `trace_id` groups runtime work caused by one causal operation.
+- `turn_id` groups all work caused by one user-visible agent turn.
+- `model_call_id` identifies one model request/response exchange inside a turn.
+- `tool_call_id` identifies one logical tool invocation across model-native
+  tools, MCP transport, and Capsem built-ins.
+
+One `turn_id` can contain multiple `model_call_id` values. One `model_call_id`
+can emit zero or more `tool_call_id` values. Tool responses must carry the same
+`tool_call_id` as their request. In the current SQLite schema, the persisted
+`tool_call_id` value is stored in `tool_calls.call_id` and
+`tool_responses.call_id`. Provider response ids, message ids, and transport
+request ids are metadata, not Capsem's join contract.
+
 ### net_events -- one row per HTTP request through MITM proxy
 
 ```sql

@@ -111,6 +111,51 @@ erDiagram
     security_rule_events ||--o{ security_ask_events : "event_id"
 ```
 
+## Identity graph
+
+The ledger uses a small set of scoped ids. Each id has one job:
+
+- `event_id` identifies one emitted ledger/security event row.
+- `trace_id` groups runtime work caused by one causal operation.
+- `turn_id` groups all work caused by one user-visible agent turn.
+- `model_call_id` identifies one model request/response exchange inside a turn.
+- `tool_call_id` identifies one logical tool invocation across model-native
+  tools, MCP transport, and Capsem built-ins.
+
+Provider response ids, message ids, and transport request ids are provider or
+transport metadata. They are not Capsem's join contract.
+
+```mermaid
+flowchart TD
+    Session["session_id<br/>one Capsem session database"]
+    Turn["turn_id<br/>one user-visible agent turn"]
+    ModelA["model_call_id<br/>model exchange A"]
+    ModelB["model_call_id<br/>model exchange B"]
+    ToolA["tool_call_id<br/>logical tool invocation A"]
+    ToolB["tool_call_id<br/>logical tool invocation B"]
+    ToolAResponse["tool response<br/>same tool_call_id as A"]
+    ToolBResponse["tool response<br/>same tool_call_id as B"]
+    EventRows["event_id rows<br/>http, dns, file, process, security"]
+
+    Session --> Turn
+    Turn --> ModelA
+    Turn --> ModelB
+    ModelA -->|"may emit N"| ToolA
+    ModelA -->|"may emit N"| ToolB
+    ToolA --> ToolAResponse
+    ToolB --> ToolBResponse
+    Turn --> EventRows
+    ToolA --> EventRows
+    ToolB --> EventRows
+```
+
+One `turn_id` can contain multiple `model_call_id` values when an agent calls
+the model, executes tools, then calls the model again with tool results. One
+`model_call_id` can emit zero or more `tool_call_id` values. A tool response
+must carry the same `tool_call_id` as the tool request. In the current SQLite
+schema, the persisted `tool_call_id` value is stored in `tool_calls.call_id`
+and `tool_responses.call_id`.
+
 ## Tables
 
 ### net_events
@@ -178,6 +223,7 @@ AI provider API calls with parsed response metadata.
 | `response_bytes` | INTEGER | Response body size |
 | `estimated_cost_usd` | REAL | Cost estimate from pricing table |
 | `trace_id` | TEXT | Links multi-turn agent conversations |
+| `turn_id` | TEXT | User-visible agent turn that contains this model exchange |
 | `usage_details` | TEXT | JSON: `{"cache_read": 800, "thinking": 200}` |
 
 ### event_body_blobs
@@ -217,11 +263,12 @@ evidence, and forensic tool activity start here.
 | `id` | INTEGER PK | Auto-increment |
 | `model_call_id` | INTEGER FK | References `model_calls.id` |
 | `call_index` | INTEGER | Position in the response |
-| `call_id` | TEXT | Provider-assigned call ID |
+| `call_id` | TEXT | Canonical `tool_call_id` value for this logical tool invocation |
 | `tool_name` | TEXT | Tool name |
 | `arguments` | TEXT | JSON arguments |
 | `origin` | TEXT | `native`, `mcp`, `builtin`, `local`, or `mcp_proxy` |
 | `trace_id` | TEXT | Cross-table correlation ID |
+| `turn_id` | TEXT | User-visible agent turn that contains this tool invocation |
 
 ### tool_responses
 
@@ -231,10 +278,11 @@ Tool results from subsequent requests (matched by `call_id`).
 |--------|------|-------------|
 | `id` | INTEGER PK | Auto-increment |
 | `model_call_id` | INTEGER FK | References `model_calls.id` |
-| `call_id` | TEXT | Matches `tool_calls.call_id` |
+| `call_id` | TEXT | Same canonical `tool_call_id` value as `tool_calls.call_id` |
 | `content_preview` | TEXT | Truncated tool result |
 | `is_error` | INTEGER | Boolean: 1 if tool returned error |
 | `trace_id` | TEXT | Cross-table correlation ID |
+| `turn_id` | TEXT | User-visible agent turn that contains this tool response |
 
 ### dns_events
 
