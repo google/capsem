@@ -86,6 +86,12 @@ just inspect-session   # Check net_events for domain, decision, status_code
 - Check if the vsock connection was accepted (host logs)
 - Check timing -- did the VM shut down before the debouncer flushed? (add `sleep 1`)
 
+For route latency or stale stats, do not add service-owned logged-data
+projections. Logged-data hot state belongs inside the logger DB object as
+table-level `mem`/disk ownership with DB-layer tests and benchmarks. Service
+routes call typed logger DB APIs or a DB query API; production service code must
+not open rusqlite connections or `DbReader` directly.
+
 Write down what you find. The diagnosis should explain *why* the bug exists, not just *where* the symptom appears.
 
 ## Concurrency flakes are product bugs, not test-tuning problems

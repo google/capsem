@@ -73,6 +73,20 @@ Package-manager tests prove function. Installing `zstd`, for example, means
 compressing known bytes, decompressing them, and comparing the exact output;
 not just checking dpkg output.
 
+## Logged-data DB ownership
+
+Telemetry and security ledgers are database-owned. Service routes, UI handlers,
+MCP helpers, and benchmark harnesses must not build their own logged-data
+projection caches. They call typed logger DB APIs (or a DB query API while a
+typed reader is being added). The logger DB object owns any hot `mem`/disk
+split, write buffering, reload-from-disk behavior, and future FTS5/search
+tables.
+
+Regression tests must guard the boundary. If a route needs ledger data, add a
+test that proves the route uses the DB object and a source guard that rejects
+raw `rusqlite` opens, direct `DbReader::open`, and service-owned projection
+state in production route code.
+
 ## Mock server boundary
 
 `scripts/mock_server_impl.py` is the single reusable local fixture server for

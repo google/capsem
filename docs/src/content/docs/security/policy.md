@@ -95,7 +95,7 @@ telemetry name. Both are intentionally required and validated.
 | `block` | Deny the event boundary and log the matched rule. |
 | `preprocess` | Mutate/enrich before enforcement decision. |
 | `rewrite` | Mutate the event or materialized boundary. Aliases `redact`, `mutate`, and `neutralize` canonicalize to `rewrite`. |
-| `postprocess` | Mutate/enrich after enforcement decision but before durable ledger projection. |
+| `postprocess` | Mutate/enrich after enforcement decision but before durable ledger materialization. |
 
 Detection is not an action. A rule reports a detection by setting
 `detection_level`, and can still allow, ask, or block.
@@ -117,7 +117,7 @@ not rename plugins or invent descriptions.
 Plugin descriptors expose typed `stages`: `preprocess`, `postprocess`, and
 `logging`. Operators can see whether a plugin can mutate before CEL
 enforcement, mutate after CEL enforcement, or produce the final ledger-safe
-projection. Plugin descriptors also expose a benchmark spec so
+event output. Plugin descriptors also expose a benchmark spec so
 `capsem-bench` can measure plugin overhead with the same fixtures every time.
 Every plugin also exposes in-memory performance counters: invocation count,
 match/skip count, mutation count, allow/ask/block/rewrite count, error count,
@@ -139,7 +139,7 @@ Capsem deliberately has two materialization paths:
 | Ledger/log/route/UI | Persist and display forensic truth. | Must contain only broker refs, hashes, bounded previews, typed detections, and plugin execution evidence. |
 
 The credential broker owns capture, storage, and runtime injection. The
-`log_sanitizer` logging plugin owns the final ledger projection. Network
+`log_sanitizer` logging plugin owns the final ledger materialization. Network
 formatters, DB readers, frontend transforms, route adapters, and test harnesses
 must not add their own credential parsing, ref creation, or redaction.
 

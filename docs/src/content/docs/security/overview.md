@@ -60,7 +60,7 @@ HTTPS is terminated at the host, normalized into `SecurityEvent` fields,
 evaluated by the shared rule rail, and forwarded to real upstream only after
 enforcement allows it. Runtime materialization and ledger materialization are
 separate: upstream may need real protocol bytes, while session DB, structured
-logs, routes, and UI stats receive only the ledger-safe projection produced by
+logs, routes, and UI stats receive only the ledger-safe event output produced by
 logging plugins. Per-session telemetry records every request and DNS query.
 
 **Filesystem boundary (VirtioFS):** The host VirtioFS server validates all path components, canonicalizes symlinks, and rejects any path that resolves outside the shared workspace. Resource limits prevent guest-driven host exhaustion.

@@ -7,6 +7,30 @@ use tower::ServiceExt;
 static SETTINGS_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[test]
+fn logged_data_routes_do_not_bypass_logger_db_boundary() {
+    let service_source = include_str!("main.rs");
+    for forbidden in [
+        "DbReader::open",
+        "rusqlite::Connection",
+        "Connection::open",
+        "stats_route_projection",
+        "stats_detail_route_projection",
+        "security_route_projection",
+        "history_route_projection",
+        "timeline_route_projection",
+        "triage_route_projection",
+        "live_session_counter_projection",
+        "request_projection_refresh",
+        "route_projection",
+    ] {
+        assert!(
+            !service_source.contains(forbidden),
+            "capsem-service routes must not bypass the logger DB object or recreate logged-data projections; found `{forbidden}` in main.rs"
+        );
+    }
+}
+
+#[test]
 fn process_env_allowlist_forwards_mcp_timeout_knobs() {
     assert!(
         PROCESS_ENV_ALLOWLIST.contains(&"CAPSEM_HOME"),
@@ -177,13 +201,6 @@ fn make_test_state() -> Arc<ServiceState> {
         profile_rule_cache: test_profile_rule_cache(),
         profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
-        stats_route_projection: Mutex::new(empty_stats_route_projection()),
-        stats_detail_route_projection: Mutex::new(empty_stats_detail_route_projection()),
-        live_session_counter_projection: Mutex::new(BTreeMap::new()),
-        security_route_projection: Mutex::new(SecurityRouteProjection::default()),
-        history_route_projection: Mutex::new(HistoryRouteProjection::default()),
-        timeline_route_projection: Mutex::new(TimelineRouteProjection::default()),
-        triage_route_projection: Mutex::new(TriageRouteProjection::default()),
         profile_mutation_writer: test_profile_mutation_writer(&run_dir),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
@@ -244,13 +261,6 @@ fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
         profile_rule_cache: test_profile_rule_cache(),
         profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
-        stats_route_projection: Mutex::new(empty_stats_route_projection()),
-        stats_detail_route_projection: Mutex::new(empty_stats_detail_route_projection()),
-        live_session_counter_projection: Mutex::new(BTreeMap::new()),
-        security_route_projection: Mutex::new(SecurityRouteProjection::default()),
-        history_route_projection: Mutex::new(HistoryRouteProjection::default()),
-        timeline_route_projection: Mutex::new(TimelineRouteProjection::default()),
-        triage_route_projection: Mutex::new(TriageRouteProjection::default()),
         profile_mutation_writer: test_profile_mutation_writer(&run_dir),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
@@ -1243,7 +1253,7 @@ async fn profile_enforcement_list_uses_profile_files_and_corp_not_user_settings(
 }
 
 #[tokio::test]
-async fn security_routes_use_memory_projection_not_session_db() {
+async fn security_routes_read_security_ledger_from_session_db() {
     let state = make_test_state();
     let dir = tempfile::tempdir().unwrap();
     let session_dir = dir.path().join("sessions").join("vm-ledger");
@@ -1276,16 +1286,13 @@ async fn security_routes_use_memory_projection_not_session_db() {
     })
     .await
     .unwrap();
-    rebuild_security_route_projection(&state).expect("projection hydrates from session DB");
-    std::fs::rename(&db_path, session_dir.join("session.db.projection-proof")).unwrap();
-
     let Json(events) = handle_security_latest(
         State(Arc::clone(&state)),
         Path("vm-ledger".to_string()),
         Query(SecurityLedgerQuery { limit: Some(10) }),
     )
     .await
-    .expect("security latest uses memory projection");
+    .expect("security latest reads session ledger");
 
     assert_eq!(events.len(), 1);
     let event = &events[0];
@@ -1303,7 +1310,7 @@ async fn security_routes_use_memory_projection_not_session_db() {
 
     let Json(stats) = handle_security_info(State(state), Path("vm-ledger".to_string()))
         .await
-        .expect("security status uses memory projection");
+        .expect("security status reads session ledger");
     assert_eq!(stats.total, 1);
     assert_eq!(stats.by_action[0].rule_action, "allow");
     assert_eq!(stats.by_action[0].count, 1);
@@ -1322,7 +1329,7 @@ async fn security_routes_use_memory_projection_not_session_db() {
 }
 
 #[tokio::test]
-async fn history_routes_use_memory_projection_not_session_db() {
+async fn history_routes_read_history_ledger_from_session_db() {
     let state = make_test_state();
     let app = build_service_router(Arc::clone(&state));
     let dir = tempfile::tempdir().unwrap();
@@ -1336,7 +1343,7 @@ async fn history_routes_use_memory_projection_not_session_db() {
     );
 
     let db_path = session_dir.join("session.db");
-    let marker = "history-projection-marker";
+    let marker = "history-ledger-marker";
     let writer = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
     writer
         .write(capsem_logger::WriteOp::ExecEvent(
@@ -1394,9 +1401,6 @@ async fn history_routes_use_memory_projection_not_session_db() {
     let direct_counts = reader.history_counts().unwrap();
     assert_eq!(direct_counts.exec_count, 1);
     assert_eq!(direct_counts.audit_count, 1);
-    rebuild_history_route_projection(&state).unwrap();
-    std::fs::rename(&db_path, session_dir.join("session.db.route-must-not-open")).unwrap();
-
     let (status, counts) = route_request(
         app.clone(),
         axum::http::Method::GET,
@@ -1489,9 +1493,6 @@ async fn detection_latest_route_filters_non_detection_rule_rows() {
     assert_eq!(direct_rows.len(), 2);
     assert!(direct_rows.iter().any(|row| row.event_id == "bbbbbb000000"
         && row.detection_level == capsem_logger::SecurityDetectionLevel::High));
-    rebuild_security_route_projection(&state).unwrap();
-    std::fs::rename(&db_path, session_dir.join("session.db.route-must-not-open")).unwrap();
-
     let (status, detection) = route_request(
         app.clone(),
         axum::http::Method::GET,
@@ -1524,7 +1525,7 @@ async fn detection_latest_route_filters_non_detection_rule_rows() {
 }
 
 #[tokio::test]
-async fn timeline_route_uses_memory_projection_not_session_db() {
+async fn timeline_route_reads_timeline_ledger_from_session_db() {
     let state = make_test_state();
     let app = build_service_router(Arc::clone(&state));
     let dir = tempfile::tempdir().unwrap();
@@ -1601,9 +1602,6 @@ async fn timeline_route_uses_memory_projection_not_session_db() {
         .await;
     writer.shutdown_blocking();
 
-    rebuild_timeline_route_projection(&state).unwrap();
-    std::fs::rename(&db_path, session_dir.join("session.db.route-must-not-open")).unwrap();
-
     let (status, timeline) = route_request(
         app,
         axum::http::Method::GET,
@@ -1640,7 +1638,7 @@ async fn timeline_route_uses_memory_projection_not_session_db() {
 }
 
 #[tokio::test]
-async fn triage_route_uses_memory_projection_not_session_db() {
+async fn triage_route_reads_triage_ledger_from_session_db() {
     let state = make_test_state();
     let app = build_service_router(Arc::clone(&state));
     let dir = tempfile::tempdir().unwrap();
@@ -1751,7 +1749,7 @@ async fn triage_route_uses_memory_projection_not_session_db() {
         "{direct_triage}"
     );
     assert_eq!(
-        direct_triage["mcp_errors"]["rows"]
+        direct_triage["tool_errors"]["rows"]
             .as_array()
             .unwrap()
             .len(),
@@ -1766,9 +1764,6 @@ async fn triage_route_uses_memory_projection_not_session_db() {
         1,
         "{direct_triage}"
     );
-
-    rebuild_triage_route_projection(&state).unwrap();
-    std::fs::rename(&db_path, session_dir.join("session.db.route-must-not-open")).unwrap();
 
     let (status, triage) = route_request(
         app,
@@ -1797,7 +1792,7 @@ async fn triage_route_uses_memory_projection_not_session_db() {
     assert_eq!(denied_net[0][4], 13);
 
     assert_eq!(
-        triage["session"]["mcp_errors"]["columns"],
+        triage["session"]["tool_errors"]["columns"],
         json!([
             "timestamp",
             "server_name",
@@ -1811,14 +1806,14 @@ async fn triage_route_uses_memory_projection_not_session_db() {
             "duration_ms"
         ])
     );
-    let mcp_errors = triage["session"]["mcp_errors"]["rows"].as_array().unwrap();
-    assert_eq!(mcp_errors.len(), 1, "{triage}");
-    assert_eq!(mcp_errors[0][1], "local");
-    assert_eq!(mcp_errors[0][2], "tools/call");
-    assert_eq!(mcp_errors[0][3], "error");
-    assert_eq!(mcp_errors[0][5], "block");
-    assert_eq!(mcp_errors[0][8], "boom");
-    assert_eq!(mcp_errors[0][9], 17);
+    let tool_errors = triage["session"]["tool_errors"]["rows"].as_array().unwrap();
+    assert_eq!(tool_errors.len(), 1, "{triage}");
+    assert_eq!(tool_errors[0][1], "local");
+    assert_eq!(tool_errors[0][2], "tools/call");
+    assert_eq!(tool_errors[0][3], "error");
+    assert_eq!(tool_errors[0][5], "block");
+    assert_eq!(tool_errors[0][8], "boom");
+    assert_eq!(tool_errors[0][9], 17);
 
     assert_eq!(
         triage["session"]["exec_failures"]["columns"],
@@ -1841,7 +1836,7 @@ async fn triage_route_uses_memory_projection_not_session_db() {
 }
 
 #[tokio::test]
-async fn winterfell_startup_rehydrates_route_projections_from_session_ledgers() {
+async fn winterfell_routes_read_session_ledgers_after_startup_cache_hydration() {
     let dir = tempfile::tempdir().unwrap();
     let sessions_dir = dir.path().join("sessions");
     std::fs::create_dir_all(&sessions_dir).unwrap();
@@ -2031,13 +2026,7 @@ async fn winterfell_startup_rehydrates_route_projections_from_session_ledgers() 
         r#"{"columns":["(SELECT COUNT(*) FROM model_calls)","(SELECT COUNT(*) FROM net_events)","(SELECT COUNT(*) FROM exec_events)","(SELECT COUNT(*) FROM security_rule_events)"],"rows":[[1,1,1,1]]}"#
     );
 
-    hydrate_startup_route_projections(&state).expect("startup rehydrates route projections");
-    std::fs::rename(
-        sessions_dir.join("main.db"),
-        sessions_dir.join("main.db.route-must-not-open"),
-    )
-    .unwrap();
-    std::fs::rename(&db_path, session_dir.join("session.db.route-must-not-open")).unwrap();
+    hydrate_startup_route_caches(&state).expect("startup hydrates profile route caches");
 
     let (status, stats) = route_request(app.clone(), axum::http::Method::GET, "/stats", None).await;
     assert_eq!(status, StatusCode::OK, "{stats}");
@@ -2124,67 +2113,6 @@ async fn winterfell_startup_rehydrates_route_projections_from_session_ledgers() 
             )),
         "{timeline}"
     );
-}
-
-#[tokio::test]
-async fn live_exec_history_projection_does_not_require_session_db() {
-    let state = make_test_state();
-    let app = build_service_router(Arc::clone(&state));
-    let dir = tempfile::tempdir().unwrap();
-    let session_dir = dir.path().join("sessions").join("live-history-vm");
-    std::fs::create_dir_all(&session_dir).unwrap();
-    insert_fake_instance_with_session_dir(
-        &state,
-        "live-history-vm",
-        std::process::id(),
-        session_dir.clone(),
-    );
-
-    let marker = "live-history-projection-marker";
-    push_exec_history_projection(
-        &state,
-        "live-history-vm",
-        ExecHistoryProjectionInput {
-            exec_id: 77,
-            command: format!("printf {marker}"),
-            exit_code: 0,
-            duration_ms: 3,
-            stdout: marker.as_bytes(),
-            stderr: b"",
-        },
-    )
-    .unwrap();
-    assert!(
-        !session_dir.join("session.db").exists(),
-        "live route projection must not create or require session.db"
-    );
-
-    let (status, counts) = route_request(
-        app.clone(),
-        axum::http::Method::GET,
-        "/vms/live-history-vm/history/counts",
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{counts}");
-    assert_eq!(counts["exec_count"], 1);
-    assert_eq!(counts["audit_count"], 0);
-
-    let (status, history) = route_request(
-        app,
-        axum::http::Method::GET,
-        &format!("/vms/live-history-vm/history?search={marker}&layer=exec"),
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{history}");
-    assert_eq!(history["total"], 1);
-    assert_eq!(history["commands"][0]["layer"], "exec");
-    assert!(history["commands"][0]["command"]
-        .as_str()
-        .unwrap()
-        .contains(marker));
-    assert_eq!(history["commands"][0]["details"]["exec_id"], 77);
 }
 
 #[test]
@@ -4219,13 +4147,6 @@ async fn credential_broker_reload_route_rehydrates_store_and_returns_same_contra
         .unwrap();
     assert_eq!(direct_rows.len(), 1);
     assert!(direct_rows[0].event_json.contains(&credential_ref));
-    rebuild_security_route_projection(&state).unwrap();
-    std::fs::rename(
-        &session_db,
-        session_dir.join("session.db.route-must-not-open"),
-    )
-    .unwrap();
-
     let (status, before) = route_request(
         app.clone(),
         axum::http::Method::GET,
@@ -4258,7 +4179,7 @@ async fn credential_broker_reload_route_rehydrates_store_and_returns_same_contra
 }
 
 #[tokio::test]
-async fn credential_broker_plugin_runtime_reports_security_projection_activity() {
+async fn credential_broker_plugin_runtime_reports_security_ledger_activity() {
     let state = make_test_state();
     let app = build_service_router(Arc::clone(&state));
     let dir = tempfile::tempdir().unwrap();
@@ -4317,14 +4238,6 @@ async fn credential_broker_plugin_runtime_reports_security_projection_activity()
     assert!(direct_rows[0]
         .event_json
         .contains("credential_observations"));
-    let projection = rebuild_security_route_projection(&state).unwrap();
-    assert_eq!(projection.sessions["broker-vm"].latest.len(), 1);
-    std::fs::rename(
-        &session_db,
-        session_dir.join("session.db.route-must-not-open"),
-    )
-    .unwrap();
-
     let (status, list) = route_request(
         app.clone(),
         axum::http::Method::GET,
@@ -4441,13 +4354,6 @@ async fn plugin_runtime_reports_execution_latency_from_security_ledger_payloads(
             .await;
     }
     writer.shutdown_blocking();
-    rebuild_security_route_projection(&state).unwrap();
-    std::fs::rename(
-        session_dir.join("session.db"),
-        session_dir.join("session.db.route-must-not-open"),
-    )
-    .unwrap();
-
     let (status, list) = route_request(
         app.clone(),
         axum::http::Method::GET,
@@ -4739,11 +4645,6 @@ async fn route_authored_detection_rule_triggers_runtime_ledger_and_latest_routes
         emitted >= 1,
         "route-authored detection and profile default rules may both emit"
     );
-    rebuild_security_route_projection(&state).expect("security projection hydrates ledger rows");
-    let moved_db = session_dir.join("session.moved.db");
-    std::fs::rename(session_dir.join("session.db"), &moved_db)
-        .expect("latest routes must not need session.db after projection hydration");
-
     let latest_response = app
         .clone()
         .oneshot(
@@ -4942,8 +4843,6 @@ async fn mounted_service_ledger_routes_read_real_session_db_rows() {
     .unwrap();
     writer.shutdown_blocking();
     assert_eq!(emitted, 1);
-    rebuild_security_route_projection(&state).unwrap();
-
     for uri in [
         "/security/latest?limit=10",
         "/enforcement/latest?limit=10",
@@ -5812,13 +5711,6 @@ fn make_state_in(run_dir: PathBuf) -> Arc<ServiceState> {
         profile_rule_cache: test_profile_rule_cache(),
         profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
-        stats_route_projection: Mutex::new(empty_stats_route_projection()),
-        stats_detail_route_projection: Mutex::new(empty_stats_detail_route_projection()),
-        live_session_counter_projection: Mutex::new(BTreeMap::new()),
-        security_route_projection: Mutex::new(SecurityRouteProjection::default()),
-        history_route_projection: Mutex::new(HistoryRouteProjection::default()),
-        timeline_route_projection: Mutex::new(TimelineRouteProjection::default()),
-        triage_route_projection: Mutex::new(TriageRouteProjection::default()),
         profile_mutation_writer: test_profile_mutation_writer(&run_dir),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
@@ -6345,13 +6237,6 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         profile_rule_cache: test_profile_rule_cache(),
         profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
-        stats_route_projection: Mutex::new(empty_stats_route_projection()),
-        stats_detail_route_projection: Mutex::new(empty_stats_detail_route_projection()),
-        live_session_counter_projection: Mutex::new(BTreeMap::new()),
-        security_route_projection: Mutex::new(SecurityRouteProjection::default()),
-        history_route_projection: Mutex::new(HistoryRouteProjection::default()),
-        timeline_route_projection: Mutex::new(TimelineRouteProjection::default()),
-        triage_route_projection: Mutex::new(TriageRouteProjection::default()),
         profile_mutation_writer: test_profile_mutation_writer(&run_dir),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
@@ -7465,7 +7350,7 @@ async fn vm_list_and_info_are_in_memory_only() {
         .expect("detail route stays lifecycle/storage only");
     assert!(
         info.total_file_events.is_none(),
-        "/vms/{{id}}/info must not read session.db telemetry; use stats/projection routes"
+        "/vms/{{id}}/info must not inline raw telemetry SQL; use ledger DB APIs"
     );
     assert!(info.model_call_count.is_none());
 }
@@ -7659,12 +7544,6 @@ async fn handle_stats_returns_global_data() {
     drop(idx);
 
     let (state, _dir) = make_test_state_with_tempdir_at(dir);
-    rebuild_stats_route_projection(&state).expect("stats projection hydrates during service boot");
-    std::fs::rename(
-        sessions_dir.join("main.db"),
-        sessions_dir.join("main.db.projection-proof"),
-    )
-    .unwrap();
     let result = handle_stats(State(state)).await;
     assert!(result.is_ok());
     let response = result.unwrap().into_response();
@@ -7679,7 +7558,7 @@ async fn handle_stats_returns_global_data() {
 }
 
 #[tokio::test]
-async fn stats_detail_route_uses_memory_projection_not_session_db() {
+async fn stats_detail_route_reads_session_db_ledger() {
     let state = make_test_state();
     let app = build_service_router(Arc::clone(&state));
     let dir = tempfile::tempdir().unwrap();
@@ -7789,9 +7668,6 @@ async fn stats_detail_route_uses_memory_projection_not_session_db() {
         .await;
     writer.shutdown_blocking();
 
-    rebuild_stats_detail_route_projection(&state).expect("stats detail projection hydrates");
-    std::fs::rename(&db_path, session_dir.join("session.db.route-must-not-open")).unwrap();
-
     let (status, body) = route_request(
         app.clone(),
         axum::http::Method::GET,
@@ -7810,7 +7686,7 @@ async fn stats_detail_route_uses_memory_projection_not_session_db() {
     assert_eq!(
         body["model_events"].as_array().unwrap().len(),
         body["model_stats"][0]["call_count"].as_u64().unwrap() as usize,
-        "model_stats.call_count must agree with projected model_events"
+        "model_stats.call_count must agree with model_events"
     );
     assert!(body["model_events"][0]
         .get("request_body_preview")
@@ -7896,18 +7772,15 @@ async fn stats_detail_route_uses_memory_projection_not_session_db() {
 }
 
 #[tokio::test]
-async fn stats_detail_projection_exposes_orphan_tool_parent_inconsistency() {
+async fn stats_detail_ledger_exposes_orphan_tool_parent_inconsistency() {
     let state = make_test_state();
     let app = build_service_router(Arc::clone(&state));
     let dir = tempfile::tempdir().unwrap();
-    let session_dir = dir
-        .path()
-        .join("sessions")
-        .join("projection-inconsistent-vm");
+    let session_dir = dir.path().join("sessions").join("ledger-inconsistent-vm");
     std::fs::create_dir_all(&session_dir).unwrap();
     insert_fake_instance_with_session_dir(
         &state,
-        "projection-inconsistent-vm",
+        "ledger-inconsistent-vm",
         std::process::id(),
         session_dir.clone(),
     );
@@ -7935,7 +7808,7 @@ async fn stats_detail_projection_exposes_orphan_tool_parent_inconsistency() {
             0_i64,
             "orphan-tool",
             "Write",
-            r#"{"path":"/root/orphan.md","content":"projection proof"}"#,
+            r#"{"path":"/root/orphan.md","content":"ledger proof"}"#,
             "model",
             "model",
             "tool.call",
@@ -7965,14 +7838,10 @@ async fn stats_detail_projection_exposes_orphan_tool_parent_inconsistency() {
     .unwrap();
     drop(conn);
 
-    rebuild_stats_detail_route_projection(&state).expect("stats detail projection hydrates");
-    rebuild_timeline_route_projection(&state).expect("timeline projection hydrates");
-    std::fs::rename(&db_path, session_dir.join("session.db.route-must-not-open")).unwrap();
-
     let (status, body) = route_request(
         app.clone(),
         axum::http::Method::GET,
-        "/vms/projection-inconsistent-vm/stats/detail",
+        "/vms/ledger-inconsistent-vm/stats/detail",
         None,
     )
     .await;
@@ -7990,7 +7859,7 @@ async fn stats_detail_projection_exposes_orphan_tool_parent_inconsistency() {
     assert_eq!(tool["tool_name"], "Write");
     assert_eq!(
         tool["arguments"],
-        r#"{"path":"/root/orphan.md","content":"projection proof"}"#
+        r#"{"path":"/root/orphan.md","content":"ledger proof"}"#
     );
     assert_eq!(tool["response_preview"], "Wrote orphan.md");
     assert_eq!(
@@ -8001,7 +7870,7 @@ async fn stats_detail_projection_exposes_orphan_tool_parent_inconsistency() {
     let (status, info) = route_request(
         app.clone(),
         axum::http::Method::GET,
-        "/vms/projection-inconsistent-vm/info",
+        "/vms/ledger-inconsistent-vm/info",
         None,
     )
     .await;
@@ -8016,7 +7885,7 @@ async fn stats_detail_projection_exposes_orphan_tool_parent_inconsistency() {
     let (status, timeline) = route_request(
         app,
         axum::http::Method::GET,
-        "/vms/projection-inconsistent-vm/timeline?trace_id=trace-orphan-tool&layers=tool&limit=20",
+        "/vms/ledger-inconsistent-vm/timeline?trace_id=trace-orphan-tool&layers=tool&limit=20",
         None,
     )
     .await;
@@ -8237,13 +8106,6 @@ fn make_test_state_with_tempdir_at(
         profile_rule_cache: test_profile_rule_cache(),
         profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
-        stats_route_projection: Mutex::new(empty_stats_route_projection()),
-        stats_detail_route_projection: Mutex::new(empty_stats_detail_route_projection()),
-        live_session_counter_projection: Mutex::new(BTreeMap::new()),
-        security_route_projection: Mutex::new(SecurityRouteProjection::default()),
-        history_route_projection: Mutex::new(HistoryRouteProjection::default()),
-        timeline_route_projection: Mutex::new(TimelineRouteProjection::default()),
-        triage_route_projection: Mutex::new(TriageRouteProjection::default()),
         profile_mutation_writer: test_profile_mutation_writer(&run_dir),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
@@ -8608,14 +8470,14 @@ async fn download_logs_file_export_before_returning_response() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn download_file_content_does_not_request_projection_refresh() {
+async fn download_file_content_does_not_wait_on_stats_rebuild() {
     let dir = tempfile::tempdir().unwrap();
     let (state, _state_dir) = make_test_state_with_tempdir();
     let (_ipc_dir, uds_path, ipc) = spawn_file_boundary_ipc(1).await;
     setup_vm_with_workspace_and_uds(&state, dir.path(), "fast-file-vm", uds_path);
     std::fs::write(
         dir.path().join("session/guest/workspace/latency.txt"),
-        b"file content must not wait on projection rebuild",
+        b"file content must not wait on ledger rebuild",
     )
     .unwrap();
 
@@ -8630,7 +8492,7 @@ async fn download_file_content_does_not_request_projection_refresh() {
         ),
     )
     .await
-    .expect("file content route waited for projection refresh")
+    .expect("file content route waited for stats rebuild")
     .expect("download should succeed after boundary log");
 
     assert_eq!(response.status(), StatusCode::OK);

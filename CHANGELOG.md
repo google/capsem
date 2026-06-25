@@ -74,6 +74,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Removed service-owned telemetry projections from stats, timeline, triage,
+  security, detection, and history routes. Logged-data routes now read through
+  the logger DB boundary, and a source guard rejects raw service DB opens or
+  route-owned logged-data projection state.
 - Fixed the gateway route table so the Stats view can reach
   `/vms/{id}/stats/detail` through the installed app instead of receiving a
   404, and added a route-health gate that exercises the stats-detail contract
@@ -770,7 +774,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Documented the runtime-vs-ledger materialization split across security
   policy, network isolation, MITM architecture, and developer skills so future
   work keeps credential capture/injection in the broker plugin and ledger
-  projection in logging plugins instead of network formatters, routes, DB
+  materialization in logging plugins instead of network formatters, routes, DB
   readers, frontend transforms, or test harnesses.
 - Hardened the local OpenAI-compatible model path: bounded request sniffing now
   promotes unknown localhost model traffic before CEL/plugin evaluation, the

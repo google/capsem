@@ -557,20 +557,21 @@ The `DbReader` provides pre-built aggregate queries:
 | Access point | Protocol | Query type |
 |-------------|----------|------------|
 | `capsem info <id> --stats` | CLI -> service HTTP `/vms/{id}/info` | Pre-built `SessionStats` |
-| Frontend Stats tab | Gateway -> typed VM-scoped projection routes | Per-table summaries and event inspection |
+| Frontend Stats tab | Gateway -> typed VM-scoped ledger routes | Per-table summaries and event inspection |
 | MCP `capsem_timeline` | MCP -> service HTTP `/vms/{id}/timeline` | Typed time-ordered event stream |
 | MCP logs/triage tools | MCP -> typed service routes | Logs, panic triage, and operational diagnostics |
 
 Capsem does not expose arbitrary SQL over HTTP, gateway, frontend, or MCP.
 `session.db` is the durable ledger and can be inspected directly by a developer
-when doing local forensics, but product routes serve typed in-memory projections
-or typed recovery snapshots rather than opening SQLite on request.
+when doing local forensics, but product routes use typed logger/database APIs.
+Any hot `mem`/disk split belongs inside the logger DB object, never in service
+route state.
 
 ## Frontend Stats And Inspection
 
 The VM **Stats** tab is ledger/database backed. It does not infer security
-state from profile config or live rules. It reads typed service projections
-hydrated from the ledger and VM-scoped rule routes:
+state from profile config or live rules. It reads typed service ledger routes
+that are backed by the logger DB API and VM-scoped rule routes:
 
 | Stats tab | Primary source |
 |-----------|----------------|
@@ -585,8 +586,9 @@ hydrated from the ledger and VM-scoped rule routes:
 | Snapshots | `/vms/{id}/snapshots/status`, `/vms/{id}/snapshots/list` |
 
 The old raw SQL Inspector tab and `/vms/{id}/inspect` route were removed. Add
-new typed projections when the UI, TUI, MCP, or CLI needs more ledger evidence;
-do not reintroduce a general SQL proxy.
+new typed logger DB APIs when the UI, TUI, MCP, or CLI needs more ledger
+evidence; do not reintroduce a general SQL proxy or service-owned logged-data
+projection.
 
 ## Per-VM isolation
 

@@ -30,7 +30,7 @@ not exposed as CEL fields.
 Mutation: stores observed credentials through the broker and writes the
 brokered `credential:blake3:*` reference back onto the event. The broker does
 not sanitize durable logs; the `log_sanitizer` logging plugin owns ledger-safe
-projection.
+materialization.
 
 MCP contract: remote MCP server config may carry only brokered auth metadata in
 profile-owned `mcp.json`:

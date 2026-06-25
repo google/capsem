@@ -72,7 +72,7 @@ graph TD
     G -->|Denied or unresolved ask| H["Return 403<br/>ledger-safe log"]
     G -->|Allowed| I["Runtime materialization<br/>forward to upstream TLS"]
     I --> J["Stream response<br/>to guest"]
-    J --> K["Logging plugins<br/>ledger projection"]
+    J --> K["Logging plugins<br/>ledger-safe event output"]
     K --> L["Log telemetry<br/>domain, method, path, status, bytes, latency"]
 ```
 

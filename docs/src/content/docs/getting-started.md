@@ -129,8 +129,8 @@ match = 'dns.qname.matches("(^|.*\\.)(openai\\.com|anthropic\\.com|googleapis\\.
 
 Every HTTP/DNS/model/MCP/file/process boundary is logged to a per-VM SQLite
 database when observed. The Capsem GUI shows this in the VM Stats tab through
-typed service projections; raw SQL is a local developer forensic tool, not a
-Capsem route or UI surface.
+typed ledger routes backed by the logger DB API; raw SQL is a local developer
+forensic tool, not a Capsem route or UI surface.
 
 ## MCP integration
 

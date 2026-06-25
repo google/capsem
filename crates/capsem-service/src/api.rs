@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 
-/// Response for GET /stats -- global session stats from the service projection.
+/// Response for GET /stats -- global session stats from the logger DB boundary.
 #[derive(Serialize, Debug, Clone)]
 pub struct StatsResponse {
     pub global: GlobalStats,
