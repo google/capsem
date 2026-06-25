@@ -242,7 +242,7 @@ async fn db_handle_query_uses_worker_not_runtime_block() {
 }
 
 #[tokio::test]
-async fn db_handle_write_persists_exact_event_fields() {
+async fn db_write_event_contract() {
     let p = temp_db_path("write-security-event-fields");
     let db = DbHandle::open(&p).expect("open handle");
     db.ready().await.expect("db ready");
