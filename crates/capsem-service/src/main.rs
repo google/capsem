@@ -3536,11 +3536,7 @@ async fn handle_stats_detail(
 ) -> Result<impl IntoResponse, AppError> {
     let session_dir = resolve_session_dir(&state, &id)?;
     let db_path = session_dir.join("session.db");
-    let payload = if db_path.exists() {
-        read_stats_detail_payload_from_session_db(&state, &id, &db_path).await?
-    } else {
-        empty_stats_detail_payload()
-    };
+    let payload = read_stats_detail_payload_from_session_db(&state, &id, &db_path).await?;
     let body = serde_json::to_vec(&payload).map_err(|error| {
         AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -3857,9 +3853,7 @@ async fn triage_for_vm(
     if !db_path.exists() {
         return Ok(json!({ "missing": true, "reason": "session not found" }));
     }
-    let Some(db) = open_ready_session_db(state, vm_id, "triage", &db_path).await? else {
-        return Ok(json!({ "missing": true, "reason": "session not found" }));
-    };
+    let db = open_ready_session_db(state, vm_id, "triage", &db_path).await?;
     let session = session_db_triage(vm_id, &db, &db_path, limit)
         .await
         .map_err(|error| {
@@ -7033,16 +7027,22 @@ async fn open_ready_session_db(
     vm_id: &str,
     ledger: &str,
     db_path: &StdPath,
-) -> Result<Option<Arc<capsem_logger::DbHandle>>, AppError> {
+) -> Result<Arc<capsem_logger::DbHandle>, AppError> {
     if !db_path.exists() {
-        info!(
+        error!(
             vm_id,
             ledger,
-            operation = "open",
+            operation = "ready",
             db_path = %db_path.display(),
             "session ledger DB is absent"
         );
-        return Ok(None);
+        return Err(ledger_route_error(
+            vm_id,
+            ledger,
+            "ready",
+            db_path,
+            "session.db absent",
+        ));
     }
     let db = if let Some(handle) = state.session_db_handle(vm_id) {
         handle
@@ -7071,7 +7071,7 @@ async fn open_ready_session_db(
     db.ready()
         .await
         .map_err(|error| ledger_route_error(vm_id, ledger, "ready", db_path, error))?;
-    Ok(Some(db))
+    Ok(db)
 }
 
 async fn query_route_db_json(
@@ -7377,9 +7377,7 @@ async fn read_security_session_ledger(
     vm_id: &str,
     db_path: &StdPath,
 ) -> Result<Option<SecuritySessionLedger>, AppError> {
-    let Some(db) = open_ready_session_db(state, vm_id, "security", db_path).await? else {
-        return Ok(None);
-    };
+    let db = open_ready_session_db(state, vm_id, "security", db_path).await?;
     let latest = query_route_typed_rows::<capsem_logger::SecurityRuleEvent>(
         vm_id,
         "security",
@@ -7552,9 +7550,7 @@ async fn read_history_session_ledger(
     vm_id: &str,
     db_path: &StdPath,
 ) -> Result<Option<HistorySessionLedger>, AppError> {
-    let Some(db) = open_ready_session_db(state, vm_id, "history", db_path).await? else {
-        return Ok(None);
-    };
+    let db = open_ready_session_db(state, vm_id, "history", db_path).await?;
     let mut entries = query_route_typed_rows::<capsem_logger::HistoryEntry>(
         vm_id,
         "history",
@@ -7766,9 +7762,7 @@ async fn read_timeline_rows_from_session_db(
     db_path: &StdPath,
     sql: &str,
 ) -> Result<Option<Vec<TimelineRow>>, AppError> {
-    let Some(db) = open_ready_session_db(state, vm_id, "timeline", db_path).await? else {
-        return Ok(None);
-    };
+    let db = open_ready_session_db(state, vm_id, "timeline", db_path).await?;
     let raw = query_route_db_json(
         vm_id,
         "timeline",
@@ -7810,9 +7804,7 @@ async fn read_live_session_counters_from_session_db(
     vm_id: &str,
     db_path: &StdPath,
 ) -> Result<Option<LiveSessionCounters>, AppError> {
-    let Some(db) = open_ready_session_db(state, vm_id, "session counter", db_path).await? else {
-        return Ok(None);
-    };
+    let db = open_ready_session_db(state, vm_id, "session counter", db_path).await?;
     let row = query_route_typed_rows::<LiveSessionCounterRow>(
         vm_id,
         "session counter",
@@ -7916,21 +7908,6 @@ fn query_history_ledger(
         total,
         has_more,
     }
-}
-
-fn empty_stats_detail_payload() -> serde_json::Value {
-    json!({
-        "model_stats": [],
-        "model_events": [],
-        "tool_events": [],
-        "http_events": [],
-        "dns_events": [],
-        "file_events": [],
-        "process_events": [],
-        "audit_events": [],
-        "credential_events": [],
-        "body_blobs": {},
-    })
 }
 
 const STATS_DETAIL_MODEL_STATS_SQL: &str = r#"
@@ -8088,9 +8065,7 @@ async fn read_stats_detail_payload_from_session_db(
     vm_id: &str,
     db_path: &StdPath,
 ) -> Result<serde_json::Value, AppError> {
-    let Some(db) = open_ready_session_db(state, vm_id, "stats_detail", db_path).await? else {
-        return Ok(empty_stats_detail_payload());
-    };
+    let db = open_ready_session_db(state, vm_id, "stats_detail", db_path).await?;
     Ok(json!({
         "model_stats": stats_detail_query_objects(vm_id, db_path, &db, "model_stats", STATS_DETAIL_MODEL_STATS_SQL).await?,
         "model_events": stats_detail_query_objects(vm_id, db_path, &db, "model_events", STATS_DETAIL_MODEL_EVENTS_SQL).await?,
@@ -8382,7 +8357,7 @@ async fn apply_session_db_status(
         return;
     }
     match open_ready_session_db(state, &info.id, "session status", &db_path).await {
-        Ok(Some(_)) => {
+        Ok(_) => {
             info.session_db = Some(api::SessionDbStatus {
                 ready: true,
                 error: None,
@@ -8394,12 +8369,6 @@ async fn apply_session_db_status(
                 ready = true,
                 "session DB ready for session status"
             );
-        }
-        Ok(None) => {
-            info.session_db = Some(api::SessionDbStatus {
-                ready: false,
-                error: Some("session.db absent".to_string()),
-            });
         }
         Err(error) => {
             let message = error.1;

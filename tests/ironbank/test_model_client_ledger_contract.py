@@ -821,6 +821,185 @@ def test_openai_two_tool_calls_have_exact_item_cardinality(
         )
         assert all(json.loads(row["event_json"]) for row in rule_rows)
         assert all(json.loads(row["rule_json"]) for row in rule_rows)
+
+        detail = model_client_env.client.get(
+            f"/vms/{model_client_env.session_id}/stats/detail",
+            timeout=30,
+        )
+        assert detail is not None
+        assert "error" not in detail, detail
+        assert "request_body_preview" not in json.dumps(detail)
+        assert "response_body_preview" not in json.dumps(detail)
+
+        route_model_by_event = {row["event_id"]: row for row in detail["model_events"]}
+        route_http_by_event = {row["event_id"]: row for row in detail["http_events"]}
+        route_dns_by_event = {row["event_id"]: row for row in detail["dns_events"]}
+        route_file_by_event = {row["event_id"]: row for row in detail["file_events"]}
+        route_tool_by_event = {row["event_id"]: row for row in detail["tool_events"]}
+
+        for db_row in model_calls:
+            assert db_row["event_id"] in route_model_by_event, {
+                "missing_model_event_id": db_row["event_id"],
+                "db_model_event_ids": [row["event_id"] for row in model_calls],
+                "route_model_event_ids": sorted(route_model_by_event),
+                "route_model_events": detail["model_events"],
+                "db_boundary_contract": (
+                    "stats/detail must be a faithful DB-handle read of model_calls; "
+                    "route projections or stale/forked DB reads are forbidden"
+                ),
+            }
+            route_row = route_model_by_event[db_row["event_id"]]
+            assert route_row["provider"] == db_row["provider"]
+            assert route_row["model"] == db_row["model"]
+            assert route_row["method"] == db_row["method"]
+            assert route_row["path"] == db_row["path"]
+            assert route_row["status_code"] == db_row["status_code"]
+            assert route_row["input_tokens"] == db_row["input_tokens"]
+            assert route_row["output_tokens"] == db_row["output_tokens"]
+            assert route_row["trace_id"] == db_row["trace_id"]
+            assert route_row["credential_ref"] == db_row["credential_ref"]
+
+        for db_row in net_rows:
+            assert db_row["event_id"] in route_http_by_event, {
+                "missing_http_event_id": db_row["event_id"],
+                "db_http_event_ids": [row["event_id"] for row in net_rows],
+                "route_http_event_ids": sorted(route_http_by_event),
+                "db_boundary_contract": (
+                    "stats/detail must be a faithful DB-handle read of net_events; "
+                    "route projections or stale/forked DB reads are forbidden"
+                ),
+            }
+            route_row = route_http_by_event[db_row["event_id"]]
+            assert route_row["domain"] == db_row["domain"]
+            assert route_row["method"] == db_row["method"]
+            assert route_row["path"] == db_row["path"]
+            assert route_row["status_code"] == db_row["status_code"]
+            assert route_row["decision"] == db_row["decision"]
+            assert route_row["bytes_sent"] == db_row["bytes_sent"]
+            assert route_row["bytes_received"] == db_row["bytes_received"]
+            assert route_row["trace_id"] == db_row["trace_id"]
+            assert route_row["credential_ref"] == db_row["credential_ref"]
+
+        route_dns = route_dns_by_event[dns["event_id"]]
+        assert route_dns["qname"] == dns["qname"]
+        assert route_dns["qtype"] == dns["qtype"]
+        assert route_dns["qclass"] == dns["qclass"]
+        assert route_dns["rcode"] == dns["rcode"]
+        assert route_dns["decision"] == dns["decision"]
+        assert route_dns["trace_id"] == dns["trace_id"]
+
+        for db_row in tool_calls:
+            assert db_row["event_id"] in route_tool_by_event, {
+                "missing_tool_event_id": db_row["event_id"],
+                "db_tool_event_ids": [row["event_id"] for row in tool_calls],
+                "route_tool_event_ids": sorted(route_tool_by_event),
+                "db_boundary_contract": (
+                    "stats/detail must be a faithful DB-handle read of tool_calls; "
+                    "MCP/model/native tool calls must surface through one unified tool route"
+                ),
+            }
+            route_row = route_tool_by_event[db_row["event_id"]]
+            assert route_row["tool_name"] == db_row["tool_name"]
+            assert route_row["call_id"] == db_row["call_id"]
+            assert route_row["model_call_id"] == db_row["model_call_id"]
+            assert route_row["model_parent_missing"] == 0
+            assert route_row["decision"] == db_row["decision"]
+            assert json.loads(route_row["arguments"]) == json.loads(db_row["arguments"])
+            assert route_row["source"] == db_row["origin"]
+            assert route_row["credential_ref"] == db_row["credential_ref"]
+
+        created_by_event = {row["event_id"]: row for row in file_rows if row["event_id"]}
+        for event_id in file_event_ids:
+            assert event_id in route_file_by_event, {
+                "missing_file_event_id": event_id,
+                "db_file_event_ids": file_event_ids,
+                "route_file_event_ids": sorted(route_file_by_event),
+                "db_boundary_contract": (
+                    "stats/detail must be a faithful DB-handle read of fs_events; "
+                    "route projections or stale/forked DB reads are forbidden"
+                ),
+            }
+            route_row = route_file_by_event[event_id]
+            db_row = created_by_event[event_id]
+            assert route_row["action"] == db_row["action"]
+            assert route_row["path"] == db_row["path"]
+            assert route_row["size"] == db_row["size"]
+            assert route_row["trace_id"] == db_row["trace_id"]
+            assert route_row["credential_ref"] == db_row["credential_ref"]
+
+        route_credential_facts = {
+            (
+                row["material_class"],
+                row["source"],
+                row["verb"],
+                row["provider"],
+                row["trace_id"],
+            )
+            for row in detail["credential_events"]
+        }
+        db_credential_facts = {
+            (
+                row["material_class"],
+                row["source"],
+                row["outcome"],
+                row["provider"],
+                row["trace_id"],
+            )
+            for row in substitution_rows
+        }
+        assert db_credential_facts <= route_credential_facts, {
+            "missing": sorted(db_credential_facts - route_credential_facts),
+            "route": sorted(route_credential_facts),
+        }
+
+        exec_rows = conn.execute(
+            """
+            SELECT *
+            FROM exec_events
+            WHERE command LIKE 'python3 /root/ironbank-client-%'
+            ORDER BY id DESC
+            LIMIT 1
+            """
+        ).fetchall()
+        assert len(exec_rows) == 1, [dict(row) for row in exec_rows]
+        exec_row = exec_rows[0]
+        route_process_by_event = {
+            row["event_id"]: row for row in detail["process_events"] if row["event_id"]
+        }
+        route_process = route_process_by_event[exec_row["event_id"]]
+        assert route_process["command"] == exec_row["command"]
+        assert route_process["exit_code"] == exec_row["exit_code"]
+        assert route_process["stdout_bytes"] == exec_row["stdout_bytes"]
+        assert route_process["stderr_bytes"] == exec_row["stderr_bytes"]
+        assert route_process["trace_id"] == exec_row["trace_id"]
+
+        route_security = model_client_env.client.get(
+            f"/vms/{model_client_env.session_id}/security/latest?limit=200",
+            timeout=30,
+        )
+        route_security_by_event_rule = {
+            (row["event_id"], row["rule_id"]): row for row in route_security
+        }
+        for db_row in rule_rows:
+            route_key = (db_row["event_id"], db_row["rule_id"])
+            assert route_key in route_security_by_event_rule, {
+                "missing_security_rule_event": route_key,
+                "db_security_rule_events": [
+                    (row["event_id"], row["rule_id"]) for row in rule_rows
+                ],
+                "route_security_rule_events": sorted(route_security_by_event_rule),
+                "db_boundary_contract": (
+                    "security/latest must preserve every rule match row; "
+                    "event_id alone is not unique because one event can match "
+                    "corp, profile, and default rules"
+                ),
+            }
+            route_row = route_security_by_event_rule[route_key]
+            assert route_row["rule_id"] == db_row["rule_id"]
+            assert route_row["rule_action"] == db_row["rule_action"]
+            assert route_row["detection_level"] == db_row["detection_level"]
+            assert json.loads(route_row["event_json"]) == json.loads(db_row["event_json"])
+            assert json.loads(route_row["rule_json"]) == json.loads(db_row["rule_json"])
     for log_path in model_client_env.log_paths:
         if log_path.exists():
             assert raw_secret not in log_path.read_text(encoding="utf-8", errors="replace"), (

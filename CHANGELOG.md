@@ -97,6 +97,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Fixed stats-detail session routes so a missing or broken session ledger fails
+  loudly through the logger DB handle instead of fabricating empty model, tool,
+  HTTP, DNS, file, process, credential, and security data.
 - Fixed logger DB readiness so session ledgers validate required route-critical
   tables/columns and fail loudly on broken schemas instead of accepting any
   open reader, including preserving `tool_calls.turn_id` through legacy table
