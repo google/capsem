@@ -159,6 +159,7 @@ fn make_test_state() -> Arc<ServiceState> {
     let asset_status_path = asset_status_path_for_run_dir(&run_dir);
     Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
+        session_db_handles: Mutex::new(HashMap::new()),
         persistent_registry: Mutex::new(PersistentRegistry::load(registry_path)),
         process_binary: PathBuf::from("/nonexistent/capsem-process"),
         assets_dir: PathBuf::from("/nonexistent/assets"),
@@ -217,6 +218,7 @@ fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
     let manifest = capsem_core::asset_manager::load_manifest_for_assets(&assets_dir).map(Arc::new);
     Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
+        session_db_handles: Mutex::new(HashMap::new()),
         persistent_registry: Mutex::new(PersistentRegistry::load(
             assets_dir.join("persistent_registry.json"),
         )),
@@ -288,7 +290,7 @@ fn insert_fake_instance_with_session_dir_and_pins(
             asset_pins,
             pid,
             uds_path: PathBuf::from(format!("/tmp/{}.sock", id)),
-            session_dir,
+            session_dir: session_dir.clone(),
             ram_mb: 2048,
             cpus: 2,
             start_time: std::time::Instant::now(),
@@ -298,6 +300,9 @@ fn insert_fake_instance_with_session_dir_and_pins(
             forked_from: None,
         },
     );
+    state
+        .register_session_db_handle(id, &session_dir)
+        .expect("fake instance session DB handle");
 }
 
 fn test_profile_revision() -> String {
@@ -1715,7 +1720,12 @@ async fn triage_route_reads_triage_ledger_from_session_db() {
         .await;
     writer.shutdown_blocking();
 
-    let direct_triage = session_db_triage("diag-vm", &db_path, 5).await.unwrap();
+    let db = state
+        .session_db_handle("diag-vm")
+        .expect("fake instance registers DB handle");
+    let direct_triage = session_db_triage("diag-vm", &db, &db_path, 5)
+        .await
+        .unwrap();
     assert_eq!(
         direct_triage["denied_net"]["rows"]
             .as_array()
@@ -5670,6 +5680,7 @@ fn make_state_in(run_dir: PathBuf) -> Arc<ServiceState> {
     std::fs::create_dir_all(run_dir.join("sessions")).unwrap();
     Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
+        session_db_handles: Mutex::new(HashMap::new()),
         persistent_registry: Mutex::new(PersistentRegistry::load(registry_path)),
         process_binary: PathBuf::from("/nonexistent/capsem-process"),
         assets_dir: PathBuf::from("/nonexistent/assets"),
@@ -6196,6 +6207,7 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
     let asset_status_path = asset_status_path_for_run_dir(&run_dir);
     let state = Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
+        session_db_handles: Mutex::new(HashMap::new()),
         persistent_registry: Mutex::new(PersistentRegistry::load(registry_path)),
         process_binary: PathBuf::from("/nonexistent/capsem-process"),
         assets_dir: dir.path().join("assets"),
@@ -7762,8 +7774,9 @@ async fn db_boundary_route_contract_db_handle_route_rewire() {
         session_dir.clone(),
     );
 
-    let db_path = session_dir.join("session.db");
-    let db = capsem_logger::DbHandle::open(&db_path).unwrap();
+    let db = state
+        .session_db_handle("db-handle-route-vm")
+        .expect("fake instance registers DB handle");
     db.ready().await.unwrap();
     db.write(capsem_logger::WriteOp::SecurityRuleEvent(
         capsem_logger::SecurityRuleEvent::new(
@@ -7864,6 +7877,56 @@ fn logged_data_routes_do_not_bypass_logger_db_boundary() {
              capsem-logger owns DB execution/storage, and missing schemas fail loudly."
         );
     }
+}
+
+#[tokio::test]
+async fn session_db_handle_state_contract() {
+    let state = make_test_state();
+    let dir = tempfile::tempdir().unwrap();
+    let session_dir = dir.path().join("sessions").join("db-state-old");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    insert_fake_instance_with_session_dir(&state, "db-state-old", std::process::id(), session_dir);
+
+    let original = state
+        .session_db_handle("db-state-old")
+        .expect("session registration must install a DB handle");
+    original.ready().await.unwrap();
+
+    state.rename_session_db_handle("db-state-old", "db-state-new");
+    assert!(
+        state.session_db_handle("db-state-old").is_none(),
+        "renaming a session must not leave a stale DB handle under the old id"
+    );
+    let renamed = state
+        .session_db_handle("db-state-new")
+        .expect("renaming a session must move its DB handle");
+    assert!(
+        Arc::ptr_eq(&original, &renamed),
+        "renaming must move the existing DB handle instead of opening a second rail"
+    );
+
+    state.unregister_session_db_handle("db-state-new");
+    assert!(
+        state.session_db_handle("db-state-new").is_none(),
+        "unregistering a session must remove the DB handle"
+    );
+}
+
+#[test]
+fn service_db_handle_open_is_owned_by_session_state() {
+    let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs"))
+        .expect("service source must be readable");
+    let opens = source.matches("DbHandle::open(").count();
+    assert_eq!(
+        opens, 1,
+        "DbHandle::open must live only in ServiceState::register_session_db_handle. \
+         Routes and helpers resolve a registered handle and call ready/query; they do not \
+         create a second DB lifecycle."
+    );
+    assert!(
+        source.contains("fn register_session_db_handle("),
+        "the single DbHandle::open owner must be the session-state registration method"
+    );
 }
 
 #[tokio::test]
@@ -8183,6 +8246,7 @@ fn make_test_state_with_tempdir_at(
     let asset_status_path = asset_status_path_for_run_dir(&run_dir);
     let state = Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
+        session_db_handles: Mutex::new(HashMap::new()),
         persistent_registry: Mutex::new(PersistentRegistry::load(registry_path)),
         process_binary: PathBuf::from("/nonexistent/capsem-process"),
         assets_dir: run_dir.join("assets"),

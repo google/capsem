@@ -143,6 +143,10 @@ const ACTIVE_PROFILE_FILE: &str = "active_profile.toml";
 struct ServiceState {
     /// Map of instance ID to Process Info
     instances: Mutex<HashMap<String, InstanceInfo>>,
+    /// Logger-owned DB handles keyed by session/VM id. Logged-data routes
+    /// resolve a handle here and call `ready/query`; they do not open SQLite
+    /// readers or create per-route projection caches.
+    session_db_handles: Mutex<HashMap<String, Arc<capsem_logger::DbHandle>>>,
     /// Registry of persistent (named) VMs
     persistent_registry: Mutex<PersistentRegistry>,
     process_binary: PathBuf,
@@ -209,6 +213,10 @@ struct ServiceState {
     /// sufficient because production runs exactly one capsem-service per
     /// user-host.
     shutdown_lock: tokio::sync::Mutex<()>,
+}
+
+fn session_db_path_for_session_dir(session_dir: &StdPath) -> PathBuf {
+    session_dir.join("session.db")
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -600,6 +608,61 @@ impl ServiceState {
         main_db_path_for_run_dir(&self.run_dir)
     }
 
+    fn register_session_db_handle(
+        &self,
+        vm_id: &str,
+        session_dir: &StdPath,
+    ) -> anyhow::Result<Arc<capsem_logger::DbHandle>> {
+        let db_path = session_db_path_for_session_dir(session_dir);
+        let started = std::time::Instant::now();
+        let handle = Arc::new(capsem_logger::DbHandle::open(&db_path).with_context(|| {
+            format!(
+                "failed to open session DB handle for {vm_id}: {}",
+                db_path.display()
+            )
+        })?);
+        self.session_db_handles
+            .lock()
+            .unwrap()
+            .insert(vm_id.to_string(), Arc::clone(&handle));
+        info!(
+            vm_id,
+            db_path = %db_path.display(),
+            operation = "register_session_db_handle",
+            duration_ms = started.elapsed().as_millis(),
+            "registered session DB handle"
+        );
+        Ok(handle)
+    }
+
+    fn unregister_session_db_handle(&self, vm_id: &str) {
+        let removed = self.session_db_handles.lock().unwrap().remove(vm_id);
+        if removed.is_some() {
+            info!(
+                vm_id,
+                operation = "unregister_session_db_handle",
+                "unregistered session DB handle"
+            );
+        }
+    }
+
+    fn rename_session_db_handle(&self, old_vm_id: &str, new_vm_id: &str) {
+        let mut handles = self.session_db_handles.lock().unwrap();
+        if let Some(handle) = handles.remove(old_vm_id) {
+            handles.insert(new_vm_id.to_string(), handle);
+            info!(
+                old_vm_id,
+                new_vm_id,
+                operation = "rename_session_db_handle",
+                "renamed session DB handle"
+            );
+        }
+    }
+
+    fn session_db_handle(&self, vm_id: &str) -> Option<Arc<capsem_logger::DbHandle>> {
+        self.session_db_handles.lock().unwrap().get(vm_id).cloned()
+    }
+
     fn next_job_id(&self) -> u64 {
         self.job_counter.fetch_add(1, Ordering::Relaxed)
     }
@@ -637,6 +700,7 @@ impl ServiceState {
     /// and `rename` can block on large dirs and stall other handlers
     /// racing for the lock.
     fn scrub_evicted_instance(&self, id: &str, info: &InstanceInfo) {
+        self.unregister_session_db_handle(id);
         if info.persistent {
             info!(id, "persistent VM process died, preserving session dir");
         } else {
@@ -1060,6 +1124,7 @@ impl ServiceState {
             // graceful shutdown regardless of who initiated it. Any
             // non-zero exit code or signal-kill is a crash.
             let removed = state_clone.instances.lock().unwrap().remove(&id_clone);
+            state_clone.unregister_session_db_handle(&id_clone);
             let clean_exit = exit_status.as_ref().is_some_and(|s| s.success());
             let unexpected_exit = removed.is_some() && !clean_exit;
 
@@ -1151,6 +1216,8 @@ impl ServiceState {
                 env: env.clone(),
             })?;
         }
+
+        self.register_session_db_handle(id, &session_dir)?;
 
         let mut instances = self.instances.lock().unwrap();
         instances.insert(
@@ -1357,9 +1424,12 @@ impl ServiceState {
             // Persistent VMs: remove from instances but keep session dir.
             tracing::warn!(name_clone, exit_status = ?exit_status, "resume_sandbox child exit handler removing instance");
             state_clone.instances.lock().unwrap().remove(&name_clone);
+            state_clone.unregister_session_db_handle(&name_clone);
             let _ = std::fs::remove_file(&uds_clone);
             let _ = std::fs::remove_file(uds_clone.with_extension("ready"));
         });
+
+        self.register_session_db_handle(name, &entry.session_dir)?;
 
         let mut instances = self.instances.lock().unwrap();
         instances.insert(
@@ -3385,7 +3455,7 @@ async fn handle_stats_detail(
     let session_dir = resolve_session_dir(&state, &id)?;
     let db_path = session_dir.join("session.db");
     let payload = if db_path.exists() {
-        read_stats_detail_payload_from_session_db(&id, &db_path).await?
+        read_stats_detail_payload_from_session_db(&state, &id, &db_path).await?
     } else {
         empty_stats_detail_payload()
     };
@@ -3602,15 +3672,10 @@ async fn handle_triage(
 
 async fn session_db_triage(
     vm_id: &str,
+    db: &capsem_logger::DbHandle,
     db_path: &std::path::Path,
     limit: usize,
 ) -> anyhow::Result<serde_json::Value> {
-    let db = capsem_logger::DbHandle::open(db_path).with_context(|| {
-        format!(
-            "failed to open session ledger for triage: {}",
-            db_path.display()
-        )
-    })?;
     db.ready()
         .await
         .map_err(|error| anyhow!("session triage ledger is not ready for {vm_id}: {error}"))?;
@@ -3662,10 +3727,10 @@ async fn session_db_triage(
         })
     }
 
-    let denied_net_v = read_query(&db, vm_id, db_path, "denied_net", &denied_net_sql).await?;
-    let tool_errors_v = read_query(&db, vm_id, db_path, "tool_errors", &tool_errors_sql).await?;
+    let denied_net_v = read_query(db, vm_id, db_path, "denied_net", &denied_net_sql).await?;
+    let tool_errors_v = read_query(db, vm_id, db_path, "tool_errors", &tool_errors_sql).await?;
     let exec_failures_v =
-        read_query(&db, vm_id, db_path, "exec_failures", &exec_failures_sql).await?;
+        read_query(db, vm_id, db_path, "exec_failures", &exec_failures_sql).await?;
 
     Ok(serde_json::json!({
         "denied_net": denied_net_v,
@@ -3706,11 +3771,14 @@ async fn triage_for_vm(
             return Ok(json!({ "missing": true, "reason": "session not found" }));
         }
     };
-    let db_path = session_dir.join("session.db");
+    let db_path = session_db_path_for_session_dir(&session_dir);
     if !db_path.exists() {
         return Ok(json!({ "missing": true, "reason": "session not found" }));
     }
-    let session = session_db_triage(vm_id, &db_path, limit)
+    let Some(db) = open_ready_session_db(state, vm_id, "triage", &db_path).await? else {
+        return Ok(json!({ "missing": true, "reason": "session not found" }));
+    };
+    let session = session_db_triage(vm_id, &db, &db_path, limit)
         .await
         .map_err(|error| {
             AppError(
@@ -6678,7 +6746,7 @@ async fn handle_timeline(
     let cutoff = since_filter.map(secs_to_rfc3339);
     let db_path = session_dir.join("session.db");
     let sql = timeline_base_sql();
-    let rows = read_timeline_rows_from_session_db(&id, &db_path, &sql)
+    let rows = read_timeline_rows_from_session_db(&state, &id, &db_path, &sql)
         .await?
         .unwrap_or_default()
         .into_iter()
@@ -6865,10 +6933,11 @@ fn ledger_route_error(
 }
 
 async fn open_ready_session_db(
+    state: &ServiceState,
     vm_id: &str,
     ledger: &str,
     db_path: &StdPath,
-) -> Result<Option<capsem_logger::DbHandle>, AppError> {
+) -> Result<Option<Arc<capsem_logger::DbHandle>>, AppError> {
     if !db_path.exists() {
         info!(
             vm_id,
@@ -6879,8 +6948,30 @@ async fn open_ready_session_db(
         );
         return Ok(None);
     }
-    let db = capsem_logger::DbHandle::open(db_path)
-        .map_err(|error| ledger_route_error(vm_id, ledger, "open", db_path, error))?;
+    let db = if let Some(handle) = state.session_db_handle(vm_id) {
+        handle
+    } else {
+        let session_dir = db_path.parent().ok_or_else(|| {
+            ledger_route_error(
+                vm_id,
+                ledger,
+                "resolve session dir",
+                db_path,
+                "missing parent",
+            )
+        })?;
+        let handle = state
+            .register_session_db_handle(vm_id, session_dir)
+            .map_err(|error| ledger_route_error(vm_id, ledger, "open", db_path, error))?;
+        info!(
+            vm_id,
+            ledger,
+            operation = "lazy_register_session_db_handle",
+            db_path = %db_path.display(),
+            "registered missing session DB handle for route"
+        );
+        handle
+    };
     db.ready()
         .await
         .map_err(|error| ledger_route_error(vm_id, ledger, "ready", db_path, error))?;
@@ -7081,10 +7172,11 @@ LIMIT 100
 "#;
 
 async fn read_security_session_ledger(
+    state: &ServiceState,
     vm_id: &str,
     db_path: &StdPath,
 ) -> Result<Option<SecuritySessionLedger>, AppError> {
-    let Some(db) = open_ready_session_db(vm_id, "security", db_path).await? else {
+    let Some(db) = open_ready_session_db(state, vm_id, "security", db_path).await? else {
         return Ok(None);
     };
     let latest = query_route_typed_rows::<capsem_logger::SecurityRuleEvent>(
@@ -7180,7 +7272,7 @@ async fn read_profile_security_ledgers(
     let mut ledgers = Vec::new();
     for (vm_id, session_dir) in profile_session_dirs(state, profile_id) {
         let Some(session) =
-            read_security_session_ledger(&vm_id, &session_dir.join("session.db")).await?
+            read_security_session_ledger(state, &vm_id, &session_dir.join("session.db")).await?
         else {
             continue;
         };
@@ -7255,10 +7347,11 @@ SELECT
 "#;
 
 async fn read_history_session_ledger(
+    state: &ServiceState,
     vm_id: &str,
     db_path: &StdPath,
 ) -> Result<Option<HistorySessionLedger>, AppError> {
-    let Some(db) = open_ready_session_db(vm_id, "history", db_path).await? else {
+    let Some(db) = open_ready_session_db(state, vm_id, "history", db_path).await? else {
         return Ok(None);
     };
     let mut entries = query_route_typed_rows::<capsem_logger::HistoryEntry>(
@@ -7467,11 +7560,12 @@ fn timeline_rows_from_query_json(raw: serde_json::Value) -> Vec<TimelineRow> {
 }
 
 async fn read_timeline_rows_from_session_db(
+    state: &ServiceState,
     vm_id: &str,
     db_path: &StdPath,
     sql: &str,
 ) -> Result<Option<Vec<TimelineRow>>, AppError> {
-    let Some(db) = open_ready_session_db(vm_id, "timeline", db_path).await? else {
+    let Some(db) = open_ready_session_db(state, vm_id, "timeline", db_path).await? else {
         return Ok(None);
     };
     let raw = query_route_db_json(
@@ -7511,10 +7605,11 @@ SELECT
 "#;
 
 async fn read_live_session_counters_from_session_db(
+    state: &ServiceState,
     vm_id: &str,
     db_path: &StdPath,
 ) -> Result<Option<LiveSessionCounters>, AppError> {
-    let Some(db) = open_ready_session_db(vm_id, "session counter", db_path).await? else {
+    let Some(db) = open_ready_session_db(state, vm_id, "session counter", db_path).await? else {
         return Ok(None);
     };
     let row = query_route_typed_rows::<LiveSessionCounterRow>(
@@ -7572,7 +7667,7 @@ async fn history_ledger_for_vm(
 ) -> Result<HistorySessionLedger, AppError> {
     let session_dir = resolve_session_dir(state, id)?;
     Ok(
-        read_history_session_ledger(id, &session_dir.join("session.db"))
+        read_history_session_ledger(state, id, &session_dir.join("session.db"))
             .await?
             .unwrap_or_default(),
     )
@@ -7788,10 +7883,11 @@ fn body_blob_map(rows: Vec<serde_json::Value>) -> serde_json::Value {
 }
 
 async fn read_stats_detail_payload_from_session_db(
+    state: &ServiceState,
     vm_id: &str,
     db_path: &StdPath,
 ) -> Result<serde_json::Value, AppError> {
-    let Some(db) = open_ready_session_db(vm_id, "stats_detail", db_path).await? else {
+    let Some(db) = open_ready_session_db(state, vm_id, "stats_detail", db_path).await? else {
         return Ok(empty_stats_detail_payload());
     };
     Ok(json!({
@@ -7868,7 +7964,9 @@ async fn apply_live_session_counters_from_ledger(
         Err(_) => return Ok(()),
     };
     let db_path = session_dir.join("session.db");
-    if let Some(counters) = read_live_session_counters_from_session_db(&info.id, &db_path).await? {
+    if let Some(counters) =
+        read_live_session_counters_from_session_db(state, &info.id, &db_path).await?
+    {
         let stats = &counters.stats;
         if stats.net_total > 0 {
             info.total_requests = Some(stats.net_total);
@@ -7886,7 +7984,7 @@ async fn apply_live_session_counters_from_ledger(
         }
     }
     let payload = if db_path.exists() {
-        read_stats_detail_payload_from_session_db(&info.id, &db_path).await?
+        read_stats_detail_payload_from_session_db(state, &info.id, &db_path).await?
     } else {
         return Ok(());
     };
@@ -7978,7 +8076,7 @@ async fn security_latest_for_vm(
 ) -> Result<Vec<capsem_logger::SecurityRuleEvent>, AppError> {
     let session_dir = resolve_session_dir(state, vm_id)?;
     let Some(session) =
-        read_security_session_ledger(vm_id, &session_dir.join("session.db")).await?
+        read_security_session_ledger(state, vm_id, &session_dir.join("session.db")).await?
     else {
         return Ok(Vec::new());
     };
@@ -7997,7 +8095,7 @@ async fn security_stats_for_vm(
 ) -> Result<capsem_logger::SecurityRuleStats, AppError> {
     let session_dir = resolve_session_dir(state, vm_id)?;
     Ok(
-        read_security_session_ledger(vm_id, &session_dir.join("session.db"))
+        read_security_session_ledger(state, vm_id, &session_dir.join("session.db"))
             .await?
             .map(|session| session.stats.clone())
             .unwrap_or_else(empty_security_rule_stats),
@@ -8021,7 +8119,7 @@ async fn handle_service_security_latest(
     let mut rows = Vec::new();
     for (vm_id, session_dir) in service_session_dirs(&state) {
         let Some(session) =
-            read_security_session_ledger(&vm_id, &session_dir.join("session.db")).await?
+            read_security_session_ledger(&state, &vm_id, &session_dir.join("session.db")).await?
         else {
             continue;
         };
@@ -8046,7 +8144,7 @@ async fn handle_service_detection_latest(
     let mut rows = Vec::new();
     for (vm_id, session_dir) in service_session_dirs(&state) {
         let Some(session) =
-            read_security_session_ledger(&vm_id, &session_dir.join("session.db")).await?
+            read_security_session_ledger(&state, &vm_id, &session_dir.join("session.db")).await?
         else {
             continue;
         };
@@ -8072,7 +8170,7 @@ async fn handle_service_security_status(
     let mut sessions = Vec::new();
     for (vm_id, session_dir) in service_session_dirs(&state) {
         let Some(session) =
-            read_security_session_ledger(&vm_id, &session_dir.join("session.db")).await?
+            read_security_session_ledger(&state, &vm_id, &session_dir.join("session.db")).await?
         else {
             continue;
         };
@@ -8090,7 +8188,7 @@ async fn handle_service_detection_status(
     let mut sessions = Vec::new();
     for (vm_id, session_dir) in service_session_dirs(&state) {
         let Some(session) =
-            read_security_session_ledger(&vm_id, &session_dir.join("session.db")).await?
+            read_security_session_ledger(&state, &vm_id, &session_dir.join("session.db")).await?
         else {
             continue;
         };
@@ -9767,6 +9865,7 @@ async fn shutdown_vm_process(
     // (idempotent).
     tracing::debug!(id, "shutdown_vm_process removing instance");
     state.instances.lock().unwrap().remove(id);
+    state.unregister_session_db_handle(id);
 
     // Wait for actual exit (poll_until + SIGKILL fallback), then clean up
     // sockets. Synchronous: callers must not see "shutdown returned" while
@@ -9910,6 +10009,7 @@ async fn handle_suspend(
 
     tracing::warn!(id, "handle_suspend (success) removing instance");
     state.instances.lock().unwrap().remove(&id);
+    state.unregister_session_db_handle(&id);
     let _ = std::fs::remove_file(&uds_path);
     let _ = std::fs::remove_file(uds_path.with_extension("ready"));
 
@@ -10217,6 +10317,7 @@ async fn handle_persist(
     {
         let mut instances = state.instances.lock().unwrap();
         if let Some(info) = instances.remove(&id) {
+            state.rename_session_db_handle(&id, name);
             instances.insert(
                 name.clone(),
                 InstanceInfo {
@@ -10965,6 +11066,7 @@ async fn main() -> Result<()> {
     );
     let state = Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
+        session_db_handles: Mutex::new(HashMap::new()),
         persistent_registry: Mutex::new(persistent_registry),
         process_binary: process_binary.clone(),
         assets_dir: assets_base_dir,
