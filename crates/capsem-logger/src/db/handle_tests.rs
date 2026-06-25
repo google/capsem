@@ -224,6 +224,60 @@ async fn db_flush_rehydrate_flushed_rows_survive_reopen() {
 }
 
 #[tokio::test]
+async fn db_rehydrates_from_disk_before_ready_succeeds() {
+    let p = temp_db_path("startup-rehydrate-existing-disk");
+    {
+        let conn = rusqlite::Connection::open(&p).expect("open disk fixture");
+        crate::schema::create_tables(&conn).expect("create disk schema");
+        conn.execute(
+            "INSERT INTO main.net_events (
+                event_id, timestamp, domain, port, decision, process_name, pid,
+                method, path, query, status_code,
+                bytes_sent, bytes_received, duration_ms, matched_rule,
+                request_headers, response_headers, request_body_preview, response_body_preview,
+                conn_type, policy_mode, policy_action, policy_rule, policy_reason,
+                trace_id, turn_id, credential_ref
+             )
+             VALUES (
+                'abcabcabcabc', '2026-06-25T00:00:00Z', 'startup-rehydrate.example', 443,
+                'allowed', 'fixture', 42, 'GET', '/disk', NULL, 200,
+                31, 41, 5, NULL, NULL, NULL, NULL, NULL, 'https',
+                'default', 'allow', 'profiles.rules.default_http', NULL,
+                'trace-startup-rehydrate', 'turn-startup-rehydrate', NULL
+             )",
+            [],
+        )
+        .expect("seed disk row before DB handle startup");
+    }
+
+    let db = DbHandle::open(&p).expect("open handle over existing disk rows");
+    db.ready()
+        .await
+        .expect("ready() must include DB-owned disk-to-memory rehydration");
+    let raw = db
+        .query(
+            "SELECT domain, decision, bytes_sent, bytes_received, trace_id, turn_id
+             FROM net_events WHERE domain = ?",
+            &[json!("startup-rehydrate.example")],
+        )
+        .await
+        .expect("query rehydrated disk row from memory view");
+    let value: serde_json::Value = serde_json::from_str(&raw).expect("query JSON");
+    assert_eq!(
+        value["rows"],
+        json!([[
+            "startup-rehydrate.example",
+            "allowed",
+            31,
+            41,
+            "trace-startup-rehydrate",
+            "turn-startup-rehydrate"
+        ]]),
+        "ready() must not succeed until existing disk rows are visible through the DB-owned memory query path"
+    );
+}
+
+#[tokio::test]
 async fn db_handle_query_binds_params_and_caps_rows() {
     let p = temp_db_path("query-binds-params-caps-rows");
     {

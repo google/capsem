@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   events persist exact rule/action/detection/trace/turn/credential fields.
 - Added a public `DbHandle::query` contract test proving bind parameters,
   deterministic column/row JSON, and the DB-owned route output cap.
+- Added a logger DB startup rehydration contract test proving existing disk
+  rows are visible through `query()` before `ready()` can be trusted by routes.
 - Added explicit logger DB contract tests with failure messages that point back
   to the DB boundary rationale when ready/query/write exactness regresses.
 - Added public `capsem-logger` DB handle contract docs and type aliases that
