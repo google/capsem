@@ -7918,7 +7918,7 @@ async fn session_db_handle_state_contract() {
 }
 
 #[tokio::test]
-async fn startup_rehydrates_session_db_handles() {
+async fn service_rehydrates_session_db_handles() {
     let (state, _dir) = make_test_state_with_tempdir();
     let session_dir = state.run_dir.join("sessions").join("startup-db-vm");
     std::fs::create_dir_all(&session_dir).unwrap();
@@ -7945,7 +7945,7 @@ async fn startup_rehydrates_session_db_handles() {
 }
 
 #[tokio::test]
-async fn session_status_reports_db_handle_readiness() {
+async fn status_reports_db_readiness() {
     let (state, _dir) = make_test_state_with_tempdir();
     let app = build_service_router(Arc::clone(&state));
     let session_dir = state.run_dir.join("sessions").join("status-db-vm");
