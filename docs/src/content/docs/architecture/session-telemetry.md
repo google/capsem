@@ -209,6 +209,9 @@ the model again with tool results. One `model_call_id` is one provider-exchange
 scope and carries that exchange's request, reasoning/thinking, response, token
 counts, and ordered `model_items`. It can emit zero or more `tool_call_id`
 values; this is the canonical one-to-many relationship for model-visible tools.
+Stated as the debugging invariant: one `model_call_id` can emit N
+`tool_call_id` values, and each emitted tool response must reuse that
+`tool_call_id`.
 A tool response must carry the same `tool_call_id` as the tool request. In the
 current SQLite schema, the persisted `tool_call_id` value is stored in
 `tool_calls.call_id` and `tool_responses.call_id`.
