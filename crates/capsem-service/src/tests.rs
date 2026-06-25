@@ -1306,7 +1306,19 @@ async fn security_routes_use_memory_projection_not_session_db() {
         .expect("security status uses memory projection");
     assert_eq!(stats.total, 1);
     assert_eq!(stats.by_action[0].rule_action, "allow");
+    assert_eq!(stats.by_action[0].count, 1);
+    assert_eq!(stats.by_event_type[0].event_type, "model.call");
+    assert_eq!(stats.by_event_type[0].count, 1);
     assert_eq!(stats.by_level[0].detection_level, "informational");
+    assert_eq!(stats.by_level[0].count, 1);
+    assert_eq!(
+        stats.by_rule[0].rule_id,
+        "profiles.rules.ai_ollama_model_api"
+    );
+    assert_eq!(stats.by_rule[0].rule_action, "allow");
+    assert_eq!(stats.by_rule[0].detection_level, "informational");
+    assert_eq!(stats.by_rule[0].count, 1);
+    assert_eq!(stats.by_rule[0].latest_event_id, "abcdef123456");
 }
 
 #[tokio::test]
@@ -7781,7 +7793,7 @@ async fn stats_detail_route_uses_memory_projection_not_session_db() {
     std::fs::rename(&db_path, session_dir.join("session.db.route-must-not-open")).unwrap();
 
     let (status, body) = route_request(
-        app,
+        app.clone(),
         axum::http::Method::GET,
         "/vms/stats-detail-vm/stats/detail",
         None,
@@ -7790,8 +7802,16 @@ async fn stats_detail_route_uses_memory_projection_not_session_db() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["model_stats"][0]["provider"], "google");
     assert_eq!(body["model_stats"][0]["model"], "gemini-3.5-flash");
+    assert_eq!(body["model_stats"][0]["call_count"], 1);
+    assert_eq!(body["model_stats"][0]["input_tokens"], 12);
+    assert_eq!(body["model_stats"][0]["output_tokens"], 7);
     assert_eq!(body["model_events"][0]["event_id"], "abc123abc123");
     assert_eq!(body["model_events"][0]["input_tokens"], 12);
+    assert_eq!(
+        body["model_events"].as_array().unwrap().len(),
+        body["model_stats"][0]["call_count"].as_u64().unwrap() as usize,
+        "model_stats.call_count must agree with projected model_events"
+    );
     assert!(body["model_events"][0]
         .get("request_body_preview")
         .is_none());
@@ -7799,9 +7819,17 @@ async fn stats_detail_route_uses_memory_projection_not_session_db() {
         .get("response_body_preview")
         .is_none());
     assert_eq!(body["tool_events"][0]["tool_name"], "Create");
+    assert_eq!(body["tool_events"][0]["call_id"], "tool-1");
+    assert_eq!(body["tool_events"][0]["source"], "native");
+    assert_eq!(body["tool_events"][0]["model_parent_missing"], 0);
+    assert!(body["tool_events"][0]["model_call_id"].as_i64().is_some());
     assert_eq!(
         body["tool_events"][0]["arguments"],
         r#"{"path":"/root/poem.md"}"#
+    );
+    assert_eq!(
+        body["tool_events"][0]["response_preview"],
+        "Wrote 4 lines to poem.md"
     );
     assert_eq!(body["http_events"][0]["event_id"], "def456def456");
     assert_eq!(
@@ -7848,6 +7876,157 @@ async fn stats_detail_route_uses_memory_projection_not_session_db() {
         body["body_blobs"]["def456def456"][1]["body"],
         r#"{"ok":true,"body":"full response body from gateway"}"#
     );
+
+    let (status, info) = route_request(
+        app,
+        axum::http::Method::GET,
+        "/vms/stats-detail-vm/info",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{info}");
+    assert_eq!(info["model_call_count"], 1);
+    assert_eq!(info["total_input_tokens"], 12);
+    assert_eq!(info["total_output_tokens"], 7);
+    assert_eq!(
+        info["total_tool_calls"],
+        body["tool_events"].as_array().unwrap().len() as u64,
+        "session info counters must agree with stats/detail tool_events"
+    );
+}
+
+#[tokio::test]
+async fn stats_detail_projection_exposes_orphan_tool_parent_inconsistency() {
+    let state = make_test_state();
+    let app = build_service_router(Arc::clone(&state));
+    let dir = tempfile::tempdir().unwrap();
+    let session_dir = dir
+        .path()
+        .join("sessions")
+        .join("projection-inconsistent-vm");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    insert_fake_instance_with_session_dir(
+        &state,
+        "projection-inconsistent-vm",
+        std::process::id(),
+        session_dir.clone(),
+    );
+
+    let db_path = session_dir.join("session.db");
+    let writer = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
+    writer.shutdown_blocking();
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    conn.execute(
+        "INSERT INTO tool_calls (
+            event_id, timestamp, model_call_id, provider, status, call_index,
+            call_id, tool_name, arguments, origin, server_name, method,
+            decision, duration_ms, trace_id, turn_id, credential_ref
+         ) VALUES (
+            ?1, ?2, ?3, ?4, ?5, ?6,
+            ?7, ?8, ?9, ?10, ?11, ?12,
+            ?13, ?14, ?15, ?16, ?17
+         )",
+        rusqlite::params![
+            "badbad000001",
+            "2026-06-24T01:02:03Z",
+            99_999_i64,
+            "google",
+            "observed",
+            0_i64,
+            "orphan-tool",
+            "Write",
+            r#"{"path":"/root/orphan.md","content":"projection proof"}"#,
+            "model",
+            "model",
+            "tool.call",
+            "allowed",
+            13_i64,
+            "trace-orphan-tool",
+            "trace-orphan-tool",
+            "credential:blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        ],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO tool_responses (
+            model_call_id, call_id, content_preview, is_error, trace_id, turn_id,
+            credential_ref
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        rusqlite::params![
+            99_999_i64,
+            "orphan-tool",
+            "Wrote orphan.md",
+            0_i64,
+            "trace-orphan-tool",
+            "trace-orphan-tool",
+            "credential:blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        ],
+    )
+    .unwrap();
+    drop(conn);
+
+    rebuild_stats_detail_route_projection(&state).expect("stats detail projection hydrates");
+    rebuild_timeline_route_projection(&state).expect("timeline projection hydrates");
+    std::fs::rename(&db_path, session_dir.join("session.db.route-must-not-open")).unwrap();
+
+    let (status, body) = route_request(
+        app.clone(),
+        axum::http::Method::GET,
+        "/vms/projection-inconsistent-vm/stats/detail",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["model_events"].as_array().unwrap().len(), 0);
+    assert_eq!(body["model_stats"].as_array().unwrap().len(), 0);
+    assert_eq!(body["tool_events"].as_array().unwrap().len(), 1);
+    let tool = &body["tool_events"][0];
+    assert_eq!(tool["event_id"], "badbad000001");
+    assert_eq!(tool["call_id"], "orphan-tool");
+    assert_eq!(tool["model_call_id"], 99_999);
+    assert_eq!(tool["model_parent_missing"], 1);
+    assert_eq!(tool["source"], "model");
+    assert_eq!(tool["server_name"], "model");
+    assert_eq!(tool["tool_name"], "Write");
+    assert_eq!(
+        tool["arguments"],
+        r#"{"path":"/root/orphan.md","content":"projection proof"}"#
+    );
+    assert_eq!(tool["response_preview"], "Wrote orphan.md");
+    assert_eq!(
+        tool["credential_ref"],
+        "credential:blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    );
+
+    let (status, info) = route_request(
+        app.clone(),
+        axum::http::Method::GET,
+        "/vms/projection-inconsistent-vm/info",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{info}");
+    assert_eq!(info["total_tool_calls"], 1);
+    assert!(
+        info.get("model_call_count").is_none()
+            || info["model_call_count"] == serde_json::Value::Null,
+        "orphan tool diagnostics must not invent a model count"
+    );
+
+    let (status, timeline) = route_request(
+        app,
+        axum::http::Method::GET,
+        "/vms/projection-inconsistent-vm/timeline?trace_id=trace-orphan-tool&layers=tool&limit=20",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{timeline}");
+    let rows = timeline["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{timeline}");
+    assert_eq!(rows[0][1], "tool");
+    assert_eq!(rows[0][3], "model/Write (call_id=orphan-tool)");
+    assert_eq!(rows[0][4], "allowed");
+    assert_eq!(rows[0][6], "trace-orphan-tool");
 }
 
 // -----------------------------------------------------------------------

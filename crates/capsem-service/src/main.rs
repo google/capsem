@@ -7883,8 +7883,9 @@ LIMIT 200
 
 const STATS_DETAIL_TOOL_EVENTS_SQL: &str = r#"
 SELECT event_id, timestamp, process_name, server_name, tool_name, method, call_id,
+       model_call_id, model_parent_missing,
        decision, duration_ms, bytes, arguments, response_preview,
-       error_message, source
+       error_message, source, credential_ref
 FROM (
     SELECT tc.event_id,
            COALESCE(NULLIF(tc.timestamp, ''), mc.timestamp) AS timestamp,
@@ -7893,13 +7894,19 @@ FROM (
            tc.tool_name,
            tc.method,
            tc.call_id,
+           tc.model_call_id,
+           CASE
+               WHEN tc.model_call_id IS NOT NULL AND mc.id IS NULL THEN 1
+               ELSE 0
+           END AS model_parent_missing,
            tc.decision,
            COALESCE(tc.duration_ms, mc.duration_ms, 0) AS duration_ms,
            COALESCE(LENGTH(tc.arguments), 0) + COALESCE(LENGTH(COALESCE(tc.response_preview, tr.content_preview)), 0) AS bytes,
            tc.arguments,
            COALESCE(tc.response_preview, tr.content_preview) AS response_preview,
            tc.error_message,
-           tc.origin AS source
+           tc.origin AS source,
+           COALESCE(tc.credential_ref, tr.credential_ref) AS credential_ref
     FROM tool_calls tc
     LEFT JOIN model_calls mc ON tc.model_call_id = mc.id
     LEFT JOIN tool_responses tr ON tc.call_id = tr.call_id

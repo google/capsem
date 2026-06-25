@@ -44,3 +44,4 @@ workspace = true
 tempfile = "3"
 filetime = "0.2"
 tower = { version = "0.5", features = ["util"] }
+rusqlite = { workspace = true }
