@@ -48,7 +48,7 @@ The model/tool contract is intentionally one ledger:
 - MCP protocol facts are typed security events. MCP-origin `tools/call` activity must appear in `tool_calls` with `origin = 'mcp'`.
 - One `model_calls.id` can emit many `tool_calls.call_id` values. The tool response must reuse the same `call_id`; MCP can enrich that same logical call, but it does not create a second product ledger.
 
-### Identity graph
+### Identity Graph
 
 Use this graph when correlating model, tool, and security rows:
 
@@ -58,33 +58,36 @@ flowchart TD
     Trace["trace_id<br/>causal runtime chain"]
     Turn["turn_id<br/>one user-visible agent turn<br/>user input + all resulting work"]
 
-    Model1["model_call_id = model_calls.id<br/>one provider request + response #1"]
-    Model2["model_call_id = model_calls.id<br/>one provider request + response #2"]
-    ModelItems1["model_items<br/>request, reasoning, response, tool_call"]
-    ModelItems2["model_items<br/>request, tool_response, reasoning, response"]
+    Model1["model_call_id = model_calls.id<br/>provider exchange #1<br/>request + thinking + response"]
+    Model2["model_call_id = model_calls.id<br/>provider exchange #2<br/>request + thinking + response"]
+    ModelItems1["model_items for Model1<br/>request, reasoning, response, tool_call"]
+    ModelItems2["model_items for Model2<br/>tool_response, request, reasoning, response"]
 
     Tool1["tool_call_id = tool_calls.call_id<br/>logical tool invocation"]
     Tool2["tool_call_id = tool_calls.call_id<br/>logical tool invocation"]
     ToolResponse1["tool_responses.call_id<br/>same tool_call_id as Tool1"]
     ToolResponse2["tool_responses.call_id<br/>same tool_call_id as Tool2"]
+    McpFacts["MCP transport facts<br/>origin/type enrichment on same tool_call_id"]
 
-    EventRows["event_id rows<br/>http, dns, file, process, credential, security"]
+    EventRows["event_id rows<br/>http, dns, model, tool, file, process, credential, security"]
     BodyBlobs["event_body_blobs<br/>full request/response bodies by event_id"]
     SecurityRows["security_rule_events<br/>rule matches by event_id"]
-    ProviderIds["provider response_id / message_id<br/>metadata only"]
+    ProviderIds["provider response_id / message_id / transport ids<br/>metadata only"]
 
     Session --> Trace
     Trace --> Turn
     Turn -->|"can contain N"| Model1
     Turn -->|"can contain N"| Model2
 
-    Model1 --> ModelItems1
-    Model2 --> ModelItems2
-    Model1 -->|"can emit N"| Tool1
-    Model1 -->|"can emit N"| Tool2
+    Model1 -->|"owns ordered items"| ModelItems1
+    Model2 -->|"owns ordered items"| ModelItems2
+    Model1 -->|"can emit 0..N"| Tool1
+    Model1 -->|"can emit 0..N"| Tool2
 
     Tool1 --> ToolResponse1
     Tool2 --> ToolResponse2
+    McpFacts -.->|"must enrich, not duplicate"| Tool1
+    McpFacts -.->|"must enrich, not duplicate"| Tool2
     ToolResponse1 -->|"usually consumed by later model call"| Model2
     ToolResponse2 -->|"usually consumed by later model call"| Model2
 
@@ -109,9 +112,9 @@ Definitions:
   response, and every emitted HTTP/DNS/file/process/security row caused by it.
 - `model_call_id` is the `model_calls.id` value for exactly one provider
   request/response exchange inside a turn. It owns that exchange's request,
-  reasoning/thinking, response, and model-emitted tool-call items. It is not the
-  whole user turn; a single `turn_id` can contain multiple `model_call_id`
-  values.
+  reasoning/thinking, response, model-emitted tool-call items, token counts, and
+  provider metadata. It is not the whole user turn; a single `turn_id` can
+  contain multiple `model_call_id` values.
 - `tool_call_id` identifies one logical tool invocation across model-native
   tools, MCP transport, Capsem built-ins, and local tools. In SQLite it is stored
   as `tool_calls.call_id` and `tool_responses.call_id`.
@@ -122,9 +125,15 @@ transport metadata. They are not Capsem's join contract.
 One `turn_id` is the user-input scope. It can contain multiple
 `model_call_id` values when an agent calls the model, executes tools, then calls
 the model again with tool results. One `model_call_id` is one provider-exchange
-scope and can emit zero or more `tool_call_id` values; this is the canonical
-one-to-many relationship for model-visible tools. A tool response must carry the
-same `tool_call_id` as the tool request.
+scope and carries that exchange's request, reasoning/thinking, response, token
+counts, and ordered `model_items`. It can emit zero or more `tool_call_id`
+values; this is the canonical one-to-many relationship for model-visible tools.
+A tool response must carry the same `tool_call_id` as the tool request.
+
+MCP is not a second user-facing tool ledger. MCP-origin `tools/call` activity
+must resolve to a `tool_calls` row with `origin = 'mcp'` or enrich an existing
+logical `tool_call_id`. An MCP call observed without a corresponding logical
+tool call is an integrity/security finding, not a separate product counter.
 
 Key cardinalities:
 
