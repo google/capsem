@@ -2,6 +2,9 @@ use std::collections::BTreeSet;
 
 use rusqlite::{Connection, OptionalExtension};
 
+const MEMORY_SCHEMA: &str = "mem";
+const DISK_ONLY_TABLES: &[&str] = &["event_body_blobs"];
+
 const CREDENTIAL_REF_CHECK: &str =
     "CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))";
 const SUBSTITUTION_REF_CHECK: &str =
@@ -441,6 +444,65 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(CREATE_SCHEMA)
 }
 
+/// Attach the DB-owned in-memory schema and mirror hot ledger tables into it.
+///
+/// The canonical schema remains the disk schema. The memory schema is derived
+/// from `main.sqlite_master` so table shape cannot drift into a second hand
+/// written contract. Blob storage stays disk-owned and bounded.
+pub fn create_memory_tables(conn: &Connection) -> rusqlite::Result<()> {
+    attach_memory_schema(conn)?;
+
+    let mut stmt = conn.prepare(
+        "SELECT name, sql
+         FROM main.sqlite_master
+         WHERE type = 'table'
+           AND name NOT LIKE 'sqlite_%'
+         ORDER BY name",
+    )?;
+    let tables = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+
+    for table in tables {
+        let (name, sql) = table?;
+        if is_disk_only_table(&name) {
+            continue;
+        }
+        let mem_sql = memory_table_sql(&name, &sql)
+            .ok_or_else(|| rusqlite::Error::InvalidParameterName(name.clone()))?;
+        conn.execute_batch(&mem_sql)?;
+    }
+
+    Ok(())
+}
+
+fn attach_memory_schema(conn: &Connection) -> rusqlite::Result<()> {
+    let mut stmt = conn.prepare("PRAGMA database_list")?;
+    let databases = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    for database in databases {
+        if database? == MEMORY_SCHEMA {
+            return Ok(());
+        }
+    }
+    conn.execute_batch(&format!("ATTACH DATABASE ':memory:' AS {MEMORY_SCHEMA}"))
+}
+
+fn is_disk_only_table(name: &str) -> bool {
+    DISK_ONLY_TABLES.contains(&name)
+}
+
+fn memory_table_sql(table: &str, sql: &str) -> Option<String> {
+    let create = format!("CREATE TABLE {table}");
+    let create_if_not_exists = format!("CREATE TABLE IF NOT EXISTS {table}");
+    if let Some(rest) = sql.strip_prefix(&create_if_not_exists) {
+        return Some(format!(
+            "CREATE TABLE IF NOT EXISTS {MEMORY_SCHEMA}.{table}{rest}"
+        ));
+    }
+    sql.strip_prefix(&create)
+        .map(|rest| format!("CREATE TABLE IF NOT EXISTS {MEMORY_SCHEMA}.{table}{rest}"))
+}
+
 /// Apply write-mode pragmas: WAL journal + relaxed synchronous.
 /// Only call on read-write connections (the writer).
 pub fn apply_pragmas(conn: &Connection) -> rusqlite::Result<()> {
@@ -629,26 +691,46 @@ pub fn validate_ready_schema(conn: &Connection) -> Result<(), String> {
     }
 
     for (table, required_columns) in READY_SCHEMA_COLUMNS {
-        let mut stmt = conn
-            .prepare(&format!("PRAGMA table_info({table})"))
-            .map_err(|error| format!("failed to inspect table {table}: {error}"))?;
-        let columns = stmt
-            .query_map([], |row| row.get::<_, String>(1))
-            .map_err(|error| format!("failed to inspect table {table}: {error}"))?
-            .collect::<Result<BTreeSet<_>, _>>()
-            .map_err(|error| format!("failed to inspect table {table}: {error}"))?;
-        if columns.is_empty() {
-            return Err(format!("session db missing required table {table}"));
-        }
-        for column in *required_columns {
-            if !columns.contains(*column) {
-                return Err(format!(
-                    "session db table {table} missing required column {column}"
-                ));
-            }
+        validate_table_columns(conn, "main", table, required_columns)?;
+        if !is_disk_only_table(table) {
+            validate_table_columns(conn, MEMORY_SCHEMA, table, required_columns)?;
         }
     }
 
+    Ok(())
+}
+
+fn validate_table_columns(
+    conn: &Connection,
+    schema: &str,
+    table: &str,
+    required_columns: &[&str],
+) -> Result<(), String> {
+    let pragma = if schema == "main" {
+        format!("PRAGMA table_info({table})")
+    } else {
+        format!("PRAGMA {schema}.table_info({table})")
+    };
+    let mut stmt = conn
+        .prepare(&pragma)
+        .map_err(|error| format!("failed to inspect table {schema}.{table}: {error}"))?;
+    let columns = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| format!("failed to inspect table {schema}.{table}: {error}"))?
+        .collect::<Result<BTreeSet<_>, _>>()
+        .map_err(|error| format!("failed to inspect table {schema}.{table}: {error}"))?;
+    if columns.is_empty() {
+        return Err(format!(
+            "session db missing required table {schema}.{table}"
+        ));
+    }
+    for column in required_columns {
+        if !columns.contains(*column) {
+            return Err(format!(
+                "session db table {schema}.{table} missing required column {column}"
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -1242,8 +1324,11 @@ pub fn migrate(conn: &Connection) {
     ));
 }
 
-/// Apply read-safe pragmas for read-only connections.
-/// WAL mode is inherited from the file; no write pragmas needed.
+/// Apply read-safe pragmas for DB-owned query connections.
+///
+/// These connections may be opened read-write briefly so the DB layer can
+/// attach and populate its private `mem` schema. After setup, `query_only`
+/// prevents writes through the read worker.
 pub fn apply_reader_pragmas(conn: &Connection) -> rusqlite::Result<()> {
     conn.pragma_update(None, "query_only", "ON")?;
     Ok(())
@@ -1252,6 +1337,20 @@ pub fn apply_reader_pragmas(conn: &Connection) -> rusqlite::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::OpenFlags;
+
+    fn columns_for_schema(conn: &Connection, schema: &str, table: &str) -> BTreeSet<String> {
+        let pragma = if schema == "main" {
+            format!("PRAGMA table_info({table})")
+        } else {
+            format!("PRAGMA {schema}.table_info({table})")
+        };
+        let mut stmt = conn.prepare(&pragma).unwrap();
+        stmt.query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<BTreeSet<_>, _>>()
+            .unwrap()
+    }
 
     #[test]
     fn create_tables_succeeds() {
@@ -1264,6 +1363,71 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         create_tables(&conn).unwrap();
         create_tables(&conn).unwrap();
+    }
+
+    #[test]
+    fn db_mem_disk_create_memory_tables_mirrors_hot_ledger_schema() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        migrate(&conn);
+        create_memory_tables(&conn).unwrap();
+
+        for (table, _) in READY_SCHEMA_COLUMNS {
+            let main_columns = columns_for_schema(&conn, "main", table);
+            if is_disk_only_table(table) {
+                let mem_columns = columns_for_schema(&conn, MEMORY_SCHEMA, table);
+                assert!(
+                    mem_columns.is_empty(),
+                    "{table} must stay disk-only; blob payloads are bounded durable storage, not DB-owned hot memory tables"
+                );
+                continue;
+            }
+            let mem_columns = columns_for_schema(&conn, MEMORY_SCHEMA, table);
+            assert_eq!(
+                mem_columns, main_columns,
+                "{MEMORY_SCHEMA}.{table} must mirror main.{table}; memory schema is derived from the canonical disk schema"
+            );
+        }
+    }
+
+    #[test]
+    fn db_mem_disk_ready_rejects_missing_memory_schema() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        migrate(&conn);
+
+        let error = validate_ready_schema(&conn)
+            .expect_err("ready() must fail if DB-owned memory tables were not created");
+        assert!(
+            error.contains("mem.net_events"),
+            "missing memory schema must fail loudly instead of route projections hiding stale state: {error}"
+        );
+    }
+
+    #[test]
+    fn db_mem_disk_memory_tables_work_before_query_only_guard() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            apply_pragmas(&conn).unwrap();
+            create_tables(&conn).unwrap();
+            migrate(&conn);
+        }
+
+        let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+        let conn = Connection::open_with_flags(&path, flags).unwrap();
+        create_memory_tables(&conn).unwrap();
+        apply_reader_pragmas(&conn).unwrap();
+        validate_ready_schema(&conn)
+            .expect("query-only connection must still own its DB-local memory schema");
+        let error = conn
+            .execute("INSERT INTO mem.net_events (timestamp, domain, decision) VALUES ('t', 'example.com', 'allowed')", [])
+            .expect_err("query_only must prevent writes after DB-owned memory setup");
+        assert!(
+            error.to_string().contains("readonly"),
+            "query_only should make the reader worker effectively read-only after setup: {error}"
+        );
     }
 
     #[test]

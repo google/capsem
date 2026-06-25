@@ -202,6 +202,7 @@ impl DbWriter {
         schema::apply_pragmas(&conn)?;
         schema::create_tables(&conn)?;
         schema::migrate(&conn);
+        schema::create_memory_tables(&conn)?;
 
         let (tx, rx) = tokio::sync::mpsc::channel(capacity);
         let db_path = path.to_path_buf();
@@ -224,6 +225,7 @@ impl DbWriter {
         schema::apply_pragmas(&conn)?;
         schema::create_tables(&conn)?;
         schema::migrate(&conn);
+        schema::create_memory_tables(&conn)?;
 
         let (tx, rx) = tokio::sync::mpsc::channel(capacity);
 

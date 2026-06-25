@@ -350,18 +350,22 @@ pub fn validate_select_only(sql: &str) -> Result<(), String> {
     }
 }
 
-/// Read-only connection to the session database.
+/// Query-only connection to the session database.
 ///
-/// Opened in WAL mode for concurrent access with the writer thread.
+/// The DB layer opens the file read-write long enough to attach and populate
+/// its private `mem` schema, then enables SQLite `query_only`. Callers never
+/// receive the connection and `DbHandle::query` still rejects non-read SQL
+/// before execution.
 pub struct DbReader {
     conn: Connection,
 }
 
 impl DbReader {
-    /// Open a read-only connection to the given DB file.
+    /// Open a query-only connection to the given DB file.
     pub fn open(path: &Path) -> rusqlite::Result<Self> {
-        let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+        let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX;
         let conn = Connection::open_with_flags(path, flags)?;
+        schema::create_memory_tables(&conn)?;
         schema::apply_reader_pragmas(&conn)?;
         Ok(Self { conn })
     }
@@ -372,6 +376,7 @@ impl DbReader {
         let conn = Connection::open_in_memory()?;
         schema::apply_pragmas(&conn)?; // in-memory is read-write, pragmas are fine
         schema::create_tables(&conn)?;
+        schema::create_memory_tables(&conn)?;
         Ok(Self { conn })
     }
 
@@ -414,10 +419,8 @@ impl DbReader {
         const PROGRESS_OPS: i32 = 10_000;
 
         let deadline = Instant::now() + Duration::from_millis(TIMEOUT_MS);
-        self.conn.progress_handler(
-            PROGRESS_OPS,
-            Some(move || Instant::now() >= deadline),
-        );
+        self.conn
+            .progress_handler(PROGRESS_OPS, Some(move || Instant::now() >= deadline));
         let result = run_query();
         self.conn.progress_handler(0, None::<fn() -> bool>);
 
