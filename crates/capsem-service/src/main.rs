@@ -3608,8 +3608,8 @@ async fn handle_triage(
 }
 
 fn session_db_triage(db_path: &std::path::Path, limit: usize) -> anyhow::Result<serde_json::Value> {
-    let db = capsem_logger::DbHandle::open(db_path);
-    db.ready().with_context(|| {
+    let db = capsem_logger::DbHandle::open(db_path)?;
+    db.ready_blocking().with_context(|| {
         format!(
             "failed to open session ledger for triage: {}",
             db_path.display()
@@ -3635,7 +3635,7 @@ fn session_db_triage(db_path: &std::path::Path, limit: usize) -> anyhow::Result<
     );
 
     let read_query = |query_name: &str, sql: &str| -> anyhow::Result<serde_json::Value> {
-        let raw = db.query_raw(sql).map_err(|error| {
+        let raw = db.query_raw_blocking(sql).map_err(|error| {
             error!(
                 query_name,
                 db_path = %db_path.display(),
@@ -6858,17 +6858,18 @@ fn read_security_session_ledger(
     if !db_path.exists() {
         return Ok(None);
     }
-    let db = capsem_logger::DbHandle::open(db_path);
-    db.ready()
+    let db = capsem_logger::DbHandle::open(db_path)
+        .map_err(|error| ledger_route_error(vm_id, "security", "open", db_path, error))?;
+    db.ready_blocking()
         .map_err(|error| ledger_route_error(vm_id, "security", "open", db_path, error))?;
     let latest = db
-        .with_reader(|reader| reader.recent_security_rule_events(2000))
+        .with_reader_blocking(|reader| reader.recent_security_rule_events(2000))
         .map_err(|error| ledger_route_error(vm_id, "security", "read latest", db_path, error))?;
     let stats = db
-        .with_reader(|reader| reader.security_rule_stats())
+        .with_reader_blocking(|reader| reader.security_rule_stats())
         .map_err(|error| ledger_route_error(vm_id, "security", "read stats", db_path, error))?;
     let brokered_credentials = db
-        .with_reader(|reader| reader.brokered_credential_stats())
+        .with_reader_blocking(|reader| reader.brokered_credential_stats())
         .map_err(|error| {
             ledger_route_error(
                 vm_id,
@@ -6927,17 +6928,18 @@ fn read_history_session_ledger(
     if !db_path.exists() {
         return Ok(None);
     }
-    let db = capsem_logger::DbHandle::open(db_path);
-    db.ready()
+    let db = capsem_logger::DbHandle::open(db_path)
+        .map_err(|error| ledger_route_error(vm_id, "history", "open", db_path, error))?;
+    db.ready_blocking()
         .map_err(|error| ledger_route_error(vm_id, "history", "open", db_path, error))?;
     let (entries, _) = db
-        .with_reader(|reader| reader.history(usize::MAX, 0, None, "all"))
+        .with_reader_blocking(|reader| reader.history(usize::MAX, 0, None, "all"))
         .map_err(|error| ledger_route_error(vm_id, "history", "read entries", db_path, error))?;
     let processes = db
-        .with_reader(|reader| reader.history_processes(i64::MAX as usize))
+        .with_reader_blocking(|reader| reader.history_processes(i64::MAX as usize))
         .map_err(|error| ledger_route_error(vm_id, "history", "read processes", db_path, error))?;
     let counts = db
-        .with_reader(|reader| reader.history_counts())
+        .with_reader_blocking(|reader| reader.history_counts())
         .map_err(|error| ledger_route_error(vm_id, "history", "read counts", db_path, error))?;
     Ok(Some(HistorySessionLedger {
         entries,
@@ -7092,11 +7094,12 @@ fn read_timeline_rows_from_session_db(
     if !db_path.exists() {
         return Ok(None);
     }
-    let db = capsem_logger::DbHandle::open(db_path);
-    db.ready()
+    let db = capsem_logger::DbHandle::open(db_path)
+        .map_err(|error| ledger_route_error(vm_id, "timeline", "open", db_path, error))?;
+    db.ready_blocking()
         .map_err(|error| ledger_route_error(vm_id, "timeline", "open", db_path, error))?;
     let raw = db
-        .query_raw(sql)
+        .query_raw_blocking(sql)
         .map_err(|error| ledger_route_error(vm_id, "timeline", "query", db_path, error))?;
     let raw = serde_json::from_str::<serde_json::Value>(&raw).map_err(|error| {
         error!(
@@ -7122,11 +7125,12 @@ fn read_live_session_counters_from_session_db(
     if !db_path.exists() {
         return Ok(None);
     }
-    let db = capsem_logger::DbHandle::open(db_path);
-    db.ready()
+    let db = capsem_logger::DbHandle::open(db_path)
+        .map_err(|error| ledger_route_error(vm_id, "session counter", "open", db_path, error))?;
+    db.ready_blocking()
         .map_err(|error| ledger_route_error(vm_id, "session counter", "open", db_path, error))?;
     let stats = db
-        .with_reader(|reader| reader.session_stats())
+        .with_reader_blocking(|reader| reader.session_stats())
         .map_err(|error| {
             ledger_route_error(vm_id, "session counter", "read stats", db_path, error)
         })?;
@@ -7328,7 +7332,7 @@ fn query_raw_objects(
     query_name: &str,
     sql: &str,
 ) -> Result<Vec<serde_json::Value>, AppError> {
-    let raw = db.query_raw(sql).map_err(|error| {
+    let raw = db.query_raw_blocking(sql).map_err(|error| {
         error!(
             vm_id,
             ledger = "stats_detail",
@@ -7411,8 +7415,9 @@ fn read_stats_detail_payload_from_session_db(
     vm_id: &str,
     db_path: &StdPath,
 ) -> Result<serde_json::Value, AppError> {
-    let db = capsem_logger::DbHandle::open(db_path);
-    db.ready()
+    let db = capsem_logger::DbHandle::open(db_path)
+        .map_err(|error| ledger_route_error(vm_id, "stats_detail", "open", db_path, error))?;
+    db.ready_blocking()
         .map_err(|error| ledger_route_error(vm_id, "stats_detail", "open", db_path, error))?;
     Ok(json!({
         "model_stats": query_raw_objects(vm_id, db_path, &db, "model_stats", STATS_DETAIL_MODEL_STATS_SQL)?,

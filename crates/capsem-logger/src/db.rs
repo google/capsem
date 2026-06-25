@@ -1,32 +1,219 @@
 use std::path::{Path, PathBuf};
+use std::sync::{mpsc, Arc, Mutex};
+use std::thread::JoinHandle;
+use std::time::Instant;
 
 use crate::reader::DbReader;
-use crate::writer::DbWriter;
+use crate::writer::{DbWriter, WriteOp};
+
+type DbResult<T> = Result<T, String>;
+
+fn elapsed_ms(started: Instant) -> u128 {
+    started.elapsed().as_millis()
+}
+
+fn sql_fingerprint(sql: &str) -> String {
+    let hash = blake3::hash(sql.as_bytes()).to_hex();
+    hash[..12].to_string()
+}
+
+enum ReadRequest {
+    Ready {
+        reply: tokio::sync::oneshot::Sender<DbResult<()>>,
+    },
+    Query {
+        sql: String,
+        params: Vec<serde_json::Value>,
+        reply: tokio::sync::oneshot::Sender<DbResult<String>>,
+    },
+    Shutdown,
+}
 
 /// Convenience wrapper that owns the DB path and creates writer/reader instances.
 pub struct SessionDb {
     path: PathBuf,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct DbHandle {
+    inner: Arc<DbHandleInner>,
+}
+
+struct DbHandleInner {
     path: PathBuf,
+    reader_tx: mpsc::Sender<ReadRequest>,
+    reader_join: Mutex<Option<JoinHandle<()>>>,
+    writer: Arc<DbWriter>,
+}
+
+impl Drop for DbHandleInner {
+    fn drop(&mut self) {
+        let _ = self.reader_tx.send(ReadRequest::Shutdown);
+        if let Some(handle) = self.reader_join.lock().unwrap().take() {
+            let _ = handle.join();
+        }
+    }
 }
 
 impl DbHandle {
-    pub fn open(path: &Path) -> Self {
-        Self {
-            path: path.to_path_buf(),
-        }
+    /// Open the session DB handle.
+    ///
+    /// This is the public DB boundary for ledger routes: callers own query
+    /// intent, while the handle owns SQLite execution, the reader worker, and
+    /// the writer queue. Later mem/disk acceleration remains hidden behind
+    /// this same API.
+    pub fn open(path: &Path) -> rusqlite::Result<Self> {
+        let started = Instant::now();
+        let writer = Arc::new(DbWriter::open(path, 1024)?);
+        DbReader::open(path)?;
+
+        let (reader_tx, reader_rx) = mpsc::channel();
+        let db_path = path.to_path_buf();
+        let reader_path = db_path.clone();
+        let reader_join = std::thread::Builder::new()
+            .name("capsem-db-reader".into())
+            .spawn(move || reader_loop(reader_path, reader_rx))
+            .expect("failed to spawn db reader thread");
+
+        tracing::debug!(
+            db_path = %db_path.display(),
+            operation = "open",
+            duration_ms = elapsed_ms(started),
+            "session db handle opened"
+        );
+
+        Ok(Self {
+            inner: Arc::new(DbHandleInner {
+                path: db_path,
+                reader_tx,
+                reader_join: Mutex::new(Some(reader_join)),
+                writer,
+            }),
+        })
     }
 
-    pub fn ready(&self) -> rusqlite::Result<()> {
-        match DbReader::open(&self.path) {
+    pub fn path(&self) -> &Path {
+        &self.inner.path
+    }
+
+    pub async fn ready(&self) -> DbResult<()> {
+        let started = Instant::now();
+        let (reply, rx) = tokio::sync::oneshot::channel();
+        self.inner
+            .reader_tx
+            .send(ReadRequest::Ready { reply })
+            .map_err(|error| {
+                tracing::error!(
+                    db_path = %self.inner.path.display(),
+                    operation = "ready",
+                    duration_ms = elapsed_ms(started),
+                    error = %error,
+                    "session db handle operation failed"
+                );
+                format!("db reader worker closed: {error}")
+            })?;
+        let result = rx
+            .await
+            .map_err(|error| format!("db reader worker dropped ready reply: {error}"))?;
+        match &result {
+            Ok(()) => tracing::debug!(
+                db_path = %self.inner.path.display(),
+                operation = "ready",
+                duration_ms = elapsed_ms(started),
+                "session db handle operation completed"
+            ),
+            Err(error) => tracing::error!(
+                db_path = %self.inner.path.display(),
+                operation = "ready",
+                duration_ms = elapsed_ms(started),
+                error = %error,
+                "session db handle operation failed"
+            ),
+        }
+        result
+    }
+
+    pub async fn query(&self, sql: &str, params: &[serde_json::Value]) -> DbResult<String> {
+        let started = Instant::now();
+        let sql_hash = sql_fingerprint(sql);
+        let params_count = params.len();
+        let (reply, rx) = tokio::sync::oneshot::channel();
+        self.inner
+            .reader_tx
+            .send(ReadRequest::Query {
+                sql: sql.to_string(),
+                params: params.to_vec(),
+                reply,
+            })
+            .map_err(|error| {
+                tracing::error!(
+                    db_path = %self.inner.path.display(),
+                    operation = "query",
+                    sql_hash,
+                    params_count,
+                    duration_ms = elapsed_ms(started),
+                    error = %error,
+                    "session db handle operation failed"
+                );
+                format!("db reader worker closed: {error}")
+            })?;
+        let result = rx
+            .await
+            .map_err(|error| format!("db reader worker dropped query reply: {error}"))?;
+        match &result {
+            Ok(_) => tracing::debug!(
+                db_path = %self.inner.path.display(),
+                operation = "query",
+                sql_hash,
+                params_count,
+                duration_ms = elapsed_ms(started),
+                "session db handle operation completed"
+            ),
+            Err(error) => tracing::error!(
+                db_path = %self.inner.path.display(),
+                operation = "query",
+                sql_hash,
+                params_count,
+                duration_ms = elapsed_ms(started),
+                error = %error,
+                "session db handle operation failed"
+            ),
+        }
+        result
+    }
+
+    pub async fn write(&self, op: WriteOp) -> DbResult<()> {
+        let started = Instant::now();
+        let op_kind = op.kind();
+        self.inner.writer.write_checked(op).await.map_err(|error| {
+            tracing::error!(
+                db_path = %self.inner.path.display(),
+                operation = "write",
+                op_kind,
+                duration_ms = elapsed_ms(started),
+                error = %error,
+                "session db handle operation failed"
+            );
+            error
+        })?;
+        self.inner.writer.flush().await;
+        tracing::debug!(
+            db_path = %self.inner.path.display(),
+            operation = "write",
+            op_kind,
+            duration_ms = elapsed_ms(started),
+            "session db handle operation completed"
+        );
+        Ok(())
+    }
+
+    pub fn ready_blocking(&self) -> rusqlite::Result<()> {
+        match DbReader::open(&self.inner.path) {
             Ok(_) => Ok(()),
             Err(error) => {
                 tracing::error!(
-                    db_path = %self.path.display(),
-                    operation = "ready",
+                    db_path = %self.inner.path.display(),
+                    operation = "ready_blocking",
                     error = %error,
                     "session db operation failed"
                 );
@@ -35,20 +222,20 @@ impl DbHandle {
         }
     }
 
-    pub fn query_raw(&self, sql: &str) -> Result<String, String> {
+    pub fn query_raw_blocking(&self, sql: &str) -> Result<String, String> {
         self.with_reader_string(|reader| reader.query_raw(sql).map_err(|error| error.to_string()))
     }
 
-    pub fn with_reader<T>(
+    pub fn with_reader_blocking<T>(
         &self,
         f: impl FnOnce(&DbReader) -> rusqlite::Result<T>,
     ) -> rusqlite::Result<T> {
-        let reader = match DbReader::open(&self.path) {
+        let reader = match DbReader::open(&self.inner.path) {
             Ok(reader) => reader,
             Err(error) => {
                 tracing::error!(
-                    db_path = %self.path.display(),
-                    operation = "open_reader",
+                    db_path = %self.inner.path.display(),
+                    operation = "open_reader_blocking",
                     error = %error,
                     "session db operation failed"
                 );
@@ -62,16 +249,80 @@ impl DbHandle {
         &self,
         f: impl FnOnce(&DbReader) -> Result<T, String>,
     ) -> Result<T, String> {
-        let reader = DbReader::open(&self.path).map_err(|error| {
+        let reader = DbReader::open(&self.inner.path).map_err(|error| {
             tracing::error!(
-                db_path = %self.path.display(),
-                operation = "open_reader",
+                db_path = %self.inner.path.display(),
+                operation = "open_reader_blocking",
                 error = %error,
                 "session db operation failed"
             );
             error.to_string()
         })?;
         f(&reader)
+    }
+}
+
+fn reader_loop(path: PathBuf, rx: mpsc::Receiver<ReadRequest>) {
+    let started = Instant::now();
+    let reader = match DbReader::open(&path) {
+        Ok(reader) => reader,
+        Err(error) => {
+            tracing::error!(
+                db_path = %path.display(),
+                operation = "reader_worker_open",
+                error = %error,
+                "session db reader worker failed"
+            );
+            return;
+        }
+    };
+    tracing::debug!(
+        db_path = %path.display(),
+        operation = "reader_worker_open",
+        duration_ms = elapsed_ms(started),
+        "session db reader worker opened"
+    );
+
+    while let Ok(request) = rx.recv() {
+        match request {
+            ReadRequest::Ready { reply } => {
+                let _ = reply.send(Ok(()));
+            }
+            ReadRequest::Query { sql, params, reply } => {
+                let started = Instant::now();
+                let sql_hash = sql_fingerprint(&sql);
+                let params_count = params.len();
+                let result = reader.query_raw_with_params(&sql, &params);
+                match &result {
+                    Ok(_) => tracing::debug!(
+                        db_path = %path.display(),
+                        operation = "query_execute",
+                        sql_hash,
+                        params_count,
+                        duration_ms = elapsed_ms(started),
+                        "session db query completed"
+                    ),
+                    Err(error) => tracing::error!(
+                        db_path = %path.display(),
+                        operation = "query_execute",
+                        sql_hash,
+                        params_count,
+                        duration_ms = elapsed_ms(started),
+                        error = %error,
+                        "session db query failed"
+                    ),
+                }
+                let _ = reply.send(result);
+            }
+            ReadRequest::Shutdown => {
+                tracing::debug!(
+                    db_path = %path.display(),
+                    operation = "reader_worker_shutdown",
+                    "session db reader worker shutting down"
+                );
+                break;
+            }
+        }
     }
 }
 
@@ -99,7 +350,7 @@ impl SessionDb {
         DbReader::open(&self.path)
     }
 
-    pub fn handle(&self) -> DbHandle {
+    pub fn handle(&self) -> rusqlite::Result<DbHandle> {
         DbHandle::open(&self.path)
     }
 }
@@ -240,6 +491,9 @@ pub fn snapshot_session_db(src: &Path, dst: &Path) -> anyhow::Result<()> {
         anyhow::bail!("cloned session db failed quick_check: {quick_check}")
     }
 }
+
+#[cfg(test)]
+mod handle_tests;
 
 #[cfg(test)]
 mod tests {

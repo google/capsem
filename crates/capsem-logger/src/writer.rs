@@ -99,11 +99,29 @@ pub enum WriteOp {
 
 #[derive(Debug)]
 enum WriterMessage {
-    Op(WriteOp),
+    Op(Box<WriteOp>),
     Flush(tokio::sync::oneshot::Sender<()>),
 }
 
 impl WriteOp {
+    pub fn kind(&self) -> &'static str {
+        match self {
+            WriteOp::NetEvent(_) => "net_event",
+            WriteOp::ModelCall(_) => "model_call",
+            WriteOp::McpCall(_) => "mcp_call",
+            WriteOp::FileEvent(_) => "file_event",
+            WriteOp::ExecEvent(_) => "exec_event",
+            WriteOp::ExecEventComplete(_) => "exec_event_complete",
+            WriteOp::AuditEvent(_) => "audit_event",
+            WriteOp::DnsEvent(_) => "dns_event",
+            WriteOp::SubstitutionEvent(_) => "substitution_event",
+            WriteOp::SecurityRuleEvent(_) => "security_rule_event",
+            WriteOp::SecurityAskEvent(_) => "security_ask_event",
+            WriteOp::SecurityDecisionEvent(_) => "security_decision_event",
+            WriteOp::ProfileMutationEvent(_) => "profile_mutation_event",
+        }
+    }
+
     /// Ensure a primary emitted event has a stable 12-lower-hex id before it
     /// reaches SQLite. Rule ledger rows already point at a triggering event and
     /// therefore must not mint their own id here.
@@ -228,6 +246,15 @@ impl DbWriter {
 
     /// Non-blocking send from async context. Yields if channel full (backpressure).
     pub async fn write(&self, op: WriteOp) {
+        if let Err(error) = self.write_checked(op).await {
+            warn!(error = %error, "db writer dropped write op");
+        }
+    }
+
+    /// Non-blocking send from async context. Yields if channel full
+    /// (backpressure) and reports closed/missing writer channels instead of
+    /// silently dropping the operation.
+    pub async fn write_checked(&self, op: WriteOp) -> Result<(), String> {
         let span = tracing::debug_span!(
             target: "capsem.db",
             DB_ENQUEUE_SPAN,
@@ -237,7 +264,7 @@ impl DbWriter {
         let started = Instant::now();
         if let Some(tx) = self.clone_sender() {
             match tx
-                .send(WriterMessage::Op(op))
+                .send(WriterMessage::Op(Box::new(op)))
                 .instrument(span.clone())
                 .await
             {
@@ -246,12 +273,14 @@ impl DbWriter {
                 }
                 Err(e) => {
                     record_enqueue(started, "closed", &span);
-                    warn!(error = %e, "db writer channel closed, dropping write op");
+                    return Err(format!("db writer channel closed: {e}"));
                 }
             }
         } else {
             record_enqueue(started, "missing_sender", &span);
+            return Err("db writer sender missing".to_string());
         }
+        Ok(())
     }
 
     /// Try to send without blocking. Returns false if the channel is full or closed.
@@ -268,7 +297,7 @@ impl DbWriter {
             .lock()
             .unwrap()
             .as_ref()
-            .is_some_and(|tx| tx.try_send(WriterMessage::Op(op)).is_ok());
+            .is_some_and(|tx| tx.try_send(WriterMessage::Op(Box::new(op))).is_ok());
         record_enqueue(
             started,
             if accepted { "queued" } else { "full_or_closed" },
@@ -291,7 +320,7 @@ impl DbWriter {
         );
         let started = Instant::now();
         if let Some(tx) = self.clone_sender() {
-            let mut message = WriterMessage::Op(op);
+            let mut message = WriterMessage::Op(Box::new(op));
             loop {
                 match tx.try_send(message) {
                     Ok(()) => {
@@ -390,7 +419,7 @@ fn writer_loop(conn: Connection, mut rx: tokio::sync::mpsc::Receiver<WriterMessa
         let mut batch = Vec::with_capacity(128);
         let mut flush_barriers = Vec::new();
         match first_message {
-            WriterMessage::Op(op) => batch.push(op),
+            WriterMessage::Op(op) => batch.push(*op),
             WriterMessage::Flush(reply) => flush_barriers.push(reply),
         }
 
@@ -398,7 +427,7 @@ fn writer_loop(conn: Connection, mut rx: tokio::sync::mpsc::Receiver<WriterMessa
         while flush_barriers.is_empty() {
             match rx.try_recv() {
                 Ok(WriterMessage::Op(op)) => {
-                    batch.push(op);
+                    batch.push(*op);
                     if batch.len() >= 128 {
                         break;
                     }

@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added the logger-owned async DB handle contract with `ready`, `query`, and
+  `write` execution APIs plus structured operation/duration logging for
+  session ledger reads and writes.
 - Added the unified tool-call ledger contract: MCP `tools/call` observations
   now write to `tool_calls origin = 'mcp'` with request/response payloads,
   protocol-only MCP messages remain in `mcp_calls`, old SQLite constraints are
