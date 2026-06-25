@@ -147,10 +147,10 @@ fn test_profile_plugin_policy_cache(
     )
 }
 
-fn test_profile_mutation_writer(run_dir: &StdPath) -> Arc<capsem_logger::DbWriter> {
+fn test_profile_mutation_db(run_dir: &StdPath) -> Arc<capsem_logger::DbHandle> {
     let db_path = main_db_path_for_run_dir(run_dir);
     std::fs::create_dir_all(db_path.parent().expect("main.db has parent")).unwrap();
-    Arc::new(capsem_logger::DbWriter::open(&db_path, 64).unwrap())
+    Arc::new(capsem_logger::DbHandle::open(&db_path).unwrap())
 }
 
 fn make_test_state() -> Arc<ServiceState> {
@@ -178,7 +178,7 @@ fn make_test_state() -> Arc<ServiceState> {
         profile_rule_cache: test_profile_rule_cache(),
         profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
-        profile_mutation_writer: test_profile_mutation_writer(&run_dir),
+        profile_mutation_db: test_profile_mutation_db(&run_dir),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
@@ -239,7 +239,7 @@ fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
         profile_rule_cache: test_profile_rule_cache(),
         profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
-        profile_mutation_writer: test_profile_mutation_writer(&run_dir),
+        profile_mutation_db: test_profile_mutation_db(&run_dir),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
@@ -5699,7 +5699,7 @@ fn make_state_in(run_dir: PathBuf) -> Arc<ServiceState> {
         profile_rule_cache: test_profile_rule_cache(),
         profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
-        profile_mutation_writer: test_profile_mutation_writer(&run_dir),
+        profile_mutation_db: test_profile_mutation_db(&run_dir),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
@@ -6226,7 +6226,7 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         profile_rule_cache: test_profile_rule_cache(),
         profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
-        profile_mutation_writer: test_profile_mutation_writer(&run_dir),
+        profile_mutation_db: test_profile_mutation_db(&run_dir),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });
@@ -7963,19 +7963,37 @@ async fn session_status_reports_db_handle_readiness() {
 }
 
 #[test]
-fn service_db_handle_open_is_owned_by_session_state() {
+fn service_db_handle_open_is_owned_by_explicit_service_state_owners() {
     let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs"))
         .expect("service source must be readable");
     let opens = source.matches("DbHandle::open(").count();
     assert_eq!(
-        opens, 1,
-        "DbHandle::open must live only in ServiceState::register_session_db_handle. \
-         Routes and helpers resolve a registered handle and call ready/query; they do not \
-         create a second DB lifecycle."
+        opens, 2,
+        "DbHandle::open must live only in explicit ServiceState DB owners: \
+         register_session_db_handle for per-session ledgers and \
+         open_profile_mutation_db_handle for the service main ledger. Routes and helpers \
+         resolve registered handles and call ready/query/write; they do not create a second \
+         DB lifecycle."
     );
     assert!(
         source.contains("fn register_session_db_handle("),
-        "the single DbHandle::open owner must be the session-state registration method"
+        "one DbHandle::open owner must be the session-state registration method"
+    );
+    assert!(
+        source.contains("fn open_profile_mutation_db_handle("),
+        "one DbHandle::open owner must be the profile mutation main-ledger method"
+    );
+    assert!(
+        !source.contains("Arc<capsem_logger::DbWriter>"),
+        "service state must not own DbWriter directly. See AGENTS.md, skills/dev-testing/SKILL.md \
+         Logged-data DB ownership, and skills/dev-rust-patterns/SKILL.md Logger DB boundary: \
+         service owns DbHandle references; capsem-logger owns writer channels and storage mechanics."
+    );
+    assert!(
+        !source.contains("DbWriter::open("),
+        "service production code must not open DbWriter side paths. Create a DbHandle owner and \
+         call db.write(event).await so structured DB logging, future mem/disk ownership, and \
+         explicit schema failure semantics stay centralized."
     );
 }
 
@@ -8315,7 +8333,7 @@ fn make_test_state_with_tempdir_at(
         profile_rule_cache: test_profile_rule_cache(),
         profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
-        profile_mutation_writer: test_profile_mutation_writer(&run_dir),
+        profile_mutation_db: test_profile_mutation_db(&run_dir),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });

@@ -1333,6 +1333,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   proof pinned to `127.0.0.1:3713` to avoid colliding with real Ollama.
 
 ### Changed (service/API)
+- Routed profile mutation ledger writes through the service-owned logger
+  `DbHandle::write` path with structured DB failure logging, removing the
+  service-side `DbWriter` side path for profile/MCP/rule/plugin edits.
 - Updated architecture docs and local development skills to match the 1.3
   contract: settings endpoints are `/settings/info|edit` and expose only
   `tree`/`issues`, install is service/profile-asset readiness rather than a

@@ -190,10 +190,10 @@ struct ServiceState {
     /// by explicit MCP discovery routes. Hot MCP list routes must not read the
     /// tool cache JSON from disk.
     mcp_tool_cache: Mutex<Vec<ToolCacheEntry>>,
-    /// Service-owned writer for the profile mutation ledger in main.db.
-    /// Profile/MCP/rule/plugin edit routes enqueue here; they must never open
-    /// SQLite directly.
-    profile_mutation_writer: Arc<capsem_logger::DbWriter>,
+    /// Logger-owned DB handle for the profile mutation ledger in main.db.
+    /// Profile/MCP/rule/plugin edit routes call `write`; they must never open
+    /// SQLite directly or hold a side `DbWriter`.
+    profile_mutation_db: Arc<capsem_logger::DbHandle>,
     /// Guards Apple VZ lifecycle edges across all VMs managed by this
     /// service. Cold starts and teardown take a read guard; save/restore take
     /// a write guard. That keeps checkpoint edges exclusive without
@@ -606,6 +606,26 @@ impl ServiceState {
     /// Layout: run_dir = ~/.capsem/run, main.db lives at ~/.capsem/sessions/main.db.
     fn main_db_path(&self) -> PathBuf {
         main_db_path_for_run_dir(&self.run_dir)
+    }
+
+    fn open_profile_mutation_db_handle(
+        run_dir: &StdPath,
+    ) -> anyhow::Result<Arc<capsem_logger::DbHandle>> {
+        let db_path = main_db_path_for_run_dir(run_dir);
+        let started = std::time::Instant::now();
+        let handle = Arc::new(capsem_logger::DbHandle::open(&db_path).with_context(|| {
+            format!(
+                "failed to open profile mutation DB handle: {}",
+                db_path.display()
+            )
+        })?);
+        info!(
+            db_path = %db_path.display(),
+            operation = "open_profile_mutation_db_handle",
+            duration_ms = started.elapsed().as_millis(),
+            "opened profile mutation DB handle"
+        );
+        Ok(handle)
     }
 
     fn register_session_db_handle(
@@ -6232,9 +6252,23 @@ async fn write_profile_mutation_event(
         None,
     );
     state
-        .profile_mutation_writer
+        .profile_mutation_db
         .write(capsem_logger::WriteOp::ProfileMutationEvent(event.clone()))
-        .await;
+        .await
+        .map_err(|error| {
+            error!(
+                target: "capsem.profile_mutation",
+                mutation_id = %event.mutation_id,
+                profile_id = %event.profile_id,
+                operation = "profile_mutation_ledger_write",
+                error = %error,
+                "profile mutation ledger write failed"
+            );
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("profile mutation ledger write failed: {error}"),
+            )
+        })?;
     refresh_profile_route_caches(state)?;
     log_profile_mutation_applied("profile_mutation_ledger", &event);
     Ok(event)
@@ -11169,10 +11203,7 @@ async fn main() -> Result<()> {
         build_profile_plugin_policy_cache(None).map_err(|AppError(_, message)| {
             anyhow!("failed to build profile plugin cache: {message}")
         })?;
-    let profile_mutation_writer = Arc::new(
-        capsem_logger::DbWriter::open(&main_db_path_for_run_dir(&run_dir), 64)
-            .context("open profile mutation ledger writer")?,
-    );
+    let profile_mutation_db = ServiceState::open_profile_mutation_db_handle(&run_dir)?;
     let state = Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
         session_db_handles: Mutex::new(HashMap::new()),
@@ -11194,7 +11225,7 @@ async fn main() -> Result<()> {
         profile_rule_cache: Mutex::new(profile_rule_cache),
         profile_plugin_policy_cache: Mutex::new(profile_plugin_policy_cache),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
-        profile_mutation_writer,
+        profile_mutation_db,
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });
