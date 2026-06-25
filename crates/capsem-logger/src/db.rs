@@ -119,21 +119,25 @@ impl DbHandle {
         let started = Instant::now();
         let writer = Arc::new(DbWriter::open(path, 1024)?);
         DbReader::open(path)?;
+        let handle = Self::open_with_writer(path.to_path_buf(), writer)?;
 
+        tracing::debug!(
+            db_path = %path.display(),
+            operation = "open",
+            duration_ms = elapsed_ms(started),
+            "session db handle opened"
+        );
+
+        Ok(handle)
+    }
+
+    fn open_with_writer(db_path: PathBuf, writer: Arc<DbWriter>) -> rusqlite::Result<Self> {
         let (reader_tx, reader_rx) = mpsc::channel();
-        let db_path = path.to_path_buf();
         let reader_path = db_path.clone();
         let reader_join = std::thread::Builder::new()
             .name("capsem-db-reader".into())
             .spawn(move || reader_loop(reader_path, reader_rx))
             .expect("failed to spawn db reader thread");
-
-        tracing::debug!(
-            db_path = %db_path.display(),
-            operation = "open",
-            duration_ms = elapsed_ms(started),
-            "session db handle opened"
-        );
 
         Ok(Self {
             inner: Arc::new(DbHandleInner {
@@ -143,6 +147,13 @@ impl DbHandle {
                 writer,
             }),
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn open_existing_for_tests(path: &Path) -> rusqlite::Result<Self> {
+        DbReader::open(path)?;
+        let writer = Arc::new(DbWriter::open_in_memory(1)?);
+        Self::open_with_writer(path.to_path_buf(), writer)
     }
 
     pub fn path(&self) -> &Path {
@@ -281,8 +292,12 @@ impl DbHandle {
     /// New async route code should use `ready().await`. This method exists only
     /// while service routes are being moved behind persistent async DB handles.
     pub fn ready_blocking(&self) -> rusqlite::Result<()> {
-        match DbReader::open(&self.inner.path) {
-            Ok(_) => Ok(()),
+        match DbReader::open(&self.inner.path).and_then(|reader| {
+            reader
+                .ready()
+                .map_err(rusqlite::Error::InvalidParameterName)
+        }) {
+            Ok(()) => Ok(()),
             Err(error) => {
                 tracing::error!(
                     db_path = %self.inner.path.display(),
@@ -367,7 +382,24 @@ fn reader_loop(path: PathBuf, rx: mpsc::Receiver<ReadRequest>) {
     while let Ok(request) = rx.recv() {
         match request {
             ReadRequest::Ready { reply } => {
-                let _ = reply.send(Ok(()));
+                let started = Instant::now();
+                let result = reader.ready();
+                match &result {
+                    Ok(()) => tracing::debug!(
+                        db_path = %path.display(),
+                        operation = "ready_execute",
+                        duration_ms = elapsed_ms(started),
+                        "session db readiness completed"
+                    ),
+                    Err(error) => tracing::error!(
+                        db_path = %path.display(),
+                        operation = "ready_execute",
+                        duration_ms = elapsed_ms(started),
+                        error = %error,
+                        "session db readiness failed"
+                    ),
+                }
+                let _ = reply.send(result);
             }
             ReadRequest::Query { sql, params, reply } => {
                 let started = Instant::now();

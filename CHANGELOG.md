@@ -80,6 +80,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Fixed logger DB readiness so session ledgers validate required route-critical
+  tables/columns and fail loudly on broken schemas instead of accepting any
+  open reader, including preserving `tool_calls.turn_id` through legacy table
+  rebuild migrations.
 - Removed service-owned telemetry projections from stats, timeline, triage,
   security, detection, and history routes. Logged-data routes now read through
   the logger DB boundary, and a source guard rejects raw service DB opens or

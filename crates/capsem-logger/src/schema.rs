@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use rusqlite::{Connection, OptionalExtension};
 
 const CREDENTIAL_REF_CHECK: &str =
@@ -447,6 +449,209 @@ pub fn apply_pragmas(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
+const READY_SCHEMA_COLUMNS: &[(&str, &[&str])] = &[
+    (
+        "net_events",
+        &[
+            "event_id",
+            "timestamp",
+            "domain",
+            "decision",
+            "trace_id",
+            "turn_id",
+            "credential_ref",
+        ],
+    ),
+    (
+        "model_calls",
+        &[
+            "event_id",
+            "provider",
+            "protocol",
+            "method",
+            "path",
+            "trace_id",
+            "turn_id",
+            "credential_ref",
+        ],
+    ),
+    (
+        "model_items",
+        &[
+            "event_id",
+            "model_call_id",
+            "kind",
+            "content_hash",
+            "trace_id",
+            "turn_id",
+            "credential_ref",
+        ],
+    ),
+    (
+        "tool_calls",
+        &[
+            "event_id",
+            "model_call_id",
+            "origin",
+            "call_id",
+            "tool_name",
+            "decision",
+            "trace_id",
+            "turn_id",
+            "credential_ref",
+        ],
+    ),
+    (
+        "tool_responses",
+        &[
+            "model_call_id",
+            "call_id",
+            "content_preview",
+            "trace_id",
+            "turn_id",
+            "credential_ref",
+        ],
+    ),
+    (
+        "event_body_blobs",
+        &[
+            "event_id",
+            "event_type",
+            "source_table",
+            "direction",
+            "body_hash",
+            "body",
+            "trace_id",
+            "turn_id",
+        ],
+    ),
+    (
+        "fs_events",
+        &[
+            "event_id",
+            "timestamp",
+            "action",
+            "path",
+            "directory",
+            "name",
+            "trace_id",
+            "turn_id",
+            "credential_ref",
+        ],
+    ),
+    (
+        "exec_events",
+        &[
+            "event_id",
+            "timestamp",
+            "exec_id",
+            "command",
+            "trace_id",
+            "turn_id",
+            "credential_ref",
+        ],
+    ),
+    (
+        "dns_events",
+        &[
+            "event_id",
+            "timestamp",
+            "qname",
+            "qtype",
+            "rcode",
+            "decision",
+            "answer_ip",
+            "trace_id",
+            "turn_id",
+            "credential_ref",
+        ],
+    ),
+    (
+        "audit_events",
+        &[
+            "event_id",
+            "timestamp",
+            "pid",
+            "exe",
+            "trace_id",
+            "turn_id",
+            "credential_ref",
+        ],
+    ),
+    (
+        "substitution_events",
+        &[
+            "event_id",
+            "timestamp",
+            "substitution_ref",
+            "outcome",
+            "provider",
+            "trace_id",
+        ],
+    ),
+    (
+        "security_rule_events",
+        &[
+            "event_id",
+            "rule_id",
+            "rule_action",
+            "detection_level",
+            "rule_json",
+            "event_json",
+            "credential_ref",
+        ],
+    ),
+    (
+        "security_decision_events",
+        &["event_id", "stage", "effective_decision", "credential_ref"],
+    ),
+    (
+        "security_ask_events",
+        &["event_id", "ask_id", "status", "event_json", "trace_id"],
+    ),
+    (
+        "profile_mutation_events",
+        &["mutation_id", "profile_id", "status"],
+    ),
+];
+
+/// Validate that a session DB is structurally ready for ledger routes.
+///
+/// This intentionally fails on missing tables or columns. A valid empty DB is
+/// ready; a partially migrated or corrupted DB is not. Routes must surface this
+/// as a DB contract error rather than returning invented empty ledgers.
+pub fn validate_ready_schema(conn: &Connection) -> Result<(), String> {
+    let integrity = conn
+        .query_row("PRAGMA integrity_check", [], |row| row.get::<_, String>(0))
+        .map_err(|error| format!("session db integrity check failed: {error}"))?;
+    if integrity != "ok" {
+        return Err(format!("session db integrity check failed: {integrity}"));
+    }
+
+    for (table, required_columns) in READY_SCHEMA_COLUMNS {
+        let mut stmt = conn
+            .prepare(&format!("PRAGMA table_info({table})"))
+            .map_err(|error| format!("failed to inspect table {table}: {error}"))?;
+        let columns = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|error| format!("failed to inspect table {table}: {error}"))?
+            .collect::<Result<BTreeSet<_>, _>>()
+            .map_err(|error| format!("failed to inspect table {table}: {error}"))?;
+        if columns.is_empty() {
+            return Err(format!("session db missing required table {table}"));
+        }
+        for column in *required_columns {
+            if !columns.contains(*column) {
+                return Err(format!(
+                    "session db table {table} missing required column {column}"
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn table_sql(conn: &Connection, table: &str) -> Option<String> {
     conn.query_row(
         "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?1",
@@ -510,6 +715,7 @@ fn rebuild_tool_calls_nullable_model_call(conn: &Connection) {
             policy_rule TEXT,
             policy_reason TEXT,
             trace_id TEXT,
+            turn_id TEXT,
             credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
         );
         INSERT INTO tool_calls_new (
@@ -517,14 +723,14 @@ fn rebuild_tool_calls_nullable_model_call(conn: &Connection) {
             tool_name, arguments, response_preview, origin, server_name, method,
             request_id, decision, duration_ms, error_message, process_name, bytes_sent,
             bytes_received, policy_mode, policy_action, policy_rule, policy_reason,
-            trace_id, credential_ref
+            trace_id, turn_id, credential_ref
         )
         SELECT
             id, event_id, timestamp, model_call_id, provider, status, call_index, call_id,
             tool_name, arguments, response_preview, origin, server_name, method,
             request_id, decision, duration_ms, error_message, process_name, bytes_sent,
             bytes_received, policy_mode, policy_action, policy_rule, policy_reason,
-            trace_id, credential_ref
+            trace_id, turn_id, credential_ref
         FROM tool_calls;
         DROP TABLE tool_calls;
         ALTER TABLE tool_calls_new RENAME TO tool_calls;",

@@ -97,6 +97,86 @@ async fn db_handle_ready_query_write() {
 }
 
 #[tokio::test]
+async fn db_handle_ready_valid_schema() {
+    let p = temp_db_path("ready-valid-empty");
+    let db = DbHandle::open(&p).expect("open handle");
+
+    db.ready().await.expect("valid empty schema must be ready");
+}
+
+#[tokio::test]
+async fn db_handle_ready_rejects_broken_schema() {
+    let p = temp_db_path("ready-broken-schema");
+    {
+        let conn = rusqlite::Connection::open(&p).expect("open broken fixture");
+        conn.execute(
+            "CREATE TABLE net_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL
+            )",
+            [],
+        )
+        .expect("create intentionally broken net_events table");
+    }
+
+    let db = DbHandle::open_existing_for_tests(&p).expect("open existing broken handle");
+    let error = db
+        .ready()
+        .await
+        .expect_err("ready must reject missing route-critical columns");
+    assert!(
+        error.contains("net_events") && error.contains("event_id"),
+        "ready error should name the broken table and missing column: {error}"
+    );
+}
+
+#[tokio::test]
+async fn db_handle_ready_preserves_turn_id_through_tool_call_migration() {
+    let p = temp_db_path("ready-tool-calls-turn-id-migration");
+    {
+        let conn = rusqlite::Connection::open(&p).expect("open migration fixture");
+        conn.execute(
+            "CREATE TABLE tool_calls (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                model_call_id INTEGER NOT NULL,
+                provider TEXT NOT NULL,
+                call_index INTEGER NOT NULL,
+                call_id TEXT NOT NULL,
+                tool_name TEXT NOT NULL,
+                arguments TEXT
+            )",
+            [],
+        )
+        .expect("create old tool_calls shape");
+        conn.execute(
+            "INSERT INTO tool_calls (
+                model_call_id, provider, call_index, call_id, tool_name, arguments
+            ) VALUES (7, 'test', 0, 'call_1', 'write_file', '{}')",
+            [],
+        )
+        .expect("seed old tool call row");
+    }
+
+    let db = DbHandle::open(&p).expect("open and migrate handle");
+    db.ready()
+        .await
+        .expect("migrated schema must satisfy readiness");
+    let raw = db
+        .query(
+            "SELECT model_call_id, call_id, tool_name, turn_id FROM tool_calls",
+            &[],
+        )
+        .await
+        .expect("query migrated tool call");
+    let value: serde_json::Value = serde_json::from_str(&raw).expect("query JSON");
+    assert_eq!(
+        value["columns"],
+        json!(["model_call_id", "call_id", "tool_name", "turn_id"])
+    );
+    assert_eq!(value["rows"], json!([[7, "call_1", "write_file", null]]));
+}
+
+#[tokio::test]
 async fn db_handle_rejects_write_sql_and_broken_schema() {
     let p = temp_db_path("rejects-write-sql");
     let db = DbHandle::open(&p).expect("open handle");

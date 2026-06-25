@@ -377,6 +377,14 @@ impl DbReader {
         Ok(Self { conn })
     }
 
+    /// Validate that this ledger is structurally ready for route reads.
+    ///
+    /// Empty ledgers are valid. Missing tables or route-critical columns are
+    /// DB contract failures and must not be converted into empty route payloads.
+    pub fn ready(&self) -> Result<(), String> {
+        schema::validate_ready_schema(&self.conn)
+    }
+
     fn has_column(&self, table: &str, column: &str) -> bool {
         let Ok(mut stmt) = self.conn.prepare(&format!("PRAGMA table_info({table})")) else {
             return false;
