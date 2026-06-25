@@ -26,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added service-owned session DB handle registration so session routes resolve
   persistent `DbHandle`s from runtime state instead of reopening ledger handles
   on every request.
+- Added startup session DB handle hydration plus structured readiness logging
+  and `/vms/{id}/info` DB readiness status for session ledgers.
 - Added the unified tool-call ledger contract: MCP `tools/call` observations
   now write to `tool_calls origin = 'mcp'` with request/response payloads,
   protocol-only MCP messages remain in `mcp_calls`, old SQLite constraints are

@@ -7912,6 +7912,56 @@ async fn session_db_handle_state_contract() {
     );
 }
 
+#[tokio::test]
+async fn startup_rehydrates_session_db_handles() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let session_dir = state.run_dir.join("sessions").join("startup-db-vm");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    let writer = capsem_logger::DbWriter::open(&session_dir.join("session.db"), 16).unwrap();
+    writer.shutdown_blocking();
+    state.persistent_registry.lock().unwrap().data.vms.insert(
+        "startup-db-vm".to_string(),
+        test_persistent_entry("startup-db-vm", session_dir),
+    );
+
+    assert!(
+        state.session_db_handle("startup-db-vm").is_none(),
+        "test must prove startup hydration installs the handle"
+    );
+    state.hydrate_session_db_handles();
+
+    let handle = state
+        .session_db_handle("startup-db-vm")
+        .expect("startup hydration must install a persistent-session DB handle");
+    handle
+        .ready()
+        .await
+        .expect("hydrated handle must prove schema readiness");
+}
+
+#[tokio::test]
+async fn session_status_reports_db_handle_readiness() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let app = build_service_router(Arc::clone(&state));
+    let session_dir = state.run_dir.join("sessions").join("status-db-vm");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    let writer = capsem_logger::DbWriter::open(&session_dir.join("session.db"), 16).unwrap();
+    writer.shutdown_blocking();
+    insert_fake_instance_with_session_dir(&state, "status-db-vm", std::process::id(), session_dir);
+
+    let (status, body) =
+        route_request(app, axum::http::Method::GET, "/vms/status-db-vm/info", None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["session_db"]["ready"], true,
+        "session status must expose DB readiness from the service-owned DbHandle: {body}"
+    );
+    assert!(
+        body["session_db"].get("error").is_none(),
+        "ready session DB status must not invent an error: {body}"
+    );
+}
+
 #[test]
 fn service_db_handle_open_is_owned_by_session_state() {
     let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs"))

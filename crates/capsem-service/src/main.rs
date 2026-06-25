@@ -663,6 +663,56 @@ impl ServiceState {
         self.session_db_handles.lock().unwrap().get(vm_id).cloned()
     }
 
+    fn hydrate_session_db_handles(&self) {
+        let mut candidates: Vec<(String, PathBuf)> = {
+            let instances = self.instances.lock().unwrap();
+            instances
+                .values()
+                .map(|info| (info.id.clone(), info.session_dir.clone()))
+                .collect()
+        };
+        {
+            let registry = self.persistent_registry.lock().unwrap();
+            candidates.extend(
+                registry
+                    .data
+                    .vms
+                    .values()
+                    .map(|entry| (entry.name.clone(), entry.session_dir.clone())),
+            );
+        }
+
+        let mut hydrated = 0usize;
+        for (vm_id, session_dir) in candidates {
+            let db_path = session_db_path_for_session_dir(&session_dir);
+            if !db_path.exists() {
+                info!(
+                    vm_id,
+                    operation = "hydrate_session_db_handle",
+                    db_path = %db_path.display(),
+                    "session DB absent during startup handle hydration"
+                );
+                continue;
+            }
+            match self.register_session_db_handle(&vm_id, &session_dir) {
+                Ok(_) => hydrated += 1,
+                Err(error) => {
+                    warn!(
+                        vm_id,
+                        operation = "hydrate_session_db_handle",
+                        db_path = %db_path.display(),
+                        error = %error,
+                        "failed to hydrate session DB handle"
+                    );
+                }
+            }
+        }
+        info!(
+            operation = "hydrate_session_db_handles",
+            hydrated, "startup session DB handle hydration complete"
+        );
+    }
+
     fn next_job_id(&self) -> u64 {
         self.job_counter.fetch_add(1, Ordering::Relaxed)
     }
@@ -3206,6 +3256,7 @@ async fn handle_info(
             }
         };
         if let (Some(mut info), Some(dir)) = (instance_data, session_dir) {
+            apply_session_db_status(&state, &mut info, &dir).await;
             if let Err(error) = apply_live_session_counters_from_ledger(&state, &mut info).await {
                 warn!(
                     vm_id = info.id.as_str(),
@@ -3219,38 +3270,38 @@ async fn handle_info(
     }
 
     // Check stopped/suspended/defunct persistent VMs
-    {
+    let persistent_entry = {
         let registry = state.persistent_registry.lock().unwrap();
-        if let Some(entry) = registry.get(&id).cloned() {
-            drop(registry);
-            let (status, can_resume, blocked_reason) = state.persistent_entry_resume_state(&entry);
-            let mut info = SandboxInfo::new(
-                entry.name.clone(),
-                entry.profile_id.clone(),
-                0,
-                status,
-                true,
-            );
-            info.name = Some(entry.name.clone());
-            info.ram_mb = Some(entry.ram_mb);
-            info.cpus = Some(entry.cpus);
-            info.version = Some(entry.base_version.clone());
-            info.forked_from = entry.forked_from.clone();
-            info.description = entry.description.clone();
-            info.can_resume = can_resume;
-            if can_resume {
-                info.resume_blocked_reason = None;
-            } else if entry.defunct {
-                info.last_error = blocked_reason;
-            } else {
-                info.resume_blocked_reason = blocked_reason;
-            }
-            info.refresh_available_actions();
-            info.size_bytes =
-                capsem_core::auto_snapshot::sandbox_disk_usage(&entry.session_dir).ok();
-            info.storage = storage_diagnostics(&entry.session_dir);
-            return Ok(Json(info));
+        registry.get(&id).cloned()
+    };
+    if let Some(entry) = persistent_entry {
+        let (status, can_resume, blocked_reason) = state.persistent_entry_resume_state(&entry);
+        let mut info = SandboxInfo::new(
+            entry.name.clone(),
+            entry.profile_id.clone(),
+            0,
+            status,
+            true,
+        );
+        info.name = Some(entry.name.clone());
+        info.ram_mb = Some(entry.ram_mb);
+        info.cpus = Some(entry.cpus);
+        info.version = Some(entry.base_version.clone());
+        info.forked_from = entry.forked_from.clone();
+        info.description = entry.description.clone();
+        info.can_resume = can_resume;
+        if can_resume {
+            info.resume_blocked_reason = None;
+        } else if entry.defunct {
+            info.last_error = blocked_reason;
+        } else {
+            info.resume_blocked_reason = blocked_reason;
         }
+        info.refresh_available_actions();
+        info.size_bytes = capsem_core::auto_snapshot::sandbox_disk_usage(&entry.session_dir).ok();
+        apply_session_db_status(&state, &mut info, &entry.session_dir).await;
+        info.storage = storage_diagnostics(&entry.session_dir);
+        return Ok(Json(info));
     }
 
     Err(AppError(
@@ -8068,6 +8119,64 @@ async fn apply_live_session_counters_from_ledger(
     Ok(())
 }
 
+async fn apply_session_db_status(
+    state: &ServiceState,
+    info: &mut SandboxInfo,
+    session_dir: &StdPath,
+) {
+    let db_path = session_db_path_for_session_dir(session_dir);
+    if !db_path.exists() {
+        info.session_db = Some(api::SessionDbStatus {
+            ready: false,
+            error: Some("session.db absent".to_string()),
+        });
+        info!(
+            vm_id = info.id.as_str(),
+            operation = "session_db_status",
+            db_path = %db_path.display(),
+            ready = false,
+            "session DB absent while building session status"
+        );
+        return;
+    }
+    match open_ready_session_db(state, &info.id, "session status", &db_path).await {
+        Ok(Some(_)) => {
+            info.session_db = Some(api::SessionDbStatus {
+                ready: true,
+                error: None,
+            });
+            info!(
+                vm_id = info.id.as_str(),
+                operation = "session_db_status",
+                db_path = %db_path.display(),
+                ready = true,
+                "session DB ready for session status"
+            );
+        }
+        Ok(None) => {
+            info.session_db = Some(api::SessionDbStatus {
+                ready: false,
+                error: Some("session.db absent".to_string()),
+            });
+        }
+        Err(error) => {
+            let message = error.1;
+            info.session_db = Some(api::SessionDbStatus {
+                ready: false,
+                error: Some(message.clone()),
+            });
+            warn!(
+                vm_id = info.id.as_str(),
+                operation = "session_db_status",
+                db_path = %db_path.display(),
+                ready = false,
+                error = %message,
+                "session DB not ready for session status"
+            );
+        }
+    }
+}
+
 async fn security_latest_for_vm(
     state: &ServiceState,
     vm_id: &str,
@@ -11090,6 +11199,7 @@ async fn main() -> Result<()> {
         shutdown_lock: tokio::sync::Mutex::new(()),
     });
     hydrate_startup_route_caches(&state).map_err(|AppError(_, message)| anyhow!("{message}"))?;
+    state.hydrate_session_db_handles();
     state.reconcile_persistent_defunct_from_logs();
 
     {

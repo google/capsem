@@ -132,6 +132,13 @@ pub struct StorageDiagnostics {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct SessionDbStatus {
+    pub ready: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct SandboxInfo {
     pub id: String,
     pub profile_id: String,
@@ -158,6 +165,8 @@ pub struct SandboxInfo {
     pub size_bytes: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub storage: Option<StorageDiagnostics>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_db: Option<SessionDbStatus>,
     // -- Telemetry (populated for /info, omitted when absent) --
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
@@ -222,6 +231,7 @@ impl SandboxInfo {
             description: None,
             size_bytes: None,
             storage: None,
+            session_db: None,
             created_at: None,
             uptime_secs: None,
             total_input_tokens: None,
