@@ -7749,7 +7749,7 @@ async fn stats_detail_route_reads_session_db_ledger() {
 }
 
 #[tokio::test]
-async fn db_handle_route_rewire() {
+async fn db_boundary_route_contract_db_handle_route_rewire() {
     let state = make_test_state();
     let app = build_service_router(Arc::clone(&state));
     let dir = tempfile::tempdir().unwrap();
