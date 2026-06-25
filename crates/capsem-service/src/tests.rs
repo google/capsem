@@ -7823,7 +7823,7 @@ async fn db_boundary_route_contract_db_handle_route_rewire() {
 }
 
 #[tokio::test]
-async fn db_boundary_route_contract_broken_session_db_schema_is_explicit_error() {
+async fn db_boundary_route_contract_stats_routes_do_not_return_empty_on_broken_schema() {
     let state = make_test_state();
     let app = build_service_router(Arc::clone(&state));
     let dir = tempfile::tempdir().unwrap();
