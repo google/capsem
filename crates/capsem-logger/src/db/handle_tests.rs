@@ -7,19 +7,21 @@ use super::*;
 use crate::events::{Decision, NetEvent};
 use crate::WriteOp;
 
+const DB_BOUNDARY_RATIONALE: &str = "DB boundary contract: capsem-logger owns DB execution/storage; callers own query intent only. See AGENTS.md and skills/dev-testing/SKILL.md.";
+
 #[test]
 fn db_handle_contract_names_db_ownership_and_schema_failures() {
     assert!(
         DB_HANDLE_CONTRACT.contains("caller owns query intent"),
-        "DB handle docs must keep route SQL/query intent separate from DB execution ownership"
+        "DB handle docs must keep route SQL/query intent separate from DB execution ownership. {DB_BOUNDARY_RATIONALE}"
     );
     assert!(
         DB_HANDLE_CONTRACT.contains("db owns execution and storage"),
-        "DB handle docs must say the logger DB object owns execution/storage mechanics"
+        "DB handle docs must say the logger DB object owns execution/storage mechanics. {DB_BOUNDARY_RATIONALE}"
     );
     assert!(
         DB_HANDLE_CONTRACT.contains("missing schema fails loudly"),
-        "DB handle docs must preserve the no-fallback missing-schema invariant"
+        "DB handle docs must preserve the no-fallback missing-schema invariant. {DB_BOUNDARY_RATIONALE}"
     );
 }
 
@@ -97,6 +99,71 @@ async fn db_handle_ready_query_write() {
 }
 
 #[tokio::test]
+async fn db_handle_contract_ready_query_write_exactness() {
+    let p = temp_db_path("contract-ready-query-write-exactness");
+    let db = DbHandle::open(&p).expect("open handle");
+
+    db.ready()
+        .await
+        .expect("ready() must validate schema before routes read ledgers. DB boundary contract: capsem-logger owns schema/readiness; callers must not fake empty route data.");
+    db.write(WriteOp::NetEvent(make_net_event(
+        "contract.example",
+        Decision::Allowed,
+    )))
+    .await
+    .expect("write(event) must persist through the logger DB path only. DB boundary contract: no caller-owned SQLite writes.");
+
+    let raw = db
+        .query(
+            "SELECT domain, port, decision, process_name, pid, method, path, status_code,
+                    bytes_sent, bytes_received, duration_ms, trace_id
+             FROM net_events WHERE domain = ?",
+            &[json!("contract.example")],
+        )
+        .await
+        .expect("query(sql, params) must be the DB-owned read path. DB boundary contract: caller owns query intent, logger owns execution/storage.");
+    let value: serde_json::Value =
+        serde_json::from_str(&raw).expect("query() must return deterministic column/row JSON");
+
+    assert_eq!(
+        value["columns"],
+        json!([
+            "domain",
+            "port",
+            "decision",
+            "process_name",
+            "pid",
+            "method",
+            "path",
+            "status_code",
+            "bytes_sent",
+            "bytes_received",
+            "duration_ms",
+            "trace_id"
+        ]),
+        "query() columns changed. {DB_BOUNDARY_RATIONALE}"
+    );
+    assert_eq!(
+        value["rows"],
+        json!([[
+            "contract.example",
+            443,
+            "allowed",
+            "db-handle-test",
+            7,
+            "GET",
+            "/api",
+            200,
+            11,
+            22,
+            3,
+            "trace-db-handle"
+        ]]),
+        "write(event) did not persist exact route-visible fields. {DB_BOUNDARY_RATIONALE}"
+    );
+}
+
+#[tokio::test]
 async fn db_handle_ready_valid_schema() {
     let p = temp_db_path("ready-valid-empty");
     let db = DbHandle::open(&p).expect("open handle");
@@ -126,7 +193,7 @@ async fn db_handle_ready_rejects_broken_schema() {
         .expect_err("ready must reject missing route-critical columns");
     assert!(
         error.contains("net_events") && error.contains("event_id"),
-        "ready error should name the broken table and missing column: {error}"
+        "ready error should name the broken table and missing column: {error}. {DB_BOUNDARY_RATIONALE}"
     );
 }
 
@@ -190,7 +257,7 @@ async fn db_handle_rejects_write_sql_and_broken_schema() {
         error.contains("read-only")
             || error.contains("only SELECT")
             || error.contains("not allowed"),
-        "unexpected write-SQL error: {error}"
+        "unexpected write-SQL error: {error}. {DB_BOUNDARY_RATIONALE}"
     );
 
     let error = db
@@ -199,6 +266,6 @@ async fn db_handle_rejects_write_sql_and_broken_schema() {
         .expect_err("broken schema/query must fail loudly");
     assert!(
         error.contains("definitely_missing"),
-        "unexpected broken-query error: {error}"
+        "unexpected broken-query error: {error}. {DB_BOUNDARY_RATIONALE}"
     );
 }

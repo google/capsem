@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added explicit logger DB contract tests with failure messages that point back
+  to the DB boundary rationale when ready/query/write exactness regresses.
 - Added public `capsem-logger` DB handle contract docs and type aliases that
   pin caller-owned query intent, DB-owned execution/storage, and loud
   missing-schema failures.
