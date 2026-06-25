@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added a public `DbHandle::query` contract test proving bind parameters,
+  deterministic column/row JSON, and the DB-owned route output cap.
 - Added explicit logger DB contract tests with failure messages that point back
   to the DB boundary rationale when ready/query/write exactness regresses.
 - Added public `capsem-logger` DB handle contract docs and type aliases that

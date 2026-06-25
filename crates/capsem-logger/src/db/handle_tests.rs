@@ -99,6 +99,146 @@ async fn db_handle_ready_query_write() {
 }
 
 #[tokio::test]
+async fn db_handle_query_binds_params_and_caps_rows() {
+    let p = temp_db_path("query-binds-params-caps-rows");
+    {
+        let db = DbHandle::open(&p).expect("open handle");
+        db.ready().await.expect("db ready");
+    }
+    {
+        let mut conn = rusqlite::Connection::open(&p).expect("open query fixture");
+        let tx = conn.transaction().expect("start fixture transaction");
+        {
+            let mut stmt = tx
+                .prepare(
+                    "INSERT INTO net_events (timestamp, domain, decision)
+                     VALUES (?1, ?2, 'allowed')",
+                )
+                .expect("prepare fixture insert");
+            for i in 0..10_050 {
+                stmt.execute(("2026-01-01T00:00:00Z", format!("bind-{i:05}.example")))
+                    .expect("insert fixture row");
+            }
+        }
+        tx.commit().expect("commit fixture rows");
+    }
+
+    let db = DbHandle::open(&p).expect("reopen handle");
+    let raw = db
+        .query(
+            "SELECT domain, decision FROM net_events
+             WHERE decision = ? AND domain LIKE ?
+             ORDER BY domain",
+            &[json!("allowed"), json!("bind-%.example")],
+        )
+        .await
+        .expect("query should bind params on DB-owned worker");
+    let value: serde_json::Value = serde_json::from_str(&raw).expect("query JSON");
+    let rows = value["rows"].as_array().expect("rows array");
+
+    assert_eq!(
+        value["columns"],
+        json!(["domain", "decision"]),
+        "query(sql, params) must return deterministic columns. {DB_BOUNDARY_RATIONALE}"
+    );
+    assert_eq!(
+        rows.len(),
+        10_000,
+        "query(sql, params) must cap route-visible output at the DB boundary. {DB_BOUNDARY_RATIONALE}"
+    );
+    assert_eq!(
+        rows.first(),
+        Some(&json!(["bind-00000.example", "allowed"]))
+    );
+    assert_eq!(rows.last(), Some(&json!(["bind-09999.example", "allowed"])));
+}
+
+#[tokio::test]
+async fn db_handle_query_returns_exact_columns_rows() {
+    let p = temp_db_path("query-exact-columns-rows");
+    let db = DbHandle::open(&p).expect("open handle");
+    db.ready().await.expect("db ready");
+    db.write(WriteOp::NetEvent(make_net_event(
+        "exact.example",
+        Decision::Denied,
+    )))
+    .await
+    .expect("write exact fixture");
+
+    let raw = db
+        .query(
+            "SELECT domain, port, decision, method, path, bytes_sent, bytes_received
+             FROM net_events WHERE domain = ?",
+            &[json!("exact.example")],
+        )
+        .await
+        .expect("query exact rows");
+    let value: serde_json::Value = serde_json::from_str(&raw).expect("query JSON");
+
+    assert_eq!(
+        value["columns"],
+        json!([
+            "domain",
+            "port",
+            "decision",
+            "method",
+            "path",
+            "bytes_sent",
+            "bytes_received"
+        ]),
+        "DbHandle::query must preserve exact column order. {DB_BOUNDARY_RATIONALE}"
+    );
+    assert_eq!(
+        value["rows"],
+        json!([["exact.example", 443, "denied", "GET", "/api", 11, 22]]),
+        "DbHandle::query must preserve exact row values. {DB_BOUNDARY_RATIONALE}"
+    );
+}
+
+#[tokio::test]
+async fn db_handle_query_rejects_mutations() {
+    let p = temp_db_path("query-rejects-mutations");
+    let db = DbHandle::open(&p).expect("open handle");
+    db.ready().await.expect("db ready");
+
+    let error = db
+        .query("DELETE FROM net_events WHERE domain = ?", &[json!("x")])
+        .await
+        .expect_err("query must reject mutation SQL");
+    assert!(
+        error.contains("DELETE") && error.contains("not allowed"),
+        "DbHandle::query must reject mutations before SQLite execution: {error}. {DB_BOUNDARY_RATIONALE}"
+    );
+}
+
+#[tokio::test]
+async fn db_handle_query_uses_worker_not_runtime_block() {
+    let p = temp_db_path("query-worker-not-runtime-block");
+    let db = DbHandle::open(&p).expect("open handle");
+    db.ready().await.expect("db ready");
+    let ticker = tokio::spawn(async {
+        let mut ticks = 0;
+        for _ in 0..100 {
+            tokio::task::yield_now().await;
+            ticks += 1;
+        }
+        ticks
+    });
+
+    let (query, ticks) = tokio::join!(
+        db.query("SELECT COUNT(*) AS count FROM net_events", &[]),
+        ticker
+    );
+
+    query.expect("query should complete through DB worker");
+    assert_eq!(
+        ticks.expect("ticker task should complete"),
+        100,
+        "DbHandle::query must await a DB-owned worker instead of blocking the tokio runtime. {DB_BOUNDARY_RATIONALE}"
+    );
+}
+
+#[tokio::test]
 async fn db_handle_contract_ready_query_write_exactness() {
     let p = temp_db_path("contract-ready-query-write-exactness");
     let db = DbHandle::open(&p).expect("open handle");
