@@ -7493,7 +7493,7 @@ async fn handle_list_includes_uptime_for_running_vms() {
 // -----------------------------------------------------------------------
 
 #[tokio::test]
-async fn handle_stats_returns_global_data() {
+async fn db_boundary_route_contract_handle_stats_returns_global_data() {
     let dir = tempfile::tempdir().unwrap();
     let run_dir = dir.path().join("run");
     std::fs::create_dir_all(&run_dir).unwrap();
@@ -7534,7 +7534,9 @@ async fn handle_stats_returns_global_data() {
 
     let (state, _dir) = make_test_state_with_tempdir_at(dir);
     let result = handle_stats(State(state)).await;
-    assert!(result.is_ok());
+    if let Err(error) = &result {
+        panic!("stats route must read seeded main.db rows through the logger DB handle: {error:?}");
+    }
     let response = result.unwrap().into_response();
     assert_eq!(response.status(), StatusCode::OK);
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
@@ -7821,7 +7823,7 @@ async fn db_boundary_route_contract_db_handle_route_rewire() {
 }
 
 #[tokio::test]
-async fn broken_session_db_schema_is_explicit_error() {
+async fn db_boundary_route_contract_broken_session_db_schema_is_explicit_error() {
     let state = make_test_state();
     let app = build_service_router(Arc::clone(&state));
     let dir = tempfile::tempdir().unwrap();
@@ -7835,6 +7837,7 @@ async fn broken_session_db_schema_is_explicit_error() {
     );
     let db_path = session_dir.join("session.db");
     let conn = rusqlite::Connection::open(&db_path).unwrap();
+    conn.execute("DROP TABLE net_events", []).unwrap();
     conn.execute("CREATE TABLE net_events (id INTEGER PRIMARY KEY)", [])
         .unwrap();
     drop(conn);
@@ -7865,7 +7868,9 @@ fn logged_data_routes_do_not_bypass_logger_db_boundary() {
         "query_raw_blocking(",
         "with_reader_blocking(",
         "DbReader::open(",
+        "SessionIndex::open(",
         "SessionDb::new(",
+        "read_stats_response_from_main_db(&state.main_db_path())",
         "_projection",
     ];
     for needle in forbidden {

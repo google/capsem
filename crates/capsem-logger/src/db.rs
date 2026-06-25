@@ -360,11 +360,7 @@ impl DbHandle {
 
 fn reader_loop(path: PathBuf, rx: mpsc::Receiver<ReadRequest>) {
     let started = Instant::now();
-    if let Err(error) = DbReader::open(&path).and_then(|reader| {
-        reader
-            .ready()
-            .map_err(rusqlite::Error::InvalidParameterName)
-    }) {
+    if let Err(error) = DbReader::open(&path) {
         tracing::error!(
             db_path = %path.display(),
             operation = "reader_worker_open",

@@ -3504,7 +3504,7 @@ async fn handle_vm_fork_status(
 async fn handle_stats(
     State(state): State<Arc<ServiceState>>,
 ) -> Result<impl IntoResponse, AppError> {
-    let response = read_stats_response_from_main_db(&state.main_db_path())?;
+    let response = read_stats_response_from_main_db_handle(&state).await?;
     let body = serde_json::to_vec(&response).map_err(|error| {
         AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -7192,6 +7192,111 @@ where
         .collect()
 }
 
+fn main_ledger_route_error(
+    ledger: &str,
+    operation: &str,
+    db_path: &StdPath,
+    error: impl std::fmt::Display,
+) -> AppError {
+    let error = error.to_string();
+    error!(
+        ledger,
+        operation,
+        db_path = %db_path.display(),
+        error = %error,
+        "main ledger route DB operation failed"
+    );
+    AppError(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        format!("failed to {operation} {ledger} main ledger: {error}"),
+    )
+}
+
+async fn query_main_db_json(
+    ledger: &str,
+    operation: &str,
+    query_name: &str,
+    db_path: &StdPath,
+    db: &capsem_logger::DbHandle,
+    sql: &str,
+    params: &[serde_json::Value],
+) -> Result<serde_json::Value, AppError> {
+    let started = std::time::Instant::now();
+    let raw = db.query(sql, params).await.map_err(|error| {
+        error!(
+            ledger,
+            operation,
+            query_name,
+            db_path = %db_path.display(),
+            duration_ms = started.elapsed().as_millis(),
+            error = %error,
+            "main ledger route DB query failed"
+        );
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("{ledger} main ledger query {query_name} failed: {error}"),
+        )
+    })?;
+    let parsed = serde_json::from_str(&raw).map_err(|error| {
+        error!(
+            ledger,
+            operation = "parse query json",
+            query_name,
+            db_path = %db_path.display(),
+            duration_ms = started.elapsed().as_millis(),
+            error = %error,
+            "main ledger route DB query returned invalid JSON"
+        );
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("{ledger} main ledger query {query_name} returned invalid json: {error}"),
+        )
+    })?;
+    tracing::debug!(
+        ledger,
+        operation,
+        query_name,
+        db_path = %db_path.display(),
+        duration_ms = started.elapsed().as_millis(),
+        "main ledger route DB query completed"
+    );
+    Ok(parsed)
+}
+
+async fn query_main_typed_rows<T>(
+    ledger: &str,
+    query_name: &str,
+    db_path: &StdPath,
+    db: &capsem_logger::DbHandle,
+    sql: &str,
+    params: &[serde_json::Value],
+) -> Result<Vec<T>, AppError>
+where
+    T: DeserializeOwned,
+{
+    let raw = query_main_db_json(ledger, "query", query_name, db_path, db, sql, params).await?;
+    let objects = query_json_to_objects(raw);
+    objects
+        .into_iter()
+        .map(|object| {
+            serde_json::from_value::<T>(object).map_err(|error| {
+                error!(
+                    ledger,
+                    operation = "decode query rows",
+                    query_name,
+                    db_path = %db_path.display(),
+                    error = %error,
+                    "main ledger route DB query mapping failed"
+                );
+                AppError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("{ledger} main ledger query {query_name} mapping failed: {error}"),
+                )
+            })
+        })
+        .collect()
+}
+
 const SECURITY_LATEST_SQL: &str = r#"
 SELECT timestamp_unix_ms, event_id, event_type, rule_id,
        rule_action, detection_level, rule_json, event_json, trace_id,
@@ -7989,44 +8094,136 @@ async fn read_stats_detail_payload_from_session_db(
     }))
 }
 
-fn read_stats_response_from_main_db(db_path: &StdPath) -> Result<StatsResponse, AppError> {
-    let index = capsem_core::session::SessionIndex::open(db_path).map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to open main.db for stats ledger: {e}"),
+const STATS_GLOBAL_SQL: &str = r#"
+SELECT
+    COUNT(*) AS total_sessions,
+    COALESCE(SUM(total_input_tokens), 0) AS total_input_tokens,
+    COALESCE(SUM(total_output_tokens), 0) AS total_output_tokens,
+    COALESCE(SUM(total_estimated_cost), 0.0) AS total_estimated_cost,
+    COALESCE(SUM(total_tool_calls), 0) AS total_tool_calls,
+    COALESCE(SUM(total_file_events), 0) AS total_file_events,
+    COALESCE(SUM(total_requests), 0) AS total_requests,
+    COALESCE(SUM(allowed_requests), 0) AS total_allowed,
+    COALESCE(SUM(denied_requests), 0) AS total_denied
+FROM sessions
+"#;
+
+const STATS_SESSIONS_SQL: &str = r#"
+SELECT id, mode, command, status, created_at, stopped_at,
+       scratch_disk_size_gb, ram_bytes, total_requests, allowed_requests, denied_requests,
+       total_input_tokens, total_output_tokens, total_estimated_cost,
+       total_tool_calls, total_file_events,
+       compressed_size_bytes, vacuumed_at,
+       storage_mode, rootfs_hash, rootfs_version, forked_from, persistent,
+       exec_count, audit_event_count
+FROM sessions
+ORDER BY created_at DESC
+LIMIT ?
+"#;
+
+const STATS_TOP_PROVIDERS_SQL: &str = r#"
+SELECT provider,
+       SUM(call_count) AS call_count,
+       SUM(input_tokens) AS input_tokens,
+       SUM(output_tokens) AS output_tokens,
+       SUM(estimated_cost) AS estimated_cost,
+       SUM(total_duration_ms) AS total_duration_ms
+FROM ai_usage
+GROUP BY provider
+ORDER BY SUM(call_count) DESC
+LIMIT ?
+"#;
+
+const STATS_TOP_TOOLS_SQL: &str = r#"
+SELECT tool_name,
+       SUM(call_count) AS call_count,
+       SUM(total_bytes) AS total_bytes,
+       SUM(total_duration_ms) AS total_duration_ms
+FROM tool_usage
+GROUP BY tool_name
+ORDER BY SUM(call_count) DESC
+LIMIT ?
+"#;
+
+const STATS_TOP_MCP_TOOLS_SQL: &str = r#"
+SELECT tool_name,
+       server_name,
+       SUM(call_count) AS call_count,
+       SUM(total_bytes) AS total_bytes,
+       SUM(total_duration_ms) AS total_duration_ms
+FROM mcp_usage
+GROUP BY tool_name, server_name
+ORDER BY SUM(call_count) DESC
+LIMIT ?
+"#;
+
+async fn read_stats_response_from_main_db_handle(
+    state: &ServiceState,
+) -> Result<StatsResponse, AppError> {
+    let db_path = state.main_db_path();
+    let db = &state.profile_mutation_db;
+    db.ready()
+        .await
+        .map_err(|error| main_ledger_route_error("stats", "ready", &db_path, error))?;
+
+    let global = query_main_typed_rows::<capsem_core::session::GlobalStats>(
+        "stats",
+        "global_stats",
+        &db_path,
+        db,
+        STATS_GLOBAL_SQL,
+        &[],
+    )
+    .await?
+    .into_iter()
+    .next()
+    .ok_or_else(|| {
+        main_ledger_route_error(
+            "stats",
+            "read global_stats",
+            &db_path,
+            "global_stats query returned no row",
         )
     })?;
+
     Ok(StatsResponse {
-        global: index.global_stats().map_err(|e| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("global_stats ledger: {e}"),
-            )
-        })?,
-        sessions: index.recent(100).map_err(|e| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("recent stats ledger: {e}"),
-            )
-        })?,
-        top_providers: index.top_providers(20).map_err(|e| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("top_providers stats ledger: {e}"),
-            )
-        })?,
-        top_tools: index.top_tools(20).map_err(|e| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("top_tools stats ledger: {e}"),
-            )
-        })?,
-        top_mcp_tools: index.top_mcp_tools(20).map_err(|e| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("top_mcp_tools stats ledger: {e}"),
-            )
-        })?,
+        global,
+        sessions: query_main_typed_rows(
+            "stats",
+            "recent_sessions",
+            &db_path,
+            db,
+            STATS_SESSIONS_SQL,
+            &[json!(100)],
+        )
+        .await?,
+        top_providers: query_main_typed_rows(
+            "stats",
+            "top_providers",
+            &db_path,
+            db,
+            STATS_TOP_PROVIDERS_SQL,
+            &[json!(20)],
+        )
+        .await?,
+        top_tools: query_main_typed_rows(
+            "stats",
+            "top_tools",
+            &db_path,
+            db,
+            STATS_TOP_TOOLS_SQL,
+            &[json!(20)],
+        )
+        .await?,
+        top_mcp_tools: query_main_typed_rows(
+            "stats",
+            "top_mcp_tools",
+            &db_path,
+            db,
+            STATS_TOP_MCP_TOOLS_SQL,
+            &[json!(20)],
+        )
+        .await?,
     })
 }
 
