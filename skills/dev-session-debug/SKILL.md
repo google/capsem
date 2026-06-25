@@ -42,10 +42,11 @@ Checks: table existence, row counts, tool lifecycle integrity (orphaned tool_cal
 The model/tool contract is intentionally one ledger:
 
 - `model_calls` is one row per model exchange: request sent to the provider and response received from it.
-- `model_items` is the ordered item ledger for request, reasoning, response, tool_call, and tool_response content inside those exchanges.
+- `model_items` is the ordered item ledger for request, reasoning/thinking, response, tool_call, and tool_response content inside those exchanges.
 - `tool_calls` is the canonical user/security tool-call ledger for all origins (`native`, `mcp`, `builtin`, `local`). User-facing tool counts and CEL tool evidence come from this table.
 - `tool_responses` records tool result content sent back to a model. A response row must match a `tool_calls.call_id` in the same trace.
 - MCP protocol facts are typed security events. MCP-origin `tools/call` activity must appear in `tool_calls` with `origin = 'mcp'`.
+- One `model_calls.id` can emit many `tool_calls.call_id` values. The tool response must reuse the same `call_id`; MCP can enrich that same logical call, but it does not create a second product ledger.
 
 ### Identity graph
 
@@ -107,8 +108,8 @@ Definitions:
   contain multiple model exchanges when the agent calls tools and then calls a
   model again with the tool results.
 - `model_call_id` is the `model_calls.id` value for one provider request and
-  response exchange. It owns that exchange's request, reasoning, response, and
-  model-emitted tool-call items.
+  response exchange for a user-visible turn. It owns that exchange's request,
+  reasoning/thinking, response, and model-emitted tool-call items.
 - `tool_call_id` identifies one logical tool invocation across model-native
   tools, MCP transport, Capsem built-ins, and local tools. In SQLite it is stored
   as `tool_calls.call_id` and `tool_responses.call_id`.

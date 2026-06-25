@@ -25,25 +25,41 @@ erDiagram
     }
     model_calls {
         int id PK
+        text event_id
         text provider
         text model
         int input_tokens
         int output_tokens
         real estimated_cost_usd
         text trace_id
+        text turn_id
+    }
+    model_items {
+        int id PK
+        int model_call_id FK
+        text item_type
+        int item_index
+        text call_id
+        text trace_id
+        text turn_id
     }
     tool_calls {
         int id PK
+        text event_id
         int model_call_id FK
         text call_id
         text tool_name
         text origin
+        text trace_id
+        text turn_id
     }
     tool_responses {
         int id PK
         int model_call_id FK
         text call_id
         text content_preview
+        text trace_id
+        text turn_id
     }
     dns_events {
         int id PK
@@ -102,11 +118,14 @@ erDiagram
         text path
         int size
     }
-    model_calls ||--o{ tool_calls : "has"
-    model_calls ||--o{ tool_responses : "has"
+    model_calls ||--o{ model_items : "orders"
+    model_calls ||--o{ tool_calls : "emits"
+    tool_calls ||--o{ tool_responses : "same call_id"
+    model_calls ||--o{ tool_responses : "consumes"
     net_events ||--o{ security_rule_events : "event_id"
     net_events ||--o{ event_body_blobs : "event_id"
     model_calls ||--o{ event_body_blobs : "event_id"
+    tool_calls ||--o{ event_body_blobs : "event_id"
     dns_events ||--o{ security_rule_events : "event_id"
     security_rule_events ||--o{ security_ask_events : "event_id"
 ```
@@ -124,8 +143,8 @@ provider id replaces these joins:
   contain multiple model exchanges when the agent calls tools and then calls a
   model again with the tool results.
 - `model_call_id` is the `model_calls.id` value for one provider request and
-  response exchange. It owns that exchange's request, reasoning, response, and
-  model-emitted tool-call items.
+  response exchange for a user-visible turn. It owns that exchange's request,
+  reasoning/thinking, response, and model-emitted tool-call items.
 - `tool_call_id` identifies one logical tool invocation across model-native
   tools, MCP transport, Capsem built-ins, and local tools. In SQLite it is stored
   as `tool_calls.call_id` and `tool_responses.call_id`.
@@ -181,7 +200,8 @@ flowchart TD
 
 One `turn_id` can contain multiple `model_call_id` values when an agent calls
 the model, executes tools, then calls the model again with tool results. One
-`model_call_id` can emit zero or more `tool_call_id` values. A tool response
+`model_call_id` can emit zero or more `tool_call_id` values; this is the
+canonical one-to-many relationship for model-visible tools. A tool response
 must carry the same `tool_call_id` as the tool request. In the current SQLite
 schema, the persisted `tool_call_id` value is stored in `tool_calls.call_id`
 and `tool_responses.call_id`.
