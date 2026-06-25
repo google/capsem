@@ -908,8 +908,8 @@ fn db_writer_records_enqueue_batch_and_shutdown_metrics() {
     let recorder = DebuggingRecorder::new();
     let snapshotter = recorder.snapshotter();
     let (tx, rx) = tokio::sync::mpsc::channel(16);
-    tx.blocking_send(super::WriterMessage::Op(Box::new(WriteOp::FileEvent(
-        crate::events::FileEvent {
+    tx.blocking_send(super::WriterMessage::Op {
+        op: Box::new(WriteOp::FileEvent(crate::events::FileEvent {
             event_id: None,
             timestamp: std::time::SystemTime::now(),
             action: crate::events::FileAction::Created,
@@ -917,8 +917,9 @@ fn db_writer_records_enqueue_batch_and_shutdown_metrics() {
             size: None,
             trace_id: None,
             credential_ref: None,
-        },
-    ))))
+        })),
+        ack: None,
+    })
     .unwrap();
     drop(tx);
 

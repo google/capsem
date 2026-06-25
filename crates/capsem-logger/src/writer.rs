@@ -1,7 +1,7 @@
 use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Instant, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use rusqlite::{params, Connection, OpenFlags};
 use tracing::{warn, Instrument};
@@ -19,6 +19,8 @@ use crate::schema;
 /// enforces this defensively to prevent unbounded storage.
 const MAX_FIELD_BYTES: usize = 256 * 1024;
 const MAX_BODY_BLOB_BYTES: usize = 10 * 1024 * 1024;
+const DISK_FLUSH_THRESHOLD_OPS: usize = 128;
+const DISK_FLUSH_INTERVAL: Duration = Duration::from_millis(25);
 
 pub const DB_ENQUEUE_SPAN: &str = "capsem.db.enqueue";
 pub const DB_WRITE_BATCH_SPAN: &str = "capsem.db.write_batch";
@@ -102,7 +104,10 @@ pub enum WriteOp {
 
 #[derive(Debug)]
 enum WriterMessage {
-    Op(Box<WriteOp>),
+    Op {
+        op: Box<WriteOp>,
+        ack: Option<tokio::sync::oneshot::Sender<Result<(), String>>>,
+    },
     Flush(tokio::sync::oneshot::Sender<()>),
 }
 
@@ -284,8 +289,12 @@ impl DbWriter {
         );
         let started = Instant::now();
         if let Some(tx) = self.clone_sender() {
+            let (ack, ack_rx) = tokio::sync::oneshot::channel();
             match tx
-                .send(WriterMessage::Op(Box::new(op)))
+                .send(WriterMessage::Op {
+                    op: Box::new(op),
+                    ack: Some(ack),
+                })
                 .instrument(span.clone())
                 .await
             {
@@ -297,6 +306,9 @@ impl DbWriter {
                     return Err(format!("db writer channel closed: {e}"));
                 }
             }
+            ack_rx
+                .await
+                .map_err(|error| format!("db writer dropped memory ack: {error}"))??;
         } else {
             record_enqueue(started, "missing_sender", &span);
             return Err("db writer sender missing".to_string());
@@ -313,12 +325,13 @@ impl DbWriter {
             queue_result = tracing::field::Empty,
         );
         let started = Instant::now();
-        let accepted = self
-            .tx
-            .lock()
-            .unwrap()
-            .as_ref()
-            .is_some_and(|tx| tx.try_send(WriterMessage::Op(Box::new(op))).is_ok());
+        let accepted = self.tx.lock().unwrap().as_ref().is_some_and(|tx| {
+            tx.try_send(WriterMessage::Op {
+                op: Box::new(op),
+                ack: None,
+            })
+            .is_ok()
+        });
         record_enqueue(
             started,
             if accepted { "queued" } else { "full_or_closed" },
@@ -341,7 +354,10 @@ impl DbWriter {
         );
         let started = Instant::now();
         if let Some(tx) = self.clone_sender() {
-            let mut message = WriterMessage::Op(Box::new(op));
+            let mut message = WriterMessage::Op {
+                op: Box::new(op),
+                ack: None,
+            };
             loop {
                 match tx.try_send(message) {
                     Ok(()) => {
@@ -433,23 +449,49 @@ impl Drop for DbWriter {
 /// The writer thread loop: block-then-drain batching.
 fn writer_loop(conn: Connection, mut rx: tokio::sync::mpsc::Receiver<WriterMessage>) {
     let mut model_item_dedup = load_model_item_dedup(&conn);
+    let mut dirty_tables = BTreeSet::new();
+    let mut dirty_ops = 0_usize;
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .expect("failed to build db writer timer runtime");
 
     // 1. Block until at least one op arrives. Returns None when all
     //    Senders are dropped (clean shutdown) and ends the loop.
-    while let Some(first_message) = rx.blocking_recv() {
-        let mut batch = Vec::with_capacity(128);
+    loop {
+        let first_message = if dirty_ops == 0 {
+            rt.block_on(rx.recv())
+        } else {
+            match rt.block_on(async { tokio::time::timeout(DISK_FLUSH_INTERVAL, rx.recv()).await })
+            {
+                Ok(message) => message,
+                Err(_) => {
+                    if let Err(error) = flush_dirty_tables_to_disk(&conn, &mut dirty_tables) {
+                        warn!(error = %error, "db interval flush failed");
+                    } else {
+                        dirty_ops = 0;
+                    }
+                    continue;
+                }
+            }
+        };
+        let Some(first_message) = first_message else {
+            break;
+        };
+
+        let mut batch = Vec::with_capacity(DISK_FLUSH_THRESHOLD_OPS);
         let mut flush_barriers = Vec::new();
         match first_message {
-            WriterMessage::Op(op) => batch.push(*op),
+            WriterMessage::Op { op, ack } => batch.push((*op, ack)),
             WriterMessage::Flush(reply) => flush_barriers.push(reply),
         }
 
         // 2. Drain any ops already queued (non-blocking).
         while flush_barriers.is_empty() {
             match rx.try_recv() {
-                Ok(WriterMessage::Op(op)) => {
-                    batch.push(*op);
-                    if batch.len() >= 128 {
+                Ok(WriterMessage::Op { op, ack }) => {
+                    batch.push((*op, ack));
+                    if batch.len() >= DISK_FLUSH_THRESHOLD_OPS {
                         break;
                     }
                 }
@@ -473,12 +515,36 @@ fn writer_loop(conn: Connection, mut rx: tokio::sync::mpsc::Receiver<WriterMessa
         let started = Instant::now();
         if batch.is_empty() {
             record_batch(started, batch_size, batch_bucket, "ok", &span);
-        } else if let Err(e) = span.in_scope(|| execute_batch(&conn, &batch, &mut model_item_dedup))
-        {
-            record_batch(started, batch_size, batch_bucket, "error", &span);
-            warn!(error = %e, count = batch.len(), "db write batch failed");
         } else {
-            record_batch(started, batch_size, batch_bucket, "ok", &span);
+            let ops: Vec<WriteOp> = batch.iter().map(|(op, _)| op.clone()).collect();
+            match span.in_scope(|| execute_memory_batch(&conn, &ops, &mut model_item_dedup)) {
+                Ok(affected) => {
+                    dirty_tables.extend(affected);
+                    dirty_ops += batch_size;
+                    record_batch(started, batch_size, batch_bucket, "ok", &span);
+                    for (_, ack) in batch {
+                        if let Some(ack) = ack {
+                            let _ = ack.send(Ok(()));
+                        }
+                    }
+                }
+                Err(e) => {
+                    record_batch(started, batch_size, batch_bucket, "error", &span);
+                    warn!(error = %e, count = batch.len(), "db memory write batch failed");
+                    for (_, ack) in batch {
+                        if let Some(ack) = ack {
+                            let _ = ack.send(Err(e.to_string()));
+                        }
+                    }
+                }
+            }
+        }
+        if dirty_ops >= DISK_FLUSH_THRESHOLD_OPS || !flush_barriers.is_empty() {
+            if let Err(error) = flush_dirty_tables_to_disk(&conn, &mut dirty_tables) {
+                warn!(error = %error, "db dirty table flush failed");
+            } else {
+                dirty_ops = 0;
+            }
         }
         for reply in flush_barriers {
             let _ = reply.send(());
@@ -493,6 +559,10 @@ fn writer_loop(conn: Connection, mut rx: tokio::sync::mpsc::Receiver<WriterMessa
         if let Ok(ms) = ms.parse::<u64>() {
             std::thread::sleep(std::time::Duration::from_millis(ms));
         }
+    }
+
+    if let Err(error) = flush_dirty_tables_to_disk(&conn, &mut dirty_tables) {
+        warn!(error = %error, "db shutdown dirty table flush failed");
     }
 
     // All senders dropped -- checkpoint WAL before closing connection.
@@ -583,6 +653,20 @@ fn batch_size_bucket(size: usize) -> &'static str {
     }
 }
 
+#[derive(Clone, Copy)]
+enum WriteTarget {
+    Memory,
+}
+
+impl WriteTarget {
+    fn table(self, name: &str) -> String {
+        match self {
+            WriteTarget::Memory if !schema::is_disk_only_table(name) => format!("mem.{name}"),
+            WriteTarget::Memory => format!("main.{name}"),
+        }
+    }
+}
+
 fn affected_memory_tables(op: &WriteOp, tables: &mut BTreeSet<&'static str>) {
     match op {
         WriteOp::NetEvent(_) => {
@@ -627,36 +711,67 @@ fn affected_memory_tables(op: &WriteOp, tables: &mut BTreeSet<&'static str>) {
     }
 }
 
-fn execute_batch(
+fn execute_memory_batch(
     conn: &Connection,
     batch: &[WriteOp],
     model_item_dedup: &mut ModelItemDedup,
-) -> rusqlite::Result<()> {
+) -> rusqlite::Result<BTreeSet<&'static str>> {
     let tx = conn.unchecked_transaction()?;
     let mut affected_tables = BTreeSet::new();
     for op in batch {
         affected_memory_tables(op, &mut affected_tables);
         match op {
-            WriteOp::NetEvent(e) => insert_net_event(&tx, e)?,
-            WriteOp::ModelCall(m) => insert_model_call(&tx, m, model_item_dedup)?,
-            WriteOp::McpCall(c) => insert_mcp_call(&tx, c)?,
-            WriteOp::FileEvent(f) => insert_file_event(&tx, f)?,
-            WriteOp::ExecEvent(e) => insert_exec_event(&tx, e)?,
-            WriteOp::ExecEventComplete(c) => update_exec_event(&tx, c)?,
-            WriteOp::AuditEvent(a) => insert_audit_event(&tx, a)?,
-            WriteOp::DnsEvent(d) => insert_dns_event(&tx, d)?,
-            WriteOp::SubstitutionEvent(s) => insert_substitution_event(&tx, s)?,
-            WriteOp::SecurityRuleEvent(e) => insert_security_rule_event(&tx, e)?,
-            WriteOp::SecurityAskEvent(e) => insert_security_ask_event(&tx, e)?,
-            WriteOp::SecurityDecisionEvent(e) => insert_security_decision_event(&tx, e)?,
-            WriteOp::ProfileMutationEvent(e) => insert_profile_mutation_event(&tx, e)?,
+            WriteOp::NetEvent(e) => insert_net_event(&tx, e, WriteTarget::Memory)?,
+            WriteOp::ModelCall(m) => {
+                insert_model_call(&tx, m, model_item_dedup, WriteTarget::Memory)?
+            }
+            WriteOp::McpCall(c) => insert_mcp_call(&tx, c, WriteTarget::Memory)?,
+            WriteOp::FileEvent(f) => insert_file_event(&tx, f, WriteTarget::Memory)?,
+            WriteOp::ExecEvent(e) => insert_exec_event(&tx, e, WriteTarget::Memory)?,
+            WriteOp::ExecEventComplete(c) => update_exec_event(&tx, c, WriteTarget::Memory)?,
+            WriteOp::AuditEvent(a) => insert_audit_event(&tx, a, WriteTarget::Memory)?,
+            WriteOp::DnsEvent(d) => insert_dns_event(&tx, d, WriteTarget::Memory)?,
+            WriteOp::SubstitutionEvent(s) => {
+                insert_substitution_event(&tx, s, WriteTarget::Memory)?
+            }
+            WriteOp::SecurityRuleEvent(e) => {
+                insert_security_rule_event(&tx, e, WriteTarget::Memory)?
+            }
+            WriteOp::SecurityAskEvent(e) => insert_security_ask_event(&tx, e, WriteTarget::Memory)?,
+            WriteOp::SecurityDecisionEvent(e) => {
+                insert_security_decision_event(&tx, e, WriteTarget::Memory)?
+            }
+            WriteOp::ProfileMutationEvent(e) => {
+                insert_profile_mutation_event(&tx, e, WriteTarget::Memory)?
+            }
         }
     }
-    schema::with_memory_schema_lock(|| schema::sync_memory_tables_from_disk(&tx, affected_tables))?;
-    tx.commit()
+    tx.commit()?;
+    Ok(affected_tables)
 }
 
-fn insert_net_event(conn: &Connection, event: &NetEvent) -> rusqlite::Result<()> {
+fn flush_dirty_tables_to_disk(
+    conn: &Connection,
+    dirty_tables: &mut BTreeSet<&'static str>,
+) -> rusqlite::Result<()> {
+    if dirty_tables.is_empty() {
+        return Ok(());
+    }
+    let tables: Vec<&'static str> = dirty_tables.iter().copied().collect();
+    let tx = conn.unchecked_transaction()?;
+    schema::with_memory_schema_lock(|| {
+        schema::flush_memory_tables_to_disk(&tx, tables.iter().copied())
+    })?;
+    tx.commit()?;
+    dirty_tables.clear();
+    Ok(())
+}
+
+fn insert_net_event(
+    conn: &Connection,
+    event: &NetEvent,
+    target: WriteTarget,
+) -> rusqlite::Result<()> {
     let timestamp = format_timestamp(event.timestamp);
     let req_body = cap_field(&event.request_body_preview);
     let resp_body = cap_field(&event.response_body_preview);
@@ -664,7 +779,7 @@ fn insert_net_event(conn: &Connection, event: &NetEvent) -> rusqlite::Result<()>
     let resp_headers = cap_field(&event.response_headers);
     let event_id = event.event_id.clone().unwrap_or_else(new_event_id);
     conn.execute(
-        "INSERT INTO net_events (
+        &format!("INSERT INTO {} (
             event_id, timestamp, domain, port, decision, process_name, pid,
             method, path, query, status_code,
             bytes_sent, bytes_received, duration_ms, matched_rule,
@@ -673,7 +788,7 @@ fn insert_net_event(conn: &Connection, event: &NetEvent) -> rusqlite::Result<()>
             policy_mode, policy_action, policy_rule, policy_reason,
             trace_id, turn_id, credential_ref
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)", target.table("net_events")),
         params![
             event_id,
             timestamp,
@@ -749,6 +864,7 @@ fn insert_model_call(
     conn: &Connection,
     call: &ModelCall,
     model_item_dedup: &mut ModelItemDedup,
+    target: WriteTarget,
 ) -> rusqlite::Result<()> {
     let timestamp = format_timestamp(call.timestamp);
     let req_body = cap_field(&call.request_body_preview);
@@ -757,7 +873,7 @@ fn insert_model_call(
     let sys_prompt = cap_field(&call.system_prompt_preview);
     let event_id = call.event_id.clone().unwrap_or_else(new_event_id);
     conn.execute(
-        "INSERT INTO model_calls (
+        &format!("INSERT INTO {} (
             event_id, timestamp, provider, protocol, model, process_name, pid,
             method, path, stream,
             system_prompt_preview, messages_count, tools_count,
@@ -767,7 +883,7 @@ fn insert_model_call(
             duration_ms, response_bytes, estimated_cost_usd, trace_id,
             usage_details, credential_ref, turn_id
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29)", target.table("model_calls")),
         params![
             event_id,
             timestamp,
@@ -833,19 +949,29 @@ fn insert_model_call(
             turn_id: call.trace_id.as_deref(),
         },
     )?;
-    insert_model_items(conn, model_call_id, call, &timestamp, model_item_dedup)?;
+    insert_model_items(
+        conn,
+        model_call_id,
+        call,
+        &timestamp,
+        model_item_dedup,
+        target,
+    )?;
 
     for tc in &call.tool_calls {
         // W6: tool_calls.trace_id falls back to the parent model_call's
         // trace_id (they belong to the same agent turn).
         let tc_trace = tc.trace_id.clone().or_else(|| call.trace_id.clone());
         conn.execute(
-            "INSERT INTO tool_calls (
+            &format!(
+                "INSERT INTO {} (
                 event_id, timestamp, model_call_id, provider, status, call_index, call_id,
                 tool_name, arguments, origin, server_name, decision, duration_ms,
                 trace_id, turn_id, credential_ref
              )
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+                target.table("tool_calls")
+            ),
             params![
                 new_event_id(),
                 timestamp,
@@ -874,8 +1000,8 @@ fn insert_model_call(
             .clone()
             .or_else(|| call.credential_ref.clone());
         conn.execute(
-            "INSERT INTO tool_responses (model_call_id, call_id, content_preview, is_error, trace_id, turn_id, credential_ref)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            &format!("INSERT INTO {} (model_call_id, call_id, content_preview, is_error, trace_id, turn_id, credential_ref)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", target.table("tool_responses")),
             params![
                 model_call_id,
                 tr.call_id,
@@ -897,6 +1023,7 @@ fn insert_model_items(
     call: &ModelCall,
     timestamp: &str,
     model_item_dedup: &mut ModelItemDedup,
+    target: WriteTarget,
 ) -> rusqlite::Result<()> {
     let mut item_index = 0_i64;
     let mut insert_item = |kind: &str,
@@ -923,12 +1050,15 @@ fn insert_model_items(
             return Ok(());
         }
         conn.execute(
-            "INSERT OR IGNORE INTO model_items (
+            &format!(
+                "INSERT OR IGNORE INTO {} (
                 event_id, model_call_id, timestamp, provider, model, path, trace_id,
                 kind, item_index, call_id, tool_name, arguments, content,
                 content_hash, credential_ref, turn_id
              )
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+                target.table("model_items")
+            ),
             params![
                 new_event_id(),
                 model_call_id,
@@ -985,12 +1115,16 @@ fn insert_model_items(
     Ok(())
 }
 
-fn insert_file_event(conn: &Connection, event: &FileEvent) -> rusqlite::Result<()> {
+fn insert_file_event(
+    conn: &Connection,
+    event: &FileEvent,
+    target: WriteTarget,
+) -> rusqlite::Result<()> {
     let timestamp = format_timestamp(event.timestamp);
     let (directory, name) = split_event_path(&event.path);
     conn.execute(
-        "INSERT INTO fs_events (event_id, timestamp, action, path, directory, name, size, trace_id, turn_id, credential_ref)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        &format!("INSERT INTO {} (event_id, timestamp, action, path, directory, name, size, trace_id, turn_id, credential_ref)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)", target.table("fs_events")),
         params![
             event.event_id.clone().unwrap_or_else(new_event_id),
             timestamp,
@@ -1019,7 +1153,7 @@ fn split_event_path(path: &str) -> (String, String) {
     }
 }
 
-fn insert_mcp_call(conn: &Connection, call: &McpCall) -> rusqlite::Result<()> {
+fn insert_mcp_call(conn: &Connection, call: &McpCall, target: WriteTarget) -> rusqlite::Result<()> {
     let timestamp = format_timestamp(call.timestamp);
     let req_preview = cap_field(&call.request_preview);
     let resp_preview = cap_field(&call.response_preview);
@@ -1027,13 +1161,13 @@ fn insert_mcp_call(conn: &Connection, call: &McpCall) -> rusqlite::Result<()> {
     if call.method == "tools/call" {
         let tool_name = call.tool_name.as_deref().unwrap_or("");
         conn.execute(
-            "INSERT INTO tool_calls (
+            &format!("INSERT INTO {} (
                 event_id, timestamp, model_call_id, provider, status, call_index, call_id,
                 tool_name, arguments, response_preview, origin, server_name, method, request_id,
                 decision, duration_ms, error_message, process_name, bytes_sent, bytes_received,
                 policy_mode, policy_action, policy_rule, policy_reason, trace_id, turn_id, credential_ref
             )
-             VALUES (?1, ?2, NULL, '', ?3, 0, ?4, ?5, ?6, ?7, 'mcp', ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
+             VALUES (?1, ?2, NULL, '', ?3, 0, ?4, ?5, ?6, ?7, 'mcp', ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)", target.table("tool_calls")),
             params![
                 &event_id,
                 &timestamp,
@@ -1151,13 +1285,17 @@ fn insert_event_body_blob(conn: &Connection, blob: EventBodyBlob<'_>) -> rusqlit
     Ok(())
 }
 
-fn insert_exec_event(conn: &Connection, event: &ExecEvent) -> rusqlite::Result<()> {
+fn insert_exec_event(
+    conn: &Connection,
+    event: &ExecEvent,
+    target: WriteTarget,
+) -> rusqlite::Result<()> {
     let timestamp = format_timestamp(event.timestamp);
     conn.execute(
-        "INSERT INTO exec_events (
+        &format!("INSERT INTO {} (
             event_id, timestamp, exec_id, command, source, trace_id, turn_id, process_name, credential_ref
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)", target.table("exec_events")),
         params![
             event.event_id.clone().unwrap_or_else(new_event_id),
             timestamp,
@@ -1173,11 +1311,16 @@ fn insert_exec_event(conn: &Connection, event: &ExecEvent) -> rusqlite::Result<(
     Ok(())
 }
 
-fn update_exec_event(conn: &Connection, complete: &ExecEventComplete) -> rusqlite::Result<()> {
+fn update_exec_event(
+    conn: &Connection,
+    complete: &ExecEventComplete,
+    target: WriteTarget,
+) -> rusqlite::Result<()> {
     let stdout_preview = cap_field(&complete.stdout_preview);
     let stderr_preview = cap_field(&complete.stderr_preview);
     conn.execute(
-        "UPDATE exec_events SET
+        &format!(
+            "UPDATE {} SET
             exit_code = ?1,
             duration_ms = ?2,
             stdout_preview = ?3,
@@ -1186,6 +1329,8 @@ fn update_exec_event(conn: &Connection, complete: &ExecEventComplete) -> rusqlit
             stderr_bytes = ?6,
             pid = ?7
          WHERE exec_id = ?8",
+            target.table("exec_events")
+        ),
         params![
             complete.exit_code as i64,
             complete.duration_ms as i64,
@@ -1200,15 +1345,19 @@ fn update_exec_event(conn: &Connection, complete: &ExecEventComplete) -> rusqlit
     Ok(())
 }
 
-fn insert_dns_event(conn: &Connection, event: &DnsEvent) -> rusqlite::Result<()> {
+fn insert_dns_event(
+    conn: &Connection,
+    event: &DnsEvent,
+    target: WriteTarget,
+) -> rusqlite::Result<()> {
     let timestamp = format_timestamp(event.timestamp);
     conn.execute(
-        "INSERT INTO dns_events (
+        &format!("INSERT INTO {} (
             event_id, timestamp, qname, qtype, qclass, rcode, decision, matched_rule,
             answer_ip, source_proto, process_name, upstream_resolver_ms, trace_id, turn_id,
             policy_mode, policy_action, policy_rule, policy_reason, credential_ref
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)", target.table("dns_events")),
         params![
             event.event_id.clone().unwrap_or_else(new_event_id),
             timestamp,
@@ -1234,14 +1383,21 @@ fn insert_dns_event(conn: &Connection, event: &DnsEvent) -> rusqlite::Result<()>
     Ok(())
 }
 
-fn insert_audit_event(conn: &Connection, event: &AuditEvent) -> rusqlite::Result<()> {
+fn insert_audit_event(
+    conn: &Connection,
+    event: &AuditEvent,
+    target: WriteTarget,
+) -> rusqlite::Result<()> {
     let timestamp = format_timestamp(event.timestamp);
     conn.execute(
-        "INSERT INTO audit_events (
+        &format!(
+            "INSERT INTO {} (
             event_id, timestamp, pid, ppid, uid, exe, comm, argv, cwd,
             session_id, tty, audit_id, exec_event_id, parent_exe, trace_id, turn_id, credential_ref
          )
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+            target.table("audit_events")
+        ),
         params![
             event.event_id.clone().unwrap_or_else(new_event_id),
             timestamp,
@@ -1265,14 +1421,21 @@ fn insert_audit_event(conn: &Connection, event: &AuditEvent) -> rusqlite::Result
     Ok(())
 }
 
-fn insert_substitution_event(conn: &Connection, event: &SubstitutionEvent) -> rusqlite::Result<()> {
+fn insert_substitution_event(
+    conn: &Connection,
+    event: &SubstitutionEvent,
+    target: WriteTarget,
+) -> rusqlite::Result<()> {
     let timestamp = format_timestamp(event.timestamp);
     conn.execute(
-        "INSERT INTO substitution_events (
+        &format!(
+            "INSERT INTO {} (
             event_id, timestamp, material_class, source, event_type, algorithm,
             substitution_ref, outcome, provider, confidence, trace_id, turn_id, context_json
          )
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            target.table("substitution_events")
+        ),
         params![
             event.event_id.clone().unwrap_or_else(new_event_id),
             timestamp,
@@ -1295,13 +1458,17 @@ fn insert_substitution_event(conn: &Connection, event: &SubstitutionEvent) -> ru
 fn insert_security_rule_event(
     conn: &Connection,
     event: &SecurityRuleEvent,
+    target: WriteTarget,
 ) -> rusqlite::Result<()> {
     conn.execute(
-        "INSERT INTO security_rule_events (
+        &format!(
+            "INSERT INTO {} (
             timestamp_unix_ms, event_id, event_type, rule_id,
             rule_action, detection_level, rule_json, event_json, trace_id, turn_id, credential_ref
          )
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            target.table("security_rule_events")
+        ),
         params![
             event.timestamp_unix_ms,
             event.event_id,
@@ -1319,13 +1486,20 @@ fn insert_security_rule_event(
     Ok(())
 }
 
-fn insert_security_ask_event(conn: &Connection, event: &SecurityAskEvent) -> rusqlite::Result<()> {
+fn insert_security_ask_event(
+    conn: &Connection,
+    event: &SecurityAskEvent,
+    target: WriteTarget,
+) -> rusqlite::Result<()> {
     conn.execute(
-        "INSERT INTO security_ask_events (
+        &format!(
+            "INSERT INTO {} (
             timestamp_unix_ms, ask_id, event_id, event_type, rule_id, rule_name,
             status, rule_json, event_json, resolver, reason, trace_id
          )
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            target.table("security_ask_events")
+        ),
         params![
             event.timestamp_unix_ms,
             event.ask_id,
@@ -1347,14 +1521,18 @@ fn insert_security_ask_event(conn: &Connection, event: &SecurityAskEvent) -> rus
 fn insert_security_decision_event(
     conn: &Connection,
     event: &SecurityDecisionEvent,
+    target: WriteTarget,
 ) -> rusqlite::Result<()> {
     conn.execute(
-        "INSERT INTO security_decision_events (
+        &format!(
+            "INSERT INTO {} (
             timestamp_unix_ms, event_id, event_type, stage, actor,
             rule_id, plugin_id, previous_decision, requested_decision,
             effective_decision, reason, event_json, trace_id, turn_id, credential_ref
          )
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+            target.table("security_decision_events")
+        ),
         params![
             event.timestamp_unix_ms,
             event.event_id,
@@ -1379,14 +1557,18 @@ fn insert_security_decision_event(
 fn insert_profile_mutation_event(
     conn: &Connection,
     event: &ProfileMutationEvent,
+    target: WriteTarget,
 ) -> rusqlite::Result<()> {
     conn.execute(
-        "INSERT INTO profile_mutation_events (
+        &format!(
+            "INSERT INTO {} (
             timestamp_unix_ms, mutation_id, profile_id, actor, category, filename,
             affected_path, target_kind, target_key, operation, rule_id,
             old_hash, old_size, new_hash, new_size, status, error, trace_id
          )
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+            target.table("profile_mutation_events")
+        ),
         params![
             event.timestamp_unix_ms,
             event.mutation_id,

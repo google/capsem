@@ -539,6 +539,25 @@ pub fn sync_memory_tables_from_disk<'a>(
     Ok(())
 }
 
+pub fn flush_memory_tables_to_disk<'a>(
+    conn: &Connection,
+    tables: impl IntoIterator<Item = &'a str>,
+) -> rusqlite::Result<()> {
+    for table in tables {
+        if is_disk_only_table(table) {
+            continue;
+        }
+        if !table_exists(conn, "main", table)? || !table_exists(conn, MEMORY_SCHEMA, table)? {
+            continue;
+        }
+        conn.execute_batch(&format!(
+            "INSERT OR REPLACE INTO main.{table}
+             SELECT * FROM {MEMORY_SCHEMA}.{table};"
+        ))?;
+    }
+    Ok(())
+}
+
 pub fn rehydrate_memory_tables_from_disk_once<'a>(
     conn: &Connection,
     tables: impl IntoIterator<Item = &'a str>,

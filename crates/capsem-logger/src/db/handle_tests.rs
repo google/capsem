@@ -72,6 +72,16 @@ fn make_net_event(domain: &str, decision: Decision) -> NetEvent {
     }
 }
 
+fn disk_net_event_count(path: &std::path::Path, domain: &str) -> i64 {
+    let conn = rusqlite::Connection::open(path).expect("open disk verifier");
+    conn.query_row(
+        "SELECT COUNT(*) FROM main.net_events WHERE domain = ?1",
+        [domain],
+        |row| row.get(0),
+    )
+    .expect("count disk net events")
+}
+
 #[tokio::test]
 async fn db_handle_ready_query_write() {
     let p = temp_db_path("ready-query-write");
@@ -99,6 +109,118 @@ async fn db_handle_ready_query_write() {
         json!(["domain", "decision", "bytes_sent"])
     );
     assert_eq!(value["rows"], json!([["db-handle.example", "allowed", 11]]));
+}
+
+#[tokio::test]
+async fn db_write_acknowledges_memory_before_disk_flush() {
+    let p = temp_db_path("memory-before-disk-flush");
+    let db = DbHandle::open(&p).expect("open handle");
+    db.ready().await.expect("db ready");
+
+    db.write(WriteOp::NetEvent(make_net_event(
+        "memory-first.example",
+        Decision::Allowed,
+    )))
+    .await
+    .expect("write must acknowledge after DB-owned memory commit");
+
+    assert_eq!(
+        disk_net_event_count(&p, "memory-first.example"),
+        0,
+        "db.write() must not force a disk flush. S06-003 contract: acknowledged writes are memory-visible, and disk batching remains DB-owned."
+    );
+
+    let raw = db
+        .query(
+            "SELECT domain, decision, bytes_sent FROM net_events WHERE domain = ?",
+            &[json!("memory-first.example")],
+        )
+        .await
+        .expect("query acknowledged row from memory");
+    let value: serde_json::Value = serde_json::from_str(&raw).expect("query JSON");
+    assert_eq!(
+        value["rows"],
+        json!([["memory-first.example", "allowed", 11]]),
+        "query() must observe the memory table immediately after write(). {DB_BOUNDARY_RATIONALE}"
+    );
+}
+
+#[tokio::test]
+async fn db_batch_flush_persists_memory_rows_idempotently() {
+    let p = temp_db_path("flush-memory-idempotent");
+    let db = DbHandle::open(&p).expect("open handle");
+    db.ready().await.expect("db ready");
+
+    db.write(WriteOp::NetEvent(make_net_event(
+        "flush-idempotent.example",
+        Decision::Allowed,
+    )))
+    .await
+    .expect("write must acknowledge memory row");
+
+    assert_eq!(disk_net_event_count(&p, "flush-idempotent.example"), 0);
+    db.flush_for_tests().await;
+    assert_eq!(disk_net_event_count(&p, "flush-idempotent.example"), 1);
+    db.flush_for_tests().await;
+    assert_eq!(
+        disk_net_event_count(&p, "flush-idempotent.example"),
+        1,
+        "flush must be idempotent; batching cannot duplicate ledger rows"
+    );
+}
+
+#[tokio::test]
+async fn db_shutdown_flushes_dirty_memory_rows_to_disk() {
+    let p = temp_db_path("shutdown-flushes-memory");
+    {
+        let db = DbHandle::open(&p).expect("open handle");
+        db.ready().await.expect("db ready");
+        db.write(WriteOp::NetEvent(make_net_event(
+            "shutdown-flush.example",
+            Decision::Allowed,
+        )))
+        .await
+        .expect("write must acknowledge memory row");
+        assert_eq!(disk_net_event_count(&p, "shutdown-flush.example"), 0);
+    }
+
+    assert_eq!(
+        disk_net_event_count(&p, "shutdown-flush.example"),
+        1,
+        "dropping the DB handle must shutdown the DB object and drain dirty memory to disk"
+    );
+}
+
+#[tokio::test]
+async fn db_flush_rehydrate_flushed_rows_survive_reopen() {
+    let p = temp_db_path("flush-rehydrate-reopen");
+    {
+        let db = DbHandle::open(&p).expect("open handle");
+        db.ready().await.expect("db ready");
+        db.write(WriteOp::NetEvent(make_net_event(
+            "flush-rehydrate.example",
+            Decision::Allowed,
+        )))
+        .await
+        .expect("write must acknowledge memory row");
+        db.flush_for_tests().await;
+    }
+
+    let db = DbHandle::open(&p).expect("reopen handle");
+    db.ready().await.expect("db ready after reopen");
+    let raw = db
+        .query(
+            "SELECT domain, decision, bytes_sent FROM net_events WHERE domain = ?",
+            &[json!("flush-rehydrate.example")],
+        )
+        .await
+        .expect("query flushed row after reopen");
+    let value: serde_json::Value = serde_json::from_str(&raw).expect("query JSON");
+    assert_eq!(
+        value["rows"],
+        json!([["flush-rehydrate.example", "allowed", 11]]),
+        "flushed DB-owned memory rows must survive close/reopen through the same query() contract"
+    );
 }
 
 #[tokio::test]
@@ -362,22 +484,24 @@ async fn db_write_is_immediately_queryable() {
 
     {
         let conn = rusqlite::Connection::open(&p).expect("open disk verifier");
-        let protocol_rows = conn
-            .execute(
-                "DELETE FROM main.net_events WHERE domain = 'memory-visible.example'",
+        let protocol_rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM main.net_events WHERE domain = 'memory-visible.example'",
                 [],
+                |row| row.get(0),
             )
-            .expect("delete protocol disk row after acknowledged write");
-        let security_rows = conn
-            .execute(
-                "DELETE FROM main.security_rule_events WHERE event_id = 'fedcba654321'",
+            .expect("count protocol disk rows after acknowledged memory write");
+        let security_rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM main.security_rule_events WHERE event_id = 'fedcba654321'",
                 [],
+                |row| row.get(0),
             )
-            .expect("delete security disk row after acknowledged write");
+            .expect("count security disk rows after acknowledged memory write");
         assert_eq!(
             (protocol_rows, security_rows),
-            (1, 1),
-            "test must prove query() reads the DB-owned memory truth, not a disk row that still exists"
+            (0, 0),
+            "test must prove query() reads the DB-owned memory truth before disk flush"
         );
     }
 

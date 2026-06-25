@@ -398,6 +398,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rewired `/stats` to read the main session ledger through the logger
   `DbHandle::ready/query` path with structured query/error logging, and added
   a guard against route-time `SessionIndex::open` regressions.
+- Changed logger DB writes to acknowledge after the DB-owned memory commit,
+  then batch-flush dirty memory tables to disk on threshold, interval,
+  explicit flush, and shutdown without exposing dirty-set mechanics to routes.
 - Clarified the shared agent, testing, debugging, architecture, and Rust
   guidance for the logger DB boundary: routes may own query intent, but only
   the logger DB object owns SQLite execution, connection threads, mem/disk

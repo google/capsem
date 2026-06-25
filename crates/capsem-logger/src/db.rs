@@ -289,7 +289,6 @@ impl DbHandle {
             );
             error
         })?;
-        self.inner.writer.flush().await;
         tracing::debug!(
             db_path = %self.inner.path.display(),
             operation = "write",
@@ -298,6 +297,11 @@ impl DbHandle {
             "session db handle operation completed"
         );
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn flush_for_tests(&self) {
+        self.inner.writer.flush().await;
     }
 
     /// Transitional blocking readiness bridge for legacy synchronous callers.
