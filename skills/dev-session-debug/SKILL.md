@@ -58,16 +58,16 @@ flowchart TD
     Trace["trace_id<br/>causal runtime chain"]
     Turn["turn_id<br/>one user-visible agent turn<br/>user input + all resulting work"]
 
-    Model1["model_call_id = model_calls.id<br/>provider exchange #1<br/>request + thinking + response"]
-    Model2["model_call_id = model_calls.id<br/>provider exchange #2<br/>request + thinking + response"]
-    ModelItems1["model_items for Model1<br/>request, reasoning, response, tool_call"]
-    ModelItems2["model_items for Model2<br/>tool_response, request, reasoning, response"]
+    ModelA["model_call_id A = model_calls.id<br/>one provider exchange<br/>one request + one response"]
+    ModelB["model_call_id B = model_calls.id<br/>later provider exchange<br/>same user-visible turn"]
+    ModelAItems["model_items for model_call_id A<br/>request, reasoning, response, tool_call"]
+    ModelBItems["model_items for model_call_id B<br/>tool_response input, request, reasoning, response"]
 
-    Tool1["tool_call_id = tool_calls.call_id<br/>logical tool invocation"]
-    Tool2["tool_call_id = tool_calls.call_id<br/>logical tool invocation"]
-    ToolResponse1["tool_responses.call_id<br/>same tool_call_id as Tool1"]
-    ToolResponse2["tool_responses.call_id<br/>same tool_call_id as Tool2"]
-    McpFacts["MCP transport facts<br/>origin/type enrichment on same tool_call_id"]
+    ToolA1["tool_call_id A1 = tool_calls.call_id<br/>logical tool invocation"]
+    ToolA2["tool_call_id A2 = tool_calls.call_id<br/>logical tool invocation"]
+    ToolA1Response["tool_responses.call_id = A1<br/>same tool_call_id"]
+    ToolA2Response["tool_responses.call_id = A2<br/>same tool_call_id"]
+    McpFacts["MCP transport facts<br/>origin/type enrichment<br/>same tool_call_id, no duplicate ledger"]
 
     EventRows["event_id rows<br/>http, dns, model, tool, file, process, credential, security"]
     BodyBlobs["event_body_blobs<br/>full request/response bodies by event_id"]
@@ -76,29 +76,31 @@ flowchart TD
 
     Session --> Trace
     Trace --> Turn
-    Turn -->|"can contain N"| Model1
-    Turn -->|"can contain N"| Model2
+    Turn -->|"contains 1..N"| ModelA
+    Turn -->|"contains 1..N"| ModelB
 
-    Model1 -->|"owns ordered items"| ModelItems1
-    Model2 -->|"owns ordered items"| ModelItems2
-    Model1 -->|"can emit 0..N"| Tool1
-    Model1 -->|"can emit 0..N"| Tool2
+    ModelA -->|"owns ordered rows"| ModelAItems
+    ModelB -->|"owns ordered rows"| ModelBItems
+    ModelA -->|"emits 0..N"| ToolA1
+    ModelA -->|"emits 0..N"| ToolA2
 
-    Tool1 --> ToolResponse1
-    Tool2 --> ToolResponse2
-    McpFacts -.->|"must enrich, not duplicate"| Tool1
-    McpFacts -.->|"must enrich, not duplicate"| Tool2
-    ToolResponse1 -->|"usually consumed by later model call"| Model2
-    ToolResponse2 -->|"usually consumed by later model call"| Model2
+    ToolA1 -->|"response reuses id"| ToolA1Response
+    ToolA2 -->|"response reuses id"| ToolA2Response
+    McpFacts -.->|"enriches"| ToolA1
+    McpFacts -.->|"enriches"| ToolA2
+    ToolA1Response -->|"can feed later exchange"| ModelB
+    ToolA2Response -->|"can feed later exchange"| ModelB
 
     Trace --> EventRows
     Turn --> EventRows
-    Tool1 --> EventRows
-    Tool2 --> EventRows
+    ModelA --> EventRows
+    ModelB --> EventRows
+    ToolA1 --> EventRows
+    ToolA2 --> EventRows
     EventRows --> BodyBlobs
     EventRows --> SecurityRows
-    Model1 -.-> ProviderIds
-    Model2 -.-> ProviderIds
+    ModelA -.-> ProviderIds
+    ModelB -.-> ProviderIds
 ```
 
 Definitions:
