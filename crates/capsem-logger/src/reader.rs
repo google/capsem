@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
 use rusqlite::{params, Connection, OpenFlags, Row};
@@ -12,6 +13,8 @@ use crate::events::{
     ToolCallEntry, ToolResponseEntry,
 };
 use crate::schema;
+
+static IN_MEMORY_READER_ID: AtomicU64 = AtomicU64::new(0);
 
 /// Counts of network events by decision outcome.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -363,9 +366,16 @@ pub struct DbReader {
 impl DbReader {
     /// Open a query-only connection to the given DB file.
     pub fn open(path: &Path) -> rusqlite::Result<Self> {
-        let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+        let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX
+            | OpenFlags::SQLITE_OPEN_URI;
         let conn = Connection::open_with_flags(path, flags)?;
-        schema::create_memory_tables(&conn)?;
+        let memory_uri = schema::memory_uri_for_path(path);
+        schema::with_memory_schema_lock(|| {
+            schema::create_memory_tables(&conn, &memory_uri)?;
+            schema::rehydrate_memory_tables_from_disk_once(&conn, schema::hot_ledger_tables())?;
+            schema::create_memory_read_views(&conn)
+        })?;
         schema::apply_reader_pragmas(&conn)?;
         Ok(Self { conn })
     }
@@ -376,7 +386,15 @@ impl DbReader {
         let conn = Connection::open_in_memory()?;
         schema::apply_pragmas(&conn)?; // in-memory is read-write, pragmas are fine
         schema::create_tables(&conn)?;
-        schema::create_memory_tables(&conn)?;
+        let memory_uri = schema::memory_uri_for_name(&format!(
+            "reader-open-in-memory-{}-{}",
+            std::process::id(),
+            IN_MEMORY_READER_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        schema::with_memory_schema_lock(|| {
+            schema::create_memory_tables(&conn, &memory_uri)?;
+            schema::rehydrate_memory_tables_from_disk_once(&conn, schema::hot_ledger_tables())
+        })?;
         Ok(Self { conn })
     }
 

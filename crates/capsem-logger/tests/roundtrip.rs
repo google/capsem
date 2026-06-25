@@ -480,8 +480,9 @@ async fn reader_works_while_writer_active() {
             .await;
     }
 
-    // Give writer thread a moment to flush.
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    // `DbWriter::write` is an enqueue path. Use the DB-owned flush barrier
+    // before asserting that a standalone reader observes the committed ledger.
+    writer.flush().await;
 
     // Open a reader while writer is still alive.
     let reader = writer.reader().unwrap();
@@ -495,7 +496,7 @@ async fn reader_works_while_writer_active() {
             Decision::Denied,
         )))
         .await;
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    writer.flush().await;
 
     let events = reader.recent_net_events(10).unwrap();
     assert_eq!(events.len(), 6);

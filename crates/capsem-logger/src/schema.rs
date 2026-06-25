@@ -1,9 +1,10 @@
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, path::Path, sync::Mutex};
 
 use rusqlite::{Connection, OptionalExtension};
 
 const MEMORY_SCHEMA: &str = "mem";
 const DISK_ONLY_TABLES: &[&str] = &["event_body_blobs"];
+static MEMORY_SCHEMA_LOCK: Mutex<()> = Mutex::new(());
 
 const CREDENTIAL_REF_CHECK: &str =
     "CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))";
@@ -449,8 +450,35 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
 /// The canonical schema remains the disk schema. The memory schema is derived
 /// from `main.sqlite_master` so table shape cannot drift into a second hand
 /// written contract. Blob storage stays disk-owned and bounded.
-pub fn create_memory_tables(conn: &Connection) -> rusqlite::Result<()> {
-    attach_memory_schema(conn)?;
+pub fn memory_uri_for_path(path: &Path) -> String {
+    memory_uri_for_name(&path.to_string_lossy())
+}
+
+pub fn memory_uri_for_name(name: &str) -> String {
+    let hash = blake3::hash(name.as_bytes()).to_hex();
+    format!(
+        "file:capsem-ledger-mem-{}?mode=memory&cache=shared",
+        &hash[..16]
+    )
+}
+
+pub(crate) fn with_memory_schema_lock<T>(
+    operation: impl FnOnce() -> rusqlite::Result<T>,
+) -> rusqlite::Result<T> {
+    let _guard = MEMORY_SCHEMA_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    operation()
+}
+
+pub fn create_memory_tables(conn: &Connection, memory_uri: &str) -> rusqlite::Result<()> {
+    attach_memory_schema(conn, memory_uri)?;
+    conn.execute_batch(&format!(
+        "CREATE TABLE IF NOT EXISTS {MEMORY_SCHEMA}.__capsem_memory_state (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );"
+    ))?;
 
     let mut stmt = conn.prepare(
         "SELECT name, sql
@@ -476,7 +504,84 @@ pub fn create_memory_tables(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
-fn attach_memory_schema(conn: &Connection) -> rusqlite::Result<()> {
+pub fn create_memory_read_views(conn: &Connection) -> rusqlite::Result<()> {
+    for (table, _) in READY_SCHEMA_COLUMNS {
+        if is_disk_only_table(table) {
+            continue;
+        }
+        if !table_exists(conn, MEMORY_SCHEMA, table)? {
+            continue;
+        }
+        conn.execute_batch(&format!(
+            "CREATE TEMP VIEW IF NOT EXISTS {table} AS SELECT * FROM {MEMORY_SCHEMA}.{table};"
+        ))?;
+    }
+    Ok(())
+}
+
+pub fn sync_memory_tables_from_disk<'a>(
+    conn: &Connection,
+    tables: impl IntoIterator<Item = &'a str>,
+) -> rusqlite::Result<()> {
+    for table in tables {
+        if is_disk_only_table(table) {
+            continue;
+        }
+        if !table_exists(conn, "main", table)? || !table_exists(conn, MEMORY_SCHEMA, table)? {
+            continue;
+        }
+        conn.execute_batch(&format!(
+            "DELETE FROM {MEMORY_SCHEMA}.{table};
+             INSERT OR REPLACE INTO {MEMORY_SCHEMA}.{table}
+             SELECT * FROM main.{table};"
+        ))?;
+    }
+    Ok(())
+}
+
+pub fn rehydrate_memory_tables_from_disk_once<'a>(
+    conn: &Connection,
+    tables: impl IntoIterator<Item = &'a str>,
+) -> rusqlite::Result<()> {
+    let already_rehydrated = conn
+        .query_row(
+            &format!(
+                "SELECT value FROM {MEMORY_SCHEMA}.__capsem_memory_state
+                 WHERE key = 'rehydrated' LIMIT 1"
+            ),
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+        .is_some();
+    if already_rehydrated {
+        return Ok(());
+    }
+    sync_memory_tables_from_disk(conn, tables)?;
+    conn.execute(
+        &format!(
+            "INSERT OR REPLACE INTO {MEMORY_SCHEMA}.__capsem_memory_state (key, value)
+             VALUES ('rehydrated', '1')"
+        ),
+        [],
+    )?;
+    Ok(())
+}
+
+fn table_exists(conn: &Connection, schema: &str, table: &str) -> rusqlite::Result<bool> {
+    let query = if schema == "main" {
+        "SELECT 1 FROM main.sqlite_master WHERE type = 'table' AND name = ?1 LIMIT 1".to_string()
+    } else {
+        format!("SELECT 1 FROM {schema}.sqlite_master WHERE type = 'table' AND name = ?1 LIMIT 1")
+    };
+    let found = conn
+        .query_row(&query, [table], |_| Ok(()))
+        .optional()?
+        .is_some();
+    Ok(found)
+}
+
+fn attach_memory_schema(conn: &Connection, memory_uri: &str) -> rusqlite::Result<()> {
     let mut stmt = conn.prepare("PRAGMA database_list")?;
     let databases = stmt.query_map([], |row| row.get::<_, String>(1))?;
     for database in databases {
@@ -484,11 +589,21 @@ fn attach_memory_schema(conn: &Connection) -> rusqlite::Result<()> {
             return Ok(());
         }
     }
-    conn.execute_batch(&format!("ATTACH DATABASE ':memory:' AS {MEMORY_SCHEMA}"))
+    let escaped_uri = memory_uri.replace('\'', "''");
+    conn.execute_batch(&format!(
+        "ATTACH DATABASE '{escaped_uri}' AS {MEMORY_SCHEMA}"
+    ))
 }
 
-fn is_disk_only_table(name: &str) -> bool {
+pub(crate) fn is_disk_only_table(name: &str) -> bool {
     DISK_ONLY_TABLES.contains(&name)
+}
+
+pub(crate) fn hot_ledger_tables() -> BTreeSet<&'static str> {
+    READY_SCHEMA_COLUMNS
+        .iter()
+        .filter_map(|(table, _)| (!is_disk_only_table(table)).then_some(*table))
+        .collect()
 }
 
 fn memory_table_sql(table: &str, sql: &str) -> Option<String> {
@@ -1370,7 +1485,7 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         create_tables(&conn).unwrap();
         migrate(&conn);
-        create_memory_tables(&conn).unwrap();
+        create_memory_tables(&conn, &memory_uri_for_name("db_mem_tables_match_schema")).unwrap();
 
         for (table, _) in READY_SCHEMA_COLUMNS {
             let main_columns = columns_for_schema(&conn, "main", table);
@@ -1417,7 +1532,11 @@ mod tests {
 
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX;
         let conn = Connection::open_with_flags(&path, flags).unwrap();
-        create_memory_tables(&conn).unwrap();
+        create_memory_tables(
+            &conn,
+            &memory_uri_for_name("db_mem_disk_memory_tables_work_before_query_only_guard"),
+        )
+        .unwrap();
         apply_reader_pragmas(&conn).unwrap();
         validate_ready_schema(&conn)
             .expect("query-only connection must still own its DB-local memory schema");

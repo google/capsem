@@ -908,7 +908,7 @@ fn db_writer_records_enqueue_batch_and_shutdown_metrics() {
     let recorder = DebuggingRecorder::new();
     let snapshotter = recorder.snapshotter();
     let (tx, rx) = tokio::sync::mpsc::channel(16);
-    tx.blocking_send(super::WriterMessage::Op(WriteOp::FileEvent(
+    tx.blocking_send(super::WriterMessage::Op(Box::new(WriteOp::FileEvent(
         crate::events::FileEvent {
             event_id: None,
             timestamp: std::time::SystemTime::now(),
@@ -918,7 +918,7 @@ fn db_writer_records_enqueue_batch_and_shutdown_metrics() {
             trace_id: None,
             credential_ref: None,
         },
-    )))
+    ))))
     .unwrap();
     drop(tx);
 

@@ -328,6 +328,110 @@ async fn db_handle_write_then_query_observes_event() {
 }
 
 #[tokio::test]
+async fn db_write_is_immediately_queryable() {
+    let p = temp_db_path("write-immediately-queryable");
+    let db = DbHandle::open(&p).expect("open handle");
+    db.ready().await.expect("db ready");
+    let credential_ref = credential_reference("test", "memory-visible-secret");
+    let rule_json = r#"{"name":"memory_visible","match":"http.host == 'memory.example'"}"#;
+    let event_json = r#"{"event_type":"http.request","http":{"host":"memory.example"}}"#;
+
+    db.write(WriteOp::NetEvent(make_net_event(
+        "memory-visible.example",
+        Decision::Allowed,
+    )))
+    .await
+    .expect("acknowledged protocol write");
+    db.write(WriteOp::SecurityRuleEvent(
+        SecurityRuleEvent::new(
+            1_771_000_002,
+            "fedcba654321",
+            "http.request",
+            "profiles.rules.memory_visible",
+            rule_json,
+            event_json,
+        )
+        .with_rule_action(SecurityRuleAction::Ask)
+        .with_detection_level(SecurityDetectionLevel::Medium)
+        .with_trace_id("trace-memory-visible")
+        .with_turn_id("turn-memory-visible")
+        .with_credential_ref(credential_ref.clone()),
+    ))
+    .await
+    .expect("acknowledged security write");
+
+    {
+        let conn = rusqlite::Connection::open(&p).expect("open disk verifier");
+        let protocol_rows = conn
+            .execute(
+                "DELETE FROM main.net_events WHERE domain = 'memory-visible.example'",
+                [],
+            )
+            .expect("delete protocol disk row after acknowledged write");
+        let security_rows = conn
+            .execute(
+                "DELETE FROM main.security_rule_events WHERE event_id = 'fedcba654321'",
+                [],
+            )
+            .expect("delete security disk row after acknowledged write");
+        assert_eq!(
+            (protocol_rows, security_rows),
+            (1, 1),
+            "test must prove query() reads the DB-owned memory truth, not a disk row that still exists"
+        );
+    }
+
+    let protocol_raw = db
+        .query(
+            "SELECT domain, decision, process_name, bytes_sent, bytes_received, trace_id
+             FROM net_events WHERE domain = ?",
+            &[json!("memory-visible.example")],
+        )
+        .await
+        .expect("query acknowledged protocol row from memory");
+    let protocol: serde_json::Value =
+        serde_json::from_str(&protocol_raw).expect("protocol query JSON");
+    assert_eq!(
+        protocol["rows"],
+        json!([[
+            "memory-visible.example",
+            "allowed",
+            "db-handle-test",
+            11,
+            22,
+            "trace-db-handle"
+        ]]),
+        "acknowledged protocol writes must be immediately visible through db.query(), independent of disk flush timing. {DB_BOUNDARY_RATIONALE}"
+    );
+
+    let security_raw = db
+        .query(
+            "SELECT event_id, event_type, rule_id, rule_action, detection_level,
+                    trace_id, turn_id, credential_ref
+             FROM security_rule_events WHERE event_id = ?",
+            &[json!("fedcba654321")],
+        )
+        .await
+        .expect("query acknowledged security row from memory");
+    let security: serde_json::Value =
+        serde_json::from_str(&security_raw).expect("security query JSON");
+    assert_eq!(
+        security["rows"],
+        json!([[
+            "fedcba654321",
+            "http.request",
+            "profiles.rules.memory_visible",
+            "ask",
+            "medium",
+            "trace-memory-visible",
+            "turn-memory-visible",
+            credential_ref
+        ]]),
+        "acknowledged security writes must be immediately visible through db.query(), independent of disk flush timing. {DB_BOUNDARY_RATIONALE}"
+    );
+}
+
+#[tokio::test]
 async fn db_handle_contract_ready_query_write_exactness() {
     let p = temp_db_path("contract-ready-query-write-exactness");
     let db = DbHandle::open(&p).expect("open handle");

@@ -1,8 +1,9 @@
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Instant, SystemTime};
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OpenFlags};
 use tracing::{warn, Instrument};
 use uuid::Uuid;
 
@@ -28,6 +29,8 @@ pub const DB_WRITE_BATCH_TOTAL: &str = "db.write_batch_total";
 pub const DB_WRITE_BATCH_DURATION_MS: &str = "db.write_batch_duration_ms";
 pub const DB_WRITE_BATCH_SIZE: &str = "db.write_batch_size";
 pub const DB_SHUTDOWN_FLUSH_MS: &str = "db.shutdown_flush_ms";
+
+static IN_MEMORY_WRITER_ID: AtomicU64 = AtomicU64::new(0);
 
 fn new_event_id() -> String {
     let value = Uuid::new_v4().simple().to_string();
@@ -198,11 +201,19 @@ impl DbWriter {
             let _ = std::fs::create_dir_all(parent);
         }
 
-        let conn = Connection::open(path)?;
+        let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
+            | OpenFlags::SQLITE_OPEN_CREATE
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX
+            | OpenFlags::SQLITE_OPEN_URI;
+        let conn = Connection::open_with_flags(path, flags)?;
         schema::apply_pragmas(&conn)?;
         schema::create_tables(&conn)?;
         schema::migrate(&conn);
-        schema::create_memory_tables(&conn)?;
+        let memory_uri = schema::memory_uri_for_path(path);
+        schema::with_memory_schema_lock(|| {
+            schema::create_memory_tables(&conn, &memory_uri)?;
+            schema::rehydrate_memory_tables_from_disk_once(&conn, schema::hot_ledger_tables())
+        })?;
 
         let (tx, rx) = tokio::sync::mpsc::channel(capacity);
         let db_path = path.to_path_buf();
@@ -225,7 +236,15 @@ impl DbWriter {
         schema::apply_pragmas(&conn)?;
         schema::create_tables(&conn)?;
         schema::migrate(&conn);
-        schema::create_memory_tables(&conn)?;
+        let memory_uri = schema::memory_uri_for_name(&format!(
+            "writer-open-in-memory-{}-{}",
+            std::process::id(),
+            IN_MEMORY_WRITER_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        schema::with_memory_schema_lock(|| {
+            schema::create_memory_tables(&conn, &memory_uri)?;
+            schema::rehydrate_memory_tables_from_disk_once(&conn, schema::hot_ledger_tables())
+        })?;
 
         let (tx, rx) = tokio::sync::mpsc::channel(capacity);
 
@@ -564,13 +583,59 @@ fn batch_size_bucket(size: usize) -> &'static str {
     }
 }
 
+fn affected_memory_tables(op: &WriteOp, tables: &mut BTreeSet<&'static str>) {
+    match op {
+        WriteOp::NetEvent(_) => {
+            tables.insert("net_events");
+        }
+        WriteOp::ModelCall(_) => {
+            tables.insert("model_calls");
+            tables.insert("model_items");
+            tables.insert("tool_calls");
+            tables.insert("tool_responses");
+        }
+        WriteOp::McpCall(_) => {
+            tables.insert("tool_calls");
+        }
+        WriteOp::FileEvent(_) => {
+            tables.insert("fs_events");
+        }
+        WriteOp::ExecEvent(_) | WriteOp::ExecEventComplete(_) => {
+            tables.insert("exec_events");
+        }
+        WriteOp::AuditEvent(_) => {
+            tables.insert("audit_events");
+        }
+        WriteOp::DnsEvent(_) => {
+            tables.insert("dns_events");
+        }
+        WriteOp::SubstitutionEvent(_) => {
+            tables.insert("substitution_events");
+        }
+        WriteOp::SecurityRuleEvent(_) => {
+            tables.insert("security_rule_events");
+        }
+        WriteOp::SecurityAskEvent(_) => {
+            tables.insert("security_ask_events");
+        }
+        WriteOp::SecurityDecisionEvent(_) => {
+            tables.insert("security_decision_events");
+        }
+        WriteOp::ProfileMutationEvent(_) => {
+            tables.insert("profile_mutation_events");
+        }
+    }
+}
+
 fn execute_batch(
     conn: &Connection,
     batch: &[WriteOp],
     model_item_dedup: &mut ModelItemDedup,
 ) -> rusqlite::Result<()> {
     let tx = conn.unchecked_transaction()?;
+    let mut affected_tables = BTreeSet::new();
     for op in batch {
+        affected_memory_tables(op, &mut affected_tables);
         match op {
             WriteOp::NetEvent(e) => insert_net_event(&tx, e)?,
             WriteOp::ModelCall(m) => insert_model_call(&tx, m, model_item_dedup)?,
@@ -587,6 +652,7 @@ fn execute_batch(
             WriteOp::ProfileMutationEvent(e) => insert_profile_mutation_event(&tx, e)?,
         }
     }
+    schema::with_memory_schema_lock(|| schema::sync_memory_tables_from_disk(&tx, affected_tables))?;
     tx.commit()
 }
 
