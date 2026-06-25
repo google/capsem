@@ -54,42 +54,81 @@ Use this graph when correlating model, tool, and security rows:
 ```mermaid
 flowchart TD
     Session["session_id<br/>one Capsem session database"]
+    Trace["trace_id<br/>causal runtime chain"]
     Turn["turn_id<br/>one user-visible agent turn"]
-    ModelA["model_call_id<br/>model exchange A"]
-    ModelB["model_call_id<br/>model exchange B"]
-    ToolA["tool_call_id<br/>logical tool invocation A"]
-    ToolB["tool_call_id<br/>logical tool invocation B"]
-    ToolAResponse["tool response<br/>same tool_call_id as A"]
-    ToolBResponse["tool response<br/>same tool_call_id as B"]
-    EventRows["event_id rows<br/>http, dns, file, process, security"]
 
-    Session --> Turn
-    Turn --> ModelA
-    Turn --> ModelB
-    ModelA -->|"may emit N"| ToolA
-    ModelA -->|"may emit N"| ToolB
-    ToolA --> ToolAResponse
-    ToolB --> ToolBResponse
+    Model1["model_call_id = model_calls.id<br/>provider request + response #1"]
+    Model2["model_call_id = model_calls.id<br/>provider request + response #2"]
+    ModelItems1["model_items<br/>request, reasoning, response, tool_call"]
+    ModelItems2["model_items<br/>request, tool_response, reasoning, response"]
+
+    Tool1["tool_call_id = tool_calls.call_id<br/>logical tool invocation"]
+    Tool2["tool_call_id = tool_calls.call_id<br/>logical tool invocation"]
+    ToolResponse1["tool_responses.call_id<br/>same tool_call_id as Tool1"]
+    ToolResponse2["tool_responses.call_id<br/>same tool_call_id as Tool2"]
+
+    EventRows["event_id rows<br/>http, dns, file, process, credential, security"]
+    BodyBlobs["event_body_blobs<br/>full request/response bodies by event_id"]
+    SecurityRows["security_rule_events<br/>rule matches by event_id"]
+    ProviderIds["provider response_id / message_id<br/>metadata only"]
+
+    Session --> Trace
+    Trace --> Turn
+    Turn -->|"can contain N"| Model1
+    Turn -->|"can contain N"| Model2
+
+    Model1 --> ModelItems1
+    Model2 --> ModelItems2
+    Model1 -->|"can emit N"| Tool1
+    Model1 -->|"can emit N"| Tool2
+
+    Tool1 --> ToolResponse1
+    Tool2 --> ToolResponse2
+    ToolResponse1 -->|"usually consumed by later model call"| Model2
+    ToolResponse2 -->|"usually consumed by later model call"| Model2
+
+    Trace --> EventRows
     Turn --> EventRows
-    ToolA --> EventRows
-    ToolB --> EventRows
+    Tool1 --> EventRows
+    Tool2 --> EventRows
+    EventRows --> BodyBlobs
+    EventRows --> SecurityRows
+    Model1 -.-> ProviderIds
+    Model2 -.-> ProviderIds
 ```
 
 Definitions:
 
-- `event_id` identifies one emitted ledger/security event row.
-- `trace_id` groups runtime work caused by one causal operation.
-- `turn_id` groups all work caused by one user-visible agent turn.
-- `model_call_id` identifies one model request/response exchange inside a turn.
+- `event_id` identifies one emitted ledger event row. Security rows, body blobs,
+  and event detail routes join back through this id.
+- `trace_id` groups runtime work caused by one causal operation across tables:
+  HTTP, DNS, model, tool, file, process, credentials, and security.
+- `turn_id` groups all work caused by one user-visible agent turn. A turn can
+  contain multiple model exchanges when the agent calls tools and then calls a
+  model again with the tool results.
+- `model_call_id` is the `model_calls.id` value for one provider request and
+  response exchange. It owns that exchange's request, reasoning, response, and
+  model-emitted tool-call items.
 - `tool_call_id` identifies one logical tool invocation across model-native
-  tools, MCP transport, and Capsem built-ins.
+  tools, MCP transport, Capsem built-ins, and local tools. In SQLite it is stored
+  as `tool_calls.call_id` and `tool_responses.call_id`.
 
-One `turn_id` can contain multiple `model_call_id` values. One `model_call_id`
-can emit zero or more `tool_call_id` values. Tool responses must carry the same
-`tool_call_id` as their request. In the current SQLite schema, the persisted
-`tool_call_id` value is stored in `tool_calls.call_id` and
-`tool_responses.call_id`. Provider response ids, message ids, and transport
-request ids are metadata, not Capsem's join contract.
+Provider response ids, message ids, and transport request ids are provider or
+transport metadata. They are not Capsem's join contract.
+
+Key cardinalities:
+
+- One session has many `trace_id` values.
+- One `trace_id` has one or more `turn_id` values.
+- One `turn_id` has one or more `model_call_id` values.
+- One `model_call_id` has one provider request and one provider response.
+- One `model_call_id` has many `model_items` rows: request, reasoning,
+  response, tool_call, and tool_response items in observed order.
+- One `model_call_id` can emit many `tool_call_id` values.
+- One `tool_call_id` has one tool request and zero or more observed response
+  rows, all with the same `tool_call_id`.
+- One `event_id` identifies one emitted row and joins its security, body, and
+  display details.
 
 ### net_events -- one row per HTTP request through MITM proxy
 
