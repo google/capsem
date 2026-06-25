@@ -67,6 +67,14 @@ class RouteTiming:
         return max(self.samples_ms)
 
 
+@dataclass(frozen=True)
+class ConcurrentRouteWriteBenchmark:
+    timing: RouteTiming
+    writer_results: list[dict[str, Any]]
+    final_default_action: str
+    final_default_rule_id: str
+
+
 class UnixHttpConnection(http.client.HTTPConnection):
     """Persistent HTTP/1.1 client over a Unix domain socket.
 
@@ -310,6 +318,23 @@ def _assert_timing_budget(timing: RouteTiming, *, p95_ms: float, max_ms: float, 
         assert timing.gateway_cpu_s <= cpu_s, (
             f"{timing.label} gateway CPU={timing.gateway_cpu_s:.3f}s > {cpu_s:.3f}s"
         )
+
+
+def route_timing_summary(timing: RouteTiming) -> dict[str, Any]:
+    ordered = sorted(timing.samples_ms)
+    p99_index = min(len(ordered) - 1, int(round((len(ordered) - 1) * 0.99)))
+    return {
+        "label": timing.label,
+        "samples": len(timing.samples_ms),
+        "p50_ms": round(timing.p50_ms, 3),
+        "p95_ms": round(timing.p95_ms, 3),
+        "p99_ms": round(ordered[p99_index], 3),
+        "max_ms": round(timing.max_ms, 3),
+        "service_cpu_s": round(timing.service_cpu_s, 6),
+        "gateway_cpu_s": (
+            None if timing.gateway_cpu_s is None else round(timing.gateway_cpu_s, 6)
+        ),
+    }
 
 
 def _hot_route_budget(path: str, *, gateway: bool = False) -> tuple[float, float, float]:
@@ -719,18 +744,11 @@ def test_hot_control_routes_have_latency_and_cpu_budgets() -> None:
         service.stop()
 
 
-@pytest.mark.serial
-def test_concurrent_route_reads_while_writes_are_active() -> None:
-    """Route reads must stay responsive while public routes write ledgers.
-
-    This is the S05 disk-backed baseline before DB-owned memory tables. The
-    reader path is `/stats`, which reads through the main DB handle. The writer
-    path is a public profile mutation route, which writes
-    `profile_mutation_events` through the same DB boundary. No direct SQLite
-    fixture writes are allowed here: the point is to measure the user-visible
-    route contract while Capsem is doing real service work.
-    """
-
+def run_concurrent_route_read_write_benchmark(
+    *,
+    samples: int = 96,
+    mutation_repeats: int = 4,
+) -> ConcurrentRouteWriteBenchmark:
     service = ServiceInstance()
     fast_service_client: PersistentJsonClient | None = None
     try:
@@ -747,7 +765,8 @@ def test_concurrent_route_reads_while_writes_are_active() -> None:
         def write_profile_mutations() -> None:
             try:
                 writer_started.set()
-                for index, action in enumerate(("allow", "ask", "block") * 4):
+                actions = ("allow", "ask", "block") * mutation_repeats
+                for index, action in enumerate(actions):
                     response = writer_client.patch(
                         f"/profiles/{CODE_PROFILE_ID}/mcp/default/edit",
                         {"action": action},
@@ -761,7 +780,7 @@ def test_concurrent_route_reads_while_writes_are_active() -> None:
                     writer_results.append(response)
                     # Keep the writer active long enough for read/write
                     # overlap without inventing a fake DB path.
-                    if index < 11:
+                    if index < len(actions) - 1:
                         time.sleep(0.002)
             except BaseException as error:  # pragma: no cover - surfaced below
                 writer_errors.append(error)
@@ -779,27 +798,49 @@ def test_concurrent_route_reads_while_writes_are_active() -> None:
                     RouteContract("GET", "/stats", None, {"global", "sessions"}, dict),
                 ),
                 service_proc=service_proc,
-                samples=96,
+                samples=samples,
             )
 
             writer.result(timeout=30)
 
         assert not writer_errors, writer_errors
         assert writer_done.is_set()
-        assert len(writer_results) == 12
-        assert {row["action"] for row in writer_results} == {"allow", "ask", "block"}
-        _assert_timing_budget(timing, p95_ms=15.0, max_ms=40.0, cpu_s=0.18)
 
         final_default = fast_service_client.get(
             f"/profiles/{CODE_PROFILE_ID}/mcp/default/info",
             timeout=20,
         )
-        assert final_default["action"] == writer_results[-1]["action"]
-        assert final_default["rule_id"]
+        return ConcurrentRouteWriteBenchmark(
+            timing=timing,
+            writer_results=writer_results,
+            final_default_action=final_default["action"],
+            final_default_rule_id=final_default["rule_id"],
+        )
     finally:
         if fast_service_client is not None:
             fast_service_client.close()
         service.stop()
+
+
+@pytest.mark.serial
+def test_concurrent_route_reads_while_writes_are_active() -> None:
+    """Route reads must stay responsive while public routes write ledgers.
+
+    This is the S05 disk-backed baseline before DB-owned memory tables. The
+    reader path is `/stats`, which reads through the main DB handle. The writer
+    path is a public profile mutation route, which writes
+    `profile_mutation_events` through the same DB boundary. No direct SQLite
+    fixture writes are allowed here: the point is to measure the user-visible
+    route contract while Capsem is doing real service work.
+    """
+
+    result = run_concurrent_route_read_write_benchmark()
+    assert len(result.writer_results) == 12
+    assert {row["action"] for row in result.writer_results} == {"allow", "ask", "block"}
+    _assert_timing_budget(result.timing, p95_ms=15.0, max_ms=40.0, cpu_s=0.18)
+
+    assert result.final_default_action == result.writer_results[-1]["action"]
+    assert result.final_default_rule_id
 
 
 @pytest.mark.serial

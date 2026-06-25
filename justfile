@@ -853,7 +853,10 @@ bench: _ensure-dev-ready _check-assets _pack-initrd _materialize-config _ensure-
     CAPSEM_ASSETS_DIR={{assets_dir}} uv run python -m pytest tests/capsem-serial/test_capsem_bench_baseline.py -v --tb=short
     echo ""
     echo "=== Host-side benchmarks (lifecycle, fork) ==="
-    uv run python -m pytest tests/capsem-serial/test_lifecycle_benchmark.py -v --tb=short -m serial
+    uv run python -m pytest \
+        tests/capsem-serial/test_lifecycle_benchmark.py \
+        tests/capsem-serial/test_route_latency_benchmark.py \
+        -v --tb=short -m serial
 
 # Build the platform package (.pkg on macOS, .deb on Linux) and install it.
 # Builds release binaries, frontend, and Tauri app. Asks for sudo to install.

@@ -8,9 +8,7 @@ description: Capsem benchmarking with capsem-bench. Use when running benchmarks,
 ## Quick start
 
 ```bash
-just benchmark                      # Run the standard artifact-recording benchmark suite, including host-native baseline
-just bench                          # Alias for just benchmark
-just benchmark-compare              # Compare committed Linux/macOS benchmark artifacts
+just bench                          # Run the standard artifact-recording benchmark suite
 just run "capsem-bench snapshot"    # Snapshot benchmarks only
 just run "capsem-bench disk"        # Disk I/O only
 just run "capsem-bench storage"     # Storage split diagnostics
@@ -36,7 +34,13 @@ Python tool that runs inside the VM. Rich tables to stderr (human), structured J
 | snapshot | `capsem-bench snapshot` | Snapshot create/list/changes/revert/delete via MCP (ms per op at 10/100/500 files) |
 | all | `capsem-bench` | Default production suite including storage split diagnostics; excludes long-running load diagnostics |
 
-`just benchmark` also records a host-native artifact under
+`just bench` also records host-side benchmark artifacts under
+`benchmarks/lifecycle/`, `benchmarks/fork/`, and `benchmarks/route-latency/`.
+The route-latency artifact measures `/stats` reads while public profile
+mutation routes are writing through the DB boundary. Treat it as the control
+plane contention baseline for UI/TUI responsiveness.
+
+Historical host-native benchmark runs may also exist under
 `benchmarks/host-native/` with local disk I/O, CLI startup, synthetic small-file
 reads, metadata-stat throughput, filesystem context, UTC timestamp, host
 hardware/OS metadata, and git state. Use this when comparing VM performance
@@ -45,7 +49,7 @@ against the hardware that produced the run. The default host I/O directory is
 accidental baseline. Override with `CAPSEM_HOST_NATIVE_BENCH_DIR` for a specific
 disk.
 
-`just benchmark` runs `scripts/archive_superseded_benchmark_artifacts.py` for
+`just bench` runs `scripts/archive_superseded_benchmark_artifacts.py` for
 retention. Before recording new artifacts, it copies the current host
 architecture's active generated artifacts into `benchmarks/archive/` so
 same-version reruns do not silently overwrite the prior evidence. After
@@ -182,34 +186,28 @@ uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py -xvs
 
 Every operation must complete in under 1.2 seconds. The test runs 3 cycles and asserts each individual operation stays under the gate.
 
-## Host-side endpoint latency benchmark
+## Host-side route latency benchmark
 
-Profiles service and gateway read endpoints with eight live temporary VMs. This
-is the TUI/control-plane hot-path gate and intentionally uses raw HTTP clients
-instead of curl helpers so process startup does not pollute endpoint timing.
+Profiles hot service/gateway read endpoints and DB contention using persistent
+HTTP clients instead of curl helpers so process startup does not pollute timing.
+This is the TUI/control-plane hot-path gate.
 
 ```bash
-uv run pytest tests/capsem-serial/test_endpoint_latency_benchmark.py -xvs
+uv run pytest tests/ironbank/test_route_latency.py -q -s
+uv run pytest tests/capsem-serial/test_route_latency_benchmark.py -q -s
 ```
 
-**Location:** `tests/capsem-serial/test_endpoint_latency_benchmark.py`
+**Gate location:** `tests/ironbank/test_route_latency.py`
+**Artifact location:** `tests/capsem-serial/test_route_latency_benchmark.py`
+**Benchmark output:** `benchmarks/route-latency/data_<version>.json`
 
 ### Endpoint groups
 
 | Group | What it covers | Default gate |
 |-------|----------------|--------------|
-| service_global | `/version`, `/list`, `/stats`, settings, profile, rules, enforcement, detection, setup, skills, MCP connector reads | p95 <= 3ms, max <= 10ms |
-| service_vm | `/info/{id}`, logs, history, file listing, session policy contexts across all 8 VMs | p95 <= 12ms, max <= 35ms |
-| gateway | `/health`, `/token`, `/status` over persistent TCP | p95 <= 2ms, max <= 8ms |
-
-### Tunables
-
-- `CAPSEM_ENDPOINT_BENCH_VM_COUNT`: number of live VMs (default: 8)
-- `CAPSEM_ENDPOINT_BENCH_GLOBAL_RUNS`: iterations per global endpoint (default: 16)
-- `CAPSEM_ENDPOINT_BENCH_VM_RUNS`: iterations per per-VM endpoint (default: 4)
-- `CAPSEM_ENDPOINT_BENCH_GATEWAY_RUNS`: iterations per gateway endpoint (default: 32)
-- `CAPSEM_ENDPOINT_BENCH_{GLOBAL,VM,GATEWAY}_P95_MS`: p95 gates
-- `CAPSEM_ENDPOINT_BENCH_{GLOBAL,VM,GATEWAY}_MAX_MS`: max gates
+| service_hot | `/status`, `/vms/list`, `/stats`, profile assets/plugins/enforcement/detection/MCP/security routes | route-specific p95 <= 2-3ms, max <= 5-8ms |
+| gateway_hot | Gateway proxy for the same hot control routes | route-specific p95 <= 3-4ms, max <= 8-10ms |
+| db_contention | `/stats` reads while `PATCH /profiles/code/mcp/default/edit` writes profile mutation ledger rows | p95 <= 15ms, max <= 40ms |
 
 ### When to run
 
