@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a logger DB correctness test proving the same HTTP/security/model/tool
   and body-blob query results match before flush, after flush, and after
   restart rehydration.
+- Added an adversarial logger DB flush test proving interrupted disk flushes
+  leave memory truth coherent, disk state transactionally valid, and recovery
+  flushes exact.
 - Added public session-telemetry documentation for the `turn_id` /
   `model_call_id` / `tool_call_id` identity graph and mirrored the same
   debugging contract in the session DB developer skill.

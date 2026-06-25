@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::LazyLock;
 use std::time::SystemTime;
 
 use serde_json::json;
@@ -12,6 +13,8 @@ use crate::events::{
 use crate::WriteOp;
 
 const DB_BOUNDARY_RATIONALE: &str = "DB boundary contract: capsem-logger owns DB execution/storage; callers own query intent only. See AGENTS.md and skills/dev-testing/SKILL.md.";
+static DB_FLUSH_FAILURE_TEST_LOCK: LazyLock<tokio::sync::Mutex<()>> =
+    LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 #[test]
 fn db_handle_contract_names_db_ownership_and_schema_failures() {
@@ -89,6 +92,12 @@ fn disk_net_event_count(path: &std::path::Path, domain: &str) -> i64 {
         |row| row.get(0),
     )
     .expect("count disk net events")
+}
+
+fn disk_quick_check(path: &std::path::Path) -> String {
+    let conn = rusqlite::Connection::open(path).expect("open disk verifier");
+    conn.pragma_query_value(None, "quick_check", |row| row.get(0))
+        .expect("disk quick_check")
 }
 
 fn make_correctness_net_event(credential_ref: &str) -> NetEvent {
@@ -401,6 +410,132 @@ async fn db_batch_flush_persists_memory_rows_idempotently() {
 }
 
 #[tokio::test]
+async fn db_correctness_db_interrupted_flush_is_transactional() {
+    let _guard = DB_FLUSH_FAILURE_TEST_LOCK.lock().await;
+    crate::writer::fail_disk_flushes_for_tests(0);
+
+    let p = temp_db_path("interrupted-flush-transactional");
+    let db = DbHandle::open(&p).expect("open handle");
+    db.ready().await.expect("db ready");
+
+    db.write(WriteOp::NetEvent(make_net_event(
+        "flush-committed.example",
+        Decision::Allowed,
+    )))
+    .await
+    .expect("baseline write must acknowledge memory row");
+    db.flush_for_tests().await;
+    assert_eq!(
+        disk_net_event_count(&p, "flush-committed.example"),
+        1,
+        "baseline row must be durably flushed before injecting failure"
+    );
+
+    db.write(WriteOp::NetEvent(make_net_event(
+        "flush-interrupted.example",
+        Decision::Allowed,
+    )))
+    .await
+    .expect("interrupted write must acknowledge memory row before disk flush");
+
+    let memory_before_failed_flush = query_json(
+        &db.query(
+            "SELECT domain, decision, trace_id, turn_id
+             FROM net_events
+             WHERE domain LIKE 'flush-%'
+             ORDER BY domain",
+            &[],
+        )
+        .await
+        .expect("memory query before failed flush"),
+    );
+    assert_eq!(
+        memory_before_failed_flush["rows"],
+        json!([
+            [
+                "flush-committed.example",
+                "allowed",
+                "trace-db-handle",
+                "trace-db-handle"
+            ],
+            [
+                "flush-interrupted.example",
+                "allowed",
+                "trace-db-handle",
+                "trace-db-handle"
+            ]
+        ]),
+        "acknowledged writes must remain visible in DB-owned memory before disk flush. {DB_BOUNDARY_RATIONALE}"
+    );
+
+    crate::writer::fail_disk_flushes_for_tests(100);
+    db.flush_for_tests().await;
+
+    assert_eq!(
+        disk_net_event_count(&p, "flush-committed.example"),
+        1,
+        "failed flush must not roll back previously committed disk truth"
+    );
+    assert_eq!(
+        disk_net_event_count(&p, "flush-interrupted.example"),
+        0,
+        "failed flush must not expose partially copied memory rows on disk"
+    );
+    assert_eq!(
+        disk_quick_check(&p),
+        "ok",
+        "failed flush must leave the disk database transactionally valid"
+    );
+
+    let memory_after_failed_flush = query_json(
+        &db.query(
+            "SELECT domain, decision, trace_id, turn_id
+             FROM net_events
+             WHERE domain LIKE 'flush-%'
+             ORDER BY domain",
+            &[],
+        )
+        .await
+        .expect("memory query after failed flush"),
+    );
+    assert_eq!(
+        memory_before_failed_flush, memory_after_failed_flush,
+        "failed disk flush must not corrupt acknowledged DB-owned memory truth. {DB_BOUNDARY_RATIONALE}"
+    );
+
+    crate::writer::fail_disk_flushes_for_tests(0);
+    db.flush_for_tests().await;
+    assert_eq!(
+        disk_net_event_count(&p, "flush-interrupted.example"),
+        1,
+        "clearing the injected failure must let the dirty memory row flush exactly once"
+    );
+    drop(db);
+
+    let reopened = DbHandle::open(&p).expect("reopen handle");
+    reopened
+        .ready()
+        .await
+        .expect("rehydrate after recovery flush");
+    let after_reopen = query_json(
+        &reopened
+            .query(
+                "SELECT domain, decision, trace_id, turn_id
+                 FROM net_events
+                 WHERE domain LIKE 'flush-%'
+                 ORDER BY domain",
+                &[],
+            )
+            .await
+            .expect("query after recovery reopen"),
+    );
+    assert_eq!(
+        memory_before_failed_flush, after_reopen,
+        "after recovery flush and restart, db.query() must return the same ledger truth. {DB_BOUNDARY_RATIONALE}"
+    );
+}
+
+#[tokio::test]
 async fn db_shutdown_flushes_dirty_memory_rows_to_disk() {
     let p = temp_db_path("shutdown-flushes-memory");
     {
@@ -510,6 +645,9 @@ async fn db_rehydrates_from_disk_before_ready_succeeds() {
 
 #[tokio::test]
 async fn db_correctness_db_query_exact_after_flush_and_restart() {
+    let _guard = DB_FLUSH_FAILURE_TEST_LOCK.lock().await;
+    crate::writer::fail_disk_flushes_for_tests(0);
+
     let p = temp_db_path("correctness-before-after-reopen");
     let credential_ref = credential_reference("openai", "this_is_not_a_real_key");
     let net_request = r#"{"prompt":"ledger","nonce":"net-before-after"}"#;

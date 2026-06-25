@@ -34,6 +34,33 @@ pub const DB_SHUTDOWN_FLUSH_MS: &str = "db.shutdown_flush_ms";
 
 static IN_MEMORY_WRITER_ID: AtomicU64 = AtomicU64::new(0);
 
+#[cfg(test)]
+static FAIL_DISK_FLUSHES_FOR_TESTS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(test)]
+pub(crate) fn fail_disk_flushes_for_tests(count: usize) {
+    FAIL_DISK_FLUSHES_FOR_TESTS.store(count, Ordering::SeqCst);
+}
+
+#[cfg(test)]
+fn take_disk_flush_failure_for_tests() -> bool {
+    FAIL_DISK_FLUSHES_FOR_TESTS
+        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |count| {
+            if count > 0 {
+                Some(count - 1)
+            } else {
+                None
+            }
+        })
+        .is_ok()
+}
+
+#[cfg(not(test))]
+fn take_disk_flush_failure_for_tests() -> bool {
+    false
+}
+
 fn new_event_id() -> String {
     let value = Uuid::new_v4().simple().to_string();
     value[..12].to_string()
@@ -762,6 +789,11 @@ fn flush_dirty_tables_to_disk(
     schema::with_memory_schema_lock(|| {
         schema::flush_memory_tables_to_disk(&tx, tables.iter().copied())
     })?;
+    if take_disk_flush_failure_for_tests() {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "injected disk flush failure before commit".to_string(),
+        ));
+    }
     tx.commit()?;
     dirty_tables.clear();
     Ok(())
