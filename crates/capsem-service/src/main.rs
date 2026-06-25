@@ -635,12 +635,23 @@ impl ServiceState {
     ) -> anyhow::Result<Arc<capsem_logger::DbHandle>> {
         let db_path = session_db_path_for_session_dir(session_dir);
         let started = std::time::Instant::now();
-        let handle = Arc::new(capsem_logger::DbHandle::open(&db_path).with_context(|| {
-            format!(
-                "failed to open session DB handle for {vm_id}: {}",
-                db_path.display()
-            )
-        })?);
+        let handle = match capsem_logger::DbHandle::open(&db_path) {
+            Ok(handle) => Arc::new(handle),
+            Err(error) => {
+                error!(
+                    vm_id,
+                    db_path = %db_path.display(),
+                    operation = "register_session_db_handle",
+                    duration_ms = started.elapsed().as_millis(),
+                    error = %error,
+                    "failed to register session DB handle"
+                );
+                return Err(anyhow!(
+                    "failed to open session DB handle for {vm_id}: {}: {error}",
+                    db_path.display()
+                ));
+            }
+        };
         self.session_db_handles
             .lock()
             .unwrap()

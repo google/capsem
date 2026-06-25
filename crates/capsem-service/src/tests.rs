@@ -7967,6 +7967,50 @@ async fn session_status_reports_db_handle_readiness() {
     );
 }
 
+#[tokio::test]
+async fn broken_session_db_schema_is_explicit_error_for_session_status() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let app = build_service_router(Arc::clone(&state));
+    let session_dir = state.run_dir.join("sessions").join("status-broken-db-vm");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    let writer = capsem_logger::DbWriter::open(&session_dir.join("session.db"), 16).unwrap();
+    writer.shutdown_blocking();
+    let conn = rusqlite::Connection::open(session_dir.join("session.db")).unwrap();
+    conn.execute("DROP TABLE net_events", []).unwrap();
+    conn.execute("CREATE TABLE net_events (id INTEGER PRIMARY KEY)", [])
+        .unwrap();
+    drop(conn);
+    state.persistent_registry.lock().unwrap().data.vms.insert(
+        "status-broken-db-vm".to_string(),
+        test_persistent_entry("status-broken-db-vm", session_dir),
+    );
+    state.hydrate_session_db_handles();
+    assert!(
+        state.session_db_handle("status-broken-db-vm").is_none(),
+        "startup hydration must not install a ready handle for malformed session schema"
+    );
+
+    let (status, body) = route_request(
+        app,
+        axum::http::Method::GET,
+        "/vms/status-broken-db-vm/info",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["session_db"]["ready"], false,
+        "broken session schemas must be visible in status instead of being treated as ready: {body}"
+    );
+    let error = body["session_db"]["error"]
+        .as_str()
+        .expect("broken DB status must carry the explicit DB readiness error");
+    assert!(
+        error.contains("missing required column") || error.contains("no such column"),
+        "broken DB status must expose the schema failure, got: {error}"
+    );
+}
+
 #[test]
 fn service_db_handle_open_is_owned_by_explicit_service_state_owners() {
     let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs"))

@@ -98,6 +98,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tables/columns and fail loudly on broken schemas instead of accepting any
   open reader, including preserving `tool_calls.turn_id` through legacy table
   rebuild migrations.
+- Fixed session DB handle registration so malformed existing session ledgers
+  surface explicit `/vms/{id}/info` readiness errors with structured
+  `vm_id`/`db_path`/operation/duration/error logging instead of degrading into
+  fake empty route data.
 - Removed service-owned telemetry projections from stats, timeline, triage,
   security, detection, and history routes. Logged-data routes now read through
   the logger DB boundary, and a source guard rejects raw service DB opens or
