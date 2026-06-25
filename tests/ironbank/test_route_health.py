@@ -7,11 +7,13 @@ quietly regresses into CPU-bound work such as hashing VM assets on a poll path.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import http.client
 import json
 import socket
 import statistics
+import threading
 import time
 from typing import Any, Callable
 
@@ -714,6 +716,89 @@ def test_hot_control_routes_have_latency_and_cpu_budgets() -> None:
             fast_gateway_client.close()
         if gateway is not None:
             gateway.stop()
+        service.stop()
+
+
+@pytest.mark.serial
+def test_concurrent_route_reads_while_writes_are_active() -> None:
+    """Route reads must stay responsive while public routes write ledgers.
+
+    This is the S05 disk-backed baseline before DB-owned memory tables. The
+    reader path is `/stats`, which reads through the main DB handle. The writer
+    path is a public profile mutation route, which writes
+    `profile_mutation_events` through the same DB boundary. No direct SQLite
+    fixture writes are allowed here: the point is to measure the user-visible
+    route contract while Capsem is doing real service work.
+    """
+
+    service = ServiceInstance()
+    fast_service_client: PersistentJsonClient | None = None
+    try:
+        service.start()
+        fast_service_client = _fast_service_client(service)
+        writer_client = service.client()
+        assert service.proc is not None
+        service_proc = psutil.Process(service.proc.pid)
+        writer_started = threading.Event()
+        writer_done = threading.Event()
+        writer_results: list[dict[str, Any]] = []
+        writer_errors: list[BaseException] = []
+
+        def write_profile_mutations() -> None:
+            try:
+                writer_started.set()
+                for index, action in enumerate(("allow", "ask", "block") * 4):
+                    response = writer_client.patch(
+                        f"/profiles/{CODE_PROFILE_ID}/mcp/default/edit",
+                        {"action": action},
+                        timeout=30,
+                    )
+                    assert response["profile_id"] == CODE_PROFILE_ID
+                    assert response["action"] == action
+                    assert response["mutation"]["target_kind"] == "mcp_default"
+                    assert response["mutation"]["operation"] == "permission"
+                    assert response["mutation"]["mutation_id"]
+                    writer_results.append(response)
+                    # Keep the writer active long enough for read/write
+                    # overlap without inventing a fake DB path.
+                    if index < 11:
+                        time.sleep(0.002)
+            except BaseException as error:  # pragma: no cover - surfaced below
+                writer_errors.append(error)
+            finally:
+                writer_done.set()
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            writer = executor.submit(write_profile_mutations)
+            assert writer_started.wait(timeout=5), "writer route never started"
+
+            timing = _measure_route(
+                "service /stats during profile-mutation writes",
+                lambda: _assert_contract(
+                    fast_service_client,
+                    RouteContract("GET", "/stats", None, {"global", "sessions"}, dict),
+                ),
+                service_proc=service_proc,
+                samples=96,
+            )
+
+            writer.result(timeout=30)
+
+        assert not writer_errors, writer_errors
+        assert writer_done.is_set()
+        assert len(writer_results) == 12
+        assert {row["action"] for row in writer_results} == {"allow", "ask", "block"}
+        _assert_timing_budget(timing, p95_ms=15.0, max_ms=40.0, cpu_s=0.18)
+
+        final_default = fast_service_client.get(
+            f"/profiles/{CODE_PROFILE_ID}/mcp/default/info",
+            timeout=20,
+        )
+        assert final_default["action"] == writer_results[-1]["action"]
+        assert final_default["rule_id"]
+    finally:
+        if fast_service_client is not None:
+            fast_service_client.close()
         service.stop()
 
 
