@@ -6,7 +6,48 @@ use std::time::Instant;
 use crate::reader::DbReader;
 use crate::writer::{DbWriter, WriteOp};
 
-type DbResult<T> = Result<T, String>;
+/// Public DB-boundary contract for Capsem session ledgers.
+///
+/// Callers own query intent: a stats, timeline, or security route may choose
+/// the SQL projection it needs. The DB handle owns execution and storage:
+/// connection threads, write queues, schema checks, WAL/mem/disk mechanics,
+/// batching, flushing, rehydration, and future FTS5/search tables all stay
+/// inside `capsem-logger`.
+///
+/// Required caller rail:
+///
+/// ```text
+/// db.ready().await?;
+/// db.query(sql, params).await?;
+/// db.write(event).await?;
+/// ```
+///
+/// Empty valid tables return empty results. Missing tables, missing columns,
+/// non-read SQL through `query`, or closed workers are hard contract failures;
+/// callers must not convert those into fake empty route responses.
+pub const DB_HANDLE_CONTRACT: &str =
+    "caller owns query intent; db owns execution and storage; missing schema fails loudly";
+
+/// Result type returned by the public asynchronous DB handle API.
+///
+/// The error string is already contextualized by the DB layer and is logged
+/// with structured fields at the boundary. Route code should add its own route
+/// context when converting this to HTTP/UDS errors, not special-case schema
+/// failures into empty data.
+pub type DbResult<T> = Result<T, String>;
+
+/// Bound parameter list for `DbHandle::query`.
+///
+/// The DB layer owns conversion into SQLite parameters. Callers pass JSON
+/// scalar values only as query intent; they do not own a SQLite connection.
+pub type DbQueryParams = [serde_json::Value];
+
+/// JSON object returned by `DbHandle::query`.
+///
+/// The value is encoded as `{ "columns": [...], "rows": [...] }`, matching
+/// `DbReader::query_raw_with_params`. Routes may map it into product JSON, but
+/// execution and schema failures remain DB-owned.
+pub type DbQueryJson = String;
 
 fn elapsed_ms(started: Instant) -> u128 {
     started.elapsed().as_millis()
@@ -29,11 +70,24 @@ enum ReadRequest {
     Shutdown,
 }
 
-/// Convenience wrapper that owns the DB path and creates writer/reader instances.
+/// Session DB path wrapper.
+///
+/// `SessionDb` is a construction helper for session-owned code that has a path
+/// and needs the logger-owned DB objects. Product routes should prefer
+/// `SessionDb::handle` or an already-open `DbHandle`; they should not construct
+/// raw SQLite readers or writers themselves.
 pub struct SessionDb {
     path: PathBuf,
 }
 
+/// Logger-owned handle for all session ledger DB execution.
+///
+/// This is the public boundary for session telemetry/security ledgers. It owns
+/// the reader worker and writer queue and hides whether the implementation is
+/// disk-backed, memory-backed, batched, rehydrated, or eventually indexed for
+/// search. Callers may provide SQL because they own query intent; callers may
+/// not own SQLite connections, route projections, missing-schema fallbacks, or
+/// write buffering.
 #[derive(Clone)]
 pub struct DbHandle {
     inner: Arc<DbHandleInner>,
@@ -56,12 +110,11 @@ impl Drop for DbHandleInner {
 }
 
 impl DbHandle {
-    /// Open the session DB handle.
+    /// Open the session DB handle and start DB-owned workers.
     ///
-    /// This is the public DB boundary for ledger routes: callers own query
-    /// intent, while the handle owns SQLite execution, the reader worker, and
-    /// the writer queue. Later mem/disk acceleration remains hidden behind
-    /// this same API.
+    /// Opening applies the logger schema through the writer path, validates a
+    /// reader can open the same DB, and starts a DB-owned reader worker. Route
+    /// code receives a handle; it does not receive a connection.
     pub fn open(path: &Path) -> rusqlite::Result<Self> {
         let started = Instant::now();
         let writer = Arc::new(DbWriter::open(path, 1024)?);
@@ -96,6 +149,12 @@ impl DbHandle {
         &self.inner.path
     }
 
+    /// Verify the DB handle is usable before a route depends on it.
+    ///
+    /// This is the readiness contract entrypoint for routes. The contract is
+    /// intentionally stable: as the DB layer grows schema/migration/mem-table
+    /// checks, callers keep invoking `ready().await` and do not learn about the
+    /// internal storage strategy.
     pub async fn ready(&self) -> DbResult<()> {
         let started = Instant::now();
         let (reply, rx) = tokio::sync::oneshot::channel();
@@ -133,7 +192,12 @@ impl DbHandle {
         result
     }
 
-    pub async fn query(&self, sql: &str, params: &[serde_json::Value]) -> DbResult<String> {
+    /// Execute one read-only query through the DB-owned worker.
+    ///
+    /// `sql` is caller-owned query intent. Execution, parameter binding,
+    /// connection ownership, structured logging, and schema failure semantics
+    /// are owned by the DB layer. Non-read SQL and broken schema fail loudly.
+    pub async fn query(&self, sql: &str, params: &DbQueryParams) -> DbResult<DbQueryJson> {
         let started = Instant::now();
         let sql_hash = sql_fingerprint(sql);
         let params_count = params.len();
@@ -182,6 +246,11 @@ impl DbHandle {
         result
     }
 
+    /// Write one telemetry/security event through the DB-owned writer path.
+    ///
+    /// This is the public write boundary for ledger events. The DB layer owns
+    /// queuing, batching, flushing, durability mechanics, and structured
+    /// operation logging. Callers must not bypass it with direct SQLite writes.
     pub async fn write(&self, op: WriteOp) -> DbResult<()> {
         let started = Instant::now();
         let op_kind = op.kind();
@@ -207,6 +276,10 @@ impl DbHandle {
         Ok(())
     }
 
+    /// Transitional blocking readiness bridge for legacy synchronous callers.
+    ///
+    /// New async route code should use `ready().await`. This method exists only
+    /// while service routes are being moved behind persistent async DB handles.
     pub fn ready_blocking(&self) -> rusqlite::Result<()> {
         match DbReader::open(&self.inner.path) {
             Ok(_) => Ok(()),
@@ -222,10 +295,18 @@ impl DbHandle {
         }
     }
 
+    /// Transitional blocking query bridge for legacy synchronous callers.
+    ///
+    /// New async route code should use `query(sql, params).await`. This method
+    /// must not grow route-specific behavior or missing-schema compatibility.
     pub fn query_raw_blocking(&self, sql: &str) -> Result<String, String> {
         self.with_reader_string(|reader| reader.query_raw(sql).map_err(|error| error.to_string()))
     }
 
+    /// Transitional blocking reader bridge for legacy typed reader methods.
+    ///
+    /// New route work should flow through `query`; future sprint items burn
+    /// this bridge as handles move into service session state.
     pub fn with_reader_blocking<T>(
         &self,
         f: impl FnOnce(&DbReader) -> rusqlite::Result<T>,

@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added public `capsem-logger` DB handle contract docs and type aliases that
+  pin caller-owned query intent, DB-owned execution/storage, and loud
+  missing-schema failures.
 - Added the logger-owned async DB handle contract with `ready`, `query`, and
   `write` execution APIs plus structured operation/duration logging for
   session ledger reads and writes.

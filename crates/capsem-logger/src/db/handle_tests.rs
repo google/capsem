@@ -7,6 +7,22 @@ use super::*;
 use crate::events::{Decision, NetEvent};
 use crate::WriteOp;
 
+#[test]
+fn db_handle_contract_names_db_ownership_and_schema_failures() {
+    assert!(
+        DB_HANDLE_CONTRACT.contains("caller owns query intent"),
+        "DB handle docs must keep route SQL/query intent separate from DB execution ownership"
+    );
+    assert!(
+        DB_HANDLE_CONTRACT.contains("db owns execution and storage"),
+        "DB handle docs must say the logger DB object owns execution/storage mechanics"
+    );
+    assert!(
+        DB_HANDLE_CONTRACT.contains("missing schema fails loudly"),
+        "DB handle docs must preserve the no-fallback missing-schema invariant"
+    );
+}
+
 fn temp_db_path(name: &str) -> PathBuf {
     let p = std::env::temp_dir().join(format!(
         "capsem-test-db-handle-{name}-{}.db",
