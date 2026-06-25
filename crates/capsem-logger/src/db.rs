@@ -360,18 +360,19 @@ impl DbHandle {
 
 fn reader_loop(path: PathBuf, rx: mpsc::Receiver<ReadRequest>) {
     let started = Instant::now();
-    let reader = match DbReader::open(&path) {
-        Ok(reader) => reader,
-        Err(error) => {
-            tracing::error!(
-                db_path = %path.display(),
-                operation = "reader_worker_open",
-                error = %error,
-                "session db reader worker failed"
-            );
-            return;
-        }
-    };
+    if let Err(error) = DbReader::open(&path).and_then(|reader| {
+        reader
+            .ready()
+            .map_err(rusqlite::Error::InvalidParameterName)
+    }) {
+        tracing::error!(
+            db_path = %path.display(),
+            operation = "reader_worker_open",
+            error = %error,
+            "session db reader worker failed"
+        );
+        return;
+    }
     tracing::debug!(
         db_path = %path.display(),
         operation = "reader_worker_open",
@@ -383,7 +384,9 @@ fn reader_loop(path: PathBuf, rx: mpsc::Receiver<ReadRequest>) {
         match request {
             ReadRequest::Ready { reply } => {
                 let started = Instant::now();
-                let result = reader.ready();
+                let result = DbReader::open(&path)
+                    .map_err(|error| error.to_string())
+                    .and_then(|reader| reader.ready());
                 match &result {
                     Ok(()) => tracing::debug!(
                         db_path = %path.display(),
@@ -405,7 +408,9 @@ fn reader_loop(path: PathBuf, rx: mpsc::Receiver<ReadRequest>) {
                 let started = Instant::now();
                 let sql_hash = sql_fingerprint(&sql);
                 let params_count = params.len();
-                let result = reader.query_raw_with_params(&sql, &params);
+                let result = DbReader::open(&path)
+                    .map_err(|error| error.to_string())
+                    .and_then(|reader| reader.query_raw_with_params(&sql, &params));
                 match &result {
                     Ok(_) => tracing::debug!(
                         db_path = %path.display(),

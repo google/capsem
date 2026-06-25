@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use rusqlite::{params, Connection, OpenFlags, Row};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::events::{
@@ -24,7 +24,7 @@ pub struct NetEventCounts {
 }
 
 /// Aggregate statistics for a session (computed from SQL queries).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionStats {
     pub net_total: u64,
     pub net_allowed: u64,
@@ -185,7 +185,7 @@ pub struct ToolServerCallCount {
 }
 
 /// A unified history entry (merging exec_events and audit_events).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HistoryEntry {
     pub timestamp: String,
     pub layer: String,
@@ -200,7 +200,7 @@ pub struct HistoryEntry {
 }
 
 /// Process-centric history view.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessEntry {
     pub exe: String,
     pub command_count: u64,
@@ -209,35 +209,35 @@ pub struct ProcessEntry {
 }
 
 /// Counts for exec and audit events.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HistoryCounts {
     pub exec_count: u64,
     pub audit_count: u64,
 }
 
 /// Rule-match counts grouped by canonical action.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SecurityRuleActionCount {
     pub rule_action: String,
     pub count: u64,
 }
 
 /// Rule-match counts grouped by canonical event type.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SecurityRuleEventTypeCount {
     pub event_type: String,
     pub count: u64,
 }
 
 /// Rule-match counts grouped by canonical detection level.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SecurityRuleDetectionLevelCount {
     pub detection_level: String,
     pub count: u64,
 }
 
 /// Rule-match counts grouped by immutable rule labels stored in session.db.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SecurityRuleStatsByRule {
     pub rule_id: String,
     pub rule_action: String,
@@ -248,7 +248,7 @@ pub struct SecurityRuleStatsByRule {
 }
 
 /// Aggregate security rule statistics regenerated only from session.db.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SecurityRuleStats {
     pub total: u64,
     pub by_action: Vec<SecurityRuleActionCount>,
@@ -258,7 +258,7 @@ pub struct SecurityRuleStats {
 }
 
 /// Brokered credential references regenerated from substitution_events.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BrokeredCredentialStat {
     pub provider: Option<String>,
     pub credential_ref: String,

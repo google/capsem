@@ -7,30 +7,6 @@ use tower::ServiceExt;
 static SETTINGS_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[test]
-fn logged_data_routes_do_not_bypass_logger_db_boundary() {
-    let service_source = include_str!("main.rs");
-    for forbidden in [
-        "DbReader::open",
-        "rusqlite::Connection",
-        "Connection::open",
-        "stats_route_projection",
-        "stats_detail_route_projection",
-        "security_route_projection",
-        "history_route_projection",
-        "timeline_route_projection",
-        "triage_route_projection",
-        "live_session_counter_projection",
-        "request_projection_refresh",
-        "route_projection",
-    ] {
-        assert!(
-            !service_source.contains(forbidden),
-            "capsem-service routes must not bypass the logger DB object or recreate logged-data projections; found `{forbidden}` in main.rs"
-        );
-    }
-}
-
-#[test]
 fn process_env_allowlist_forwards_mcp_timeout_knobs() {
     assert!(
         PROCESS_ENV_ALLOWLIST.contains(&"CAPSEM_HOME"),
@@ -1739,7 +1715,7 @@ async fn triage_route_reads_triage_ledger_from_session_db() {
         .await;
     writer.shutdown_blocking();
 
-    let direct_triage = session_db_triage(&db_path, 5).unwrap();
+    let direct_triage = session_db_triage("diag-vm", &db_path, 5).await.unwrap();
     assert_eq!(
         direct_triage["denied_net"]["rows"]
             .as_array()
@@ -2394,6 +2370,7 @@ match = 'mcp.tool_call.name == "local__echo"'
             detection_level: Some(capsem_core::net::policy_config::DetectionLevel::Critical),
         },
     )
+    .await
     .expect("plugin edit should update profile override");
     assert_eq!(
         plugin_info.config.mode,
@@ -7769,6 +7746,124 @@ async fn stats_detail_route_reads_session_db_ledger() {
         body["tool_events"].as_array().unwrap().len() as u64,
         "session info counters must agree with stats/detail tool_events"
     );
+}
+
+#[tokio::test]
+async fn db_handle_route_rewire() {
+    let state = make_test_state();
+    let app = build_service_router(Arc::clone(&state));
+    let dir = tempfile::tempdir().unwrap();
+    let session_dir = dir.path().join("sessions").join("db-handle-route-vm");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    insert_fake_instance_with_session_dir(
+        &state,
+        "db-handle-route-vm",
+        std::process::id(),
+        session_dir.clone(),
+    );
+
+    let db_path = session_dir.join("session.db");
+    let db = capsem_logger::DbHandle::open(&db_path).unwrap();
+    db.ready().await.unwrap();
+    db.write(capsem_logger::WriteOp::SecurityRuleEvent(
+        capsem_logger::SecurityRuleEvent::new(
+            1_789_111_000_000,
+            "abcdef123456",
+            "http.request",
+            "profiles.rules.default_http",
+            r#"{"name":"default_http"}"#,
+            r#"{"event_type":"http.request"}"#,
+        )
+        .with_rule_action(capsem_logger::SecurityRuleAction::Allow),
+    ))
+    .await
+    .unwrap();
+    let written = db
+        .query("SELECT COUNT(*) AS total FROM security_rule_events", &[])
+        .await
+        .unwrap();
+    assert_eq!(written, r#"{"columns":["total"],"rows":[[1]]}"#);
+
+    let (status, stats_detail) = route_request(
+        app.clone(),
+        axum::http::Method::GET,
+        "/vms/db-handle-route-vm/stats/detail",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{stats_detail}");
+    assert_eq!(stats_detail["model_stats"], json!([]));
+    assert_eq!(stats_detail["body_blobs"], json!({}));
+
+    let (status, security_status) = route_request(
+        app,
+        axum::http::Method::GET,
+        "/vms/db-handle-route-vm/security/status",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{security_status}");
+    assert_eq!(security_status["total"], 1);
+    assert_eq!(security_status["by_action"][0]["rule_action"], "allow");
+}
+
+#[tokio::test]
+async fn broken_session_db_schema_is_explicit_error() {
+    let state = make_test_state();
+    let app = build_service_router(Arc::clone(&state));
+    let dir = tempfile::tempdir().unwrap();
+    let session_dir = dir.path().join("sessions").join("broken-db-vm");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    insert_fake_instance_with_session_dir(
+        &state,
+        "broken-db-vm",
+        std::process::id(),
+        session_dir.clone(),
+    );
+    let db_path = session_dir.join("session.db");
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    conn.execute("CREATE TABLE net_events (id INTEGER PRIMARY KEY)", [])
+        .unwrap();
+    drop(conn);
+
+    let (status, body) = route_request(
+        app,
+        axum::http::Method::GET,
+        "/vms/broken-db-vm/stats/detail",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    let body_text = body.to_string();
+    assert!(
+        body_text.contains("stats_detail ledger")
+            && (body_text.contains("no such column")
+                || body_text.contains("missing required column")),
+        "broken schemas must fail loudly, not return empty fake data: {body}"
+    );
+}
+
+#[test]
+fn logged_data_routes_do_not_bypass_logger_db_boundary() {
+    let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs"))
+        .expect("service source must be readable");
+    let forbidden = [
+        "ready_blocking(",
+        "query_raw_blocking(",
+        "with_reader_blocking(",
+        "DbReader::open(",
+        "SessionDb::new(",
+        "_projection",
+    ];
+    for needle in forbidden {
+        assert!(
+            !source.contains(needle),
+            "{needle} reintroduced a logged-data route bypass. See AGENTS.md, \
+             skills/dev-testing/SKILL.md Logged-data DB ownership, and \
+             skills/dev-rust-patterns/SKILL.md Logger DB boundary: routes own query intent, \
+             capsem-logger owns DB execution/storage, and missing schemas fail loudly."
+        );
+    }
 }
 
 #[tokio::test]
