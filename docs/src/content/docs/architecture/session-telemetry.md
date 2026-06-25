@@ -139,12 +139,14 @@ provider id replaces these joins:
   and event detail routes join back through this id.
 - `trace_id` groups runtime work caused by one causal operation across tables:
   HTTP, DNS, model, tool, file, process, credentials, and security.
-- `turn_id` groups all work caused by one user-visible agent turn. A turn can
-  contain multiple model exchanges when the agent calls tools and then calls a
-  model again with the tool results.
-- `model_call_id` is the `model_calls.id` value for one provider request and
-  response exchange for a user-visible turn. It owns that exchange's request,
-  reasoning/thinking, response, and model-emitted tool-call items.
+- `turn_id` groups all work caused by one user-visible agent turn: the user's
+  input, every provider exchange needed to answer it, every tool request and
+  response, and every emitted HTTP/DNS/file/process/security row caused by it.
+- `model_call_id` is the `model_calls.id` value for exactly one provider
+  request/response exchange inside a turn. It owns that exchange's request,
+  reasoning/thinking, response, and model-emitted tool-call items. It is not the
+  whole user turn; a single `turn_id` can contain multiple `model_call_id`
+  values.
 - `tool_call_id` identifies one logical tool invocation across model-native
   tools, MCP transport, Capsem built-ins, and local tools. In SQLite it is stored
   as `tool_calls.call_id` and `tool_responses.call_id`.
@@ -156,10 +158,10 @@ transport metadata. They are not Capsem's join contract.
 flowchart TD
     Session["session_id<br/>one Capsem session database"]
     Trace["trace_id<br/>causal runtime chain"]
-    Turn["turn_id<br/>one user-visible agent turn"]
+    Turn["turn_id<br/>one user-visible agent turn<br/>user input + all resulting work"]
 
-    Model1["model_call_id = model_calls.id<br/>provider request + response #1"]
-    Model2["model_call_id = model_calls.id<br/>provider request + response #2"]
+    Model1["model_call_id = model_calls.id<br/>one provider request + response #1"]
+    Model2["model_call_id = model_calls.id<br/>one provider request + response #2"]
     ModelItems1["model_items<br/>request, reasoning, response, tool_call"]
     ModelItems2["model_items<br/>request, tool_response, reasoning, response"]
 
@@ -198,13 +200,14 @@ flowchart TD
     Model2 -.-> ProviderIds
 ```
 
-One `turn_id` can contain multiple `model_call_id` values when an agent calls
-the model, executes tools, then calls the model again with tool results. One
-`model_call_id` can emit zero or more `tool_call_id` values; this is the
-canonical one-to-many relationship for model-visible tools. A tool response
-must carry the same `tool_call_id` as the tool request. In the current SQLite
-schema, the persisted `tool_call_id` value is stored in `tool_calls.call_id`
-and `tool_responses.call_id`.
+One `turn_id` is the user-input scope. It can contain multiple
+`model_call_id` values when an agent calls the model, executes tools, then calls
+the model again with tool results. One `model_call_id` is one provider-exchange
+scope and can emit zero or more `tool_call_id` values; this is the canonical
+one-to-many relationship for model-visible tools. A tool response must carry the
+same `tool_call_id` as the tool request. In the current SQLite schema, the
+persisted `tool_call_id` value is stored in `tool_calls.call_id` and
+`tool_responses.call_id`.
 
 The key cardinalities are:
 
