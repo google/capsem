@@ -279,7 +279,7 @@ check_guest_binaries() {
     echo "== Guest Binaries =="
 
     local cargo_toml="$ROOT_DIR/crates/capsem-agent/Cargo.toml"
-    local dockerfile="$ROOT_DIR/src/capsem/builder/templates/Dockerfile.rootfs.j2"
+    local dockerfile="$ROOT_DIR/config/docker/Dockerfile.rootfs.j2"
     local justfile="$ROOT_DIR/justfile"
 
     if [[ ! -f "$cargo_toml" ]]; then

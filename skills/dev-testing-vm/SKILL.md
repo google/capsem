@@ -12,10 +12,10 @@ The diagnostic suite runs inside the guest VM via pytest. Tests live in `guest/a
 ### Running diagnostics
 
 ```bash
-just run "capsem-doctor"              # Full suite (~10s total)
-just run "capsem-doctor -k sandbox"   # Only sandbox tests
-just run "capsem-doctor -k network"   # Only network tests
-just run "capsem-doctor -x"           # Stop on first failure
+just exec "capsem-doctor"              # Full suite (~10s total)
+just exec "capsem-doctor -k sandbox"   # Only sandbox tests
+just exec "capsem-doctor -k network"   # Only network tests
+just exec "capsem-doctor -x"           # Stop on first failure
 ```
 
 ### Test categories
@@ -37,8 +37,8 @@ just run "capsem-doctor -x"           # Stop on first failure
 2. Use `from conftest import run` for shell commands, `output_dir` fixture for temp files
 3. Tests auto-skip outside the capsem VM (conftest checks for root + writable /root)
 4. Rebuild rootfs with `just build-assets` to bake new test files into the image
-5. For fast iteration during development, tests in `diagnostics/` are also repacked into the initrd by `just run`, so `just run "capsem-doctor"` picks up changes without a full rootfs rebuild
-6. Verify: `just run "capsem-doctor -k <your_test>"`
+5. For fast iteration during development, tests in `diagnostics/` are also repacked into the initrd by `just run`, so `just exec "capsem-doctor"` picks up changes without a full rootfs rebuild
+6. Verify: `just exec "capsem-doctor -k <your_test>"`
 
 ## Session inspection
 
@@ -51,16 +51,16 @@ just inspect-session --list       # List recent sessions
 just inspect-session -n 10        # Show 10 preview rows per table
 ```
 
-Checks: all 6 tables exist (net_events, model_calls, tool_calls, tool_responses, mcp_calls, fs_events), row counts, orphaned tool_calls, AI-provider consistency.
+Checks: session ledgers exist (net_events, model_calls, tool_calls, tool_responses, fs_events, dns_events, security_rule_events), row counts, orphaned tool_calls, AI-provider consistency.
 
 ## Verifying telemetry pipelines
 
 Each pipeline can be tested with a targeted VM command:
 
-- **fs_events**: `just run 'touch /root/test.txt && sleep 1'` then `just inspect-session`
-- **net_events**: `just run 'curl -s https://api.anthropic.com/ && sleep 1'`
+- **fs_events**: `just exec 'touch /root/test.txt && sleep 1'` then `just inspect-session`
+- **net_events**: `just exec 'curl -s https://api.anthropic.com/ && sleep 1'`
 - **model_calls/tool_calls**: boot interactively, run `claude -p "what is 2+2"`
-- **mcp_calls**: boot interactively, run `claude -p "use fetch to get https://example.com"`
+- **MCP-origin tool_calls**: boot interactively, run `claude -p "use fetch to get https://example.com"` and query `tool_calls WHERE origin = 'mcp'`
 
 If events are missing: check boot logs for daemon startup, vsock connection acceptance, and whether the VM lived long enough for the debouncer to flush (add `sleep 1`).
 

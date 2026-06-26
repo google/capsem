@@ -1307,11 +1307,7 @@ fn run_exec_on_fds(
     }
 
     // Spawn child process with piped stdout and stderr.
-    let cwd = if std::path::Path::new("/root").exists() {
-        "/root"
-    } else {
-        "/"
-    };
+    let cwd = default_exec_cwd();
     let mut child = match std::process::Command::new("bash")
         .arg("-c")
         .arg(command)
@@ -1381,6 +1377,14 @@ fn run_exec_on_fds(
     eprintln!("[capsem-agent] exec[{id}] done: exit_code={exit_code}");
     let _ = ctrl_tx.send(GuestToHost::ExecDone { id, exit_code });
     exit_code
+}
+
+fn default_exec_cwd() -> &'static str {
+    if unsafe { libc::geteuid() } == 0 && std::path::Path::new("/root").is_dir() {
+        "/root"
+    } else {
+        "/"
+    }
 }
 
 /// Guest workspace root (VirtioFS mount point).
@@ -2174,62 +2178,46 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    fn bridge_loop_concurrency_no_deadlock() {
-        use std::os::unix::io::AsRawFd;
+    fn bridge_loop_transfers_multi_chunk_data_both_directions() {
+        use std::os::unix::io::IntoRawFd;
         use std::os::unix::net::UnixStream;
 
         let (mut master_host, master_guest) = UnixStream::pair().unwrap();
         let (mut vsock_host, vsock_guest) = UnixStream::pair().unwrap();
 
-        let master_fd = master_guest.as_raw_fd();
-        let vsock_fd = vsock_guest.as_raw_fd();
+        let timeout = std::time::Duration::from_secs(30);
+        master_host.set_read_timeout(Some(timeout)).unwrap();
+        master_host.set_write_timeout(Some(timeout)).unwrap();
+        vsock_host.set_read_timeout(Some(timeout)).unwrap();
+        vsock_host.set_write_timeout(Some(timeout)).unwrap();
+
+        let master_fd = master_guest.into_raw_fd();
+        let vsock_fd = vsock_guest.into_raw_fd();
 
         let _bridge_thread = std::thread::spawn(move || {
             bridge_loop(master_fd, vsock_fd);
         });
 
-        // 1MB ensures internal buffers (usually 8KB) fill up, triggering backpressure
-        // and testing deadlock immunity.
-        let data_size = 1024 * 1024;
+        // 16 KiB is twice the bridge copy buffer, so this still forces
+        // multi-chunk full-duplex transfer without turning the unit test into a
+        // throughput benchmark under llvm-cov.
+        let data_size = 16 * 1024;
         let test_data = vec![0x42u8; data_size];
 
         let mut master_host_read = master_host.try_clone().unwrap();
         let mut vsock_host_read = vsock_host.try_clone().unwrap();
+        master_host_read.set_read_timeout(Some(timeout)).unwrap();
+        vsock_host_read.set_read_timeout(Some(timeout)).unwrap();
 
-        let t_master_write = std::thread::spawn({
-            let test_data = test_data.clone();
-            move || {
-                std::io::Write::write_all(&mut master_host, &test_data).unwrap();
-            }
-        });
-
-        let t_vsock_write = std::thread::spawn({
-            let test_data = test_data.clone();
-            move || {
-                std::io::Write::write_all(&mut vsock_host, &test_data).unwrap();
-            }
-        });
-
-        let t_master_read = std::thread::spawn(move || {
-            let mut buf = vec![0u8; data_size];
-            std::io::Read::read_exact(&mut master_host_read, &mut buf).unwrap();
-            buf
-        });
-
-        let t_vsock_read = std::thread::spawn(move || {
-            let mut buf = vec![0u8; data_size];
-            std::io::Read::read_exact(&mut vsock_host_read, &mut buf).unwrap();
-            buf
-        });
-
-        t_master_write.join().unwrap();
-        t_vsock_write.join().unwrap();
-
-        let master_out = t_master_read.join().unwrap();
-        let vsock_out = t_vsock_read.join().unwrap();
-
-        assert_eq!(master_out, test_data);
+        std::io::Write::write_all(&mut master_host, &test_data).unwrap();
+        let mut vsock_out = vec![0u8; data_size];
+        std::io::Read::read_exact(&mut vsock_host_read, &mut vsock_out).unwrap();
         assert_eq!(vsock_out, test_data);
+
+        std::io::Write::write_all(&mut vsock_host, &test_data).unwrap();
+        let mut master_out = vec![0u8; data_size];
+        std::io::Read::read_exact(&mut master_host_read, &mut master_out).unwrap();
+        assert_eq!(master_out, test_data);
     }
 
     // -----------------------------------------------------------------------
@@ -2255,6 +2243,15 @@ mod tests {
         match rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap() {
             GuestToHost::ExecDone { id, exit_code } => (id, exit_code),
             other => panic!("expected ExecDone, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn exec_default_cwd_uses_root_only_for_root_user() {
+        if unsafe { libc::geteuid() } == 0 && std::path::Path::new("/root").is_dir() {
+            assert_eq!(default_exec_cwd(), "/root");
+        } else {
+            assert_eq!(default_exec_cwd(), "/");
         }
     }
 

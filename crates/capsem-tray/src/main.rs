@@ -170,12 +170,21 @@ fn main() -> Result<()> {
         while let Ok(result) = poll_rx.try_recv() {
             match result {
                 PollResult::Status(status) => {
-                    // Icon always stays as template (white) -- only
-                    // switch back from Error to Idle when gateway reconnects.
-                    if last_state != Some(TrayState::Idle) {
-                        tray.set_icon_with_as_template(Some(icon_idle.clone()), true)
+                    let service_available = menu::service_available(&status);
+                    let desired_state = if service_available {
+                        TrayState::Idle
+                    } else {
+                        TrayState::Error
+                    };
+                    if last_state != Some(desired_state) {
+                        let icon = if service_available {
+                            icon_idle.clone()
+                        } else {
+                            icon_error.clone()
+                        };
+                        tray.set_icon_with_as_template(Some(icon), true)
                             .unwrap_or_else(|e| warn!("failed to set icon: {e}"));
-                        last_state = Some(TrayState::Idle);
+                        last_state = Some(desired_state);
                     }
 
                     if last_status.as_ref() != Some(&status) {
@@ -209,6 +218,9 @@ fn main() -> Result<()> {
                 }
                 Some(Action::OpenUi) => {
                     launch_ui(None);
+                }
+                Some(Action::StartService) => {
+                    launch_capsem_start();
                 }
                 Some(action) => {
                     if action_tx.blocking_send(action).is_err() {
@@ -353,7 +365,7 @@ async fn dispatch_action(client: &GatewayClient, action: Action) {
             launch_ui_action(id, "fork");
             return;
         }
-        Action::OpenUi | Action::Quit => return,
+        Action::OpenUi | Action::StartService | Action::Quit => return,
     };
 
     if let Err(e) = result {
@@ -370,6 +382,44 @@ fn launch_ui(vm_id: Option<&str>) {
 /// -- actions requiring a user-supplied name belong in the UI, not the tray.
 fn launch_ui_action(vm_id: &str, action: &str) {
     launch_capsem_app(Some(vm_id), Some(action));
+}
+
+fn launch_capsem_start() {
+    std::thread::spawn(move || {
+        let binary = find_capsem_cli_binary();
+        let (program, args) = build_start_service_invocation(binary.as_deref());
+        let mut cmd = std::process::Command::new(&program);
+        cmd.args(&args);
+        match cmd.spawn() {
+            Ok(mut child) => {
+                info!("capsem start dispatched from tray");
+                let _ = child.wait();
+            }
+            Err(e) => warn!("failed to start Capsem service from tray: {e}"),
+        }
+    });
+}
+
+fn find_capsem_cli_binary() -> Option<std::path::PathBuf> {
+    let sibling = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|parent| parent.join("capsem")));
+    let mut candidates = Vec::new();
+    if let Some(sibling) = sibling {
+        candidates.push(sibling);
+    }
+    candidates.push(std::path::PathBuf::from("/usr/local/bin/capsem"));
+    candidates.push(std::path::PathBuf::from("/opt/homebrew/bin/capsem"));
+    candidates.into_iter().find(|p| p.exists())
+}
+
+fn build_start_service_invocation(
+    binary: Option<&std::path::Path>,
+) -> (std::ffi::OsString, Vec<std::ffi::OsString>) {
+    match binary {
+        Some(path) => (path.as_os_str().to_owned(), vec!["start".into()]),
+        None => ("capsem".into(), vec!["start".into()]),
+    }
 }
 
 /// Platform-specific install candidates for the Capsem.app binary.
@@ -578,5 +628,20 @@ mod tests {
                 os("fork"),
             ]
         );
+    }
+
+    #[test]
+    fn start_service_invocation_uses_resolved_capsem_binary() {
+        let binary = PathBuf::from("/usr/local/bin/capsem");
+        let (program, args) = build_start_service_invocation(Some(&binary));
+        assert_eq!(program, binary.as_os_str());
+        assert_eq!(args, vec![os("start")]);
+    }
+
+    #[test]
+    fn start_service_invocation_falls_back_to_path_lookup() {
+        let (program, args) = build_start_service_invocation(None);
+        assert_eq!(program, os("capsem"));
+        assert_eq!(args, vec![os("start")]);
     }
 }

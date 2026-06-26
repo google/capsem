@@ -44,6 +44,36 @@ fn create_params_serializes_camel() {
 }
 
 #[test]
+fn default_profile_id_is_primary_profile() {
+    assert_eq!(DEFAULT_PROFILE_ID, "code");
+}
+
+#[test]
+fn create_body_includes_required_profile_id() {
+    let params = CreateParams {
+        name: Some("vm".into()),
+        ram_mb: Some(2048),
+        cpu_count: Some(2),
+        version: None,
+        env: None,
+        from: None,
+    };
+    let body = build_create_body(&params);
+    assert_eq!(body["profile_id"], "code");
+}
+
+#[test]
+fn run_body_includes_required_profile_id() {
+    let params = RunParams {
+        command: "echo ok".into(),
+        timeout: None,
+        env: None,
+    };
+    let body = build_run_body(&params);
+    assert_eq!(body["profile_id"], "code");
+}
+
+#[test]
 fn exec_params_roundtrip() {
     let json = json!({"id": "vm-1", "command": "echo hi"});
     let p: ExecParams = serde_json::from_value(json).unwrap();
@@ -71,13 +101,6 @@ fn file_write_params_roundtrip() {
     let json = json!({"id": "vm-1", "path": "/tmp/test.txt", "content": "data"});
     let p: FileWriteParams = serde_json::from_value(json).unwrap();
     assert_eq!(p.content, "data");
-}
-
-#[test]
-fn inspect_params_roundtrip() {
-    let json = json!({"id": "vm-1", "sql": "SELECT 1"});
-    let p: InspectParams = serde_json::from_value(json).unwrap();
-    assert_eq!(p.sql, "SELECT 1");
 }
 
 #[test]
@@ -406,18 +429,6 @@ fn uds_path_override_logic() {
 }
 
 // -----------------------------------------------------------------------
-// inspect_schema
-// -----------------------------------------------------------------------
-
-#[test]
-fn inspect_schema_contains_create_table() {
-    let schema = capsem_logger::schema::CREATE_SCHEMA;
-    assert!(schema.contains("CREATE TABLE"));
-    assert!(schema.contains("net_events"));
-    assert!(schema.contains("model_calls"));
-}
-
-// -----------------------------------------------------------------------
 // Tool router
 // -----------------------------------------------------------------------
 
@@ -436,8 +447,6 @@ fn tool_router_registers_all_tools() {
         "capsem_exec",
         "capsem_read_file",
         "capsem_write_file",
-        "capsem_inspect_schema",
-        "capsem_inspect",
         "capsem_delete",
         "capsem_stop",
         "capsem_suspend",
@@ -468,6 +477,33 @@ fn tool_router_registers_all_tools() {
     );
 }
 
+#[test]
+fn tool_descriptions_do_not_expose_old_lifecycle_semantics() {
+    let tools = CapsemHandler::tool_router();
+    let banned = [
+        concat!("ephem", "eral"),
+        concat!("tempor", "ary"),
+        "temp vm",
+        "named sessions",
+        concat!("un", "named"),
+    ];
+    for tool in tools.list_all() {
+        let haystack = format!(
+            "{} {}",
+            tool.name,
+            tool.description.as_deref().unwrap_or_default()
+        )
+        .to_lowercase();
+        for needle in banned {
+            assert!(
+                !haystack.contains(needle),
+                "tool {} exposes old lifecycle word {needle:?}: {haystack}",
+                tool.name
+            );
+        }
+    }
+}
+
 // -----------------------------------------------------------------------
 // Handler server info
 // -----------------------------------------------------------------------
@@ -489,23 +525,23 @@ fn server_info_name_and_version() {
 fn path_construction_with_traversal() {
     // Verify how VM IDs flow into URL paths -- a malicious ID could cause path traversal
     let id = "../../../etc/passwd";
-    let path = format!("/exec/{}", id);
-    assert_eq!(path, "/exec/../../../etc/passwd");
+    let path = format!("/vms/{}/exec", id);
+    assert_eq!(path, "/vms/../../../etc/passwd/exec");
     // This gets sent as an HTTP path; the service must validate the ID
 }
 
 #[test]
 fn path_construction_with_empty_id() {
     let id = "";
-    let path = format!("/exec/{}", id);
-    assert_eq!(path, "/exec/");
+    let path = format!("/vms/{}/exec", id);
+    assert_eq!(path, "/vms//exec");
     // Empty IDs should be rejected by the service
 }
 
 #[test]
 fn path_construction_with_slashes() {
     let id = "vm/../../secret";
-    let path = format!("/info/{}", id);
+    let path = format!("/vms/{}/info", id);
     assert!(
         path.contains("../"),
         "Path traversal attempt preserved in URL"
@@ -568,14 +604,6 @@ fn file_write_params_path_traversal() {
 }
 
 #[test]
-fn inspect_params_sql_injection() {
-    let json = json!({"id": "vm-1", "sql": "SELECT 1; DROP TABLE net_events; --"});
-    let p: InspectParams = serde_json::from_value(json).unwrap();
-    assert!(p.sql.contains("DROP TABLE"));
-    // Backend MUST use read-only connection
-}
-
-#[test]
 fn create_params_with_env() {
     let json = json!({"name": "test", "env": {"API_KEY": "sk-123", "DEBUG": "true"}});
     let p: CreateParams = serde_json::from_value(json).unwrap();
@@ -615,25 +643,6 @@ fn id_params_with_null_bytes() {
 }
 
 // -----------------------------------------------------------------------
-// inspect_schema validates
-// -----------------------------------------------------------------------
-
-#[test]
-fn inspect_schema_has_all_tables() {
-    let schema = capsem_logger::schema::CREATE_SCHEMA;
-    for table in [
-        "net_events",
-        "model_calls",
-        "tool_calls",
-        "tool_responses",
-        "mcp_calls",
-        "fs_events",
-        "snapshot_events",
-    ] {
-        assert!(schema.contains(table), "Missing table in schema: {table}");
-    }
-}
-
 // -----------------------------------------------------------------------
 // format_service_response: the common dispatch shape
 // -----------------------------------------------------------------------
@@ -685,7 +694,7 @@ fn format_service_response_array_value_is_ok() {
 // -----------------------------------------------------------------------
 
 #[test]
-fn create_body_named_is_persistent() {
+fn create_body_with_requested_name_is_persistent() {
     let p = CreateParams {
         name: Some("dev".into()),
         ..Default::default()
@@ -696,11 +705,22 @@ fn create_body_named_is_persistent() {
 }
 
 #[test]
-fn create_body_unnamed_is_ephemeral() {
+fn create_body_without_requested_name_is_temporary() {
     let p = CreateParams::default();
     let body = build_create_body(&p);
-    assert_eq!(body["persistent"], false);
     assert!(body["name"].is_null());
+    assert_eq!(body["persistent"], false);
+}
+
+#[test]
+fn create_body_from_clone_source_is_persistent() {
+    let p = CreateParams {
+        from: Some("src-vm".into()),
+        ..Default::default()
+    };
+    let body = build_create_body(&p);
+    assert_eq!(body["from"], "src-vm");
+    assert_eq!(body["persistent"], true);
 }
 
 #[test]
@@ -831,20 +851,8 @@ fn fork_body_without_description() {
 }
 
 // -----------------------------------------------------------------------
-// build_persist_body / build_purge_body / build_read_file_body
+// build_purge_body / build_read_file_body
 // -----------------------------------------------------------------------
-
-#[test]
-fn persist_body_contains_name() {
-    let p = PersistParams {
-        id: "vm-1".into(),
-        name: "promoted".into(),
-    };
-    let body = build_persist_body(&p);
-    assert_eq!(body["name"], "promoted");
-    // id is in URL path, not body
-    assert!(body.get("id").is_none());
-}
 
 #[test]
 fn purge_body_all_defaults_to_false() {

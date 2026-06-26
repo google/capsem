@@ -21,7 +21,7 @@ import uuid
 
 import pytest
 
-from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT, EXEC_TIMEOUT_SECS
+from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT, EXEC_TIMEOUT_SECS
 from helpers.service import wait_exec_ready, vm_name
 
 pytestmark = pytest.mark.integration
@@ -29,7 +29,7 @@ pytestmark = pytest.mark.integration
 
 def _exec(client, name, command):
     return client.post(
-        f"/exec/{name}",
+        f"/vms/{name}/exec",
         {"command": command, "timeout_secs": EXEC_TIMEOUT_SECS},
     )
 
@@ -40,8 +40,14 @@ class TestSuspendOverlayDurability:
         """Files on the EXT4 overlay (e.g. /tmp, /etc) must read back cleanly after resume."""
         name = vm_name("ovl")
         client.post(
-            "/provision",
-            {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS, "persistent": True},
+            "/vms/create",
+            {
+                "name": name,
+                "profile_id": CODE_PROFILE_ID,
+                "ram_mb": DEFAULT_RAM_MB,
+                "cpus": DEFAULT_CPUS,
+                "persistent": True,
+            },
         )
         try:
             assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
@@ -52,10 +58,10 @@ class TestSuspendOverlayDurability:
                 w = _exec(client, name, f"mkdir -p $(dirname {p}) && echo {marker} > {p}")
                 assert w.get("exit_code") == 0, f"write {p}: {w}"
 
-            sus = client.post(f"/suspend/{name}", {})
+            sus = client.post(f"/vms/{name}/pause", {})
             assert sus and sus.get("success"), f"suspend failed: {sus}"
 
-            res = client.post(f"/resume/{name}", {})
+            res = client.post(f"/vms/{name}/resume", {})
             assert res is not None, "resume returned None"
             resumed = res.get("id", name)
             assert wait_exec_ready(client, resumed, timeout=EXEC_READY_TIMEOUT), \
@@ -70,14 +76,20 @@ class TestSuspendOverlayDurability:
                 f"  {p}: exit={ec} out={out!r}" for p, ec, out in missing
             )
         finally:
-            client.delete(f"/delete/{name}")
+            client.delete(f"/vms/{name}/delete")
 
     def test_root_directory_listable_after_suspend_resume(self, client):
         """`ls /root` must succeed after suspend+resume (the bug repro)."""
         name = vm_name("lsroot")
         client.post(
-            "/provision",
-            {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS, "persistent": True},
+            "/vms/create",
+            {
+                "name": name,
+                "profile_id": CODE_PROFILE_ID,
+                "ram_mb": DEFAULT_RAM_MB,
+                "cpus": DEFAULT_CPUS,
+                "persistent": True,
+            },
         )
         try:
             assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
@@ -85,10 +97,10 @@ class TestSuspendOverlayDurability:
             # Touch a file so /root has something with a known inode.
             _exec(client, name, "echo hello > /root/before.txt")
 
-            sus = client.post(f"/suspend/{name}", {})
+            sus = client.post(f"/vms/{name}/pause", {})
             assert sus and sus.get("success"), f"suspend failed: {sus}"
 
-            res = client.post(f"/resume/{name}", {})
+            res = client.post(f"/vms/{name}/resume", {})
             assert res is not None
             resumed = res.get("id", name)
             assert wait_exec_ready(client, resumed, timeout=EXEC_READY_TIMEOUT)
@@ -101,7 +113,7 @@ class TestSuspendOverlayDurability:
             assert "before.txt" in r.get("stdout", ""), \
                 f"before.txt missing after resume: {r}"
         finally:
-            client.delete(f"/delete/{name}")
+            client.delete(f"/vms/{name}/delete")
 
     def test_suspend_failure_does_not_brick_vm(self, client):
         """Heavy-overlay write + suspend + resume + suspend + resume.
@@ -114,8 +126,14 @@ class TestSuspendOverlayDurability:
         """
         name = vm_name("brick")
         client.post(
-            "/provision",
-            {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS, "persistent": True},
+            "/vms/create",
+            {
+                "name": name,
+                "profile_id": CODE_PROFILE_ID,
+                "ram_mb": DEFAULT_RAM_MB,
+                "cpus": DEFAULT_CPUS,
+                "persistent": True,
+            },
         )
         try:
             assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
@@ -131,10 +149,10 @@ class TestSuspendOverlayDurability:
             assert r.get("exit_code") == 0, f"churn failed: {r}"
 
             for cycle in range(3):
-                sus = client.post(f"/suspend/{name}", {})
+                sus = client.post(f"/vms/{name}/pause", {})
                 assert sus and sus.get("success"), f"[cycle {cycle}] suspend failed: {sus}"
 
-                res = client.post(f"/resume/{name}", {})
+                res = client.post(f"/vms/{name}/resume", {})
                 assert res is not None, f"[cycle {cycle}] resume returned None"
                 resumed = res.get("id", name)
                 assert wait_exec_ready(client, resumed, timeout=EXEC_READY_TIMEOUT), \
@@ -145,4 +163,4 @@ class TestSuspendOverlayDurability:
                 assert r.get("exit_code") == 0, \
                     f"[cycle {cycle}] post-resume health probe failed: {r}"
         finally:
-            client.delete(f"/delete/{name}")
+            client.delete(f"/vms/{name}/delete")

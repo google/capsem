@@ -1,7 +1,6 @@
 """Verify session.db survives clean VM shutdown."""
 
 import shutil
-import sqlite3
 import tempfile
 import uuid
 
@@ -21,11 +20,11 @@ def test_db_survives_clean_shutdown():
     vm_name = f"survive-{uuid.uuid4().hex[:8]}"
 
     try:
-        client.post("/provision", {"name": vm_name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        client.post("/vms/create", {"name": vm_name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
         assert wait_exec_ready(client, vm_name), f"VM {vm_name} never exec-ready"
 
         # Run a command to generate some data
-        client.post(f"/exec/{vm_name}", {"command": "echo session-test"})
+        client.post(f"/vms/{vm_name}/exec", {"command": "echo session-test"})
 
         import time
         time.sleep(3)
@@ -49,7 +48,7 @@ def test_db_survives_clean_shutdown():
             shutil.copy2(str(db_path), copy_path)
 
             # Delete the VM
-            client.delete(f"/delete/{vm_name}")
+            client.delete(f"/vms/{vm_name}/delete")
 
             # Verify the copy is valid SQLite
             conn = sqlite3.connect(copy_path)
@@ -62,7 +61,7 @@ def test_db_survives_clean_shutdown():
             assert len(tables) > 0, "Copied session.db has no tables"
     finally:
         try:
-            client.delete(f"/delete/{vm_name}")
+            client.delete(f"/vms/{vm_name}/delete")
         except Exception:
             pass
         svc.stop()

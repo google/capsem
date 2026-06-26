@@ -168,6 +168,10 @@ pub struct SecurityDecisionEvent {
     pub event_json: String,
     #[serde(default)]
     pub trace_id: Option<String>,
+    #[serde(default)]
+    pub turn_id: Option<String>,
+    #[serde(default)]
+    pub credential_ref: Option<String>,
 }
 
 /// A stored security rule match. This is the source for runtime `latest`
@@ -188,6 +192,59 @@ pub struct SecurityRuleEvent {
     pub event_json: String,
     #[serde(default)]
     pub trace_id: Option<String>,
+    #[serde(default)]
+    pub turn_id: Option<String>,
+    #[serde(default)]
+    pub credential_ref: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProfileMutationEvent {
+    pub timestamp_unix_ms: i64,
+    pub mutation_id: String,
+    pub profile_id: String,
+    pub actor: String,
+    pub category: String,
+    pub filename: String,
+    pub affected_path: String,
+    pub target_kind: String,
+    pub target_key: String,
+    pub operation: String,
+    #[serde(default)]
+    pub rule_id: Option<String>,
+    pub old_hash: String,
+    pub old_size: u64,
+    pub new_hash: String,
+    pub new_size: u64,
+    pub status: ProfileMutationStatus,
+    #[serde(default)]
+    pub error: Option<String>,
+    #[serde(default)]
+    pub trace_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProfileMutationStatus {
+    Applied,
+    Failed,
+}
+
+impl ProfileMutationStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Applied => "applied",
+            Self::Failed => "failed",
+        }
+    }
+
+    pub fn parse_str(value: &str) -> Option<Self> {
+        match value {
+            "applied" => Some(Self::Applied),
+            "failed" => Some(Self::Failed),
+            _ => None,
+        }
+    }
 }
 
 /// Append-only ask lifecycle status for an ask enforcement decision.
@@ -309,6 +366,8 @@ impl SecurityRuleEvent {
             rule_json: rule_json.into(),
             event_json: event_json.into(),
             trace_id: None,
+            turn_id: None,
+            credential_ref: None,
         }
     }
 
@@ -324,6 +383,16 @@ impl SecurityRuleEvent {
 
     pub fn with_trace_id(mut self, trace_id: impl Into<String>) -> Self {
         self.trace_id = Some(trace_id.into());
+        self
+    }
+
+    pub fn with_turn_id(mut self, turn_id: impl Into<String>) -> Self {
+        self.turn_id = Some(turn_id.into());
+        self
+    }
+
+    pub fn with_credential_ref(mut self, credential_ref: impl Into<String>) -> Self {
+        self.credential_ref = Some(credential_ref.into());
         self
     }
 }
@@ -451,28 +520,6 @@ pub struct FileEvent {
     pub credential_ref: Option<String>,
 }
 
-/// A snapshot event (auto or manual) recorded for the stats UI.
-/// Each row is self-contained: the fs_event range (start_fs_event_id, stop_fs_event_id]
-/// lets the frontend compute per-snapshot file changes without directory walks.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SnapshotEvent {
-    #[serde(default)]
-    pub event_id: Option<String>,
-    #[serde(
-        serialize_with = "serialize_timestamp",
-        deserialize_with = "deserialize_timestamp"
-    )]
-    pub timestamp: SystemTime,
-    pub slot: usize,
-    pub origin: String,
-    pub name: Option<String>,
-    pub files_count: usize,
-    pub start_fs_event_id: i64,
-    pub stop_fs_event_id: i64,
-    #[serde(default)]
-    pub trace_id: Option<String>,
-}
-
 /// A single network connection event.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetEvent {
@@ -500,6 +547,10 @@ pub struct NetEvent {
     pub response_headers: Option<String>,
     pub request_body_preview: Option<String>,
     pub response_body_preview: Option<String>,
+    #[serde(default)]
+    pub request_body_full: Option<String>,
+    #[serde(default)]
+    pub response_body_full: Option<String>,
     pub conn_type: Option<String>,
     #[serde(default)]
     pub policy_mode: Option<String>,
@@ -533,6 +584,10 @@ fn default_origin() -> String {
     "native".to_string()
 }
 
+fn default_tool_transport() -> String {
+    "unknown".to_string()
+}
+
 /// A tool result sent back to the model in a subsequent request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolResponseEntry {
@@ -541,6 +596,8 @@ pub struct ToolResponseEntry {
     pub is_error: bool,
     #[serde(default)]
     pub trace_id: Option<String>,
+    #[serde(default)]
+    pub credential_ref: Option<String>,
 }
 
 /// A single MCP tool call event (one row per tools/call or tools/list request).
@@ -566,6 +623,10 @@ pub struct McpCall {
     pub process_name: Option<String>,
     pub bytes_sent: u64,
     pub bytes_received: u64,
+    /// Transport carrying the MCP evidence: "vsock_frame", "http",
+    /// "sse", "websocket", "direct", or "unknown".
+    #[serde(default = "default_tool_transport")]
+    pub transport: String,
     #[serde(default)]
     pub policy_mode: Option<String>,
     #[serde(default)]
@@ -592,6 +653,8 @@ pub struct ModelCall {
     )]
     pub timestamp: SystemTime,
     pub provider: String,
+    #[serde(default)]
+    pub protocol: Option<String>,
     pub model: Option<String>,
     pub process_name: Option<String>,
     pub pid: Option<u32>,
@@ -604,11 +667,15 @@ pub struct ModelCall {
     pub tools_count: usize,
     pub request_bytes: u64,
     pub request_body_preview: Option<String>,
+    #[serde(default)]
+    pub request_body_full: Option<String>,
     // Response metadata
     pub message_id: Option<String>,
     pub status_code: Option<u16>,
     pub text_content: Option<String>,
     pub thinking_content: Option<String>,
+    #[serde(default)]
+    pub response_body_full: Option<String>,
     pub stop_reason: Option<String>,
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
@@ -640,7 +707,6 @@ pub struct ExecEvent {
     pub command: String,
     /// Request origin: "mcp", "cli", "api", "frontend".
     pub source: String,
-    pub mcp_call_id: Option<u64>,
     pub trace_id: Option<String>,
     pub process_name: Option<String>,
     #[serde(default)]
@@ -686,6 +752,10 @@ pub struct DnsEvent {
     pub qclass: u16,
     /// DNS response code (0 = NoError, 2 = ServFail, 3 = NXDomain).
     pub rcode: u16,
+    /// First A/AAAA answer observed in the response, when the DNS proxy
+    /// received a parseable answer packet.
+    #[serde(default)]
+    pub answer_ip: Option<String>,
     /// "allowed" / "denied" / "error" (mirrors `Decision::as_str`).
     pub decision: String,
     /// Policy rule that produced a Denied decision, e.g.
@@ -712,7 +782,7 @@ pub struct DnsEvent {
     #[serde(default)]
     pub policy_mode: Option<String>,
     /// Typed policy action (`allow`, `ask`, `block`, `rewrite`) when
-    /// Policy V2 matched.
+    /// security rule matched.
     #[serde(default)]
     pub policy_action: Option<String>,
     /// Fully qualified policy rule id, e.g. `policy.dns.block_openai`.
@@ -824,6 +894,8 @@ mod tests {
             response_headers: None,
             request_body_preview: None,
             response_body_preview: None,
+            request_body_full: None,
+            response_body_full: None,
             conn_type: None,
             policy_mode: None,
             policy_action: None,

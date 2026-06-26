@@ -7,7 +7,6 @@ pre-observability-sprint code did. Verifies the structured handshake
 error is also emitted to service.log.
 """
 
-import os
 import socket
 import time
 from pathlib import Path

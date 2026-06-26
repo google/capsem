@@ -7,7 +7,7 @@ import pytest
 import subprocess
 from pathlib import Path
 
-from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
+from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.service import wait_exec_ready
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -30,10 +30,15 @@ def _provision_vm(uds_path, name, persistent=False):
     """Provision a VM via the service API (non-blocking, for test setup)."""
     from helpers.uds_client import UdsHttpClient
     client = UdsHttpClient(uds_path)
-    body = {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS}
+    body = {
+        "name": name,
+        "profile_id": CODE_PROFILE_ID,
+        "ram_mb": DEFAULT_RAM_MB,
+        "cpus": DEFAULT_CPUS,
+    }
     if persistent:
         body["persistent"] = True
-    return client.post("/provision", body)
+    return client.post("/vms/create", body)
 
 
 class TestRun:
@@ -172,11 +177,11 @@ class TestPurge:
         # VM should still exist
         from helpers.uds_client import UdsHttpClient
         client = UdsHttpClient(uds_path)
-        listing = client.get("/list")
+        listing = client.get("/vms/list")
         ids = [s["id"] for s in listing["sandboxes"]]
         assert name in ids, f"Persistent VM {name} was destroyed despite user saying 'n'"
         # Cleanup
-        client.delete(f"/delete/{name}")
+        client.delete(f"/vms/{name}/delete")
 
     def test_purge_all_confirmed_destroys(self, uds_path):
         """capsem purge --all with 'y' should destroy persistent VMs."""
@@ -189,7 +194,7 @@ class TestPurge:
         # VM should be gone
         from helpers.uds_client import UdsHttpClient
         client = UdsHttpClient(uds_path)
-        listing = client.get("/list")
+        listing = client.get("/vms/list")
         ids = [s["id"] for s in listing["sandboxes"]]
         assert name not in ids, f"Persistent VM {name} survived purge --all with 'y'"
 
@@ -251,8 +256,9 @@ class TestEnv:
         # Use the service API directly to provision with env
         from helpers.uds_client import UdsHttpClient
         client = UdsHttpClient(uds_path)
-        resp = client.post("/provision", {
-            "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
+        resp = client.post("/vms/create", {
+            "name": name, "profile_id": CODE_PROFILE_ID,
+            "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
             "persistent": True, "env": {"CAPSEM_TEST_VAR": "hello_from_host"}
         })
         assert resp is not None, "provision with env failed"

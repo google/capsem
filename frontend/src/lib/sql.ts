@@ -3,6 +3,8 @@
 
 // -- Stats bar (polled every 2s) ------------------------------------------
 
+export const TOOL_CALL_LEDGER_WHERE = "origin IN ('native', 'mcp', 'builtin', 'local', 'mcp_proxy')";
+
 export const MODEL_STATS_SQL = `
   SELECT
     COALESCE(SUM(input_tokens), 0) as total_input_tokens,
@@ -14,8 +16,9 @@ export const MODEL_STATS_SQL = `
 
 export const TOOL_COUNT_SQL = `
   SELECT
-    (SELECT COUNT(*) FROM tool_calls WHERE origin = 'native')
-  + (SELECT COUNT(*) FROM mcp_calls WHERE tool_name IS NOT NULL) as cnt
+    COUNT(*) as cnt
+  FROM tool_calls
+  WHERE ${TOOL_CALL_LEDGER_WHERE}
 `;
 
 // -- Models tab (trace viewer) --------------------------------------------
@@ -40,20 +43,18 @@ export const TRACES_SQL = `
     COALESCE(SUM(mc.duration_ms), 0) as total_duration_ms,
     COALESCE(SUM(mc.estimated_cost_usd), 0.0) as total_cost,
     (SELECT COUNT(*) FROM tool_calls tc
-     JOIN model_calls mc2 ON tc.model_call_id = mc2.id
-     WHERE mc2.trace_id = t.trace_id) as total_tool_calls,
+     WHERE tc.trace_id = t.trace_id AND ${TOOL_CALL_LEDGER_WHERE}) as total_tool_calls,
     (SELECT stop_reason FROM model_calls m4 WHERE m4.trace_id = t.trace_id ORDER BY m4.id DESC LIMIT 1) as stop_reason
   FROM top_traces t
   JOIN model_calls mc ON mc.trace_id = t.trace_id
   GROUP BY t.trace_id
-  HAVING total_input_tokens + total_output_tokens > 0
   ORDER BY t.max_id DESC
 `;
 
 export const TRACE_DETAIL_SQL = `
   SELECT id, timestamp, provider, model, thinking_content, text_content,
          input_tokens, output_tokens, duration_ms, estimated_cost_usd, stop_reason,
-         request_body_preview, system_prompt_preview, messages_count, tools_count
+         messages_count, tools_count
   FROM model_calls
   WHERE trace_id = ?
   ORDER BY id ASC
@@ -62,9 +63,8 @@ export const TRACE_DETAIL_SQL = `
 export const TRACE_TOOL_CALLS_SQL = `
   SELECT tc.id, tc.model_call_id, tc.call_index, tc.call_id, tc.tool_name, tc.arguments, tc.origin
   FROM tool_calls tc
-  JOIN model_calls mc ON tc.model_call_id = mc.id
-  WHERE mc.trace_id = ?
-  ORDER BY tc.model_call_id, tc.call_index
+  WHERE tc.trace_id = ? AND ${TOOL_CALL_LEDGER_WHERE}
+  ORDER BY COALESCE(tc.model_call_id, 0), tc.call_index
 `;
 
 export const TRACE_TOOL_RESPONSES_SQL = `
@@ -78,51 +78,40 @@ export const TRACE_TOOL_RESPONSES_SQL = `
 
 export const TOOLS_STATS_SQL = `
   SELECT
-    (SELECT COUNT(*) FROM tool_calls WHERE origin = 'native') + (SELECT COUNT(*) FROM mcp_calls) as total,
+    (SELECT COUNT(*) FROM tool_calls WHERE ${TOOL_CALL_LEDGER_WHERE}) as total,
     (SELECT COUNT(*) FROM tool_calls WHERE origin = 'native') as native,
-    (SELECT COUNT(*) FROM mcp_calls) as mcp,
-    (SELECT COUNT(*) FROM mcp_calls WHERE decision = 'allowed') as allowed,
-    (SELECT COUNT(*) FROM mcp_calls WHERE decision != 'allowed') as denied
+    (SELECT COUNT(*) FROM tool_calls WHERE origin = 'mcp') as mcp,
+    (SELECT COUNT(*) FROM tool_calls WHERE ${TOOL_CALL_LEDGER_WHERE} AND decision = 'allowed') as allowed,
+    (SELECT COUNT(*) FROM tool_calls WHERE ${TOOL_CALL_LEDGER_WHERE} AND decision != 'allowed') as denied
 `;
 
 export const TOOLS_TOP_TOOLS_SQL = `
-  SELECT tool_name, cnt, source FROM (
-    SELECT tc.tool_name, COUNT(*) as cnt, 'native' as source
-    FROM tool_calls tc
-    WHERE tc.origin = 'native'
-    GROUP BY tc.tool_name
-    UNION ALL
-    SELECT tool_name, COUNT(*) as cnt, 'mcp' as source
-    FROM mcp_calls
-    WHERE tool_name IS NOT NULL
-    GROUP BY tool_name
-  )
+  SELECT tool_name, COUNT(*) as cnt, origin as source
+  FROM tool_calls
+  WHERE ${TOOL_CALL_LEDGER_WHERE}
+  GROUP BY tool_name, origin
   ORDER BY cnt DESC
   LIMIT 10
 `;
 
 export const TOOLS_TOP_SERVERS_SQL = `
   SELECT server_name, COUNT(*) as cnt
-  FROM mcp_calls
+  FROM tool_calls
+  WHERE ${TOOL_CALL_LEDGER_WHERE} AND server_name IS NOT NULL
   GROUP BY server_name
   ORDER BY cnt DESC
   LIMIT 8
 `;
 
 export const TOOLS_OVER_TIME_SQL = `
-  WITH all_calls AS (
-    SELECT mc.timestamp, 'native' as source
-    FROM tool_calls tc
-    JOIN model_calls mc ON tc.model_call_id = mc.id
-    WHERE tc.origin = 'native'
-    UNION ALL
-    SELECT timestamp, 'mcp' as source
-    FROM mcp_calls
-  ),
-  numbered AS (
+  WITH numbered AS (
     SELECT source,
       (ROW_NUMBER() OVER (ORDER BY timestamp) - 1) / 5 as bucket
-    FROM all_calls
+    FROM (
+      SELECT COALESCE(NULLIF(timestamp, ''), '1970-01-01T00:00:00Z') as timestamp, origin as source
+      FROM tool_calls
+      WHERE ${TOOL_CALL_LEDGER_WHERE}
+    )
   )
   SELECT bucket,
     SUM(CASE WHEN source = 'native' THEN 1 ELSE 0 END) as native,
@@ -135,53 +124,73 @@ export const TOOLS_OVER_TIME_SQL = `
 // -- Tools tab (unified native + MCP) ----------------------------------------
 
 export const TOOLS_UNIFIED_SQL = `
-  SELECT timestamp, process_name, server_name, tool_name, method,
+  SELECT event_id, timestamp, process_name, server_name, tool_name, method,
          decision, duration_ms, bytes, arguments, response_preview,
          error_message, source
   FROM (
-    SELECT mc.timestamp, NULL as process_name, 'local' as server_name,
-           tc.tool_name, NULL as method, 'allowed' as decision,
-           mc.duration_ms,
-           COALESCE(LENGTH(tc.arguments), 0) as bytes,
-           tc.arguments, tr.content_preview as response_preview,
-           NULL as error_message, 'native' as source
+    SELECT tc.event_id,
+           COALESCE(NULLIF(tc.timestamp, ''), mc.timestamp) as timestamp,
+           tc.process_name,
+           COALESCE(tc.server_name, 'model') as server_name,
+           tc.tool_name,
+           tc.method,
+           tc.decision,
+           COALESCE(tc.duration_ms, mc.duration_ms, 0) as duration_ms,
+           COALESCE(LENGTH(tc.arguments), 0) + COALESCE(LENGTH(COALESCE(tc.response_preview, tr.content_preview)), 0) as bytes,
+           tc.arguments,
+           COALESCE(tc.response_preview, tr.content_preview) as response_preview,
+           tc.error_message,
+           tc.origin as source
     FROM tool_calls tc
-    JOIN model_calls mc ON tc.model_call_id = mc.id
+    LEFT JOIN model_calls mc ON tc.model_call_id = mc.id
     LEFT JOIN tool_responses tr ON tc.call_id = tr.call_id
-    WHERE tc.origin = 'native'
-    UNION ALL
-    SELECT timestamp, process_name, server_name, tool_name, method,
-           decision, duration_ms,
-           COALESCE(LENGTH(request_preview), 0) + COALESCE(LENGTH(response_preview), 0) as bytes,
-           request_preview as arguments, response_preview,
-           error_message, 'mcp' as source
-    FROM mcp_calls
+    WHERE ${TOOL_CALL_LEDGER_WHERE}
   )
   ORDER BY timestamp DESC
 `;
 
+export const TOOLS_UNIFIED_MINIMAL_SQL = `
+  SELECT tc.event_id,
+         COALESCE(mc.timestamp, '') as timestamp,
+         NULL as process_name,
+         'model' as server_name,
+         tc.tool_name,
+         NULL as method,
+         'allowed' as decision,
+         COALESCE(mc.duration_ms, 0) as duration_ms,
+         COALESCE(LENGTH(tc.arguments), 0) as bytes,
+         tc.arguments,
+         NULL as response_preview,
+         NULL as error_message,
+         tc.origin as source
+  FROM tool_calls tc
+  LEFT JOIN model_calls mc ON tc.model_call_id = mc.id
+  WHERE ${TOOL_CALL_LEDGER_WHERE}
+  ORDER BY COALESCE(mc.timestamp, '') DESC, tc.id DESC
+`;
+
 export const TOOLS_UNIFIED_SEARCH_SQL = `
-  SELECT timestamp, process_name, server_name, tool_name, method,
+  SELECT event_id, timestamp, process_name, server_name, tool_name, method,
          decision, duration_ms, bytes, arguments, response_preview,
          error_message, source
   FROM (
-    SELECT mc.timestamp, NULL as process_name, 'local' as server_name,
-           tc.tool_name, NULL as method, 'allowed' as decision,
-           mc.duration_ms,
-           COALESCE(LENGTH(tc.arguments), 0) as bytes,
-           tc.arguments, tr.content_preview as response_preview,
-           NULL as error_message, 'native' as source
+    SELECT tc.event_id,
+           COALESCE(NULLIF(tc.timestamp, ''), mc.timestamp) as timestamp,
+           tc.process_name,
+           COALESCE(tc.server_name, 'model') as server_name,
+           tc.tool_name,
+           tc.method,
+           tc.decision,
+           COALESCE(tc.duration_ms, mc.duration_ms, 0) as duration_ms,
+           COALESCE(LENGTH(tc.arguments), 0) + COALESCE(LENGTH(COALESCE(tc.response_preview, tr.content_preview)), 0) as bytes,
+           tc.arguments,
+           COALESCE(tc.response_preview, tr.content_preview) as response_preview,
+           tc.error_message,
+           tc.origin as source
     FROM tool_calls tc
-    JOIN model_calls mc ON tc.model_call_id = mc.id
+    LEFT JOIN model_calls mc ON tc.model_call_id = mc.id
     LEFT JOIN tool_responses tr ON tc.call_id = tr.call_id
-    WHERE tc.origin = 'native'
-    UNION ALL
-    SELECT timestamp, process_name, server_name, tool_name, method,
-           decision, duration_ms,
-           COALESCE(LENGTH(request_preview), 0) + COALESCE(LENGTH(response_preview), 0) as bytes,
-           request_preview as arguments, response_preview,
-           error_message, 'mcp' as source
-    FROM mcp_calls
+    WHERE ${TOOL_CALL_LEDGER_WHERE}
   )
   WHERE tool_name LIKE ? OR method LIKE ? OR server_name LIKE ? OR process_name LIKE ?
   ORDER BY timestamp DESC
@@ -296,7 +305,7 @@ export const NET_TOP_DOMAINS_SQL = `
 export const NET_EVENTS_ALL_SQL = `
   SELECT id, timestamp, domain, port, decision, method, path, query,
          status_code, bytes_sent, bytes_received, duration_ms, matched_rule,
-         request_headers, response_headers, request_body_preview, response_body_preview
+         request_headers, response_headers
   FROM net_events
   ORDER BY id DESC
 `;
@@ -304,7 +313,7 @@ export const NET_EVENTS_ALL_SQL = `
 export const NET_EVENTS_SEARCH_SQL = `
   SELECT id, timestamp, domain, port, decision, method, path, query,
          status_code, bytes_sent, bytes_received, duration_ms, matched_rule,
-         request_headers, response_headers, request_body_preview, response_body_preview
+         request_headers, response_headers
   FROM net_events
   WHERE domain LIKE ? OR path LIKE ? OR method LIKE ?
   ORDER BY id DESC
@@ -354,72 +363,3 @@ export const FILE_EVENTS_SEARCH_SQL = `
   WHERE path LIKE ?
   ORDER BY id DESC
 `;
-
-// -- Snapshots tab -----------------------------------------------------------
-
-export const SNAPSHOT_STATS_SQL = `
-  SELECT
-    COUNT(*) as total,
-    SUM(CASE WHEN origin = 'auto' THEN 1 ELSE 0 END) as auto_count,
-    SUM(CASE WHEN origin = 'manual' THEN 1 ELSE 0 END) as manual_count
-  FROM snapshot_events
-  WHERE id IN (SELECT MAX(id) FROM snapshot_events GROUP BY slot)
-`;
-
-export const SNAPSHOT_LIST_SQL = `
-  SELECT s.id, s.timestamp, s.slot, s.origin, s.name, s.files_count,
-    s.start_fs_event_id, s.stop_fs_event_id,
-    (SELECT COUNT(*) FROM fs_events
-     WHERE id > s.start_fs_event_id AND id <= s.stop_fs_event_id
-     AND action = 'created') as created,
-    (SELECT COUNT(*) FROM fs_events
-     WHERE id > s.start_fs_event_id AND id <= s.stop_fs_event_id
-     AND action = 'modified') as modified,
-    (SELECT COUNT(*) FROM fs_events
-     WHERE id > s.start_fs_event_id AND id <= s.stop_fs_event_id
-     AND action = 'deleted') as deleted
-  FROM snapshot_events s
-  WHERE s.id IN (
-    SELECT MAX(id) FROM snapshot_events GROUP BY slot
-  )
-  ORDER BY s.timestamp DESC
-`;
-
-// -- Inspector preset queries -----------------------------------------------
-
-import type { PresetQuery } from './types';
-
-export const PRESET_QUERIES: PresetQuery[] = [
-  { label: 'Recent events', sql: 'SELECT timestamp, event_type, summary FROM event_log ORDER BY timestamp DESC LIMIT 20' },
-  { label: 'HTTP requests', sql: 'SELECT method, url, status_code, decision, duration_ms FROM http_requests ORDER BY timestamp DESC LIMIT 20' },
-  { label: 'Tool calls', sql: 'SELECT tool_name, server, duration_ms, timestamp FROM tool_calls ORDER BY timestamp DESC LIMIT 20' },
-  { label: 'Model calls', sql: 'SELECT provider, model, input_tokens, output_tokens, estimated_cost_usd FROM model_calls ORDER BY timestamp DESC' },
-  { label: 'File events', sql: 'SELECT path, operation, size_bytes, timestamp FROM file_events ORDER BY timestamp DESC LIMIT 20' },
-];
-
-/**
- * Validate that a SQL query is a SELECT statement (not INSERT/UPDATE/DELETE/DROP/etc).
- * Returns null if valid, or an error message if rejected.
- */
-export function validateSelectOnly(sql: string): string | null {
-  const trimmed = sql.trim();
-  if (!trimmed) return 'Query is empty';
-
-  const stripped = trimmed
-    .replace(/--[^\n]*/g, '')
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .trim();
-
-  if (!stripped) return 'Query is empty (only comments)';
-
-  if (!/^SELECT\b/i.test(stripped)) {
-    return 'Only SELECT queries are allowed';
-  }
-
-  const dangerous = /\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|REPLACE|ATTACH|DETACH|PRAGMA)\b/i;
-  if (dangerous.test(stripped)) {
-    return 'Query contains forbidden keyword';
-  }
-
-  return null;
-}

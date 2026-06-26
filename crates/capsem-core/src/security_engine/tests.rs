@@ -1,15 +1,15 @@
 use super::*;
 use crate::credential_broker::{
-    broker_to_user_settings, CredentialObservation, CredentialProvider,
+    broker_observed_credential, CredentialObservation, CredentialProvider,
 };
 use crate::net::ai_traffic::provider::ProviderKind;
 use crate::net::policy_config::{
-    CompiledSecurityRule, PolicyDecisionKind, PolicyRuleConfig, SecurityPluginConfig,
-    SecurityPluginMode, SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource,
+    SecurityPluginConfig, SecurityPluginMode, SecurityRuleProfile, SecurityRuleSet,
+    SecurityRuleSource,
 };
 use capsem_logger::{
     AuditEvent, Decision, DnsEvent, ExecEvent, ExecEventComplete, FileAction, FileEvent, McpCall,
-    ModelCall, NetEvent, SnapshotEvent, SubstitutionEvent, WriteOp,
+    ModelCall, NetEvent, SubstitutionEvent, WriteOp,
 };
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -39,107 +39,81 @@ impl Drop for EnvVarGuard {
 }
 
 struct TracePlugin {
-    id: PolicyActionId,
-}
-
-impl SecurityActionPlugin for TracePlugin {
-    fn id(&self) -> PolicyActionId {
-        self.id
-    }
-
-    fn apply(
-        &self,
-        _rule: &PolicyRuleConfig,
-        mut event: SecurityEvent,
-    ) -> Result<SecurityEvent, SecurityActionError> {
-        event.action_trace.push(self.id);
-        if self.id == PolicyActionId::CredentialBrokerSubstitute {
-            event.credential_ref = Some("credential:blake3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string());
-        }
-        Ok(event)
-    }
-}
-
-struct TraceRulePlugin {
     id: &'static str,
+    stage: SecurityPluginStage,
 }
 
-impl SecurityRulePlugin for TraceRulePlugin {
+impl SecurityPlugin for TracePlugin {
     fn id(&self) -> &'static str {
         self.id
     }
 
+    fn stage(&self) -> SecurityPluginStage {
+        self.stage
+    }
+
     fn apply(
         &self,
-        rule: &CompiledSecurityRule,
         mut event: SecurityEvent,
-    ) -> Result<SecurityEvent, SecurityActionError> {
+        _config: SecurityPluginConfig,
+    ) -> Result<SecurityPluginResult, SecurityActionError> {
         event
             .action_trace
             .push(PolicyActionId::CredentialBrokerSubstitute);
         event.credential_ref = Some(format!(
             "credential:blake3:{:0<64}",
-            &rule.rule_id.replace('.', "")[..12.min(rule.rule_id.len())]
+            self.id.replace('_', "")
         ));
-        Ok(event)
+        Ok(SecurityPluginResult::applied(event))
     }
 }
 
-struct MarkCredentialRulePlugin;
+struct MarkDecisionPlugin;
 
-impl SecurityRulePlugin for MarkCredentialRulePlugin {
+impl SecurityPlugin for MarkDecisionPlugin {
     fn id(&self) -> &'static str {
-        "mark_credential"
+        "mark_decision"
+    }
+
+    fn stage(&self) -> SecurityPluginStage {
+        SecurityPluginStage::Preprocess
     }
 
     fn apply(
         &self,
-        _rule: &CompiledSecurityRule,
         mut event: SecurityEvent,
-    ) -> Result<SecurityEvent, SecurityActionError> {
-        event.credential = Some(CredentialSecurityEvent {
-            reference: Some("credential:blake3:marked".to_string()),
-            ..Default::default()
-        });
+        _config: SecurityPluginConfig,
+    ) -> Result<SecurityPluginResult, SecurityActionError> {
+        event.request_decision(SecurityDecisionKind::Block);
         event
             .action_trace
             .push(PolicyActionId::CredentialBrokerCapture);
-        Ok(event)
+        Ok(SecurityPluginResult::applied(event))
     }
 }
 
-struct DecisionRulePlugin {
+struct DecisionPlugin {
     id: &'static str,
+    stage: SecurityPluginStage,
     requested: SecurityDecisionKind,
 }
 
-impl SecurityRulePlugin for DecisionRulePlugin {
+impl SecurityPlugin for DecisionPlugin {
     fn id(&self) -> &'static str {
         self.id
     }
 
+    fn stage(&self) -> SecurityPluginStage {
+        self.stage
+    }
+
     fn apply(
         &self,
-        _rule: &CompiledSecurityRule,
         mut event: SecurityEvent,
-    ) -> Result<SecurityEvent, SecurityActionError> {
+        _config: SecurityPluginConfig,
+    ) -> Result<SecurityPluginResult, SecurityActionError> {
         event.request_decision(self.requested);
-        Ok(event)
-    }
-}
-
-fn rule(actions: Vec<PolicyActionId>) -> PolicyRuleConfig {
-    PolicyRuleConfig {
-        on: PolicyCallback::HttpRequest,
-        condition: "request.host == \"example.com\"".to_string(),
-        decision: PolicyDecisionKind::Allow,
-        priority: 10,
-        reason: None,
-        actions,
-        rewrite_target: None,
-        rewrite_value: None,
-        strip_request_headers: Vec::new(),
-        strip_response_headers: Vec::new(),
+        Ok(SecurityPluginResult::applied(event))
     }
 }
 
@@ -157,146 +131,6 @@ fn plugin_config(
         mode,
         detection_level,
     }
-}
-
-#[test]
-fn action_registry_runs_plugins_in_rule_order() {
-    let registry = SecurityActionRegistry::new()
-        .register(TracePlugin {
-            id: PolicyActionId::CredentialBrokerCapture,
-        })
-        .unwrap()
-        .register(TracePlugin {
-            id: PolicyActionId::CredentialBrokerSubstitute,
-        })
-        .unwrap();
-    let rule = rule(vec![
-        PolicyActionId::CredentialBrokerCapture,
-        PolicyActionId::CredentialBrokerSubstitute,
-    ]);
-
-    let event = registry
-        .apply_rule_actions(&rule, SecurityEvent::new(PolicyCallback::HttpRequest))
-        .unwrap();
-
-    assert_eq!(
-        event.action_trace,
-        [
-            PolicyActionId::CredentialBrokerCapture,
-            PolicyActionId::CredentialBrokerSubstitute
-        ]
-    );
-    assert!(
-        event
-            .credential_ref
-            .as_deref()
-            .is_some_and(capsem_logger::is_credential_reference),
-        "later plugins must receive and return the event from earlier plugins"
-    );
-}
-
-#[test]
-fn builtin_action_registry_runs_credential_broker_actions() {
-    let rule = rule(vec![
-        PolicyActionId::CredentialBrokerCapture,
-        PolicyActionId::CredentialBrokerSubstitute,
-    ]);
-
-    let event = SecurityActionRegistry::with_builtin_actions()
-        .apply_rule_actions(&rule, SecurityEvent::new(PolicyCallback::HttpRequest))
-        .unwrap();
-
-    assert_eq!(
-        event.action_trace,
-        [
-            PolicyActionId::CredentialBrokerCapture,
-            PolicyActionId::CredentialBrokerSubstitute
-        ]
-    );
-}
-
-#[test]
-fn credential_broker_capture_action_brokers_observation_into_event_ref() {
-    let _lock = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
-    let tmp = tempfile::tempdir().unwrap();
-    let store_path = tmp.path().join("broker-store.json");
-    let user_path = tmp.path().join("user.toml");
-    let _store_guard = EnvVarGuard::set(crate::credential_broker::TEST_STORE_ENV, &store_path);
-    let _user_guard = EnvVarGuard::set("CAPSEM_USER_CONFIG", &user_path);
-    let raw = "github_pat_capture_action_secret";
-    let rule = rule(vec![PolicyActionId::CredentialBrokerCapture]);
-    let event =
-        SecurityEvent::new(PolicyCallback::HttpResponse).with_credential_observations(vec![
-            CredentialObservation {
-                provider: CredentialProvider::Github,
-                raw_value: raw.to_string(),
-                source: "http.body.response.$.access_token".to_string(),
-                event_type: Some("http.response".to_string()),
-                confidence: 1.0,
-                trace_id: None,
-                context_json: None,
-            },
-        ]);
-
-    let event = SecurityActionRegistry::with_builtin_actions()
-        .apply_rule_actions(&rule, event)
-        .unwrap();
-
-    let credential_ref = event
-        .credential_ref
-        .as_deref()
-        .expect("capture action should return a broker reference");
-    assert!(capsem_logger::is_credential_reference(credential_ref));
-    assert!(!credential_ref.contains(raw));
-    assert_eq!(
-        crate::credential_broker::resolve_broker_reference_for_provider(
-            CredentialProvider::Github,
-            credential_ref,
-        )
-        .unwrap()
-        .as_deref(),
-        Some(raw)
-    );
-}
-
-#[test]
-fn action_registry_rejects_missing_plugin_at_execution_boundary() {
-    let registry = SecurityActionRegistry::new();
-    let rule = rule(vec![PolicyActionId::CredentialBrokerCapture]);
-
-    let error = registry
-        .apply_rule_actions(&rule, SecurityEvent::new(PolicyCallback::HttpRequest))
-        .unwrap_err();
-
-    assert!(
-        error
-            .to_string()
-            .contains("credential_broker.capture' is not registered"),
-        "{error}"
-    );
-}
-
-#[test]
-fn action_registry_rejects_duplicate_plugin_registration() {
-    let result = SecurityActionRegistry::new()
-        .register(TracePlugin {
-            id: PolicyActionId::CredentialBrokerCapture,
-        })
-        .unwrap()
-        .register(TracePlugin {
-            id: PolicyActionId::CredentialBrokerCapture,
-        });
-    let error = match result {
-        Ok(_) => panic!("duplicate action plugin registration should fail"),
-        Err(error) => error,
-    };
-
-    assert!(
-        error
-            .to_string()
-            .contains("credential_broker.capture' registered twice"),
-        "{error}"
-    );
 }
 
 struct RecordingEmitter {
@@ -321,7 +155,7 @@ impl SecurityEventEmitter for RecordingEmitter {
 #[test]
 fn security_event_emitter_is_the_auditable_event_boundary() {
     let emitter = RecordingEmitter::new();
-    let mut event = SecurityEvent::new(PolicyCallback::HttpResponse);
+    let mut event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest);
     event.credential_ref = Some(
         "credential:blake3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
             .to_string(),
@@ -333,71 +167,51 @@ fn security_event_emitter_is_the_auditable_event_boundary() {
 }
 
 #[test]
-fn security_event_engine_emits_only_post_action_event() {
+fn security_event_engine_runs_enabled_plugins_by_stage() {
+    use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+
+    let recorder = DebuggingRecorder::new();
+    let snapshotter = recorder.snapshotter();
+    let _guard = ::metrics::set_default_local_recorder(&recorder);
+
     let emitter = Arc::new(RecordingEmitter::new());
     let registry = SecurityActionRegistry::new()
-        .register(TracePlugin {
-            id: PolicyActionId::CredentialBrokerCapture,
+        .with_plugin_policy(BTreeMap::from([
+            (
+                "trace_pre".to_string(),
+                plugin_config(SecurityPluginMode::Rewrite, DetectionLevel::Medium),
+            ),
+            (
+                "trace_post".to_string(),
+                plugin_config(SecurityPluginMode::Rewrite, DetectionLevel::Low),
+            ),
+            (
+                "trace_logging".to_string(),
+                plugin_config(SecurityPluginMode::Rewrite, DetectionLevel::Informational),
+            ),
+        ]))
+        .register_plugin(TracePlugin {
+            id: "trace_post",
+            stage: SecurityPluginStage::Postprocess,
         })
         .unwrap()
-        .register(TracePlugin {
-            id: PolicyActionId::CredentialBrokerSubstitute,
+        .register_plugin(TracePlugin {
+            id: "trace_pre",
+            stage: SecurityPluginStage::Preprocess,
+        })
+        .unwrap()
+        .register_plugin(TracePlugin {
+            id: "trace_logging",
+            stage: SecurityPluginStage::Logging,
         })
         .unwrap();
     let engine = SecurityEventEngine::new(registry, Arc::clone(&emitter));
-    let rule = rule(vec![
-        PolicyActionId::CredentialBrokerCapture,
-        PolicyActionId::CredentialBrokerSubstitute,
-    ]);
-
-    let returned = engine
-        .apply_rules_and_emit(&[rule], SecurityEvent::new(PolicyCallback::HttpRequest))
-        .unwrap();
-
-    assert_eq!(
-        returned.action_trace,
-        [
-            PolicyActionId::CredentialBrokerCapture,
-            PolicyActionId::CredentialBrokerSubstitute
-        ]
-    );
-    assert_eq!(
-        emitter.events.lock().unwrap().as_slice(),
-        [returned],
-        "the emitter boundary must see the final post-action event only"
-    );
-}
-
-#[test]
-fn security_event_engine_runs_matched_security_rule_plugins_in_rule_order() {
-    let emitter = Arc::new(RecordingEmitter::new());
-    let registry = SecurityActionRegistry::new()
-        .register_rule_plugin(TraceRulePlugin { id: "trace_first" })
-        .unwrap()
-        .register_rule_plugin(TraceRulePlugin { id: "trace_second" })
-        .unwrap();
-    let engine = SecurityEventEngine::new(registry, Arc::clone(&emitter));
-    let rules = security_rule_set(
-        r#"
-[profiles.rules.second]
-name = "second_rule"
-plugin = "trace_second"
-action = "postprocess"
-priority = 20
-match = 'http.host == "example.com"'
-
-[profiles.rules.first]
-name = "first_rule"
-plugin = "trace_first"
-action = "preprocess"
-priority = 10
-match = 'http.host == "example.com"'
-"#,
-    );
-    let event = SecurityEvent::new(PolicyCallback::HttpRequest).with_http(HttpSecurityEvent {
-        host: Some("example.com".to_string()),
-        ..Default::default()
-    });
+    let rules = SecurityRuleSet::new(Vec::new());
+    let event =
+        SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
+            host: Some("example.com".to_string()),
+            ..Default::default()
+        });
 
     let returned = engine.apply_matching_rules_and_emit(&rules, event).unwrap();
 
@@ -405,33 +219,131 @@ match = 'http.host == "example.com"'
         returned.action_trace,
         [
             PolicyActionId::CredentialBrokerSubstitute,
+            PolicyActionId::CredentialBrokerSubstitute,
             PolicyActionId::CredentialBrokerSubstitute
         ],
-        "matched security-rule plugins should run in compiled priority order"
+        "enabled plugins should run once on their declared stage"
+    );
+    assert_eq!(
+        returned
+            .detections
+            .iter()
+            .map(|detection| (
+                detection.source,
+                detection.plugin_id.as_deref(),
+                detection.plugin_mode
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                SecurityDetectionSource::Plugin,
+                Some("trace_pre"),
+                Some(SecurityPluginMode::Rewrite)
+            ),
+            (
+                SecurityDetectionSource::Plugin,
+                Some("trace_post"),
+                Some(SecurityPluginMode::Rewrite)
+            ),
+            (
+                SecurityDetectionSource::Plugin,
+                Some("trace_logging"),
+                Some(SecurityPluginMode::Rewrite)
+            ),
+        ]
+    );
+    assert_eq!(
+        returned
+            .plugin_executions
+            .iter()
+            .map(|execution| (
+                execution.plugin_id.as_str(),
+                execution.stage,
+                execution.applied,
+                execution.duration_us <= 1_000_000,
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            ("trace_pre", SecurityPluginStage::Preprocess, true, true),
+            ("trace_post", SecurityPluginStage::Postprocess, true, true),
+            ("trace_logging", SecurityPluginStage::Logging, true, true),
+        ],
+        "plugin execution counters must ride on the same security event as detections"
     );
     assert_eq!(emitter.events.lock().unwrap().as_slice(), [returned]);
+
+    let snapshot = snapshotter.snapshot().into_vec();
+    let plugin_counter_ids = snapshot
+        .iter()
+        .filter_map(|(key, _, _, value)| {
+            if key.key().name() != SECURITY_PLUGIN_EXECUTION_TOTAL
+                || !matches!(value, DebugValue::Counter(1))
+            {
+                return None;
+            }
+            let labels = key.key().labels().collect::<Vec<_>>();
+            let plugin_id = labels
+                .iter()
+                .find(|label| label.key() == "plugin_id")
+                .map(|label| label.value().to_string())?;
+            let status_ok = labels
+                .iter()
+                .any(|label| label.key() == "status" && label.value() == "ok");
+            let applied = labels
+                .iter()
+                .any(|label| label.key() == "applied" && label.value() == "true");
+            status_ok.then_some(())?;
+            applied.then_some(plugin_id)
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        plugin_counter_ids,
+        ["trace_logging", "trace_post", "trace_pre"]
+            .into_iter()
+            .map(str::to_string)
+            .collect::<std::collections::BTreeSet<_>>(),
+        "every enabled plugin execution must emit a labeled counter"
+    );
+    let plugin_histogram_ids = snapshot
+        .iter()
+        .filter_map(|(key, _, _, value)| {
+            if key.key().name() != SECURITY_PLUGIN_EXECUTION_DURATION_MS
+                || !matches!(value, DebugValue::Histogram(_))
+            {
+                return None;
+            }
+            key.key()
+                .labels()
+                .find(|label| label.key() == "plugin_id")
+                .map(|label| label.value().to_string())
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        plugin_histogram_ids, plugin_counter_ids,
+        "every enabled plugin counter must have a matching duration histogram"
+    );
 }
 
 #[test]
-fn security_event_engine_skips_unmatched_security_rule_plugins() {
+fn security_event_engine_skips_disabled_plugins() {
     let emitter = Arc::new(RecordingEmitter::new());
     let registry = SecurityActionRegistry::new()
-        .register_rule_plugin(TraceRulePlugin { id: "trace" })
+        .with_plugin_policy(BTreeMap::from([(
+            "trace".to_string(),
+            plugin_config(SecurityPluginMode::Disable, DetectionLevel::Critical),
+        )]))
+        .register_plugin(TracePlugin {
+            id: "trace",
+            stage: SecurityPluginStage::Postprocess,
+        })
         .unwrap();
     let engine = SecurityEventEngine::new(registry, Arc::clone(&emitter));
-    let rules = security_rule_set(
-        r#"
-[profiles.rules.no_match]
-name = "no_match_rule"
-plugin = "trace"
-action = "postprocess"
-match = 'http.host == "example.com"'
-"#,
-    );
-    let event = SecurityEvent::new(PolicyCallback::HttpRequest).with_http(HttpSecurityEvent {
-        host: Some("api.openai.com".to_string()),
-        ..Default::default()
-    });
+    let rules = SecurityRuleSet::new(Vec::new());
+    let event =
+        SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
+            host: Some("api.openai.com".to_string()),
+            ..Default::default()
+        });
 
     let returned = engine
         .apply_matching_rules_and_emit(&rules, event.clone())
@@ -442,33 +354,33 @@ match = 'http.host == "example.com"'
 }
 
 #[test]
-fn security_event_engine_reevaluates_postprocess_after_preprocess_mutation() {
+fn security_event_engine_applies_postprocess_after_preprocess_mutation() {
     let emitter = Arc::new(RecordingEmitter::new());
     let registry = SecurityActionRegistry::new()
-        .register_rule_plugin(MarkCredentialRulePlugin)
+        .with_plugin_policy(BTreeMap::from([
+            (
+                "mark_decision".to_string(),
+                plugin_config(SecurityPluginMode::Block, DetectionLevel::High),
+            ),
+            (
+                "trace".to_string(),
+                plugin_config(SecurityPluginMode::Rewrite, DetectionLevel::Low),
+            ),
+        ]))
+        .register_plugin(MarkDecisionPlugin)
         .unwrap()
-        .register_rule_plugin(TraceRulePlugin { id: "trace" })
+        .register_plugin(TracePlugin {
+            id: "trace",
+            stage: SecurityPluginStage::Postprocess,
+        })
         .unwrap();
     let engine = SecurityEventEngine::new(registry, Arc::clone(&emitter));
-    let rules = security_rule_set(
-        r#"
-[profiles.rules.mark]
-name = "mark_rule"
-plugin = "mark_credential"
-action = "preprocess"
-match = 'http.host == "example.com"'
-
-[profiles.rules.after_mark]
-name = "after_mark_rule"
-plugin = "trace"
-action = "postprocess"
-match = 'credential.reference.contains("marked")'
-"#,
-    );
-    let event = SecurityEvent::new(PolicyCallback::HttpRequest).with_http(HttpSecurityEvent {
-        host: Some("example.com".to_string()),
-        ..Default::default()
-    });
+    let rules = SecurityRuleSet::new(Vec::new());
+    let event =
+        SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
+            host: Some("example.com".to_string()),
+            ..Default::default()
+        });
 
     let returned = engine.apply_matching_rules_and_emit(&rules, event).unwrap();
 
@@ -478,33 +390,30 @@ match = 'credential.reference.contains("marked")'
             PolicyActionId::CredentialBrokerCapture,
             PolicyActionId::CredentialBrokerSubstitute
         ],
-        "postprocess rules must see the event after preprocess mutation"
+        "postprocess plugins must see the event after preprocess mutation"
     );
+    assert_eq!(returned.decision.effective, SecurityDecisionKind::Block);
     assert_eq!(emitter.events.lock().unwrap().as_slice(), [returned]);
 }
 
 #[test]
-fn security_rule_plugin_policy_supports_rewrite_and_disable_modes() {
-    let rules = security_rule_set(
-        r#"
-[profiles.rules.trace]
-name = "trace_rule"
-plugin = "trace"
-action = "rewrite"
-match = 'http.host == "example.com"'
-"#,
-    );
-    let event = SecurityEvent::new(PolicyCallback::HttpRequest).with_http(HttpSecurityEvent {
-        host: Some("example.com".to_string()),
-        ..Default::default()
-    });
+fn security_plugin_policy_supports_rewrite_and_disable_modes() {
+    let rules = SecurityRuleSet::new(Vec::new());
+    let event =
+        SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
+            host: Some("example.com".to_string()),
+            ..Default::default()
+        });
 
     let rewrite_registry = SecurityActionRegistry::new()
         .with_plugin_policy(BTreeMap::from([(
             "trace".to_string(),
             plugin_config(SecurityPluginMode::Rewrite, DetectionLevel::Medium),
         )]))
-        .register_rule_plugin(TraceRulePlugin { id: "trace" })
+        .register_plugin(TracePlugin {
+            id: "trace",
+            stage: SecurityPluginStage::Postprocess,
+        })
         .unwrap();
     let rewrite_returned =
         SecurityEventEngine::new(rewrite_registry, Arc::new(RecordingEmitter::new()))
@@ -526,7 +435,10 @@ match = 'http.host == "example.com"'
             "trace".to_string(),
             plugin_config(SecurityPluginMode::Disable, DetectionLevel::Critical),
         )]))
-        .register_rule_plugin(TraceRulePlugin { id: "trace" })
+        .register_plugin(TracePlugin {
+            id: "trace",
+            stage: SecurityPluginStage::Postprocess,
+        })
         .unwrap();
     let disabled_returned =
         SecurityEventEngine::new(disabled_registry, Arc::new(RecordingEmitter::new()))
@@ -539,7 +451,7 @@ match = 'http.host == "example.com"'
 }
 
 #[test]
-fn security_rule_plugin_policy_block_is_absolute_after_later_allow() {
+fn security_plugin_policy_block_is_absolute_after_later_allow() {
     let emitter = Arc::new(RecordingEmitter::new());
     let registry = SecurityActionRegistry::new()
         .with_plugin_policy(BTreeMap::from([
@@ -552,38 +464,25 @@ fn security_rule_plugin_policy_block_is_absolute_after_later_allow() {
                 plugin_config(SecurityPluginMode::Allow, DetectionLevel::Low),
             ),
         ]))
-        .register_rule_plugin(DecisionRulePlugin {
+        .register_plugin(DecisionPlugin {
             id: "blocker",
+            stage: SecurityPluginStage::Preprocess,
             requested: SecurityDecisionKind::Block,
         })
         .unwrap()
-        .register_rule_plugin(DecisionRulePlugin {
+        .register_plugin(DecisionPlugin {
             id: "allow_after",
+            stage: SecurityPluginStage::Postprocess,
             requested: SecurityDecisionKind::Allow,
         })
         .unwrap();
     let engine = SecurityEventEngine::new(registry, Arc::clone(&emitter));
-    let rules = security_rule_set(
-        r#"
-[profiles.rules.block]
-name = "block_rule"
-plugin = "blocker"
-action = "preprocess"
-priority = 10
-match = 'http.host == "example.com"'
-
-[profiles.rules.allow_after]
-name = "allow_after_rule"
-plugin = "allow_after"
-action = "postprocess"
-priority = 20
-match = 'security.decision == "block"'
-"#,
-    );
-    let event = SecurityEvent::new(PolicyCallback::HttpRequest).with_http(HttpSecurityEvent {
-        host: Some("example.com".to_string()),
-        ..Default::default()
-    });
+    let rules = SecurityRuleSet::new(Vec::new());
+    let event =
+        SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
+            host: Some("example.com".to_string()),
+            ..Default::default()
+        });
 
     let returned = engine.apply_matching_rules_and_emit(&rules, event).unwrap();
 
@@ -606,7 +505,7 @@ fn builtin_dummy_plugins_block_eicar_and_cannot_be_downgraded_by_postprocess() {
         SecurityActionRegistry::with_builtin_actions().with_plugin_policy(BTreeMap::from([
             (
                 "dummy_pre_eicar".to_string(),
-                plugin_config(SecurityPluginMode::Rewrite, DetectionLevel::Critical),
+                plugin_config(SecurityPluginMode::Block, DetectionLevel::Critical),
             ),
             (
                 "dummy_post_allow".to_string(),
@@ -618,7 +517,6 @@ fn builtin_dummy_plugins_block_eicar_and_cannot_be_downgraded_by_postprocess() {
         r#"
 [profiles.rules.eicar]
 name = "eicar_rewrite_scan"
-plugin = "dummy_pre_eicar"
 action = "rewrite"
 detection_level = "high"
 priority = 10
@@ -626,17 +524,17 @@ match = 'file.import.content.contains("EICAR")'
 
 [profiles.rules.allow_after]
 name = "allow_after_eicar"
-plugin = "dummy_post_allow"
 action = "postprocess"
 detection_level = "low"
 priority = 20
-match = 'security.decision == "block"'
+match = 'file.import.content.contains("EICAR")'
 "#,
     );
-    let event = SecurityEvent::new(PolicyCallback::FileImport).with_file(FileSecurityEvent {
-        import_content: Some(DUMMY_EICAR_TEST_STRING.to_string()),
-        ..Default::default()
-    });
+    let event =
+        SecurityEvent::new(RuntimeSecurityEventType::FileImport).with_file(FileSecurityEvent {
+            import_content: Some(DUMMY_EICAR_TEST_STRING.to_string()),
+            ..Default::default()
+        });
 
     let returned = engine.apply_matching_rules_and_emit(&rules, event).unwrap();
 
@@ -655,29 +553,29 @@ match = 'security.decision == "block"'
             .collect::<Vec<_>>(),
         vec![
             (
+                SecurityDetectionSource::Plugin,
+                None,
+                Some("dummy_pre_eicar"),
+                DetectionLevel::Critical,
+                Some(SecurityPluginMode::Block),
+            ),
+            (
                 SecurityDetectionSource::Rule,
                 Some("profiles.rules.eicar"),
-                Some("dummy_pre_eicar"),
+                None,
                 DetectionLevel::High,
                 None,
             ),
             (
-                SecurityDetectionSource::Plugin,
-                Some("profiles.rules.eicar"),
-                Some("dummy_pre_eicar"),
-                DetectionLevel::Critical,
-                Some(SecurityPluginMode::Rewrite),
-            ),
-            (
                 SecurityDetectionSource::Rule,
                 Some("profiles.rules.allow_after"),
-                Some("dummy_post_allow"),
+                None,
                 DetectionLevel::Low,
                 None,
             ),
             (
                 SecurityDetectionSource::Plugin,
-                Some("profiles.rules.allow_after"),
+                None,
                 Some("dummy_post_allow"),
                 DetectionLevel::Informational,
                 Some(SecurityPluginMode::Allow),
@@ -700,22 +598,19 @@ match = 'security.decision == "block"'
 }
 
 #[test]
-fn security_event_engine_rejects_missing_security_rule_plugin_and_does_not_emit() {
+fn security_event_engine_rejects_missing_security_plugin_and_does_not_emit() {
     let emitter = Arc::new(RecordingEmitter::new());
-    let engine = SecurityEventEngine::new(SecurityActionRegistry::new(), Arc::clone(&emitter));
-    let rules = security_rule_set(
-        r#"
-[profiles.rules.broker]
-name = "broker_rule"
-plugin = "credential_broker"
-action = "postprocess"
-match = 'http.host == "example.com"'
-"#,
-    );
-    let event = SecurityEvent::new(PolicyCallback::HttpRequest).with_http(HttpSecurityEvent {
-        host: Some("example.com".to_string()),
-        ..Default::default()
-    });
+    let registry = SecurityActionRegistry::new().with_plugin_policy(BTreeMap::from([(
+        "credential_broker".to_string(),
+        plugin_config(SecurityPluginMode::Rewrite, DetectionLevel::Informational),
+    )]));
+    let engine = SecurityEventEngine::new(registry, Arc::clone(&emitter));
+    let rules = SecurityRuleSet::new(Vec::new());
+    let event =
+        SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
+            host: Some("example.com".to_string()),
+            ..Default::default()
+        });
 
     let error = engine
         .apply_matching_rules_and_emit(&rules, event)
@@ -724,7 +619,7 @@ match = 'http.host == "example.com"'
     assert!(
         error
             .to_string()
-            .contains("security rule plugin 'credential_broker' is not registered"),
+            .contains("security plugin 'credential_broker' is not registered"),
         "{error}"
     );
     assert!(
@@ -738,22 +633,18 @@ fn credential_broker_plugin_uses_matched_security_rule_metadata() {
     let _lock = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
     let tmp = tempfile::tempdir().unwrap();
     let store_path = tmp.path().join("broker-store.json");
-    let user_path = tmp.path().join("user.toml");
-    let _store_guard = EnvVarGuard::set(crate::credential_broker::TEST_STORE_ENV, &store_path);
-    let _user_guard = EnvVarGuard::set("CAPSEM_USER_CONFIG", &user_path);
+    let _store_guard = EnvVarGuard::set(crate::credential_broker::STORE_PATH_ENV, &store_path);
+    let _user_guard = EnvVarGuard::set("CAPSEM_HOME", tmp.path());
     let emitter = Arc::new(RecordingEmitter::new());
-    let engine = SecurityEventEngine::with_builtin_actions(Arc::clone(&emitter));
-    let raw = "github_pat_security_rule_plugin_secret";
-    let rules = security_rule_set(
-        r#"
-[profiles.rules.github_broker]
-name = "github_broker_rule"
-plugin = "credential_broker"
-action = "postprocess"
-match = 'http.host == "github.com"'
-"#,
-    );
-    let event = SecurityEvent::new(PolicyCallback::HttpResponse)
+    let registry =
+        SecurityActionRegistry::with_builtin_actions().with_plugin_policy(BTreeMap::from([(
+            "credential_broker".to_string(),
+            plugin_config(SecurityPluginMode::Rewrite, DetectionLevel::Informational),
+        )]));
+    let engine = SecurityEventEngine::new(registry, Arc::clone(&emitter));
+    let raw = "github_pat_security_plugin_secret";
+    let rules = SecurityRuleSet::new(Vec::new());
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
         .with_http(HttpSecurityEvent {
             host: Some("github.com".to_string()),
             ..Default::default()
@@ -763,7 +654,6 @@ match = 'http.host == "github.com"'
             raw_value: raw.to_string(),
             source: "http.body.response.$.token".to_string(),
             event_type: Some("http.response".to_string()),
-            confidence: 1.0,
             trace_id: None,
             context_json: None,
         }]);
@@ -789,6 +679,122 @@ match = 'http.host == "github.com"'
 }
 
 #[test]
+fn security_event_log_sanitizer_logging_plugin_redacts_before_logger_emit() {
+    let _lock = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
+    let tmp = tempfile::tempdir().unwrap();
+    let store_path = tmp.path().join("broker-store.json");
+    let _store_guard = EnvVarGuard::set(crate::credential_broker::STORE_PATH_ENV, &store_path);
+    let _user_guard = EnvVarGuard::set("CAPSEM_HOME", tmp.path());
+    let emitter = Arc::new(RecordingEmitter::new());
+    let registry =
+        SecurityActionRegistry::with_builtin_actions().with_plugin_policy(BTreeMap::from([
+            (
+                "credential_broker".to_string(),
+                plugin_config(SecurityPluginMode::Rewrite, DetectionLevel::Informational),
+            ),
+            (
+                "log_sanitizer".to_string(),
+                plugin_config(SecurityPluginMode::Rewrite, DetectionLevel::Informational),
+            ),
+        ]));
+    let engine = SecurityEventEngine::new(registry, Arc::clone(&emitter));
+    let raw = "sk-security-event-raw-header";
+    let mut headers = http::HeaderMap::new();
+    headers.insert(
+        http::header::AUTHORIZATION,
+        http::HeaderValue::from_str(&format!("Bearer {raw}")).unwrap(),
+    );
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
+        .with_http_request(HttpRequestSecurityEvent::new(
+            "api.openai.com",
+            Some(ProviderKind::OpenAi),
+            headers,
+            None,
+        ))
+        .with_credential_observations(vec![CredentialObservation {
+            provider: CredentialProvider::OpenAi,
+            raw_value: raw.to_string(),
+            source: "http.request.headers.authorization".to_string(),
+            event_type: Some("http.request".to_string()),
+            trace_id: None,
+            context_json: None,
+        }]);
+
+    let returned = engine
+        .apply_matching_rules_and_emit(&SecurityRuleSet::new(Vec::new()), event)
+        .expect("credential broker plus logging sanitizer should emit a safe event");
+
+    let events = emitter.events.lock().unwrap();
+    assert_eq!(events.as_slice(), std::slice::from_ref(&returned));
+    let emitted = events.first().expect("sanitized event emitted");
+    assert_eq!(
+        emitted.credential_observations,
+        Vec::<CredentialObservation>::new(),
+        "raw observations are runtime-only and must not cross the logging-plugin handoff"
+    );
+    let auth = emitted
+        .http_request
+        .as_ref()
+        .and_then(|request| request.headers.get(http::header::AUTHORIZATION))
+        .and_then(|value| value.to_str().ok())
+        .expect("sanitized auth header is preserved as a broker reference");
+    assert!(
+        auth.contains("credential:blake3:"),
+        "sanitized header must preserve auth shape while replacing raw credential: {auth}"
+    );
+    assert_ne!(auth, raw);
+    assert!(
+        !format!("{emitted:?}").contains(raw),
+        "logging-plugin output must not contain raw credential material"
+    );
+}
+
+#[test]
+fn credential_broker_uses_ai_provider_hint_for_local_openai_compatible_headers() {
+    let _lock = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
+    let tmp = tempfile::tempdir().unwrap();
+    let store_path = tmp.path().join("broker-store.json");
+    let _store_guard = EnvVarGuard::set(crate::credential_broker::STORE_PATH_ENV, &store_path);
+    let _user_guard = EnvVarGuard::set("CAPSEM_HOME", tmp.path());
+    let emitter = Arc::new(RecordingEmitter::new());
+    let registry =
+        SecurityActionRegistry::with_builtin_actions().with_plugin_policy(BTreeMap::from([(
+            "credential_broker".to_string(),
+            plugin_config(SecurityPluginMode::Rewrite, DetectionLevel::Informational),
+        )]));
+    let engine = SecurityEventEngine::new(registry, Arc::clone(&emitter));
+    let raw = "capsem_test_sdk_api_key_repeat_0123456789abcdef";
+    let mut headers = http::HeaderMap::new();
+    headers.insert(
+        http::header::AUTHORIZATION,
+        http::HeaderValue::from_str(&format!("Bearer {raw}")).unwrap(),
+    );
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http_request(
+        HttpRequestSecurityEvent::new("127.0.0.1", Some(ProviderKind::OpenAi), headers, None),
+    );
+
+    let returned = engine
+        .apply_matching_rules_and_emit(&SecurityRuleSet::new(Vec::new()), event)
+        .expect("provider hint should let broker capture local OpenAI-compatible SDK keys");
+
+    let credential_ref = returned
+        .credential_ref
+        .as_deref()
+        .expect("provider-hinted credential should be brokered");
+    assert!(capsem_logger::is_credential_reference(credential_ref));
+    assert_eq!(
+        crate::credential_broker::resolve_broker_reference_for_provider(
+            CredentialProvider::OpenAi,
+            credential_ref,
+        )
+        .unwrap()
+        .as_deref(),
+        Some(raw)
+    );
+    assert_eq!(emitter.events.lock().unwrap().as_slice(), [returned]);
+}
+
+#[test]
 fn security_event_cel_evaluates_one_cross_root_rule_without_fanout() {
     let condition = r#"
 http.host.matches("(^|.*\.)openai\.com$")
@@ -796,16 +802,17 @@ http.host.matches("(^|.*\.)openai\.com$")
 || file.import.path.endsWith(".env")
 "#;
 
-    let http_event = SecurityEvent::new(PolicyCallback::HttpRequest).with_http(HttpSecurityEvent {
-        host: Some("api.openai.com".to_string()),
-        ..Default::default()
-    });
+    let http_event =
+        SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
+            host: Some("api.openai.com".to_string()),
+            ..Default::default()
+        });
     assert!(
         crate::net::policy_config::evaluate_security_event_match(condition, &http_event).unwrap()
     );
 
     let model_event =
-        SecurityEvent::new(PolicyCallback::ModelRequest).with_model(ModelSecurityEvent {
+        SecurityEvent::new(RuntimeSecurityEventType::ModelCall).with_model(ModelSecurityEvent {
             provider: Some("openai".to_string()),
             ..Default::default()
         });
@@ -813,30 +820,50 @@ http.host.matches("(^|.*\.)openai\.com$")
         crate::net::policy_config::evaluate_security_event_match(condition, &model_event).unwrap()
     );
 
-    let file_event = SecurityEvent::new(PolicyCallback::HttpRequest).with_file(FileSecurityEvent {
-        import_path: Some("/workspace/.env".to_string()),
-        ..Default::default()
-    });
+    let file_event =
+        SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_file(FileSecurityEvent {
+            import_path: Some("/workspace/.env".to_string()),
+            ..Default::default()
+        });
     assert!(
         crate::net::policy_config::evaluate_security_event_match(condition, &file_event).unwrap()
     );
 }
 
 #[test]
-fn security_event_cel_credential_name_is_not_exposed_without_parser() {
-    let event =
-        SecurityEvent::new(PolicyCallback::HttpRequest).with_credential(CredentialSecurityEvent {
-            reference: Some("credential:blake3:test".to_string()),
-            ..Default::default()
-        });
+fn security_event_cel_rejects_credential_and_snapshot_roots() {
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest);
 
+    for condition in [
+        r#"credential.ref == "credential:blake3:test""#,
+        r#"snapshot.action == "create""#,
+    ] {
+        let error = crate::net::policy_config::evaluate_security_event_match(condition, &event)
+            .expect_err("fake first-party roots must be rejected");
+        assert!(
+            error.contains("not a first-party security-event root"),
+            "{condition}: {error}"
+        );
+    }
+}
+
+#[test]
+fn security_event_cel_roots_accept_network_facts_and_reject_decision_state() {
+    for condition in [
+        r#"ip.value == "127.0.0.1""#,
+        r#"tcp.port == "11434""#,
+        r#"udp.port == "53""#,
+    ] {
+        crate::net::policy_config::validate_security_event_match(condition)
+            .unwrap_or_else(|error| panic!("{condition} should be an accepted CEL root: {error}"));
+    }
+
+    let error =
+        crate::net::policy_config::validate_security_event_match(r#"security.decision == "allow""#)
+            .expect_err("rules must not predicate on decisions emitted by the rule engine");
     assert!(
-        !crate::net::policy_config::evaluate_security_event_match(
-            r#"credential.name == "OPENAI_API_KEY""#,
-            &event
-        )
-        .unwrap(),
-        "credential.name must not match until a real parser emits it"
+        error.contains("not a first-party security-event root"),
+        "{error}"
     );
 }
 
@@ -847,10 +874,11 @@ http.host.matches("(^|.*\.)openai\.com$")
 || model.provider == "openai"
 || file.import.path.endsWith(".env")
 "#;
-    let dns_event = SecurityEvent::new(PolicyCallback::DnsQuery).with_dns(DnsSecurityEvent {
-        qname: Some("example.com".to_string()),
-        qtype: Some("A".to_string()),
-    });
+    let dns_event =
+        SecurityEvent::new(RuntimeSecurityEventType::DnsQuery).with_dns(DnsSecurityEvent {
+            qname: Some("example.com".to_string()),
+            qtype: Some("A".to_string()),
+        });
 
     assert!(
         !crate::net::policy_config::evaluate_security_event_match(condition, &dns_event).unwrap()
@@ -859,7 +887,7 @@ http.host.matches("(^|.*\.)openai\.com$")
 
 #[test]
 fn security_event_cel_exposes_all_first_party_roots() {
-    let event = SecurityEvent::new(PolicyCallback::HttpRequest)
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
         .with_http(HttpSecurityEvent {
             host: Some("example.com".to_string()),
             ..Default::default()
@@ -871,7 +899,13 @@ fn security_event_cel_exposes_all_first_party_roots() {
         .with_mcp(McpSecurityEvent {
             tool_call_name: Some("email_send".to_string()),
             ..Default::default()
-        })
+        }
+        .with_request_preview(Some(
+            r#"{"name":"email_send","arguments":{"recipient":"bank@example.com","body":"ledger"}}"#,
+        ))
+        .with_response_preview(Some(
+            r#"{"content":[{"type":"text","text":"queued"}]}"#,
+        )))
         .with_model(ModelSecurityEvent {
             provider: Some("openai".to_string()),
             ..Default::default()
@@ -913,53 +947,80 @@ fn security_event_cel_exposes_all_first_party_roots() {
             command: Some("python main.py".to_string()),
             ..Default::default()
         })
-        .with_credential(CredentialSecurityEvent {
-            reference: Some("credential:blake3:test".to_string()),
-            ..Default::default()
+        .with_ip(IpSecurityEvent {
+            value: Some("127.0.0.1".to_string()),
+            version: Some("4".to_string()),
         })
-        .with_snapshot(SnapshotSecurityEvent {
-            action: Some("create".to_string()),
+        .with_tcp(TcpSecurityEvent {
+            port: Some("11434".to_string()),
+        })
+        .with_udp(UdpSecurityEvent {
+            port: Some("53".to_string()),
         });
 
     let conditions = [
+        r#"http.valid == "true""#,
         r#"http.host == "example.com""#,
+        r#"dns.valid == "true""#,
         r#"dns.qname == "example.com""#,
+        r#"mcp.valid == "true""#,
+        r#"mcp.tool_call.valid == "true""#,
         r#"mcp.tool_call.name.contains("email")"#,
+        r#"mcp.request.valid == "true""#,
+        r#"mcp.request.arguments.contains("bank@example.com")"#,
+        r#"mcp.response.valid == "true""#,
+        r#"mcp.response.content.contains("queued")"#,
+        r#"model.valid == "true""#,
+        r#"model.request.valid == "false""#,
+        r#"model.response.valid == "false""#,
         r#"model.provider == "openai""#,
+        r#"file.valid == "true""#,
+        r#"file.import.valid == "true""#,
         r#"file.import.path.endsWith("input.txt")"#,
         r#"file.import.name == "input.txt""#,
         r#"file.import.ext == "txt""#,
         r#"file.import.mime_type == "text/plain""#,
         r#"file.import.content.contains("incoming")"#,
+        r#"file.export.valid == "true""#,
         r#"file.export.path.endsWith("output.json")"#,
         r#"file.export.name == "output.json""#,
         r#"file.export.ext == "json""#,
         r#"file.export.mime_type == "application/json""#,
         r#"file.export.content.contains("ok")"#,
+        r#"file.read.valid == "true""#,
         r#"file.read.path.matches("(^|.*/)skills/.+\.md$")"#,
         r#"file.read.name == "SKILL.md""#,
         r#"file.read.ext == "md""#,
         r#"file.read.mime_type == "text/markdown""#,
         r#"file.read.content.contains("Development Sprint")"#,
+        r#"file.create.valid == "true""#,
         r#"file.create.path.endsWith("report.md")"#,
         r#"file.create.name == "report.md""#,
         r#"file.create.ext == "md""#,
         r#"file.create.mime_type == "text/markdown""#,
         r#"file.create.content.contains("Report")"#,
+        r#"file.write.valid == "true""#,
         r#"file.write.path.endsWith("report.md")"#,
         r#"file.write.name == "report.md""#,
         r#"file.write.ext == "md""#,
         r#"file.write.mime_type == "text/markdown""#,
         r#"file.write.content.contains("updated")"#,
+        r#"file.delete.valid == "true""#,
         r#"file.delete.path.endsWith("old.txt")"#,
         r#"file.delete.name == "old.txt""#,
         r#"file.delete.ext == "txt""#,
         r#"file.delete.mime_type == "text/plain""#,
         r#"file.delete.content.contains("stale")"#,
+        r#"process.valid == "true""#,
+        r#"process.audit.valid == "true""#,
         r#"process.command.contains("python")"#,
-        r#"credential.ref == "credential:blake3:test""#,
-        r#"snapshot.action == "create""#,
-        r#"security.decision == "allow""#,
+        r#"ip.valid == "true""#,
+        r#"ip.value == "127.0.0.1""#,
+        r#"ip.version == "4""#,
+        r#"tcp.valid == "true""#,
+        r#"tcp.port == "11434""#,
+        r#"udp.valid == "true""#,
+        r#"udp.port == "53""#,
     ];
     let covered_roots = conditions
         .iter()
@@ -984,7 +1045,7 @@ fn security_event_cel_exposes_all_first_party_roots() {
 
 #[test]
 fn serializable_security_event_exposes_stable_first_party_wire_shape_without_raw_observations() {
-    let mut event = SecurityEvent::new(PolicyCallback::FileImport)
+    let mut event = SecurityEvent::new(RuntimeSecurityEventType::FileImport)
         .with_trace_id("trace_wire")
         .with_file(FileSecurityEvent {
             import_path: Some("/workspace/eicar.txt".to_string()),
@@ -996,7 +1057,6 @@ fn serializable_security_event_exposes_stable_first_party_wire_shape_without_raw
             raw_value: "sk-real-secret".to_string(),
             source: "http.response.body".to_string(),
             event_type: Some("http.response".to_string()),
-            confidence: 0.99,
             trace_id: Some("trace_wire".to_string()),
             context_json: None,
         }]);
@@ -1030,17 +1090,14 @@ fn serializable_security_event_exposes_stable_first_party_wire_shape_without_raw
         "profiles.rules.eicar_block"
     );
     assert_eq!(json["file"]["import_path"], "/workspace/eicar.txt");
-    for root in [
-        "http",
-        "dns",
-        "mcp",
-        "model",
-        "file",
-        "process",
-        "credential",
-        "snapshot",
-    ] {
+    for root in ["http", "dns", "mcp", "model", "file", "process"] {
         assert!(json.get(root).is_some(), "{root} must be in the wire DTO");
+    }
+    for root in ["credential", "snapshot"] {
+        assert!(
+            json.get(root).is_none(),
+            "{root} must not be a fake first-party wire DTO root"
+        );
     }
     assert!(
         json.get("credential_observations").is_none(),
@@ -1073,50 +1130,38 @@ fn runtime_security_event_type_roundtrips_and_maps_family() {
 }
 
 #[test]
-fn runtime_security_event_policy_callback_bridge_is_explicit() {
-    let cases = [
-        (
-            RuntimeSecurityEventType::HttpRequest,
-            Some(PolicyCallback::HttpRequest),
-        ),
-        (
-            RuntimeSecurityEventType::ModelCall,
-            Some(PolicyCallback::ModelRequest),
-        ),
-        (
-            RuntimeSecurityEventType::McpToolCall,
-            Some(PolicyCallback::McpRequest),
-        ),
-        (
-            RuntimeSecurityEventType::DnsQuery,
-            Some(PolicyCallback::DnsQuery),
-        ),
-        (RuntimeSecurityEventType::McpToolList, None),
-        (RuntimeSecurityEventType::McpEvent, None),
-        (RuntimeSecurityEventType::FileEvent, None),
-        (
-            RuntimeSecurityEventType::FileImport,
-            Some(PolicyCallback::FileImport),
-        ),
-        (
-            RuntimeSecurityEventType::FileExport,
-            Some(PolicyCallback::FileExport),
-        ),
-        (RuntimeSecurityEventType::ProcessExec, None),
-        (RuntimeSecurityEventType::ProcessExecComplete, None),
-        (RuntimeSecurityEventType::ProcessAudit, None),
-        (RuntimeSecurityEventType::CredentialSubstitution, None),
-        (RuntimeSecurityEventType::SnapshotEvent, None),
-        (RuntimeSecurityEventType::SecurityRule, None),
-        (RuntimeSecurityEventType::SecurityAsk, None),
-    ];
+fn runtime_security_event_families_mark_only_credential_as_ledger_only() {
+    use RuntimeSecurityEventFamily::*;
 
-    assert_eq!(cases.len(), RuntimeSecurityEventType::ALL.len());
-    for (event_type, expected_callback) in cases {
+    let cel_roots = crate::net::policy_config::SECURITY_EVENT_CEL_ROOTS
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+    let families = [Http, Model, Mcp, Dns, File, Process, Credential, Security];
+
+    for family in families {
         assert_eq!(
-            event_type.policy_callback(),
-            expected_callback,
-            "{} policy callback bridge drifted",
+            family.is_first_party_cel_root(),
+            cel_roots.contains(family.as_str()),
+            "{} family CEL-root marker must match SECURITY_EVENT_CEL_ROOTS",
+            family.as_str()
+        );
+        assert_eq!(
+            family.is_ledger_only(),
+            matches!(family, Credential),
+            "{} ledger-only marker drifted",
+            family.as_str()
+        );
+    }
+}
+
+#[test]
+fn runtime_security_event_types_keep_only_credential_ledger_only() {
+    for event_type in RuntimeSecurityEventType::ALL {
+        assert_eq!(
+            event_type.uses_ledger_only_family(),
+            matches!(event_type, RuntimeSecurityEventType::CredentialSubstitution),
+            "{} ledger-only classification drifted",
             event_type.as_str()
         );
     }
@@ -1159,7 +1204,6 @@ fn runtime_security_event_from_logger_write_maps_all_write_ops() {
             file_write_with_action(FileAction::Exported, Some(credential_ref)),
             RuntimeSecurityEventType::FileExport,
         ),
-        (snapshot_write(), RuntimeSecurityEventType::SnapshotEvent),
         (
             exec_write(Some(credential_ref)),
             RuntimeSecurityEventType::ProcessExec,
@@ -1186,9 +1230,7 @@ fn runtime_security_event_from_logger_write_maps_all_write_ops() {
         let event = RuntimeSecurityEvent::from_logger_write(write);
         assert_eq!(event.event_type, expected_type);
         assert_eq!(event.event_family, expected_type.family());
-        if expected_type != RuntimeSecurityEventType::SnapshotEvent
-            && expected_type != RuntimeSecurityEventType::ProcessExecComplete
-        {
+        if expected_type != RuntimeSecurityEventType::ProcessExecComplete {
             assert_eq!(event.credential_ref.as_deref(), Some(credential_ref));
         }
     }
@@ -1324,21 +1366,28 @@ reason = "corp block"
         .iter()
         .find(|rule| rule.rule_id == "profiles.rules.block_openai")
         .unwrap();
-    let event = SecurityEvent::new(PolicyCallback::HttpRequest)
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
         .with_trace_id("trace_deadbeef")
         .with_http(HttpSecurityEvent {
             host: Some("api.openai.com".into()),
             method: Some("POST".into()),
             path: Some("/v1/chat/completions".into()),
+            query: None,
             status: None,
             body: Some("{\"model\":\"gpt-4.1\"}".into()),
+        })
+        .with_ip(IpSecurityEvent {
+            value: Some("203.0.113.10".into()),
+            version: Some("4".into()),
+        })
+        .with_tcp(TcpSecurityEvent {
+            port: Some("443".into()),
         })
         .with_credential_observations(vec![CredentialObservation {
             provider: CredentialProvider::OpenAi,
             raw_value: "sk-live-should-not-appear".into(),
             source: "http.request.header.authorization".into(),
             event_type: Some("http.request".into()),
-            confidence: 1.0,
             trace_id: Some("trace_deadbeef".into()),
             context_json: None,
         }]);
@@ -1369,6 +1418,12 @@ reason = "corp block"
     );
     assert!(row.rule_json.contains("openai_api_block"));
     assert!(row.event_json.contains("api.openai.com"));
+    let event_json: serde_json::Value = serde_json::from_str(&row.event_json).unwrap();
+    assert_eq!(event_json["event_type"], "http.request");
+    assert_eq!(event_json["http"]["host"], "api.openai.com");
+    assert_eq!(event_json["ip"]["value"], "203.0.113.10");
+    assert_eq!(event_json["ip"]["version"], "4");
+    assert_eq!(event_json["tcp"]["port"], "443");
     assert!(row.event_json.contains("credential:blake3:"));
     assert!(
         !row.event_json.contains("sk-live-should-not-appear"),
@@ -1427,7 +1482,7 @@ match = 'file.read.path.contains("skills/") && file.read.name.endsWith(".md")'
     let event_id = emit_security_write(&writer, file_write(None))
         .await
         .expect("file event must receive a primary event id");
-    let event = SecurityEvent::new(PolicyCallback::HttpRequest)
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
         .with_trace_id("trace_file_skill")
         .with_file(FileSecurityEvent {
             read_path: Some("/root/.codex/skills/example/SKILL.md".into()),
@@ -1493,12 +1548,13 @@ match = 'http.path.startsWith("/v1/")'
     let event_id = emit_security_write(&writer, net_write(None))
         .await
         .expect("primary HTTP event must receive an id");
-    let event = SecurityEvent::new(PolicyCallback::HttpRequest)
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
         .with_trace_id("trace_http_rules")
         .with_http(HttpSecurityEvent {
             host: Some("api.openai.com".into()),
             method: Some("POST".into()),
             path: Some("/v1/responses".into()),
+            query: None,
             status: Some("200".into()),
             body: None,
         });
@@ -1583,12 +1639,13 @@ match = 'model.provider == "openai"'
     let event_id = emit_security_write(&writer, net_write(None))
         .await
         .expect("primary HTTP event must receive an id");
-    let event = SecurityEvent::new(PolicyCallback::HttpRequest).with_http(HttpSecurityEvent {
-        host: Some("api.openai.com".into()),
-        method: Some("POST".into()),
-        path: Some("/v1/responses".into()),
-        ..Default::default()
-    });
+    let event =
+        SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
+            host: Some("api.openai.com".into()),
+            method: Some("POST".into()),
+            path: Some("/v1/responses".into()),
+            ..Default::default()
+        });
 
     let emission = emit_matching_security_rules_with_decision(
         &writer,
@@ -1688,7 +1745,6 @@ async fn emit_matching_security_rules_with_decision_defaults_to_allow_without_en
 [profiles.rules.detect_skill]
 name = "detect_skill"
 action = "postprocess"
-plugin = "credential_broker"
 detection_level = "informational"
 match = 'file.read.name == "SKILL.md"'
 "#,
@@ -1696,10 +1752,11 @@ match = 'file.read.name == "SKILL.md"'
     let event_id = emit_security_write(&writer, file_write(None))
         .await
         .expect("primary file event must receive an id");
-    let event = SecurityEvent::new(PolicyCallback::HttpRequest).with_file(FileSecurityEvent {
-        read_name: Some("SKILL.md".into()),
-        ..Default::default()
-    });
+    let event =
+        SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_file(FileSecurityEvent {
+            read_name: Some("SKILL.md".into()),
+            ..Default::default()
+        });
 
     let emission = emit_matching_security_rules_with_decision(
         &writer,
@@ -1715,6 +1772,131 @@ match = 'file.read.name == "SKILL.md"'
 
     assert_eq!(emission.emitted, 1);
     assert_eq!(emission.enforcement, SecurityEnforcementDecision::allow());
+}
+
+#[tokio::test]
+async fn default_rules_do_not_override_specific_enforcement_decisions() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db_path = tmp.path().join("session.db");
+    let writer = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
+    let rules = security_rule_set(
+        r#"
+[profiles.rules.allow_local_fixture]
+name = "allow_local_fixture"
+action = "allow"
+priority = 10
+detection_level = "informational"
+reason = "Hermetic fixture endpoint is explicitly allowed."
+match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
+
+[default.000_local_network]
+name = "local_network"
+action = "ask"
+priority = "default"
+reason = "Default ask before local network access."
+match = 'ip.value == "127.0.0.1" || http.host == "127.0.0.1"'
+"#,
+    );
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
+        .with_http(HttpSecurityEvent {
+            host: Some("127.0.0.1".into()),
+            method: Some("POST".into()),
+            path: Some("/v1/chat/completions".into()),
+            ..Default::default()
+        })
+        .with_ip(IpSecurityEvent {
+            value: Some("127.0.0.1".into()),
+            version: Some("4".into()),
+        })
+        .with_tcp(TcpSecurityEvent {
+            port: Some("3713".into()),
+        });
+
+    let boundary = evaluate_security_boundary(&rules, BTreeMap::new(), event.clone()).unwrap();
+    assert_eq!(boundary.matched_rule_count, 2);
+    assert_eq!(
+        boundary.enforcement.action,
+        SecurityEnforcementAction::Allow
+    );
+    assert_eq!(
+        boundary.enforcement.rule_id.as_deref(),
+        Some("profiles.rules.allow_local_fixture")
+    );
+    assert_eq!(
+        boundary.event.decision.effective,
+        SecurityDecisionKind::Allow
+    );
+
+    let event_id = emit_security_write(&writer, net_write(None))
+        .await
+        .expect("primary HTTP event must receive an id");
+    let emission = emit_matching_security_rules_with_decision(
+        &writer,
+        event_id,
+        RuntimeSecurityEventType::HttpRequest,
+        &rules,
+        &event,
+        1_789_000_000_265,
+    )
+    .await
+    .unwrap();
+    writer.shutdown_blocking();
+
+    assert_eq!(emission.emitted, 2);
+    assert_eq!(
+        emission.enforcement.action,
+        SecurityEnforcementAction::Allow
+    );
+    assert_eq!(
+        emission.enforcement.rule_id.as_deref(),
+        Some("profiles.rules.allow_local_fixture")
+    );
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let rule_rows: Vec<(String, String)> = {
+        let mut stmt = conn
+            .prepare("SELECT rule_id, rule_action FROM security_rule_events ORDER BY rule_id")
+            .unwrap();
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap()
+    };
+    assert_eq!(
+        rule_rows,
+        vec![
+            (
+                "profiles.rules.allow_local_fixture".to_string(),
+                "allow".to_string(),
+            ),
+            (
+                "profiles.rules.default_000_local_network".to_string(),
+                "ask".to_string(),
+            ),
+        ],
+        "the default catchall remains visible in the rule ledger"
+    );
+    let decision_rows: Vec<(String, String, String)> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT rule_id, requested_decision, effective_decision
+                 FROM security_decision_events ORDER BY id",
+            )
+            .unwrap();
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap()
+    };
+    assert_eq!(
+        decision_rows,
+        vec![(
+            "profiles.rules.allow_local_fixture".to_string(),
+            "allow".to_string(),
+            "allow".to_string(),
+        )],
+        "the default ask must not appear as an effective decision after a specific allow"
+    );
 }
 
 #[tokio::test]
@@ -1734,7 +1916,7 @@ match = 'http.host == "api.openai.com"'
     let event_id = emit_security_write(&writer, net_write(None))
         .await
         .expect("primary HTTP event must receive an id");
-    let event = SecurityEvent::new(PolicyCallback::HttpRequest)
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
         .with_trace_id("trace_ask")
         .with_http(HttpSecurityEvent {
             host: Some("api.openai.com".into()),
@@ -1830,7 +2012,7 @@ match = 'http.host == "api.openai.com"'
 }
 
 #[tokio::test]
-async fn session_db_regenerates_rule_plugin_enforcement_detection_and_ask_story() {
+async fn session_db_regenerates_rule_enforcement_detection_and_ask_story() {
     let tmp = tempfile::tempdir().unwrap();
     let db_path = tmp.path().join("session.db");
     let writer = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
@@ -1850,9 +2032,8 @@ action = "allow"
 detection_level = "high"
 match = 'http.host == "github.com"'
 
-[profiles.rules.github_broker]
-name = "github_broker"
-plugin = "credential_broker"
+[profiles.rules.github_postprocess]
+name = "github_postprocess"
 action = "postprocess"
 detection_level = "informational"
 match = 'http.host == "github.com"'
@@ -1861,7 +2042,7 @@ match = 'http.host == "github.com"'
     let github_event_id = emit_security_write(&writer, net_write(None))
         .await
         .expect("primary HTTP event must receive an id");
-    let github_event = SecurityEvent::new(PolicyCallback::HttpRequest)
+    let github_event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
         .with_trace_id("trace_github")
         .with_http(HttpSecurityEvent {
             host: Some("github.com".into()),
@@ -1902,7 +2083,7 @@ match = 'http.host == "api.openai.com"'
     let ask_event_id = emit_security_write(&writer, net_write(None))
         .await
         .expect("primary HTTP event must receive an id");
-    let ask_event = SecurityEvent::new(PolicyCallback::HttpRequest)
+    let ask_event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
         .with_trace_id("trace_openai_ask")
         .with_http(HttpSecurityEvent {
             host: Some("api.openai.com".into()),
@@ -1956,28 +2137,30 @@ match = 'http.host == "api.openai.com"'
     let rows = reader.recent_security_rule_events(10).unwrap();
     assert_eq!(rows.len(), 4);
 
-    let plugin_row = rows
+    let postprocess_row = rows
         .iter()
-        .find(|row| row.rule_id == "profiles.rules.github_broker")
-        .expect("plugin-backed rule row must be present");
-    assert_eq!(plugin_row.event_id, github_event_id.as_str());
-    assert_eq!(plugin_row.event_type, "http.request");
+        .find(|row| row.rule_id == "profiles.rules.github_postprocess")
+        .expect("postprocess detection rule row must be present");
+    assert_eq!(postprocess_row.event_id, github_event_id.as_str());
+    assert_eq!(postprocess_row.event_type, "http.request");
     assert_eq!(
-        plugin_row.rule_action,
+        postprocess_row.rule_action,
         capsem_logger::SecurityRuleAction::Postprocess
     );
     assert_eq!(
-        plugin_row.detection_level,
+        postprocess_row.detection_level,
         capsem_logger::SecurityDetectionLevel::Informational
     );
-    let plugin_rule: serde_json::Value = serde_json::from_str(&plugin_row.rule_json).unwrap();
-    assert_eq!(plugin_rule["provider"], "profiles");
-    assert_eq!(plugin_rule["rule_action"], "postprocess");
-    assert_eq!(plugin_rule["detection_level"], "informational");
-    assert_eq!(plugin_rule["plugin"], "credential_broker");
-    let plugin_event: serde_json::Value = serde_json::from_str(&plugin_row.event_json).unwrap();
-    assert_eq!(plugin_event["event_type"], "http.request");
-    assert_eq!(plugin_event["http"]["host"], "github.com");
+    let postprocess_rule: serde_json::Value =
+        serde_json::from_str(&postprocess_row.rule_json).unwrap();
+    assert_eq!(postprocess_rule["provider"], "profiles");
+    assert_eq!(postprocess_rule["rule_action"], "postprocess");
+    assert_eq!(postprocess_rule["detection_level"], "informational");
+    assert!(postprocess_rule.get("plugin").is_none());
+    let postprocess_event: serde_json::Value =
+        serde_json::from_str(&postprocess_row.event_json).unwrap();
+    assert_eq!(postprocess_event["event_type"], "http.request");
+    assert_eq!(postprocess_event["http"]["host"], "github.com");
 
     let block_row = rows
         .iter()
@@ -2029,7 +2212,7 @@ match = 'http.host == "api.openai.com"'
     assert!(stats
         .by_rule
         .iter()
-        .any(|entry| entry.rule_id == "profiles.rules.github_broker"
+        .any(|entry| entry.rule_id == "profiles.rules.github_postprocess"
             && entry.detection_level == "informational"
             && entry.latest_event_id == github_event_id.as_str()));
 }
@@ -2057,7 +2240,7 @@ fn denied_ask_resolution_blocks_like_block() {
     .with_resolver("tester")
     .with_reason("denied for test");
     let resolved = decision.with_ask_resolution(&denied).unwrap();
-    let event = SecurityEvent::new(PolicyCallback::HttpRequest).with_http_request(
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http_request(
         HttpRequestSecurityEvent::new(
             "api.openai.com",
             Some(ProviderKind::OpenAi),
@@ -2274,7 +2457,6 @@ match = 'process.exec.id == "42" && process.exec.exit_code == "0" && process.exe
             exec_id: 42,
             command: "python main.py".to_string(),
             source: "api".to_string(),
-            mcp_call_id: None,
             trace_id: Some("trace_exec".to_string()),
             process_name: None,
             credential_ref: None,
@@ -2340,78 +2522,11 @@ match = 'process.exec.id == "42" && process.exec.exit_code == "0" && process.exe
 }
 
 #[tokio::test]
-async fn emit_snapshot_security_write_and_rules_maps_snapshot_action() {
+async fn emit_substitution_security_write_and_rules_keeps_ref_without_fake_root() {
     let tmp = tempfile::tempdir().unwrap();
     let db_path = tmp.path().join("session.db");
     let writer = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
-    let profile = SecurityRuleProfile::parse_toml(
-        r#"
-[profiles.rules.snapshot_auto_seen]
-name = "snapshot_auto_seen"
-action = "allow"
-detection_level = "informational"
-match = 'snapshot.action == "auto"'
-"#,
-    )
-    .unwrap();
-    let rules = crate::net::policy_config::SecurityRuleSet::compile_profile(
-        &profile,
-        SecurityRuleSource::User,
-    )
-    .unwrap();
-
-    let event_id = emit_snapshot_security_write_and_rules(
-        &writer,
-        &rules,
-        SnapshotEvent {
-            event_id: None,
-            timestamp: SystemTime::now(),
-            slot: 1,
-            origin: "auto".to_string(),
-            name: None,
-            files_count: 3,
-            start_fs_event_id: 0,
-            stop_fs_event_id: 10,
-            trace_id: Some("trace_snapshot".to_string()),
-        },
-    )
-    .await
-    .expect("snapshot event must receive id");
-    writer.shutdown_blocking();
-
-    let conn = rusqlite::Connection::open(&db_path).unwrap();
-    let snapshot_event_id: String = conn
-        .query_row("SELECT event_id FROM snapshot_events", [], |row| row.get(0))
-        .unwrap();
-    let rule_event_id: String = conn
-        .query_row("SELECT event_id FROM security_rule_events", [], |row| {
-            row.get(0)
-        })
-        .unwrap();
-    assert_eq!(snapshot_event_id, event_id.as_str());
-    assert_eq!(rule_event_id, event_id.as_str());
-}
-
-#[tokio::test]
-async fn emit_substitution_security_write_and_rules_maps_credential_ref() {
-    let tmp = tempfile::tempdir().unwrap();
-    let db_path = tmp.path().join("session.db");
-    let writer = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
-    let profile = SecurityRuleProfile::parse_toml(
-        r#"
-[profiles.rules.credential_brokered_seen]
-name = "credential_brokered_seen"
-action = "allow"
-detection_level = "informational"
-match = 'credential.provider == "openai" && credential.ref.contains("credential:blake3:")'
-"#,
-    )
-    .unwrap();
-    let rules = crate::net::policy_config::SecurityRuleSet::compile_profile(
-        &profile,
-        SecurityRuleSource::User,
-    )
-    .unwrap();
+    let rules = SecurityRuleSet::new(Vec::new());
     let credential_ref = capsem_logger::credential_reference("openai", "sk-test-secret");
 
     let event_id = emit_substitution_security_write_and_rules(
@@ -2424,10 +2539,10 @@ match = 'credential.provider == "openai" && credential.ref.contains("credential:
             source: "http.response".to_string(),
             event_type: Some("http.request".to_string()),
             algorithm: "blake3".to_string(),
-            substitution_ref: credential_ref,
-            outcome: "substituted".to_string(),
+            substitution_ref: credential_ref.clone(),
+            outcome: "captured".to_string(),
             provider: Some("openai".to_string()),
-            confidence: Some(1.0),
+            confidence: None,
             trace_id: Some("trace_credential".to_string()),
             context_json: None,
         },
@@ -2442,16 +2557,21 @@ match = 'credential.provider == "openai" && credential.ref.contains("credential:
             row.get(0)
         })
         .unwrap();
-    let rule_row: (String, String) = conn
+    let persisted_ref: String = conn
         .query_row(
-            "SELECT event_id, rule_id FROM security_rule_events",
+            "SELECT substitution_ref FROM substitution_events",
             [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| row.get(0),
         )
         .unwrap();
+    let rule_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM security_rule_events", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
     assert_eq!(substitution_event_id, event_id.as_str());
-    assert_eq!(rule_row.0, event_id.as_str());
-    assert_eq!(rule_row.1, "profiles.rules.credential_brokered_seen");
+    assert_eq!(persisted_ref, credential_ref);
+    assert_eq!(rule_count, 0);
 }
 
 #[tokio::test]
@@ -2476,10 +2596,11 @@ match = 'http.host.contains("openai.com")'
     let event_id = emit_security_write(&writer, net_write(None))
         .await
         .expect("primary HTTP event must receive an id");
-    let event = SecurityEvent::new(PolicyCallback::HttpRequest).with_http(HttpSecurityEvent {
-        host: Some("example.com".into()),
-        ..Default::default()
-    });
+    let event =
+        SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
+            host: Some("example.com".into()),
+            ..Default::default()
+        });
 
     let emitted = emit_matching_security_rules(
         &writer,
@@ -2524,6 +2645,8 @@ fn net_write(credential_ref: Option<&str>) -> WriteOp {
         response_headers: None,
         request_body_preview: None,
         response_body_preview: None,
+        request_body_full: None,
+        response_body_full: None,
         conn_type: None,
         policy_mode: None,
         policy_action: None,
@@ -2539,6 +2662,7 @@ fn model_write(credential_ref: Option<&str>) -> WriteOp {
         event_id: None,
         timestamp: SystemTime::now(),
         provider: "openai".to_string(),
+        protocol: Some("openai".to_string()),
         model: Some("gpt-test".to_string()),
         process_name: None,
         pid: None,
@@ -2550,10 +2674,12 @@ fn model_write(credential_ref: Option<&str>) -> WriteOp {
         tools_count: 0,
         request_bytes: 2,
         request_body_preview: None,
+        request_body_full: None,
         message_id: None,
         status_code: Some(200),
         text_content: None,
         thinking_content: None,
+        response_body_full: None,
         stop_reason: None,
         input_tokens: None,
         output_tokens: None,
@@ -2584,6 +2710,7 @@ fn mcp_write(method: &str, credential_ref: Option<&str>) -> WriteOp {
         process_name: None,
         bytes_sent: 0,
         bytes_received: 0,
+        transport: "vsock_frame".to_string(),
         policy_mode: None,
         policy_action: None,
         policy_rule: None,
@@ -2609,20 +2736,6 @@ fn file_write_with_action(action: FileAction, credential_ref: Option<&str>) -> W
     })
 }
 
-fn snapshot_write() -> WriteOp {
-    WriteOp::SnapshotEvent(SnapshotEvent {
-        event_id: None,
-        timestamp: SystemTime::now(),
-        slot: 0,
-        origin: "auto".to_string(),
-        name: None,
-        files_count: 0,
-        start_fs_event_id: 0,
-        stop_fs_event_id: 0,
-        trace_id: Some("trace".to_string()),
-    })
-}
-
 fn exec_write(credential_ref: Option<&str>) -> WriteOp {
     WriteOp::ExecEvent(ExecEvent {
         event_id: None,
@@ -2630,7 +2743,6 @@ fn exec_write(credential_ref: Option<&str>) -> WriteOp {
         exec_id: 1,
         command: "true".to_string(),
         source: "api".to_string(),
-        mcp_call_id: None,
         trace_id: Some("trace".to_string()),
         process_name: None,
         credential_ref: credential_ref.map(str::to_string),
@@ -2679,6 +2791,7 @@ fn dns_write(credential_ref: Option<&str>) -> WriteOp {
         qtype: 1,
         qclass: 1,
         rcode: 0,
+        answer_ip: Some("93.184.216.34".to_string()),
         decision: "allowed".to_string(),
         matched_rule: None,
         source_proto: Some("udp".to_string()),
@@ -2704,7 +2817,7 @@ fn substitution_write(credential_ref: &str) -> WriteOp {
         substitution_ref: credential_ref.to_string(),
         outcome: "stored".to_string(),
         provider: Some("openai".to_string()),
-        confidence: Some(1.0),
+        confidence: None,
         trace_id: Some("trace".to_string()),
         context_json: None,
     })
@@ -2716,19 +2829,20 @@ fn brokered_anthropic_header_event() -> (
     String,
     tempfile::TempDir,
     EnvVarGuard,
+    EnvVarGuard,
     tokio::sync::MutexGuard<'static, ()>,
 ) {
     let lock = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
     let tmp = tempfile::tempdir().unwrap();
     let store_path = tmp.path().join("broker-store.jsonl");
-    let store_guard = EnvVarGuard::set(crate::credential_broker::TEST_STORE_ENV, &store_path);
+    let store_guard = EnvVarGuard::set(crate::credential_broker::STORE_PATH_ENV, &store_path);
+    let user_config_guard = EnvVarGuard::set("CAPSEM_HOME", tmp.path());
     let raw = "sk-ant-materialize-secret";
-    let brokered = broker_to_user_settings(&CredentialObservation {
+    let brokered = broker_observed_credential(&CredentialObservation {
         provider: CredentialProvider::Anthropic,
         raw_value: raw.to_string(),
         source: "http.request.headers.authorization".to_string(),
         event_type: Some("http.request".to_string()),
-        confidence: 1.0,
         trace_id: None,
         context_json: None,
     })
@@ -2739,7 +2853,7 @@ fn brokered_anthropic_header_event() -> (
         http::header::AUTHORIZATION,
         http::HeaderValue::from_str(&brokered.credential_ref).unwrap(),
     );
-    let event = SecurityEvent::new(PolicyCallback::HttpRequest).with_http_request(
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http_request(
         HttpRequestSecurityEvent::new(
             "api.anthropic.com",
             Some(ProviderKind::Anthropic),
@@ -2754,13 +2868,15 @@ fn brokered_anthropic_header_event() -> (
         raw.to_string(),
         tmp,
         store_guard,
+        user_config_guard,
         lock,
     )
 }
 
 #[test]
 fn http_materializer_without_substitute_action_keeps_reference() {
-    let (event, reference, _raw, _tmp, _store_guard, _lock) = brokered_anthropic_header_event();
+    let (event, reference, _raw, _tmp, _store_guard, _user_config_guard, _lock) =
+        brokered_anthropic_header_event();
 
     let materialized = materialize_http_request_for_upstream(&event).unwrap();
 
@@ -2776,8 +2892,70 @@ fn http_materializer_without_substitute_action_keeps_reference() {
 }
 
 #[test]
+fn credential_broker_plugin_marks_broker_ref_for_injection_not_recapture() {
+    let (mut event, reference, raw, _tmp, _store_guard, _user_config_guard, _lock) =
+        brokered_anthropic_header_event();
+    let request = event.http_request.as_mut().expect("http request event");
+    request.headers.insert(
+        http::header::AUTHORIZATION,
+        http::HeaderValue::from_str(&format!("Bearer {reference}")).unwrap(),
+    );
+    let registry =
+        SecurityActionRegistry::with_builtin_actions().with_plugin_policy(BTreeMap::from([(
+            "credential_broker".to_string(),
+            plugin_config(SecurityPluginMode::Rewrite, DetectionLevel::Informational),
+        )]));
+
+    let event = registry
+        .apply_security_plugins(SecurityPluginStage::Preprocess, event)
+        .expect("broker plugin runs");
+
+    assert!(
+        event.credential_observations.is_empty(),
+        "broker refs are already ledger-safe references, not new raw credentials"
+    );
+    assert_eq!(event.credential_injections.len(), 1);
+    assert_eq!(
+        event.credential_injections[0].credential_ref.as_str(),
+        reference.as_str()
+    );
+    assert_eq!(
+        event.credential_injections[0].source,
+        "http.header.authorization"
+    );
+    assert_eq!(
+        event.action_trace,
+        vec![PolicyActionId::CredentialBrokerSubstitute]
+    );
+    let materialized = materialize_http_request_for_upstream(&event).unwrap();
+    assert_eq!(
+        event
+            .http_request
+            .as_ref()
+            .unwrap()
+            .headers
+            .get(http::header::AUTHORIZATION)
+            .unwrap(),
+        &http::HeaderValue::from_str(&format!("Bearer {reference}")).unwrap(),
+        "the security event stays reference-only"
+    );
+    assert_eq!(
+        materialized
+            .headers
+            .get(http::header::AUTHORIZATION)
+            .unwrap(),
+        &http::HeaderValue::from_str(&format!("Bearer {raw}")).unwrap(),
+        "only the upstream materialized copy receives the raw credential"
+    );
+    assert_eq!(
+        materialized.credential_ref.as_deref(),
+        Some(reference.as_str())
+    );
+}
+
+#[test]
 fn http_materializer_requires_allow_enforcement_decision() {
-    let event = SecurityEvent::new(PolicyCallback::HttpRequest).with_http_request(
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http_request(
         HttpRequestSecurityEvent::new(
             "api.openai.com",
             Some(ProviderKind::OpenAi),
@@ -2816,7 +2994,8 @@ fn http_materializer_requires_allow_enforcement_decision() {
 
 #[test]
 fn http_materializer_resolves_broker_ref_only_for_upstream_copy() {
-    let (mut event, reference, raw, _tmp, _store_guard, _lock) = brokered_anthropic_header_event();
+    let (mut event, reference, raw, _tmp, _store_guard, _user_config_guard, _lock) =
+        brokered_anthropic_header_event();
     event
         .action_trace
         .push(PolicyActionId::CredentialBrokerSubstitute);

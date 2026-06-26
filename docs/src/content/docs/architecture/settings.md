@@ -1,9 +1,15 @@
 ---
 title: Settings System
-description: How Capsem loads, merges, and applies configuration from defaults, user, and enterprise sources.
+description: How Capsem loads, merges, and applies UI/application preferences from defaults, user, and enterprise sources.
 ---
 
-Capsem's settings system controls everything from AI provider access to VM resources. Settings are declared in TOML, merged from three sources with enterprise override, rendered in a dynamic UI, and injected into the guest VM at boot. This page covers the full architecture.
+Capsem's settings system controls UI/application preferences: appearance,
+notifications, local app behavior, and other service-level preferences that are
+not profile runtime truth. VM resources, assets, MCP, provider access,
+enforcement, detections, and credential brokerage are owned by profile/corp
+contracts plus plugins, not by settings-owned AI provider toggles. Settings are
+declared in TOML, merged from defaults, user, and enterprise sources with
+enterprise override, and rendered in a dynamic UI.
 
 ## File Sources
 
@@ -12,25 +18,20 @@ Three TOML files feed the settings system, merged with a strict priority order:
 ```mermaid
 flowchart LR
   DT["defaults.toml\n(compile-time embedded)"] --> R[Resolver]
-  UT["user.toml\n(~/.capsem/user.toml)"] --> R
+  UT["settings.toml\n(~/.capsem/settings.toml)"] --> R
   CT["corp.toml\n(/etc/capsem/corp.toml)"] --> R
   R --> RS["Resolved Settings"]
   RS --> TB[Tree Builder]
-  RS --> P2["Policy Rules"]
-  RS --> PB[Policy Builder]
-  TB --> SR["Settings Response\n{tree, issues, presets, policy}"]
-  P2 --> SR
-  PB --> NP["Network Policy\n(MITM proxy rules)"]
-  PB --> GC["Guest Config\n(env vars + files)"]
+  TB --> SR["Settings Response\n{tree, issues}"]
 ```
 
 | File | Location | Purpose | Editable |
 |---|---|---|---|
 | `defaults.toml` | Embedded at compile time | All built-in settings with types and defaults | No (source code) |
-| `user.toml` | `~/.capsem/user.toml` | User overrides and custom values | Yes (UI + manual) |
+| `settings.toml` | `~/.capsem/settings.toml` | User UI/app preference overrides | Yes (UI + manual) |
 | `corp.toml` | `/etc/capsem/corp.toml` | Enterprise lockdown (MDM-distributed) | IT admin only |
 
-Environment variables `CAPSEM_USER_CONFIG` and `CAPSEM_CORP_CONFIG` can override the default paths for testing.
+Environment variables can override the default settings and corp paths for testing.
 
 ## Settings Grammar
 
@@ -42,7 +43,8 @@ The settings TOML uses a formal grammar with four node types, distinguished by k
 | has `action` key | **Action** | UI button/widget, no stored value |
 | neither | **Group** | Container that organizes children |
 
-A fourth node type, **MCP Server**, lives in a separate `[mcp]` section.
+MCP server configuration is profile-owned and may be reflected in profile UI,
+but it is not a settings node type.
 
 ### Setting types
 
@@ -60,21 +62,13 @@ A fourth node type, **MCP Server**, lives in a separate `[mcp]` section.
 
 ### Action nodes
 
-Action nodes declare UI elements (buttons, preset selectors) directly in the TOML grammar instead of hardcoding them in the frontend:
+Action nodes declare UI elements directly in the TOML grammar instead of hardcoding them in the frontend:
 
 ```toml
-[settings.security.preset]
-name = "Security Preset"
-description = "Predefined security configurations"
-action = "preset_select"
-
 [settings.app.check_update]
 name = "Check for updates"
 action = "check_update"
 
-[settings.vm.rerun_wizard]
-name = "Setup Wizard"
-action = "rerun_wizard"
 ```
 
 The UI renders these via a finite `ActionKind` enum -- not string comparison.
@@ -84,15 +78,16 @@ The UI renders these via a finite `ActionKind` enum -- not string comparison.
 Each leaf setting can have a `.meta` sub-table with extra fields:
 
 ```toml
-[settings.ai.anthropic.api_key.meta]
-env_vars = ["ANTHROPIC_API_KEY"]
-docs_url = "https://console.anthropic.com/settings/keys"
-prefix = "sk-ant-"
-widget = "password_input"
-side_effect = "toggle_theme"   # only on appearance.dark_mode
+[settings.appearance.dark_mode.meta]
+widget = "toggle"
+side_effect = "toggle_theme"
 ```
 
-Key metadata fields: `widget` (override default UI widget), `side_effect` (frontend action on change), `hidden` (exclude from UI but still active for policy), `builtin` (non-removable), `env_vars` (inject into guest), `domains` (network policy), `rules` (HTTP method permissions).
+Key metadata fields: `widget` (override default UI widget), `side_effect`
+(frontend action on change), `hidden` (exclude from UI but still active for
+settings resolution), and `builtin` (non-removable). Static API-key metadata and
+provider network policy metadata are retired from settings; credentials are
+broker/plugin-owned and network enforcement is rule-owned.
 
 ## Value Resolution
 
@@ -101,14 +96,14 @@ Settings are resolved per-key with corp taking highest priority:
 ```mermaid
 flowchart TD
   D["Default value\n(defaults.toml)"] -->|"user has override?"| U
-  U["User value\n(user.toml)"] -->|"corp has override?"| C
+  U["User value\n(settings.toml)"] -->|"corp has override?"| C
   C["Corp value\n(corp.toml)"] --> E["Effective value"]
   style C fill:#7c3aed,color:#fff
   style U fill:#3b82f6,color:#fff
   style D fill:#6b7280,color:#fff
 ```
 
-**Corp override is final.** When corp.toml sets a value, it becomes `corp_locked: true`. The user cannot change it via the UI or presets.
+**Corp override is final.** When corp.toml sets a value, it becomes `corp_locked: true`. The user cannot change it via the UI.
 
 ### Enabled resolution
 
@@ -121,7 +116,10 @@ effective_enabled = explicit_enabled AND enabled_by_result
 - **explicit_enabled**: corp `enabled` field > user `enabled` > defaults `enabled` > `true`
 - **enabled_by_result**: if no `enabled_by` pointer, `true`. Otherwise, look up the parent toggle's effective boolean value.
 
-Example: when `ai.anthropic.allow` is `false` (corp-locked off), all child settings (`api_key`, `domains`, config files) are `enabled: false` -- greyed out in the UI and excluded from policy.
+Example: when `repository.providers.github.allow` is `false` (corp-locked off),
+child settings such as the repository token field are `enabled: false` and
+greyed out in the UI. Provider allow/block behavior is not represented this
+way; it is expressed as profile/corp security rules.
 
 ### Hidden resolution
 
@@ -133,33 +131,9 @@ effective_hidden = corp_hidden OR user_hidden OR defaults_hidden
 
 Hidden settings are filtered from the tree sent to the frontend but still participate in policy building.
 
-## Presets
-
-Security presets (Medium, High) are batch writes to `user.toml`. They are **not** a separate resolution layer.
-
-```mermaid
-sequenceDiagram
-  participant UI as Frontend
-  participant BE as Backend
-  participant UF as user.toml
-  participant CF as corp.toml
-
-  UI->>BE: apply_preset("medium")
-  BE->>CF: Load corp settings
-  BE->>UF: Load user settings
-  loop Each preset setting
-    BE->>CF: Is key corp-locked?
-    alt Corp-locked
-      BE-->>BE: Skip (add to skipped list)
-    else Not locked
-      BE->>UF: Write { value, modified }
-    end
-  end
-  BE->>BE: Reload network policies
-  BE-->>UI: List of skipped setting IDs
-```
-
-After preset application, resolution re-runs: `corp > user (with preset values) > defaults`. The UI detects the active preset by comparing effective values against all preset definitions.
+After settings edits, resolution re-runs across the current settings file and
+corp locks. Retired behavior bundles and policy maps are no longer settings-owned
+objects.
 
 ## IPC Protocol
 
@@ -173,11 +147,11 @@ sequenceDiagram
   participant SVC as capsem-service
 
   Note over UI: Page load
-  UI->>GW: GET /settings
-  GW->>SVC: GET /settings (UDS)
-  SVC->>SVC: resolve + build tree + lint + presets
+  UI->>GW: GET /settings/info
+  GW->>SVC: GET /settings/info (UDS)
+  SVC->>SVC: resolve + build tree + lint
   SVC-->>GW: SettingsResponse
-  GW-->>UI: {tree, issues, presets}
+  GW-->>UI: {tree, issues}
   UI->>M: new SettingsModel(response)
 
   Note over UI: User edits a text field
@@ -185,9 +159,9 @@ sequenceDiagram
   Note over M: Accumulated locally
 
   Note over UI: User clicks Save
-  UI->>GW: POST /settings {id: value, ...}
-  GW->>SVC: POST /settings (UDS)
-  SVC->>SVC: validate ALL then write user.toml then reload policies
+  UI->>GW: PATCH /settings/edit {id: value, ...}
+  GW->>SVC: PATCH /settings/edit (UDS)
+  SVC->>SVC: validate ALL then write settings.toml
   SVC-->>GW: SettingsResponse (fresh state)
   GW-->>UI: response
   UI->>M: new SettingsModel(response)
@@ -200,9 +174,11 @@ Returns the full `SettingsResponse` in one call:
 | Field | Type | Content |
 |---|---|---|
 | `tree` | `SettingsNode[]` | Hierarchical tree: groups, leaves, actions, MCP servers |
-| `issues` | `ConfigIssue[]` | Validation warnings (missing API keys, invalid JSON, etc.) |
-| `presets` | `SecurityPreset[]` | Available security presets with their setting values |
-| `policy` | `PolicyConfig` | Legacy/API compatibility view for older policy consumers. New rule authoring lives in `profiles.rules`, `corp.rules`, provider convenience rules, and `rule_files`. |
+| `issues` | `ConfigIssue[]` | Validation warnings (invalid JSON, invalid paths, blocked setting writes, etc.) |
+
+`SettingsResponse` intentionally does not include behavior bundles, provider status, MCP
+policy, security rules, plugins, credentials, or VM behavior. Those belong to
+profile/corp contracts, runtime plugin status, or service/VM runtime endpoints.
 
 ### save_settings
 
@@ -210,11 +186,11 @@ Accepts a batch of changes as `{ setting_id: value, ... }`. Behavior:
 
 1. **Validate ALL changes upfront** (atomic -- all or nothing)
 2. **Reject entire batch** if any change targets a corp-locked setting, uses an unknown ID, or fails validation
-3. **Write to user.toml** in a single file operation
-4. **Hot-reload policies** so the running MITM proxy picks up changes immediately
-5. **Return fresh `SettingsResponse`** reflecting the new state
+3. **Write to settings.toml** in a single file operation
+4. **Return fresh `SettingsResponse`** reflecting the new state
 
-Bool toggles use `save_settings` immediately (instant policy reload). Text, number, file, and list changes accumulate locally and are sent as a batch when the user clicks Save.
+Bool toggles use `save_settings` immediately. Text, number, file, and list
+changes accumulate locally and are sent as a batch when the user clicks Save.
 
 Security rules are stored under `profiles.rules`, `corp.rules`, or referenced
 rule files. A profile can point at shared rule packs:
@@ -225,8 +201,8 @@ enforcement = "profiles/base/enforcement.toml"
 sigma = "profiles/base/detection.yaml"
 ```
 
-The same atomic validation applies: one invalid rule rejects the entire save
-batch before `user.toml` is changed.
+Profile rule edits use the profile enforcement endpoints, not the settings save
+endpoint.
 
 ## Frontend Architecture
 
@@ -254,13 +230,14 @@ flowchart TD
 | **Enums** | `settings-enums.ts` | Typed enums matching Rust serde output (Widget, SideEffect, ActionKind, SettingType) |
 | **Model** | `settings-model.ts` | Pure TypeScript -- parsing, indexing, widget resolution, pending changes, validation. No Svelte dependency. Fully unit-tested. |
 | **Store** | `settings.svelte.ts` | Thin Svelte 5 wrapper -- reactive state, IPC calls, delegates to SettingsModel |
-| **View** | `SettingsSection.svelte` | Recursive renderer -- dispatches on `node.kind` (group/leaf/action/mcp_server) and `Widget` enum |
+| **View** | `SettingsSection.svelte` | Recursive renderer -- dispatches on `node.kind` (group/leaf/action) and `Widget` enum |
 
 The model class is independently testable (43 vitest tests) and works identically whether talking to the gateway or using mock data.
 
-## Boot-Time Config Injection
+## Boot-Time Config Materialization
 
-At VM boot, resolved settings are translated into environment variables and files injected into the guest:
+At VM boot, resolved settings are translated into the limited non-secret
+environment variables and files that are allowed to enter the guest:
 
 ```mermaid
 sequenceDiagram
@@ -270,10 +247,8 @@ sequenceDiagram
 
   Proc->>Core: load_merged_guest_config()
   Core->>Core: Resolve settings (corp > user > defaults)
-  Core->>Core: Collect env vars from meta.env_vars
+  Core->>Core: Collect explicit non-secret guest env settings
   Core->>Core: Collect boot files (type=file settings with content)
-  Core->>Core: Inject MCP servers into agent config files
-  Core->>Core: Generate .git-credentials from tokens
   Proc->>VM: send_boot_config()
   loop Each env var
     Proc->>VM: SetEnv { key, value }
@@ -286,28 +261,35 @@ sequenceDiagram
 
 Key behaviors:
 
-- **API keys are always injected** (even if the provider toggle is off) so the user can enable a provider at runtime without rebooting.
-- **Provider toggles control network access**, not file injection. The domain policy blocks/allows traffic.
-- **File permissions** default to `0o600` (owner-only) for sensitive content like API keys and SSH keys.
-- **MCP servers** are injected into each AI agent's config file format (Claude JSON, Gemini JSON, Codex TOML).
+- **API keys and provider credentials are never settings materialized boot
+  secrets.** They are detected, substituted, and audited by the credential
+  broker plugin using opaque BLAKE3 references.
+- **Profile/corp rules control network access.** HTTP, DNS, MCP, model, file,
+  and process events are blocked or allowed by `SecurityRuleSet` over canonical
+  `SecurityEvent` fields.
+- **File permissions** default to `0o600` (owner-only) for sensitive explicit
+  boot files such as SSH keys.
+- **Static AI CLI config-file injection is retired.** Tool/provider
+  observations belong to runtime plugin/security-ledger evidence, not
+  settings-owned provider files.
 
 ## MCP Server Definitions
 
-MCP servers are declared in a separate `[mcp]` section and auto-injected into AI agent config files at boot:
+MCP servers are profile configuration. The UI may display MCP profile config
+through profile routes, but settings do not own or merge MCP runtime truth and
+the settings tree never contains MCP server nodes:
 
 ```mermaid
 flowchart LR
-  DM["defaults.toml\n[mcp.capsem]"] --> MR[MCP Resolver]
-  UM["user.toml\n[mcp.my_tool]"] --> MR
-  CM["corp.toml\n[mcp.acme]"] --> MR
-  MR --> MS["Resolved MCP Servers"]
-  MS --> CJ["Claude settings.json\nmcpServers: {...}"]
-  MS --> GJ["Gemini settings.json\nmcpServers: {...}"]
-  MS --> CT2["Codex config.toml\n[mcp_servers.*]"]
-  MS --> TREE["Settings Tree\nMcpServer nodes in UI"]
+  P["profile.toml\n[mcp]"] --> MR[MCP Resolver]
+  C["corp.toml\nlocks/constraints"] --> MR
+  MR --> MS["Resolved profile MCP servers"]
+  MS --> ROUTE["MCP runtime routing"]
+  MS --> TOOLS["Per-server tool inventory"]
+  MS --> TREE["Profile UI"]
 ```
 
-Resolution follows the same `corp > user > defaults` merge (per key). Corp entries are `corp_locked`. Example from defaults.toml:
+Resolution is profile-first with corp constraints. Example profile entry:
 
 ```toml
 [mcp.capsem]
@@ -318,7 +300,7 @@ command = "/run/capsem-mcp-server"
 builtin = true
 ```
 
-Enterprises can add MCP servers via `corp.toml`:
+Enterprises can add MCP servers via corp-owned profile configuration:
 
 ```toml
 [mcp.internal_tools]
@@ -331,10 +313,9 @@ args = ["--config", "/etc/acme.json"]
 ## Security Rules
 
 Security rules live outside ordinary `settings` leaves. They are resolved from
-`corp.rules`, `profiles.rules`, provider convenience defaults, and referenced
-`rule_files`. Corp rules keep corporate priority and lock semantics; profile
-rules run after built-in defaults unless they explicitly choose a later user
-priority.
+profile/corp enforcement TOML and Sigma detection YAML. Corp rules keep
+corporate priority and lock semantics; profile/user rules run after corp rules,
+and built-in default rules run last.
 
 See [Policy](/security/policy/) for rule syntax, first-party `SecurityEvent`
 fields, actions, priorities, Sigma import, examples, and telemetry.
@@ -346,9 +327,8 @@ Enterprise administrators distribute `corp.toml` via MDM. It controls:
 | Capability | How |
 |---|---|
 | **Force a value** | Set the key in corp.toml -- user cannot override |
-| **Disable a provider** | Set `ai.anthropic.allow = false` -- all children disabled |
+| **Disable provider traffic** | Add a corp/profile enforcement rule that matches the provider boundary and uses `action = "block"` |
 | **Hide a setting** | Set `hidden = true` on the override entry |
-| **Block preset application** | Corp-locked settings are skipped during preset apply |
 | **Add MCP servers** | Add entries to `[mcp]` section -- user cannot remove |
 | **Disable MCP servers** | Set `enabled = false` on a server definition |
 
@@ -361,7 +341,5 @@ The desktop frontend talks to `capsem-gateway`, which proxies HTTP requests to
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /settings` | Returns `SettingsResponse` with tree, issues, presets, and policy. |
-| `POST /settings` | Accepts a batch of setting and policy changes. |
-| `POST /settings/presets/{id}` | Applies a security preset. |
-| `POST /reload-config` | Hot-reloads runtime policy after saves. |
+| `GET /settings/info` | Returns `SettingsResponse` with `tree` and `issues`. |
+| `PATCH /settings/edit` | Accepts a batch of settings-only changes and returns fresh `SettingsResponse`. |

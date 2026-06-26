@@ -3,7 +3,6 @@
 import json
 import os
 
-import pytest
 
 from conftest import run
 

@@ -4,12 +4,13 @@ Tests binary responses, large bodies, endpoint coverage, and edge cases
 through the real gateway binary against the mock UDS service.
 """
 
-import json
 import subprocess
 import tempfile
 import os
 
 import pytest
+
+from helpers.constants import CODE_PROFILE_ID
 
 pytestmark = pytest.mark.gateway
 
@@ -18,52 +19,77 @@ class TestProxyEndpointCoverage:
     """Verify all mock service endpoints are reachable through the gateway."""
 
     def test_get_info_existing_vm(self, gw_client):
-        """GET /info/{id} returns VM details for known VM."""
-        resp = gw_client.get("/info/vm-001")
+        """GET /vms/{id}/info returns VM details for known VM."""
+        resp = gw_client.get("/vms/vm-001/info")
         assert resp is not None
         assert resp.get("id") == "vm-001"
         assert resp.get("name") == "dev"
         assert resp.get("status") == "Running"
 
     def test_get_info_unknown_vm(self, gw_client):
-        """GET /info/{id} returns 404 for unknown VM."""
-        resp = gw_client.get("/info/ghost-vm-999")
+        """GET /vms/{id}/info returns 404 for unknown VM."""
+        resp = gw_client.get("/vms/ghost-vm-999/info")
         assert resp is not None
         assert "error" in resp
 
+    def test_get_status_existing_vm(self, gw_client):
+        """GET /vms/{id}/status returns runtime state without info fields."""
+        resp = gw_client.get("/vms/vm-001/status")
+        assert resp is not None
+        assert resp.get("id") == "vm-001"
+        assert resp.get("status") == "Running"
+        assert resp.get("pid") == 100
+        assert "ram_mb" not in resp
+        assert "description" not in resp
+
     def test_post_exec_command(self, gw_client):
-        """POST /exec/{id} returns stdout, stderr, exit_code."""
-        resp = gw_client.post("/exec/vm-001", {"command": "whoami"})
+        """POST /vms/{id}/exec returns stdout, stderr, exit_code."""
+        resp = gw_client.post("/vms/vm-001/exec", {"command": "whoami"})
         assert resp is not None
         assert "stdout" in resp
         assert resp.get("exit_code") == 0
 
     def test_post_stop_vm(self, gw_client):
-        """POST /stop/{id} returns success."""
-        resp = gw_client.post("/stop/vm-001", {})
+        """POST /vms/{id}/stop returns success."""
+        resp = gw_client.post("/vms/vm-001/stop", {})
         assert resp is not None
 
     def test_post_write_file(self, gw_client):
-        """POST /write_file/{id} returns success."""
-        resp = gw_client.post("/write_file/vm-001", {
+        """POST /vms/{id}/files/write returns success."""
+        resp = gw_client.post("/vms/vm-001/files/write", {
             "path": "/root/test.txt",
             "content": "hello",
         })
         assert resp is not None
 
     def test_post_read_file(self, gw_client):
-        """POST /read_file/{id} returns file content."""
-        resp = gw_client.post("/read_file/vm-001", {"path": "/root/test.txt"})
+        """POST /vms/{id}/files/read returns file content."""
+        resp = gw_client.post("/vms/vm-001/files/read", {"path": "/root/test.txt"})
         assert resp is not None
 
-    def test_post_inspect(self, gw_client):
-        """POST /inspect/{id} returns SQL query results."""
-        resp = gw_client.post("/inspect/vm-001", {"query": "SELECT 1"})
-        assert resp is not None
+    def test_post_inspect_not_forwarded(self, gw_client):
+        """Raw SQL inspection is not a gateway product route."""
+        result = subprocess.run(
+            [
+                "curl", "-s", "-S",
+                "-o", "/dev/null",
+                "-w", "%{http_code}",
+                "-X", "POST",
+                "-H", "Content-Type: application/json",
+                "-H", f"Authorization: Bearer {gw_client.token}",
+                "-d", '{"sql":"SELECT 1"}',
+                f"{gw_client.base_url}/vms/vm-001/inspect",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert result.returncode == 0
+        assert result.stdout.strip() == "404"
 
     def test_post_persist(self, gw_client):
-        """POST /persist/{id} converts ephemeral to persistent."""
-        resp = gw_client.post("/persist/vm-001", {"name": "saved"})
+        """POST /vms/{id}/save converts ephemeral to persistent."""
+        resp = gw_client.post("/vms/vm-001/save", {"name": "saved"})
         assert resp is not None
 
     def test_post_purge(self, gw_client):
@@ -73,35 +99,35 @@ class TestProxyEndpointCoverage:
 
     def test_post_run(self, gw_client):
         """POST /run one-shot command execution."""
-        resp = gw_client.post("/run", {"command": "echo test"})
+        resp = gw_client.post("/run", {"command": "echo test", "profile_id": CODE_PROFILE_ID})
         assert resp is not None
         assert "stdout" in resp
 
     def test_post_resume(self, gw_client):
-        """POST /resume/{name} resumes a persistent VM."""
-        resp = gw_client.post("/resume/dev", {})
+        """POST /vms/{id}/resume resumes a persistent VM."""
+        resp = gw_client.post("/vms/dev/resume", {})
         assert resp is not None
 
     def test_post_fork(self, gw_client):
-        """POST /fork/{id} creates a fork image."""
-        resp = gw_client.post("/fork/vm-001", {"name": "snapshot1"})
+        """POST /vms/{id}/fork creates a fork image."""
+        resp = gw_client.post("/vms/vm-001/fork", {"name": "snapshot1"})
         assert resp is not None
         assert resp.get("name") == "snapshot1"
 
     def test_get_logs(self, gw_client):
-        """GET /logs/{id} returns boot logs."""
-        resp = gw_client.get("/logs/vm-001")
+        """GET /vms/{id}/logs returns boot logs."""
+        resp = gw_client.get("/vms/vm-001/logs")
         assert resp is not None
         assert "logs" in resp
 
     def test_delete_vm(self, gw_client):
-        """DELETE /delete/{id} destroys a VM."""
-        resp = gw_client.delete("/delete/vm-001")
+        """DELETE /vms/{id}/delete destroys a VM."""
+        resp = gw_client.delete("/vms/vm-001/delete")
         assert resp is not None
 
-    def test_post_reload_config(self, gw_client):
-        """POST /reload-config reloads settings."""
-        resp = gw_client.post("/reload-config", {})
+    def test_post_profile_reload(self, gw_client):
+        """POST /profiles/{profile_id}/reload reloads profile config."""
+        resp = gw_client.post("/profiles/code/reload", {})
         assert resp is not None
 
 
@@ -110,23 +136,22 @@ class TestProxyEdgeCases:
     def test_double_slash_in_path(self, gw_client):
         """Double slashes in path are handled gracefully."""
         # axum normalizes // to /, so this should work or 404
-        resp = gw_client.get("//list")
+        resp = gw_client.get("//vms/list")
         # Should not crash the gateway
         assert resp is not None or True  # 404 is acceptable
 
     def test_very_long_query_string(self, gw_client):
         """Long query strings are forwarded without truncation."""
         long_query = "x=" + "a" * 4000
-        resp = gw_client.get(f"/info/vm-001?{long_query}")
+        resp = gw_client.get(f"/vms/vm-001/info?{long_query}")
         # Should succeed (query is forwarded, mock ignores it)
         assert resp is not None
 
     def test_empty_post_body(self, gw_client):
         """POST with empty body is forwarded correctly."""
-        resp = gw_client.post("/echo", None)
+        gw_client.post("/echo", None)
         # Mock echoes back the body -- empty body returns empty or None
         # The key thing: no crash
-        assert True  # If we get here, no crash
 
     def test_json_post_with_nested_data(self, gw_client):
         """POST with nested JSON is forwarded correctly."""
@@ -135,7 +160,7 @@ class TestProxyEdgeCases:
             "env": {"FOO": "bar", "BAZ": "qux"},
             "options": {"timeout": 30, "verbose": True},
         }
-        resp = gw_client.post("/exec/vm-001", payload)
+        resp = gw_client.post("/vms/vm-001/exec", payload)
         assert resp is not None
         assert resp.get("exit_code") == 0
 
@@ -151,14 +176,12 @@ class TestProxyEdgeCases:
                  "-H", f"Authorization: Bearer {gateway_env.token}",
                  "-H", "Content-Type: application/octet-stream",
                  "--data-binary", f"@{tmp_path}",
-                 f"http://127.0.0.1:{gateway_env.port}/echo"],
+                 f"http://127.0.0.1:{gateway_env.port}/vms/vm-001/files/content?path=/root/boundary.bin"],
                 capture_output=True, text=True, timeout=60,
             )
             status = result.stdout.strip()
             # 10MB exactly should be accepted (limit rejects >10MB)
-            assert status in ("200", "502"), (
-                f"10MB body returned {status}, expected 200 or 502 (502 if mock can't handle)"
-            )
+            assert status == "200", f"10MB body returned {status}, expected 200"
         finally:
             os.unlink(tmp_path)
 
@@ -168,7 +191,7 @@ class TestProxyEdgeCases:
             ["curl", "-s", "-D", "-", "-o", "/dev/null",
              "--max-time", "5", "-X", "HEAD",
              "-H", f"Authorization: Bearer {gateway_env.token}",
-             f"http://127.0.0.1:{gateway_env.port}/list"],
+             f"http://127.0.0.1:{gateway_env.port}/vms/list"],
             capture_output=True, text=True, timeout=10,
         )
         # HEAD should return headers but no body
@@ -182,7 +205,7 @@ class TestProxyEdgeCases:
              "-H", "Origin: http://localhost:3000",
              "-H", "Access-Control-Request-Method: POST",
              "-H", "Access-Control-Request-Headers: authorization,content-type",
-             f"http://127.0.0.1:{gateway_env.port}/provision"],
+             f"http://127.0.0.1:{gateway_env.port}/vms/create"],
             capture_output=True, text=True, timeout=10,
         )
         headers = result.stdout.lower()

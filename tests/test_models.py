@@ -9,17 +9,13 @@ import pytest
 from pydantic import ValidationError
 
 from capsem.builder.models import (
-    AiProviderConfig,
-    ApiKeyConfig,
     ArchConfig,
     BuildConfig,
-    CliToolConfig,
     Compression,
-    FileConfig,
+    ErofsCompression,
+    ErofsConfig,
     GuestImageConfig,
-    InstallConfig,
     McpServerConfig,
-    NetworkConfig,
     PackageManager,
     PackageNetworkConfig,
     PackageSetConfig,
@@ -52,28 +48,6 @@ def _build(**kw):
     return BuildConfig(**defaults)
 
 
-def _api_key(**kw):
-    defaults = {"name": "Test Key", "env_vars": ["TEST_KEY"]}
-    defaults.update(kw)
-    return ApiKeyConfig(**defaults)
-
-
-def _network(**kw):
-    defaults = {"domains": ["*.example.com"]}
-    defaults.update(kw)
-    return NetworkConfig(**defaults)
-
-
-def _ai_provider(**kw):
-    defaults = {
-        "name": "Test Provider",
-        "api_key": _api_key(),
-        "network": _network(),
-    }
-    defaults.update(kw)
-    return AiProviderConfig(**defaults)
-
-
 def _mcp_stdio(**kw):
     defaults = {"name": "Test", "transport": McpTransport.STDIO, "command": "/bin/test"}
     defaults.update(kw)
@@ -100,6 +74,33 @@ class TestCompression:
 
     def test_from_string(self):
         assert Compression("zstd") is Compression.ZSTD
+
+
+class TestErofsCompression:
+    def test_values(self):
+        assert set(ErofsCompression) == {
+            ErofsCompression.LZ4, ErofsCompression.LZ4HC, ErofsCompression.ZSTD,
+        }
+
+    def test_default_config_is_release_lz4hc(self):
+        e = ErofsConfig()
+        assert e.enabled is True
+        assert e.compression is ErofsCompression.LZ4HC
+        assert e.compression_level == 12
+        assert e.cluster_size is None
+
+    def test_lz4_rejects_level(self):
+        with pytest.raises(ValidationError):
+            ErofsConfig(compression=ErofsCompression.LZ4, compression_level=1)
+
+    def test_lz4hc_rejects_too_high_level(self):
+        with pytest.raises(ValidationError):
+            ErofsConfig(compression=ErofsCompression.LZ4HC, compression_level=13)
+
+    def test_zstd_remains_supported_option(self):
+        e = ErofsConfig(compression=ErofsCompression.ZSTD, compression_level=15)
+        assert e.compression is ErofsCompression.ZSTD
+        assert e.compression_level == 15
 
 
 class TestPackageManager:
@@ -168,6 +169,8 @@ class TestBuildConfig:
         b = _build()
         assert b.compression is Compression.ZSTD
         assert b.compression_level == 15
+        assert b.erofs.compression is ErofsCompression.LZ4HC
+        assert b.erofs.compression_level == 12
 
     def test_compression_level_min(self):
         b = _build(compression_level=1)
@@ -225,164 +228,6 @@ class TestBuildConfig:
         data = b.model_dump()
         c = BuildConfig.model_validate(data)
         assert b == c
-
-
-# ---------------------------------------------------------------------------
-# ApiKeyConfig
-# ---------------------------------------------------------------------------
-
-
-class TestApiKeyConfig:
-    def test_construction(self):
-        k = _api_key(prefix="sk-", docs_url="https://example.com/keys")
-        assert k.name == "Test Key"
-        assert k.env_vars == ["TEST_KEY"]
-        assert k.prefix == "sk-"
-        assert k.docs_url == "https://example.com/keys"
-
-    def test_defaults(self):
-        k = _api_key()
-        assert k.prefix == ""
-        assert k.docs_url is None
-
-    def test_empty_env_vars_rejected(self):
-        with pytest.raises(ValidationError):
-            ApiKeyConfig(name="Bad", env_vars=[])
-
-    def test_multiple_env_vars(self):
-        k = _api_key(env_vars=["KEY_A", "KEY_B"])
-        assert len(k.env_vars) == 2
-
-
-# ---------------------------------------------------------------------------
-# NetworkConfig
-# ---------------------------------------------------------------------------
-
-
-class TestNetworkConfig:
-    def test_construction(self):
-        n = _network(allow_get=True, allow_post=True)
-        assert n.domains == ["*.example.com"]
-        assert n.allow_get is True
-        assert n.allow_post is True
-
-    def test_defaults(self):
-        n = _network()
-        assert n.allow_get is False
-        assert n.allow_post is False
-
-    def test_empty_domains_rejected(self):
-        with pytest.raises(ValidationError):
-            NetworkConfig(domains=[])
-
-    def test_multiple_domains(self):
-        n = _network(domains=["a.com", "b.com", "*.c.com"])
-        assert len(n.domains) == 3
-
-
-# ---------------------------------------------------------------------------
-# InstallConfig
-# ---------------------------------------------------------------------------
-
-
-class TestInstallConfig:
-    def test_construction(self):
-        i = InstallConfig(manager=PackageManager.NPM, prefix="/opt/ai-clis",
-                          packages=["@google/gemini-cli"])
-        assert i.manager is PackageManager.NPM
-        assert i.prefix == "/opt/ai-clis"
-        assert i.packages == ["@google/gemini-cli"]
-
-    def test_defaults(self):
-        i = InstallConfig(manager=PackageManager.NPM, packages=["pkg"])
-        assert i.prefix == ""
-
-
-# ---------------------------------------------------------------------------
-# FileConfig
-# ---------------------------------------------------------------------------
-
-
-class TestFileConfig:
-    def test_construction(self):
-        f = FileConfig(path="/root/.config/test.json", content='{"key":"val"}')
-        assert f.path == "/root/.config/test.json"
-        assert f.content == '{"key":"val"}'
-
-    def test_empty_content(self):
-        f = FileConfig(path="/root/.creds", content="")
-        assert f.content == ""
-
-
-# ---------------------------------------------------------------------------
-# CliToolConfig
-# ---------------------------------------------------------------------------
-
-
-class TestCliToolConfig:
-    def test_construction(self):
-        c = CliToolConfig(key="claude", name="Claude Code")
-        assert c.key == "claude"
-        assert c.name == "Claude Code"
-        assert c.description == ""
-        assert c.version_command is None
-
-    def test_with_version_command(self):
-        c = CliToolConfig(
-            key="claude", name="Claude Code",
-            version_command="claude --version 2>/dev/null | head -1",
-        )
-        assert c.version_command == "claude --version 2>/dev/null | head -1"
-
-    def test_roundtrip(self):
-        c = CliToolConfig(
-            key="gemini", name="Gemini CLI",
-            version_command="gemini --version",
-        )
-        data = c.model_dump()
-        d = CliToolConfig.model_validate(data)
-        assert c == d
-
-
-# ---------------------------------------------------------------------------
-# AiProviderConfig
-# ---------------------------------------------------------------------------
-
-
-class TestAiProviderConfig:
-    def test_minimal(self):
-        p = _ai_provider()
-        assert p.name == "Test Provider"
-        assert p.enabled is True
-        assert p.install is None
-        assert p.files == {}
-
-    def test_full(self):
-        p = _ai_provider(
-            description="Full provider",
-            enabled=False,
-            install=InstallConfig(manager=PackageManager.NPM, packages=["cli"]),
-            files={"settings": FileConfig(path="/root/.cfg", content="data")},
-        )
-        assert p.description == "Full provider"
-        assert p.enabled is False
-        assert p.install is not None
-        assert "settings" in p.files
-
-    def test_disabled_provider(self):
-        p = _ai_provider(enabled=False)
-        assert p.enabled is False
-        # Validation still passes for disabled providers
-        assert p.api_key.env_vars == ["TEST_KEY"]
-
-    def test_roundtrip(self):
-        p = _ai_provider(
-            install=InstallConfig(manager=PackageManager.NPM, packages=["cli"]),
-            files={"cfg": FileConfig(path="/a", content="b")},
-        )
-        data = p.model_dump()
-        q = AiProviderConfig.model_validate(data)
-        assert p == q
 
 
 # ---------------------------------------------------------------------------
@@ -548,10 +393,7 @@ class TestWebServiceConfig:
 class TestWebSecurityConfig:
     def test_defaults(self):
         w = WebSecurityConfig()
-        assert w.allow_read is False
-        assert w.allow_write is False
-        assert w.custom_allow == []
-        assert w.custom_block == []
+        assert w.http_upstream_ports == [80, 3128, 3713, 8080, 11434]
         assert w.search == {}
         assert w.registry == {}
         assert w.repository == {}
@@ -570,18 +412,18 @@ class TestWebSecurityConfig:
         assert "google" in w.search
         assert "pypi" in w.registry
 
-    def test_custom_allow_block(self):
-        w = WebSecurityConfig(
-            custom_allow=["elie.net", "*.elie.net"],
-            custom_block=["evil.com"],
-        )
-        assert len(w.custom_allow) == 2
-        assert w.custom_block == ["evil.com"]
+    def test_retired_decision_fields_forbidden(self):
+        with pytest.raises(ValidationError):
+            WebSecurityConfig(
+                allow_read=True,
+                allow_write=True,
+                custom_allow=["elie.net", "*.elie.net"],
+                custom_block=["evil.com"],
+            )
 
     def test_roundtrip(self):
         w = WebSecurityConfig(
-            allow_read=True,
-            custom_allow=["a.com"],
+            http_upstream_ports=[80],
             search={"g": WebServiceConfig(name="G", domains=["g.com"])},
         )
         data = w.model_dump()
@@ -704,32 +546,29 @@ class TestGuestImageConfig:
     def test_minimal(self):
         g = GuestImageConfig(build=_build())
         assert g.build.compression is Compression.ZSTD
-        assert g.ai_providers == {}
         assert g.package_sets == {}
         assert g.mcp_servers == {}
-        assert g.web_security.allow_read is False
+        assert g.web_security.http_upstream_ports == [80, 3128, 3713, 8080, 11434]
         assert g.vm_resources.cpu_count == 4
         assert g.vm_environment.shell.term == "xterm-256color"
 
     def test_full(self):
         g = GuestImageConfig(
             build=_build(),
-            ai_providers={"google": _ai_provider(name="Google")},
             package_sets={"python": PackageSetConfig(
                 name="Python", manager=PackageManager.UV,
                 install_cmd="uv pip install", packages=["pytest"],
             )},
             mcp_servers={"capsem": _mcp_stdio(name="Capsem")},
-            web_security=WebSecurityConfig(allow_read=True),
+            web_security=WebSecurityConfig(http_upstream_ports=[80]),
             vm_resources=VmResourcesConfig(cpu_count=8),
             vm_environment=VmEnvironmentConfig(
                 shell=ShellConfig(term="screen"),
             ),
         )
-        assert "google" in g.ai_providers
         assert "python" in g.package_sets
         assert "capsem" in g.mcp_servers
-        assert g.web_security.allow_read is True
+        assert g.web_security.http_upstream_ports == [80]
         assert g.vm_resources.cpu_count == 8
         assert g.vm_environment.shell.term == "screen"
 
@@ -741,7 +580,6 @@ class TestGuestImageConfig:
     def test_json_roundtrip(self):
         g = GuestImageConfig(
             build=_build(),
-            ai_providers={"test": _ai_provider()},
             mcp_servers={"mcp": _mcp_stdio()},
         )
         json_str = g.model_dump_json()
@@ -755,14 +593,6 @@ class TestGuestImageConfig:
 
 
 class TestAdversarial:
-    def test_wildcard_domain_patterns(self):
-        n = _network(domains=["*.example.com", "example.com", "*.*.deep.com"])
-        assert len(n.domains) == 3
-
-    def test_unicode_in_domain(self):
-        n = _network(domains=["xn--e1afmapc.xn--p1ai"])
-        assert len(n.domains) == 1
-
     def test_huge_package_list(self):
         packages = [f"pkg-{i}" for i in range(1000)]
         ps = PackageSetConfig(
@@ -770,21 +600,3 @@ class TestAdversarial:
             install_cmd="apt install", packages=packages,
         )
         assert len(ps.packages) == 1000
-
-    def test_empty_string_content_in_file(self):
-        f = FileConfig(path="/root/.empty", content="")
-        assert f.content == ""
-
-    def test_path_traversal_in_file(self):
-        # Config is declarative; runtime enforces path safety
-        f = FileConfig(path="../../etc/passwd", content="root:x:0:0")
-        assert f.path == "../../etc/passwd"
-
-    def test_very_long_content_in_file(self):
-        content = "x" * 1_000_000
-        f = FileConfig(path="/root/.big", content=content)
-        assert len(f.content) == 1_000_000
-
-    def test_special_chars_in_env_vars(self):
-        k = _api_key(env_vars=["MY_KEY_123"])
-        assert k.env_vars == ["MY_KEY_123"]

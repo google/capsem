@@ -78,10 +78,10 @@ fn lowercase_authorization_redacted() {
 
 #[test]
 fn home_path_with_special_chars_collapsed() {
-    let line = "/Users/jane.doe-1/project/file.rs";
+    let line = "/Users/co-work.doe-1/project/file.rs";
     let r = redact_line(line);
     assert!(r.starts_with("~/"), "{r}");
-    assert!(!r.contains("/Users/jane.doe-1/"));
+    assert!(!r.contains("/Users/co-work.doe-1/"));
 }
 
 #[test]

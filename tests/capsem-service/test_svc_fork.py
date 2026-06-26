@@ -1,10 +1,10 @@
-"""POST /fork/{id}: clone a persistent VM's state into a new persistent VM."""
+"""POST /vms/{id}/fork: clone a persistent VM's state into a new persistent VM."""
 
 import uuid
 
 import pytest
 
-from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
+from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.service import wait_exec_ready, vm_name
 
 pytestmark = pytest.mark.integration
@@ -13,8 +13,9 @@ pytestmark = pytest.mark.integration
 def _provision_persistent(client, prefix="fork"):
     """Provision a persistent (named) VM and return its name."""
     name = vm_name(prefix)
-    resp = client.post("/provision", {
+    resp = client.post("/vms/create", {
         "name": name,
+        "profile_id": CODE_PROFILE_ID,
         "ram_mb": DEFAULT_RAM_MB,
         "cpus": DEFAULT_CPUS,
         "persistent": True,
@@ -35,14 +36,14 @@ class TestFork:
             )
 
             marker = f"fork-marker-{uuid.uuid4().hex[:8]}"
-            client.post(f"/write_file/{source}", {
+            client.post(f"/vms/{source}/files/write", {
                 "path": "/root/fork-marker.txt",
                 "content": marker,
             })
 
             child = f"fork-child-{uuid.uuid4().hex[:6]}"
             children.append(child)
-            resp = client.post(f"/fork/{source}", {
+            resp = client.post(f"/vms/{source}/fork", {
                 "name": child,
                 "description": "coverage test fork",
             }, timeout=60)
@@ -51,13 +52,13 @@ class TestFork:
             assert resp.get("size_bytes", 0) > 0, f"fork size 0: {resp}"
 
             # Child is registered persistent/stopped. Resume to read the marker.
-            resume_resp = client.post(f"/resume/{child}", {})
+            resume_resp = client.post(f"/vms/{child}/resume", {})
             assert resume_resp is not None, f"resume failed: {resume_resp}"
             resumed_id = resume_resp.get("id", child)
             assert wait_exec_ready(client, resumed_id, timeout=EXEC_READY_TIMEOUT), (
                 f"forked VM {resumed_id} did not become exec-ready"
             )
-            read = client.post(f"/read_file/{resumed_id}", {"path": "/root/fork-marker.txt"})
+            read = client.post(f"/vms/{resumed_id}/files/read", {"path": "/root/fork-marker.txt"})
             assert read is not None
             assert read.get("content") == marker, (
                 f"marker did not survive fork: {read}"
@@ -65,7 +66,7 @@ class TestFork:
         finally:
             for vm in children + [source]:
                 try:
-                    client.delete(f"/delete/{vm}")
+                    client.delete(f"/vms/{vm}/delete")
                 except Exception:
                     pass
 
@@ -74,7 +75,7 @@ class TestFork:
         source = _provision_persistent(client, "fork-dup-src")
         taken = _provision_persistent(client, "fork-dup-dest")
         try:
-            resp = client.post(f"/fork/{source}", {"name": taken}, timeout=30)
+            resp = client.post(f"/vms/{source}/fork", {"name": taken}, timeout=30)
             assert resp is not None
             assert "error" in resp or "already exists" in str(resp).lower(), (
                 f"expected duplicate name rejection, got: {resp}"
@@ -82,14 +83,14 @@ class TestFork:
         finally:
             for vm in (source, taken):
                 try:
-                    client.delete(f"/delete/{vm}")
+                    client.delete(f"/vms/{vm}/delete")
                 except Exception:
                     pass
 
     def test_fork_nonexistent_source(self, client):
         """Fork from an unknown source id fails with 404."""
         resp = client.post(
-            f"/fork/ghost-{uuid.uuid4().hex[:6]}",
+            f"/vms/ghost-{uuid.uuid4().hex[:6]}/fork",
             {"name": f"child-{uuid.uuid4().hex[:6]}"},
             timeout=15,
         )

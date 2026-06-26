@@ -137,7 +137,7 @@ The KVM backend generates an aarch64 Flattened Device Tree at boot. The FDT cont
 | Slot | Device | IRQ (SPI) | Purpose |
 |------|--------|-----------|---------|
 | 0 | virtio-console | 48 | Serial console (boot logs, terminal fallback) |
-| 1 | virtio-blk | 49 | Root filesystem (squashfs, read-only) |
+| 1 | virtio-blk | 49 | Root filesystem (EROFS, read-only) |
 | 2 | virtio-blk | 50 | Scratch disk (optional) |
 | 3 | virtio-vsock | 51 | Guest-host vsock communication |
 | 4+ | virtio-fs | 52+ | VirtioFS shared directories |

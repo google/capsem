@@ -14,6 +14,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PersistentVmEntry {
     pub name: String,
+    pub profile_id: String,
+    pub profile_revision: String,
+    pub profile_payload_hash: String,
+    pub asset_pins: BootAssetPins,
     pub ram_mb: u64,
     pub cpus: u32,
     pub base_version: String,
@@ -46,10 +50,23 @@ pub struct PersistentVmEntry {
     pub last_error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub checkpoint_path: Option<String>,
-    /// User-provided env vars from /provision -- replayed on every resume so the
+    /// User-provided env vars from /vms/create -- replayed on every resume so the
     /// guest sees the same environment after stop+resume cycles.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub env: Option<HashMap<String, String>>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct BootAssetPins {
+    pub kernel: BootAssetPin,
+    pub initrd: BootAssetPin,
+    pub rootfs: BootAssetPin,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct BootAssetPin {
+    pub name: String,
+    pub hash: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Default)]
@@ -124,6 +141,11 @@ mod tests {
     fn make_entry(name: &str, session_dir: PathBuf) -> PersistentVmEntry {
         PersistentVmEntry {
             name: name.into(),
+            profile_id: "code".into(),
+            profile_revision: "2026.06.08.7".into(),
+            profile_payload_hash:
+                "blake3:1111111111111111111111111111111111111111111111111111111111111111".into(),
+            asset_pins: test_asset_pins(),
             ram_mb: 2048,
             cpus: 2,
             base_version: "0.1.0".into(),
@@ -136,6 +158,26 @@ mod tests {
             last_error: None,
             checkpoint_path: None,
             env: None,
+        }
+    }
+
+    fn test_asset_pins() -> BootAssetPins {
+        BootAssetPins {
+            kernel: BootAssetPin {
+                name: "vmlinuz".into(),
+                hash: "blake3:aa933a569fe27ed014ae76b58eb278d72fbde8a3cbd4c06a23da2987e70d0bd1"
+                    .into(),
+            },
+            initrd: BootAssetPin {
+                name: "initrd.img".into(),
+                hash: "blake3:ad31b76e82d487b207302109396b6dfa9bca97cb624c576dd3ccb6f59946cc96"
+                    .into(),
+            },
+            rootfs: BootAssetPin {
+                name: "rootfs.erofs".into(),
+                hash: "blake3:dd32949abf690412c611f1a558d1bb6462089f98e585009d70fb70e8ad6a6620"
+                    .into(),
+            },
         }
     }
 
@@ -246,14 +288,12 @@ mod tests {
     }
 
     #[test]
-    fn suspended_flag_defaults_to_false_when_missing() {
-        // Old registry entries won't have the suspended field
+    fn persistent_vm_entry_rejects_missing_profile_contract_fields() {
         let json = r#"{"name":"old","ram_mb":2048,"cpus":2,"base_version":"0.1.0","created_at":"0","session_dir":"/tmp/old"}"#;
-        let entry: PersistentVmEntry = serde_json::from_str(json).unwrap();
-        assert!(!entry.suspended, "suspended should default to false");
+        let err = serde_json::from_str::<PersistentVmEntry>(json).unwrap_err();
         assert!(
-            entry.checkpoint_path.is_none(),
-            "checkpoint_path should default to None"
+            err.to_string().contains("profile_id"),
+            "registry entries without profile contract fields must fail closed, got: {err}"
         );
     }
 

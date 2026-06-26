@@ -1,22 +1,18 @@
 // Settings store -- thin Svelte wrapper around SettingsModel.
 // Wired to gateway settings API.
 import { SettingsModel } from '../models/settings-model';
-import { getSettings, saveSettings, applyPreset, reloadConfig } from '../api';
+import { getSettings, saveSettings } from '../api';
 import type {
   ConfigIssue,
-  SecurityPreset,
   SettingsGroup,
   SettingsNode,
   SettingsLeaf,
   SettingValue,
-  PolicyRuleConfig,
   SettingsChangeValue,
 } from '../types/settings';
-import type { PolicyRuleType } from '../models/settings-model';
 
 class SettingsStore {
   model = $state<SettingsModel | null>(null);
-  applyingPreset = $state<string | null>(null);
   loading = $state(false);
   error = $state<string | null>(null);
 
@@ -30,15 +26,9 @@ class SettingsStore {
     return this.model?.issues ?? [];
   }
 
-  get presets(): SecurityPreset[] {
-    return this.model?.presets ?? [];
-  }
-
   sections = $derived(
     this.model?.sections.map((g) => g.name) ?? [],
   );
-
-  activePresetId = $derived(this.model?.activePresetId ?? null);
 
   isDirty = $derived(this.model?.isDirty ?? false);
 
@@ -81,18 +71,6 @@ class SettingsStore {
     this.model?.stage(id, value);
   }
 
-  stagePolicyRule(type: PolicyRuleType, name: string, rule: PolicyRuleConfig) {
-    this.model?.stagePolicyRule(type, name, rule);
-  }
-
-  deletePolicyRule(type: PolicyRuleType, name: string) {
-    this.model?.deletePolicyRule(type, name);
-  }
-
-  stageGeneratedPolicyRules(): number {
-    return this.model?.stageGeneratedPolicyRules() ?? 0;
-  }
-
   /** Persist all pending changes via the gateway settings API. */
   async save() {
     if (!this.model?.isDirty) return;
@@ -101,7 +79,6 @@ class SettingsStore {
     try {
       const response = await saveSettings(changes);
       this.model = new SettingsModel(response);
-      await reloadConfig().catch(() => {});
     } catch (e) {
       this.error = String(e);
     } finally {
@@ -143,19 +120,6 @@ class SettingsStore {
       this.model.stage(id, value);
     }
     return changes.size;
-  }
-
-  async applySecurityPreset(id: string) {
-    this.applyingPreset = id;
-    try {
-      const response = await applyPreset(id);
-      this.model = new SettingsModel(response);
-      await reloadConfig().catch(() => {});
-    } catch (e) {
-      this.error = String(e);
-    } finally {
-      this.applyingPreset = null;
-    }
   }
 }
 

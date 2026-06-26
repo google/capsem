@@ -28,7 +28,10 @@ def test_tool_calls_table_exists(session_db):
 
 def test_tool_calls_schema(session_db):
     cols = [r[1] for r in session_db.execute("PRAGMA table_info(tool_calls)").fetchall()]
-    for required in ["model_call_id", "tool_name", "origin", "arguments"]:
+    for required in [
+        "event_id", "model_call_id", "tool_name", "origin", "arguments",
+        "response_preview", "server_name", "method", "decision", "trace_id",
+    ]:
         assert required in cols, f"Missing column: {required}"
 
 

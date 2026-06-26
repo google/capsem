@@ -200,6 +200,31 @@ async fn refresh_assets() -> Result<()> {
     let binary_version = env!("CARGO_PKG_VERSION");
 
     println!("Refreshing VM assets into {}...", assets_dir.display());
+    if let Some(local_source) = local_manifest_asset_source(&assets_dir)? {
+        println!("Using local asset source {}...", local_source.display());
+        let copied = capsem_core::asset_manager::copy_missing_local_assets(
+            &manifest,
+            binary_version,
+            arch,
+            &local_source,
+            &assets_dir,
+            |p| {
+                if p.done {
+                    let mb = p.bytes_done as f64 / 1_048_576.0;
+                    println!("  {} ({:.1} MB)", p.logical_name, mb);
+                }
+            },
+        )
+        .context("local asset hydration failed")?;
+
+        if copied.is_empty() {
+            println!("All assets already up to date.");
+        } else {
+            println!("Refreshed {} asset(s).", copied.len());
+        }
+        return Ok(());
+    }
+
     let downloaded = capsem_core::asset_manager::download_missing_assets(
         &manifest,
         binary_version,
@@ -221,6 +246,32 @@ async fn refresh_assets() -> Result<()> {
         println!("Refreshed {} asset(s).", downloaded.len());
     }
     Ok(())
+}
+
+fn local_manifest_asset_source(assets_dir: &std::path::Path) -> Result<Option<PathBuf>> {
+    let origin_path = assets_dir.join("manifest-origin.json");
+    if !origin_path.exists() {
+        return Ok(None);
+    }
+    let content = std::fs::read_to_string(&origin_path)
+        .with_context(|| format!("read {}", origin_path.display()))?;
+    let value: serde_json::Value = serde_json::from_str(&content)
+        .with_context(|| format!("parse {}", origin_path.display()))?;
+    let Some(source) = value.get("source").and_then(|v| v.as_str()) else {
+        return Ok(None);
+    };
+    if source.starts_with("http://") || source.starts_with("https://") {
+        return Ok(None);
+    }
+    let path = if let Some(rest) = source.strip_prefix("file://") {
+        PathBuf::from(rest)
+    } else {
+        PathBuf::from(source)
+    };
+    if !path.is_file() {
+        return Ok(None);
+    }
+    Ok(path.parent().map(|parent| parent.to_path_buf()))
 }
 
 #[cfg(test)]
@@ -269,5 +320,50 @@ mod tests {
     #[test]
     fn cache_ttl_constant() {
         assert_eq!(CACHE_TTL_SECS, 86400);
+    }
+
+    #[test]
+    fn local_manifest_asset_source_uses_manifest_origin_parent() {
+        let dir = tempfile::tempdir().unwrap();
+        let assets_dir = dir.path().join("installed-assets");
+        let source_dir = dir.path().join("source-assets");
+        std::fs::create_dir_all(&assets_dir).unwrap();
+        std::fs::create_dir_all(&source_dir).unwrap();
+        let manifest = source_dir.join("manifest.json");
+        std::fs::write(&manifest, "{}").unwrap();
+        std::fs::write(
+            assets_dir.join("manifest-origin.json"),
+            serde_json::json!({
+                "schema": "capsem.manifest_origin.v1",
+                "origin": "package",
+                "source": manifest.display().to_string()
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            local_manifest_asset_source(&assets_dir).unwrap(),
+            Some(source_dir)
+        );
+    }
+
+    #[test]
+    fn local_manifest_asset_source_ignores_remote_origin() {
+        let dir = tempfile::tempdir().unwrap();
+        let assets_dir = dir.path().join("installed-assets");
+        std::fs::create_dir_all(&assets_dir).unwrap();
+        std::fs::write(
+            assets_dir.join("manifest-origin.json"),
+            serde_json::json!({
+                "schema": "capsem.manifest_origin.v1",
+                "origin": "package",
+                "source": "https://example.invalid/manifest.json"
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(local_manifest_asset_source(&assets_dir).unwrap(), None);
     }
 }

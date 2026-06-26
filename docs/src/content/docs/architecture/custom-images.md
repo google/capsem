@@ -1,242 +1,132 @@
 ---
 title: Custom Images
-description: Build custom Capsem VM images with your own AI providers, packages, and security policies.
+description: Build custom Capsem VM images from profile-owned packages, rules, MCP config, and assets.
 sidebar:
   order: 40
 ---
 
-Capsem images are defined declaratively using TOML configuration files. Organizations can create custom images with their own AI providers, pre-installed packages, MCP servers, and security policies.
+Capsem images are defined by profiles. Organizations create custom images by
+shipping profile-owned package files, root seed files, MCP config, enforcement
+rules, detection rules, and plugin policy. Provider access and credentials
+remain runtime rule/plugin truth, not image-builder truth.
 
 ## Quick Start
 
 ```bash
-pip install capsem
-capsem-builder init my-corp-image/
-capsem-builder validate my-corp-image/
-capsem-builder build my-corp-image/
+cargo run -p capsem-admin -- profile check config/profiles/code/profile.toml --config-root config
+cargo run -p capsem-admin -- image build --profile config/profiles/code/profile.toml --config-root config --arch arm64
+cargo run -p capsem-admin -- manifest generate assets --version 1.3.corp.1 --json
 ```
 
 ## Directory Structure
 
 ```
-my-corp-image/
-    config/
-        build.toml              Architectures, compression, base images
-        ai/
-            anthropic.toml      Provider: API key, domains, CLI install, config files
-            google.toml
-            openai.toml
-        packages/
-            apt.toml            System packages
-            python.toml         Python packages + PyPI registry
-        mcp/
-            capsem.toml         MCP server definitions
-        security/
-            web.toml            Domain allow/block policy
-        vm/
-            resources.toml      CPU, RAM, disk, session limits
-            environment.toml    Shell, bashrc, TLS config
-        kernel/
-            defconfig.arm64     Kernel config per architecture
-            defconfig.x86_64
-    artifacts/
-        capsem-init             PID 1 init script
-        capsem-bashrc           Shell configuration
-        banner.txt              Login banner
-        diagnostics/            In-VM test suite
+config/
+    settings/
+        settings.toml             UI/application preferences only
+        schema.generated.json     Settings shape for UI and validation
+        ui-metadata.toml          UI rendering metadata
+    corp/
+        corp.toml                 Corp locks and reporting endpoints
+        enforcement.toml          Corp enforcement rules
+        detection.yaml            Corp Sigma detection rules
+    profiles/
+        corp-code/
+            profile.toml              Profile ledger
+            apt-packages.txt          System packages
+            python-requirements.txt   Python packages
+            npm-packages.txt          Node CLI packages
+            build.sh                  Profile image build hook
+            mcp.json                  Profile MCP config
+            enforcement.toml          Enforcement rules
+            detection.yaml            Sigma detection rules
+            tips.txt                  Login tips
+            root/                     Guest root seed
+            root.manifest.json        Guest root seed integrity manifest
+    docker/
+        Dockerfile.rootfs.j2
+        Dockerfile.kernel.j2
+target/config/                        Generated runtime config
 ```
 
 ## Configuration Reference
 
-### AI Providers
+### Guest Tools
 
-Each file in `config/ai/` defines one provider. The filename is the provider identifier.
-
-```toml
-# config/ai/anthropic.toml
-[anthropic]
-name = "Anthropic"
-description = "Claude Code AI agent"
-enabled = true
-
-[anthropic.api_key]
-name = "Anthropic API Key"
-env_vars = ["ANTHROPIC_API_KEY"]
-prefix = "sk-ant-"
-docs_url = "https://console.anthropic.com/settings/keys"
-
-[anthropic.network]
-domains = ["*.anthropic.com", "*.claude.com"]
-allow_get = true
-allow_post = true
-
-[anthropic.install]
-manager = "curl"
-packages = ["https://claude.ai/install.sh"]
-
-[anthropic.files.settings_json]
-path = "/root/.claude/settings.json"
-content = '{"permissions":{"defaultMode":"bypassPermissions"}}'
-```
-
-Add a custom provider:
-
-```bash
-capsem-builder add ai-provider my-llm
-```
+Images may install guest tools, but provider access, credentials, rules, and
+tool configuration are not image-owned. Provider/network control is profile/corp
+rule truth. Credentials are captured and materialized by the credential broker
+plugin at runtime, and logged only as BLAKE3 references.
 
 ### Package Sets
 
-Each file in `config/packages/` defines packages for one manager.
+Each profile-owned package file defines desired packages for one manager.
 
-```toml
-# config/packages/apt.toml
-[apt]
-name = "System Packages"
-manager = "apt"
-packages = [
-    "coreutils", "util-linux", "git", "curl",
-    "python3", "python3-pip", "python3-venv",
-]
+```text
+# config/profiles/corp-code/apt-packages.txt
+coreutils
+util-linux
+git
+curl
+python3
+python3-pip
+python3-venv
 ```
 
-```toml
-# config/packages/python.toml
-[python]
-name = "Python Packages"
-manager = "uv"
-install_cmd = "uv pip install --system --break-system-packages"
-packages = ["numpy", "pandas", "requests", "pytest"]
-
-[python.network]
-name = "PyPI"
-domains = ["pypi.org", "files.pythonhosted.org"]
-allow_get = true
+```text
+# config/profiles/corp-code/python-requirements.txt
+numpy
+pandas
+requests
+pytest
 ```
 
 ### MCP Servers
 
-```toml
-# config/mcp/capsem.toml
-[capsem]
-name = "Capsem"
-description = "Built-in file and snapshot tools"
-transport = "stdio"
-command = "/run/capsem-mcp-server"
-builtin = true
-enabled = true
+```json
+{
+  "servers": [
+    {
+      "id": "capsem",
+      "name": "Capsem",
+      "transport": "stdio",
+      "command": "/run/capsem-mcp-server",
+      "enabled": true
+    }
+  ]
+}
 ```
 
-### Security Policy
-
-`config/security/web.toml` controls network access inside the VM.
+### Network Mechanics And Security Rules
 
 ```toml
-[web]
-allow_read = false      # GET/HEAD for unknown domains
-allow_write = false     # POST/PUT for unknown domains
-custom_allow = []       # additional allowed domain patterns
-custom_block = []       # blocked patterns (override allow)
+[profiles.rules.allow_internal_registry]
+name = "allow_internal_registry"
+action = "allow"
+match = 'http.host.matches("(^|.*\\.)registry\\.internal\\.corp$")'
 
-[web.search.google]
-name = "Google"
-enabled = true
-domains = ["www.google.com", "google.com"]
-allow_get = true
-
-[web.registry.npm]
-name = "npm"
-enabled = true
-domains = ["registry.npmjs.org", "*.npmjs.org"]
-allow_get = true
-
-[web.repository.github]
-name = "GitHub"
-enabled = true
-domains = ["github.com", "*.github.com", "*.githubusercontent.com"]
-allow_get = true
-allow_post = true
+[profiles.rules.block_external_search]
+name = "block_external_search"
+action = "block"
+match = 'http.host.matches("(^|.*\\.)(google\\.com|bing\\.com|duckduckgo\\.com)$")'
 ```
 
 ### Build Configuration
 
-`config/build.toml` defines per-architecture build parameters. Each architecture is self-contained.
-
-```toml
-[build]
-compression = "zstd"
-compression_level = 15
-
-[build.architectures.arm64]
-base_image = "debian:bookworm-slim"
-docker_platform = "linux/arm64"
-rust_target = "aarch64-unknown-linux-musl"
-kernel_branch = "6.6"
-kernel_image = "arch/arm64/boot/Image"
-defconfig = "kernel/defconfig.arm64"
-node_major = 24
-
-[build.architectures.x86_64]
-base_image = "debian:bookworm-slim"
-docker_platform = "linux/amd64"
-rust_target = "x86_64-unknown-linux-musl"
-kernel_branch = "6.6"
-kernel_image = "arch/x86_64/boot/bzImage"
-defconfig = "kernel/defconfig.x86_64"
-node_major = 24
-```
-
-### VM Resources
-
-```toml
-# config/vm/resources.toml
-[resources]
-cpu_count = 4
-ram_gb = 4
-scratch_disk_size_gb = 16
-retention_days = 30
-max_sessions = 100
-```
-
-### VM Environment
-
-```toml
-# config/vm/environment.toml
-[environment.shell]
-term = "xterm-256color"
-home = "/root"
-path = "/opt/ai-clis/bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-
-[environment.shell.bashrc]
-path = "/root/.bashrc"
-content = '''
-PS1='\[\033[1;32m\]capsem\[\033[0m\]:\[\033[1;34m\]\w\[\033[0m\]\$ '
-alias pip='uv pip'
-alias claude='claude --dangerously-skip-permissions'
-alias gemini='gemini --yolo'
-'''
-
-[environment.tls]
-ca_bundle = "/etc/ssl/certs/ca-certificates.crt"
-```
-
-The `PATH` is set by the host at boot via the settings registry -- do not set PATH in the bashrc (it creates duplicates and hides bugs). The aliases enable auto-approve modes for AI CLIs since the VM is already sandboxed.
+Backend build parameters are implementation inputs to the profile-derived build
+rail and Docker templates. Do not put rootfs compression levels, Docker
+platforms, kernel image paths, or defconfig paths in source profiles. The
+release rail owns those image mechanics; profiles own which packages, root
+seed files, rules, MCP declarations, and plugins are part of the image.
 
 ## CLI Reference
 
 | Command | What it does |
 |---------|-------------|
-| `capsem-builder build [DIR]` | Build all architectures |
-| `capsem-builder build --arch arm64` | Single architecture |
-| `capsem-builder build --dry-run` | Preview without building |
-| `capsem-builder validate [DIR]` | Lint configs with diagnostics |
-| `capsem-builder inspect [DIR]` | Render build manifest |
-| `capsem-builder audit` | Vulnerability scan |
-| `capsem-builder init NAME/` | Scaffold new image |
-| `capsem-builder add ai-provider NAME` | Add provider template |
-| `capsem-builder add packages NAME` | Add package set template |
-| `capsem-builder add mcp NAME` | Add MCP server template |
-| `capsem-builder doctor` | Check build prerequisites |
+| `capsem-admin profile check` | Validate profile ledger, referenced files, rules, MCP, and root seed |
+| `capsem-admin image build` | Build profile-derived kernel/rootfs assets |
+| `capsem-admin manifest generate` | Generate manifest and B3SUMS for assets |
+| `capsem-admin profile materialize` | Generate runtime `target/config` from profile and manifest |
 
 ## Manifest
 
@@ -245,6 +135,7 @@ Every build produces `assets/manifest.json` (format 2) -- a single top-level fil
 ```json
 {
   "format": 2,
+  "refresh_policy": "24h",
   "assets": {
     "current": "2026.0421.30",
     "releases": {
@@ -256,7 +147,7 @@ Every build produces `assets/manifest.json` (format 2) -- a single top-level fil
           "arm64": {
             "vmlinuz":         {"hash": "<64-char blake3>", "size": 7797248},
             "initrd.img":      {"hash": "<64-char blake3>", "size": 2314963},
-            "rootfs.squashfs": {"hash": "<64-char blake3>", "size": 454230016}
+            "rootfs.erofs": {"hash": "<64-char blake3>", "size": 454230016}
           }
         }
       }
@@ -275,78 +166,123 @@ Every build produces `assets/manifest.json` (format 2) -- a single top-level fil
 }
 ```
 
-The runtime boots only when the asset hashes match. `min_binary`/`min_assets` gate which binary and asset versions are compatible with each other.
+The runtime boots only when the asset hashes match. `min_binary`/`min_assets`
+gate which binary and asset versions are compatible with each other.
+
+Source profiles do not hand-author asset hashes. `capsem-admin profile
+materialize` combines source profile/corp/settings config with the generated
+asset manifest into `target/config` for local builds, CI, packages, and
+installed runtime config.
+
+The source profile is the ledger, not a generated evidence file. Do not add
+asset hashes, sibling-file hashes, package hashes, or build-output hashes to
+checked-in `profile.toml`. Evidence belongs in root seed manifests, asset
+manifests, OBOMs, build ledgers, and generated `target/config`.
 
 ## Corporate Deployment
 
+### Admin Provisioning Trust Chain
+
+Corporate provisioning is profile/corp driven. Do not put signing keys,
+catalog channels, build knobs, or release-process metadata inside `corp.toml`
+or `profile.toml`; those payloads should only describe runtime behavior.
+
+The release and runtime evidence chain is:
+
+| Layer | Owns |
+|-------|------|
+| Release artifacts | SBOM and provenance attestations |
+| Corp config | Corp locks, endpoints, enforcement files, detection files, and `refresh_policy` |
+| Profile config | VM defaults, rule files, MCP/profile metadata, asset selection, and `refresh_policy` |
+| Profile assets | Kernel, initrd, and rootfs bytes verified by BLAKE3 |
+
+At runtime Capsem verifies BLAKE3 hashes and refresh policy before marking a
+profile launchable. A missing, stale, or mismatched profile/asset contract must
+fail closed.
+
+Example materialized profile payload:
+
+```toml
+id = "code"
+name = "Code"
+revision = "2026.06.08.7"
+refresh_policy = "24h"
+
+[assets]
+format = "profile-assets.v1"
+refresh_policy = "on_profile_refresh"
+
+[assets.arch.arm64.rootfs]
+name = "rootfs.erofs"
+url = "https://releases.capsem.dev/assets/arm64/rootfs.erofs"
+hash = "blake3:..."
+size = 12345678
+```
+
+Example corp payload:
+
+```toml
+refresh_policy = "24h"
+
+[corp_rule_files]
+enforcement = "corp/enforcement.toml"
+sigma = "corp/detection.yaml"
+sigma_output_endpoint = "https://siem.example.invalid/capsem/sigma"
+open_telemetry = "https://otel.example.invalid/v1/traces"
+remote_enforcement = "https://security.example.invalid/capsem/enforcement"
+```
+
 ### Workflow
 
-1. `capsem-builder init corp-image/` -- scaffold from defaults
-2. Remove unwanted providers: delete `config/ai/openai.toml`
-3. Add internal providers: `capsem-builder add ai-provider internal-llm`
-4. Edit security policy: lock down domains in `config/security/web.toml`
-5. Add corporate packages: edit `config/packages/python.toml`
-6. Validate: `capsem-builder validate corp-image/`
-7. Build: `capsem-builder build corp-image/`
-8. Distribute: ship the `assets/` directory
+1. Copy `config/profiles/code/` to a new profile id.
+2. Edit the new `profile.toml` name, description, icon, and file references.
+3. Edit profile/corp security rules to allow, ask, or block network/model/MCP
+   boundaries.
+4. Add internal guest tools only if they must be baked into the image, using
+   profile package files or `build.sh`.
+5. Keep credentials brokered at runtime; do not add them to image config.
+6. Validate with `capsem-admin profile check`.
+7. Build with `capsem-admin image build`.
+8. Generate the manifest with `capsem-admin manifest generate`.
+9. Materialize runtime config with `capsem-admin profile materialize`.
+10. Distribute the package plus selected manifest and profile assets.
 
 ### Lockdown Example
 
-Remove all AI providers except Anthropic, block external search, allow only internal registries:
+Block external search and allow only internal registries:
 
-```bash
-capsem-builder init corp-image/
-rm corp-image/config/ai/google.toml
-rm corp-image/config/ai/openai.toml
-```
-
-Edit `corp-image/config/security/web.toml`:
+Edit the profile or corp enforcement rule file:
 
 ```toml
-[web]
-allow_read = false
-allow_write = false
-custom_allow = ["*.internal.corp.com"]
-custom_block = []
+[profiles.rules.allow_internal_registry]
+name = "allow_internal_registry"
+action = "allow"
+match = 'http.host.matches("(^|.*\\.)internal\\.corp\\.com$")'
 
-[web.search.google]
-name = "Google"
-enabled = false
-
-[web.registry.npm]
-name = "Internal npm"
-enabled = true
-domains = ["npm.internal.corp.com"]
-allow_get = true
+[profiles.rules.block_external_search]
+name = "block_external_search"
+action = "block"
+match = 'http.host.matches("(^|.*\\.)(google\\.com|bing\\.com|duckduckgo\\.com)$")'
 ```
 
-## Install Methods
+## Install Inputs
 
-AI providers support two install methods via the `[provider.install]` section:
+Use profile-owned package files for normal package managers:
 
-### npm (default for most CLIs)
+- `apt-packages.txt` for apt packages
+- `python-requirements.txt` for Python packages
+- `npm-packages.txt` for Node CLI packages
+- `build.sh` for build-time installers that cannot be expressed as a package list
 
-```toml
-[provider.install]
-manager = "npm"
-prefix = "/opt/ai-clis"
-packages = ["@google/gemini-cli"]
-```
+The build ledger records these declared inputs for debugging. The CI/release
+asset rail publishes the CycloneDX OBOM, which records the installed base-image
+component names and versions after the rootfs is produced.
 
-All npm packages across providers are batched into a single `npm install -g --prefix /opt/ai-clis` command. The prefix directory is writable at runtime via the overlayfs upper layer, allowing CLIs to self-update.
-
-### curl (native binary installers)
-
-```toml
-[provider.install]
-manager = "curl"
-packages = ["https://claude.ai/install.sh"]
-```
-
-Each URL gets its own `RUN curl -fsSL <url> | bash` step. Binaries are automatically copied from `~/.local/bin/` to `/usr/local/bin/` (chmod 555) because `/root` is a tmpfs at runtime.
-
-:::caution[/root is ephemeral]
-Anything installed under `/root/` during the Docker build is hidden at runtime by the tmpfs overlay. If your installer puts binaries in `~/.local/bin/` or `~/.claude/bin/`, the template automatically copies them to `/usr/local/bin/`. If you add a custom curl-based installer, verify where it puts its binaries and ensure they're copied to a system path.
+:::caution[/root is runtime overlay state]
+Anything installed under `/root/` during the Docker build can be hidden at
+runtime by the tmpfs overlay. If a manual installer puts binaries in
+`~/.local/bin/` or a tool-specific home directory, copy them to a stable system
+path from `build.sh` and verify with `capsem-doctor`.
 :::
 
 ## Troubleshooting
@@ -355,8 +291,8 @@ Anything installed under `/root/` during the Docker build is hidden at runtime b
 |-----------|-------|-----|
 | `error[E001] missing required field` | TOML config missing a schema field | Check file:line in error, compare against examples above |
 | `error[E304] defconfig missing` | Kernel config for declared arch doesn't exist | Add `config/kernel/defconfig.{arch}` |
-| `warn[W001] no npm registry` | npm packages declared but no registry in web.toml | Add npm registry entry to security policy |
-| `warn[W005] API key in config` | Hardcoded key in TOML | Use `~/.capsem/user.toml` for personal keys |
+| `warn[W001] no npm registry` | npm packages declared but no registry config | Add a registry entry to the profile build config |
+| `warn[W005] API key in config` | Hardcoded key in TOML | Remove it; credentials must be brokered at runtime |
 | Build fails: "container runtime not found" | No Docker | Install Docker (`brew install colima docker` on macOS, `sudo apt install docker.io` on Linux) |
 | Build fails: exit 137 (OOM) or exit 143 (SIGTERM mid-build) | Container runtime VM out of memory -- Tauri install-test cold build needs >12GB | Bump Colima to 16GB: `colima stop && colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8` |
 | Build fails: "Release file not valid yet" | Container VM clock drift | Builder handles this automatically via `Acquire::Check-Valid-Until=false` |

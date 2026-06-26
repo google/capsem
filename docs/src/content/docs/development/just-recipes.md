@@ -11,8 +11,8 @@ sidebar:
 
 | Recipe | What it does | Time |
 |--------|-------------|------|
-| `just shell` | Build/sign as needed, boot a temporary VM, and attach a shell | ~10s after first build |
-| `just exec "CMD"` | Run a command in a fresh temporary VM, then destroy it | ~10s after first build |
+| `just shell` | Build/sign as needed, boot a VM, and attach a shell | ~10s after first build |
+| `just exec "CMD"` | Run a command in a fresh disposable VM, then destroy it | ~10s after first build |
 | `just run-service` | Start or reuse the daemon service | continuous |
 | `just ui` | Tauri desktop app with hot reload and the service path | continuous |
 | `just dev-frontend` | Frontend-only dev server with mock data on port 5173 | continuous |
@@ -67,8 +67,9 @@ LIMIT 20;"
 just query-session "
 SELECT m.event_id, m.server_name, m.method, m.tool_name, m.decision,
        s.rule_id, s.rule_action, s.detection_level
-FROM mcp_calls m
-JOIN security_rule_events s ON s.event_id = m.event_id
+FROM tool_calls m
+LEFT JOIN security_rule_events s ON s.event_id = m.event_id
+WHERE m.origin = 'mcp'
 ORDER BY m.id DESC
 LIMIT 20;"
 ```
@@ -87,14 +88,25 @@ LIMIT 20;"
 
 | Recipe | What it does | Time |
 |--------|-------------|------|
-| `just build-assets` | Full rebuild: kernel + rootfs via capsem-builder (needs Docker) | ~10 min |
-| `just build-kernel <arch>` | Kernel only | ~5 min |
-| `just build-rootfs <arch>` | Rootfs only | ~8 min |
+| `just build-assets code [arch]` | Full profile-derived rebuild: kernel + rootfs via `capsem-admin` (needs Docker) | ~10 min |
+| `just build-kernel <arch> code` | Kernel only through the profile-derived profile-derived build rail | ~5 min |
+| `just build-rootfs <arch> code` | Rootfs only through the profile-derived profile-derived build rail | ~8 min |
 | `just cross-compile [arch]` | Full Linux build in container: agent binaries + deb + AppImage | ~15 min |
 
-You only need `just build-assets` on first setup or when `guest/config/`
-changes rootfs packages or image build inputs. Day-to-day, `just shell` and
-`just exec` repack the initrd without rebuilding rootfs images.
+You only need `just build-assets code` on first setup or when profile-owned
+package/root/install inputs or backend image templates change rootfs contents.
+Day-to-day, `just shell` and `just exec` repack the initrd without rebuilding
+rootfs images.
+
+Runtime recipes run the shared generated-config path:
+
+```text
+_check-assets -> _pack-initrd -> _materialize-config -> _ensure-service
+```
+
+`_materialize-config` invokes `capsem-admin profile materialize`, which writes
+the current-build runtime profile under `target/config/` from checked-in
+`config/` source files and `assets/manifest.json`.
 
 ## Session inspection
 
@@ -142,7 +154,7 @@ ui               -> _ensure-setup + _pnpm-install + run-service
 build-ui         -> _pnpm-install + frontend build + cargo build -p capsem-app
 smoke            -> _install-tools + _pnpm-install + _check-assets + _pack-initrd + _ensure-service
 test             -> _install-tools + _clean-stale + _pnpm-install + _generate-settings + _check-assets + _pack-initrd
-build-assets     -> _install-tools + _clean-stale + doctor + capsem-builder kernel/rootfs
+build-assets     -> _install-tools + _clean-stale + doctor + capsem-admin image build
 test-install     -> _build-host
 cut-release      -> test + _stamp-version
 ```
@@ -156,5 +168,5 @@ cut-release      -> test + _stamp-version
 | `_pack-initrd` | Cross-compiles guest agent + repacks initrd with latest binaries |
 | `_sign` | Codesigns the binary with virtualization entitlement |
 | `_check-assets` | Verifies VM assets exist, tells you to run `build-assets` if not |
-| `_generate-settings` | Exports MCP tool defs + generates schema/defaults/mock data |
+| `_generate-settings` | Generates settings schema, UI metadata, and frontend mock data |
 | `_ensure-service` | Builds/signs host binaries and starts or reuses the service |

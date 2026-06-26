@@ -1,0 +1,643 @@
+# ============================================================================
+# Capsem Settings Registry
+# ============================================================================
+#
+# Single source of truth for all built-in settings. Embedded at compile time
+# via include_str!(). See docs/config.md for the format reference.
+#
+# Three node types, distinguished by presence of `type`:
+#   - Category/group: has `name` but no `type` -- grouping with metadata
+#   - Setting leaf:   has `name` and `type`    -- actual setting
+#   - Meta:           sub-table under a leaf   -- extra metadata (env_vars, etc.)
+
+# -- App ---------------------------------------------------------------------
+
+[settings.app]
+name = "App"
+description = "Application settings"
+collapsed = false
+
+[settings.app.auto_update]
+name = "Auto-check for updates"
+description = "Check for new Capsem versions on launch"
+type = "bool"
+default = true
+
+[settings.app.check_update]
+name = "Check for updates"
+description = "Manually check if a new version is available"
+action = "check_update"
+
+# -- Repositories --------------------------------------------------------------
+
+[settings.repository]
+name = "Repositories"
+description = "Code hosting and git configuration"
+collapsed = false
+
+# -- Git Identity --------------------------------------------------------------
+
+[settings.repository.git]
+# No name -- avoids an empty heading; Identity renders directly under Repositories.
+
+[settings.repository.git.identity]
+name = "Git Identity"
+description = "Author name and email for commits inside the VM"
+
+[settings.repository.git.identity.author_name]
+name = "Author name"
+description = "Name used for git commits. Injected as GIT_AUTHOR_NAME and GIT_COMMITTER_NAME."
+type = "text"
+default = ""
+
+[settings.repository.git.identity.author_name.meta]
+env_vars = ["GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"]
+
+[settings.repository.git.identity.author_email]
+name = "Author email"
+description = "Email used for git commits. Injected as GIT_AUTHOR_EMAIL and GIT_COMMITTER_EMAIL."
+type = "text"
+default = ""
+
+[settings.repository.git.identity.author_email.meta]
+env_vars = ["GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"]
+
+# -- Repository Providers ------------------------------------------------------
+
+[settings.repository.providers]
+name = "Providers"
+description = "Code hosting platforms"
+
+# -- GitHub --------------------------------------------------------------------
+
+[settings.repository.providers.github]
+name = "GitHub"
+description = "GitHub and GitHub-hosted content"
+enabled_by = "repository.providers.github.allow"
+
+[settings.repository.providers.github.allow]
+name = "Allow GitHub"
+description = "Enable access to GitHub and GitHub-hosted content."
+type = "bool"
+default = true
+
+[settings.repository.providers.github.allow.meta]
+domains = ["github.com", "*.github.com", "*.githubusercontent.com"]
+
+[settings.repository.providers.github.allow.meta.rules.default]
+get = true
+post = true
+
+[settings.repository.providers.github.domains]
+name = "GitHub Domains"
+description = "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains."
+type = "text"
+default = "github.com, *.github.com, *.githubusercontent.com"
+
+[settings.repository.providers.github.domains.meta]
+format = "domain_list"
+
+[settings.repository.providers.github.token]
+name = "GitHub Token"
+description = "Brokered credential reference for GitHub HTTPS access."
+type = "apikey"
+default = ""
+
+[settings.repository.providers.github.token.meta]
+docs_url = "https://github.com/settings/tokens"
+prefix = "ghp_"
+
+# -- GitLab --------------------------------------------------------------------
+
+[settings.repository.providers.gitlab]
+name = "GitLab"
+description = "GitLab and GitLab-hosted content"
+enabled_by = "repository.providers.gitlab.allow"
+
+[settings.repository.providers.gitlab.allow]
+name = "Allow GitLab"
+description = "Enable access to GitLab and GitLab-hosted content."
+type = "bool"
+default = false
+
+[settings.repository.providers.gitlab.allow.meta]
+domains = ["gitlab.com", "*.gitlab.com"]
+
+[settings.repository.providers.gitlab.allow.meta.rules.default]
+get = true
+post = true
+
+[settings.repository.providers.gitlab.domains]
+name = "GitLab Domains"
+description = "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains."
+type = "text"
+default = "gitlab.com, *.gitlab.com"
+
+[settings.repository.providers.gitlab.domains.meta]
+format = "domain_list"
+
+[settings.repository.providers.gitlab.token]
+name = "GitLab Token"
+description = "Brokered credential reference for GitLab HTTPS access."
+type = "apikey"
+default = ""
+
+[settings.repository.providers.gitlab.token.meta]
+docs_url = "https://gitlab.com/-/user_settings/personal_access_tokens"
+prefix = "glpat-"
+
+# -- Security ----------------------------------------------------------------
+
+[settings.security]
+name = "Security"
+description = "Network mechanics and service access controls"
+collapsed = false
+
+# -- Security > Services -----------------------------------------------------
+
+[settings.security.services]
+name = "Services"
+description = "Search engines and package registries"
+
+# -- Security > Services > Search Engines ------------------------------------
+
+[settings.security.services.search]
+name = "Search Engines"
+description = "Web search engine access"
+
+[settings.security.services.search.google]
+name = "Google"
+description = "Google web search"
+enabled_by = "security.services.search.google.allow"
+
+[settings.security.services.search.google.allow]
+name = "Allow Google"
+description = "Enable access to Google web search."
+type = "bool"
+default = true
+
+[settings.security.services.search.google.allow.meta]
+domains = ["www.google.com", "google.com"]
+
+[settings.security.services.search.google.allow.meta.rules.default]
+get = true
+
+[settings.security.services.search.google.domains]
+name = "Google Domains"
+description = "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains."
+type = "text"
+default = "www.google.com, google.com"
+
+[settings.security.services.search.google.domains.meta]
+format = "domain_list"
+
+[settings.security.services.search.bing]
+name = "Bing"
+description = "Microsoft Bing web search"
+enabled_by = "security.services.search.bing.allow"
+
+[settings.security.services.search.bing.allow]
+name = "Allow Bing"
+description = "Enable access to Bing web search."
+type = "bool"
+default = false
+
+[settings.security.services.search.bing.allow.meta]
+domains = ["www.bing.com", "bing.com"]
+
+[settings.security.services.search.bing.allow.meta.rules.default]
+get = true
+
+[settings.security.services.search.bing.domains]
+name = "Bing Domains"
+description = "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains."
+type = "text"
+default = "www.bing.com, bing.com"
+
+[settings.security.services.search.bing.domains.meta]
+format = "domain_list"
+
+[settings.security.services.search.duckduckgo]
+name = "DuckDuckGo"
+description = "DuckDuckGo web search"
+enabled_by = "security.services.search.duckduckgo.allow"
+
+[settings.security.services.search.duckduckgo.allow]
+name = "Allow DuckDuckGo"
+description = "Enable access to DuckDuckGo web search."
+type = "bool"
+default = false
+
+[settings.security.services.search.duckduckgo.allow.meta]
+domains = ["duckduckgo.com", "*.duckduckgo.com"]
+
+[settings.security.services.search.duckduckgo.allow.meta.rules.default]
+get = true
+
+[settings.security.services.search.duckduckgo.domains]
+name = "DuckDuckGo Domains"
+description = "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains."
+type = "text"
+default = "duckduckgo.com, *.duckduckgo.com"
+
+[settings.security.services.search.duckduckgo.domains.meta]
+format = "domain_list"
+
+# -- Security > Services > Package Registries --------------------------------
+
+[settings.security.services.registry]
+name = "Package Registries"
+description = "Package manager registries"
+
+[settings.security.services.registry.debian]
+name = "Debian"
+description = "Debian package repositories"
+enabled_by = "security.services.registry.debian.allow"
+
+[settings.security.services.registry.debian.allow]
+name = "Allow Debian"
+description = "Enable access to deb.debian.org and security.debian.org for apt package installs."
+type = "bool"
+default = true
+
+[settings.security.services.registry.debian.allow.meta]
+domains = ["deb.debian.org", "security.debian.org"]
+
+[settings.security.services.registry.debian.allow.meta.rules.default]
+get = true
+
+[settings.security.services.registry.debian.domains]
+name = "Debian Domains"
+description = "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains."
+type = "text"
+default = "deb.debian.org, security.debian.org"
+
+[settings.security.services.registry.debian.domains.meta]
+format = "domain_list"
+
+[settings.security.services.registry.npm]
+name = "npm"
+description = "npm package registry"
+enabled_by = "security.services.registry.npm.allow"
+
+[settings.security.services.registry.npm.allow]
+name = "Allow npm"
+description = "Enable access to the npm package registry."
+type = "bool"
+default = true
+
+[settings.security.services.registry.npm.allow.meta]
+domains = ["registry.npmjs.org", "*.npmjs.org"]
+
+[settings.security.services.registry.npm.allow.meta.rules.default]
+get = true
+
+[settings.security.services.registry.npm.domains]
+name = "npm Domains"
+description = "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains."
+type = "text"
+default = "registry.npmjs.org, *.npmjs.org"
+
+[settings.security.services.registry.npm.domains.meta]
+format = "domain_list"
+
+[settings.security.services.registry.pypi]
+name = "PyPI"
+description = "Python Package Index"
+enabled_by = "security.services.registry.pypi.allow"
+
+[settings.security.services.registry.pypi.allow]
+name = "Allow PyPI"
+description = "Enable access to the Python Package Index."
+type = "bool"
+default = true
+
+[settings.security.services.registry.pypi.allow.meta]
+domains = ["pypi.org", "files.pythonhosted.org"]
+
+[settings.security.services.registry.pypi.allow.meta.rules.default]
+get = true
+
+[settings.security.services.registry.pypi.domains]
+name = "PyPI Domains"
+description = "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains."
+type = "text"
+default = "pypi.org, files.pythonhosted.org"
+
+[settings.security.services.registry.pypi.domains.meta]
+format = "domain_list"
+
+[settings.security.services.registry.crates]
+name = "crates.io"
+description = "Rust crate registry"
+enabled_by = "security.services.registry.crates.allow"
+
+[settings.security.services.registry.crates.allow]
+name = "Allow crates.io"
+description = "Enable access to the Rust crate registry."
+type = "bool"
+default = true
+
+[settings.security.services.registry.crates.allow.meta]
+domains = ["crates.io", "static.crates.io"]
+
+[settings.security.services.registry.crates.allow.meta.rules.default]
+get = true
+
+[settings.security.services.registry.crates.domains]
+name = "crates.io Domains"
+description = "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains."
+type = "text"
+default = "crates.io, static.crates.io"
+
+[settings.security.services.registry.crates.domains.meta]
+format = "domain_list"
+
+# -- VM ----------------------------------------------------------------------
+
+[settings.vm]
+name = "VM"
+description = "Virtual machine configuration"
+collapsed = false
+
+# -- VM > Snapshots ----------------------------------------------------------
+
+[settings.vm.snapshots]
+name = "Snapshots"
+description = "Automatic and manual workspace snapshot settings"
+
+[settings.vm.snapshots.auto_max]
+name = "Auto snapshot limit"
+description = "Maximum number of automatic rolling snapshots."
+type = "number"
+default = 10
+
+[settings.vm.snapshots.auto_max.meta]
+min = 1
+max = 50
+
+[settings.vm.snapshots.manual_max]
+name = "Manual snapshot limit"
+description = "Maximum number of named manual snapshots."
+type = "number"
+default = 12
+
+[settings.vm.snapshots.manual_max.meta]
+min = 1
+max = 50
+
+[settings.vm.snapshots.auto_interval]
+name = "Auto snapshot interval"
+description = "Seconds between automatic snapshots."
+type = "number"
+default = 300
+
+[settings.vm.snapshots.auto_interval.meta]
+min = 30
+max = 3600
+
+# -- VM > Environment --------------------------------------------------------
+
+[settings.vm.environment]
+name = "Environment"
+description = "Shell and environment variables"
+
+[settings.vm.environment.shell]
+name = "Shell"
+description = "Guest shell settings"
+
+[settings.vm.environment.shell.term]
+name = "TERM"
+description = "Terminal type for the guest shell."
+type = "text"
+default = "xterm-256color"
+
+[settings.vm.environment.shell.term.meta]
+env_vars = ["TERM"]
+
+[settings.vm.environment.shell.home]
+name = "HOME"
+description = "Home directory for the guest shell."
+type = "text"
+default = "/root"
+
+[settings.vm.environment.shell.home.meta]
+env_vars = ["HOME"]
+
+[settings.vm.environment.shell.path]
+name = "PATH"
+description = "Executable search path for the guest shell."
+type = "text"
+default = "/opt/ai-clis/bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+[settings.vm.environment.shell.path.meta]
+env_vars = ["PATH"]
+
+[settings.vm.environment.shell.lang]
+name = "LANG"
+description = "Locale for the guest shell."
+type = "text"
+default = "C"
+
+[settings.vm.environment.shell.lang.meta]
+env_vars = ["LANG"]
+
+[settings.vm.environment.shell.bashrc]
+name = "Bash configuration"
+description = "User shell config sourced at login. Customize prompt, aliases, and functions."
+type = "file"
+
+[settings.vm.environment.shell.bashrc.default]
+path = "/root/.bashrc"
+content = '''
+# Prompt: green bold hostname with blue directory
+PS1='\[\033[1;32m\]\h\[\033[0m\]:\[\033[1;34m\]\w\[\033[0m\]\$ '
+
+# Aliases
+alias pip='uv pip'
+alias pip3='uv pip'
+alias python='uv run python'
+alias python3='uv run python3'
+alias gemini='gemini --yolo'
+alias ls='ls --color=auto'
+alias ll='ls -la --color=auto'
+alias grep='grep --color=auto'
+'''
+
+[settings.vm.environment.shell.bashrc.meta]
+filetype = "bash"
+
+[settings.vm.environment.shell.tmux_conf]
+name = "tmux configuration"
+description = "tmux terminal multiplexer config. Customize appearance, keybindings, and behavior."
+type = "file"
+
+[settings.vm.environment.shell.tmux_conf.default]
+path = "/root/.tmux.conf"
+content = '''
+set -g default-terminal "tmux-256color"
+set -ag terminal-features ",xterm-256color:RGB"
+set -g mouse on
+set -g escape-time 0
+set -g history-limit 50000
+set -g status-style "bg=default,fg=colour8"
+set -g status-left ""
+set -g status-right ""
+set -g pane-border-style "fg=colour8"
+set -g pane-active-border-style "fg=colour4"
+set -g message-style "bg=default,fg=colour4"
+'''
+
+[settings.vm.environment.shell.tmux_conf.meta]
+filetype = "conf"
+
+[settings.vm.environment.ssh]
+name = "SSH"
+description = "SSH key configuration"
+
+[settings.vm.environment.ssh.public_key]
+name = "SSH public key"
+description = "Public key injected as /root/.ssh/authorized_keys in the guest VM."
+type = "text"
+default = ""
+
+[settings.vm.environment.tls]
+name = "TLS"
+description = "TLS certificate configuration"
+
+[settings.vm.environment.tls.ca_bundle]
+name = "CA bundle path"
+description = "Path to the CA certificate bundle in the guest. Injected as REQUESTS_CA_BUNDLE, NODE_EXTRA_CA_CERTS, and SSL_CERT_FILE."
+type = "text"
+default = "/etc/ssl/certs/ca-certificates.crt"
+
+[settings.vm.environment.tls.ca_bundle.meta]
+env_vars = ["REQUESTS_CA_BUNDLE", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE"]
+
+# -- VM > Resources ----------------------------------------------------------
+
+[settings.vm.resources]
+name = "Resources"
+description = "Hardware, telemetry, and session limits"
+
+[settings.vm.resources.cpu_count]
+name = "CPU cores"
+description = "Number of CPU cores allocated to the VM."
+type = "number"
+default = 4
+
+[settings.vm.resources.cpu_count.meta]
+min = 1
+max = 8
+
+[settings.vm.resources.max_concurrent_vms]
+name = "Max concurrent VMs"
+description = "Maximum number of sandbox VMs that can be running simultaneously."
+type = "number"
+default = 10
+
+[settings.vm.resources.max_concurrent_vms.meta]
+min = 1
+max = 20
+
+[settings.vm.resources.ram_gb]
+name = "RAM"
+description = "Amount of RAM allocated to the VM in GB."
+type = "number"
+default = 4
+
+[settings.vm.resources.ram_gb.meta]
+min = 1
+max = 16
+
+[settings.vm.resources.scratch_disk_size_gb]
+name = "Scratch disk size"
+description = "Size of the ephemeral scratch disk in GB."
+type = "number"
+default = 16
+
+[settings.vm.resources.scratch_disk_size_gb.meta]
+min = 1
+max = 128
+
+[settings.vm.resources.log_bodies]
+name = "Log request bodies"
+description = "Capture request/response bodies in telemetry."
+type = "bool"
+default = false
+
+[settings.vm.resources.max_body_capture]
+name = "Max body capture"
+description = "Maximum bytes of body to capture in telemetry."
+type = "number"
+default = 4096
+
+[settings.vm.resources.max_body_capture.meta]
+min = 0
+max = 1048576
+
+[settings.vm.resources.retention_days]
+name = "Session retention"
+description = "Number of days to retain session data."
+type = "number"
+default = 30
+
+[settings.vm.resources.retention_days.meta]
+min = 1
+max = 365
+
+[settings.vm.resources.max_sessions]
+name = "Maximum sessions"
+description = "Keep at most this many sessions (oldest culled first)."
+type = "number"
+default = 100
+
+[settings.vm.resources.max_sessions.meta]
+min = 1
+max = 10000
+
+[settings.vm.resources.max_disk_gb]
+name = "Maximum disk usage"
+description = "Maximum total disk usage for all sessions in GB."
+type = "number"
+default = 100
+
+[settings.vm.resources.max_disk_gb.meta]
+min = 1
+max = 1000
+
+[settings.vm.resources.terminated_retention_days]
+name = "Terminated session retention"
+description = "Days to keep terminated session records in the index. After this, the record is permanently deleted."
+type = "number"
+default = 365
+
+[settings.vm.resources.terminated_retention_days.meta]
+min = 30
+max = 3650
+
+# -- Appearance --------------------------------------------------------------
+
+[settings.appearance]
+name = "Appearance"
+description = "UI appearance and display settings"
+collapsed = false
+
+[settings.appearance.dark_mode]
+name = "Dark mode"
+description = "Use dark color scheme in the UI."
+type = "bool"
+default = true
+
+[settings.appearance.dark_mode.meta]
+side_effect = "toggle_theme"
+
+[settings.appearance.font_size]
+name = "Font size"
+description = "Terminal font size in pixels."
+type = "number"
+default = 14
+
+[settings.appearance.font_size.meta]
+min = 8
+max = 32

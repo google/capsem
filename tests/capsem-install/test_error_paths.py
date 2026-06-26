@@ -6,20 +6,16 @@ traces or silent failures) and that the system degrades gracefully.
 
 from __future__ import annotations
 
-import json
-import os
 import stat
-import subprocess
-from pathlib import Path
 
 import pytest
 
 from .conftest import (
     CAPSEM_DIR,
-    INSTALL_DIR,
     RUN_DIR,
     ASSETS_DIR,
     run_capsem,
+    temporarily_replace_installed_binary,
 )
 
 
@@ -28,29 +24,13 @@ class TestErrorPaths:
 
     def test_bad_service_binary(self, installed_layout, clean_state):
         """Broken capsem-service gives error, not hang."""
-        service_bin = INSTALL_DIR / "capsem-service"
-        original = service_bin.read_bytes()
-        try:
-            # unlink-then-write: writing over the mapped binary of a still-
-            # running service process raises ETXTBSY on Linux. Unlinking
-            # the path breaks the inode association; a subsequent write
-            # creates a fresh inode so any lingering exec handle on the
-            # old inode doesn't block us. The `finally` does the same
-            # restore so a flaky cleanup can't wedge the installed prefix.
-            service_bin.unlink()
-            service_bin.write_text("#!/bin/sh\nexit 1\n")
-            service_bin.chmod(stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP)
-
+        with temporarily_replace_installed_binary("capsem-service", b"#!/bin/sh\nexit 1\n"):
             result = run_capsem("list", timeout=15)
             assert result.returncode != 0
             combined = (result.stdout + result.stderr).lower()
             assert "error" in combined or "failed" in combined, (
                 f"expected error message: {result.stdout}{result.stderr}"
             )
-        finally:
-            service_bin.unlink(missing_ok=True)
-            service_bin.write_bytes(original)
-            service_bin.chmod(stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP)
 
     @pytest.mark.live_system
     def test_missing_assets_dir(self, installed_layout, clean_state):

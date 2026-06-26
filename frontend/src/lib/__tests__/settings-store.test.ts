@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { buildMockSettingsResponse, mockSettings, recomputeEnabled } from '../mock-settings';
 import type { SettingsResponse } from '../types/settings';
 
-// Mock the API module -- settings store calls getSettings/saveSettings/applyPreset.
+// Mock the API module -- settings store calls getSettings/saveSettings.
 let mockResponse: SettingsResponse;
 
 vi.mock('../api', () => ({
@@ -10,41 +10,12 @@ vi.mock('../api', () => ({
   saveSettings: vi.fn(async (changes: Record<string, unknown>) => {
     // Apply changes to mock data and return updated response.
     for (const [id, value] of Object.entries(changes)) {
-      if (id.startsWith('policy.')) {
-        const [, type, name] = id.split('.');
-        const policy = mockResponse.policy ?? {};
-        const bucket = (policy as Record<string, Record<string, unknown>>)[type] ?? {};
-        if (value === null) {
-          delete bucket[name];
-        } else {
-          bucket[name] = value;
-        }
-        (policy as Record<string, Record<string, unknown>>)[type] = bucket;
-        mockResponse.policy = policy as SettingsResponse['policy'];
-        continue;
-      }
       const setting = mockSettings.find(s => s.id === id);
       if (setting) {
         setting.effective_value = value as any;
       }
     }
     recomputeEnabled();
-    const policy = mockResponse.policy;
-    mockResponse = buildMockSettingsResponse();
-    mockResponse.policy = policy;
-    return mockResponse;
-  }),
-  applyPreset: vi.fn(async (id: string) => {
-    const preset = mockResponse.presets.find(p => p.id === id);
-    if (preset) {
-      for (const [settingId, value] of Object.entries(preset.settings)) {
-        const setting = mockSettings.find(s => s.id === settingId);
-        if (setting) {
-          setting.effective_value = value as any;
-        }
-      }
-      recomputeEnabled();
-    }
     mockResponse = buildMockSettingsResponse();
     return mockResponse;
   }),
@@ -66,7 +37,7 @@ describe('settingsStore', () => {
 
     it('sections includes expected groups', () => {
       expect(settingsStore.sections).toContain('App');
-      expect(settingsStore.sections).toContain('AI Providers');
+      expect(settingsStore.sections).toContain('Repositories');
       expect(settingsStore.sections).toContain('VM');
     });
 
@@ -74,12 +45,8 @@ describe('settingsStore', () => {
       expect(settingsStore.tree.length).toBeGreaterThan(0);
     });
 
-    it('issues are populated after load', () => {
-      expect(settingsStore.issues.length).toBeGreaterThan(0);
-    });
-
-    it('presets are populated after load', () => {
-      expect(settingsStore.model!.presets.length).toBeGreaterThan(0);
+    it('issues load from the response', () => {
+      expect(settingsStore.issues).toEqual([]);
     });
 
     it('loading flag is false after load completes', () => {
@@ -118,13 +85,13 @@ describe('settingsStore', () => {
     it('staging multiple keys tracks all', () => {
       settingsStore.stage('vm.resources.cpu_count', 8);
       settingsStore.stage('vm.resources.ram_gb', 16);
-      settingsStore.stage('security.web.allow_read', true);
+      settingsStore.stage('security.services.search.bing.allow', true);
       expect(settingsStore.model!.pendingChanges.size).toBe(3);
     });
 
     it('staging a boolean value works', () => {
-      settingsStore.stage('security.web.allow_read', true);
-      expect(settingsStore.model!.pendingChanges.get('security.web.allow_read')).toBe(true);
+      settingsStore.stage('security.services.search.bing.allow', true);
+      expect(settingsStore.model!.pendingChanges.get('security.services.search.bing.allow')).toBe(true);
     });
 
     it('staging a string value works', () => {
@@ -161,20 +128,6 @@ describe('settingsStore', () => {
       expect(settingsStore.isDirty).toBe(false);
       expect(settingsStore.findLeaf('vm.resources.cpu_count')!.effective_value).toBe(8);
       expect(settingsStore.findLeaf('vm.resources.ram_gb')!.effective_value).toBe(16);
-    });
-
-    it('saves named policy rule changes', async () => {
-      settingsStore.stagePolicyRule('http', 'block_evil', {
-        on: 'http.request',
-        if: 'request.host == "evil.com"',
-        decision: 'block',
-        priority: 5,
-      });
-      await settingsStore.save();
-      expect(settingsStore.model!.policy.http?.block_evil).toMatchObject({
-        on: 'http.request',
-        decision: 'block',
-      });
     });
 
     it('no-op when not dirty', async () => {
@@ -217,16 +170,16 @@ describe('settingsStore', () => {
 
   describe('updateImmediate', () => {
     it('applies and saves in one call', async () => {
-      const before = settingsStore.findLeaf('security.web.allow_read')?.effective_value;
-      await settingsStore.updateImmediate('security.web.allow_read', !before);
-      const after = settingsStore.findLeaf('security.web.allow_read')?.effective_value;
+      const before = settingsStore.findLeaf('security.services.search.bing.allow')?.effective_value;
+      await settingsStore.updateImmediate('security.services.search.bing.allow', !before);
+      const after = settingsStore.findLeaf('security.services.search.bing.allow')?.effective_value;
       expect(after).toBe(!before);
       expect(settingsStore.isDirty).toBe(false);
     });
 
     it('does not leave other staged changes', async () => {
       settingsStore.stage('vm.resources.cpu_count', 8);
-      await settingsStore.updateImmediate('security.web.allow_read', true);
+      await settingsStore.updateImmediate('security.services.search.bing.allow', true);
       // The cpu_count was also saved (updateImmediate calls save)
       expect(settingsStore.isDirty).toBe(false);
     });
@@ -234,7 +187,7 @@ describe('settingsStore', () => {
 
   describe('lookup', () => {
     it('findLeaf returns leaf by ID', () => {
-      const leaf = settingsStore.findLeaf('ai.anthropic.allow');
+      const leaf = settingsStore.findLeaf('repository.providers.github.allow');
       expect(leaf).toBeDefined();
       expect(leaf!.setting_type).toBe('bool');
     });
@@ -244,18 +197,18 @@ describe('settingsStore', () => {
     });
 
     it('findGroup returns group by name', () => {
-      const g = settingsStore.findGroup('Claude Code');
+      const g = settingsStore.findGroup('GitHub');
       expect(g).toBeDefined();
-      expect(g!.key).toBe('ai.anthropic.claude');
+      expect(g!.key).toBe('repository.providers.github');
     });
 
     it('findGroup returns undefined for unknown name', () => {
       expect(settingsStore.findGroup('Nonexistent')).toBeUndefined();
     });
 
-    it('issuesFor returns issues for known ID', () => {
-      const issues = settingsStore.issuesFor('ai.anthropic.api_key');
-      expect(issues.length).toBeGreaterThan(0);
+    it('issuesFor returns empty for known ID without issues', () => {
+      const issues = settingsStore.issuesFor('repository.providers.github.token');
+      expect(issues).toEqual([]);
     });
 
     it('issuesFor returns empty for ID without issues', () => {
@@ -272,21 +225,5 @@ describe('settingsStore', () => {
       expect(settingsStore.section('Nonexistent')).toBeUndefined();
     });
 
-    it('activePresetId is null when no preset matches', () => {
-      expect(settingsStore.activePresetId).toBeNull();
-    });
-  });
-
-  describe('presets', () => {
-    it('applySecurityPreset changes settings', async () => {
-      await settingsStore.applySecurityPreset('medium');
-      const webRead = settingsStore.findLeaf('security.web.allow_read');
-      expect(webRead!.effective_value).toBe(true);
-    });
-
-    it('applySecurityPreset clears applying flag', async () => {
-      await settingsStore.applySecurityPreset('high');
-      expect(settingsStore.applyingPreset).toBeNull();
-    });
   });
 });

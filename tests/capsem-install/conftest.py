@@ -11,12 +11,15 @@ Tests are split into two tiers:
 from __future__ import annotations
 
 import atexit
+from contextlib import contextmanager
 import os
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -86,7 +89,18 @@ INSTALL_DIR = CAPSEM_DIR / "bin"
 ASSETS_DIR = CAPSEM_DIR / "assets"
 RUN_DIR = CAPSEM_DIR / "run"
 
-BINARIES = ["capsem", "capsem-service", "capsem-process", "capsem-mcp", "capsem-gateway", "capsem-tray"]
+BINARIES = [
+    "capsem",
+    "capsem-service",
+    "capsem-process",
+    "capsem-tui",
+    "capsem-mcp",
+    "capsem-mcp-aggregator",
+    "capsem-mcp-builtin",
+    "capsem-gateway",
+    "capsem-tray",
+    "capsem-admin",
+]
 DEFAULT_TIMEOUT = 30
 
 
@@ -98,6 +112,65 @@ def run_capsem(*args: str, timeout: int = DEFAULT_TIMEOUT) -> subprocess.Complet
         text=True,
         timeout=timeout,
     )
+
+
+def installed_binary_path(name: str) -> Path:
+    """Return the real installed binary path, following postinstall symlinks."""
+    binary = INSTALL_DIR / name
+    return binary.resolve(strict=True)
+
+
+def _sudo_install(src: Path, dest: Path, mode: int) -> None:
+    subprocess.run(
+        ["sudo", "install", "-m", f"{mode:o}", str(src), str(dest)],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+
+
+@contextmanager
+def temporarily_replace_installed_binary(name: str, content: bytes, mode: int = 0o755):
+    """Replace a real installed binary and restore it after the test.
+
+    Debian packages symlink ~/.capsem/bin/* to /usr/bin/* and the systemd
+    unit executes the resolved /usr/bin path. Tests that validate a broken
+    service binary must therefore mutate the resolved target, not replace the
+    symlink with a private file that production never executes.
+    """
+    _kill_service()
+    binary = installed_binary_path(name)
+    original = binary.read_bytes()
+    original_mode = stat.S_IMODE(binary.stat().st_mode)
+    tmp_dir = Path(tempfile.mkdtemp(prefix="capsem-binary-replace-"))
+    replacement = tmp_dir / name
+    restored = tmp_dir / f"{name}.original"
+    replacement.write_bytes(content)
+    replacement.chmod(mode)
+    restored.write_bytes(original)
+    restored.chmod(original_mode)
+
+    writable = os.access(binary.parent, os.W_OK) and os.access(binary, os.W_OK)
+    try:
+        if writable:
+            binary.unlink()
+            binary.write_bytes(content)
+            binary.chmod(mode)
+        else:
+            _sudo_install(replacement, binary, mode)
+        yield binary
+    finally:
+        try:
+            _kill_service()
+            if writable:
+                binary.unlink(missing_ok=True)
+                binary.write_bytes(original)
+                binary.chmod(original_mode)
+            else:
+                _sudo_install(restored, binary, original_mode)
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def get_build_hash() -> str:
@@ -145,7 +218,24 @@ def _kill_service() -> None:
     # installed prefix. We build the pattern from INSTALL_DIR so HOME expansion
     # is consistent and we never match target/debug binaries.
     install_prefix = str(INSTALL_DIR) + "/"
-    for proc_name in ["capsem-service", "capsem-gateway", "capsem-tray", "capsem-process"]:
+    if os.environ.get("CAPSEM_DEB_INSTALLED") == "1" and shutil.which("systemctl"):
+        try:
+            subprocess.run(
+                ["systemctl", "--user", "stop", "capsem"],
+                capture_output=True,
+                timeout=10,
+            )
+        except subprocess.TimeoutExpired:
+            pass
+
+    for proc_name in [
+        "capsem-service",
+        "capsem-gateway",
+        "capsem-tray",
+        "capsem-process",
+        "capsem-mcp-aggregator",
+        "capsem-mcp-builtin",
+    ]:
         subprocess.run(
             ["pkill", "-f", f"{install_prefix}{proc_name}"],
             capture_output=True,
@@ -170,10 +260,11 @@ def _ensure_installed() -> None:
 
     bin_src = os.environ.get("CAPSEM_BIN_SRC", "target/debug")
     assets_src = os.environ.get("CAPSEM_ASSETS_SRC", "assets")
+    config_src = os.environ.get("CAPSEM_CONFIG_SRC", "target/config")
     script = Path(__file__).parent.parent.parent / "scripts" / "simulate-install.sh"
     assert script.exists(), f"simulate-install.sh not found at {script}"
     result = subprocess.run(
-        ["bash", str(script), bin_src, assets_src],
+        ["bash", str(script), bin_src, assets_src, config_src],
         capture_output=True, text=True, timeout=60,
     )
     assert result.returncode == 0, (

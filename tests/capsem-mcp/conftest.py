@@ -9,7 +9,6 @@ without touching the dev service or requiring HOME hacking.
 
 import json
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -23,8 +22,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from helpers.constants import EXEC_READY_TIMEOUT
-from helpers.mcp import content_text, kill_mcp_proc, parse_content, wait_exec_ready as mcp_wait_exec_ready
-from helpers.service import preserve_tmp_dir_on_failure
+from helpers.mcp import kill_mcp_proc, wait_exec_ready as mcp_wait_exec_ready
+from helpers.service import materialize_test_profiles, preserve_tmp_dir_on_failure
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 MCP_BINARY = PROJECT_ROOT / "target/debug/capsem-mcp"
@@ -142,6 +141,10 @@ def _start_capsem_service():
     env["CAPSEM_RUN_DIR"] = str(tmp_dir)
     env["CAPSEM_HOME"] = str(tmp_dir)
     env["HOME"] = str(tmp_dir)
+    env["CAPSEM_PROFILES_DIR"] = str(materialize_test_profiles(tmp_dir))
+    env["CAPSEM_CREDENTIAL_STORE_PATH"] = str(
+        tmp_dir / "credential-store.json"
+    )
 
     log_path = tmp_dir / "service.log"
     stderr_path = tmp_dir / "service.stderr.log"
@@ -186,7 +189,7 @@ def _start_capsem_service():
         try:
             proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
-            print(f"\n@@@ capsem-service did not exit within 10s, killing it", file=sys.stderr)
+            print("\n@@@ capsem-service did not exit within 10s, killing it", file=sys.stderr)
             proc.kill()
             proc.wait()
 

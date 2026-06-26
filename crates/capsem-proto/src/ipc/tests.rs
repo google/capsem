@@ -229,6 +229,37 @@ fn exec_result_nonzero_exit() {
 }
 
 #[test]
+fn snapshot_status_roundtrip() {
+    let msg = ProcessToService::SnapshotStatusResult {
+        id: 7,
+        status: super::SnapshotStatus {
+            total: 1,
+            auto_count: 1,
+            manual_count: 0,
+            manual_available: 12,
+            snapshots: vec![super::SnapshotSlotStatus {
+                checkpoint: "cp-0".into(),
+                slot: 0,
+                origin: "auto".into(),
+                name: None,
+                timestamp: "2026-06-11T00:00:00Z".into(),
+                hash: None,
+            }],
+        },
+    };
+    let bytes = serde_json::to_vec(&msg).unwrap();
+    let msg2: ProcessToService = serde_json::from_slice(&bytes).unwrap();
+    match msg2 {
+        ProcessToService::SnapshotStatusResult { id, status } => {
+            assert_eq!(id, 7);
+            assert_eq!(status.total, 1);
+            assert_eq!(status.snapshots[0].checkpoint, "cp-0");
+        }
+        _ => panic!("wrong variant"),
+    }
+}
+
+#[test]
 fn write_file_result_success() {
     let msg = ProcessToService::WriteFileResult {
         id: 5,
@@ -306,14 +337,21 @@ fn log_file_boundary_result_roundtrip() {
     let msg = ProcessToService::LogFileBoundaryResult {
         id: 101,
         success: false,
+        data: Some(b"rewritten".to_vec()),
         error: Some("ledger failed".into()),
     };
     let bytes = serde_json::to_vec(&msg).unwrap();
     let msg2: ProcessToService = serde_json::from_slice(&bytes).unwrap();
     match msg2 {
-        ProcessToService::LogFileBoundaryResult { id, success, error } => {
+        ProcessToService::LogFileBoundaryResult {
+            id,
+            success,
+            data,
+            error,
+        } => {
             assert_eq!(id, 101);
             assert!(!success);
+            assert_eq!(data.as_deref(), Some(&b"rewritten"[..]));
             assert_eq!(error.as_deref(), Some("ledger failed"));
         }
         _ => panic!("wrong variant"),
@@ -525,6 +563,7 @@ fn mcp_call_tool_result_roundtrip_bincode() {
     let msg = ProcessToService::McpCallToolResult {
         id: 30,
         result_json: Some(serde_json::json!({"items": [1, 2]}).to_string()),
+        event_id: Some("abcdef123456".to_string()),
         error: None,
     };
     let bytes = bincode::serialize(&msg).unwrap();
@@ -533,9 +572,11 @@ fn mcp_call_tool_result_roundtrip_bincode() {
         ProcessToService::McpCallToolResult {
             id,
             result_json,
+            event_id,
             error,
         } => {
             assert_eq!(id, 30);
+            assert_eq!(event_id.as_deref(), Some("abcdef123456"));
             assert!(error.is_none());
             let parsed: serde_json::Value = serde_json::from_str(&result_json.unwrap()).unwrap();
             assert_eq!(parsed["items"], serde_json::json!([1, 2]));
@@ -599,6 +640,7 @@ fn mcp_call_tool_result_roundtrip() {
     let msg = ProcessToService::McpCallToolResult {
         id: 30,
         result_json: Some(serde_json::json!({"content": []}).to_string()),
+        event_id: Some("abcdef123456".to_string()),
         error: None,
     };
     let bytes = serde_json::to_vec(&msg).unwrap();
@@ -607,10 +649,12 @@ fn mcp_call_tool_result_roundtrip() {
         ProcessToService::McpCallToolResult {
             id,
             result_json,
+            event_id,
             error,
         } => {
             assert_eq!(id, 30);
             assert!(result_json.is_some());
+            assert_eq!(event_id.as_deref(), Some("abcdef123456"));
             assert!(error.is_none());
         }
         _ => panic!("wrong variant"),

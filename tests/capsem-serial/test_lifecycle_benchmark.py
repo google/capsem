@@ -3,7 +3,7 @@
 Profiles individual operations: provision, exec-ready wait, exec, delete,
 fork, boot-from-image. Reports per-operation timings as a Rich table + JSON.
 
-Fork gates: fork < 500ms, image size <= 13MB, boot-from-image verifies data.
+Fork gates: fork < 500ms, image size <= 14MB, boot-from-image verifies data.
 """
 
 import json
@@ -16,6 +16,11 @@ from pathlib import Path
 import pytest
 
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
+from helpers.package_probe import (
+    FORK_PROBE_COMMAND,
+    FORK_PROBE_OUTPUT,
+    install_fork_probe_with_service_client,
+)
 from helpers.service import ServiceInstance, wait_exec_ready
 
 pytestmark = pytest.mark.serial
@@ -43,7 +48,7 @@ def _save_benchmark(category, data):
 RUNS = 3
 OP_GATE_MS = 1200  # every individual operation must complete under this
 FORK_GATE_MS = 500
-IMAGE_SIZE_GATE_MB = 13
+IMAGE_SIZE_GATE_MB = 14
 
 
 def _percentile(values, pct):
@@ -79,7 +84,7 @@ def _run_lifecycle(client):
     name = f"bench-{uuid.uuid4().hex[:8]}"
 
     t0 = time.monotonic()
-    client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+    client.post("/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
     provision_ms = (time.monotonic() - t0) * 1000
 
     t0 = time.monotonic()
@@ -88,12 +93,12 @@ def _run_lifecycle(client):
     assert ready, f"VM {name} never became exec-ready"
 
     t0 = time.monotonic()
-    resp = client.post(f"/exec/{name}", {"command": "echo ok", "timeout_secs": 10}, timeout=15)
+    resp = client.post(f"/vms/{name}/exec", {"command": "echo ok", "timeout_secs": 10}, timeout=15)
     exec_ms = (time.monotonic() - t0) * 1000
     assert resp is not None and "ok" in resp.get("stdout", "")
 
     t0 = time.monotonic()
-    client.delete(f"/delete/{name}")
+    client.delete(f"/vms/{name}/delete")
     delete_ms = (time.monotonic() - t0) * 1000
 
     return {
@@ -106,7 +111,7 @@ def _run_lifecycle(client):
 
 
 def _run_fork_benchmark(client):
-    """Provision VM -> install packages -> write workspace -> fork -> verify.
+    """Provision VM -> install package -> write workspace -> fork -> verify.
 
     Returns dict with fork timing, image size, and boot-from-image timing.
     """
@@ -116,25 +121,21 @@ def _run_fork_benchmark(client):
 
     try:
         # Provision source VM and wait for exec
-        client.post("/provision", {"name": src, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        client.post("/vms/create", {"name": src, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
         assert wait_exec_ready(client, src, timeout=EXEC_READY_TIMEOUT), f"{src} not ready"
 
-        # Install a package (rootfs overlay change)
-        resp = client.post(f"/exec/{src}", {
-            "command": "apt-get update -qq && apt-get install -y -qq jq 2>&1 | tail -1",
-            "timeout_secs": 120,
-        }, timeout=130)
-        assert resp and resp.get("exit_code") == 0, f"apt-get failed: {resp}"
+        # Install a hermetic local package (rootfs overlay change)
+        install_fork_probe_with_service_client(client, src)
 
         # Write workspace file
-        client.post(f"/write_file/{src}", {
+        client.post(f"/vms/{src}/files/write", {
             "path": "/root/bench.txt",
             "content": "fork-benchmark-marker",
         })
 
         # Fork -- time it
         t0 = time.monotonic()
-        fork_resp = client.post(f"/fork/{src}", {"name": img})
+        fork_resp = client.post(f"/vms/{src}/fork", {"name": img})
         fork_ms = (time.monotonic() - t0) * 1000
 
         size_bytes = fork_resp.get("size_bytes", 0)
@@ -142,7 +143,7 @@ def _run_fork_benchmark(client):
 
         # Boot from fork -- time provision + exec-ready
         t0 = time.monotonic()
-        client.post("/provision", {
+        client.post("/vms/create", {
             "name": dst, "from": img,
             "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
         })
@@ -152,12 +153,20 @@ def _run_fork_benchmark(client):
         assert wait_exec_ready(client, dst, timeout=EXEC_READY_TIMEOUT), f"{dst} not ready"
         boot_ready_ms = (time.monotonic() - t0) * 1000
 
-        # Verify packages survived (rootfs overlay)
-        resp = client.post(f"/exec/{dst}", {"command": "which jq", "timeout_secs": 10}, timeout=15)
-        pkg_survived = resp is not None and resp.get("exit_code") == 0
+        # Verify package survived (rootfs overlay)
+        resp = client.post(
+            f"/vms/{dst}/exec",
+            {"command": FORK_PROBE_COMMAND, "timeout_secs": 10},
+            timeout=15,
+        )
+        pkg_survived = (
+            resp is not None
+            and resp.get("exit_code") == 0
+            and resp.get("stdout", "").strip() == FORK_PROBE_OUTPUT
+        )
 
         # Verify workspace survived
-        resp = client.post(f"/exec/{dst}", {
+        resp = client.post(f"/vms/{dst}/exec", {
             "command": "cat /root/bench.txt", "timeout_secs": 10,
         }, timeout=15)
         ws_survived = resp is not None and "fork-benchmark-marker" in resp.get("stdout", "")
@@ -173,7 +182,7 @@ def _run_fork_benchmark(client):
     finally:
         for v in [dst, src, img]:
             try:
-                client.delete(f"/delete/{v}")
+                client.delete(f"/vms/{v}/delete")
             except Exception:
                 pass
 

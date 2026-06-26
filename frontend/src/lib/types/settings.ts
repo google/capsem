@@ -20,85 +20,9 @@ export type SettingType =
 export type SettingValue = boolean | number | string | { path: string; content: string } | string[] | number[];
 
 /** Where a setting's effective value came from (serde rename_all = "lowercase"). */
-export type PolicySource = 'default' | 'user' | 'corp';
+export type SettingsSource = 'default' | 'user' | 'corp';
 
-export type PolicyCallback =
-  | 'mcp.request'
-  | 'mcp.response'
-  | 'http.request'
-  | 'http.response'
-  | 'dns.query'
-  | 'dns.response'
-  | 'model.request'
-  | 'model.response'
-  | 'model.tool_call'
-  | 'model.tool_response'
-  | 'hook.decision';
-
-export type PolicyDecisionKind = 'allow' | 'ask' | 'block' | 'rewrite';
-
-export interface PolicyRuleConfig {
-  on: PolicyCallback;
-  if: string;
-  decision: PolicyDecisionKind;
-  priority: number;
-  reason?: string | null;
-  rewrite_target?: string | null;
-  rewrite_value?: string | null;
-  strip_request_headers?: string[];
-  strip_response_headers?: string[];
-}
-
-export interface PolicyConfig {
-  mcp?: Record<string, PolicyRuleConfig>;
-  http?: Record<string, PolicyRuleConfig>;
-  dns?: Record<string, PolicyRuleConfig>;
-  model?: Record<string, PolicyRuleConfig>;
-  hook?: Record<string, PolicyRuleConfig>;
-}
-
-export interface ProviderDiscovery {
-  observed_at: string;
-  source: string;
-  event_type?: string | null;
-  confidence: number;
-  credential_ref?: string | null;
-  trace_id?: string | null;
-}
-
-export interface ProviderStatus {
-  id: string;
-  name: string;
-  protocol?: string | null;
-  url?: string | null;
-  aliases: string[];
-  listen_ports: number[];
-  allowed_remote_targets: string[];
-  discovery?: ProviderDiscovery | null;
-  credential_setting_id?: string | null;
-  brokered_credential_ref?: string | null;
-  corp_blocked: boolean;
-}
-
-export type ToolConfigFormat = 'toml' | 'json' | 'yaml' | 'env' | 'text';
-export type ToolConfigOverlay =
-  | 'mcp_injection'
-  | 'broker_placeholders'
-  | 'telemetry_disablement'
-  | 'endpoint_selection';
-
-export interface ToolConfigSourceRecord {
-  tool_id: string;
-  guest_path: string;
-  format: ToolConfigFormat;
-  observed_hash?: string | null;
-  observed_version?: string | null;
-  inferred_endpoint_ref?: string | null;
-  credential_refs: string[];
-  allowed_overlays: ToolConfigOverlay[];
-}
-
-export type SettingsChangeValue = SettingValue | PolicyRuleConfig | null;
+export type SettingsChangeValue = SettingValue | null;
 
 /** Per-rule HTTP method permissions. */
 export interface HttpMethodPermissions {
@@ -141,7 +65,7 @@ export interface ResolvedSetting {
   setting_type: SettingType;
   default_value: SettingValue;
   effective_value: SettingValue;
-  source: PolicySource;
+  source: SettingsSource;
   modified: string | null;
   corp_locked: boolean;
   enabled_by: string | null;
@@ -179,7 +103,7 @@ export interface SettingsLeaf {
   setting_type: SettingType;
   default_value: SettingValue;
   effective_value: SettingValue;
-  source: PolicySource;
+  source: SettingsSource;
   modified: string | null;
   corp_locked: boolean;
   enabled_by: string | null;
@@ -196,44 +120,13 @@ export interface SettingsAction {
   action: string;
 }
 
-/** A declarative MCP server node in the settings tree. */
-export interface McpServerNode {
-  kind: 'mcp_server';
-  key: string;
-  name: string;
-  description?: string | null;
-  transport: string;
-  command?: string | null;
-  url?: string | null;
-  args: string[];
-  env: Record<string, string>;
-  headers: Record<string, string>;
-  builtin: boolean;
-  enabled: boolean;
-  source: PolicySource;
-  corp_locked: boolean;
-}
-
-/** A settings tree node: group, leaf, action, or MCP server. */
-export type SettingsNode = SettingsGroup | SettingsLeaf | SettingsAction | McpServerNode;
+/** A settings tree node: group, leaf, or action. */
+export type SettingsNode = SettingsGroup | SettingsLeaf | SettingsAction;
 
 /** Unified response from load_settings / save_settings. */
 export interface SettingsResponse {
   tree: SettingsNode[];
   issues: ConfigIssue[];
-  presets: SecurityPreset[];
-  policy?: PolicyConfig;
-  providers?: ProviderStatus[];
-  tool_config_sources?: Record<string, ToolConfigSourceRecord>;
-}
-
-/** A security preset definition. */
-export interface SecurityPreset {
-  id: string;
-  name: string;
-  description: string;
-  settings: Record<string, SettingValue>;
-  mcp: { default_tool_permission?: string } | null;
 }
 
 /** Info about an available update. */

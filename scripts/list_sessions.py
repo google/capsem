@@ -38,7 +38,7 @@ def main():
     parser.add_argument("--with-db", action="store_true", help="Only sessions with session.db on disk")
     parser.add_argument("--with-model", action="store_true", help="Only sessions with model calls (tokens > 0)")
     parser.add_argument("--with-net", action="store_true", help="Only sessions with network events")
-    parser.add_argument("--with-mcp", action="store_true", help="Only sessions with MCP calls")
+    parser.add_argument("--with-tools", action="store_true", help="Only sessions with tool calls")
     parser.add_argument("--min-cost", type=float, default=0, help="Minimum estimated cost")
     args = parser.parse_args()
 
@@ -56,8 +56,8 @@ def main():
         conditions.append("(total_input_tokens + total_output_tokens) > 0")
     if args.with_net:
         conditions.append("total_requests > 0")
-    if args.with_mcp:
-        conditions.append("total_mcp_calls > 0")
+    if args.with_tools:
+        conditions.append("total_tool_calls > 0")
     if args.min_cost > 0:
         conditions.append(f"total_estimated_cost >= {args.min_cost}")
 
@@ -67,8 +67,7 @@ def main():
         f"SELECT id, status, created_at, stopped_at, storage_mode,"
         f" total_requests, allowed_requests, denied_requests,"
         f" total_input_tokens, total_output_tokens,"
-        f" total_estimated_cost, total_tool_calls, total_mcp_calls,"
-        f" total_file_events"
+        f" total_estimated_cost, total_tool_calls, total_file_events"
         f" FROM sessions {where} ORDER BY created_at DESC LIMIT ?",
         (args.n,),
     ).fetchall()
@@ -85,7 +84,7 @@ def main():
     # Header
     hdr = (
         f"{'ID':<36}  {'Created':>16}  {'Dur':>6}  {'Cost':>7}"
-        f"  {'net':>5}  {'tokens':>7}  {'tool':>5}  {'mcp':>5}  {'fs':>5}"
+        f"  {'net':>5}  {'tokens':>7}  {'tool':>5}  {'fs':>5}"
     )
     print(f"{BOLD}{hdr}{RESET}")
     print(f"{DIM}{'-' * len(hdr)}{RESET}")
@@ -106,7 +105,6 @@ def main():
         net = r["total_requests"] or 0
         tokens = (r["total_input_tokens"] or 0) + (r["total_output_tokens"] or 0)
         tool = r["total_tool_calls"] or 0
-        mcp = r["total_mcp_calls"] or 0
         fs = r["total_file_events"] or 0
 
         # Mark sessions that still have DB on disk
@@ -114,7 +112,7 @@ def main():
 
         line = (
             f"{sid:<36}{has_db} {created_short:>16}  {dur:>6}  ${cost:>6.2f}"
-            f"  {net:>5}  {tokens:>7}  {tool:>5}  {mcp:>5}  {fs:>5}"
+            f"  {net:>5}  {tokens:>7}  {tool:>5}  {fs:>5}"
         )
         print(line)
 

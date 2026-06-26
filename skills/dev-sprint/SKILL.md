@@ -23,6 +23,9 @@ Write `sprints/<sprint-name>/plan.md`:
 - What "done" looks like
 - The testing proof matrix for each functional slice: unit/contract,
   functional, adversarial, E2E/VM, telemetry, and performance
+- For Capsem release, VM, network, model, MCP, credential broker,
+  package-manager, doctor, benchmark, or security acceptance work, load
+  `/ironbank` and add an Ironbank entry to the proof matrix before coding
 
 The plan is a living document. Update it as the sprint evolves -- crossed-out items, new discoveries, changed approach. The plan is evidence of thinking, not a contract.
 
@@ -59,13 +62,50 @@ Update the tracker as you go. Check items off. Add notes about surprises, blocke
 
 For every functional milestone, keep the coverage ledger current. Do not mark a task complete with only implementation notes and a command list. Name the actual tests or manual VM checks that prove the feature, and name the missing categories honestly. A benchmark can prove performance, not functional correctness. A Rust unit suite can prove contracts, not the user-visible VM path.
 
+For Ironbank slices, the focused verification must be the relevant
+`tests/ironbank/` case or a documented RED test that currently fails. Do not
+mark Ironbank tests `skip`, `skipif`, `slow`, or optional; if a dependency is
+missing, the product or harness is missing.
+
 ## 3. Build
 
 Write code. Follow the project skills:
 - `/dev-debugging` for bug investigation (reproduce first, diagnose, then fix)
 - `/dev-testing` for TDD (write test, see it fail, implement, refactor)
+- `/ironbank` for full black-box ledger acceptance; never close those gates
+  with Rust internals, status-only replay, row-exists checks, `skip`, or
+  `slow`
 - `/dev-rust-patterns` for async/cross-compile patterns
 - `/dev-mitm-proxy`, `/dev-mcp` for subsystem-specific guidance
+
+### Profile Source vs Generated Runtime Config
+
+Keep profile/config ownership crisp:
+
+- Read `config/README.md` and `tests/README.md` before changing config layout,
+  profile payloads, generated settings artifacts, or config test fixtures.
+- Checked-in `config/profiles/<id>/profile.toml` is source contract, not a
+  scratchpad for local asset or payload hashes.
+- Profile sibling files are source inputs. Do not add `hash` or `size` fields
+  to source `profile.toml` after changing `build.sh`, package files, rules,
+  MCP files, tips, or root seed manifests. Generated hashes belong in
+  `target/config`, asset manifests, OBOMs, or root manifests, never in the
+  checked-in profile source.
+- Current asset URLs/hashes from `assets/manifest.json` are materialized into
+  `target/config` through the same `capsem-admin`/just rail used by CI and
+  release. Do not commit ad hoc `target/config` output.
+- `config/skills` does not exist. Developer skills live in repository-level
+  `skills/`. User/profile skills, when implemented, are profile-owned payloads
+  with their own contract, not Codex development instructions.
+- Any sprint that changes profile payloads must prove the profile-derived build rail, not a
+  manual TOML patch.
+
+Names are part of the architecture contract. Prefer boring,
+self-explanatory names that state what a thing is (`mock_server`,
+`profile_loader`, `security_rule`) over origin-story names, lore names, or
+names tied to the first caller (`debug_upstream`, benchmark-only labels,
+temporary sprint names). If a developer cannot infer the contract from the
+name before opening the file, rename it before the pattern spreads.
 
 ## 4. Commit at functional milestones
 
@@ -103,7 +143,7 @@ Every sprint ends with testing. No exceptions.
 
 ```bash
 just test                           # ALL tests: unit + integration + cross-compile + frontend + bench
-just run "capsem-doctor"            # VM smoke test
+just exec "capsem-doctor"            # VM smoke test
 ```
 
 If the sprint touched telemetry:
@@ -120,6 +160,9 @@ The testing gate must cover the story, not just the code that was easiest to tes
 - E2E/VM tests for the real user path when the behavior crosses a VM, CLI, MCP, service, telemetry, or network boundary
 - Session DB or external-state checks when the behavior claims auditability
 - Benchmarks only when performance is part of the claim
+- Package-manager proof must be functional: apt, npm, uv, pip, node, and
+  profile package rails must prove the installed package runs and performs its
+  intended job, not merely that a package manager recorded it.
 
 If one of those is missing, keep the sprint open or record the exact debt in the tracker with a follow-up task. Do not bury the gap in prose like "covered later"; make it visible.
 
@@ -170,3 +213,6 @@ When executing a meta sprint, create a `tracker.md` for the active work. Update 
 - **Stale tracker**: if the tracker doesn't match reality, it's useless
 - **Benchmark-as-proof**: performance numbers do not prove the feature is correct
 - **Silent coverage debt**: missing E2E, functional, or adversarial tests must be named before a milestone can be called done
+- **Ironbank theater**: status-code-only replay, row-exists checks,
+  parser-only proof, Rust-internal expectations, public-network fixtures,
+  `skip`, `skipif`, or `slow` cannot close release-critical VM/security work

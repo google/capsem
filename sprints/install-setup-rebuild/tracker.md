@@ -5,9 +5,14 @@
 - [x] Create sprint plan, tracker, and master board.
 - [x] T0: Freeze install/setup replacement contract.
 - [x] T0: Trace current macOS `.pkg`, Linux `.deb`, Docker install test, and `just install` flows.
-- [x] T0: Decide local dev asset policy: bundled current-arch assets vs local release URL.
+- [x] T0: Decide local dev asset policy: selected package manifest plus profile
+  `file://` URLs for dev assets.
 - [x] T1: Remove post-installer mutation from `just install`.
 - [x] T1: Make package payload mode explicit and testable.
+- [x] T1: Make package install own previous-version removal, including stale
+  GUI/service processes and package-owned app/share payload.
+- [x] T1: Add explicit package-builder `--manifest` input for local, CI, and
+  corp package rails without post-install asset patching.
 - [x] T1: Add reinstall test where only `initrd` hash changes.
 - [x] T1: Add stale asset symlink regression test.
 - [x] T2: Extract asset reconciliation from `capsem setup`.
@@ -150,10 +155,49 @@
   service persists durable status checkpoints at reconcile start, per-asset
   completion, and final success/failure, and clears stale `in_progress` state
   when a new daemon starts.
-- Decision: local dev installs bundle the current host-arch asset payload into
-  the `.pkg`/`.deb` before the installer runs. Release packages may remain
-  manifest-only. `just install` must not copy assets into `~/.capsem` after
-  Installer.app or `dpkg` returns.
+- Decision: local dev installs package the selected manifest and materialized
+  profile file URLs before the installer runs. The package always moves that
+  manifest to the runtime asset directory; there is no asset-mode variable and
+  no post-install asset patching.
+- Decision: package install is allowed to replace or downgrade. The package
+  itself removes the previous app/share payload before installing; PackageKit
+  version ordering is not a safety mechanism.
+- Decision: package builders shape the authoritative manifest for the package.
+  By default it comes from the build assets; corp/dev can override it with
+  `--manifest <path|file://|http://|https://>`. The selected manifest is copied
+  into the package payload and then into `~/.capsem/assets/manifest.json` by
+  postinstall. It is not a post-install side channel.
+- Decision: `capsem-admin manifest generate <assets_dir>` is the only
+  documented manifest producer. Just recipes, release docs, and corp custom
+  build docs point to admin; lower-level builder/Python generation remains an
+  implementation detail behind admin, not a public or package path.
+- Completed slice: macOS package builds now include `pkg-scripts/preinstall`.
+  It stops old Capsem service processes, kills stale `capsem-app`, removes the
+  old `/Applications/Capsem.app`, and removes package-owned
+  `/usr/local/share/capsem` before payload install. Package replacement and
+  downgrade no longer depend on PackageKit version ordering.
+- Completed slice: `scripts/build-pkg.sh` and `scripts/repack-deb.sh` accept
+  `--manifest <path|file://|http://|https://>` as the corp/dev override for the
+  package manifest view, and preserve package versions instead of appending
+  build timestamps. Local install, Docker install, and CI release workflows now
+  pass the manifest explicitly.
+- Completed slice: `_pack-initrd` regenerates manifests through
+  `capsem-admin manifest generate "$ASSETS" --version "$VERSION"` and tests
+  prove the public admin command produces the v2 manifest format from an asset
+  directory.
+- Completed slice: `just install` now builds the package with the explicit
+  `--manifest` override and materialized profile `file://` asset descriptors.
+  Local dev assets are copied by the normal profile asset reconciliation path
+  from the installed profile's `file://` descriptors.
+- Completed slice: `/profiles/status` and
+  `/profiles/{profile_id}/assets/status` now report the runtime asset manifest
+  origin, installed path, BLAKE3 hash, format, refresh policy, current asset
+  release, and current binary release.
+- Verification: package-only macOS build succeeded for
+  `packages/Capsem-1.3.1781035201.pkg`; expanded payload contains
+  `Scripts/preinstall`, `Scripts/postinstall`, `assets/manifest.json`,
+  `profiles/code.toml`, `profiles/code/enforcement.toml`, and companion
+  binaries.
 - Completed slice: `capsem-logger` now owns canonical
   `credential:blake3:<hex>` reference generation, shared `credential_ref`
   fields on event tables/structs, and `substitution_events` logging. Current
@@ -211,10 +255,26 @@
   `rerun_wizard` typed settings action, service setup-state module, and all
   remaining `/setup/*` service routes. Corporate policy provisioning now lives
   at `POST /corp-config`.
-- Completed slice: T1 package discipline moved local dev assets into the
-  package payload via explicit `CAPSEM_PKG_ASSET_MODE=current-arch` /
-  `CAPSEM_DEB_ASSET_MODE=current-arch` modes and removed the post-installer
-  `sync-dev-assets.sh` call from `just install`.
+- Completed slice: T1 package discipline now moves exactly one selected
+  manifest into the package payload, installs only `manifest.json` and
+  `manifest-origin.json` into `~/.capsem/assets`, and relies on profile
+  `file://`/`https://` descriptors for asset reconciliation. VM asset payloads
+  are not embedded in `.pkg` or `.deb`.
+  `CAPSEM_PKG_ASSET_MODE` and `CAPSEM_DEB_ASSET_MODE` are removed. Packages
+  also install `manifest-origin.json`, and service status reports the installed
+  manifest path, BLAKE3 hash, origin, source, and package timestamp for
+  corp/debug provenance.
+- Verification: closed package payload guardrails passed with
+  `uv run python -m pytest tests/capsem-build-chain/test_install_asset_payload.py tests/test_build_pkg.py -vv --tb=short` on macOS and
+  `docker run --rm -v "$PWD":/repo -w /repo -e UV_PROJECT_ENVIRONMENT=/tmp/capsem-uv-venv capsem-install-test:latest bash -lc 'uv run --python /usr/bin/python3 python -m pytest tests/test_repack_deb.py -vv --tb=short'` on Linux.
+- Completed slice: manifest status now treats the manifest as mutable release
+  metadata, not an immutable install pin. Status reports `validation_status`,
+  `validation_error`, `refreshed_at`, current BLAKE3 hash, source provenance,
+  and manifest current asset/binary versions when the on-disk manifest parses.
+- Completed slice: installer diagnostics now write both aggregate
+  `~/.capsem/logs/install.log` and per-run timestamped
+  `~/.capsem/logs/install-<UTC>.log`, with `install-latest.log` pointing to the
+  newest run. Readiness poll log lines include numeric attempts.
 - Completed slice: install asset-copy scripts now skip nested directories in
   arch asset folders, preventing a stray `assets/arm64/arm64` directory from
   breaking local installed-layout tests.
@@ -390,8 +450,8 @@
   assets endpoint is unreachable, and disables `Customize Session...` /
   `Quick Session` until assets are ready.
 - Static gate: `just --dry-run install` proves the install recipe parses and
-  assembles packages with current-arch asset payload modes and no
-  post-installer asset sync.
+  assembles packages with the selected manifest and no post-installer asset
+  sync.
 - Static gate: `just --dry-run test-install` proves the Docker/systemd install
   recipe still expands cleanly after the package/install refactor.
 - Static gate: `just --dry-run test` proves the full release test recipe still
@@ -438,8 +498,8 @@
 - Missing/deferred: full interactive `just install` on macOS still needs manual
   Installer.app completion before release sign-off. Attempt on 2026-06-06:
   release binaries, frontend, Tauri app bundle, and
-  `packages/Capsem-1.0.1780763638.pkg` built successfully with current-arch
-  dev assets embedded. The first attempt caught a real release CLI compile
+  `packages/Capsem-1.0.1780763638.pkg` built successfully with package-owned
+  dev asset metadata. The first attempt caught a real release CLI compile
   fallout from the new `ProcessToService::LogFileBoundaryResult` variant; fixed
   by making `capsem shell` ignore that internal response. The second attempt
   blocked for ~8 minutes on `open -W packages/Capsem-1.0.1780763638.pkg`

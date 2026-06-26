@@ -3,7 +3,6 @@
 
 import argparse
 import gzip
-import json
 import os
 import sqlite3
 import sys
@@ -31,10 +30,6 @@ SESSION_TABLES = {
     ],
     "tool_responses": [
         "id", "model_call_id", "call_id", "is_error",
-    ],
-    "mcp_calls": [
-        "id", "timestamp", "server_name", "method", "tool_name", "decision",
-        "duration_ms",
     ],
     "fs_events": [
         "id", "timestamp", "action", "path", "size",
@@ -84,8 +79,7 @@ def list_recent_sessions(n: int = 5) -> list[dict]:
         "SELECT id, mode, status, created_at, stopped_at,"
         " total_requests, allowed_requests, denied_requests,"
         " total_input_tokens, total_output_tokens,"
-        " total_estimated_cost, total_tool_calls, total_mcp_calls,"
-        " total_file_events"
+        " total_estimated_cost, total_tool_calls, total_file_events"
         " FROM sessions ORDER BY created_at DESC LIMIT ?",
         (n,),
     ).fetchall()
@@ -236,7 +230,7 @@ def check_session(db_path: Path, preview_rows: int = 5):
                     f" model, tokens, and preview populated{RESET}\n"
                 )
 
-    # -- Tool lifecycle: origin breakdown + mcp correlation --
+    # -- Tool lifecycle: origin breakdown --
     if "tool_calls" in existing:
         tc_total = conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0]
         if tc_total > 0:
@@ -253,44 +247,26 @@ def check_session(db_path: Path, preview_rows: int = 5):
                     f"  {CYAN}Tool origins: {', '.join(parts)}"
                     f" ({tc_total} total){RESET}"
                 )
-            # Show matching mcp_calls per tool if both tables exist
-            if "mcp_calls" in existing:
-                mcp_total = conn.execute(
-                    "SELECT COUNT(*) FROM mcp_calls"
-                ).fetchone()[0]
-                if mcp_total > 0:
-                    # Approximate match: same tool_name within 60s window
-                    matched = conn.execute(
-                        "SELECT COUNT(DISTINCT tc.id) FROM tool_calls tc"
-                        " JOIN mcp_calls mc ON tc.tool_name = mc.tool_name"
-                        " AND mc.timestamp >= tc.call_id"  # timestamps always exist
-                    ).fetchone()[0]
-                    print(
-                        f"  {CYAN}Guest MCP calls: {mcp_total}"
-                        f" (approx {matched} correlated with tool_calls){RESET}"
-                    )
             print()
 
-    # -- MCP tool usage breakdown --
-    if "mcp_calls" in existing:
-        mcp_total = conn.execute("SELECT COUNT(*) FROM mcp_calls").fetchone()[0]
-        if mcp_total > 0:
-            tool_rows = conn.execute(
-                "SELECT tool_name, decision, COUNT(*) as cnt,"
-                " ROUND(AVG(duration_ms), 1) as avg_ms"
-                " FROM mcp_calls"
-                " WHERE tool_name IS NOT NULL"
-                " GROUP BY tool_name, decision"
-                " ORDER BY cnt DESC"
-            ).fetchall()
-            if tool_rows:
-                print(f"{BOLD}MCP tool usage:{RESET}")
-                print(
-                    table(
-                        ["tool_name", "decision", "count", "avg_ms"],
-                        [[r[0], r[1], str(r[2]), str(r[3])] for r in tool_rows],
-                    )
+    # -- Tool usage breakdown --
+    if "tool_calls" in existing:
+        tool_rows = conn.execute(
+            "SELECT tool_name, origin, decision, COUNT(*) as cnt,"
+            " ROUND(AVG(duration_ms), 1) as avg_ms"
+            " FROM tool_calls"
+            " WHERE tool_name IS NOT NULL"
+            " GROUP BY tool_name, origin, decision"
+            " ORDER BY cnt DESC"
+        ).fetchall()
+        if tool_rows:
+            print(f"{BOLD}Tool usage:{RESET}")
+            print(
+                table(
+                    ["tool_name", "origin", "decision", "count", "avg_ms"],
+                    [[r[0], r[1], r[2], str(r[3]), str(r[4])] for r in tool_rows],
                 )
+            )
 
     # -- Preview rows per table --
     for tbl, cols in SESSION_TABLES.items():
@@ -356,7 +332,7 @@ def main():
         print(f"\n{BOLD}Recent sessions:{RESET}")
         headers = [
             "id", "mode", "status", "created_at", "requests",
-            "in_tokens", "out_tokens", "cost", "tools", "mcp", "files",
+            "in_tokens", "out_tokens", "cost", "tools", "files",
         ]
         rows = []
         for s in sessions:
@@ -370,7 +346,6 @@ def main():
                 str(s["total_output_tokens"]),
                 f"${s['total_estimated_cost']:.4f}",
                 str(s["total_tool_calls"]),
-                str(s["total_mcp_calls"]),
                 str(s["total_file_events"]),
             ])
         print(table(headers, rows))

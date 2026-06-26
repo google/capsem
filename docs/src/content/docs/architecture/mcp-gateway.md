@@ -54,7 +54,7 @@ sequenceDiagram
     participant Svc as capsem-service
 
     Agent->>MCP: tools/call (capsem_exec)
-    MCP->>Svc: POST /exec/{id} (HTTP/UDS)
+    MCP->>Svc: POST /vms/{id}/exec (HTTP/UDS)
     Svc-->>MCP: {stdout, stderr, exit_code}
     MCP-->>Agent: tool result
 ```
@@ -65,28 +65,26 @@ sequenceDiagram
 
 | Tool | Description | Service endpoint |
 |------|-------------|-----------------|
-| `capsem_create` | Create a new VM (name, RAM, CPUs, env, image) | `POST /provision` |
-| `capsem_list` | List all VMs with status and config | `GET /list` |
-| `capsem_info` | VM details (ID, PID, status, persistent) | `GET /info/{id}` |
-| `capsem_exec` | Run shell command inside VM (timeout param) | `POST /exec/{id}` |
+| `capsem_create` | Create a new VM (name, RAM, CPUs, env, image) | `POST /vms/create` |
+| `capsem_list` | List all VMs with status and config | `GET /vms/list` |
+| `capsem_info` | VM details (ID, PID, profile, status) | `GET /vms/{id}/info` |
+| `capsem_exec` | Run shell command inside VM (timeout param) | `POST /vms/{id}/exec` |
 | `capsem_run` | One-shot: provision + exec + destroy | `POST /run` |
-| `capsem_read_file` | Read file from guest filesystem | `GET /read_file/{id}` |
-| `capsem_write_file` | Write file to guest filesystem | `POST /write_file/{id}` |
-| `capsem_stop` | Stop VM (persistent: preserve, ephemeral: destroy) | `POST /stop/{id}` |
-| `capsem_suspend` | Suspend VM (save RAM/CPU state) | `POST /suspend/{id}` |
-| `capsem_resume` | Resume stopped persistent VM | `POST /resume/{name}` |
-| `capsem_persist` | Convert ephemeral VM to persistent | `POST /persist/{id}` |
-| `capsem_delete` | Permanently destroy VM and all state | `DELETE /delete/{id}` |
-| `capsem_purge` | Kill all temp VMs (all=true includes persistent) | `POST /purge` |
-| `capsem_fork` | Fork VM into reusable image | `POST /fork/{id}` |
-| `capsem_vm_logs` | Get serial/process logs (grep + tail params) | `GET /logs/{id}` |
+| `capsem_read_file` | Read file from guest filesystem | `POST /vms/{id}/files/read` |
+| `capsem_write_file` | Write file to guest filesystem | `POST /vms/{id}/files/write` |
+| `capsem_stop` | Stop VM | `POST /vms/{id}/stop` |
+| `capsem_suspend` | Suspend VM (save RAM/CPU state) | `POST /vms/{id}/pause` |
+| `capsem_resume` | Resume stopped or paused VM | `POST /vms/{id}/resume` |
+| `capsem_save` | Save current VM state | `POST /vms/{id}/save` |
+| `capsem_delete` | Permanently destroy VM and all state | `DELETE /vms/{id}/delete` |
+| `capsem_purge` | Clean up disposable sessions; `all=true` includes retained sessions | `POST /purge` |
+| `capsem_fork` | Fork VM into reusable image | `POST /vms/{id}/fork` |
+| `capsem_vm_logs` | Get serial/process logs (grep + tail params) | `GET /vms/{id}/logs` |
 | `capsem_service_logs` | Get service logs (grep + tail params) | Service log file |
 | `capsem_host_logs` | Get an allowlisted host log by symbolic name | `GET /host-logs/{name}` |
 | `capsem_panics` | Extract structured panics and backtraces from host logs | `GET /panics` |
 | `capsem_triage` | Summarize recent panics, IPC drops, server errors, and slow ops | `GET /triage` |
-| `capsem_timeline` | Render a time-ordered session timeline by event layer and trace ID | `GET /timeline/{id}` |
-| `capsem_inspect_schema` | Get CREATE TABLE statements for telemetry DB | Schema constant |
-| `capsem_inspect` | Run SQL query against VM's session.db | `POST /inspect/{id}` |
+| `capsem_timeline` | Render a time-ordered session timeline by event layer and trace ID | `GET /vms/{id}/timeline` |
 | `capsem_version` | MCP server version and service connectivity | Local + service |
 | `capsem_mcp_servers` | List configured guest MCP servers | Service MCP IPC |
 | `capsem_mcp_tools` | List discovered guest MCP tools | Service MCP IPC |
@@ -132,7 +130,9 @@ Two threads handle the relay:
 
 ## Tool routing (host endpoint)
 
-The MITM MCP endpoint receives framed JSON-RPC over vsock:5002, applies MCP policy, records `mcp_calls`, and routes requests through the aggregator:
+The MITM MCP endpoint receives framed JSON-RPC over vsock:5002, normalizes the
+frame into the shared `SecurityEvent` rule rail, records protocol evidence, and
+routes allowed requests through the aggregator:
 
 ```mermaid
 graph TD
@@ -171,27 +171,20 @@ fields such as `mcp.method`, `mcp.server.name`, `mcp.tool_call.name`, and
 
 The MCP gateway does not own a separate decision provider. Its job is to parse
 MCP, attach typed MCP fields to `SecurityEvent`, call the shared security
-engine, and log the protocol row plus any `security_rule_events` matches.
+engine, and log transport evidence plus any `security_rule_events` matches.
 
-## MCP call logging
+## Tool and MCP logging
 
-Every `tools/call` request is logged to the session database `mcp_calls` table:
-
-| Column | Source |
-|--------|--------|
-| `server_name` | `builtin`, `file`, or external server name |
-| `method` | JSON-RPC method (`tools/call`, `tools/list`, etc.) |
-| `tool_name` | Tool name from request params |
-| `decision` | Terminal transport result: `allowed`, `denied`, or `error` |
-| `duration_ms` | End-to-end call duration |
-| `request_preview` | Truncated request body |
-| `response_preview` | Truncated response body |
-| `process_name` | Guest process from metadata line |
-| `trace_id` | Cross-table correlation ID |
-| `event_id` | 12-hex primary event id used to join `security_rule_events` |
+The product/security tool ledger is `tool_calls`. Every model-native,
+built-in/local, or MCP-origin tool invocation must appear there with an origin
+such as `native`, `builtin`, `local`, `mcp`, or `mcp_proxy`. Visible MCP
+protocol facts such as initialize/list/resource frames are represented as typed
+security events and matching `security_rule_events`, not as a second tool-call
+ledger. An MCP `tools/call` without a matching `tool_calls` row is a serious
+telemetry bug.
 
 See [Session Telemetry](/architecture/session-telemetry/) for the full
-`mcp_calls` schema and rule-ledger joins.
+`tool_calls`, `tool_responses`, and security-rule ledger joins.
 
 ## Endpoint runtime state
 
@@ -200,7 +193,7 @@ See [Session Telemetry](/architecture/session-telemetry/) for the full
 | `aggregator` | `AggregatorClient` | Client handle for the isolated MCP aggregator subprocess |
 | `db` | `Arc<DbWriter>` | Async telemetry writer |
 | `security_rules` | `RwLock<Arc<SecurityRuleSet>>` | Hot-reloadable security-event rules |
-| `domain_policy` | `RwLock<Arc<DomainPolicy>>` | Domain policy for builtin HTTP tools |
+| `plugin_policy` | `RwLock<Arc<SecurityPluginPolicy>>` | Hot-reloadable plugin modes for security-event preprocessing/postprocessing |
 
 The `AggregatorClient` is cloneable (`Arc`-wrapped mpsc channel) and shared
 across endpoint sessions for a given VM. The rule set uses double-Arc style
@@ -209,20 +202,29 @@ reloads affect already-open guest MCP connections.
 
 ## Configuration files
 
-MCP server definitions live in TOML files under `guest/config/mcp/`:
+MCP server definitions are profile-owned. The profile points at `mcp.json`, and
+semantic routes mutate MCP server/tool posture through backend-owned profile
+rules instead of exposing raw rule text to the UI.
 
-```toml
-# guest/config/mcp/capsem.toml
-[capsem]
-name = "Capsem"
-description = "Built-in Capsem MCP server for file and snapshot tools"
-transport = "stdio"
-command = "/run/capsem-mcp-server"
-builtin = true
-enabled = true
+```json
+{
+  "servers": [
+    {
+      "id": "capsem",
+      "name": "Capsem",
+      "description": "Built-in Capsem MCP server for file and snapshot tools",
+      "transport": "stdio",
+      "command": "/run/capsem-mcp-server",
+      "builtin": true,
+      "enabled": true
+    }
+  ]
+}
 ```
 
-External MCP servers are auto-detected from AI CLI settings (`~/.claude/settings.json`, `~/.gemini/settings.json`), defined manually in `~/.capsem/user.toml`, or injected via corp policy. Definitions are merged by `build_server_list()` and passed to the [MCP Aggregator](/architecture/mcp-aggregator/) subprocess at spawn time.
+Profile MCP config and corp constraints are validated by the service and passed
+to the [MCP Aggregator](/architecture/mcp-aggregator/) subprocess at spawn
+time. Credentials are broker-owned references, not raw tokens in MCP config.
 
 ## Key source files
 
@@ -240,6 +242,6 @@ External MCP servers are auto-detected from AI CLI settings (`~/.claude/settings
 | `capsem-core/src/security_engine/` | SecurityEvent construction, rule evaluation, plugin actions, and rule-ledger emission |
 | `capsem-mcp-aggregator/src/main.rs` | Isolated subprocess: NDJSON loop, server connections |
 | `capsem-process/src/main.rs` | `spawn_mcp_aggregator()`: launch and driver tasks |
-| `guest/config/mcp/` | MCP server TOML definitions |
+| `config/profiles/<id>/mcp.json` | Profile MCP server definitions |
 
 See [MCP Aggregator](/architecture/mcp-aggregator/) for the full subprocess architecture.

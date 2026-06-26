@@ -12,10 +12,15 @@ import pytest
 
 from .conftest import (
     CAPSEM_DIR,
+    run_capsem,
 )
 
 CORP_TOML = CAPSEM_DIR / "corp.toml"
 SYSTEM_CORP = Path("/etc/capsem/corp.toml")
+VALID_CORP_CONTENT = (
+    '[settings]\n'
+    '"repository.providers.github.allow" = { value = true, modified = "2024-01-01T00:00:00Z" }\n'
+)
 
 
 class TestCorpPrecedence:
@@ -33,19 +38,19 @@ class TestCorpPrecedence:
         CAPSEM_DIR.mkdir(parents=True, exist_ok=True)
         CORP_TOML.write_text(
             '[settings]\n'
-            '"ai.anthropic.allow" = { value = false, modified = "2024-01-01T00:00:00Z" }\n'
-            '"user.only.key" = { value = "from-user", modified = "2024-01-01T00:00:00Z" }\n'
+            '"repository.providers.github.allow" = { value = false, modified = "2024-01-01T00:00:00Z" }\n'
+            '"repository.git.identity.author_name" = { value = "User Corp", modified = "2024-01-01T00:00:00Z" }\n'
         )
 
         SYSTEM_CORP.parent.mkdir(parents=True, exist_ok=True)
         SYSTEM_CORP.write_text(
             '[settings]\n'
-            '"ai.anthropic.allow" = { value = true, modified = "2024-06-01T00:00:00Z" }\n'
+            '"repository.providers.github.allow" = { value = true, modified = "2024-06-01T00:00:00Z" }\n'
         )
 
         try:
-            # System corp should win for ai.anthropic.allow, user corp provides user.only.key
-            result = run_capsem("service", "status", timeout=10)
+            # System corp should win per-key; user corp can still provide other keys.
+            run_capsem("service", "status", timeout=10)
             # We can't easily verify merge from CLI output, but the test validates
             # the file layout is correct for the resolver
             assert SYSTEM_CORP.exists()

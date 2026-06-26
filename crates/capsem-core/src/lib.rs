@@ -2,7 +2,6 @@ pub mod asset_manager;
 pub mod auto_snapshot;
 pub mod credential_broker;
 pub mod fs_monitor;
-pub mod host_config;
 pub mod host_state;
 pub mod hypervisor;
 pub mod ipc_handshake;
@@ -17,6 +16,8 @@ pub mod paths;
 pub mod security_engine;
 pub mod session;
 pub mod telemetry;
+#[cfg(test)]
+pub(crate) mod test_support;
 pub mod uds;
 pub mod vm;
 use std::path::Path;

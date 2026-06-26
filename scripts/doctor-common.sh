@@ -32,6 +32,15 @@ FIX_NEEDED=()
 
 _reg() { FIX_IDS+=("$1"); FIX_CMDS+=("$2"); FIX_DESCS+=("$3"); FIX_NEEDED+=(0); }
 
+_doctor_build_assets_all_profiles() {
+    local arch
+    arch="$(uname -m | sed 's/aarch64/arm64/;s/arm64/arm64/;s/x86_64/x86_64/')"
+    local profile
+    for profile in config/profiles/*/profile.toml; do
+        just build-assets "$(basename "$(dirname "$profile")")" "$arch"
+    done
+}
+
 # Order matters: tools before builds, builds before assets
 _reg rustup-targets   "rustup target add aarch64-unknown-linux-musl x86_64-unknown-linux-musl" \
                       "Install Rust cross-compile targets"
@@ -55,7 +64,7 @@ _reg run-signed-chmod "chmod +x scripts/run_signed.sh" \
                       "Make scripts/run_signed.sh executable"
 _reg pnpm-install     "cd frontend && pnpm install --frozen-lockfile" \
                       "Install frontend deps"
-_reg build-assets     "touch .dev-setup && CAPSEM_SKIP_ASSET_CHECK=1 just build-assets" \
+_reg build-assets     "touch .dev-setup && CAPSEM_SKIP_ASSET_CHECK=1 _doctor_build_assets_all_profiles" \
                       "Build VM assets (kernel + rootfs)"
 _reg pack-initrd      "touch .dev-setup && CAPSEM_SKIP_ASSET_CHECK=1 just _pack-initrd" \
                       "Cross-compile guest binaries + repack initrd"
@@ -249,7 +258,7 @@ else
 fi
 
 section "Release Tools"
-for tool in gh openssl minisign cargo-sbom; do
+for tool in gh openssl cargo-sbom cdxgen; do
     if command -v "$tool" &>/dev/null; then
         pass "$tool"
     else

@@ -18,7 +18,6 @@ from pathlib import Path
 
 from helpers.mcp import kill_mcp_proc
 
-from .conftest import RealService
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 MCP_BINARY = PROJECT_ROOT / "target/debug/capsem-mcp"

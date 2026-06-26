@@ -7,22 +7,43 @@ Build execution tests mock run_cmd (single subprocess seam) -- no Docker needed.
 import json
 import re
 import shutil
-import subprocess
+import tomllib
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from capsem.builder.config import load_guest_config
+from capsem.builder.models import ErofsConfig
 from capsem.builder.docker import (
+    BUILD_LEDGER_NAME,
+    FALLBACK_KERNEL_VERSION,
     GUEST_BINARIES,
     ROOTFS_SCRIPTS,
+    _append_build_ledger,
+    _directory_tree_hash,
+    _file_ledger_entry,
+    _rootfs_config_input_record,
     build_version_script,
+    build_image,
     container_compile_agent,
+    create_erofs,
     cross_compile_agent,
+    detect_runtime,
+    docker_build,
+    experimental_erofs_build_config,
+    export_container_fs,
     extract_tool_versions,
+    extract_kernel_assets,
     generate_build_context,
+    generate_cyclonedx_obom,
+    generate_checksums,
+    get_project_version,
+    is_ci,
+    prepare_build_context,
     render_dockerfile,
+    resolve_kernel_version,
+    sync_container_clock,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -34,9 +55,9 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 @pytest.fixture
-def real_config():
-    """Load real guest config from guest/config/."""
-    return load_guest_config(PROJECT_ROOT / "guest")
+def real_config(tmp_path):
+    """Load the generated backend image spec used by Docker rendering tests."""
+    return _profile_guest_config(tmp_path, "code")
 
 
 @pytest.fixture
@@ -47,6 +68,110 @@ def rendered_arm64(real_config):
 @pytest.fixture
 def rendered_x86(real_config):
     return render_dockerfile("Dockerfile.rootfs.j2", real_config, "x86_64")
+
+
+def _profile_guest_config(tmp_path: Path, profile_id: str):
+    guest = tmp_path / "guest"
+    config = guest / "config"
+    shutil.copytree(PROJECT_ROOT / "config" / "docker" / "image", config)
+
+    profile_root = PROJECT_ROOT / "config" / "profiles" / profile_id
+    profile = tomllib.loads((profile_root / "profile.toml").read_text())
+
+    packages = config / "packages"
+    packages.mkdir()
+    _write_package_toml(
+        packages / "apt.toml",
+        "apt",
+        "System Packages",
+        "apt",
+        "apt-get install -y --no-install-recommends",
+        _package_lines(profile_root / "apt-packages.txt"),
+    )
+    _write_package_toml(
+        packages / "python.toml",
+        "python",
+        "Python Packages",
+        "uv",
+        "uv pip install --system --break-system-packages",
+        _package_lines(profile_root / "python-requirements.txt"),
+    )
+    _write_package_toml(
+        packages / "npm.toml",
+        "npm",
+        "Node Packages",
+        "npm",
+        "npm install -g --prefix /opt/ai-clis",
+        _package_lines(profile_root / "npm-packages.txt"),
+    )
+
+    vm = profile["vm"]
+    (config / "vm" / "resources.toml").write_text(
+        "\n".join(
+            [
+                "[resources]",
+                f"cpu_count = {vm['cpu_count']}",
+                f"ram_gb = {vm['ram_gb']}",
+                f"scratch_disk_size_gb = {vm['scratch_disk_size_gb']}",
+                "log_bodies = false",
+                "max_body_capture = 4096",
+                "retention_days = 30",
+                "max_sessions = 100",
+                "min_content_sessions = 25",
+                "max_disk_gb = 100",
+                "terminated_retention_days = 365",
+                "",
+            ]
+        )
+    )
+
+    shutil.copytree(PROJECT_ROOT / "guest" / "artifacts", guest / "artifacts")
+    shutil.copytree(profile_root / "root", guest / "profile-root")
+    shutil.copy2(profile_root / "build.sh", guest / "profile-build.sh")
+    shutil.copy2(profile_root / "tips.txt", guest / "artifacts" / "tips.txt")
+    return load_guest_config(guest)
+
+
+@pytest.fixture
+def generated_profile_guest(tmp_path):
+    return _profile_guest_config(tmp_path, "code")
+
+
+def _package_lines(path: Path) -> list[str]:
+    return [
+        line.strip()
+        for line in path.read_text().splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+
+
+def _write_package_toml(
+    path: Path,
+    key: str,
+    name: str,
+    manager: str,
+    install_cmd: str,
+    packages: list[str],
+) -> None:
+    path.write_text(
+        "\n".join(
+            [
+                f"[{key}]",
+                f'name = "{name}"',
+                f'manager = "{manager}"',
+                f'install_cmd = "{install_cmd}"',
+                "packages = [",
+                *[f'  "{package}",' for package in packages],
+                "]",
+                "",
+            ]
+        )
+    )
+
+
+@pytest.fixture
+def rendered_profile_arm64(generated_profile_guest):
+    return render_dockerfile("Dockerfile.rootfs.j2", generated_profile_guest, "arm64")
 
 
 # ---------------------------------------------------------------------------
@@ -75,19 +200,18 @@ class TestRenderRootfs:
         cmd = real_config.package_sets["python"].install_cmd
         assert cmd in rendered_arm64
 
-    def test_npm_packages_from_providers(self, real_config, rendered_arm64):
-        for provider in real_config.ai_providers.values():
-            if provider.enabled and provider.install:
-                for pkg in provider.install.packages:
-                    assert pkg in rendered_arm64, f"npm package '{pkg}' missing"
+    def test_npm_packages_from_package_sets(self, generated_profile_guest, rendered_profile_arm64):
+        for pkg in generated_profile_guest.package_sets["npm"].packages:
+            assert pkg in rendered_profile_arm64, f"npm package '{pkg}' missing"
 
-    def test_npm_prefix(self, rendered_arm64):
-        assert "/opt/ai-clis" in rendered_arm64
+    def test_npm_prefix(self, rendered_profile_arm64):
+        assert "/opt/ai-clis" in rendered_profile_arm64
 
     def test_guest_binaries(self, rendered_arm64):
         for binary in GUEST_BINARIES:
             assert f"COPY {binary} " in rendered_arm64
             assert f"chmod 555 /usr/local/bin/{binary}" in rendered_arm64
+        assert "COPY capsem-bench-rs /usr/local/bin/capsem-bench-rs" in rendered_arm64
 
     def test_ca_cert(self, rendered_arm64):
         assert "capsem-ca.crt" in rendered_arm64
@@ -161,17 +285,17 @@ class TestRootfsLayerOrdering:
         assert pos != -1, f"Expected to find {label or repr(needle)} in Dockerfile"
         return pos
 
-    def test_env_path_includes_npm_prefix(self, rendered_arm64):
+    def test_env_path_includes_npm_prefix(self, rendered_profile_arm64):
         """Regression: v0.14.18 -- /opt/ai-clis/bin not on PATH, gemini/codex
         returned N/A, build-time validator rejected the rootfs."""
-        assert 'ENV PATH="/opt/ai-clis/bin:$PATH"' in rendered_arm64, (
+        assert 'ENV PATH="/opt/ai-clis/bin:$PATH"' in rendered_profile_arm64, (
             "Dockerfile.rootfs.j2 must set ENV PATH to include /opt/ai-clis/bin "
-            "so version extraction can find npm-installed AI CLIs"
+            "so version extraction can find npm-installed CLIs"
         )
 
-    def test_env_path_after_npm_install(self, rendered_arm64):
-        npm_pos = self._pos(rendered_arm64, "npm install -g --prefix", "npm install")
-        path_pos = self._pos(rendered_arm64, 'ENV PATH="/opt/ai-clis/bin', "ENV PATH")
+    def test_env_path_after_npm_install(self, rendered_profile_arm64):
+        npm_pos = self._pos(rendered_profile_arm64, "npm install -g --prefix", "npm install")
+        path_pos = self._pos(rendered_profile_arm64, 'ENV PATH="/opt/ai-clis/bin', "ENV PATH")
         assert npm_pos < path_pos, "ENV PATH must come after npm install"
 
     def test_ca_cert_before_certifi_patch(self, rendered_arm64):
@@ -183,10 +307,10 @@ class TestRootfsLayerOrdering:
             "Order must be: COPY cert -> update-ca-certificates -> certifi patch"
         )
 
-    def test_node_before_npm_install(self, rendered_arm64):
+    def test_node_before_npm_install(self, rendered_profile_arm64):
         """npm install requires node to be installed first."""
-        node_pos = self._pos(rendered_arm64, "nvm install", "node install")
-        npm_pos = self._pos(rendered_arm64, "npm install -g --prefix", "npm install")
+        node_pos = self._pos(rendered_profile_arm64, "nvm install", "node install")
+        npm_pos = self._pos(rendered_profile_arm64, "npm install -g --prefix", "npm install")
         assert node_pos < npm_pos, "Node.js must be installed before npm install"
 
     def test_guest_binaries_before_root_cleanup(self, rendered_arm64):
@@ -218,16 +342,16 @@ class TestRootfsLayerOrdering:
             "no package installs should follow it"
         )
 
-    def test_setuid_strip_after_all_installs(self, rendered_arm64):
+    def test_setuid_strip_after_all_installs(self, rendered_profile_arm64):
         """Setuid strip must come after all package installs so no new
         setuid binaries sneak in after the strip."""
-        strip_pos = self._pos(rendered_arm64, "-4000", "setuid strip")
+        strip_pos = self._pos(rendered_profile_arm64, "-4000", "setuid strip")
         # Must be after npm, python, and guest binary installs
-        npm_pos = self._pos(rendered_arm64, "npm install -g --prefix", "npm install")
+        npm_pos = self._pos(rendered_profile_arm64, "npm install -g --prefix", "npm install")
         assert strip_pos > npm_pos, "setuid strip must come after npm install"
-        if "uv pip install --system" in rendered_arm64:
+        if "uv pip install --system" in rendered_profile_arm64:
             # Find the LAST uv pip install (python packages, not certifi)
-            last_pip = rendered_arm64.rfind("uv pip install --system --break-system-packages")
+            last_pip = rendered_profile_arm64.rfind("uv pip install --system --break-system-packages")
             assert strip_pos > last_pip, "setuid strip must come after python packages"
 
     def test_x86_64_has_same_ordering(self, rendered_arm64, rendered_x86):
@@ -297,26 +421,13 @@ class TestRootfsVersionExtractability:
     built image. This class validates that the Dockerfile installs them
     in locations that will be on PATH when extract_tool_versions runs."""
 
-    def test_all_ai_cli_install_prefixes_on_path(self, real_config, rendered_arm64):
-        """Every AI provider with an npm install prefix must have that
-        prefix's bin/ on ENV PATH in the Dockerfile."""
-        for provider in real_config.ai_providers.values():
-            if not (provider.enabled and provider.install):
-                continue
-            if provider.install.manager.value == "npm" and provider.install.prefix:
-                prefix_bin = f"{provider.install.prefix}/bin"
-                assert prefix_bin in rendered_arm64, (
-                    f"AI provider {provider.name} installs to {provider.install.prefix} "
-                    f"but {prefix_bin} is not on PATH in the Dockerfile"
-                )
+    def test_npm_install_prefix_on_path(self, rendered_profile_arm64):
+        assert "/opt/ai-clis/bin" in rendered_profile_arm64
 
     def test_curl_installed_clis_copied_to_usr_local(self, real_config, rendered_arm64):
         """Curl-installed CLIs write to ~/.local/bin which is tmpfs at runtime.
         The Dockerfile must copy them to /usr/local/bin."""
-        has_curl = any(
-            p.enabled and p.install and p.install.manager.value == "curl"
-            for p in real_config.ai_providers.values()
-        )
+        has_curl = "curl" in real_config.package_sets
         if has_curl:
             assert 'install -m 555 "$bin" /usr/local/bin/' in rendered_arm64, (
                 "Curl-installed CLIs must be copied to /usr/local/bin so they "
@@ -414,6 +525,8 @@ class TestGenerateBuildContext:
         assert "npm_packages" in ctx
         assert "npm_prefix" in ctx
         assert "guest_binaries" in ctx
+        assert "profile_build_script" in ctx
+        assert "profile_install_script" not in ctx
 
     def test_kernel_keys(self, real_config):
         ctx = generate_build_context(
@@ -423,14 +536,26 @@ class TestGenerateBuildContext:
         assert "arch_name" in ctx
         assert "kernel_version" in ctx
 
-    def test_rootfs_npm_providers(self, real_config):
-        ctx = generate_build_context("Dockerfile.rootfs.j2", real_config, "arm64")
-        assert "@google/gemini-cli" in ctx["npm_packages"]
-        assert "@openai/codex" in ctx["npm_packages"]
+    def test_rootfs_without_npm_package_set(self, real_config):
+        package_sets = {
+            key: value for key, value in real_config.package_sets.items() if key != "npm"
+        }
+        config = real_config.model_copy(update={"package_sets": package_sets})
+        ctx = generate_build_context("Dockerfile.rootfs.j2", config, "arm64")
+        assert ctx["npm_packages"] == []
+
+    def test_rootfs_npm_packages_can_come_from_profile_package_set(self, generated_profile_guest):
+        ctx = generate_build_context("Dockerfile.rootfs.j2", generated_profile_guest, "arm64")
+        assert ctx["npm_packages"] == ["@openai/codex", "@google/gemini-cli"]
+        rendered = render_dockerfile("Dockerfile.rootfs.j2", generated_profile_guest, "arm64")
+        assert "@openai/codex" in rendered
+        assert "@google/gemini-cli" in rendered
+        assert "profile-build.sh" in rendered
+        assert "profile-root/" in rendered
 
     def test_rootfs_curl_installs(self, real_config):
         ctx = generate_build_context("Dockerfile.rootfs.j2", real_config, "arm64")
-        assert "https://claude.ai/install.sh" in ctx["curl_installs"]
+        assert ctx["curl_installs"] == []
 
     def test_rootfs_arch_config(self, real_config):
         ctx = generate_build_context("Dockerfile.rootfs.j2", real_config, "arm64")
@@ -461,7 +586,7 @@ class TestEdgeCases:
 
     def test_no_python_packages(self, real_config):
         """Removing python package set still renders."""
-        from capsem.builder.models import BuildConfig, GuestImageConfig
+        from capsem.builder.models import GuestImageConfig
 
         minimal = GuestImageConfig(
             build=real_config.build,
@@ -472,13 +597,13 @@ class TestEdgeCases:
         # Should not have python install section
         assert "uv pip install --system" not in result or "certifi" in result
 
-    def test_no_ai_providers(self, real_config):
-        """No AI providers means no npm install section."""
+    def test_no_npm_package_set(self, real_config):
+        """No npm package set means no npm install section."""
         from capsem.builder.models import GuestImageConfig
 
         minimal = GuestImageConfig(
             build=real_config.build,
-            package_sets=real_config.package_sets,
+            package_sets={"apt": real_config.package_sets["apt"]},
         )
         result = render_dockerfile("Dockerfile.rootfs.j2", minimal, "arm64")
         assert "FROM --platform=linux/arm64" in result
@@ -499,25 +624,6 @@ class TestEdgeCases:
 # ---------------------------------------------------------------------------
 # Build execution: resolve_kernel_version
 # ---------------------------------------------------------------------------
-
-
-from capsem.builder.docker import (
-    FALLBACK_KERNEL_VERSION,
-    create_erofs,
-    create_squashfs,
-    detect_runtime,
-    docker_build,
-    experimental_erofs_build_config,
-    export_container_fs,
-    extract_kernel_assets,
-    generate_checksums,
-    get_project_version,
-    is_ci,
-    prepare_build_context,
-    resolve_kernel_version,
-    run_cmd,
-    sync_container_clock,
-)
 
 
 class TestResolveKernelVersion:
@@ -751,7 +857,7 @@ class TestExportContainerFs:
 
 
 # ---------------------------------------------------------------------------
-# Build execution: squashfs
+# Build execution: rootfs assets
 # ---------------------------------------------------------------------------
 
 
@@ -766,8 +872,7 @@ class TestBuildVersionScript:
     def test_real_config_has_all_sections(self, real_config):
         script = build_version_script(real_config)
         assert '# System' in script
-        assert '# Python' in script
-        assert '# AI CLIs' in script
+        assert '# Python' not in script
 
     def test_real_config_has_build_tools(self, real_config):
         script = build_version_script(real_config)
@@ -776,22 +881,11 @@ class TestBuildVersionScript:
         assert 'uv=' in script
         assert 'pip=' in script
 
-    def test_real_config_has_apt_tools(self, real_config):
+    def test_real_config_uses_build_tool_version_commands_only(self, real_config):
         script = build_version_script(real_config)
-        assert 'git=' in script
-        assert 'python3=' in script
-        assert 'gh=' in script
-
-    def test_real_config_has_python_packages(self, real_config):
-        script = build_version_script(real_config)
-        assert 'pytest=' in script
-        assert 'numpy=' in script
-
-    def test_real_config_has_ai_clis(self, real_config):
-        script = build_version_script(real_config)
-        assert 'claude=' in script
-        assert 'gemini=' in script
-        assert 'codex=' in script
+        assert 'git=' not in script
+        assert 'python3=' not in script
+        assert 'pytest=' not in script
 
     def test_empty_config_produces_empty_script(self):
         from capsem.builder.models import BuildConfig, GuestImageConfig
@@ -800,18 +894,6 @@ class TestBuildVersionScript:
         )
         script = build_version_script(config)
         assert script == ""
-
-    def test_disabled_provider_excluded(self, real_config):
-        """Disabled AI providers are not included in the version script."""
-        from capsem.builder.models import GuestImageConfig
-        # Create config with all providers disabled
-        disabled_providers = {}
-        for key, prov in real_config.ai_providers.items():
-            disabled_providers[key] = prov.model_copy(update={"enabled": False})
-        config = real_config.model_copy(update={"ai_providers": disabled_providers})
-        script = build_version_script(config)
-        assert "# AI CLIs" not in script
-
 
 def real_arch():
     """Minimal ArchConfig for test configs."""
@@ -825,7 +907,7 @@ def real_arch():
 
 
 class TestExtractToolVersionsValidation:
-    """extract_tool_versions() validates AI CLI results."""
+    """extract_tool_versions() writes version output from configured commands."""
 
     @patch("capsem.builder.docker.run_cmd")
     def test_valid_output_passes(self, mock_run, real_config):
@@ -835,8 +917,6 @@ class TestExtractToolVersionsValidation:
             "python3=3.11.2\ngit=2.39.5\ngh=2.67.0\ntmux=3.4\ncurl=7.88.1\n"
             "# Python\n"
             "pytest=8.3.4\nnumpy=2.2.3\nrequests=2.32.3\npandas=2.2.3\n"
-            "# AI CLIs\n"
-            "claude=1.0.18\ngemini=0.3.0\ncodex=0.1.0\n"
         ))
         # Should not raise
         extract_tool_versions(
@@ -845,24 +925,23 @@ class TestExtractToolVersionsValidation:
         )
 
     @patch("capsem.builder.docker.run_cmd")
-    def test_na_ai_cli_raises(self, mock_run, real_config):
+    def test_na_values_do_not_raise(self, mock_run, real_config):
         mock_run.return_value = MagicMock(stdout=(
             "# System\n"
             "node=24.1.0\n"
-            "# AI CLIs\n"
-            "claude=1.0.18\ngemini=N/A\ncodex=N/A\n"
+            "# Python\n"
+            "pytest=N/A\n"
         ))
-        with pytest.raises(RuntimeError, match="gemini"):
-            extract_tool_versions(
-                "docker", "test-image", "linux/arm64",
-                Path("/tmp"), real_config,
-            )
+        extract_tool_versions(
+            "docker", "test-image", "linux/arm64",
+            Path("/tmp"), real_config,
+        )
 
     @patch("capsem.builder.docker.run_cmd")
     def test_validate_false_skips_check(self, mock_run, real_config):
         mock_run.return_value = MagicMock(stdout=(
-            "# AI CLIs\n"
-            "claude=N/A\ngemini=N/A\ncodex=N/A\n"
+            "# Python\n"
+            "pytest=N/A\n"
         ))
         # Should not raise when validate=False
         extract_tool_versions(
@@ -907,19 +986,6 @@ class TestAptClockSkewOptions:
             )
 
     @patch("capsem.builder.docker.run_cmd")
-    def test_create_squashfs_has_both_options(self, mock_run):
-        create_squashfs(
-            "docker", Path("/tmp/rootfs.tar"), Path("/tmp/rootfs.squashfs"),
-            "zstd", 15,
-        )
-        cmd_str = " ".join(mock_run.call_args[0][0])
-        for opt in self.APT_CLOCK_SKEW_OPTIONS:
-            assert opt in cmd_str, (
-                f"create_squashfs() missing apt option '{opt}' -- "
-                "squashfs builds will fail when container clock drifts"
-            )
-
-    @patch("capsem.builder.docker.run_cmd")
     def test_create_erofs_has_both_options(self, mock_run):
         create_erofs(
             "docker", Path("/tmp/rootfs.tar"), Path("/tmp/rootfs.erofs"),
@@ -933,33 +999,6 @@ class TestAptClockSkewOptions:
             )
 
 
-class TestCreateSquashfs:
-    @patch("capsem.builder.docker.run_cmd")
-    def test_zstd_compression(self, mock_run):
-        create_squashfs(
-            "docker", Path("/tmp/rootfs.tar"), Path("/tmp/rootfs.squashfs"),
-            "zstd", 15,
-        )
-        cmd = mock_run.call_args[0][0]
-        cmd_str = " ".join(cmd)
-        assert "mksquashfs" in cmd_str
-        assert "-comp zstd" in cmd_str
-        assert "-Xcompression-level 15" in cmd_str
-
-    @patch("capsem.builder.docker.run_cmd")
-    def test_gzip_no_level_flag(self, mock_run):
-        create_squashfs(
-            "docker", Path("/tmp/rootfs.tar"), Path("/tmp/rootfs.squashfs"),
-            "gzip", 9,
-        )
-        cmd = mock_run.call_args[0][0]
-        cmd_str = " ".join(cmd)
-        assert "mksquashfs" in cmd_str
-        assert "-comp gzip" in cmd_str
-        # gzip doesn't support -Xcompression-level in mksquashfs
-        assert "-Xcompression-level" not in cmd_str
-
-
 class TestCreateErofs:
     @patch("capsem.builder.docker.run_cmd")
     def test_zstd_uses_modern_erofs_utils_image(self, mock_run):
@@ -971,6 +1010,7 @@ class TestCreateErofs:
         cmd_str = " ".join(cmd)
         assert "debian:trixie-slim" in cmd
         assert "mkfs.erofs" in cmd_str
+        assert "-Enosbcrc" in cmd_str
         assert "-zzstd,level=15" in cmd_str
         assert "-C65536" in cmd_str
 
@@ -983,6 +1023,7 @@ class TestCreateErofs:
         cmd = mock_run.call_args[0][0]
         cmd_str = " ".join(cmd)
         assert "debian:bookworm-slim" in cmd
+        assert "-Enosbcrc" in cmd_str
         assert "-zlz4hc,level=12" in cmd_str
         assert "-C65536" in cmd_str
 
@@ -1002,8 +1043,266 @@ class TestCreateErofs:
         assert "tar xf /assets/rootfs.tar -C /rootfs" in cmd_str
         assert " /assets/out/rootfs.erofs /rootfs" in cmd_str
 
-    def test_env_config_defaults_disabled(self):
-        assert experimental_erofs_build_config({}) == (False, "lz4hc", None, None)
+
+class TestBuildLedger:
+    def test_file_ledger_entry_uses_blake3_and_relative_path(self, tmp_path):
+        data = tmp_path / "context" / "nested" / "file.txt"
+        data.parent.mkdir(parents=True)
+        data.write_text("ledger")
+
+        entry = _file_ledger_entry(data, base=tmp_path / "context")
+
+        assert entry["path"] == "nested/file.txt"
+        assert entry["size"] == len("ledger")
+        assert len(entry["blake3"]) == 64
+
+    def test_directory_tree_hash_changes_with_file_contents(self, tmp_path):
+        context = tmp_path / "ctx"
+        context.mkdir()
+        (context / "Dockerfile").write_text("FROM scratch\n")
+        first = _directory_tree_hash(context)
+
+        (context / "Dockerfile").write_text("FROM busybox\n")
+        second = _directory_tree_hash(context)
+
+        assert first != second
+
+    def test_append_build_ledger_writes_jsonl_records(self, tmp_path):
+        arch_output = tmp_path / "assets" / "arm64"
+        ledger = _append_build_ledger(arch_output, {
+            "stage": "rootfs.erofs",
+            "outputs": [{"path": "rootfs.erofs", "size": 4, "blake3": "0" * 64}],
+        })
+
+        records = [json.loads(line) for line in ledger.read_text().splitlines()]
+        assert ledger.name == BUILD_LEDGER_NAME
+        assert records[0]["schema"] == "capsem.build_ledger.v1"
+        assert records[0]["stage"] == "rootfs.erofs"
+        assert records[0]["outputs"][0]["path"] == "rootfs.erofs"
+
+    def test_rootfs_config_input_record_tracks_declared_inputs_not_installed_state(
+        self, generated_profile_guest
+    ):
+        record = _rootfs_config_input_record(generated_profile_guest, "arm64")
+
+        assert record["stage"] == "rootfs.config_inputs"
+        assert record["arch"] == "arm64"
+        assert "curl" in record["package_inputs"]["apt"]["packages"]
+        assert "zstd" in record["package_inputs"]["apt"]["packages"]
+        assert "pytest" in record["package_inputs"]["python"]["packages"]
+        assert "openai" in record["package_inputs"]["python"]["packages"]
+        assert record["package_inputs"]["npm"]["packages"] == [
+            "@openai/codex",
+            "@google/gemini-cli",
+        ]
+        assert record["package_inputs"]["python"]["install_cmd"] == (
+            "uv pip install --system --break-system-packages"
+        )
+        assert record["profile_inputs"]["root_seed"]["enabled"] is True
+        assert record["profile_inputs"]["build_script"]["enabled"] is True
+        assert record["erofs"] == {
+            "enabled": True,
+            "compression": "lz4hc",
+            "compression_level": 12,
+            "cluster_size": None,
+        }
+        assert "installed_packages" not in record
+        assert "installed_versions" not in record
+
+    @patch("capsem.builder.docker.run_cmd")
+    def test_generate_cyclonedx_obom_extracts_rootfs_and_runs_cdxgen(self, mock_run, tmp_path, monkeypatch):
+        repo_root = tmp_path
+        (repo_root / "target" / "tmp").mkdir(parents=True)
+        rootfs_tar = tmp_path / "rootfs.tar"
+        rootfs_tar.write_bytes(b"tar")
+        output = tmp_path / "assets" / "arm64" / "obom.cdx.json"
+        monkeypatch.setenv("CAPSEM_CDXGEN_CMD", "cdxgen")
+
+        def fake_run(cmd, **_kwargs):
+            if cmd[0] == "cdxgen":
+                output.write_text(json.dumps({
+                    "bomFormat": "CycloneDX",
+                    "metadata": {
+                        "tools": {
+                            "components": [
+                                {"name": "cdxgen", "version": "11.0.0"}
+                            ]
+                        }
+                    },
+                    "components": [],
+                }))
+            return MagicMock(stdout="")
+
+        mock_run.side_effect = fake_run
+
+        result = generate_cyclonedx_obom(rootfs_tar, output, repo_root=repo_root)
+
+        assert result == output
+        tar_cmd = mock_run.call_args_list[0][0][0]
+        assert tar_cmd[0] == "tar"
+        assert "--exclude=dev/*" in tar_cmd
+        assert "-xf" in tar_cmd
+        assert str(rootfs_tar) in tar_cmd
+        cdxgen_cmd = mock_run.call_args_list[1][0][0]
+        assert cdxgen_cmd[:4] == ["cdxgen", "-t", "os", "-o"]
+        assert cdxgen_cmd[4] == str(output)
+
+    @patch("capsem.builder.docker.remove_image")
+    @patch("capsem.builder.docker.extract_tool_versions")
+    @patch("capsem.builder.docker.generate_cyclonedx_obom")
+    @patch("capsem.builder.docker.create_erofs")
+    @patch("capsem.builder.docker.export_container_fs")
+    @patch("capsem.builder.docker.docker_build")
+    @patch("capsem.builder.docker.cross_compile_agent")
+    @patch("capsem.builder.docker.sync_container_clock")
+    @patch("capsem.builder.docker.detect_runtime")
+    def test_rootfs_build_records_export_erofs_and_versions(
+        self,
+        mock_runtime,
+        _mock_sync,
+        mock_cross_compile,
+        _mock_docker_build,
+        mock_export,
+        mock_create_erofs,
+        mock_generate_obom,
+        mock_extract_versions,
+        _mock_remove,
+        real_config,
+        tmp_path,
+    ):
+        mock_runtime.return_value = "docker"
+
+        def fake_cross_compile(_rust_target, _repo_root, context_dir):
+            copied = []
+            for binary in GUEST_BINARIES:
+                path = context_dir / binary
+                path.write_text(binary)
+                copied.append(path)
+            return copied
+
+        def fake_export(_runtime, _tag, _platform, output_tar):
+            output_tar.write_bytes(b"rootfs tar")
+
+        def fake_erofs(_runtime, _tar_path, output_path, *_args):
+            output_path.write_bytes(b"erofs")
+
+        def fake_obom(_tar_path, output_path, **_kwargs):
+            output_path.write_text(json.dumps({
+                "bomFormat": "CycloneDX",
+                "metadata": {
+                    "tools": {
+                        "components": [
+                            {"name": "cdxgen", "version": "11.0.0"}
+                        ]
+                    }
+                },
+                "components": [],
+            }))
+
+        def fake_versions(_runtime, _tag, _platform, output_dir, _config):
+            (output_dir / "tool-versions.txt").write_text("codex=1.0.0\n")
+
+        mock_cross_compile.side_effect = fake_cross_compile
+        mock_export.side_effect = fake_export
+        mock_create_erofs.side_effect = fake_erofs
+        mock_generate_obom.side_effect = fake_obom
+        mock_extract_versions.side_effect = fake_versions
+
+        build_image(
+            real_config,
+            "arm64",
+            template="rootfs",
+            output_dir=tmp_path,
+            repo_root=PROJECT_ROOT,
+        )
+
+        records = [
+            json.loads(line)
+            for line in (tmp_path / "arm64" / BUILD_LEDGER_NAME).read_text().splitlines()
+        ]
+        assert [record["stage"] for record in records] == [
+            "rootfs.config_inputs",
+            "rootfs.export",
+            "rootfs.erofs",
+            "rootfs.obom",
+            "rootfs.tool_versions",
+        ]
+        config_record = records[0]
+        assert config_record["package_inputs"]["apt"]["packages"]
+        assert config_record["profile_inputs"]["root_seed"]["enabled"] is True
+        assert "installed_packages" not in config_record
+        erofs_record = records[2]
+        assert erofs_record["erofs"] == {
+            "compression": "lz4hc",
+            "compression_level": "12",
+            "cluster_size": None,
+            "utils_image": "debian:bookworm-slim",
+        }
+        assert erofs_record["outputs"][0]["path"] == "rootfs.erofs"
+        assert erofs_record["inputs"]["build_context"]["hash"]
+        obom_record = records[3]
+        assert obom_record["generator"] == "cdxgen"
+        assert obom_record["outputs"][0]["path"] == "obom.cdx.json"
+
+    @patch("capsem.builder.docker.remove_image")
+    @patch("capsem.builder.docker.extract_kernel_assets")
+    @patch("capsem.builder.docker.docker_build")
+    @patch("capsem.builder.docker.sync_container_clock")
+    @patch("capsem.builder.docker.detect_runtime")
+    def test_kernel_build_records_assets(
+        self,
+        mock_runtime,
+        _mock_sync,
+        _mock_docker_build,
+        mock_extract,
+        _mock_remove,
+        real_config,
+        tmp_path,
+    ):
+        mock_runtime.return_value = "docker"
+
+        def fake_extract(_runtime, _tag, _platform, output_dir):
+            vmlinuz = output_dir / "vmlinuz"
+            initrd = output_dir / "initrd.img"
+            vmlinuz.write_bytes(b"kernel")
+            initrd.write_bytes(b"initrd")
+            return vmlinuz, initrd
+
+        mock_extract.side_effect = fake_extract
+
+        build_image(
+            real_config,
+            "arm64",
+            template="kernel",
+            output_dir=tmp_path,
+            kernel_version="7.0.11",
+            repo_root=PROJECT_ROOT,
+        )
+
+        records = [
+            json.loads(line)
+            for line in (tmp_path / "arm64" / BUILD_LEDGER_NAME).read_text().splitlines()
+        ]
+        assert len(records) == 1
+        assert records[0]["stage"] == "kernel.assets"
+        assert records[0]["kernel_version"] == "7.0.11"
+        assert {entry["path"] for entry in records[0]["outputs"]} == {
+            "vmlinuz",
+            "initrd.img",
+        }
+
+class TestErofsConfig:
+    def test_config_defaults_enable_release_lz4hc(self):
+        assert experimental_erofs_build_config({}, ErofsConfig()) == (
+            True, "lz4hc", None, "12",
+        )
+
+    def test_env_cannot_disable_release_erofs(self):
+        with pytest.raises(ValueError, match="EROFS build cannot be disabled"):
+            experimental_erofs_build_config(
+                {"CAPSEM_BUILD_EXPERIMENTAL_EROFS": "0"},
+                ErofsConfig(),
+            )
 
     def test_env_config_parses_enabled_zstd(self):
         assert experimental_erofs_build_config({
@@ -1041,16 +1340,21 @@ class TestKernelConfig:
         assert real_config.build.architectures["arm64"].kernel_branch == "7.0"
         assert real_config.build.architectures["x86_64"].kernel_branch == "7.0"
 
+    def test_real_config_defaults_erofs_lz4hc_level_12(self, real_config):
+        assert real_config.build.erofs.enabled is True
+        assert real_config.build.erofs.compression.value == "lz4hc"
+        assert real_config.build.erofs.compression_level == 12
+
     @pytest.mark.parametrize("name", ["defconfig.arm64", "defconfig.x86_64"])
     def test_erofs_zstd_enabled(self, name):
-        content = (PROJECT_ROOT / "guest" / "config" / "kernel" / name).read_text()
+        content = (PROJECT_ROOT / "config" / "docker" / "image" / "kernel" / name).read_text()
         assert "CONFIG_EROFS_FS=y" in content
         assert "CONFIG_EROFS_FS_ZIP=y" in content
         assert "CONFIG_EROFS_FS_ZIP_ZSTD=y" in content
 
     @pytest.mark.parametrize("name", ["defconfig.arm64", "defconfig.x86_64"])
     def test_iptables_nft_nat_redirect_enabled(self, name):
-        content = (PROJECT_ROOT / "guest" / "config" / "kernel" / name).read_text()
+        content = (PROJECT_ROOT / "config" / "docker" / "image" / "kernel" / name).read_text()
         required = [
             "CONFIG_NETFILTER=y",
             "CONFIG_NF_TABLES=y",
@@ -1074,9 +1378,10 @@ class TestKernelConfig:
         for symbol in forbidden:
             assert symbol not in content
 
-    def test_init_mounts_erofs_when_cmdline_requests_it(self):
+    def test_init_mounts_erofs_by_default(self):
         content = (PROJECT_ROOT / "guest" / "artifacts" / "capsem-init").read_text()
-        assert "capsem.rootfs=erofs" in content
+        assert "ROOTFS_TYPE=erofs" in content
+        assert "ROOTFS_LABEL=erofs" in content
         assert "capsem.rootfs=erofs-dax" in content
         assert "ROOTFS_MOUNT_OPTS=ro,dax" in content
         assert 'mount -t "$ROOTFS_TYPE" -o "$ROOTFS_MOUNT_OPTS" /dev/vda /mnt/a' in content
@@ -1135,6 +1440,44 @@ class TestPrepareBuildContext:
         assert (context_dir / "kernel" / "defconfig.arm64").is_file()
         assert (context_dir / "capsem-init").is_file()
 
+    def test_rootfs_context_copies_profile_root_and_build_script(
+        self, generated_profile_guest, tmp_path
+    ):
+        context_dir = tmp_path / "ctx"
+        context_dir.mkdir()
+        prepare_build_context(
+            generated_profile_guest,
+            "arm64",
+            "Dockerfile.rootfs.j2",
+            context_dir,
+            PROJECT_ROOT,
+        )
+        assert (context_dir / "profile-build.sh").is_file()
+        assert (context_dir / "profile-root/root/.antigravity/config.json").is_file()
+        assert (context_dir / "profile-root/root/.gemini/config/config.json").is_file()
+        assert (context_dir / "profile-root/root/.gemini/antigravity-cli/settings.json").is_file()
+        assert (context_dir / "profile-root/root/.codex/config.toml").is_file()
+        assert "Credentials are brokered by Capsem" in (context_dir / "tips.txt").read_text()
+
+        forbidden_fragments = (
+            "127.0.0.1:11434",
+            "localhost:11434",
+            "CAPSEM_MOCK_SERVER",
+            '"provider": "ollama"',
+            '"baseUrl": "http://127.0.0.1:11434"',
+        )
+        leaked = []
+        for payload in sorted((context_dir / "profile-root").rglob("*")):
+            if not payload.is_file():
+                continue
+            text = payload.read_text(errors="ignore")
+            for fragment in forbidden_fragments:
+                if fragment in text:
+                    leaked.append(
+                        f"{payload.relative_to(context_dir / 'profile-root')}: {fragment}"
+                    )
+        assert leaked == []
+
     def test_rootfs_dockerfile_content(self, real_config, tmp_path):
         context_dir = tmp_path / "ctx"
         context_dir.mkdir()
@@ -1190,10 +1533,41 @@ class TestGenerateChecksums:
         # manifest.json was written (v2 format: orthogonal assets vs binaries).
         manifest = json.loads((tmp_path / "manifest.json").read_text())
         assert manifest["format"] == 2
+        assert manifest["refresh_policy"] == "24h"
         assert manifest["binaries"]["current"] == "0.13.0"
         assert "0.13.0" in manifest["binaries"]["releases"]
         asset_version = manifest["assets"]["current"]
         assert asset_version in manifest["assets"]["releases"]
+
+    def test_manifest_reuses_release_for_identical_assets(self, tmp_path):
+        arm64 = tmp_path / "arm64"
+        arm64.mkdir()
+        (arm64 / "vmlinuz").write_bytes(b"kernel")
+        (arm64 / "initrd.img").write_bytes(b"initrd")
+        (arm64 / "rootfs.erofs").write_bytes(b"rootfs")
+
+        generate_checksums(tmp_path, "0.13.0")
+        first = json.loads((tmp_path / "manifest.json").read_text())
+        generate_checksums(tmp_path, "0.13.0")
+        second = json.loads((tmp_path / "manifest.json").read_text())
+
+        assert second["assets"]["current"] == first["assets"]["current"]
+
+    def test_manifest_increments_release_for_changed_assets(self, tmp_path):
+        arm64 = tmp_path / "arm64"
+        arm64.mkdir()
+        (arm64 / "vmlinuz").write_bytes(b"kernel")
+        (arm64 / "initrd.img").write_bytes(b"initrd")
+        (arm64 / "rootfs.erofs").write_bytes(b"rootfs")
+
+        generate_checksums(tmp_path, "0.13.0")
+        first = json.loads((tmp_path / "manifest.json").read_text())
+        (arm64 / "initrd.img").write_bytes(b"changed-initrd")
+        generate_checksums(tmp_path, "0.13.0")
+        second = json.loads((tmp_path / "manifest.json").read_text())
+
+        assert first["assets"]["current"].endswith(".1")
+        assert second["assets"]["current"].endswith(".2")
 
     def test_manifest_per_arch_structure(self, tmp_path):
         """Per-arch layout produces releases[v].arches[arch][filename]={hash,size}."""
@@ -1213,6 +1587,32 @@ class TestGenerateChecksums:
             assert "/" not in filename
             assert len(entry["hash"]) == 64  # blake3 hex digest
             assert entry["size"] > 0
+
+    def test_manifest_includes_obom_when_rootfs_build_emits_it(self, tmp_path):
+        """CycloneDX OBOM is pinned as a profile asset, not replaced by build-ledger."""
+        arm64 = tmp_path / "arm64"
+        arm64.mkdir()
+        (arm64 / "vmlinuz").write_bytes(b"kernel")
+        (arm64 / "initrd.img").write_bytes(b"initrd")
+        (arm64 / "rootfs.erofs").write_bytes(b"rootfs")
+        (arm64 / "obom.cdx.json").write_text(json.dumps({
+            "bomFormat": "CycloneDX",
+            "metadata": {
+                "tools": {
+                    "components": [
+                        {"name": "cdxgen", "version": "11.0.0"}
+                    ]
+                }
+            },
+        }))
+
+        generate_checksums(tmp_path, "0.13.0")
+
+        manifest = json.loads((tmp_path / "manifest.json").read_text())
+        asset_version = manifest["assets"]["current"]
+        arm64_entries = manifest["assets"]["releases"][asset_version]["arches"]["arm64"]
+        assert "obom.cdx.json" in arm64_entries
+        assert "build-ledger.log" not in arm64_entries
 
     def test_manifest_flat_fallback(self, tmp_path):
         """Flat layout (no arch subdirs) still populates an arches entry."""
@@ -1269,20 +1669,35 @@ class TestGenerateChecksums:
         assert "rootfs.erofs" in entries
         assert "rootfs.squashfs" not in entries
 
-    def test_manifest_falls_back_to_squashfs_when_erofs_is_absent(self, tmp_path):
-        """Old local asset directories can still generate a manifest."""
+    def test_manifest_rejects_squashfs_when_erofs_is_absent(self, tmp_path):
+        """A squashfs-only asset directory must not mint a release manifest."""
         arm64 = tmp_path / "arm64"
         arm64.mkdir()
         (arm64 / "vmlinuz").write_bytes(b"kernel")
         (arm64 / "initrd.img").write_bytes(b"initrd")
         (arm64 / "rootfs.squashfs").write_bytes(b"rootfs")
 
-        generate_checksums(tmp_path, "0.13.0")
+        with pytest.raises(FileNotFoundError, match="rootfs.erofs"):
+            generate_checksums(tmp_path, "0.13.0")
 
-        manifest = json.loads((tmp_path / "manifest.json").read_text())
-        asset_version = manifest["assets"]["current"]
-        entries = manifest["assets"]["releases"][asset_version]["arches"]["arm64"]
-        assert set(entries) == {"vmlinuz", "initrd.img", "rootfs.squashfs"}
+    def test_manifest_rejects_rootfs_only_arch(self, tmp_path):
+        """A rootfs-only partial build must not clobber a bootable manifest."""
+        arm64 = tmp_path / "arm64"
+        arm64.mkdir()
+        (arm64 / "rootfs.erofs").write_bytes(b"rootfs")
+
+        with pytest.raises(FileNotFoundError, match="vmlinuz"):
+            generate_checksums(tmp_path, "0.13.0")
+
+    def test_manifest_rejects_kernel_only_arch(self, tmp_path):
+        """A kernel-only partial build must not mint a rootfs-less manifest."""
+        arm64 = tmp_path / "arm64"
+        arm64.mkdir()
+        (arm64 / "vmlinuz").write_bytes(b"kernel")
+        (arm64 / "initrd.img").write_bytes(b"initrd")
+
+        with pytest.raises(FileNotFoundError, match="rootfs.erofs"):
+            generate_checksums(tmp_path, "0.13.0")
 
 
 # ---------------------------------------------------------------------------
@@ -1478,9 +1893,9 @@ class TestPrepareBuildContextArtifacts:
         repo = tmp_path / "repo"
         artifacts = repo / "guest" / "artifacts"
         artifacts.mkdir(parents=True)
-        config = repo / "config"
-        config.mkdir()
-        (config / "capsem-ca.crt").write_text("fake cert")
+        security_keys = repo / "security" / "keys"
+        security_keys.mkdir(parents=True)
+        (security_keys / "capsem-ca.crt").write_text("fake cert")
         for name in ("capsem-bashrc", "banner.txt", "tips.txt"):
             (artifacts / name).write_text(f"content of {name}")
         for name in ROOTFS_SCRIPTS:
@@ -1495,12 +1910,19 @@ class TestPrepareBuildContextArtifacts:
         (bench / "disk.py").write_text("# disk bench")
         return repo
 
+    def fake_guest_config(self, real_config, fake_repo):
+        """Point the backend image spec at the fake guest workspace."""
+        return real_config.model_copy(
+            update={"guest_dir_path": str(fake_repo / "guest")}
+        )
+
     def test_missing_rootfs_artifact_silently_skipped(self, real_config, fake_repo, tmp_path):
         # Remove one ROOTFS_SCRIPT from fake repo
         (fake_repo / "guest" / "artifacts" / "snapshots").unlink()
         ctx = tmp_path / "ctx"
         ctx.mkdir()
-        prepare_build_context(real_config, "arm64", "Dockerfile.rootfs.j2", ctx, fake_repo)
+        config = self.fake_guest_config(real_config, fake_repo)
+        prepare_build_context(config, "arm64", "Dockerfile.rootfs.j2", ctx, fake_repo)
         assert not (ctx / "snapshots").exists()
         # Other artifacts still copied
         assert (ctx / "capsem-doctor").is_file()
@@ -1509,7 +1931,8 @@ class TestPrepareBuildContextArtifacts:
     def test_all_rootfs_artifacts_copied_when_present(self, real_config, fake_repo, tmp_path):
         ctx = tmp_path / "ctx"
         ctx.mkdir()
-        prepare_build_context(real_config, "arm64", "Dockerfile.rootfs.j2", ctx, fake_repo)
+        config = self.fake_guest_config(real_config, fake_repo)
+        prepare_build_context(config, "arm64", "Dockerfile.rootfs.j2", ctx, fake_repo)
         for name in ROOTFS_SCRIPTS:
             assert (ctx / name).is_file(), f"{name} not copied to build context"
 
@@ -1517,14 +1940,16 @@ class TestPrepareBuildContextArtifacts:
         shutil.rmtree(fake_repo / "guest" / "artifacts" / "diagnostics")
         ctx = tmp_path / "ctx"
         ctx.mkdir()
-        prepare_build_context(real_config, "arm64", "Dockerfile.rootfs.j2", ctx, fake_repo)
+        config = self.fake_guest_config(real_config, fake_repo)
+        prepare_build_context(config, "arm64", "Dockerfile.rootfs.j2", ctx, fake_repo)
         assert not (ctx / "diagnostics").exists()
 
     def test_missing_bench_pkg_dir_no_crash(self, real_config, fake_repo, tmp_path):
         shutil.rmtree(fake_repo / "guest" / "artifacts" / "capsem_bench")
         ctx = tmp_path / "ctx"
         ctx.mkdir()
-        prepare_build_context(real_config, "arm64", "Dockerfile.rootfs.j2", ctx, fake_repo)
+        config = self.fake_guest_config(real_config, fake_repo)
+        prepare_build_context(config, "arm64", "Dockerfile.rootfs.j2", ctx, fake_repo)
         assert not (ctx / "capsem_bench").exists()
 
 
@@ -1544,9 +1969,13 @@ class TestRootfsArtifactConstants:
             assert f"COPY {artifact} " in rendered_arm64, (
                 f"{artifact} missing COPY line in Dockerfile.rootfs.j2"
             )
-            assert f"chmod" in rendered_arm64 and artifact in rendered_arm64, (
+            assert "chmod" in rendered_arm64 and artifact in rendered_arm64, (
                 f"{artifact} missing chmod line in Dockerfile.rootfs.j2"
             )
+
+    def test_protocol_benchmark_rust_binary_is_mandatory_guest_binary(self):
+        assert "capsem-bench-rs" in GUEST_BINARIES
+        assert "capsem-bench" in ROOTFS_SCRIPTS
 
 
 class TestCrossCompileAgent:

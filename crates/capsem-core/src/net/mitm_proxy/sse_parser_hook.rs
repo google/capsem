@@ -17,7 +17,7 @@
 use bytes::Bytes;
 
 use super::hooks::{ChunkCtx, ChunkHook, ConnMeta};
-use crate::net::ai_traffic::provider::ProviderKind;
+use crate::net::ai_traffic::provider::ModelProtocol;
 use crate::net::parsers::sse_parser::{SseEvent, SseParser};
 
 /// Per-request producer/consumer slot for parsed SSE events.
@@ -47,8 +47,8 @@ struct SseParserState {
     initialized: bool,
 }
 
-fn conn_ai_provider(conn: &ConnMeta) -> Option<ProviderKind> {
-    conn.ai_provider
+fn conn_ai_protocol(conn: &ConnMeta) -> Option<ModelProtocol> {
+    conn.ai_protocol
 }
 
 /// `ChunkHook` that runs the shared `SseParser` over the response
@@ -76,7 +76,7 @@ impl ChunkHook for SseParserHook {
         // Read conn metadata before claiming a state slot -- the slot
         // borrow holds &mut on the slot map, which would otherwise
         // conflict with `ctx.conn()`'s shared borrow of the same ctx.
-        let domain_is_ai = conn_ai_provider(ctx.conn()).is_some();
+        let domain_is_ai = conn_ai_protocol(ctx.conn()).is_some();
         // Two sequential state borrows: the parser slot (private) and
         // the public event-stream slot. Each `state::<T>()` call only
         // borrows the slot map for its T, so this composes cleanly.

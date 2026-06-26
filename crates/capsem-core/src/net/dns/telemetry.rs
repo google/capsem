@@ -9,13 +9,13 @@
 //! lets the dispatch decide when (and whether) to record, without
 //! coupling the handler to a `DbWriter`.
 
+use std::net::{Ipv4Addr, Ipv6Addr};
 use std::time::SystemTime;
 
 use capsem_logger::events::DnsEvent;
 
 use crate::net::dns::server::DnsHandlerResult;
-use crate::net::policy_config::PolicyCallback;
-use crate::security_engine::{DnsSecurityEvent, SecurityEvent};
+use crate::security_engine::{DnsSecurityEvent, RuntimeSecurityEventType, SecurityEvent};
 
 /// Build a `DnsEvent` row for one query.
 ///
@@ -42,6 +42,7 @@ pub fn build_dns_event(
         qtype,
         qclass,
         rcode: result.rcode,
+        answer_ip: first_answer_ip(&result.answer_bytes),
         decision: result.decision.as_str().to_string(),
         matched_rule: result.matched_rule.clone(),
         source_proto: source_proto.map(|s| s.to_string()),
@@ -56,11 +57,83 @@ pub fn build_dns_event(
     }
 }
 
+fn first_answer_ip(packet: &[u8]) -> Option<String> {
+    if packet.len() < 12 {
+        return None;
+    }
+    let qdcount = u16::from_be_bytes([packet[4], packet[5]]) as usize;
+    let ancount = u16::from_be_bytes([packet[6], packet[7]]) as usize;
+    let mut offset = 12usize;
+    for _ in 0..qdcount {
+        offset = skip_dns_name(packet, offset)?;
+        offset = offset.checked_add(4)?;
+        if offset > packet.len() {
+            return None;
+        }
+    }
+    for _ in 0..ancount {
+        offset = skip_dns_name(packet, offset)?;
+        if offset.checked_add(10)? > packet.len() {
+            return None;
+        }
+        let rr_type = u16::from_be_bytes([packet[offset], packet[offset + 1]]);
+        let rdlen = u16::from_be_bytes([packet[offset + 8], packet[offset + 9]]) as usize;
+        offset += 10;
+        if offset.checked_add(rdlen)? > packet.len() {
+            return None;
+        }
+        match (rr_type, rdlen) {
+            (1, 4) => {
+                let addr = Ipv4Addr::new(
+                    packet[offset],
+                    packet[offset + 1],
+                    packet[offset + 2],
+                    packet[offset + 3],
+                );
+                return Some(addr.to_string());
+            }
+            (28, 16) => {
+                let mut octets = [0u8; 16];
+                octets.copy_from_slice(&packet[offset..offset + 16]);
+                return Some(Ipv6Addr::from(octets).to_string());
+            }
+            _ => offset += rdlen,
+        }
+    }
+    None
+}
+
+fn skip_dns_name(packet: &[u8], mut offset: usize) -> Option<usize> {
+    let mut jumps = 0usize;
+    loop {
+        let len = *packet.get(offset)?;
+        if len & 0b1100_0000 == 0b1100_0000 {
+            packet.get(offset + 1)?;
+            return Some(offset + 2);
+        }
+        if len == 0 {
+            return Some(offset + 1);
+        }
+        if len & 0b1100_0000 != 0 {
+            return None;
+        }
+        offset = offset.checked_add(1 + len as usize)?;
+        if offset > packet.len() {
+            return None;
+        }
+        jumps += 1;
+        if jumps > 128 {
+            return None;
+        }
+    }
+}
+
 pub fn security_event_from_dns_event(event: &DnsEvent) -> SecurityEvent {
-    let security_event = SecurityEvent::new(PolicyCallback::DnsQuery).with_dns(DnsSecurityEvent {
-        qname: Some(event.qname.clone()),
-        qtype: Some(event.qtype.to_string()),
-    });
+    let security_event =
+        SecurityEvent::new(RuntimeSecurityEventType::DnsQuery).with_dns(DnsSecurityEvent {
+            qname: Some(event.qname.clone()),
+            qtype: Some(event.qtype.to_string()),
+        });
     match event.trace_id.clone() {
         Some(trace_id) => security_event.with_trace_id(trace_id),
         None => security_event,

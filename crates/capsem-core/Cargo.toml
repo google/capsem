@@ -43,15 +43,15 @@ futures = { workspace = true }
 tokio-stream = { workspace = true }
 async-compression = { workspace = true }
 tokio-util = { workspace = true }
+sse-stream = { workspace = true }
 bytes = "1"
 serde_json = { workspace = true }
 uuid = { version = "1", features = ["v4"] }
 flate2 = "1"
-minisign-verify = "0.2"
 regex = { workspace = true }
 scraper = "0.25"
 
-rmcp = { version = "1.2", features = ["client", "transport-streamable-http-client-reqwest", "transport-child-process", "reqwest"] }
+rmcp = { workspace = true, features = ["transport-streamable-http-client-reqwest", "transport-streamable-http-server", "transport-child-process"] }
 hickory-proto = { workspace = true }
 # Bounded LRU primitive used by `net::dns::cache` for the TTL-honoring
 # answer cache (T3.f). Pure-Rust, no_std-compatible, single small dep.
@@ -66,6 +66,7 @@ metrics = "0.24"
 
 # Linux-only: KVM hypervisor backend
 [target.'cfg(target_os = "linux")'.dependencies]
+io-uring = "0.7"
 vm-fdt = "0.3"
 
 # macOS-only: Apple Virtualization.framework bindings
@@ -76,7 +77,6 @@ objc2-foundation = { workspace = true }
 block2 = { workspace = true }
 dispatch2 = { workspace = true }
 core-foundation-sys = "0.8"
-security-framework = "3.7"
 
 [lints]
 workspace = true
@@ -86,6 +86,7 @@ tempfile = "3"
 dotenvy = "0.15"
 criterion = { version = "0.5", features = ["html_reports"] }
 metrics-util = "0.19"
+axum = { workspace = true }
 # Property-based tests for the DNS wire codec (T3.f). Cheap dev-dep,
 # scoped to test runs only.
 proptest = "1"
@@ -108,4 +109,8 @@ harness = false
 
 [[bench]]
 name = "security_actions"
+harness = false
+
+[[bench]]
+name = "dns_handler"
 harness = false

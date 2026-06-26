@@ -1,4 +1,4 @@
-"""Core no-state service endpoints: /version, /stats, /service-logs, /reload-config."""
+"""Core no-state service endpoints: /version, /stats, /service-logs, profile reload."""
 
 import pytest
 
@@ -35,7 +35,7 @@ class TestServiceLogs:
     def test_service_logs_present(self, client):
         """/service-logs returns the tail of the service's own log file as plain text."""
         # Trigger some recent activity so the log has content.
-        client.get("/list")
+        client.get("/vms/list")
         text = client.get_text("/service-logs")
         assert isinstance(text, str) and text, "service-logs returned empty"
         assert len(text) > 10, f"service-logs implausibly short: {text!r}"
@@ -47,14 +47,17 @@ class TestServiceLogs:
 
 class TestReloadConfig:
 
-    def test_reload_config_no_instances(self, client):
-        """/reload-config succeeds with instances: 0 when no VMs are running."""
+    def test_profile_reload_no_instances(self, client):
+        """/profiles/{profile_id}/reload succeeds with instances: 0 when no VMs are running."""
         # Make sure no VMs are running first.
         client.post("/purge", {"all": True})
 
-        resp = client.post("/reload-config", {})
-        assert resp is not None, "reload-config returned no body"
-        assert resp.get("success") is True, f"reload-config failed: {resp}"
+        resp = client.post("/profiles/code/reload", {})
+        assert resp is not None, "profile reload returned no body"
+        assert resp.get("success") is True, f"profile reload failed: {resp}"
         assert resp.get("reloaded") == 0, (
             f"expected 0 reloaded, got {resp.get('reloaded')}: {resp}"
         )
+
+    def test_retired_global_reload_config_route_is_removed(self, client):
+        assert client.post("/reload-config", {}) is None

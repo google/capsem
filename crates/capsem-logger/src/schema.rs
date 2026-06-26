@@ -1,21 +1,38 @@
-use rusqlite::Connection;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::{Path, PathBuf},
+    sync::Mutex,
+};
+
+use rusqlite::{Connection, OptionalExtension};
+
+const MEMORY_SCHEMA: &str = "mem";
+const DISK_ONLY_TABLES: &[&str] = &["event_body_blobs"];
+static MEMORY_SCHEMA_LOCK: Mutex<()> = Mutex::new(());
 
 const CREDENTIAL_REF_CHECK: &str =
     "CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))";
 const SUBSTITUTION_REF_CHECK: &str =
     "CHECK (substitution_ref IS NULL OR (length(substitution_ref) = 82 AND substitution_ref GLOB 'credential:blake3:[0-9a-f]*'))";
+const SUBSTITUTION_OUTCOME_CHECK: &str =
+    "CHECK (outcome IN ('captured', 'brokered', 'injected', 'error'))";
 const RULE_ACTION_CHECK: &str =
     "CHECK (rule_action IN ('allow', 'ask', 'block', 'preprocess', 'rewrite', 'postprocess'))";
 const DETECTION_LEVEL_CHECK: &str =
     "CHECK (detection_level IN ('none', 'informational', 'low', 'medium', 'high', 'critical'))";
 const ASK_STATUS_CHECK: &str = "CHECK (status IN ('pending', 'approved', 'denied'))";
+const PROFILE_MUTATION_STATUS_CHECK: &str = "CHECK (status IN ('applied', 'failed'))";
+const BLAKE3_REF_CHECK: &str =
+    "CHECK (length(old_hash) = 71 AND old_hash GLOB 'blake3:[0-9a-f]*' AND length(new_hash) = 71 AND new_hash GLOB 'blake3:[0-9a-f]*')";
 const SECURITY_DECISION_CHECK: &str = "CHECK (previous_decision IN ('allow', 'ask', 'block') AND requested_decision IN ('allow', 'ask', 'block') AND effective_decision IN ('allow', 'ask', 'block'))";
 const SECURITY_DECISION_STAGE_CHECK: &str =
     "CHECK (stage IN ('preprocess', 'rule', 'rewrite', 'postprocess', 'ask_resolution'))";
 const SECURITY_EVENT_TYPE_CHECK: &str =
-    "CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'snapshot.event', 'security.rule', 'security.ask'))";
+    "CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask'))";
 const SECURITY_EVENT_ID_CHECK: &str =
     "CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]')";
+const MODEL_PROTOCOL_CHECK: &str =
+    "CHECK (protocol IS NULL OR protocol IN ('anthropic', 'openai', 'google', 'ollama'))";
 
 pub const CREATE_SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS net_events (
@@ -45,6 +62,7 @@ pub const CREATE_SCHEMA: &str = "
         policy_rule TEXT,
         policy_reason TEXT,
         trace_id TEXT,
+        turn_id TEXT,
         credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
     );
 
@@ -53,6 +71,7 @@ pub const CREATE_SCHEMA: &str = "
         event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         timestamp TEXT NOT NULL,
         provider TEXT NOT NULL,
+        protocol TEXT CHECK (protocol IS NULL OR protocol IN ('anthropic', 'openai', 'google', 'ollama')),
         model TEXT,
         process_name TEXT,
         pid INTEGER,
@@ -75,20 +94,65 @@ pub const CREATE_SCHEMA: &str = "
         response_bytes INTEGER DEFAULT 0,
         estimated_cost_usd REAL DEFAULT 0,
         trace_id TEXT,
+        turn_id TEXT,
         usage_details TEXT,
         credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
     );
 
+    CREATE TABLE IF NOT EXISTS event_body_blobs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id TEXT NOT NULL CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask')),
+        source_table TEXT NOT NULL CHECK (source_table IN ('net_events', 'model_calls', 'tool_calls')),
+        direction TEXT NOT NULL CHECK (direction IN ('request', 'response')),
+        content_type TEXT,
+        original_bytes INTEGER NOT NULL CHECK (original_bytes >= 0),
+        stored_bytes INTEGER NOT NULL CHECK (stored_bytes >= 0 AND stored_bytes <= original_bytes),
+        truncated INTEGER NOT NULL CHECK (truncated IN (0, 1)),
+        body_hash TEXT NOT NULL CHECK (length(body_hash) = 71 AND body_hash GLOB 'blake3:[0-9a-f]*'),
+        body BLOB NOT NULL,
+        trace_id TEXT,
+        turn_id TEXT,
+        created_at TEXT NOT NULL,
+        UNIQUE(event_id, source_table, direction)
+    );
+    CREATE INDEX IF NOT EXISTS idx_event_body_blobs_event_id
+        ON event_body_blobs(event_id);
+    CREATE INDEX IF NOT EXISTS idx_event_body_blobs_trace_id
+        ON event_body_blobs(trace_id);
+    CREATE INDEX IF NOT EXISTS idx_event_body_blobs_hash
+        ON event_body_blobs(body_hash);
+
     CREATE TABLE IF NOT EXISTS tool_calls (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        model_call_id INTEGER NOT NULL,
+        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        timestamp TEXT NOT NULL DEFAULT '',
+        model_call_id INTEGER,
+        provider TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'observed' CHECK (status IN ('requested', 'observed', 'responded', 'error')),
         call_index INTEGER NOT NULL,
         call_id TEXT NOT NULL,
         tool_name TEXT NOT NULL,
         arguments TEXT,
+        response_preview TEXT,
         origin TEXT NOT NULL DEFAULT 'native',
-        mcp_call_id INTEGER,
-        trace_id TEXT
+        transport TEXT NOT NULL DEFAULT 'unknown' CHECK (transport IN ('http', 'sse', 'websocket', 'vsock_frame', 'direct', 'unknown')),
+        server_name TEXT,
+        method TEXT,
+        request_id TEXT,
+        decision TEXT NOT NULL DEFAULT 'allowed',
+        duration_ms INTEGER DEFAULT 0,
+        error_message TEXT,
+        process_name TEXT,
+        bytes_sent INTEGER DEFAULT 0,
+        bytes_received INTEGER DEFAULT 0,
+        policy_mode TEXT,
+        policy_action TEXT,
+        policy_rule TEXT,
+        policy_reason TEXT,
+        trace_id TEXT,
+        turn_id TEXT,
+        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
     );
 
     CREATE TABLE IF NOT EXISTS tool_responses (
@@ -97,7 +161,9 @@ pub const CREATE_SCHEMA: &str = "
         call_id TEXT NOT NULL,
         content_preview TEXT,
         is_error INTEGER DEFAULT 0,
-        trace_id TEXT
+        trace_id TEXT,
+        turn_id TEXT,
+        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
     );
 
     CREATE INDEX IF NOT EXISTS idx_net_events_domain
@@ -113,34 +179,33 @@ pub const CREATE_SCHEMA: &str = "
     CREATE INDEX IF NOT EXISTS idx_model_calls_trace_id
         ON model_calls(trace_id);
 
-    CREATE TABLE IF NOT EXISTS mcp_calls (
+    CREATE TABLE IF NOT EXISTS model_items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        model_call_id INTEGER NOT NULL,
         timestamp TEXT NOT NULL,
-        server_name TEXT NOT NULL,
-        method TEXT NOT NULL,
-        tool_name TEXT,
-        request_id TEXT,
-        request_preview TEXT,
-        response_preview TEXT,
-        decision TEXT NOT NULL,
-        duration_ms INTEGER DEFAULT 0,
-        error_message TEXT,
-        process_name TEXT,
-        bytes_sent INTEGER DEFAULT 0,
-        bytes_received INTEGER DEFAULT 0,
-        policy_mode TEXT,
-        policy_action TEXT,
-        policy_rule TEXT,
-        policy_reason TEXT,
+        provider TEXT NOT NULL,
+        model TEXT,
+        path TEXT NOT NULL,
         trace_id TEXT,
-        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
+        turn_id TEXT,
+        kind TEXT NOT NULL CHECK (kind IN ('request', 'reasoning', 'response', 'tool_call', 'tool_response')),
+        item_index INTEGER NOT NULL,
+        call_id TEXT NOT NULL DEFAULT '',
+        tool_name TEXT,
+        arguments TEXT,
+        content TEXT,
+        content_hash TEXT NOT NULL CHECK (length(content_hash) = 71 AND content_hash GLOB 'blake3:[0-9a-f]*'),
+        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*')),
+        UNIQUE(trace_id, kind, content_hash, call_id)
     );
+    CREATE INDEX IF NOT EXISTS idx_model_items_trace_id
+        ON model_items(trace_id);
+    CREATE INDEX IF NOT EXISTS idx_model_items_call_id
+        ON model_items(call_id);
+    CREATE INDEX IF NOT EXISTS idx_model_items_provider_path_model
+        ON model_items(provider, path, model);
 
-    CREATE INDEX IF NOT EXISTS idx_mcp_calls_server
-        ON mcp_calls(server_name);
-    CREATE INDEX IF NOT EXISTS idx_mcp_calls_timestamp
-        ON mcp_calls(timestamp);
     CREATE INDEX IF NOT EXISTS idx_tool_calls_call_id
         ON tool_calls(call_id);
     CREATE INDEX IF NOT EXISTS idx_tool_responses_call_id
@@ -152,8 +217,11 @@ pub const CREATE_SCHEMA: &str = "
         timestamp TEXT NOT NULL,
         action TEXT NOT NULL,
         path TEXT NOT NULL,
+        directory TEXT,
+        name TEXT,
         size INTEGER,
         trace_id TEXT,
+        turn_id TEXT,
         credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
     );
 
@@ -161,21 +229,6 @@ pub const CREATE_SCHEMA: &str = "
         ON fs_events(timestamp);
     CREATE INDEX IF NOT EXISTS idx_fs_events_path
         ON fs_events(path);
-
-    CREATE TABLE IF NOT EXISTS snapshot_events (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
-        timestamp TEXT NOT NULL,
-        slot INTEGER NOT NULL,
-        origin TEXT NOT NULL,
-        name TEXT,
-        files_count INTEGER DEFAULT 0,
-        start_fs_event_id INTEGER DEFAULT 0,
-        stop_fs_event_id INTEGER DEFAULT 0,
-        trace_id TEXT
-    );
-    CREATE INDEX IF NOT EXISTS idx_snapshot_events_timestamp
-        ON snapshot_events(timestamp);
 
     CREATE TABLE IF NOT EXISTS exec_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -190,8 +243,8 @@ pub const CREATE_SCHEMA: &str = "
         stdout_bytes INTEGER DEFAULT 0,
         stderr_bytes INTEGER DEFAULT 0,
         source TEXT NOT NULL DEFAULT 'api',
-        mcp_call_id INTEGER,
         trace_id TEXT,
+        turn_id TEXT,
         process_name TEXT,
         pid INTEGER,
         credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
@@ -213,12 +266,14 @@ pub const CREATE_SCHEMA: &str = "
         qtype INTEGER NOT NULL,
         qclass INTEGER NOT NULL,
         rcode INTEGER NOT NULL,
+        answer_ip TEXT,
         decision TEXT NOT NULL,
         matched_rule TEXT,
         source_proto TEXT,
         process_name TEXT,
         upstream_resolver_ms INTEGER DEFAULT 0,
         trace_id TEXT,
+        turn_id TEXT,
         policy_mode TEXT,
         policy_action TEXT,
         policy_rule TEXT,
@@ -254,6 +309,7 @@ pub const CREATE_SCHEMA: &str = "
         exec_event_id INTEGER,
         parent_exe TEXT,
         trace_id TEXT,
+        turn_id TEXT,
         credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
     );
     CREATE INDEX IF NOT EXISTS idx_audit_events_timestamp
@@ -274,10 +330,11 @@ pub const CREATE_SCHEMA: &str = "
         event_type TEXT,
         algorithm TEXT NOT NULL,
         substitution_ref TEXT NOT NULL CHECK (length(substitution_ref) = 82 AND substitution_ref GLOB 'credential:blake3:[0-9a-f]*'),
-        outcome TEXT NOT NULL,
+        outcome TEXT NOT NULL CHECK (outcome IN ('captured', 'brokered', 'injected', 'error')),
         provider TEXT,
         confidence REAL,
         trace_id TEXT,
+        turn_id TEXT,
         context_json TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_substitution_events_timestamp
@@ -291,13 +348,15 @@ pub const CREATE_SCHEMA: &str = "
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp_unix_ms INTEGER NOT NULL,
         event_id TEXT NOT NULL CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
-        event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'snapshot.event', 'security.rule', 'security.ask')),
+        event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask')),
         rule_id TEXT NOT NULL,
         rule_action TEXT NOT NULL CHECK (rule_action IN ('allow', 'ask', 'block', 'preprocess', 'rewrite', 'postprocess')),
         detection_level TEXT NOT NULL DEFAULT 'none' CHECK (detection_level IN ('none', 'informational', 'low', 'medium', 'high', 'critical')),
         rule_json TEXT NOT NULL CHECK (json_valid(rule_json)),
         event_json TEXT NOT NULL CHECK (json_valid(event_json)),
-        trace_id TEXT
+        trace_id TEXT,
+        turn_id TEXT,
+        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
     );
     CREATE INDEX IF NOT EXISTS idx_security_rule_events_timestamp
         ON security_rule_events(timestamp_unix_ms);
@@ -312,7 +371,7 @@ pub const CREATE_SCHEMA: &str = "
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp_unix_ms INTEGER NOT NULL,
         event_id TEXT NOT NULL CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
-        event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'snapshot.event', 'security.rule', 'security.ask')),
+        event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask')),
         stage TEXT NOT NULL CHECK (stage IN ('preprocess', 'rule', 'rewrite', 'postprocess', 'ask_resolution')),
         actor TEXT NOT NULL,
         rule_id TEXT,
@@ -322,7 +381,9 @@ pub const CREATE_SCHEMA: &str = "
         effective_decision TEXT NOT NULL CHECK (effective_decision IN ('allow', 'ask', 'block')),
         reason TEXT,
         event_json TEXT NOT NULL CHECK (json_valid(event_json)),
-        trace_id TEXT
+        trace_id TEXT,
+        turn_id TEXT,
+        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
     );
     CREATE INDEX IF NOT EXISTS idx_security_decision_events_timestamp
         ON security_decision_events(timestamp_unix_ms);
@@ -336,7 +397,7 @@ pub const CREATE_SCHEMA: &str = "
         timestamp_unix_ms INTEGER NOT NULL,
         ask_id TEXT NOT NULL CHECK (length(ask_id) = 12 AND ask_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         event_id TEXT NOT NULL CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
-        event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'snapshot.event', 'security.rule', 'security.ask')),
+        event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask')),
         rule_id TEXT NOT NULL,
         rule_name TEXT NOT NULL,
         status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'denied')),
@@ -354,6 +415,34 @@ pub const CREATE_SCHEMA: &str = "
         ON security_ask_events(event_id);
     CREATE INDEX IF NOT EXISTS idx_security_ask_events_rule_id
         ON security_ask_events(rule_id);
+
+    CREATE TABLE IF NOT EXISTS profile_mutation_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp_unix_ms INTEGER NOT NULL,
+        mutation_id TEXT NOT NULL CHECK (length(mutation_id) = 12 AND mutation_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        profile_id TEXT NOT NULL,
+        actor TEXT NOT NULL,
+        category TEXT NOT NULL,
+        filename TEXT NOT NULL,
+        affected_path TEXT NOT NULL,
+        target_kind TEXT NOT NULL,
+        target_key TEXT NOT NULL,
+        operation TEXT NOT NULL,
+        rule_id TEXT,
+        old_hash TEXT NOT NULL CHECK (length(old_hash) = 71 AND old_hash GLOB 'blake3:[0-9a-f]*'),
+        old_size INTEGER NOT NULL,
+        new_hash TEXT NOT NULL CHECK (length(new_hash) = 71 AND new_hash GLOB 'blake3:[0-9a-f]*'),
+        new_size INTEGER NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('applied', 'failed')),
+        error TEXT,
+        trace_id TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_profile_mutation_events_timestamp
+        ON profile_mutation_events(timestamp_unix_ms);
+    CREATE INDEX IF NOT EXISTS idx_profile_mutation_events_profile
+        ON profile_mutation_events(profile_id);
+    CREATE INDEX IF NOT EXISTS idx_profile_mutation_events_target
+        ON profile_mutation_events(category, target_kind, target_key);
 ";
 
 /// Create all tables and indexes on the given connection.
@@ -361,34 +450,619 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(CREATE_SCHEMA)
 }
 
+/// Attach the DB-owned in-memory schema and mirror hot ledger tables into it.
+///
+/// The canonical schema remains the disk schema. The memory schema is derived
+/// from `main.sqlite_master` so table shape cannot drift into a second hand
+/// written contract. Blob storage stays disk-owned and bounded.
+pub fn memory_uri_for_path(path: &Path) -> String {
+    memory_uri_for_name(&path.to_string_lossy())
+}
+
+pub fn memory_uri_for_name(name: &str) -> String {
+    let hash = blake3::hash(name.as_bytes()).to_hex();
+    format!(
+        "file:capsem-ledger-mem-{}?mode=memory&cache=shared",
+        &hash[..16]
+    )
+}
+
+pub(crate) fn with_memory_schema_lock<T>(
+    operation: impl FnOnce() -> rusqlite::Result<T>,
+) -> rusqlite::Result<T> {
+    let _guard = MEMORY_SCHEMA_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    operation()
+}
+
+pub fn create_memory_tables(conn: &Connection, memory_uri: &str) -> rusqlite::Result<()> {
+    attach_memory_schema(conn, memory_uri)?;
+    conn.execute_batch(&format!(
+        "CREATE TABLE IF NOT EXISTS {MEMORY_SCHEMA}.__capsem_memory_state (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );"
+    ))?;
+
+    let mut stmt = conn.prepare(
+        "SELECT name, sql
+         FROM main.sqlite_master
+         WHERE type = 'table'
+           AND name NOT LIKE 'sqlite_%'
+         ORDER BY name",
+    )?;
+    let tables = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+
+    for table in tables {
+        let (name, sql) = table?;
+        if is_disk_only_table(&name) {
+            continue;
+        }
+        let mem_sql = memory_table_sql(&name, &sql)
+            .ok_or_else(|| rusqlite::Error::InvalidParameterName(name.clone()))?;
+        conn.execute_batch(&mem_sql)?;
+    }
+
+    Ok(())
+}
+
+pub fn create_memory_read_views(conn: &Connection) -> rusqlite::Result<()> {
+    for (table, _) in READY_SCHEMA_COLUMNS {
+        if is_disk_only_table(table) {
+            continue;
+        }
+        if !table_exists(conn, MEMORY_SCHEMA, table)? {
+            continue;
+        }
+        conn.execute_batch(&format!(
+            "CREATE TEMP VIEW IF NOT EXISTS {table} AS SELECT * FROM {MEMORY_SCHEMA}.{table};"
+        ))?;
+    }
+    Ok(())
+}
+
+pub(crate) type MemoryFlushWatermarks = BTreeMap<&'static str, i64>;
+
+pub(crate) fn initial_memory_flush_watermarks<'a>(
+    conn: &Connection,
+    tables: impl IntoIterator<Item = &'a str>,
+) -> rusqlite::Result<MemoryFlushWatermarks> {
+    let mut watermarks = MemoryFlushWatermarks::new();
+    for table in tables {
+        if is_disk_only_table(table) {
+            continue;
+        }
+        if !table_exists(conn, "main", table)? {
+            continue;
+        }
+        let Some(table) = canonical_hot_table(table) else {
+            continue;
+        };
+        let max_id = max_table_id(conn, "main", table)?;
+        watermarks.insert(table, max_id);
+    }
+    Ok(watermarks)
+}
+
+pub fn sync_memory_tables_from_disk<'a>(
+    conn: &Connection,
+    tables: impl IntoIterator<Item = &'a str>,
+) -> rusqlite::Result<()> {
+    for table in tables {
+        if is_disk_only_table(table) {
+            continue;
+        }
+        if !table_exists(conn, "main", table)? || !table_exists(conn, MEMORY_SCHEMA, table)? {
+            continue;
+        }
+        conn.execute_batch(&format!(
+            "DELETE FROM {MEMORY_SCHEMA}.{table};
+             INSERT OR REPLACE INTO {MEMORY_SCHEMA}.{table}
+             SELECT * FROM main.{table};"
+        ))?;
+    }
+    Ok(())
+}
+
+pub fn flush_memory_tables_to_disk<'a>(
+    conn: &Connection,
+    tables: impl IntoIterator<Item = &'a str>,
+    watermarks: &MemoryFlushWatermarks,
+) -> rusqlite::Result<MemoryFlushWatermarks> {
+    let mut advanced = MemoryFlushWatermarks::new();
+    for table in tables {
+        if is_disk_only_table(table) {
+            continue;
+        }
+        if !table_exists(conn, "main", table)? || !table_exists(conn, MEMORY_SCHEMA, table)? {
+            continue;
+        }
+        let Some(table) = canonical_hot_table(table) else {
+            continue;
+        };
+        let last_flushed_id = *watermarks.get(table).unwrap_or(&0);
+        let max_memory_id = max_table_id(conn, MEMORY_SCHEMA, table)?;
+        if max_memory_id <= last_flushed_id {
+            continue;
+        }
+        conn.execute(
+            &format!(
+                "INSERT OR REPLACE INTO main.{table}
+                 SELECT * FROM {MEMORY_SCHEMA}.{table}
+                 WHERE id > ?1;"
+            ),
+            [last_flushed_id],
+        )?;
+        advanced.insert(table, max_memory_id);
+    }
+    Ok(advanced)
+}
+
+pub fn rehydrate_memory_tables_from_disk_once<'a>(
+    conn: &Connection,
+    tables: impl IntoIterator<Item = &'a str>,
+) -> rusqlite::Result<()> {
+    let already_rehydrated = conn
+        .query_row(
+            &format!(
+                "SELECT value FROM {MEMORY_SCHEMA}.__capsem_memory_state
+                 WHERE key = 'rehydrated' LIMIT 1"
+            ),
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+        .is_some();
+    if already_rehydrated {
+        return Ok(());
+    }
+    sync_memory_tables_from_disk(conn, tables)?;
+    conn.execute(
+        &format!(
+            "INSERT OR REPLACE INTO {MEMORY_SCHEMA}.__capsem_memory_state (key, value)
+             VALUES ('rehydrated', '1')"
+        ),
+        [],
+    )?;
+    Ok(())
+}
+
+fn table_exists(conn: &Connection, schema: &str, table: &str) -> rusqlite::Result<bool> {
+    let query = if schema == "main" {
+        "SELECT 1 FROM main.sqlite_master WHERE type = 'table' AND name = ?1 LIMIT 1".to_string()
+    } else {
+        format!("SELECT 1 FROM {schema}.sqlite_master WHERE type = 'table' AND name = ?1 LIMIT 1")
+    };
+    let found = conn
+        .query_row(&query, [table], |_| Ok(()))
+        .optional()?
+        .is_some();
+    Ok(found)
+}
+
+fn attach_memory_schema(conn: &Connection, memory_uri: &str) -> rusqlite::Result<()> {
+    let mut stmt = conn.prepare("PRAGMA database_list")?;
+    let databases = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    for database in databases {
+        if database? == MEMORY_SCHEMA {
+            return Ok(());
+        }
+    }
+    let escaped_uri = memory_uri.replace('\'', "''");
+    conn.execute_batch(&format!(
+        "ATTACH DATABASE '{escaped_uri}' AS {MEMORY_SCHEMA}"
+    ))
+}
+
+pub(crate) fn is_disk_only_table(name: &str) -> bool {
+    DISK_ONLY_TABLES.contains(&name)
+}
+
+pub(crate) fn hot_ledger_tables() -> BTreeSet<&'static str> {
+    READY_SCHEMA_COLUMNS
+        .iter()
+        .filter_map(|(table, _)| (!is_disk_only_table(table)).then_some(*table))
+        .collect()
+}
+
+fn canonical_hot_table(table: &str) -> Option<&'static str> {
+    READY_SCHEMA_COLUMNS
+        .iter()
+        .map(|(name, _)| *name)
+        .find(|name| *name == table && !is_disk_only_table(name))
+}
+
+fn max_table_id(conn: &Connection, schema: &str, table: &str) -> rusqlite::Result<i64> {
+    conn.query_row(
+        &format!("SELECT COALESCE(MAX(id), 0) FROM {schema}.{table}"),
+        [],
+        |row| row.get::<_, i64>(0),
+    )
+}
+
+fn memory_table_sql(table: &str, sql: &str) -> Option<String> {
+    let create = format!("CREATE TABLE {table}");
+    let create_if_not_exists = format!("CREATE TABLE IF NOT EXISTS {table}");
+    if let Some(rest) = sql.strip_prefix(&create_if_not_exists) {
+        return Some(format!(
+            "CREATE TABLE IF NOT EXISTS {MEMORY_SCHEMA}.{table}{rest}"
+        ));
+    }
+    sql.strip_prefix(&create)
+        .map(|rest| format!("CREATE TABLE IF NOT EXISTS {MEMORY_SCHEMA}.{table}{rest}"))
+}
+
+/// SQLite mmap window for file-backed ledger databases.
+///
+/// Keep this in the DB layer: routes and security components should not know
+/// whether a query reads through SQLite's page cache, mmap, or DB-owned memory
+/// tables.
+pub const SQLITE_MMAP_SIZE_BYTES: i64 = 256 * 1024 * 1024;
+pub const DB_SQLITE_MMAP_CONFIG_BYTES: &str = "db.sqlite_mmap_config_bytes";
+pub const DB_SQLITE_MMAP_EFFECTIVE_BYTES: &str = "db.sqlite_mmap_effective_bytes";
+pub const DB_SQLITE_FILE_SIZE_BYTES: &str = "db.sqlite_file_size_bytes";
+pub const DB_SQLITE_WAL_SIZE_BYTES: &str = "db.sqlite_wal_size_bytes";
+pub const DB_SQLITE_MMAP_COVERAGE_RATIO: &str = "db.sqlite_mmap_coverage_ratio";
+pub const DB_SQLITE_MMAP_BUDGET_CHECKS_TOTAL: &str = "db.sqlite_mmap_budget_checks_total";
+
+fn apply_mmap_pragma(conn: &Connection) -> rusqlite::Result<()> {
+    conn.pragma_update(None, "mmap_size", SQLITE_MMAP_SIZE_BYTES)
+}
+
+fn sqlite_sidecar_path(path: &Path, suffix: &str) -> PathBuf {
+    PathBuf::from(format!("{}{}", path.display(), suffix))
+}
+
+fn file_len(path: &Path) -> u64 {
+    std::fs::metadata(path).map(|meta| meta.len()).unwrap_or(0)
+}
+
+pub fn record_sqlite_mmap_telemetry(
+    conn: &Connection,
+    path: &Path,
+    role: &'static str,
+    phase: &'static str,
+) {
+    let effective_mmap: i64 = conn
+        .query_row("PRAGMA mmap_size", [], |row| row.get(0))
+        .unwrap_or(0);
+    let db_file_size = file_len(path);
+    let wal_file_size = file_len(&sqlite_sidecar_path(path, "-wal"));
+    let status = if db_file_size == 0 {
+        "empty"
+    } else if db_file_size <= effective_mmap.max(0) as u64 {
+        "within_window"
+    } else {
+        "over_window"
+    };
+    let coverage_ratio = if db_file_size == 0 {
+        1.0
+    } else {
+        (effective_mmap.max(0) as u64).min(db_file_size) as f64 / db_file_size as f64
+    };
+
+    ::metrics::gauge!(DB_SQLITE_MMAP_CONFIG_BYTES, "role" => role, "phase" => phase)
+        .set(SQLITE_MMAP_SIZE_BYTES as f64);
+    ::metrics::gauge!(DB_SQLITE_MMAP_EFFECTIVE_BYTES, "role" => role, "phase" => phase)
+        .set(effective_mmap as f64);
+    ::metrics::gauge!(DB_SQLITE_FILE_SIZE_BYTES, "role" => role, "phase" => phase)
+        .set(db_file_size as f64);
+    ::metrics::gauge!(DB_SQLITE_WAL_SIZE_BYTES, "role" => role, "phase" => phase)
+        .set(wal_file_size as f64);
+    ::metrics::gauge!(DB_SQLITE_MMAP_COVERAGE_RATIO, "role" => role, "phase" => phase)
+        .set(coverage_ratio);
+    ::metrics::counter!(
+        DB_SQLITE_MMAP_BUDGET_CHECKS_TOTAL,
+        "role" => role,
+        "phase" => phase,
+        "status" => status
+    )
+    .increment(1);
+
+    tracing::debug!(
+        target: "capsem.db",
+        db_path = %path.display(),
+        role,
+        phase,
+        mmap_config_bytes = SQLITE_MMAP_SIZE_BYTES,
+        mmap_effective_bytes = effective_mmap,
+        db_file_size_bytes = db_file_size,
+        wal_file_size_bytes = wal_file_size,
+        mmap_coverage_ratio = coverage_ratio,
+        mmap_budget_status = status,
+        "sqlite mmap telemetry recorded"
+    );
+}
+
 /// Apply write-mode pragmas: WAL journal + relaxed synchronous.
 /// Only call on read-write connections (the writer).
 pub fn apply_pragmas(conn: &Connection) -> rusqlite::Result<()> {
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "synchronous", "NORMAL")?;
+    apply_mmap_pragma(conn)?;
     Ok(())
 }
 
-/// Migrate existing databases to add new columns/tables.
-/// Idempotent: safe to call on databases that already have the changes.
-pub fn migrate(conn: &Connection) {
-    let _ = conn.execute("ALTER TABLE model_calls ADD COLUMN trace_id TEXT", []);
-    let _ = conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_model_calls_trace_id ON model_calls(trace_id)",
-        [],
-    );
-    // Add mcp_calls table if not present (for DBs created before this feature).
+const READY_SCHEMA_COLUMNS: &[(&str, &[&str])] = &[
+    (
+        "net_events",
+        &[
+            "event_id",
+            "timestamp",
+            "domain",
+            "decision",
+            "trace_id",
+            "turn_id",
+            "credential_ref",
+        ],
+    ),
+    (
+        "model_calls",
+        &[
+            "event_id",
+            "provider",
+            "protocol",
+            "method",
+            "path",
+            "trace_id",
+            "turn_id",
+            "credential_ref",
+        ],
+    ),
+    (
+        "model_items",
+        &[
+            "event_id",
+            "model_call_id",
+            "kind",
+            "content_hash",
+            "trace_id",
+            "turn_id",
+            "credential_ref",
+        ],
+    ),
+    (
+        "tool_calls",
+        &[
+            "event_id",
+            "model_call_id",
+            "origin",
+            "call_id",
+            "tool_name",
+            "decision",
+            "trace_id",
+            "turn_id",
+            "credential_ref",
+        ],
+    ),
+    (
+        "tool_responses",
+        &[
+            "model_call_id",
+            "call_id",
+            "content_preview",
+            "trace_id",
+            "turn_id",
+            "credential_ref",
+        ],
+    ),
+    (
+        "event_body_blobs",
+        &[
+            "event_id",
+            "event_type",
+            "source_table",
+            "direction",
+            "body_hash",
+            "body",
+            "trace_id",
+            "turn_id",
+        ],
+    ),
+    (
+        "fs_events",
+        &[
+            "event_id",
+            "timestamp",
+            "action",
+            "path",
+            "directory",
+            "name",
+            "trace_id",
+            "turn_id",
+            "credential_ref",
+        ],
+    ),
+    (
+        "exec_events",
+        &[
+            "event_id",
+            "timestamp",
+            "exec_id",
+            "command",
+            "trace_id",
+            "turn_id",
+            "credential_ref",
+        ],
+    ),
+    (
+        "dns_events",
+        &[
+            "event_id",
+            "timestamp",
+            "qname",
+            "qtype",
+            "rcode",
+            "decision",
+            "answer_ip",
+            "trace_id",
+            "turn_id",
+            "credential_ref",
+        ],
+    ),
+    (
+        "audit_events",
+        &[
+            "event_id",
+            "timestamp",
+            "pid",
+            "exe",
+            "trace_id",
+            "turn_id",
+            "credential_ref",
+        ],
+    ),
+    (
+        "substitution_events",
+        &[
+            "event_id",
+            "timestamp",
+            "substitution_ref",
+            "outcome",
+            "provider",
+            "trace_id",
+        ],
+    ),
+    (
+        "security_rule_events",
+        &[
+            "event_id",
+            "rule_id",
+            "rule_action",
+            "detection_level",
+            "rule_json",
+            "event_json",
+            "credential_ref",
+        ],
+    ),
+    (
+        "security_decision_events",
+        &["event_id", "stage", "effective_decision", "credential_ref"],
+    ),
+    (
+        "security_ask_events",
+        &["event_id", "ask_id", "status", "event_json", "trace_id"],
+    ),
+    (
+        "profile_mutation_events",
+        &["mutation_id", "profile_id", "status"],
+    ),
+];
+
+/// Validate that a session DB is structurally ready for ledger routes.
+///
+/// This intentionally fails on missing tables or columns. A valid empty DB is
+/// ready; a partially migrated or corrupted DB is not. Routes must surface this
+/// as a DB contract error rather than returning invented empty ledgers.
+pub fn validate_ready_schema(conn: &Connection) -> Result<(), String> {
+    let integrity = conn
+        .query_row("PRAGMA integrity_check", [], |row| row.get::<_, String>(0))
+        .map_err(|error| format!("session db integrity check failed: {error}"))?;
+    if integrity != "ok" {
+        return Err(format!("session db integrity check failed: {integrity}"));
+    }
+
+    for (table, required_columns) in READY_SCHEMA_COLUMNS {
+        validate_table_columns(conn, "main", table, required_columns)?;
+        if !is_disk_only_table(table) {
+            validate_table_columns(conn, MEMORY_SCHEMA, table, required_columns)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_table_columns(
+    conn: &Connection,
+    schema: &str,
+    table: &str,
+    required_columns: &[&str],
+) -> Result<(), String> {
+    let pragma = if schema == "main" {
+        format!("PRAGMA table_info({table})")
+    } else {
+        format!("PRAGMA {schema}.table_info({table})")
+    };
+    let mut stmt = conn
+        .prepare(&pragma)
+        .map_err(|error| format!("failed to inspect table {schema}.{table}: {error}"))?;
+    let columns = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| format!("failed to inspect table {schema}.{table}: {error}"))?
+        .collect::<Result<BTreeSet<_>, _>>()
+        .map_err(|error| format!("failed to inspect table {schema}.{table}: {error}"))?;
+    if columns.is_empty() {
+        return Err(format!(
+            "session db missing required table {schema}.{table}"
+        ));
+    }
+    for column in required_columns {
+        if !columns.contains(*column) {
+            return Err(format!(
+                "session db table {schema}.{table} missing required column {column}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn table_sql(conn: &Connection, table: &str) -> Option<String> {
+    conn.query_row(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?1",
+        [table],
+        |row| row.get::<_, String>(0),
+    )
+    .optional()
+    .ok()
+    .flatten()
+}
+
+fn column_is_not_null(conn: &Connection, table: &str, column: &str) -> bool {
+    let mut stmt = match conn.prepare(&format!("PRAGMA table_info({table})")) {
+        Ok(stmt) => stmt,
+        Err(_) => return false,
+    };
+    let rows = match stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(1)?, row.get::<_, i64>(3)?))
+    }) {
+        Ok(rows) => rows,
+        Err(_) => return false,
+    };
+    for row in rows.flatten() {
+        if row.0 == column {
+            return row.1 != 0;
+        }
+    }
+    false
+}
+
+fn rebuild_tool_calls_nullable_model_call(conn: &Connection) {
+    if !column_is_not_null(conn, "tool_calls", "model_call_id") {
+        return;
+    }
     let _ = conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS mcp_calls (
+        "DROP TABLE IF EXISTS tool_calls_new;
+        CREATE TABLE tool_calls_new (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp TEXT NOT NULL,
-            server_name TEXT NOT NULL,
-            method TEXT NOT NULL,
-            tool_name TEXT,
-            request_id TEXT,
-            request_preview TEXT,
+            event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+            timestamp TEXT NOT NULL DEFAULT '',
+            model_call_id INTEGER,
+            provider TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'observed' CHECK (status IN ('requested', 'observed', 'responded', 'error')),
+            call_index INTEGER NOT NULL,
+            call_id TEXT NOT NULL,
+            tool_name TEXT NOT NULL,
+            arguments TEXT,
             response_preview TEXT,
-            decision TEXT NOT NULL,
+            origin TEXT NOT NULL DEFAULT 'native',
+            transport TEXT NOT NULL DEFAULT 'unknown' CHECK (transport IN ('http', 'sse', 'websocket', 'vsock_frame', 'direct', 'unknown')),
+            server_name TEXT,
+            method TEXT,
+            request_id TEXT,
+            decision TEXT NOT NULL DEFAULT 'allowed',
             duration_ms INTEGER DEFAULT 0,
             error_message TEXT,
             process_name TEXT,
@@ -398,35 +1072,183 @@ pub fn migrate(conn: &Connection) {
             policy_action TEXT,
             policy_rule TEXT,
             policy_reason TEXT,
-            trace_id TEXT
+            trace_id TEXT,
+            turn_id TEXT,
+            credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
         );
-        CREATE INDEX IF NOT EXISTS idx_mcp_calls_server ON mcp_calls(server_name);
-        CREATE INDEX IF NOT EXISTS idx_mcp_calls_timestamp ON mcp_calls(timestamp);",
+        INSERT INTO tool_calls_new (
+            id, event_id, timestamp, model_call_id, provider, status, call_index, call_id,
+            tool_name, arguments, response_preview, origin, transport, server_name, method,
+            request_id, decision, duration_ms, error_message, process_name, bytes_sent,
+            bytes_received, policy_mode, policy_action, policy_rule, policy_reason,
+            trace_id, turn_id, credential_ref
+        )
+        SELECT
+            id, event_id, timestamp, model_call_id, provider, status, call_index, call_id,
+            tool_name, arguments, response_preview, origin,
+            CASE
+                WHEN origin = 'mcp' THEN 'vsock_frame'
+                WHEN origin = 'local' THEN 'direct'
+                ELSE 'unknown'
+            END,
+            server_name, method,
+            request_id, decision, duration_ms, error_message, process_name, bytes_sent,
+            bytes_received, policy_mode, policy_action, policy_rule, policy_reason,
+            trace_id, turn_id, credential_ref
+        FROM tool_calls;
+        DROP TABLE tool_calls;
+        ALTER TABLE tool_calls_new RENAME TO tool_calls;",
+    );
+}
+
+fn rebuild_event_body_blobs_source_check(conn: &Connection) {
+    let Some(sql) = table_sql(conn, "event_body_blobs") else {
+        return;
+    };
+    if sql.contains("'tool_calls'") {
+        return;
+    }
+    let _ = conn.execute_batch(
+        "DROP TABLE IF EXISTS event_body_blobs_new;
+        CREATE TABLE event_body_blobs_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id TEXT NOT NULL CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+            event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask')),
+            source_table TEXT NOT NULL CHECK (source_table IN ('net_events', 'model_calls', 'tool_calls')),
+            direction TEXT NOT NULL CHECK (direction IN ('request', 'response')),
+            content_type TEXT,
+            original_bytes INTEGER NOT NULL CHECK (original_bytes >= 0),
+            stored_bytes INTEGER NOT NULL CHECK (stored_bytes >= 0 AND stored_bytes <= original_bytes),
+            truncated INTEGER NOT NULL CHECK (truncated IN (0, 1)),
+            body_hash TEXT NOT NULL CHECK (length(body_hash) = 71 AND body_hash GLOB 'blake3:[0-9a-f]*'),
+            body BLOB NOT NULL,
+            trace_id TEXT,
+            turn_id TEXT,
+            created_at TEXT NOT NULL,
+            UNIQUE(event_id, source_table, direction)
+        );
+        INSERT INTO event_body_blobs_new (
+            id, event_id, event_type, source_table, direction, content_type,
+            original_bytes, stored_bytes, truncated, body_hash, body, trace_id, turn_id, created_at
+        )
+        SELECT
+            id, event_id, event_type, source_table, direction, content_type,
+            original_bytes, stored_bytes, truncated, body_hash, body, trace_id, turn_id, created_at
+        FROM event_body_blobs;
+        DROP TABLE event_body_blobs;
+        ALTER TABLE event_body_blobs_new RENAME TO event_body_blobs;",
+    );
+}
+
+/// Migrate existing databases to add new columns/tables.
+/// Idempotent: safe to call on databases that already have the changes.
+pub fn migrate(conn: &Connection) {
+    for tbl in [
+        "net_events",
+        "model_calls",
+        "model_items",
+        "tool_calls",
+        "tool_responses",
+        "event_body_blobs",
+        "fs_events",
+        "exec_events",
+        "dns_events",
+        "audit_events",
+        "substitution_events",
+        "security_rule_events",
+        "security_decision_events",
+        "security_ask_events",
+    ] {
+        let _ = conn.execute(&format!("ALTER TABLE {tbl} ADD COLUMN turn_id TEXT"), []);
+        let _ = conn.execute(
+            &format!("CREATE INDEX IF NOT EXISTS idx_{tbl}_turn_id ON {tbl}(turn_id)"),
+            [],
+        );
+    }
+    for tbl in ["security_rule_events", "security_decision_events"] {
+        let _ = conn.execute(
+            &format!("ALTER TABLE {tbl} ADD COLUMN credential_ref TEXT {CREDENTIAL_REF_CHECK}"),
+            [],
+        );
+        let _ = conn.execute(
+            &format!(
+                "CREATE INDEX IF NOT EXISTS idx_{tbl}_credential_ref ON {tbl}(credential_ref)"
+            ),
+            [],
+        );
+    }
+    let _ = conn.execute("ALTER TABLE model_calls ADD COLUMN trace_id TEXT", []);
+    let _ = conn.execute(
+        &format!("ALTER TABLE model_calls ADD COLUMN protocol TEXT {MODEL_PROTOCOL_CHECK}"),
+        [],
+    );
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_model_calls_trace_id ON model_calls(trace_id)",
+        [],
     );
     // Replace cache_read_tokens with usage_details TEXT column.
     // SQLite doesn't support DROP COLUMN before 3.35, so just add the new one.
     let _ = conn.execute("ALTER TABLE model_calls ADD COLUMN usage_details TEXT", []);
-    // Add origin + mcp_call_id columns to tool_calls (for DBs created before this feature).
+    // Add unified tool ledger columns to tool_calls (for DBs created before this feature).
     let _ = conn.execute(
         "ALTER TABLE tool_calls ADD COLUMN origin TEXT NOT NULL DEFAULT 'native'",
         [],
     );
-    let _ = conn.execute("ALTER TABLE tool_calls ADD COLUMN mcp_call_id INTEGER", []);
-    // Add bytes_sent/bytes_received to mcp_calls (for DBs created before this feature).
     let _ = conn.execute(
-        "ALTER TABLE mcp_calls ADD COLUMN bytes_sent INTEGER DEFAULT 0",
+        "ALTER TABLE tool_calls ADD COLUMN event_id TEXT NOT NULL DEFAULT '000000000000' CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]')",
         [],
     );
     let _ = conn.execute(
-        "ALTER TABLE mcp_calls ADD COLUMN bytes_received INTEGER DEFAULT 0",
+        "ALTER TABLE tool_calls ADD COLUMN timestamp TEXT NOT NULL DEFAULT ''",
         [],
     );
-    // Add policy decision metadata to mcp_calls (for DBs created before T2).
-    let _ = conn.execute("ALTER TABLE mcp_calls ADD COLUMN policy_mode TEXT", []);
-    let _ = conn.execute("ALTER TABLE mcp_calls ADD COLUMN policy_action TEXT", []);
-    let _ = conn.execute("ALTER TABLE mcp_calls ADD COLUMN policy_rule TEXT", []);
-    let _ = conn.execute("ALTER TABLE mcp_calls ADD COLUMN policy_reason TEXT", []);
-    // Add policy decision metadata to net_events for Policy V2 HTTP/DNS audit.
+    let _ = conn.execute(
+        "ALTER TABLE tool_calls ADD COLUMN provider TEXT NOT NULL DEFAULT ''",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE tool_calls ADD COLUMN status TEXT NOT NULL DEFAULT 'observed' CHECK (status IN ('requested', 'observed', 'responded', 'error'))",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE tool_calls ADD COLUMN credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE tool_calls ADD COLUMN response_preview TEXT",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE tool_calls ADD COLUMN transport TEXT NOT NULL DEFAULT 'unknown' CHECK (transport IN ('http', 'sse', 'websocket', 'vsock_frame', 'direct', 'unknown'))",
+        [],
+    );
+    let _ = conn.execute("ALTER TABLE tool_calls ADD COLUMN server_name TEXT", []);
+    let _ = conn.execute("ALTER TABLE tool_calls ADD COLUMN method TEXT", []);
+    let _ = conn.execute("ALTER TABLE tool_calls ADD COLUMN request_id TEXT", []);
+    let _ = conn.execute(
+        "ALTER TABLE tool_calls ADD COLUMN decision TEXT NOT NULL DEFAULT 'allowed'",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE tool_calls ADD COLUMN duration_ms INTEGER DEFAULT 0",
+        [],
+    );
+    let _ = conn.execute("ALTER TABLE tool_calls ADD COLUMN error_message TEXT", []);
+    let _ = conn.execute("ALTER TABLE tool_calls ADD COLUMN process_name TEXT", []);
+    let _ = conn.execute(
+        "ALTER TABLE tool_calls ADD COLUMN bytes_sent INTEGER DEFAULT 0",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE tool_calls ADD COLUMN bytes_received INTEGER DEFAULT 0",
+        [],
+    );
+    let _ = conn.execute("ALTER TABLE tool_calls ADD COLUMN policy_mode TEXT", []);
+    let _ = conn.execute("ALTER TABLE tool_calls ADD COLUMN policy_action TEXT", []);
+    let _ = conn.execute("ALTER TABLE tool_calls ADD COLUMN policy_rule TEXT", []);
+    let _ = conn.execute("ALTER TABLE tool_calls ADD COLUMN policy_reason TEXT", []);
+    rebuild_tool_calls_nullable_model_call(conn);
+    // Add policy decision metadata to net_events for security rule HTTP/DNS audit.
     let _ = conn.execute("ALTER TABLE net_events ADD COLUMN policy_mode TEXT", []);
     let _ = conn.execute("ALTER TABLE net_events ADD COLUMN policy_action TEXT", []);
     let _ = conn.execute("ALTER TABLE net_events ADD COLUMN policy_rule TEXT", []);
@@ -440,6 +1262,52 @@ pub fn migrate(conn: &Connection) {
         "CREATE INDEX IF NOT EXISTS idx_tool_responses_call_id ON tool_responses(call_id)",
         [],
     );
+    let _ = conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS model_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+            model_call_id INTEGER NOT NULL,
+            timestamp TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            model TEXT,
+            path TEXT NOT NULL,
+            trace_id TEXT,
+            kind TEXT NOT NULL CHECK (kind IN ('request', 'reasoning', 'response', 'tool_call', 'tool_response')),
+            item_index INTEGER NOT NULL,
+            call_id TEXT NOT NULL DEFAULT '',
+            tool_name TEXT,
+            arguments TEXT,
+            content TEXT,
+            content_hash TEXT NOT NULL CHECK (length(content_hash) = 71 AND content_hash GLOB 'blake3:[0-9a-f]*'),
+            credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*')),
+            UNIQUE(trace_id, kind, content_hash, call_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_model_items_trace_id ON model_items(trace_id);
+        CREATE INDEX IF NOT EXISTS idx_model_items_call_id ON model_items(call_id);
+        CREATE INDEX IF NOT EXISTS idx_model_items_provider_path_model ON model_items(provider, path, model);",
+    );
+    let _ = conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS event_body_blobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id TEXT NOT NULL CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+            event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask')),
+            source_table TEXT NOT NULL CHECK (source_table IN ('net_events', 'model_calls', 'tool_calls')),
+            direction TEXT NOT NULL CHECK (direction IN ('request', 'response')),
+            content_type TEXT,
+            original_bytes INTEGER NOT NULL CHECK (original_bytes >= 0),
+            stored_bytes INTEGER NOT NULL CHECK (stored_bytes >= 0 AND stored_bytes <= original_bytes),
+            truncated INTEGER NOT NULL CHECK (truncated IN (0, 1)),
+            body_hash TEXT NOT NULL CHECK (length(body_hash) = 71 AND body_hash GLOB 'blake3:[0-9a-f]*'),
+            body BLOB NOT NULL,
+            trace_id TEXT,
+            created_at TEXT NOT NULL,
+            UNIQUE(event_id, source_table, direction)
+        );
+        CREATE INDEX IF NOT EXISTS idx_event_body_blobs_event_id ON event_body_blobs(event_id);
+        CREATE INDEX IF NOT EXISTS idx_event_body_blobs_trace_id ON event_body_blobs(trace_id);
+        CREATE INDEX IF NOT EXISTS idx_event_body_blobs_hash ON event_body_blobs(body_hash);",
+    );
+    rebuild_event_body_blobs_source_check(conn);
     // Add fs_events table if not present (for DBs created before this feature).
     let _ = conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS fs_events (
@@ -447,25 +1315,15 @@ pub fn migrate(conn: &Connection) {
             timestamp TEXT NOT NULL,
             action TEXT NOT NULL,
             path TEXT NOT NULL,
+            directory TEXT,
+            name TEXT,
             size INTEGER
         );
         CREATE INDEX IF NOT EXISTS idx_fs_events_timestamp ON fs_events(timestamp);
         CREATE INDEX IF NOT EXISTS idx_fs_events_path ON fs_events(path);",
     );
-    // Add snapshot_events table if not present (for DBs created before this feature).
-    let _ = conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS snapshot_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp TEXT NOT NULL,
-            slot INTEGER NOT NULL,
-            origin TEXT NOT NULL,
-            name TEXT,
-            files_count INTEGER DEFAULT 0,
-            start_fs_event_id INTEGER DEFAULT 0,
-            stop_fs_event_id INTEGER DEFAULT 0
-        );
-        CREATE INDEX IF NOT EXISTS idx_snapshot_events_timestamp ON snapshot_events(timestamp);",
-    );
+    // Snapshot metadata is host recovery state, not session.db activity.
+    let _ = conn.execute_batch("DROP TABLE IF EXISTS snapshot_events;");
     // Add exec_events table if not present (for DBs created before this feature).
     let _ = conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS exec_events (
@@ -480,7 +1338,6 @@ pub fn migrate(conn: &Connection) {
             stdout_bytes INTEGER DEFAULT 0,
             stderr_bytes INTEGER DEFAULT 0,
             source TEXT NOT NULL DEFAULT 'api',
-            mcp_call_id INTEGER,
             trace_id TEXT,
             process_name TEXT,
             pid INTEGER
@@ -502,6 +1359,7 @@ pub fn migrate(conn: &Connection) {
             qtype INTEGER NOT NULL,
             qclass INTEGER NOT NULL,
             rcode INTEGER NOT NULL,
+            answer_ip TEXT,
             decision TEXT NOT NULL,
             matched_rule TEXT,
             source_proto TEXT,
@@ -523,10 +1381,13 @@ pub fn migrate(conn: &Connection) {
     let _ = conn.execute("ALTER TABLE dns_events ADD COLUMN policy_action TEXT", []);
     let _ = conn.execute("ALTER TABLE dns_events ADD COLUMN policy_rule TEXT", []);
     let _ = conn.execute("ALTER TABLE dns_events ADD COLUMN policy_reason TEXT", []);
+    let _ = conn.execute("ALTER TABLE dns_events ADD COLUMN answer_ip TEXT", []);
     let _ = conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_dns_events_policy_rule ON dns_events(policy_rule)",
         [],
     );
+    let _ = conn.execute("ALTER TABLE fs_events ADD COLUMN directory TEXT", []);
+    let _ = conn.execute("ALTER TABLE fs_events ADD COLUMN name TEXT", []);
 
     // Add audit_events table if not present (for DBs created before this feature).
     let _ = conn.execute_batch(
@@ -559,10 +1420,8 @@ pub fn migrate(conn: &Connection) {
     // pre-date W4's trace propagation; downstream queries handle that
     // gracefully (`WHERE trace_id = ? OR trace_id IS NULL`).
     for tbl in [
-        "mcp_calls",
         "net_events",
         "fs_events",
-        "snapshot_events",
         "tool_calls",
         "tool_responses",
         "audit_events",
@@ -577,9 +1436,9 @@ pub fn migrate(conn: &Connection) {
     for tbl in [
         "net_events",
         "model_calls",
-        "mcp_calls",
         "fs_events",
         "exec_events",
+        "tool_responses",
         "dns_events",
         "audit_events",
     ] {
@@ -598,9 +1457,7 @@ pub fn migrate(conn: &Connection) {
     for tbl in [
         "net_events",
         "model_calls",
-        "mcp_calls",
         "fs_events",
-        "snapshot_events",
         "exec_events",
         "dns_events",
         "audit_events",
@@ -622,7 +1479,7 @@ pub fn migrate(conn: &Connection) {
             event_type TEXT,
             algorithm TEXT NOT NULL,
             substitution_ref TEXT NOT NULL {SUBSTITUTION_REF_CHECK},
-            outcome TEXT NOT NULL,
+            outcome TEXT NOT NULL {SUBSTITUTION_OUTCOME_CHECK},
             provider TEXT,
             confidence REAL,
             trace_id TEXT,
@@ -721,11 +1578,45 @@ pub fn migrate(conn: &Connection) {
         CREATE INDEX IF NOT EXISTS idx_security_ask_events_rule_id
             ON security_ask_events(rule_id);"
     ));
+    let _ = conn.execute_batch(&format!(
+        "CREATE TABLE IF NOT EXISTS profile_mutation_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp_unix_ms INTEGER NOT NULL,
+            mutation_id TEXT NOT NULL {SECURITY_EVENT_ID_CHECK},
+            profile_id TEXT NOT NULL,
+            actor TEXT NOT NULL,
+            category TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            affected_path TEXT NOT NULL,
+            target_kind TEXT NOT NULL,
+            target_key TEXT NOT NULL,
+            operation TEXT NOT NULL,
+            rule_id TEXT,
+            old_hash TEXT NOT NULL,
+            old_size INTEGER NOT NULL,
+            new_hash TEXT NOT NULL,
+            new_size INTEGER NOT NULL,
+            status TEXT NOT NULL {PROFILE_MUTATION_STATUS_CHECK},
+            error TEXT,
+            trace_id TEXT,
+            {BLAKE3_REF_CHECK}
+        );
+        CREATE INDEX IF NOT EXISTS idx_profile_mutation_events_timestamp
+            ON profile_mutation_events(timestamp_unix_ms);
+        CREATE INDEX IF NOT EXISTS idx_profile_mutation_events_profile
+            ON profile_mutation_events(profile_id);
+        CREATE INDEX IF NOT EXISTS idx_profile_mutation_events_target
+            ON profile_mutation_events(category, target_kind, target_key);"
+    ));
 }
 
-/// Apply read-safe pragmas for read-only connections.
-/// WAL mode is inherited from the file; no write pragmas needed.
+/// Apply read-safe pragmas for DB-owned query connections.
+///
+/// These connections may be opened read-write briefly so the DB layer can
+/// attach and populate its private `mem` schema. After setup, `query_only`
+/// prevents writes through the read worker.
 pub fn apply_reader_pragmas(conn: &Connection) -> rusqlite::Result<()> {
+    apply_mmap_pragma(conn)?;
     conn.pragma_update(None, "query_only", "ON")?;
     Ok(())
 }
@@ -733,6 +1624,20 @@ pub fn apply_reader_pragmas(conn: &Connection) -> rusqlite::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::OpenFlags;
+
+    fn columns_for_schema(conn: &Connection, schema: &str, table: &str) -> BTreeSet<String> {
+        let pragma = if schema == "main" {
+            format!("PRAGMA table_info({table})")
+        } else {
+            format!("PRAGMA {schema}.table_info({table})")
+        };
+        let mut stmt = conn.prepare(&pragma).unwrap();
+        stmt.query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<BTreeSet<_>, _>>()
+            .unwrap()
+    }
 
     #[test]
     fn create_tables_succeeds() {
@@ -748,9 +1653,158 @@ mod tests {
     }
 
     #[test]
+    fn db_mem_tables_match_schema() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        migrate(&conn);
+        create_memory_tables(&conn, &memory_uri_for_name("db_mem_tables_match_schema")).unwrap();
+
+        for (table, _) in READY_SCHEMA_COLUMNS {
+            let main_columns = columns_for_schema(&conn, "main", table);
+            if is_disk_only_table(table) {
+                let mem_columns = columns_for_schema(&conn, MEMORY_SCHEMA, table);
+                assert!(
+                    mem_columns.is_empty(),
+                    "{table} must stay disk-only; blob payloads are bounded durable storage, not DB-owned hot memory tables"
+                );
+                continue;
+            }
+            let mem_columns = columns_for_schema(&conn, MEMORY_SCHEMA, table);
+            assert_eq!(
+                mem_columns, main_columns,
+                "{MEMORY_SCHEMA}.{table} must mirror main.{table}; memory schema is derived from the canonical disk schema"
+            );
+        }
+    }
+
+    #[test]
+    fn db_mem_disk_ready_rejects_missing_memory_schema() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        migrate(&conn);
+
+        let error = validate_ready_schema(&conn)
+            .expect_err("ready() must fail if DB-owned memory tables were not created");
+        assert!(
+            error.contains("mem.net_events"),
+            "missing memory schema must fail loudly instead of route projections hiding stale state: {error}"
+        );
+    }
+
+    #[test]
+    fn db_mem_flush_uses_per_table_id_watermark() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        migrate(&conn);
+        create_memory_tables(
+            &conn,
+            &memory_uri_for_name("db_mem_flush_uses_per_table_id_watermark"),
+        )
+        .unwrap();
+        let mut watermarks =
+            initial_memory_flush_watermarks(&conn, ["net_events"]).expect("initial watermarks");
+
+        conn.execute(
+            "INSERT INTO mem.net_events (timestamp, domain, decision)
+             VALUES ('2026-06-26T00:00:00Z', 'flush-one.example', 'allowed')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO mem.net_events (timestamp, domain, decision)
+             VALUES ('2026-06-26T00:00:01Z', 'flush-two.example', 'allowed')",
+            [],
+        )
+        .unwrap();
+
+        let before_first = conn.total_changes();
+        let advanced =
+            flush_memory_tables_to_disk(&conn, ["net_events"], &watermarks).expect("first flush");
+        watermarks.extend(advanced);
+        assert_eq!(
+            conn.total_changes() - before_first,
+            2,
+            "first mem->disk flush should copy exactly the two new rows"
+        );
+
+        conn.execute(
+            "INSERT INTO mem.net_events (timestamp, domain, decision)
+             VALUES ('2026-06-26T00:00:02Z', 'flush-three.example', 'allowed')",
+            [],
+        )
+        .unwrap();
+
+        let before_second = conn.total_changes();
+        let advanced =
+            flush_memory_tables_to_disk(&conn, ["net_events"], &watermarks).expect("second flush");
+        watermarks.extend(advanced);
+        assert_eq!(
+            conn.total_changes() - before_second,
+            1,
+            "second mem->disk flush must use the per-table id watermark instead of replaying the whole memory table"
+        );
+
+        let before_third = conn.total_changes();
+        let advanced =
+            flush_memory_tables_to_disk(&conn, ["net_events"], &watermarks).expect("third flush");
+        watermarks.extend(advanced);
+        assert_eq!(
+            conn.total_changes() - before_third,
+            0,
+            "unchanged dirty-table flush must not rewrite already flushed rows"
+        );
+    }
+
+    #[test]
+    fn db_mem_disk_memory_tables_work_before_query_only_guard() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            apply_pragmas(&conn).unwrap();
+            create_tables(&conn).unwrap();
+            migrate(&conn);
+        }
+
+        let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+        let conn = Connection::open_with_flags(&path, flags).unwrap();
+        create_memory_tables(
+            &conn,
+            &memory_uri_for_name("db_mem_disk_memory_tables_work_before_query_only_guard"),
+        )
+        .unwrap();
+        apply_reader_pragmas(&conn).unwrap();
+        validate_ready_schema(&conn)
+            .expect("query-only connection must still own its DB-local memory schema");
+        let error = conn
+            .execute("INSERT INTO mem.net_events (timestamp, domain, decision) VALUES ('t', 'example.com', 'allowed')", [])
+            .expect_err("query_only must prevent writes after DB-owned memory setup");
+        assert!(
+            error.to_string().contains("readonly"),
+            "query_only should make the reader worker effectively read-only after setup: {error}"
+        );
+    }
+
+    #[test]
     fn apply_pragmas_succeeds() {
         let conn = Connection::open_in_memory().unwrap();
         apply_pragmas(&conn).unwrap();
+    }
+
+    #[test]
+    fn writer_pragmas_enable_file_backed_mmap() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.db");
+        let conn = Connection::open(&path).unwrap();
+        apply_pragmas(&conn).unwrap();
+
+        let mmap_size: i64 = conn
+            .query_row("PRAGMA mmap_size", [], |row| row.get(0))
+            .unwrap();
+        assert!(
+            mmap_size >= SQLITE_MMAP_SIZE_BYTES,
+            "writer connections must enable SQLite mmap inside the DB layer; got {mmap_size}"
+        );
     }
 
     #[test]
@@ -775,29 +1829,6 @@ mod tests {
             )
             .unwrap();
         assert_eq!(trace_id, "trace_abc");
-    }
-
-    #[test]
-    fn migrate_mcp_calls_idempotent() {
-        let conn = Connection::open_in_memory().unwrap();
-        create_tables(&conn).unwrap();
-        migrate(&conn);
-        migrate(&conn);
-        // Verify mcp_calls table exists.
-        conn.execute(
-            "INSERT INTO mcp_calls (timestamp, server_name, method, decision)
-             VALUES ('2024-01-01T00:00:00Z', 'github', 'tools/list', 'allowed')",
-            [],
-        )
-        .unwrap();
-        let server: String = conn
-            .query_row(
-                "SELECT server_name FROM mcp_calls WHERE server_name = 'github'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(server, "github");
     }
 
     #[test]
@@ -848,7 +1879,7 @@ mod tests {
         create_tables(&conn).unwrap();
         migrate(&conn);
         migrate(&conn);
-        // Verify origin and mcp_call_id columns exist by inserting a row.
+        // Verify origin/server/method columns exist by inserting one unified MCP-origin row.
         conn.execute(
             "INSERT INTO model_calls (timestamp, provider, method, path)
              VALUES ('2024-01-01T00:00:00Z', 'test', 'POST', '/v1')",
@@ -857,8 +1888,9 @@ mod tests {
         .unwrap();
         let mc_id = conn.last_insert_rowid();
         conn.execute(
-            "INSERT INTO tool_calls (model_call_id, call_index, call_id, tool_name, origin, mcp_call_id)
-             VALUES (?1, 0, 'call_01', 'fetch_http', 'mcp', NULL)",
+            "INSERT INTO tool_calls (
+                model_call_id, call_index, call_id, tool_name, origin, server_name, method
+             ) VALUES (?1, 0, 'call_01', 'fetch_http', 'mcp', 'local', 'tools/call')",
             [mc_id],
         )
         .unwrap();
@@ -873,6 +1905,101 @@ mod tests {
     }
 
     #[test]
+    fn migrate_tool_calls_allows_orphan_mcp_origin_rows() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE tool_calls (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                model_call_id INTEGER NOT NULL,
+                call_index INTEGER NOT NULL,
+                call_id TEXT NOT NULL,
+                tool_name TEXT NOT NULL,
+                arguments TEXT
+            );",
+        )
+        .unwrap();
+
+        migrate(&conn);
+        migrate(&conn);
+
+        conn.execute(
+            "INSERT INTO tool_calls (
+                event_id, timestamp, model_call_id, provider, status, call_index,
+                call_id, tool_name, arguments, response_preview, origin, server_name,
+                method, request_id, decision, duration_ms
+             ) VALUES (
+                '012345abcdef', '2026-01-01T00:00:00Z', NULL, '', 'responded', 0,
+                'mcp_01', 'fetch_http', '{\"url\":\"http://127.0.0.1\"}',
+                'Status: 200 OK', 'mcp', 'local', 'tools/call', 'req-1', 'allowed', 7
+             )",
+            [],
+        )
+        .unwrap();
+
+        let row: (Option<i64>, String, String) = conn
+            .query_row(
+                "SELECT model_call_id, origin, response_preview FROM tool_calls WHERE call_id = 'mcp_01'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(row.0, None);
+        assert_eq!(row.1, "mcp");
+        assert_eq!(row.2, "Status: 200 OK");
+    }
+
+    #[test]
+    fn migrate_event_body_blobs_accepts_tool_calls_source() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE event_body_blobs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id TEXT NOT NULL CHECK (length(event_id) = 12),
+                event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call')),
+                source_table TEXT NOT NULL CHECK (source_table IN ('net_events', 'model_calls')),
+                direction TEXT NOT NULL CHECK (direction IN ('request', 'response')),
+                content_type TEXT,
+                original_bytes INTEGER NOT NULL CHECK (original_bytes >= 0),
+                stored_bytes INTEGER NOT NULL CHECK (stored_bytes >= 0 AND stored_bytes <= original_bytes),
+                truncated INTEGER NOT NULL CHECK (truncated IN (0, 1)),
+                body_hash TEXT NOT NULL CHECK (length(body_hash) = 71),
+                body BLOB NOT NULL,
+                trace_id TEXT,
+                created_at TEXT NOT NULL,
+                UNIQUE(event_id, source_table, direction)
+            );",
+        )
+        .unwrap();
+
+        migrate(&conn);
+        migrate(&conn);
+
+        conn.execute(
+            "INSERT INTO event_body_blobs (
+                event_id, event_type, source_table, direction, content_type,
+                original_bytes, stored_bytes, truncated, body_hash, body,
+                trace_id, created_at
+             ) VALUES (
+                '012345abcdef', 'mcp.tool_call', 'tool_calls', 'request',
+                'application/json', 2, 2, 0,
+                'blake3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+                '{}', 'trace-1', '2026-01-01T00:00:00Z'
+             )",
+            [],
+        )
+        .unwrap();
+
+        let source: String = conn
+            .query_row(
+                "SELECT source_table FROM event_body_blobs WHERE event_id = '012345abcdef'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(source, "tool_calls");
+    }
+
+    #[test]
     fn create_tables_include_shared_credential_ref_columns() {
         let conn = Connection::open_in_memory().unwrap();
         create_tables(&conn).unwrap();
@@ -880,11 +2007,14 @@ mod tests {
         for table in [
             "net_events",
             "model_calls",
-            "mcp_calls",
             "fs_events",
             "exec_events",
             "dns_events",
             "audit_events",
+            "tool_calls",
+            "tool_responses",
+            "security_rule_events",
+            "security_decision_events",
         ] {
             let mut stmt = conn
                 .prepare(&format!("PRAGMA table_info({table})"))
@@ -902,6 +2032,40 @@ mod tests {
     }
 
     #[test]
+    fn create_tables_include_shared_turn_id_columns() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+
+        for table in [
+            "net_events",
+            "model_calls",
+            "model_items",
+            "tool_calls",
+            "tool_responses",
+            "event_body_blobs",
+            "fs_events",
+            "exec_events",
+            "dns_events",
+            "audit_events",
+            "security_rule_events",
+            "security_decision_events",
+        ] {
+            let mut stmt = conn
+                .prepare(&format!("PRAGMA table_info({table})"))
+                .unwrap();
+            let cols: Vec<String> = stmt
+                .query_map([], |row| row.get::<_, String>(1))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect();
+            assert!(
+                cols.iter().any(|col| col == "turn_id"),
+                "{table} missing first-class turn_id column: {cols:?}"
+            );
+        }
+    }
+
+    #[test]
     fn create_tables_include_shared_event_id_columns() {
         let conn = Connection::open_in_memory().unwrap();
         create_tables(&conn).unwrap();
@@ -909,9 +2073,7 @@ mod tests {
         for table in [
             "net_events",
             "model_calls",
-            "mcp_calls",
             "fs_events",
-            "snapshot_events",
             "exec_events",
             "dns_events",
             "audit_events",
@@ -931,6 +2093,39 @@ mod tests {
                 "{table} missing shared event_id column: {cols:?}"
             );
         }
+    }
+
+    #[test]
+    fn model_calls_include_strict_protocol_column() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+
+        let cols: Vec<String> = {
+            let mut stmt = conn.prepare("PRAGMA table_info(model_calls)").unwrap();
+            stmt.query_map([], |row| row.get::<_, String>(1))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect()
+        };
+        assert!(
+            cols.iter().any(|col| col == "protocol"),
+            "model_calls must carry model wire protocol separately from provider: {cols:?}"
+        );
+
+        conn.execute(
+            "INSERT INTO model_calls (timestamp, provider, protocol, method, path)
+             VALUES ('2024-01-01T00:00:00Z', 'unknown', 'openai', 'POST', '/v1/chat/completions')",
+            [],
+        )
+        .unwrap();
+        let err = conn
+            .execute(
+                "INSERT INTO model_calls (timestamp, provider, protocol, method, path)
+                 VALUES ('2024-01-01T00:00:00Z', 'unknown', 'madeup', 'POST', '/v1/chat/completions')",
+                [],
+            )
+            .expect_err("unknown model wire protocols must be rejected");
+        assert!(err.to_string().contains("CHECK"));
     }
 
     #[test]
@@ -967,7 +2162,7 @@ mod tests {
                 '2026-01-01T00:00:00Z', 'credential', 'http.authorization',
                 'http.request', 'blake3',
                 'credential:blake3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
-                'substituted'
+                'captured'
              )",
             [],
         )
@@ -980,7 +2175,7 @@ mod tests {
                     substitution_ref, outcome
                  ) VALUES (
                     '2026-01-01T00:00:00Z', 'credential', 'http.authorization',
-                    'blake3', 'Bearer raw-secret', 'substituted'
+                    'blake3', 'Bearer raw-secret', 'captured'
                  )",
                 [],
             )
@@ -989,6 +2184,27 @@ mod tests {
             err.to_string().contains("CHECK"),
             "expected CHECK constraint failure, got: {err}"
         );
+
+        for outcome in ["substituted", "ignored"] {
+            let err = conn
+                .execute(
+                    "INSERT INTO substitution_events (
+                        timestamp, material_class, source, event_type,
+                        algorithm, substitution_ref, outcome
+                     ) VALUES (
+                        '2026-01-01T00:00:00Z', 'credential', 'http.authorization',
+                        'http.request', 'blake3',
+                        'credential:blake3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+                        ?1
+                     )",
+                    [outcome],
+                )
+                .expect_err("substitution_events outcome must be a closed broker verb");
+            assert!(
+                err.to_string().contains("CHECK"),
+                "expected CHECK constraint failure for outcome {outcome}, got: {err}"
+            );
+        }
     }
 
     #[test]
@@ -1320,83 +2536,108 @@ mod tests {
     }
 
     #[test]
-    fn migrate_mcp_calls_bytes_idempotent() {
-        let conn = Connection::open_in_memory().unwrap();
-        create_tables(&conn).unwrap();
-        migrate(&conn);
-        migrate(&conn);
-        // Verify bytes_sent/bytes_received columns exist.
-        conn.execute(
-            "INSERT INTO mcp_calls (timestamp, server_name, method, decision, bytes_sent, bytes_received)
-             VALUES ('2026-01-01T00:00:00Z', 'test', 'tools/call', 'allowed', 1024, 2048)",
-            [],
-        )
-        .unwrap();
-        let (sent, recv): (i64, i64) = conn
-            .query_row(
-                "SELECT bytes_sent, bytes_received FROM mcp_calls WHERE server_name = 'test'",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
+    fn reader_pragmas_enable_mmap_before_query_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            apply_pragmas(&conn).unwrap();
+            create_tables(&conn).unwrap();
+        }
+
+        let flags =
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
+        let conn = Connection::open_with_flags(&path, flags).unwrap();
+        apply_reader_pragmas(&conn).unwrap();
+
+        let mmap_size: i64 = conn
+            .query_row("PRAGMA mmap_size", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(sent, 1024);
-        assert_eq!(recv, 2048);
+        assert!(
+            mmap_size >= SQLITE_MMAP_SIZE_BYTES,
+            "reader worker connections must enable SQLite mmap before query_only; got {mmap_size}"
+        );
+
+        let query_only: i64 = conn
+            .query_row("PRAGMA query_only", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(query_only, 1, "reader worker must still be query-only");
     }
 
     #[test]
-    fn migrate_mcp_calls_policy_fields_idempotent() {
+    fn mmap_telemetry_records_budget_and_size_metrics() {
+        use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let _guard = metrics::set_default_local_recorder(&recorder);
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.db");
+        let conn = Connection::open(&path).unwrap();
+        apply_pragmas(&conn).unwrap();
+        create_tables(&conn).unwrap();
+        record_sqlite_mmap_telemetry(&conn, &path, "writer", "test");
+
+        let snapshot = snapshotter.snapshot().into_vec();
+        assert!(snapshot.iter().any(|(key, _, _, value)| {
+            key.key().name() == DB_SQLITE_MMAP_CONFIG_BYTES && matches!(value, DebugValue::Gauge(_))
+        }));
+        assert!(snapshot.iter().any(|(key, _, _, value)| {
+            key.key().name() == DB_SQLITE_MMAP_EFFECTIVE_BYTES
+                && matches!(value, DebugValue::Gauge(_))
+        }));
+        assert!(snapshot.iter().any(|(key, _, _, value)| {
+            key.key().name() == DB_SQLITE_FILE_SIZE_BYTES && matches!(value, DebugValue::Gauge(_))
+        }));
+        assert!(snapshot.iter().any(|(key, _, _, value)| {
+            key.key().name() == DB_SQLITE_WAL_SIZE_BYTES && matches!(value, DebugValue::Gauge(_))
+        }));
+        assert!(snapshot.iter().any(|(key, _, _, value)| {
+            key.key().name() == DB_SQLITE_MMAP_COVERAGE_RATIO
+                && matches!(value, DebugValue::Gauge(_))
+        }));
+        assert!(snapshot.iter().any(|(key, _, _, value)| {
+            key.key().name() == DB_SQLITE_MMAP_BUDGET_CHECKS_TOTAL
+                && matches!(value, DebugValue::Counter(1))
+        }));
+    }
+
+    #[test]
+    fn create_tables_keeps_snapshots_out_of_session_db() {
         let conn = Connection::open_in_memory().unwrap();
         create_tables(&conn).unwrap();
-        migrate(&conn);
-        migrate(&conn);
-        conn.execute(
-            "INSERT INTO mcp_calls (
-                timestamp, server_name, method, decision,
-                policy_mode, policy_action, policy_rule, policy_reason
-             )
-             VALUES (
-                '2026-01-01T00:00:00Z', 'github', 'tools/call', 'allowed',
-                'audit_only', 'deny', 'mcp.tool.github__delete_repo', 'local policy block'
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='snapshot_events'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            count, 0,
+            "snapshots are host recovery state; session.db is the user/security activity ledger"
+        );
+    }
+
+    #[test]
+    fn security_event_type_check_rejects_snapshot_event() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        let result = conn.execute(
+            "INSERT INTO security_rule_events (
+                timestamp_unix_ms, event_id, event_type, rule_id, rule_name,
+                rule_action, detection_level, provider, rule_snapshot, event_payload
+             ) VALUES (
+                1, 'abcdef123456', 'snapshot.event', 'profiles.rules.snapshot',
+                'snapshot', 'allow', 'none', 'profiles', '{}', '{}'
              )",
             [],
-        )
-        .unwrap();
-        let (mode, action, rule, reason): (String, String, String, String) = conn
-            .query_row(
-                "SELECT policy_mode, policy_action, policy_rule, policy_reason
-                 FROM mcp_calls WHERE server_name = 'github'",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-            )
-            .unwrap();
-        assert_eq!(mode, "audit_only");
-        assert_eq!(action, "deny");
-        assert_eq!(rule, "mcp.tool.github__delete_repo");
-        assert_eq!(reason, "local policy block");
-    }
-
-    #[test]
-    fn create_tables_includes_snapshot_events() {
-        let conn = Connection::open_in_memory().unwrap();
-        create_tables(&conn).unwrap();
-        conn.execute(
-            "INSERT INTO snapshot_events (timestamp, slot, origin, name, files_count, start_fs_event_id, stop_fs_event_id)
-             VALUES ('2026-01-01T00:00:00Z', 0, 'auto', NULL, 14, 0, 5)",
-            [],
-        )
-        .unwrap();
-        let (slot, origin, files_count, start_id, stop_id): (i64, String, i64, i64, i64) = conn
-            .query_row(
-                "SELECT slot, origin, files_count, start_fs_event_id, stop_fs_event_id FROM snapshot_events",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
-            )
-            .unwrap();
-        assert_eq!(slot, 0);
-        assert_eq!(origin, "auto");
-        assert_eq!(files_count, 14);
-        assert_eq!(start_id, 0);
-        assert_eq!(stop_id, 5);
+        );
+        assert!(
+            result.is_err(),
+            "snapshot.event must not be a security-event type"
+        );
     }
 
     #[test]
@@ -1470,27 +2711,5 @@ mod tests {
                 .unwrap();
             assert_eq!(count, 1, "missing index {idx}");
         }
-    }
-
-    #[test]
-    fn migrate_snapshot_events_idempotent() {
-        let conn = Connection::open_in_memory().unwrap();
-        create_tables(&conn).unwrap();
-        migrate(&conn);
-        migrate(&conn);
-        conn.execute(
-            "INSERT INTO snapshot_events (timestamp, slot, origin, files_count, start_fs_event_id, stop_fs_event_id)
-             VALUES ('2026-01-01T00:00:00Z', 5, 'manual', 20, 10, 25)",
-            [],
-        )
-        .unwrap();
-        let origin: String = conn
-            .query_row(
-                "SELECT origin FROM snapshot_events WHERE slot = 5",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(origin, "manual");
     }
 }

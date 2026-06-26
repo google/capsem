@@ -1,32 +1,31 @@
 //! Pure helpers used by the MITM pipeline: LLM-API path detection,
-//! URI splitting, and header formatting with sensitive-value substitution.
+//! URI splitting, and header formatting.
 
-use crate::credential_broker::{
-    detect_http_credential, is_broker_reference, CredentialObservation,
-};
-use crate::net::ai_traffic::provider::ProviderKind;
+use crate::credential_broker::{detect_http_credential_with_provider, CredentialObservation};
+use crate::net::ai_traffic::provider::{ModelProtocol, ProviderKind};
 
 /// Returns true only for paths that are actual LLM API endpoints
-/// (generation, embeddings, audio -- anything billed per token/request).
-pub(super) fn is_llm_api_path(provider: ProviderKind, path: &str) -> bool {
-    match provider {
-        ProviderKind::Anthropic => {
+/// (generation, embeddings, images, audio -- anything billed per token/request).
+pub(super) fn is_llm_api_path(protocol: ModelProtocol, path: &str) -> bool {
+    match protocol {
+        ModelProtocol::Anthropic => {
             path.starts_with("/v1/messages") || path.starts_with("/v1/complete")
         }
-        ProviderKind::OpenAi => {
+        ModelProtocol::OpenAi => {
             path.starts_with("/v1/chat/completions")
                 || path.starts_with("/v1/responses")
                 || path.starts_with("/v1/completions")
                 || path.starts_with("/v1/embeddings")
+                || path.starts_with("/v1/images")
                 || path.starts_with("/v1/audio")
         }
-        ProviderKind::Google => {
+        ModelProtocol::Google => {
             path.contains(":generateContent")
                 || path.contains(":streamGenerateContent")
                 || path.contains(":embedContent")
                 || path.contains(":batchEmbedContents")
         }
-        ProviderKind::Ollama => {
+        ModelProtocol::Ollama => {
             path.starts_with("/api/chat")
                 || path.starts_with("/api/generate")
                 || path.starts_with("/api/embeddings")
@@ -73,9 +72,9 @@ pub(super) fn parse_http_host_target(
 }
 
 /// Headers whose values are safe to store verbatim in telemetry logs.
-/// Everything else keeps its name but the value is replaced with either
-/// a broker credential reference (when a known credential is detected)
-/// or a short BLAKE3 hash for unknown sensitive material.
+/// Everything else keeps its name but the value is replaced with a short hash.
+/// Provider-aware credential handling belongs to the security-engine plugin
+/// rail, not this network formatting helper.
 const HEADER_ALLOWLIST: &[&str] = &[
     "accept",
     "content-encoding",
@@ -98,58 +97,36 @@ pub(super) struct FormattedHeaders {
 /// Format HTTP headers for telemetry storage.
 ///
 /// Allowlisted headers are stored verbatim. All other headers keep their
-/// name but the value is replaced with `credential:blake3:<hex>` when the
-/// broker recognizes the credential provider, otherwise `hash:<12-char-hex>`
-/// for non-credential sensitive material. This prevents credential leakage
-/// while preserving header presence and enabling same-key correlation.
+/// name but the value is replaced with `hash:<12-char-hex>`. Credential-shaped
+/// values also emit broker observations for the security ledger.
 pub(super) fn format_headers(headers: &hyper::HeaderMap) -> String {
-    format_headers_for_domain("", headers).formatted
+    format_headers_for_domain("", None, headers).formatted
 }
 
 pub(super) fn format_headers_for_domain(
     domain: &str,
+    ai_provider: Option<ProviderKind>,
     headers: &hyper::HeaderMap,
 ) -> FormattedHeaders {
+    let provider_hint = ai_provider.map(|provider| match provider {
+        ProviderKind::Unknown => ProviderKind::Unknown,
+        ProviderKind::Ollama => ProviderKind::OpenAi,
+        other => other,
+    });
     let mut observations = Vec::new();
-    let mut credential_ref = None;
     let formatted = headers
         .iter()
         .map(|(name, value)| {
             if HEADER_ALLOWLIST.contains(&name.as_str()) {
                 let v = value.to_str().unwrap_or("<binary>");
                 format!("{}: {}", name, v)
-            } else if let Ok(v) = value.to_str() {
-                if is_broker_reference(v) {
-                    if credential_ref.is_none() {
-                        credential_ref = Some(v.to_string());
-                    }
-                    format!("{}: {}", name, v)
-                } else if let Some(observation) =
-                    detect_http_credential(domain, name.as_str(), value.as_bytes())
-                {
-                    let reference = observation.credential_ref();
-                    if credential_ref.is_none() {
-                        credential_ref = Some(reference.clone());
-                    }
-                    observations.push(observation);
-                    format!("{}: {}", name, reference)
-                } else {
-                    let raw = value.as_bytes();
-                    let digest = blake3::hash(raw);
-                    let hex = &digest.to_hex()[..12];
-                    format!("{}: hash:{}", name, hex)
-                }
-            } else if let Some(observation) =
-                detect_http_credential(domain, name.as_str(), value.as_bytes())
-            {
-                let reference = observation.credential_ref();
-                if credential_ref.is_none() {
-                    credential_ref = Some(reference.clone());
-                }
-                observations.push(observation);
-                format!("{}: {}", name, reference)
             } else {
                 let raw = value.as_bytes();
+                if let Some(observation) =
+                    detect_http_credential_with_provider(domain, provider_hint, name.as_str(), raw)
+                {
+                    observations.push(observation);
+                }
                 let digest = blake3::hash(raw);
                 let hex = &digest.to_hex()[..12];
                 format!("{}: hash:{}", name, hex)
@@ -160,7 +137,47 @@ pub(super) fn format_headers_for_domain(
 
     FormattedHeaders {
         formatted,
+        credential_ref: observations
+            .first()
+            .map(CredentialObservation::credential_ref),
         observations,
-        credential_ref,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::credential_broker::CredentialProvider;
+
+    #[test]
+    fn header_formatter_sanitizes_and_emits_broker_observations() {
+        let mut headers = hyper::HeaderMap::new();
+        headers.insert(
+            hyper::header::AUTHORIZATION,
+            hyper::header::HeaderValue::from_static("Bearer sk-network-format-secret"),
+        );
+
+        let formatted =
+            format_headers_for_domain("127.0.0.1", Some(ProviderKind::OpenAi), &headers);
+
+        assert_eq!(formatted.observations.len(), 1);
+        assert_eq!(
+            formatted.observations[0].provider,
+            CredentialProvider::OpenAi
+        );
+        assert_eq!(
+            formatted.observations[0].source,
+            "http.header.authorization"
+        );
+        assert_eq!(
+            formatted.observations[0].event_type.as_deref(),
+            Some("http.request")
+        );
+        assert_eq!(
+            formatted.credential_ref.as_deref(),
+            Some(formatted.observations[0].credential_ref().as_str())
+        );
+        assert!(formatted.formatted.contains("authorization: hash:"));
+        assert!(!formatted.formatted.contains("sk-network-format-secret"));
     }
 }

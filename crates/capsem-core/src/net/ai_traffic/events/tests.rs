@@ -355,7 +355,7 @@ fn summary_tool_calls_sorted_by_index() {
 
 // ── parse_non_streaming_usage ────────────────────────────────────
 
-use super::super::provider::ProviderKind;
+use super::super::provider::ModelProtocol;
 
 #[test]
 fn non_streaming_google_usage() {
@@ -367,11 +367,99 @@ fn non_streaming_google_usage() {
             "thoughtsTokenCount": 20
         }
     }"#;
-    let (model, input, output, details) = parse_non_streaming_usage(ProviderKind::Google, body);
+    let (model, input, output, details) = parse_non_streaming_usage(ModelProtocol::Google, body);
     assert_eq!(model.as_deref(), Some("gemini-2.5-flash-preview-05-20"));
     assert_eq!(input, Some(100));
     assert_eq!(output, Some(50));
     assert_eq!(details.get("thinking"), Some(&20));
+}
+
+#[test]
+fn non_streaming_google_code_assist_usage_unwraps_response_envelope() {
+    let body = br#"{
+        "response": {
+            "modelVersion": "gemini-3.5-flash-low",
+            "usageMetadata": {
+                "promptTokenCount": 31,
+                "candidatesTokenCount": 17,
+                "thoughtsTokenCount": 2,
+                "totalTokenCount": 50
+            }
+        },
+        "traceId": "trace_0123456789ab",
+        "metadata": {}
+    }"#;
+
+    let (model, input, output, details) = parse_non_streaming_usage(ModelProtocol::Google, body);
+
+    assert_eq!(model.as_deref(), Some("gemini-3.5-flash-low"));
+    assert_eq!(input, Some(31));
+    assert_eq!(output, Some(17));
+    assert_eq!(details.get("thinking"), Some(&2));
+}
+
+#[test]
+fn non_streaming_google_tool_calls() {
+    let body = br#"{
+        "candidates": [{
+            "content": {
+                "parts": [
+                    {"functionCall": {"name": "search_web", "args": {"query": "capsem"}}},
+                    {"functionCall": {"name": "read_file", "args": {"path": "/workspace/README.md"}}}
+                ]
+            }
+        }]
+    }"#;
+
+    let calls = parse_non_streaming_tool_calls(ModelProtocol::Google, body);
+
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0].index, 0);
+    assert_eq!(calls[0].call_id, "gemini_search_web_0");
+    assert_eq!(calls[0].name, "search_web");
+    assert_eq!(calls[0].arguments, r#"{"query":"capsem"}"#);
+    assert_eq!(calls[1].index, 1);
+    assert_eq!(calls[1].call_id, "gemini_read_file_1");
+    assert_eq!(calls[1].name, "read_file");
+    assert_eq!(calls[1].arguments, r#"{"path":"/workspace/README.md"}"#);
+}
+
+#[test]
+fn non_streaming_google_code_assist_tool_calls_keep_provider_call_id() {
+    let body = br#"{
+        "response": {
+            "candidates": [{
+                "content": {
+                    "parts": [{
+                        "functionCall": {
+                            "id": "call_0123456789ab",
+                            "name": "run_command",
+                            "args": {
+                                "CommandLine": "printf '%s\\n' abc > /root/agy.txt",
+                                "Cwd": "/root",
+                                "WaitMsBeforeAsync": 1000
+                            }
+                        }
+                    }]
+                }
+            }],
+            "modelVersion": "gemini-3.5-flash-low",
+            "usageMetadata": {"promptTokenCount": 31, "candidatesTokenCount": 17}
+        },
+        "traceId": "trace_0123456789ab",
+        "metadata": {}
+    }"#;
+
+    let calls = parse_non_streaming_tool_calls(ModelProtocol::Google, body);
+
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].index, 0);
+    assert_eq!(calls[0].call_id, "call_0123456789ab");
+    assert_eq!(calls[0].name, "run_command");
+    assert_eq!(
+        calls[0].arguments,
+        r#"{"CommandLine":"printf '%s\\n' abc > /root/agy.txt","Cwd":"/root","WaitMsBeforeAsync":1000}"#
+    );
 }
 
 #[test]
@@ -384,11 +472,49 @@ fn non_streaming_anthropic_usage() {
             "cache_read_input_tokens": 150
         }
     }"#;
-    let (model, input, output, details) = parse_non_streaming_usage(ProviderKind::Anthropic, body);
+    let (model, input, output, details) = parse_non_streaming_usage(ModelProtocol::Anthropic, body);
     assert_eq!(model.as_deref(), Some("claude-sonnet-4-20250514"));
     assert_eq!(input, Some(200));
     assert_eq!(output, Some(80));
     assert_eq!(details.get("cache_read"), Some(&150));
+}
+
+#[test]
+fn non_streaming_anthropic_tool_calls() {
+    let body = br#"{
+        "id": "msg_ironbank_tool_01",
+        "type": "message",
+        "role": "assistant",
+        "model": "claude-sonnet-4-20250514",
+        "content": [
+            {
+                "type": "tool_use",
+                "id": "toolu_capsem_write_poem",
+                "name": "exec_command",
+                "input": {
+                    "cmd": "printf '%s\\n' abc123 > /root/poem.txt",
+                    "yield_time_ms": 1000,
+                    "max_output_tokens": 2000
+                }
+            }
+        ],
+        "stop_reason": "tool_use",
+        "usage": {
+            "input_tokens": 31,
+            "output_tokens": 17
+        }
+    }"#;
+
+    let calls = parse_non_streaming_tool_calls(ModelProtocol::Anthropic, body);
+
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].index, 0);
+    assert_eq!(calls[0].call_id, "toolu_capsem_write_poem");
+    assert_eq!(calls[0].name, "exec_command");
+    assert_eq!(
+        calls[0].arguments,
+        r#"{"cmd":"printf '%s\\n' abc123 > /root/poem.txt","max_output_tokens":2000,"yield_time_ms":1000}"#
+    );
 }
 
 #[test]
@@ -402,12 +528,57 @@ fn non_streaming_openai_usage() {
             "completion_tokens_details": {"reasoning_tokens": 30}
         }
     }"#;
-    let (model, input, output, details) = parse_non_streaming_usage(ProviderKind::OpenAi, body);
+    let (model, input, output, details) = parse_non_streaming_usage(ModelProtocol::OpenAi, body);
     assert_eq!(model.as_deref(), Some("gpt-4o"));
     assert_eq!(input, Some(300));
     assert_eq!(output, Some(120));
     assert_eq!(details.get("cache_read"), Some(&50));
     assert_eq!(details.get("thinking"), Some(&30));
+}
+
+#[test]
+fn non_streaming_openai_responses_usage() {
+    let body = br#"{
+        "id": "resp_ironbank_real_shape",
+        "object": "response",
+        "model": "gpt-5-nano-2025-08-07",
+        "output": [
+            {
+                "id": "rs_01",
+                "type": "reasoning",
+                "content": [],
+                "summary": []
+            },
+            {
+                "id": "msg_01",
+                "type": "message",
+                "status": "completed",
+                "content": [
+                    {
+                        "type": "output_text",
+                        "annotations": [],
+                        "text": "ironbank-live-nonce"
+                    }
+                ],
+                "role": "assistant"
+            }
+        ],
+        "usage": {
+            "input_tokens": 34,
+            "input_tokens_details": {"cached_tokens": 3},
+            "output_tokens": 36,
+            "output_tokens_details": {"reasoning_tokens": 5},
+            "total_tokens": 70
+        }
+    }"#;
+
+    let (model, input, output, details) = parse_non_streaming_usage(ModelProtocol::OpenAi, body);
+
+    assert_eq!(model.as_deref(), Some("gpt-5-nano-2025-08-07"));
+    assert_eq!(input, Some(34));
+    assert_eq!(output, Some(36));
+    assert_eq!(details.get("cache_read"), Some(&3));
+    assert_eq!(details.get("thinking"), Some(&5));
 }
 
 #[test]
@@ -417,7 +588,7 @@ fn non_streaming_ollama_usage() {
         "prompt_eval_count": 24,
         "eval_count": 64
     }"#;
-    let (model, input, output, details) = parse_non_streaming_usage(ProviderKind::Ollama, body);
+    let (model, input, output, details) = parse_non_streaming_usage(ModelProtocol::Ollama, body);
     assert_eq!(model.as_deref(), Some("llama3.1"));
     assert_eq!(input, Some(24));
     assert_eq!(output, Some(64));
@@ -425,9 +596,170 @@ fn non_streaming_ollama_usage() {
 }
 
 #[test]
+fn non_streaming_openai_tool_calls() {
+    let body = br#"{
+        "id": "chatcmpl-mock-local",
+        "object": "chat.completion",
+        "model": "mock-local",
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "id": "tool_0001",
+                            "type": "function",
+                            "function": {
+                                "name": "fixture_lookup",
+                                "arguments": "{\"query\":\"capsem\"}"
+                            }
+                        }
+                    ]
+                },
+                "finish_reason": "tool_calls"
+            }
+        ]
+    }"#;
+    let calls = parse_non_streaming_tool_calls(ModelProtocol::OpenAi, body);
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].index, 0);
+    assert_eq!(calls[0].call_id, "tool_0001");
+    assert_eq!(calls[0].name, "fixture_lookup");
+    assert_eq!(calls[0].arguments, r#"{"query":"capsem"}"#);
+}
+
+#[test]
+fn non_streaming_openai_responses_tool_calls() {
+    let body = br#"{
+        "id": "resp_ironbank_tool",
+        "object": "response",
+        "model": "gpt-5-nano-2025-08-07",
+        "output": [
+            {
+                "id": "fc_01",
+                "type": "function_call",
+                "call_id": "call_ironbank_write",
+                "name": "exec_command",
+                "arguments": "{\"cmd\":\"printf '%s\\n' abc123 > /root/poem.md\"}"
+            }
+        ]
+    }"#;
+
+    let calls = parse_non_streaming_tool_calls(ModelProtocol::OpenAi, body);
+
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].index, 0);
+    assert_eq!(calls[0].call_id, "call_ironbank_write");
+    assert_eq!(calls[0].name, "exec_command");
+    assert_eq!(
+        calls[0].arguments,
+        r#"{"cmd":"printf '%s\n' abc123 > /root/poem.md"}"#
+    );
+}
+
+#[test]
+fn non_streaming_openai_text_survives_tool_call_response() {
+    let body = br#"{
+        "id": "chatcmpl-mock-local",
+        "object": "chat.completion",
+        "model": "mock-local",
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "Capsem ironbank poem\nledgers count the sparks\nno secret crosses raw",
+                    "tool_calls": [
+                        {
+                            "id": "tool_0001",
+                            "type": "function",
+                            "function": {
+                                "name": "fixture_lookup",
+                                "arguments": "{\"query\":\"capsem\"}"
+                            }
+                        }
+                    ]
+                },
+                "finish_reason": "tool_calls"
+            }
+        ]
+    }"#;
+
+    let summary = parse_non_streaming_response_summary(ModelProtocol::OpenAi, body);
+
+    assert_eq!(
+        summary.text,
+        "Capsem ironbank poem\nledgers count the sparks\nno secret crosses raw"
+    );
+    assert!(summary.thinking.is_empty());
+    assert_eq!(summary.stop_reason, Some(StopReason::ToolUse));
+}
+
+#[test]
+fn non_streaming_openai_responses_text_is_recorded() {
+    let body = br#"{
+        "id": "resp_ironbank_real_shape",
+        "object": "response",
+        "model": "gpt-5-nano-2025-08-07",
+        "status": "completed",
+        "output": [
+            {
+                "id": "rs_01",
+                "type": "reasoning",
+                "content": [],
+                "summary": []
+            },
+            {
+                "id": "msg_01",
+                "type": "message",
+                "status": "completed",
+                "content": [
+                    {
+                        "type": "output_text",
+                        "annotations": [],
+                        "text": "ironbank-live-nonce"
+                    }
+                ],
+                "role": "assistant"
+            }
+        ]
+    }"#;
+
+    let summary = parse_non_streaming_response_summary(ModelProtocol::OpenAi, body);
+
+    assert_eq!(summary.text, "ironbank-live-nonce");
+    assert!(summary.thinking.is_empty());
+    assert_eq!(summary.stop_reason, Some(StopReason::EndTurn));
+}
+
+#[test]
+fn non_streaming_openai_image_generation_payload_is_recorded() {
+    let body = br#"{
+        "created": 1710000000,
+        "data": [
+            {
+                "b64_json": "Y2Fwc2VtLW1vY2staW1hZ2U="
+            }
+        ],
+        "usage": {
+            "input_tokens": 11,
+            "output_tokens": 17,
+            "total_tokens": 28
+        }
+    }"#;
+
+    let summary = parse_non_streaming_response_summary(ModelProtocol::OpenAi, body);
+
+    assert_eq!(summary.text, "Y2Fwc2VtLW1vY2staW1hZ2U=");
+    assert!(summary.thinking.is_empty());
+    assert_eq!(summary.stop_reason, Some(StopReason::EndTurn));
+}
+
+#[test]
 fn non_streaming_invalid_json() {
     let (model, input, output, details) =
-        parse_non_streaming_usage(ProviderKind::Google, b"not json");
+        parse_non_streaming_usage(ModelProtocol::Google, b"not json");
     assert!(model.is_none());
     assert!(input.is_none());
     assert!(output.is_none());
@@ -436,7 +768,7 @@ fn non_streaming_invalid_json() {
 
 #[test]
 fn non_streaming_empty_body() {
-    let (model, input, output, details) = parse_non_streaming_usage(ProviderKind::Anthropic, b"");
+    let (model, input, output, details) = parse_non_streaming_usage(ModelProtocol::Anthropic, b"");
     assert!(model.is_none());
     assert!(input.is_none());
     assert!(output.is_none());
@@ -460,7 +792,7 @@ fn non_streaming_gzip_compressed() {
     encoder.write_all(json).unwrap();
     let compressed = encoder.finish().unwrap();
 
-    let (model, input, output, _) = parse_non_streaming_usage(ProviderKind::Google, &compressed);
+    let (model, input, output, _) = parse_non_streaming_usage(ModelProtocol::Google, &compressed);
     assert_eq!(model.as_deref(), Some("gemini-2.5-flash-lite"));
     assert_eq!(input, Some(42));
     assert_eq!(output, Some(7));
@@ -470,7 +802,7 @@ fn non_streaming_gzip_compressed() {
 fn non_streaming_corrupt_gzip() {
     // Gzip magic bytes but corrupt data
     let body = &[0x1f, 0x8b, 0x00, 0x00, 0xff, 0xff];
-    let (model, input, output, details) = parse_non_streaming_usage(ProviderKind::Google, body);
+    let (model, input, output, details) = parse_non_streaming_usage(ModelProtocol::Google, body);
     assert!(model.is_none());
     assert!(input.is_none());
     assert!(output.is_none());

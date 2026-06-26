@@ -2,6 +2,10 @@
 
 Sandboxes AI agents in air-gapped Linux VMs on macOS using Apple's Virtualization.framework. Runs as a daemon service (like Docker). Built with Rust and Astro.
 
+Shared agent invariants live in `AGENTS.md`. Read that file too; it is the
+Codex/Claude/Gemini common contract for DB boundaries, skills, and release
+discipline.
+
 ## Quick Start
 
 ```bash
@@ -45,17 +49,19 @@ skills/                   Shared AI agent skills (SKILL.md format)
 
 ## Skills
 
-Skills live in `skills/` at the project root. Both Claude Code and Gemini CLI discover them via symlinks:
+Skills live in `skills/` at the project root. This is the canonical checked-in
+developer skill library. Agent-specific discovery may symlink or copy from this
+path; runtime product config must not mirror developer skills under `config/`.
 
 ```
-skills/<name>/SKILL.md        One skill per directory
-.claude/skills -> ../skills   Claude Code symlink
-.agents/skills -> ../skills   Gemini CLI symlink
+skills/<name>/SKILL.md    One skill per directory
 ```
 
 Prefix-based grouping: `dev-*`, `build-*`, `release-*`, `site-*`, `frontend-*`, `meta-*`. `asset-pipeline` covers the build-to-boot asset flow. See `/meta-organize-skills` for conventions.
 
-**Do not** put files in `.claude/skills/` or `.agents/skills/` directly -- those are symlinks.
+**Do not** put skill source files in `.claude/`, `.codex/`, `.gemini/`, or
+`config/skills/`. Those roots are agent-local settings or product config, not
+the developer skill source.
 
 ## Skills -- LOAD BEFORE CODING
 

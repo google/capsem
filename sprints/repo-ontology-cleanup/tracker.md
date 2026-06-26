@@ -1,0 +1,659 @@
+# Sprint: repo-ontology-cleanup
+
+## Tasks
+
+- [x] Create ontology sprint board.
+- [x] Inventory top-level directories and tracked/generated split.
+- [x] Initial root seed path corrected: no `config/guest`; profile-owned root
+  lives under `config/profiles/<profile_id>/root/`.
+- [x] Discovery: `guest/config` is mostly obsolete; it survives because
+  `capsem-admin image build` still shells out to `capsem-builder build
+  <guest_dir>`.
+- [x] Discovery: Python builder abstraction is over-owning product config:
+  scaffold/init/new/add commands, AI provider config, MCP config, web security,
+  VM resources, VM environment, and defaults generation are all mixed into
+  `GuestImageConfig`.
+- [x] User contract: profile is the only ledger. Packages, MCP, root seed,
+  assets, rules, plugins, and VM defaults must be in or referenced by the
+  profile. If it is not in the profile, it does not exist.
+- [x] User correction: there is no `config/guest`; it is `config/profiles`.
+- [x] User correction: move `code.toml` into `config/profiles/code/profile.toml`
+  so the profile directory is self-contained.
+- [x] User correction: add profile-owned `mcp.json`, conventional package files
+  for apt/Python/npm, a manual installer script, plus `tips.txt`.
+- [x] User correction/security: profile must hash-pin referenced files, and
+  package manifests must ship profile files with hashes.
+- [x] User correction: Docker templates are config/build inputs and belong under
+  `config/docker/`, not hidden in Python source.
+- [x] Magic inventory pass found remaining suspicious paths:
+  `guest/config`, builder templates under Python source, generated
+  `config/defaults.json`/`settings-schema.json`/`mcp-tools.json`, root
+  `.gemini`/`.claude`/`.codex`, old `CAPSEM_USER_CONFIG` and
+  `CAPSEM_CORP_CONFIG`, `assets/current`, stale `rootfs.squashfs`,
+  `sync-dev-assets.sh`/`simulate-install.sh`, and asset-only
+  `manifest-origin.json`.
+- [x] S0: Freeze current dirty install-log/version-stamp work.
+- [x] S0: Add guardrail in active finalizing sprint.
+- [x] S1: Burn the vague `config/host` proposal. Checked-in host-side product
+  contracts are explicit: UI/application preferences under `config/settings`,
+  corp constraints under `config/corp`, and profile runtime truth under
+  `config/profiles`.
+- [x] S1: Move Docker templates to `config/docker/`.
+- [x] S1: Move `config/profiles/code.toml` to
+  `config/profiles/code/profile.toml`.
+- [x] S1: Define profile-owned package declarations for image-baked packages.
+- [x] S1: Define profile-owned MCP declarations.
+- [x] S1: Define profile-owned packaged root under
+  `config/profiles/<profile_id>/root/`.
+- [x] S1: Define hash-pinned profile file references for enforcement,
+  detection, MCP, packages, manual installer script, root, and tips.
+- [ ] S1: Remove vague `guest_dir` as product config authority.
+  Partial: `capsem-admin image build` now materializes
+  `target/image-workspace/<profile_id>/guest` from the profile before invoking
+  the backend, but the Python backend still accepts a guest directory and must
+  be demoted to an explicit image spec in a later slice.
+- [x] S1: Emit backend/CI build record with hashes for rendered Dockerfile,
+  build context, rootfs tar, final EROFS, kernel assets, tool-version output,
+  compression settings, git revision, and project version.
+- [x] S1/S5: Restore Linux KVM guest-memory safety hardening from lost Linux
+  line:
+  `0422a6ec` guest memory range validation and `45800223` offset-overflow
+  guards are ported into current KVM memory/virtio-blk code.
+- [x] S5: Boot rebuilt profile and run AGY/Antigravity in the guest. Do not
+  raise VM RAM caps speculatively; capture the exact kernel/runtime failure and
+  fix the specific kernel option if it still fails.
+  Proof, 2026-06-10: an isolated dev service using the freshly rebuilt local
+  profile/rootfs found `/usr/local/bin/agy` in the guest and `agy --version`
+  returned `1.0.7`. The earlier default `capsem run` failure was against stale
+  installed/user assets, not the rebuilt profile.
+- [ ] S1: Extend build record to include profile and profile-owned payload
+  files after the profile ledger hash schema lands.
+- [x] Tooling: Add Ruff as a full-repository Python lint gate.
+- [x] Tooling: Add `ty` as a Python source type-check gate for `src/capsem`.
+- [ ] Tooling: Burn full-tree `ty` debt for guest payloads/scripts/tests after
+  guest dependency paths and dynamic test helper types are normalized.
+- [x] S1: Delete Python builder product scaffolding commands and module.
+  `capsem-builder init/new/add` and `src/capsem/builder/scaffold.py` are gone;
+  focused tests prove the commands are rejected.
+- [ ] S1: Delete/rewrite remaining Python builder product config models.
+- [ ] S1: Replace `GuestImageConfig` with backend-only image spec.
+- [x] S1: Move settings/default generation out of guest image config naming.
+  Settings source is `config/settings/settings.toml`; generated artifacts are
+  `config/settings/schema.generated.json` and
+  `config/settings/ui-metadata.generated.json`.
+- [x] S1: Resolve generated config files. Retired
+  `config/defaults.json`/`settings-schema.json`/`mcp-tools.json` naming and the
+  later `settings-registry`/`mcp-tools.generated` artifacts are gone from active
+  docs/code; MCP runtime truth is route-backed profile data.
+- [x] S1: Classify/remove root developer shims (`.gemini`, `.claude`,
+  `.codex`): project/dev agent skills live in top-level `skills/` with
+  `.codex/skills -> ../skills`; profile/product skill payload is a separate
+  future profile concern and must not be confused with developer skills.
+- [x] S1: Add Pydantic-backed skill library validation. `capsem-builder
+  validate-skills config/skills` validates every skill directory and
+  `SKILL.md` frontmatter, rejects symlinks/nested skills/name drift, and runs
+  in `just test`, `just smoke`, and CI alongside Ruff/ty.
+- [ ] S1: Restrict or replace old config env overrides (`CAPSEM_USER_CONFIG`,
+  `CAPSEM_CORP_CONFIG`).
+- [ ] S1: Run systematic `user.toml` burn audit across code, tests, docs,
+  skills, and sprint fixtures. Every `user.toml`, `UserConfig`, and
+  `CAPSEM_USER_CONFIG` reference must be deleted, renamed to `settings.toml`,
+  moved to profile/corp ownership, or explicitly confined to test/dev-only
+  helpers. Production profile routes must not read or write `user.toml`.
+- [x] S1-A: Add `Profile` invariant rail core in
+  `Profile::load_from_dir`, `status`, `check`, `download_assets`,
+  `set_mcp_tool_permission`, and `save`. Proof:
+  `cargo test -p capsem-core --lib net::policy_config::profile_contract::tests`.
+- [x] S1-A: Hash-pin profile enforcement and detection files as first-class
+  `profile.files.enforcement` and `profile.files.detection` descriptors in the
+  code profile. Proof: checked-in profile tests parse, validate, compile rule
+  files, and reject a tampered pinned enforcement file.
+- [x] S1-A: Add optional typed `SecurityRule.managed` annotations for semantic
+  backend-owned targets with MCP server/tool, plugin, and skill variants.
+  Proof: `cargo test -p capsem-core --lib
+  net::policy_config::security_rule_profile::tests`.
+- [x] S1-A: Enforce uniqueness for managed rule targets so semantic routes can
+  update exactly one backend-owned rule and never search by CEL text. Proof:
+  duplicate managed-target rule tests fail closed at rule-profile and profile
+  mutation boundaries.
+- [x] S1-A: Add profile mutation ledger schema/event/write path through the
+  single DB writer. Proof: `cargo test -p capsem-logger profile_mutation`.
+- [x] S1-A: Add MCP tool permission core litmus below the route layer:
+  `set_mcp_tool_permission("capsem", "fetch_http", Ask)` creates or updates one
+  managed enforcement rule, updates the profile hash pin, reloads cleanly, and
+  does not mutate `mcp.json`.
+- [x] S1-B: Wire profile status/assets routes through the `Profile` rail.
+  `/profiles/status` and `/profiles/{id}/assets/status` now verify pinned
+  profile sibling files and BLAKE3/size-pinned assets; fake or corrupted assets
+  are not reported ready. Proof:
+  `cargo test -p capsem-service profile_ -- --test-threads=1`.
+- [x] S1-B: Wire MCP tool permission route through profile-owned enforcement.
+  `PATCH /profiles/code/mcp/servers/capsem/tools/fetch_http/edit` with
+  `{"action":"ask"}` verifies pinned `mcp.json`, writes/updates one managed
+  enforcement rule, updates `profile.toml`'s BLAKE3/size pin, and writes a
+  `profile_mutation_events` row to `main.db`. Proof:
+  `profile_mcp_tool_edit_writes_profile_rule_and_mutation_ledger`.
+- [x] S1-B: Burn settings-backed enforcement/detection route authoring.
+  Enforcement/detection list/info now compile built-in defaults plus profile
+  rule files plus corp overlays, never `user.toml`; rule edit/delete routes
+  mutate the profile enforcement file, refresh profile pins, and write mutation
+  ledger rows. Proof:
+  `profile_enforcement_list_uses_profile_files_and_corp_not_user_settings`,
+  `enforcement_rule_endpoints_add_delete_reload_and_reject_invalid_rules_atomically`,
+  and `route_authored_detection_rule_triggers_runtime_ledger_and_latest_routes`.
+- [x] S1-C: Clean admin/doctor/Justfile/CLI status-debug rails. Public build,
+  diagnostics, status, and debug paths must use profile/admin/service
+  infrastructure, not direct `guest/config`, direct asset-manifest reads, or
+  legacy `user.toml` support-bundle contracts. Required proof: capsem-admin
+  profile/workspace tests, builder doctor tests, capsem CLI/support-bundle
+  tests, Justfile audit, and focused status/debug checks. Proof:
+  `cargo test -p capsem-admin -- --nocapture`, `cargo test -p capsem --bin
+  capsem -- --nocapture`, `uv run python -m pytest tests/test_doctor.py
+  tests/test_justfile_contract.py tests/test_cli.py::TestDoctorCommand -q`,
+  and grep audit for legacy `--guest-dir`
+  / direct manifest reads in the touched rails.
+- [x] S1-D: Add structured route/debug logging for profile and rule mutation
+  paths. Rule upsert/delete and semantic MCP tool mutations must log request,
+  validation rejection, ledger enqueue failure, and applied mutation events with
+  stable fields matching the `profile_mutation_events` ledger: route,
+  profile_id, actor, category, filename, affected_path, target_kind,
+  target_key, operation, rule_id, old/new hash+size, status, and mutation_id.
+  Proof: `profile_mutation_log_fields_match_ledger_contract`,
+  `profile_mcp_tool_edit_writes_profile_rule_and_mutation_ledger`,
+  `enforcement_rule_endpoints_add_delete_reload_and_reject_invalid_rules_atomically`,
+  `handle_detection_rule_upsert_requires_detection_level`,
+  `route_authored_detection_rule_triggers_runtime_ledger_and_latest_routes`,
+  full `cargo test -p capsem-service --bin capsem-service --
+  --test-threads=1` with 163 tests, and
+  `cargo check -p capsem-service --all-targets`.
+- [ ] S1: Replace rule-leaking UI/TUI mutation paths with semantic profile
+  facade routes. MCP server/tool, plugin, and skill controls send enum/state
+  edits; backend owns translation into profile-owned enforcement, plugin, skill,
+  or MCP files. Normal UI/TUI controls must not ship raw rule TOML over routes.
+- [ ] S1: Add generic profile mutation service and mutation ledger.
+  Route-originated profile changes for MCP, plugins, skills, rules, and future
+  profile-owned config must verify current hashes, mutate a single
+  profile-owned path, update BLAKE3/size pins, and emit typed mutation-ledger
+  rows through the DB writer. Ledger rows must include profile id, category,
+  target kind, target key/path, operation, filename, affected file path,
+  old/new hash and size, status, and error if any. No ad hoc route file edits
+  and no side SQLite writes.
+  Partial S1-A/S1-B: core summary/event/schema/write path exists for applied
+  mutations; service routes now emit applied rows for MCP tool and profile rule
+  mutations. Open: failed-mutation ledgering, explicit route lock/corp
+  constraints, plugin/skill/default-rule adapters, and stale-hash race tests.
+- [ ] S1: Build the `Profile` object abstraction before wiring route
+  mutations. `Profile` is the invariant rail for profile truth and owns
+  load/path resolution/lock/verify/status/check/download/semantic
+  mutation/save/reload/ledger/corp constraints. It represents `profile.toml`
+  plus referenced sibling files and assets. Routes call semantic methods such as
+  `set_mcp_tool_permission`, `set_plugin_mode`, and `set_skill_enabled`;
+  asset routes call `status`, `check`, and `download_assets`; routes must not
+  parse/write profile files or duplicate asset readiness/download logic
+  directly. Any smaller document/store helpers are private implementation
+  details.
+  Partial S1-A: core load/path/status/check/file-url download/MCP tool semantic
+  mutation/save paths exist. Partial S1-B: service status/assets and
+  enforcement/MCP rule routes use the profile rail. Open: route-facing
+  lock/reload/corp-constraint integration, plugin/skill adapters, and deeper
+  service status/UI integration.
+- [ ] S1: Extend `SecurityRule` with optional typed ownership annotations for
+  backend-managed semantic rules. Enforce uniqueness for MCP server/tool,
+  plugin, and skill targets so routes update the one owned rule instead of
+  searching CEL or inventing new rule names.
+  Partial S1-A complete for the rule contract; route use remains open.
+- [ ] S1: Add the MCP permission litmus test: changing the `capsem` server's
+  `fetch_http` tool to `ask` through the profile MCP tool edit route writes or
+  updates the profile enforcement rule, returns `effective_action = "ask"` from
+  the tool list, and does not mutate `mcp.json`, `settings.toml`, or any
+  `user.toml` path.
+  Partial S1-B: route edit writes the managed enforcement rule, updates the
+  profile pin, emits the mutation ledger row, and leaves `mcp.json` untouched.
+  Open: expose `effective_action` from the tool list route.
+- [ ] S1: Add adversarial tests for mutation discipline: stale hash rejects,
+  manual file drift rejects, duplicate managed-rule annotations reject,
+  unannotated user/corp CEL rules with the same server/tool do not confuse the
+  route-owned lookup, and failed mutations are ledgered without partial profile
+  file updates.
+  Partial S1-A: manual drift, missing pin, duplicate managed annotation,
+  create/update idempotence, file-url asset readiness, and DB schema rejection
+  tests exist. Open: failed-mutation ledgering, route-level stale-hash race,
+  unannotated same-target CEL non-confusion at route boundary, and plugin/skill
+  mutation adversarial tests.
+- [ ] S1: Update code/tests/docs/skills; remove old-path fallbacks.
+- [x] S2: Add guest root seed and move CLI config files into real files.
+- [x] S2: Add `mcp.json`, `apt-packages.txt`,
+  `python-requirements.txt`, `npm-packages.txt`, `install.sh`, and `tips.txt`
+  under `config/profiles/code/`.
+- [x] S2: Builder copies guest root seed into rootfs seed path.
+- [x] S2: `capsem-init` projects seed into runtime `/`.
+- [x] S2: In-VM diagnostics assert the projected profile-owned Gemini,
+  Antigravity, Claude, Codex, and MCP config files exist, use the profile MCP
+  bridge, and contain no obvious credential-shaped secrets.
+- [x] S3: Tool install refresh/version discipline.
+  Profile-owned apt/Python/npm package files and `install.sh` materialize into
+  the generated guest workspace and rootfs Docker context. The build ledger now
+  records the declared/rendered package and profile config inputs; installed
+  package/component truth belongs to the OBOM, not the build ledger. Real
+  AGY/Codex/Claude/Gemini VM proof remains an S5 rebuilt-image gate.
+- [x] S3: Build ledger records the config that went into the VM image build.
+  `build-ledger.log` now emits a `rootfs.config_inputs` JSONL stage containing
+  declared apt/Python/npm package sets, rendered rootfs install lists, profile
+  root/install-script inputs, and EROFS config. It deliberately does not record
+  `installed_packages` or `installed_versions`; the OBOM is the source of truth
+  for what was installed in the produced base image.
+- [x] S3: Use `cdxgen/cdxgen` as the preferred OBOM generator (`obom` /
+  `cdxgen -t os`) for the produced Linux rootfs/VM image, and record OBOM path,
+  BLAKE3 hash, generator, and generator version in the profile/build evidence.
+  The profile OBOM contract, admin materialization, docs, and service routes
+  all require pinned CycloneDX OBOM metadata; actual OBOM production is part of
+  the asset build/release path, while runtime inspection comes from
+  `/profiles/{id}/obom`.
+- [x] S3: Add the profile OBOM contract and runtime API: profile TOML accepts
+  `obom.arch.<arch>` descriptors with BLAKE3 hash, size, generator metadata, and
+  service/gateway expose `/profiles/{id}/obom` plus `/profiles/{id}/info`.
+- [x] S3: Teach `capsem-admin profile materialize` to attach a pinned
+  `obom.cdx.json` when the asset manifest lists one; local OBOM documents are
+  served only after size and BLAKE3 verification.
+- [x] S4: Documentation and skill cleanup.
+- [x] S4: Update public docs and internal skills after ontology paths land;
+  stale `guest/config` guidance is a release hold.
+  Proof: active architecture/development/security docs and internal skills now
+  describe the profile/admin build contract, profile-owned package/MCP/rule
+  files, generated `target/config`, build-ledger-vs-OBOM evidence, and
+  `capsem-admin image build` as the public rail. Added
+  `tests/capsem-build-chain/test_active_docs_profile_contract.py` to fail if
+  active docs/skills reintroduce retired builder/product-authoring guidance.
+- [x] Pre-S5: Coverage infrastructure audit.
+  Required before S5 benchmark/install gates: every workspace crate must be
+  included in PR `cargo llvm-cov` package lists and mapped in Codecov
+  components, with a build-chain guard that fails on future crate drift.
+  Proof: `uv run python -m pytest
+  tests/capsem-build-chain/test_coverage_infra_contract.py -q` and
+  `uv run ruff check tests/capsem-build-chain/test_coverage_infra_contract.py`.
+- [ ] S5: Verification gate.
+  Mostly green on 2026-06-10, but intentionally left open because the magic
+  inventory is still red. Remaining live old-path/product-config references
+  include `guest/config`, Python `GuestImageConfig`/`ai_providers`, and
+  `CAPSEM_USER_CONFIG`/`user.toml` in production-ish rails, tests, and docs.
+  This must be burned in S1 before the ontology sprint can close.
+
+## S5 Evidence, 2026-06-10
+
+- Build/profile evidence:
+  - `just build-assets code arm64` passed.
+  - Asset manifest is `assets.current = 2026.0610.11`,
+    `binaries.current = 1.3.1781050981`.
+  - Built Linux kernel asset is present for arm64:
+    `vmlinuz` BLAKE3
+    `559f986e3fed2b255e6d13030bbeb92d1fe585e88f7bdda39797ba356ba2e17f`.
+  - Built EROFS/LZ4HC profile image is present for arm64:
+    `rootfs.erofs` BLAKE3
+    `84f7971493028a9aa8a118ccb30f5e9ff90b6dc1b46fcc51dccf10d712a1d009`,
+    size `862875648`.
+  - Built initrd is present for arm64:
+    `initrd.img` BLAKE3
+    `c6bbd2f580032b1c60e32c94a7313cbed9a059253f574e269cd96f58faf671ea`.
+  - Built CycloneDX OBOM is present for arm64:
+    `obom.cdx.json` BLAKE3
+    `45e917cf3405060e2db2daf29bcf5a12dc7b40787f32e413eaf083dec71b626d`.
+  - `capsem-admin profile materialize`, `profile check`, and `image verify`
+    passed for the materialized profile; `image verify` passed for both arm64
+    and x86_64 manifest entries.
+
+- Focused contract tests:
+  - `cargo test -p capsem-core --lib
+    net::policy_config::profile_contract::tests` passed: 20 tests.
+  - `cargo test -p capsem-core --lib
+    net::policy_config::security_rule_profile::tests` passed: 29 tests.
+  - `uv run python -m pytest
+    tests/capsem-build-chain/test_active_docs_profile_contract.py
+    tests/capsem-build-chain/test_coverage_infra_contract.py
+    tests/test_docker.py -q` passed: 154 tests.
+  - `uv run python -m pytest tests/test_doctor.py
+    tests/test_justfile_contract.py tests/test_cli.py::TestDoctorCommand -q`
+    passed: 37 tests.
+  - `uv run python -m pytest tests/test_build_assets_profile.py
+    tests/capsem-build-chain/test_install_asset_payload.py
+    tests/capsem-build-chain/test_simulate_install_assets.py
+    tests/capsem-install/test_setup_removed.py
+    tests/capsem-install/test_installed_layout.py
+    tests/capsem-install/test_smoke.py -q` passed: 35 passed, 2 skipped.
+  - `cargo test -p capsem-admin -- image_verify materialize -- --nocapture`
+    passed: 4 tests.
+
+- End-to-end gates:
+  - `just smoke` passed in 233s. It covered `capsem-doctor --fast`,
+    injection scenarios, VM guest diagnostics, session ledger checks, MCP
+    ledger checks, network/security rows, main/session DB rollups, Python
+    integration tests, and suspend/resume durability.
+  - `just test` passed. Highlights: `cargo audit`, Ruff, `ty`, skill
+    validation, frontend check/test/build with 357 Vitest tests, cross-compile
+    agent checks, Rust security/logger/gateway rails, Python suite with
+    1400 passed and 71 skipped at 90.08% coverage, build-chain serial tests,
+    VM integration, benchmark baseline, and Docker/systemd install e2e with
+    39 passed and 22 skipped.
+  - Linux `.deb` build and validation passed; local Linux boot remains skipped
+    because this host cannot provide the Linux/KVM runtime. Linux team must run
+    the real boot gate.
+
+- Benchmark baselines generated:
+  - `benchmarks/capsem-bench/data_1.3.1781050981_arm64.json`:
+    scratch seq write/read `1789.0 MB/s` / `4202.3 MB/s`; rootfs seq read
+    `3428.1 MB/s`; rootfs random read `32908.7 IOPS`; CLI startup means:
+    Python `4.5 ms`, Node `26.0 ms`, Claude `138.7 ms`, Gemini `661.4 ms`,
+    Codex `80.5 ms`.
+  - `benchmarks/lifecycle/data_1.3.1781050981.json`: provision mean
+    `1053.2 ms`, exec mean `12.3 ms`, total mean `1139.7 ms`.
+  - `benchmarks/fork/data_1.3.1781050981.json`: fork mean `35.7 ms`,
+    boot-provision mean `976.4 ms`.
+  - `benchmarks/parallel/data_1.0.json`: 4 VM workers completed in
+    `31593.206 ms`.
+  - The capsem-bench HTTP/proxy throughput section is still explicitly skipped
+    unless a hermetic local MITM lab URL is supplied via
+    `CAPSEM_MOCK_SERVER_BASE_URL`; that is not counted as green HTTP
+    performance proof.
+
+- Red inventory:
+  - `rg` audit still finds old ontology references outside `sprints/` and
+    generated directories, including `guest/config`, `GuestImageConfig`,
+    `ai_providers`, `CAPSEM_USER_CONFIG`, `CAPSEM_CORP_CONFIG`, and
+    `user.toml`.
+  - S5 therefore proves the rebuilt profile works and the broad gates pass, but
+    does not close the ontology sprint.
+- [x] S5: Full build gate: rebuild profile assets through the admin/just rail,
+  including EROFS/LZ4HC rootfs.
+  Proof: `just build-assets code arm64` passed and produced manifest
+  `2026.0610.11` with arm64 kernel, initrd, EROFS/LZ4HC rootfs, and CycloneDX
+  OBOM entries.
+- [ ] S5: Package/install gate: build the real package and install through the
+  package path with manifest override support, then verify service/UI readiness.
+  Partial: `just test` built and validated the Linux package and passed the
+  Docker/systemd package install e2e gate with 39 passed and 22 skipped. Open:
+  macOS package/UI readiness is not counted green here; the installed UI was
+  already observed stale/broken earlier and needs the install/package route
+  cleanup before release.
+- [ ] S5: Linux handoff gate: Linux CI/team must run KVM tests for restored
+  guest-memory range/overflow hardening because macOS cannot compile/execute
+  `hypervisor::kvm` without the Linux toolchain/runtime.
+  Partial: `.deb` build/validation passed locally through Docker; actual Linux
+  boot/runtime remains a Linux-team gate.
+- [ ] S5: Magic inventory gate.
+  Red: old ontology references remain outside sprint/generated paths:
+  `guest/config`, `GuestImageConfig`, `ai_providers`, `CAPSEM_USER_CONFIG`,
+  `CAPSEM_CORP_CONFIG`, and `user.toml`.
+- [ ] Changelog.
+  Partial: profile-owned image payload pinning and S1-A/S1-B profile mutation
+  rail service wiring are recorded under Unreleased.
+- [ ] Commit.
+
+## Notes
+
+- User-approved ontology: all configuration-shaped source belongs under
+  `config/`. Host-side configuration should live under `config/host/`.
+- Corrected guest root source:
+  `config/profiles/<profile_id>/root/`.
+- User direction: `guest/config` is probably 90% irrelevant now that
+  `capsem-admin` owns image/profile/materialization. Do not preserve it by
+  renaming everything blindly.
+- User correction: there are no AI providers. MCP lives in profile or it does
+  not exist. Packages baked into the image belong to the profile. Root seed
+  files live under the profile, not `config/guest`.
+- User correction: `user.toml` must burn. User preferences are
+  `settings.toml`; profile behavior is profile-owned; corp constraints are
+  corp-owned. The current profile enforcement handlers still load/write the old
+  settings/user shape internally and must be corrected in S1.
+- User correction: UI/TUI must mutate MCP server/tool permissions through
+  semantic profile routes. The backend translates simple enum/state edits into
+  profile-owned rules/config; do not expose the raw rule system to common UI/TUI
+  controls and do not add compound clever routes.
+- User correction: semantic route mutations need a mutation ledger. Because
+  profile files are hash-pinned, route edits must update the profile ledger and
+  emit a DB-writer mutation record with the mutated path and old/new hashes; no
+  hand editing, no side writes, no silent hash drift.
+- User correction: backend-generated permission rules need typed ownership
+  annotations so route code can enforce one rule per semantic target such as MCP
+  server/tool. Do not infer route-owned rules by CEL text or naming tricks.
+- Security correction: path-only references such as `rule_files.enforcement =
+  "profiles/code/enforcement.toml"` are not enough. The profile ledger must bind
+  referenced files by blake3, and admin/doctor/service/package install must be
+  able to verify/report that exact ledger.
+- S1-A implementation note: `Profile` now owns the first core rail for profile
+  ledger operations. The code profile pins `enforcement.toml` and
+  `detection.yaml`; `Profile::set_mcp_tool_permission` verifies the existing
+  enforcement pin, updates or creates one managed rule, writes the new
+  enforcement file, updates the profile pin, and returns a
+  `ProfileMutationSummary` convertible into a DB-writer
+  `ProfileMutationEvent`.
+- S1-A verification:
+  - `cargo test -p capsem-core --lib net::policy_config::profile_contract::tests`
+    passed: 20 tests.
+  - `cargo test -p capsem-core --lib net::policy_config::security_rule_profile::tests`
+    passed: 29 tests.
+  - `cargo test -p capsem-logger profile_mutation` passed: 2 tests.
+  - Package-level filtered core runs also executed the relevant library tests
+    but the unrelated `mcp_export` test binary hit the repo's macOS codesign
+    wrapper when run under broad package filtering; the scoped `--lib` gates are
+    the S1-A proof.
+- `config/profiles/<profile_id>/root/` represents guest `/`. Example:
+  `config/profiles/code/root/root/.codex/config.toml` maps to
+  `/root/.codex/config.toml`.
+- Proposed target layout:
+  `config/profiles/code/profile.toml`, `enforcement.toml`, `detection.yaml`,
+  `mcp.json`, `apt-packages.txt`, `python-requirements.txt`,
+  `npm-packages.txt`, `install.sh`, `tips.txt`, and `root/...`.
+- `install.sh` is for profile-owned manual shell installers, for example AGY or
+  Claude installer flows that cannot be expressed as apt/Python/npm package
+  lines. It must be hash-pinned and audited as a build input.
+- Runtime `/root` is tmpfs, so the root seed must be copied into a seed path in
+  rootfs and projected at boot by `capsem-init`.
+- Current `guest/config/ai/*.toml` has inline `files` entries for Codex,
+  Claude, and Gemini, but those are not a trustworthy runtime projection path.
+- `guest/config/` is widely referenced by builder, tests, docs, and skills; this
+  is evidence of the old ontology, not proof that the whole shape should
+  survive.
+- Current admin path: `capsem-admin image build` validates the profile and then
+  shells out to `uv run capsem-builder build <guest_dir>`. This is the seam to
+  remove: admin should pass explicit image inputs to the backend.
+- Python builder burn list:
+  - delete `init`, `new`, `add ai-provider`, `add mcp` product-authoring CLI;
+  - delete or rewrite `scaffold.py`;
+  - remove `AiProviderConfig`, `McpServerConfig`, `WebSecurityConfig`,
+    `VmResourcesConfig`, `VmEnvironmentConfig` from image build ownership;
+  - keep only backend image concerns after admin/profile resolution: kernel arch
+    config, resolved package install sets, rootfs compression, resolved root seed
+    metadata, and version capture commands;
+  - move/replace `generate_defaults_json` so host settings are generated from
+    `config/host/settings.toml`, not guest image config.
+- Dockerfile templates are not Python source. Move
+  `src/capsem/builder/templates/Dockerfile.{rootfs,kernel}.j2` to
+  `config/docker/` and make admin/backend hash them as build inputs.
+- Current dirty worktree includes install timestamp log changes and version
+  stamp files from the last successful `just install`. Freeze that before path
+  moves.
+- S0 freeze commit: `5d0bf0d4 fix: timestamp package install logs`.
+- Build ledger first slice: `capsem-builder` now appends per-arch JSONL
+  `build-ledger.log` from the production build path, and release CI uploads it
+  as `vm-build-ledger-<arch>` even on failed builds. S3 completes the profile
+  payload/config portion with hash-pinned profile files and a
+  `rootfs.config_inputs` ledger stage.
+- S3 correction: `build-ledger.log` is a build-debug ledger, not an installed
+  package database. It records desired config inputs and hashes so we can
+  retrace a rootfs build. `obom.cdx.json` is the authoritative record of
+  installed base-image components.
+- Python tooling slice: Ruff is enabled for the full tree and has cleaned stale
+  unused imports/dead assignments/undefined names. `ty check src/capsem` passes
+  and is wired into CI/local gates. Full-tree `ty check .` still reports
+  existing guest/test typing debt, mostly guest-only dependencies (`rich`,
+  `fastmcp`, `capsem_bench` path setup) and dynamic tests; do not expand the
+  gate until that debt is burned deliberately.
+- Linux KVM guest-memory safety history check:
+  - `0422a6ec fix: validate kvm guest memory ranges` added
+    `GuestMemoryRef::gpa_range_to_host` and moved virtio-blk zero-copy/raw
+    pointer users from first-byte checks to full-range checks.
+  - `45800223 fix: guard kvm memory offset overflow` changed guest memory
+    `read_at`/`write_at` arithmetic to checked additions.
+  - Both concepts are now ported into the current branch. Local macOS native
+    tests cannot execute the KVM module because it is `target_os = "linux"`;
+    Linux CI/team validation remains required.
+- AGY/Antigravity correction: do not model this as a 48G/64G VM allocation
+  change. It is a guest-kernel/runtime option issue to diagnose from a real
+  rebuilt-profile boot with `capsem exec` once profile/root/package inputs are
+  rebuilt.
+- Profile payload slice: `config/profiles/code/profile.toml` now pins MCP,
+  package lists, manual installer script, tips, and `root.manifest.json` by
+  BLAKE3/size. `root.manifest.json` pins every packaged guest-root file.
+  `capsem-admin profile check` verifies both layers and rejects path escape,
+  bad hash scheme, zero-size, and mutated payloads.
+- Generated image workspace slice: `capsem-admin image build` now validates the
+  source profile and materializes `target/image-workspace/<profile_id>/guest`
+  from the profile before invoking `capsem-builder`. This is the transition
+  rail; the backend still has a `guest_dir` argument and must be burned down to
+  an explicit image spec in S1.
+- Real arm64 rootfs/initrd build slice:
+  `cargo run -p capsem-admin -- image build --profile
+  config/profiles/code/profile.toml --config-root config --guest-dir guest
+  --output assets --arch arm64 --template rootfs` succeeded through the
+  profile-materialized workspace and produced EROFS/LZ4HC level 12
+  `assets/arm64/rootfs.erofs` with BLAKE3
+  `015b5d930eef2eacfb6b484adaf8abd83cd4fb2c0a4700c24fe696c9db595ba1`, size
+  `862875648`. `just _pack-initrd` then repacked diagnostics into
+  `assets/arm64/initrd.img` with BLAKE3
+  `7928dd872e09c33ca001f779d987cb7b71d3df8f3f9ed74ca68aeb5c38d1fb9f`, size
+  `2849956`. The profile asset pins were reconciled to the generated manifest
+  for arm64 `initrd.img` and `rootfs.erofs`.
+- Runtime projection gotcha: profile root files are baked into EROFS, but
+  `capsem-init` overlays diagnostics from initrd at boot for fast iteration.
+  Therefore profile-root changes require a rootfs rebuild, and diagnostic test
+  changes require `just _pack-initrd`; otherwise doctor may execute stale tests
+  against fresh profile files.
+- Installer proof: the first real Docker build failed because downloaded
+  installer scripts were executed with `/bin/sh`; the profile `install.sh` now
+  invokes them with Bash. The retry installed Claude Code `2.1.170` and
+  Antigravity CLI `1.0.7` during the rootfs build.
+- VM proof: isolated dev service under `target/capsem-dev-home` booted the
+  rebuilt arm64 profile assets. `capsem status` reported Capsem
+  `1.3.1781050981`, assets manifest `2026.0609.18`, `1/1` profile ready, and
+  arm64 vmlinuz/initrd/rootfs all `ok`. `capsem doctor --fast` passed with
+  `286 passed, 23 skipped, 1 deselected in 27.04s`; log:
+  `target/capsem-dev-home/run/doctor-latest.log`.
+- Size/performance note for follow-up, not a blocker for this proof: because
+  the profile-root layer currently sits before Python/package-heavy Docker
+  layers, small profile-root edits can invalidate expensive image layers; NVM
+  and Python packages also include test/data trees that may be pruneable later.
+- Verification for this slice:
+  - `cargo test -p capsem-core --lib -- --nocapture` passed with 1506 tests,
+    1 ignored.
+  - `cargo fmt --check` passed.
+  - `git diff --check` passed.
+  - `cargo test -p capsem-core hypervisor::kvm::memory -- --nocapture`
+    compiled the crate but ran zero KVM tests on macOS, then hit one transient
+    codesign failure for the unrelated `mcp_export` test binary.
+  - `cargo test -p capsem-core hypervisor::kvm::virtio_blk -- --nocapture`
+    completed with zero KVM tests on macOS because the module is Linux-only.
+  - Linux cross-check attempts are recorded in the coverage ledger below.
+
+## Coverage Ledger
+
+- Unit/contract: `cargo test -p capsem-core profile_contract -- --nocapture`
+  proves profile file refs parse, serde/validate, and reject absolute paths,
+  traversal, bad hash schemes, and zero-size pins. Restored KVM memory tests
+  exist in `memory.rs`/`virtio_blk.rs` but are Linux-only.
+- S1-B unit/contract: `cargo test -p capsem-core --lib
+  net::policy_config::profile_contract::tests` passed with 20 tests, covering
+  malformed profiles, pinned profile file tamper, file-url asset download, and
+  MCP managed-rule mutation/update.
+- S1-B service/route: `cargo test -p capsem-service --bin capsem-service --
+  --test-threads=1` passed with 162 tests. This includes profile status
+  hash-verification, profile asset download/corruption repair, MCP tool
+  permission route mutation, enforcement/detection profile-file authoring, corp
+  overlay preservation, and route-authored detection ledger readback.
+- S1-B API/library: `cargo test -p capsem-service --lib` passed with 92 tests.
+- S1-B build hygiene: `cargo fmt --check`, `git diff --check`, and
+  `cargo check -p capsem-service --all-targets` passed.
+- Tooling: `uv run ruff check .` and `uv run ty check src/capsem` are the
+  current Python quality gates.
+- Skill contract: `uv run capsem-builder validate-skills config/skills` and
+  `uv run python -m pytest tests/test_skills.py -q` pass. The validator is
+  Pydantic-backed and wired into local/CI gates.
+- Profile-directory contract: `cargo test -p capsem-core profile_contract -- --nocapture`,
+  `cargo test -p capsem-admin -- --nocapture`, `cargo test -p capsem-service
+  profile_catalog -- --nocapture`, and the focused package/install pytest set
+  pass after moving source and generated profiles to
+  `profiles/<id>/profile.toml`.
+- Functional: `cargo run -p capsem-admin -- profile check
+  config/profiles/code/profile.toml --config-root config --arch arm64 --json`
+  reports every profile payload and packaged-root file with matching
+  BLAKE3/size. `cargo test -p capsem-admin
+  image_workspace_materializes_self_contained_profile_config -- --nocapture`
+  proves image workspace materialization.
+- S1-C: `cargo test -p capsem-admin -- --nocapture` passed with 24 tests,
+  proving checked-in profile validation, payload/root-manifest pin checks,
+  self-contained image workspace materialization, EROFS/LZ4HC planning, and
+  profile materialization from manifests.
+- S1-C: `uv run python -m pytest tests/test_doctor.py
+  tests/test_justfile_contract.py tests/test_cli.py::TestDoctorCommand -q`
+  passed with 37 tests. Builder doctor now delegates profile validation to
+  `capsem-admin profile check`, rejects positional `guest/`, and the Justfile
+  guard proves public asset recipes no longer pass `--guest-dir` or call
+  `capsem-builder build guest`.
+- S1-C: `cargo test -p capsem --bin capsem -- --nocapture` passed with 172
+  tests. `capsem status` and default health derive profile/asset readiness from
+  `/profiles/status`; support bundles collect `settings.toml`, corp metadata,
+  and diagnostics without preserving `config/user.toml`.
+- S1-D observability: `cargo test -p capsem-service --bin capsem-service
+  profile_mutation_log_fields_match_ledger_contract -- --nocapture` proves the
+  structured log payload mirrors the profile mutation ledger contract.
+  `cargo test -p capsem-service --bin capsem-service -- --test-threads=1`
+  passed with 163 tests, covering MCP tool mutation, enforcement/detection rule
+  authoring, rejection paths, runtime detection ledger readback, and the new
+  route/debug logging contract.
+- S3 auditability: `uv run python -m pytest tests/test_docker.py::TestBuildLedger
+  -q` passed with 6 tests and `uv run python -m pytest tests/test_docker.py -q`
+  passed with 149 tests. Build ledgers now record rendered Dockerfile/context
+  hashes, rootfs tar, EROFS, kernel assets, tool-version output, and the
+  `rootfs.config_inputs` stage for declared package/profile/EROFS config. The
+  ledger deliberately does not record installed package state; `obom.cdx.json`
+  is the installed base-image component record.
+- S3 admin/runtime proof: `cargo test -p capsem-admin
+  image_workspace_materializes_self_contained_profile_config -- --nocapture`
+  passed, proving profile package/root/install inputs materialize into the
+  image workspace. `cargo test -p capsem-admin
+  profile_materialize_writes_generated_config_from_manifest -- --nocapture`
+  and `cargo test -p capsem-service --bin capsem-service
+  profile_info_and_obom_route_expose_base_image_obom_hash -- --nocapture`
+  passed, proving pinned OBOM metadata materializes into the profile and is
+  exposed by the runtime profile API after BLAKE3/size validation.
+- S4 docs/skills: `uv run python -m pytest
+  tests/capsem-build-chain/test_active_docs_profile_contract.py -q` passed,
+  proving active docs/skills do not teach retired product-authoring routes such
+  as raw backend builder commands, setup wizard/provider config, squashfs
+  fallback, or settings-owned AI/MCP config. Broad grep was reviewed; remaining
+  hits are telemetry terminology or explicit "retired path is gone" statements.
+  `cd docs && pnpm run build` passed with 47 pages, proving the edited Astro
+  docs and Mermaid diagrams build cleanly.
+- Adversarial: `cargo test -p capsem-admin profile_check -- --nocapture`
+  proves mutated profile payload files are rejected and profile root manifests
+  are verified. Remaining: checked-in credential sweep for
+  `config/profiles/<profile_id>/root/`.
+- E2E/VM: isolated rebuilt-profile boot passed `capsem doctor --fast` with
+  `286 passed, 23 skipped, 1 deselected in 27.04s`. The doctor suite now proves
+  profile-owned Gemini, Antigravity, Claude, Codex, and MCP config files exist
+  in runtime `/root`, use the canonical `/run/capsem-mcp-server` bridge where
+  applicable, and contain no obvious credential-shaped secrets.
+- Asset build: arm64 rootfs rebuild through `capsem-admin image build` passed,
+  and `cargo run -p capsem-admin -- image verify --profile
+  config/profiles/code/profile.toml --config-root config --output assets
+  --manifest assets/manifest.json --arch arm64 --json` passed for vmlinuz,
+  initrd, and rootfs pins.
+- Linux/KVM: local macOS cannot execute KVM tests. Attempted
+  `cargo check -p capsem-core --target x86_64-unknown-linux-gnu`, blocked
+  because the target is not installed; attempted
+  `cargo check -p capsem-core --target x86_64-unknown-linux-musl`, blocked by
+  missing `x86_64-linux-musl-gcc` for C dependencies (`libsqlite3-sys`, `ring`,
+  `aws-lc-sys`). Linux CI/team must run this gate.
+- Telemetry: not directly touched unless doctor/status output changes.
+- Performance: tool refresh may affect image build time; runtime should not add
+  hot-path latency. `uv run python -m pytest tests/test_docker.py -q` passes
+  with 148 backend builder/context tests and no Docker execution.
+- Missing/deferred: none accepted yet.

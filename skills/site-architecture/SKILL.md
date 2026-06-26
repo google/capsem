@@ -12,17 +12,22 @@ Capsem sandboxes AI agents in air-gapped Linux VMs on macOS using Apple's Virtua
 **Host-side:**
 - **capsem-service** (daemon): always-running background service. Axum HTTP server over Unix Domain Socket (`~/.capsem/run/service.sock`). Manages VM lifecycle, routes API calls to per-VM processes.
 - **capsem-process** (per-VM): one process per sandbox. Boots the VM, bridges vsock connections (terminal + control), manages structured jobs (exec, file I/O) via a job store.
-- **capsem** (CLI): user-facing CLI. **Everything is ephemeral unless asked otherwise.** `capsem shell` (no args) = temp VM + auto-destroy on exit. `capsem create -n <name>` = persistent VM (detached). `capsem create` (no name) = ephemeral VM (detached). `capsem shell <id>` = attach to existing. Talks to capsem-service over UDS HTTP.
+- **capsem** (CLI): user-facing CLI. Sessions are created from profiles and
+  named by the service (`<profile-id>-N` unless the user supplies a name).
+  `capsem shell` opens the TUI/session picker, creates or attaches through the
+  service, and talks to capsem-service over UDS HTTP. User-facing copy says
+  sessions; implementation/debug output may say VM when describing the
+  virtualization layer.
 - **capsem-mcp** (MCP server): stdio-based MCP server for AI agents (Claude Code, Gemini CLI). Bridges MCP tool calls to capsem-service HTTP API.
-- **capsem-gateway** (HTTP gateway): TCP-to-UDS reverse proxy (default port 19222). Bearer token auth, CORS, 10MB body limit. Provides `/status` (cached 1s), `/terminal/{id}` (WebSocket relay to per-VM UDS), and transparent fallback proxy to capsem-service. The frontend and tray app connect through the gateway. Writes runtime files to `~/.capsem/run/` (gateway.token, gateway.port, gateway.pid).
-- **capsem-app** (Tauri GUI): thin webview shell. Connects to gateway at `http://127.0.0.1:19222`. No VM logic, no capsem-core dependency. Only 2 IPC commands: `open_url` (opens URL in system browser) and `check_for_app_update` (Tauri updater). Bundles `frontend/dist` as offline fallback when gateway is unreachable.
+- **capsem-gateway** (HTTP gateway): TCP-to-UDS reverse proxy (default port 19222). Bearer token auth, CORS, 10MB body limit. Provides an explicit route table plus `/status` (cached 1s) and `/terminal/{id}` (WebSocket relay to per-VM UDS). Unknown routes return 404; the frontend and tray app connect through the gateway. Writes runtime files to `~/.capsem/run/` (gateway.token, gateway.port, gateway.pid).
+- **capsem-app** (Tauri GUI): thin webview shell. Connects to gateway at `http://127.0.0.1:19222`. No VM logic, no capsem-core dependency. Only 2 IPC commands: `open_url` (opens URL in system browser) and `check_for_app_update` (Tauri updater). Bundles `frontend/dist` so the app can render the service-unavailable screen when gateway is unreachable.
 - **capsem-tray** (system tray): menu-bar companion process. Polls the gateway for VM status, shows running/stopped counts, and provides quick actions (open dashboard, quit). Non-standalone: refuses to run without `--parent-pid` pointing at a live capsem-service, acquires a system-wide singleton lock at `~/.capsem/run/tray.lock` (only one tray ever in the menu bar), and self-exits within 500ms when its parent dies. Contract enforced by `capsem-guard` on the companion side, not the spawner.
 - **capsem-guard** (shared library): parent-watch + singleton primitives used by capsem-tray and capsem-gateway. Provides `watch_parent_or_exit`, `Singleton::try_acquire`, and the umbrella `install(parent_pid, lock_path)`. Guarantees companions die with their parent and can't run standalone or as multiple instances -- closes the orphan-accumulation class of bug that `kill_on_drop(true)` alone cannot cover under SIGKILL/OOM/test-harness termination. See `/dev-rust-patterns` lesson 18.
 
 **Guest-side:**
 - **capsem-init** (`capsem-init`): PID 1, sets up air-gapped networking, mounts filesystems, deploys guest binaries, launches daemons, writes boot timing JSONL
 - **capsem-pty-agent** (`capsem-pty-agent`): main guest agent -- PTY bridge, control channel, exec, file I/O, shutdown handler (see "Guest agent architecture" below)
-- **capsem-sysutil** (`capsem-sysutil`): multi-call binary for guest lifecycle commands (shutdown, halt, poweroff, reboot, suspend). Opens its own vsock:5004 connection independently of the agent, so shutdown works even if the agent is hung. Symlinked by capsem-init to `/sbin/shutdown`, `/sbin/halt`, `/sbin/poweroff`, `/sbin/reboot`, `/usr/local/bin/suspend`.
+- **capsem-sysutil** (`capsem-sysutil`): guest suspend helper. Opens its own vsock:5004 connection independently of the agent, so suspend works even if the agent is hung. Symlinked by capsem-init only to `/usr/local/bin/suspend`; in-VM shutdown commands are disabled.
 - **capsem-net-proxy** (`capsem-net-proxy`): redirects HTTPS traffic to host MITM proxy via vsock
 - **capsem-mcp-server** (`capsem-mcp-server`): guest MCP stdio-to-framed-vsock relay for tool calls to the host MITM MCP endpoint
 
@@ -66,30 +71,40 @@ Tray app  -> capsem-gateway (TCP)-> HTTP/UDS -> capsem-service
 
 ### Service HTTP API
 
+The service and gateway expose one explicit route table. Unknown routes must
+return 404; do not add compatibility aliases or generic gateway forwarding. The full
+contract lives in `docs/src/content/docs/architecture/service-api.md`; the
+common session routes are:
+
 | Method | Path | Purpose |
 |--------|------|---------|
-| POST | `/provision` | Create a new sandbox VM (set `persistent: true` for named VMs) |
-| GET | `/list` | List all sandboxes (running + stopped persistent) |
-| GET | `/info/{id}` | Sandbox details (config, status, persistent) |
-| POST | `/exec/{id}` | Execute command, return stdout/stderr/exit_code |
-| POST | `/run` | One-shot: provision temp VM, exec command, destroy, return output |
-| POST | `/stop/{id}` | Stop VM (persistent: preserve state; ephemeral: destroy) |
-| POST | `/resume/{name}` | Resume a stopped persistent VM |
-| POST | `/persist/{id}` | Convert running ephemeral VM to persistent |
-| POST | `/purge` | Kill all temp VMs (set `all: true` to include persistent) |
-| POST | `/write_file/{id}` | Write file to guest |
-| GET | `/read_file/{id}?path=...` | Read file from guest |
-| GET | `/logs/{id}` | Serial/boot logs |
-| POST | `/inspect/{id}` | Raw SQL query against session.db |
-| DELETE | `/delete/{id}` | Destroy VM and wipe all state |
-| POST | `/fork/{id}` | Fork a VM into a reusable image |
-| GET | `/images` | List all user images |
-| GET | `/images/{name}` | Inspect a specific image |
-| DELETE | `/images/{name}` | Delete an image |
+| POST | `/vms/create` | Create a session from a profile |
+| GET | `/vms/list` | List sessions and profile/status metadata |
+| GET | `/vms/{id}/info` | Session identity, profile, config, and diagnostics |
+| GET | `/vms/{id}/status` | Hot in-memory runtime state and counters |
+| POST | `/vms/{id}/exec` | Execute command, return stdout/stderr/exit_code |
+| POST | `/run` | One-shot create + exec + destroy through the same service path |
+| POST | `/vms/{id}/stop` | Stop a running session |
+| POST | `/vms/{id}/pause` | Pause/suspend a running session |
+| POST | `/vms/{id}/start` | Start a stopped session |
+| POST | `/vms/{id}/resume` | Resume a paused/stopped session |
+| POST | `/vms/{id}/save` | Save current session state |
+| POST | `/vms/{id}/fork` | Fork a session into reusable state |
+| DELETE | `/vms/{id}/delete` | Destroy session and wipe state |
+| POST | `/purge` | Delete defunct/incompatible service state |
+| POST | `/vms/{id}/files/write` | Write file to guest |
+| POST | `/vms/{id}/files/read` | Read file from guest |
+| GET | `/vms/{id}/files/list` | List guest files |
+| GET | `/vms/{id}/files/content` | Download file content |
+| POST | `/vms/{id}/files/content` | Upload file content |
+| GET | `/vms/{id}/logs` | Serial/boot logs |
 
 ### MCP tools (capsem-mcp)
 
-21 tools: `capsem_create` (env + image params), `capsem_list`, `capsem_info`, `capsem_exec` (timeout param), `capsem_run`, `capsem_stop`, `capsem_resume`, `capsem_persist`, `capsem_purge`, `capsem_read_file`, `capsem_write_file`, `capsem_vm_logs` (grep + tail), `capsem_service_logs` (grep + tail), `capsem_inspect_schema`, `capsem_inspect`, `capsem_delete`, `capsem_version`, `capsem_fork`, `capsem_image_list`, `capsem_image_inspect`, `capsem_image_delete`.
+MCP tools include `capsem_create`, `capsem_list`, `capsem_info`, `capsem_exec`,
+`capsem_run`, lifecycle tools, file read/write, logs, timeline, triage,
+version, fork, and profile MCP tools. Raw SQL inspection tools are not part of
+the product surface; telemetry access must use typed routes.
 
 ## Host-guest communication
 
@@ -114,7 +129,7 @@ Serial console stays active for kernel boot logs. Terminal I/O switches to vsock
 | 5000 | Control messages (resize, heartbeat, exec commands, file I/O) |
 | 5001 | Terminal data (PTY I/O) |
 | 5002 | MITM proxy and framed guest MCP endpoint |
-| 5004 | Lifecycle commands (shutdown/suspend, capsem-sysutil) |
+| 5004 | Lifecycle commands (suspend; deprecated shutdown frames ignored, capsem-sysutil) |
 | 5005 | Exec output (direct child process stdout, on demand) |
 
 ## Guest agent architecture
@@ -142,27 +157,24 @@ Single-threaded, sync Rust binary (no tokio). Launched by capsem-init after file
 
 **Shutdown handler:** `sync()` -> `SIGTERM` bash -> wait `SHUTDOWN_GRACE_SECS` (defined in `capsem-proto`) -> `SIGKILL` (interactive bash ignores SIGTERM) -> break. The bridge loop cleanup then sends SIGHUP + waitpid to reap the child.
 
-### capsem-sysutil (lifecycle multi-call binary)
+### capsem-sysutil (guest suspend helper)
 
 Busybox-pattern binary dispatching on `argv[0]`. Symlinked by capsem-init:
-- `/sbin/shutdown`, `/sbin/halt`, `/sbin/poweroff`, `/sbin/reboot` -> `/run/capsem-sysutil`
 - `/usr/local/bin/suspend` -> `/run/capsem-sysutil`
 
-Opens its own vsock:5004 connection (independent of capsem-pty-agent) and sends `GuestToHost::ShutdownRequest` or `SuspendRequest`. Shows a countdown (`SHUTDOWN_GRACE_SECS + 1` seconds) before sending. Rejects reboot requests with an error.
+Opens its own vsock:5004 connection (independent of capsem-pty-agent) and sends `GuestToHost::SuspendRequest`. Shows a countdown (`SHUTDOWN_GRACE_SECS + 1` seconds) before sending. `shutdown`, `halt`, and `poweroff` return an error; `reboot` remains unsupported. The host ignores old `GuestToHost::ShutdownRequest` frames for wire compatibility.
 
-**Shutdown flow (end-to-end):**
+**Suspend flow (end-to-end):**
 ```
-Guest: shutdown -> capsem-sysutil -> vsock:5004 -> capsem-process
-  capsem-process: reads ShutdownRequest -> sends ProcessToService::ShutdownRequested to service
-  capsem-process: sends HostToGuest::Shutdown on control channel (vsock:5000)
-  capsem-pty-agent: receives Shutdown -> sync + SIGTERM + grace + SIGKILL -> exit
-  capsem-process: VM stops, process exits
-  capsem-service: child reaper cleans up (ephemeral: destroy session, persistent: preserve)
+Guest: suspend -> capsem-sysutil -> vsock:5004 -> capsem-process
+  capsem-process: reads SuspendRequest -> sends ProcessToService::SuspendRequested to service
+  capsem-process: saves VM state and exits cleanly
+  capsem-service: marks persistent VM suspended for resume
 ```
 
 ### capsem-net-proxy
 
-Listens on localhost:10443 inside the guest. iptables redirects all port 443 traffic here. Each connection is bridged to host vsock:5002 where the MITM proxy handles TLS termination and policy.
+Listens on localhost:10443 inside the guest. iptables redirects all port 443 traffic here. Each connection is bridged to host vsock:5002 where the network intercept handles TLS termination, protocol parsing, and handoff to the security engine.
 
 ### capsem-mcp-server
 
@@ -180,7 +192,7 @@ Selected by kernel cmdline `capsem.storage=virtiofs` (default) or absence (block
   auto_snapshots/      # Rolling ring buffer (12 APFS clones, 5min interval)
 ```
 
-Boot sequence: squashfs -> VirtioFS mount -> loopback ext4 -> overlayfs -> bind-mount workspace.
+Boot sequence: profile-selected read-only rootfs asset -> VirtioFS mount -> loopback ext4 -> overlayfs -> bind-mount workspace.
 
 Why ext4 loopback: Apple VZ's VirtioFS doesn't support `mknod` (whiteout creation), so overlayfs can't use VirtioFS directly as upper.
 
@@ -203,16 +215,40 @@ The guest is air-gapped. No real NIC, no real DNS, no direct internet access.
 1. `capsem-init` creates a dummy0 NIC with fake DNS (dnsmasq)
 2. iptables redirects all port 443 traffic to `capsem-net-proxy` on localhost:10443
 3. `capsem-net-proxy` bridges each TCP connection to host vsock port 5002
-4. Host MITM proxy terminates TLS using per-domain minted certs (signed by static Capsem CA)
-5. Host inspects HTTP request, applies domain + HTTP policy, forwards to real upstream
-6. Full telemetry recorded to session DB (domain, method, path, status, headers, body preview)
+4. Host network intercept terminates TLS using per-domain minted certs (signed by static Capsem CA)
+5. Host parses HTTP/model facts into a `SecurityEvent` and calls the shared security engine
+6. Runtime materialization forwards allowed bytes to upstream
+7. Logging plugins produce ledger-safe event output for the logger DB
 
-### Network policy
+### Network/security policy
 
-- User config: `~/.capsem/user.toml` -- domain allow/block lists + HTTP rules
-- Corp config: `/etc/capsem/corp.toml` -- enterprise lockdown (MDM-distributed)
-- Merge: corp overrides user entirely per field; unspecified fields fall through
-- HTTP rules: `[[network.rules]]` with method+path matching per domain
+- Corp config owns enterprise constraints, reporting endpoints, and locked
+  rule/plugin policy.
+- Profile config owns VM assets, MCP config, rules, detections, plugins, and
+  defaults for sessions created from that profile.
+- Settings config owns UI/app preferences only.
+- All enforcement and detection compiles into one `SecurityRuleSet` over
+  `SecurityEvent`; there is no domain-policy, HTTP-policy, or MCP-policy
+  decision provider.
+- Credential capture/injection belongs to the credential broker plugin.
+  Durable ledger materialization belongs to the logger DB boundary after
+  logging plugins such as `log_sanitizer` produce ledger-safe events. Network
+  formatters, service routes, frontend transforms, and debug harnesses must not
+  implement credential handling or logged-data caches.
+
+### Logger DB boundary
+
+`capsem-logger` owns SQLite connections and storage mechanics. Routes,
+service code, MCP helpers, UI handlers, and benchmarks must not call
+`rusqlite::Connection::open` or `DbReader::open` directly and must not maintain
+their own telemetry/security projection caches. They call a logger DB object to
+run queries and writes.
+
+The DB layer owns connection threads, `mem`/disk table layout, batching, flush,
+rehydration, WAL tuning, and future FTS5/search. It does not own product route
+semantics by hardcoding route-specific helper methods in `DbWriter`; callers may
+own query intent while the DB object owns execution. Missing ledger tables or
+columns are schema-contract failures, not empty data.
 
 ### MITM CA
 
@@ -226,28 +262,45 @@ The guest is air-gapped. No real NIC, no real DNS, no direct internet access.
 
 **Block mode**: `mke2fs` runs unconditionally at boot. Overlay upper is always tmpfs.
 
-**Everything is ephemeral unless asked otherwise.** VMs are temporary by default. Named VMs (`capsem create -n <name>`) are persistent -- their workspace and rootfs overlay survive stops and can be resumed. Persistent VM data lives in `~/.capsem/run/persistent/`. Never make the overlay upper layer persistent for ephemeral VMs. To add packages: edit guest config and `just build-assets`.
+**Sessions run profiles.** Session workspace and overlay state are session
+state; image contents come from the profile asset contract. Never make the
+overlay upper layer a hidden image-authoring rail. To add packages, edit the
+profile-owned package files under `config/profiles/<id>/` and rebuild through
+the profile-derived asset rail.
 
-**Fork images** extend the ephemeral model with reusable templates. `capsem fork <vm> <image-name>` snapshots a VM (running or stopped) via APFS clonefile. `capsem create --image <name>` boots from the template. Images have flat genealogy: each depends only on a base squashfs version, never on other images. Deleting any image is always safe; asset cleanup protects referenced squashfs versions.
+**Fork images** extend the session model with reusable templates. `capsem fork
+<session> <image-name>` snapshots a session via APFS clonefile. Forks stay tied
+to their profile asset contract. Deleting any image is always safe; asset
+cleanup protects referenced profile assets.
 
 ## Installation and service lifecycle
 
-`capsem setup` is the primary install entry point. On first CLI use, auto-runs non-interactively if `~/.capsem/setup-state.json` is missing.
+Release packages are the primary install entry point. Local development uses
+the same package rail as CI: build the package, pass a manifest override, and
+let the package install service files plus manifest metadata.
 
-**Setup wizard** (6 steps): corp config provisioning, background asset download, security preset, AI provider detection, repository access, service installation.
+Package install handles service registration and manifest placement. Profile
+configuration handles security rules, plugins, MCP, assets, and packaged root
+content; credentials are brokered at runtime.
 
 **Install layout** (`~/.capsem/`):
 - `bin/` -- capsem, capsem-service, capsem-process, capsem-mcp, capsem-gateway, capsem-tray
-- `assets/` -- manifest.json, v{VERSION}/{vmlinuz, initrd.img, rootfs.squashfs}
+- `assets/` -- manifest.json and profile-selected VM assets such as `vmlinuz`,
+  `initrd.img`, and EROFS rootfs images
 - `run/` -- service.sock, service.pid, gateway.token, gateway.port, gateway.pid, instances/{id}.sock
 
 **Service registration**: LaunchAgent `com.capsem.service` (macOS) or systemd user unit `capsem.service` (Linux). KeepAlive/Restart=always. Service auto-launches gateway and tray as companion processes, passing `--parent-pid` so companions self-exit when the service dies (see capsem-guard, `/dev-rust-patterns` lesson 18).
 
 **Auto-launch cascade**: capsem-service starts -> spawns capsem-gateway (port 19222) + capsem-tray. All three are separate processes.
 
-**Self-update**: `capsem update` checks GitHub for new manifest, downloads assets in background. Binary swap deferred. Background update-check cache (`update-check.json`, 24h TTL) refreshes on every CLI command.
+**Self-update**: `capsem update` checks GitHub for a new manifest, downloads
+assets in background, and reports manifest origin/hash through service status.
+Binary swap is deferred. Background update-check cache (`update-check.json`,
+24h TTL) refreshes on every CLI command.
 
-Key source files: `crates/capsem/src/setup.rs`, `paths.rs`, `service_install.rs`, `update.rs`, `uninstall.rs`.
+Key source files: `crates/capsem/src/paths.rs`,
+`crates/capsem/src/service_install.rs`, `crates/capsem/src/update.rs`, and
+`crates/capsem/src/uninstall.rs`.
 
 ## Key source files
 
@@ -264,9 +317,9 @@ Read `references/tauri-v2.md` for Tauri v2 patterns. capsem-app is a thin webvie
 - **`capsem-process`**: per-VM process. Boots VM via capsem-core, bridges vsock, manages structured jobs (exec, file I/O) with a job store + oneshot channels.
 - **`capsem`**: CLI client. HTTP over UDS to service, direct UDS to process for shell.
 - **`capsem-mcp`**: MCP server (stdio). Uses `rmcp` crate. Bridges AI agent tool calls to service HTTP API.
-- **`capsem-gateway`**: TCP-to-UDS HTTP reverse proxy. Axum server on port 19222, Bearer token auth, CORS. Provides `/status` (cached), `/terminal/{id}` (WebSocket relay), and transparent fallback to service. Frontend and tray connect through this.
+- **`capsem-gateway`**: TCP-to-UDS HTTP reverse proxy. Axum server on port 19222, Bearer token auth, CORS. Provides an explicit route table, `/status` (cached), and `/terminal/{id}` (WebSocket relay). Unknown routes return 404; frontend and tray connect through this.
 - **`capsem-app`**: thin Tauri webview shell. Points at gateway (`http://127.0.0.1:19222`). No capsem-core dependency. 2 IPC commands: `open_url`, `check_for_app_update`.
-- **`capsem-agent`**: guest binaries crate. Contains four binaries cross-compiled for aarch64/x86_64-linux-musl: `capsem-pty-agent` (PTY bridge + control + exec + file I/O + shutdown), `capsem-sysutil` (lifecycle multi-call: shutdown/halt/poweroff/reboot/suspend), `capsem-net-proxy` (HTTPS -> MITM), `capsem-mcp-server` (guest MCP relay).
+- **`capsem-agent`**: guest binaries crate. Contains four binaries cross-compiled for aarch64/x86_64-linux-musl: `capsem-pty-agent` (PTY bridge + control + exec + file I/O + shutdown), `capsem-sysutil` (guest suspend helper; in-VM shutdown disabled), `capsem-net-proxy` (HTTPS -> MITM), `capsem-mcp-server` (guest MCP relay).
 - **`capsem-logger`**: session DB schema, queries, async writer.
 - **`capsem-proto`**: shared protocol types. `ipc.rs` (ServiceToProcess/ProcessToService), `lib.rs` (HostToGuest/GuestToHost).
 
@@ -279,7 +332,7 @@ capsem-process is a **low-privilege** per-VM process. Security invariants:
 3. **Session directory 0700**: created by the service via `create_virtiofs_session`. Contains workspace/, system/, serial.log (0600), session.db.
 4. **No guest-triggered process exit**: control channel read errors cause `break` (loop exit), not `process::exit()`. Guest cannot DoS the host process.
 5. **Gateway auth layer**: external access goes through capsem-gateway (Bearer token, rate limiting, localhost CORS). Per-VM sockets are not exposed to the network.
-6. **Rootfs read-only**: squashfs mounted read-only by Apple VZ. Guest binaries deployed chmod 555.
+6. **Rootfs read-only**: profile rootfs asset mounted read-only. Guest binaries deployed chmod 555.
 7. **Guest binary security**: all injected binaries are read-only. Guest cannot modify its own agent.
 8. **VirtioFS boundary**: only `session_dir/guest/` is shared via VirtioFS (contains `system/` and `workspace/`). Host-only files (`session.db`, `serial.log`, `auto_snapshots/`, `checkpoint.vzsave`) are outside the share. Compat symlinks at `session_dir/{system,workspace}` point into `guest/` so existing code paths work unchanged.
 

@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::HashMap;
 
 #[test]
 fn load_settings_file_missing_returns_default() {
@@ -46,6 +47,83 @@ fn write_then_load_roundtrip() {
 }
 
 #[test]
+fn load_local_settings_file_rejects_profile_behavior() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(
+        tmp.path(),
+        r#"
+[settings."vm.resources.cpu_count"]
+value = 8
+modified = "2026-06-11T00:00:00Z"
+"#,
+    )
+    .unwrap();
+
+    let error = load_local_settings_file(tmp.path()).expect_err("profile behavior rejected");
+    assert!(error.contains("owned by profile"), "{error}");
+}
+
+#[test]
+fn load_local_settings_file_accepts_ui_preferences() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(
+        tmp.path(),
+        r#"
+[settings."appearance.dark_mode"]
+value = true
+modified = "2026-06-11T00:00:00Z"
+"#,
+    )
+    .unwrap();
+
+    let file = load_local_settings_file(tmp.path()).expect("ui settings load");
+    assert!(file.settings.contains_key("appearance.dark_mode"));
+}
+
+#[test]
+fn load_corp_settings_file_rejects_ui_preferences() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(
+        tmp.path(),
+        r#"
+[settings."app.auto_update"]
+value = true
+modified = "2026-06-11T00:00:00Z"
+"#,
+    )
+    .unwrap();
+
+    let error = load_corp_settings_file(tmp.path()).expect_err("ui setting rejected");
+    assert!(error.contains("owned by settings"), "{error}");
+}
+
+#[test]
+fn load_corp_settings_file_accepts_constraints() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(
+        tmp.path(),
+        r#"
+refresh_policy = "24h"
+
+[settings."vm.resources.cpu_count"]
+value = 8
+modified = "2026-06-11T00:00:00Z"
+
+[corp.rules.block_example]
+name = "block_example"
+action = "block"
+priority = -10
+match = 'http.host == "example.invalid"'
+"#,
+    )
+    .unwrap();
+
+    let file = load_corp_settings_file(tmp.path()).expect("corp constraints load");
+    assert!(file.settings.contains_key("vm.resources.cpu_count"));
+    assert!(file.corp.rules.contains_key("block_example"));
+}
+
+#[test]
 fn settings_file_parses_rule_file_references() {
     let file: SettingsFile = toml::from_str(
         r#"
@@ -76,7 +154,7 @@ sigma_output_endpoint = "https://security.example.invalid/capsem/sigma"
 #[test]
 fn load_referenced_enforcement_rules_resolves_relative_to_settings_file() {
     let dir = tempfile::tempdir().unwrap();
-    let settings_path = dir.path().join("user.toml");
+    let settings_path = dir.path().join("settings.toml");
     let rules_dir = dir.path().join("profiles").join("base");
     std::fs::create_dir_all(&rules_dir).unwrap();
     std::fs::write(
@@ -112,7 +190,7 @@ enforcement = "profiles/base/enforcement.toml"
 #[test]
 fn load_referenced_sigma_rules_resolves_relative_to_settings_file() {
     let dir = tempfile::tempdir().unwrap();
-    let settings_path = dir.path().join("user.toml");
+    let settings_path = dir.path().join("settings.toml");
     let rules_dir = dir.path().join("profiles").join("base");
     std::fs::create_dir_all(&rules_dir).unwrap();
     std::fs::write(
@@ -165,7 +243,7 @@ sigma = "profiles/base/detection.yaml"
 }
 
 #[test]
-fn migrate_setting_ids_renames_old_keys() {
+fn migrate_setting_ids_does_not_resurrect_retired_web_decision_keys() {
     let mut file = SettingsFile::default();
     file.settings.insert(
         "web.defaults.allow_read".into(),
@@ -175,35 +253,27 @@ fn migrate_setting_ids_renames_old_keys() {
         },
     );
     migrate_setting_ids(&mut file);
-    assert!(!file.settings.contains_key("web.defaults.allow_read"));
-    assert!(file.settings.contains_key("security.web.allow_read"));
+    assert!(file.settings.contains_key("web.defaults.allow_read"));
+    assert!(!file.settings.contains_key("security.web.allow_read"));
 }
 
 #[test]
-fn migrate_setting_ids_does_not_clobber_new() {
+fn migrate_setting_ids_still_renames_live_service_keys() {
     let mut file = SettingsFile::default();
-    // Both old and new key exist -- new key should be preserved
     file.settings.insert(
-        "web.defaults.allow_read".into(),
+        "web.search.google.allow".into(),
         crate::net::policy_config::types::SettingEntry {
             value: SettingValue::Bool(false),
             modified: "old".into(),
         },
     );
-    file.settings.insert(
-        "security.web.allow_read".into(),
-        crate::net::policy_config::types::SettingEntry {
-            value: SettingValue::Bool(true),
-            modified: "new".into(),
-        },
-    );
     migrate_setting_ids(&mut file);
-    // New key retains its value
-    let val = file.settings["security.web.allow_read"]
+    assert!(!file.settings.contains_key("web.search.google.allow"));
+    let val = file.settings["security.services.search.google.allow"]
         .value
         .as_bool()
         .unwrap();
-    assert!(val); // true from the new key, not false from old
+    assert!(!val);
 }
 
 #[test]
@@ -211,24 +281,26 @@ fn can_write_corp_settings_always_false() {
     assert!(!can_write_corp_settings());
 }
 
-/// Env-var resolution tests run serially in a single test to avoid races
-/// with other tests mutating the same process-global env vars under
-/// parallel execution.
+/// Env-var resolution tests run serially in a single test to avoid races with
+/// other tests mutating the same process-global env vars under parallel
+/// execution.
 #[test]
 fn env_var_path_resolution() {
     let _guard = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
 
     // Snapshot prior values so we can restore them at the end.
-    let prev_user = std::env::var("CAPSEM_USER_CONFIG").ok();
+    let prev_home_override = std::env::var("CAPSEM_HOME").ok();
     let prev_corp = std::env::var("CAPSEM_CORP_CONFIG").ok();
 
-    // User override via env.
-    std::env::set_var("CAPSEM_USER_CONFIG", "/tmp/custom-user.toml");
+    // Local settings are rooted by CAPSEM_HOME.
+    std::env::set_var("CAPSEM_HOME", "/tmp/custom-capsem-home");
     assert_eq!(
-        user_config_path(),
-        Some(std::path::PathBuf::from("/tmp/custom-user.toml"))
+        settings_config_path(),
+        Some(std::path::PathBuf::from(
+            "/tmp/custom-capsem-home/settings.toml"
+        ))
     );
-    std::env::remove_var("CAPSEM_USER_CONFIG");
+    std::env::remove_var("CAPSEM_HOME");
 
     // Corp override via env.
     std::env::set_var("CAPSEM_CORP_CONFIG", "/tmp/custom-corp.toml");
@@ -245,9 +317,9 @@ fn env_var_path_resolution() {
     );
 
     // Restore any prior values.
-    match prev_user {
-        Some(v) => std::env::set_var("CAPSEM_USER_CONFIG", v),
-        None => std::env::remove_var("CAPSEM_USER_CONFIG"),
+    match prev_home_override {
+        Some(v) => std::env::set_var("CAPSEM_HOME", v),
+        None => std::env::remove_var("CAPSEM_HOME"),
     }
     match prev_corp {
         Some(v) => std::env::set_var("CAPSEM_CORP_CONFIG", v),
@@ -256,99 +328,81 @@ fn env_var_path_resolution() {
 }
 
 #[test]
-fn parse_mcp_section_ignores_missing_section() {
-    let toml = "[settings]\n";
-    assert!(parse_mcp_section(toml, PolicySource::User).is_empty());
+fn load_settings_and_corp_files_preserves_direct_corp_rule_groups_from_env_config() {
+    let _guard = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
+    let tmp = tempfile::tempdir().unwrap();
+    let settings_home = tmp.path().join("capsem-home");
+    let settings_path = settings_home.join("settings.toml");
+    let corp_path = tmp.path().join("corp.toml");
+    std::fs::create_dir_all(&settings_home).unwrap();
+    std::fs::write(&settings_path, "").unwrap();
+    std::fs::write(
+        &corp_path,
+        r#"
+[corp.rules.block_local_deny_target]
+name = "block_local_deny_target"
+action = "block"
+priority = -100
+detection_level = "high"
+reason = "Loader regression proof."
+match = 'http.host == "127.0.0.1" && http.path == "/deny-target"'
+
+[plugins.credential_broker]
+mode = "rewrite"
+
+[network.dns]
+upstreams = ["127.0.0.1:5353"]
+        "#,
+    )
+    .unwrap();
+
+    let prev_home_override = std::env::var("CAPSEM_HOME").ok();
+    let prev_corp = std::env::var("CAPSEM_CORP_CONFIG").ok();
+    std::env::set_var("CAPSEM_HOME", &settings_home);
+    std::env::set_var("CAPSEM_CORP_CONFIG", &corp_path);
+    let (_, corp) = load_settings_and_corp_files();
+    match prev_home_override {
+        Some(v) => std::env::set_var("CAPSEM_HOME", v),
+        None => std::env::remove_var("CAPSEM_HOME"),
+    }
+    match prev_corp {
+        Some(v) => std::env::set_var("CAPSEM_CORP_CONFIG", v),
+        None => std::env::remove_var("CAPSEM_CORP_CONFIG"),
+    }
+
+    assert!(
+        corp.corp.rules.contains_key("block_local_deny_target"),
+        "direct corp rules must not be dropped by load_settings_and_corp_files"
+    );
+    assert!(
+        corp.plugins.contains_key("credential_broker"),
+        "corp plugin policy must not be dropped by load_settings_and_corp_files"
+    );
+    assert_eq!(corp.network.dns.upstreams, vec!["127.0.0.1:5353"]);
 }
 
 #[test]
-fn parse_mcp_section_ignores_invalid_toml() {
-    assert!(parse_mcp_section("{{{not toml", PolicySource::User).is_empty());
-}
-
-#[test]
-fn parse_mcp_section_skips_global_keys() {
-    let toml = r#"
-[mcp]
-global_policy = "any"
-default_tool_permission = "deny"
-health_check_interval_secs = 60
-
-[mcp.my_server]
-name = "Example"
-transport = "stdio"
-command = "example-mcp"
-"#;
-    let servers = parse_mcp_section(toml, PolicySource::User);
-    assert_eq!(servers.len(), 1);
-    assert_eq!(servers[0].key, "my_server");
-    assert_eq!(servers[0].name, "Example");
-    assert_eq!(servers[0].command.as_deref(), Some("example-mcp"));
-    assert_eq!(servers[0].source, PolicySource::User);
-    // enabled defaults to true via the `default_true` helper.
-    assert!(servers[0].enabled);
-    assert!(!servers[0].corp_locked);
-}
-
-#[test]
-fn parse_mcp_section_skips_malformed_server_entries() {
-    let toml = r#"
-[mcp.bad_server]
-# missing required `name` field
-transport = "stdio"
-
-[mcp.good_server]
-name = "Good"
-transport = "sse"
-url = "https://example.com/mcp"
-"#;
-    let servers = parse_mcp_section(toml, PolicySource::Corp);
-    assert_eq!(servers.len(), 1);
-    assert_eq!(servers[0].key, "good_server");
-    assert_eq!(servers[0].url.as_deref(), Some("https://example.com/mcp"));
-}
-
-#[test]
-fn parse_mcp_section_json_ignores_missing_section() {
-    assert!(parse_mcp_section_json("{}", PolicySource::Default).is_empty());
-    // Also handles invalid JSON silently.
-    assert!(parse_mcp_section_json("not json", PolicySource::Default).is_empty());
-}
-
-#[test]
-fn parse_mcp_section_json_parses_builtin_server() {
-    let json = r#"{
-      "mcp": {
-        "global_policy": "any",
-        "my_tool": {
-          "name": "My Tool",
-          "transport": "stdio",
-          "command": "mytool",
-          "builtin": true,
-          "enabled": false
-        }
-      }
-    }"#;
-    let servers = parse_mcp_section_json(json, PolicySource::Default);
-    assert_eq!(servers.len(), 1);
-    let s = &servers[0];
-    assert_eq!(s.key, "my_tool");
-    assert!(s.builtin);
-    assert!(!s.enabled);
-    assert_eq!(s.source, PolicySource::Default);
-}
-
-#[test]
-fn parse_mcp_section_json_skips_malformed_entries() {
-    let json = r#"{
-      "mcp": {
-        "broken": {},
-        "ok": {"name": "OK", "transport": "stdio"}
-      }
-    }"#;
-    let servers = parse_mcp_section_json(json, PolicySource::User);
-    assert_eq!(servers.len(), 1);
-    assert_eq!(servers[0].key, "ok");
+fn load_settings_file_rejects_retired_mcp_policy_keys() {
+    let dir = tempfile::tempdir().unwrap();
+    for retired in [
+        r#"[mcp]
+global_policy = "block"
+"#,
+        r#"[mcp]
+default_tool_permission = "warn"
+"#,
+        r#"[mcp.tool_permissions]
+local__echo = "block"
+"#,
+    ] {
+        let path = dir.path().join("settings.toml");
+        std::fs::write(&path, retired).unwrap();
+        let error = load_settings_file(&path).unwrap_err();
+        assert!(
+            error.contains("retired MCP policy key"),
+            "unexpected error: {error}"
+        );
+    }
 }
 
 #[test]

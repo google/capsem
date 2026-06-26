@@ -7,14 +7,20 @@ description: The capsem-doctor in-VM diagnostic suite. Use when writing, running
 
 capsem-doctor is a pytest-based diagnostic suite that runs inside the guest VM. It verifies sandbox integrity, network isolation, runtime environment, and AI agent functionality. It's the smoke test gate -- every change must pass it before shipping.
 
+Doctor is also an Ironbank input. When doctor is used to close a
+release-critical VM/security/protocol/package-manager gate, load `/ironbank`
+and assert the full ledger through `tests/ironbank/`: client result, DB rows,
+structured logs, UDS/HTTP route output, counters, and UI-facing JSON. A doctor
+exit code or "row exists" check is not enough.
+
 ## Running
 
 ```bash
-just run "capsem-doctor"              # Full suite (~10s total including VM boot)
-just run "capsem-doctor -k sandbox"   # Only sandbox tests
-just run "capsem-doctor -k network"   # Only network tests
-just run "capsem-doctor -x"           # Stop on first failure
-just run "capsem-doctor -v"           # Extra verbose
+just exec "capsem-doctor"              # Full suite (~10s total including VM boot)
+just exec "capsem-doctor -k sandbox"   # Only sandbox tests
+just exec "capsem-doctor -k network"   # Only network tests
+just exec "capsem-doctor -x"           # Stop on first failure
+just exec "capsem-doctor -v"           # Extra verbose
 ```
 
 ## Test categories (11 files)
@@ -56,8 +62,8 @@ def output_dir():
 1. Add test functions to the appropriate `guest/artifacts/diagnostics/test_*.py` file, or create `test_<category>.py`
 2. Use `from conftest import run` for shell commands, `output_dir` fixture for temp files
 3. Tests auto-skip outside the capsem VM (no special guards needed)
-4. `just run "capsem-doctor"` picks up changes immediately (diagnostics repacked into initrd)
-5. For rootfs-baked changes: `just build-assets` then `just run "capsem-doctor"`
+4. `just exec "capsem-doctor"` picks up changes immediately (diagnostics repacked into initrd)
+5. For rootfs-baked changes: `just build-assets` then `just exec "capsem-doctor"`
 
 ## Where tests live on disk
 
@@ -72,3 +78,7 @@ def output_dir():
 - Set reasonable timeouts (default 10s). Network tests may need longer.
 - Think adversarially: test what should be blocked, not just what should work
 - For VirtioFS tests, skip gracefully in block mode: `pytest.mark.skipif`
+- For Ironbank/release gates, do not skip. If a package manager, protocol, or
+  diagnostic dependency is unavailable, the product or harness is broken.
+- Package-manager diagnostics must prove function, not installation presence:
+  run the installed binary/module and verify deterministic behavior.

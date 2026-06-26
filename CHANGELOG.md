@@ -7,10 +7,1234 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Added a logger DB correctness test proving the same HTTP/security/model/tool
+  and body-blob query results match before flush, after flush, and after
+  restart rehydration.
+- Added an adversarial logger DB flush test proving interrupted disk flushes
+  leave memory truth coherent, disk state transactionally valid, and recovery
+  flushes exact.
+- Added public session-telemetry documentation for the `turn_id` /
+  `model_call_id` / `tool_call_id` identity graph and mirrored the same
+  debugging contract in the session DB developer skill.
+- Added a public `DbHandle::write` contract test proving security ledger
+  events persist exact rule/action/detection/trace/turn/credential fields.
+- Added a public `DbHandle::query` contract test proving bind parameters,
+  deterministic column/row JSON, and the DB-owned route output cap.
+- Added a logger DB startup rehydration contract test proving existing disk
+  rows are visible through `query()` before `ready()` can be trusted by routes.
+- Added explicit logger DB contract tests with failure messages that point back
+  to the DB boundary rationale when ready/query/write exactness regresses.
+- Added public `capsem-logger` DB handle contract docs and type aliases that
+  pin caller-owned query intent, DB-owned execution/storage, and loud
+  missing-schema failures.
+- Added the logger-owned async DB handle contract with `ready`, `query`, and
+  `write` execution APIs plus structured operation/duration logging for
+  session ledger reads and writes.
+- Added service route DB-boundary structured logging and rewired stats,
+  history, timeline, security, detection, plugin, credential, and triage ledger
+  reads through `DbHandle::ready/query` instead of route-owned SQLite readers.
+- Added service-owned session DB handle registration so session routes resolve
+  persistent `DbHandle`s from runtime state instead of reopening ledger handles
+  on every request.
+- Added startup session DB handle hydration plus structured readiness logging
+  and `/vms/{id}/info` DB readiness status for session ledgers.
+- Added the unified tool-call ledger contract: MCP `tools/call` observations
+  now write to `tool_calls origin = 'mcp'` with request/response payloads,
+  protocol-only MCP messages remain in `mcp_calls`, old SQLite constraints are
+  migrated to allow orphan/direct tool evidence, and the UI/Inspector/Ironbank
+  contracts read user-facing tools from the single `tool_calls` table.
+- Added a frontend vocabulary guard that scans product source for retired 1.3
+  UI/API strings such as VM dashboard wording, policy labels, preview fields,
+  raw credential hashes, and 404/501 placeholders.
+- Added a release evidence collector that writes a timestamped 1.3 audit bundle
+  with git, manifest, benchmark, file-inventory, and pending manual-gate facts.
+- Added provider-specific Ironbank release gate entrypoints for OpenAI, AGY,
+  Gemini, and Claude so the Sprinty 1.3 provider matrix runs the named
+  hermetic replay tests directly instead of relying on consolidated test files.
+- Added a release evidence guard that parses Ironbank tests and fails the
+  bundle if release-proof tests use disabled-test markers such as `skip`,
+  `skipif`, `slow`, optional markers, or `pytest.skip()`.
+- Added a release evidence guard that scans installed Capsem helper binaries
+  when present and fails if any active `~/.capsem/bin/capsem*` executable still
+  carries retired native Keychain credential-store markers.
+- Added a dedicated optional live-provider compatibility canary suite for
+  OpenAI, Gemini, and Claude outside Ironbank; it reuses the model-client
+  ledger assertions when operator credentials are present and stays inert when
+  no live keys are configured.
+- Added an Ironbank guard that keeps Anthropic/Claude replay fixtures on the
+  release-target `claude-sonnet-4-6` model across mock-server responses and SDK
+  ledger assertions.
+- Added an Ironbank guard that keeps the hermetic Gemini replay path on the
+  release-target `gemini-3.5-flash` model across script generation, mock-server
+  routing, pricing, and ledger assertions.
+- Added strict capsem-doctor Ironbank acceptance checks for functional package
+  manager proof, hermetic doctor fixtures, and no retired escape markers in the
+  installed diagnostic suite.
+- Added a remote HTTPS apt Ironbank package-manager gate that installs and
+  runs a Debian package through Capsem, then verifies process, file, HTTP, DNS,
+  and security ledger rows.
+- Added bootstrap and Justfile contract tests that prove release gates keep
+  checking project skills, site structure, profile-owned asset materialization,
+  ruff/ty/skill validation, and retired escape-path names.
+- Added the explicit `just test-frontend` release gate so Sprinty, docs, and
+  local checks all use the same frontend check/test/build path.
+- Hardened macOS and Linux postinstall scripts so missing packaged helper
+  binaries fail installation instead of leaving stale tools in `~/.capsem/bin`.
+- Added a dedicated Ironbank Claude CLI ledger gate that runs `ollama launch claude` through the VM profile and proves the model, tool, file, credential, and security ledger path.
+- Added a dedicated Ironbank Codex CLI ledger gate that runs direct Codex and
+  `ollama launch codex` through the VM profile and proves the model, tool,
+  file, credential, and security ledger path.
+- Added fresh 1.3 release benchmark artifacts and docs for the VM-path
+  mock-server protocol, lifecycle, fork, disk, and EROFS/LZ4HC performance
+  gates.
+- Refreshed the 1.3 release benchmark baselines from the green full
+  non-manual release gate.
+- Refreshed the 1.3 release benchmark baselines again after the install/profile
+  asset rail fix so release evidence matches the current branch state.
+- Added benchmark report output for sample counts, error rates, and a generated
+  1.3 release latency/throughput graph.
+- Added an Ironbank mock-server contract proving the single reusable local
+  mock server serves the HTTP, HTTPS/SSE, DNS, OAuth, MCP, OpenAI, Anthropic,
+  Gemini/AGY, and Ollama fixture surfaces used by release gates.
+- Added a stable Ironbank capsem-doctor acceptance contract that ties the
+  named release gate to the full VM doctor ledger proof and shared mock server.
+- Added an Ironbank profile asset readiness gate proving profile cards can be
+  built from route-owned asset status for `code` and `co-work`, including
+  missing, ensure/download, shared cache reuse, hash-named assets, and manifest
+  provenance.
+
+### Fixed (service control)
+- Fixed DNS load latency by replacing per-query guest vsock connect/close
+  with a persistent worker pool and matching host-side framed DNS sessions,
+  while keeping every DNS query on the single security/logging rail before
+  the response is returned.
+- Fixed logger DB read latency by reusing the DB-owned reader connection,
+  moving read-query timeouts to SQLite's progress handler, and caching DB
+  readiness after validation; the Ironbank route gate now measures `/stats`
+  at about 0.8ms p95 through the service and about 1.1ms p95 through the
+  gateway.
+- Fixed stats-detail session routes so a missing or broken session ledger fails
+  loudly through the logger DB handle instead of fabricating empty model, tool,
+  HTTP, DNS, file, process, credential, and security data.
+- Fixed logger DB readiness so session ledgers validate required route-critical
+  tables/columns and fail loudly on broken schemas instead of accepting any
+  open reader, including preserving `tool_calls.turn_id` through legacy table
+  rebuild migrations.
+- Fixed session DB handle registration so malformed existing session ledgers
+  surface explicit `/vms/{id}/info` readiness errors with structured
+  `vm_id`/`db_path`/operation/duration/error logging instead of degrading into
+  fake empty route data.
+- Removed service-owned telemetry projections from stats, timeline, triage,
+  security, detection, and history routes. Logged-data routes now read through
+  the logger DB boundary, and a source guard rejects raw service DB opens or
+  route-owned logged-data projection state.
+- Fixed the gateway route table so the Stats view can reach
+  `/vms/{id}/stats/detail` through the installed app instead of receiving a
+  404, and added a route-health gate that exercises the stats-detail contract
+  through both service and gateway.
+- Fixed profile shell bootstrap so fresh VMs keep `/opt/ai-clis/bin` on PATH
+  ahead of durable `/usr/local/bin` and `/root/.local/bin`, restoring
+  out-of-the-box Gemini, Codex, and global npm package-manager diagnostics.
+- Fixed service startup projection hydration so incomplete or stale per-session
+  ledgers degrade to empty live counters instead of preventing the service from
+  accepting routes; snapshot routes remain file-backed and ignore session DB
+  activity.
+- Tightened the Ironbank route-health gate so profile enforcement and detection
+  evaluate routes are benchmarked for latency and CPU along with status/list
+  routes, preventing decision-path regressions from hiding outside hot-route
+  tests.
+- Fixed exec-route latency by moving session-ledger projection refreshes off
+  the async route worker and returning command results without waiting for a
+  full SQLite projection rebuild; serial provision-to-exec gates now pass at
+  about 1s, including the three-live-VM gate.
+- Fixed live MCP tool-call security projection so `capsem_mcp_call` emits
+  through the existing security DB writer and mirrors the exact
+  `security_rule_events` rows into service memory for `/security/latest` and
+  `/security/status`, without route-time SQLite reads or a second writer.
+- Fixed the session stats Tools tab to count all model-origin tool calls
+  (`native`, `builtin`, and `local`) separately from protocol-origin tool
+  transport (`mcp`/`mcp_proxy`) instead of presenting an MCP-only activity
+  metric.
+- Removed retired `capsem-mcp` lifecycle semantics: the host MCP server no
+  longer registers `capsem_persist`, no longer sends create-time lifecycle
+  flags, and its tool descriptions now reflect profile-owned sessions.
+- Fixed the frontend VM provision contract so profile-owned CPU/RAM defaults
+  stay service-owned when creating sessions from the dashboard or quick-create
+  paths.
+- Fixed stats detail drawers so nested event objects are compacted before
+  rendering, keeping file/security rows focused on present ledger facts instead
+  of showing null-only branches.
+- Fixed HTTP/model body recording so compact preview fields stay separate from
+  full bounded `event_body_blobs` storage while still using the single
+  `DbWriter` security-event/session ledger.
+- Fixed the Stats UI ledger path so HTTP, DNS, model, tool, file, process,
+  credential, and body-detail rows come from a typed per-session route
+  projection instead of sending raw SQL through `/vms/{id}/inspect`.
+- Removed the frontend SQL Inspector surface so session UI tabs can only use
+  typed route projections instead of arbitrary session database queries.
+- Removed the service, gateway, and MCP raw SQL inspection surface so product
+  callers cannot route arbitrary session database reads through Capsem.
+- Fixed the per-session timeline route so it filters the service's in-memory
+  timeline projection instead of opening `session.db` on the request path.
+- Fixed the triage route so session-scoped diagnostics are served from a
+  route-owned memory projection instead of querying `session.db` per request.
+- Fixed the one-shot `/run` route so it stops the session without reopening
+  `session.db` to synthesize counters on the request path.
+- Tightened the route-authored rule ledger regression so latest security and
+  detection routes are asserted against an already-hydrated projection after
+  `session.db` has been moved away.
+- Fixed Ironbank plugin ledger assertions so hot plugin-list routes stay
+  config-only while per-plugin detail routes prove runtime execution counters.
+- Fixed profile shell bootstrap payloads so shipped profiles put
+  `/root/.local/bin` ahead of `/usr/local/bin`, keeping Claude/Codex/AGY
+  user-local CLI installs on the path used by interactive shells and doctor
+  checks.
+- Fixed the dashboard session list so it refreshes explicitly, keeps long
+  session lists scrollable, groups broken sessions below healthy sessions, and
+  exposes a route-backed purge action instead of leaving stale broken rows mixed
+  into the main list.
+- Fixed TUI and tray session creation so default new-session actions route
+  through profile-scoped service naming (`code-1`, `co-work-1`, etc.) instead
+  of legacy `tmp-*` session creation, while preserving explicit custom names.
+- Fixed the tray menu so a stopped service status cannot expose dashboard,
+  session list, new-session, or connect actions that would route into dead
+  service state.
+- Fixed the stats Tools panel so model-native tool calls from active minimal
+  `tool_calls` ledgers render from the unified tool table instead of appearing
+  empty in AGY/Claude sessions that already recorded the tool rows.
+- Fixed TUI terminal responsiveness under bursty keyboard/paste input by
+  bounding per-tick input draining and coalescing adjacent terminal bytes before
+  websocket sends, matching the browser terminal's coalescing rail.
+- Fixed gateway terminal input relay latency by forwarding client keystrokes to
+  the VM immediately while preserving coalesced VM-output rendering.
+- Fixed Codex sandbox prerequisites in shipped profiles by adding Bubblewrap
+  to profile-owned apt packages and capsem-doctor checks, preventing Codex from
+  falling back to bundled sandbox helpers because `bwrap` is missing.
+- Fixed runtime `/root/.local/bin` shims for curl-installed AI CLIs so
+  Claude/AGY doctor checks see the same user-local command path that survives
+  the writable `/root` mount.
+- Fixed runtime apt HTTPS installs by keeping `/etc` traversable for apt's
+  `_apt` sandbox after profile-root projection, and added a capsem-doctor gate
+  that fetches and runs a real remote Debian package.
+- Fixed default Codex profile seeds so shipped profiles no longer force a
+  hidden local Ollama provider or startup update checks, and added release
+  doctor/profile-payload guards to keep that drift from returning.
+- Fixed shipped AGY/Gemini profile root seeds and image-workspace
+  materialization so production profiles cannot silently force local Ollama or
+  mock-provider endpoints.
+- Fixed tool-call ledger contract tests so tool responses must reference both
+  their matching tool-call ID in the same trace and the exact model exchange
+  row that consumed the tool response.
+- Fixed file-event credential attribution so ordinary model-created files keep
+  their trace correlation without inheriting unrelated HTTP/OAuth credential
+  references from the same agent turn.
+- Fixed the session stats detail drawer so body ledger metadata is separated
+  from event fields, long hashes wrap cleanly, and security snapshots render
+  compact non-null JSON instead of dense null-heavy projections.
+- Fixed the profile plugin list hot path so UI/TUI polling reads cached plugin
+  configuration instead of scanning session databases for runtime counters;
+  per-plugin detail routes still hydrate live ledger counters.
+- Fixed the DNS security ledger unit test so it drains the async DB writer
+  before reading joined DNS/security-rule rows, avoiding Linux coverage timing
+  flakes without weakening the ledger assertion.
+- Fixed Linux CI coverage so the KVM/unit lane has bounded timeout guards
+  instead of hanging indefinitely without a named test failure.
+- Fixed Linux release-test regressions in the KVM pause/stop harness and PTY
+  bridge concurrency proof so CI verifies the intended lifecycle and full-duplex
+  contracts without racy or unbounded test behavior.
+- Fixed terminal WebSocket burst preservation, deterministic Linux PTY bridge
+  multi-chunk transfer coverage, and macOS CI coverage upload prerequisites so
+  the release gate no longer depends on runner scheduling, excessive
+  coverage-load socket traffic, or missing checksum tools.
+- Fixed the IPC schema-mismatch handshake regression test so it keeps the
+  responder socket alive until the initiator observes the typed mismatch under
+  the macOS nextest runner.
+- Fixed the CI install-test asset preparation rail so placeholder initrds are
+  valid gzip-compressed cpio images and the macOS bootstrap asset hash suite
+  installs `b3sum` before verifying `B3SUMS`.
+- Fixed the macOS CI Python coverage gate so it no longer references the
+  deleted `tests/test_mcp.py` file and includes the existing image-build
+  backend test needed to keep the builder coverage threshold meaningful.
+- Fixed runtime profile materialization on CI hosts whose CPU architecture is
+  not present in the checked-in asset manifest by falling back to the
+  manifest's sole available architecture while keeping explicit `CAPSEM_ARCH`
+  overrides strict.
+- Fixed stale frontend development guidance that still described the gateway as
+  a transparent fallback proxy instead of the explicit route allowlist used by
+  the 1.3 UI/TUI contract.
+- Fixed package and simulated installs to ad-hoc sign helper binaries with
+  stable `org.capsem.*` identifiers, preventing rebuilds from producing
+  hash-derived macOS code identities that can trigger repeated authorization
+  prompts.
+- Fixed the dev service/install asset rail so local service starts materialize
+  a real installed-style assets directory and profile catalog instead of
+  symlinking `~/.capsem/assets` to the worktree, preventing stale profile pins
+  from mixing with fresh assets in the UI.
+- Removed the retired global `/vms/list` asset-health payload so service and
+  gateway status cannot report flat `vmlinuz/initrd/rootfs` readiness that
+  contradicts profile-owned asset status.
+- Removed the retired top-level gateway `/status.assets` payload and added an
+  Ironbank route guard so profile asset readiness can only come from
+  profile-owned asset routes.
+- Removed the retired service `ListResponse.asset_health` compatibility field
+  so `/vms/list` can only report sessions, never stale global VM asset health.
+- Fixed profile launcher cards so missing-asset and ready states expose one
+  route-owned action row instead of duplicating `Download`/`Start` in the card
+  header and footer.
+- Fixed package, Debian, and simulated installs so retired per-user config
+  artifacts are removed before the service starts, keeping profile/corp/config
+  ownership on the 1.3 rails.
+- Fixed package, Debian, and simulated installs so the retired
+  `capsem-admin-python` bundle is removed from `~/.capsem/bin`, preventing old
+  1.2 builder/keychain code from lingering in installed trees.
+- Fixed `capsem shell` input handling so bursty keypresses and paste input are
+  drained in one TUI cycle instead of being throttled to one event per 16ms
+  redraw tick.
+- Strengthened gateway terminal relay coverage so text and binary bursts keep
+  their coalesced frame contract across size limits and frame-type changes.
+- Fixed the gateway architecture docs and developer skills to state the
+  explicit-route/404 contract instead of describing a generic gateway
+  forwarding path.
+- Clarified the 1.3 manual bug hotlist against the Sprinty release ledger so
+  closed work such as body blobs, MCP proof, overlay panic handling, and
+  session naming/action fixes are not accidentally reopened during final smoke.
+- Gitignored `.env.local` and `.env.ironbank` so live-provider canary
+  credentials stay out of source control alongside the default `.env`.
+- Fixed gateway startup so an explicit `--run-dir` controls the log, token,
+  port, pid, and lock artifacts even when `CAPSEM_RUN_DIR` is set, restoring
+  isolated Ironbank gateway logging under parallel release tests.
+- Fixed isolated `just test` and `just smoke` cleanup so any test-home
+  service started through the release gate is stopped by pidfile on exit,
+  preventing failed or interrupted runs from leaving hidden source daemons.
+- Fixed the unknown model-endpoint integration gate so it asserts provider
+  identity and wire protocol separately: undeclared OpenAI-shaped traffic stays
+  provider `unknown` while still recording protocol `openai`.
+- Disabled the macOS Keychain-backed credential broker store for 1.3 and
+  routed durable credential storage through the same file-backed store used on
+  Linux, preventing repeated native credential prompts during normal service and
+  TUI use.
+- Removed the last runtime credential-store vault namespace vestige so 1.3
+  exposes only the file-backed durable credential store, with no Keychain-shaped
+  `org.capsem.credentials` runtime contract left behind.
+- Fixed the macOS LaunchAgent install contract so installed services explicitly
+  pin `CAPSEM_CREDENTIAL_STORE_PATH` to the file-backed credential store.
+- Fixed macOS package preinstall so it no longer invokes the previously
+  installed `capsem stop` binary, preventing stale Keychain-backed installs from
+  prompting before the file-backed 1.3 payload replaces them.
+- Fixed macOS package preinstall so it removes stale per-user
+  `~/Applications/Capsem.app` bundles, preventing old GUI builds from surviving
+  alongside the package-owned `/Applications/Capsem.app`.
+- Strengthened the installer and release-doctor credential-store guards so the
+  retired Keychain/test-store selector cannot be regenerated by package
+  metadata.
+- Fixed macOS package and simulated install cleanup so stale
+  `~/.capsem/bin.backup*` helpers carrying retired Keychain credential-store
+  code are removed and fail the release evidence guard if they reappear.
+- Fixed macOS package assembly so companion binaries are rejected before
+  packaging if they still carry retired native Keychain credential-store
+  markers, preventing stale payloads from reintroducing credential prompts.
+- Removed the desktop app's hidden native updater check and switched
+  Capsem-owned HTTP clients to webpki roots so startup/status paths do not
+  touch macOS platform trust or Keychain APIs outside the service contract.
+- Fixed the release docs gate by restoring `just docs` as the single command
+  that builds both the docs site and the marketing site.
+- Fixed release telemetry docs and developer skills to identify
+  `event_body_blobs` as the forensic HTTP/model/MCP body source, with preview
+  fields documented only as compact UI display fields.
+- Fixed the CLI service-boundary regression guard so its test-only helper no
+  longer trips release clippy as dead production code.
+- Added a CLI boundary guard proving `capsem stop` and the other service-control
+  commands are handled before UDS/service API construction, so they cannot
+  depend on profile, status, or credential-store readiness.
+- Stabilized credential broker telemetry-hook tests under the full coverage
+  gate by waiting for DB-visible ledger rows instead of relying on a
+  one-second sleep window.
+- Fixed session trace detail reads for older ledgers whose `tool_responses`
+  table predates `credential_ref`, preserving tool response inspection instead
+  of failing the release fixture gate.
+- Fixed the Gemini/AGY stream parser so function-call argument JSON is parsed
+  from raw response bytes instead of a normalized serde value, preserving the
+  exact tool-call payload that enters the ledger.
+- Fixed unknown-endpoint model sniffing so OpenAI/Anthropic/Gemini model names
+  infer the provider from the bounded request body while generic compatible
+  traffic remains `unknown`.
+- Updated the frontend Astro/Svelte integration dependencies to patched
+  Astro/Vite versions so the release `pnpm audit` gate is clean during
+  `just test`.
+- Fixed bootstrap's Colima readiness check so `colima is not running` no longer
+  matches the word `running` and skips the Docker VM startup path during
+  `just test`.
+- Fixed the generated settings/schema rail so it reads the current
+  `config/docker/image` authority instead of the removed `guest/config` tree,
+  keeping `just test` and CI on the same profile-derived build inputs.
+- Fixed CLI status/debug health checks so they use the same `CAPSEM_RUN_DIR`
+  socket and gateway files as the service client, preventing source and
+  installed runs from checking different Capsem runtimes.
+- Fixed the service file API control-channel contract so 1 MiB file
+  read/write round trips no longer tear down the guest agent stream, and
+  restored the initrd repack path to build guest agents from
+  `config/docker/image` instead of the removed `guest/config` tree.
+- Fixed `capsem stop` and other service-control commands so they stay pure
+  local control operations and no longer start the background update/network
+  refresh before dispatch.
+- Fixed explicit service stops so installed clients remember the user stopped
+  Capsem and refuse to auto-launch the service from status/session requests
+  until `capsem start` is run, preventing surprise credential-store hydration
+  and Keychain prompts during stop flows.
+
+### Fixed (terminal throughput)
+- Coalesced desktop terminal output to one xterm write per animation frame and
+  batched bursty terminal input before WebSocket send, preventing high-volume
+  agent output from starving keyboard responsiveness.
+- Coalesced gateway terminal relay bursts in both directions, so adjacent
+  terminal WebSocket/UDS frames are batched without losing byte order while
+  preserving a short interactive flush deadline.
+
+### Fixed (session lifecycle)
+- Fixed MCP snapshot reverts that reported `action: deleted` through the tool
+  result while leaving the created file visible inside the guest workspace.
+- Fixed stale persistent sessions whose preserved boot logs show overlayfs
+  `Stale file handle` / kernel panic failures so they are reconciled as
+  `Defunct`, cannot be resumed, keep the original boot-failure reason in
+  route JSON, and are removed by default purge.
+- Fixed session ledger inspection for incompatible persistent sessions so
+  stats, timeline, and forensic views can still read the preserved
+  `session.db` while the session remains non-resumable and delete-only.
+- Replaced ad hoc temporary session names with profile-scoped session names
+  such as `code-1` and `co-work-1` across service provisioning, the TUI create
+  dialog, and the desktop UI, while preserving focus handoff to newly created
+  sessions.
+
+### Changed (route surfaces and diagnostics)
+- Rewired `/stats` to read the main session ledger through the logger
+  `DbHandle::ready/query` path with structured query/error logging, and added
+  a guard against route-time `SessionIndex::open` regressions.
+- Changed logger DB writes to acknowledge after the DB-owned memory commit,
+  then batch-flush dirty memory tables to disk on threshold, interval,
+  explicit flush, and shutdown without exposing dirty-set mechanics to routes.
+- Clarified the shared agent, testing, debugging, architecture, and Rust
+  guidance for the logger DB boundary: routes may own query intent, but only
+  the logger DB object owns SQLite execution, connection threads, mem/disk
+  layout, batching, flush, rehydration, and schema failures.
+- Clarified the release architecture and developer skills so the documented
+  service routes use the explicit `/vms/...` contract, VM asset manifests use
+  BLAKE3/origin reporting instead of local minisign theater, and `tool_calls`
+  is named as the canonical tool ledger while `mcp_calls` is transport
+  evidence.
+- Added a release compliance gate for SBOM, OBOM, and build-ledger evidence,
+  clarifying that OBOMs describe base VM images while build ledgers remain
+  debug evidence.
+- Renamed the private mock-server implementation and benchmark artifact
+  directory so release tests and docs refer to the single reusable
+  mock-server/protocol rail instead of retired MITM-local wording.
+- Exposed model request/response/tool-call validity facts in serialized
+  security events so route JSON matches the first-party CEL model facts used
+  by enforcement.
+- Added a config-layout gate that makes the settings/corp/profiles/docker/data
+  source contract executable and rejects host metadata or generated pins in
+  checked-in profile config.
+- Moved image build defaults out of checked-in `guest` source config and into
+  `config/docker/image`, with `capsem-admin` generating the backend image
+  workspace from the selected profile plus Docker image defaults.
+- Added an Ironbank Gemini API ledger gate proving public Gemini
+  `streamGenerateContent` and `generateContent` traffic through the hermetic
+  mock server records Google provider/protocol rows, tool calls, non-stream
+  output, brokered credentials, DNS/HTTP evidence, and security decisions.
+- Fixed installed asset cleanup so `manifest-origin.json` survives service
+  startup, preserving manifest origin/hash reporting while profile asset
+  readiness and `capsem update --assets` hydrate through the hash-named asset
+  rail.
+- Tightened the TUI session contract so profile launch options come only from
+  `/profiles/list`, no fallback profile is synthesized from stale session
+  rows, and user-facing TUI controls say sessions rather than VMs.
+- Removed retired frontend policy vocabulary from settings origins and dead
+  network-policy IPC types so profile UI surfaces speak enforcement,
+  detection, plugins, MCP, and assets directly.
+- Removed the visible frontend build timestamp from the main toolbar; build and
+  version evidence remain available through debug/status surfaces.
+- Replaced raw toolbar status colors with semantic UI tokens so service chrome
+  follows the Capsem design contract.
+- Added frontend route-contract gates for the Sessions dashboard and profile
+  surfaces so the UI must keep using route-owned profile/session terminology,
+  asset readiness, enforcement, detection, plugins, MCP, and canonical detail
+  payloads.
+- Removed the retired MCP tool `approved` field from profile MCP route
+  responses; the UI/TUI contract now exposes only route-backed
+  `permission_action` / `permission_source` decisions.
+- Cleaned the desktop stats/detail panes so HTTP/model bodies are loaded from
+  the blob ledger rather than preview columns, credential broker rows display
+  verbs/origins instead of substitution refs, and inspector presets use the
+  same broker vocabulary as the session UI.
+- Tightened the desktop stats contract so user-facing detail controls say
+  session ledger instead of database, and MCP protocol cards no longer surface
+  credential-reference counts that belong to the credential broker view.
+- Added a service and gateway route-matrix gate for profile UI surfaces so
+  `code` and `co-work` profile pages must expose assets, enforcement,
+  detection, plugins, credential broker, and MCP routes without 404/501
+  fallbacks.
+- Fixed gateway forwarding for session snapshot status/list routes and added
+  route-contract coverage so the stats UI reads snapshot state through the
+  explicit service route instead of hitting a gateway 404.
+- Added service-level plugin route contract coverage so profile plugin list,
+  info, edit, credential-broker detail, retry, and unknown-plugin responses
+  prove the typed pre/post/logging stage surface through UDS.
+- Fixed profile plugin edits so `/profiles/{profile_id}/plugins/{plugin_id}/edit`
+  persists to the profile file, refreshes route-visible policy immediately, and
+  records a `profile_mutation_events` ledger row instead of using a runtime-only
+  override.
+- Added credential store lifecycle route coverage proving startup hydration,
+  explicit broker retry, memory-only hot reads, empty-versus-ready status, and
+  raw-secret absence from service/plugin route JSON.
+- Tightened the profile plugin UI contract so plugin rows render route-owned
+  stage, version, mode, detection level, counters, latency, and broker
+  capabilities, while credential inventory uses provider/last-seen/counts
+  instead of exposing raw BLAKE references as the primary identity.
+- Added service-side snapshot and DbWriter contract coverage proving snapshot
+  status/list routes are file/IPC-backed, ignore toxic `session.db` rows, and
+  keep per-session SQLite writes on the capsem-process `DbWriter` rail.
+- Added a session dashboard route gate proving defunct and incompatible
+  sessions remain delete-only across list/status/info/resume/delete routes,
+  and cleaned frontend session wording checks so stale VM labels cannot hide in
+  test noise.
+- Cached profile route summaries in service memory so `/profiles/list` no
+  longer reloads profile files or recompiles rule sets on every UI/TUI poll;
+  the Ironbank route-health gate now shows profile list p95 in single-digit
+  milliseconds with negligible service CPU.
+- Renamed the local protocol benchmark internals from the retired
+  `mitm-local` escape-hatch wording to the shared mock-server protocol rail;
+  `capsem-bench protocol` remains the public command and now emits
+  `mock_server_protocol` benchmark JSON.
+- Fixed profile route summaries so `code` and `co-work` expose route-owned
+  rule, plugin, MCP, and asset metadata without leaking host profile paths or
+  falling back to default-only profile assumptions.
+- Refreshed the 1.3 benchmark artifacts and docs from the canonical
+  `just bench` rail, including mock-server HTTP/protocol throughput plus
+  lifecycle and fork timings used by the S05 route-latency gate.
+- Hardened the Ironbank HTTP body ledger proof so upstream transcript
+  assertions ignore non-HTTP records instead of failing on unrelated DNS
+  rows emitted by the hermetic mock server.
+- Added strict model wire-protocol recording to the session ledger so model
+  traffic can preserve both the endpoint owner (`provider`) and the recognized
+  protocol (`protocol`) without collapsing OpenAI-compatible local traffic into
+  a fake provider.
+- Changed `just bench` to use the artifact-recording release benchmark path
+  with the shared local mock server, so HTTP, proxy throughput, and protocol
+  benchmarks fail on skips and publish local numbers alongside lifecycle/fork
+  artifacts.
+- Fixed security decision ledgers so visible default catchall rules remain
+  recorded in `security_rule_events` without emitting a second effective
+  decision after a more specific profile/corp enforcement rule wins. The code
+  and co-work profiles now include an explicit hermetic mock-server allow rule
+  for `127.0.0.1:3713`, so doctor, benchmark, and Ironbank traffic does not
+  trip the default local-network ask rule.
+- Tightened the CEL fact contract exposed by profile enforcement routes:
+  evaluate requests now materialize typed `http`, `dns`, `mcp`, `model`,
+  `file`, `process`, `ip`, `tcp`, and `udp` facts, default rules include
+  unknown-model and unknown-MCP detections, and provider endpoint aliases are
+  rejected in favor of explicit `allowed_remote_targets`.
+- Fixed Ironbank route contracts for MCP tools and file listings so profile
+  MCP routes assert the current permission-action shape and `.txt` uploads are
+  reported deterministically as text/plain instead of Magika-dependent
+  octet-stream.
+- Strengthened `/vms/create` and `/vms/{id}/resume` responses so provision
+  routes return the session profile ID, lifecycle state, persistence bit,
+  resumability, and valid action enum list alongside the VM ID and UDS path.
+  Ironbank route-health now proves create/status/info/list/exec/fork/pause/
+  resume/stop/delete/purge state and latency budgets through service and
+  gateway routes.
+- Strengthened the Ironbank route-health gate so profile enforcement evaluate
+  routes must prove exact `allow`, `ask`, and `block` decisions, detection
+  rows, and plugin execution stages while keeping hot control-route CPU and
+  latency budgets under test.
+- Added a first-class `event_body_blobs` ledger for HTTP, model, and MCP
+  request/response bodies with a 10 MiB bounded capture, original/stored byte
+  counts, BLAKE3 body hash, content type, trace ID, and truncation flag. Stats
+  details now load `request_body`/`response_body` from that ledger instead of
+  treating preview fields as forensic truth.
+- Strengthened the Claude/Anthropic Ironbank ledger proof to cover
+  non-streaming HTTP, streaming SSE, and SDK client paths through the same
+  model/tool/file/security/broker ledger assertions. Repeated same-path model
+  checks now anchor tool rows and tool responses to the current model-call IDs
+  and trace IDs so provider proofs cannot pass on stale rows.
+- Extended the OpenAI/Codex Ironbank ledger proof to cover Responses,
+  embeddings, and image-generation traffic through the same VM/session DB
+  path. OpenAI image endpoints are now classified as model traffic and their
+  generated payloads are recorded in `model_calls.text_content` while brokered
+  credentials remain opaque and raw secrets stay out of DB/log output.
+- Strengthened the Codex CLI Ironbank proof so tool-call IDs are derived from
+  the per-run nonce and local OpenAI-compatible traffic asserts
+  `provider = unknown`, `protocol = openai`, and the unknown-provider
+  detection rule instead of relying on stale fixed identifiers.
+- Added a host `capsem-mcp` Ironbank proof that exercises the real stdio MCP
+  server against `capsem-service`, verifies every advertised tool, calls the
+  session/file/exec/MCP/log/triage routes with deterministic inputs, and
+  reconciles MCP, file, exec, security, route, snapshot, and structured-log
+  ledger output. Host-triggered exec events now carry trace IDs so MCP-driven
+  command activity stays attributable through the session ledger.
+- Added a reusable Ironbank two-turn model ledger assertion surface that
+  computes expected trace/cardinality from externally meaningful client facts
+  and proves exactly matched model item, tool call, tool response, file, DNS,
+  HTTP, security, credential, and upstream transcript rows through a dedicated
+  black-box VM test.
+- Removed the remaining network-side HTTP port denial from the MITM path so
+  routing/capture mechanics no longer issue security verdicts outside the CEL
+  security-event rail. The former `NetworkPolicy` type is now named
+  `NetworkMechanics`, and Ironbank now guards old policy-v2, MCP decision,
+  fallback logger, side-write, and retired policy authoring strings from
+  reappearing in live code.
+- Added dedicated Ironbank credential broker and plugin ledger proof. Broker
+  coverage now has its own release-gate entry point for capture, brokered
+  rewrite, injection rows, and raw-secret absence, while plugin route coverage
+  proves profile-scoped list/info/edit, broker inventory/reload, dummy
+  pre/post mode changes, serialized security-event detections, plugin
+  executions, and evaluation decisions.
+- Removed the old settings-tree MCP server rail. Settings metadata and
+  settings responses now expose UI/application preferences only, while MCP
+  remains profile-owned through `/profiles/{profile_id}/mcp/...` routes.
+  Default security-rule catchalls also remain visible in the security ledger
+  after specific rules match, so forensic rows show both the specific verdict
+  and the late default rule.
+- Removed the dead MCP server merge rail that auto-detected host AI CLI MCP
+  configs and merged manual/corp/user inputs outside the profile contract.
+  Runtime MCP server construction is now guarded to use profile-owned
+  `build_profile_server_list()` only, with docs and skills updated to remove
+  the stale fallback language.
+- Renamed the MCP configuration contract from `McpUserConfig` to
+  `McpProfileConfig` and added a no-legacy guard so profile/corp-owned MCP
+  config cannot regress to user-config terminology.
+- Hardened profile parsing so `assets` is a required profile-owned section
+  instead of silently defaulting to the first built-in profile's asset release.
+  Profile contract and admin profile-check tests now prove malformed profiles
+  cannot inherit Code assets by omission.
+- Aligned the shared settings conformance fixture with the 1.3 contract that
+  settings are UI/application preferences only. Python, Rust, and frontend
+  settings schema tests now reject stale AI-provider, credential, profile-file,
+  and `enabled_by` provider surfaces instead of requiring them.
+- Split model wire protocol from endpoint-provider identity so Ollama,
+  OpenAI-compatible, Anthropic-compatible, and unknown model endpoints can be
+  parsed without pretending protocol and provider are aliases. Recognized model
+  protocol traffic on undeclared endpoints now emits `model.provider =
+  "unknown"` and hits a default informational detection rule.
+- Fixed local model enforcement so explicit profile/corp allow rules win over
+  the built-in local-network `ask` default while the default rule remains
+  visible in the security ledger. Model request/response events now carry the
+  same `tcp.port`/`ip.value` transport facts as HTTP events, and Ironbank
+  proves UDS and HTTP latest routes expose the same unknown-provider detection
+  row.
+- Tightened credential brokerage for unknown OpenAI-compatible and
+  Anthropic-compatible model endpoints: `Authorization` and `x-api-key` headers
+  are brokered from protocol/header shape without relabeling the provider, and
+  async file attribution keeps the first credential seen for a trace.
+- Fixed the AGY hermetic replay fixture so Google Code Assist
+  `listExperiments` matches the recorded 68 experiment IDs and 250 flags, and
+  `/log` accepts protobuf play-log telemetry with the recorded empty text/plain
+  acknowledgement instead of fake JSON.
+- Refactored the Ironbank model-client proof into composable script-builder
+  and ledger-assertion helpers, and made the Codex CLI fixture use the same
+  brokered OpenAI credential path as the SDK/API clients instead of a
+  non-secret marker shortcut.
+- Tightened the shared Ironbank AI-client harness so every credentialed model
+  client proof must show broker capture, brokered request rewrite, one shared
+  `credential_ref` across HTTP/model/tool-call/tool-response/file rows, exact
+  substitution ledger verbs, and raw-secret absence from DB/log output. The
+  OpenAI API, OpenAI two-turn, Codex CLI, Claude HTTP, and Claude SDK proofs
+  now all run through that same broker contract.
+- Tightened the OpenAI-compatible Ironbank double-turn ledger so repeated
+  model history is deduplicated by persisted BLAKE3 item hashes, model tool
+  calls register workspace file-path trace hints, and subsequent fs-monitor
+  events plus security-rule rows are attributed to the same model trace. The
+  focused proof now asserts two random tool calls produce exactly two traces,
+  ten model item rows, four model calls, four HTTP rows, one DNS row, two tool
+  calls, two tool responses, and two created file events.
+- Tightened the HTTP Ironbank ledger path so active profiles carry corp network
+  mechanics into `capsem-process`, HTTP security events expose `http.query`,
+  `http.body`, `tcp.port`, and `ip.value` to CEL and forensic rows, and the
+  first plain-JSON HTTP full-chain test reconciles client output, upstream
+  transcript, `net_events`, `security_rule_events`, UDS inspect, gateway
+  inspect, timeline, security status/latest, VM status counters, and structured
+  service/gateway logs.
+- Fixed blocked HTTP telemetry so CEL-denied requests now keep request byte
+  counts, request previews, and client-visible denial response previews in the
+  same ledger path as allowed requests, with Ironbank proof that the denied
+  request never reaches the upstream fixture.
+- Fixed pending HTTP `ask` decisions so clients see an approval-required 403
+  instead of a generic block message, while Ironbank proves the pending
+  `security_ask_events` lifecycle row, `policy_action = ask`, security status,
+  UDS inspect, gateway inspect, counters, and logs all agree.
+- Fixed brokered HTTP credential rewrite accounting so OAuth captures emit
+  exact `captured`/`brokered`/`injected` ledger verbs, broker refs replay into
+  upstream header/query bytes without leaking raw credentials to DB, routes, or
+  logs, and credential inventory merges injected rows with their captured
+  provider identity. Grouped CEL rule matches such as `a && (b || c)` now
+  compile through the same profile rule path used by the HTTP rewrite proof.
+- Changed the credential broker durable store to the same file-backed backend on
+  macOS and Linux for 1.3, so service startup/reload hydrates captured
+  credentials without native credential prompts.
+- Tightened HTTP body-handling ledger proof for gzip, chunked, SSE, truncated
+  preview, and HTTPS override traffic. Decoded gzip responses now log the same
+  materialized headers and body bytes delivered to the guest instead of stale
+  compressed response metadata.
+- Added DNS Ironbank ledger proof for allowed and blocked UDP DNS traffic.
+  Allowed DNS rows now carry the matched security rule and policy fields just
+  like blocked rows, hermetic DNS upstream transcripts prove blocked
+  exfiltration never leaves the VM boundary, and security status exposes
+  detection-level counters regenerated from `session.db`.
+- Added MCP Ironbank ledger proof for profile-owned builtin MCP and observed
+  remote MCP traffic. MCP security events now carry request arguments,
+  response content, trace IDs, and transport facts through CEL, DB rows, UDS
+  inspection, gateway inspection, latest/status routes, and structured logs.
+- Added Ironbank file/process/snapshot and package-manager ledger proofs.
+  The new black-box coverage exercises file import/export/create/modify/delete
+  rows, symlink escape rejection, process audit versus exec semantics,
+  snapshot route hermeticity, package-manager functional probes, route
+  serialization, and DB-backed security rows.
+- Tightened Ironbank model/client coverage so the mock server replays an
+  Ollama-compatible OpenAI chat-completion shape with native tool calls, the
+  OpenAI SDK/Anthropic SDK/LiteLLM/Ollama SDK/Codex CLI paths assert full
+  model, HTTP, security, file, exec, credential, and session DB ledger fields,
+  and the tests now fail on any public HTTP or DNS side traffic. This caught and
+  closed Codex plugin/OTLP side calls and LiteLLM's default public cost-map
+  fetch during hermetic release proof.
+- Added a full mock-server JSONL request ledger and upgraded the Codex CLI
+  Ironbank proof to drive the OpenAI Responses API through a native
+  `exec_command` tool call, require Codex to write a random UUID4 hex value to a
+  random filename, return only the successful tool status to the model, and
+  reconcile exact HTTP bodies with
+  `model_calls`, `tool_calls`, `fs_events`, `net_events`, and
+  `security_rule_events`.
+- Upgraded the mock server and Ironbank launcher proof for
+  `ollama launch claude`: the mock now replays Anthropic streaming `tool_use`
+  and final-message SSE shapes, structurally detects real `tool_result` blocks,
+  and the ledger proof covers Claude's real `Bash` tool call, tool response,
+  token usage, file write, HTTP/model rows, DNS, and security rules. AI request
+  capture is now bounded at 1 MiB by default so large real agent continuations
+  are parseable instead of clipping away trailing tool results.
+- Tightened the config authority guard so `config/` can only contain the
+  declared `settings/`, `corp/`, `profiles/`, `docker/`, and `data/` roots;
+  active docs and skills now explicitly reject admin/default/guest/preset/
+  registry/template roots, clarify that settings have schemas while profiles
+  have catalogs, and describe `capsem-admin` as a validation/materialization
+  tool rather than a product authoring surface.
+- Tightened the profile-derived image/config contract in docs and developer
+  skills: `config/` is now documented as settings/corp/profiles/docker/data,
+  `capsem-admin` is explicitly a validator/materializer/build tool rather
+  than a config authority, stale `guest/config` authoring and source-profile
+  pin language is removed from active docs/skills, and `capsem-admin image
+  build --dry-run` is no longer a public product rail. The internal settings UI
+  metadata parser no longer calls itself a registry, preserving the rule that
+  profiles and corp own runtime truth while settings only describe
+  UI/application preferences; private capsem-admin scaffold helpers are now
+  burned by a guard test too.
+- Burned the public `capsem-builder build`, `validate`, `inspect`, `mcp`, and
+  `--dry-run` rails so product image/config work can only enter through
+  profile-owned config plus `capsem-admin`; docs, skills, and CLI tests now
+  document and enforce `capsem-builder` as a backend helper only.
+- Kept profile image builds behind the `capsem-admin image build` rail while
+  moving Docker/template execution to a private Python backend module, and
+  tightened partial asset generation so rootfs-only or kernel-only outputs
+  cannot mint a bootable manifest or delete unrelated arch assets.
+- Fixed PR CI Python coverage so the schema/builder coverage step runs the
+  explicit Python contract suite that exercises `src/capsem`, instead of
+  replaying VM, serial, install, MCP, service, and Ironbank suites under one
+  monolithic `pytest tests/ --cov` command; the gate now also covers malformed
+  dev skill frontmatter, symlink, empty-root, and bad-entry cases so remote
+  runner coverage drift no longer drops the Python gate below threshold.
+- Fixed PR CI non-VM Python integration setup so bootstrap, codesign, and
+  rootfs artifact tests generate their ignored local test assets through
+  `capsem-admin`, build the exact debug host binaries under inspection, and
+  ad-hoc sign them with the canonical entitlement before asserting the package
+  and signing contracts.
+- Fixed PR CI frontend coverage by moving generated settings/mock fixture
+  creation onto a shared `scripts/generate-settings.sh` rail, running that rail
+  before frontend build/check in CI, declaring the Vitest coverage provider,
+  uploading the actual `frontend/coverage/coverage-final.json`, and excluding
+  generated coverage output from later frontend type checks.
+- Fixed PR CI Rust coverage so `cargo llvm-cov` reports and uploads coverage
+  without aborting the rest of the release gate on a local percentage
+  threshold; Codecov remains the coverage ledger while Python, frontend,
+  schema, cross-compile, and artifact checks now still run.
+- Fixed the Docker install e2e package path so Linux `.deb` repacking
+  materializes profile-owned runtime config before copying profiles into the
+  package, using the same shared materializer as local dev recipes instead of
+  assuming `just` exists inside the package-test container.
+- Fixed Docker install e2e asset bootstrap so the ignored local `assets/`
+  working tree is prepared with tiny test boot files and a `capsem-admin`
+  generated manifest before profile materialization.
+- Fixed CI regressions where macOS Rust coverage compiled the Tauri app before
+  `frontend/dist` existed, and Linux ARM agent exec tests selected `/root` as
+  cwd for a non-root runner user simply because the directory existed.
+- Fixed ARM Linux CI compilation for KVM checkpoint tests by keeping portable
+  checkpoint header decode coverage on every target while gating x86 KVM vCPU,
+  IRQ, PIT, and MMIO serialization tests to x86_64 where those structs exist.
+- Fixed CI release gates so Rust coverage no longer references the deleted
+  `capsem-debug-upstream` crate and Python lint validates the top-level
+  `skills/` library instead of the retired `config/skills` path.
+- Made the credential broker memory-first behind an opaque `CredentialStore`:
+  captures update runtime memory before durable storage, replay/status checks
+  no longer hit Keychain or disk, real substitutions can hydrate on cache
+  miss, service `/status` reports only ready/degraded state, and
+  `/profiles/{id}/plugins/credential_broker/credentials/{info,reload}` exposes
+  the detailed broker store object plus explicit retry.
+- Routed the profile-scoped credential broker retry endpoint through the HTTP
+  gateway and pinned it in the explicit route allowlist so the UI cannot see a
+  404 for a service-supported profile/plugin operation.
+- Added a real-service gateway contract test for the profile overview route
+  bundle so profile info, credential broker status/retry, asset status,
+  enforcement rules, and detection rules must all survive the HTTP gateway with
+  the UI-facing JSON field shape intact.
+- Extended file-boundary IPC so plugin `rewrite` decisions can return mutated
+  bytes to the service for import/export/read/write boundaries; the service
+  now writes or returns only the bytes approved by the plugin-aware security
+  rail, while block still fails closed.
+- Fixed file-boundary rewrite materialization so logging-stage sanitizers and
+  large-content security previews cannot truncate or replace guest file bytes;
+  data-plane rewrites now require a complete payload and an applied
+  non-logging `rewrite` plugin.
+- Fixed the Linux installed-package build by scoping the Keychain credential
+  index type to macOS, keeping the non-macOS credential store warning-clean
+  under the package e2e `-D warnings` gate.
+- Tightened plugin route regression coverage so `rewrite` mode proves an
+  actual event mutation and `block` mode remains the only plugin mode that
+  denies the evaluated security event.
+- Tightened Ironbank plugin matrix coverage so postprocess plugin detections
+  must appear in the security event detection vector, closing the explicit
+  allow/ask/block/disable/rewrite/pre/post/detection-level proof item.
+- Removed fake confidence from broker-created credential observations and
+  injections; substitution rows keep the historical nullable column, but
+  broker emissions now record `NULL` confidence.
+- Hardened file import/export security boundaries so explicit file writes run
+  through the plugin-aware security rail, plugin `block` decisions deny the
+  VM-facing file operation before bytes are written or returned, and profile
+  plugin edits reload matching active VMs before returning. Ironbank now proves
+  the denied EICAR import, live plugin disable, allowed import, and exact
+  session DB plugin decision/execution ledger.
+- Split security plugins into explicit preprocess, postprocess, and logging
+  stages while preserving the single `SecurityEvent -> SecurityEvent` plugin
+  contract; the credential broker now owns credential observation/storage as a
+  security plugin, and the log sanitizer owns the ledger-safe projection before
+  emission. The profile/corp plugin policy and route-visible plugin catalog now
+  expose all three stages instead of hiding logging plugins behind a
+  compatibility bucket.
+- Renamed the core security plugin stage contract to
+  `preprocess`/`postprocess`/`logging` and extended the security action
+  benchmark matrix to cover all three plugin kinds, including the logging
+  sanitizer.
+- Extended credential broker replay so broker refs in HTTP headers or queries
+  are treated as preprocess injection events, materialized only for upstream
+  runtime bytes, and recorded in the substitution ledger as `injected` without
+  leaking raw secrets or broker refs through sanitized header payloads.
+- Expanded the Ironbank credential broker ledger proof to cover query replay,
+  JSON request bodies, form request bodies, OAuth response token bodies, and
+  generic credential response bodies through the real VM path and hermetic
+  mock server.
+- Added route-visible plugin execution counters and latency totals for
+  security plugins, and moved MITM rule-ledger emission onto the plugin-aware
+  security event path so broker and log-sanitizer executions are preserved in
+  session DB forensic payloads and `/profiles/{id}/plugins/list`.
+- Documented the runtime-vs-ledger materialization split across security
+  policy, network isolation, MITM architecture, and developer skills so future
+  work keeps credential capture/injection in the broker plugin and ledger
+  materialization in logging plugins instead of network formatters, routes, DB
+  readers, frontend transforms, or test harnesses.
+- Hardened the local OpenAI-compatible model path: bounded request sniffing now
+  promotes unknown localhost model traffic before CEL/plugin evaluation, the
+  credential broker uses the parsed provider hint for SDK bearer headers, and
+  Ironbank proves the VM-visible OpenAI SDK response, tool call, file write,
+  broker reference, substitution ledger, route counters, raw-secret absence,
+  explicit model allow rules, and the default local-network `ask` guard end to
+  end.
+- Removed provider-aware credential brokering from MITM header formatting so
+  network helpers no longer create credential refs or credential observations.
+- Replaced the Rust mock-server crate with the shared Python mock server
+  runtime for doctor, integration, recorder, benchmark, and Ironbank tests, so
+  there is one hermetic protocol lab and no duplicate fixture implementation.
+- Extended `capsem-mock-server` with deterministic DNS fixtures over UDP and
+  TCP, reported in its ready JSON, so doctor, recorder, benchmark, and
+  Ironbank work can exercise DNS without public resolvers or a second fixture
+  server.
+- Extended `capsem-mock-server` with a real local HTTPS listener that serves
+  the same deterministic fixtures as HTTP, giving doctor, recorder, benchmark,
+  and Ironbank work one protocol lab for HTTP, HTTPS/MITM, DNS, SSE,
+  WebSocket, MCP, OAuth, and model replay.
+- Extended the protocol fixture recorder to capture and replay DNS fixtures
+  from `capsem-mock-server`, keeping DNS in the same sanitized fixture corpus
+  as model, MCP, OAuth, credential, and HTTP-like flows.
+- Removed the env-gated local MITM benchmark skip from the serial release
+  tests and restored its default load to 50,000 requests at concurrency 64, so
+  `just test` always produces meaningful local HTTP/SSE/WebSocket MITM
+  baseline numbers through the shared mock server.
+- Hardened the in-VM network doctor so missing or unroutable
+  `CAPSEM_MOCK_SERVER_BASE_URL` fails the local HTTP/SSE/WebSocket/OAuth/model
+  proof instead of silently skipping deterministic protocol coverage.
+- Clarified the shared skills contract for profile `build.sh`: it is a
+  rootfs-only build hook, not an installer/runtime/config path, and changes
+  require profile descriptor updates, asset rebuilds, and black-box VM proof.
+- Routed service-initiated profile MCP tool calls through the logged MCP
+  JSON-RPC security rail instead of calling the aggregator directly, so
+  `capsem_mcp_call` now writes `mcp_calls`, built-in MCP HTTP `net_events`,
+  and matching `mcp.tool_call` security-rule rows through the process
+  `DbWriter`.
+- Added an Ironbank-native profile MCP ledger proof for `capsem_mcp_call` that
+  drives `capsem-mcp`, profile MCP routes, a fresh VM, the shared mock server,
+  and read-only session DB checks in one black-box release gate.
+- Hardened agent bootstrap packaging: profile build hooks now remove
+  installer-created OAuth/token/history/cache/log residue before rootfs
+  packaging, AGY runs through the Capsem sandbox wrapper by default, and Gemini
+  is wrapped without copying its npm entrypoint so relative JS chunk imports
+  still work. Ironbank now boots a fresh VM and proves AGY, Claude, Codex, and
+  Gemini bootstrap commands plus route/session ledgers from the outside.
+- Extended the Ironbank model ledger proof to drive real Anthropic, LiteLLM,
+  and native Ollama Python SDK clients through the shared mock server, and
+  fixed native Ollama `/api/chat` classification so session DB rows, security
+  ledgers, route output, token counts, byte counts, and file writes agree.
+- Extended gateway `/status` to preserve the service profile catalog and
+  installed asset manifest provenance, including profile readiness, manifest
+  origin/source/hash, validation status, and current asset/binary versions.
+- Included installed asset manifest provenance in support bundles so debug
+  reports preserve the manifest origin/source/hash trail alongside the active
+  asset manifest.
+- Extended support-bundle debug diagnostics with the current profile route
+  inventory and profile OBOM descriptors, including `/profiles/{id}/obom`,
+  BLAKE3 hash, generator metadata, size, and base-image scope.
+- Added support-bundle supply-chain references for the host SPDX SBOM release
+  artifact, GitHub attestation source, profile CycloneDX OBOM routes, and
+  manifest provenance paths.
+- Hardened package artifact tests so local and remote manifest overrides prove
+  the packaged manifest payload and `manifest-origin.json` provenance instead
+  of only checking installer script text.
+- Added the manifest file BLAKE3 to `capsem-admin manifest check --json` and
+  logged manifest report/provenance events during package postinstall.
+- Tightened the Ironbank doctor ledger gate so local-network `ask` decisions,
+  informational detections, serialized detection payloads, and security plugin
+  execution timings are proven from session DB rows instead of only counted.
+- Renamed the deterministic local fixture upstream to `capsem-mock-server` and
+  made `CAPSEM_MOCK_SERVER_BASE_URL` the shared contract for doctor,
+  integration, recorder, benchmark, and Ironbank-style black-box tests.
+- Added an Ironbank package-manager ledger proof that boots a VM through public
+  service routes, verifies apt, npm, uv, pip, and node packages perform real
+  work, and audits session history plus `exec_events`/`fs_events` fields.
+- Hardened VM fork cloning so `session.db` is snapshotted through SQLite
+  instead of copied as a raw file. Forks of forks now preserve WAL-backed
+  committed ledger rows as a standalone quick-check-clean database, preventing
+  boot failures from malformed copied session DBs.
+- Hardened Apple VZ suspend/resume and benchmark gates: checkpoint files now
+  require an fsynced completion marker before a VM can be considered
+  suspended, save/restore remain exclusive across service workers, cold starts
+  stay concurrent, and timing probes run isolated after the `-n 4` integration
+  canary so published boot/lifecycle numbers remain meaningful.
+- Replaced fork-package proof in MCP and lifecycle benchmarks with a hermetic
+  local `.deb` probe installed through the public VM file/exec routes, so fork
+  preservation no longer depends on public `apt` repositories while still
+  proving rootfs overlay package state survives the fork.
+- Pointed the injection test runner at the materialized profile catalog and a
+  short `/tmp` CAPSEM_HOME so injection scenarios exercise package/CI-style
+  profile config without tripping macOS Unix-socket path limits.
+- Made `doctor --fix` rebuild VM assets for every checked-in profile through a
+  named profile loop instead of a default-only asset build, with a release
+  contract test guarding the recipe.
+- Aligned support-bundle and gateway test fixtures with the current
+  profile/settings layout and VM `available_actions` contract, and cleaned up
+  Rust formatting debt from the release cleanup branch.
+- Hardened profile routing assumptions by passing the full release gate under
+  temporary arbitrary profile ids before restoring the shipping `code` and
+  `co-work` profile identities. This keeps profile-aware routes, UI/TUI
+  helpers, admin materialization, and install packaging from silently depending
+  on a single hardcoded profile.
+- Added a real checked-in `co-work` profile as source profile data, and
+  tightened Profile UI/TUI/service tests so profile-aware surfaces consume
+  route-provided profile ids instead of silently falling back to `code`.
+- Advanced the 1.3 release metadata to `1.3.1781205836`, pinned the frontend
+  `esbuild` override through the lockfile, and archived fresh lifecycle, fork,
+  in-VM storage, and parallel benchmark ledgers for the current build.
+- Fixed the gateway profile MCP surface so the UI/TUI route for reading and
+  editing a profile's default MCP permission forwards to the service instead
+  of returning a route-level 404.
+- Moved dashboard session creation controls onto each profile card: ready
+  profiles expose a primary `New` action, profiles with missing assets expose
+  `Download`, and `Customize` opens the session dialog preselected to that
+  profile.
+- Added a compact route-backed VM asset checklist to each profile launcher
+  card so users can see which kernel/initrd/rootfs assets are present or
+  missing before starting or downloading a profile.
+- Fixed dashboard session actions so incompatible or defunct sessions remain
+  non-openable and expose only the delete action even if a stale status payload
+  includes start, resume, or fork actions.
+- Tightened the MCP profile UI so default and per-tool permission controls use
+  the same typed allow/ask/block option list as the route contract.
+- Fixed credential broker stats so captured, brokered, injected, and error
+  events are counted independently instead of treating every broker row as a
+  captured credential.
+- Made credential capture write the full durable verb trail: observed secrets
+  now emit `captured` and `brokered`, while replayed references emit
+  `injected`.
+- Fixed the hermetic credential broker test store so concurrent captures cannot
+  corrupt the store or lose refs before replay.
+- Added Ironbank coverage for unknown-host OpenAI-compatible body-shape
+  detection: neutral-path model traffic now proves model rows, broker refs, and
+  detection-rule ledger output.
+- Added Ironbank coverage for unknown remote MCP-over-HTTP JSON-RPC activity:
+  observed initialize/list/tool-call traffic now proves MCP DB rows, timeline
+  route evidence, and `mcp.tool_list`/`mcp.tool_call` security ledger entries.
+- Added Ironbank coverage for declaration-only model tools: an
+  OpenAI-compatible request may advertise tools without creating executed
+  `tool_calls` rows unless the model response actually emits a tool call.
+- Tightened Ironbank tool-call ledger coverage so executed model tool calls
+  must have exact row counts, declaration-only tools stay absent, and observed
+  MCP `tools/call` rows correlate by trace and tool name without protocol
+  chatter becoming phantom executions.
+- Added Ironbank coverage for Gemini/Google and Claude/Anthropic streaming
+  model traffic through hermetic SSE fixtures, proving client-visible bytes,
+  parsed model rows, security-ledger entries, and brokered API-key references.
+- Fixed the credential broker so Google `x-goog-api-key` headers are captured
+  as Google credentials even before a provider hint exists.
+- Hardened profile root bootstrap packaging: `capsem-admin profile check` now
+  rejects unpinned files under a profile root seed, profile payload tests prove
+  AGY/Claude/Codex/MCP non-secret bootstrap files are pinned exactly, and
+  OAuth tokens, logs, conversations, history, and cache payloads cannot be
+  baked into checked-in profile roots silently.
+- Tightened the VM Stats Process panel so it reports command executions and
+  observed processes as separate ledgers, replaces the unrelated credential-ref
+  counter with unique binary counts, and removes tutorial prose from the app UI.
+- Made Stats detail payload rendering content-aware: HTTP header fields use an
+  HTTP grammar, JSON previews are parsed and formatted as JSON, and non-JSON
+  payloads stay as escaped text instead of being forced through a JSON view.
+- Cleaned up Profile overview credential inventory so it shows provider,
+  last-seen, observed, and injected counts without rendering raw broker
+  credential references in the primary UI.
+- Moved frontend MCP controls off settings-backed `mcp.servers.*` mutation and
+  onto profile-scoped MCP routes. Settings now stays focused on UI/app
+  preferences, while the Profile surface owns rules, plugins, MCP, and assets.
+- Moved `capsem-process` and the built-in MCP server onto the materialized
+  runtime profile directory. Runtime rules, plugins, MCP, model endpoints, and
+  service-supplied corp overlays now load from the profile contract instead of
+  global settings/user config files.
+- Updated the Sessions launcher to render profile-owned icon/name/description
+  from `/profiles/list`, check assets per profile, show a download action while
+  assets are missing/downloading, and pass the selected `profile_id` on VM
+  creation.
+- Unified the frontend VM list around one profile-owned VM model: profile
+  launches, keyboard creation, and the custom VM dialog now create named
+  retained VMs, and both the list and active-VM toolbar expose pause/resume,
+  stop/start, fork, and delete without temporary-vs-persistent UI branches.
+- Rebuilt the VM Stats tab around the current session database and VM-scoped
+  ledger routes. It now surfaces Model, MCP, HTTP, DNS, Files, Process,
+  and Security evidence, links directly to raw session DB inspection, and uses
+  DB-backed security/detection/enforcement rows for forensic details. Hypervisor
+  snapshot internals no longer appear as a generic Stats tab; explicit snapshot
+  MCP calls still surface through MCP activity, but host snapshot state is no
+  longer written to or exposed from `session.db`.
+- Hardened the black-box integration gate so credential-broker tests use an
+  isolated file-backed broker store instead of the developer's native keychain,
+  and bounded the VM model fixture call so model/credential regressions fail
+  quickly with ledger evidence instead of hanging the release test.
+- Hardened the integration service startup wait so a clean `capsem-service`
+  idempotent exit during a compatible peer-start race keeps probing the UDS
+  route instead of failing the release gate before `/list` becomes ready.
+- Isolated each integration gate invocation under its own test CAPSEM_HOME so
+  focused and full runs do not share stale service sockets, pidfiles, or broker
+  stores; `CAPSEM_INTEGRATION_HOME` remains available as an explicit debug
+  override.
+- Pinned integration-test `CAPSEM_RUN_DIR` and `capsem-service --uds-path` to
+  the same process-scoped runtime directory so inherited test environment
+  cannot redirect service startup to a foreign singleton socket.
+- Made package postinstall hydrate VM assets through `capsem update --assets`
+  after copying the selected manifest/profile ledgers. Local dev/corp manifests
+  now use `manifest-origin.json` to hydrate from the source asset tree with the
+  same hash-named layout and blake3 verification as remote downloads, while the
+  package payload remains free of rootfs/initrd/kernel blobs.
+- Made `bootstrap.sh` frontend dependency installation non-interactive by
+  running `pnpm install` with `CI=true`, matching the full test gate contract
+  and avoiding TTY-only confirmation prompts during unattended bootstrap.
+- Added VM-scoped snapshot status/list routes backed by the running
+  `capsem-process` in-memory snapshot scheduler. Stopped VMs reconstruct
+  snapshot status from that VM's snapshot metadata only when requested, and
+  migrated session databases drop the old `snapshot_events` table.
+- Compact `snapshots_list` output now defaults to created/edited/deleted counts
+  so AI-facing MCP responses stay small; callers must pass
+  `include_changes=true` to request full per-file snapshot diffs.
+- Hardened workspace snapshot storage so capture, compaction, deletion, and
+  eviction refuse to operate when snapshot storage or a slot resolves inside
+  the live workspace. Regression tests prove snapshot capture/compaction leave
+  live workspace entries unchanged and reject symlinked storage back into the
+  workspace.
+- Hardened `snapshots_revert` against symlink escape/pull-in regressions:
+  restore now rejects symlinked parent components in checkpoint storage, avoids
+  following live workspace symlinks during no-op checks, and reads regular
+  snapshot sources with no-follow file opens. Regression tests cover the old
+  “symlink out of workspace, pull outside file bytes into restore” class.
+- Clarified the VM Stats process tab by separating command execution rows from
+  audit-port process observations, removing the vague “Process Audit Events”
+  label from the user-facing table.
+- Updated public architecture docs and internal development skills to reflect
+  the 1.3 contract: profile-owned assets/rules/MCP/plugins, settings as UI/app
+  preferences only, explicit gateway routes, ledger-backed Stats/Inspector,
+  and the single SecurityEvent/CEL rule rail.
+- Added a `capsem debug` CLI alias for redacted support bundles and expanded
+  `capsem status` with profile catalog readiness and corp config
+  presence/source/hash information when the service is running.
+- Expanded `capsem debug` support bundles with a machine-readable runtime
+  boundary contract covering first-party host VSOCK services, explicitly closed
+  raw ports, and diagnostic/status routes for bug reports.
+- Updated package installation diagnostics: macOS and Linux package scripts now
+  write a durable `~/.capsem/logs/install.log`, package builders accept local
+  paths plus `file://`, `http://`, and `https://` manifest overrides, and
+  service status reports the installed manifest hash and package provenance.
+- Hardened macOS `.pkg` and Linux `.deb` package composition so closed
+  packages contain the app/binaries, profile config, and selected
+  `manifest.json`/`manifest-origin.json` only; VM asset payloads are never
+  embedded and are reconciled by the service from the installed manifest.
+- Reorganized checked-in config source into `config/settings`, `config/corp`,
+  `config/profiles`, `config/docker`, and `config/data`, documented the layout,
+  and made source profiles unpinned by contract. `config/settings` owns only
+  UI/application preferences; profile/corp own runtime behavior.
+- Added per-install timestamped logs under `~/.capsem/logs/install-*.log` plus
+  `install-latest.log`, while preserving the aggregate `install.log`.
+- Expanded manifest status reporting with mutable-manifest semantics:
+  `/profiles/status`, `/profiles/{id}/assets/status`, and CLI status output now
+  report the current manifest hash, source, refresh timestamp, and validation
+  result instead of treating the install-time hash as immutable.
+- Hardened doctor/Ironbank diagnostics so credential-shaped model and OAuth
+  probes no longer place synthetic secrets in process argv, and removed the
+  guest `shutdown` sysutil alias now that VM shutdown is owned by the TUI.
+- Made `capsem-admin manifest generate <assets_dir>` the documented manifest
+  production rail for local, release, and corp custom builds; package builders
+  consume the selected manifest but no longer document or rely on direct
+  generator internals.
+- Added a route-backed frontend debug snapshot:
+  `window.__capsemDebug.snapshot()` now returns frontend version/log context,
+  websocket tail, gateway status, profile catalog status, and corp info for
+  pasteable bug reports.
+- Updated the session UI to display each VM's backend-provided `profile_id` and
+  replaced hard-coded About runtime/kernel claims with live diagnostic status.
+- Updated the Profile overview to render route-backed surface availability
+  (web, shell, mobile) and broker-visible credential inventory/grant status, so
+  profile readiness is visible before users dig into Plugins or raw stats.
+- Removed the mistaken checked-in `config/skills/` mirror and restored
+  repository `skills/` as the developer skill source; profile/product skills
+  must be introduced through the profile ledger instead of a global config
+  escape hatch.
+- Moved the code profile ledger to `config/profiles/code/profile.toml` and
+  materialize generated/installed profiles with the same directory shape, so
+  source and runtime config use one profile path contract.
+- Added profile-owned VM base-image OBOM evidence: materialized profiles can
+  pin `obom.cdx.json` with BLAKE3 hash, size, cdxgen generator metadata, and
+  the rootfs hash it describes, and `/profiles/{id}/info` plus
+  `/profiles/{id}/obom` expose that base-image-only contract.
+- Added profile-owned image payload declarations for the code profile: MCP
+  config, apt/Python/npm package lists, build-time hook script, tips, and
+  packaged guest-root seed files are now declared from `profile.toml`.
+  `capsem-admin profile check` verifies those source payloads plus the root
+  seed manifest, and `capsem-admin image build` materializes a pinned,
+  self-contained generated guest workspace before invoking the backend builder.
+- Renamed profile image hooks from `install.sh`/`files.install` to
+  `build.sh`/`files.build` and added Ollama to the shipped Code and Co-work
+  profile images through that builder rail, with `zstd` included for the
+  official Ollama installer.
+- Pruned Ollama CUDA libraries from profile-built images and added the Python
+  Ollama SDK to Code and Co-work profiles so local Ollama client tests do not
+  require ad-hoc VM package repair or waste guest disk on unused GPU payloads.
+- Added non-secret Claude MCP approval state to Code and Co-work profile roots
+  so fresh profile-built sessions do not prompt users to trust the built-in
+  `capsem` MCP server before agents can use it.
+- Added OpenAI, Anthropic, and LiteLLM Python SDKs to the Code and Co-work
+  profile package ledgers so Ironbank real-client model tests can run from the
+  VM without ad-hoc guest installs.
+- Added an Ironbank `capsem-doctor` ledger proof that boots a VM through public
+  service routes, runs the hermetic mock protocol lab, and verifies HTTP, DNS,
+  MCP, model, tool-call, file, exec, security-rule, and credential broker rows
+  agree in `session.db`.
+- Made the VirtioFS doctor pip probe hermetic by installing a generated local
+  wheel with `--no-index` instead of reaching out to PyPI for `cowsay`.
+- Expanded per-architecture VM build ledgers with a `rootfs.config_inputs`
+  stage that records declared package config, rendered rootfs install inputs,
+  profile root/build-script inputs, and EROFS settings. Installed package
+  names and versions remain OBOM evidence, not build-ledger claims.
+- Cleaned active architecture/development docs and internal skills around the
+  profile/admin image contract: public guidance now points at profile-owned
+  package/MCP/rule/root files, generated `target/config`, `capsem-admin image
+  build`, build ledgers, and OBOM evidence instead of retired builder
+  scaffolding or image-owned provider configuration.
+- Added the first profile mutation rail: enforcement and detection rule files
+  are now profile-owned files, `Profile` owns core status/check/download and
+  MCP tool permission mutation, backend-managed rules carry typed ownership
+  annotations, and profile mutations have a DB-writer ledger event.
+- Wired service profile routes onto that rail: profile status now verifies
+  pinned profile files plus asset hashes, profile asset ensure repairs corrupt
+  hash-prefixed assets, MCP tool permission edits write managed profile
+  enforcement rules and profile mutation ledger rows, and enforcement/detection
+  route listing and authoring compile from profile files plus corp overlays
+  without reading or writing user settings.
+- Made MCP tool permissions round-trip through the same profile enforcement
+  contract: tool list responses now include the effective `allow`/`ask`/`block`
+  action and source rule, the frontend edits tools with `{ action }` instead of
+  the retired `{ approved: true }` cache shape, and unsupported server
+  add/toggle/delete controls are no longer exposed in the MCP UI.
+- Clarified MCP builtin display semantics: the profile-owned `local` Capsem MCP
+  entry is rendered as built-in capability, not as a stopped external server,
+  and frontend runtime counts exclude static builtin MCP entries.
+- Split the Profile UI's retired generic `Policy` section into explicit
+  `Enforcement` and `Detection` route-backed tabs, with a frontend contract
+  test guarding against reintroducing the old policy tab.
+- Replaced the Profile UI's raw asset JSON dump with a route-backed asset
+  checklist that shows manifest status, VM assets, profile files, verified/
+  missing/invalid/downloading state, paths, and size details from
+  `/profiles/{profile_id}/assets/status`.
+- Disabled debug-only dummy plugins by default and updated the plugin UI to
+  show enum-backed mode badges/icons for allow, ask, block, rewrite, and
+  disabled states without hiding inactive plugins.
+- Added plugin-owned capability metadata to `/profiles/{profile_id}/plugins/*`.
+  The credential broker now reports watched event families, supported
+  providers, and credential source shapes, and the Plugin UI renders those
+  fields alongside broker inventory/counters instead of guessing.
+- Updated the Profile rule lists and MCP tool list to use the same
+  enum-backed visual language for allow/ask/block/rewrite/detection levels,
+  while keeping MCP tool permission changes on the route-backed selector.
+- Added an explicit `enabled` field to the security rule contract. Disabled
+  rules remain visible in profile enforcement/detection inventories but are
+  skipped by `SecurityRuleSet` evaluation and rendered inactive in the UI.
+- Grouped Profile enforcement and detection rule lists into `default_rule`
+  and profile/corp sections so built-in catchalls are visible without creating
+  a second rule engine.
+- Added a visible MCP default permission selector backed by `default.mcp`.
+  The UI reads and edits `/profiles/{profile_id}/mcp/default/*`, while the
+  service mutates the pinned enforcement file and writes the same profile
+  mutation ledger used by per-tool MCP overrides.
+- Cleaned the admin/doctor/status/debug rails so diagnostics follow the profile
+  contract: builder doctor delegates profile validation to `capsem-admin
+  profile check`, Justfile asset builds no longer pass legacy guest-config
+  knobs, `capsem status`/default health read profile readiness from the service,
+  and support bundles collect `settings.toml`/corp diagnostics without
+  preserving `user.toml` as a config contract.
+- Added structured `capsem.profile_mutation` logs for profile mutation routes
+  and ledger writes. MCP tool edits plus enforcement/detection rule upserts and
+  deletes now log route requests, validation rejections, ledger-open failures,
+  and applied mutations with the same stable profile, target, operation, rule,
+  hash, size, status, and mutation identifiers stored in the mutation ledger.
+- Updated in-VM diagnostics to validate that the profile-owned Gemini,
+  Antigravity, Claude, Codex, and MCP config files are actually projected into
+  runtime `/root`, point at the canonical Capsem MCP bridge where applicable,
+  and do not contain obvious credential-shaped secrets. The arm64 code-profile
+  EROFS rootfs and initrd pins were refreshed from the rebuilt assets.
+- Added a coverage-infra guard for release prep: PR Rust coverage now includes
+  every workspace crate across the macOS/Linux jobs, Codecov components map
+  each crate, and build-chain tests fail if a future crate is left out.
+- Hardened AGY/manual-loop diagnostics: missing `capsem-mcp-aggregator` now
+  fails loud instead of returning an empty MCP tool stub, unknown private
+  model gateways are promoted from bounded JSON protocol shape while preserving
+  the original HTTP body, broker credential inventory reports whether a stored
+  reference is actually replayable, unknown remote MCP-over-HTTP JSON-RPC is
+  promoted into first-party MCP ledger/security events, and boot/dispatch
+  consume one typed host VSOCK service registry.
+
 ### Added (kernel 7.0 + EROFS)
 - Added a stable-kernel upgrade path for guest builds: `kernel_branch = "7.0"`
   now resolves against kernel.org stable releases, while `auto` remains
   LTS-only for conservative release automation.
+- Restored Linux KVM guest-memory hardening from the lost Linux line:
+  guest memory reads/writes now reject offset overflow, and virtio-blk validates
+  complete guest physical ranges before exposing raw host pointers to vectored
+  I/O.
 - Added experimental EROFS rootfs image generation with `lz4`, `lz4hc`, and
   `zstd` compression. EROFS zstd uses a newer `erofs-utils` container image,
   both guest defconfigs enable kernel-side EROFS zstd decompression, and
@@ -26,11 +1250,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rule insertion errors, and the rootfs build strips Debian's legacy iptables
   frontend binaries.
 - Promoted EROFS lz4hc rootfs assets into the normal asset contract:
-  `just build-assets`, manifests, service resolution, setup status, release
-  attestation, and installer download tests now prefer `rootfs.erofs` while
-  retaining squashfs as a legacy read fallback.
+  `just build-assets code [arch]`, manifests, service resolution, setup status,
+  release attestation, and installer download tests now use `rootfs.erofs` as
+  the 1.3 runtime rootfs.
+- Removed squashfs as a runtime/build fallback for 1.3 assets: the builder emits
+  only `rootfs.erofs`, manifests require EROFS rootfs entries, service/core
+  asset resolution no longer selects `rootfs.squashfs`, and in-VM doctor checks
+  require `/dev/vda` to be EROFS.
+- Added per-architecture VM asset `build-ledger.log` JSONL output from the real
+  builder path, covering rendered Dockerfile/build-context hashes, rootfs tar,
+  EROFS, kernel assets, tool-version output, compression settings, git revision,
+  and project version; release CI uploads the ledger separately for retraceable
+  failures.
+- Added Python quality gates: Ruff now runs across the repository, and `ty`
+  type-checks `src/capsem` in CI plus the local `just test`/`just smoke`
+  fast-fail stages.
+
+### Added (benchmarks)
+- Added a deterministic `/model/response` fixture to `capsem-mock-server`
+  and wired `capsem-bench protocol` to exercise both SSE model streams and
+  JSON model responses without public-network dependencies.
+- Added a shared `capsem-bench` load harness for MITM, MCP, DNS, and local
+  mock-server tests: `CAPSEM_BENCH_CONCURRENCY`,
+  `CAPSEM_BENCH_DURATION_S`, `CAPSEM_BENCH_TOTAL_REQUESTS`, and
+  `CAPSEM_BENCH_SCENARIOS` now drive one tested config path, and load rows
+  share the same request/error/rps/p50/p95/p99/p999/RSS schema.
+- Added `scripts/benchmark_report.py`, a Pydantic-validated host reporter that
+  renders benchmark JSON as Markdown and can produce matplotlib PNG graphs for
+  committed load artifacts.
+- Expanded the security-action Criterion benchmark to cover runtime event
+  classification for HTTP, DNS, MCP, model, file, and process events in
+  addition to rule matching, plugin dispatch, broker substitution, and MCP
+  brokered OAuth credential-reference resolution.
+- Refreshed the VM `mitm-local` release artifact so the local fixture corpus now
+  includes JSON model responses, credential-shaped responses, WebSocket control,
+  and session DB/no-secret verification through the profile-selected VM path.
+- Added a retired security-rail guard test that fails if old Policy V2,
+  domain-policy, or MCP decision-provider code paths reappear in live crates or
+  configuration.
 
 ### Fixed (install/setup)
+- Fixed `capsem stop` on macOS so it unloads the LaunchAgent instead of sending
+  SIGTERM to a `KeepAlive` job that launchd immediately restarts. The command
+  now verifies the service is no longer loaded before reporting success, so
+  stopping Capsem no longer re-enters service startup or prompts for Keychain.
 - macOS package postinstall now adds `~/.capsem/bin` to fish shell startup via
   an idempotent `fish_add_path --path "$HOME/.capsem/bin"` entry.
 - Rebuilt install/startup flow around service readiness and asset state instead
@@ -38,20 +1301,269 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   resolve through the manifest contract, and the UI waits on the service rather
   than opening against a dead daemon.
 - Removed the old setup/onboarding authority path. Provider credentials are now
-  discovered or brokered through runtime security events and settings references
-  instead of being copied through a setup wizard.
+  discovered or brokered by the credential broker plugin through runtime
+  security events and broker-owned references instead of being copied through a
+  setup wizard.
+- Removed the dead host credential detection module that could scan raw host
+  API keys/OAuth files and write them into settings. Credential capture now
+  stays behind the credential broker/plugin path, and the retired settings key
+  validation surface remains fail-closed at the gateway.
+- Stopped settings-derived guest config from materializing brokered provider
+  credentials, repository tokens, generated `.git-credentials`, provider allow
+  env vars, or AI CLI config files into VM boot env/files. Settings can still
+  provide UI/app preferences and explicit non-secret `guest.env.*`; credential
+  materialization is broker/plugin-owned.
+- Removed the generated/UI `settings.ai.*` provider registry and the stale
+  settings-based API-key injection tests. Retired flat AI setting IDs now fail
+  validation for both settings file loads and inline corp config installs;
+  provider control remains profile/corp rule-owned and credential handling
+  remains plugin-owned.
+- Removed the retired settings preset subsystem and cleaned root `config/` so
+  MITM CA key material lives under `security/keys/` instead of looking like
+  editable runtime configuration. Profile assets are selected by URL and
+  verified by BLAKE3 hash/size, while release evidence stays in SBOM and
+  provenance attestations.
+- Fixed local install/package asset materialization so literal build outputs
+  and already hash-prefixed assets both install through the same
+  manifest-driven hash-prefixed layout, and package/simulated installs now
+  include the full host tool set including `capsem-admin`,
+  `capsem-tui`, `capsem-mcp-aggregator`, and `capsem-mcp-builtin`.
+- Updated the built-in code profile's arm64 asset pins to the current
+  EROFS/LZ4HC release artifacts so profile-owned VM boot resolution and the
+  installed asset manifest agree.
+- Fixed EROFS asset generation to disable the internal superblock CRC feature;
+  BLAKE3 remains the release/boot integrity contract, and the repaired LZ4HC
+  rootfs now passes `fsck.erofs` before install.
+- Hardened the install test harness so the Linux package/systemd user unit is
+  stopped before scoped process cleanup, and renamed the internal dev-readiness
+  just helper away from setup wording while keeping `capsem setup` removed.
+
+### Changed (release proof)
+- Added shared runtime config materialization through
+  `capsem-admin profile materialize`: local dev, smoke/test/install recipes,
+  and release package jobs now generate `target/config` from checked-in
+  `config/` plus `assets/manifest.json` instead of hand-editing source
+  profiles. Service test helpers and `just _ensure-service` load
+  `target/config/profiles` fail-closed.
+- Updated docs and developer skills to document the same generated-config rail:
+  checked-in `config/` is source/support material, current-build runtime config
+  lives under `target/config`, and EROFS/LZ4HC level 12 is the 1.3 rootfs
+  contract rather than a best-effort fallback.
+- Restored the Linux-team KVM/FUSE performance work and storage benchmark
+  harness into the current EROFS/LZ4HC rail, including bounded VM proof for
+  `capsem-bench storage` from the generated profile-selected asset chain.
+- Replaced public-service release proof with deterministic local fixtures:
+  `capsem doctor` now starts/passes a local `capsem-mock-server`, doctor MCP
+  content checks use local text/HTML fixtures, integration tests use local
+  allowed/throughput/blocked HTTP paths, and session DB row-generation tests no
+  longer curl public services.
+- Routed local release-proof network traffic through the normal guest
+  iptables-nft redirect rail. The local fixture is only the upstream target;
+  doctor, integration, and benchmark paths no longer inject proxy environment
+  variables or explicit WebSocket proxy sockets.
+- Expanded the shipped plain-HTTP redirect/allowlist mechanics to
+  `80`, `3128`, `3713`, `8080`, and `11434`, with doctor and local release
+  proof pinned to `127.0.0.1:3713` to avoid colliding with real Ollama.
+
+### Changed (service/API)
+- Routed profile mutation ledger writes through the service-owned logger
+  `DbHandle::write` path with structured DB failure logging, removing the
+  service-side `DbWriter` side path for profile/MCP/rule/plugin edits.
+- Updated architecture docs and local development skills to match the 1.3
+  contract: settings endpoints are `/settings/info|edit` and expose only
+  `tree`/`issues`, install is service/profile-asset readiness rather than a
+  setup wizard, and EROFS/LZ4HC is the rootfs contract.
+- Moved VM APIs under the explicit `/vms/...` contract. VM creation, listing,
+  info, stop, pause, delete, resume, save, fork, exec, logs, inspect, history,
+  timeline, and file read/write/list/content routes now live under
+  `/vms`/`/vms/{vm_id}`; the retired top-level routes fail closed in the
+  service/gateway route contract.
+- Tightened the Python service, gateway, and E2E harnesses around the
+  profile-owned VM contract: every VM creation and one-shot run test now passes
+  the real `code` profile id explicitly, and the gateway mock rejects missing
+  profile ids instead of accepting old default-profile payloads.
+- Fixed runtime config loading so env-supplied corp/profile config preserves
+  direct `corp.rules`, `profiles.rules`, `default`, `plugins`, and refresh
+  groups when materializing `MergedPolicies`. Negative-priority corp rules now
+  survive into VM processes and are covered by deterministic local MITM
+  telemetry proof.
+- Added `GET /vms/{vm_id}/status` as the runtime-state endpoint for one VM so
+  UI state reads no longer need to treat `/vms/{vm_id}/info` as a status API.
+- Added `PATCH /vms/{vm_id}/edit` as a fail-closed VM edit gate: attempts to
+  mutate immutable `profile_id` or unknown fields are rejected, and resource
+  edits return explicit unsupported status until live edit semantics are
+  implemented.
+- Added `GET /vms/{vm_id}/save/status` and
+  `GET /vms/{vm_id}/fork/status`; because save/fork are synchronous today,
+  existing VMs report explicit `idle` operation state rather than fake progress.
+- Added VM action route coverage for `POST /vms/{vm_id}/start`,
+  `POST /vms/{vm_id}/restart`, and `POST /vms/{vm_id}/reload-profile`.
+  `start` uses the existing resume/start path; restart and reload-profile
+  verify the VM exists and fail explicitly until real semantics land.
+- Added profile inventory routes `GET /profiles/list` and
+  `GET /profiles/status`, `POST /profiles/reload`, and
+  `GET /profiles/{profile_id}/info`. Profile identity now comes from the typed
+  profile catalog: the built-in `code` profile is a real `ProfileConfigFile`,
+  route validation no longer uses a hard-coded `default` profile stub, and
+  catalog reload/status reports profile readiness through the profile asset
+  contract.
+- Removed the `ProfileConfigFile::builtin_default()` compatibility alias and
+  updated built-in profile validation/tests to name the real `code` profile.
+- Fixed CLI and `capsem-mcp` MCP commands to use the real built-in `code`
+  profile instead of the retired `default` profile when listing servers/tools,
+  refreshing tools, calling profile-scoped MCP tools, or creating one-shot VMs.
+  “Default” now refers only to visible default rules, not a hidden profile id.
+- Restored the terminal control UI as the `capsem-tui` host binary and made
+  `capsem shell` launch it. The TUI is wired to the current `/profiles/list`,
+  `/status`, and `/vms/...` contracts, restores Alt-owned shortcuts,
+  create/fork/pause/resume/stop/delete/recovery flows, vt-backed terminal
+  reconnect behavior, and deterministic text/SVG snapshot inspection.
+- Moved the service route table into a single shared router builder so startup
+  and route-level tests exercise the same mounted API contract, including
+  detection-rule authoring through `/profiles/.../detection/rules/...` and
+  ledger readback through `/vms/.../security/latest`.
+- Tightened gateway and service release fixtures around the explicit API
+  contract: generic fallback proxy paths stay rejected, body-limit tests use
+  real file-content routes, MCP credential status remains opaque, and macOS
+  process leak detection survives `KERN_PROCARGS2` permission denials.
+- Expanded mounted service route contract tests across fail-closed profile/VM
+  stubs, profile/settings/corp reads, corp edit/reload, plugin edit/evaluate,
+  MCP profile scoping, service-wide security ledgers, and file import/export
+  boundary logging.
+- Moved remote MCP auth onto the credential broker contract. MCP profile/corp
+  config now carries `auth.kind` plus opaque `auth.credential_ref` for bearer
+  or OAuth material; raw `bearer_token`/`bearerToken` imports are rejected or
+  skipped, secret-bearing MCP headers fail validation, and UI status reports
+  `has_auth_credential` instead of token presence.
+- Replaced internet-backed MCP manager proof with local recording test
+  infrastructure. The normal MCP manager suite now uses a local Streamable
+  HTTP MCP server and HTTP recorder to prove broker-owned auth resolution,
+  tool discovery, tool dispatch, and fail-closed missing credentials without
+  contacting public services.
+- Replaced builtin MCP HTTP tool tests that fetched `elie.net` and Wikipedia
+  with local static HTTP fixture responses. `fetch_http`, `grep_http`, and
+  `http_headers` still exercise the real reqwest/tool/security path, but
+  normal tests no longer require public network availability.
+- Added a profile-owned rule-file compilation guard: profile enforcement TOML
+  and Sigma detection YAML now materialize as `SecurityRuleProfile` and compile
+  only through the unified `SecurityRuleSet`/CEL rail, rejecting old policy
+  syntax and profile-file attempts to smuggle `corp.rules`.
+- Restored the `capsem-admin` executable as a Rust admin front door. Its
+  product surface is intentionally narrow: profile validate/check/materialize,
+  settings validate, enforcement/detection validate, manifest check/generate,
+  and profile-derived image build.
+- Added `capsem-admin manifest check|generate` for the current format-2 asset
+  manifest. The commands validate top-level `refresh_policy`, report asset
+  releases/arches, and regenerate the canonical `assets/manifest.json` from
+  built assets without restoring manifest signing or a second asset path.
+- Added profile-derived `capsem-admin image build` and moved
+  `just build-assets` onto that rail. Asset builds now require an explicit
+  profile, validate the profile and rule files first, preserve the Code profile
+  defaults, build EROFS `lz4hc` level 12 rootfs assets, and reject raw
+  no-profile build attempts.
+- Updated the release workflow to call the profile-derived asset build rail
+  explicitly (`code` profile) and to package/sign the full restored host binary
+  set, including `capsem-admin`.
+- Replaced the temporary flat profile asset triplet with per-architecture
+  profile asset declarations. `config/profiles/code/profile.toml` now parses as
+  the checked-in contract for EROFS/LZ4HC kernel, initrd, and rootfs assets with
+  URL/hash/size metadata.
+- Made `/profiles/{profile_id}/assets/status` report the selected profile's
+  current-architecture asset contract instead of a service-global asset guess,
+  including profile id, revision, profile payload hash, expected hashes,
+  sizes, source URLs, and present/missing state from the same hash-prefixed
+  resolver used by boot.
+- Made VM creation profile-explicit. `POST /vms/create`/provision and
+  one-shot `run` payloads now require `profile_id`; unknown profiles fail
+  before boot state is created, persistent registry rows store `profile_id`,
+  fork/save/resume preserve it, and list/info responses expose it. A VM's
+  `profile_id` remains immutable after creation.
+- Made VM boot preflight and process spawn resolve kernel, initrd, and rootfs
+  from the selected profile asset contract. Profile resolution supports the
+  approved hash-prefixed downloaded layout and logical-name dev layout, but
+  both are derived from profile asset descriptors instead of the old
+  service-global file guess.
+- Made `/profiles/{profile_id}/assets/ensure` profile-owned. It downloads the
+  selected profile's current-architecture kernel, initrd, and rootfs URLs into
+  hash-prefixed asset files, verifies each file with the profile BLAKE3 hash,
+  updates reconcile status, and skips already-verified profile assets.
+- Made `capsem assets status` and `capsem assets ensure` profile-aware. Both
+  commands now target the real `code` profile by default, accept `--profile`,
+  and call `/profiles/{profile_id}/assets/...` instead of the burned
+  `/profiles/default` path; gateway route coverage also forwards
+  `/profiles/status` and `/profiles/reload` explicitly.
+- Updated the frontend MCP and plugin settings surfaces to target the real
+  `code` profile instead of the burned `default` profile id.
+- Made startup asset cleanup preserve profile catalog assets and persistent VM
+  boot asset pins. Hash-prefixed files referenced by active profile
+  descriptors or saved VM pins are retained even when they are not listed in
+  the release manifest.
+- Made persistent VM lifecycle state pin the selected profile revision, profile
+  payload hash, and boot asset descriptors. Create/save/fork/resume preserve
+  the pinned profile revision, typed profile payload BLAKE3 hash, and
+  kernel/initrd/rootfs name+hash pins; save/fork/resume fail closed when the
+  current profile revision, profile payload hash, or boot asset pins drift.
+- Added profile management route gates:
+  `POST /profiles/create`, `PATCH /profiles/{profile_id}/edit`,
+  `DELETE /profiles/{profile_id}/delete`, `POST /profiles/{profile_id}/clone`,
+  and `POST /profiles/{profile_id}/validate`. Validation is real over the
+  typed `ProfileConfigFile`; mutation routes fail explicitly until profile file
+  persistence is implemented instead of writing through settings.
+- Added `GET /profiles/{profile_id}/enforcement/rules/list`, returning the
+  compiled profile rule inventory with source, default-rule, priority, action,
+  detection level, and lock metadata so the UI can reflect backend rule
+  truth instead of inventing grouping state.
+- Added `GET /profiles/{profile_id}/enforcement/info`, returning compiled
+  enforcement configuration counts by source/action plus default/custom,
+  detection, and corp-lock totals. Runtime counters remain table-backed under
+  VM enforcement status.
+- Added profile-scoped detection rule routes
+  `/profiles/{profile_id}/detection/info`,
+  `/profiles/{profile_id}/detection/rules/list`,
+  `/profiles/{profile_id}/detection/evaluate`,
+  `/profiles/{profile_id}/detection/rules/{rule_id}/edit`,
+  `/profiles/{profile_id}/detection/rules/{rule_id}/delete`, and
+  `/profiles/{profile_id}/detection/reload`. They reuse the same compiled
+  security-rule contract as enforcement and only list/write rules with an
+  explicit `detection_level`.
+- Moved asset readiness/reconciliation to profile-owned routes
+  `/profiles/{profile_id}/assets/status` and
+  `/profiles/{profile_id}/assets/ensure`; retired global `/assets/status` and
+  `/assets/ensure` so asset selection stays under the profile contract.
+- Removed the retired service-global asset status helper from the service
+  binary and converted its reconcile-progress unit coverage to the
+  profile-owned asset status contract.
+- Added profile-scoped skills route surfaces. Skills `info|list` reflect the
+  typed profile manifest; add/edit/delete fail explicitly until profile
+  persistence is implemented.
+- Removed the profile credential API surface before release: there is no
+  `/profiles/{profile_id}/credentials/*` route and no `[credentials]` profile
+  block. Credential capture/substitution state belongs to the credential broker
+  plugin runtime contract.
+- Added profile-scoped assets `info|edit`, plugins `info`, and MCP `info`
+  routes. Info routes summarize existing profile/config state; asset edits
+  fail explicitly until profile persistence lands.
+- Made profile MCP inventory profile-owned. `/profiles/{profile_id}/mcp/...`
+  now reads the selected profile's MCP section instead of settings/corp MCP
+  sections, `config/profiles/code/profile.toml` explicitly enables the real
+  built-in `local` MCP server, and unknown profile server ids fail closed.
+- Added service-wide runtime ledger routes `/security/latest|status`,
+  `/enforcement/latest|status`, and `/detection/latest|status`. These aggregate
+  per-VM `session.db` security-rule ledger rows through `DbReader`; detection
+  routes filter to rows with an explicit detection level.
 
 ### Added (security event rule spine)
 - Replaced callback-shaped Policy V2 authoring with one native rule contract
   over canonical `SecurityEvent`: `[corp.rules.*]`, `[profiles.rules.*]`, and
   provider convenience `[ai.<provider>.rules.*]` all compile into the same
   `SecurityRuleSet`.
-- Added typed rule actions `allow`, `ask`, `block`, `preprocess`, and
-  `postprocess`, plus optional `detection_level` metadata for
+- Added typed rule actions `allow`, `ask`, `block`, `preprocess`, `rewrite`,
+  and `postprocess`, plus optional `detection_level` metadata for
   `informational`, `low`, `medium`, `high`, and `critical` detections.
-- Added source-aware priority discipline: built-in defaults use priority `0`,
-  user/plugin rules default to `10`, corp-locked rules default negative, and
-  non-corp rules cannot use negative priorities.
+- Added source-aware priority discipline: built-in defaults use the named
+  `default` priority sentinel after the numeric user range, user/plugin rules
+  default to `10`, corp-locked rules default negative, and non-corp rules
+  cannot use negative priorities.
 - Added shared external rule files: both user and corp settings can reference
   native enforcement TOML with `[rule_files].enforcement` and Sigma YAML with
   `[rule_files].sigma`; both compile into the same runtime rules. Corp settings
@@ -62,60 +1574,167 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rule names, invalid priorities, invalid plugin shapes, and atomic rejection
   now fail closed before settings are written.
 - Added strict CEL validation against first-party `SecurityEvent` roots
-  (`http`, `dns`, `mcp`, `model`, `file`, `process`, `credential`, and
-  `snapshot`, and `security`) so stale callback-local fields fail before rules
-  persist.
-- Added a security-event engine that runs matched preprocess plugins before
+  (`http`, `dns`, `mcp`, `model`, `file`, `process`, and `security`) so stale
+  callback-local fields fail before rules persist. Credential substitution
+  remains a ledger event type, while snapshot lifecycle state is host recovery
+  state exposed through VM snapshot routes rather than CEL roots or
+  `session.db`.
+- Added typed runtime-family markers for first-party CEL roots versus
+  ledger-only `credential.substitution` rows, with regression tests tying the
+  markers to `SECURITY_EVENT_CEL_ROOTS`.
+- Replaced legacy `[profiles.defaults.*]` rule authoring with the visible
+  `[default.<domain>]` contract. Default rules still compile into ordinary late
+  CEL rules under `profiles.rules.default_<domain>`, and the old namespace is
+  rejected instead of aliased.
+- Removed static `tool_config_sources` from settings/profile contracts and the
+  settings UI response. Tool config observations now belong to runtime
+  plugin/security-ledger evidence with BLAKE3 references, and static
+  `tool_config_sources` tables fail closed.
+- Removed static credential/config-file metadata from `[ai.*]` provider
+  endpoint records. Provider records now carry routing/rule/discovery
+  information only; `credential_setting_id`, provider-level `credential_ref`,
+  and provider `files` fail closed, and settings provider cards no longer expose
+  brokered credential refs.
+- Removed provider status from `/settings/info` and the settings UI/model.
+  Provider-like behavior is no longer a settings object: profile/corp rules own
+  enforcement and credential/plugin runtime status owns credential evidence.
+- Stopped the credential broker from writing brokered references into settings.
+  Observed credentials are stored behind the credential-store boundary, emitted
+  to the substitution/security ledger, and can record provider discovery;
+  settings files no longer become a credential-reference inventory.
+- Added a security-event engine that runs configured preprocess plugins before
   detection/enforcement, evaluates CEL once against the canonical event, then
-  runs matched postprocess plugins only after the decision allows
+  runs configured postprocess plugins only after the decision allows
   materialization.
-- Added the typed plugin contract `plugin(rule, SecurityEvent) ->
-  SecurityEvent`; plugin failures fail closed, and matched plugin metadata is
-  recorded in the security rule ledger.
+- Added the typed plugin contract `plugin(SecurityEvent) -> SecurityEvent`;
+  plugins own their filtering and runtime state, plugin failures fail closed,
+  and plugin effects are recorded in the security rule ledger.
 - Added typed profile/corp plugin policy with `mode` and `detection_level`.
-  Enabled rule plugins append `SecurityDetectionEvent` records onto
+  Enabled plugins append `SecurityDetectionEvent` records onto
   `SecurityEvent.detections`, rules with `detection_level` append the same
-  reporting vector, and `rewrite` is the canonical mutation mode with
-  `redact`, `mutate`, and `neutralize` accepted as aliases.
-- Added the plugin/detection/enforcement endpoint taxonomy: `/plugins` reports
-  and updates plugin config globally, `/plugins/{id}` reports per-VM effective
-  plugin config, `/enforcements/evaluate` sends a test event through the real
-  engine, and `/detections/{id}/latest|info` plus
-  `/enforcements/{id}/latest|info` remain table-backed ledger views.
+  reporting vector, and `rewrite` is the canonical mutation mode.
+- Extended profile plugin API responses with backend-owned plugin metadata and
+  runtime status: stage, version, counters, errors, and brokered credential
+  references. The settings UI now reads brokered credential refs only from the
+  credential-broker plugin runtime status shape.
+- Hardened plugin edit requests so unknown fields are rejected instead of
+  ignored. Invalid modes, invalid detection levels, unknown plugins/profiles,
+  and credential-reference smuggling attempts fail closed.
+- Hardened profile skill mutation routes with typed, strict payloads. Add/edit
+  requests now reject unknown fields and empty paths before the current
+  profile-persistence gate returns `501 Not Implemented`.
+- Added the plugin/detection/enforcement endpoint taxonomy:
+  `/profiles/{profile_id}/plugins/list`,
+  `/profiles/{profile_id}/plugins/{plugin_id}/info`, and
+  `/profiles/{profile_id}/plugins/{plugin_id}/edit` report and update
+  profile-owned plugin config,
+  `/profiles/{profile_id}/enforcement/evaluate` sends a profile-scoped test
+  event through the real engine, and
+  `/vms/{vm_id}/detection/latest|status` plus
+  `/vms/{vm_id}/enforcement/latest|status` remain table-backed ledger views.
 - Added enforcement rule-management endpoints:
-  `POST|DELETE /enforcements/rules/{rule_id}` validate user profile rules
-  against the native `SecurityRuleProfile` compiler before writing
-  `user.toml`, and `POST /enforcements/reload` aliases the VM config reload
-  broadcast.
+  `PUT /profiles/{profile_id}/enforcement/rules/{rule_id}/edit` and
+  `DELETE /profiles/{profile_id}/enforcement/rules/{rule_id}/delete`
+  validate profile rules against the native `SecurityRuleProfile` compiler
+  before writing `user.toml`, and
+  `POST /profiles/{profile_id}/enforcement/reload` reloads that profile's
+  enforcement rules.
+- Replaced the retired `/corp-config` provisioning route with
+  `PUT /corp/edit`; the gateway and service now reject the old route instead
+  of forwarding it.
+- Added the rest of the corp plane routes: `GET /corp/info`,
+  `POST /corp/validate`, and `POST /corp/reload`, all forwarded explicitly by
+  the gateway.
+- Replaced the ambiguous `GET|POST /settings` route with
+  `GET /settings/info` and `PATCH /settings/edit`; the old magic settings
+  route now fails closed in the service and gateway.
+- Split core config mutation by owner: `PATCH /settings/edit` now uses the
+  UI-settings writer, while VM/security/AI behavior uses profile-owned config
+  writers. Credential brokerage state belongs to the broker plugin runtime
+  contract.
+- Added a first-class profile manifest contract covering profile identity,
+  description, icon SVG, web/shell/mobile availability, VM asset selection,
+  VM defaults, rule files/default rules, plugins, MCP servers, skills,
+  AI/provider convenience rules, and tool config source metadata.
+- Profile inventory now sources the built-in `default` profile summary from
+  the profile manifest contract instead of service-local placeholder text.
+- Removed retired settings utility routes `/settings/lint` and
+  `/settings/validate-key`; settings now expose only `info` and `edit` until
+  profile/corp validation and credential broker endpoints own those workflows.
+- Removed retired settings preset endpoints and UI selector; security/profile
+  defaults no longer mutate behavior through `/settings/presets`.
+- Removed preset metadata from `/settings/info`; settings responses now carry
+  settings tree/issues plus status fields only, not behavior presets.
+- Replaced the global `POST /reload-config` route with
+  `POST /profiles/{profile_id}/reload`; the old global reload route now fails
+  closed in the service and gateway.
 - Added `SerializableSecurityEvent` as the public evaluated-event wire DTO:
   every first-party event root is present, absent roots serialize as `null`,
   and raw credential observation buffers are excluded.
-- Added credential broker plugin support with Keychain-backed storage on macOS
-  and BLAKE3 `credential:blake3:<hex>` references in settings, logs, and
-  `session.db`; raw credentials stay broker-private.
+- Added credential broker plugin support with file-backed durable storage and
+  BLAKE3 `credential:blake3:<hex>` references in broker runtime status, logs,
+  and `session.db`; raw credentials stay broker-private.
 - Added brokered credential capture from observed HTTP headers/body responses
   and `.env` files, plus upstream-only substitution of broker references for
   allowed HTTP materialization.
 - Added a closed runtime security-event identity contract and routed HTTP/net,
   model, MCP, DNS, file, process exec/audit/completion, broker substitution,
   and snapshot session DB rows through the security-engine emitter handoff.
+- Removed the old MITM PolicyHook/Policy V2 runtime rails and the MCP built-in
+  legacy domain bridge. HTTP request, model request/response, framed MCP
+  request/response, MCP built-in HTTP tools, and DNS query blocking now enforce
+  through the canonical `SecurityEvent` + CEL rule path before dispatch.
+- Added contract tests proving built-in default rules match HTTP, DNS, MCP,
+  model, file, and process security events as ordinary late-priority CEL rules;
+  specific rules run first, and editing a default rule changes evaluation
+  without any hidden network fallback.
+- Removed retired web decision settings (`security.web.allow_read`,
+  `security.web.allow_write`, `security.web.custom_allow`, and
+  `security.web.custom_block`) from defaults, presets, builder schemas,
+  frontend fixtures, guest diagnostics, and integration fixtures. Network
+  settings now expose only mechanics such as `security.web.http_upstream_ports`;
+  HTTP/DNS allow/block behavior belongs to profile security rules.
+- Replaced global MCP service/gateway/frontend routes with profile/server
+  routes: servers live under `/profiles/{profile_id}/mcp/servers/list`, tools
+  live under `/profiles/{profile_id}/mcp/servers/{server_id}/tools/list`, and
+  tool edit/call/refresh operations are scoped to the same profile/server path.
+- Replaced global enforcement authoring routes with profile-owned routes:
+  `/profiles/{profile_id}/enforcement/evaluate`,
+  `/profiles/{profile_id}/enforcement/rules/{rule_id}/edit`,
+  `/profiles/{profile_id}/enforcement/rules/{rule_id}/delete`, and
+  `/profiles/{profile_id}/enforcement/reload`.
 - Routed explicit file import/export/read/write boundaries through the
   process-owned security-event emitter so `fs_events` and
   `security_rule_events` share the same primary event id without a service-side
   DB writer or fallback logger.
+- Added a release guard that keeps session event writes behind
+  `capsem_logger::DbWriter`: production protocol, plugin, security, service,
+  and process code may not open ad-hoc SQLite writers or insert event rows
+  directly.
 - Added a security rule forensic ledger: `security_rule_events` stores the
   triggering event id/type, rule id/name/action/detection level, rule snapshot,
   matched `SecurityEvent` payload, and trace id. `security_ask_events` records
   append-only pending/approved/denied ask lifecycle rows.
-- Added DB-backed security endpoints: `/security/{id}/latest` returns full
-  stored rule ledger rows and `/security/{id}/info` regenerates counters from
-  `session.db`.
+- Added DB-backed security endpoints: `/vms/{vm_id}/security/latest` returns
+  full stored rule ledger rows and `/vms/{vm_id}/security/status` regenerates
+  counters from `session.db`.
+- Replaced retired top-level VM lifecycle routes with the profile-era VM
+  namespace across service, gateway, CLI, MCP, tray, frontend, and tests:
+  `POST /vms/{vm_id}/pause`, `DELETE /vms/{vm_id}/delete`,
+  `POST /vms/{vm_id}/resume`, `POST /vms/{vm_id}/save`, and
+  `POST /vms/{vm_id}/fork`. The gateway now rejects the old
+  `/suspend`, `/delete`, `/resume`, `/persist`, and `/fork` route family.
+- Moved core VM create/list/info/stop routes into the same VM namespace across
+  service, gateway, CLI, MCP, tray, frontend, status aggregation, docs, and
+  tests: `POST /vms/create`, `GET /vms/list`,
+  `GET /vms/{vm_id}/info`, and `POST /vms/{vm_id}/stop`. The gateway now
+  rejects retired `/provision`, `/list`, `/info/{id}`, and `/stop/{id}` paths.
 - Added built-in provider-owned AI rules for OpenAI/Codex, Anthropic/Claude,
   Google/Gemini, and Ollama. The rules live under `[ai.<provider>.rules.*]`,
   merge as defaults < user < corp, enforce corp-only negative priorities, and
   compile into deterministic `profiles.rules.*` security-event rules whose
   matches are written to the `security_rule_events` session DB ledger and
-  exposed through `/security/{id}/latest`.
+  exposed through `/vms/{vm_id}/security/latest`.
 - Added Sigma import support that parses Sigma YAML into typed `SecurityRule`
   entries, derives valid rule ids/names, validates generated CEL against
   `SecurityEvent` roots, and keeps security-team detection authoring on the
@@ -135,11 +1754,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   latency, batch writes, shutdown flushes, and coalesced event pressure.
 
 ### Changed (security policy enforcement)
-- Unified HTTP, DNS, MCP, model, file, process, credential, and snapshot
-  detection/enforcement on the security-event rule engine. Producers now emit
-  canonical security events, evaluate the active `SecurityRuleSet`, and write
-  matched rule rows with the same primary event id as the underlying
-  `session.db` event.
+- Unified HTTP, DNS, MCP, model, file, and process detection/enforcement on
+  the security-event rule engine. Producers now emit canonical security events,
+  evaluate the active `SecurityRuleSet`, and write matched rule rows with the
+  same primary event id as the underlying `session.db` event. Credential
+  substitution and snapshot lifecycle writes remain canonical ledger event
+  types, not fake rule roots.
+- Removed the global MCP policy API/UI/CLI surface (`/mcp/policy`,
+  `capsem mcp policy`, and frontend MCP policy mutators). MCP runtime endpoints
+  now report mechanics only; MCP decisions must be expressed as security rules.
+- Removed the old `McpPolicy`/`ToolDecision` decision object from core config.
+  Security presets no longer write MCP tool permissions, retired
+  `mcp.global_policy`, `mcp.default_tool_permission`, and
+  `mcp.tool_permissions` keys fail closed at settings load, and MCP blocking
+  tests now use profile security rules.
+- Removed `NetworkPolicy::evaluate`, `PolicyDecision`, and
+  `NetworkPolicy::is_fully_blocked` from the network engine. Network policy
+  code now carries only mechanics such as DNS redirects, HTTP port metadata,
+  and body-capture settings; HTTP/DNS allow, ask, block, and default behavior
+  must come from profile/corp security rules.
+- Removed the remaining domain allow/read/write/default fields from
+  `NetworkPolicy` itself. The network object can no longer carry hidden
+  domain enforcement state; tests now assert default and provider behavior
+  through compiled `SecurityRuleSet` entries.
+- Stopped exporting retired web default toggles as guest authority env vars
+  (`CAPSEM_WEB_ALLOW_READ` and `CAPSEM_WEB_ALLOW_WRITE`). The guest now relies
+  on security events and rules for HTTP/DNS behavior rather than stale
+  settings-derived hints.
 - Replaced the old callback-demux rule authoring language with CEL over
   first-party event roots. Admin-visible rules use `match = ...` and typed
   actions rather than callback-local `on`/`if`/`decision` fields.
@@ -148,8 +1789,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   process exec/audit/completion, credential substitution, and snapshot events
   all pass through the shared security-event emitter and rule ledger.
 - Added VM and integration coverage proving configured security rules block,
-  ask, or log HTTP, DNS, MCP, model, file, process, credential, and snapshot
-  events without leaking denied request/response payloads into previews.
+  ask, or log HTTP, DNS, MCP, model, file, and process events without leaking
+  denied request/response payloads into previews.
 - Updated the policy product surface and docs around the new
   `SecurityEvent` rule contract, Sigma import, DB-backed latest/info
   endpoints, and forensic `session.db` ledger instead of generated
@@ -985,13 +2626,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with `port=11434, conn_type=http-mitm, decision=allowed,
   status=200`. As part of the verification,
   `DEFAULT_HTTP_UPSTREAM_PORTS` is bumped from `[80]` to
-  `[80, 11434]` so the host policy default mirrors the iptables
+  `[80, 3128, 3713, 8080, 11434]` so the host policy default mirrors the iptables
   rules in `capsem-init` -- otherwise port 11434 traffic gets
   redirected to 10080, hits the host proxy, and is rejected by
   the policy gate, which is the wrong default for the canonical
   local-LLM workflow this protocol path was designed for. New
-  ports get added by editing both lists in tandem until the
-  policy_config plumb (deferred follow-up) lands.
+  ports get added by editing the shared policy config and guest redirect lists
+  in tandem.
 - **T2 (agent-side): plain-HTTP listener + iptables redirects.**
   `capsem-net-proxy` now listens on `127.0.0.1:10080` in addition to
   the original `:10443`; a `run_listener(port)` helper drives the
@@ -1870,10 +3511,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed (observability)
 - **W6 trace_id wiring completed across capsem-logger / capsem-core /
   capsem-process.** The `trace_id` column on `net_events`, `mcp_calls`,
-  `tool_calls`, `tool_responses`, `fs_events`, `snapshot_events`, and
+  `tool_calls`, `tool_responses`, `fs_events`, and
   `audit_events` is now populated end-to-end. Write-side: every event
   emitter (`mitm_proxy`, `mcp/{gateway,builtin_tools,file_tools}`,
-  `fs_monitor`, `capsem-process`'s snapshot/audit paths) calls
+  `fs_monitor`, and `capsem-process` audit paths) calls
   `capsem_core::telemetry::ambient_capsem_trace_id()`. INSERT statements
   in `writer.rs` now include the new column. `tool_calls.trace_id` and
   `tool_responses.trace_id` fall back to the parent `model_calls.trace_id`
@@ -1949,7 +3590,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   doesn't lose context that pre-dates the trace propagation.
 
 - **`trace_id TEXT` column on every event table.** Added to
-  `mcp_calls`, `net_events`, `fs_events`, `snapshot_events`,
+  `mcp_calls`, `net_events`, `fs_events`,
   `tool_calls`, `tool_responses`, `audit_events` (model_calls and
   exec_events already had it). Indexes added on each. Fresh DBs get
   the column from `CREATE_SCHEMA`; existing DBs get it via
@@ -2168,13 +3809,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `JoinHandle::abort` does).
 
 ### Changed (kernel)
-- `guest/config/build.toml` ships `kernel_branch = "auto"` instead of a
+- The backend image spec ships `kernel_branch = "auto"` instead of a
   hardcoded `"6.6"`. `resolve_kernel_version("auto")` queries
   kernel.org/releases.json and picks the newest non-EOL longterm branch's
   latest patch (today: `6.18.26`). Pin to a specific branch by setting
   `kernel_branch = "X.Y"` (e.g. `"6.6"`) for reproducibility / security
   freeze. Killed the duplicated `"6.6"` literal in `models.py` /
-  `scaffold.py` -- single source of truth is now `build.toml`.
+  the removed scaffold rail -- single source of truth is now the profile-derived
+  backend image spec.
 
 ### Changed (bootstrap)
 - `bootstrap.sh` moved to the repo root (was `scripts/bootstrap.sh`).
@@ -2345,25 +3987,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.0.1776980020] - 2026-04-23
 
 ### Security
-- **Verify manifest signatures at boot before trusting asset hashes.**
-  The previous commit wired asset hash verification to the on-disk
-  `manifest.json`, but an attacker with write access to `assets/` could
-  swap both the rootfs and the manifest to match. Closed the gap with
-  minisign signature verification: the release pubkey
-  (`config/manifest-sign.pub`, key id `93A070CBB288AC9B`) is now baked
-  into `capsem-core` via `include_str!`, and
-  `asset_manager::load_verified_manifest_for_assets` rejects any
-  manifest whose sibling `.minisig` is missing or invalid. Release
-  builds (`cfg!(debug_assertions) == false`) hard-fail on a manifest
-  without a valid signature; debug builds allow unsigned manifests so
-  local dev loops with locally built assets keep working. Added the
-  `minisign-verify = "0.2"` crate; covered by 9 new unit tests
-  including verify-accepts/rejects-tampered-manifest/rejects-mangled-
-  signature/rejects-wrong-pubkey/bails-when-sig-required-but-missing/
-  accepts-unsigned-when-allowed/bails-on-bad-signature and a regression
-  guard that the baked pubkey file parses as valid minisign. Updated
-  `docs/src/content/docs/architecture/asset-pipeline.md` to describe
-  the full tamper-resistance chain.
+- **Simplified asset authorization to the profile/corp contract.** URLs are
+  profile/corp-selected, downloaded bytes are verified by BLAKE3 hash/size, and
+  release evidence is SBOM plus provenance attestations.
 
 - **Asset hash verification at boot was silently disabled on every release.**
   `crates/capsem-core/src/vm/boot.rs` read three expected hashes via
@@ -2388,9 +4014,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a manifest. Missing or malformed manifest falls back to disabled
   verification with an explicit `[boot-audit] asset hash verification
   disabled` log line, keeping dev loops without a manifest working.
-  Tamper resistance for release environments now depends on manifest
-  signature verification in the asset-download path; that path is a
-  separate, tracked gap.
   Updated `docs/src/content/docs/architecture/asset-pipeline.md` to
   describe the runtime-lookup flow (replacing the old "Compile-Time
   Hash Embedding" section) and fixed the mermaid diagram to match.
@@ -4516,7 +6139,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **MCP: `env` parameter** -- on `capsem_create` tool, inject environment variables into the guest.
 - **Next-gen daemon architecture (Sprint 1)** -- capsem now runs as a daemon service (`capsem-service`) that spawns isolated per-VM processes (`capsem-process`), mirroring Chrome's multi-process security model. The service manages VM lifecycle over a UDS API, while each process boots and owns exactly one VM.
 - **Full CLI client (`capsem`)** -- new subcommands: `start`, `stop`, `shell`, `list`/`ls`, `status`, `exec`, `delete`/`rm`, `info`, `logs`, `doctor`. The CLI communicates with the service daemon over `~/.capsem/service.sock`.
-- **`capsem-mcp` crate** -- standalone MCP server (stdio transport via `rmcp`) that bridges AI agent tool calls to the service API. Provides `capsem_create`, `capsem_exec`, `capsem_read_file`, `capsem_write_file`, `capsem_list`, `capsem_delete`, `capsem_info`, `capsem_inspect`, `capsem_inspect_schema`, `capsem_service_logs`, `capsem_vm_logs` tools.
+- **`capsem-mcp` crate** -- standalone MCP server (stdio transport via `rmcp`) that bridges AI agent tool calls to the service API. Provides `capsem_create`, `capsem_exec`, `capsem_read_file`, `capsem_write_file`, `capsem_list`, `capsem_delete`, `capsem_info`, `capsem_service_logs`, `capsem_vm_logs` tools.
 - **Structured IPC protocol** -- `capsem-proto` extended with `Exec`, `WriteFile`, `ReadFile`, `ReloadConfig`, `StartTerminalStream` commands and matching result variants. New `ipc_ext` module in `capsem-core` for framed message helpers.
 - **Service-level resource management** -- concurrent VM limit (`max_concurrent_vms`), per-VM CPU/RAM validation (1-8 CPUs, 256MB-16GB), stale instance cleanup, auto-remove flag, socket path length validation.
 - **Multi-version asset resolution** -- service resolves assets from `~/.capsem/assets/v{version}/` with arch-specific fallback.
@@ -4571,7 +6194,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **Cross-arch Docker builds fail on macOS** -- Docker's legacy builder shared intermediate layer cache across `--platform` values, causing arm64 layers to be reused for x86_64 builds. Fixed by requiring Docker BuildKit (buildx), which properly includes platform in cache keys. Added buildx to `just doctor` and `scripts/bootstrap.sh`.
-- **Snapshots tab shows nothing during long sessions** -- the tab called `callMcpTool('snapshots_list')` once on mount, never refreshed, and failed silently if the MCP gateway wasn't wired yet. Replaced with SQL queries against a new `snapshot_events` table in `session.db`, consistent with all other stats tabs. Each snapshot event stores a self-contained `(start_fs_event_id, stop_fs_event_id]` range for efficient per-snapshot change counts via `fs_events` cross-reference.
+- **Snapshots tab shows nothing during long sessions** -- the tab called `callMcpTool('snapshots_list')` once on mount, never refreshed, and failed silently if the MCP gateway wasn't wired yet. An intermediate implementation used SQL rows, but the current 1.3 contract supersedes that: snapshot state is exposed through VM snapshot routes and is not stored in `session.db`.
 - **Symlink loop hangs app on startup** -- `disk_usage_bytes()` used `is_dir()` / `metadata()` which follow symlinks. A `.venv/lib64 -> lib` relative symlink in session workspaces caused infinite recursion, hanging the app at boot. Fixed to use `symlink_metadata()` throughout. Added regression tests for symlink loops, absolute escapes, and real session timing.
 - **Wizard flashes briefly on app launch** -- the setup wizard appeared for one frame before settings finished loading. Added `!settingsStore.loading` guard to prevent the wizard from rendering until settings are fully resolved.
 - **KVM boot path compile errors** -- `vm/boot.rs` referenced `rootfs_path()` and `virtiofs_share()` methods that were renamed. Fixed to use `disk_path()` and `virtio_fs_share()`.
@@ -4959,7 +6582,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Wizard validates API keys in real-time against provider endpoints (spinner, check/X inline)
 - API key detection now checks `~/.config/openai/api_key` and `~/.anthropic/api_key`
-- Build verification documentation (SBOM, attestation, manifest signatures)
+- Build verification documentation (SBOM and attestation)
 
 ### Fixed
 - `svelte-check` failing on `dist/` build artifacts (excluded from tsconfig)
@@ -4977,7 +6600,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Rootfs removed from DMG bundle (was 463 MB, now ~15 MB) -- rootfs is downloaded on first launch
 - Build attestation (SBOM + provenance) restored after CI refactor
-- Manifest.json now signed with minisign (same key as updater artifacts)
+- Manifest metadata published with asset hashes and release attestations
 
 ## [0.9.3] - 2026-03-18
 
@@ -5576,8 +7199,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - SNI proxy replaced by MITM transparent proxy for full HTTP-level traffic inspection and policy enforcement
-- Domain policy (`DomainPolicy`) wrapped by `HttpPolicy` which adds method+path rules while preserving backward compatibility
-- `load_merged_policy()` now returns `HttpPolicy` instead of `DomainPolicy`
 - HTTPS proxy connections spawn as async tokio tasks instead of blocking threads
 - Control protocol split into disjoint `HostToGuest`/`GuestToHost` enums with reserved variants for file operations and lifecycle management
 - Guest agent boot sequence restructured: vsock connects first, receives clock + env from host before forking bash

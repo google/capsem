@@ -41,6 +41,8 @@ pub const TELEMETRY_DROPPED_TOTAL: &str = "mitm.telemetry_dropped_total";
 pub const TLS_HANDSHAKE_MS: &str = "mitm.tls_handshake_ms";
 pub const UPSTREAM_DIAL_MS: &str = "mitm.upstream_dial_ms";
 pub const HOOK_DURATION_MS: &str = "mitm.hook_duration_ms";
+pub const TELEMETRY_RESPONSE_END_DURATION_MS: &str = "mitm.telemetry_response_end_duration_ms";
+pub const TELEMETRY_STAGE_DURATION_MS: &str = "mitm.telemetry_stage_duration_ms";
 pub const REQUEST_BODY_BYTES: &str = "mitm.request_body_bytes";
 pub const RESPONSE_BODY_BYTES: &str = "mitm.response_body_bytes";
 pub const DNS_HANDLE_DURATION_MS: &str = "mitm.dns_handle_duration_ms";
@@ -140,6 +142,16 @@ pub fn describe_all() {
         HOOK_DURATION_MS,
         Unit::Milliseconds,
         "Wall time spent inside a single hook on_event() call."
+    );
+    describe_histogram!(
+        TELEMETRY_RESPONSE_END_DURATION_MS,
+        Unit::Milliseconds,
+        "Wall time spent in the HTTP telemetry response-end handler before handoff to async ledger work."
+    );
+    describe_histogram!(
+        TELEMETRY_STAGE_DURATION_MS,
+        Unit::Milliseconds,
+        "Wall time spent in one named HTTP telemetry stage before handoff to async ledger work."
     );
     describe_histogram!(
         REQUEST_BODY_BYTES,

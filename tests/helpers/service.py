@@ -10,7 +10,7 @@ import uuid
 
 from pathlib import Path
 
-from .constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
+from .constants import EXEC_READY_TIMEOUT
 from .sign import sign_binary
 from .uds_client import UdsHttpClient
 
@@ -20,6 +20,7 @@ PROCESS_BINARY = PROJECT_ROOT / "target/debug/capsem-process"
 GATEWAY_BINARY = PROJECT_ROOT / "target/debug/capsem-gateway"
 TRAY_BINARY = PROJECT_ROOT / "target/debug/capsem-tray"
 ASSETS_DIR = PROJECT_ROOT / "assets"
+PROFILES_DIR = PROJECT_ROOT / "target" / "config" / "profiles"
 
 
 ARTIFACT_MAX_FILE_BYTES = 25 * 1024 * 1024  # 25 MB hard cap per file
@@ -33,6 +34,38 @@ ARTIFACT_SKIP_NAMES = frozenset({
     "checkpoint.vzsave",
 })
 ARTIFACT_MAX_KEPT_DIRS = 20  # rotate: keep only the N most-recent failure dirs
+
+def _contains_profile_toml(profiles_dir: Path) -> bool:
+    return any(path.name == "profile.toml" for path in profiles_dir.glob("*/profile.toml"))
+
+
+def materialize_test_profiles(tmp_dir: Path) -> Path:
+    """Copy generated runtime profiles into a test run directory.
+
+    Checked-in profiles are source contracts and intentionally do not contain
+    asset hashes. VM-booting tests must use the materialized profiles generated
+    under target/config/profiles, matching the service/runtime rail.
+    """
+    profiles_dir = tmp_dir / "config" / "profiles"
+    if profiles_dir.exists():
+        if not _contains_profile_toml(profiles_dir):
+            raise RuntimeError(
+                f"generated profile directory contains no profile.toml: {profiles_dir}. "
+                "Run `just _materialize-config` or a just recipe that depends on it."
+            )
+        return profiles_dir
+    if not PROFILES_DIR.exists():
+        raise RuntimeError(
+            f"generated profile directory missing: {PROFILES_DIR}. "
+            "Run `just _materialize-config` or a just recipe that depends on it."
+        )
+    if not _contains_profile_toml(PROFILES_DIR):
+        raise RuntimeError(
+            f"generated profile directory contains no profile.toml: {PROFILES_DIR}. "
+            "Run `just _materialize-config` or a just recipe that depends on it."
+        )
+    shutil.copytree(PROFILES_DIR, profiles_dir)
+    return profiles_dir
 
 
 def preserve_tmp_dir_on_failure(tmp_dir):
@@ -172,9 +205,11 @@ def _rotate_artifacts(root, keep):
 class ServiceInstance:
     """A running capsem-service instance on an isolated socket."""
 
-    def __init__(self):
+    def __init__(self, *, assets_dir: Path | None = None):
         self.tmp_dir = Path(tempfile.mkdtemp(prefix="capsem-test-"))
         self.uds_path = self.tmp_dir / f"service-{uuid.uuid4().hex[:8]}.sock"
+        self.assets_dir = assets_dir
+        self.profiles_dir = None
         self.proc = None
         self._log_file = None
 
@@ -185,13 +220,23 @@ class ServiceInstance:
         sign_binary(GATEWAY_BINARY)
         sign_binary(TRAY_BINARY)
 
-        arch = "arm64" if os.uname().machine == "arm64" else "x86_64"
-        assets_dir = ASSETS_DIR / arch
+        assets_dir = self.assets_dir or ASSETS_DIR
+        if self.profiles_dir is None:
+            self.profiles_dir = materialize_test_profiles(self.tmp_dir)
+        if not self.profiles_dir.exists():
+            raise RuntimeError(
+                f"generated profile directory missing: {self.profiles_dir}. "
+                "Run `just _materialize-config` or a just recipe that depends on it."
+            )
 
         env = os.environ.copy()
         env["RUST_LOG"] = "debug"
         env["CAPSEM_RUN_DIR"] = str(self.tmp_dir)
         env["CAPSEM_HOME"] = str(self.tmp_dir)
+        env["CAPSEM_PROFILES_DIR"] = str(self.profiles_dir)
+        env["CAPSEM_CREDENTIAL_STORE_PATH"] = str(
+            self.tmp_dir / "credential-store.json"
+        )
         env["HOME"] = str(self.tmp_dir)
 
         log_path = self.tmp_dir / "service.log"
@@ -225,7 +270,7 @@ class ServiceInstance:
                 try:
                     result = subprocess.run(
                         ["curl", "-s", "--unix-socket", str(self.uds_path),
-                         "--max-time", "2", "http://localhost/list"],
+                         "--max-time", "2", "http://localhost/vms/list"],
                         capture_output=True, text=True, timeout=5,
                     )
                     if result.returncode == 0:
@@ -277,7 +322,7 @@ def wait_exec_ready(client, vm_name, timeout=EXEC_READY_TIMEOUT):
     """
     try:
         resp = client.post(
-            f"/exec/{vm_name}",
+            f"/vms/{vm_name}/exec",
             {"command": "echo ready", "timeout_secs": timeout},
             timeout=timeout + 5,
         )

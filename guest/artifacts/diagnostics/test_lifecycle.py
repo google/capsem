@@ -11,7 +11,6 @@ from conftest import run
 
 
 SYSUTIL_SYMLINKS = [
-    ("/sbin/shutdown", "/run/capsem-sysutil"),
     ("/sbin/halt", "/run/capsem-sysutil"),
     ("/sbin/poweroff", "/run/capsem-sysutil"),
     ("/sbin/reboot", "/run/capsem-sysutil"),
@@ -41,12 +40,9 @@ def test_capsem_sysutil_not_writable():
     assert writable == 0, f"/run/capsem-sysutil has write bits set (mode={oct(mode)})"
 
 
-def test_shutdown_help():
-    """shutdown --help should print capsem help text."""
-    result = run("shutdown --help")
-    assert result.returncode == 0, f"shutdown --help failed: {result.stderr}"
-    assert "capsem" in result.stdout.lower() or "sandbox" in result.stdout.lower(), \
-        f"shutdown --help output doesn't mention capsem: {result.stdout}"
+def test_shutdown_is_not_capsem_sysutil_alias():
+    """The TUI owns shutdown; the guest must not expose a capsem shutdown alias."""
+    assert not os.path.islink("/sbin/shutdown"), "/sbin/shutdown must not be a capsem alias"
 
 
 # -- VM identity --

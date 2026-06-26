@@ -1,0 +1,60 @@
+{
+  "version": "0.3.0",
+  "timestamp": 1781017822.1791599,
+  "hostname": "release-bench-dns-blocked",
+  "dns_load": {
+    "version": "1.0",
+    "qname": "blocked.example.com",
+    "qtype": 1,
+    "concurrency_levels": [
+      {
+        "concurrency": 1,
+        "duration_s": 10.0,
+        "total_requests": 15091,
+        "errors": 0,
+        "rps": 1509.1,
+        "p50_ms": 0.6440829999991848,
+        "p95_ms": 0.741583499999976,
+        "p99_ms": 0.8140493999999611,
+        "p999_ms": 1.4099857499996806,
+        "rss_peak_mb": 24.7578125,
+        "decision_distribution": {
+          "denied": 15091
+        }
+      },
+      {
+        "concurrency": 16,
+        "duration_s": 10.0,
+        "total_requests": 42141,
+        "errors": 0,
+        "rps": 4214.1,
+        "p50_ms": 3.2752920000014285,
+        "p95_ms": 12.489791000000139,
+        "p99_ms": 14.399816399998855,
+        "p999_ms": 15.91881750000028,
+        "rss_peak_mb": 26.31640625,
+        "decision_distribution": {
+          "denied": 42141
+        }
+      },
+      {
+        "concurrency": 64,
+        "duration_s": 10.0,
+        "total_requests": 39055,
+        "errors": 0,
+        "rps": 3905.5,
+        "p50_ms": 14.272207999997732,
+        "p95_ms": 30.33112520000003,
+        "p99_ms": 34.87302481999741,
+        "p999_ms": 37.12447357200147,
+        "rss_peak_mb": 30.81640625,
+        "decision_distribution": {
+          "denied": 39055
+        }
+      }
+    ]
+  },
+  "host_recorded_at": 1781017853.103043,
+  "arch": "arm64",
+  "corp_rule_file": "/var/folders/l5/jg8zh4215ll399vd5mcp9sp40000gn/T/capsem-bench-corp-1sneg4pl/corp.toml"
+}

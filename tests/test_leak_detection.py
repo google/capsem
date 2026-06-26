@@ -13,7 +13,6 @@ import sys
 import threading
 import time
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import psutil
 import pytest
@@ -40,6 +39,9 @@ class _FakeProc:
 
     def cmdline(self):
         return self._cmdline_impl()
+
+    def name(self):
+        return self.info["name"]
 
 
 @pytest.fixture

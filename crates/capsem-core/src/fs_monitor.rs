@@ -21,6 +21,7 @@ use tracing::{debug, info, warn};
 use capsem_logger::{DbWriter, FileAction, FileEvent};
 
 use crate::credential_broker::{broker_and_log_observations, parse_env_credentials};
+use crate::net::ai_traffic::TraceState;
 use crate::net::policy_config::SecurityRuleSet;
 
 /// Directories excluded from monitoring.
@@ -102,6 +103,7 @@ impl FsMonitor {
         strip_prefix: PathBuf,
         db: Arc<DbWriter>,
         security_rules: Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>,
+        trace_state: Arc<std::sync::Mutex<TraceState>>,
     ) -> anyhow::Result<Self> {
         let (event_tx, event_rx) = mpsc::channel::<Event>(1024);
         let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);
@@ -133,6 +135,7 @@ impl FsMonitor {
                     strip_prefix,
                     db,
                     security_rules,
+                    trace_state,
                 ));
             })
             .expect("failed to spawn fs_monitor thread");
@@ -162,6 +165,7 @@ impl FsMonitor {
         strip_prefix: PathBuf,
         db: Arc<DbWriter>,
         security_rules: Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>,
+        trace_state: Arc<std::sync::Mutex<TraceState>>,
     ) {
         let mut queue: Vec<QueuedEvent> = Vec::new();
         let mut dropped: u64 = 0;
@@ -171,13 +175,13 @@ impl FsMonitor {
             tokio::select! {
                 _ = shutdown_rx.recv() => {
                     // Final flush
-                    Self::flush(&mut queue, &mut dropped, &db, &security_rules).await;
+                    Self::flush(&mut queue, &mut dropped, &db, &security_rules, &trace_state).await;
                     debug!("host fs-monitor stopped");
                     break;
                 }
                 event = event_rx.recv() => {
                     let Some(event) = event else {
-                        Self::flush(&mut queue, &mut dropped, &db, &security_rules).await;
+                        Self::flush(&mut queue, &mut dropped, &db, &security_rules, &trace_state).await;
                         debug!("host fs-monitor channel closed");
                         break;
                     };
@@ -203,7 +207,7 @@ impl FsMonitor {
                     }
                 }
                 _ = tokio::time::sleep(flush_interval) => {
-                    Self::flush(&mut queue, &mut dropped, &db, &security_rules).await;
+                    Self::flush(&mut queue, &mut dropped, &db, &security_rules, &trace_state).await;
                 }
             }
         }
@@ -219,6 +223,7 @@ impl FsMonitor {
         dropped: &mut u64,
         db: &DbWriter,
         security_rules: &Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>,
+        trace_state: &Arc<std::sync::Mutex<TraceState>>,
     ) {
         if queue.is_empty() && *dropped == 0 {
             return;
@@ -252,7 +257,15 @@ impl FsMonitor {
                     let (old_action, old_fs_path) = pending
                         .insert(event.path.clone(), (event.action, event.fs_path.clone()))
                         .unwrap();
-                    Self::emit(db, security_rules, &event.path, &old_fs_path, old_action).await;
+                    Self::emit(
+                        db,
+                        security_rules,
+                        trace_state,
+                        &event.path,
+                        &old_fs_path,
+                        old_action,
+                    )
+                    .await;
                     emitted += 1;
                 }
                 None => {
@@ -263,7 +276,7 @@ impl FsMonitor {
 
         // Emit all remaining pending entries
         for (path, (action, fs_path)) in pending {
-            Self::emit(db, security_rules, &path, &fs_path, action).await;
+            Self::emit(db, security_rules, trace_state, &path, &fs_path, action).await;
             emitted += 1;
         }
 
@@ -275,6 +288,7 @@ impl FsMonitor {
     async fn emit(
         db: &DbWriter,
         security_rules: &Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>,
+        trace_state: &Arc<std::sync::Mutex<TraceState>>,
         path: &str,
         fs_path: &Path,
         action: FileAction,
@@ -285,6 +299,12 @@ impl FsMonitor {
             None
         };
         let rules = security_rules.read().unwrap().clone();
+        let trace_id = {
+            let state = trace_state.lock().unwrap_or_else(|e| e.into_inner());
+            state
+                .lookup_file_path(path)
+                .or_else(crate::telemetry::ambient_capsem_trace_id)
+        };
         let credential_ref =
             Self::broker_env_file_credentials(db, &rules, path, fs_path, action).await;
         crate::security_engine::emit_file_security_write_and_rules(
@@ -296,7 +316,7 @@ impl FsMonitor {
                 action,
                 path: path.to_string(),
                 size,
-                trace_id: crate::telemetry::ambient_capsem_trace_id(),
+                trace_id,
                 credential_ref,
             },
         )
@@ -339,420 +359,4 @@ fn is_env_candidate(path: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::net::policy_config::{SecurityRuleProfile, SecurityRuleSource};
-
-    struct EnvGuard {
-        old_user: Option<String>,
-        old_home: Option<String>,
-        old_store: Option<String>,
-    }
-
-    impl EnvGuard {
-        fn install(
-            user_config: &std::path::Path,
-            home: &std::path::Path,
-            test_store: &std::path::Path,
-        ) -> Self {
-            let old_user = std::env::var("CAPSEM_USER_CONFIG").ok();
-            let old_home = std::env::var("HOME").ok();
-            let old_store = std::env::var(crate::credential_broker::TEST_STORE_ENV).ok();
-            std::env::set_var("CAPSEM_USER_CONFIG", user_config);
-            std::env::set_var("HOME", home);
-            std::env::set_var(crate::credential_broker::TEST_STORE_ENV, test_store);
-            Self {
-                old_user,
-                old_home,
-                old_store,
-            }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            match &self.old_user {
-                Some(v) => std::env::set_var("CAPSEM_USER_CONFIG", v),
-                None => std::env::remove_var("CAPSEM_USER_CONFIG"),
-            }
-            match &self.old_home {
-                Some(v) => std::env::set_var("HOME", v),
-                None => std::env::remove_var("HOME"),
-            }
-            match &self.old_store {
-                Some(v) => std::env::set_var(crate::credential_broker::TEST_STORE_ENV, v),
-                None => std::env::remove_var(crate::credential_broker::TEST_STORE_ENV),
-            }
-        }
-    }
-
-    fn empty_security_rules() -> Arc<std::sync::RwLock<Arc<SecurityRuleSet>>> {
-        Arc::new(std::sync::RwLock::new(Arc::new(SecurityRuleSet::new(
-            Vec::new(),
-        ))))
-    }
-
-    #[test]
-    fn should_exclude_git() {
-        assert!(should_exclude(Path::new(".git")));
-        assert!(should_exclude(Path::new("project/.git/objects")));
-    }
-
-    #[test]
-    fn should_exclude_node_modules() {
-        assert!(should_exclude(Path::new("node_modules")));
-        assert!(should_exclude(Path::new("project/node_modules/express")));
-    }
-
-    #[test]
-    fn should_not_exclude_normal_paths() {
-        assert!(!should_exclude(Path::new("project/src/app.js")));
-        assert!(!should_exclude(Path::new("README.md")));
-    }
-
-    #[test]
-    fn should_not_exclude_partial_name() {
-        assert!(!should_exclude(Path::new(".github/workflows")));
-        assert!(!should_exclude(Path::new("targets/debug")));
-    }
-
-    #[test]
-    fn env_candidate_matches_dotenv_files_only() {
-        assert!(is_env_candidate(".env"));
-        assert!(is_env_candidate("project/.env.local"));
-        assert!(!is_env_candidate("project/env.txt"));
-        assert!(!is_env_candidate("project/not.env"));
-    }
-
-    #[test]
-    fn event_to_action_maps_correctly() {
-        assert_eq!(
-            event_to_action(&EventKind::Create(notify::event::CreateKind::File)),
-            Some(FileAction::Created)
-        );
-        assert_eq!(
-            event_to_action(&EventKind::Modify(notify::event::ModifyKind::Data(
-                notify::event::DataChange::Content
-            ))),
-            Some(FileAction::Modified)
-        );
-        assert_eq!(
-            event_to_action(&EventKind::Remove(notify::event::RemoveKind::File)),
-            Some(FileAction::Deleted)
-        );
-        assert_eq!(
-            event_to_action(&EventKind::Access(notify::event::AccessKind::Read)),
-            None
-        );
-    }
-
-    // -- flush coalescing tests --
-
-    /// Test the coalescing logic by extracting it into a pure function.
-    /// Returns the list of (path, action) pairs that would be emitted.
-    fn coalesce(events: &[(&str, FileAction)]) -> Vec<(String, FileAction)> {
-        let mut pending: HashMap<String, FileAction> = HashMap::new();
-        let mut result = Vec::new();
-
-        for (path, action) in events {
-            let path = path.to_string();
-            match pending.get(&path) {
-                Some(&existing) if existing == *action => {
-                    // Same path, same action -- coalesce
-                }
-                Some(_) => {
-                    // Same path, different action -- emit old, store new
-                    let old = pending.insert(path.clone(), *action).unwrap();
-                    result.push((path, old));
-                }
-                None => {
-                    pending.insert(path, *action);
-                }
-            }
-        }
-
-        for (path, action) in pending {
-            result.push((path, action));
-        }
-        result
-    }
-
-    #[test]
-    fn flush_coalesces_same_action_same_path() {
-        let result = coalesce(&[
-            ("file.txt", FileAction::Modified),
-            ("file.txt", FileAction::Modified),
-            ("file.txt", FileAction::Modified),
-        ]);
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].1, FileAction::Modified);
-    }
-
-    #[test]
-    fn flush_preserves_different_actions_same_path() {
-        let result = coalesce(&[
-            ("file.txt", FileAction::Created),
-            ("file.txt", FileAction::Deleted),
-        ]);
-        assert_eq!(result.len(), 2);
-        let actions: Vec<_> = result.iter().map(|(_, a)| *a).collect();
-        assert!(actions.contains(&FileAction::Created));
-        assert!(actions.contains(&FileAction::Deleted));
-    }
-
-    #[test]
-    fn flush_different_paths_not_coalesced() {
-        let result = coalesce(&[
-            ("a.txt", FileAction::Modified),
-            ("b.txt", FileAction::Modified),
-        ]);
-        assert_eq!(result.len(), 2);
-    }
-
-    #[test]
-    fn flush_empty_queue_is_noop() {
-        let result = coalesce(&[]);
-        assert_eq!(result.len(), 0);
-    }
-
-    #[test]
-    fn flush_create_modify_delete_sequence() {
-        let result = coalesce(&[
-            ("file.txt", FileAction::Created),
-            ("file.txt", FileAction::Modified),
-            ("file.txt", FileAction::Modified),
-            ("file.txt", FileAction::Modified),
-            ("file.txt", FileAction::Deleted),
-        ]);
-        // created -> modified (emits created), modified -> modified (coalesced),
-        // modified -> deleted (emits modified), remaining: deleted = 3 total
-        assert_eq!(result.len(), 3);
-        let actions: Vec<_> = result.iter().map(|(_, a)| *a).collect();
-        assert!(actions.contains(&FileAction::Created));
-        assert!(actions.contains(&FileAction::Modified));
-        assert!(actions.contains(&FileAction::Deleted));
-    }
-
-    #[test]
-    fn flush_interleaved_paths() {
-        let result = coalesce(&[
-            ("a.txt", FileAction::Modified),
-            ("b.txt", FileAction::Created),
-            ("a.txt", FileAction::Modified),
-            ("b.txt", FileAction::Modified),
-        ]);
-        // a.txt: 2x modified -> 1 emitted (coalesced)
-        // b.txt: created then modified -> 2 emitted
-        assert_eq!(result.len(), 3);
-    }
-
-    #[test]
-    fn flush_modify_modify_delete() {
-        // Common pattern: file saved multiple times then deleted
-        let result = coalesce(&[
-            ("temp.txt", FileAction::Modified),
-            ("temp.txt", FileAction::Modified),
-            ("temp.txt", FileAction::Deleted),
-        ]);
-        assert_eq!(result.len(), 2);
-        let actions: Vec<_> = result.iter().map(|(_, a)| *a).collect();
-        assert!(actions.contains(&FileAction::Modified));
-        assert!(actions.contains(&FileAction::Deleted));
-    }
-
-    #[test]
-    fn flush_create_delete_create() {
-        // Edge case: file created, deleted, created again
-        let result = coalesce(&[
-            ("f.txt", FileAction::Created),
-            ("f.txt", FileAction::Deleted),
-            ("f.txt", FileAction::Created),
-        ]);
-        // created -> deleted (emits created), deleted -> created (emits deleted),
-        // remaining: created = 3 total
-        assert_eq!(result.len(), 3);
-    }
-
-    #[test]
-    fn queue_overflow_caps_at_max() {
-        let mut queue: Vec<QueuedEvent> = Vec::new();
-        let mut dropped = 0u64;
-        // Fill queue to capacity
-        for i in 0..MAX_QUEUE_SIZE {
-            queue.push(QueuedEvent {
-                path: format!("file_{}.txt", i),
-                fs_path: PathBuf::from(format!("file_{}.txt", i)),
-                action: FileAction::Modified,
-            });
-        }
-        // One more should increment dropped
-        if queue.len() >= MAX_QUEUE_SIZE {
-            dropped += 1;
-        }
-        assert_eq!(queue.len(), MAX_QUEUE_SIZE);
-        assert_eq!(dropped, 1);
-    }
-
-    #[tokio::test]
-    async fn emit_brokers_env_credentials_and_persists_reference() {
-        let _lock = crate::credential_broker::TEST_ENV_LOCK.lock().await;
-        let dir = tempfile::tempdir().unwrap();
-        let db_path = dir.path().join("session.db");
-        let env_path = dir.path().join(".env");
-        let user_config = dir.path().join("user.toml");
-        let test_store = dir.path().join("credential-store.json");
-        let _guard = EnvGuard::install(&user_config, dir.path(), &test_store);
-        std::fs::write(&env_path, "OPENAI_API_KEY=sk-env-secret\n").unwrap();
-
-        let db = DbWriter::open(&db_path, 64).unwrap();
-        FsMonitor::emit(
-            &db,
-            &empty_security_rules(),
-            ".env",
-            &env_path,
-            FileAction::Modified,
-        )
-        .await;
-
-        let mut seen = false;
-        for _ in 0..50 {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-            let conn = rusqlite::Connection::open(&db_path).unwrap();
-            let file_ref: Option<String> = conn
-                .query_row(
-                    "SELECT credential_ref FROM fs_events WHERE path = '.env'",
-                    [],
-                    |row| row.get(0),
-                )
-                .ok();
-            let Some(file_ref) = file_ref else {
-                continue;
-            };
-            let sub_count: i64 = conn
-                .query_row(
-                    "SELECT COUNT(*) FROM substitution_events WHERE substitution_ref = ?1 AND source = '.env:OPENAI_API_KEY'",
-                    [&file_ref],
-                    |row| row.get(0),
-                )
-                .unwrap();
-            if sub_count == 1 {
-                seen = true;
-                break;
-            }
-        }
-
-        assert!(seen, "expected .env file event and substitution rows");
-        let db_bytes = std::fs::read(&db_path).unwrap();
-        assert!(!String::from_utf8_lossy(&db_bytes).contains("sk-env-secret"));
-    }
-
-    #[tokio::test]
-    async fn emit_writes_file_security_rule_ledger_row() {
-        let dir = tempfile::tempdir().unwrap();
-        let db_path = dir.path().join("session.db");
-        let file_path = dir.path().join("skill.md");
-        std::fs::write(&file_path, "# skill").unwrap();
-        let db = DbWriter::open(&db_path, 64).unwrap();
-        let profile = SecurityRuleProfile::parse_toml(
-            r#"
-[profiles.rules.file_create_skill]
-name = "file_create_skill"
-action = "allow"
-detection_level = "informational"
-match = 'file.create.name == "skill.md" && file.create.ext == "md"'
-"#,
-        )
-        .unwrap();
-        let rules = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).unwrap();
-        let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(rules)));
-
-        FsMonitor::emit(
-            &db,
-            &security_rules,
-            "skill.md",
-            &file_path,
-            FileAction::Created,
-        )
-        .await;
-        db.shutdown_blocking();
-
-        let conn = rusqlite::Connection::open(&db_path).unwrap();
-        let joined: (String, String) = conn
-            .query_row(
-                "SELECT fs_events.event_id, security_rule_events.rule_id
-                 FROM fs_events
-                 JOIN security_rule_events ON security_rule_events.event_id = fs_events.event_id
-                 WHERE fs_events.path = 'skill.md'",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .unwrap();
-        assert_eq!(joined.0.len(), 12);
-        assert_eq!(joined.1, "profiles.rules.file_create_skill");
-    }
-
-    #[tokio::test]
-    async fn emit_records_block_rules_as_audit_only_file_event() {
-        let dir = tempfile::tempdir().unwrap();
-        let db_path = dir.path().join("session.db");
-        let file_path = dir.path().join("blocked.txt");
-        std::fs::write(&file_path, "already materialized").unwrap();
-        let db = DbWriter::open(&db_path, 64).unwrap();
-        let profile = SecurityRuleProfile::parse_toml(
-            r#"
-[profiles.rules.file_monitor_block_seen]
-name = "file_monitor_block_seen"
-action = "block"
-detection_level = "high"
-match = 'file.write.path == "blocked.txt"'
-"#,
-        )
-        .unwrap();
-        let rules = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).unwrap();
-        let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(rules)));
-
-        FsMonitor::emit(
-            &db,
-            &security_rules,
-            "blocked.txt",
-            &file_path,
-            FileAction::Modified,
-        )
-        .await;
-        db.shutdown_blocking();
-
-        let conn = rusqlite::Connection::open(&db_path).unwrap();
-        let fs_action: String = conn
-            .query_row(
-                "SELECT action FROM fs_events WHERE path = 'blocked.txt'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(fs_action, "modified");
-        let (event_type, rule_action, detection_level): (String, String, String) = conn
-            .query_row(
-                "SELECT event_type, rule_action, detection_level
-                 FROM security_rule_events
-                 WHERE rule_id = 'profiles.rules.file_monitor_block_seen'",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .unwrap();
-        assert_eq!(event_type, "file.event");
-        assert_eq!(rule_action, "block");
-        assert_eq!(detection_level, "high");
-        let import_export_rows: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM security_rule_events
-                 WHERE event_type IN ('file.import', 'file.export')",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(
-            import_export_rows, 0,
-            "fs_monitor audit events must not masquerade as boundary gates"
-        );
-    }
-}
+mod tests;

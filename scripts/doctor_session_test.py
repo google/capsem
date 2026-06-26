@@ -6,23 +6,34 @@ the session.db and main.db to verify that all telemetry pipelines recorded
 data correctly during the diagnostic run.
 
 Capsem-doctor exercises network (allowed + denied domains), filesystem
-(test file writes), and MCP (tool discovery + invocation) -- but NOT
-AI model calls. This test validates that all of those events were captured.
+(test file writes), MCP (tool discovery + invocation), and hermetic
+model-shaped traffic through the local mock server. This test validates
+that all of those events were captured.
 
 Usage:
     python3 scripts/doctor_session_test.py              # uses target/debug/capsem
     python3 scripts/doctor_session_test.py --binary ./capsem --assets ./assets
+
+Ironbank note: this script is a black-box ledger validator. Do not weaken it
+into status-only checks, row-exists checks, skipped cases, slow/optional cases,
+or Rust-internal expectations. Release-critical cases belong in
+tests/ironbank/ and must assert the full public ledger.
 """
 
 import argparse
 import gzip
 import json
 import os
-import re
 import sqlite3
 import subprocess
 import sys
 from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from mock_server import start_mock_server, stop_process  # noqa: E402
 
 BOLD = "\033[1m"
 DIM = "\033[2m"
@@ -32,8 +43,27 @@ YELLOW = "\033[33m"
 CYAN = "\033[36m"
 RESET = "\033[0m"
 
-SESSIONS_DIR = Path.home() / ".capsem" / "run" / "sessions"
-MAIN_DB = Path.home() / ".capsem" / "sessions" / "main.db"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+MOCK_SERVER_ENV = "CAPSEM_MOCK_SERVER_BASE_URL"
+
+
+def _capsem_home() -> Path:
+    env = os.environ.get("CAPSEM_HOME")
+    if env:
+        return Path(env)
+    return Path.home() / ".capsem"
+
+
+def _run_dir() -> Path:
+    env = os.environ.get("CAPSEM_RUN_DIR")
+    if env:
+        return Path(env)
+    return _capsem_home() / "run"
+
+
+CAPSEM_HOME = _capsem_home()
+SESSIONS_DIR = _run_dir() / "sessions"
+MAIN_DB = CAPSEM_HOME / "sessions" / "main.db"
 
 
 class Results:
@@ -67,7 +97,7 @@ class Results:
         return len(self.failed) == 0
 
 
-def run_doctor(binary: str, assets_dir: str) -> tuple[str, int]:
+def run_doctor(binary: str, assets_dir: str, mock_base_url: str) -> tuple[str, int]:
     """Boot the VM with capsem-doctor, return (session_id, exit_code).
 
     Finds the session by looking for the newest run-* dir created during
@@ -76,6 +106,7 @@ def run_doctor(binary: str, assets_dir: str) -> tuple[str, int]:
     env = {
         **os.environ,
         "CAPSEM_ASSETS_DIR": assets_dir,
+        MOCK_SERVER_ENV: mock_base_url,
         "RUST_LOG": "capsem=warn",
     }
 
@@ -190,58 +221,75 @@ def verify_session(session_id: str) -> bool:
         if "deleted" in action_map:
             r.ok(f"deleted fs_events: {action_map['deleted']}")
 
-    # -- mcp_calls ---------------------------------------------------------
-    print(f"\n{BOLD}mcp_calls{RESET}")
-    mcp_count = conn.execute("SELECT COUNT(*) FROM mcp_calls").fetchone()[0]
+    # -- MCP-origin tool_calls ---------------------------------------------
+    print(f"\n{BOLD}MCP-origin tool_calls{RESET}")
+    mcp_table = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='mcp_calls'"
+    ).fetchone()
+    r.check(
+        mcp_table is None,
+        "mcp_calls table absent",
+        "mcp_calls table still exists; tool invocations must use tool_calls",
+    )
+    mcp_count = conn.execute(
+        "SELECT COUNT(*) FROM tool_calls WHERE origin = 'mcp'"
+    ).fetchone()[0]
     r.check(
         mcp_count > 0,
-        f"{mcp_count} mcp_calls recorded",
-        "no mcp_calls recorded (guest MCP endpoint may not be logging)",
+        f"{mcp_count} MCP-origin tool_calls recorded",
+        "no MCP-origin tool_calls recorded (guest MCP endpoint may not be logging)",
     )
 
-    if mcp_count > 0:
-        mcp_methods = conn.execute(
-            "SELECT DISTINCT method FROM mcp_calls"
-        ).fetchall()
-        methods = {row["method"] for row in mcp_methods}
-        r.check(
-            "initialize" in methods,
-            "MCP initialize logged",
-            "MCP initialize NOT logged",
-        )
-        r.check(
-            "tools/list" in methods,
-            "MCP tools/list logged",
-            "MCP tools/list NOT logged",
-        )
-        r.check(
-            "tools/call" in methods,
-            "MCP tools/call logged",
-            "MCP tools/call NOT logged",
-        )
-
-    # -- model_calls (should be empty) -------------------------------------
-    print(f"\n{BOLD}model_calls (regression check){RESET}")
+    # -- model_calls -------------------------------------------------------
+    print(f"\n{BOLD}model_calls{RESET}")
     model_count = conn.execute("SELECT COUNT(*) FROM model_calls").fetchone()[0]
     r.check(
-        model_count == 0,
-        "0 model_calls (capsem-doctor does not call LLMs)",
-        f"{model_count} model_calls found (regression: something is misidentifying traffic as LLM calls)",
+        model_count > 0,
+        f"{model_count} model_calls recorded",
+        "no model_calls recorded (local OpenAI-compatible fixture parsing may have failed)",
     )
+    if model_count > 0:
+        fixture_model = conn.execute(
+            "SELECT * FROM model_calls"
+            " WHERE provider = 'openai'"
+            " AND model = 'mock-local'"
+            " AND path = '/v1/chat/completions'"
+            " ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        r.check(
+            fixture_model is not None,
+            "mock-local OpenAI-compatible model_call recorded",
+            "mock-local OpenAI-compatible model_call missing",
+        )
+        if fixture_model is not None:
+            r.check(
+                (fixture_model["input_tokens"] or 0) > 0
+                and (fixture_model["output_tokens"] or 0) > 0,
+                "mock-local model_call has token usage",
+                "mock-local model_call missing token usage",
+            )
 
-    # -- tool_calls / tool_responses (should be empty) ---------------------
-    print(f"\n{BOLD}tool_calls / tool_responses (regression check){RESET}")
+    # -- tool_calls / tool_responses ---------------------------------------
+    print(f"\n{BOLD}tool_calls / tool_responses{RESET}")
     tc_count = conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0]
     tr_count = conn.execute("SELECT COUNT(*) FROM tool_responses").fetchone()[0]
     r.check(
-        tc_count == 0,
-        "0 tool_calls (no AI agent tool use in capsem-doctor)",
-        f"{tc_count} tool_calls found (regression)",
+        tc_count > 0,
+        f"{tc_count} tool_calls recorded",
+        "no tool_calls recorded (mock model fixture tool call parsing may have failed)",
+    )
+    fixture_tool_call = conn.execute(
+        "SELECT COUNT(*) FROM tool_calls WHERE tool_name = 'fixture_lookup'"
+    ).fetchone()[0]
+    r.check(
+        fixture_tool_call > 0,
+        f"fixture_lookup tool_calls recorded: {fixture_tool_call}",
+        "fixture_lookup tool_call missing",
     )
     r.check(
         tr_count == 0,
-        "0 tool_responses (no AI agent tool use in capsem-doctor)",
-        f"{tr_count} tool_responses found (regression)",
+        "0 tool_responses (fixture emits a request-side tool call only)",
+        f"{tr_count} tool_responses found (unexpected)",
     )
 
     conn.close()
@@ -271,16 +319,16 @@ def verify_session(session_id: str) -> bool:
                 "main.db total_requests = 0 (rollup failed)",
             )
             r.check(
-                row["total_mcp_calls"] > 0,
-                f"main.db total_mcp_calls = {row['total_mcp_calls']}",
-                "main.db total_mcp_calls = 0 (rollup failed)",
+                row["total_tool_calls"] > 0,
+                f"main.db total_tool_calls = {row['total_tool_calls']}",
+                "main.db total_tool_calls = 0 (rollup failed)",
             )
 
             # Cross-check: main.db rollup matches session.db actuals.
             sconn = sqlite3.connect(str(SESSIONS_DIR / session_id / "session.db"))
             actual_fs = sconn.execute("SELECT COUNT(*) FROM fs_events").fetchone()[0]
             actual_net = sconn.execute("SELECT COUNT(*) FROM net_events").fetchone()[0]
-            actual_mcp = sconn.execute("SELECT COUNT(*) FROM mcp_calls").fetchone()[0]
+            actual_tools = sconn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0]
             sconn.close()
 
             r.check(
@@ -294,9 +342,9 @@ def verify_session(session_id: str) -> bool:
                 f"rollup total_requests ({row['total_requests']}) != session.db ({actual_net})",
             )
             r.check(
-                row["total_mcp_calls"] == actual_mcp,
-                f"rollup total_mcp_calls ({row['total_mcp_calls']}) matches session.db ({actual_mcp})",
-                f"rollup total_mcp_calls ({row['total_mcp_calls']}) != session.db ({actual_mcp})",
+                row["total_tool_calls"] == actual_tools,
+                f"rollup total_tool_calls ({row['total_tool_calls']}) matches session.db ({actual_tools})",
+                f"rollup total_tool_calls ({row['total_tool_calls']}) != session.db ({actual_tools})",
             )
         else:
             r.fail(f"session {session_id} not found in main.db")
@@ -339,7 +387,7 @@ def verify_session(session_id: str) -> bool:
 
     if vm_log_path.exists():
         vm_log_content = vm_log_path.read_text()
-        vm_log_lines = [l for l in vm_log_content.splitlines() if l.strip()]
+        vm_log_lines = [line for line in vm_log_content.splitlines() if line.strip()]
         r.check(
             len(vm_log_lines) >= 3,
             f"{len(vm_log_lines)} entries in process.log",
@@ -399,7 +447,14 @@ def main():
     )
     args = parser.parse_args()
 
-    session_id, exit_code = run_doctor(args.binary, args.assets)
+    mock_proc = None
+    try:
+        mock_proc, ready = start_mock_server()
+        mock_base_url = ready["base_url"]
+        print(f"{BOLD}Local mock server:{RESET} {mock_base_url}")
+        session_id, exit_code = run_doctor(args.binary, args.assets, mock_base_url)
+    finally:
+        stop_process(mock_proc)
 
     # capsem-doctor must pass -- a failure is itself a test failure.
     if exit_code != 0:

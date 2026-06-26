@@ -25,7 +25,7 @@ fn test_app(token: &str) -> Router {
         .route("/", get(|| async { "health" }))
         .route("/health", get(|| async { "health" }))
         .route("/token", get(|| async { "token" }))
-        .route("/list", get(|| async { "ok" }))
+        .route("/vms/list", get(|| async { "ok" }))
         .route("/status", get(|| async { "status" }))
         .route("/terminal/{id}", get(|| async { "terminal" }))
         .layer(axum::middleware::from_fn_with_state(
@@ -175,7 +175,12 @@ async fn health_endpoint_requires_no_auth() {
 async fn rejects_request_without_token() {
     let app = test_app("secret-token");
     let resp = app
-        .oneshot(Request::builder().uri("/list").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/vms/list")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
@@ -192,7 +197,7 @@ async fn rejects_request_with_wrong_token() {
     let resp = app
         .oneshot(
             Request::builder()
-                .uri("/list")
+                .uri("/vms/list")
                 .header("authorization", "Bearer wrong-token")
                 .body(Body::empty())
                 .unwrap(),
@@ -208,7 +213,7 @@ async fn accepts_request_with_valid_token() {
     let resp = app
         .oneshot(
             Request::builder()
-                .uri("/list")
+                .uri("/vms/list")
                 .header("authorization", "Bearer my-token")
                 .body(Body::empty())
                 .unwrap(),
@@ -227,7 +232,7 @@ async fn rejects_malformed_auth_header() {
         .clone()
         .oneshot(
             Request::builder()
-                .uri("/list")
+                .uri("/vms/list")
                 .header("authorization", "tok")
                 .body(Body::empty())
                 .unwrap(),
@@ -240,7 +245,7 @@ async fn rejects_malformed_auth_header() {
     let resp = app
         .oneshot(
             Request::builder()
-                .uri("/list")
+                .uri("/vms/list")
                 .header("authorization", "Basic dG9rOg==")
                 .body(Body::empty())
                 .unwrap(),
@@ -256,7 +261,7 @@ async fn rejects_empty_bearer_token() {
     let resp = app
         .oneshot(
             Request::builder()
-                .uri("/list")
+                .uri("/vms/list")
                 .header("authorization", "Bearer ")
                 .body(Body::empty())
                 .unwrap(),
@@ -286,7 +291,7 @@ async fn post_to_health_requires_auth() {
 #[tokio::test]
 async fn all_non_root_paths_require_auth() {
     let app = test_app("tok");
-    for path in ["/status", "/list"] {
+    for path in ["/status", "/vms/list"] {
         let resp = app
             .clone()
             .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
@@ -308,7 +313,7 @@ async fn rejects_double_space_bearer() {
     let resp = app
         .oneshot(
             Request::builder()
-                .uri("/list")
+                .uri("/vms/list")
                 .header("authorization", "Bearer  tok")
                 .body(Body::empty())
                 .unwrap(),
@@ -324,7 +329,7 @@ async fn rejects_lowercase_bearer() {
     let resp = app
         .oneshot(
             Request::builder()
-                .uri("/list")
+                .uri("/vms/list")
                 .header("authorization", "bearer tok")
                 .body(Body::empty())
                 .unwrap(),
@@ -340,7 +345,7 @@ async fn rejects_tab_separated_bearer() {
     let resp = app
         .oneshot(
             Request::builder()
-                .uri("/list")
+                .uri("/vms/list")
                 .header("authorization", "Bearer\ttok")
                 .body(Body::empty())
                 .unwrap(),
@@ -356,7 +361,7 @@ async fn rejects_token_with_trailing_whitespace() {
     let resp = app
         .oneshot(
             Request::builder()
-                .uri("/list")
+                .uri("/vms/list")
                 .header("authorization", "Bearer tok ")
                 .body(Body::empty())
                 .unwrap(),
@@ -374,7 +379,7 @@ async fn rejects_non_ascii_auth_header() {
     let resp = app
         .oneshot(
             Request::builder()
-                .uri("/list")
+                .uri("/vms/list")
                 .header("authorization", hv)
                 .body(Body::empty())
                 .unwrap(),
@@ -480,11 +485,11 @@ async fn terminal_rejects_wrong_query_param_token() {
 #[tokio::test]
 async fn non_terminal_path_ignores_query_param_token() {
     let app = test_app("tok");
-    // /list with ?token= should still require header auth
+    // /vms/list with ?token= should still require header auth
     let resp = app
         .oneshot(
             Request::builder()
-                .uri("/list?token=tok")
+                .uri("/vms/list?token=tok")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -614,7 +619,7 @@ async fn returns_429_after_too_many_failures() {
 
     let app = Router::new()
         .route("/", get(|| async { "health" }))
-        .route("/list", get(|| async { "ok" }))
+        .route("/vms/list", get(|| async { "ok" }))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,
@@ -624,7 +629,7 @@ async fn returns_429_after_too_many_failures() {
     let resp = app
         .oneshot(
             Request::builder()
-                .uri("/list")
+                .uri("/vms/list")
                 .header("authorization", "Bearer wrong")
                 .body(Body::empty())
                 .unwrap(),
@@ -648,7 +653,7 @@ async fn valid_auth_succeeds_even_after_many_failures() {
     }
 
     let app = Router::new()
-        .route("/list", get(|| async { "ok" }))
+        .route("/vms/list", get(|| async { "ok" }))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,
@@ -658,7 +663,7 @@ async fn valid_auth_succeeds_even_after_many_failures() {
     let resp = app
         .oneshot(
             Request::builder()
-                .uri("/list")
+                .uri("/vms/list")
                 .header("authorization", "Bearer correct-token")
                 .body(Body::empty())
                 .unwrap(),

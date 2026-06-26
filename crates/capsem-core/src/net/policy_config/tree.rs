@@ -1,11 +1,11 @@
-use super::loader::load_settings_files;
-use super::registry::{setting_definitions, DEFAULTS_JSON};
+use super::loader::load_settings_and_corp_files;
 use super::resolver::resolve_settings;
+use super::settings_metadata::{setting_definitions, DEFAULTS_JSON};
 use super::types::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// A settings tree node: group, leaf setting, action button, or MCP server.
+/// A settings tree node: group, leaf setting, or action button.
 ///
 /// Serialized with `tag = "kind"` so JSON includes `{"kind": "group", ...}` etc.
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -34,9 +34,6 @@ pub enum SettingsNode {
         description: Option<String>,
         action: ActionKind,
     },
-    /// A declarative MCP server definition.
-    #[serde(rename = "mcp_server")]
-    McpServer(Box<McpServerDef>),
 }
 
 /// Build a settings tree mirroring the JSON hierarchy with resolved values at leaves.
@@ -174,17 +171,17 @@ fn build_tree_from_object(
     children
 }
 
-/// Build the full settings tree from defaults.json + resolved values.
+/// Build the full settings tree from generated settings UI metadata + resolved values.
 ///
 /// Returns top-level groups (AI Providers, Package Registries, etc.).
 /// Dynamic `guest.env.*` settings are appended to the Guest Environment group.
 pub fn build_settings_tree(resolved: &[ResolvedSetting]) -> Vec<SettingsNode> {
     let root: serde_json::Value =
-        serde_json::from_str(DEFAULTS_JSON).expect("built-in defaults.json is invalid");
+        serde_json::from_str(DEFAULTS_JSON).expect("built-in settings UI metadata is invalid");
     let settings = root
         .get("settings")
         .and_then(|v| v.as_object())
-        .expect("defaults.json missing settings");
+        .expect("settings UI metadata missing settings");
 
     // Build a lookup from ID to resolved setting.
     let resolved_map: HashMap<String, ResolvedSetting> =
@@ -230,43 +227,9 @@ pub fn build_settings_tree(resolved: &[ResolvedSetting]) -> Vec<SettingsNode> {
     tree
 }
 
-/// Build a settings tree including MCP server nodes.
-///
-/// MCP servers are appended as a top-level "MCP Servers" group if any exist.
-pub fn build_settings_tree_with_mcp(
-    resolved: &[ResolvedSetting],
-    mcp_servers: &[McpServerDef],
-) -> Vec<SettingsNode> {
-    let mut tree = build_settings_tree(resolved);
-
-    if !mcp_servers.is_empty() {
-        let mcp_children: Vec<SettingsNode> = mcp_servers
-            .iter()
-            .filter(|s| s.enabled)
-            .map(|s| SettingsNode::McpServer(Box::new(s.clone())))
-            .collect();
-        if !mcp_children.is_empty() {
-            tree.push(SettingsNode::Group {
-                key: "mcp".to_string(),
-                name: "MCP Servers".to_string(),
-                description: Some(
-                    "Model Context Protocol servers available to AI agents".to_string(),
-                ),
-                enabled_by: None,
-                enabled: true,
-                collapsed: false,
-                children: mcp_children,
-            });
-        }
-    }
-
-    tree
-}
-
 /// Load settings tree from standard locations.
 pub fn load_settings_tree() -> Vec<SettingsNode> {
-    let (user, corp) = load_settings_files();
+    let (user, corp) = load_settings_and_corp_files();
     let resolved = resolve_settings(&user, &corp);
-    let mcp_servers = super::loader::load_mcp_servers();
-    build_settings_tree_with_mcp(&resolved, &mcp_servers)
+    build_settings_tree(&resolved)
 }

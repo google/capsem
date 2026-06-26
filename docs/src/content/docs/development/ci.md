@@ -25,7 +25,7 @@ Runs on every pull request. Two parallel jobs:
 Tests the KVM backend, which only compiles on Linux:
 
 1. Enable `/dev/kvm` via udev rules
-2. Unit tests with coverage for: capsem-core, capsem-logger, capsem-proto, capsem-service, capsem, capsem-mcp
+2. Unit tests with coverage for every portable workspace crate
 3. Verify KVM tests actually ran (not silently skipped)
 4. Upload coverage to Codecov with `linux-unit` flag
 
@@ -34,7 +34,7 @@ Tests the KVM backend, which only compiles on Linux:
 Full test suite on macOS (Apple VZ backend):
 
 1. **Dependency audit** -- `cargo audit` + `pnpm audit`
-2. **Rust unit tests with coverage** -- all 10 crates: capsem-core, capsem-agent, capsem-logger, capsem-proto, capsem-gateway, capsem-service, capsem, capsem-mcp, capsem-tray, capsem-process
+2. **Rust unit tests with coverage** -- every workspace crate, including macOS-only app/tray crates
 3. **Rust integration tests** -- cross-crate tests from `tests/` directory
 4. **Frontend** -- type check (`astro check` + `svelte-check`), vitest with coverage, production build
 5. **Python schema tests** -- capsem-builder tests with 90% coverage floor
@@ -56,14 +56,30 @@ Coverage is uploaded to [Codecov](https://codecov.io) with flags:
 
 Component-level targets in `codecov.yml`:
 
-| Component | Target |
-|-----------|--------|
-| capsem-service | 80% |
-| capsem-mcp | 80% |
-| capsem-gateway | 80% |
-| capsem (CLI) | 80% |
-| capsem-core | 70% |
-| capsem-agent | 70% |
+| Component | Path owner |
+|-----------|------------|
+| Network | MITM, TLS, DNS/HTTP/model network parsing and routing |
+| Security | policy config, host config, profile/corp security contracts |
+| Tooling | MCP, builtin tools, snapshots, FS monitor |
+| Monitoring | logger DB, session index, log layer |
+| Virtualization | VM lifecycle and hypervisor backends |
+| Runtime | in-VM agent and shared protocol crates |
+| Daemon | app shell and host orchestration |
+| Service | service daemon and process manager |
+| Admin | profile/materialization/image administration |
+| CLI | command-line client |
+| TUI | terminal UI |
+| MCP Server | stdio JSON-RPC MCP server |
+| Gateway | TCP-to-UDS gateway and terminal WebSocket |
+| System Tray | menu-bar host |
+| Guard | lifecycle guard primitives |
+| UI | frontend app |
+| Builder | Python builder/schema package |
+| Mock Server | deterministic local fixture server |
+
+`tests/capsem-build-chain/test_coverage_infra_contract.py` is the drift guard:
+adding a workspace crate must update both the PR coverage commands and the
+Codecov component map.
 
 ## Release workflow (`release.yaml`)
 
@@ -78,7 +94,7 @@ preflight (30s) --> build-assets (arm64 + x86_64, 10 min) --> build-app-macos (1
 | Job | Runner | What it produces |
 |-----|--------|-----------------|
 | `preflight` | macos-14 | Validates Apple cert, Tauri signing key, notarization creds |
-| `build-assets` | ubuntu arm64 + x86_64 | vmlinuz, initrd.img, rootfs.squashfs per arch |
+| `build-assets` | ubuntu arm64 + x86_64 | vmlinuz, initrd.img, rootfs.erofs per arch |
 | `test` | macos-14 | Unit tests + coverage + audit (gates release) |
 | `build-app-macos` | macos-14 | DMG (codesigned + notarized), host binaries, latest.json |
 | `build-app-linux` | ubuntu arm64 + x86_64 | deb packages (both arches), latest.json |
@@ -97,9 +113,14 @@ The macOS build signs all binaries with a Developer ID certificate:
 Each release publishes:
 - `capsem-{version}-{arch}.dmg` -- macOS desktop app
 - `capsem_{version}_{arch}.deb` -- Linux package
-- `{arch}-vmlinuz`, `{arch}-initrd.img`, `{arch}-rootfs.squashfs` -- VM images
+- `{arch}-vmlinuz`, `{arch}-initrd.img`, `{arch}-rootfs.erofs` -- VM images
 - `manifest.json` -- asset manifest with BLAKE3 hashes
 - `latest.json` -- Tauri auto-updater metadata
+
+Release packaging materializes runtime profiles through the same profile-derived build rail as
+local development: `capsem-admin profile materialize` copies checked-in config
+into `target/config/` and pins profile asset descriptors to the current
+`assets/manifest.json`. CI must not hand-edit profiles or bypass that step.
 
 ## Running CI checks locally
 
@@ -114,8 +135,8 @@ just test-unit          # Rust unit tests
 just test-frontend      # Frontend type check + vitest + build
 just test-python        # Python schema tests
 
-# Quick smoke test
-just smoke              # Fast path: doctor + integration tests
+# Hermetic smoke test
+just smoke              # doctor + integration tests
 ```
 
 ### Debugging CI failures
@@ -126,7 +147,7 @@ Common failure patterns:
 |---------|-------|-----|
 | "No Developer ID signing identity" | p12 uses PBES2/AES encryption | Re-export with `scripts/fix_p12_legacy.sh` |
 | KVM tests skipped | `/dev/kvm` not available on runner | Check udev rules in workflow |
-| Schema drift | `settings-schema.json` out of sync | Run `just schema` and commit |
+| Schema drift | `config/settings/schema.generated.json` out of sync | Run `just _generate-settings` and commit |
 | Frontend build fails | Missing `@source` directive | Add pattern to `global.css` |
 | Coverage below floor | New code without tests | Add tests to meet 70%/80%/90% threshold |
 | Python import errors | New test file with bad import | Fix the import path |

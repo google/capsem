@@ -86,50 +86,42 @@ into the same `SecurityRule` list. No HTTP/DNS/MCP/model verb buckets.
 Optional fields:
 
 ```toml
-plugin = "credential_broker|pii|virus_total|..."
 detection_level = "informational|low|medium|high|critical"
 priority = -1000..1000
 corp_locked = true
 reason = "human-readable context"
 ```
 
-Credential broker example:
+Plugin configuration:
 
 ```toml
-[ai.openai.rules.api_key_broker]
-name = "openai_api_key_broker"
-plugin = "credential_broker"
-action = "postprocess"
-type = "api-key"
-header = "Authorization"
-prefix = "Bearer "
-credential = "api_key"
-match = 'http.host.matches("(^|.*\.)openai\.com$")'
+[plugins.credential_broker]
+mode = "rewrite"
+detection_level = "informational"
 ```
 
-Credential broker rules match safe routing context. Raw authorization headers,
-raw API keys, and raw credential file contents are inspected inside the broker
-plugin and are logged only through BLAKE3 substitution references.
+Plugins own their own filtering. Rules must not use `plugin = ...`. Raw
+authorization headers, raw API keys, and raw credential file contents are
+inspected inside the broker plugin and are logged only through BLAKE3
+substitution references.
 
 PII example:
 
 ```toml
 [profiles.rules.redact_pii]
 name = "openai_prompt_pii_redact"
-plugin = "pii"
 action = "preprocess"
 match = 'has(model.request.body)'
 ```
 
-PII detection is plugin work. The rule selects model requests; the plugin
-inspects/redacts privately and returns the mutated `SecurityEvent`.
+PII detection is plugin work. The plugin inspects/redacts privately and returns
+the mutated `SecurityEvent`; profile rules remain normal CEL rules.
 
 File scanner example:
 
 ```toml
 [profiles.rules.scan_import]
 name = "file_import_vt_scan"
-plugin = "virus_total"
 action = "postprocess"
 match = 'file.import.path.matches(".*")'
 ```
@@ -198,16 +190,15 @@ has been removed. Provider defaults no longer generate old `policy.http`,
 
 - Done: `SecurityEventEngine` evaluates one `SecurityRuleSet` against one
   canonical `SecurityEvent`.
-- Done: matched preprocess rules run first through
-  `plugin(rule, SecurityEvent) -> SecurityEvent`.
-- Done: the engine re-evaluates the mutated event, then runs matched
-  postprocess plugins through the same contract.
+- Revised: enabled plugins run by their own declared stage through
+  `plugin(SecurityEvent) -> SecurityEvent`. Rules no longer dispatch plugins.
 - Done: the emitter sees exactly one final post-action event.
-- Done: matched missing plugins fail closed before emission.
+- Done: configured missing plugins fail closed before emission.
 - Done: `credential_broker` is registered as a built-in postprocess-capable
-  typed rule plugin and uses the matched `CompiledSecurityRule` metadata.
-- Done: `credential.reference` is exposed as a first-party CEL field for rules
-  that need to match broker-created credential references.
+  plugin and uses credential observations on the event, not matched rule
+  metadata.
+- Revised: `credential.*` is not a first-party CEL root in 1.3; broker refs
+  stay on the event/ledger as forensic evidence.
 - Deferred: PII and VirusTotal plugin implementations are future plugins on
   this same contract.
 

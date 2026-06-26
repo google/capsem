@@ -16,6 +16,7 @@ fn anthropic_conn() -> ConnMeta {
         port: 443,
         process_name: None,
         ai_provider: Some(ProviderKind::Anthropic),
+        ai_protocol: Some(ModelProtocol::Anthropic),
         ..Default::default()
     }
 }
@@ -26,6 +27,7 @@ fn openai_conn() -> ConnMeta {
         port: 443,
         process_name: None,
         ai_provider: Some(ProviderKind::OpenAi),
+        ai_protocol: Some(ModelProtocol::OpenAi),
         ..Default::default()
     }
 }
@@ -36,6 +38,7 @@ fn local_openai_conn() -> ConnMeta {
         port: 11434,
         process_name: None,
         ai_provider: Some(ProviderKind::OpenAi),
+        ai_protocol: Some(ModelProtocol::OpenAi),
         ..Default::default()
     }
 }
@@ -46,6 +49,7 @@ fn google_conn() -> ConnMeta {
         port: 443,
         process_name: None,
         ai_provider: Some(ProviderKind::Google),
+        ai_protocol: Some(ModelProtocol::Google),
         ..Default::default()
     }
 }

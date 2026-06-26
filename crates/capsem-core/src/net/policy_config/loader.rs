@@ -1,25 +1,18 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use super::provider_profile::ProviderDiscoveryPatch;
-use super::types::{McpServerDef, McpTransport, PolicySource};
 use super::{
-    is_policy_rule_key, parse_policy_rule_key, validate_imported_policy_rule_json,
-    validate_stored_setting_contract, ProviderRuleProfile, ProviderStatus, SecurityRuleAction,
-    SettingValue, SettingsFile, SETTING_ANTHROPIC_API_KEY, SETTING_GOOGLE_API_KEY,
-    SETTING_OPENAI_API_KEY,
+    setting_id_owner, validate_corp_toml_contract, validate_settings_toml_contract,
+    validate_stored_setting_contract, ConfigOwner, SettingValue, SettingsFile,
 };
 
 // ---------------------------------------------------------------------------
 // File I/O
 // ---------------------------------------------------------------------------
 
-/// User config path: `<capsem_home>/user.toml` (overridable via CAPSEM_USER_CONFIG)
-pub fn user_config_path() -> Option<std::path::PathBuf> {
-    if let Ok(path) = std::env::var("CAPSEM_USER_CONFIG") {
-        return Some(std::path::PathBuf::from(path));
-    }
-    crate::paths::capsem_home_opt().map(|h| h.join("user.toml"))
+/// Local UI settings path: `<capsem_home>/settings.toml`.
+pub fn settings_config_path() -> Option<std::path::PathBuf> {
+    crate::paths::capsem_home_opt().map(|h| h.join("settings.toml"))
 }
 
 /// Corporate config path: returns the first available corp config path.
@@ -61,6 +54,8 @@ pub fn corp_config_paths() -> Vec<std::path::PathBuf> {
 pub fn load_settings_file(path: &Path) -> Result<SettingsFile, String> {
     match std::fs::read_to_string(path) {
         Ok(content) => {
+            reject_retired_mcp_policy_keys(path, &content)?;
+            reject_retired_ai_setting_ids(path, &content)?;
             let mut file: SettingsFile = toml::from_str(&content)
                 .map_err(|e| format!("failed to parse {}: {}", path.display(), e))?;
             migrate_setting_ids(&mut file);
@@ -77,6 +72,66 @@ pub fn load_settings_file(path: &Path) -> Result<SettingsFile, String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(SettingsFile::default()),
         Err(e) => Err(format!("failed to read {}: {}", path.display(), e)),
     }
+}
+
+/// Load a local UI/application settings file and reject profile-owned behavior.
+pub fn load_local_settings_file(path: &Path) -> Result<SettingsFile, String> {
+    let file = load_settings_file(path)?;
+    validate_settings_toml_contract(&file)
+        .map_err(|e| format!("failed to validate {}: {e}", path.display()))?;
+    Ok(file)
+}
+
+/// Load a corporate constraint file and reject UI preferences.
+pub fn load_corp_settings_file(path: &Path) -> Result<SettingsFile, String> {
+    let file = load_settings_file(path)?;
+    validate_corp_toml_contract(&file)
+        .map_err(|e| format!("failed to validate {}: {e}", path.display()))?;
+    Ok(file)
+}
+
+fn reject_retired_mcp_policy_keys(path: &Path, content: &str) -> Result<(), String> {
+    let root: toml::Value = toml::from_str(content)
+        .map_err(|e| format!("failed to parse {}: {}", path.display(), e))?;
+    let Some(mcp) = root.get("mcp").and_then(|value| value.as_table()) else {
+        return Ok(());
+    };
+    for retired in [
+        "global_policy",
+        "default_tool_permission",
+        "tool_permissions",
+    ] {
+        if mcp.contains_key(retired) {
+            return Err(format!(
+                "failed to validate {}: retired MCP policy key mcp.{retired}; use profile security rules instead",
+                path.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn reject_retired_ai_setting_ids(path: &Path, content: &str) -> Result<(), String> {
+    reject_retired_ai_setting_ids_in_content(&path.display().to_string(), content)
+}
+
+pub(super) fn reject_retired_ai_setting_ids_in_content(
+    label: &str,
+    content: &str,
+) -> Result<(), String> {
+    let root: toml::Value =
+        toml::from_str(content).map_err(|e| format!("failed to parse {label}: {e}"))?;
+    let Some(settings) = root.get("settings").and_then(|value| value.as_table()) else {
+        return Ok(());
+    };
+    for key in settings.keys() {
+        if key.starts_with("ai.") {
+            return Err(format!(
+                "failed to validate {label}: retired AI setting id {key}; use profile/corp security rules, provider discovery, and plugins instead",
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn merge_referenced_security_rule_profile(
@@ -169,10 +224,6 @@ pub fn load_referenced_sigma_rules(
 
 /// Migration map: old setting IDs -> new setting IDs.
 const SETTING_ID_MIGRATIONS: &[(&str, &str)] = &[
-    ("web.defaults.allow_read", "security.web.allow_read"),
-    ("web.defaults.allow_write", "security.web.allow_write"),
-    ("web.custom_allow", "security.web.custom_allow"),
-    ("web.custom_block", "security.web.custom_block"),
     (
         "web.search.google.allow",
         "security.services.search.google.allow",
@@ -249,14 +300,14 @@ pub fn write_settings_file(path: &Path, file: &SettingsFile) -> Result<(), Strin
     std::fs::write(path, content).map_err(|e| format!("failed to write {}: {}", path.display(), e))
 }
 
-/// Load both settings files from standard locations.
+/// Load local UI settings and corp constraints from standard locations.
 ///
 /// Corp config merges all available paths (system + user-provisioned).
 /// First path wins per-key (/etc/capsem/corp.toml overrides ~/.capsem/corp.toml).
-pub fn load_settings_files() -> (SettingsFile, SettingsFile) {
-    let user = match user_config_path() {
-        Some(path) => load_settings_file(&path).unwrap_or_else(|e| {
-            tracing::warn!("user settings: {e}");
+pub fn load_settings_and_corp_files() -> (SettingsFile, SettingsFile) {
+    let settings = match settings_config_path() {
+        Some(path) => load_local_settings_file(&path).unwrap_or_else(|e| {
+            tracing::warn!("local settings: {e}");
             SettingsFile::default()
         }),
         None => SettingsFile::default(),
@@ -264,7 +315,7 @@ pub fn load_settings_files() -> (SettingsFile, SettingsFile) {
 
     let mut corp = SettingsFile::default();
     for path in corp_config_paths() {
-        match load_settings_file(&path) {
+        match load_corp_settings_file(&path) {
             Ok(file) => {
                 // First path wins per-key: only insert if not already present
                 for (id, entry) in file.settings {
@@ -274,14 +325,36 @@ pub fn load_settings_files() -> (SettingsFile, SettingsFile) {
                 if corp.mcp.is_none() && file.mcp.is_some() {
                     corp.mcp = file.mcp;
                 }
-                // Policy V2 config: first corp path wins per named rule.
-                corp.policy.merge_first_wins(file.policy);
                 // External rule files: first corp path wins per reference.
                 corp.rule_files.merge_first_wins(file.rule_files);
                 corp.corp_rule_files.merge_first_wins(file.corp_rule_files);
+                if corp.refresh_policy.is_none() {
+                    corp.refresh_policy = file.refresh_policy;
+                }
+                for (rule_id, rule) in file.default {
+                    corp.default.entry(rule_id).or_insert(rule);
+                }
+                for (rule_id, rule) in file.profiles.rules {
+                    corp.profiles.rules.entry(rule_id).or_insert(rule);
+                }
+                for (rule_id, rule) in file.corp.rules {
+                    corp.corp.rules.entry(rule_id).or_insert(rule);
+                }
                 // Provider profile config: first corp path wins per provider.
                 for (provider_id, provider) in file.ai {
                     corp.ai.entry(provider_id).or_insert(provider);
+                }
+                for (plugin_id, plugin) in file.plugins {
+                    corp.plugins.entry(plugin_id).or_insert(plugin);
+                }
+                if corp.network.dns.upstreams.is_empty() && !file.network.dns.upstreams.is_empty() {
+                    corp.network.dns.upstreams = file.network.dns.upstreams;
+                }
+                for (target, override_config) in file.network.upstream_overrides {
+                    corp.network
+                        .upstream_overrides
+                        .entry(target)
+                        .or_insert(override_config);
                 }
             }
             Err(e) => {
@@ -290,12 +363,12 @@ pub fn load_settings_files() -> (SettingsFile, SettingsFile) {
         }
     }
 
-    (user, corp)
+    (settings, corp)
 }
 
-/// Write user settings to ~/.capsem/user.toml.
-pub fn write_user_settings(file: &SettingsFile) -> Result<(), String> {
-    let path = user_config_path().ok_or("HOME not set")?;
+/// Write local UI settings to `<capsem_home>/settings.toml`.
+pub fn write_local_settings(file: &SettingsFile) -> Result<(), String> {
+    let path = settings_config_path().ok_or("HOME not set")?;
     write_settings_file(&path, file)
 }
 
@@ -304,285 +377,17 @@ pub fn can_write_corp_settings() -> bool {
     false
 }
 
-/// Load the merged MCP user config (user + corp).
-/// Corp fields override user fields.
-pub fn load_mcp_user_config() -> crate::mcp::policy::McpUserConfig {
-    let (user, corp) = load_settings_files();
-    let user_mcp = user.mcp.unwrap_or_default();
-    let _corp_mcp = corp.mcp.unwrap_or_default();
-    // Note: merging is done at policy evaluation time via to_policy().
-    // This returns the user's config; corp is loaded separately.
-    user_mcp
-}
-
-/// Load the corp MCP config.
-pub fn load_mcp_corp_config() -> crate::mcp::policy::McpUserConfig {
-    let (_, corp) = load_settings_files();
-    corp.mcp.unwrap_or_default()
-}
-
-/// Save MCP user config to user.toml without clobbering settings.
-pub fn save_mcp_user_config(mcp: &crate::mcp::policy::McpUserConfig) -> Result<(), String> {
-    let path = user_config_path().ok_or("HOME not set")?;
-    let mut file = load_settings_file(&path)?;
-    file.mcp = Some(mcp.clone());
-    write_settings_file(&path, &file)
-}
-
-// ---------------------------------------------------------------------------
-// MCP server loading
-// ---------------------------------------------------------------------------
-
-/// Raw MCP server entry as it appears in TOML (without key or source metadata).
-#[derive(serde::Deserialize, Debug)]
-struct McpServerToml {
-    name: String,
-    #[serde(default)]
-    description: Option<String>,
-    transport: McpTransport,
-    #[serde(default)]
-    command: Option<String>,
-    #[serde(default)]
-    url: Option<String>,
-    #[serde(default)]
-    args: Vec<String>,
-    #[serde(default)]
-    env: HashMap<String, String>,
-    #[serde(default)]
-    headers: HashMap<String, String>,
-    #[serde(default)]
-    builtin: bool,
-    #[serde(default = "super::types::default_true")]
-    enabled: bool,
-}
-
-/// Parse `[mcp]` section from a TOML string into McpServerDef entries.
-fn parse_mcp_section(toml_str: &str, source: PolicySource) -> Vec<McpServerDef> {
-    let root: toml::Value = match toml::from_str(toml_str) {
-        Ok(v) => v,
-        Err(_) => return vec![],
-    };
-    let mcp_table = match root.get("mcp").and_then(|v| v.as_table()) {
-        Some(t) => t,
-        None => return vec![],
-    };
-    let mut servers = Vec::new();
-    for (key, val) in mcp_table {
-        // Skip global config keys that aren't server definitions
-        if key == "global_policy"
-            || key == "default_tool_permission"
-            || key == "health_check_interval_secs"
-            || key == "server_enabled"
-            || key == "tool_permissions"
-        {
-            continue;
-        }
-
-        let toml_str = match toml::to_string(val) {
-            Ok(s) => s,
-            Err(_) => continue,
-        };
-        let server: McpServerToml = match toml::from_str(&toml_str) {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::warn!("skipping MCP server '{key}': {e}");
-                continue;
-            }
-        };
-        servers.push(McpServerDef {
-            key: key.clone(),
-            name: server.name,
-            description: server.description,
-            transport: server.transport,
-            command: server.command,
-            url: server.url,
-            args: server.args,
-            env: server.env,
-            headers: server.headers,
-            builtin: server.builtin,
-            enabled: server.enabled,
-            source,
-            corp_locked: false,
-        });
-    }
-    servers
-}
-
-/// Parse `mcp` section from a JSON string into McpServerDef entries.
-fn parse_mcp_section_json(json_str: &str, source: PolicySource) -> Vec<McpServerDef> {
-    let root: serde_json::Value = match serde_json::from_str(json_str) {
-        Ok(v) => v,
-        Err(_) => return vec![],
-    };
-    let mcp_obj = match root.get("mcp").and_then(|v| v.as_object()) {
-        Some(t) => t,
-        None => return vec![],
-    };
-    let mut servers = Vec::new();
-    for (key, val) in mcp_obj {
-        // Skip global config keys that aren't server definitions
-        if key == "global_policy"
-            || key == "default_tool_permission"
-            || key == "health_check_interval_secs"
-            || key == "server_enabled"
-            || key == "tool_permissions"
-        {
-            continue;
-        }
-
-        let server: McpServerToml = match serde_json::from_value(val.clone()) {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::warn!("skipping MCP server '{key}': {e}");
-                continue;
-            }
-        };
-        servers.push(McpServerDef {
-            key: key.clone(),
-            name: server.name,
-            description: server.description,
-            transport: server.transport,
-            command: server.command,
-            url: server.url,
-            args: server.args,
-            env: server.env,
-            headers: server.headers,
-            builtin: server.builtin,
-            enabled: server.enabled,
-            source,
-            corp_locked: false,
-        });
-    }
-    servers
-}
-
-/// Load and merge MCP server definitions from defaults, user, and corp configs.
-///
-/// Resolution: corp > user > defaults (per key). Corp entries are corp_locked.
-pub fn load_mcp_servers() -> Vec<McpServerDef> {
-    use super::registry::DEFAULTS_JSON;
-
-    let mut by_key: HashMap<String, McpServerDef> = HashMap::new();
-
-    // 1. Defaults from JSON (lowest priority)
-    for s in parse_mcp_section_json(DEFAULTS_JSON, PolicySource::Default) {
-        by_key.insert(s.key.clone(), s);
-    }
-
-    // 2. User overrides
-    let user_toml = match user_config_path() {
-        Some(path) => std::fs::read_to_string(&path).unwrap_or_default(),
-        None => String::new(),
-    };
-    for s in parse_mcp_section(&user_toml, PolicySource::User) {
-        by_key.insert(s.key.clone(), s);
-    }
-
-    // 3. Corp overrides (highest priority, corp_locked)
-    let corp_toml = std::fs::read_to_string(corp_config_path()).unwrap_or_default();
-    for mut s in parse_mcp_section(&corp_toml, PolicySource::Corp) {
-        s.corp_locked = true;
-        by_key.insert(s.key.clone(), s);
-    }
-
-    // Also mark defaults/user entries as corp_locked if corp has the same key
-    // (already handled by overwrite above -- corp entry replaces user/default)
-
-    let mut servers: Vec<McpServerDef> = by_key.into_values().collect();
-    servers.sort_by(|a, b| a.key.cmp(&b.key));
-    servers
-}
-
 // ---------------------------------------------------------------------------
 // Unified settings response
 // ---------------------------------------------------------------------------
 
-/// Load the unified settings response (tree + issues + presets) in one call.
+/// Load the unified settings response (tree + issues) in one call.
 pub fn load_settings_response() -> super::types::SettingsResponse {
-    let (user, corp) = load_settings_files();
-    let resolved = super::resolver::resolve_settings(&user, &corp);
-    let mcp_servers = load_mcp_servers();
-    let mut policy =
-        super::types::PolicyConfig::merged_with_builtin_security_rules(&user.policy, &corp.policy);
-    match super::provider_profile::compile_provider_rules_to_policy_config(
-        &super::provider_profile::ProviderRuleProfile {
-            ai: user.ai.clone(),
-        },
-        &super::provider_profile::ProviderRuleProfile {
-            ai: corp.ai.clone(),
-        },
-    ) {
-        Ok(provider_policy) => policy.merge_first_wins(provider_policy),
-        Err(error) => tracing::warn!("provider rule profile ignored in settings response: {error}"),
-    }
+    let (settings, corp) = load_settings_and_corp_files();
+    let resolved = super::resolver::resolve_settings(&settings, &corp);
     super::types::SettingsResponse {
-        tree: super::tree::build_settings_tree_with_mcp(&resolved, &mcp_servers),
+        tree: super::tree::build_settings_tree(&resolved),
         issues: super::lint::config_lint(&resolved),
-        presets: super::presets::security_presets(),
-        policy,
-        providers: build_provider_statuses(&user, &corp, &resolved),
-        tool_config_sources: user.tool_config_sources.clone(),
-    }
-}
-
-fn build_provider_statuses(
-    user: &SettingsFile,
-    corp: &SettingsFile,
-    resolved: &[super::types::ResolvedSetting],
-) -> Vec<ProviderStatus> {
-    let merged = ProviderRuleProfile::merge_defaults_user_and_corp(
-        &ProviderRuleProfile {
-            ai: user.ai.clone(),
-        },
-        &ProviderRuleProfile {
-            ai: corp.ai.clone(),
-        },
-    )
-    .unwrap_or_else(|error| {
-        tracing::warn!("provider status ignored invalid provider profile: {error}");
-        ProviderRuleProfile::default()
-    });
-
-    merged
-        .ai
-        .iter()
-        .map(|(id, provider)| {
-            let credential_setting_id = credential_setting_id_for_provider(id).map(str::to_string);
-            let brokered_credential_ref = credential_setting_id
-                .as_deref()
-                .and_then(|setting_id| resolved.iter().find(|setting| setting.id == setting_id))
-                .and_then(|setting| setting.effective_value.as_text())
-                .filter(|value| capsem_logger::is_credential_reference(value))
-                .map(str::to_string);
-            let corp_blocked = corp.ai.get(id).is_some_and(|provider| {
-                provider
-                    .rules
-                    .values()
-                    .any(|rule| rule.action == SecurityRuleAction::Block)
-            });
-            ProviderStatus {
-                id: id.clone(),
-                name: provider.name.clone().unwrap_or_else(|| id.clone()),
-                protocol: provider.protocol.clone(),
-                url: provider.url.clone(),
-                aliases: provider.aliases.clone(),
-                listen_ports: provider.listen_ports.clone(),
-                allowed_remote_targets: provider.allowed_remote_targets.clone(),
-                discovery: provider.discovery.clone(),
-                credential_setting_id,
-                brokered_credential_ref,
-                corp_blocked,
-            }
-        })
-        .collect()
-}
-
-fn credential_setting_id_for_provider(provider_id: &str) -> Option<&'static str> {
-    match provider_id {
-        "anthropic" => Some(SETTING_ANTHROPIC_API_KEY),
-        "google" => Some(SETTING_GOOGLE_API_KEY),
-        "openai" => Some(SETTING_OPENAI_API_KEY),
-        _ => None,
     }
 }
 
@@ -610,72 +415,32 @@ pub fn batch_update_settings(
 pub fn batch_update_settings_json(
     changes: &HashMap<String, serde_json::Value>,
 ) -> Result<Vec<String>, String> {
-    batch_update_settings_json_with_provider_discoveries(changes, &[])
+    batch_update_settings_json_inner(changes)
 }
 
-pub fn batch_update_settings_with_provider_discoveries(
-    changes: &HashMap<String, SettingValue>,
-    provider_discoveries: &[ProviderDiscoveryPatch],
-) -> Result<Vec<String>, String> {
-    let mut raw = HashMap::new();
-    for (id, value) in changes {
-        let json = serde_json::to_value(value)
-            .map_err(|e| format!("failed to encode setting {id}: {e}"))?;
-        raw.insert(id.clone(), json);
-    }
-    batch_update_settings_json_with_provider_discoveries(&raw, provider_discoveries)
-}
-
-fn batch_update_settings_json_with_provider_discoveries(
+fn batch_update_settings_json_inner(
     changes: &HashMap<String, serde_json::Value>,
-    provider_discoveries: &[ProviderDiscoveryPatch],
 ) -> Result<Vec<String>, String> {
-    use super::registry::setting_definitions;
+    use super::settings_metadata::setting_definitions;
 
-    if changes.is_empty() && provider_discoveries.is_empty() {
+    if changes.is_empty() {
         return Ok(vec![]);
     }
 
-    let user_path = user_config_path().ok_or("HOME not set")?;
+    let settings_path = settings_config_path().ok_or("HOME not set")?;
     let corp_path = corp_config_path();
-    let mut user_file = load_settings_file(&user_path)?;
-    let corp_file = load_settings_file(&corp_path)?;
+    let mut settings_file = load_local_settings_file(&settings_path)?;
+    let corp_file = load_corp_settings_file(&corp_path)?;
     let defs = setting_definitions();
     let mut setting_changes = HashMap::new();
-    let mut policy_changes = Vec::new();
 
     // Validate all changes upfront
     let mut errors = Vec::new();
     for (id, value) in changes {
-        if is_policy_rule_key(id) {
-            match parse_policy_rule_key(id) {
-                Ok((_rule_type, _)) => {
-                    match corp_file.policy.contains_rule_key(id) {
-                        Ok(true) => {
-                            errors.push(format!("corp-locked: {id}"));
-                            continue;
-                        }
-                        Ok(false) => {}
-                        Err(e) => {
-                            errors.push(e);
-                            continue;
-                        }
-                    }
-
-                    if value.is_null() {
-                        policy_changes.push((id.clone(), None));
-                        continue;
-                    }
-
-                    match validate_imported_policy_rule_json("settings-json", id, value.clone()) {
-                        Ok(rule) => {
-                            policy_changes.push((id.clone(), Some(rule)));
-                        }
-                        Err(e) => errors.push(format!("invalid policy rule {id}: {e}")),
-                    }
-                }
-                Err(e) => errors.push(e),
-            }
+        if id.starts_with("policy.") {
+            errors.push(format!(
+                "unknown setting: {id}; use profiles.rules, corp.rules, ai.<provider>.rules, or rule_files"
+            ));
             continue;
         }
 
@@ -692,6 +457,16 @@ fn batch_update_settings_json_with_provider_discoveries(
         let def = defs.iter().find(|d| d.id == *id);
         if def.is_none() && !is_dynamic {
             errors.push(format!("unknown setting: {id}"));
+            continue;
+        }
+
+        let actual_owner = setting_id_owner(id);
+        if actual_owner != ConfigOwner::Settings {
+            errors.push(format!(
+                "{} update cannot write {}-owned setting: {id}",
+                ConfigOwner::Settings.as_str(),
+                actual_owner.as_str()
+            ));
             continue;
         }
 
@@ -712,11 +487,11 @@ fn batch_update_settings_json_with_provider_discoveries(
         return Err(errors.join("; "));
     }
 
-    // All valid -- write to user.toml
+    // All valid -- write to local settings.toml
     let now = crate::session::now_iso();
     let mut applied = Vec::new();
     for (id, value) in setting_changes {
-        user_file.settings.insert(
+        settings_file.settings.insert(
             id.clone(),
             super::types::SettingEntry {
                 value,
@@ -725,26 +500,8 @@ fn batch_update_settings_json_with_provider_discoveries(
         );
         applied.push(id.clone());
     }
-    for (id, rule) in policy_changes {
-        match rule {
-            Some(rule) => user_file.policy.upsert_rule_key(&id, rule)?,
-            None => user_file.policy.remove_rule_key(&id)?,
-        }
-        applied.push(id);
-    }
-    for patch in provider_discoveries {
-        patch
-            .discovery
-            .validate(&format!("ai.{}.discovery", patch.provider_id))?;
-        user_file
-            .ai
-            .entry(patch.provider_id.clone())
-            .or_default()
-            .discovery = Some(patch.discovery.clone());
-        applied.push(format!("ai.{}.discovery", patch.provider_id));
-    }
 
-    write_settings_file(&user_path, &user_file)?;
+    write_settings_file(&settings_path, &settings_file)?;
     applied.sort();
     Ok(applied)
 }

@@ -70,3 +70,46 @@ fn trace_state_multiple_tool_calls_same_trace() {
         );
     }
 }
+
+#[test]
+fn trace_state_registers_workspace_file_hints_from_tool_arguments() {
+    let mut state = TraceState::new();
+    state.register_tool_file_hints(
+        "trace_file",
+        [
+            r#"{"cmd":"printf '%s\n' abc > /root/openai-two-123.txt","file_path":"/root/direct.txt"}"#,
+        ],
+    );
+
+    assert_eq!(
+        state.lookup_file_path("openai-two-123.txt").as_deref(),
+        Some("trace_file")
+    );
+    assert_eq!(
+        state.lookup_file_path("/root/direct.txt").as_deref(),
+        Some("trace_file")
+    );
+    assert_eq!(
+        state.lookup_file_path("/workspace/direct.txt").as_deref(),
+        Some("trace_file")
+    );
+    assert!(state.lookup_file_path("../escape.txt").is_none());
+}
+
+#[test]
+fn trace_state_keeps_file_hints_after_tool_trace_completes() {
+    let mut state = TraceState::new();
+    state.register_tool_calls("trace_file", &["call_1".to_string()]);
+    state.register_tool_file_hints(
+        "trace_file",
+        [r#"{"cmd":"printf '%s\n' abc > /root/later.txt"}"#],
+    );
+
+    state.complete_trace("trace_file");
+
+    assert!(state.lookup(&["call_1".to_string()]).is_none());
+    assert_eq!(
+        state.lookup_file_path("later.txt").as_deref(),
+        Some("trace_file")
+    );
+}

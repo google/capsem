@@ -281,6 +281,110 @@ fn revert_file_deletes_created_file() {
     assert_eq!(result["checkpoint"], "cp-0");
 }
 
+#[cfg(unix)]
+#[test]
+fn revert_file_rejects_snapshot_parent_symlink_escape() {
+    let (tmp, session, mut sched) = setup();
+    let outside = tmp.path().join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("secret.txt"), "external secret").unwrap();
+
+    sched.take_snapshot().unwrap();
+    std::os::unix::fs::symlink(&outside, session.join("auto_snapshots/0/workspace/escape"))
+        .unwrap();
+
+    let args = serde_json::json!({"path": "escape/secret.txt", "checkpoint": "cp-0"});
+    let resp = handle_revert_file(
+        &args,
+        &sched,
+        &session.join("workspace"),
+        Some(serde_json::json!(1)),
+        None,
+    );
+
+    let err = resp.error.expect("symlink escape must be rejected");
+    assert!(
+        err.message
+            .contains("snapshot source parent contains symlink"),
+        "unexpected error: {}",
+        err.message
+    );
+    assert!(
+        !session.join("workspace/escape").exists(),
+        "restore must not materialize escaped snapshot content into workspace"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn revert_file_replaces_live_final_symlink_without_touching_target() {
+    let (tmp, session, mut sched) = setup();
+    let outside = tmp.path().join("outside.txt");
+    std::fs::write(&outside, "outside secret").unwrap();
+    std::fs::write(session.join("workspace/safe.txt"), "snapshot data").unwrap();
+    sched.take_snapshot().unwrap();
+
+    std::fs::remove_file(session.join("workspace/safe.txt")).unwrap();
+    std::os::unix::fs::symlink(&outside, session.join("workspace/safe.txt")).unwrap();
+
+    let args = serde_json::json!({"path": "safe.txt", "checkpoint": "cp-0"});
+    let resp = handle_revert_file(
+        &args,
+        &sched,
+        &session.join("workspace"),
+        Some(serde_json::json!(1)),
+        None,
+    );
+
+    assert!(resp.error.is_none(), "restore failed: {:?}", resp.error);
+    assert_eq!(std::fs::read_to_string(&outside).unwrap(), "outside secret");
+    assert!(
+        !session
+            .join("workspace/safe.txt")
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "workspace file should be restored as a regular file"
+    );
+    assert_eq!(
+        std::fs::read_to_string(session.join("workspace/safe.txt")).unwrap(),
+        "snapshot data"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn revert_file_restores_snapshot_symlink_without_pulling_target_bytes() {
+    let (tmp, session, mut sched) = setup();
+    let outside = tmp.path().join("outside.txt");
+    std::fs::write(&outside, "outside secret").unwrap();
+    std::os::unix::fs::symlink(&outside, session.join("workspace/link.txt")).unwrap();
+    sched.take_snapshot().unwrap();
+
+    std::fs::remove_file(session.join("workspace/link.txt")).unwrap();
+    let args = serde_json::json!({"path": "link.txt", "checkpoint": "cp-0"});
+    let resp = handle_revert_file(
+        &args,
+        &sched,
+        &session.join("workspace"),
+        Some(serde_json::json!(1)),
+        None,
+    );
+
+    assert!(resp.error.is_none(), "restore failed: {:?}", resp.error);
+    let restored = session.join("workspace/link.txt");
+    assert!(
+        restored
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "snapshot symlink should remain a symlink, not copied target bytes"
+    );
+    assert_eq!(std::fs::read_link(restored).unwrap(), outside);
+}
+
 #[test]
 fn revert_file_rejects_path_traversal() {
     let (_tmp, session, mut sched) = setup();
@@ -492,7 +596,7 @@ fn list_changed_files_shows_create_modify_delete() {
     assert_eq!(get_op("delete_me.txt"), "deleted");
 }
 
-/// snapshots_list includes per-snapshot changes and filters empty snapshots.
+/// snapshots_list defaults to compact per-snapshot change counts.
 #[test]
 fn list_snapshots_changes_vs_previous() {
     let (_tmp, session, mut sched) = setup();
@@ -516,16 +620,54 @@ fn list_snapshots_changes_vs_previous() {
     let entries = summary["snapshots"].as_array().unwrap();
 
     assert_eq!(entries.len(), 2);
-    // Newest first: cp-1, cp-0
+    // Newest first: cp-1, cp-0. Full changes are intentionally omitted by
+    // default so snapshot internals do not bleed into generic consumers.
+    assert!(
+        entries[0]["changes"].is_null(),
+        "full changes require opt-in"
+    );
+    assert!(
+        entries[1]["changes"].is_null(),
+        "full changes require opt-in"
+    );
+
+    // cp-0: hello.txt is "new" (rendered as created in the summary).
+    assert_eq!(entries[1]["changes_summary"]["created"], 1);
+    assert_eq!(entries[1]["changes_summary"]["edited"], 0);
+    assert_eq!(entries[1]["changes_summary"]["deleted"], 0);
+    assert_eq!(entries[1]["changes_summary"]["total"], 1);
+
+    // cp-1: hello.txt is "modified" (rendered as edited in the summary).
+    assert_eq!(entries[0]["changes_summary"]["created"], 0);
+    assert_eq!(entries[0]["changes_summary"]["edited"], 1);
+    assert_eq!(entries[0]["changes_summary"]["deleted"], 0);
+    assert_eq!(entries[0]["changes_summary"]["total"], 1);
+}
+
+/// Explicit MCP callers can request full per-file snapshot changes.
+#[test]
+fn list_snapshots_include_changes_is_explicit() {
+    let (_tmp, session, mut sched) = setup();
+    let ws = session.join("workspace");
+
+    std::fs::write(ws.join("hello.txt"), "world").unwrap();
+    sched.take_snapshot().unwrap(); // cp-0
+    std::fs::write(ws.join("hello.txt"), "modified world content").unwrap();
+    sched.take_snapshot().unwrap(); // cp-1
+
+    let args = serde_json::json!({"format": "json", "include_changes": true});
+    let resp = handle_list_snapshots(&args, &sched, &ws, Some(serde_json::json!(1)));
+    let text = extract_text(&resp);
+    let summary: Value = serde_json::from_str(&text).unwrap();
+    let entries = summary["snapshots"].as_array().unwrap();
+
+    assert_eq!(entries.len(), 2);
     let cp1_changes = entries[0]["changes"].as_array().unwrap();
     let cp0_changes = entries[1]["changes"].as_array().unwrap();
 
-    // cp-0: hello.txt is "new" (didn't exist before)
     assert_eq!(cp0_changes.len(), 1);
     assert_eq!(cp0_changes[0]["path"], "hello.txt");
     assert_eq!(cp0_changes[0]["op"], "new");
-
-    // cp-1: hello.txt is "modified" (changed since cp-0)
     assert_eq!(cp1_changes.len(), 1);
     assert_eq!(cp1_changes[0]["path"], "hello.txt");
     assert_eq!(cp1_changes[0]["op"], "modified");
@@ -813,10 +955,13 @@ fn list_returns_text_table() {
         text.contains("Checkpoint"),
         "missing Checkpoint column: {text}"
     );
-    // Changes should use compact format.
+    // Changes should use compact count columns.
+    assert!(text.contains("Created"), "missing Created column: {text}");
+    assert!(text.contains("Edited"), "missing Edited column: {text}");
+    assert!(text.contains("Deleted"), "missing Deleted column: {text}");
     assert!(
-        text.contains('+') || text.contains('~'),
-        "changes should use compact +/~ format: {text}"
+        text.contains("1       "),
+        "changes should render numeric compact counts: {text}"
     );
 }
 
@@ -860,6 +1005,44 @@ fn list_format_json_returns_raw() {
     // format=json should return valid JSON.
     let summary: Value = serde_json::from_str(&text).expect("format=json should return valid JSON");
     assert!(summary["snapshots"].is_array());
+}
+
+#[test]
+fn list_format_json_large_payload_is_not_prefixed_with_pagination_text() {
+    let (_tmp, session, mut sched) = setup();
+    let ws = session.join("workspace");
+
+    for i in 0..10 {
+        for j in 0..80 {
+            std::fs::write(
+                ws.join(format!("large_{i}_{j}.txt")),
+                format!("payload {i} {j}"),
+            )
+            .unwrap();
+        }
+        sched.take_snapshot().unwrap();
+    }
+
+    let args = serde_json::json!({"format": "json", "max_length": 200});
+    let resp = handle_list_snapshots(&args, &sched, &ws, Some(serde_json::json!(1)));
+    let text = extract_text(&resp);
+
+    assert!(
+        !text.starts_with("Content length:"),
+        "format=json must not be prefixed with prose pagination: {text}"
+    );
+    let summary: Value = serde_json::from_str(&text).expect("format=json should return valid JSON");
+    assert!(summary["snapshots"].as_array().unwrap().len() >= 10);
+    for snap in summary["snapshots"].as_array().unwrap() {
+        assert!(
+            snap["changes"].is_null(),
+            "format=json should stay compact unless include_changes=true: {snap}"
+        );
+        assert!(
+            snap["changes_summary"].is_object(),
+            "format=json should include compact change summary: {snap}"
+        );
+    }
 }
 
 /// Contract test: verifies the exact response shape the frontend depends on.
@@ -927,8 +1110,12 @@ fn list_format_json_frontend_contract() {
             "snapshot must have files_count: {snap}"
         );
         assert!(
-            snap["changes"].is_array(),
-            "snapshot must have changes array: {snap}"
+            snap["changes_summary"].is_object(),
+            "snapshot must have compact changes_summary object: {snap}"
+        );
+        assert!(
+            snap["changes"].is_null(),
+            "full changes must require include_changes=true: {snap}"
         );
     }
 }

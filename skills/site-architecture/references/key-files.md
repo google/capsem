@@ -4,7 +4,7 @@
 
 - `guest/artifacts/capsem-init` -- PID 1 init script. Sets up networking, mounts, launches daemons.
 - `guest/artifacts/capsem-bashrc` -- guest shell config (baked into rootfs)
-- `guest/config/` -- guest image TOML configs (AI providers, packages, VM resources)
+- `config/profiles/<id>/` -- profile-owned packages, rules, MCP declarations, tips, and root seed files
 - `crates/capsem-agent/src/main.rs` -- PTY agent (vsock bridge, cross-compiled)
 - `crates/capsem-agent/src/net_proxy.rs` -- TCP-to-vsock relay (cross-compiled)
 
@@ -12,10 +12,8 @@
 
 - `crates/capsem-core/src/net/mitm_proxy.rs` -- async MITM proxy (rustls + hyper): TLS termination, HTTP inspection, upstream bridging
 - `crates/capsem-core/src/net/cert_authority.rs` -- CA loader + on-demand domain cert minting with RwLock cache
-- `crates/capsem-core/src/net/http_policy.rs` -- method+path policy engine
-- `crates/capsem-core/src/net/domain_policy.rs` -- domain allow/block evaluation
+- `crates/capsem-core/src/security_engine/` -- shared CEL rule/plugin/decision rail over `SecurityEvent`
 - `crates/capsem-core/src/net/sni.rs` -- SNI parser for TLS ClientHello
-- `crates/capsem-core/src/net/policy_config.rs` -- user.toml + corp.toml merge logic
 
 ## VM
 
@@ -41,14 +39,14 @@
 
 ## Config
 
-- `config/defaults.toml` -- settings registry (embedded at compile time)
+- `config/settings/ui-metadata.toml` -- settings UI metadata (embedded at compile time)
 - `config/capsem-ca.key` + `config/capsem-ca.crt` -- static MITM CA keypair (ECDSA P-256)
 
 ## Frontend
 
 - `frontend/src/components/capsem-terminal.ts` -- xterm.js web component
 - `frontend/src/lib/components/App.svelte` -- root layout
-- `frontend/src/lib/api.ts` -- HTTP client for gateway API with mock fallback
+- `frontend/src/lib/api.ts` -- HTTP client for explicit gateway API routes
 - `frontend/src/lib/mock.ts` -- fake data for browser dev mode
 - `frontend/src/lib/types.ts` -- TS types mirroring Rust IPC structs
 

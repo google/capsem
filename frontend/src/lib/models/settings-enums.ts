@@ -35,7 +35,6 @@ export enum SideEffect {
 
 export enum ActionKind {
   CheckUpdate = 'check_update',
-  PresetSelect = 'preset_select',
 }
 
 export enum McpTransport {
@@ -43,7 +42,7 @@ export enum McpTransport {
   Sse = 'sse',
 }
 
-export enum PolicySource {
+export enum SettingsSource {
   Default = 'default',
   User = 'user',
   Corp = 'corp',

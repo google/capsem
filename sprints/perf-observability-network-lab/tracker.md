@@ -15,10 +15,10 @@
 - [x] T0.5f -- Embed provider-owned defaults for OpenAI/Codex, Anthropic/Claude, Google/Gemini, and Ollama.
 - [x] T0.5g -- Compile provider-owned defaults plus user/corp overlays into runtime Policy V2 HTTP/DNS/model callbacks and settings response.
 - [x] T0.5h -- Capture Infisical `agent-vault` review findings into `swarm-findings/agent-vault.md`.
-- [x] T1.1 -- Build local debug upstream with HTTP deterministic endpoints.
+- [x] T1.1 -- Build local mock server with HTTP deterministic endpoints.
 - [x] T1.2 -- Add gzip, slow chunk, SSE/model-like, and credential response endpoints.
 - [x] T1.3 -- Add WebSocket echo/ping/close endpoints.
-- [x] T1.4 -- Add lifecycle helper so tests can start/stop the debug upstream deterministically.
+- [x] T1.4 -- Add lifecycle helper so tests can start/stop the mock server deterministically.
 - [x] T2.1 -- Add debug-only OTEL/tracing config that cannot export upstream by default.
 - [x] T2.2 -- Add MITM request spans around protocol, TLS, policy, actions, upstream, response policy, model policy, and chunk hooks.
 - [x] T2.3 -- Add security-event emit span/metrics with canonical event type/family labels.
@@ -305,20 +305,20 @@
   `sprints/perf-observability-network-lab/T0-network-test-inventory.md`,
   covering guest diagnostics, capsem-bench defaults, integration scripts,
   session tests, MCP builtin HTTP tests, provider smokes, and local-only tests.
-- Completed: `capsem-debug-upstream` was added as a workspace binary/library
-  under `crates/capsem-debug-upstream`. It binds `127.0.0.1:0` by default,
+- Completed: `capsem-mock-server` was added as a workspace binary/library
+  under `crates/capsem-mock-server`. It binds `127.0.0.1:0` by default,
   prints one ready JSON object with the bound `base_url`, and exposes
   `/tiny`, `/bytes/{size}`, `/gzip/{size}`, `/sse/model`, `/slow-chunks`,
   `/credential/response`, `/echo`, `/deny-target`, `/ws/echo`, `/ws/ping`,
   and `/ws/close`.
-- Completed: `spawn_debug_upstream()` returns a test lifecycle handle with
+- Completed: `spawn_mock_server()` returns a test lifecycle handle with
   `addr()`, `base_url()`, and `shutdown()`, so tests and benchmarks can start
   and stop the same server deterministically.
-- Verification: `cargo check -p capsem-debug-upstream` passed.
-- Verification: `cargo test -p capsem-debug-upstream -- --nocapture` passed
+- Verification: `cargo check -p capsem-mock-server` passed.
+- Verification: `cargo test -p capsem-mock-server -- --nocapture` passed
   with HTTP bytes/gzip, SSE model-like stream, secret-safe echo metadata, and
   WebSocket echo/ping/close coverage.
-- Verification: `cargo run -p capsem-debug-upstream -- --addr 127.0.0.1:0`
+- Verification: `cargo run -p capsem-mock-server -- --addr 127.0.0.1:0`
   printed ready JSON for an ephemeral localhost port and stopped cleanly on
   Ctrl-C.
 - Completed: `capsem_core::telemetry` now has a debug telemetry policy:
@@ -376,11 +376,11 @@
 - Completed: `capsem-bench mitm-local` now runs deterministic local-lab
   scenarios for tiny HTTP, 1 MB HTTP, gzip 1 MB, SSE/model stream,
   deny-target, credential response, WebSocket echo, and WebSocket close.
-  The mode requires an explicit debug-upstream base URL and is never included
+  The mode requires an explicit mock-server base URL and is never included
   in `capsem-bench all`.
 - Completed: `tests/capsem-serial/test_mitm_local_benchmark.py` is a gated
   host-side artifact writer. With `CAPSEM_RUN_MITM_LOCAL_BENCH=1`, it starts
-  or consumes a debug-upstream URL, provisions a VM, runs
+  or consumes a mock-server URL, provisions a VM, runs
   `capsem-bench mitm-local`, pulls `/tmp/capsem-benchmark.json`, asserts no
   synthetic raw API key is stored in the result JSON, and archives under
   `benchmarks/mitm-local/`.
@@ -410,16 +410,16 @@
 - Verification: `cargo fmt -p capsem-logger --check` and `git diff --check`
   passed.
 - Completed: `capsem-bench http` no longer silently defaults to Google. It
-  uses `CAPSEM_BENCH_MITM_LOCAL_BASE_URL/tiny` when present, uses the old
+  uses `CAPSEM_MOCK_SERVER_BASE_URL/tiny` when present, uses the old
   public target only when `CAPSEM_BENCH_ALLOW_PUBLIC_NETWORK=1`, and otherwise
   returns a structured skipped result.
 - Completed: `capsem-bench throughput` no longer silently defaults to the
-  public PDF/CDN. It uses `CAPSEM_BENCH_MITM_LOCAL_BASE_URL/bytes/10mb` when
+  public PDF/CDN. It uses `CAPSEM_MOCK_SERVER_BASE_URL/bytes/10mb` when
   present, uses the old public target only when
   `CAPSEM_BENCH_ALLOW_PUBLIC_NETWORK=1`, and otherwise returns a structured
   skipped result.
 - Completed: The guest network diagnostic HTTP-port and throughput checks now
-  prefer the local debug-upstream URL and otherwise require
+  prefer the local mock-server URL and otherwise require
   `CAPSEM_RUN_PUBLIC_NETWORK_SMOKE=1` before using Google/CDN public-network
   probes.
 - Completed: T4.3 partial smoke sweep gated public DNS/TLS/curl/provider
@@ -451,10 +451,10 @@
 - Verification: `git diff --check` passed after the T4.1/T4.2 edits.
 - Fixed: The gated VM `mitm-local` benchmark was initially a false positive:
   the guest had a stale initrd without the new mode, then arbitrary localhost
-  debug-upstream ports bypassed transparent iptables, then WebSocket proxying
+  mock-server ports bypassed transparent iptables, then WebSocket proxying
   attempted HTTP-proxy semantics. The harness now repacks current guest
   artifacts, writes an isolated `user.toml` allowing `127.0.0.1` plus the
-  dynamic debug-upstream port through `security.web.http_upstream_ports`, uses
+  dynamic mock-server port through `security.web.http_upstream_ports`, uses
   explicit `127.0.0.1:10080` net-proxy env for HTTP, and gives WebSockets a
   pre-connected socket to the same net-proxy with `proxy=None`.
 - Completed: T5.1 archived the real VM/MITM local benchmark at
@@ -478,7 +478,7 @@
   passed with default, user override, and corp override coverage.
 - Verification: `uv run pytest tests/test_capsem_bench_mitm_local.py -q`
   passed with 13 tests, including explicit WebSocket net-proxy socket coverage.
-- Verification: `CAPSEM_RUN_MITM_LOCAL_BENCH=1 CAPSEM_BENCH_MITM_LOCAL_BASE_URL=http://127.0.0.1:50233 CAPSEM_BENCH_MITM_LOCAL_N=10 CAPSEM_BENCH_MITM_LOCAL_CONCURRENCY=1 uv run pytest tests/capsem-serial/test_mitm_local_benchmark.py -xvs`
+- Verification: `CAPSEM_RUN_MITM_LOCAL_BENCH=1 CAPSEM_MOCK_SERVER_BASE_URL=http://127.0.0.1:50233 CAPSEM_BENCH_MITM_LOCAL_N=10 CAPSEM_BENCH_MITM_LOCAL_CONCURRENCY=1 uv run pytest tests/capsem-serial/test_mitm_local_benchmark.py -xvs`
   passed and archived the VM/MITM JSON.
 - Completed: Launch lifecycle benchmark archived at
   `benchmarks/lifecycle/data_1.0.1780763638.json`.
@@ -529,7 +529,7 @@
   `T0-contract.md`; T2.1 local-only debug telemetry policy is covered by Rust
   tests. Span instrumentation starts in T2.2.
 - Functional: Local HTTP/gzip/SSE/WebSocket endpoint tests now pass in
-  `capsem-debug-upstream`; through-Capsem replacement tests start in T3/T4.
+  `capsem-mock-server`; through-Capsem replacement tests start in T3/T4.
 - Adversarial: Planned deny, malformed gzip, slow chunks, disconnect, WebSocket close, and credential leak tests.
 - E2E/VM or integration: Gated host-side artifact writer for in-VM
   `capsem-bench mitm-local` now runs, asserts every scenario succeeds, checks
@@ -548,7 +548,7 @@
   provider-owned Ollama HTTP/model rule rows in `session.db`, and the service
   `/security/{id}/latest` endpoint returns the full DB-backed ledger shape.
 - Final verification: `cargo fmt --check`; focused Rust gates
-  `cargo test -p capsem-debug-upstream -- --nocapture`,
+  `cargo test -p capsem-mock-server -- --nocapture`,
   `cargo test -p capsem-core websocket_upgrade_tunnels_through_local_upstream -- --nocapture`,
   `cargo test -p capsem-core --lib telemetry -- --nocapture`, and
   `cargo test -p capsem-logger db_writer_records_enqueue_batch_and_shutdown_metrics -- --nocapture`;

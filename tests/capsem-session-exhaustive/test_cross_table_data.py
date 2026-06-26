@@ -19,27 +19,34 @@ class TestCrossTableForeignKeys:
         )
 
     def test_tool_responses_call_fk(self, exhaust_db):
-        """tool_responses.call_id references a valid tool_calls.id."""
+        """tool_responses.call_id references a valid tool_calls.call_id in the same trace."""
         orphans = exhaust_db.execute("""
-            SELECT tr.id, tr.call_id FROM tool_responses tr
-            WHERE tr.call_id IS NOT NULL
-            AND tr.call_id NOT IN (SELECT id FROM tool_calls)
+            SELECT tr.id, tr.call_id, tr.trace_id FROM tool_responses tr
+            LEFT JOIN tool_calls tc
+              ON tr.call_id = tc.call_id
+             AND tr.trace_id = tc.trace_id
+            WHERE tc.call_id IS NULL
         """).fetchall()
         assert len(orphans) == 0, (
             f"tool_responses with invalid call_id: {[dict(r) for r in orphans]}"
         )
 
-    def test_mcp_origin_tool_calls_fk(self, exhaust_db):
-        """tool_calls with origin='mcp' have a valid mcp_call_id FK."""
+    def test_tool_responses_model_call_fk(self, exhaust_db):
+        """tool_responses.model_call_id references the model exchange that consumed it."""
         orphans = exhaust_db.execute("""
-            SELECT tc.id, tc.mcp_call_id FROM tool_calls tc
-            WHERE tc.origin = 'mcp'
-            AND tc.mcp_call_id IS NOT NULL
-            AND tc.mcp_call_id NOT IN (SELECT id FROM mcp_calls)
+            SELECT tr.id, tr.model_call_id, tr.call_id FROM tool_responses tr
+            WHERE tr.model_call_id NOT IN (SELECT id FROM model_calls)
         """).fetchall()
         assert len(orphans) == 0, (
-            f"MCP tool_calls with invalid mcp_call_id: {[dict(r) for r in orphans]}"
+            f"tool_responses with invalid model_call_id: {[dict(r) for r in orphans]}"
         )
+
+    def test_mcp_origin_tool_calls_fk(self, exhaust_db):
+        """MCP-origin tool_calls are the protocol evidence; no side table exists."""
+        rows = exhaust_db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='mcp_calls'"
+        ).fetchall()
+        assert rows == []
 
     def test_all_tables_have_id_column(self, exhaust_db):
         """All session.db tables have an 'id' primary key column."""

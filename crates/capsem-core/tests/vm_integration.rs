@@ -35,8 +35,6 @@ fn make_config(assets: &std::path::Path) -> VmConfig {
     }
     if assets.join("rootfs.erofs").exists() {
         builder = builder.disk_path(assets.join("rootfs.erofs"));
-    } else if assets.join("rootfs.squashfs").exists() {
-        builder = builder.disk_path(assets.join("rootfs.squashfs"));
     }
 
     builder

@@ -1,19 +1,20 @@
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::time::SystemTime;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant, SystemTime};
 
 use rusqlite::{params, Connection, OpenFlags, Row};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::events::{
-    AuditEvent, Decision, ExecEvent, FileAction, FileEvent, McpCall, ModelCall, NetEvent,
-    SecurityAskEvent, SecurityAskStatus, SecurityDetectionLevel, SecurityRuleAction,
-    SecurityRuleEvent, ToolCallEntry, ToolResponseEntry,
+    AuditEvent, Decision, ExecEvent, FileAction, FileEvent, ModelCall, NetEvent, SecurityAskEvent,
+    SecurityAskStatus, SecurityDetectionLevel, SecurityRuleAction, SecurityRuleEvent,
+    ToolCallEntry, ToolResponseEntry,
 };
 use crate::schema;
+
+static IN_MEMORY_READER_ID: AtomicU64 = AtomicU64::new(0);
 
 /// Counts of network events by decision outcome.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -24,7 +25,7 @@ pub struct NetEventCounts {
 }
 
 /// Aggregate statistics for a session (computed from SQL queries).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionStats {
     pub net_total: u64,
     pub net_allowed: u64,
@@ -95,6 +96,32 @@ pub struct McpToolUsage {
     pub total_duration_ms: u64,
 }
 
+/// A user/security tool-call ledger row from `tool_calls`.
+#[derive(Debug, Clone, Serialize)]
+pub struct ToolCallLedgerEntry {
+    pub id: i64,
+    pub event_id: String,
+    pub timestamp: String,
+    pub model_call_id: Option<i64>,
+    pub origin: String,
+    pub transport: String,
+    pub server_name: Option<String>,
+    pub method: Option<String>,
+    pub request_id: Option<String>,
+    pub call_id: String,
+    pub tool_name: String,
+    pub arguments: Option<String>,
+    pub response_preview: Option<String>,
+    pub decision: String,
+    pub duration_ms: u64,
+    pub error_message: Option<String>,
+    pub bytes_sent: u64,
+    pub bytes_received: u64,
+    pub policy_rule: Option<String>,
+    pub trace_id: Option<String>,
+    pub credential_ref: Option<String>,
+}
+
 /// Summary of a trace (one agent turn) aggregated from grouped model calls.
 #[derive(Debug, Clone, Serialize)]
 pub struct TraceSummary {
@@ -139,20 +166,20 @@ pub struct FileEventStats {
     pub restored: u64,
 }
 
-/// Aggregate MCP call statistics.
+/// Aggregate user-facing tool-call statistics.
 #[derive(Debug, Clone, Serialize)]
-pub struct McpCallStats {
+pub struct ToolCallStats {
     pub total: u64,
     pub allowed: u64,
     pub warned: u64,
     pub denied: u64,
     pub errored: u64,
-    pub by_server: Vec<McpServerCallCount>,
+    pub by_server: Vec<ToolServerCallCount>,
 }
 
-/// Per-server MCP call counts.
+/// Per-server tool-call counts.
 #[derive(Debug, Clone, Serialize)]
-pub struct McpServerCallCount {
+pub struct ToolServerCallCount {
     pub server_name: String,
     pub count: u64,
     pub denied: u64,
@@ -160,7 +187,7 @@ pub struct McpServerCallCount {
 }
 
 /// A unified history entry (merging exec_events and audit_events).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HistoryEntry {
     pub timestamp: String,
     pub layer: String,
@@ -169,13 +196,13 @@ pub struct HistoryEntry {
     pub duration_ms: Option<u64>,
     pub stdout_preview: Option<String>,
     pub stderr_preview: Option<String>,
-    /// For exec layer: source, process_name, trace_id, mcp_call_id.
+    /// For exec layer: source, process_name, trace_id.
     /// For audit layer: pid, ppid, exe, parent_exe, tty, cwd.
     pub details: serde_json::Value,
 }
 
 /// Process-centric history view.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessEntry {
     pub exe: String,
     pub command_count: u64,
@@ -184,28 +211,35 @@ pub struct ProcessEntry {
 }
 
 /// Counts for exec and audit events.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HistoryCounts {
     pub exec_count: u64,
     pub audit_count: u64,
 }
 
 /// Rule-match counts grouped by canonical action.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SecurityRuleActionCount {
     pub rule_action: String,
     pub count: u64,
 }
 
 /// Rule-match counts grouped by canonical event type.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SecurityRuleEventTypeCount {
     pub event_type: String,
     pub count: u64,
 }
 
+/// Rule-match counts grouped by canonical detection level.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SecurityRuleDetectionLevelCount {
+    pub detection_level: String,
+    pub count: u64,
+}
+
 /// Rule-match counts grouped by immutable rule labels stored in session.db.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SecurityRuleStatsByRule {
     pub rule_id: String,
     pub rule_action: String,
@@ -216,16 +250,27 @@ pub struct SecurityRuleStatsByRule {
 }
 
 /// Aggregate security rule statistics regenerated only from session.db.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SecurityRuleStats {
     pub total: u64,
     pub by_action: Vec<SecurityRuleActionCount>,
     pub by_event_type: Vec<SecurityRuleEventTypeCount>,
+    pub by_level: Vec<SecurityRuleDetectionLevelCount>,
     pub by_rule: Vec<SecurityRuleStatsByRule>,
 }
 
-/// Shared SQL column list for model_calls SELECT queries.
-const MODEL_CALL_COLUMNS_BASE: &str = "id, timestamp, provider, model, process_name, pid,
+/// Brokered credential references regenerated from substitution_events.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BrokeredCredentialStat {
+    pub provider: Option<String>,
+    pub credential_ref: String,
+    pub observed_count: u64,
+    pub injected_count: u64,
+    pub last_seen: Option<String>,
+}
+
+/// Shared SQL column tail for model_calls SELECT queries after provider/protocol.
+const MODEL_CALL_COLUMNS_TAIL: &str = "model, process_name, pid,
      method, path, stream,
      system_prompt_preview, messages_count, tools_count,
      request_bytes, request_body_preview,
@@ -233,13 +278,7 @@ const MODEL_CALL_COLUMNS_BASE: &str = "id, timestamp, provider, model, process_n
      stop_reason, input_tokens, output_tokens,
      duration_ms, response_bytes, estimated_cost_usd, trace_id";
 
-/// Shared SQL column list for mcp_calls SELECT queries.
-const MCP_CALL_COLUMNS_BASE: &str = "timestamp, server_name, method, tool_name, request_id,
-     request_preview, response_preview, decision,
-     duration_ms, error_message, process_name,
-     bytes_sent, bytes_received,
-     policy_mode, policy_action, policy_rule, policy_reason,
-     trace_id";
+const TOOL_CALL_LEDGER_FILTER: &str = "origin IN ('native', 'mcp', 'builtin', 'local')";
 
 /// Parse a model_calls row into (id, ModelCall). Column order must match MODEL_CALL_COLUMNS.
 fn read_model_call_row(row: &Row<'_>) -> rusqlite::Result<(i64, ModelCall)> {
@@ -250,36 +289,39 @@ fn read_model_call_row(row: &Row<'_>) -> rusqlite::Result<(i64, ModelCall)> {
     Ok((
         id,
         ModelCall {
-            event_id: row.get(27)?,
+            event_id: row.get(28)?,
             timestamp,
             provider: row.get(2)?,
-            model: row.get(3)?,
-            process_name: row.get(4)?,
-            pid: row.get::<_, Option<i64>>(5)?.map(|p| p as u32),
-            method: row.get(6)?,
-            path: row.get(7)?,
-            stream: row.get::<_, i64>(8)? != 0,
-            system_prompt_preview: row.get(9)?,
-            messages_count: row.get::<_, i64>(10)? as usize,
-            tools_count: row.get::<_, i64>(11)? as usize,
-            request_bytes: row.get::<_, i64>(12)? as u64,
-            request_body_preview: row.get(13)?,
-            message_id: row.get(14)?,
-            status_code: row.get::<_, Option<i64>>(15)?.map(|c| c as u16),
-            text_content: row.get(16)?,
-            thinking_content: row.get(17)?,
-            stop_reason: row.get(18)?,
-            input_tokens: row.get::<_, Option<i64>>(19)?.map(|t| t as u64),
-            output_tokens: row.get::<_, Option<i64>>(20)?.map(|t| t as u64),
+            protocol: row.get(3)?,
+            model: row.get(4)?,
+            process_name: row.get(5)?,
+            pid: row.get::<_, Option<i64>>(6)?.map(|p| p as u32),
+            method: row.get(7)?,
+            path: row.get(8)?,
+            stream: row.get::<_, i64>(9)? != 0,
+            system_prompt_preview: row.get(10)?,
+            messages_count: row.get::<_, i64>(11)? as usize,
+            tools_count: row.get::<_, i64>(12)? as usize,
+            request_bytes: row.get::<_, i64>(13)? as u64,
+            request_body_preview: row.get(14)?,
+            request_body_full: None,
+            message_id: row.get(15)?,
+            status_code: row.get::<_, Option<i64>>(16)?.map(|c| c as u16),
+            text_content: row.get(17)?,
+            thinking_content: row.get(18)?,
+            response_body_full: None,
+            stop_reason: row.get(19)?,
+            input_tokens: row.get::<_, Option<i64>>(20)?.map(|t| t as u64),
+            output_tokens: row.get::<_, Option<i64>>(21)?.map(|t| t as u64),
             usage_details: row
-                .get::<_, Option<String>>(26)?
+                .get::<_, Option<String>>(27)?
                 .and_then(|s| serde_json::from_str(&s).ok())
                 .unwrap_or_default(),
-            duration_ms: row.get::<_, i64>(21)? as u64,
-            response_bytes: row.get::<_, i64>(22)? as u64,
-            estimated_cost_usd: row.get::<_, f64>(23).unwrap_or(0.0),
-            trace_id: row.get(24)?,
-            credential_ref: row.get(25)?,
+            duration_ms: row.get::<_, i64>(22)? as u64,
+            response_bytes: row.get::<_, i64>(23)? as u64,
+            estimated_cost_usd: row.get::<_, f64>(24).unwrap_or(0.0),
+            trace_id: row.get(25)?,
+            credential_ref: row.get(26)?,
             tool_calls: Vec::new(),
             tool_responses: Vec::new(),
         },
@@ -312,19 +354,31 @@ pub fn validate_select_only(sql: &str) -> Result<(), String> {
     }
 }
 
-/// Read-only connection to the session database.
+/// Query-only connection to the session database.
 ///
-/// Opened in WAL mode for concurrent access with the writer thread.
+/// The DB layer opens the file read-write long enough to attach and populate
+/// its private `mem` schema, then enables SQLite `query_only`. Callers never
+/// receive the connection and `DbHandle::query` still rejects non-read SQL
+/// before execution.
 pub struct DbReader {
     conn: Connection,
 }
 
 impl DbReader {
-    /// Open a read-only connection to the given DB file.
+    /// Open a query-only connection to the given DB file.
     pub fn open(path: &Path) -> rusqlite::Result<Self> {
-        let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+        let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX
+            | OpenFlags::SQLITE_OPEN_URI;
         let conn = Connection::open_with_flags(path, flags)?;
+        let memory_uri = schema::memory_uri_for_path(path);
+        schema::with_memory_schema_lock(|| {
+            schema::create_memory_tables(&conn, &memory_uri)?;
+            schema::rehydrate_memory_tables_from_disk_once(&conn, schema::hot_ledger_tables())?;
+            schema::create_memory_read_views(&conn)
+        })?;
         schema::apply_reader_pragmas(&conn)?;
+        schema::record_sqlite_mmap_telemetry(&conn, path, "reader", "open");
         Ok(Self { conn })
     }
 
@@ -334,7 +388,37 @@ impl DbReader {
         let conn = Connection::open_in_memory()?;
         schema::apply_pragmas(&conn)?; // in-memory is read-write, pragmas are fine
         schema::create_tables(&conn)?;
+        let memory_uri = schema::memory_uri_for_name(&format!(
+            "reader-open-in-memory-{}-{}",
+            std::process::id(),
+            IN_MEMORY_READER_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        schema::with_memory_schema_lock(|| {
+            schema::create_memory_tables(&conn, &memory_uri)?;
+            schema::rehydrate_memory_tables_from_disk_once(&conn, schema::hot_ledger_tables())
+        })?;
         Ok(Self { conn })
+    }
+
+    /// Validate that this ledger is structurally ready for route reads.
+    ///
+    /// Empty ledgers are valid. Missing tables or route-critical columns are
+    /// DB contract failures and must not be converted into empty route payloads.
+    pub fn ready(&self) -> Result<(), String> {
+        schema::validate_ready_schema(&self.conn)
+    }
+
+    /// Refresh DB-owned hot memory tables from disk for externally-written DBs.
+    ///
+    /// Normal writer-owned handles do not call this on read because their
+    /// memory tables are the write truth. Service session route handles use it
+    /// because capsem-process owns the writes and disk is the process boundary.
+    pub(crate) fn sync_from_disk(&self) -> rusqlite::Result<()> {
+        self.conn.pragma_update(None, "query_only", "OFF")?;
+        let result = schema::sync_memory_tables_from_disk(&self.conn, schema::hot_ledger_tables())
+            .and_then(|()| schema::create_memory_read_views(&self.conn));
+        let restore = self.conn.pragma_update(None, "query_only", "ON");
+        result.and(restore)
     }
 
     fn has_column(&self, table: &str, column: &str) -> bool {
@@ -360,19 +444,35 @@ impl DbReader {
         }
     }
 
-    fn model_call_columns(&self) -> String {
-        format!(
-            "{MODEL_CALL_COLUMNS_BASE}, {}, usage_details, {}",
-            self.optional_column_expr("model_calls", "credential_ref"),
-            self.optional_column_expr("model_calls", "event_id")
-        )
+    fn with_query_timeout<F>(&self, run_query: F) -> Result<String, String>
+    where
+        F: FnOnce() -> Result<String, String>,
+    {
+        const TIMEOUT_MS: u64 = 5_000;
+        const PROGRESS_OPS: i32 = 10_000;
+
+        let deadline = Instant::now() + Duration::from_millis(TIMEOUT_MS);
+        self.conn
+            .progress_handler(PROGRESS_OPS, Some(move || Instant::now() >= deadline));
+        let result = run_query();
+        self.conn.progress_handler(0, None::<fn() -> bool>);
+
+        result.map_err(|e| {
+            if e.contains("interrupted") {
+                "query timed out after 5 seconds".to_string()
+            } else {
+                e
+            }
+        })
     }
 
-    fn mcp_call_columns(&self) -> String {
+    fn model_call_columns(&self) -> String {
         format!(
-            "{MCP_CALL_COLUMNS_BASE}, {}, {}",
-            self.optional_column_expr("mcp_calls", "credential_ref"),
-            self.optional_column_expr("mcp_calls", "event_id")
+            "id, timestamp, provider, {}, {}, {}, usage_details, {}",
+            self.optional_column_expr("model_calls", "protocol"),
+            MODEL_CALL_COLUMNS_TAIL,
+            self.optional_column_expr("model_calls", "credential_ref"),
+            self.optional_column_expr("model_calls", "event_id")
         )
     }
 
@@ -389,39 +489,7 @@ impl DbReader {
         validate_select_only(sql)?;
 
         const MAX_ROWS: usize = 10_000;
-        const TIMEOUT_MS: u64 = 5_000;
-        const POLL_MS: u64 = 100;
-
-        // Set up interrupt timer.
-        let interrupt_handle = self.conn.get_interrupt_handle();
-        let done = Arc::new(AtomicBool::new(false));
-        let done_clone = Arc::clone(&done);
-        let timer = std::thread::spawn(move || {
-            let polls = TIMEOUT_MS / POLL_MS;
-            for _ in 0..polls {
-                std::thread::sleep(std::time::Duration::from_millis(POLL_MS));
-                if done_clone.load(Ordering::Relaxed) {
-                    return;
-                }
-            }
-            if !done_clone.load(Ordering::Relaxed) {
-                interrupt_handle.interrupt();
-            }
-        });
-
-        let result = self.query_raw_inner(sql, MAX_ROWS);
-
-        // Signal timer to stop and wait for it.
-        done.store(true, Ordering::Relaxed);
-        let _ = timer.join();
-
-        result.map_err(|e| {
-            if e.contains("interrupted") {
-                "query timed out after 5 seconds".to_string()
-            } else {
-                e
-            }
-        })
+        self.with_query_timeout(|| self.query_raw_inner(sql, MAX_ROWS))
     }
 
     /// Execute an arbitrary read-only SQL query with bind parameters and return JSON.
@@ -434,37 +502,7 @@ impl DbReader {
         validate_select_only(sql)?;
 
         const MAX_ROWS: usize = 10_000;
-        const TIMEOUT_MS: u64 = 5_000;
-        const POLL_MS: u64 = 100;
-
-        let interrupt_handle = self.conn.get_interrupt_handle();
-        let done = Arc::new(AtomicBool::new(false));
-        let done_clone = Arc::clone(&done);
-        let timer = std::thread::spawn(move || {
-            let polls = TIMEOUT_MS / POLL_MS;
-            for _ in 0..polls {
-                std::thread::sleep(std::time::Duration::from_millis(POLL_MS));
-                if done_clone.load(Ordering::Relaxed) {
-                    return;
-                }
-            }
-            if !done_clone.load(Ordering::Relaxed) {
-                interrupt_handle.interrupt();
-            }
-        });
-
-        let result = self.query_raw_params_inner(sql, params, MAX_ROWS);
-
-        done.store(true, Ordering::Relaxed);
-        let _ = timer.join();
-
-        result.map_err(|e| {
-            if e.contains("interrupted") {
-                "query timed out after 5 seconds".to_string()
-            } else {
-                e
-            }
-        })
+        self.with_query_timeout(|| self.query_raw_params_inner(sql, params, MAX_ROWS))
     }
 
     fn query_raw_inner(&self, sql: &str, max_rows: usize) -> Result<String, String> {
@@ -596,6 +634,8 @@ impl DbReader {
                 response_headers: row.get(15)?,
                 request_body_preview: row.get(16)?,
                 response_body_preview: row.get(17)?,
+                request_body_full: None,
+                response_body_full: None,
                 conn_type: row.get(18)?,
                 policy_mode: row.get(19)?,
                 policy_action: row.get(20)?,
@@ -632,7 +672,8 @@ impl DbReader {
     ) -> rusqlite::Result<Vec<SecurityRuleEvent>> {
         let mut stmt = self.conn.prepare(
             "SELECT timestamp_unix_ms, event_id, event_type, rule_id,
-                    rule_action, detection_level, rule_json, event_json, trace_id
+                    rule_action, detection_level, rule_json, event_json, trace_id,
+                    turn_id, credential_ref
              FROM security_rule_events
              ORDER BY timestamp_unix_ms DESC, id DESC
              LIMIT ?1",
@@ -708,6 +749,19 @@ impl DbReader {
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
+        let mut level_stmt = self.conn.prepare(
+            "SELECT detection_level, COUNT(*) FROM security_rule_events
+             GROUP BY detection_level ORDER BY detection_level",
+        )?;
+        let by_level = level_stmt
+            .query_map([], |row| {
+                Ok(SecurityRuleDetectionLevelCount {
+                    detection_level: row.get(0)?,
+                    count: row.get::<_, i64>(1)? as u64,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
         let mut rule_stmt = self.conn.prepare(
             "SELECT
                 sre.rule_id,
@@ -745,8 +799,33 @@ impl DbReader {
             total,
             by_action,
             by_event_type,
+            by_level,
             by_rule,
         })
+    }
+
+    /// Aggregate credential-broker runtime state from the session DB only.
+    pub fn brokered_credential_stats(&self) -> rusqlite::Result<Vec<BrokeredCredentialStat>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT MAX(provider), substitution_ref, COUNT(*),
+                    SUM(CASE WHEN outcome = 'injected' THEN 1 ELSE 0 END),
+                    MAX(timestamp)
+             FROM substitution_events
+             WHERE material_class = 'credential'
+             GROUP BY substitution_ref
+             ORDER BY MAX(timestamp) DESC
+             LIMIT 100",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(BrokeredCredentialStat {
+                provider: row.get(0)?,
+                credential_ref: row.get(1)?,
+                observed_count: row.get::<_, i64>(2)? as u64,
+                injected_count: row.get::<_, i64>(3)? as u64,
+                last_seen: row.get(4)?,
+            })
+        })?;
+        rows.collect()
     }
 
     /// Count net events by decision: returns (total, allowed, denied).
@@ -802,16 +881,19 @@ impl DbReader {
         &self,
         model_call_id: i64,
     ) -> rusqlite::Result<Vec<ToolResponseEntry>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT call_id, content_preview, is_error
+        let credential_ref_col = self.optional_column_expr("tool_responses", "credential_ref");
+        let sql = format!(
+            "SELECT call_id, content_preview, is_error, {credential_ref_col}
              FROM tool_responses WHERE model_call_id = ?1",
-        )?;
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params![model_call_id], |row| {
             Ok(ToolResponseEntry {
                 call_id: row.get(0)?,
                 content_preview: row.get(1)?,
                 is_error: row.get::<_, i64>(2)? != 0,
                 trace_id: None,
+                credential_ref: row.get(3)?,
             })
         })?;
         rows.collect()
@@ -883,11 +965,11 @@ impl DbReader {
             .unwrap_or_default();
 
         // Total tool calls.
-        let total_tool_calls: u64 =
-            self.conn
-                .query_row("SELECT COUNT(*) FROM tool_calls", [], |row| {
-                    row.get::<_, i64>(0).map(|n| n as u64)
-                })?;
+        let total_tool_calls: u64 = self.conn.query_row(
+            &format!("SELECT COUNT(*) FROM tool_calls WHERE {TOOL_CALL_LEDGER_FILTER}"),
+            [],
+            |row| row.get::<_, i64>(0).map(|n| n as u64),
+        )?;
 
         Ok(SessionStats {
             net_total,
@@ -1038,6 +1120,8 @@ impl DbReader {
                 response_headers: row.get(15)?,
                 request_body_preview: row.get(16)?,
                 response_body_preview: row.get(17)?,
+                request_body_full: None,
+                response_body_full: None,
                 conn_type: row.get(18)?,
                 policy_mode: row.get(19)?,
                 policy_action: row.get(20)?,
@@ -1102,13 +1186,14 @@ impl DbReader {
 
     /// Tool usage frequency (from tool_calls table).
     pub fn tool_usage_frequency(&self, limit: usize) -> rusqlite::Result<Vec<ToolUsageCount>> {
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare(&format!(
             "SELECT tool_name, COUNT(*) as cnt
              FROM tool_calls
+             WHERE {TOOL_CALL_LEDGER_FILTER}
              GROUP BY tool_name
              ORDER BY cnt DESC
              LIMIT ?1",
-        )?;
+        ))?;
         let rows = stmt.query_map(params![limit as i64], |row| {
             Ok(ToolUsageCount {
                 tool_name: row.get(0)?,
@@ -1130,15 +1215,17 @@ impl DbReader {
 
     /// Tool usage with response byte and duration stats from model_calls.
     pub fn tool_usage_with_stats(&self, limit: usize) -> rusqlite::Result<Vec<ToolUsageWithStats>> {
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare(&format!(
             "SELECT tc.tool_name, COUNT(*) as cnt,
-                    COALESCE(SUM(mc.response_bytes), 0),
-                    COALESCE(SUM(mc.duration_ms), 0)
+                    COALESCE(SUM(LENGTH(COALESCE(tc.response_preview, tr.content_preview, ''))), 0),
+                    COALESCE(SUM(COALESCE(tc.duration_ms, mc.duration_ms, 0)), 0)
              FROM tool_calls tc
-             JOIN model_calls mc ON tc.model_call_id = mc.id
+             LEFT JOIN model_calls mc ON tc.model_call_id = mc.id
+             LEFT JOIN tool_responses tr ON tc.call_id = tr.call_id
+             WHERE {TOOL_CALL_LEDGER_FILTER}
              GROUP BY tc.tool_name
              ORDER BY cnt DESC LIMIT ?1",
-        )?;
+        ))?;
         let rows = stmt.query_map(params![limit as i64], |row| {
             Ok(ToolUsageWithStats {
                 tool_name: row.get(0)?,
@@ -1150,17 +1237,17 @@ impl DbReader {
         rows.collect()
     }
 
-    /// MCP tool usage grouped by tool_name with duration and response size.
+    /// MCP-origin tool usage grouped by tool_name with duration and response size.
     pub fn mcp_tool_usage(&self, limit: usize) -> rusqlite::Result<Vec<McpToolUsage>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT tool_name, server_name, COUNT(*) as cnt,
+        let sql = "SELECT tool_name, server_name, COUNT(*) as cnt,
                     COALESCE(SUM(LENGTH(response_preview)), 0),
                     COALESCE(SUM(duration_ms), 0)
-             FROM mcp_calls
-             WHERE tool_name IS NOT NULL
+             FROM tool_calls
+             WHERE origin = 'mcp'
              GROUP BY tool_name
-             ORDER BY cnt DESC LIMIT ?1",
-        )?;
+             ORDER BY cnt DESC LIMIT ?1"
+            .to_string();
+        let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params![limit as i64], |row| {
             Ok(McpToolUsage {
                 tool_name: row.get(0)?,
@@ -1291,12 +1378,19 @@ impl DbReader {
         })?;
 
         // Fetch all tool responses for this trace in one batch.
-        let mut tool_resps_stmt = self.conn.prepare(
-            "SELECT tr.model_call_id, tr.call_id, tr.content_preview, tr.is_error
+        let tool_response_credential_ref_col =
+            if self.has_column("tool_responses", "credential_ref") {
+                "tr.credential_ref".to_string()
+            } else {
+                "NULL AS credential_ref".to_string()
+            };
+        let tool_response_sql = format!(
+            "SELECT tr.model_call_id, tr.call_id, tr.content_preview, tr.is_error, {tool_response_credential_ref_col}
              FROM tool_responses tr
              JOIN model_calls mc ON tr.model_call_id = mc.id
-             WHERE mc.trace_id = ?1",
-        )?;
+             WHERE mc.trace_id = ?1"
+        );
+        let mut tool_resps_stmt = self.conn.prepare(&tool_response_sql)?;
         let all_tool_resps = tool_resps_stmt.query_map(params![trace_id], |row| {
             Ok((
                 row.get::<_, i64>(0)?,
@@ -1305,6 +1399,7 @@ impl DbReader {
                     content_preview: row.get(2)?,
                     is_error: row.get::<_, i64>(3)? != 0,
                     trace_id: None,
+                    credential_ref: row.get(4)?,
                 },
             ))
         })?;
@@ -1400,52 +1495,59 @@ impl DbReader {
         )
     }
 
-    // ── MCP call queries ──────────────────────────────────────────────
-
-    /// Query the most recent N MCP calls, ordered newest first.
-    pub fn recent_mcp_calls(&self, limit: usize) -> rusqlite::Result<Vec<McpCall>> {
-        let sql = format!(
-            "SELECT {}
-             FROM mcp_calls
+    /// Query the user-facing tool-call ledger, ordered newest first.
+    pub fn recent_tool_calls(&self, limit: usize) -> rusqlite::Result<Vec<ToolCallLedgerEntry>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, event_id, timestamp, model_call_id, origin, transport, server_name, method,
+                    request_id, call_id, tool_name, arguments, response_preview, decision,
+                    duration_ms, error_message, bytes_sent, bytes_received, policy_rule,
+                    trace_id, credential_ref
+             FROM tool_calls
+             WHERE origin IN ('native', 'mcp', 'builtin', 'local')
              ORDER BY id DESC
              LIMIT ?1",
-            self.mcp_call_columns()
-        );
-        let mut stmt = self.conn.prepare(&sql)?;
-        let rows = stmt.query_map(params![limit as i64], read_mcp_call_row)?;
+        )?;
+        let rows = stmt.query_map(params![limit as i64], |row| {
+            Ok(ToolCallLedgerEntry {
+                id: row.get(0)?,
+                event_id: row.get(1)?,
+                timestamp: row.get(2)?,
+                model_call_id: row.get(3)?,
+                origin: row.get(4)?,
+                transport: row.get(5)?,
+                server_name: row.get(6)?,
+                method: row.get(7)?,
+                request_id: row.get(8)?,
+                call_id: row.get(9)?,
+                tool_name: row.get(10)?,
+                arguments: row.get(11)?,
+                response_preview: row.get(12)?,
+                decision: row.get(13)?,
+                duration_ms: row.get::<_, i64>(14)? as u64,
+                error_message: row.get(15)?,
+                bytes_sent: row.get::<_, i64>(16)? as u64,
+                bytes_received: row.get::<_, i64>(17)? as u64,
+                policy_rule: row.get(18)?,
+                trace_id: row.get(19)?,
+                credential_ref: row.get(20)?,
+            })
+        })?;
         rows.collect()
     }
 
-    /// Search MCP calls by server_name, method, or tool_name substring.
-    pub fn search_mcp_calls(&self, query: &str, limit: usize) -> rusqlite::Result<Vec<McpCall>> {
-        let pattern = format!("%{query}%");
-        let sql = format!(
-            "SELECT {}
-             FROM mcp_calls
-             WHERE server_name LIKE ?1
-                OR method LIKE ?1
-                OR tool_name LIKE ?1
-             ORDER BY id DESC
-             LIMIT ?2",
-            self.mcp_call_columns()
-        );
-        let mut stmt = self.conn.prepare(&sql)?;
-        let rows = stmt.query_map(params![pattern, limit as i64], read_mcp_call_row)?;
-        rows.collect()
-    }
-
-    /// Aggregate MCP call statistics. All aggregation done in SQL.
-    pub fn mcp_call_stats(&self) -> rusqlite::Result<McpCallStats> {
-        let (total, allowed, warned, denied, errored) = self.conn.query_row(
-            "SELECT
+    /// Aggregate user-facing tool-call statistics. All aggregation done in SQL.
+    pub fn tool_call_stats(&self) -> rusqlite::Result<ToolCallStats> {
+        let totals_sql = "SELECT
                 COUNT(*),
                 COALESCE(SUM(CASE WHEN decision = 'allowed' THEN 1 ELSE 0 END), 0),
                 COALESCE(SUM(CASE WHEN decision = 'warned' THEN 1 ELSE 0 END), 0),
                 COALESCE(SUM(CASE WHEN decision = 'denied' THEN 1 ELSE 0 END), 0),
                 COALESCE(SUM(CASE WHEN decision = 'error' THEN 1 ELSE 0 END), 0)
-             FROM mcp_calls",
-            [],
-            |row| {
+             FROM tool_calls
+             WHERE origin IN ('native', 'mcp', 'builtin', 'local')"
+            .to_string();
+        let (total, allowed, warned, denied, errored) =
+            self.conn.query_row(&totals_sql, [], |row| {
                 Ok((
                     row.get::<_, i64>(0)? as u64,
                     row.get::<_, i64>(1)? as u64,
@@ -1453,20 +1555,20 @@ impl DbReader {
                     row.get::<_, i64>(3)? as u64,
                     row.get::<_, i64>(4)? as u64,
                 ))
-            },
-        )?;
+            })?;
 
-        let mut stmt = self.conn.prepare(
-            "SELECT server_name,
+        let by_server_sql = "SELECT COALESCE(server_name, origin),
                     COUNT(*) as cnt,
                     SUM(CASE WHEN decision = 'denied' THEN 1 ELSE 0 END),
                     SUM(CASE WHEN decision = 'warned' THEN 1 ELSE 0 END)
-             FROM mcp_calls
-             GROUP BY server_name
-             ORDER BY cnt DESC",
-        )?;
+             FROM tool_calls
+             WHERE origin IN ('native', 'mcp', 'builtin', 'local')
+             GROUP BY COALESCE(server_name, origin)
+             ORDER BY cnt DESC, COALESCE(server_name, origin) ASC"
+            .to_string();
+        let mut stmt = self.conn.prepare(&by_server_sql)?;
         let by_server = stmt.query_map([], |row| {
-            Ok(McpServerCallCount {
+            Ok(ToolServerCallCount {
                 server_name: row.get(0)?,
                 count: row.get::<_, i64>(1)? as u64,
                 denied: row.get::<_, i64>(2)? as u64,
@@ -1474,7 +1576,7 @@ impl DbReader {
             })
         })?;
 
-        Ok(McpCallStats {
+        Ok(ToolCallStats {
             total,
             allowed,
             warned,
@@ -1482,6 +1584,14 @@ impl DbReader {
             errored,
             by_server: by_server.collect::<rusqlite::Result<Vec<_>>>()?,
         })
+    }
+
+    /// Raw tool-call row count for session-index rollups.
+    pub fn raw_tool_call_count(&self) -> rusqlite::Result<u64> {
+        self.conn
+            .query_row("SELECT COUNT(*) FROM tool_calls", [], |row| {
+                Ok(row.get::<_, i64>(0)? as u64)
+            })
     }
 
     // -----------------------------------------------------------------
@@ -1519,7 +1629,7 @@ impl DbReader {
                 let mut stmt = self.conn.prepare(
                     "SELECT timestamp, exec_id, command, exit_code, duration_ms,
                             stdout_preview, stderr_preview, source, trace_id,
-                            process_name, mcp_call_id
+                            process_name
                      FROM exec_events WHERE command LIKE ?1
                      ORDER BY timestamp DESC",
                 )?;
@@ -1531,7 +1641,7 @@ impl DbReader {
                 let mut stmt = self.conn.prepare(
                     "SELECT timestamp, exec_id, command, exit_code, duration_ms,
                             stdout_preview, stderr_preview, source, trace_id,
-                            process_name, mcp_call_id
+                            process_name
                      FROM exec_events ORDER BY timestamp DESC",
                 )?;
                 let rows = stmt.query_map([], read_exec_history_row)?;
@@ -1601,7 +1711,7 @@ impl DbReader {
         let credential_ref_col = self.optional_column_expr("exec_events", "credential_ref");
         let event_id_col = self.optional_column_expr("exec_events", "event_id");
         let sql = format!(
-            "SELECT timestamp, exec_id, command, source, mcp_call_id, trace_id, process_name,
+            "SELECT timestamp, exec_id, command, source, trace_id, process_name,
                     {credential_ref_col}, {event_id_col}
              FROM exec_events ORDER BY timestamp DESC LIMIT ?1"
         );
@@ -1610,15 +1720,14 @@ impl DbReader {
             let ts_str: String = row.get(0)?;
             let timestamp = humantime::parse_rfc3339(&ts_str).unwrap_or(SystemTime::UNIX_EPOCH);
             Ok(ExecEvent {
-                event_id: row.get(8)?,
+                event_id: row.get(7)?,
                 timestamp,
                 exec_id: row.get::<_, i64>(1)? as u64,
                 command: row.get(2)?,
                 source: row.get(3)?,
-                mcp_call_id: row.get::<_, Option<i64>>(4)?.map(|v| v as u64),
-                trace_id: row.get(5)?,
-                process_name: row.get(6)?,
-                credential_ref: row.get(7)?,
+                trace_id: row.get(4)?,
+                process_name: row.get(5)?,
+                credential_ref: row.get(6)?,
             })
         })?;
         rows.collect()
@@ -1687,6 +1796,8 @@ fn read_security_rule_event_row(row: &Row<'_>) -> rusqlite::Result<SecurityRuleE
         rule_json: row.get(6)?,
         event_json: row.get(7)?,
         trace_id: row.get(8)?,
+        turn_id: row.get(9)?,
+        credential_ref: row.get(10)?,
     })
 }
 
@@ -1730,34 +1841,6 @@ fn read_file_event_row(row: &Row<'_>) -> rusqlite::Result<FileEvent> {
     })
 }
 
-/// Parse an mcp_calls row into McpCall. Column order must match the SELECT in queries above.
-fn read_mcp_call_row(row: &Row<'_>) -> rusqlite::Result<McpCall> {
-    let ts_str: String = row.get(0)?;
-    let timestamp = humantime::parse_rfc3339(&ts_str).unwrap_or(SystemTime::UNIX_EPOCH);
-    Ok(McpCall {
-        event_id: row.get(19)?,
-        timestamp,
-        server_name: row.get(1)?,
-        method: row.get(2)?,
-        tool_name: row.get(3)?,
-        request_id: row.get(4)?,
-        request_preview: row.get(5)?,
-        response_preview: row.get(6)?,
-        decision: row.get(7)?,
-        duration_ms: row.get::<_, i64>(8)? as u64,
-        error_message: row.get(9)?,
-        process_name: row.get(10)?,
-        bytes_sent: row.get::<_, i64>(11)? as u64,
-        bytes_received: row.get::<_, i64>(12)? as u64,
-        policy_mode: row.get(13)?,
-        policy_action: row.get(14)?,
-        policy_rule: row.get(15)?,
-        policy_reason: row.get(16)?,
-        trace_id: row.get(17)?,
-        credential_ref: row.get(18)?,
-    })
-}
-
 /// Parse an exec_events row into a HistoryEntry for unified history.
 fn read_exec_history_row(row: &Row<'_>) -> rusqlite::Result<HistoryEntry> {
     Ok(HistoryEntry {
@@ -1772,7 +1855,6 @@ fn read_exec_history_row(row: &Row<'_>) -> rusqlite::Result<HistoryEntry> {
             "source": row.get::<_, Option<String>>(7)?,
             "trace_id": row.get::<_, Option<String>>(8)?,
             "process_name": row.get::<_, Option<String>>(9)?,
-            "mcp_call_id": row.get::<_, Option<i64>>(10)?,
             "exec_id": row.get::<_, i64>(1)?,
         }),
     })
@@ -1897,6 +1979,27 @@ mod tests {
     }
 
     #[test]
+    fn query_raw_with_params_does_not_pay_timeout_poll_on_success() {
+        let reader = setup_reader_with_data();
+        let started = std::time::Instant::now();
+
+        for _ in 0..8 {
+            let json_str = reader
+                .query_raw_with_params("SELECT COUNT(*) AS cnt FROM net_events", &[])
+                .unwrap();
+            let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+            assert_eq!(parsed["rows"][0][0], 2);
+        }
+
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < std::time::Duration::from_millis(80),
+            "successful DB queries must not wait for the 100ms timeout poll; elapsed={elapsed:?}. \
+             The route latency contract depends on the DB layer returning immediately when SQLite is done."
+        );
+    }
+
+    #[test]
     fn validate_select_only_allows_select() {
         assert!(validate_select_only("SELECT 1").is_ok());
         assert!(validate_select_only("  select * from foo").is_ok());
@@ -1953,14 +2056,12 @@ mod tests {
                 ('2026-01-01T00:11:00Z', 'anthropic', 'claude-3',  'POST', '/m', 50,  75,  800,  0.005, 't1'),
                 ('2026-01-01T00:12:00Z', 'openai',    'gpt-4',     'POST', '/m', 30,  60,  400,  0.003, 't2');
 
-             INSERT INTO tool_calls (model_call_id, call_index, call_id, tool_name, arguments)
-             VALUES (1, 0, 'c-1', 'bash',  '{}'),
-                    (1, 1, 'c-2', 'bash',  '{}'),
-                    (2, 0, 'c-3', 'fetch', '{}');
-
-             INSERT INTO mcp_calls (timestamp, server_name, method, tool_name, decision, duration_ms)
-             VALUES ('2026-01-01T00:20:00Z', 'github', 'call', 'search_repos', 'allowed', 100),
-                    ('2026-01-01T00:21:00Z', 'github', 'call', 'search_repos', 'allowed', 120);
+             INSERT INTO tool_calls (model_call_id, call_index, call_id, tool_name, arguments, origin, server_name, method, decision, duration_ms)
+             VALUES (1, 0, 'c-1', 'bash',  '{}', 'native', NULL, NULL, 'allowed', 0),
+                    (1, 1, 'c-2', 'bash',  '{}', 'native', NULL, NULL, 'allowed', 0),
+                    (2, 0, 'c-3', 'fetch', '{}', 'native', NULL, NULL, 'allowed', 0),
+                    (NULL, 0, 'mcp-1', 'search_repos', '{}', 'mcp', 'github', 'tools/call', 'allowed', 100),
+                    (NULL, 0, 'mcp-2', 'search_repos', '{}', 'mcp', 'github', 'tools/call', 'allowed', 120);
 
              INSERT INTO fs_events (timestamp, action, path)
              VALUES ('2026-01-01T00:30:00Z', 'create', '/tmp/a'),
@@ -2038,7 +2139,7 @@ mod tests {
                  ) VALUES
                     (1789000000000, '111111111111', 'http.request', 'allow_github',
                      'allow', 'none', '{\"name\":\"allow_github\"}', '{\"http\":{\"host\":\"api.github.com\"}}'),
-                    (1789000000001, '222222222222', 'model.request', 'block_openai',
+                    (1789000000001, '222222222222', 'model.call', 'block_openai',
                      'block', 'critical', '{\"name\":\"block_openai\"}', '{\"model\":{\"provider\":\"openai\"}}')",
             )
             .unwrap();
@@ -2062,9 +2163,9 @@ mod tests {
                     timestamp_unix_ms, event_id, event_type, rule_id,
                     rule_action, detection_level, rule_json, event_json
                  ) VALUES
-                    (1789000000000, '111111111111', 'model.request', 'block_openai',
+                    (1789000000000, '111111111111', 'model.call', 'block_openai',
                      'block', 'critical', '{}', '{}'),
-                    (1789000000001, '222222222222', 'model.request', 'block_openai',
+                    (1789000000001, '222222222222', 'model.call', 'block_openai',
                      'block', 'critical', '{}', '{}'),
                     (1789000000002, '333333333333', 'http.request', 'allow_github',
                      'allow', 'none', '{}', '{}')",
@@ -2080,7 +2181,15 @@ mod tests {
         assert!(stats
             .by_event_type
             .iter()
-            .any(|entry| entry.event_type == "model.request" && entry.count == 2));
+            .any(|entry| entry.event_type == "model.call" && entry.count == 2));
+        assert!(stats
+            .by_level
+            .iter()
+            .any(|entry| entry.detection_level == "critical" && entry.count == 2));
+        assert!(stats
+            .by_level
+            .iter()
+            .any(|entry| entry.detection_level == "none" && entry.count == 1));
         let block = stats
             .by_rule
             .iter()
@@ -2195,7 +2304,9 @@ mod tests {
         assert_eq!(s.total_input_tokens, 100 + 50 + 30);
         assert_eq!(s.total_output_tokens, 200 + 75 + 60);
         assert_eq!(s.total_model_duration_ms, 1500 + 800 + 400);
-        assert_eq!(s.total_tool_calls, 3);
+        // Session stats report the unified tool ledger: model-native tool
+        // calls plus MCP-origin calls observed at the boundary.
+        assert_eq!(s.total_tool_calls, 5);
         // Floating point sum — allow tiny tolerance.
         assert!((s.total_estimated_cost_usd - 0.018).abs() < 1e-9);
     }
@@ -2209,6 +2320,148 @@ mod tests {
         assert_eq!(s.total_tool_calls, 0);
         assert_eq!(s.total_estimated_cost_usd, 0.0);
         assert!(s.total_usage_details.is_empty());
+    }
+
+    #[test]
+    fn tool_call_stats_counts_unified_tool_ledger_rows() {
+        let r = DbReader::open_in_memory().unwrap();
+        r.conn
+            .execute_batch(
+                "INSERT INTO tool_calls (timestamp, origin, transport, server_name, method, call_index, call_id, tool_name, arguments, decision, duration_ms)
+                 VALUES
+                    ('2026-01-01T00:00:04Z', 'mcp', 'vsock_frame', 'capsem', 'tools/call', 0, 'mcp-1', 'local__fetch_http', '{}', 'allowed', 9),
+                    ('2026-01-01T00:00:05Z', 'mcp', 'http', 'github', 'tools/call', 0, 'mcp-2', 'github__search', '{}', 'denied', 11),
+                    ('2026-01-01T00:00:06Z', 'native', 'http', 'model', NULL, 0, 'native-1', 'bash', '{}', 'allowed', 1);",
+            )
+            .unwrap();
+
+        let stats = r.tool_call_stats().unwrap();
+        assert_eq!(stats.total, 3);
+        assert_eq!(stats.allowed, 2);
+        assert_eq!(stats.denied, 1);
+        assert_eq!(stats.by_server.len(), 3);
+        assert_eq!(stats.by_server[0].server_name, "capsem");
+        assert_eq!(stats.by_server[0].count, 1);
+        assert_eq!(stats.by_server[1].server_name, "github");
+        assert_eq!(stats.by_server[1].count, 1);
+        assert_eq!(stats.by_server[2].server_name, "model");
+        assert_eq!(stats.by_server[2].count, 1);
+    }
+
+    #[test]
+    fn recent_tool_calls_reads_unified_model_and_mcp_rows() {
+        let r = DbReader::open_in_memory().unwrap();
+        r.conn
+            .execute_batch(
+                "INSERT INTO tool_calls (
+                    id, event_id, timestamp, model_call_id, origin, transport, server_name, method,
+                    request_id, call_index, call_id, tool_name, arguments, response_preview,
+                    decision, duration_ms, bytes_sent, bytes_received, policy_rule, trace_id
+                 ) VALUES
+                    (100, 'aaaaaaaaaaaa', '2026-01-01T00:00:01Z', 1, 'native', 'http', 'model', NULL,
+                     NULL, 0, 'call-model', 'write_file', '{\"path\":\"poem.md\"}',
+                     'ok', 'allowed', 7, 10, 20, NULL, 'trace-model'),
+                    (101, 'bbbbbbbbbbbb', '2026-01-01T00:00:02Z', NULL, 'mcp', 'vsock_frame', 'capsem', 'tools/call',
+                     'req-1', 0, 'req-1', 'local__fetch_http', '{\"url\":\"https://example.com\"}',
+                     '{\"status\":200}', 'denied', 9, 30, 40, 'profiles.rules.block_fetch', 'trace-mcp');",
+            )
+            .unwrap();
+
+        let rows = r.recent_tool_calls(10).unwrap();
+        let mcp = rows.iter().find(|row| row.origin == "mcp").unwrap();
+        assert_eq!(mcp.event_id, "bbbbbbbbbbbb");
+        assert_eq!(mcp.model_call_id, None);
+        assert_eq!(mcp.transport, "vsock_frame");
+        assert_eq!(mcp.server_name.as_deref(), Some("capsem"));
+        assert_eq!(mcp.method.as_deref(), Some("tools/call"));
+        assert_eq!(mcp.request_id.as_deref(), Some("req-1"));
+        assert_eq!(mcp.tool_name, "local__fetch_http");
+        assert_eq!(
+            mcp.arguments.as_deref(),
+            Some("{\"url\":\"https://example.com\"}")
+        );
+        assert_eq!(mcp.response_preview.as_deref(), Some("{\"status\":200}"));
+        assert_eq!(mcp.decision, "denied");
+        assert_eq!(
+            mcp.policy_rule.as_deref(),
+            Some("profiles.rules.block_fetch")
+        );
+
+        let native = rows.iter().find(|row| row.origin == "native").unwrap();
+        assert_eq!(native.model_call_id, Some(1));
+        assert_eq!(native.transport, "http");
+        assert_eq!(native.tool_name, "write_file");
+        assert_eq!(native.response_preview.as_deref(), Some("ok"));
+    }
+
+    #[test]
+    fn raw_tool_call_count_matches_unified_ledger_rows() {
+        let r = DbReader::open_in_memory().unwrap();
+        r.conn
+            .execute_batch(
+                "INSERT INTO tool_calls (timestamp, origin, server_name, method, call_index, call_id, tool_name, arguments, decision, duration_ms)
+                 VALUES
+                    ('2026-01-01T00:00:00Z', 'mcp', 'capsem', 'tools/call', 0, 'call-1', 'local__snapshots_changes', '{}', 'allowed', 4),
+                    ('2026-01-01T00:00:01Z', 'mcp', 'capsem', 'tools/call', 0, 'call-2', 'local__fetch_http', '{}', 'allowed', 9),
+                    ('2026-01-01T00:00:02Z', 'native', 'model', NULL, 0, 'call-3', 'write_file', '{}', 'allowed', 1);",
+            )
+            .unwrap();
+
+        assert_eq!(r.tool_call_stats().unwrap().total, 3);
+        assert_eq!(r.raw_tool_call_count().unwrap(), 3);
+    }
+
+    #[test]
+    fn brokered_credential_stats_merges_injected_rows_without_provider() {
+        let r = DbReader::open_in_memory().unwrap();
+        let credential_ref = crate::events::credential_reference("google", "ya29.runtime-token");
+        r.conn
+            .execute(
+                "INSERT INTO substitution_events (
+                    timestamp, material_class, source, event_type, algorithm,
+                    substitution_ref, outcome, provider, trace_id
+                 ) VALUES (?1, 'credential', ?2, 'http.response', 'blake3', ?3, 'captured', 'google', 'trace-1')",
+                params![
+                    "2026-06-14T22:00:00Z",
+                    "http.body.response.$.access_token",
+                    credential_ref,
+                ],
+            )
+            .unwrap();
+        r.conn
+            .execute(
+                "INSERT INTO substitution_events (
+                    timestamp, material_class, source, event_type, algorithm,
+                    substitution_ref, outcome, provider, trace_id
+                 ) VALUES (?1, 'credential', ?2, 'http.request', 'blake3', ?3, 'injected', NULL, 'trace-2')",
+                params![
+                    "2026-06-14T22:00:01Z",
+                    "http.header.authorization",
+                    credential_ref,
+                ],
+            )
+            .unwrap();
+        r.conn
+            .execute(
+                "INSERT INTO substitution_events (
+                    timestamp, material_class, source, event_type, algorithm,
+                    substitution_ref, outcome, provider, trace_id
+                 ) VALUES (?1, 'credential', ?2, 'http.request', 'blake3', ?3, 'injected', NULL, 'trace-3')",
+                params![
+                    "2026-06-14T22:00:02Z",
+                    "http.query.access_token",
+                    credential_ref,
+                ],
+            )
+            .unwrap();
+
+        let stats = r.brokered_credential_stats().unwrap();
+        assert_eq!(stats.len(), 1);
+        assert_eq!(stats[0].provider.as_deref(), Some("google"));
+        assert_eq!(stats[0].credential_ref, credential_ref);
+        assert_eq!(stats[0].observed_count, 3);
+        assert_eq!(stats[0].injected_count, 2);
+        assert_eq!(stats[0].last_seen.as_deref(), Some("2026-06-14T22:00:02Z"));
     }
 
     // -----------------------------------------------------------------------
@@ -2245,6 +2498,39 @@ mod tests {
         assert_eq!(rs.len(), 2);
         assert!(!rs[0].is_error);
         assert!(rs[1].is_error);
+    }
+
+    #[test]
+    fn tool_responses_for_tolerates_old_schema_without_credential_ref() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("old-session.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute(
+                "CREATE TABLE tool_responses (
+                    id INTEGER PRIMARY KEY,
+                    model_call_id INTEGER NOT NULL,
+                    call_id TEXT NOT NULL,
+                    content_preview TEXT,
+                    is_error INTEGER NOT NULL DEFAULT 0
+                )",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO tool_responses (model_call_id, call_id, content_preview, is_error)
+                 VALUES (1, 'old-call', 'old-ok', 0)",
+                [],
+            )
+            .unwrap();
+        }
+
+        let reader = DbReader::open(&path).unwrap();
+        let responses = reader.tool_responses_for(1).unwrap();
+        assert_eq!(responses.len(), 1);
+        assert_eq!(responses[0].call_id, "old-call");
+        assert_eq!(responses[0].content_preview.as_deref(), Some("old-ok"));
+        assert_eq!(responses[0].credential_ref, None);
     }
 
     // -----------------------------------------------------------------------

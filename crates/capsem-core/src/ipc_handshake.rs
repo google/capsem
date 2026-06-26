@@ -120,36 +120,49 @@ fn read_hello(stream: &mut UnixStream, timeout: Duration) -> Result<Hello, Hands
     let prev_timeout = stream.read_timeout().ok().flatten();
     stream.set_read_timeout(Some(timeout))?;
 
-    let mut len_buf = [0u8; 4];
-    let read_result = stream.read_exact(&mut len_buf);
+    let result = (|| {
+        let mut len_buf = [0u8; 4];
+        match stream.read_exact(&mut len_buf) {
+            Ok(()) => {}
+            Err(e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut =>
+            {
+                return Err(HandshakeError::Timeout {
+                    timeout_ms: timeout.as_millis() as u64,
+                });
+            }
+            Err(e) => return Err(HandshakeError::Io(e)),
+        }
+
+        let len = u32::from_be_bytes(len_buf);
+        if len > MAX_HELLO_BYTES {
+            return Err(HandshakeError::Decode(format!(
+                "Hello length {len} exceeds {MAX_HELLO_BYTES}"
+            )));
+        }
+        let mut buf = vec![0u8; len as usize];
+        match stream.read_exact(&mut buf) {
+            Ok(()) => {}
+            Err(e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut =>
+            {
+                return Err(HandshakeError::Timeout {
+                    timeout_ms: timeout.as_millis() as u64,
+                });
+            }
+            Err(e) => return Err(HandshakeError::Io(e)),
+        }
+
+        rmp_serde::from_slice::<Hello>(&buf)
+            .map_err(|e| HandshakeError::Decode(format!("decode Hello: {e}")))
+    })();
+
     // Restore the previous timeout so the bincode channel that takes
     // over after handshake doesn't inherit our 5-second cap.
     let _ = stream.set_read_timeout(prev_timeout);
-
-    match read_result {
-        Ok(()) => {}
-        Err(e)
-            if e.kind() == std::io::ErrorKind::WouldBlock
-                || e.kind() == std::io::ErrorKind::TimedOut =>
-        {
-            return Err(HandshakeError::Timeout {
-                timeout_ms: timeout.as_millis() as u64,
-            });
-        }
-        Err(e) => return Err(HandshakeError::Io(e)),
-    }
-
-    let len = u32::from_be_bytes(len_buf);
-    if len > MAX_HELLO_BYTES {
-        return Err(HandshakeError::Decode(format!(
-            "Hello length {len} exceeds {MAX_HELLO_BYTES}"
-        )));
-    }
-    let mut buf = vec![0u8; len as usize];
-    stream.read_exact(&mut buf)?;
-
-    rmp_serde::from_slice::<Hello>(&buf)
-        .map_err(|e| HandshakeError::Decode(format!("decode Hello: {e}")))
+    result
 }
 
 #[cfg(test)]

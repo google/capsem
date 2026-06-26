@@ -9,14 +9,14 @@
 use std::collections::{BTreeMap, HashMap};
 
 use crate::net::ai_traffic::events::{LlmEvent, ProviderStreamParser, StopReason};
-use crate::net::ai_traffic::provider::{Provider, ProviderKind};
+use crate::net::ai_traffic::provider::{ModelProtocol, Provider};
 use crate::net::parsers::sse_parser::SseEvent;
 
 pub struct AnthropicProvider;
 
 impl Provider for AnthropicProvider {
-    fn kind(&self) -> ProviderKind {
-        ProviderKind::Anthropic
+    fn kind(&self) -> ModelProtocol {
+        ModelProtocol::Anthropic
     }
 
     fn upstream_base_url(&self) -> &str {

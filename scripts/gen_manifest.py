@@ -17,6 +17,32 @@ import os
 import sys
 
 
+def _same_asset_map(left, right):
+    return left == right
+
+
+def _next_or_existing_asset_version(existing, date_prefix, arch_assets):
+    """Reuse the current release for identical assets; otherwise mint a patch."""
+    patch = 1
+    if not isinstance(existing, dict):
+        return f"{date_prefix}.{patch}"
+    assets = existing.get("assets", {})
+    releases = assets.get("releases", {})
+    current = assets.get("current")
+    if current in releases:
+        current_arches = releases[current].get("arches", {})
+        if _same_asset_map(current_arches, arch_assets):
+            return current
+    for version in releases:
+        if not version.startswith(date_prefix + "."):
+            continue
+        try:
+            patch = max(patch, int(version.rsplit(".", 1)[1]) + 1)
+        except ValueError:
+            continue
+    return f"{date_prefix}.{patch}"
+
+
 def main():
     if len(sys.argv) != 3:
         print(f"Usage: {sys.argv[0]} <assets_dir> <cargo_toml_path>", file=sys.stderr)
@@ -40,31 +66,15 @@ def main():
     today = datetime.date.today()
     today_str = today.isoformat()
 
-    # Derive asset version: YYYY.MMDD.patch
-    # Check existing manifest for same-day releases to increment patch.
     manifest_path = os.path.join(assets_dir, "manifest.json")
     date_prefix = today.strftime("%Y.%m%d")
-    patch = 1
+    existing_manifest = None
     if os.path.exists(manifest_path):
         try:
             with open(manifest_path) as f:
-                existing = json.load(f)
-            # v2 format
-            if existing.get("format") == 2:
-                for v in existing.get("assets", {}).get("releases", {}):
-                    if v.startswith(date_prefix + "."):
-                        p = int(v.rsplit(".", 1)[1])
-                        patch = max(patch, p + 1)
-            # v1 format -- check if latest matches today's date pattern
-            elif "latest" in existing:
-                v = existing["latest"]
-                if v.startswith(date_prefix + "."):
-                    p = int(v.rsplit(".", 1)[1])
-                    patch = max(patch, p + 1)
-        except (json.JSONDecodeError, ValueError, KeyError):
-            pass
-
-    asset_version = f"{date_prefix}.{patch}"
+                existing_manifest = json.load(f)
+        except json.JSONDecodeError:
+            existing_manifest = None
 
     # Read B3SUMS and collect entries with file sizes.
     b3sums_path = os.path.join(assets_dir, "B3SUMS")
@@ -93,8 +103,15 @@ def main():
                 "size": sz,
             }
 
+    asset_version = _next_or_existing_asset_version(
+        existing_manifest,
+        date_prefix,
+        arch_assets,
+    )
+
     manifest = {
         "format": 2,
+        "refresh_policy": "24h",
         "assets": {
             "current": asset_version,
             "releases": {

@@ -12,20 +12,6 @@ pub(crate) fn clone_fd(fd: RawFd) -> std::io::Result<std::fs::File> {
     file.try_clone()
 }
 
-pub(crate) fn query_max_fs_event_id(db: &capsem_logger::DbWriter) -> i64 {
-    db.reader()
-        .ok()
-        .and_then(|r| {
-            r.query_raw("SELECT COALESCE(MAX(id),0) FROM fs_events")
-                .ok()
-        })
-        .and_then(|json| {
-            let parsed: serde_json::Value = serde_json::from_str(&json).ok()?;
-            parsed["rows"].get(0)?.get(0)?.as_i64()
-        })
-        .unwrap_or(0)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -51,51 +37,5 @@ mod tests {
         // is instantly reused by another test.
         let result = clone_fd(-1);
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn query_max_fs_event_id_on_empty_db_is_zero() {
-        let dir = tempfile::tempdir().unwrap();
-        let db_path = dir.path().join("empty.db");
-        let writer = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
-        assert_eq!(query_max_fs_event_id(&writer), 0);
-    }
-
-    #[test]
-    fn query_max_fs_event_id_reflects_highest_row() {
-        use capsem_logger::events::{FileAction, FileEvent};
-        use capsem_logger::writer::WriteOp;
-
-        let dir = tempfile::tempdir().unwrap();
-        let db_path = dir.path().join("events.db");
-        let writer = capsem_logger::DbWriter::open(&db_path, 64).unwrap();
-
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .build()
-            .unwrap();
-        rt.block_on(async {
-            for i in 0..3 {
-                capsem_core::security_engine::emit_security_write(
-                    &writer,
-                    WriteOp::FileEvent(FileEvent {
-                        event_id: None,
-                        timestamp: std::time::SystemTime::now(),
-                        action: FileAction::Created,
-                        path: format!("/tmp/f{i}"),
-                        size: Some(1),
-                        trace_id: None,
-                        credential_ref: None,
-                    }),
-                )
-                .await;
-            }
-        });
-
-        // Drop the writer so the batch is flushed and visible to the reader.
-        drop(writer);
-
-        // Reopen to query the final max id.
-        let reader_writer = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
-        assert_eq!(query_max_fs_event_id(&reader_writer), 3);
     }
 }

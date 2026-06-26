@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""End-to-end injection test: generate configs, boot VMs, verify all injection paths.
+"""End-to-end boot-config test for non-secret settings materialization.
 
-Each scenario writes a temporary user.toml (and optionally corp.toml), boots the VM
+Each scenario writes a temporary settings.toml (and optionally corp.toml), boots the VM
 with `capsem-doctor -k injection`, and checks the exit code. The in-VM tests read
-/tmp/capsem-injection-manifest.json to verify every env var and file arrived.
+/tmp/capsem-injection-manifest.json to verify the emitted boot env/files are
+well-formed.
 
 Usage:
     python3 scripts/injection_test.py              # uses target/debug/capsem
@@ -12,10 +13,10 @@ Usage:
 
 import argparse
 import os
+from pathlib import Path
 import subprocess
 import sys
 import tempfile
-from pathlib import Path
 
 BOLD = "\033[1m"
 DIM = "\033[2m"
@@ -55,67 +56,43 @@ class Results:
 # -- Scenario definitions --
 # Each scenario is a dict with:
 #   name: human-readable label
-#   user_toml: TOML string for CAPSEM_USER_CONFIG
+#   settings_toml: TOML string for <CAPSEM_HOME>/settings.toml
 #   corp_toml: optional TOML string for CAPSEM_CORP_CONFIG (None = no corp override)
+#
+# Runtime AI credentials are intentionally absent here. Provider access and
+# credential brokerage now flow through profile/corp security rules plus plugins,
+# not settings-owned AI toggles or static boot-time secret injection.
 
 SCENARIOS = [
     {
-        "name": "all_enabled",
-        "description": "All AI providers on, both repo tokens set, git identity set",
-        "user_toml": """\
+        "name": "git_identity",
+        "description": "Non-secret git identity and repository toggles materialize cleanly",
+        "settings_toml": """\
 [settings]
-"ai.anthropic.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
-"ai.google.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
-"ai.openai.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
-"ai.anthropic.api_key" = { value = "sk-ant-test-key-injection", modified = "2026-01-01T00:00:00Z" }
-"ai.google.api_key" = { value = "AIzaSy_test_key_injection", modified = "2026-01-01T00:00:00Z" }
 "repository.providers.github.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
-"repository.providers.github.token" = { value = "ghp_test_token_injection", modified = "2026-01-01T00:00:00Z" }
 "repository.providers.gitlab.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
-"repository.providers.gitlab.token" = { value = "glpat-test_token_injection", modified = "2026-01-01T00:00:00Z" }
 "repository.git.identity.author_name" = { value = "Test User", modified = "2026-01-01T00:00:00Z" }
 "repository.git.identity.author_email" = { value = "test@example.com", modified = "2026-01-01T00:00:00Z" }
 """,
         "corp_toml": None,
     },
     {
-        "name": "partial",
-        "description": "Only Google enabled, only GitHub token, no git identity",
-        "user_toml": """\
+        "name": "broker_refs_not_boot_secrets",
+        "description": "Brokered repository credential references are accepted but not materialized as raw boot secrets",
+        "settings_toml": """\
 [settings]
-"ai.anthropic.allow" = { value = false, modified = "2026-01-01T00:00:00Z" }
-"ai.google.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
-"ai.openai.allow" = { value = false, modified = "2026-01-01T00:00:00Z" }
-"ai.google.api_key" = { value = "AIzaSy_partial_key", modified = "2026-01-01T00:00:00Z" }
 "repository.providers.github.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
-"repository.providers.github.token" = { value = "ghp_partial_token", modified = "2026-01-01T00:00:00Z" }
-"repository.providers.gitlab.allow" = { value = false, modified = "2026-01-01T00:00:00Z" }
-""",
-        "corp_toml": None,
-    },
-    {
-        "name": "all_disabled",
-        "description": "All providers off, tokens set but allow=false -- .git-credentials must NOT exist",
-        "user_toml": """\
-[settings]
-"ai.anthropic.allow" = { value = false, modified = "2026-01-01T00:00:00Z" }
-"ai.google.allow" = { value = false, modified = "2026-01-01T00:00:00Z" }
-"ai.openai.allow" = { value = false, modified = "2026-01-01T00:00:00Z" }
-"repository.providers.github.allow" = { value = false, modified = "2026-01-01T00:00:00Z" }
-"repository.providers.github.token" = { value = "ghp_should_not_appear", modified = "2026-01-01T00:00:00Z" }
-"repository.providers.gitlab.allow" = { value = false, modified = "2026-01-01T00:00:00Z" }
-"repository.providers.gitlab.token" = { value = "glpat-should_not_appear", modified = "2026-01-01T00:00:00Z" }
+"repository.providers.github.token" = { value = "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111", modified = "2026-01-01T00:00:00Z" }
+"repository.providers.gitlab.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
+"repository.providers.gitlab.token" = { value = "credential:blake3:2222222222222222222222222222222222222222222222222222222222222222", modified = "2026-01-01T00:00:00Z" }
 """,
         "corp_toml": None,
     },
     {
         "name": "empty_tokens",
-        "description": "Providers on but tokens empty -- .git-credentials must NOT exist",
-        "user_toml": """\
+        "description": "Repository providers on with empty tokens -- no credential file should be emitted",
+        "settings_toml": """\
 [settings]
-"ai.anthropic.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
-"ai.google.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
-"ai.openai.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
 "repository.providers.github.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
 "repository.providers.github.token" = { value = "", modified = "2026-01-01T00:00:00Z" }
 "repository.providers.gitlab.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
@@ -124,27 +101,35 @@ SCENARIOS = [
         "corp_toml": None,
     },
     {
-        "name": "corp_override",
-        "description": "User enables all, corp blocks Anthropic -- CAPSEM_ANTHROPIC_ALLOWED=0",
-        "user_toml": """\
+        "name": "corp_rule_file",
+        "description": "Corp rule config loads without resurrecting settings-owned AI provider toggles",
+        "settings_toml": """\
 [settings]
-"ai.anthropic.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
-"ai.google.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
-"ai.openai.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
-"ai.anthropic.api_key" = { value = "sk-ant-corp-test-key", modified = "2026-01-01T00:00:00Z" }
-"ai.google.api_key" = { value = "AIzaSy_corp_test_key", modified = "2026-01-01T00:00:00Z" }
+"repository.git.identity.author_name" = { value = "Corp Test User", modified = "2026-01-01T00:00:00Z" }
 """,
         "corp_toml": """\
-[settings]
-"ai.anthropic.allow" = { value = false, modified = "2026-01-01T00:00:00Z" }
+[corp.rules.block_example_invalid]
+name = "block_example_invalid"
+action = "block"
+priority = -100
+detection_level = "high"
+reason = "Integration proof that corp rules own enforcement."
+match = 'http.host == "example.invalid"'
 """,
     },
 ]
 
 
+def default_materialized_profiles_dir() -> str:
+    """Return the generated profile catalog used by packages and CI."""
+    repo_root = Path(__file__).resolve().parent.parent
+    return str(repo_root / "target" / "config" / "profiles")
+
+
 def run_scenario(
     binary: str,
     assets_dir: str,
+    profiles_dir: str,
     scenario: dict,
     results: Results,
 ) -> None:
@@ -153,12 +138,14 @@ def run_scenario(
     print(f"\n{BOLD}--- Scenario: {name} ---{RESET}")
     print(f"  {DIM}{scenario['description']}{RESET}")
 
-    # Write temporary user.toml.
-    user_file = tempfile.NamedTemporaryFile(
-        mode="w", suffix=".toml", prefix=f"capsem-injection-{name}-user-", delete=False,
-    )
-    user_file.write(scenario["user_toml"])
-    user_file.close()
+    # Write temporary settings.toml inside an isolated Capsem home.
+    # macOS UDS paths are short; the default tempfile location under
+    # /var/folders/... can exceed the usable socket path once /run/service.sock
+    # is appended.
+    capsem_home = tempfile.TemporaryDirectory(prefix=f"capsem-injection-{name}-home-", dir="/tmp")
+    settings_path = os.path.join(capsem_home.name, "settings.toml")
+    with open(settings_path, "w") as settings_file:
+        settings_file.write(scenario["settings_toml"])
 
     # Write temporary corp.toml if specified.
     corp_path = None
@@ -173,8 +160,9 @@ def run_scenario(
     env = {
         **os.environ,
         "CAPSEM_ASSETS_DIR": assets_dir,
+        "CAPSEM_PROFILES_DIR": profiles_dir,
         "RUST_LOG": "capsem=warn",
-        "CAPSEM_USER_CONFIG": user_file.name,
+        "CAPSEM_HOME": capsem_home.name,
     }
     if corp_path:
         env["CAPSEM_CORP_CONFIG"] = corp_path
@@ -214,14 +202,14 @@ def run_scenario(
         results.fail(f"{name}: VM timed out after 120s")
     finally:
         # Clean up temp files.
-        os.unlink(user_file.name)
+        capsem_home.cleanup()
         if corp_path:
             os.unlink(corp_path)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="End-to-end injection test for capsem boot config.",
+        description="End-to-end non-secret boot config test.",
     )
     parser.add_argument(
         "--binary",
@@ -234,6 +222,11 @@ def main():
         help="Path to VM assets directory (default: assets)",
     )
     parser.add_argument(
+        "--profiles-dir",
+        default=default_materialized_profiles_dir(),
+        help="Path to materialized profile catalog (default: target/config/profiles)",
+    )
+    parser.add_argument(
         "--scenario",
         default=None,
         help="Run only this scenario (by name). Default: run all.",
@@ -243,6 +236,7 @@ def main():
     print(f"{BOLD}=== Capsem Injection Test ==={RESET}")
     print(f"  binary: {args.binary}")
     print(f"  assets: {args.assets}")
+    print(f"  profiles: {args.profiles_dir}")
 
     results = Results()
 
@@ -255,7 +249,7 @@ def main():
             sys.exit(1)
 
     for scenario in scenarios:
-        run_scenario(args.binary, args.assets, scenario, results)
+        run_scenario(args.binary, args.assets, args.profiles_dir, scenario, results)
 
     # Summary.
     print(f"\n{BOLD}{'=' * 60}{RESET}")

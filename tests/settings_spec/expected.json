@@ -1,21 +1,18 @@
 {
-  "total_settings": 22,
+  "total_settings": 13,
   "by_type": {
-    "bool": 3,
+    "bool": 2,
     "number": 1,
-    "text": 6,
-    "apikey": 1,
-    "file": 1,
+    "action": 1,
+    "text": 3,
     "url": 1,
     "email": 1,
     "string_list": 1,
     "int_list": 1,
     "float_list": 1,
-    "action": 2,
-    "mcp_tool": 1,
-    "kv_map": 2
+    "kv_map": 1
   },
-  "group_count": 8,
+  "group_count": 3,
   "settings": [
     {
       "key": "test_app.auto_update",
@@ -34,30 +31,6 @@
       "name": "Check for updates",
       "setting_type": "action",
       "enabled_by": null
-    },
-    {
-      "key": "test_ai.provider.allow",
-      "name": "Allow Provider",
-      "setting_type": "bool",
-      "enabled_by": null
-    },
-    {
-      "key": "test_ai.provider.api_key",
-      "name": "API Key",
-      "setting_type": "apikey",
-      "enabled_by": "test_ai.provider.allow"
-    },
-    {
-      "key": "test_ai.provider.domains",
-      "name": "Provider Domains",
-      "setting_type": "text",
-      "enabled_by": "test_ai.provider.allow"
-    },
-    {
-      "key": "test_ai.provider.settings_json",
-      "name": "Provider settings.json",
-      "setting_type": "file",
-      "enabled_by": "test_ai.provider.allow"
     },
     {
       "key": "test_security.masked_field",
@@ -108,12 +81,6 @@
       "enabled_by": null
     },
     {
-      "key": "test_security.preset",
-      "name": "Security Preset",
-      "setting_type": "action",
-      "enabled_by": null
-    },
-    {
       "key": "test_security.env_vars",
       "name": "Environment Variables",
       "setting_type": "kv_map",
@@ -123,30 +90,6 @@
       "key": "test_appearance.theme",
       "name": "Theme",
       "setting_type": "text",
-      "enabled_by": null
-    },
-    {
-      "key": "mcp.capsem.type",
-      "name": "Server Type",
-      "setting_type": "text",
-      "enabled_by": null
-    },
-    {
-      "key": "mcp.capsem.command",
-      "name": "Command",
-      "setting_type": "text",
-      "enabled_by": null
-    },
-    {
-      "key": "mcp.capsem.env",
-      "name": "Environment",
-      "setting_type": "kv_map",
-      "enabled_by": null
-    },
-    {
-      "key": "mcp.capsem.tools.snapshot_create",
-      "name": "snapshot_create",
-      "setting_type": "mcp_tool",
       "enabled_by": null
     }
   ]

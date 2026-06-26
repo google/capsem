@@ -19,7 +19,7 @@ use hyper::body::Bytes;
 
 use super::events::{Event, EventKind, EventLayer, EventMask};
 use super::protocol::Protocol;
-use crate::net::ai_traffic::provider::ProviderKind;
+use crate::net::ai_traffic::provider::{ModelProtocol, ProviderKind};
 
 /// Outcome of a single `Hook::on_event` call.
 ///
@@ -85,11 +85,15 @@ pub struct ConnMeta {
     /// on transport read this; pre-T2 fixtures and `Default` use
     /// `Unknown`.
     pub protocol: Protocol,
-    /// Model protocol classification resolved by MITM from the live
-    /// endpoint registry. Hooks must trust this metadata and must not
-    /// infer providers from `domain`, so enforcement, parsing, broker
-    /// substitution, and telemetry share one provider decision.
+    /// Model provider identity resolved by MITM from the live endpoint
+    /// registry. This is the policy/logging owner (for example `ollama`
+    /// for `127.0.0.1:11434`), not necessarily the body wire format.
     pub ai_provider: Option<ProviderKind>,
+    /// Model wire protocol used to parse request/response bodies. Launcher
+    /// adapters can make this differ from `ai_provider`: `ollama launch
+    /// claude` is provider `ollama` with protocol `anthropic`, while
+    /// `ollama launch codex` is provider `ollama` with protocol `openai`.
+    pub ai_protocol: Option<ModelProtocol>,
 }
 
 impl<'pipe> HookCtx<'pipe> {

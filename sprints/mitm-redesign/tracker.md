@@ -13,7 +13,7 @@ regression tests. dns-load baseline locked at
 rps, 0% errors at every concurrency level). mitm-load debug-build
 reference at `benchmarks/mitm-load/post_t3_debug_reference.json`
 alongside the existing release-build baseline (release re-baseline
-needs minisign signing infra). T4 (mcp-protocol-aware-mitm) is the
+needs release evidence infra). T4 (mcp-protocol-aware-mitm) is the
 next phase. Capsem-core lib at 1693 tests.
 
 Full pipeline: guest libc resolver -> iptables nat 53 -> 1053 ->
@@ -44,7 +44,7 @@ Closure gate results:
   Structural argument: T3 added a SEPARATE DNS path; the MITM
   hot-path code wasn't modified (only metric name constants were
   added to `mitm_proxy/metrics.rs`). Release-on-conc-bench
-  re-baseline pending minisign signing infra.
+  re-baseline pending release evidence infra.
 
 Tests: 1693 capsem-core lib + 88 capsem-process + 220 capsem-logger
 + 157 capsem-proto + 15 agent-bin pass; workspace clippy clean;

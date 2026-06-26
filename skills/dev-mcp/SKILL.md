@@ -1,13 +1,13 @@
 ---
 name: dev-mcp
-description: MCP development for Capsem. Covers the capsem-mcp host MCP server (AI agent sandbox control via stdio), the guest MCP relay and host MITM MCP endpoint (tool routing to external servers via framed vsock), and using capsem MCP tools for fast debugging. Use when working on the MCP server, endpoint, tool routing, policy evaluation, mcp_calls telemetry, or when you need to debug anything inside a VM. Also use this skill when capsem MCP tools are available and you want to understand the fastest way to test changes interactively.
+description: MCP development for Capsem. Covers the capsem-mcp host MCP server (AI agent sandbox control via stdio), the guest MCP relay and host MITM MCP endpoint (tool routing to external servers via framed vsock), and using capsem MCP tools for fast debugging. Use when working on the MCP server, endpoint, tool routing, policy evaluation, canonical tool_calls telemetry, MCP transport evidence, or when you need to debug anything inside a VM. Also use this skill when capsem MCP tools are available and you want to understand the fastest way to test changes interactively.
 ---
 
 # MCP in Capsem
 
 Capsem has two MCP components:
 
-1. **capsem-mcp** (host): MCP server over stdio that lets AI agents (Claude Code, Gemini CLI) control sandboxes -- create/delete VMs, exec commands, read/write files, query telemetry. Bridges to capsem-service HTTP API over UDS.
+1. **capsem-mcp** (host): MCP server over stdio that lets AI agents (Claude Code, Gemini CLI) control sandboxes -- create/delete VMs, exec commands, read/write files, and read typed telemetry routes. Bridges to capsem-service HTTP API over UDS.
 2. **Guest MCP relay + MITM MCP endpoint**: bridges AI agents running inside a guest VM to external MCP servers on the host via framed MCP records over vsock port 5002.
 
 ## Using capsem MCP tools for fast debugging
@@ -18,31 +18,29 @@ When the capsem MCP server is configured in your AI CLI, you have direct VM cont
 
 | Tool | Parameters | What it does |
 |------|-----------|-------------|
-| `capsem_create` | name?, ramMb?, cpuCount?, env?, image? | Boot a fresh VM (~10s). Named VMs are persistent. env = `{"KEY": "VALUE"}` for guest injection. image = boot from a forked template. |
-| `capsem_run` | command, timeout? | One-shot: boot temp VM, exec command, destroy, return output |
-| `capsem_list` | -- | List all VMs (running + stopped persistent) |
-| `capsem_info` | id | VM config, status, persistent, PID |
+| `capsem_create` | name?, ramMb?, cpuCount?, env?, from? | Create a profile-owned session. env = `{"KEY": "VALUE"}` for guest injection. from = clone from another session. |
+| `capsem_run` | command, timeout? | One-shot: ask the service to create a fresh profile-owned session, exec command, and return output |
+| `capsem_list` | -- | List sessions |
+| `capsem_info` | id | Session profile, status, resources, version, telemetry |
 | `capsem_exec` | id, command, timeout? | Run command in guest, get stdout/stderr/exit_code. No default command timeout; pass `timeout` only when the user asked for a deadline. |
-| `capsem_stop` | id | Stop VM (persistent: preserve state; ephemeral: destroy) |
-| `capsem_resume` | name | Resume a stopped persistent VM |
-| `capsem_persist` | id, name | Convert running ephemeral VM to persistent |
-| `capsem_purge` | all? | Kill all temp VMs (all=true includes persistent) |
+| `capsem_stop` | id | Stop a session |
+| `capsem_resume` | name | Resume a stopped session or return the running session id |
+| `capsem_purge` | all? | Purge stopped, broken, incompatible, or otherwise purgeable sessions |
 | `capsem_read_file` | id, path | Read file content from guest |
 | `capsem_write_file` | id, path, content | Write file into guest |
 | `capsem_vm_logs` | id, grep?, tail? | Serial + process logs. grep filters lines, tail limits to last N. |
+| `capsem_terminal_snapshot` | id, source?, grep?, tail? | Render a text snapshot of a session terminal/log surface from serial/process logs with ANSI cleanup. |
 | `capsem_service_logs` | grep?, tail? | Service daemon logs (last ~100KB). grep + tail filters. |
-| `capsem_inspect_schema` | -- | session.db CREATE TABLE statements |
-| `capsem_inspect` | id, sql | Raw SQL against session.db |
 | `capsem_delete` | id | Destroy VM and wipe all state |
 | `capsem_version` | -- | MCP server version + service connectivity status |
-| `capsem_fork` | id, name, description? | Fork a running/stopped VM into a new stopped persistent session (use as a reusable template). |
-| `capsem_mcp_servers` | -- | List configured MCP servers with connection status and tool counts. |
-| `capsem_mcp_tools` | server? | List discovered MCP tools across all connected servers. Filter by `server` name to scope to one server. |
-| `capsem_mcp_call` | name, args? | Call an MCP tool by namespaced name (e.g. `github__search_repos`) with JSON arguments. Lets the agent exercise the MCP policy + telemetry path without driving guest stdio. |
+| `capsem_fork` | id, name, description? | Fork a running/stopped session into a new stopped session. |
+| `capsem_mcp_connectors` | profile? | List Profile V2 `mcpServers` entries for the selected or requested profile. |
+| `capsem_mcp_add` | id, profile?, disabled?, type?, command?, args?, env?, url?, headers?, bearerToken?, credential_refs?, allowed_tools? | Add a standard MCP server entry plus Capsem governance metadata to a user profile. |
+| `capsem_mcp_delete` | id, profile? | Delete a direct user Profile V2 MCP server entry. |
 | `capsem_panics` | since?, limit? | **Run FIRST when investigating an unexplained failure.** Structured panic + backtrace extractor across `~/.capsem/run/{service,mcp,gateway,tray}.log` and capsem-app's latest jsonl. Returns `[{ ts, binary, thread, location, message, frames }]` with home-dir paths redacted. |
 | `capsem_triage` | id?, since?, limit? | Opinionated ranked summary of recent panics, dropped IPC frames (`target=ipc` warns from W1), 4xx/5xx server errors (`target=service`), and slow operations (>500ms). With `id`: also queries session.db for denied net + mcp errors + exec failures. |
 | `capsem_host_logs` | name, grep?, tail?, maxBytes? | Read a host log by symbolic name. Names: `service`, `mcp`, `gateway`, `tray`, `app` (latest jsonl in `~/.capsem/logs/`). Hard-coded allowlist; no path traversal. |
-| `capsem_timeline` | id, traceId?, since?, limit?, layers? | Unified time-ordered event stream for a session, joining exec/mcp/net/fs/model events. Filter by `traceId` to follow one logical operation across layers. |
+| `capsem_timeline` | id, traceId?, since?, limit?, layers? | Unified time-ordered event stream for a session, joining exec/tool/net/fs/model events. Filter by `traceId` to follow one logical operation across layers. |
 
 ### Debug workflow
 
@@ -51,10 +49,10 @@ When the capsem MCP server is configured in your AI CLI, you have direct VM cont
 capsem_run { command: "capsem-doctor -k net" }
 
 -- Iterative debugging (long-lived VM):
-1. capsem_create        -- boot a fresh sandbox (add name for persistence)
+1. capsem_create        -- boot a fresh sandbox
 2. capsem_exec          -- run the thing you want to test
 3. capsem_read_file     -- check config, logs, state
-4. capsem_inspect       -- query telemetry tables
+4. capsem_timeline      -- inspect typed telemetry without raw SQL
 5. (fix code on host, rebuild with `just build`)
 6. capsem_delete        -- tear down
 7. repeat from 1
@@ -70,16 +68,15 @@ capsem_exec { id: "vm-1", command: "capsem-doctor -k net" }
 **Check network policy enforcement:**
 ```
 capsem_exec { id: "vm-1", command: "curl -s https://blocked-domain.com" }
-capsem_inspect { id: "vm-1", sql: "SELECT domain, action, status_code FROM net_events ORDER BY timestamp DESC LIMIT 10" }
+capsem_timeline { id: "vm-1", layers: "net", limit: 10 }
 ```
 
 **Verify telemetry pipeline:**
 ```
-capsem_inspect { id: "vm-1", sql: "SELECT server_name, tool_name, decision, duration_ms FROM mcp_calls ORDER BY timestamp DESC" }
-capsem_inspect { id: "vm-1", sql: "SELECT COUNT(*) as n, operation FROM fs_events GROUP BY operation" }
+capsem_timeline { id: "vm-1", layers: "tool,fs", limit: 50 }
 ```
 
-**Read guest config/state:**
+**Read guest runtime state:**
 ```
 capsem_read_file { id: "vm-1", path: "/etc/resolv.conf" }
 capsem_read_file { id: "vm-1", path: "/tmp/capsem-init.log" }
@@ -97,11 +94,11 @@ capsem_exec { id: "vm-1", command: "chmod +x /tmp/test.sh && /tmp/test.sh" }
 |----------|-----|
 | Quick check: "does this work in the guest?" | `capsem_exec` |
 | Read a guest file to understand state | `capsem_read_file` |
-| Verify telemetry was recorded | `capsem_inspect` with SQL |
+| Verify telemetry was recorded | typed telemetry routes or Ironbank direct ledger reads |
 | Run capsem-doctor diagnostics | `capsem_exec` with `capsem-doctor` |
 | Full regression suite | `just test` |
 | Build + boot + validate in one shot | `just smoke` |
-| Benchmark performance | `just bench` |
+| Benchmark performance | `just benchmark` |
 
 MCP tools are for fast, targeted checks during development. Just recipes are for comprehensive validation before committing.
 
@@ -152,7 +149,7 @@ The guest MCP path is not a single process. `capsem-process` (the per-VM host pr
 
 Rationale: isolating external-server connections in a low-privilege subprocess means a compromised third-party MCP server cannot reach the host filesystem or the session DB. The built-in tool server runs in its own process for the same reason.
 
-Wire protocol between `capsem-process` and the aggregator: **length-prefixed msgpack frames** on stdio (`[4-byte big-endian length][msgpack payload]`). Between the aggregator and the built-in server: **stdio MCP** (standard JSON-RPC per line). Between the in-guest AI agent and `capsem-process`: `/run/capsem-mcp-server` relays stdio JSON-RPC as bounded framed MCP records over **vsock port 5002**. MCP calls pass through the MITM parser/interpreter and write MITM-owned `mcp_calls`.
+Wire protocol between `capsem-process` and the aggregator: **length-prefixed msgpack frames** on stdio (`[4-byte big-endian length][msgpack payload]`). Between the aggregator and the built-in server: **stdio MCP** (standard JSON-RPC per line). Between the in-guest AI agent and `capsem-process`: `/run/capsem-mcp-server` relays stdio JSON-RPC as bounded framed MCP records over **vsock port 5002**. Tool activity writes the canonical `tool_calls` ledger. Visible MCP protocol facts are represented as typed security events and `security_rule_events`.
 
 Binaries land in `~/.capsem/bin/` at install time: `capsem-mcp-aggregator`, `capsem-mcp-builtin`.
 
@@ -173,8 +170,8 @@ Framed guest MCP over `vsock:5002` must be tested as the default transport, not 
 ```
 Guest (Claude/Gemini) -> capsem-mcp-server (stdin/stdout relay)
   -> framed vsock:5002 -> MITM MCP endpoint (capsem-core)
-  -> Policy check -> Route to: builtin tools | external MCP servers (via rmcp)
-  -> Telemetry -> session.db mcp_calls table
+  -> SecurityEvent rule check -> Route to: builtin tools | external MCP servers (via rmcp)
+  -> Telemetry -> session.db tool_calls table plus security_rule_events protocol evidence
 ```
 
 ### Wire format
@@ -215,18 +212,23 @@ The endpoint parses the namespace to route to the correct server.
 | `prompts/list` | Return prompt catalog |
 | `prompts/get` | Lookup name -> get via rmcp |
 
-### Policy evaluation
+### Security evaluation
 
 ```
-1. Blocked servers list (highest priority)
-2. Allowed servers whitelist (if non-empty)
-3. Per-tool decision map
-4. Default fallback (Allow/Warn/Block)
+1. Parse MCP frame into typed `SecurityEvent` MCP fields.
+2. Apply the shared security engine plugin/rule rail.
+3. Dispatch only if the effective action allows it.
+4. Log canonical tool row, optional MCP protocol row, and matched security rule rows.
 ```
 
-Config hierarchy: corp.toml > user.toml > auto-detected from AI CLI settings.
+Config hierarchy: corp config constrains profile config. Profile config owns
+MCP servers, tools, resources, default rules, and plugin policy. There is no
+MCP-specific decision provider or `user.toml` override rail.
 
-Decisions: `Allow`, `Warn` (log + continue), `Block` (error -32600).
+Decisions use the shared security action enum: `allow`, `ask`, `block`,
+`rewrite`, `preprocess`, and `postprocess`. `ask` waits for an approval or
+denial before dispatch; `block` returns a policy JSON-RPC error without calling
+the tool.
 
 ### Built-in tools
 
@@ -250,9 +252,20 @@ All use namespace prefix `builtin` (e.g., `builtin__http_get`).
 | `crates/capsem-core/src/mcp/mod.rs` | Tool cache, server detection, collision detection |
 | `crates/capsem-agent/src/mcp_server.rs` | capsem-mcp-server binary (stdin/stdout relay) |
 
-### Telemetry (mcp_calls table)
+### Telemetry (tool_calls and security events)
 
-Every request/response logged with: timestamp, server_name, method, tool_name, request/response preview (256KB cap), decision, duration_ms, error_message, process_name, bytes sent/received.
+`tool_calls` is the canonical user/security ledger for all tool origins:
+model-native, built-in/local, and MCP-origin. UI counts, CEL rules, and
+forensic tool activity must use this table.
+
+MCP protocol facts such as initialize/list/resource frames are security events.
+A visible MCP `tools/call` without a matching `tool_calls` row is a bug.
+
+Every request/response logged with: timestamp, server_name, method, tool_name,
+compact request/response display fields, decision, duration_ms, error_message,
+process_name, bytes sent/received. Full MCP request/response payloads share the
+same `event_body_blobs` ledger table as HTTP and model traffic; do not add a
+second MCP-only body rail.
 
 Read `references/mcp-wire.md` for the full wire format details.
 
@@ -297,15 +310,15 @@ The MCP integration tests (`tests/capsem-mcp/`) are black-box tests that boot a 
 
 ### In-VM diagnostics
 
-`just run "capsem-doctor -k mcp"` -- tests tool routing and domain blocking inside the guest.
+`just exec "capsem-doctor -k mcp"` -- tests tool routing and domain blocking inside the guest.
 
 ### Manual validation
 
 Boot interactively, run a workload, then inspect telemetry:
 ```bash
-just run
+just shell
 # (in another terminal)
-just inspect-session <vm_id> "SELECT * FROM mcp_calls"
+just inspect-session <vm_id> "SELECT * FROM tool_calls WHERE origin = 'mcp'"
 ```
 
 Or use MCP tools directly (see "Fast debugging" section above) for the same workflow without leaving Claude Code.

@@ -13,7 +13,7 @@ by:
   tests/capsem-e2e/        (full CLI -> gateway -> service -> VM paths
                             for a handful of flagship flows)
 
-If a gateway-proxied response shape changes (e.g. /list returns a new
+If a gateway-proxied response shape changes (e.g. /vms/list returns a new
 field), update the mock here AND the corresponding service test in
 tests/capsem-service/. If you find yourself writing an assertion about
 what the service should return, you're in the wrong directory.
@@ -21,7 +21,6 @@ what the service should return, you're in the wrong directory.
 
 import json
 import os
-import socket
 import socketserver
 import tempfile
 import threading
@@ -31,7 +30,7 @@ from pathlib import Path
 
 import pytest
 
-from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
+from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.gateway import GatewayInstance, TcpHttpClient
 
 pytestmark = pytest.mark.gateway
@@ -92,61 +91,174 @@ class MockServiceHandler(BaseHTTPRequestHandler):
         self._send_json({"error": msg}, status=status)
 
     def do_GET(self):
-        if self.clean_path == "/list" or self.clean_path.startswith("/list?"):
+        path_only = self.clean_path.split("?", 1)[0]
+        if path_only == "/vms/list":
             sandboxes = []
             for vm in MOCK_VMS.values():
                 sandboxes.append({
                     "id": vm["id"],
                     "pid": vm["pid"],
+                    "profile_id": CODE_PROFILE_ID,
                     "status": vm["status"],
                     "persistent": vm["persistent"],
                     "ram_mb": vm["ram_mb"],
                     "cpus": vm["cpus"],
+                    "available_actions": ["pause", "stop", "fork", "delete"],
                 })
             self._send_json({"sandboxes": sandboxes})
-        elif self.clean_path.startswith("/info/"):
-            vm_id = self.clean_path.split("/info/", 1)[1].split("?")[0]
+        elif path_only.startswith("/vms/") and path_only.endswith("/info"):
+            vm_id = path_only.split("/vms/", 1)[1].rsplit("/info", 1)[0]
             if vm_id in MOCK_VMS:
                 self._send_json(MOCK_VMS[vm_id])
             else:
                 self._send_error(404, f"sandbox {vm_id} not found")
-        elif self.clean_path.startswith("/logs/"):
+        elif path_only.startswith("/vms/") and path_only.endswith("/snapshots/status"):
+            vm_id = path_only.split("/vms/", 1)[1].rsplit("/snapshots/status", 1)[0]
+            if vm_id in MOCK_VMS:
+                self._send_json({
+                    "total": 1,
+                    "auto_count": 1,
+                    "manual_count": 0,
+                    "manual_available": 12,
+                    "snapshots": [
+                        {
+                            "checkpoint": "checkpoint-0",
+                            "slot": 0,
+                            "origin": "auto",
+                            "timestamp": "unix:1700000000",
+                        }
+                    ],
+                })
+            else:
+                self._send_error(404, f"sandbox {vm_id} not found")
+        elif path_only.startswith("/vms/") and path_only.endswith("/snapshots/list"):
+            vm_id = path_only.split("/vms/", 1)[1].rsplit("/snapshots/list", 1)[0]
+            if vm_id in MOCK_VMS:
+                self._send_json({
+                    "total": 1,
+                    "snapshots": [
+                        {
+                            "checkpoint": "checkpoint-0",
+                            "slot": 0,
+                            "origin": "auto",
+                            "timestamp": "unix:1700000000",
+                        }
+                    ],
+                })
+            else:
+                self._send_error(404, f"sandbox {vm_id} not found")
+        elif path_only.startswith("/vms/") and path_only.endswith("/status"):
+            vm_id = path_only.split("/vms/", 1)[1].rsplit("/status", 1)[0]
+            if vm_id in MOCK_VMS:
+                vm = MOCK_VMS[vm_id]
+                self._send_json({
+                    "id": vm["id"],
+                    "profile_id": CODE_PROFILE_ID,
+                    "status": vm["status"],
+                    "pid": vm["pid"],
+                    "persistent": vm["persistent"],
+                    "available_actions": ["pause", "stop", "fork", "delete"],
+                })
+            else:
+                self._send_error(404, f"sandbox {vm_id} not found")
+        elif path_only.startswith("/vms/") and path_only.endswith("/logs"):
             self._send_json({"logs": "mock boot log\n", "serial_logs": None, "process_logs": None})
+        elif path_only.startswith("/vms/") and path_only.endswith("/files/list"):
+            self._send_json({"entries": []})
+        elif path_only.startswith("/vms/") and path_only.endswith("/files/content"):
+            body = b"mock file bytes"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        elif path_only == "/profiles/status":
+            self._send_json({
+                "source": "directory",
+                "profile_count": 2,
+                "ready_count": 1,
+                "asset_manifest": {
+                    "origin": "package",
+                    "path": "/Users/test/.capsem/assets/manifest.json",
+                    "origin_path": "/Users/test/.capsem/assets/manifest-origin.json",
+                    "origin_source": "file:///tmp/corp/manifest.json",
+                    "packaged_at": "2026-06-13T00:00:00Z",
+                    "blake3": "0123456789abcdef",
+                    "validation_status": "valid",
+                    "refresh_policy": "24h",
+                    "assets_current": "2026.0613.1",
+                    "binaries_current": "1.3.0",
+                },
+                "profiles": [
+                    {
+                        "id": CODE_PROFILE_ID,
+                        "name": "Code",
+                        "description": "Optimized for coding and long-running agents.",
+                        "ready": True,
+                        "current_arch": "arm64",
+                        "missing_assets": [],
+                        "invalid_assets": [],
+                        "invalid_files": [],
+                        "errors": [],
+                        "asset_count": 3,
+                    },
+                    {
+                        "id": "co-work",
+                        "name": "Co-work",
+                        "description": "Shared profile for collaborative agent sessions.",
+                        "ready": False,
+                        "current_arch": "arm64",
+                        "missing_assets": [{"kind": "rootfs", "path": "/missing/rootfs.erofs", "valid": False}],
+                        "invalid_assets": [],
+                        "invalid_files": [],
+                        "errors": ["missing rootfs"],
+                        "asset_count": 3,
+                    },
+                ],
+            })
         else:
             self._send_error(404, f"unknown endpoint: {self.clean_path}")
 
     def do_POST(self):
         body = self._read_body()
-        if self.clean_path == "/provision":
+        path_only = self.clean_path.split("?", 1)[0]
+        if path_only == "/vms/create":
             data = json.loads(body) if body else {}
+            if data.get("profile_id") != CODE_PROFILE_ID:
+                self._send_error(400, "profile_id is required")
+                return
             vm_id = f"vm-{uuid.uuid4().hex[:8]}"
             self._send_json({"id": vm_id})
-        elif self.clean_path.startswith("/exec/"):
+        elif path_only.startswith("/vms/") and path_only.endswith("/exec"):
             data = json.loads(body) if body else {}
             cmd = data.get("command", "")
             self._send_json({"stdout": f"mock: {cmd}\n", "stderr": "", "exit_code": 0})
-        elif self.clean_path.startswith("/stop/"):
+        elif path_only.startswith("/vms/") and path_only.endswith("/stop"):
             self._send_json({"ok": True})
-        elif self.clean_path.startswith("/write_file/"):
+        elif path_only.startswith("/vms/") and path_only.endswith("/files/write"):
             self._send_json({"success": True})
-        elif self.clean_path.startswith("/read_file/"):
+        elif path_only.startswith("/vms/") and path_only.endswith("/files/read"):
             self._send_json({"content": "mock file content"})
-        elif self.clean_path.startswith("/inspect/"):
-            self._send_json({"columns": [], "rows": []})
-        elif self.clean_path.startswith("/persist/"):
+        elif path_only.startswith("/vms/") and path_only.endswith("/files/content"):
+            self._send_json({"success": True, "size": len(body)})
+        elif path_only.startswith("/vms/") and path_only.endswith("/save"):
             self._send_json({"ok": True})
-        elif self.clean_path == "/purge":
+        elif path_only == "/purge":
             self._send_json({"purged": 0, "persistent_purged": 0, "ephemeral_purged": 0})
-        elif self.clean_path == "/run":
+        elif path_only == "/run":
+            data = json.loads(body) if body else {}
+            if data.get("profile_id") != CODE_PROFILE_ID:
+                self._send_error(400, "profile_id is required")
+                return
             self._send_json({"stdout": "mock run output\n", "stderr": "", "exit_code": 0})
-        elif self.clean_path.startswith("/resume/"):
+        elif path_only.startswith("/vms/") and path_only.endswith("/resume"):
             self._send_json({"id": "vm-resumed"})
-        elif self.clean_path.startswith("/fork/"):
+        elif path_only.startswith("/vms/") and path_only.endswith("/fork"):
             data = json.loads(body) if body else {}
             self._send_json({"name": data.get("name", "fork"), "size_bytes": 1024})
-        elif self.clean_path == "/reload-config":
+        elif path_only.startswith("/profiles/") and path_only.endswith("/reload"):
             self._send_json({"ok": True})
-        elif self.clean_path == "/echo":
+        elif path_only == "/echo":
             # Echo back the request body for proxy testing
             self.send_response(200)
             self.send_header("Content-Type", "application/octet-stream")
@@ -157,7 +269,7 @@ class MockServiceHandler(BaseHTTPRequestHandler):
             self._send_error(404, f"unknown endpoint: {self.clean_path}")
 
     def do_DELETE(self):
-        if self.clean_path.startswith("/delete/"):
+        if self.clean_path.startswith("/vms/") and self.clean_path.endswith("/delete"):
             self._send_json({"ok": True})
         elif self.clean_path.startswith("/images/"):
             self._send_json({"ok": True})

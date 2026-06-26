@@ -16,6 +16,8 @@ use std::sync::Arc;
 use tokio::net::UnixStream;
 use tracing::{error, info};
 
+const DEFAULT_PROFILE_ID: &str = "code";
+
 /// Case-insensitive line-level grep over a block of text.
 fn grep_lines(text: &str, pattern: &str) -> String {
     let pat = pattern.to_lowercase();
@@ -150,11 +152,12 @@ fn query_string<S: AsRef<str>>(params: &[(&str, Option<S>)]) -> String {
     }
 }
 
-/// Body for POST /provision.
+/// Body for POST /vms/create.
 fn build_create_body(params: &CreateParams) -> Value {
-    let persistent = params.name.is_some();
+    let persistent = params.name.is_some() || params.from.is_some();
     let mut body = json!({
         "name": params.name,
+        "profile_id": DEFAULT_PROFILE_ID,
         "persistent": persistent,
     });
     if let Some(ram) = params.ram_mb {
@@ -172,10 +175,11 @@ fn build_create_body(params: &CreateParams) -> Value {
     body
 }
 
-/// Body for POST /run (fresh temporary session).
+/// Body for POST /run.
 fn build_run_body(params: &RunParams) -> Value {
     let mut body = json!({
         "command": params.command,
+        "profile_id": DEFAULT_PROFILE_ID,
         "timeout_secs": params.timeout.unwrap_or(60),
     });
     if let Some(ref env) = params.env {
@@ -184,7 +188,7 @@ fn build_run_body(params: &RunParams) -> Value {
     body
 }
 
-/// Body for POST /fork/{id}.
+/// Body for POST /vms/{id}/fork.
 fn build_fork_body(params: &ForkParams) -> Value {
     json!({
         "name": params.name,
@@ -192,7 +196,7 @@ fn build_fork_body(params: &ForkParams) -> Value {
     })
 }
 
-/// Body for POST /persist/{id}.
+/// Body for POST /vms/{id}/save.
 fn build_persist_body(params: &PersistParams) -> Value {
     json!({ "name": params.name })
 }
@@ -202,7 +206,7 @@ fn build_purge_body(params: &PurgeParams) -> Value {
     json!({ "all": params.all.unwrap_or(false) })
 }
 
-/// Body for POST /read_file/{id}.
+/// Body for POST /vms/{id}/files/read.
 fn build_read_file_body(params: &FileReadParams) -> Value {
     json!({ "path": params.path })
 }
@@ -410,8 +414,7 @@ struct IdParams {
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
 struct CreateParams {
-    /// Name for the session. Named sessions are persistent ("if you name it, you keep it").
-    /// If omitted, creates a temporary session.
+    /// Optional requested session name. If omitted, the service assigns a profile-scoped name.
     name: Option<String>,
     #[serde(rename = "ramMb")]
     #[schemars(rename = "ramMb")]
@@ -422,7 +425,7 @@ struct CreateParams {
     version: Option<String>,
     /// Environment variables to inject into the guest (e.g. {"API_KEY": "sk-..."})
     env: Option<HashMap<String, String>>,
-    /// Clone state from an existing persistent session. The new session inherits
+    /// Clone state from an existing session. The new session inherits
     /// the source's disk state (workspace, rootfs overlay, session.db).
     from: Option<String>,
 }
@@ -438,22 +441,22 @@ struct ForkParams {
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
-struct NameParams {
-    /// Name of the persistent session
+struct PersistParams {
+    /// ID or name of the running session to save
+    id: String,
+    /// Name for the saved session
     name: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
-struct PersistParams {
-    /// ID of the running ephemeral session
-    id: String,
-    /// Name to assign (makes it persistent)
+struct NameParams {
+    /// Session name or id
     name: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
 struct PurgeParams {
-    /// Set to true to also destroy persistent sessions
+    /// Set to true to purge every stopped/broken session the service considers purgeable
     #[serde(default)]
     all: Option<bool>,
 }
@@ -532,7 +535,7 @@ struct TimelineMcpParams {
     since: Option<String>,
     /// Max rows. Default 200, max 2000.
     limit: Option<u64>,
-    /// Comma-separated subset of layers: "exec,mcp,net,fs,model".
+    /// Comma-separated subset of layers: "exec,tool,net,fs,model".
     /// Default all.
     layers: Option<String>,
 }
@@ -548,12 +551,6 @@ struct HostLogsMcpParams {
     /// Max bytes to read from end of file. Default 100KB, max 5MB.
     #[serde(rename = "maxBytes")]
     max_bytes: Option<u64>,
-}
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
-struct InspectParams {
-    id: String,
-    sql: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
@@ -574,12 +571,12 @@ struct McpCallParams {
 impl CapsemHandler {
     #[tool(
         name = "capsem_list",
-        description = "List all sessions (running and stopped persistent) with ID, name, status, RAM, CPUs, uptime, and telemetry"
+        description = "List sessions with ID, name, profile, status, resources, uptime, and telemetry"
     )]
     async fn list(&self) -> Result<String, String> {
         let resp = self
             .client
-            .request::<Value, Value>("GET", "/list", None)
+            .request::<Value, Value>("GET", "/vms/list", None)
             .await;
         format_service_response(resp)
     }
@@ -591,7 +588,7 @@ impl CapsemHandler {
     async fn vm_logs(&self, Parameters(params): Parameters<LogsParams>) -> Result<String, String> {
         match self
             .client
-            .request::<Value, Value>("GET", &format!("/logs/{}", params.id), None)
+            .request::<Value, Value>("GET", &format!("/vms/{}/logs", params.id), None)
             .await
         {
             Ok(mut val) => {
@@ -702,14 +699,14 @@ impl CapsemHandler {
 
     #[tool(
         name = "capsem_timeline",
-        description = "Render a unified time-ordered timeline for a session, joining exec/mcp/net/fs/model events. Optional traceId filter follows one logical operation across layers (W6 added trace_id to every table; pre-W4 rows are NULL and surface alongside). Layers default to all five; pass a subset like `exec,mcp` to scope. Use this AFTER capsem_triage / capsem_panics narrow the window."
+        description = "Render a unified time-ordered timeline for a session, joining exec/tool/net/fs/model events. Optional traceId filter follows one logical operation across layers (W6 added trace_id to every table; pre-W4 rows are NULL and surface alongside). Layers default to all five; pass a subset like `exec,tool` to scope. Use this AFTER capsem_triage / capsem_panics narrow the window."
     )]
     async fn timeline(
         &self,
         Parameters(params): Parameters<TimelineMcpParams>,
     ) -> Result<String, String> {
         let path = format!(
-            "/timeline/{}{}",
+            "/vms/{}/timeline{}",
             params.id,
             query_string(&[
                 ("trace_id", params.trace_id.clone()),
@@ -726,14 +723,14 @@ impl CapsemHandler {
 
     #[tool(
         name = "capsem_create",
-        description = "Create a new session. Named sessions are persistent. Returns session ID. RAM/CPU default to the user's configured VM settings (vm.resources.ram_gb / cpu_count) when unspecified. If name already exists, returns error -- use capsem_resume instead"
+        description = "Create a new profile-owned session. Returns session ID. RAM/CPU default to the selected profile when unspecified. If name already exists, returns an error."
     )]
     async fn create(&self, Parameters(params): Parameters<CreateParams>) -> Result<String, String> {
         info!(?params, "capsem_create tool called");
         let body = build_create_body(&params);
         let resp = self
             .client
-            .request::<Value, Value>("POST", "/provision", Some(body))
+            .request::<Value, Value>("POST", "/vms/create", Some(body))
             .await;
         if let Err(ref e) = resp {
             error!(error = %e, "provision request failed");
@@ -743,12 +740,12 @@ impl CapsemHandler {
 
     #[tool(
         name = "capsem_info",
-        description = "Get session details: ID, name, status, persistent, RAM, CPUs, version, and telemetry"
+        description = "Get session details: ID, name, profile, status, resources, version, and telemetry"
     )]
     async fn info(&self, Parameters(params): Parameters<IdParams>) -> Result<String, String> {
         let resp = self
             .client
-            .request::<Value, Value>("GET", &format!("/info/{}", params.id), None)
+            .request::<Value, Value>("GET", &format!("/vms/{}/info", params.id), None)
             .await;
         format_service_response(resp)
     }
@@ -761,7 +758,7 @@ impl CapsemHandler {
         let body = build_exec_body(&params);
         let resp = self
             .client
-            .request::<Value, Value>("POST", &format!("/exec/{}", params.id), Some(body))
+            .request::<Value, Value>("POST", &format!("/vms/{}/exec", params.id), Some(body))
             .await;
         format_service_response(resp)
     }
@@ -777,7 +774,11 @@ impl CapsemHandler {
         let body = build_read_file_body(&params);
         let resp = self
             .client
-            .request::<Value, Value>("POST", &format!("/read_file/{}", params.id), Some(body))
+            .request::<Value, Value>(
+                "POST",
+                &format!("/vms/{}/files/read", params.id),
+                Some(body),
+            )
             .await;
         format_service_response(resp)
     }
@@ -790,7 +791,7 @@ impl CapsemHandler {
         &self,
         Parameters(params): Parameters<FileWriteParams>,
     ) -> Result<String, String> {
-        let path = format!("/write_file/{}", params.id);
+        let path = format!("/vms/{}/files/write", params.id);
         let resp = self
             .client
             .request::<FileWriteParams, Value>("POST", &path, Some(params))
@@ -799,80 +800,61 @@ impl CapsemHandler {
     }
 
     #[tool(
-        name = "capsem_inspect_schema",
-        description = "Get CREATE TABLE statements for all telemetry DB tables. Call before capsem_inspect"
-    )]
-    async fn inspect_schema(&self) -> Result<String, String> {
-        Ok(capsem_logger::schema::CREATE_SCHEMA.to_string())
-    }
-
-    #[tool(
-        name = "capsem_inspect",
-        description = "Run a SQL query against a session's telemetry database. Returns columns and rows"
-    )]
-    async fn inspect(
-        &self,
-        Parameters(params): Parameters<InspectParams>,
-    ) -> Result<String, String> {
-        let path = format!("/inspect/{}", params.id);
-        let resp = self
-            .client
-            .request::<InspectParams, Value>("POST", &path, Some(params))
-            .await;
-        format_service_response(resp)
-    }
-
-    #[tool(
         name = "capsem_delete",
-        description = "Delete a session permanently. Destroys all state including persistent data"
+        description = "Delete a session and destroy its state"
     )]
     async fn delete(&self, Parameters(params): Parameters<IdParams>) -> Result<String, String> {
         let resp = self
             .client
-            .request::<Value, Value>("DELETE", &format!("/delete/{}", params.id), None)
+            .request::<Value, Value>("DELETE", &format!("/vms/{}/delete", params.id), None)
             .await;
         format_service_response(resp)
     }
 
-    #[tool(
-        name = "capsem_stop",
-        description = "Stop a session. Persistent sessions preserve their state; ephemeral sessions are destroyed"
-    )]
+    #[tool(name = "capsem_stop", description = "Stop a session")]
     async fn stop(&self, Parameters(params): Parameters<IdParams>) -> Result<String, String> {
         let resp = self
             .client
-            .request::<Value, Value>("POST", &format!("/stop/{}", params.id), Some(json!({})))
+            .request::<Value, Value>("POST", &format!("/vms/{}/stop", params.id), Some(json!({})))
             .await;
         format_service_response(resp)
     }
 
     #[tool(
         name = "capsem_suspend",
-        description = "Suspend a session. Saves RAM and CPU state. Requires persistent session"
+        description = "Pause a session by saving RAM and CPU state"
     )]
     async fn suspend(&self, Parameters(params): Parameters<IdParams>) -> Result<String, String> {
         let resp = self
             .client
-            .request::<Value, Value>("POST", &format!("/suspend/{}", params.id), Some(json!({})))
+            .request::<Value, Value>(
+                "POST",
+                &format!("/vms/{}/pause", params.id),
+                Some(json!({})),
+            )
             .await;
         format_service_response(resp)
     }
 
     #[tool(
         name = "capsem_resume",
-        description = "Resume a stopped persistent session or get ID of a running one. Returns session ID"
+        description = "Resume a stopped session or get the ID of a running one"
     )]
     async fn resume(&self, Parameters(params): Parameters<NameParams>) -> Result<String, String> {
         let resp = self
             .client
-            .request::<Value, Value>("POST", &format!("/resume/{}", params.name), Some(json!({})))
+            .request::<Value, Value>(
+                "POST",
+                &format!("/vms/{}/resume", params.name),
+                Some(json!({})),
+            )
             .await;
         format_service_response(resp)
     }
 
     #[tool(
         name = "capsem_persist",
-        description = "Convert a running ephemeral session to a persistent named session"
+        description = "Save a running session under a stable name"
     )]
     async fn persist(
         &self,
@@ -881,14 +863,14 @@ impl CapsemHandler {
         let body = build_persist_body(&params);
         let resp = self
             .client
-            .request::<Value, Value>("POST", &format!("/persist/{}", params.id), Some(body))
+            .request::<Value, Value>("POST", &format!("/vms/{}/save", params.id), Some(body))
             .await;
         format_service_response(resp)
     }
 
     #[tool(
         name = "capsem_purge",
-        description = "Kill all temporary sessions. Set all=true to also destroy persistent sessions"
+        description = "Purge stopped, broken, incompatible, or otherwise purgeable sessions"
     )]
     async fn purge(&self, Parameters(params): Parameters<PurgeParams>) -> Result<String, String> {
         let body = build_purge_body(&params);
@@ -901,7 +883,7 @@ impl CapsemHandler {
 
     #[tool(
         name = "capsem_run",
-        description = "Run a command in a fresh temporary session. Session is auto-provisioned and destroyed. Returns stdout, stderr, exit_code"
+        description = "Run a command in a fresh profile-owned session managed by the service. Returns stdout, stderr, exit_code"
     )]
     async fn run(&self, Parameters(params): Parameters<RunParams>) -> Result<String, String> {
         let body = build_run_body(&params);
@@ -914,14 +896,14 @@ impl CapsemHandler {
 
     #[tool(
         name = "capsem_fork",
-        description = "Fork a running or stopped session into a new stopped persistent session"
+        description = "Fork a running or stopped session into a new stopped session"
     )]
     async fn fork(&self, Parameters(params): Parameters<ForkParams>) -> Result<String, String> {
         info!(?params, "capsem_fork tool called");
         let body = build_fork_body(&params);
         let resp = self
             .client
-            .request::<Value, Value>("POST", &format!("/fork/{}", params.id), Some(body))
+            .request::<Value, Value>("POST", &format!("/vms/{}/fork", params.id), Some(body))
             .await;
         format_service_response(resp)
     }
@@ -934,7 +916,7 @@ impl CapsemHandler {
         let mcp_version = env!("CARGO_PKG_VERSION");
         let service_status = match self
             .client
-            .request::<Value, Value>("GET", "/list", None)
+            .request::<Value, Value>("GET", "/vms/list", None)
             .await
         {
             Ok(_) => "connected".to_string(),
@@ -954,7 +936,11 @@ impl CapsemHandler {
     async fn mcp_servers(&self) -> Result<String, String> {
         let resp: Vec<Value> = self
             .client
-            .request("GET", "/mcp/servers", None::<&()>)
+            .request(
+                "GET",
+                &format!("/profiles/{}/mcp/servers/list", DEFAULT_PROFILE_ID),
+                None::<&()>,
+            )
             .await
             .map_err(|e| e.to_string())?;
         serde_json::to_string_pretty(&resp).map_err(|e| e.to_string())
@@ -968,13 +954,38 @@ impl CapsemHandler {
         &self,
         Parameters(params): Parameters<McpToolsParams>,
     ) -> Result<String, String> {
-        let mut tools: Vec<Value> = self
-            .client
-            .request("GET", "/mcp/tools", None::<&()>)
-            .await
-            .map_err(|e| e.to_string())?;
-        if let Some(ref filter) = params.server {
-            tools.retain(|t| t["server_name"].as_str() == Some(filter));
+        let server_names = if let Some(ref filter) = params.server {
+            vec![filter.clone()]
+        } else {
+            let servers: Vec<Value> = self
+                .client
+                .request(
+                    "GET",
+                    &format!("/profiles/{}/mcp/servers/list", DEFAULT_PROFILE_ID),
+                    None::<&()>,
+                )
+                .await
+                .map_err(|e| e.to_string())?;
+            servers
+                .into_iter()
+                .filter_map(|server| server["name"].as_str().map(ToOwned::to_owned))
+                .collect()
+        };
+        let mut tools = Vec::new();
+        for server_name in server_names {
+            let mut server_tools: Vec<Value> = self
+                .client
+                .request(
+                    "GET",
+                    &format!(
+                        "/profiles/{}/mcp/servers/{}/tools/list",
+                        DEFAULT_PROFILE_ID, server_name
+                    ),
+                    None::<&()>,
+                )
+                .await
+                .map_err(|e| e.to_string())?;
+            tools.append(&mut server_tools);
         }
         serde_json::to_string_pretty(&tools).map_err(|e| e.to_string())
     }
@@ -987,12 +998,18 @@ impl CapsemHandler {
         &self,
         Parameters(params): Parameters<McpCallParams>,
     ) -> Result<String, String> {
+        let (server_name, tool_name) = params.name.split_once("__").ok_or_else(|| {
+            "MCP tool calls must use namespaced names like server__tool".to_string()
+        })?;
         let args = params.arguments.unwrap_or(json!({}));
         let resp: Value = self
             .client
             .request(
                 "POST",
-                &format!("/mcp/tools/{}/call", params.name),
+                &format!(
+                    "/profiles/{}/mcp/servers/{}/tools/{}/call",
+                    DEFAULT_PROFILE_ID, server_name, tool_name
+                ),
                 Some(&args),
             )
             .await

@@ -1,7 +1,5 @@
 """Verify only one service can bind to a socket at a time."""
 
-import subprocess
-import time
 
 import pytest
 
@@ -24,7 +22,7 @@ def test_second_service_fails():
             svc_b.start()
             # If it somehow starts, it should at least not corrupt service A
             client_a = svc_a.client()
-            resp = client_a.get("/list")
+            resp = client_a.get("/vms/list")
             assert resp is not None, "Service A should still work"
             svc_b.stop()
         except RuntimeError:

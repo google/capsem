@@ -6,6 +6,8 @@ test-artifacts/
 /lib/
 dist/
 .env
+.env.local
+.env.ironbank
 .venv
 archive/
 .credentials.json
@@ -42,6 +44,8 @@ private/
 
 # Dev setup sentinel (written by just doctor)
 .dev-setup
+.sprinty/
+.sprinty-*/
 
 # Coverage output
 coverage/

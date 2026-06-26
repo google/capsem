@@ -7,11 +7,10 @@
 //
 // Per query lifecycle (UDP):
 //   1. recv_from(udp_sock) -> (raw_dns_bytes, peer_addr)
-//   2. open new vsock conn to (HOST_CID=2, port=5007)
-//   3. write [4-byte BE length][rmp DnsRequest{raw, proto="udp"}]
-//   4. read [4-byte BE length][rmp DnsResponse{raw, decision, rcode}]
+//   2. hand query to a persistent vsock worker
+//   3. worker writes [4-byte BE length][rmp DnsRequest{raw, proto="udp"}]
+//   4. worker reads [4-byte BE length][rmp DnsResponse{raw, decision, rcode}]
 //   5. send_to(udp_sock, response.raw, peer_addr)
-//   6. close vsock conn
 //
 // Per query lifecycle (TCP):
 //   The DNS-over-TCP wire format uses a 2-byte BE length prefix per
@@ -21,11 +20,11 @@
 //   accept may carry multiple queries; we serve them serially on the
 //   same socket.
 //
-// One vsock connection per query keeps the agent stateless and
-// matches the host-side `serve_dns_session` shape (one envelope
-// round-trip then close). DNS queries are small + infrequent compared
-// to HTTP; T5 hardening can swap to a multiplexed long-lived conn if
-// throughput ever becomes the bottleneck.
+// DNS is latency-sensitive and high fan-out under agent workloads, so
+// the proxy keeps a small pool of persistent vsock workers. Each worker
+// owns one blocking vsock fd and processes one in-flight DNS request at
+// a time; the pool provides concurrency without opening/closing a vsock
+// connection per packet.
 //
 // Launched by `capsem-init` (T3.4) alongside the iptables nat
 // redirect for UDP/TCP port 53 -> 1053. Replaced the dnsmasq fake
@@ -36,11 +35,14 @@ mod vsock_io;
 
 use std::io;
 use std::process;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{mpsc, Arc};
+use std::thread;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, UdpSocket};
 use tokio::signal;
-use tokio::task;
+use tokio::sync::oneshot;
 
 use capsem_proto::{
     decode_dns_response, encode_dns_request, DnsRequest, DnsResponse, MAX_FRAME_SIZE,
@@ -60,20 +62,66 @@ const LISTEN_PORT: u16 = 1053;
 /// EDNS responses at ~4096; standard queries fit in 512. 4096 is what
 /// hickory uses internally.
 const MAX_UDP_DNS_BYTES: usize = 4096;
+const DNS_VSOCK_WORKERS: usize = 8;
 
-/// Round-trip a single DNS query through the host-side handler.
-///
-/// Opens a fresh vsock conn, encodes + writes a `DnsRequest`, reads
-/// the framed `DnsResponse`, closes the conn. Done synchronously
-/// (blocking syscalls on a `spawn_blocking` thread) because the
-/// vsock_io helpers are blocking primitives.
-async fn forward_query(raw: Vec<u8>, proto: &'static str) -> io::Result<DnsResponse> {
-    task::spawn_blocking(move || forward_query_blocking(raw, proto))
-        .await
-        .map_err(|e| io::Error::other(format!("dns forward task panicked: {e}")))?
+struct DnsForwarder {
+    workers: Vec<mpsc::Sender<DnsWork>>,
+    next_worker: AtomicUsize,
 }
 
-fn forward_query_blocking(raw: Vec<u8>, proto: &str) -> io::Result<DnsResponse> {
+struct DnsWork {
+    raw: Vec<u8>,
+    proto: &'static str,
+    reply: oneshot::Sender<io::Result<DnsResponse>>,
+}
+
+impl DnsForwarder {
+    fn new(worker_count: usize) -> Self {
+        assert!(worker_count > 0, "DNS forwarder needs at least one worker");
+        let mut workers = Vec::with_capacity(worker_count);
+        for id in 0..worker_count {
+            let (tx, rx) = mpsc::channel();
+            spawn_dns_worker(id, rx);
+            workers.push(tx);
+        }
+        Self {
+            workers,
+            next_worker: AtomicUsize::new(0),
+        }
+    }
+
+    async fn forward_query(&self, raw: Vec<u8>, proto: &'static str) -> io::Result<DnsResponse> {
+        let (reply, wait) = oneshot::channel();
+        let work = DnsWork { raw, proto, reply };
+        let idx = next_worker_index(&self.next_worker, self.workers.len());
+        self.workers[idx]
+            .send(work)
+            .map_err(|_| io::Error::other("dns forward worker stopped"))?;
+        wait.await
+            .map_err(|_| io::Error::other("dns forward worker dropped response"))?
+    }
+}
+
+fn next_worker_index(next_worker: &AtomicUsize, worker_count: usize) -> usize {
+    next_worker.fetch_add(1, Ordering::Relaxed) % worker_count
+}
+
+fn spawn_dns_worker(id: usize, rx: mpsc::Receiver<DnsWork>) {
+    thread::Builder::new()
+        .name(format!("capsem-dns-vsock-{id}"))
+        .spawn(move || {
+            let mut fd = None;
+            for work in rx {
+                let result = dns_round_trip_with_reconnect(&mut fd, work.raw, work.proto);
+                let _ = work.reply.send(result);
+            }
+            close_fd(fd);
+        })
+        .expect("spawn DNS vsock worker");
+}
+
+/// Round-trip a single DNS query through the host-side handler.
+fn forward_query_on_fd(fd: i32, raw: Vec<u8>, proto: &str) -> io::Result<DnsResponse> {
     let req = DnsRequest {
         raw,
         proto: proto.to_string(),
@@ -82,32 +130,57 @@ fn forward_query_blocking(raw: Vec<u8>, proto: &str) -> io::Result<DnsResponse> 
     let frame = encode_dns_request(&req)
         .map_err(|e| io::Error::other(format!("encode_dns_request: {e:#}")))?;
 
-    let fd = vsock_connect(VSOCK_HOST_CID, VSOCK_PORT_DNS_PROXY)?;
-    // From here on the fd is owned by us; close on every exit.
-    let result = (|| -> io::Result<DnsResponse> {
-        write_all_fd(fd, &frame)?;
-        let mut len_buf = [0u8; 4];
-        read_exact_fd(fd, &mut len_buf)?;
-        let len = u32::from_be_bytes(len_buf);
-        if len > MAX_FRAME_SIZE {
-            return Err(io::Error::other(format!(
-                "dns response frame too large ({len} > {MAX_FRAME_SIZE})"
-            )));
-        }
-        let mut payload = vec![0u8; len as usize];
-        read_exact_fd(fd, &mut payload)?;
-        decode_dns_response(&payload)
-            .map_err(|e| io::Error::other(format!("decode_dns_response: {e:#}")))
-    })();
-
-    unsafe {
-        nix::libc::close(fd);
+    write_all_fd(fd, &frame)?;
+    let mut len_buf = [0u8; 4];
+    read_exact_fd(fd, &mut len_buf)?;
+    let len = u32::from_be_bytes(len_buf);
+    if len > MAX_FRAME_SIZE {
+        return Err(io::Error::other(format!(
+            "dns response frame too large ({len} > {MAX_FRAME_SIZE})"
+        )));
     }
-    result
+    let mut payload = vec![0u8; len as usize];
+    read_exact_fd(fd, &mut payload)?;
+    decode_dns_response(&payload)
+        .map_err(|e| io::Error::other(format!("decode_dns_response: {e:#}")))
+}
+
+fn dns_round_trip_with_reconnect(
+    fd: &mut Option<i32>,
+    raw: Vec<u8>,
+    proto: &'static str,
+) -> io::Result<DnsResponse> {
+    for attempt in 0..2 {
+        let active_fd = match *fd {
+            Some(active_fd) => active_fd,
+            None => {
+                let new_fd = vsock_connect(VSOCK_HOST_CID, VSOCK_PORT_DNS_PROXY)?;
+                *fd = Some(new_fd);
+                new_fd
+            }
+        };
+        match forward_query_on_fd(active_fd, raw.clone(), proto) {
+            Ok(response) => return Ok(response),
+            Err(error) if attempt == 0 => {
+                close_fd(fd.take());
+                eprintln!("[capsem-dns-proxy] vsock worker reconnecting after error: {error}");
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Err(io::Error::other("dns forward retry exhausted"))
+}
+
+fn close_fd(fd: Option<i32>) {
+    if let Some(fd) = fd {
+        unsafe {
+            nix::libc::close(fd);
+        }
+    }
 }
 
 /// UDP listener: read one datagram, forward, send the response back.
-async fn run_udp_listener() -> io::Result<()> {
+async fn run_udp_listener(forwarder: Arc<DnsForwarder>) -> io::Result<()> {
     let sock = UdpSocket::bind((LISTEN_BIND, LISTEN_PORT)).await?;
     eprintln!("[capsem-dns-proxy] udp listening on {LISTEN_BIND}:{LISTEN_PORT}");
     let sock = std::sync::Arc::new(sock);
@@ -123,8 +196,9 @@ async fn run_udp_listener() -> io::Result<()> {
         buf.truncate(n);
 
         let sock_for_response = std::sync::Arc::clone(&sock);
+        let forwarder = Arc::clone(&forwarder);
         tokio::spawn(async move {
-            match forward_query(buf, "udp").await {
+            match forwarder.forward_query(buf, "udp").await {
                 Ok(resp) => {
                     if resp.raw.is_empty() {
                         // Host returned empty bytes -- usually a parse
@@ -146,7 +220,7 @@ async fn run_udp_listener() -> io::Result<()> {
 
 /// TCP listener: each accepted conn carries one or more DNS messages,
 /// each prefixed by a 2-byte BE length (RFC 1035 §4.2.2).
-async fn run_tcp_listener() -> io::Result<()> {
+async fn run_tcp_listener(forwarder: Arc<DnsForwarder>) -> io::Result<()> {
     let listener = TcpListener::bind((LISTEN_BIND, LISTEN_PORT)).await?;
     eprintln!("[capsem-dns-proxy] tcp listening on {LISTEN_BIND}:{LISTEN_PORT}");
     loop {
@@ -158,6 +232,7 @@ async fn run_tcp_listener() -> io::Result<()> {
             }
         };
         let _ = stream.set_nodelay(true);
+        let forwarder = Arc::clone(&forwarder);
         tokio::spawn(async move {
             loop {
                 let mut len_buf = [0u8; 2];
@@ -175,7 +250,7 @@ async fn run_tcp_listener() -> io::Result<()> {
                     eprintln!("[capsem-dns-proxy] tcp read body from {peer}: {e}");
                     return;
                 }
-                match forward_query(payload, "tcp").await {
+                match forwarder.forward_query(payload, "tcp").await {
                     Ok(resp) => {
                         if resp.raw.is_empty() {
                             return;
@@ -203,8 +278,9 @@ async fn run_tcp_listener() -> io::Result<()> {
 async fn main() -> io::Result<()> {
     eprintln!("[capsem-dns-proxy] starting (pid {})", process::id());
 
-    let udp_task = tokio::spawn(run_udp_listener());
-    let tcp_task = tokio::spawn(run_tcp_listener());
+    let forwarder = Arc::new(DnsForwarder::new(DNS_VSOCK_WORKERS));
+    let udp_task = tokio::spawn(run_udp_listener(Arc::clone(&forwarder)));
+    let tcp_task = tokio::spawn(run_tcp_listener(forwarder));
 
     tokio::select! {
         res = udp_task => {
@@ -255,6 +331,23 @@ mod tests {
         // RFC 6891 default EDNS UDP payload size is 4096; smaller
         // would risk truncation flag (TC bit) on legit queries.
         const _: () = assert!(MAX_UDP_DNS_BYTES >= 4096);
+    }
+
+    #[test]
+    fn dns_proxy_uses_persistent_vsock_worker_pool() {
+        assert!(
+            DNS_VSOCK_WORKERS >= 2,
+            "DNS must not regress to per-query vsock connect/close; keep a persistent worker pool"
+        );
+    }
+
+    #[test]
+    fn dns_proxy_round_robins_vsock_workers() {
+        let next = AtomicUsize::new(0);
+        assert_eq!(next_worker_index(&next, 3), 0);
+        assert_eq!(next_worker_index(&next, 3), 1);
+        assert_eq!(next_worker_index(&next, 3), 2);
+        assert_eq!(next_worker_index(&next, 3), 0);
     }
 
     #[test]

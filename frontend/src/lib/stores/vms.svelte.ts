@@ -19,6 +19,7 @@ class VmStore {
   acting = $state(false);
   polled = $state(false);
   showCreateModal = $state(false);
+  createProfileId = $state<string | null>(null);
 
   get loading(): boolean {
     return !this.polled || this.acting;
@@ -35,16 +36,6 @@ class VmStore {
       this.vms = status.vms;
       this.resourceSummary = status.resource_summary;
       this.serviceStatus = status.service;
-      try {
-        this.assetHealth = await api.getAssetsStatus();
-      } catch (e) {
-        this.assetHealth = {
-          ready: false,
-          downloading: false,
-          assets: [],
-          error: assetStatusError(e),
-        };
-      }
       this.polled = true;
       this.error = null;
       // Only log state transitions, not every 2s poll.
@@ -139,8 +130,15 @@ class VmStore {
 
   async provision(opts: ProvisionRequest): Promise<{ id: string; name: string }> {
     console.log('[vmStore] provision(%o)', opts);
-    if (this.assetHealth?.ready !== true) {
-      throw new Error('VM assets are not ready');
+    let assetHealth: AssetStatusResponse | null = null;
+    try {
+      assetHealth = await api.getAssetsStatus(opts.profile_id);
+    } catch (e) {
+      throw new Error(assetStatusError(e));
+    }
+    if (assetHealth.ready !== true) {
+      this.assetHealth = assetHealth;
+      throw new Error(`VM assets are not ready for profile ${opts.profile_id}`);
     }
     this.acting = true;
     try {
@@ -153,20 +151,20 @@ class VmStore {
     }
   }
 
-  async ensureAssets(): Promise<void> {
-    this.acting = true;
-    try {
-      this.assetHealth = await api.ensureAssets();
-      await this.refresh();
-    } finally {
-      this.acting = false;
-    }
+  openCreateModal(profileId?: string): void {
+    this.createProfileId = profileId ?? null;
+    this.showCreateModal = true;
   }
 
-  async persist(id: string, name: string): Promise<void> {
+  closeCreateModal(): void {
+    this.showCreateModal = false;
+    this.createProfileId = null;
+  }
+
+  async ensureAssets(profileId: string): Promise<void> {
     this.acting = true;
     try {
-      await api.persistVm(id, name);
+      this.assetHealth = await api.ensureAssets(profileId);
       await this.refresh();
     } finally {
       this.acting = false;

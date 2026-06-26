@@ -29,13 +29,12 @@ just schema                                                        # Regenerate 
 |------|-------|----------------|
 | `test_validate.py` | 96 | TOML config linting, error codes E001-E305, warnings W001-W012 |
 | `test_models.py` | 80 | Pydantic models (GuestImageConfig, ArchConfig, all sub-models) |
-| `test_cli.py` | 79 | Click CLI commands (build, validate, inspect, init, add, audit, mcp, doctor) |
+| `test_cli.py` | 18 | Backend-only Click CLI surface; product build/validate/inspect commands stay burned |
 | `test_docker.py` | 75 | Jinja Dockerfile rendering, conformance with legacy Dockerfiles |
 | `test_settings_spec.py` | 73 | Settings schema conformance (golden fixture round-trip) |
 | `test_manifest.py` | 48 | BOM collection, manifest rendering, dpkg/pip/npm parsers |
 | `test_config.py` | 41 | TOML config loading, defaults generation, roundtrip |
 | `test_doctor.py` | 27 | Build doctor checks (Docker, tools, disk, permissions) |
-| `test_scaffold.py` | 23 | init/add scaffold commands |
 | `test_mcp.py` | 20 | JSON-RPC 2.0 MCP stdio server |
 | `test_audit.py` | 20 | Trivy/grype JSON parsing, severity summary |
 
@@ -61,17 +60,17 @@ If you change the settings schema (node types, metadata fields), all three must 
 ## Schema generation pipeline
 
 ```
-guest/config/*.toml -> Pydantic models -> config/settings-schema.json (JSON Schema)
-                                       -> config/defaults.json (settings interchange)
+config/settings/settings.toml -> Pydantic models -> config/settings/schema.generated.json (JSON Schema)
+                                                   -> config/settings/ui-metadata.generated.json (UI metadata)
 ```
 
 - `just schema` runs `generate_schema.py` which calls `export_json_schema()` and `generate_defaults_json()`
-- Rust reads `config/defaults.json` via `include_str!()` in `registry.rs`
-- TypeScript validates against `config/settings-schema.json` in conformance tests
+- Rust reads `config/settings/ui-metadata.generated.json` via `include_str!()` in `registry.rs`
+- TypeScript validates against `config/settings/schema.generated.json` in conformance tests
 
 ## In-VM tests (NOT pytest on host)
 
-`guest/artifacts/diagnostics/` contains 207 pytest tests that run INSIDE the VM via `just run "capsem-doctor"`. These are NOT part of the host `uv run pytest` suite. They test the guest environment (mounts, networking, sandbox, MCP, runtimes). See `/dev-testing-vm` for details.
+`guest/artifacts/diagnostics/` contains 207 pytest tests that run INSIDE the VM via `just exec "capsem-doctor"`. These are NOT part of the host `uv run pytest` suite. They test the guest environment (mounts, networking, sandbox, MCP, runtimes). See `/dev-testing-vm` for details.
 
 ## Source layout
 
@@ -80,16 +79,15 @@ src/capsem/
     __init__.py
     builder/
         __init__.py
-        cli.py           Click CLI entry point
+        cli.py           Backend-only Click CLI entry point
         config.py         TOML config loading, defaults generation
         models.py         Pydantic models (GuestImageConfig, ArchConfig, etc.)
         schema.py         Settings schema (SettingsRoot, GroupNode, SettingNode)
         docker.py         Jinja Dockerfile rendering, Docker build execution
         manifest.py       BOM collection, manifest rendering
         validate.py       Compiler-style linting with error codes
-        scaffold.py       init/add scaffolding
         audit.py          Trivy/grype output parsing
-        mcp_server.py     JSON-RPC 2.0 MCP stdio server
+        image_build_backend.py Private capsem-admin image build backend
         doctor.py         Build environment doctor checks
         templates/
             Dockerfile.rootfs.j2

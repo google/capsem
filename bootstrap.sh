@@ -19,6 +19,33 @@ for arg in "$@"; do
     esac
 done
 
+check_bootstrap_shape() {
+    cd "$SCRIPT_DIR"
+    for link in .agents/skills .claude/skills .codex/skills .cursor/skills .gemini/skills; do
+        [ "$(readlink "$link" 2>/dev/null || true)" = "../skills" ] || {
+            printf "  [FAIL] %s must be a symlink to ../skills\n" "$link" >&2
+            exit 1
+        }
+    done
+    for file in \
+        skills/dev-sprint/SKILL.md \
+        skills/dev-testing/SKILL.md \
+        skills/dev-capsem/SKILL.md \
+        skills/ironbank/SKILL.md \
+        skills/frontend-design/SKILL.md \
+        site/package.json \
+        site/astro.config.mjs \
+        site/src/components/FAQ.svelte \
+        site/src/lib/data.ts; do
+        [ -f "$file" ] || { printf "  [FAIL] missing %s\n" "$file" >&2; exit 1; }
+    done
+    SKILL_COUNT=$(find skills -mindepth 2 -name SKILL.md | wc -l | tr -d ' ')
+    [ "$SKILL_COUNT" -ge 25 ] || { printf "  [FAIL] expected at least 25 project skills, found %s\n" "$SKILL_COUNT" >&2; exit 1; }
+    printf "  [ok]   project skills symlinks, key skills, and site surface\n"
+}
+
+check_bootstrap_shape
+
 # Ask the developer "Install <tool>? [Y/n]". Returns 0 on yes, 1 on no.
 # Default is YES (just press enter). Auto-yes when -y is set; auto-yes when
 # stdin isn't a tty either (CI/pipelines should bootstrap fully -- pass an
@@ -125,7 +152,7 @@ fi
 
 if command -v pnpm >/dev/null 2>&1; then
     printf "  Frontend deps (pnpm install)...\n"
-    (cd frontend && pnpm install --frozen-lockfile)
+    (cd frontend && CI=true pnpm install --frozen-lockfile)
 else
     case "$(uname -s)" in
         Darwin)
@@ -143,7 +170,7 @@ else
     esac
     if command -v pnpm >/dev/null 2>&1; then
         printf "  Frontend deps (pnpm install)...\n"
-        (cd frontend && pnpm install --frozen-lockfile)
+        (cd frontend && CI=true pnpm install --frozen-lockfile)
     else
         printf "  [SKIP] Frontend deps (pnpm not installed -- doctor will catch this)\n"
     fi
@@ -175,6 +202,11 @@ case "$(uname -s)" in
                 if confirm "start Colima now (vz, 16 GB, 8 CPU -- needed for build-assets + tauri install-test)"; then
                     colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8
                 fi
+            fi
+            if command -v docker >/dev/null 2>&1; then
+                docker info >/dev/null
+                docker run --rm --pull=missing alpine:3.20 true >/dev/null
+                printf "  [ok]   docker VM probe (info + pull/run)\n"
             fi
         fi ;;
     Linux)

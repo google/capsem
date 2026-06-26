@@ -3,6 +3,33 @@ use std::path::{Path, PathBuf};
 
 use crate::paths;
 
+const EXPLICIT_STOP_MARKER: &str = "service.explicitly-stopped";
+
+pub fn explicit_stop_marker_path() -> PathBuf {
+    capsem_core::paths::capsem_run_dir().join(EXPLICIT_STOP_MARKER)
+}
+
+pub fn service_explicitly_stopped() -> bool {
+    explicit_stop_marker_path().exists()
+}
+
+pub fn clear_explicit_stop_marker() -> Result<()> {
+    let marker = explicit_stop_marker_path();
+    match std::fs::remove_file(&marker) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error).with_context(|| format!("remove {}", marker.display())),
+    }
+}
+
+fn write_explicit_stop_marker() -> Result<()> {
+    let marker = explicit_stop_marker_path();
+    if let Some(parent) = marker.parent() {
+        std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    std::fs::write(&marker, b"stopped\n").with_context(|| format!("write {}", marker.display()))
+}
+
 /// Escape a string for safe embedding in XML `<string>` elements.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn xml_escape(s: &str) -> String {
@@ -43,6 +70,10 @@ pub fn generate_plist(
     let gateway_bin = xml_escape(&gateway_bin.display().to_string());
     let tray_bin = xml_escape(&tray_bin.display().to_string());
     let assets_dir = xml_escape(&assets_dir.display().to_string());
+    let credential_store_path = xml_escape(&format!(
+        "{}/.capsem/credentials/credential-store.json",
+        home
+    ));
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -50,6 +81,11 @@ pub fn generate_plist(
 <dict>
     <key>Label</key>
     <string>com.capsem.service</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>CAPSEM_CREDENTIAL_STORE_PATH</key>
+        <string>{credential_store_path}</string>
+    </dict>
     <key>ProgramArguments</key>
     <array>
         <string>{service_bin}</string>
@@ -149,6 +185,7 @@ fn reject_test_isolation_env() -> Result<()> {
 /// Install the capsem service as a LaunchAgent (macOS) or systemd user unit (Linux).
 pub async fn install_service() -> Result<()> {
     reject_test_isolation_env()?;
+    clear_explicit_stop_marker()?;
     let capsem_paths =
         paths::discover_paths().context("cannot discover paths for service installation")?;
     let home = std::env::var("HOME").context("HOME not set")?;
@@ -233,6 +270,7 @@ pub async fn start_service() -> Result<()> {
     if !is_service_installed() {
         anyhow::bail!("Service not installed. Run `capsem install` first.");
     }
+    clear_explicit_stop_marker()?;
 
     #[cfg(target_os = "macos")]
     {
@@ -278,24 +316,34 @@ pub async fn stop_service() -> Result<()> {
     if !is_service_installed() {
         anyhow::bail!("Service not installed. Run `capsem install` first.");
     }
+    write_explicit_stop_marker()?;
 
     #[cfg(target_os = "macos")]
     {
         let uid = nix::unistd::getuid();
-        let target = format!("gui/{}/com.capsem.service", uid);
-        let status = tokio::process::Command::new("launchctl")
-            .args(["kill", "SIGTERM", &target])
-            .status()
+        let (primary, fallback) = macos_stop_launchagent_plan(uid.as_raw());
+        let output = tokio::process::Command::new(primary.program)
+            .args(primary.args.iter().map(String::as_str))
+            .output()
             .await?;
-        if !status.success() {
-            // Fallback: unload/load cycle
-            if let Some(plist) = plist_path() {
-                let _ = tokio::process::Command::new("launchctl")
-                    .args(["unload", &plist.to_string_lossy()])
-                    .status()
+        if !output.status.success() && macos_launchagent_loaded(uid.as_raw()).await? {
+            if let Some(fallback) = fallback {
+                let fallback_output = tokio::process::Command::new(fallback.program)
+                    .args(fallback.args.iter().map(String::as_str))
+                    .output()
                     .await;
+                if fallback_output
+                    .as_ref()
+                    .map(|o| !o.status.success())
+                    .unwrap_or(true)
+                    && macos_launchagent_loaded(uid.as_raw()).await?
+                {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    anyhow::bail!("failed to stop capsem service: {}", stderr.trim());
+                }
             }
         }
+        wait_for_macos_launchagent_unloaded(uid.as_raw()).await?;
     }
 
     #[cfg(target_os = "linux")]
@@ -323,6 +371,50 @@ pub fn plist_path() -> Option<PathBuf> {
     std::env::var("HOME")
         .ok()
         .map(|h| PathBuf::from(h).join("Library/LaunchAgents/com.capsem.service.plist"))
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LaunchctlCommand {
+    program: &'static str,
+    args: Vec<String>,
+}
+
+#[cfg(target_os = "macos")]
+fn macos_stop_launchagent_plan(uid: u32) -> (LaunchctlCommand, Option<LaunchctlCommand>) {
+    let target = format!("gui/{uid}/com.capsem.service");
+    (
+        LaunchctlCommand {
+            program: "launchctl",
+            args: vec!["bootout".to_string(), target],
+        },
+        plist_path().map(|plist| LaunchctlCommand {
+            program: "launchctl",
+            args: vec!["unload".to_string(), plist.display().to_string()],
+        }),
+    )
+}
+
+#[cfg(target_os = "macos")]
+async fn wait_for_macos_launchagent_unloaded(uid: u32) -> Result<()> {
+    for _ in 0..50 {
+        if !macos_launchagent_loaded(uid).await? {
+            return Ok(());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    let target = format!("gui/{uid}/com.capsem.service");
+    anyhow::bail!("capsem service still loaded after stop: {target}");
+}
+
+#[cfg(target_os = "macos")]
+async fn macos_launchagent_loaded(uid: u32) -> Result<bool> {
+    let target = format!("gui/{uid}/com.capsem.service");
+    let output = tokio::process::Command::new("launchctl")
+        .args(["print", &target])
+        .output()
+        .await?;
+    Ok(output.status.success())
 }
 
 #[cfg(target_os = "macos")]
@@ -615,6 +707,71 @@ mod tests {
     }
 
     #[test]
+    fn test_generate_plist_pins_file_backed_credential_store() {
+        let plist = generate_plist(
+            Path::new("/Users/test/.capsem/bin/capsem-service"),
+            Path::new("/Users/test/.capsem/bin/capsem-process"),
+            Path::new("/Users/test/.capsem/bin/capsem-gateway"),
+            Path::new("/Users/test/.capsem/bin/capsem-tray"),
+            Path::new("/Users/test/.capsem/assets"),
+            "/Users/test",
+        );
+
+        assert!(plist.contains("<key>EnvironmentVariables</key>"));
+        assert!(plist.contains("<key>CAPSEM_CREDENTIAL_STORE_PATH</key>"));
+        assert!(plist
+            .contains("<string>/Users/test/.capsem/credentials/credential-store.json</string>"));
+        let retired_test_store = concat!("CAPSEM_CREDENTIAL", "_BROKER_TEST_STORE");
+        let retired_keychain_namespace = concat!("org.capsem", ".credentials");
+        let retired_keychain_service = concat!("com.capsem", ".credential");
+        assert!(
+            !plist.contains(retired_test_store),
+            "installed service must not expose the retired credential test-store rail"
+        );
+        assert!(
+            !plist.contains(retired_keychain_namespace)
+                && !plist.contains(retired_keychain_service),
+            "installed service must not expose a native Keychain namespace"
+        );
+        assert!(
+            !plist.to_lowercase().contains("keychain"),
+            "runtime LaunchAgent must not mention or select native Keychain storage"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_stop_uses_bootout_so_keepalive_does_not_restart_service() {
+        let _lock = crate::lock_test_env();
+        let _home = EnvGuard::set("HOME", "/Users/tester");
+        let (primary, fallback) = macos_stop_launchagent_plan(501);
+
+        assert_eq!(primary.program, "launchctl");
+        assert_eq!(
+            primary.args,
+            vec![
+                "bootout".to_string(),
+                "gui/501/com.capsem.service".to_string()
+            ]
+        );
+        assert!(
+            !primary
+                .args
+                .iter()
+                .any(|arg| arg == "kill" || arg == "SIGTERM"),
+            "capsem stop must unload the LaunchAgent, not SIGTERM a KeepAlive job"
+        );
+
+        let fallback = fallback.expect("installed macOS stop path should have plist fallback");
+        assert_eq!(fallback.program, "launchctl");
+        assert_eq!(fallback.args[0], "unload");
+        assert_eq!(
+            fallback.args[1],
+            "/Users/tester/Library/LaunchAgents/com.capsem.service.plist"
+        );
+    }
+
+    #[test]
     fn test_generate_systemd_unit_absolute_paths() {
         let unit = generate_systemd_unit(
             Path::new("/home/test/.capsem/bin/capsem-service"),
@@ -743,9 +900,6 @@ mod tests {
 
     // -- test-isolation guard -------------------------------------------------
 
-    // Env mutation races across parallel tests; serialize writes.
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     struct EnvGuard {
         key: &'static str,
         prev: Option<String>,
@@ -775,7 +929,7 @@ mod tests {
 
     #[test]
     fn reject_test_isolation_env_accepts_clean_env() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = crate::lock_test_env();
         let _h = EnvGuard::unset("CAPSEM_HOME");
         let _r = EnvGuard::unset("CAPSEM_RUN_DIR");
         let _a = EnvGuard::unset("CAPSEM_ASSETS_DIR");
@@ -783,8 +937,27 @@ mod tests {
     }
 
     #[test]
+    fn explicit_stop_marker_roundtrips_under_run_dir() {
+        let _lock = crate::lock_test_env();
+        let dir = tempfile::tempdir().unwrap();
+        let run_dir = dir.path().join("run");
+        let _r = EnvGuard::set("CAPSEM_RUN_DIR", run_dir.to_str().unwrap());
+
+        assert!(!service_explicitly_stopped());
+        write_explicit_stop_marker().unwrap();
+        assert!(service_explicitly_stopped());
+        assert_eq!(
+            explicit_stop_marker_path(),
+            run_dir.join(EXPLICIT_STOP_MARKER)
+        );
+
+        clear_explicit_stop_marker().unwrap();
+        assert!(!service_explicitly_stopped());
+    }
+
+    #[test]
     fn reject_test_isolation_env_refuses_capsem_home() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = crate::lock_test_env();
         let _h = EnvGuard::set("CAPSEM_HOME", "/tmp/fake");
         let _r = EnvGuard::unset("CAPSEM_RUN_DIR");
         let _a = EnvGuard::unset("CAPSEM_ASSETS_DIR");
@@ -802,7 +975,7 @@ mod tests {
     #[test]
     fn reject_test_isolation_env_ignores_empty() {
         // Empty value means "not set" per env_nonempty convention -- must not refuse.
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = crate::lock_test_env();
         let _h = EnvGuard::set("CAPSEM_HOME", "");
         let _r = EnvGuard::unset("CAPSEM_RUN_DIR");
         let _a = EnvGuard::unset("CAPSEM_ASSETS_DIR");
@@ -811,7 +984,7 @@ mod tests {
 
     #[test]
     fn reject_test_isolation_env_lists_all_set_vars() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = crate::lock_test_env();
         let _h = EnvGuard::set("CAPSEM_HOME", "/tmp/a");
         let _r = EnvGuard::set("CAPSEM_RUN_DIR", "/tmp/b");
         let _a = EnvGuard::set("CAPSEM_ASSETS_DIR", "/tmp/c");

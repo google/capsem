@@ -20,31 +20,31 @@ def test_resume_after_neighbor_delete():
     vm_b = f"resume-b-{uuid.uuid4().hex[:8]}"
 
     try:
-        client.post("/provision", {"name": vm_a, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
-        client.post("/provision", {"name": vm_b, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        client.post("/vms/create", {"name": vm_a, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        client.post("/vms/create", {"name": vm_b, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
 
-        assert wait_exec_ready(client, vm_a), f"VM-A never exec-ready"
-        assert wait_exec_ready(client, vm_b), f"VM-B never exec-ready"
+        assert wait_exec_ready(client, vm_a), "VM-A never exec-ready"
+        assert wait_exec_ready(client, vm_b), "VM-B never exec-ready"
 
         # Write a file in VM-A
-        client.post(f"/write_file/{vm_a}", {
+        client.post(f"/vms/{vm_a}/files/write", {
             "path": "/root/resume-test.txt",
             "content": "still-here",
         })
 
         # Delete VM-B
-        client.delete(f"/delete/{vm_b}")
+        client.delete(f"/vms/{vm_b}/delete")
 
         # VM-A file should still be there
-        resp = client.post(f"/read_file/{vm_a}", {"path": "/root/resume-test.txt"})
+        resp = client.post(f"/vms/{vm_a}/files/read", {"path": "/root/resume-test.txt"})
         assert resp.get("content") == "still-here"
 
         # VM-A exec should still work
-        resp = client.post(f"/exec/{vm_a}", {"command": "echo alive"})
+        resp = client.post(f"/vms/{vm_a}/exec", {"command": "echo alive"})
         assert "alive" in resp.get("stdout", "")
 
         # VM-B should be gone from list
-        list_resp = client.get("/list")
+        list_resp = client.get("/vms/list")
         ids = [s["id"] for s in list_resp["sandboxes"]]
         assert vm_b not in ids
         assert vm_a in ids
@@ -52,7 +52,7 @@ def test_resume_after_neighbor_delete():
     finally:
         for vm in (vm_a, vm_b):
             try:
-                client.delete(f"/delete/{vm}")
+                client.delete(f"/vms/{vm}/delete")
             except Exception:
                 pass
         svc.stop()

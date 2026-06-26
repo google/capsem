@@ -1,17 +1,34 @@
 """AI CLI installation and sandbox enforcement tests."""
 
+import json
 import os
+import re
+import tomllib
+from urllib.parse import urlsplit
 
 import pytest
 
 from conftest import run
 
-PUBLIC_NETWORK_SMOKE_ENV = "CAPSEM_RUN_PUBLIC_NETWORK_SMOKE"
+LOCAL_MOCK_SERVER_ENV = "CAPSEM_MOCK_SERVER_BASE_URL"
+SECRET_PATTERN = re.compile(
+    r"(sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9_]{20,}|AIza[0-9A-Za-z_-]{20,})"
+)
 
 
-def _require_public_network_smoke(reason):
-    if os.environ.get(PUBLIC_NETWORK_SMOKE_ENV) != "1":
-        pytest.skip(f"{reason}; set {PUBLIC_NETWORK_SMOKE_ENV}=1")
+def _require_local_mock_url(path, reason):
+    base_url = os.environ.get(LOCAL_MOCK_SERVER_ENV)
+    if not base_url:
+        pytest.fail(f"{reason}; set {LOCAL_MOCK_SERVER_ENV}")
+    url = f"{base_url.rstrip('/')}/{path.lstrip('/')}"
+    parsed = urlsplit(url)
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    if parsed.scheme == "http" and port not in (80, 3128, 3713, 8080, 11434):
+        pytest.fail(
+            f"{reason}; local mock server port {port} is outside the "
+            "default HTTP upstream allowlist"
+        )
+    return url
 
 
 @pytest.mark.parametrize("cli", ["claude", "gemini", "codex"])
@@ -37,6 +54,15 @@ def test_no_npm_global_in_path():
     )
 
 
+def test_codex_sandbox_prerequisite_bubblewrap_available():
+    """Codex should not fall back to bundled sandbox helpers because bwrap is missing."""
+    result = run("command -v bwrap && bwrap --version", timeout=10)
+    assert result.returncode == 0, (
+        f"bubblewrap/bwrap missing from PATH: {result.stdout} {result.stderr}"
+    )
+    assert "bubblewrap" in result.stdout.lower()
+
+
 def test_npm_prefix_is_opt_ai_clis():
     """npm global prefix must point to /opt/ai-clis."""
     result = run("npm config get prefix")
@@ -53,6 +79,16 @@ def test_ai_cli_in_login_shell(cli):
     assert result.returncode == 0, (
         f"{cli} not found in login shell PATH: {result.stdout} {result.stderr}"
     )
+
+
+@pytest.mark.parametrize("cli", ["claude", "agy"])
+def test_user_local_ai_cli_shim_survives_runtime_root_mount(cli):
+    """Curl-installed CLIs must keep the user-local shim their doctors expect."""
+    result = run(f"readlink -f /root/.local/bin/{cli}", timeout=10)
+    assert result.returncode == 0, (
+        f"/root/.local/bin/{cli} shim missing: {result.stdout} {result.stderr}"
+    )
+    assert result.stdout.strip() == f"/usr/local/bin/{cli}"
 
 
 @pytest.mark.parametrize("cli", ["gemini", "claude", "codex"])
@@ -83,47 +119,70 @@ def test_gemini_api_key_no_duplicate():
         )
 
 
-def test_gemini_settings_exist():
-    """Gemini CLI settings.json must be seeded with valid config."""
-    result = run("cat /root/.gemini/settings.json 2>&1")
-    assert result.returncode == 0, "~/.gemini/settings.json missing"
-    assert "homeDirectoryWarningDismissed" in result.stdout
-    assert "sessionRetention" in result.stdout
-    assert "gemini-api-key" in result.stdout
+def _read_json(path):
+    result = run(f"cat {path}")
+    assert result.returncode == 0, f"missing profile-owned JSON {path}: {result.stderr}"
+    assert not SECRET_PATTERN.search(result.stdout), f"secret-like value found in {path}"
+    return json.loads(result.stdout)
 
 
-def test_gemini_projects_exist():
-    """Gemini CLI projects.json must register /root as a project."""
-    result = run("cat /root/.gemini/projects.json 2>&1")
-    assert result.returncode == 0, "~/.gemini/projects.json missing"
-    assert "/root" in result.stdout
+def test_gemini_profile_config_seeded_without_credentials():
+    """Profile-owned Gemini config must be projected at boot without secrets."""
+    settings = _read_json("/root/.gemini/settings.json")
+    assert settings["general"]["enableAutoUpdate"] is False
+    assert settings["general"]["enableAutoUpdateNotification"] is False
+    assert settings["privacy"]["usageStatisticsEnabled"] is False
+    assert settings["privacy"]["sessionRetention"] == "none"
+    assert settings["telemetry"]["enabled"] is False
+    assert settings["security"]["auth"]["selectedType"] == "gemini-api-key"
+    assert settings["security"]["folderTrust.enabled"] is False
+
+    projects = _read_json("/root/.gemini/projects.json")
+    assert projects["projects"]["/root"] == "root"
+
+    trusted = _read_json("/root/.gemini/trustedFolders.json")
+    assert trusted["/root"] == "TRUST_FOLDER"
+
+    installation_id = run("cat /root/.gemini/installation_id")
+    assert installation_id.returncode == 0
+    assert installation_id.stdout.strip()
+    assert not SECRET_PATTERN.search(installation_id.stdout)
 
 
-def test_gemini_trusted_folders_exist():
-    """Gemini CLI trustedFolders.json must trust /root."""
-    result = run("cat /root/.gemini/trustedFolders.json 2>&1")
-    assert result.returncode == 0, "~/.gemini/trustedFolders.json missing"
-    assert "TRUST_FOLDER" in result.stdout
+def test_antigravity_profile_config_seeded_without_credentials():
+    """Profile-owned Antigravity config must be projected at boot without secrets."""
+    settings = _read_json("/root/.antigravity/settings.json")
+    assert settings["colorScheme"] == "dark"
+    assert "/root" in settings["trustedWorkspaces"]
+    assert not SECRET_PATTERN.search(json.dumps(settings, sort_keys=True))
 
 
-def test_gemini_installation_id_exist():
-    """Gemini CLI installation_id must be present."""
-    result = run("cat /root/.gemini/installation_id 2>&1")
-    assert result.returncode == 0, "~/.gemini/installation_id missing"
-    assert len(result.stdout.strip()) > 0, "installation_id is empty"
+def test_codex_profile_config_uses_first_party_defaults_without_local_ollama():
+    """Default Codex profile config must not force a local Ollama provider."""
+    result = run("cat /root/.codex/config.toml")
+    assert result.returncode == 0, f"missing Codex profile config: {result.stderr}"
+    assert not SECRET_PATTERN.search(result.stdout), "secret-like value found in Codex config"
+    config = tomllib.loads(result.stdout)
+
+    assert config.get("model_provider") not in {"local_ollama", "ollama"}, (
+        "Codex default profile must not be preconfigured to Ollama; local providers "
+        "belong behind explicit profile/rule/user selection."
+    )
+    providers = config.get("model_providers") or {}
+    assert "local_ollama" not in providers
+    assert "ollama" not in providers
 
 
-def test_google_ai_domain_allowed():
-    """Google AI domain must be reachable through the MITM proxy."""
-    _require_public_network_smoke("public Google AI domain smoke")
+def test_google_ai_local_fixture_allowed():
+    """Google AI-shaped local fixture must be reachable through the MITM proxy."""
+    local_url = _require_local_mock_url("/tiny", "local Google AI fixture smoke")
     result = run(
-        "curl -sI --connect-timeout 10 https://generativelanguage.googleapis.com 2>&1",
+        f"curl -sI --connect-timeout 10 {local_url} 2>&1",
         timeout=20,
     )
-    # TLS handshake should succeed, HTTP response received (even if 404/401)
     assert result.returncode == 0, (
-        f"Google AI domain should be allowed: {result.stdout}\n{result.stderr}"
+        f"local Google AI fixture should be allowed: {result.stdout}\n{result.stderr}"
     )
     assert "HTTP/" in result.stdout, (
-        f"no HTTP response from Google AI domain: {result.stdout}"
+        f"no HTTP response from local Google AI fixture: {result.stdout}"
     )

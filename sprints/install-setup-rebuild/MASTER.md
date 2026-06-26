@@ -17,6 +17,13 @@
 Active. Do not call install/setup done until:
 
 - Full interactive `just install` must pass on macOS before release sign-off.
+- The package owns previous-version replacement. It must stop old Capsem
+  processes and remove the old `/Applications/Capsem.app` and package-owned
+  share payload before installing the new payload, so downgrade/reinstall works
+  without PackageKit version tricks.
+- Package builders accept an explicit manifest input. Local dev, CI, and corp
+  package builds use the same package rail and choose the manifest with
+  `--manifest`; no post-install local asset patching is allowed.
 - The service can start without `capsem setup`.
 - Assets are independently reconciled and visible through `/assets/status`;
   richer slow-download fixture proof remains part of final install gates.
@@ -241,13 +248,24 @@ Implemented:
 
 - `just install` no longer invokes `scripts/sync-dev-assets.sh` after
   Installer.app or `dpkg` returns.
-- macOS package build has explicit `CAPSEM_PKG_ASSET_MODE`:
-  `manifest-only` for release-style packages and `current-arch` for local dev
-  packages.
-- Linux `.deb` repack has explicit `CAPSEM_DEB_ASSET_MODE` with the same
-  `manifest-only` / `current-arch` split.
-- macOS and Linux postinstall copy any package-provided assets into the
-  installed asset directory as part of the package install path.
+- macOS and Linux packages always move one selected manifest into the package
+  payload. `--manifest` accepts local paths plus `file://`, `http://`, and
+  `https://` URLs as the corp/dev override; asset-mode environment variables
+  are burned.
+- Manifest production is documented and tested through
+  `capsem-admin manifest generate <assets_dir>`, including corp custom builds.
+  Direct generator internals are not a public package/install path.
+- Service/CLI manifest status reports mutable-manifest truth: current hash,
+  source provenance, refresh timestamp, validation status/error, and current
+  asset/binary versions. It does not pretend the install-time hash is a
+  permanent security pin.
+- macOS and Linux package scripts write durable install diagnostics to
+  `~/.capsem/logs/install.log`, plus per-run timestamped logs and
+  `install-latest.log`.
+- macOS and Linux postinstall copy only package-provided `manifest.json` and
+  `manifest-origin.json` into the installed asset directory. VM asset payloads
+  remain external and are reconciled by the service from the installed
+  manifest.
 - Asset copy scripts skip nested directories inside `assets/<arch>/`, so a
   stray nested arch directory cannot abort install.
 - Added fast package-contract tests and a reinstall test where only
@@ -267,7 +285,7 @@ Still open:
 
 - Full interactive `just install` on macOS. Attempt on 2026-06-06 built release
   binaries, frontend, Tauri app, and `packages/Capsem-1.0.1780763638.pkg` with
-  current-arch assets embedded. It also caught and fixed a release CLI
+  the selected manifest moved by the package rail. It also caught and fixed a release CLI
   exhaustive-match fallout for `ProcessToService::LogFileBoundaryResult`.
   The gate remains open because the second run blocked on the GUI
   Installer.app flow (`open -W packages/Capsem-1.0.1780763638.pkg`) without

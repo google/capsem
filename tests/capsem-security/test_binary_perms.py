@@ -2,7 +2,6 @@
 
 import os
 import subprocess
-import stat
 
 import pytest
 

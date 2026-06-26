@@ -13,12 +13,6 @@ export interface TokenResponse {
   token: string;
 }
 
-export interface AssetHealth {
-  ready: boolean;
-  version?: string;
-  missing: string[];
-}
-
 // GET /status
 export interface StatusResponse {
   service: string; // "running" | "unavailable"
@@ -26,21 +20,23 @@ export interface StatusResponse {
   vm_count: number;
   vms: VmSummary[];
   resource_summary: ResourceSummary | null;
-  assets?: AssetHealth;
 }
 
 export interface VmSummary {
   id: string;
   name: string | null;
-  status: string; // "Running" | "Stopped" | "Suspended" | "Error" | "Booting"
+  status: VmLifecycleState;
   persistent: boolean;
-  // Telemetry (present for running VMs, absent for stopped)
+  profile_id: string;
+  can_resume: boolean;
+  resume_blocked_reason?: string;
+  available_actions: VmAction[];
+  // Telemetry (present for running sessions, absent for stopped)
   uptime_secs?: number;
   total_input_tokens?: number;
   total_output_tokens?: number;
   total_estimated_cost?: number;
   total_tool_calls?: number;
-  total_mcp_calls?: number;
   total_requests?: number;
   allowed_requests?: number;
   denied_requests?: number;
@@ -56,7 +52,7 @@ export interface ResourceSummary {
   suspended_count: number;
 }
 
-// GET /list (proxied to service)
+// GET /vms/list (proxied to service)
 export interface ListResponse {
   sandboxes: SandboxInfo[];
 }
@@ -65,21 +61,23 @@ export interface SandboxInfo {
   id: string;
   name?: string;
   pid: number;
-  status: string;
+  status: VmLifecycleState;
   persistent: boolean;
+  can_resume: boolean;
+  resume_blocked_reason?: string;
+  available_actions: VmAction[];
   ram_mb?: number;
   cpus?: number;
   version?: string;
   forked_from?: string;
   description?: string;
-  // Telemetry (populated by /info, absent from /list)
+  // Telemetry (populated by /vms/{id}/info, absent from /vms/list)
   created_at?: string;
   uptime_secs?: number;
   total_input_tokens?: number;
   total_output_tokens?: number;
   total_estimated_cost?: number;
   total_tool_calls?: number;
-  total_mcp_calls?: number;
   total_requests?: number;
   allowed_requests?: number;
   denied_requests?: number;
@@ -87,11 +85,54 @@ export interface SandboxInfo {
   model_call_count?: number;
 }
 
-// POST /provision, POST /run
+// GET /vms/{id}/status
+export interface VmStatusResponse {
+  id: string;
+  status: VmLifecycleState;
+  pid?: number;
+  persistent: boolean;
+  can_resume: boolean;
+  resume_blocked_reason?: string;
+  available_actions: VmAction[];
+  uptime_secs?: number;
+  created_at?: string;
+  last_error?: string;
+}
+
+export type VmLifecycleState =
+  | 'Running'
+  | 'Stopped'
+  | 'Suspended'
+  | 'Defunct'
+  | 'Incompatible';
+
+export type VmAction =
+  | 'pause'
+  | 'stop'
+  | 'start'
+  | 'resume'
+  | 'fork'
+  | 'delete';
+
+export interface VmActionContract {
+  available_actions: VmAction[];
+}
+
+// GET /vms/{id}/save/status, GET /vms/{id}/fork/status
+export interface VmOperationStatusResponse {
+  vm_id: string;
+  operation: string;
+  status: string;
+  in_progress: boolean;
+  message?: string;
+}
+
+// POST /vms/create, POST /run
 export interface ProvisionRequest {
+  profile_id: string;
   name?: string;
-  ram_mb: number;
-  cpus: number;
+  ram_mb?: number;
+  cpus?: number;
   persistent: boolean;
   env?: Record<string, string>;
   from?: string;
@@ -99,9 +140,15 @@ export interface ProvisionRequest {
 
 export interface ProvisionResponse {
   id: string;
+  profile_id: string;
+  status: VmLifecycleState;
+  persistent: boolean;
+  can_resume: boolean;
+  available_actions: VmAction[];
+  uds_path?: string;
 }
 
-// POST /exec/{id}
+// POST /vms/{id}/exec
 export interface ExecRequest {
   command: string;
   timeout_secs?: number;
@@ -113,17 +160,7 @@ export interface ExecResponse {
   exit_code: number;
 }
 
-// POST /inspect/{id}
-export interface InspectRequest {
-  sql: string;
-}
-
-export interface InspectResponse {
-  columns: string[];
-  rows: Record<string, string | number | null>[];
-}
-
-// POST /read_file/{id}
+// POST /vms/{id}/files/read
 export interface ReadFileRequest {
   path: string;
 }
@@ -132,13 +169,13 @@ export interface ReadFileResponse {
   content: string;
 }
 
-// POST /write_file/{id}
+// POST /vms/{id}/files/write
 export interface WriteFileRequest {
   path: string;
   content: string;
 }
 
-// POST /fork/{id}
+// POST /vms/{id}/fork
 export interface ForkRequest {
   name: string;
   description?: string;
@@ -169,7 +206,6 @@ export interface GlobalStats {
   total_output_tokens: number;
   total_estimated_cost: number;
   total_tool_calls: number;
-  total_mcp_calls: number;
   total_file_events: number;
   total_requests: number;
   total_allowed: number;
@@ -192,7 +228,6 @@ export interface SessionRecord {
   total_output_tokens: number;
   total_estimated_cost: number;
   total_tool_calls: number;
-  total_mcp_calls: number;
   total_file_events: number;
   compressed_size_bytes: number | null;
   vacuumed_at: string | null;

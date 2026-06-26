@@ -2,57 +2,28 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::net::ai_traffic::provider::ModelProtocol;
+use crate::net::ai_traffic::provider::{ModelProtocol, ProviderKind};
 
 use super::{
-    CompiledSecurityRule, PolicyConfig, ProviderDiscovery, SecurityRuleProfile,
-    SecurityRuleProvider, SecurityRuleSet, SecurityRuleSource,
+    CompiledSecurityRule, SecurityRuleProfile, SecurityRuleProvider, SecurityRuleSet,
+    SecurityRuleSource,
 };
 
 const DEFAULT_PROVIDER_RULES_TOML: &str = include_str!("default_provider_rules.toml");
+const REQUIRED_BUILTIN_PLUGINS: &[&str] = &["credential_broker", "log_sanitizer"];
+const REQUIRED_DEFAULT_RULE_KEYS: &[&str] = &["http", "dns", "mcp", "model", "file", "process"];
 
 pub type AiProviderProfile = SecurityRuleProvider;
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ProviderDiscoveryPatch {
-    pub provider_id: String,
-    pub discovery: ProviderDiscovery,
-}
-
-impl ProviderDiscoveryPatch {
-    pub fn for_builtin_provider(
-        provider_id: impl Into<String>,
-        discovery: ProviderDiscovery,
-    ) -> Result<Self, String> {
-        let provider_id = provider_id.into();
-        if !ProviderRuleProfile::builtin_defaults()
-            .ai
-            .contains_key(&provider_id)
-        {
-            return Err(format!(
-                "provider discovery only supports configured provider '{provider_id}'"
-            ));
-        }
-        discovery.validate(&format!("ai.{provider_id}.discovery"))?;
-        Ok(Self {
-            provider_id,
-            discovery,
-        })
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelEndpoint {
     pub provider_id: String,
+    pub provider_kind: ProviderKind,
     pub display_name: String,
     pub protocol: ModelProtocol,
     pub upstream_url: String,
-    pub aliases: Vec<String>,
     pub listen_ports: Vec<u16>,
-    pub credential_setting_id: Option<String>,
-    pub credential_ref: Option<String>,
     pub allowed_remote_targets: Vec<String>,
-    pub files: Vec<String>,
 }
 
 impl ModelEndpoint {
@@ -80,7 +51,6 @@ impl ModelEndpoint {
 
     fn hosts(&self) -> Vec<Option<String>> {
         std::iter::once(upstream_target(&self.upstream_url).and_then(|target| target.host))
-            .chain(self.aliases.iter().map(|alias| normalize_host(alias)))
             .chain(
                 self.allowed_remote_targets
                     .iter()
@@ -91,27 +61,12 @@ impl ModelEndpoint {
 
     fn target_specs(&self) -> Vec<TargetSpec> {
         let upstream = upstream_target(&self.upstream_url).unwrap_or_default();
-        let alias_targets = self.aliases.iter().flat_map(|alias| {
-            let host = normalize_host(alias);
-            if self.listen_ports.is_empty() {
-                vec![TargetSpec { host, port: None }]
-            } else {
-                self.listen_ports
-                    .iter()
-                    .map(|port| TargetSpec {
-                        host: host.clone(),
-                        port: Some(*port),
-                    })
-                    .collect::<Vec<_>>()
-            }
-        });
         std::iter::once(upstream)
             .chain(
                 self.allowed_remote_targets
                     .iter()
                     .filter_map(|target| upstream_target(target)),
             )
-            .chain(alias_targets)
             .collect()
     }
 }
@@ -138,15 +93,12 @@ impl ModelEndpointRegistry {
                 provider_id.clone(),
                 ModelEndpoint {
                     provider_id: provider_id.clone(),
+                    provider_kind: ProviderKind::from_provider_id(provider_id),
                     display_name: provider.name.clone().unwrap_or_else(|| provider_id.clone()),
                     protocol: ModelProtocol::try_from(protocol)?,
                     upstream_url: url.to_string(),
-                    aliases: provider.aliases.clone(),
                     listen_ports: provider.listen_ports.clone(),
-                    credential_setting_id: provider.credential_setting_id.clone(),
-                    credential_ref: provider.credential_ref.clone(),
                     allowed_remote_targets: provider.allowed_remote_targets.clone(),
-                    files: provider.files.clone(),
                 },
             );
         }
@@ -177,6 +129,16 @@ impl ModelEndpointRegistry {
     pub fn protocol_for_target(&self, host: &str, port: u16) -> Option<ModelProtocol> {
         self.endpoint_for_target(host, port)
             .map(|endpoint| endpoint.protocol)
+    }
+
+    pub fn provider_for_host(&self, host: &str) -> Option<ProviderKind> {
+        self.endpoint_for_host(host)
+            .map(|endpoint| endpoint.provider_kind)
+    }
+
+    pub fn provider_for_target(&self, host: &str, port: u16) -> Option<ProviderKind> {
+        self.endpoint_for_target(host, port)
+            .map(|endpoint| endpoint.provider_kind)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &ModelEndpoint> {
@@ -244,9 +206,16 @@ pub struct ProviderRuleProfile {
 }
 
 impl ProviderRuleProfile {
-    pub fn builtin_defaults() -> Self {
+    pub fn builtin_security_defaults() -> SecurityRuleProfile {
         let profile = SecurityRuleProfile::parse_toml(DEFAULT_PROVIDER_RULES_TOML)
             .expect("built-in provider rule profile must parse");
+        validate_builtin_profile_contract(&profile)
+            .expect("built-in provider rule profile must include default rules and plugins");
+        profile
+    }
+
+    pub fn builtin_defaults() -> Self {
+        let profile = Self::builtin_security_defaults();
         Self { ai: profile.ai }
     }
 
@@ -271,11 +240,6 @@ impl ProviderRuleProfile {
         ModelEndpointRegistry::from_provider_profile(self)
     }
 
-    pub fn compile_policy_config(&self) -> Result<PolicyConfig, String> {
-        self.validate()?;
-        Ok(PolicyConfig::default())
-    }
-
     pub fn merge_override(base: &Self, overrides: &Self) -> Result<Self, String> {
         base.validate()?;
         overrides.validate()?;
@@ -293,25 +257,12 @@ impl ProviderRuleProfile {
                     if override_provider.url.is_some() {
                         base_provider.url = override_provider.url.clone();
                     }
-                    if !override_provider.aliases.is_empty() {
-                        base_provider.aliases = override_provider.aliases.clone();
-                    }
                     if !override_provider.listen_ports.is_empty() {
                         base_provider.listen_ports = override_provider.listen_ports.clone();
-                    }
-                    if override_provider.credential_setting_id.is_some() {
-                        base_provider.credential_setting_id =
-                            override_provider.credential_setting_id.clone();
-                    }
-                    if override_provider.credential_ref.is_some() {
-                        base_provider.credential_ref = override_provider.credential_ref.clone();
                     }
                     if !override_provider.allowed_remote_targets.is_empty() {
                         base_provider.allowed_remote_targets =
                             override_provider.allowed_remote_targets.clone();
-                    }
-                    if !override_provider.files.is_empty() {
-                        base_provider.files = override_provider.files.clone();
                     }
                     if override_provider.discovery.is_some() {
                         base_provider.discovery = override_provider.discovery.clone();
@@ -351,12 +302,22 @@ impl ProviderRuleProfile {
     }
 }
 
-pub fn compile_provider_rules_to_policy_config(
-    user: &ProviderRuleProfile,
-    corp: &ProviderRuleProfile,
-) -> Result<PolicyConfig, String> {
-    let merged = ProviderRuleProfile::merge_defaults_user_and_corp(user, corp)?;
-    merged.compile_policy_config()
+fn validate_builtin_profile_contract(profile: &SecurityRuleProfile) -> Result<(), String> {
+    for plugin_id in REQUIRED_BUILTIN_PLUGINS {
+        if !profile.plugins.contains_key(*plugin_id) {
+            return Err(format!(
+                "built-in profile must include [plugins.{plugin_id}]"
+            ));
+        }
+    }
+    for rule_key in REQUIRED_DEFAULT_RULE_KEYS {
+        if !profile.default.contains_key(*rule_key) {
+            return Err(format!(
+                "built-in profile must include visible default rule [default.{rule_key}]"
+            ));
+        }
+    }
+    Ok(())
 }
 
 pub fn compile_provider_rules_to_security_rule_set(
@@ -364,8 +325,8 @@ pub fn compile_provider_rules_to_security_rule_set(
     corp: &ProviderRuleProfile,
 ) -> Result<SecurityRuleSet, String> {
     let mut by_rule_id = BTreeMap::new();
-    for rule in
-        ProviderRuleProfile::builtin_defaults().compile(SecurityRuleSource::BuiltinDefault)?
+    for rule in ProviderRuleProfile::builtin_security_defaults()
+        .compile(SecurityRuleSource::BuiltinDefault)?
     {
         by_rule_id.insert(rule.rule_id.clone(), rule);
     }
@@ -398,11 +359,38 @@ mod tests {
         assert!(compiled
             .iter()
             .any(|rule| rule.rule_id == "profiles.rules.ai_openai_http_api"));
-        assert!(compiled.iter().any(|rule| {
-            rule.provider == "google"
-                && rule.rule_key == "config_credential_broker"
-                && rule.plugin.as_deref() == Some("credential_broker")
-        }));
+        let built_in_defaults = ProviderRuleProfile::builtin_security_defaults();
+        let built_in_compiled = built_in_defaults
+            .compile(SecurityRuleSource::BuiltinDefault)
+            .expect("full built-in defaults compile");
+        let unknown_provider_rule = built_in_compiled
+            .iter()
+            .find(|rule| rule.rule_id == "profiles.rules.default_unknown_model_provider")
+            .expect("built-in defaults include unknown provider detection");
+        assert_eq!(unknown_provider_rule.action, SecurityRuleAction::Allow);
+        assert_eq!(
+            unknown_provider_rule.detection_level,
+            Some(DetectionLevel::Informational)
+        );
+        assert_eq!(
+            unknown_provider_rule.condition,
+            r#"model.provider == "unknown""#
+        );
+        let unknown_mcp_rule = built_in_compiled
+            .iter()
+            .find(|rule| rule.rule_id == "profiles.rules.default_unknown_mcp_server")
+            .expect("built-in defaults include unknown MCP detection");
+        assert_eq!(unknown_mcp_rule.action, SecurityRuleAction::Allow);
+        assert_eq!(
+            unknown_mcp_rule.detection_level,
+            Some(DetectionLevel::Informational)
+        );
+        assert_eq!(
+            unknown_mcp_rule.condition,
+            r#"mcp.server.name.contains("observed:")"#
+        );
+        assert!(built_in_defaults.plugins.contains_key("credential_broker"));
+        assert!(built_in_defaults.plugins.contains_key("log_sanitizer"));
         assert!(compiled
             .iter()
             .all(|rule| !rule.condition.contains("file.ingress")));
@@ -412,14 +400,35 @@ mod tests {
     }
 
     #[test]
-    fn provider_defaults_do_not_emit_old_policy_callbacks() {
-        let policy = ProviderRuleProfile::builtin_defaults()
-            .compile_policy_config()
-            .expect("adapter compiles");
-        assert!(policy.http.is_empty());
-        assert!(policy.dns.is_empty());
-        assert!(policy.mcp.is_empty());
-        assert!(policy.model.is_empty());
+    fn builtin_profile_contract_requires_plugins_and_visible_default_rules() {
+        let missing_plugins = SecurityRuleProfile::parse_toml(
+            r#"
+    [default.http]
+    name = "http"
+    action = "allow"
+    priority = "default"
+    reason = "Default allow for HTTP requests."
+match = 'has(http.host)'
+"#,
+        )
+        .expect("profile without plugins parses before built-in contract");
+        let err = validate_builtin_profile_contract(&missing_plugins)
+            .expect_err("built-in profile requires plugin section");
+        assert!(err.contains("[plugins.credential_broker]"), "{err}");
+
+        let missing_defaults = SecurityRuleProfile::parse_toml(
+            r#"
+[plugins.credential_broker]
+mode = "rewrite"
+
+[plugins.log_sanitizer]
+mode = "rewrite"
+"#,
+        )
+        .expect("profile without defaults parses before built-in contract");
+        let err = validate_builtin_profile_contract(&missing_defaults)
+            .expect_err("built-in profile requires visible defaults");
+        assert!(err.contains("[default.http]"), "{err}");
     }
 
     #[test]
@@ -453,6 +462,10 @@ mod tests {
             Some(ModelProtocol::Google)
         );
         assert_eq!(
+            registry.protocol_for_host("daily-cloudcode-pa.googleapis.com"),
+            Some(ModelProtocol::Google)
+        );
+        assert_eq!(
             registry.protocol_for_host("127.0.0.1"),
             Some(ModelProtocol::Ollama)
         );
@@ -471,13 +484,7 @@ mod tests {
         );
         assert_eq!(registry.protocol_for_target("api.openai.com", 80), None);
         let openai = registry.get("openai").expect("openai endpoint");
-        assert_eq!(openai.aliases, vec!["api.openai.com"]);
         assert_eq!(openai.listen_ports, vec![443]);
-        assert_eq!(
-            openai.credential_setting_id.as_deref(),
-            Some("ai.openai.api_key")
-        );
-        assert!(openai.credential_ref.is_none());
         assert_eq!(openai.allowed_remote_targets, vec!["api.openai.com:443"]);
     }
 
@@ -489,12 +496,8 @@ mod tests {
 name = "Private Gateway"
 protocol = "openai-compatible"
 url = "https://llm.internal.example/v1"
-aliases = ["company-openai", "llm.internal.example"]
 listen_ports = [443, 8443]
-credential_setting_id = "ai.private_gateway.api_key"
-credential_ref = "credential:blake3:2222222222222222222222222222222222222222222222222222222222222222"
 allowed_remote_targets = ["llm.internal.example:443", "company-openai:8443"]
-files = ["/root/.config/private-gateway/config.toml"]
 
 [ai.private_gateway.rules.http_api]
 name = "private_gateway_http_seen"
@@ -513,18 +516,6 @@ match = 'http.host == "llm.internal.example"'
         assert_eq!(endpoint.protocol, ModelProtocol::OpenAi);
         assert_eq!(endpoint.upstream_url, "https://llm.internal.example/v1");
         assert_eq!(
-            endpoint.credential_setting_id.as_deref(),
-            Some("ai.private_gateway.api_key")
-        );
-        assert_eq!(
-            endpoint.credential_ref.as_deref(),
-            Some("credential:blake3:2222222222222222222222222222222222222222222222222222222222222222")
-        );
-        assert_eq!(
-            endpoint.files,
-            vec!["/root/.config/private-gateway/config.toml"]
-        );
-        assert_eq!(
             registry.protocol_for_host("llm.internal.example"),
             Some(ModelProtocol::OpenAi)
         );
@@ -537,6 +528,58 @@ match = 'http.host == "llm.internal.example"'
             Some(ModelProtocol::OpenAi)
         );
         assert_eq!(registry.protocol_for_target("company-openai", 11434), None);
+    }
+
+    #[test]
+    fn provider_endpoint_aliases_are_rejected_in_favor_of_explicit_targets() {
+        let error = ProviderRuleProfile::parse_toml(
+            r#"
+[ai.private_gateway]
+name = "Private Gateway"
+protocol = "openai-compatible"
+url = "https://llm.internal.example/v1"
+aliases = ["company-openai"]
+allowed_remote_targets = ["company-openai:443"]
+
+[ai.private_gateway.rules.http_api]
+name = "private_gateway_http_seen"
+action = "allow"
+match = 'http.host == "company-openai"'
+"#,
+        )
+        .expect_err("provider aliases are a second classifier and must be rejected");
+        assert!(error.contains("aliases"), "{error}");
+        assert!(error.contains("unknown field"), "{error}");
+    }
+
+    #[test]
+    fn provider_endpoint_metadata_rejects_static_credentials_and_config_files() {
+        for (field, value) in [
+            ("credential_setting_id", r#""ai.private_gateway.api_key""#),
+            (
+                "credential_ref",
+                r#""credential:blake3:2222222222222222222222222222222222222222222222222222222222222222""#,
+            ),
+            ("files", r#"["/root/.config/private-gateway/config.toml"]"#),
+        ] {
+            let input = format!(
+                r#"
+[ai.private_gateway]
+name = "Private Gateway"
+protocol = "openai-compatible"
+url = "https://llm.internal.example/v1"
+{field} = {value}
+
+[ai.private_gateway.rules.http_api]
+name = "private_gateway_http_seen"
+action = "allow"
+match = 'http.host == "llm.internal.example"'
+"#
+            );
+            let err = ProviderRuleProfile::parse_toml(&input)
+                .expect_err("provider static credential/config metadata must be rejected");
+            assert!(err.contains(field), "{field}: {err}");
+        }
     }
 
     #[test]
@@ -601,19 +644,6 @@ action = "allow"
 detection_level = "informational"
 match = 'http.host.matches("(^|.*\.)openai\.com$")'
 
-[ai.openai.rules.capture_credential]
-name = "openai_capture_credential"
-plugin = "credential_broker"
-action = "postprocess"
-type = "api-key"
-credential = "api_key"
-match = 'http.host.matches("(^|.*\.)openai\.com$")'
-
-[ai.openai.rules.redact_prompt]
-name = "openai_redact_prompt"
-plugin = "pii"
-action = "preprocess"
-match = 'model.provider == "openai"'
 "#,
         )
         .expect("provider rules parse");
@@ -630,7 +660,6 @@ match = 'model.provider == "openai"'
                     rule.action,
                     rule.detection_level,
                     rule.priority,
-                    rule.plugin.as_deref(),
                 )
             })
             .collect::<Vec<_>>();
@@ -640,29 +669,6 @@ match = 'model.provider == "openai"'
             SecurityRuleAction::Allow,
             Some(DetectionLevel::Informational),
             10,
-            None
         )));
-        assert!(ids.contains(&(
-            "profiles.rules.ai_openai_capture_credential",
-            SecurityRuleAction::Postprocess,
-            None,
-            10,
-            Some("credential_broker")
-        )));
-        assert!(ids.contains(&(
-            "profiles.rules.ai_openai_redact_prompt",
-            SecurityRuleAction::Preprocess,
-            None,
-            10,
-            Some("pii")
-        )));
-
-        let policy = profile
-            .compile_policy_config()
-            .expect("provider rules do not generate old Policy V2 callbacks");
-        assert!(policy.http.is_empty());
-        assert!(policy.dns.is_empty());
-        assert!(policy.model.is_empty());
-        assert!(policy.mcp.is_empty());
     }
 }

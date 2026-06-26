@@ -1,16 +1,21 @@
 use anyhow::{Context, Result};
 use capsem_core::{read_control_msg, write_control_msg, VsockConnection};
 use capsem_proto::ipc::{FileBoundaryAction, ProcessToService, ServiceToProcess};
-use capsem_proto::{GuestToHost, HostToGuest};
+use capsem_proto::{GuestToHost, HostToGuest, HostVsockService};
+use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use tokio::sync::{broadcast, mpsc};
 use tracing::{error, info, warn};
 
 use crate::helpers::clone_fd;
 use crate::job_store::{with_quiescence, ActiveFileOp, JobResult, JobStore};
+
+type SecurityRulesHandle = Arc<RwLock<Arc<capsem_core::net::policy_config::SecurityRuleSet>>>;
+type PluginPolicyHandle =
+    Arc<RwLock<BTreeMap<String, capsem_core::net::policy_config::SecurityPluginConfig>>>;
 
 /// Maximum attempts for the initial handshake before giving up.
 ///
@@ -22,6 +27,15 @@ use crate::job_store::{with_quiescence, ActiveFileOp, JobResult, JobStore};
 /// guest. Post-initial handshakes (on re-keyed connections) do not
 /// retry: the guest drives retry at the transport layer.
 const HANDSHAKE_RETRY_MAX: usize = 3;
+
+fn checkpoint_complete_path(checkpoint_path: &std::path::Path) -> PathBuf {
+    let marker_name = checkpoint_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| format!("{name}.complete"))
+        .unwrap_or_else(|| "checkpoint.vzsave.complete".to_string());
+    checkpoint_path.with_file_name(marker_name)
+}
 
 pub(crate) struct VsockOptions {
     pub(crate) vm_id: String,
@@ -36,12 +50,12 @@ pub(crate) struct VsockOptions {
     pub(crate) cli_env: Vec<(String, String)>,
     pub(crate) guest_config: capsem_core::net::policy_config::GuestConfig,
     pub(crate) mitm_config: Arc<capsem_core::net::mitm_proxy::MitmProxyConfig>,
-    /// T3.2: handler for DNS queries forwarded over vsock port 5007.
-    /// Shared by-Arc with main.rs so the same `NetworkPolicy` drives
-    /// both the MITM proxy and the DNS NXDOMAIN gate.
+    /// Handler for DNS queries forwarded over vsock port 5007. DNS
+    /// NXDOMAIN decisions come from the shared security rules; the network
+    /// policy handle remains for resolver mechanics such as redirects/cache.
     pub(crate) dns_handler: Arc<capsem_core::net::dns::DnsHandler>,
-    pub(crate) security_rules:
-        Arc<std::sync::RwLock<Arc<capsem_core::net::policy_config::SecurityRuleSet>>>,
+    pub(crate) security_rules: SecurityRulesHandle,
+    pub(crate) plugin_policy: PluginPolicyHandle,
     pub(crate) _net_state: Arc<capsem_core::SandboxNetworkState>,
     pub(crate) is_restore: bool,
     pub(crate) vm_ready: Arc<AtomicBool>,
@@ -67,6 +81,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
         mitm_config,
         dns_handler,
         security_rules,
+        plugin_policy,
         is_restore,
         vm_ready,
         uds_path,
@@ -248,6 +263,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
     let js = Arc::clone(&job_store);
     let db_ctrl = Arc::clone(&db);
     let security_rules_ctrl = Arc::clone(&security_rules);
+    let plugin_policy_ctrl = Arc::clone(&plugin_policy);
     let mut control_rekey_rx_inner = control_rekey_rx;
 
     let js_for_teardown = Arc::clone(&job_store);
@@ -359,7 +375,14 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                                         break;
                                     }
                                 }
-                                handle_guest_msg(msg, &js, &db_ctrl, &security_rules_ctrl).await
+                                handle_guest_msg(
+                                    msg,
+                                    &js,
+                                    &db_ctrl,
+                                    &security_rules_ctrl,
+                                    &plugin_policy_ctrl,
+                                )
+                                .await
                             }
                             _ => break, // Error or closed, wait for rekey
                         }
@@ -422,6 +445,14 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     // creates the capture slot *before* sending here. The
                     // control bridge owns delivery/replay, so this layer just
                     // forwards without replacing the active_exec slot.
+                    let trace_id =
+                        capsem_core::telemetry::ambient_capsem_trace_id().or_else(|| {
+                            capsem_core::telemetry::child_trace_env(&format!(
+                                "{vm_id_for_cmd}-exec-{id}"
+                            ))
+                            .into_iter()
+                            .find_map(|(key, value)| (key == "CAPSEM_TRACE_ID").then_some(value))
+                        });
                     let rules = security_rules_for_cmd.read().unwrap().clone();
                     let event_id =
                         capsem_core::security_engine::emit_process_exec_security_write_and_rules(
@@ -433,8 +464,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                                 exec_id: id,
                                 command: command.clone(),
                                 source: "api".into(),
-                                mcp_call_id: None,
-                                trace_id: None,
+                                trace_id,
                                 process_name: None,
                                 credential_ref: None,
                             },
@@ -502,30 +532,51 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     let event_id = emit_explicit_file_security_event(
                         &db_for_cmd,
                         &security_rules_for_cmd,
-                        file_action,
-                        path,
-                        Some(size),
-                        Some(file_content_preview(&data)),
-                        mime_type,
+                        &plugin_policy,
+                        FileSecurityBoundary {
+                            action: file_action,
+                            path,
+                            size: Some(size),
+                            content: Some(file_content_preview(&data)),
+                            mime_type,
+                        },
                     )
                     .await;
-                    let success = event_id.is_some();
+                    let (success, data, error) = match event_id {
+                        Ok(Some(emission)) if emission.enforcement.is_allowed() => (
+                            true,
+                            rewritten_file_content(&data, size, &emission.event),
+                            None,
+                        ),
+                        Ok(Some(emission)) => (
+                            false,
+                            None,
+                            Some(emission.enforcement.reason.unwrap_or_else(|| {
+                                "file boundary blocked by security policy".into()
+                            })),
+                        ),
+                        Ok(None) => (
+                            false,
+                            None,
+                            Some("failed to write file boundary security event".into()),
+                        ),
+                        Err(error) => (false, None, Some(error)),
+                    };
                     if let Some(tx) = js_for_cmd.jobs.lock().unwrap().remove(&id) {
                         capsem_core::try_send!(
                             "job_result_log_file_boundary",
                             tx.send(JobResult::LogFileBoundary {
                                 success,
-                                error: if success {
-                                    None
-                                } else {
-                                    Some("failed to write file boundary security event".into())
-                                }
+                                data,
+                                error
                             })
                         );
                     }
                 }
                 ServiceToProcess::Suspend { checkpoint_path } => {
                     let full_path = session_dir.join(checkpoint_path);
+                    let complete_path = checkpoint_complete_path(&full_path);
+                    let _ = std::fs::remove_file(&complete_path);
                     let checkpoint_path_for_save = full_path.clone();
                     let rootfs_img = session_dir.join("guest").join("system").join("rootfs.img");
                     let h_tx = hub_tx.clone();
@@ -580,6 +631,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                         if suspend_result.is_ok() {
                             let fsync_start = std::time::Instant::now();
                             let checkpoint_path = full_path.clone();
+                            let complete_marker_path = complete_path.clone();
                             if let Err(e) =
                                 tokio::task::spawn_blocking(move || -> std::io::Result<()> {
                                     let checkpoint_file = std::fs::OpenOptions::new()
@@ -592,6 +644,11 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                                         .write(true)
                                         .open(&rootfs_img)?;
                                     f.sync_all()?;
+                                    std::fs::write(&complete_marker_path, b"ok\n")?;
+                                    let complete_file = std::fs::OpenOptions::new()
+                                        .read(true)
+                                        .open(&complete_marker_path)?;
+                                    complete_file.sync_all()?;
                                     Ok(())
                                 })
                                 .await
@@ -604,7 +661,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                                     "failed to fsync checkpoint/rootfs after save_state: {e}"
                                 ));
                             } else {
-                                info!(target: "fs", op = "fsync", path = "checkpoint.vzsave+rootfs.img", duration_ms = fsync_start.elapsed().as_millis() as u64, "host_fsync_checkpoint_and_rootfs ok");
+                                info!(target: "fs", op = "fsync", path = "checkpoint.vzsave+rootfs.img", marker = %complete_path.display(), duration_ms = fsync_start.elapsed().as_millis() as u64, "host_fsync_checkpoint_and_rootfs ok");
                             }
                         } else if let Err(ref e) = suspend_result {
                             error!(target: "suspend", error = %e, "suspend failed");
@@ -630,6 +687,8 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                         // service notices and can re-spawn cleanly; but DO NOT claim
                         // Suspended -- service treats process death without "Suspended"
                         // as crash and will not write a checkpoint marker.
+                        let _ = std::fs::remove_file(&complete_path);
+                        let _ = std::fs::remove_file(&full_path);
                         warn!("suspend did not complete; exiting without Suspended marker");
                         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                         std::process::exit(1);
@@ -819,21 +878,18 @@ fn dispatch_aux_connection(
     ctrl_tx: &mpsc::Sender<ServiceToProcess>,
     vm_id: &str,
 ) {
-    match conn.port {
-        capsem_core::VSOCK_PORT_SNI_PROXY => {
+    match HostVsockService::from_port(conn.port) {
+        Some(HostVsockService::SniProxy) => {
             let config = Arc::clone(mitm_config);
             tokio::spawn(async move {
                 capsem_core::net::mitm_proxy::handle_connection(conn.fd, config).await;
                 drop(conn);
             });
         }
-        capsem_proto::VSOCK_PORT_DNS_PROXY => {
-            // T3.2 -- one envelope round-trip per vsock connection.
-            // The agent opens a fresh conn per query (UDP datagram or
-            // TCP DNS query), writes a length-framed `DnsRequest`,
-            // reads back a length-framed `DnsResponse`, and closes.
-            // Lifetime is per-query; if this becomes a bottleneck T5
-            // can swap to a multiplexed long-lived conn.
+        Some(HostVsockService::DnsProxy) => {
+            // DNS proxy connections are long-lived framed sessions.
+            // The guest keeps a small worker pool of persistent vsock
+            // fds; each frame is one DNS query/response round trip.
             // T3.3 -- after the handler returns we build a `DnsEvent`
             // and push it through the shared `DbWriter` so a
             // `dns_events` row is recorded for every query (allowed,
@@ -847,7 +903,7 @@ fn dispatch_aux_connection(
                 serve_dns_session(conn, handler, db_for_dns, security_rules).await;
             });
         }
-        capsem_core::VSOCK_PORT_EXEC => {
+        Some(HostVsockService::Exec) => {
             let js = Arc::clone(job_store);
             std::thread::spawn(move || {
                 let mut file = match clone_fd(conn.fd) {
@@ -891,7 +947,7 @@ fn dispatch_aux_connection(
                 drop(conn);
             });
         }
-        capsem_proto::VSOCK_PORT_AUDIT => {
+        Some(HostVsockService::Audit) => {
             let db_clone = Arc::clone(db);
             let security_rules = security_rules.read().unwrap().clone();
             std::thread::spawn(move || {
@@ -946,7 +1002,7 @@ fn dispatch_aux_connection(
                 drop(conn);
             });
         }
-        capsem_core::VSOCK_PORT_LIFECYCLE => {
+        Some(HostVsockService::Lifecycle) => {
             let itx = ipc_tx.clone();
             let ctx = ctrl_tx.clone();
             let id = vm_id.to_string();
@@ -989,23 +1045,35 @@ fn dispatch_aux_connection(
                 drop(conn);
             });
         }
+        Some(HostVsockService::Control | HostVsockService::Terminal) => {
+            warn!(
+                target: "ipc",
+                port = conn.port,
+                service = HostVsockService::from_port(conn.port).map(HostVsockService::as_str),
+                "vsock dispatch: control/terminal service reached auxiliary dispatcher; connection ignored"
+            );
+        }
         other => {
-            warn!(target: "ipc", port = other, "vsock dispatch: unknown port; auxiliary connection ignored");
+            warn!(
+                target: "ipc",
+                port = conn.port,
+                service = ?other.map(HostVsockService::as_str),
+                "vsock dispatch: unknown port; auxiliary connection ignored"
+            );
         }
     }
 }
 
-/// One-shot DNS query handler over the vsock DNS port (T3.2).
+/// Persistent DNS query handler over the vsock DNS port (T3.2).
 ///
 /// Wire shape:
 ///   guest -> host: `[u32 BE length][rmp DnsRequest]`
 ///   host -> guest: `[u32 BE length][rmp DnsResponse]`
 ///
-/// The connection is closed after one round-trip. The agent opens a
-/// fresh conn per DNS query so we don't have to multiplex responses
-/// against transaction ids on the wire -- DNS already has a transaction
-/// id in the wire bytes themselves and the agent matches on those when
-/// returning the answer to the original UDP peer.
+/// Each connection carries many serialized request/response frames.
+/// The guest-side worker pool owns concurrency: one in-flight DNS query
+/// per persistent vsock fd. This removes per-query connection churn
+/// without introducing response multiplexing ambiguity.
 async fn serve_dns_session(
     conn: VsockConnection,
     handler: Arc<capsem_core::net::dns::DnsHandler>,
@@ -1015,85 +1083,103 @@ async fn serve_dns_session(
     use std::io::{Read as _, Write as _};
 
     let conn_fd = conn.fd;
-    // Move the fd in/out via spawn_blocking so we don't run sync I/O on
-    // the tokio runtime. The DNS handler itself is async (UDP forwarder
-    // returns Future), so we read the request, run the handler, then
-    // write the response.
-    let read_res = tokio::task::spawn_blocking(move || -> Result<Vec<u8>> {
-        let mut file = clone_fd(conn_fd)?;
-        let mut len_buf = [0u8; 4];
-        file.read_exact(&mut len_buf)
-            .context("DNS port: failed to read length prefix")?;
-        let len = u32::from_be_bytes(len_buf) as usize;
-        if len > capsem_proto::MAX_FRAME_SIZE as usize {
-            anyhow::bail!("DNS port: frame too large ({len} > MAX_FRAME_SIZE)");
+    loop {
+        // Move the fd in/out via spawn_blocking so we don't run sync I/O on
+        // the tokio runtime. The DNS handler itself is async (UDP forwarder
+        // returns Future), so we read one request, run the handler, then
+        // write one response.
+        let read_res = tokio::task::spawn_blocking(move || -> Result<Option<Vec<u8>>> {
+            let mut file = clone_fd(conn_fd)?;
+            let mut len_buf = [0u8; 4];
+            match file.read_exact(&mut len_buf) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => {
+                    return Ok(None);
+                }
+                Err(error) => {
+                    return Err(error).context("DNS port: failed to read length prefix");
+                }
+            }
+            let len = u32::from_be_bytes(len_buf) as usize;
+            if len > capsem_proto::MAX_FRAME_SIZE as usize {
+                anyhow::bail!("DNS port: frame too large ({len} > MAX_FRAME_SIZE)");
+            }
+            let mut payload = vec![0u8; len];
+            file.read_exact(&mut payload)
+                .context("DNS port: failed to read payload")?;
+            Ok(Some(payload))
+        })
+        .await;
+
+        let payload = match read_res {
+            Ok(Ok(Some(p))) => p,
+            Ok(Ok(None)) => break,
+            Ok(Err(e)) => {
+                warn!(error = %e, "DNS port: read failed");
+                break;
+            }
+            Err(e) => {
+                warn!(error = %e, "DNS port: read task panicked");
+                break;
+            }
+        };
+
+        let req = match capsem_proto::decode_dns_request(&payload) {
+            Ok(r) => r,
+            Err(e) => {
+                warn!(error = %e, "DNS port: decode_dns_request failed");
+                break;
+            }
+        };
+
+        let result = handler.handle(&req.raw).await;
+
+        // T3.3 -- record one `dns_events` row per query. trace_id ties it
+        // back to the agent action; source_proto distinguishes UDP from
+        // TCP DNS at the source side. Await the security emitter so DNS audit
+        // rows are accepted by the single security/logging rail before the
+        // DNS response is returned.
+        let event = capsem_core::net::dns::build_dns_event(
+            &result,
+            Some(req.proto.as_str()),
+            req.process_name.clone(),
+            capsem_core::telemetry::ambient_capsem_trace_id(),
+        );
+        emit_dns_security_write_and_rules(&db, &security_rules, event).await;
+
+        let response = capsem_proto::DnsResponse {
+            raw: result.answer_bytes,
+            decision: result.decision.as_str().to_string(),
+            rcode: result.rcode,
+        };
+
+        let frame = match capsem_proto::encode_dns_response(&response) {
+            Ok(f) => f,
+            Err(e) => {
+                warn!(error = %e, "DNS port: encode_dns_response failed");
+                break;
+            }
+        };
+
+        let write_res = tokio::task::spawn_blocking(move || -> Result<()> {
+            let mut file = clone_fd(conn_fd)?;
+            file.write_all(&frame)
+                .context("DNS port: failed to write response frame")?;
+            Ok(())
+        })
+        .await;
+        match write_res {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                warn!(error = %e, "DNS port: write failed");
+                break;
+            }
+            Err(e) => {
+                warn!(error = %e, "DNS port: write task panicked");
+                break;
+            }
         }
-        let mut payload = vec![0u8; len];
-        file.read_exact(&mut payload)
-            .context("DNS port: failed to read payload")?;
-        Ok(payload)
-    })
-    .await;
-
-    let payload = match read_res {
-        Ok(Ok(p)) => p,
-        Ok(Err(e)) => {
-            warn!(error = %e, "DNS port: read failed");
-            drop(conn);
-            return;
-        }
-        Err(e) => {
-            warn!(error = %e, "DNS port: read task panicked");
-            drop(conn);
-            return;
-        }
-    };
-
-    let req = match capsem_proto::decode_dns_request(&payload) {
-        Ok(r) => r,
-        Err(e) => {
-            warn!(error = %e, "DNS port: decode_dns_request failed");
-            drop(conn);
-            return;
-        }
-    };
-
-    let result = handler.handle(&req.raw).await;
-
-    // T3.3 -- record one `dns_events` row per query. trace_id ties it
-    // back to the agent action; source_proto distinguishes UDP from
-    // TCP DNS at the source side. Await the security emitter so DNS audit
-    // rows are durable instead of lossy under writer back-pressure.
-    let event = capsem_core::net::dns::build_dns_event(
-        &result,
-        Some(req.proto.as_str()),
-        req.process_name.clone(),
-        capsem_core::telemetry::ambient_capsem_trace_id(),
-    );
-    emit_dns_security_write_and_rules(&db, &security_rules, event).await;
-
-    let response = capsem_proto::DnsResponse {
-        raw: result.answer_bytes,
-        decision: result.decision.as_str().to_string(),
-        rcode: result.rcode,
-    };
-
-    let frame = match capsem_proto::encode_dns_response(&response) {
-        Ok(f) => f,
-        Err(e) => {
-            warn!(error = %e, "DNS port: encode_dns_response failed");
-            drop(conn);
-            return;
-        }
-    };
-
-    let _ = tokio::task::spawn_blocking(move || -> Result<()> {
-        let mut file = clone_fd(conn_fd)?;
-        file.write_all(&frame)
-            .context("DNS port: failed to write response frame")?;
-        Ok(())
-    })
-    .await;
+    }
 
     drop(conn);
 }
@@ -1165,29 +1251,36 @@ fn ackable_response_id(msg: &GuestToHost) -> Option<u64> {
 
 const FILE_SECURITY_CONTENT_PREVIEW_MAX: usize = 64 * 1024;
 
+struct FileSecurityBoundary {
+    action: capsem_logger::FileAction,
+    path: String,
+    size: Option<u64>,
+    content: Option<String>,
+    mime_type: Option<String>,
+}
+
 fn file_content_preview(data: &[u8]) -> String {
     String::from_utf8_lossy(&data[..data.len().min(FILE_SECURITY_CONTENT_PREVIEW_MAX)]).into_owned()
 }
 
 async fn emit_explicit_file_security_event(
     db: &Arc<capsem_logger::DbWriter>,
-    security_rules: &Arc<std::sync::RwLock<Arc<capsem_core::net::policy_config::SecurityRuleSet>>>,
-    action: capsem_logger::FileAction,
-    path: String,
-    size: Option<u64>,
-    content: Option<String>,
-    mime_type: Option<String>,
-) -> Option<capsem_core::security_engine::SecurityEventId> {
+    security_rules: &SecurityRulesHandle,
+    plugin_policy: &PluginPolicyHandle,
+    boundary: FileSecurityBoundary,
+) -> Result<Option<capsem_core::security_engine::SecurityRuleEmission>, String> {
     let rules = security_rules.read().unwrap().clone();
-    capsem_core::security_engine::emit_explicit_file_security_write_and_rules(
+    let plugins = plugin_policy.read().unwrap().clone();
+    capsem_core::security_engine::emit_explicit_file_security_write_and_rules_with_plugins(
         db,
         &rules,
+        plugins,
         capsem_core::security_engine::ExplicitFileSecurityEvent {
-            action,
-            path,
-            size,
-            content,
-            mime_type,
+            action: boundary.action,
+            path: boundary.path,
+            size: boundary.size,
+            content: boundary.content,
+            mime_type: boundary.mime_type,
             trace_id: None,
             credential_ref: None,
         },
@@ -1195,11 +1288,52 @@ async fn emit_explicit_file_security_event(
     .await
 }
 
+fn rewritten_file_content(
+    original_preview: &[u8],
+    original_size: u64,
+    event: &capsem_core::security_engine::SecurityEvent,
+) -> Option<Vec<u8>> {
+    if original_preview.len() as u64 != original_size {
+        return None;
+    }
+    let mutating_rewrite = event.plugin_executions.iter().any(|execution| {
+        execution.applied
+            && !matches!(
+                execution.stage,
+                capsem_core::security_engine::SecurityPluginStage::Logging
+            )
+            && event.detections.iter().any(|detection| {
+                detection.plugin_id.as_deref() == Some(execution.plugin_id.as_str())
+                    && detection.plugin_mode
+                        == Some(capsem_core::net::policy_config::SecurityPluginMode::Rewrite)
+            })
+    });
+    if !mutating_rewrite {
+        return None;
+    }
+    let file = event.file.as_ref()?;
+    let content = file
+        .import_content
+        .as_deref()
+        .or(file.export_content.as_deref())
+        .or(file.read_content.as_deref())
+        .or(file.write_content.as_deref())
+        .or(file.create_content.as_deref())
+        .or(file.delete_content.as_deref())
+        .or(file.content.as_deref())?;
+    if content.as_bytes() == original_preview {
+        None
+    } else {
+        Some(content.as_bytes().to_vec())
+    }
+}
+
 async fn handle_guest_msg(
     msg: GuestToHost,
     js: &Arc<JobStore>,
     db: &Arc<capsem_logger::DbWriter>,
-    security_rules: &Arc<std::sync::RwLock<Arc<capsem_core::net::policy_config::SecurityRuleSet>>>,
+    security_rules: &SecurityRulesHandle,
+    plugin_policy: &PluginPolicyHandle,
 ) {
     match msg {
         GuestToHost::ExecDone { id, exit_code } => {
@@ -1277,16 +1411,52 @@ async fn handle_guest_msg(
                 Some(ActiveFileOp::Write { path, .. }) => (path, capsem_logger::FileAction::Read),
                 None => (path, capsem_logger::FileAction::Read),
             };
-            emit_explicit_file_security_event(
+            let boundary = emit_explicit_file_security_event(
                 db,
                 security_rules,
-                action,
-                path,
-                Some(data.len() as u64),
-                Some(file_content_preview(&data)),
-                None,
+                plugin_policy,
+                FileSecurityBoundary {
+                    action,
+                    path,
+                    size: Some(data.len() as u64),
+                    content: Some(file_content_preview(&data)),
+                    mime_type: None,
+                },
             )
             .await;
+            match boundary {
+                Ok(Some(emission)) if emission.enforcement.is_allowed() => {}
+                Ok(Some(emission)) if action == capsem_logger::FileAction::Exported => {
+                    let error = emission
+                        .enforcement
+                        .reason
+                        .unwrap_or_else(|| "file export blocked by security policy".into());
+                    if let Some(tx) = js.jobs.lock().unwrap().remove(&id) {
+                        capsem_core::try_send!(
+                            "job_result_read_file_blocked",
+                            tx.send(JobResult::ReadFile {
+                                data: None,
+                                error: Some(error)
+                            })
+                        );
+                    }
+                    return;
+                }
+                Ok(Some(emission)) => {
+                    warn!(
+                        id,
+                        action = ?action,
+                        decision = ?emission.enforcement.action,
+                        "file boundary emitted non-allow decision after data was already local"
+                    );
+                }
+                Ok(None) => {
+                    warn!(id, action = ?action, "failed to write file boundary security event");
+                }
+                Err(error) => {
+                    warn!(id, action = ?action, error, "failed to evaluate file boundary");
+                }
+            }
             if let Some(tx) = js.jobs.lock().unwrap().remove(&id) {
                 capsem_core::try_send!(
                     "job_result_read_file",
@@ -1305,16 +1475,25 @@ async fn handle_guest_msg(
             if let Some(context) = context {
                 match context {
                     ActiveFileOp::Write { path, data } => {
-                        emit_explicit_file_security_event(
+                        if let Err(error) = emit_explicit_file_security_event(
                             db,
                             security_rules,
-                            capsem_logger::FileAction::Modified,
-                            path,
-                            Some(data.len() as u64),
-                            Some(file_content_preview(&data)),
-                            None,
+                            plugin_policy,
+                            FileSecurityBoundary {
+                                action: capsem_logger::FileAction::Modified,
+                                path,
+                                size: Some(data.len() as u64),
+                                content: Some(file_content_preview(&data)),
+                                mime_type: None,
+                            },
                         )
-                        .await;
+                        .await
+                        {
+                            warn!(
+                                id,
+                                error, "failed to evaluate file write completion boundary"
+                            );
+                        }
                     }
                     ActiveFileOp::Read { path } => {
                         warn!(
@@ -1487,20 +1666,22 @@ enum VsockPortKind {
     SniProxy,
     Exec,
     Lifecycle,
+    Audit,
     DnsProxy,
     Unknown,
 }
 
 #[cfg(test)]
 fn classify_vsock_port(port: u32) -> VsockPortKind {
-    match port {
-        capsem_core::VSOCK_PORT_TERMINAL => VsockPortKind::Terminal,
-        capsem_core::VSOCK_PORT_CONTROL => VsockPortKind::Control,
-        capsem_core::VSOCK_PORT_SNI_PROXY => VsockPortKind::SniProxy,
-        capsem_core::VSOCK_PORT_EXEC => VsockPortKind::Exec,
-        capsem_core::VSOCK_PORT_LIFECYCLE => VsockPortKind::Lifecycle,
-        capsem_proto::VSOCK_PORT_DNS_PROXY => VsockPortKind::DnsProxy,
-        _ => VsockPortKind::Unknown,
+    match HostVsockService::from_port(port) {
+        Some(HostVsockService::Terminal) => VsockPortKind::Terminal,
+        Some(HostVsockService::Control) => VsockPortKind::Control,
+        Some(HostVsockService::SniProxy) => VsockPortKind::SniProxy,
+        Some(HostVsockService::Exec) => VsockPortKind::Exec,
+        Some(HostVsockService::Lifecycle) => VsockPortKind::Lifecycle,
+        Some(HostVsockService::Audit) => VsockPortKind::Audit,
+        Some(HostVsockService::DnsProxy) => VsockPortKind::DnsProxy,
+        None => VsockPortKind::Unknown,
     }
 }
 

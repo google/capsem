@@ -1,14 +1,5 @@
 // TypeScript types mirroring Rust structs for Tauri IPC.
 
-/** Response from get_network_policy. */
-export interface NetworkPolicyResponse {
-  allow: string[];
-  block: string[];
-  default_action: string;
-  corp_managed: boolean;
-  conflicts: string[];
-}
-
 /** Response from get_guest_config. */
 export interface GuestConfigResponse {
   env: Record<string, string>;
@@ -48,44 +39,9 @@ export type SettingType =
 export type SettingValue = boolean | number | string | { path: string; content: string } | string[] | number[];
 
 /** Where a setting's effective value came from (serde rename_all = "lowercase"). */
-export type PolicySource = 'default' | 'user' | 'corp';
+export type SettingsSource = 'default' | 'user' | 'corp';
 
-export type PolicyCallback =
-  | 'mcp.request'
-  | 'mcp.response'
-  | 'http.request'
-  | 'http.response'
-  | 'dns.query'
-  | 'dns.response'
-  | 'model.request'
-  | 'model.response'
-  | 'model.tool_call'
-  | 'model.tool_response'
-  | 'hook.decision';
-
-export type PolicyDecisionKind = 'allow' | 'ask' | 'block' | 'rewrite';
-
-export interface PolicyRuleConfig {
-  on: PolicyCallback;
-  if: string;
-  decision: PolicyDecisionKind;
-  priority: number;
-  reason?: string | null;
-  rewrite_target?: string | null;
-  rewrite_value?: string | null;
-  strip_request_headers?: string[];
-  strip_response_headers?: string[];
-}
-
-export interface PolicyConfig {
-  mcp?: Record<string, PolicyRuleConfig>;
-  http?: Record<string, PolicyRuleConfig>;
-  dns?: Record<string, PolicyRuleConfig>;
-  model?: Record<string, PolicyRuleConfig>;
-  hook?: Record<string, PolicyRuleConfig>;
-}
-
-export type SettingsChangeValue = SettingValue | PolicyRuleConfig | null;
+export type SettingsChangeValue = SettingValue | null;
 
 /** Per-rule HTTP method permissions. */
 export interface HttpMethodPermissions {
@@ -128,7 +84,7 @@ export interface ResolvedSetting {
   setting_type: SettingType;
   default_value: SettingValue;
   effective_value: SettingValue;
-  source: PolicySource;
+  source: SettingsSource;
   modified: string | null;
   corp_locked: boolean;
   enabled_by: string | null;
@@ -160,7 +116,7 @@ export interface UpdateInfo {
 export type ViewName = 'terminal' | 'stats' | 'settings' | 'logs';
 
 /** Stats panel tab names. */
-export type StatsTab = 'ai' | 'tools' | 'network' | 'files' | 'snapshots';
+export type StatsTab = 'ai' | 'tools' | 'network' | 'files';
 
 /** Aggregated model stats (from stats bar polling). */
 export interface ModelStatsRow {
@@ -198,8 +154,6 @@ export interface TraceModelCall {
   duration_ms: number;
   estimated_cost_usd: number;
   stop_reason: string | null;
-  request_body_preview: string | null;
-  system_prompt_preview: string | null;
   messages_count: number;
   tools_count: number;
 }
@@ -249,13 +203,20 @@ export interface ToolAnnotations {
 export interface McpServerInfo {
   name: string;
   url: string;
-  has_bearer_token: boolean;
+  has_auth_credential: boolean;
   custom_header_count: number;
   source: string;
   enabled: boolean;
   running: boolean;
   tool_count: number;
   is_stdio: boolean;
+}
+
+/** Default MCP permission rule exposed from the profile enforcement contract. */
+export interface McpDefaultPermission {
+  action: ToolPermission;
+  source: string;
+  rule_id: string | null;
 }
 
 /** Info about a discovered MCP tool. */
@@ -266,20 +227,13 @@ export interface McpToolInfo {
   server_name: string;
   annotations: ToolAnnotations | null;
   pin_hash: string | null;
-  approved: boolean;
   pin_changed: boolean;
+  permission_action: ToolPermission;
+  permission_source: string;
 }
 
 /** Per-tool permission decision. */
 export type ToolPermission = 'allow' | 'ask' | 'block';
-
-/** Info about the MCP policy. */
-export interface McpPolicyInfo {
-  global_policy: string | null;
-  default_tool_permission: string;
-  blocked_servers: string[];
-  tool_permissions: Record<string, string>;
-}
 
 /** Settings sub-section identifier (dynamic, derived from TOML tree). */
 export type SettingsSection = string;
@@ -314,7 +268,7 @@ export interface SettingsLeaf {
   setting_type: SettingType;
   default_value: SettingValue;
   effective_value: SettingValue;
-  source: PolicySource;
+  source: SettingsSource;
   modified: string | null;
   corp_locked: boolean;
   enabled_by: string | null;
@@ -331,33 +285,13 @@ export interface SettingsAction {
   action: string;
 }
 
-/** A declarative MCP server node in the settings tree. */
-export interface McpServerNode {
-  kind: 'mcp_server';
-  key: string;
-  name: string;
-  description?: string | null;
-  transport: string;
-  command?: string | null;
-  url?: string | null;
-  args: string[];
-  env: Record<string, string>;
-  headers: Record<string, string>;
-  builtin: boolean;
-  enabled: boolean;
-  source: PolicySource;
-  corp_locked: boolean;
-}
-
-/** A settings tree node: group, leaf, action, or MCP server. */
-export type SettingsNode = SettingsGroup | SettingsLeaf | SettingsAction | McpServerNode;
+/** A settings tree node: group, leaf, or action. */
+export type SettingsNode = SettingsGroup | SettingsLeaf | SettingsAction;
 
 /** Unified response from load_settings / save_settings. */
 export interface SettingsResponse {
   tree: SettingsNode[];
   issues: ConfigIssue[];
-  presets: SecurityPreset[];
-  policy?: PolicyConfig;
 }
 
 /** A structured log event from the Rust backend. */
@@ -375,34 +309,6 @@ export type LogLevel = 'error' | 'warn' | 'info' | 'debug';
 export interface LogSessionInfo {
   session_id: string;
   entry_count: number;
-}
-
-/** Result of validating an API key against a provider endpoint. */
-export interface KeyValidation {
-  valid: boolean;
-  message: string;
-}
-
-/** Host configuration detected from the macOS host. */
-export interface HostConfig {
-  git_name: string | null;
-  git_email: string | null;
-  ssh_public_key: string | null;
-  anthropic_api_key: string | null;
-  google_api_key: string | null;
-  openai_api_key: string | null;
-  github_token: string | null;
-  claude_oauth_credentials: string | null;
-  google_adc: string | null;
-}
-
-/** A security preset definition. */
-export interface SecurityPreset {
-  id: string;
-  name: string;
-  description: string;
-  settings: Record<string, SettingValue>;
-  mcp: { default_tool_permission?: string } | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -480,7 +386,7 @@ export interface FileNode {
   sizeBytes?: number;
 }
 
-/** A file entry from the host-side files API (GET /files/{id}). */
+/** A file entry from the host-side files API (GET /vms/{id}/files/list). */
 export interface FileEntry {
   name: string;
   path: string;
@@ -493,12 +399,12 @@ export interface FileEntry {
   children?: FileEntry[];
 }
 
-/** Response from GET /files/{id}. */
+/** Response from GET /vms/{id}/files/list. */
 export interface FileListResponse {
   entries: FileEntry[];
 }
 
-/** Response from POST /files/{id}/content (upload). */
+/** Response from POST /vms/{id}/files/content (upload). */
 export interface FileUploadResponse {
   success: boolean;
   size: number;
@@ -509,10 +415,4 @@ export interface FileContentResult {
   text: string;
   blob: Blob;
   size: number;
-}
-
-/** A preset SQL query for the inspector. */
-export interface PresetQuery {
-  label: string;
-  sql: string;
 }

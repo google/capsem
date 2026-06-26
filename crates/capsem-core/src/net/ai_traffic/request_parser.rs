@@ -6,7 +6,7 @@
 //! and tool_result entries from subsequent requests (for linking tool call
 //! lifecycle).
 
-use super::provider::ProviderKind;
+use super::provider::ModelProtocol;
 
 /// Fallback for truncated JSON: search for "model":"..." in the first few KB
 /// using a simple byte scan.
@@ -42,16 +42,16 @@ pub struct ToolResultMeta {
 /// Parse an inbound request body, extracting metadata based on provider format.
 ///
 /// Tolerant of malformed input -- returns default RequestMeta on parse failure.
-pub fn parse_request(provider: ProviderKind, body: &[u8]) -> RequestMeta {
+pub fn parse_request(protocol: ModelProtocol, body: &[u8]) -> RequestMeta {
     if body.is_empty() {
         return RequestMeta::default();
     }
 
-    match provider {
-        ProviderKind::Anthropic => parse_anthropic(body),
-        ProviderKind::OpenAi => parse_openai(body),
-        ProviderKind::Google => parse_google(body),
-        ProviderKind::Ollama => parse_ollama(body),
+    match protocol {
+        ModelProtocol::Anthropic => parse_anthropic(body),
+        ModelProtocol::OpenAi => parse_openai(body),
+        ModelProtocol::Google => parse_google(body),
+        ModelProtocol::Ollama => parse_ollama(body),
     }
 }
 
@@ -225,9 +225,15 @@ mod openai_wire {
 
     #[derive(Deserialize)]
     pub struct Message {
+        #[serde(rename = "type")]
+        pub item_type: Option<String>,
         pub role: Option<String>,
         pub content: Option<MessageContent>,
         pub tool_call_id: Option<String>,
+        pub call_id: Option<String>,
+        pub output: Option<String>,
+        pub name: Option<String>,
+        pub arguments: Option<String>,
     }
 
     #[derive(Deserialize)]
@@ -282,29 +288,45 @@ fn parse_openai(body: &[u8]) -> RequestMeta {
         })
         .map(|s| s.to_string());
 
-    // Extract tool results from only the TRAILING tool messages (the new ones
-    // the agent just appended). Multi-turn conversations re-send the full
-    // history, so iterating all messages would re-log previous tool results.
     let mut tool_results = Vec::new();
-    for msg in messages.iter().rev() {
-        if msg.role.as_deref() != Some("tool") {
-            break;
+    if req.input.is_some() {
+        // Responses API input arrays are the current turn payload. A
+        // function_call_output can be followed by the user prompt for
+        // convenience, so a trailing-only scan would miss the tool result.
+        for msg in messages {
+            if msg.item_type.as_deref() == Some("function_call_output") {
+                if let Some(call_id) = msg.call_id.as_ref() {
+                    tool_results.push(ToolResultMeta {
+                        call_id: call_id.clone(),
+                        content_preview: msg.output.clone().unwrap_or_default(),
+                        is_error: false,
+                    });
+                }
+            }
         }
-        if let Some(call_id) = &msg.tool_call_id {
-            let content_text = match &msg.content {
-                Some(openai_wire::MessageContent::Text(t)) => t.clone(),
-                Some(openai_wire::MessageContent::Parts(parts)) => parts
-                    .iter()
-                    .filter_map(|p| p.text.as_deref())
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-                None => String::new(),
-            };
-            tool_results.push(ToolResultMeta {
-                call_id: call_id.clone(),
-                content_preview: content_text,
-                is_error: false, // OpenAI doesn't have explicit is_error on tool results
-            });
+    } else {
+        // Chat Completions re-sends history. Only the trailing tool messages
+        // represent new tool results for this request.
+        for msg in messages.iter().rev() {
+            if msg.role.as_deref() != Some("tool") {
+                break;
+            }
+            if let Some(call_id) = msg.tool_call_id.as_ref().or(msg.call_id.as_ref()) {
+                let content_text = match &msg.content {
+                    Some(openai_wire::MessageContent::Text(t)) => t.clone(),
+                    Some(openai_wire::MessageContent::Parts(parts)) => parts
+                        .iter()
+                        .filter_map(|p| p.text.as_deref())
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                    None => msg.output.clone().unwrap_or_default(),
+                };
+                tool_results.push(ToolResultMeta {
+                    call_id: call_id.clone(),
+                    content_preview: content_text,
+                    is_error: false,
+                });
+            }
         }
     }
 
@@ -346,6 +368,7 @@ mod google_wire {
 
     #[derive(Deserialize)]
     pub struct FunctionResponse {
+        pub id: Option<String>,
         pub name: Option<String>,
         pub response: Option<Box<serde_json::value::RawValue>>,
     }
@@ -373,7 +396,8 @@ mod google_wire {
 }
 
 fn parse_google(body: &[u8]) -> RequestMeta {
-    let Ok(req) = serde_json::from_slice::<google_wire::Request>(body) else {
+    let body = google_request_body(body);
+    let Ok(req) = serde_json::from_slice::<google_wire::Request>(&body) else {
         return RequestMeta::default();
     };
 
@@ -390,13 +414,19 @@ fn parse_google(body: &[u8]) -> RequestMeta {
     let contents = req.contents.as_deref().unwrap_or(&[]);
     let messages_count = contents.len();
 
-    // Extract function responses from only the TRAILING function messages (the
-    // new ones the agent just appended). Multi-turn conversations re-send the
-    // full history, so iterating all messages would re-log previous tool results.
+    // Extract function responses from only the TRAILING messages that carry
+    // functionResponse parts. Multi-turn conversations re-send full history, so
+    // iterating all messages would re-log previous tool results. Google Code
+    // Assist may put these parts on role=model rather than role=function.
     let mut tool_results = Vec::new();
     let mut counter = 0usize;
     for content in contents.iter().rev() {
-        if content.role.as_deref() != Some("function") {
+        let has_function_response = content
+            .parts
+            .as_ref()
+            .map(|parts| parts.iter().any(|part| part.function_response.is_some()))
+            .unwrap_or(false);
+        if !has_function_response {
             break;
         }
         if let Some(parts) = &content.parts {
@@ -408,9 +438,13 @@ fn parse_google(body: &[u8]) -> RequestMeta {
                         .as_ref()
                         .map(|v| v.get().to_string())
                         .unwrap_or_default();
+                    let call_id = fr
+                        .id
+                        .clone()
+                        .filter(|value| !value.is_empty())
+                        .unwrap_or_else(|| format!("gemini_{}_{}", name, counter));
                     tool_results.push(ToolResultMeta {
-                        // Gemini doesn't have call_id -- generate unique IDs
-                        call_id: format!("gemini_{}_{}", name, counter),
+                        call_id,
                         content_preview: content_text,
                         is_error: false,
                     });
@@ -436,6 +470,16 @@ fn parse_google(body: &[u8]) -> RequestMeta {
         tools_count,
         tool_results,
     }
+}
+
+fn google_request_body(body: &[u8]) -> Vec<u8> {
+    let Ok(json) = serde_json::from_slice::<serde_json::Value>(body) else {
+        return body.to_vec();
+    };
+    let Some(request) = json.get("request").filter(|value| value.is_object()) else {
+        return body.to_vec();
+    };
+    serde_json::to_vec(request).unwrap_or_else(|_| body.to_vec())
 }
 
 // ── Ollama native ──────────────────────────────────────────────────

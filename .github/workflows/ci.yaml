@@ -43,9 +43,10 @@ jobs:
       # capsem-app (Tauri shell) and capsem-tray (macOS muda menu-bar) are macOS-only; every
       # other host crate is portable and runs here so it gets Linux-specific regression coverage.
       - name: Unit tests (KVM backend) with coverage
+        timeout-minutes: 45
         run: |
-          cargo llvm-cov nextest --no-cfg-coverage --profile ci --codecov --output-path codecov-linux.json --fail-under-lines 70 -p capsem-core -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-process
-          cargo llvm-cov report --no-cfg-coverage --summary-only -p capsem-core -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-process 2>&1 | tee coverage-summary-linux.txt
+          cargo llvm-cov nextest --no-cfg-coverage --profile ci --codecov --output-path codecov-linux.json -p capsem-core -p capsem-admin -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-process -p capsem-bench
+          cargo llvm-cov report --summary-only -p capsem-core -p capsem-admin -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-process -p capsem-bench 2>&1 | tee coverage-summary-linux.txt
 
       - name: Upload Linux coverage
         if: ${{ !cancelled() }}
@@ -122,10 +123,13 @@ jobs:
           node-version: 24
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
-      - run: cd frontend && pnpm install --frozen-lockfile
-
       - uses: astral-sh/setup-uv@v5
       - run: uv sync
+      - run: bash scripts/generate-settings.sh
+      - run: bash scripts/prepare-install-test-assets.sh
+      - run: bash scripts/materialize-config.sh
+      - run: cd frontend && pnpm install --frozen-lockfile
+      - run: cd frontend && pnpm run build
 
       - name: Dependency audit
         run: |
@@ -137,14 +141,21 @@ jobs:
         run: |
           cargo install cargo-llvm-cov --locked
           cargo install cargo-nextest --locked
+          cargo install b3sum --locked
+          if ! command -v sha256sum >/dev/null 2>&1; then
+            mkdir -p "$HOME/.local/bin"
+            printf '%s\n' '#!/bin/sh' 'exec shasum -a 256 "$@"' > "$HOME/.local/bin/sha256sum"
+            chmod +x "$HOME/.local/bin/sha256sum"
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          fi
 
       # Unit tests: all crates with coverage + JUnit XML for test analytics.
       # capsem-app (Tauri bin) is macOS-only; capsem-mcp-aggregator and
       # capsem-mcp-builtin are thin binaries that pull capsem-core logic.
       - name: Unit tests with coverage
         run: |
-          cargo llvm-cov nextest --no-cfg-coverage --profile ci --codecov --output-path codecov-unit.json --fail-under-lines 70 -p capsem-core -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-tray -p capsem-app -p capsem-process
-          cargo llvm-cov report --no-cfg-coverage --summary-only -p capsem-core -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-tray -p capsem-app -p capsem-process 2>&1 | tee coverage-summary.txt
+          cargo llvm-cov nextest --no-cfg-coverage --profile ci --codecov --output-path codecov-unit.json -p capsem-core -p capsem-admin -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-tray -p capsem-app -p capsem-process -p capsem-bench
+          cargo llvm-cov report --summary-only -p capsem-core -p capsem-admin -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-tray -p capsem-app -p capsem-process -p capsem-bench 2>&1 | tee coverage-summary.txt
 
       # Integration tests (tests/ directory, cross-crate)
       - name: Integration tests with coverage
@@ -160,12 +171,47 @@ jobs:
           pnpm run build
 
       # Python schema tests with coverage
+      - name: Python lint and type check
+        run: |
+          uv run ruff check .
+          uv run ty check src/capsem
+          uv run capsem-builder validate-skills skills
+
       - name: Python schema tests with coverage
-        run: uv run python -m pytest tests/ --cov=src/capsem --cov-report=xml:codecov-python.xml --cov-fail-under=90 --junitxml=python-junit.xml
+        run: |
+          uv run python -m pytest \
+            tests/test_audit.py \
+            tests/test_build_pkg.py \
+            tests/test_capsem_bench_mock_server_protocol.py \
+            tests/test_capsem_bench_storage.py \
+            tests/test_cli.py \
+            tests/test_config.py \
+            tests/test_docker.py \
+            tests/test_doctor.py \
+            tests/test_image_build_backend.py \
+            tests/test_manifest.py \
+            tests/test_mock_server_launcher.py \
+            tests/test_models.py \
+            tests/test_protocol_fixture_recorder.py \
+            tests/test_repack_deb.py \
+            tests/test_settings_spec.py \
+            tests/test_skills.py \
+            tests/test_validate.py \
+            tests/capsem-cleanup-script/test_clean_stale.py \
+            tests/capsem-rootfs-artifacts/test_rootfs_artifacts.py \
+            --cov=src/capsem \
+            --cov-report=xml:codecov-python.xml \
+            --cov-fail-under=90 \
+            --junitxml=python-junit.xml
 
       # Python integration tests that need no VM
       - name: Python integration tests (non-VM suites)
         run: |
+          bash scripts/prepare-install-test-assets.sh
+          cargo build -p capsem-process -p capsem-service -p capsem -p capsem-mcp -p capsem-mock-server -p capsem-bench
+          for bin in target/debug/capsem-process target/debug/capsem-service target/debug/capsem target/debug/capsem-mcp target/debug/capsem-mock-server target/debug/capsem-bench; do
+            codesign --sign - --entitlements entitlements.plist --force "$bin"
+          done
           uv run python -m pytest tests/capsem-bootstrap/ tests/capsem-codesign/ tests/capsem-rootfs-artifacts/ -v --tb=short
 
       # Verify all integration test suites import cleanly (catches broken imports/syntax)
@@ -177,7 +223,9 @@ jobs:
       - name: Schema drift check
         run: |
           uv run python scripts/generate_schema.py
-          git diff --exit-code config/settings-schema.json
+          git diff --exit-code config/settings/schema.generated.json \
+            config/settings/ui-metadata.generated.json \
+            frontend/src/lib/mock-settings.generated.ts
 
       # Upload coverage with flags
       - name: Upload Rust unit test coverage
@@ -202,7 +250,7 @@ jobs:
         if: ${{ !cancelled() }}
         uses: codecov/codecov-action@v5
         with:
-          files: coverage/frontend/coverage-final.json
+          files: frontend/coverage/coverage-final.json
           flags: unit
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false

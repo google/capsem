@@ -1,0 +1,12 @@
+{
+  "colorScheme": "dark",
+  "trustedWorkspaces": [
+    "/root"
+  ],
+  "telemetry": {
+    "enabled": false
+  },
+  "autoUpdate": {
+    "enabled": false
+  }
+}

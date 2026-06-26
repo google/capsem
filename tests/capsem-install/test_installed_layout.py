@@ -6,7 +6,7 @@ service startup expect. Works with both installation paths:
   - simulate-install.sh (standalone pytest): fallback
 
 Layout contract:
-  ~/.capsem/bin/capsem{,-service,-process,-mcp,-gateway,-tray}  (executables or symlinks)
+  ~/.capsem/bin/capsem* host tools                           (executables or symlinks)
   ~/.capsem/assets/manifest.json                                (service reads this)
   ~/.capsem/assets/{arch}/{logical}-{hash16}.{ext}              (resolver target)
   ~/.capsem/run/                                                (created at runtime)
@@ -21,7 +21,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-from pathlib import Path
+import tomllib
 
 import pytest
 
@@ -32,7 +32,6 @@ from .conftest import (
     INSTALL_DIR,
     RUN_DIR,
     run_capsem,
-    get_build_hash,
 )
 
 
@@ -42,7 +41,7 @@ class TestInstalledLayoutContract:
     # -- Binaries --
 
     def test_all_binaries_exist(self, installed_layout):
-        """All 6 binaries present in ~/.capsem/bin/."""
+        """All host binaries are present in ~/.capsem/bin/."""
         for name in BINARIES:
             binary = INSTALL_DIR / name
             assert binary.exists(), f"missing: {binary}"
@@ -65,6 +64,17 @@ class TestInstalledLayoutContract:
         result = run_capsem("version", timeout=5)
         assert result.returncode == 0
         assert "build" in result.stdout, f"no build hash: {result.stdout}"
+
+    def test_capsem_admin_help_works(self, installed_layout):
+        """capsem-admin is installed and runnable without a service."""
+        result = subprocess.run(
+            [str(INSTALL_DIR / "capsem-admin"), "--help"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        assert result.returncode == 0
+        assert "capsem-admin" in result.stdout
 
     # -- Assets --
 
@@ -162,7 +172,48 @@ class TestInstalledLayoutContract:
         assert CAPSEM_DIR.exists()
         assert (CAPSEM_DIR / "bin").is_dir()
         assert (CAPSEM_DIR / "assets").is_dir()
+        assert (CAPSEM_DIR / "profiles").is_dir()
         assert (CAPSEM_DIR / "run").is_dir()
+
+    def test_installed_profile_catalog_exists(self, installed_layout):
+        """Installed service must load materialized profiles, not compiled source fallback."""
+        profile = CAPSEM_DIR / "profiles" / "code" / "profile.toml"
+        assert profile.exists(), (
+            f"materialized profile missing: {profile}\n"
+            "without this, installed service falls back to compiled source profile pins"
+        )
+        assert (CAPSEM_DIR / "profiles" / "code" / "enforcement.toml").exists()
+
+    def test_installed_profile_asset_pins_match_manifest(self, installed_layout):
+        """Profile-owned asset pins must match the installed asset manifest."""
+        import platform
+
+        profile_path = CAPSEM_DIR / "profiles" / "code" / "profile.toml"
+        manifest_path = ASSETS_DIR / "manifest.json"
+        if not manifest_path.exists():
+            pytest.skip("no manifest.json")
+        assert profile_path.exists(), f"profile missing: {profile_path}"
+
+        machine = platform.machine().lower()
+        arch = "arm64" if machine in ("arm64", "aarch64") else "x86_64"
+        manifest = json.loads(manifest_path.read_text())
+        current = manifest["assets"]["current"]
+        manifest_assets = manifest["assets"]["releases"][current]["arches"].get(arch)
+        if manifest_assets is None:
+            pytest.skip(f"no {arch} entry in manifest")
+
+        profile = tomllib.loads(profile_path.read_text())
+        profile_assets = profile["assets"]["arch"][arch]
+        for kind, logical in [
+            ("kernel", "vmlinuz"),
+            ("initrd", "initrd.img"),
+            ("rootfs", "rootfs.erofs"),
+        ]:
+            expected = manifest_assets[logical]["hash"]
+            actual = profile_assets[kind]["hash"].removeprefix("blake3:")
+            assert actual == expected, (
+                f"profile {kind} pin drift: profile={actual} manifest={expected}"
+            )
 
     # -- Service spawn contract --
     # When CLI auto-launches, it runs:

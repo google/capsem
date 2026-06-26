@@ -6,49 +6,51 @@ pytestmark = pytest.mark.session
 
 
 def test_tool_calls_reference_model_calls(session_db):
-    """tool_calls.model_call_id should reference a valid model_calls.id."""
+    """Model-attached tool_calls.model_call_id should reference model_calls.id."""
     orphans = session_db.execute("""
         SELECT tc.id, tc.model_call_id
         FROM tool_calls tc
         LEFT JOIN model_calls mc ON tc.model_call_id = mc.id
-        WHERE mc.id IS NULL
+        WHERE tc.model_call_id IS NOT NULL AND mc.id IS NULL
     """).fetchall()
     assert len(orphans) == 0, f"Orphan tool_calls (no matching model_call): {orphans}"
 
 
 def test_tool_responses_reference_valid_call_id(session_db):
-    """tool_responses.call_id should reference a valid tool_calls.call_id."""
+    """tool_responses.call_id should reference a valid tool_calls.call_id in the same trace."""
     orphans = session_db.execute("""
-        SELECT tr.id, tr.call_id
+        SELECT tr.id, tr.call_id, tr.trace_id
         FROM tool_responses tr
-        LEFT JOIN tool_calls tc ON tr.call_id = tc.call_id
+        LEFT JOIN tool_calls tc
+          ON tr.call_id = tc.call_id
+         AND tr.trace_id = tc.trace_id
         WHERE tc.call_id IS NULL
     """).fetchall()
     assert len(orphans) == 0, f"Orphan tool_responses (no matching tool_call): {orphans}"
 
 
-def test_mcp_tool_calls_reference_mcp_calls(session_db):
-    """tool_calls with origin='mcp' should have a valid mcp_call_id."""
+def test_tool_responses_reference_model_calls(session_db):
+    """tool_responses.model_call_id should reference the model exchange that consumed it."""
     orphans = session_db.execute("""
-        SELECT tc.id, tc.mcp_call_id
-        FROM tool_calls tc
-        LEFT JOIN mcp_calls mc ON tc.mcp_call_id = mc.id
-        WHERE tc.origin = 'mcp' AND tc.mcp_call_id IS NOT NULL AND mc.id IS NULL
+        SELECT tr.id, tr.model_call_id, tr.call_id
+        FROM tool_responses tr
+        LEFT JOIN model_calls mc ON tr.model_call_id = mc.id
+        WHERE mc.id IS NULL
     """).fetchall()
-    assert len(orphans) == 0, f"MCP tool_calls with invalid mcp_call_id: {orphans}"
+    assert len(orphans) == 0, f"Orphan tool_responses (no matching model_call): {orphans}"
 
 
-def test_snapshot_event_fs_range_valid(session_db):
-    """snapshot_events fs_event_id range should reference valid fs_events."""
-    rows = session_db.execute("""
-        SELECT se.id, se.start_fs_event_id, se.stop_fs_event_id
-        FROM snapshot_events se
-        WHERE se.stop_fs_event_id IS NOT NULL
-    """).fetchall()
-    for row in rows:
-        start = row["start_fs_event_id"]
-        stop = row["stop_fs_event_id"]
-        if start is not None and stop is not None:
-            assert stop >= start, (
-                f"snapshot_event {row['id']}: stop ({stop}) < start ({start})"
-            )
+def test_mcp_tool_calls_are_direct_tool_evidence(session_db):
+    """MCP-origin tool invocations live directly in tool_calls."""
+    rows = session_db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='mcp_calls'"
+    ).fetchall()
+    assert rows == []
+
+
+def test_snapshots_are_not_cross_table_activity(session_db):
+    """Snapshots are exposed through VM snapshot routes, not session.db joins."""
+    rows = session_db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='snapshot_events'"
+    ).fetchall()
+    assert rows == []

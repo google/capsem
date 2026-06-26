@@ -6,18 +6,31 @@ MITM MCP endpoint responds to JSON-RPC messages over framed vsock:5002.
 
 import json
 import os
+import re
 import subprocess
 
 import pytest
 
 from conftest import run
 
-PUBLIC_NETWORK_SMOKE_ENV = "CAPSEM_RUN_PUBLIC_NETWORK_SMOKE"
+LOCAL_MOCK_SERVER_ENV = "CAPSEM_MOCK_SERVER_BASE_URL"
+SECRET_PATTERN = re.compile(
+    r"(sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9_]{20,}|AIza[0-9A-Za-z_-]{20,})"
+)
 
 
-def _require_public_network_smoke(reason):
-    if os.environ.get(PUBLIC_NETWORK_SMOKE_ENV) != "1":
-        pytest.skip(f"{reason}; set {PUBLIC_NETWORK_SMOKE_ENV}=1")
+def _local_mock_url(path):
+    base_url = os.environ.get(LOCAL_MOCK_SERVER_ENV)
+    if not base_url:
+        return None
+    return f"{base_url.rstrip('/')}/{path.lstrip('/')}"
+
+
+def _require_local_mock_url(path, reason):
+    url = _local_mock_url(path)
+    if not url:
+        pytest.fail(f"{reason}; set {LOCAL_MOCK_SERVER_ENV}")
+    return url
 
 
 # ---------------------------------------------------------------------------
@@ -212,8 +225,8 @@ def test_mcp_oversized_request_returns_local_error_and_recovers():
 
 
 def test_mcp_fetch_http_allowed_domain():
-    """fetch_http on an allowed domain succeeds."""
-    _require_public_network_smoke("public MCP fetch_http smoke")
+    """fetch_http on the local mock server succeeds."""
+    url = _require_local_mock_url("/tiny", "local MCP fetch_http smoke")
     responses = _mcp_call([
         {
             "jsonrpc": "2.0",
@@ -232,7 +245,7 @@ def test_mcp_fetch_http_allowed_domain():
             "method": "tools/call",
             "params": {
                 "name": "local__fetch_http",
-                "arguments": {"url": "https://elie.net", "max_length": 1000},
+                "arguments": {"url": url, "max_length": 1000},
             },
         },
     ])
@@ -241,7 +254,8 @@ def test_mcp_fetch_http_allowed_domain():
     result = call_resp[0]["result"]
     assert result.get("isError") is not True
     content_text = result["content"][0]["text"]
-    assert "URL: https://elie.net" in content_text
+    assert f"URL: {url}" in content_text
+    assert "capsem-mock-server:tiny" in content_text
 
 
 def test_mcp_fetch_http_blocked_domain():
@@ -325,20 +339,16 @@ def _init_and_call(tool_name, arguments, call_id=10, timeout=15):
 # ---------------------------------------------------------------------------
 
 def test_mcp_fetch_http_returns_real_content():
-    """fetch_http on elie.net returns actual page content, not empty text."""
-    _require_public_network_smoke("public MCP fetch_http content smoke")
+    """fetch_http returns actual local fixture content, not empty text."""
+    url = _require_local_mock_url("/tiny", "local MCP fetch_http content smoke")
     result = _init_and_call(
         "fetch_http",
-        {"url": "https://elie.net", "max_length": 5000},
+        {"url": url, "max_length": 5000},
     )
     assert result.get("isError") is not True, f"fetch failed: {result}"
     text = result["content"][0]["text"]
-    # Must contain the domain echo
-    assert "elie.net" in text
-    # Must contain actual content from the page (not just metadata headers)
-    text_lower = text.lower()
-    assert "elie" in text_lower, (
-        f"fetch_http returned no real content from elie.net (missing 'elie'): {text[:500]}"
+    assert "capsem-mock-server:tiny" in text, (
+        f"fetch_http returned no real local fixture content: {text[:500]}"
     )
 
 
@@ -347,16 +357,16 @@ def test_mcp_fetch_http_returns_real_content():
 # ---------------------------------------------------------------------------
 
 def test_mcp_grep_http_finds_matches():
-    """grep_http on elie.net with pattern 'elie' must find matches."""
-    _require_public_network_smoke("public MCP grep_http smoke")
+    """grep_http on the local mock server must find matches."""
+    url = _require_local_mock_url("/html/about", "local MCP grep_http smoke")
     result = _init_and_call(
         "grep_http",
-        {"url": "https://elie.net", "pattern": "elie"},
+        {"url": url, "pattern": "Google"},
     )
     assert result.get("isError") is not True, f"grep failed: {result}"
     text = result["content"][0]["text"]
     assert "Matches found: 0" not in text, (
-        f"grep_http found 0 matches for 'elie' on elie.net -- extraction broken: {text[:500]}"
+        f"grep_http found 0 matches on local fixture -- extraction broken: {text[:500]}"
     )
     assert "Match 1" in text, (
         f"grep_http output missing match blocks: {text[:500]}"
@@ -392,11 +402,11 @@ def test_mcp_http_headers_blocked_domain():
 # ---------------------------------------------------------------------------
 
 def test_mcp_http_headers_allowed_domain():
-    """http_headers on elie.net returns status and headers."""
-    _require_public_network_smoke("public MCP http_headers smoke")
+    """http_headers on the local mock server returns status and headers."""
+    url = _require_local_mock_url("/tiny", "local MCP http_headers smoke")
     result = _init_and_call(
         "http_headers",
-        {"url": "https://elie.net"},
+        {"url": url},
     )
     assert result.get("isError") is not True, f"http_headers failed: {result}"
     text = result["content"][0]["text"]
@@ -405,54 +415,53 @@ def test_mcp_http_headers_allowed_domain():
 
 
 def test_claude_mcp_list_shows_capsem():
-    """claude mcp list must show the capsem server."""
+    """Claude sees the profile-owned Capsem MCP bridge."""
     r = run("claude mcp list 2>&1", timeout=15)
     assert r.returncode == 0, f"claude mcp list failed: {r.stderr}"
-    assert "capsem" in r.stdout, f"capsem not in claude mcp list output: {r.stdout}"
+    assert "capsem:" in r.stdout, f"Claude MCP config missing capsem: {r.stdout}"
+    assert "/run/capsem-mcp-server" in r.stdout, (
+        f"Claude MCP bridge points at the wrong command: {r.stdout}"
+    )
+    assert "No MCP servers configured" not in r.stdout, (
+        f"Claude ignored profile-owned MCP config: {r.stdout}"
+    )
 
 
 def test_claude_state_json_has_capsem_mcp():
-    """Claude state file (.claude.json) has the capsem MCP server configured.
-
-    The injected server key is ``local`` (see config/defaults.json and the
-    host-side ``inject_capsem_mcp_server`` tests). The command path points
-    at the in-VM ``/run/capsem-mcp-server`` bridge.
-    """
+    """Claude state is profile-owned trust state and must not embed MCP or secrets."""
     r = run("cat /root/.claude.json")
-    assert r.returncode == 0, "~/.claude.json missing"
+    assert r.returncode == 0, f"missing Claude profile state: {r.stderr}"
+    assert not SECRET_PATTERN.search(r.stdout), "secret-like value found in Claude state"
     settings = json.loads(r.stdout)
-    assert "mcpServers" in settings, "mcpServers key missing from .claude.json"
-    assert "local" in settings["mcpServers"], (
-        f"local not in mcpServers: {list(settings['mcpServers'].keys())}"
+    assert "mcpServers" not in settings or not settings["mcpServers"], (
+        f"Claude state must not create a second MCP authority: {settings.get('mcpServers')}"
     )
-    assert settings["mcpServers"]["local"]["command"] == "/run/capsem-mcp-server", (
-        f"wrong command: {settings['mcpServers']['local']}"
-    )
+    assert settings["hasTrustDialogAccepted"] is True
+    assert settings["projects"]["/root"]["hasTrustDialogAccepted"] is True
 
 
-def test_gemini_settings_has_capsem_mcp():
-    """Gemini settings.json has the capsem MCP server configured under the
-    canonical ``local`` key."""
-    r = run("cat /root/.gemini/settings.json")
-    assert r.returncode == 0, "~/.gemini/settings.json missing"
-    settings = json.loads(r.stdout)
-    assert "mcpServers" in settings, "mcpServers key missing from Gemini settings"
-    assert "local" in settings["mcpServers"], (
-        f"local not in mcpServers: {list(settings['mcpServers'].keys())}"
-    )
-    assert settings["mcpServers"]["local"]["command"] == "/run/capsem-mcp-server", (
-        f"wrong command: {settings['mcpServers']['local']}"
-    )
+def test_profile_mcp_registry_has_capsem_bridge_only():
+    """The profile-owned MCP registry is the canonical MCP authority."""
+    r = run("cat /root/.mcp.json")
+    assert r.returncode == 0, f"missing canonical MCP registry: {r.stderr}"
+    assert not SECRET_PATTERN.search(r.stdout), "secret-like value found in MCP registry"
+    registry = json.loads(r.stdout)
+    assert registry == {
+        "mcpServers": {
+            "capsem": {
+                "command": "/run/capsem-mcp-server",
+            },
+        },
+    }
 
 
 def test_codex_config_has_capsem_mcp():
-    """Codex config.toml has capsem MCP server configured."""
+    """Codex config must consume the same profile-owned Capsem MCP bridge."""
     r = run("cat /root/.codex/config.toml")
-    assert r.returncode == 0, f"~/.codex/config.toml missing: {r.stderr}"
-    assert "capsem" in r.stdout, f"capsem not in codex config: {r.stdout}"
-    assert "/run/capsem-mcp-server" in r.stdout, (
-        f"capsem-mcp-server path missing from codex config: {r.stdout}"
-    )
+    assert r.returncode == 0, f"missing Codex profile config: {r.stderr}"
+    assert not SECRET_PATTERN.search(r.stdout), "secret-like value found in Codex config"
+    assert '[mcp_servers.capsem]' in r.stdout
+    assert 'command = "/run/capsem-mcp-server"' in r.stdout
 
 
 def test_mcp_tools_list_has_descriptions():
@@ -587,25 +596,25 @@ def test_mcp_fetch_http_invalid_url():
 
 
 def test_mcp_fetch_http_subpath():
-    """fetch_http on elie.net/about returns real page content."""
-    _require_public_network_smoke("public MCP fetch_http subpath smoke")
+    """fetch_http on the local HTML fixture returns real page content."""
+    url = _require_local_mock_url("/html/about", "local MCP fetch_http subpath smoke")
     result = _init_and_call(
         "fetch_http",
-        {"url": "https://elie.net/about", "max_length": 2000},
+        {"url": url, "max_length": 2000},
     )
     assert result.get("isError") is not True, f"fetch failed: {result}"
     text = result["content"][0]["text"]
-    assert "Bursztein" in text, (
-        f"fetch_http on /about must contain 'Bursztein': {text[:500]}"
+    assert "Capsem mock server about page" in text, (
+        f"fetch_http on /html/about must contain fixture text: {text[:500]}"
     )
 
 
 def test_mcp_fetch_http_raw_mode():
     """fetch_http with format=raw returns HTML tags."""
-    _require_public_network_smoke("public MCP fetch_http raw smoke")
+    url = _require_local_mock_url("/html/about", "local MCP fetch_http raw smoke")
     result = _init_and_call(
         "fetch_http",
-        {"url": "https://elie.net/about", "format": "raw", "max_length": 10000},
+        {"url": url, "format": "raw", "max_length": 10000},
     )
     assert result.get("isError") is not True, f"fetch raw failed: {result}"
     text = result["content"][0]["text"]
@@ -615,25 +624,25 @@ def test_mcp_fetch_http_raw_mode():
 
 
 def test_mcp_grep_http_with_pattern():
-    """grep_http on elie.net/about finds 'Google' matches."""
-    _require_public_network_smoke("public MCP grep_http pattern smoke")
+    """grep_http on the local HTML fixture finds 'Google' matches."""
+    url = _require_local_mock_url("/html/about", "local MCP grep_http pattern smoke")
     result = _init_and_call(
         "grep_http",
-        {"url": "https://elie.net/about", "pattern": "Google"},
+        {"url": url, "pattern": "Google"},
     )
     assert result.get("isError") is not True, f"grep failed: {result}"
     text = result["content"][0]["text"]
     assert "Match 1" in text, (
-        f"grep_http must find 'Google' on /about: {text[:500]}"
+        f"grep_http must find 'Google' on local fixture: {text[:500]}"
     )
 
 
 def test_mcp_fetch_http_pagination():
     """fetch_http with small max_length shows pagination hint."""
-    _require_public_network_smoke("public MCP fetch_http pagination smoke")
+    url = _require_local_mock_url("/html/large", "local MCP fetch_http pagination smoke")
     result = _init_and_call(
         "fetch_http",
-        {"url": "https://elie.net/about", "max_length": 500},
+        {"url": url, "max_length": 500},
     )
     assert result.get("isError") is not True, f"fetch failed: {result}"
     text = result["content"][0]["text"]
@@ -859,8 +868,7 @@ def test_snapshots_revert():
     # Create snapshot.
     r = run("snapshots create snap_revert_test --json")
     assert r.returncode == 0, f"create failed: {r.stderr}"
-    data = json.loads(r.stdout)
-    checkpoint = data["checkpoint"]
+    json.loads(r.stdout)
 
     # Modify file.
     r = run("echo snap_modified > /root/snap_revert_test.txt")
@@ -1150,7 +1158,7 @@ def _mcp_history(path):
 
 def _mcp_list():
     """MCP path: list snapshots."""
-    result = _init_and_call("snapshots_list", {"format": "json"})
+    result = _init_and_call("snapshots_list", {"format": "json", "include_changes": True})
     assert result.get("isError") is not True, f"snapshots_list failed: {result}"
     return json.loads(result["content"][0]["text"])
 
@@ -1197,7 +1205,7 @@ def test_bug1_list_changes_vs_previous():
     )
 
     # CLI path (belt and suspenders)
-    r = run("snapshots list --json")
+    r = run("snapshots list --json --include-changes")
     cli_listing = json.loads(r.stdout)
     cli_snaps = {s["checkpoint"]: s for s in cli_listing["snapshots"]}
     cli_cp1_ops = {c["path"]: c["op"] for c in cli_snaps[cp1].get("changes", [])}
@@ -1448,7 +1456,6 @@ def test_tool_revert_action_restored():
     run("rm -f /root/t9a.txt")
 
 
-@pytest.mark.skip(reason="APFS clonefile races: snapshot may capture file created just before clone completes")
 def test_tool_revert_action_deleted():
     """T9b: Revert action is 'deleted' when file didn't exist in snapshot."""
     import time
@@ -1626,19 +1633,6 @@ def test_scenario_s18_delete_one_dir_revert():
     assert "s18_b" in r.stdout, "b/f.txt should be untouched"
 
     run("rm -rf /root/s18a /root/s18b")
-
-
-@pytest.mark.skip(reason="VirtioFS does not reliably propagate host-side permission changes to guest")
-def test_scenario_s19_permissions():
-    """S19: chmod, snap, chmod, revert -> permissions restored."""
-    run("echo s19 > /root/s19.txt && chmod 644 /root/s19.txt")
-    cp = _mcp_snap_create("s19_644")
-    run("chmod 777 /root/s19.txt")
-
-    _mcp_revert("s19.txt", cp)
-    r = run("stat -c %a /root/s19.txt")
-    assert "644" in r.stdout, f"expected 644, got: {r.stdout}"
-    run("rm -f /root/s19.txt")
 
 
 def test_scenario_s22_broken_symlink():
@@ -1833,7 +1827,7 @@ def test_scenario_s17_modify_one_dir_other_unchanged():
 def test_scenario_s20_touch_mtime_unchanged():
     """S20: create, snap, touch -m (mtime only), snap -> unchanged (size-based detection)."""
     run("echo s20 > /root/s20.txt")
-    cp1 = _mcp_snap_create("s20_orig")
+    _mcp_snap_create("s20_orig")
     run("touch -m /root/s20.txt")  # change mtime, not content
     cp2 = _mcp_snap_create("s20_touched")
 

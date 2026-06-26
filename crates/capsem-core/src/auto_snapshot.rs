@@ -95,11 +95,65 @@ impl AutoSnapshotScheduler {
     }
 
     fn workspace_dir(&self) -> PathBuf {
-        self.session_dir.join("workspace")
+        let guest_workspace = crate::guest_share_dir(&self.session_dir).join("workspace");
+        if guest_workspace.exists() {
+            guest_workspace
+        } else {
+            self.session_dir.join("workspace")
+        }
     }
 
     fn system_dir(&self) -> PathBuf {
-        self.session_dir.join("system")
+        let guest_system = crate::guest_share_dir(&self.session_dir).join("system");
+        if guest_system.exists() {
+            guest_system
+        } else {
+            self.session_dir.join("system")
+        }
+    }
+
+    fn ensure_snapshot_storage_outside_workspace(&self) -> anyhow::Result<()> {
+        let workspace = self
+            .workspace_dir()
+            .canonicalize()
+            .context("failed to resolve workspace directory for snapshot safety check")?;
+        self.ensure_existing_path_outside_workspace(
+            &self.snapshots_dir(),
+            &workspace,
+            "snapshot storage",
+        )
+    }
+
+    fn ensure_snapshot_path_outside_workspace(
+        &self,
+        path: &Path,
+        label: &str,
+    ) -> anyhow::Result<()> {
+        let workspace = self
+            .workspace_dir()
+            .canonicalize()
+            .context("failed to resolve workspace directory for snapshot safety check")?;
+        self.ensure_existing_path_outside_workspace(path, &workspace, label)
+    }
+
+    fn ensure_existing_path_outside_workspace(
+        &self,
+        path: &Path,
+        workspace: &Path,
+        label: &str,
+    ) -> anyhow::Result<()> {
+        if path.exists() {
+            let resolved = path
+                .canonicalize()
+                .with_context(|| format!("failed to resolve {label} path {}", path.display()))?;
+            anyhow::ensure!(
+                !resolved.starts_with(workspace),
+                "{label} resolves inside live workspace: {} -> {}",
+                path.display(),
+                resolved.display()
+            );
+        }
+        Ok(())
     }
 
     /// Absolute slot index for auto pool.
@@ -158,6 +212,8 @@ impl AutoSnapshotScheduler {
     ) -> anyhow::Result<SnapshotSlot> {
         let t0 = std::time::Instant::now();
         let slot_dir = self.slot_dir(slot);
+        self.ensure_snapshot_storage_outside_workspace()?;
+        self.ensure_snapshot_path_outside_workspace(&slot_dir, "snapshot slot")?;
 
         if slot_dir.exists() {
             std::fs::remove_dir_all(&slot_dir)?;
@@ -295,6 +351,7 @@ impl AutoSnapshotScheduler {
         anyhow::ensure!(slot < self.total_slots(), "slot {slot} out of range");
         let dir = self.slot_dir(slot);
         anyhow::ensure!(dir.exists(), "slot {slot} is empty");
+        self.ensure_snapshot_path_outside_workspace(&dir, "snapshot slot")?;
         std::fs::remove_dir_all(&dir)?;
         debug!(slot, "snapshot deleted");
         Ok(())
@@ -322,6 +379,12 @@ impl AutoSnapshotScheduler {
             .collect();
         if let Some(oldest) = auto_slots.last() {
             let dir = self.slot_dir(oldest.slot);
+            if self
+                .ensure_snapshot_path_outside_workspace(&dir, "snapshot slot")
+                .is_err()
+            {
+                return false;
+            }
             if std::fs::remove_dir_all(&dir).is_ok() {
                 debug!(slot = oldest.slot, "evicted oldest auto-snapshot");
                 return true;
@@ -340,6 +403,7 @@ impl AutoSnapshotScheduler {
         name: &str,
     ) -> anyhow::Result<SnapshotSlot> {
         let t0 = std::time::Instant::now();
+        self.ensure_snapshot_storage_outside_workspace()?;
         anyhow::ensure!(!slots.is_empty(), "no snapshots to compact");
         anyhow::ensure!(
             self.available_manual_slots() > 0,
@@ -367,6 +431,7 @@ impl AutoSnapshotScheduler {
 
         // Build merged workspace in a temp dir within snapshots dir.
         let tmp_dir = self.snapshots_dir().join("_compact_tmp");
+        self.ensure_snapshot_path_outside_workspace(&tmp_dir, "snapshot compact temp")?;
         if tmp_dir.exists() {
             std::fs::remove_dir_all(&tmp_dir)?;
         }
@@ -419,6 +484,7 @@ impl AutoSnapshotScheduler {
 
         // Create the new snapshot slot.
         let slot_dir = self.slot_dir(target_slot);
+        self.ensure_snapshot_path_outside_workspace(&slot_dir, "snapshot slot")?;
         if slot_dir.exists() {
             std::fs::remove_dir_all(&slot_dir)?;
         }
@@ -455,6 +521,7 @@ impl AutoSnapshotScheduler {
         for &(slot, _) in &metas {
             let dir = self.slot_dir(slot);
             if dir.exists() {
+                self.ensure_snapshot_path_outside_workspace(&dir, "snapshot slot")?;
                 let _ = std::fs::remove_dir_all(&dir);
             }
         }
@@ -825,14 +892,29 @@ pub fn clone_sandbox_state(src_session_dir: &Path, dst_session_dir: &Path) -> an
         }
     }
 
-    // Clone session.db at session root (host-only, not in guest/)
+    // Snapshot session.db at session root (host-only, not in guest/).
+    //
+    // session.db may be in WAL mode while the VM is running. Copying only the
+    // main database file can produce a malformed or stale fork because the
+    // committed pages may still live in session.db-wal. Ask SQLite to write a
+    // coherent standalone image instead.
     let db_src = src_session_dir.join("session.db");
     if db_src.exists() {
         let db_dst = dst_session_dir.join("session.db");
-        clone_file(&db_src, &db_dst).context("failed to clone session.db")?;
+        clone_session_db_snapshot(&db_src, &db_dst).context("failed to snapshot session.db")?;
     }
 
     Ok(crate::session::disk_usage_bytes(dst_session_dir))
+}
+
+fn clone_session_db_snapshot(src: &Path, dst: &Path) -> anyhow::Result<()> {
+    capsem_logger::snapshot_session_db(src, dst).with_context(|| {
+        format!(
+            "failed to snapshot session db {} into {}",
+            src.display(),
+            dst.display()
+        )
+    })
 }
 
 /// Simple ISO 8601 timestamp from epoch seconds (no chrono dependency).

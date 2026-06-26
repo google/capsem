@@ -173,26 +173,24 @@ describe('settings_spec conformance', () => {
     }
   });
 
-  it('all 13 setting types present', () => {
-    const expectedTypes = [
+  it('only app/preference setting types are present in the golden fixture', () => {
+    const expectedTypes = new Set([
       'text',
       'number',
       'url',
       'email',
-      'apikey',
       'bool',
-      'file',
       'kv_map',
       'string_list',
       'int_list',
       'float_list',
       'action',
-      'mcp_tool',
-    ];
+    ]);
     const settings = extractSettings(golden.settings);
     const types = new Set(settings.map((s) => s.setting_type));
-    for (const t of expectedTypes) {
-      expect(types.has(t)).toBe(true);
+    expect(types).toEqual(expectedTypes);
+    for (const forbidden of ['apikey', 'file']) {
+      expect(types.has(forbidden)).toBe(false);
     }
   });
 
@@ -206,26 +204,18 @@ describe('settings_spec conformance', () => {
     }
   });
 
-  it('mcp_tool settings have metadata.origin', () => {
+  it('does not carry profile MCP tools in settings', () => {
     const settings = extractSettings(golden.settings);
     const tools = settings.filter((s) => s.setting_type === 'mcp_tool');
-    expect(tools.length).toBeGreaterThanOrEqual(1);
-    for (const t of tools) {
-      expect(t.metadata.origin).toBeDefined();
-      expect(t.metadata.origin).not.toBeNull();
-    }
+    expect(tools).toHaveLength(0);
   });
 
-  it('file setting has path and content in default_value', () => {
+  it('does not carry profile/provider file payloads in settings', () => {
     const settings = extractSettings(golden.settings);
     const files = settings.filter((s) => s.setting_type === 'file');
-    expect(files.length).toBeGreaterThanOrEqual(1);
-    for (const f of files) {
-      const dv = f.default_value as Record<string, unknown>;
-      expect(dv).toBeDefined();
-      expect(dv.path).toBeDefined();
-      expect(dv.content).toBeDefined();
-    }
+    expect(files).toEqual([]);
+    expect(settings.some((s) => s.key.includes('provider'))).toBe(false);
+    expect(settings.some((s) => s.key.includes('credential'))).toBe(false);
   });
 
   it('hidden setting exists', () => {
@@ -233,33 +223,22 @@ describe('settings_spec conformance', () => {
     expect(settings.some((s) => s.metadata.hidden)).toBe(true);
   });
 
-  it('builtin setting exists', () => {
+  it('does not use builtin metadata for profile-owned state', () => {
     const settings = extractSettings(golden.settings);
-    expect(settings.some((s) => s.metadata.builtin)).toBe(true);
+    expect(settings.some((s) => s.metadata.builtin)).toBe(false);
   });
 
-  it('enabled_by references a valid bool setting', () => {
+  it('does not use settings enabled_by to model profile/provider state', () => {
     const settings = extractSettings(golden.settings);
-    const byKey = new Map(settings.map((s) => [s.key, s]));
     const withParent = settings.filter((s) => s.enabled_by);
-    expect(withParent.length).toBeGreaterThanOrEqual(1);
-    for (const s of withParent) {
-      const parent = byKey.get(s.enabled_by!);
-      expect(parent).toBeDefined();
-      expect(parent!.setting_type).toBe('bool');
-    }
+    expect(withParent).toEqual([]);
   });
 
-  it('nested group depth (test_ai.provider is 2 levels deep)', () => {
+  it('does not expose AI/provider groups through settings', () => {
     const aiGroup = golden.settings.find(
       (n) => n.kind === 'group' && n.key === 'test_ai',
     ) as TestGroupNode | undefined;
-    expect(aiGroup).toBeDefined();
-    const provider = aiGroup!.children.find(
-      (n) => n.kind === 'group' && n.key === 'test_ai.provider',
-    ) as TestGroupNode | undefined;
-    expect(provider).toBeDefined();
-    expect(provider!.children.length).toBeGreaterThanOrEqual(1);
+    expect(aiGroup).toBeUndefined();
   });
 
   it('user-modified setting has source and modified', () => {

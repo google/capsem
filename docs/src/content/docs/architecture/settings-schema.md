@@ -5,17 +5,21 @@ sidebar:
   order: 20
 ---
 
-The settings schema is the structural contract between guest TOML configs, the Rust backend, and the TypeScript frontend. Pydantic models in Python are the single source of truth. JSON Schema is generated from them. Three languages -- Python, Rust, TypeScript -- must parse settings identically.
+The settings schema is the structural contract for UI/application preferences
+only. Runtime behavior belongs to profile/corp ledgers, not settings. Pydantic
+models in Python are the single source of truth for settings shape, JSON Schema
+is generated from them, and Python/Rust/TypeScript must parse settings
+identically.
 
 Key files:
 
 | File | Role |
 |---|---|
 | `src/capsem/builder/schema.py` | Pydantic models (canonical schema) |
-| `config/settings-schema.json` | Generated JSON Schema |
-| `config/defaults.json` | Generated defaults from guest TOML configs |
-| `crates/capsem-core/src/net/policy_config/types.rs` | Rust settings and Policy serde contract |
-| `frontend/src/lib/types/settings.ts` | TypeScript settings and Policy wire types |
+| `config/settings/schema.generated.json` | Generated JSON Schema |
+| `config/settings/ui-metadata.generated.json` | Generated UI metadata and defaults from `config/settings/settings.toml` |
+| `crates/capsem-core/src/net/policy_config/types.rs` | Rust settings serde contract |
+| `frontend/src/lib/types/settings.ts` | TypeScript settings wire types |
 | `crates/capsem-core/tests/settings_spec.rs` | Rust conformance tests |
 | `frontend/src/lib/__tests__/settings_spec.test.ts` | TypeScript conformance tests |
 | `tests/test_settings_spec.py` | Python schema + conformance tests |
@@ -49,7 +53,9 @@ graph TD
 | `collapsed` | bool | yes | Whether the UI renders this group collapsed |
 | `children` | SettingsNode[] | yes | Nested groups and settings |
 
-**SettingNode** (`kind="setting"`): everything else -- regular settings, actions, and MCP tools. The `setting_type` field determines which subfields are relevant.
+**SettingNode** (`kind="setting"`): ordinary UI/application preferences and
+frontend actions. MCP runtime truth is profile-owned and is exposed by profile
+routes, not generated as settings leaves.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -57,7 +63,7 @@ graph TD
 | `name` | string | yes | Display name |
 | `description` | string | yes | Help text |
 | `setting_type` | SettingType | yes | Data type (see enum table below) |
-| `default_value` | any | no | Default from guest config |
+| `default_value` | any | no | Default from settings source |
 | `effective_value` | any | no | Resolved value (corp > user > default) |
 | `source` | PolicySource | no | Where effective value came from |
 | `modified` | string | no | ISO timestamp of last user change |
@@ -68,7 +74,8 @@ graph TD
 | `metadata` | SettingMetadata | no | Extra fields (defaults to empty) |
 | `history` | HistoryEntry[] | no | Audit trail of value changes |
 
-Actions (`check_update`, `preset_select`, `rerun_wizard`) and MCP tools are SettingNode variants. They use `setting_type="action"` or `setting_type="mcp_tool"` with the relevant metadata fields. Consumers check `setting_type`, not `kind`.
+Actions (`check_update`) use `setting_type="action"` with the relevant metadata
+fields. Consumers check `setting_type`, not `kind`.
 
 ## SettingType Enum
 
@@ -88,7 +95,7 @@ Actions (`check_update`, `preset_select`, `rerun_wizard`) and MCP tools are Sett
 | `int_list` | value | Array of integers |
 | `float_list` | value | Array of floats |
 | `action` | structural | UI button/widget, no stored value |
-| `mcp_tool` | structural | MCP tool definition |
+| `mcp_tool` | retired | Do not use for runtime MCP. MCP is profile-owned and route-backed. |
 
 ## Metadata Fields
 
@@ -120,24 +127,12 @@ All metadata lives in a single `SettingMetadata` object. Most fields are optiona
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `action` | ActionKind | `null` | Action identifier (`check_update`, `preset_select`, `rerun_wizard`) |
+| `action` | ActionKind | `null` | Action identifier (`check_update`) |
 
-### MCP tool-specific
+### Retired MCP Metadata
 
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `origin` | McpToolOrigin | `null` | Where the tool runs (`builtin`, `remote`, `in_vm`) |
-
-### MCP server-specific (legacy)
-
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `transport` | McpTransport | `null` | Protocol (`stdio`, `sse`) |
-| `command` | string | `null` | Executable path (stdio transport) |
-| `url` | string | `null` | Server URL (sse transport) |
-| `args` | string[] | `[]` | Command arguments |
-| `env` | dict | `{}` | Environment variables for the server process |
-| `headers` | dict | `{}` | HTTP headers (sse transport) |
+MCP server and tool configuration is profile-owned. It is not authored through
+settings metadata and must be read through profile MCP routes.
 
 ## Security Rule Schema
 
@@ -166,9 +161,9 @@ The schema generation pipeline runs from Pydantic models to two output files:
 ```mermaid
 flowchart LR
     PM["schema.py\nPydantic models"] --> MSJ["model_json_schema()"]
-    MSJ --> SCH["config/settings-schema.json"]
-    GC["guest/config/*.toml"] --> GD["generate_defaults_json()"]
-    GD --> DEF["config/defaults.json"]
+    MSJ --> SCH["config/settings/schema.generated.json"]
+    GC["config/settings/settings.toml"] --> GD["generate_defaults_json()"]
+    GD --> DEF["config/settings/ui-metadata.generated.json"]
 ```
 
 `just schema` regenerates both files:
@@ -177,8 +172,8 @@ flowchart LR
 just schema
 # Runs: uv run python scripts/generate_schema.py
 # Outputs:
-#   config/settings-schema.json  (JSON Schema from Pydantic)
-#   config/defaults.json         (defaults from guest TOML configs)
+#   config/settings/schema.generated.json  (JSON Schema from Pydantic)
+#   config/settings/ui-metadata.generated.json         (defaults from host settings source)
 ```
 
 The JSON Schema is derived from `SettingsRoot.model_json_schema()`. It contains `$defs` for all model types (GroupNode, SettingNode, SettingMetadata, enums) and a `properties.settings` array at the root.
@@ -217,7 +212,6 @@ flowchart TD
 | Roundtrip serialize/deserialize | Python, Rust |
 | All 13 setting types present | All three |
 | Action settings have `metadata.action` | All three |
-| MCP tool settings have `metadata.origin` | All three |
 | File settings have `{ path, content }` | All three |
 | Hidden/builtin settings exist | All three |
 | `enabled_by` references a valid bool | Python, TypeScript |
@@ -226,21 +220,21 @@ Any schema change requires updating the golden fixture, expected.json, and all t
 
 ## Data Flow
 
-Two parallel paths connect guest TOML configs to the running application:
+Two parallel paths connect the settings contract to the running application:
 
 ```mermaid
 flowchart TD
     subgraph "Schema Path (dev time)"
         PM["schema.py\nPydantic models"] --> JSG["model_json_schema()"]
-        JSG --> SCHEMA["config/settings-schema.json"]
+        JSG --> SCHEMA["config/settings/schema.generated.json"]
         SCHEMA --> TESTS["Conformance tests\n(Python + Rust + TypeScript)"]
     end
 
     subgraph "Data Path (build time)"
-        TOML["guest/config/*.toml\n(ai, mcp, security, vm)"] --> GEN["generate_defaults_json()"]
-        GEN --> DEF["config/defaults.json"]
+        TOML["config/settings/settings.toml\n(UI/app preferences only)"] --> GEN["generate_defaults_json()"]
+        GEN --> DEF["config/settings/ui-metadata.generated.json"]
         DEF --> RUST["Rust include_str!()\nregistry.rs"]
-        RUST --> BOOT["Boot-time config\ninjection"]
+        RUST --> BOOT["Settings route\nand UI defaults"]
     end
 
     subgraph "Golden Fixture Path (test time)"
@@ -250,13 +244,16 @@ flowchart TD
     end
 ```
 
-The data path: guest TOML configs are processed by `generate_defaults_json()` into `config/defaults.json`. Rust embeds this file at compile time via `include_str!()` in `registry.rs`. At boot, the registry resolves settings (corp > user > defaults) and injects the result into the VM.
+The data path: host settings source is processed by `generate_defaults_json()`
+into `config/settings/ui-metadata.generated.json`. Rust embeds this file at compile time via
+`include_str!()` in `registry.rs`. Settings are UI/app preferences. Profiles
+own assets, rules, MCP, plugins, image payloads, and VM runtime posture.
 
 The schema path: Pydantic models generate JSON Schema for documentation and validation. The conformance tests ensure all three languages agree on parsing.
 
-## Design Decision: Two Node Types
+## Design Decision: Settings Nodes Only
 
-The original schema had four node types:
+The retired schema mixed settings and profile MCP runtime state:
 
 | Old type | Discriminant |
 |---|---|
@@ -265,19 +262,21 @@ The original schema had four node types:
 | Action | `kind="action"` |
 | McpServer | `kind="mcp_server"` |
 
-This was simplified to two:
+The current settings schema keeps only settings-owned nodes:
 
-| New type | Discriminant | Covers |
+| Current type | Discriminant | Covers |
 |---|---|---|
-| GroupNode | `kind="group"` | Containers with children |
-| SettingNode | `kind="setting"` | Regular settings, actions, MCP tools |
+| Group | `kind="group"` | Containers with children |
+| Leaf | `kind="leaf"` | Regular UI/application settings |
+| Action | `kind="action"` | Settings-owned action controls |
 
-The four-type design forced consumers to match on `kind` with four arms, even though actions and MCP servers share nearly all fields with regular settings. The two-type design uses `setting_type` as the discriminant for behavior:
+MCP server state is profile-owned and comes from
+`/profiles/{profile_id}/mcp/...`, not from the settings tree. Consumers must not
+invent a settings `mcp_server` node. Behavior is driven by `setting_type` and
+`widget` on settings leaves:
 
 - Regular settings: `setting_type` in `{text, number, bool, ...}` -- value fields populated
 - Actions: `setting_type="action"` -- `metadata.action` specifies the action kind
-- MCP tools: `setting_type="mcp_tool"` -- `metadata.origin` specifies where the tool runs
-
-Consumers match on `kind` (two arms: group vs. setting), then check `setting_type` when they need type-specific behavior. MCP servers are GroupNodes containing server config settings and MCP tool SettingNodes as children. Tool categories (snapshots, network) are nested sub-groups within the server GroupNode.
-
-The Rust conformance tests use local test-only structs with the two-node schema. The live app's `SettingsNode` in `capsem-core` still uses the old four-variant enum for backward compatibility -- migration is tracked separately.
+Consumers match on `kind` (two arms: group vs. setting), then check
+`setting_type` when they need type-specific behavior. MCP servers and tools do
+not appear here; profile routes own MCP configuration and state.

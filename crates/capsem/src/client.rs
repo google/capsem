@@ -24,6 +24,7 @@ use crate::{paths, service_install};
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ProvisionRequest {
     pub name: Option<String>,
+    pub profile_id: String,
     pub ram_mb: u64,
     pub cpus: u32,
     #[serde(default)]
@@ -37,6 +38,13 @@ pub struct ProvisionRequest {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ProvisionResponse {
     pub id: String,
+    pub profile_id: String,
+    pub status: VmLifecycleState,
+    #[serde(default)]
+    pub persistent: bool,
+    #[serde(default)]
+    pub can_resume: bool,
+    pub available_actions: Vec<VmAction>,
     /// Where the per-VM `capsem-process` listens. Returned by the service
     /// so clients never have to recompute the SUN_LEN fallback. `None` only
     /// when talking to an older service that pre-dates this field.
@@ -57,13 +65,45 @@ pub struct ForkResponse {
     pub size_bytes: u64,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VmLifecycleState {
+    Running,
+    Stopped,
+    Suspended,
+    Defunct,
+    Incompatible,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum VmAction {
+    Pause,
+    Stop,
+    Start,
+    Resume,
+    Fork,
+    Delete,
+}
+
+impl std::fmt::Display for VmLifecycleState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Running => f.write_str("Running"),
+            Self::Stopped => f.write_str("Stopped"),
+            Self::Suspended => f.write_str("Suspended"),
+            Self::Defunct => f.write_str("Defunct"),
+            Self::Incompatible => f.write_str("Incompatible"),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SessionInfo {
     pub id: String,
     #[serde(default)]
     pub name: Option<String>,
     pub pid: u32,
-    pub status: String,
+    pub status: VmLifecycleState,
     #[serde(default)]
     pub persistent: bool,
     #[serde(default)]
@@ -89,8 +129,6 @@ pub struct SessionInfo {
     #[serde(default)]
     pub total_tool_calls: Option<u64>,
     #[serde(default)]
-    pub total_mcp_calls: Option<u64>,
-    #[serde(default)]
     pub total_requests: Option<u64>,
     #[serde(default)]
     pub allowed_requests: Option<u64>,
@@ -105,6 +143,10 @@ pub struct SessionInfo {
     /// crashed VM shows its own reason on screen.
     #[serde(default)]
     pub last_error: Option<String>,
+    #[serde(default)]
+    pub can_resume: bool,
+    #[serde(default)]
+    pub resume_blocked_reason: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -121,6 +163,7 @@ pub struct PersistRequest {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RunRequest {
     pub command: String,
+    pub profile_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_secs: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -189,10 +232,40 @@ pub struct AssetEntry {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct AssetManifestStatus {
+    pub origin: String,
+    pub path: String,
+    #[serde(default)]
+    pub origin_path: Option<String>,
+    #[serde(default)]
+    pub origin_source: Option<String>,
+    #[serde(default)]
+    pub packaged_at: Option<String>,
+    #[serde(default)]
+    pub refreshed_at: Option<String>,
+    #[serde(default)]
+    pub validation_status: Option<String>,
+    #[serde(default)]
+    pub validation_error: Option<String>,
+    #[serde(default)]
+    pub blake3: Option<String>,
+    #[serde(default)]
+    pub format: Option<u32>,
+    #[serde(default)]
+    pub refresh_policy: Option<String>,
+    #[serde(default)]
+    pub assets_current: Option<String>,
+    #[serde(default)]
+    pub binaries_current: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct AssetStatusResponse {
     pub ready: bool,
     #[serde(default)]
     pub downloading: bool,
+    #[serde(default)]
+    pub manifest: Option<AssetManifestStatus>,
     #[serde(default)]
     pub current_asset: Option<String>,
     #[serde(default)]
@@ -385,6 +458,9 @@ impl UdsClient {
     /// if a unit is installed, falls back to direct spawn. Caller
     /// already verified the socket is unreachable.
     async fn try_ensure_service(&self) -> Result<UnixStream> {
+        if service_install::service_explicitly_stopped() {
+            anyhow::bail!("capsem service was explicitly stopped; run `capsem start` to start it");
+        }
         info!("Service not responding, attempting to launch...");
 
         // If the service is registered with a service manager, use that exclusively.

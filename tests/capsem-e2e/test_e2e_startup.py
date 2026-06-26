@@ -7,7 +7,6 @@ runs when a user does just run-service. If these fail, just shell fails.
 import os
 import socket
 import subprocess
-import signal
 import time
 
 import pytest

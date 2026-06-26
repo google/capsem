@@ -31,6 +31,7 @@ PROCESS_BINARY = PROJECT_ROOT / "target/debug/capsem-process"
 CLI_BINARY = PROJECT_ROOT / "target/debug/capsem"
 MCP_BINARY = PROJECT_ROOT / "target/debug/capsem-mcp"
 ASSETS_DIR = PROJECT_ROOT / "assets"
+PROFILES_DIR = PROJECT_ROOT / "target" / "config" / "profiles"
 
 pytestmark = pytest.mark.e2e
 
@@ -42,7 +43,7 @@ def _vm_name(prefix="e2e"):
 class RealService:
     """Starts capsem-service the way just run-service does.
 
-    Readiness check: socket file exists AND curl to /list succeeds.
+    Readiness check: socket file exists AND curl to /vms/list succeeds.
     This is intentionally the same logic as the justfile run-service
     recipe. If they diverge, tests pass but the product breaks.
     """
@@ -64,6 +65,12 @@ class RealService:
         env = os.environ.copy()
         env["RUST_LOG"] = "capsem=debug"
         env["CAPSEM_RUN_DIR"] = str(self.tmp_dir)
+        env["CAPSEM_HOME"] = str(self.tmp_dir)
+        env["CAPSEM_PROFILES_DIR"] = str(PROFILES_DIR)
+        env["CAPSEM_CREDENTIAL_STORE_PATH"] = str(
+            self.tmp_dir / "credential-store.json"
+        )
+        env["HOME"] = str(self.tmp_dir)
 
         log_path = self.tmp_dir / "service.log"
         stderr_path = self.tmp_dir / "service.stderr.log"
@@ -92,7 +99,7 @@ class RealService:
                 try:
                     result = subprocess.run(
                         ["curl", "-s", "--unix-socket", str(self.uds_path),
-                         "--max-time", "2", "http://localhost/list"],
+                         "--max-time", "2", "http://localhost/vms/list"],
                         capture_output=True, text=True, timeout=5,
                     )
                     if result.returncode == 0:

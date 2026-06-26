@@ -5,30 +5,36 @@ the exact layer that broke.
 """
 
 import os
-import subprocess
+from urllib.parse import urlsplit
 
 import pytest
 
 from conftest import run
 
-LOCAL_DEBUG_UPSTREAM_ENV = "CAPSEM_BENCH_MITM_LOCAL_BASE_URL"
-PUBLIC_NETWORK_SMOKE_ENV = "CAPSEM_RUN_PUBLIC_NETWORK_SMOKE"
+LOCAL_MOCK_SERVER_ENV = "CAPSEM_MOCK_SERVER_BASE_URL"
 
 
-def _local_debug_url(path):
-    base_url = os.environ.get(LOCAL_DEBUG_UPSTREAM_ENV)
+def _local_mock_url(path):
+    base_url = os.environ.get(LOCAL_MOCK_SERVER_ENV)
     if not base_url:
         return None
     return f"{base_url.rstrip('/')}/{path.lstrip('/')}"
 
 
-def _public_network_smoke_enabled():
-    return os.environ.get(PUBLIC_NETWORK_SMOKE_ENV) == "1"
-
-
-def _require_public_network_smoke(reason):
-    if not _public_network_smoke_enabled():
-        pytest.skip(f"{reason}; set {PUBLIC_NETWORK_SMOKE_ENV}=1")
+def _require_local_mock_url(path, reason):
+    url = _local_mock_url(path)
+    if not url:
+        pytest.fail(
+            f"{reason}; set {LOCAL_MOCK_SERVER_ENV} for deterministic local proof"
+        )
+    parsed = urlsplit(url)
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    if parsed.scheme == "http" and port not in (80, 3128, 3713, 8080, 11434):
+        pytest.fail(
+            f"{reason}; local mock server port {port} is outside the "
+            "default HTTP upstream allowlist"
+        )
+    return url
 
 
 # ---------------------------------------------------------------
@@ -76,26 +82,16 @@ def test_iptables_redirect_dns_tcp_to_1053():
         f"no TCP dport 53 redirect rule:\n{result.stdout}"
 
 
-def test_dns_resolves_via_capsem_proxy():
-    """T3.4 acceptance: a real domain must resolve to a real IP via
-    the capsem-dns-proxy -> host hickory handler. Pre-T3.4 every
-    name resolved to 10.0.0.1; post-T3.4 we must get a real upstream
-    answer for an allowed domain."""
-    _require_public_network_smoke("public DNS resolution smoke")
-    result = run("getent hosts elie.net", timeout=10)
-    assert result.returncode == 0, f"elie.net did not resolve:\n{result.stderr}"
-    assert "10.0.0.1" not in result.stdout, \
-        f"elie.net still resolves to dnsmasq sentinel 10.0.0.1:\n{result.stdout}"
-    # First whitespace token is the IP; accept IPv4 (3 dots) or
-    # IPv6 (>=2 colons). Some upstreams return AAAA-only on this
-    # name and getent honors the request's address family.
-    parts = result.stdout.split()
-    assert parts, f"empty getent output:\n{result.stdout!r}"
-    ip = parts[0]
-    is_v4 = ip.count(".") == 3
-    is_v6 = ip.count(":") >= 2
-    assert is_v4 or is_v6, \
-        f"unexpected IP shape {ip!r} in:\n{result.stdout}"
+def test_dns_query_reaches_capsem_proxy():
+    """A DNS query must reach the Capsem proxy instead of the old wildcard
+    dnsmasq sentinel path. The reserved .invalid TLD keeps the proof hermetic."""
+    result = run(
+        "getent hosts capsem-doctor-hermetic.invalid 2>&1",
+        timeout=10,
+    )
+    assert result.returncode != 0, \
+        f"reserved .invalid domain unexpectedly resolved:\n{result.stdout}"
+    assert "10.0.0.1" not in result.stdout
 
 
 def test_dns_nxdomain_propagates_from_upstream():
@@ -133,11 +129,12 @@ def test_iptables_redirect_80_to_10080():
         f"no dport 80 redirect rule:\n{result.stdout}"
 
 
-def test_iptables_redirect_11434_to_10080():
-    """T2.2: Ollama default port 11434 must REDIRECT to 10080 too."""
+def test_iptables_redirect_plain_http_allowlist_to_10080():
+    """T2.2: default plain-HTTP allowlist must REDIRECT to 10080."""
     result = run("iptables-nft -t nat -S OUTPUT 2>&1", timeout=5)
-    assert "11434" in result.stdout, \
-        f"no REDIRECT for 11434 (Ollama):\n{result.stdout}"
+    for port in (3128, 3713, 8080, 11434):
+        assert f"--dport {port}" in result.stdout, \
+            f"no REDIRECT for {port} -> 10080:\n{result.stdout}"
 
 
 # ---------------------------------------------------------------
@@ -215,8 +212,7 @@ def test_vsock_bridge_delivers_bytes():
 
 
 def test_tls_handshake_completes():
-    """TLS handshake to allowed domain must complete through the MITM proxy."""
-    _require_public_network_smoke("public TLS handshake smoke")
+    """TLS handshake must complete through the local MITM proxy."""
     result = run(
         "python3 -c \""
         "import socket, ssl; "
@@ -225,7 +221,7 @@ def test_tls_handshake_completes():
         "ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT); "
         "ctx.check_hostname = False; "
         "ctx.verify_mode = ssl.CERT_NONE; "
-        "ws = ctx.wrap_socket(s, server_hostname='google.com'); "
+        "ws = ctx.wrap_socket(s, server_hostname='capsem-doctor.local'); "
         "print('TLS_OK version=' + str(ws.version())); "
         "print('cipher=' + str(ws.cipher())); "
         "cert = ws.getpeercert(binary_form=True); "
@@ -239,7 +235,6 @@ def test_tls_handshake_completes():
 
 def test_tls_cert_from_capsem_ca():
     """MITM proxy must present a cert signed by the Capsem CA."""
-    _require_public_network_smoke("public TLS certificate smoke")
     result = run(
         "python3 -c \""
         "import socket, ssl; "
@@ -248,7 +243,7 @@ def test_tls_cert_from_capsem_ca():
         "ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT); "
         "ctx.check_hostname = False; "
         "ctx.verify_mode = ssl.CERT_NONE; "
-        "ws = ctx.wrap_socket(s, server_hostname='google.com'); "
+        "ws = ctx.wrap_socket(s, server_hostname='capsem-doctor.local'); "
         "cert = ws.getpeercert(); "
         "issuer = dict(x[0] for x in cert.get('issuer', ())); "
         "cn = issuer.get('commonName', ''); "
@@ -272,28 +267,28 @@ def test_tls_cert_from_capsem_ca():
 # ---------------------------------------------------------------
 
 
-def test_curl_https_with_skip_verify():
-    """curl -k to allowed domain must get HTTP response."""
-    _require_public_network_smoke("public HTTPS curl smoke")
-    result = run("curl -skI --connect-timeout 10 https://google.com 2>&1", timeout=20)
+def test_curl_https_without_system_ca_validation():
+    """curl through the local HTTP MITM rail must get a deterministic response."""
+    local_url = _require_local_mock_url("/tiny", "local HTTP curl smoke")
+    result = run(f"curl -sSI --connect-timeout 10 {local_url} 2>&1", timeout=20)
     assert result.returncode == 0, \
-        f"curl -k failed (exit {result.returncode}):\n{result.stdout}"
+        f"curl failed (exit {result.returncode}):\n{result.stdout}"
     assert "HTTP/" in result.stdout, f"no HTTP response:\n{result.stdout}"
 
 
 def test_curl_verbose_diagnostics():
     """curl -v captures the full handshake trace for debugging."""
-    _require_public_network_smoke("public HTTPS verbose curl smoke")
-    result = run("curl -vvk --connect-timeout 10 -o /dev/null https://google.com 2>&1", timeout=20)
+    local_url = _require_local_mock_url("/tiny", "local verbose curl smoke")
+    result = run(f"curl -vv --connect-timeout 10 -o /dev/null {local_url} 2>&1", timeout=20)
     # Even if curl fails, capture the verbose output for diagnosis.
     # This test always passes -- it's here for diagnostic output on failure.
     lines = result.stdout.strip().split('\n') if result.stdout else []
     info = {
         "exit_code": result.returncode,
-        "connected": any("Connected to" in l for l in lines),
-        "ssl_handshake": any("SSL connection" in l for l in lines),
-        "http_response": any("HTTP/" in l for l in lines),
-        "error_lines": [l for l in lines if "error" in l.lower()],
+        "connected": any("Connected to" in line for line in lines),
+        "ssl_handshake": any("SSL connection" in line for line in lines),
+        "http_response": any("HTTP/" in line for line in lines),
+        "error_lines": [line for line in lines if "error" in line.lower()],
     }
     # If curl failed, print the full trace as the assertion message.
     if result.returncode != 0:
@@ -339,27 +334,26 @@ def test_certifi_includes_capsem_ca():
 
 
 def test_curl_allowed_domain_ca_trusted():
-    """curl without -k must succeed (system trusts Capsem CA)."""
-    _require_public_network_smoke("public HTTPS CA trust smoke")
+    """curl without public access must still prove the local rail works."""
+    local_url = _require_local_mock_url("/tiny", "local curl trust smoke")
     result = run(
-        "curl -sI --connect-timeout 10 https://google.com 2>&1",
+        f"curl -sI --connect-timeout 10 {local_url} 2>&1",
         timeout=20,
     )
     assert result.returncode == 0, \
-        f"curl failed without -k (CA not trusted?):\n{result.stdout}\n{result.stderr}"
+        f"curl failed against local mock server:\n{result.stdout}\n{result.stderr}"
     assert "HTTP/" in result.stdout, f"no HTTP response:\n{result.stdout}"
 
 
 def test_python_urllib_https_trusted():
-    """Python urllib must complete TLS via system CA trust."""
-    _require_public_network_smoke("public Python TLS smoke")
-    # Verify TLS works by connecting with ssl module (urllib raises HTTPError
-    # for 403 responses, which obscures the TLS-success signal we care about).
+    """Python ssl must complete a local MITM TLS handshake."""
     result = run(
         'python3 -c "'
         "import ssl, socket; "
-        "ctx = ssl.create_default_context(); "
-        "s = ctx.wrap_socket(socket.create_connection(('google.com', 443), timeout=10), server_hostname='google.com'); "
+        "ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT); "
+        "ctx.check_hostname = False; "
+        "ctx.verify_mode = ssl.CERT_NONE; "
+        "s = ctx.wrap_socket(socket.create_connection(('10.0.0.1', 443), timeout=10), server_hostname='capsem-doctor.local'); "
         "print('OK version=' + str(s.version())); "
         "s.close()"
         '" 2>&1',
@@ -392,83 +386,190 @@ def test_ca_env_var_set(var):
 def test_denied_domain_rejected():
     """HTTPS to an unconditionally denied domain must be rejected.
 
-    ``api.openai.com`` is allowlist-gated by ``CAPSEM_OPENAI_ALLOWED`` and will
-    return 401 (real upstream auth failure) when enabled -- see
-    ``test_ai_provider_domain_blocked`` for that matrix. This test uses a
-    domain that no rule ever matches; when ``CAPSEM_WEB_ALLOW_READ=1`` the
-    default-read fallback makes every unknown domain reachable, so the
-    assertion is only meaningful with the default-deny posture.
+    This test uses a reserved domain that no rule ever matches.
     """
-    if os.environ.get("CAPSEM_WEB_ALLOW_READ") == "1":
-        pytest.skip("security.web.allow_read=true -- unknown domains allowed by policy")
     result = run("curl -skI --connect-timeout 5 https://evil-never-allowed.invalid 2>&1", timeout=15)
     assert result.returncode != 0 or "403" in result.stdout, \
         f"curl to denied domain should fail or return 403: {result.stdout}"
 
 
 def test_post_to_random_domain_denied():
-    """POST to a non-allow-listed domain must return 403."""
-    result = run("curl -ski -X POST --connect-timeout 5 https://example.com 2>&1", timeout=15)
-    assert "403" in result.stdout or result.returncode != 0, "POST to denied domain should return 403 or fail"
-
-
-@pytest.mark.parametrize("domain,env_var", [
-    ("api.anthropic.com", "CAPSEM_ANTHROPIC_ALLOWED"),
-    ("api.openai.com", "CAPSEM_OPENAI_ALLOWED"),
-])
-def test_ai_provider_domain_blocked(domain, env_var):
-    """AI provider domains: blocked unless allowed by policy, reachable if allowed."""
-    if os.environ.get(env_var) == "1":
-        _require_public_network_smoke(f"public AI provider smoke for {domain}")
+    """POST to a denied HTTPS domain must not silently pass."""
     result = run(
-        f"curl -skI --connect-timeout 10 https://{domain} 2>&1",
-        timeout=20,
+        "curl -skX POST --connect-timeout 5 "
+        "-H 'content-type: application/json' "
+        "-d '{\"probe\":\"doctor-deny\"}' "
+        "https://evil-never-allowed.invalid/deny-target 2>&1",
+        timeout=15,
     )
-    if os.environ.get(env_var) == "1":
-        # Domain is allowed -- must be reachable (HTTP response, not 403).
-        assert "HTTP/" in result.stdout, \
-            f"{domain} is allowed ({env_var}=1) but not reachable: {result.stdout}"
-    else:
-        # Domain is blocked -- must get 403 or connection refused.
-        assert result.returncode != 0 or "403" in result.stdout, \
-            f"Connection to {domain} should be blocked: {result.stdout}"
+    assert result.returncode != 0 or "403" in result.stdout, \
+        f"POST to denied domain should fail or return 403: {result.stdout}"
 
 
 def test_http_port_80_is_proxied():
     """Plain HTTP (port 80) is inspected by the MITM proxy."""
-    local_url = _local_debug_url("/tiny")
-    if local_url:
-        result = run(
-            f"curl -sS --connect-timeout 5 {local_url} 2>&1",
-            timeout=15,
-        )
-        assert result.returncode == 0, \
-            f"local HTTP through proxy failed: {result.stdout}"
-        assert "capsem-debug-upstream:tiny" in result.stdout, \
-            f"unexpected local HTTP response: {result.stdout}"
-        return
-
-    if not _public_network_smoke_enabled():
-        pytest.skip(
-            f"set {LOCAL_DEBUG_UPSTREAM_ENV} for local lab or "
-            f"{PUBLIC_NETWORK_SMOKE_ENV}=1 for explicit public smoke"
-        )
-
+    local_url = _require_local_mock_url("/tiny", "local HTTP proxy smoke")
     result = run(
-        "curl -sI --connect-timeout 5 http://google.com 2>&1",
+        f"curl -sS --connect-timeout 5 {local_url} 2>&1",
         timeout=15,
     )
     assert result.returncode == 0, \
-        f"HTTP port 80 should be reachable through the proxy: {result.stdout}"
-    assert "HTTP/" in result.stdout, \
-        f"HTTP port 80 should return an HTTP response: {result.stdout}"
+        f"local HTTP through proxy failed: {result.stdout}"
+    assert "capsem-mock-server:tiny" in result.stdout, \
+        f"unexpected local HTTP response: {result.stdout}"
+
+
+def test_local_http_gzip_decompression_path():
+    """Gzip response bodies must travel through the local MITM rail."""
+    local_url = _require_local_mock_url("/gzip/10kb", "local gzip smoke")
+    result = run(
+        f"curl -sS --compressed --connect-timeout 5 {local_url} | wc -c",
+        timeout=15,
+    )
+    assert result.returncode == 0, f"gzip curl failed: {result.stdout}"
+    assert result.stdout.strip() == str(10 * 1024), \
+        f"unexpected decoded gzip byte count: {result.stdout}"
+
+
+def test_local_http_delayed_chunk_stream():
+    """Chunked response streaming must complete through the local MITM rail."""
+    local_url = _require_local_mock_url("/delayed-chunks", "local chunk smoke")
+    result = run(
+        f"curl -sS --connect-timeout 5 {local_url}",
+        timeout=15,
+    )
+    assert result.returncode == 0, f"chunk curl failed: {result.stdout}"
+    assert "chunk-0" in result.stdout and "chunk-3" in result.stdout, \
+        f"missing chunk fixture output: {result.stdout}"
+
+
+def test_local_sse_model_fixture():
+    """SSE model-shaped traffic must traverse the local MITM rail."""
+    local_url = _require_local_mock_url("/sse/model", "local SSE model smoke")
+    result = run(
+        f"curl -sS --connect-timeout 5 {local_url}",
+        timeout=15,
+    )
+    assert result.returncode == 0, f"SSE curl failed: {result.stdout}"
+    assert "model.tool_call" in result.stdout and "fixture_lookup" in result.stdout, \
+        f"unexpected SSE model fixture: {result.stdout}"
+
+
+def test_local_openai_compatible_model_fixture():
+    """OpenAI-compatible model traffic must be observed without public services."""
+    local_url = _require_local_mock_url(
+        "/v1/chat/completions",
+        "local OpenAI-compatible model smoke",
+    )
+    result = run(
+        "python3 - <<'PY'\n"
+        "from pathlib import Path\n"
+        "import subprocess\n"
+        "payload_path = Path('/tmp/capsem-doctor-openai-payload.json')\n"
+        "config_path = Path('/tmp/capsem-doctor-openai-curl.conf')\n"
+        "secret = 'sk-' + 'capsem_' + 'test_' + 'openai_api_key_' + '0123456789abcdef'\n"
+        "payload_path.write_text('{\"model\":\"mock-local\","
+        "\"messages\":[{\"role\":\"user\",\"content\":\"call fixture_lookup\"}],"
+        "\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"fixture_lookup\","
+        "\"parameters\":{\"type\":\"object\",\"properties\":{\"query\":{\"type\":\"string\"}}}}}]}')\n"
+        "config_path.write_text(\n"
+        "    'silent\\n'\n"
+        "    'show-error\\n'\n"
+        "    'connect-timeout = 5\\n'\n"
+        "    'request = POST\\n'\n"
+        "    'header = \"content-type: application/json\"\\n'\n"
+        "    f'header = \"authorization: Bearer {secret}\"\\n'\n"
+        "    f'data = \"@{payload_path}\"\\n'\n"
+        f"    'url = \"{local_url}\"\\n'\n"
+        ")\n"
+        "raise SystemExit(subprocess.run(['curl', '--config', str(config_path)]).returncode)\n"
+        "PY",
+        timeout=15,
+    )
+    assert result.returncode == 0, f"model fixture curl failed: {result.stdout}"
+    assert '"model":"mock-local"' in result.stdout.replace(" ", ""), \
+        f"model fixture did not report mock-local: {result.stdout}"
+    assert "tool_calls" in result.stdout and "fixture_lookup" in result.stdout, \
+        f"model fixture did not include tool call: {result.stdout}"
+
+
+def test_local_credential_fixture_is_broker_stimulus_only():
+    """Credential-shaped fixture traffic should trigger broker logging without
+    dumping synthetic secret values into doctor output."""
+    local_url = _require_local_mock_url("/credential/response", "local broker smoke")
+    result = run(
+        f"curl -sS -o /dev/null -w '%{{http_code}} %{{size_download}}'"
+        f" --connect-timeout 5 {local_url}",
+        timeout=15,
+    )
+    assert result.returncode == 0, f"credential fixture curl failed: {result.stdout}"
+    assert result.stdout.strip().startswith("200 "), \
+        f"credential fixture did not return HTTP 200: {result.stdout}"
+    assert "capsem_test_" not in result.stdout
+
+
+def test_local_oauth_token_fixture_is_broker_stimulus_only():
+    """OAuth token exchange traffic must be exercised hermetically without
+    dumping synthetic token values into doctor output."""
+    local_url = _require_local_mock_url("/oauth/token", "local OAuth token smoke")
+    result = run(
+        "python3 - <<'PY'\n"
+        "from pathlib import Path\n"
+        "import subprocess\n"
+        "body_path = Path('/tmp/capsem-doctor-oauth-form.txt')\n"
+        "config_path = Path('/tmp/capsem-doctor-oauth-curl.conf')\n"
+        "code = 'capsem_' + 'test_' + 'oauth_code_' + '0123456789abcdef'\n"
+        "client_secret = 'capsem_' + 'test_' + 'oauth_client_secret'\n"
+        "body_path.write_text(\n"
+        "    'grant_type=authorization_code'\n"
+        "    f'&code={code}'\n"
+        "    f'&client_secret={client_secret}'\n"
+        ")\n"
+        "config_path.write_text(\n"
+        "    'silent\\n'\n"
+        "    'show-error\\n'\n"
+        "    'output = /dev/null\\n'\n"
+        "    'write-out = \"%{http_code} %{size_download}\"\\n'\n"
+        "    'connect-timeout = 5\\n'\n"
+        "    'request = POST\\n'\n"
+        "    'header = \"content-type: application/x-www-form-urlencoded\"\\n'\n"
+        "    f'data = \"@{body_path}\"\\n'\n"
+        f"    'url = \"{local_url}\"\\n'\n"
+        ")\n"
+        "raise SystemExit(subprocess.run(['curl', '--config', str(config_path)]).returncode)\n"
+        "PY",
+        timeout=15,
+    )
+    assert result.returncode == 0, f"OAuth fixture curl failed: {result.stdout}"
+    assert result.stdout.strip().startswith("200 "), \
+        f"OAuth fixture did not return HTTP 200: {result.stdout}"
+    assert "capsem_test_" not in result.stdout
+
+
+def test_local_websocket_echo_fixture():
+    """WebSocket upgrade and frame echo must work against the local lab."""
+    local_url = _require_local_mock_url("/ws/echo", "local WebSocket smoke")
+    ws_url = local_url.replace("http://", "ws://", 1).replace("https://", "wss://", 1)
+    result = run(
+        "python3 - <<'PY'\n"
+        "import sys\n"
+        "from websockets.sync.client import connect\n"
+        f"with connect({ws_url!r}, proxy=None, open_timeout=5, close_timeout=5) as ws:\n"
+        "    ws.send('doctor-websocket')\n"
+        "    reply = ws.recv(timeout=5)\n"
+        "    print(reply)\n"
+        "PY",
+        timeout=15,
+    )
+    assert result.returncode == 0, f"websocket fixture failed: {result.stdout}"
+    assert "doctor-websocket" in result.stdout, \
+        f"unexpected websocket echo: {result.stdout}"
 
 
 def test_non_standard_port_fails():
     """Connections to non-443 ports must fail."""
-    _require_public_network_smoke("public non-standard-port smoke")
     result = run(
-        "curl -skI --connect-timeout 5 https://google.com:8443 2>&1",
+        "curl -skI --connect-timeout 5 https://127.0.0.1:8443 2>&1",
         timeout=15,
     )
     assert result.returncode != 0, \
@@ -489,10 +590,6 @@ def test_direct_ip_no_route():
 # Layer 7: Proxy throughput
 # ---------------------------------------------------------------
 
-# cdn.elie.net 301-redirects to elie.net, so curl needs -L and both hosts
-# must be on the custom_allow list.
-_THROUGHPUT_URL = "https://cdn.elie.net/static/files/i-am-a-legend/i-am-a-legend-slides.pdf"
-_THROUGHPUT_DOMAIN = "cdn.elie.net"
 _MIN_SPEED_MBPS = 0.5
 
 
@@ -503,39 +600,15 @@ def test_proxy_download_throughput():
     vsock -> host MITM proxy -> upstream -> back. Public network is an
     explicit smoke only; default release gates should use the local lab.
     """
-    local_url = _local_debug_url("/bytes/10mb")
-    if local_url:
-        result = run(
-            f"curl -sL -o /dev/null"
-            f" -w '%{{speed_download}} %{{size_download}} %{{time_total}}'"
-            f" --connect-timeout 15"
-            f" {local_url}",
-            timeout=180,
-        )
-        expected_bytes = 10 * 1024 * 1024
-    else:
-        if not _public_network_smoke_enabled():
-            pytest.skip(
-                f"set {LOCAL_DEBUG_UPSTREAM_ENV} for local lab or "
-                f"{PUBLIC_NETWORK_SMOKE_ENV}=1 for explicit public smoke"
-            )
-
-    # Probe reachability first so we can skip cleanly rather than fail.
-        probe = run(
-            f"curl -skLI --connect-timeout 10 {_THROUGHPUT_URL} 2>&1",
-            timeout=20,
-        )
-        if probe.returncode != 0 or "403" in probe.stdout:
-            pytest.skip(f"{_THROUGHPUT_DOMAIN} not in allow list (add to network.custom_allow to run)")
-
-        result = run(
-            f"curl -sL -o /dev/null"
-            f" -w '%{{speed_download}} %{{size_download}} %{{time_total}}'"
-            f" --connect-timeout 15"
-            f" {_THROUGHPUT_URL}",
-            timeout=180,
-        )
-        expected_bytes = 500 * 1024
+    local_url = _require_local_mock_url("/bytes/10mb", "local proxy throughput smoke")
+    result = run(
+        f"curl -sL -o /dev/null"
+        f" -w '%{{speed_download}} %{{size_download}} %{{time_total}}'"
+        f" --connect-timeout 15"
+        f" {local_url}",
+        timeout=180,
+    )
+    expected_bytes = 10 * 1024 * 1024
 
     assert result.returncode == 0, \
         f"download failed (exit {result.returncode}):\n{result.stderr}"

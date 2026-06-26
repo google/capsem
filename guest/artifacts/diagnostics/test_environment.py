@@ -2,7 +2,6 @@
 
 import os
 
-import pytest
 
 from conftest import run
 
@@ -145,7 +144,7 @@ def test_boot_time_under_1s():
 
     Reads the boot timing file written by capsem-init. If total exceeds
     1000ms, something regressed (e.g. uv not on PATH, falling back to
-    slow python3 -m venv)."""
+    expensive python3 -m venv)."""
     import json
     timing_path = "/run/capsem-boot-timing"
     result = run(f"cat {timing_path}")
@@ -158,10 +157,10 @@ def test_boot_time_under_1s():
         except json.JSONDecodeError:
             continue
     total = sum(s.get("duration_ms", 0) for s in stages)
-    slow = [s for s in stages if s.get("duration_ms", 0) > 500]
+    long_stages = [s for s in stages if s.get("duration_ms", 0) > 500]
     assert total <= 1000, (
         f"boot took {total}ms (limit 1000ms). "
-        f"slow stages: {slow}. all: {stages}"
+        f"long stages: {long_stages}. all: {stages}"
     )
 
 

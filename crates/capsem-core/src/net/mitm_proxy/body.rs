@@ -1,11 +1,11 @@
 //! Body wrappers for the MITM pipeline.
 //!
-//! - `BodyStats`: per-request byte counter + body-preview buffer.
+//! - `BodyStats`: per-request byte counter + body-capture buffer.
 //!   Used by `TrackedBody` (request side) and read by
 //!   `TelemetryHook` at end-of-stream via the seeded
 //!   `TelemetryRequestContext`.
 //! - `TrackedBody`: counts bytes flowing through any hyper Body and
-//!   caps the preview buffer. Wraps the upstream request body.
+//!   caps the capture buffer. Wraps the upstream request body.
 //! - `ChunkDispatchBody`: drives the sync `ChunkHook` chain on every
 //!   frame. Per-request `HookState` slot map can be pre-seeded via
 //!   `seed::<T>()` so hooks read context (e.g.
@@ -25,15 +25,15 @@ pub type ProxyBoxBody = http_body_util::combinators::BoxBody<Bytes, anyhow::Erro
 pub struct BodyStats {
     pub bytes: u64,
     pub preview: Vec<u8>,
-    pub max_preview: usize,
+    pub max_body_capture: usize,
 }
 
 impl BodyStats {
-    pub fn new(max_preview: usize) -> Self {
+    pub fn new(max_body_capture: usize) -> Self {
         Self {
             bytes: 0,
             preview: Vec::new(),
-            max_preview,
+            max_body_capture,
         }
     }
 }
@@ -81,8 +81,8 @@ where
                             "body exceeded maximum size"
                         ))));
                     }
-                    if st.preview.len() < st.max_preview {
-                        let to_copy = (st.max_preview - st.preview.len()).min(len as usize);
+                    if st.preview.len() < st.max_body_capture {
+                        let to_copy = (st.max_body_capture - st.preview.len()).min(len as usize);
                         let chunk = hyper::body::Buf::chunk(data);
                         let to_copy = to_copy.min(chunk.len());
                         st.preview.extend_from_slice(&chunk[..to_copy]);

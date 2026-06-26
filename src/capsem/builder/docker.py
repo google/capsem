@@ -10,6 +10,7 @@ import datetime
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -20,14 +21,16 @@ from typing import Any
 from jinja2 import Environment, FileSystemLoader
 
 from capsem.builder.doctor import check_container_runtime
-from capsem.builder.models import GuestImageConfig, PackageManager
+from capsem.builder.models import ErofsConfig, GuestImageConfig
 
-TEMPLATES_DIR = Path(__file__).parent / "templates"
+TEMPLATES_DIR = Path(__file__).resolve().parents[3] / "config" / "docker"
 FALLBACK_KERNEL_VERSION = "7.0.11"
 DEFAULT_EROFS_UTILS_IMAGE = "debian:bookworm-slim"
 ZSTD_EROFS_UTILS_IMAGE = "debian:trixie-slim"
 BOOT_ASSETS = ("vmlinuz", "initrd.img")
-ROOTFS_ASSET_PREFERENCE = ("rootfs.erofs", "rootfs.squashfs")
+ROOTFS_ASSET_PREFERENCE = ("rootfs.erofs",)
+OBOM_ASSET = "obom.cdx.json"
+BUILD_LEDGER_NAME = "build-ledger.log"
 
 # Guest binaries COPY'd into the rootfs (cross-compiled Rust binaries).
 GUEST_BINARIES = [
@@ -36,7 +39,10 @@ GUEST_BINARIES = [
     "capsem-dns-proxy",
     "capsem-mcp-server",
     "capsem-sysutil",
+    "capsem-bench-rs",
 ]
+
+GUEST_BINARY_SOURCES = {}
 
 # --- Single source of truth for rootfs artifacts from guest/artifacts/ ---
 # Scripts and tools that must be copied into the rootfs build context and
@@ -66,6 +72,11 @@ def enforce_guest_binary_perms(paths: list[Path]) -> None:
             raise FileNotFoundError(p)
         os.chmod(p, 0o555)
 
+
+def _guest_binary_source(binary: str) -> str:
+    return GUEST_BINARY_SOURCES.get(binary, binary)
+
+
 def _rootfs_context(config: GuestImageConfig, arch_name: str) -> dict[str, Any]:
     """Build Jinja context for Dockerfile.rootfs.j2."""
     arch = config.build.architectures[arch_name]
@@ -82,15 +93,11 @@ def _rootfs_context(config: GuestImageConfig, arch_name: str) -> dict[str, Any]:
 
     npm_packages: list[str] = []
     npm_prefix = "/opt/ai-clis"
+    if "npm" in config.package_sets:
+        npm_packages.extend(config.package_sets["npm"].packages)
     curl_installs: list[str] = []
-    for provider in config.ai_providers.values():
-        if provider.enabled and provider.install:
-            if provider.install.manager == PackageManager.NPM:
-                npm_packages.extend(provider.install.packages)
-                if provider.install.prefix:
-                    npm_prefix = provider.install.prefix
-            elif provider.install.manager == PackageManager.CURL:
-                curl_installs.extend(provider.install.packages)
+    if "curl" in config.package_sets:
+        curl_installs.extend(config.package_sets["curl"].packages)
 
     return {
         "arch": arch,
@@ -102,6 +109,8 @@ def _rootfs_context(config: GuestImageConfig, arch_name: str) -> dict[str, Any]:
         "npm_prefix": npm_prefix,
         "curl_installs": curl_installs,
         "guest_binaries": GUEST_BINARIES,
+        "profile_root_seed": config.profile_root_seed,
+        "profile_build_script": config.profile_build_script,
     }
 
 
@@ -423,34 +432,6 @@ def export_container_fs(
         run_cmd([runtime, "rm", cid])
 
 
-def create_squashfs(
-    runtime: str,
-    tar_path: Path,
-    output_path: Path,
-    compression: str,
-    compression_level: int,
-    block_size: str = "64K",
-) -> None:
-    """Create a squashfs image from a tar archive using a container."""
-    abs_dir = str(tar_path.parent.resolve())
-    tar_name = tar_path.name
-    out_name = output_path.name
-
-    # -Xcompression-level is only valid for zstd and xz
-    level_flag = ""
-    if compression in ("zstd", "xz"):
-        level_flag = f" -Xcompression-level {compression_level}"
-
-    run_cmd([
-        runtime, "run", "--rm",
-        "-v", f"{abs_dir}:/assets",
-        "debian:bookworm-slim", "bash", "-c",
-        f"apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Check-Date=false update && apt-get install -y squashfs-tools zstd && "
-        f"mkdir /rootfs && tar xf /assets/{tar_name} -C /rootfs && "
-        f"mksquashfs /rootfs /assets/{out_name} -comp {compression}{level_flag} -b {block_size} -noappend",
-    ])
-
-
 def create_erofs(
     runtime: str,
     tar_path: Path,
@@ -480,7 +461,7 @@ def create_erofs(
     tar_rel = tar_abs.relative_to(common_dir).as_posix()
     out_rel = output_abs.relative_to(common_dir).as_posix()
     out_dir = Path(out_rel).parent.as_posix()
-    image = ZSTD_EROFS_UTILS_IMAGE if compression == "zstd" else DEFAULT_EROFS_UTILS_IMAGE
+    image = erofs_utils_image_for(compression)
     cluster_flag = f" -C{cluster_size}" if cluster_size else ""
     level_flag = f",level={compression_level}" if compression_level else ""
     mkdir_output = "" if out_dir == "." else f"mkdir -p /assets/{out_dir} && "
@@ -493,23 +474,45 @@ def create_erofs(
         f"-o Acquire::Check-Valid-Until=false -o Acquire::Check-Date=false update && "
         f"DEBIAN_FRONTEND=noninteractive apt-get install -y erofs-utils && "
         f"mkdir /rootfs && {mkdir_output}tar xf /assets/{tar_rel} -C /rootfs && "
-        f"mkfs.erofs -z{compression}{level_flag}{cluster_flag} /assets/{out_rel} /rootfs",
+        f"mkfs.erofs -Enosbcrc -z{compression}{level_flag}{cluster_flag} "
+        f"/assets/{out_rel} /rootfs",
     ])
+
+
+def erofs_utils_image_for(compression: str) -> str:
+    """Return the container image used to create an EROFS image."""
+    if compression == "zstd":
+        return ZSTD_EROFS_UTILS_IMAGE
+    return DEFAULT_EROFS_UTILS_IMAGE
 
 
 def experimental_erofs_build_config(
     env: dict[str, str] | os._Environ[str] | None = None,
+    defaults: ErofsConfig | None = None,
 ) -> tuple[bool, str, str | None, str | None]:
-    """Return optional EROFS build settings from environment variables."""
+    """Return EROFS build settings from config defaults and env overrides."""
     source = os.environ if env is None else env
-    enabled = source.get("CAPSEM_BUILD_EXPERIMENTAL_EROFS") == "1"
-    compression = source.get("CAPSEM_BUILD_EROFS_COMPRESSION", "lz4hc")
+    enabled = defaults.enabled if defaults is not None else False
+    if "CAPSEM_BUILD_EXPERIMENTAL_EROFS" in source:
+        enabled = source.get("CAPSEM_BUILD_EXPERIMENTAL_EROFS") == "1"
+    if not enabled:
+        raise ValueError("EROFS build cannot be disabled for the 1.3 asset contract")
+    compression = (
+        source.get("CAPSEM_BUILD_EROFS_COMPRESSION")
+        or (defaults.compression.value if defaults is not None else "lz4hc")
+    )
     if compression not in {"lz4", "lz4hc", "zstd"}:
         raise ValueError(
             "CAPSEM_BUILD_EROFS_COMPRESSION must be one of: lz4, lz4hc, zstd"
         )
-    cluster_size = source.get("CAPSEM_BUILD_EROFS_CLUSTER_SIZE")
-    compression_level = source.get("CAPSEM_BUILD_EROFS_COMPRESSION_LEVEL")
+    cluster_size = source.get("CAPSEM_BUILD_EROFS_CLUSTER_SIZE") or (
+        str(defaults.cluster_size) if defaults is not None and defaults.cluster_size else None
+    )
+    compression_level = source.get("CAPSEM_BUILD_EROFS_COMPRESSION_LEVEL") or (
+        str(defaults.compression_level)
+        if defaults is not None and defaults.compression_level is not None
+        else None
+    )
     if compression == "zstd" and compression_level is None:
         compression_level = "15"
     if compression_level is not None:
@@ -542,7 +545,7 @@ def container_compile_agent(
 
     # Build all shell commands from GUEST_BINARIES constant
     cp_cmds = " && ".join(
-        f"cp target/{rust_target}/release/{b} /output/{b}"
+        f"cp target/{rust_target}/release/{_guest_binary_source(b)} /output/{b}"
         for b in GUEST_BINARIES
     )
     rm_cmds = " ".join(f"/output/{b}" for b in GUEST_BINARIES)
@@ -577,7 +580,7 @@ def container_compile_agent(
         f"cp -r /src/crates /build/crates && "
         f"apt-get update -qq && apt-get install -y -qq musl-tools >/dev/null 2>&1 && "
         f"rustup target add {rust_target} && "
-        f"cargo build --release --target {rust_target} -p capsem-agent && "
+        f"cargo build --release --target {rust_target} -p capsem-agent -p capsem-bench && "
         f"rm -f {rm_cmds} && "
         f"{cp_cmds} && chmod 555 {chmod_cmds} && {file_cmds}",
     ])
@@ -628,13 +631,14 @@ def cross_compile_agent(
         "cargo", "build", "--release",
         "--target", rust_target,
         "-p", "capsem-agent",
+        "-p", "capsem-bench",
     ], cwd=repo_root)
 
     release_dir = repo_root / "target" / rust_target / "release"
     output_dir.mkdir(parents=True, exist_ok=True)
     copied: list[Path] = []
     for binary in GUEST_BINARIES:
-        src = release_dir / binary
+        src = release_dir / _guest_binary_source(binary)
         if not src.exists():
             raise RuntimeError(f"Expected binary not found: {src}")
         dst = output_dir / binary
@@ -650,8 +654,9 @@ def build_version_script(config: GuestImageConfig) -> str:
     """Build a shell script that extracts tool versions from config.
 
     Returns a bash script that prints grouped key=value lines to stdout.
-    The script is assembled from version_commands in build config, package
-    sets, and AI provider CLI configs.
+    The script is assembled from version_commands in build config and package
+    sets. Profile-owned build scripts install agent CLIs; they are not authored
+    through builder config.
     """
     lines: list[str] = []
 
@@ -675,43 +680,19 @@ def build_version_script(config: GuestImageConfig) -> str:
             for key, cmd in py_cmds.items():
                 lines.append(f'echo "{key}=$({cmd} || echo \'N/A\')";')
 
-    # -- AI CLIs (listed separately) --
-    ai_cmds: list[tuple[str, str]] = []
-    for provider in config.ai_providers.values():
-        if provider.enabled and provider.cli and provider.cli.version_command:
-            ai_cmds.append((provider.cli.key, provider.cli.version_command))
-    if ai_cmds:
-        lines.append('echo "# AI CLIs";')
-        for key, cmd in ai_cmds:
-            lines.append(f'echo "{key}=$({cmd} || echo \'N/A\')";')
-
     return "\n".join(lines)
 
 
 def _validate_tool_versions(
     content: str, config: GuestImageConfig,
 ) -> None:
-    """Check that enabled AI provider CLIs did not return N/A."""
+    """Reserved hook for version-output validation."""
     versions: dict[str, str] = {}
     for line in content.splitlines():
         if line.startswith("#") or "=" not in line:
             continue
         key, _, val = line.partition("=")
         versions[key.strip()] = val.strip()
-
-    failures: list[str] = []
-    for provider in config.ai_providers.values():
-        if provider.enabled and provider.cli and provider.cli.version_command:
-            key = provider.cli.key
-            val = versions.get(key, "")
-            if not val or val == "N/A":
-                failures.append(key)
-
-    if failures:
-        raise RuntimeError(
-            f"Enabled AI CLIs returned N/A or empty version: {', '.join(failures)}. "
-            "Check that the CLI installed correctly in the rootfs."
-        )
 
 
 def extract_tool_versions(
@@ -738,6 +719,80 @@ def extract_tool_versions(
         _validate_tool_versions(result.stdout, config)
 
 
+def _cdxgen_command() -> list[str]:
+    """Return the configured cdxgen command.
+
+    CI and developer machines can pin this through CAPSEM_CDXGEN_CMD. The
+    default uses npm's package runner so the rootfs build does not depend on a
+    globally installed binary.
+    """
+    configured = os.environ.get("CAPSEM_CDXGEN_CMD", "npx --yes @cyclonedx/cdxgen@latest")
+    command = shlex.split(configured)
+    if not command:
+        raise RuntimeError("CAPSEM_CDXGEN_CMD must not be empty")
+    return command
+
+
+def _validate_cyclonedx_obom(path: Path) -> None:
+    """Validate the minimal OBOM contract consumed by capsem-admin/service."""
+    try:
+        document = json.loads(path.read_text())
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"cdxgen wrote invalid JSON OBOM at {path}: {exc}") from exc
+    if document.get("bomFormat") != "CycloneDX":
+        raise RuntimeError(f"OBOM {path} must be CycloneDX JSON")
+    metadata = document.get("metadata")
+    if not isinstance(metadata, dict):
+        raise RuntimeError(f"OBOM {path} is missing metadata")
+    tools = metadata.get("tools")
+    candidates: list[dict[str, Any]] = []
+    if isinstance(tools, dict) and isinstance(tools.get("components"), list):
+        candidates = [tool for tool in tools["components"] if isinstance(tool, dict)]
+    elif isinstance(tools, list):
+        candidates = [tool for tool in tools if isinstance(tool, dict)]
+    if not any(
+        str(tool.get("name", "")).lower() == "cdxgen" and str(tool.get("version", ""))
+        for tool in candidates
+    ):
+        raise RuntimeError(f"OBOM {path} must record cdxgen name and version in metadata.tools")
+
+
+def generate_cyclonedx_obom(rootfs_tar: Path, output_path: Path, *, repo_root: Path) -> Path:
+    """Generate a CycloneDX OS OBOM for the exported rootfs tar.
+
+    The build ledger records declared build inputs. This OBOM is the runtime
+    inventory for what actually ended up in the base image.
+    """
+    import tempfile
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_parent = repo_root / "target" / "tmp"
+    tmp_parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="capsem-obom-", dir=tmp_parent) as tmp:
+        rootfs_dir = Path(tmp) / "rootfs"
+        rootfs_dir.mkdir()
+        run_cmd([
+            "tar",
+            "--exclude=dev/*",
+            "--exclude=proc/*",
+            "--exclude=sys/*",
+            "-xf",
+            str(rootfs_tar),
+            "-C",
+            str(rootfs_dir),
+        ])
+        run_cmd([
+            *_cdxgen_command(),
+            "-t",
+            "os",
+            "-o",
+            str(output_path),
+            str(rootfs_dir),
+        ])
+    _validate_cyclonedx_obom(output_path)
+    return output_path
+
+
 def _blake3_hex(path: Path) -> str:
     """Compute BLAKE3 hash of a file, returning the hex digest."""
     import blake3
@@ -748,12 +803,221 @@ def _blake3_hex(path: Path) -> str:
     return hasher.hexdigest()
 
 
+def _utc_now_iso() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _file_ledger_entry(path: Path, *, base: Path | None = None) -> dict[str, Any]:
+    """Return the immutable ledger identity for a file."""
+    if not path.is_file():
+        raise FileNotFoundError(path)
+    display_path = path
+    if base is not None:
+        try:
+            display_path = path.resolve().relative_to(base.resolve())
+        except ValueError:
+            display_path = path
+    return {
+        "path": display_path.as_posix(),
+        "size": path.stat().st_size,
+        "blake3": _blake3_hex(path),
+    }
+
+
+def _directory_file_entries(directory: Path) -> list[dict[str, Any]]:
+    """Return sorted per-file ledger entries for a build context."""
+    entries: list[dict[str, Any]] = []
+    for path in sorted(p for p in directory.rglob("*") if p.is_file()):
+        entries.append(_file_ledger_entry(path, base=directory))
+    return entries
+
+
+def _directory_tree_hash(directory: Path) -> str:
+    """Hash a directory tree from relative paths and file BLAKE3 hashes."""
+    import blake3
+    hasher = blake3.blake3()
+    for entry in _directory_file_entries(directory):
+        hasher.update(entry["path"].encode())
+        hasher.update(b"\0")
+        hasher.update(str(entry["size"]).encode())
+        hasher.update(b"\0")
+        hasher.update(entry["blake3"].encode())
+        hasher.update(b"\n")
+    return hasher.hexdigest()
+
+
+def _git_revision(repo_root: Path) -> str | None:
+    try:
+        result = run_cmd(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo_root,
+            capture=True,
+            echo=False,
+        )
+        return result.stdout.strip() or None
+    except Exception:
+        return None
+
+
+def _project_version_or_unknown(repo_root: Path) -> str:
+    try:
+        return get_project_version(repo_root)
+    except Exception:
+        return "unknown"
+
+
+def _append_build_ledger(arch_output: Path, record: dict[str, Any]) -> Path:
+    """Append one JSON record to the per-arch build ledger."""
+    arch_output.mkdir(parents=True, exist_ok=True)
+    ledger_path = arch_output / BUILD_LEDGER_NAME
+    full_record = {
+        "schema": "capsem.build_ledger.v1",
+        "timestamp": _utc_now_iso(),
+        **record,
+    }
+    with ledger_path.open("a") as f:
+        f.write(json.dumps(full_record, sort_keys=True) + "\n")
+    return ledger_path
+
+
+def _build_input_record(
+    *,
+    repo_root: Path,
+    arch_name: str,
+    template: str,
+    template_name: str,
+    context_dir: Path,
+    dockerfile_path: Path,
+    docker_tag: str,
+    docker_platform: str,
+    runtime: str,
+) -> dict[str, Any]:
+    return {
+        "arch": arch_name,
+        "template": template,
+        "template_name": template_name,
+        "runtime": runtime,
+        "docker_tag": docker_tag,
+        "docker_platform": docker_platform,
+        "project_version": _project_version_or_unknown(repo_root),
+        "git_revision": _git_revision(repo_root),
+        "dockerfile": _file_ledger_entry(dockerfile_path, base=context_dir),
+        "build_context": {
+            "hash": _directory_tree_hash(context_dir),
+            "files": _directory_file_entries(context_dir),
+        },
+    }
+
+
+def _path_input_record(path_value: str | None) -> dict[str, Any] | None:
+    """Return debug identity for a profile-provided path when it exists."""
+    if not path_value:
+        return None
+    path = Path(path_value)
+    record: dict[str, Any] = {"path": path.as_posix()}
+    if path.is_file():
+        record["file"] = _file_ledger_entry(path)
+    elif path.is_dir():
+        record["directory"] = {
+            "hash": _directory_tree_hash(path),
+            "files": _directory_file_entries(path),
+        }
+    else:
+        record["exists"] = False
+    return record
+
+
+def _package_config_record(config: GuestImageConfig) -> dict[str, Any]:
+    """Record declared package config inputs, not installed package state."""
+    package_inputs: dict[str, Any] = {}
+    for key, package_set in sorted(config.package_sets.items()):
+        package_inputs[key] = {
+            "manager": package_set.manager.value,
+            "install_cmd": package_set.install_cmd,
+            "packages": list(package_set.packages),
+            "version_commands": dict(sorted(package_set.version_commands.items())),
+        }
+    return package_inputs
+
+
+def _rootfs_config_input_record(
+    config: GuestImageConfig,
+    arch_name: str,
+) -> dict[str, Any]:
+    """Build the rootfs debug ledger record for declared config inputs.
+
+    This record is intentionally not an installed-package ledger. Installed
+    package/component truth belongs to the CycloneDX OBOM generated from the
+    produced rootfs. The build ledger records the config and profile inputs we
+    fed into the build so failures can be retraced.
+    """
+    ctx = _rootfs_context(config, arch_name)
+    erofs = config.build.erofs
+    return {
+        "stage": "rootfs.config_inputs",
+        "arch": arch_name,
+        "package_inputs": _package_config_record(config),
+        "rendered_rootfs_inputs": {
+            "apt_packages": list(ctx["apt_packages"]),
+            "python_packages": list(ctx["python_packages"]),
+            "python_install_cmd": ctx["python_install_cmd"],
+            "npm_packages": list(ctx["npm_packages"]),
+            "npm_prefix": ctx["npm_prefix"],
+            "curl_installs": list(ctx["curl_installs"]),
+        },
+        "profile_inputs": {
+            "root_seed": {
+                "enabled": config.profile_root_seed,
+                "source": _path_input_record(config.profile_root_seed_path),
+            },
+            "build_script": {
+                "enabled": config.profile_build_script,
+                "source": _path_input_record(config.profile_build_script_path),
+            },
+        },
+        "erofs": {
+            "enabled": erofs.enabled,
+            "compression": erofs.compression.value,
+            "compression_level": erofs.compression_level,
+            "cluster_size": erofs.cluster_size,
+        },
+    }
+
+
 def _select_rootfs_asset(asset_dir: Path) -> str | None:
     """Return the canonical rootfs asset name for a directory."""
     for filename in ROOTFS_ASSET_PREFERENCE:
         if (asset_dir / filename).is_file():
             return filename
     return None
+
+
+def _next_or_existing_asset_version(
+    output_dir: Path,
+    date_prefix: str,
+    arch_assets: dict[str, dict[str, dict]],
+) -> str:
+    manifest_path = output_dir / "manifest.json"
+    patch = 1
+    if not manifest_path.is_file():
+        return f"{date_prefix}.{patch}"
+    try:
+        existing = json.loads(manifest_path.read_text())
+    except json.JSONDecodeError:
+        return f"{date_prefix}.{patch}"
+    assets = existing.get("assets", {})
+    releases = assets.get("releases", {})
+    current = assets.get("current")
+    if current in releases and releases[current].get("arches", {}) == arch_assets:
+        return current
+    for version in releases:
+        if not version.startswith(f"{date_prefix}."):
+            continue
+        try:
+            patch = max(patch, int(version.rsplit(".", 1)[1]) + 1)
+        except ValueError:
+            continue
+    return f"{date_prefix}.{patch}"
 
 
 def generate_checksums(output_dir: Path, version: str) -> Path:
@@ -763,19 +1027,44 @@ def generate_checksums(output_dir: Path, version: str) -> Path:
     all_files: list[str] = []
     for arch_dir in sorted(arch_dirs):
         arch_name = arch_dir.name
+        rootfs_name = _select_rootfs_asset(arch_dir)
+        arch_has_assets = rootfs_name is not None or (arch_dir / OBOM_ASSET).is_file() or any(
+            (arch_dir / filename).is_file() for filename in BOOT_ASSETS
+        )
+        if arch_has_assets:
+            for filename in BOOT_ASSETS:
+                if not (arch_dir / filename).is_file():
+                    raise FileNotFoundError(f"{arch_dir / filename}")
+            if rootfs_name is None:
+                raise FileNotFoundError(f"{arch_dir / 'rootfs.erofs'}")
         for filename in BOOT_ASSETS:
             if (arch_dir / filename).is_file():
                 all_files.append(f"{arch_name}/{filename}")
-        if rootfs_name := _select_rootfs_asset(arch_dir):
+        if rootfs_name:
             all_files.append(f"{arch_name}/{rootfs_name}")
+        if (arch_dir / OBOM_ASSET).is_file():
+            all_files.append(f"{arch_name}/{OBOM_ASSET}")
 
     if not all_files:
         # Flat layout fallback
+        flat_rootfs_name = _select_rootfs_asset(output_dir)
+        flat_has_assets = flat_rootfs_name is not None or (output_dir / OBOM_ASSET).is_file() or any(
+            (output_dir / f).is_file() for f in BOOT_ASSETS
+        )
+        if flat_has_assets:
+            for filename in BOOT_ASSETS:
+                if not (output_dir / filename).is_file():
+                    raise FileNotFoundError(f"{output_dir / filename}")
+            if flat_rootfs_name is None:
+                raise FileNotFoundError(f"{output_dir / 'rootfs.erofs'}")
         for f in BOOT_ASSETS:
             if (output_dir / f).is_file():
                 all_files.append(f)
-        if rootfs_name := _select_rootfs_asset(output_dir):
+        if flat_rootfs_name:
+            rootfs_name = flat_rootfs_name
             all_files.append(rootfs_name)
+        if (output_dir / OBOM_ASSET).is_file():
+            all_files.append(OBOM_ASSET)
 
     # Compute BLAKE3 hashes using Python blake3 library.
     b3sums_lines = []
@@ -786,12 +1075,6 @@ def generate_checksums(output_dir: Path, version: str) -> Path:
         hashes[filepath] = b3hash
         b3sums_lines.append(f"{b3hash}  {filepath}")
     (output_dir / "B3SUMS").write_text("\n".join(b3sums_lines) + "\n")
-
-    # Build v2 manifest with separate assets/binaries sections
-    import datetime
-    today = datetime.date.today()
-    date_prefix = today.strftime("%Y.%m%d")
-    asset_version = f"{date_prefix}.1"
 
     arch_assets: dict[str, dict[str, dict]] = {}
     for filepath in all_files:
@@ -809,8 +1092,21 @@ def generate_checksums(output_dir: Path, version: str) -> Path:
             "hash": b3hash, "size": size,
         }
 
+    # Build v2 manifest with separate assets/binaries sections. Reuse the
+    # current release for identical assets so dev initrd repacks do not mint
+    # endless no-op asset versions.
+    import datetime
+    today = datetime.date.today()
+    date_prefix = today.strftime("%Y.%m%d")
+    asset_version = _next_or_existing_asset_version(
+        output_dir,
+        date_prefix,
+        arch_assets,
+    )
+
     manifest = {
         "format": 2,
+        "refresh_policy": "24h",
         "assets": {
             "current": asset_version,
             "releases": {
@@ -864,6 +1160,7 @@ def prepare_build_context(
     **kwargs: Any,
 ) -> Path:
     """Write rendered Dockerfile and copy required files into a build context."""
+    guest_dir = Path(config.guest_dir_path) if config.guest_dir_path else repo_root / "guest"
     # Render Dockerfile
     dockerfile_content = render_dockerfile(template_name, config, arch_name, **kwargs)
     dockerfile_path = context_dir / "Dockerfile"
@@ -872,10 +1169,10 @@ def prepare_build_context(
     if "rootfs" in template_name:
         # CA cert
         shutil.copy2(
-            str(repo_root / "config" / "capsem-ca.crt"),
+            str(repo_root / "security" / "keys" / "capsem-ca.crt"),
             str(context_dir / "capsem-ca.crt"),
         )
-        artifacts = repo_root / "guest" / "artifacts"
+        artifacts = guest_dir / "artifacts"
         for name in ("capsem-bashrc", "banner.txt", "tips.txt"):
             shutil.copy2(
                 str(artifacts / name),
@@ -896,19 +1193,37 @@ def prepare_build_context(
             src = artifacts / name
             if src.is_dir():
                 shutil.copytree(str(src), str(context_dir / name), dirs_exist_ok=True)
+        if config.profile_root_seed:
+            if not config.profile_root_seed_path:
+                raise FileNotFoundError("profile_root_seed_path")
+            profile_root = Path(config.profile_root_seed_path)
+            if not profile_root.is_dir():
+                raise FileNotFoundError(profile_root)
+            shutil.copytree(
+                str(profile_root),
+                str(context_dir / "profile-root"),
+                dirs_exist_ok=True,
+            )
+        if config.profile_build_script:
+            if not config.profile_build_script_path:
+                raise FileNotFoundError("profile_build_script_path")
+            profile_build = Path(config.profile_build_script_path)
+            if not profile_build.is_file():
+                raise FileNotFoundError(profile_build)
+            shutil.copy2(str(profile_build), str(context_dir / "profile-build.sh"))
         # Agent binaries (if they exist in context already from cross_compile_agent)
         # They may have been copied to context_dir by the pipeline before this call
 
     elif "kernel" in template_name:
         # Defconfig -- preserve directory structure for COPY {{ arch.defconfig }}
         arch = config.build.architectures[arch_name]
-        defconfig_src = repo_root / "guest" / "config" / arch.defconfig
+        defconfig_src = guest_dir / "config" / arch.defconfig
         defconfig_dst = context_dir / arch.defconfig
         defconfig_dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(str(defconfig_src), str(defconfig_dst))
         # capsem-init
         shutil.copy2(
-            str(repo_root / "guest" / "artifacts" / "capsem-init"),
+            str(guest_dir / "artifacts" / "capsem-init"),
             str(context_dir / "capsem-init"),
         )
 
@@ -978,9 +1293,20 @@ def build_image(
                 kernel_version = resolve_kernel_version(arch.kernel_branch)
             print(f"Kernel: {kernel_version}")
 
-            prepare_build_context(
+            dockerfile_path = prepare_build_context(
                 config, arch_name, template_name, context_dir, repo_root,
                 kernel_version=kernel_version,
+            )
+            build_inputs = _build_input_record(
+                repo_root=repo_root,
+                arch_name=arch_name,
+                template=template,
+                template_name=template_name,
+                context_dir=context_dir,
+                dockerfile_path=dockerfile_path,
+                docker_tag=tag,
+                docker_platform=arch.docker_platform,
+                runtime=runtime,
             )
             docker_build(
                 runtime, tag, context_dir / "Dockerfile", context_dir,
@@ -992,6 +1318,15 @@ def build_image(
                 runtime, tag, arch.docker_platform, arch_output,
             )
             remove_image(runtime, tag)
+            _append_build_ledger(arch_output, {
+                "stage": "kernel.assets",
+                "inputs": build_inputs,
+                "kernel_version": kernel_version,
+                "outputs": [
+                    _file_ledger_entry(vmlinuz, base=arch_output),
+                    _file_ledger_entry(initrd, base=arch_output),
+                ],
+            })
             print(f"  vmlinuz:    {vmlinuz}")
             print(f"  initrd.img: {initrd}")
 
@@ -1002,8 +1337,23 @@ def build_image(
             for b in binaries:
                 print(f"  {b.name}: {b.stat().st_size} bytes")
 
-            prepare_build_context(
+            dockerfile_path = prepare_build_context(
                 config, arch_name, template_name, context_dir, repo_root,
+            )
+            build_inputs = _build_input_record(
+                repo_root=repo_root,
+                arch_name=arch_name,
+                template=template,
+                template_name=template_name,
+                context_dir=context_dir,
+                dockerfile_path=dockerfile_path,
+                docker_tag=tag,
+                docker_platform=arch.docker_platform,
+                runtime=runtime,
+            )
+            _append_build_ledger(
+                arch_output,
+                _rootfs_config_input_record(config, arch_name),
             )
             docker_build(
                 runtime, tag, context_dir / "Dockerfile", context_dir,
@@ -1014,40 +1364,68 @@ def build_image(
             tar_path = arch_output / "rootfs.tar"
             print("Exporting rootfs filesystem...")
             export_container_fs(runtime, tag, arch.docker_platform, tar_path)
-
-            print(f"Creating squashfs ({config.build.compression.value} compression)...")
-            squashfs_path = arch_output / "rootfs.squashfs"
-            create_squashfs(
-                runtime, tar_path, squashfs_path,
-                config.build.compression.value,
-                config.build.compression_level,
-            )
+            tar_entry = _file_ledger_entry(tar_path, base=arch_output)
+            _append_build_ledger(arch_output, {
+                "stage": "rootfs.export",
+                "inputs": build_inputs,
+                "intermediates": [tar_entry],
+            })
 
             erofs_enabled, erofs_compression, erofs_cluster_size, erofs_level = (
-                experimental_erofs_build_config()
+                experimental_erofs_build_config(defaults=config.build.erofs)
             )
+            if not erofs_enabled:
+                raise ValueError("EROFS build cannot be disabled for the 1.3 asset contract")
             erofs_path = arch_output / "rootfs.erofs"
-            if erofs_enabled:
-                print(
-                    f"Creating EROFS ({erofs_compression} compression"
-                    f"{', level ' + erofs_level if erofs_level else ''}"
-                    f"{', cluster ' + erofs_cluster_size if erofs_cluster_size else ''})..."
-                )
-                create_erofs(
-                    runtime, tar_path, erofs_path,
-                    erofs_compression,
-                    erofs_cluster_size,
-                    erofs_level,
-                )
+            print(
+                f"Creating EROFS ({erofs_compression} compression"
+                f"{', level ' + erofs_level if erofs_level else ''}"
+                f"{', cluster ' + erofs_cluster_size if erofs_cluster_size else ''})..."
+            )
+            create_erofs(
+                runtime, tar_path, erofs_path,
+                erofs_compression,
+                erofs_cluster_size,
+                erofs_level,
+            )
+            erofs_entry = _file_ledger_entry(erofs_path, base=arch_output)
+            _append_build_ledger(arch_output, {
+                "stage": "rootfs.erofs",
+                "inputs": build_inputs,
+                "intermediates": [tar_entry],
+                "erofs": {
+                    "compression": erofs_compression,
+                    "compression_level": erofs_level,
+                    "cluster_size": erofs_cluster_size,
+                    "utils_image": erofs_utils_image_for(erofs_compression),
+                },
+                "outputs": [erofs_entry],
+            })
+            print("Generating CycloneDX OBOM...")
+            obom_path = arch_output / OBOM_ASSET
+            generate_cyclonedx_obom(tar_path, obom_path, repo_root=repo_root)
+            obom_entry = _file_ledger_entry(obom_path, base=arch_output)
+            _append_build_ledger(arch_output, {
+                "stage": "rootfs.obom",
+                "inputs": build_inputs,
+                "intermediates": [tar_entry],
+                "generator": "cdxgen",
+                "outputs": [obom_entry],
+            })
             tar_path.unlink(missing_ok=True)
 
             print("Extracting tool versions...")
             extract_tool_versions(runtime, tag, arch.docker_platform, arch_output, config)
+            versions_path = arch_output / "tool-versions.txt"
+            if versions_path.is_file():
+                _append_build_ledger(arch_output, {
+                    "stage": "rootfs.tool_versions",
+                    "inputs": build_inputs,
+                    "outputs": [_file_ledger_entry(versions_path, base=arch_output)],
+                })
             remove_image(runtime, tag)
 
-            print(f"  rootfs.squashfs: {squashfs_path}")
-            if erofs_enabled:
-                print(f"  rootfs.erofs:    {erofs_path}")
+            print(f"  rootfs.erofs:    {erofs_path}")
 
 
 def build_all_architectures(

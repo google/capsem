@@ -1,5 +1,5 @@
 ---
-name: organize-skills
+name: meta-organize-skills
 description: Use when creating, reorganizing, or maintaining the skills/ directory. Covers the shared skill layout conventions, directory structure, SKILL.md format, symlink architecture, and how to add or restructure skills so both Claude Code and Gemini CLI discover them.
 ---
 

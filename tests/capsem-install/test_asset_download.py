@@ -77,6 +77,7 @@ def _make_manifest(arch: str, files: dict[str, bytes]) -> dict:
     """Build a minimal v2 manifest for the given arch + byte blobs."""
     return {
         "format": 2,
+        "refresh_policy": "24h",
         "assets": {
             "current": "2030.0101.1",
             "releases": {

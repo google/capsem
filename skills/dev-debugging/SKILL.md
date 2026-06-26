@@ -18,7 +18,7 @@ Before touching any implementation code, write a test that captures the bug. Thi
 
 If you can't reproduce it in a test, you don't understand it well enough to fix it. For VM-level issues, use capsem-doctor or write a targeted diagnostic command:
 ```bash
-just run "<command that triggers the bug>"
+just exec "<command that triggers the bug>"
 ```
 
 For telemetry issues, use session inspection:
@@ -35,7 +35,7 @@ With a failing test in hand, investigate. Do not skip this step. Common diagnost
 ```
 capsem_panics { since: "1h" }       # any Rust panic in any host log? -> rank highest
 capsem_triage { id: "vm-1" }        # ranked recent ipc-warns + 4xx/5xx + slow_ops + session.db errors
-capsem_timeline { id: "vm-1", trace_id: "<X>" }   # follow ONE logical operation across exec/mcp/net/fs/model
+capsem_timeline { id: "vm-1", trace_id: "<X>" }   # follow ONE logical operation across exec/tool/net/fs/model
 ```
 
 These read post-W2 JSON logs (`~/.capsem/run/{service,mcp,gateway,tray}.log` + capsem-app's latest jsonl) and post-W6 session.db tables. The W4 `target=fs op=fsync duration_ms=...` markers feed `capsem_triage`'s slow-op rank; the W3 schema_hash check appears in `capsem_panics` output as `IPC handshake failed; refusing connection` events. Always start with `capsem_panics` -- a single panic outranks a hundred warns.
@@ -62,12 +62,17 @@ persistent/<name>/...           persistent-VM state (checkpoint.vzsave, workspac
 
 **Guest VM issues**: Boot with targeted commands and inspect behavior:
 ```bash
-just run "capsem-doctor -k <category>"   # Run specific diagnostic category
-just run "<manual investigation command>"
+just exec "capsem-doctor -k <category>"   # Run specific diagnostic category
+just exec "<manual investigation command>"
 ```
 Check boot logs for daemon startup failures, vsock connection issues, or timing problems.
 
-**Network/policy issues**: Check the MITM proxy path -- SNI parsing, domain policy evaluation, HTTP rule matching, cert minting. Use session DB to see what actually happened:
+**Network/security issues**: Check the network intercept path -- SNI parsing,
+HTTP/DNS/model normalization, cert minting, `SecurityEvent` construction,
+security rule evaluation, plugin execution, runtime materialization, and ledger
+materialization. Do not debug by adding credential handling to formatters,
+routes, DB readers, frontend transforms, or harnesses. Use session DB to see
+what actually happened:
 ```bash
 just inspect-session   # Check net_events for domain, decision, status_code
 ```
@@ -76,10 +81,22 @@ just inspect-session   # Check net_events for domain, decision, status_code
 
 **Build pipeline issues**: Check `target/build.log` -- all build infrastructure (runner, code signing, generation scripts) logs here. The runner (`scripts/run_signed.sh`) and `_generate-settings` recipe both append to this file. Never write diagnostics to stdout from build scripts (it contaminates binary output like `mcp-export`).
 
-**Telemetry pipeline issues**: The six tables (net_events, model_calls, tool_calls, tool_responses, mcp_calls, fs_events) each have their own pipeline. If a table is empty or has wrong data:
+**Telemetry pipeline issues**: The canonical session ledgers (net_events, model_calls, tool_calls, tool_responses, fs_events, dns_events, security_rule_events) each have their own boundary. If a table is empty or has wrong data:
 - Check if the guest daemon started (boot logs)
 - Check if the vsock connection was accepted (host logs)
 - Check timing -- did the VM shut down before the debouncer flushed? (add `sleep 1`)
+
+For route latency or stale stats, do not add service-owned logged-data
+projections. Logged-data hot state belongs inside the logger DB object as
+table-level `mem`/disk ownership with DB-layer tests and benchmarks. Service
+routes may describe the query they need, but production service code must not
+open rusqlite connections or `DbReader` directly.
+
+Do not "fix" route latency by hardcoding route-specific query helpers in
+`DbWriter`, by adding service caches, or by swallowing missing tables/columns as
+empty data. The correct diagnosis target is the DB object: connection/thread
+ownership, `mem`/disk layout, batching, flush, rehydration, and query execution.
+If the schema is missing, surface the broken ledger contract.
 
 Write down what you find. The diagnosis should explain *why* the bug exists, not just *where* the symptom appears.
 
@@ -122,7 +139,7 @@ Now that you understand the root cause, write the fix. The fix should:
 
 After the fix, run the full validation:
 1. `just test` -- unit + cross-compile + frontend
-2. `just run "capsem-doctor"` -- VM smoke test
+2. `just exec "capsem-doctor"` -- VM smoke test
 3. If the bug touched telemetry: `just inspect-session` after a real session
 
 ## What NOT to do

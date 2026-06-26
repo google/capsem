@@ -11,9 +11,9 @@ sidebar:
 |---------|-------|-----|
 | `codesign: command not found` | Xcode CLTools not installed | `xcode-select --install` |
 | Entitlement crash on launch | Binary not codesigned | `just doctor` to diagnose, then `just run` (signs automatically) |
-| `CAPSEM_ASSETS_DIR` error | Assets not built | `just build-assets` (first time only) |
-| `vmlinuz not found` | Missing kernel asset | `just build-kernel` |
-| `rootfs.img not found` | Missing rootfs asset | `just build-rootfs` |
+| `CAPSEM_ASSETS_DIR` error | Assets not built | `just build-assets code` (first time only) |
+| `vmlinuz not found` | Missing kernel asset | `just build-kernel <arch> code` |
+| `rootfs.erofs not found` | Missing rootfs asset | `just build-rootfs <arch> code` |
 
 ## Boot hangs or times out
 
@@ -28,7 +28,7 @@ sidebar:
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | `curl: (60) SSL certificate problem` | CA bundle not injected | Check `capsem-doctor -k "ca_env"` |
-| Domain blocked unexpectedly | Not in allow list | Check `~/.capsem/user.toml` domain policy |
+| Domain blocked unexpectedly | Matching block/ask rule | Check the active profile/corp enforcement rules and the VM security ledger |
 | All HTTPS fails | MITM proxy not running | Check `capsem-doctor -k "net_proxy"` for L2 status |
 | Slow downloads | Expected for air-gapped proxy | All traffic routes through the MITM proxy by design |
 
@@ -37,8 +37,8 @@ sidebar:
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | `claude: command not found` | Not in PATH | Check `/opt/ai-clis/bin` is in PATH: `echo $PATH` |
-| `disabled by policy` at boot | API key not configured | Add key to `~/.capsem/user.toml` |
-| CLI hangs on first run | Waiting for network it can't reach | Check provider is in the domain allow list |
+| `disabled by policy` at boot | Profile/corp rule or broker state blocked materialization | Check profile rules, corp rules, and credential broker status |
+| CLI hangs on first run | Waiting for network it can't reach | Check provider HTTP/DNS rules and brokered credential state |
 
 ## Disk full / Colima eating all disk space
 
@@ -61,10 +61,10 @@ colima ssh -- docker system df              # Docker usage inside VM
 When something goes wrong, `capsem-doctor` is the fastest way to pinpoint the issue:
 
 ```bash
-just run "capsem-doctor"          # Full diagnostic suite (~10s)
-just run "capsem-doctor -k sandbox"   # Just sandbox/security checks
-just run "capsem-doctor -k network"   # Just network stack
-just run "capsem-doctor -x"           # Stop on first failure
+just exec "capsem-doctor"          # Full diagnostic suite (~10s)
+just exec "capsem-doctor -k sandbox"   # Just sandbox/security checks
+just exec "capsem-doctor -k network"   # Just network stack
+just exec "capsem-doctor -x"           # Stop on first failure
 ```
 
 The test suite is layered L1-L7. Failures at lower layers explain failures at higher layers -- fix from the bottom up.

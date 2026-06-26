@@ -10,6 +10,7 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+anyhow = { workspace = true }
 rusqlite = { workspace = true }
 humantime = { workspace = true }
 tokio = { workspace = true }
@@ -27,7 +28,12 @@ workspace = true
 tempfile = "3"
 metrics-util = "0.19"
 criterion = { version = "0.5", features = ["html_reports"] }
+memmap2 = "0.9"
 
 [[bench]]
 name = "db_writer_pressure"
+harness = false
+
+[[bench]]
+name = "db_read_write_micro"
 harness = false

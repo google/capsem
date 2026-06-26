@@ -1,4 +1,4 @@
-use super::types::{PolicyCallback, PolicySubject};
+use super::types::PolicySubject;
 
 #[derive(Debug, Clone)]
 pub struct CompiledCondition {
@@ -42,21 +42,9 @@ impl CompiledCondition {
     where
         F: Fn(&str) -> Result<(), String>,
     {
-        let raw_clauses = split_disjunction(condition)?;
-        if raw_clauses.is_empty() {
+        let clauses = parse_clauses(condition, &validate)?;
+        if clauses.is_empty() {
             return Err("policy condition must not be empty".into());
-        }
-        let mut clauses = Vec::with_capacity(raw_clauses.len());
-        for clause in raw_clauses {
-            let raw_atoms = split_conjunction(clause)?;
-            if raw_atoms.is_empty() {
-                return Err("policy condition contains an empty CEL term".into());
-            }
-            let mut atoms = Vec::with_capacity(raw_atoms.len());
-            for atom in raw_atoms {
-                atoms.push(ConditionAtom::parse_with(atom, &validate)?);
-            }
-            clauses.push(ConditionClause { atoms });
         }
         Ok(Self { clauses })
     }
@@ -79,6 +67,48 @@ impl CompiledCondition {
         }
         Ok(false)
     }
+}
+
+fn parse_clauses<F>(condition: &str, validate: &F) -> Result<Vec<ConditionClause>, String>
+where
+    F: Fn(&str) -> Result<(), String>,
+{
+    let condition = strip_outer_grouping(condition.trim())?;
+    let raw_clauses = split_disjunction(condition)?;
+    if raw_clauses.len() > 1 {
+        let mut clauses = Vec::new();
+        for clause in raw_clauses {
+            clauses.extend(parse_clauses(clause, validate)?);
+        }
+        return Ok(clauses);
+    }
+
+    let raw_terms = split_conjunction(condition)?;
+    if raw_terms.is_empty() {
+        return Err("policy condition contains an empty CEL term".into());
+    }
+    let mut clauses = vec![ConditionClause { atoms: Vec::new() }];
+    for term in raw_terms {
+        let term = strip_outer_grouping(term.trim())?;
+        if contains_top_level_operator(term, "||")? || contains_top_level_operator(term, "&&")? {
+            let nested = parse_clauses(term, validate)?;
+            let mut expanded = Vec::new();
+            for existing in &clauses {
+                for nested_clause in &nested {
+                    let mut atoms = existing.atoms.clone();
+                    atoms.extend(nested_clause.atoms.clone());
+                    expanded.push(ConditionClause { atoms });
+                }
+            }
+            clauses = expanded;
+        } else {
+            let atom = ConditionAtom::parse_with(term, validate)?;
+            for clause in &mut clauses {
+                clause.atoms.push(atom.clone());
+            }
+        }
+    }
+    Ok(clauses)
 }
 
 impl ConditionAtom {
@@ -184,24 +214,6 @@ impl ConditionAtom {
     }
 }
 
-pub(super) fn validate_policy_condition(
-    callback: PolicyCallback,
-    condition: &str,
-) -> Result<(), String> {
-    validate_condition_with(condition, |field| validate_field(callback, field))
-}
-
-pub(super) fn evaluate_policy_condition<S>(
-    callback: PolicyCallback,
-    condition: &str,
-    subject: &S,
-) -> Result<bool, String>
-where
-    S: PolicySubject + ?Sized,
-{
-    evaluate_condition_with(condition, subject, |field| validate_field(callback, field))
-}
-
 pub(super) fn validate_condition_with<F>(condition: &str, validate: F) -> Result<(), String>
 where
     F: Fn(&str) -> Result<(), String>,
@@ -227,6 +239,10 @@ fn split_disjunction(condition: &str) -> Result<Vec<&str>, String> {
 
 fn split_conjunction(condition: &str) -> Result<Vec<&str>, String> {
     split_top_level_operator(condition, "&&")
+}
+
+fn contains_top_level_operator(condition: &str, operator: &str) -> Result<bool, String> {
+    Ok(split_top_level_operator(condition, operator)?.len() > 1)
 }
 
 fn split_top_level_operator<'a>(
@@ -291,6 +307,62 @@ fn split_top_level_operator<'a>(
     }
     atoms.push(atom);
     Ok(atoms)
+}
+
+fn strip_outer_grouping(mut value: &str) -> Result<&str, String> {
+    loop {
+        let trimmed = value.trim();
+        if !(trimmed.starts_with('(') && trimmed.ends_with(')')) {
+            return Ok(trimmed);
+        }
+        if outer_parens_wrap(trimmed)? {
+            value = &trimmed[1..trimmed.len() - 1];
+        } else {
+            return Ok(trimmed);
+        }
+    }
+}
+
+fn outer_parens_wrap(value: &str) -> Result<bool, String> {
+    let mut quote = None;
+    let mut escaped = false;
+    let mut paren_depth = 0usize;
+    let bytes = value.as_bytes();
+
+    for (index, byte) in bytes.iter().enumerate() {
+        let ch = *byte as char;
+        if let Some(active_quote) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == active_quote {
+                quote = None;
+            }
+            continue;
+        }
+
+        match ch {
+            '\'' | '"' => quote = Some(ch),
+            '(' => paren_depth += 1,
+            ')' => {
+                paren_depth = paren_depth
+                    .checked_sub(1)
+                    .ok_or_else(|| "policy condition has unmatched ')'".to_string())?;
+                if paren_depth == 0 && index != bytes.len() - 1 {
+                    return Ok(false);
+                }
+            }
+            _ => {}
+        }
+    }
+    if quote.is_some() {
+        return Err("policy condition has an unterminated string literal".into());
+    }
+    if paren_depth != 0 {
+        return Err("policy condition has unmatched '('".into());
+    }
+    Ok(true)
 }
 
 fn parse_method_call<'a>(
@@ -427,150 +499,4 @@ fn parse_string_literal(value: &str) -> Result<String, String> {
     }
 
     Err("policy condition has an unterminated string literal".into())
-}
-
-fn validate_field(callback: PolicyCallback, field: &str) -> Result<(), String> {
-    if !is_valid_field_path(field) {
-        return Err(format!("invalid CEL field path: {field}"));
-    }
-    if field_allowed(callback, field) {
-        return Ok(());
-    }
-    Err(format!(
-        "field '{field}' is not available on policy callback {:?}",
-        callback
-    ))
-}
-
-fn is_valid_field_path(field: &str) -> bool {
-    !field.is_empty()
-        && field.split('.').all(|part| {
-            let mut chars = part.chars();
-            matches!(chars.next(), Some(ch) if ch == '_' || ch.is_ascii_alphabetic())
-                && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
-        })
-}
-
-fn field_allowed(callback: PolicyCallback, field: &str) -> bool {
-    let (exact, prefixes): (&[&str], &[&str]) = match callback {
-        PolicyCallback::McpRequest => (
-            &[
-                "method",
-                "request.id",
-                "server.name",
-                "tool.name",
-                "resource.uri",
-            ],
-            &["arguments"],
-        ),
-        PolicyCallback::McpResponse => (
-            &[
-                "method",
-                "request.id",
-                "server.name",
-                "tool.name",
-                "response.text",
-                "response.content",
-                "response.is_error",
-            ],
-            &["arguments", "response"],
-        ),
-        PolicyCallback::HttpRequest => (
-            &[
-                "request.scheme",
-                "request.host",
-                "request.port",
-                "request.method",
-                "request.path",
-                "request.query",
-                "request.url",
-                "credential.provider",
-                "credential.ref",
-            ],
-            &["request.headers"],
-        ),
-        PolicyCallback::HttpResponse => (
-            &[
-                "request.scheme",
-                "request.host",
-                "request.port",
-                "request.method",
-                "request.path",
-                "request.query",
-                "request.url",
-                "response.status",
-                "response.body",
-                "response.text",
-            ],
-            &["request.headers", "response.headers"],
-        ),
-        PolicyCallback::DnsQuery => (
-            &["qname", "qtype", "protocol", "process.name"],
-            &[] as &[&str],
-        ),
-        PolicyCallback::DnsResponse => (
-            &["qname", "qtype", "rcode", "protocol", "process.name"],
-            &["answer"],
-        ),
-        PolicyCallback::ModelRequest => (
-            &[
-                "provider",
-                "endpoint",
-                "model",
-                "protocol",
-                "system_prompt",
-                "request.body",
-                "messages_count",
-                "tools_count",
-                "credential.provider",
-                "credential.ref",
-            ],
-            &["request.headers", "messages"],
-        ),
-        PolicyCallback::ModelResponse => (
-            &[
-                "provider",
-                "model",
-                "response.text",
-                "text",
-                "content",
-                "thinking_content",
-                "stop_reason",
-            ],
-            &["response"],
-        ),
-        PolicyCallback::ModelToolCall => (
-            &["provider", "model", "tool.name", "tool.call_id"],
-            &["tool.arguments"],
-        ),
-        PolicyCallback::ModelToolResponse => (
-            &[
-                "provider",
-                "model",
-                "tool.name",
-                "tool.call_id",
-                "content",
-                "response.content",
-                "is_error",
-            ],
-            &["tool.arguments", "response"],
-        ),
-        PolicyCallback::FileImport => (
-            &["path", "name", "ext", "mime_type", "content"],
-            &["file", "import"],
-        ),
-        PolicyCallback::FileExport => (
-            &["path", "name", "ext", "mime_type", "content"],
-            &["file", "export"],
-        ),
-        PolicyCallback::HookDecision => (
-            &["callback", "decision", "rule.id", "endpoint.id"],
-            &["request", "response"],
-        ),
-    };
-
-    exact.contains(&field)
-        || prefixes
-            .iter()
-            .any(|prefix| field == *prefix || field.starts_with(&format!("{prefix}.")))
 }

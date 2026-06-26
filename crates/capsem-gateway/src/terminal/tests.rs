@@ -2,6 +2,7 @@
 
 use super::*;
 use std::path::Path;
+use tokio::sync::oneshot;
 
 // --- validate_vm_id ---
 
@@ -96,6 +97,65 @@ fn rejects_id_starting_with_underscore() {
 #[test]
 fn rejects_null_bytes() {
     assert!(validate_vm_id("vm\0id").is_err());
+}
+
+// --- terminal relay batching ---
+
+#[test]
+fn text_relay_batch_merges_until_the_size_cap_then_flushes() {
+    let mut pending = None;
+
+    assert!(queue_text_batch(&mut pending, String::new()).is_none());
+    assert!(pending.is_none(), "empty text frames must be ignored");
+    assert!(queue_text_batch(&mut pending, "ab".to_string()).is_none());
+    assert!(queue_text_batch(&mut pending, "cd".to_string()).is_none());
+    assert_text_batch(&pending, "abcd");
+
+    let fill = "x".repeat(TERMINAL_RELAY_BATCH_MAX_BYTES - 4);
+    let flushed = queue_text_batch(&mut pending, fill).expect("batch should flush at cap");
+    let expected = "abcd".to_string() + &"x".repeat(TERMINAL_RELAY_BATCH_MAX_BYTES - 4);
+    assert_text_batch(&Some(flushed), &expected);
+    assert!(
+        pending.is_none(),
+        "full text batch should leave no pending frame"
+    );
+}
+
+#[test]
+fn binary_relay_batch_merges_until_the_size_cap_then_flushes() {
+    let mut pending = None;
+
+    assert!(queue_binary_batch(&mut pending, Vec::new()).is_none());
+    assert!(pending.is_none(), "empty binary frames must be ignored");
+    assert!(queue_binary_batch(&mut pending, vec![1, 2]).is_none());
+    assert!(queue_binary_batch(&mut pending, vec![3, 4]).is_none());
+    assert_binary_batch(&pending, &[1, 2, 3, 4]);
+
+    let fill = vec![9; TERMINAL_RELAY_BATCH_MAX_BYTES - 4];
+    let flushed = queue_binary_batch(&mut pending, fill).expect("batch should flush at cap");
+    let mut expected = vec![1, 2, 3, 4];
+    expected.extend(std::iter::repeat_n(9, TERMINAL_RELAY_BATCH_MAX_BYTES - 4));
+    assert_binary_batch(&Some(flushed), &expected);
+    assert!(
+        pending.is_none(),
+        "full binary batch should leave no pending frame"
+    );
+}
+
+#[test]
+fn relay_batch_flushes_when_frame_type_changes() {
+    let mut pending = None;
+
+    assert!(queue_text_batch(&mut pending, "hello".to_string()).is_none());
+    let flushed = queue_binary_batch(&mut pending, vec![1, 2, 3])
+        .expect("binary frame should flush pending text first");
+    assert_text_batch(&Some(flushed), "hello");
+    assert_binary_batch(&pending, &[1, 2, 3]);
+
+    let flushed = queue_text_batch(&mut pending, "world".to_string())
+        .expect("text frame should flush pending binary first");
+    assert_binary_batch(&Some(flushed), &[1, 2, 3]);
+    assert_text_batch(&pending, "world");
 }
 
 // --- terminal_uds_path ---
@@ -681,6 +741,133 @@ async fn websocket_relay_process_sends_binary_and_ping() {
 }
 
 #[tokio::test]
+async fn websocket_relay_coalesces_process_text_bursts() {
+    let (url, mh, sh, _d) = ws_test_setup("p2c-coalesce-vm", |uds| {
+        tokio::spawn(async move {
+            if let Ok((stream, _)) = uds.accept().await {
+                let ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+                let (mut write, _read) = ws.split();
+                write
+                    .send(TungsteniteMessage::Text("alpha ".into()))
+                    .await
+                    .unwrap();
+                write
+                    .send(TungsteniteMessage::Text("beta ".into()))
+                    .await
+                    .unwrap();
+                write
+                    .send(TungsteniteMessage::Text("gamma".into()))
+                    .await
+                    .unwrap();
+            }
+        })
+    })
+    .await;
+
+    let (mut ws, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+
+    let msg = tokio::time::timeout(std::time::Duration::from_secs(2), ws.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    match msg {
+        TungsteniteMessage::Text(t) => assert_eq!(t.to_string(), "alpha beta gamma"),
+        other => panic!("expected coalesced text, got {:?}", other),
+    }
+
+    ws.send(TungsteniteMessage::Close(None)).await.ok();
+    mh.abort();
+    sh.abort();
+}
+
+#[tokio::test]
+async fn websocket_relay_forwards_single_client_input_without_batch_delay() {
+    let (tx, rx) = oneshot::channel::<Vec<u8>>();
+    let (url, mh, sh, _d) = ws_test_setup("c2p-low-latency-vm", move |uds| {
+        tokio::spawn(async move {
+            if let Ok((stream, _)) = uds.accept().await {
+                let ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+                let (_write, mut read) = ws.split();
+                while let Some(Ok(msg)) = read.next().await {
+                    if let TungsteniteMessage::Binary(bytes) = msg {
+                        let _ = tx.send(bytes.to_vec());
+                        break;
+                    }
+                }
+            }
+        })
+    })
+    .await;
+
+    let (mut ws, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+    ws.send(TungsteniteMessage::Binary(vec![b'a'].into()))
+        .await
+        .unwrap();
+
+    let relayed = tokio::time::timeout(TERMINAL_RELAY_BATCH_FLUSH / 2, rx)
+        .await
+        .expect("single terminal input must not wait for the relay batch flush interval")
+        .unwrap();
+    assert_eq!(relayed, vec![b'a']);
+
+    ws.send(TungsteniteMessage::Close(None)).await.ok();
+    mh.abort();
+    sh.abort();
+}
+
+#[tokio::test]
+async fn websocket_relay_coalesces_client_text_bursts() {
+    const EXPECTED_BURST: &str = "cmd --flag value\r";
+
+    let (tx, rx) = oneshot::channel::<String>();
+    let (url, mh, sh, _d) = ws_test_setup("c2p-coalesce-vm", move |uds| {
+        tokio::spawn(async move {
+            if let Ok((stream, _)) = uds.accept().await {
+                let ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+                let (_write, mut read) = ws.split();
+                let mut relayed = String::new();
+                while let Some(Ok(msg)) = read.next().await {
+                    if let TungsteniteMessage::Text(t) = msg {
+                        relayed.push_str(&t);
+                        assert!(
+                            EXPECTED_BURST.starts_with(&relayed),
+                            "relay corrupted client burst prefix: {relayed:?}"
+                        );
+                        if relayed == EXPECTED_BURST {
+                            let _ = tx.send(relayed);
+                            break;
+                        }
+                    }
+                }
+            }
+        })
+    })
+    .await;
+
+    let (mut ws, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+    ws.send(TungsteniteMessage::Text("cmd ".into()))
+        .await
+        .unwrap();
+    ws.send(TungsteniteMessage::Text("--flag ".into()))
+        .await
+        .unwrap();
+    ws.send(TungsteniteMessage::Text("value\r".into()))
+        .await
+        .unwrap();
+
+    let relayed = tokio::time::timeout(std::time::Duration::from_secs(2), rx)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(relayed, EXPECTED_BURST);
+
+    ws.send(TungsteniteMessage::Close(None)).await.ok();
+    mh.abort();
+    sh.abort();
+}
+
+#[tokio::test]
 async fn websocket_relay_process_sends_close_with_frame() {
     // Exercise the p2c Close with CloseFrame path
     let (url, mh, sh, _d) = ws_test_setup("p2close-vm", |uds| {
@@ -793,4 +980,18 @@ async fn websocket_relay_sends_close_frame_on_uds_failure() {
     }
 
     sh.abort();
+}
+
+fn assert_text_batch(batch: &Option<TerminalRelayBatch>, expected: &str) {
+    match batch {
+        Some(TerminalRelayBatch::Text(text)) => assert_eq!(text, expected),
+        _ => panic!("expected text relay batch"),
+    }
+}
+
+fn assert_binary_batch(batch: &Option<TerminalRelayBatch>, expected: &[u8]) {
+    match batch {
+        Some(TerminalRelayBatch::Binary(bytes)) => assert_eq!(bytes, expected),
+        _ => panic!("expected binary relay batch"),
+    }
 }

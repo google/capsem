@@ -73,13 +73,13 @@ export const SECURITY_BLOCKS = [
   },
   {
     badge: "CONTROL",
-    title: "Enterprise-grade policy with user and corp config layers",
+    title: "Enterprise-grade policy with profile and corp config layers",
     description:
-      "User-level config in ~/.capsem/user.toml lets developers customize domain lists and HTTP rules. Corp-level config at /etc/capsem/corp.toml (MDM-distributed) locks down policy with enterprise overrides that users cannot bypass.",
+      "Each profile owns its enforcement, detection, MCP, plugin, and asset configuration. Corp-level config at /etc/capsem/corp.toml (MDM-distributed) locks down policy and reporting with enterprise overrides that users cannot bypass.",
     bullets: [
-      "Domain allow/block with wildcard support",
-      "HTTP method + path matching per domain",
-      "Corp config overrides user config entirely",
+      "Profile-owned CEL enforcement rules",
+      "Detection rules with Sigma import/export",
+      "Corp config locks and reports profile behavior",
     ],
   },
 ] as const;
@@ -122,7 +122,7 @@ export const FAQS = [
   {
     question: "Can I customize which domains are allowed?",
     answer:
-      "Yes. Edit ~/.capsem/user.toml to define domain allow/block lists and per-domain HTTP rules (method + path matching). For enterprise deployments, /etc/capsem/corp.toml provides lockdown that individual users cannot override.",
+      "Yes. Edit the profile's enforcement rules to control HTTP, DNS, MCP, model, file, process, IP, and transport behavior. For enterprise deployments, /etc/capsem/corp.toml provides lockdown that individual users cannot override.",
   },
   {
     question: "Is the VM truly air-gapped?",

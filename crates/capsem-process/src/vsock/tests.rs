@@ -45,6 +45,22 @@ fn classify_lifecycle_port() {
 }
 
 #[test]
+fn classify_audit_port() {
+    assert_eq!(
+        classify_vsock_port(capsem_proto::VSOCK_PORT_AUDIT),
+        VsockPortKind::Audit
+    );
+}
+
+#[test]
+fn classify_dns_proxy_port() {
+    assert_eq!(
+        classify_vsock_port(capsem_proto::VSOCK_PORT_DNS_PROXY),
+        VsockPortKind::DnsProxy
+    );
+}
+
+#[test]
 fn classify_unknown_port() {
     assert_eq!(classify_vsock_port(99999), VsockPortKind::Unknown);
 }
@@ -62,6 +78,88 @@ fn make_conn(port: u32) -> VsockConnection {
     // Dummy fd value (-1) is fine: these tests never read/write the fd,
     // they only exercise the collection and classification logic.
     VsockConnection::new(-1, port, Box::new(()))
+}
+
+fn empty_plugin_policy() -> PluginPolicyHandle {
+    Arc::new(std::sync::RwLock::new(std::collections::BTreeMap::new()))
+}
+
+fn file_import_event_with_content(content: &str) -> capsem_core::security_engine::SecurityEvent {
+    capsem_core::security_engine::SecurityEvent::new(
+        capsem_core::security_engine::RuntimeSecurityEventType::FileImport,
+    )
+    .with_file(capsem_core::security_engine::FileSecurityEvent {
+        import_content: Some(content.to_string()),
+        ..Default::default()
+    })
+}
+
+fn add_plugin_rewrite_marker(
+    event: &mut capsem_core::security_engine::SecurityEvent,
+    plugin_id: &str,
+    stage: capsem_core::security_engine::SecurityPluginStage,
+) {
+    event.record_plugin_execution(capsem_core::security_engine::SecurityPluginExecution {
+        plugin_id: plugin_id.to_string(),
+        stage,
+        applied: true,
+        duration_us: 7,
+    });
+    event.record_detection(capsem_core::security_engine::SecurityDetectionEvent {
+        source: capsem_core::security_engine::SecurityDetectionSource::Plugin,
+        detection_level: capsem_core::net::policy_config::DetectionLevel::Informational,
+        rule_id: None,
+        plugin_id: Some(plugin_id.to_string()),
+        action: None,
+        plugin_mode: Some(capsem_core::net::policy_config::SecurityPluginMode::Rewrite),
+        reason: None,
+    });
+}
+
+#[test]
+fn file_boundary_preview_is_not_rewrite_data() {
+    let preview = b"x".repeat(FILE_SECURITY_CONTENT_PREVIEW_MAX);
+    let preview_text = String::from_utf8(preview.clone()).unwrap();
+    let event = file_import_event_with_content(&preview_text);
+
+    assert_eq!(
+        rewritten_file_content(&preview, 100_000, &event),
+        None,
+        "file boundary previews must not truncate larger data-plane payloads"
+    );
+}
+
+#[test]
+fn file_boundary_logging_rewrite_is_not_data_plane_rewrite() {
+    let original = b"token=secret";
+    let mut event = file_import_event_with_content("token=hash:abc123");
+    add_plugin_rewrite_marker(
+        &mut event,
+        "log_sanitizer",
+        capsem_core::security_engine::SecurityPluginStage::Logging,
+    );
+
+    assert_eq!(
+        rewritten_file_content(original, original.len() as u64, &event),
+        None,
+        "logging plugins sanitize the ledger and must not rewrite guest bytes"
+    );
+}
+
+#[test]
+fn file_boundary_preprocess_rewrite_changes_complete_payload() {
+    let original = b"EICAR";
+    let mut event = file_import_event_with_content("CAPSEM_REWRITTEN_EICAR");
+    add_plugin_rewrite_marker(
+        &mut event,
+        "dummy_pre_eicar",
+        capsem_core::security_engine::SecurityPluginStage::Preprocess,
+    );
+
+    assert_eq!(
+        rewritten_file_content(original, original.len() as u64, &event),
+        Some(b"CAPSEM_REWRITTEN_EICAR".to_vec())
+    );
 }
 
 #[test]
@@ -183,6 +281,7 @@ async fn exec_done_with_empty_stdout_resolves_without_500ms_stall() {
     let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(
         capsem_core::net::policy_config::SecurityRuleSet::new(Vec::new()),
     )));
+    let plugin_policy = empty_plugin_policy();
 
     let id: u64 = 42;
     let (tx, rx) = oneshot::channel::<JobResult>();
@@ -202,6 +301,7 @@ async fn exec_done_with_empty_stdout_resolves_without_500ms_stall() {
         &js,
         &db,
         &security_rules,
+        &plugin_policy,
     )
     .await;
     let elapsed_ms = start.elapsed().as_millis();
@@ -251,6 +351,7 @@ match = 'file.export.path == "/workspace/out.txt" && file.export.content.contain
     )
     .expect("rules compile");
     let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(rules)));
+    let plugin_policy = empty_plugin_policy();
     let js = Arc::new(JobStore::new());
     let id: u64 = 77;
     js.active_file_ops.lock().unwrap().insert(
@@ -271,6 +372,7 @@ match = 'file.export.path == "/workspace/out.txt" && file.export.content.contain
         &js,
         &db,
         &security_rules,
+        &plugin_policy,
     )
     .await;
 
@@ -334,6 +436,7 @@ match = 'dns.qname == "api.openai.com" && dns.qtype == "1"'
         qtype: 1,
         qclass: 1,
         rcode: 0,
+        answer_ip: Some("93.184.216.34".to_string()),
         decision: "allowed".to_string(),
         matched_rule: None,
         source_proto: Some("udp".to_string()),
@@ -350,6 +453,10 @@ match = 'dns.qname == "api.openai.com" && dns.qtype == "1"'
     let event_id = emit_dns_security_write_and_rules(&db, &security_rules, event)
         .await
         .expect("event id allocated");
+    let db_for_flush = Arc::clone(&db);
+    tokio::task::spawn_blocking(move || db_for_flush.shutdown_blocking())
+        .await
+        .expect("db writer flush task joined");
 
     let reader = capsem_logger::DbReader::open(&db_path).unwrap();
     let rows: serde_json::Value = serde_json::from_str(
@@ -363,7 +470,9 @@ match = 'dns.qname == "api.openai.com" && dns.qtype == "1"'
             .expect("joined DNS rule ledger row"),
     )
     .unwrap();
-    let row = rows["rows"][0].as_array().expect("one joined row");
+    let rows = rows["rows"].as_array().expect("joined row array");
+    assert_eq!(rows.len(), 1, "expected one joined row, got {rows:?}");
+    let row = rows[0].as_array().expect("one joined row");
 
     assert_eq!(row[0].as_str(), Some(event_id.as_str()));
     assert_eq!(row[1].as_str(), Some(event_id.as_str()));

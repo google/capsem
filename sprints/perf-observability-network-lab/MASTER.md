@@ -171,7 +171,7 @@ This sprint is not "make everything fast" by guessing. It builds a deterministic
 
 ## Output Artifacts
 
-- `capsem-debug-upstream` test binary/server with local endpoints.
+- `capsem-mock-server` test binary/server with local endpoints.
 - `capsem-bench mitm-local` benchmark mode.
 - OTEL/tracing span map for MITM, security event emission, DB writer, and launch.
 - Replacement tests for network diagnostics and MITM tests that currently depend on external services.
@@ -189,7 +189,7 @@ This sprint is not "make everything fast" by guessing. It builds a deterministic
   4096-event bursts 27.0200/27.8743/28.0951 ms and 150.797K events/s mean.
 - Local MITM network matrix is captured through the gated VM benchmark. The
   gate remains opt-in with `CAPSEM_RUN_MITM_LOCAL_BENCH=1` so normal tests do
-  not boot a VM or depend on a routable local debug-upstream URL.
+  not boot a VM or depend on a routable local mock-server URL.
 - VM/MITM local matrix archived at
   `benchmarks/mitm-local/data_1.0.1780763638_arm64.json` with 10 requests,
   concurrency 1:
@@ -263,7 +263,7 @@ Cleared release-hold item:
 The litmus test for this sprint:
 
 1. Start a fresh VM.
-2. Start the local debug upstream.
+2. Start the local mock server.
 3. Run local HTTP, gzip, SSE/model-like, WebSocket, credential-broker, and denial cases.
 4. Query spans/metrics and `session.db`.
 5. Produce a single table:

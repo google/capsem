@@ -4,7 +4,6 @@ import uuid
 
 import pytest
 
-from pathlib import Path
 
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.service import wait_exec_ready
@@ -17,13 +16,13 @@ def test_session_dir_removed_after_delete(cleanup_env):
     client = cleanup_env.client()
     name = f"sessdir-{uuid.uuid4().hex[:8]}"
 
-    client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+    client.post("/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
     wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
 
     sessions_dir = cleanup_env.tmp_dir / "sessions" / name
     # Session dir may or may not exist depending on implementation
 
-    client.delete(f"/delete/{name}")
+    client.delete(f"/vms/{name}/delete")
 
     import time
     time.sleep(2)

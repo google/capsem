@@ -15,7 +15,14 @@ ASSETS_DIR = PROJECT_ROOT / "assets"
 def host_arch():
     return "arm64" if os.uname().machine == "arm64" else "x86_64"
 
-GUEST_BINARIES = ["capsem-pty-agent", "capsem-net-proxy", "capsem-mcp-server"]
+GUEST_BINARIES = [
+    "capsem-pty-agent",
+    "capsem-net-proxy",
+    "capsem-dns-proxy",
+    "capsem-mcp-server",
+    "capsem-sysutil",
+    "capsem-bench-rs",
+]
 
 pytestmark = pytest.mark.build_chain
 
@@ -62,8 +69,7 @@ def test_initrd_binaries_555(initrd_path):
         )
         for name in GUEST_BINARIES:
             candidates = list(Path(tmp).rglob(name))
-            if not candidates:
-                continue
+            assert candidates, f"{name} missing from initrd"
             binary = candidates[0]
             mode = oct(binary.stat().st_mode & 0o777)
             assert mode == "0o555", f"{name} in initrd should be 555, got {mode}"

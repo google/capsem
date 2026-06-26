@@ -21,9 +21,12 @@ use std::path::Path;
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
-/// Maximum size of a single control message frame (256KB).
-/// Generous buffer for large payloads like CA bundles and file writes.
-pub const MAX_FRAME_SIZE: u32 = 262_144;
+/// Maximum size of a single control message frame (2 MiB).
+///
+/// The service file API supports a 1 MiB black-box round trip through the
+/// guest control channel. Keep this bounded, but large enough that legitimate
+/// file import/export requests do not tear down the agent control stream.
+pub const MAX_FRAME_SIZE: u32 = 2 * 1024 * 1024;
 
 /// Maximum number of env vars allowed during boot handshake.
 pub const MAX_BOOT_ENV_VARS: usize = 128;
@@ -109,6 +112,91 @@ pub const VSOCK_PORT_AUDIT: u32 = 5006;
 /// listener forwards each DNS query to the host's hickory-backed handler
 /// over an `rmp-serde` length-framed envelope.
 pub const VSOCK_PORT_DNS_PROXY: u32 = 5007;
+
+/// Host-side VSOCK services that the guest is allowed to connect to.
+///
+/// This is the authoritative raw VSOCK boundary. Guest TCP traffic, model
+/// traffic, MCP JSON-RPC, DNS, and process/file audit all enter audited typed
+/// service rails through these ports. New raw VSOCK listeners must be added
+/// here first so boot, dispatch, tests, and debug output stay in lock-step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HostVsockService {
+    Control,
+    Terminal,
+    SniProxy,
+    Lifecycle,
+    Exec,
+    Audit,
+    DnsProxy,
+}
+
+impl HostVsockService {
+    pub const fn port(self) -> u32 {
+        match self {
+            Self::Control => VSOCK_PORT_CONTROL,
+            Self::Terminal => VSOCK_PORT_TERMINAL,
+            Self::SniProxy => VSOCK_PORT_SNI_PROXY,
+            Self::Lifecycle => VSOCK_PORT_LIFECYCLE,
+            Self::Exec => VSOCK_PORT_EXEC,
+            Self::Audit => VSOCK_PORT_AUDIT,
+            Self::DnsProxy => VSOCK_PORT_DNS_PROXY,
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Control => "control",
+            Self::Terminal => "terminal",
+            Self::SniProxy => "sni_proxy",
+            Self::Lifecycle => "lifecycle",
+            Self::Exec => "exec",
+            Self::Audit => "audit",
+            Self::DnsProxy => "dns_proxy",
+        }
+    }
+
+    pub const fn from_port(port: u32) -> Option<Self> {
+        match port {
+            VSOCK_PORT_CONTROL => Some(Self::Control),
+            VSOCK_PORT_TERMINAL => Some(Self::Terminal),
+            VSOCK_PORT_SNI_PROXY => Some(Self::SniProxy),
+            VSOCK_PORT_LIFECYCLE => Some(Self::Lifecycle),
+            VSOCK_PORT_EXEC => Some(Self::Exec),
+            VSOCK_PORT_AUDIT => Some(Self::Audit),
+            VSOCK_PORT_DNS_PROXY => Some(Self::DnsProxy),
+            _ => None,
+        }
+    }
+}
+
+pub const HOST_VSOCK_SERVICES: &[HostVsockService] = &[
+    HostVsockService::Control,
+    HostVsockService::Terminal,
+    HostVsockService::SniProxy,
+    HostVsockService::Lifecycle,
+    HostVsockService::Exec,
+    HostVsockService::Audit,
+    HostVsockService::DnsProxy,
+];
+
+pub const HOST_VSOCK_PORTS: &[u32] = &[
+    VSOCK_PORT_CONTROL,
+    VSOCK_PORT_TERMINAL,
+    VSOCK_PORT_SNI_PROXY,
+    VSOCK_PORT_LIFECYCLE,
+    VSOCK_PORT_EXEC,
+    VSOCK_PORT_AUDIT,
+    VSOCK_PORT_DNS_PROXY,
+];
+
+pub const fn host_vsock_services() -> &'static [HostVsockService] {
+    HOST_VSOCK_SERVICES
+}
+
+pub const fn host_vsock_ports() -> &'static [u32] {
+    HOST_VSOCK_PORTS
+}
 
 // ---------------------------------------------------------------------------
 // Framed MCP transport (MITM MCP unification T0 wire gate)
@@ -537,8 +625,6 @@ pub enum GuestToHost {
 /// MessagePack bytes appearing in the middle of legitimate file content
 /// (e.g. `cat msgpack-blob.bin`) are not a leak.
 ///
-/// Tested in `crates/capsem/src/shell_exit/tests.rs` against every variant
-/// of both envelopes.
 pub fn looks_like_ipc_frame(data: &[u8]) -> bool {
     data.len() >= 4
         && (data[0] == 0x81 || data[0] == 0x82)

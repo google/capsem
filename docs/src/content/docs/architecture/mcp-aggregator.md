@@ -9,7 +9,7 @@ The MCP aggregator (`capsem-mcp-aggregator`) is a low-privilege subprocess that 
 
 ## Why a separate process
 
-External MCP servers require network access, bearer tokens, and custom HTTP headers. The main per-VM process (`capsem-process`) has extensive privileges: VM control, session database, VirtioFS workspace, service IPC. Running external server connections inside capsem-process would expose all of those privileges to any vulnerability in an MCP server connection or the HTTP/SSE transport layer.
+External MCP servers require network access, broker-resolved auth material, and custom HTTP headers. The main per-VM process (`capsem-process`) has extensive privileges: VM control, session database, VirtioFS workspace, service IPC. Running external server connections inside capsem-process would expose all of those privileges to any vulnerability in an MCP server connection or the HTTP/SSE transport layer.
 
 The aggregator subprocess enforces a hard privilege boundary:
 
@@ -20,9 +20,9 @@ The aggregator subprocess enforces a hard privilege boundary:
 | VirtioFS workspace | Yes | No |
 | Service IPC | Yes | No |
 | Network (external MCP servers) | No | Yes |
-| Bearer tokens / API keys | No | Yes |
+| Broker-resolved auth material | No | Yes |
 
-If the aggregator is compromised, the attacker has network access and MCP server credentials -- but cannot reach the VM, read telemetry, or modify files.
+If the aggregator is compromised, the attacker has network access and short-lived MCP auth material resolved by the broker -- but cannot reach the VM, read telemetry, or modify files.
 
 ## Architecture
 
@@ -88,7 +88,7 @@ sequenceDiagram
     participant Ext as External MCP servers
 
     Proc->>Agg: spawn (stdin/stdout piped, stderr inherited)
-    Proc->>Agg: [{"name":"github","url":"...","bearer_token":"..."}]\n (first line)
+    Proc->>Agg: [{"name":"github","url":"...","auth":{"kind":"oauth","credential_ref":"credential:blake3:..."}}]\n (first line)
     Agg->>Ext: HTTP MCP initialize (per enabled server)
     Ext-->>Agg: tools/list, resources/list, prompts/list
     Note over Agg: Build unified catalogs
@@ -126,13 +126,21 @@ The first line on stdin is a JSON array of server definitions:
     "name": "github",
     "url": "https://api.githubcopilot.com/mcp/",
     "headers": {},
-    "bearer_token": "ghp_xxxx",
+    "auth": {
+      "kind": "oauth",
+      "credential_ref": "credential:blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
     "enabled": true,
     "source": "claude",
     "unsupported_stdio": false
   }
 ]
 ```
+
+Raw API keys, OAuth access tokens, refresh tokens, and `Authorization` headers
+are never serialized into MCP config. Remote MCP auth is broker-owned: the
+server definition carries only an opaque `credential:blake3:*` reference and
+the connector resolves it at the HTTP transport boundary.
 
 Servers marked `unsupported_stdio: true` are stdio-only servers that cannot be connected over HTTP -- the aggregator skips them. Disabled servers are also skipped.
 
@@ -203,11 +211,13 @@ The aggregator splits on the first `__` when routing, so tool names containing `
 
 ## Server definition sources
 
-Three layers combined with deduplication (first occurrence wins by name). The list is processed in trust order so the first-wins rule encodes the documented `corp > user > defaults` policy:
+MCP server definitions are profile-owned and filtered by corp constraints. The
+list is processed in trust order so corp constraints cannot be shadowed by a
+profile entry:
 
-1. **Corp-injected servers** from `/etc/capsem/corp.toml` (enterprise policy -- definitions and enable/disable overrides; cannot be shadowed by a same-name user or auto-detected entry)
-2. **Auto-detected** from host AI CLI configs (`~/.claude/settings.json`, `~/.gemini/settings.json`)
-3. **User manual servers** from `~/.capsem/user.toml` `[mcp]` section
+1. **Corp constraints** from corp config and referenced rule files
+2. **Profile MCP servers** from the active profile
+3. **Registry/builtin server descriptors** owned by Capsem
 
 Names containing `__` or matching `builtin` are rejected. Empty names are rejected.
 
@@ -215,9 +225,9 @@ Names containing `__` or matching `builtin` are rejected. Empty names are reject
 
 The `refresh` operation allows live reconfiguration without restarting the VM:
 
-1. Service receives `POST /reload-config`
+1. Service receives `POST /profiles/{profile_id}/mcp/servers/{server_id}/refresh`
 2. Service sends `McpRefreshTools` IPC to capsem-process
-3. capsem-process reads fresh settings from disk, calls `build_server_list()`
+3. capsem-process reads fresh profile/corp MCP config
 4. Client sends `refresh` with new definitions to the aggregator
 5. Aggregator disconnects all servers, replaces definitions, reconnects
 
@@ -246,7 +256,7 @@ The aggregator is designed for graceful degradation:
 | Tool call to disconnected server | Error response to caller, other tools unaffected |
 | Malformed request line | Logged, skipped, loop continues |
 | Subprocess crash | Endpoint returns JSON-RPC errors, VM keeps running |
-| Serialization failure | Fallback JSON error response written to stdout |
+| Serialization failure | JSON-RPC error response written to stdout |
 | Stdin EOF | Graceful shutdown (all servers disconnected) |
 
 ## Key source files
@@ -256,7 +266,7 @@ The aggregator is designed for graceful degradation:
 | `capsem-mcp-aggregator/src/main.rs` | Subprocess binary: init, NDJSON loop, request dispatch |
 | `capsem-core/src/mcp/aggregator.rs` | Protocol types (`AggregatorRequest/Response`) and `AggregatorClient` |
 | `capsem-core/src/mcp/server_manager.rs` | `McpServerManager`: rmcp connections, tool catalog, namespacing |
-| `capsem-core/src/mcp/mod.rs` | `build_server_list()`: auto-detect + manual + corp merge |
-| `capsem-process/src/main.rs` | `spawn_mcp_aggregator()`: launch, driver tasks, mock fallback |
+| `capsem-core/src/mcp/mod.rs` | `build_profile_server_list()`: profile-owned MCP servers plus the local builtin server |
+| `capsem-process/src/main.rs` | `spawn_mcp_aggregator()`: launch and driver tasks for the selected profile's MCP contract |
 | `capsem-core/src/net/mitm_proxy/mcp_endpoint.rs` | MITM MCP endpoint: policy, telemetry, and dispatch through the aggregator |
 | `capsem-proto/src/ipc.rs` | Service-process IPC messages for MCP operations |

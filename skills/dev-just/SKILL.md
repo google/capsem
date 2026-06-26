@@ -20,15 +20,16 @@ All workflows use `just` (not make). The justfile is the single entry point.
 | `just dev-frontend` | Frontend-only dev server on :5173 (no Tauri, no VM, mock data) |
 | `just build-ui [release]` | **Frontend build + `cargo build -p capsem-app` in lockstep.** Use after any frontend change when running the Tauri binary directly. |
 | `just run-ui -- [args]` | `build-ui` then launch `./target/debug/capsem-app` with args (e.g. `--connect <id>`) |
-| `just build-assets [arch]` | Full VM asset rebuild via capsem-builder (kernel + rootfs). Default: both arches. |
-| `just smoke` | Fast path: audit + doctor --fast + injection + integration + parallel pytest groups (~30s) |
+| `just build-assets [arch]` | Full VM asset rebuild through capsem-admin/profile materialization and the private Python builder backend. Default: both arches. |
+| `just smoke` | Hermetic smoke gate: audit + doctor + injection + integration + parallel pytest groups |
 | `just test` | ALL tests: unit (warnings-as-errors) + cov + cross-compile + frontend + python + injection + integration + bench + install e2e |
-| `just test-gateway` | Gateway unit + Python mock-UDS tests (no VM needed) |
+| `just test-gateway` | Gateway unit + mock-UDS tests (no VM needed) |
 | `just test-gateway-e2e` | Gateway E2E tests (real service + VMs) |
 | `just test-install` | Install e2e in Docker + systemd (real .deb, dpkg -i, pytest) |
 | `just coverage` | HTML coverage report across all Rust crates (opens `target/llvm-cov/html/index.html`) |
 | `just cross-compile [arch]` | Full Linux build in container (agent + deb) |
-| `just bench` | In-VM benchmarks (disk I/O, rootfs, CLI startup, HTTP) + host lifecycle benchmarks |
+| `just benchmark` | Standard artifact-recording benchmark suite across host-native, in-VM, lifecycle/fork/parallel, and Security Engine lanes |
+| `just bench` | Alias for `just benchmark` |
 | `just inspect-session [args]` | Session DB integrity + event summary |
 | `just list-sessions` | Table of recent sessions with event counts |
 | `just query-session "SQL" [id]` | Run SQL against a session DB (latest with a DB by default) |
@@ -40,7 +41,7 @@ All workflows use `just` (not make). The justfile is the single entry point.
 | `just build-host-image` | Build/refresh the `capsem-host-builder` Docker image |
 | `just install` | Build release .pkg/.deb + install it locally (postinstall handles codesign, PATH, service registration) |
 | `just release [tag]` | Wait for CI to build + publish a pushed tag |
-| `just cut-release` | Run test, bump version, stamp changelog, tag, push, wait for CI |
+| `just cut-release` | Run test, bump version, stamp changelog, commit, and create a local tag |
 | `just clean` | Remove all build artifacts |
 | `just clean all` | clean + Docker prune (full reset) |
 
@@ -52,7 +53,7 @@ All workflows use `just` (not make). The justfile is the single entry point.
 | Guest binary (agent, net-proxy, mcp-server) | `just smoke` (auto-repacks initrd) |
 | `capsem-init` | `just smoke` (auto-repacks) |
 | In-VM diagnostics (`guest/artifacts/diagnostics/`) | `just smoke` |
-| Guest config (`guest/config/`) or rootfs packages | `just build-assets` then `just shell` |
+| Profile payloads (`config/profiles/<id>/`) or rootfs packages | `just build-assets` then `just shell` |
 | Frontend components | `just ui` (iterate) then `just test` (validate) |
 | Frontend standalone (no VM) | `just dev-frontend` |
 | Tauri binary (not dev) | `just build-ui` then `just run-ui` |
@@ -61,7 +62,7 @@ All workflows use `just` (not make). The justfile is the single entry point.
 | Service HTTP API / CLI / MCP | `just smoke` (parallel pytest groups cover all three) |
 | Install / postinst / systemd flow | `just test-install` |
 | Pre-release | `just test` |
-| Ship | `just cut-release` |
+| Ship | `just cut-release`, then manually push `main` and the tag |
 
 ## Dependency chains
 
@@ -70,10 +71,10 @@ shell            -> _check-assets + _pack-initrd + _ensure-service (_sign + buil
 ui               -> _ensure-setup + _pnpm-install + run-service
 run-service      -> _check-assets + _pack-initrd + _ensure-service
 exec             -> run-service
-build-assets     -> _install-tools + _clean-stale (inline: doctor, capsem-builder kernel + rootfs)
-build-ui         -> _pnpm-install (pnpm build + cargo build -p capsem-app)
-smoke            -> _install-tools + _pnpm-install + _check-assets + _pack-initrd + _ensure-service
-test             -> _install-tools + _clean-stale + _pnpm-install + _generate-settings
+build-assets     -> _install-tools + _clean-stale (inline: doctor, capsem-admin image build)
+build-ui         -> _frontend-dist (pnpm build + cargo build -p capsem-app)
+smoke            -> _install-tools + _frontend-dist + _check-assets + _pack-initrd + _ensure-service
+test             -> _install-tools + _clean-stale + _frontend-dist + _generate-settings
                     + _check-assets + _pack-initrd
 bench            -> _ensure-setup + _check-assets + _pack-initrd + _ensure-service
 test-gateway-e2e -> _check-assets + _pack-initrd + _sign
@@ -83,6 +84,11 @@ cut-release      -> test + _stamp-version
 ```
 
 `_`-prefixed recipes are internal (hidden from `just --list`).
+
+`_ensure-service` honors `CAPSEM_HOME` / `CAPSEM_RUN_DIR` for isolated
+smoke/test runs and assigns the gateway an ephemeral port in that mode. This
+keeps test services from colliding with the user's installed gateway on the
+default developer port.
 
 ## Docker disk management
 
@@ -101,6 +107,7 @@ For a full manual reset: `just clean all` (removes all build artifacts + aggress
 
 `tauri::generate_context!()` reads `tauri.conf.json` `frontendDist: ../../frontend/dist` and **bakes every file under that directory into the Rust binary** during `cargo build`. Consequences:
 
+- Recipes that compile the full workspace (`just smoke`, `just test`) must build `_frontend-dist` before `cargo clippy --workspace --all-targets`; otherwise `capsem-app` fails during macro expansion if `frontend/dist` is missing.
 - Rebuilding only the frontend (`pnpm run build`) has **zero effect** on a running `./target/**/capsem-app` -- the binary still carries the old bundle.
 - After any edit to `frontend/**`, you must `cargo build -p capsem-app` for the change to reach the Tauri app.
 - `just ui` (`cargo tauri dev`) sidesteps this by serving `http://localhost:5173` directly -- no embedding happens in dev mode.
@@ -135,15 +142,22 @@ sh bootstrap.sh   # Installs deps + runs doctor fix
 
 ## Builder CLI
 
-The capsem-builder Python package provides config-driven image building:
+The capsem-builder Python package is the backend implementation. Product image
+truth enters through `capsem-admin` and profile-owned config, not direct
+builder authoring commands:
 
 ```bash
-uv run capsem-builder doctor guest/       # Check build prerequisites
-uv run capsem-builder validate guest/     # Lint guest config
-uv run capsem-builder build guest/ --dry-run   # Preview rendered Dockerfiles
-uv run capsem-builder build guest/ --arch arm64 # Build for arm64
-uv run capsem-builder inspect guest/      # Show config summary
+capsem-admin profile check --profile config/profiles/<profile-id>/profile.toml --config-root config
+just build-assets              # Build profile-owned VM assets through the profile-derived build rail
+just _materialize-config       # Materialize generated runtime profile config
 ```
+
+The only public `capsem-builder` helper commands are backend support commands
+used by just/CI: `doctor`, `validate-skills`, `agent`, and `audit`.
+There is no public `capsem-builder build`, `validate`, `inspect`, `--dry-run`,
+`mcp`, or render-only rail. If the product contract needs a new image input,
+add it to the profile/corp/settings config model and the `capsem-admin`
+validation path.
 
 ## Cross-compilation
 

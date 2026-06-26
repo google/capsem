@@ -4,7 +4,7 @@
 //!
 //! T1 slice 8. Replaces the logic in `telemetry::TelemetryEmitter`
 //! and the body-wrapper firing surface from `telemetry::TelemetryBody`.
-//! The ChunkHook owns its own response-side byte counting + preview
+//! The ChunkHook owns its own response-side byte counting + capture
 //! (so we no longer need `body::TrackedBody` or `body::RespStatsKind`
 //! once the legacy chain is removed in the cleanup slice). Per-request
 //! context (method, path, status, headers, decision, matched-rule,
@@ -29,19 +29,25 @@ use tracing::{info, warn};
 use super::body::BodyStats;
 use super::hooks::{ChunkCtx, ChunkHook};
 use super::interpreter_hook::LlmEventStream;
+use super::metrics as m;
 use super::util::is_llm_api_path;
 use crate::credential_broker::{
-    broker_and_log_observations, detect_http_body_credentials,
-    redact_observed_credentials_in_bytes, CredentialObservation,
+    broker_and_log_observations, detect_http_body_credentials, log_brokered_injections,
+    redact_observed_credentials_in_bytes, CredentialInjection, CredentialObservation,
 };
-use crate::net::ai_traffic::events::{collect_summary, parse_non_streaming_usage, StopReason};
+use crate::net::ai_traffic::events::{
+    collect_summary, parse_non_streaming_response_summary, parse_non_streaming_tool_calls,
+    parse_non_streaming_usage, StopReason,
+};
 use crate::net::ai_traffic::pricing::PricingTable;
-use crate::net::ai_traffic::provider::{extract_model_from_path, tool_origin, ProviderKind};
+use crate::net::ai_traffic::provider::{
+    extract_model_from_path, tool_origin, ModelProtocol, ProviderKind,
+};
 use crate::net::ai_traffic::{request_parser, TraceState};
-use crate::net::policy_config::{PolicyCallback, SecurityRuleSet};
+use crate::net::policy_config::SecurityRuleSet;
 use crate::security_engine::{
-    emit_matching_security_rules, emit_security_write, HttpSecurityEvent, ModelSecurityEvent,
-    RuntimeSecurityEventType, SecurityEvent,
+    delegate_matching_security_rules_for_evaluated_event, emit_security_write, HttpSecurityEvent,
+    IpSecurityEvent, ModelSecurityEvent, RuntimeSecurityEventType, SecurityEvent, TcpSecurityEvent,
 };
 
 /// Per-request snapshot of the request-side fields that the response
@@ -53,6 +59,8 @@ pub struct TelemetryRequestContext {
     pub domain: String,
     pub process_name: Option<String>,
     pub ai_provider: Option<ProviderKind>,
+    pub ai_protocol: Option<ModelProtocol>,
+    pub model_traffic: bool,
     pub method: String,
     pub path: String,
     pub query: Option<String>,
@@ -66,9 +74,9 @@ pub struct TelemetryRequestContext {
     /// `TrackedBody` wrapper around the upstream request body. The
     /// hook reads the final value at `on_response_end`.
     pub request_body_stats: Arc<Mutex<BodyStats>>,
-    /// `max_body_capture` for the response side (controls preview
-    /// growth in the hook's own response stats).
-    pub max_response_preview: usize,
+    /// Body-capture limit for the response side. DB/UI previews are derived
+    /// later by capsem-logger and must not be the source of truth.
+    pub max_response_body_capture: usize,
     /// Upstream port for this request. 443 for the TLS path, 80
     /// (or another allowlisted port) for the plain-HTTP path. Lands
     /// in `NetEvent.port` so operators can distinguish HTTPS from
@@ -83,17 +91,18 @@ pub struct TelemetryRequestContext {
     pub policy_reason: Option<String>,
     pub credential_ref: Option<String>,
     pub credential_observations: Vec<CredentialObservation>,
+    pub credential_injections: Vec<CredentialInjection>,
 }
 
 /// Per-request response-side counters owned by the hook. Updated on
-/// every `on_response_chunk`. The cap on the preview is taken from
-/// `TelemetryRequestContext::max_response_preview` if seeded;
-/// otherwise zero (no preview captured -- shadow mode).
+/// every `on_response_chunk`. The cap on the captured body is taken from
+/// `TelemetryRequestContext::max_response_body_capture` if seeded;
+/// otherwise zero (no body captured -- shadow mode).
 #[derive(Default)]
 pub struct TelemetryResponseStats {
     pub bytes: u64,
     pub preview: Vec<u8>,
-    pub max_preview: usize,
+    pub max_body_capture: usize,
 }
 
 /// Shared dependencies handed to `TelemetryHook` at construction --
@@ -104,6 +113,11 @@ pub struct TelemetryDeps {
     pub pricing: Arc<PricingTable>,
     pub trace_state: Arc<Mutex<TraceState>>,
     pub security_rules: Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>,
+    pub plugin_policy: Arc<
+        std::sync::RwLock<
+            std::collections::BTreeMap<String, crate::net::policy_config::SecurityPluginConfig>,
+        >,
+    >,
 }
 
 /// Sync `ChunkHook` that tracks response bytes/preview and, on
@@ -125,24 +139,24 @@ impl ChunkHook for TelemetryHook {
     }
 
     fn on_response_chunk(&self, chunk: &mut Bytes, ctx: &mut ChunkCtx<'_>) {
-        // Determine the per-request preview cap by peeking at the
+        // Determine the per-request body-capture cap by peeking at the
         // request context (if any). We touch the response stats slot
         // only if the request context has been seeded -- shadow mode
         // skips the slot allocation entirely.
-        let max_preview = match ctx
+        let max_body_capture = match ctx
             .state::<Option<TelemetryRequestContext>>(|| None)
             .as_ref()
         {
-            Some(req_ctx) => req_ctx.max_response_preview,
+            Some(req_ctx) => req_ctx.max_response_body_capture,
             None => return,
         };
 
         let stats = ctx.state::<TelemetryResponseStats>(TelemetryResponseStats::default);
-        if stats.max_preview == 0 {
-            stats.max_preview = max_preview;
+        if stats.max_body_capture == 0 {
+            stats.max_body_capture = max_body_capture;
         }
         stats.bytes += chunk.len() as u64;
-        let remaining = stats.max_preview.saturating_sub(stats.preview.len());
+        let remaining = stats.max_body_capture.saturating_sub(stats.preview.len());
         if remaining > 0 {
             let to_copy = remaining.min(chunk.len());
             stats.preview.extend_from_slice(&chunk[..to_copy]);
@@ -150,6 +164,7 @@ impl ChunkHook for TelemetryHook {
     }
 
     fn on_response_end(&self, ctx: &mut ChunkCtx<'_>) {
+        let response_end_started = Instant::now();
         // Move the request context out of the slot so we can take
         // ownership of its fields. After this the slot is `None` --
         // duplicate end firings (Drop fallback in ChunkDispatchBody)
@@ -161,11 +176,14 @@ impl ChunkHook for TelemetryHook {
 
         let mut resp_stats =
             std::mem::take(ctx.state::<TelemetryResponseStats>(TelemetryResponseStats::default));
+        let stage_started = Instant::now();
         let llm_events = ctx
             .state::<LlmEventStream>(LlmEventStream::default)
             .events
             .clone();
+        record_telemetry_stage(stage_started, "llm_event_clone");
 
+        let stage_started = Instant::now();
         let request_body_preview = {
             req_ctx
                 .request_body_stats
@@ -174,6 +192,9 @@ impl ChunkHook for TelemetryHook {
                 .preview
                 .clone()
         };
+        record_telemetry_stage(stage_started, "request_body_snapshot");
+
+        let stage_started = Instant::now();
         let mut credential_observations = req_ctx.credential_observations.clone();
         let header_observations_len = credential_observations.len();
         credential_observations.extend(detect_http_body_credentials(
@@ -213,8 +234,9 @@ impl ChunkHook for TelemetryHook {
                 );
             }
         }
+        record_telemetry_stage(stage_started, "credential_detect_and_redact");
 
-        let net_event = build_net_event(&req_ctx, &resp_stats);
+        let stage_started = Instant::now();
         let model_call = maybe_build_model_call(
             &req_ctx,
             &resp_stats,
@@ -222,51 +244,103 @@ impl ChunkHook for TelemetryHook {
             &self.deps.pricing,
             &self.deps.trace_state,
         );
+        record_telemetry_stage(stage_started, "model_call_build");
+
+        let stage_started = Instant::now();
+        let mut net_event = build_net_event(&req_ctx, &resp_stats);
+        if let Some(model_call) = &model_call {
+            net_event.trace_id = model_call.trace_id.clone();
+        }
+        for observation in &mut credential_observations {
+            if observation.trace_id.is_none() {
+                observation.trace_id = net_event.trace_id.clone();
+            }
+        }
+        record_telemetry_stage(stage_started, "net_event_build");
 
         log_outcome(&req_ctx);
 
-        // Spawn DB writes so the body completion path doesn't block
-        // on backpressure.
+        let stage_started = Instant::now();
         let db = Arc::clone(&self.deps.db);
-        let security_rules = Arc::clone(&self.deps.security_rules);
+        let rules = self.deps.security_rules.read().unwrap().clone();
+        let plugin_policy = self.deps.plugin_policy.read().unwrap().clone();
+        let credential_injections = req_ctx.credential_injections.clone();
+        let broker_db = Arc::clone(&db);
+        let broker_rules = rules.clone();
+        let broker_observations = credential_observations.clone();
+        let broker_injections = credential_injections.clone();
         tokio::spawn(async move {
-            let rules = security_rules.read().unwrap().clone();
-            broker_and_log_observations(&db, &rules, credential_observations).await;
-            let net_security_event = security_event_from_net_event(&net_event);
+            log_brokered_injections(&broker_db, &broker_rules, broker_injections).await;
+            broker_and_log_observations(&broker_db, &broker_rules, broker_observations).await;
+        });
+        record_telemetry_stage(stage_started, "broker_task_spawn");
+
+        let stage_started = Instant::now();
+        let net_security_event = security_event_from_net_event(&net_event)
+            .with_credential_observations(credential_observations)
+            .with_credential_injections(credential_injections);
+        record_telemetry_stage(stage_started, "security_event_build");
+
+        let stage_started = Instant::now();
+        let has_model_call = model_call.is_some();
+        tokio::spawn(async move {
             if let Some(event_id) = emit_security_write(&db, WriteOp::NetEvent(net_event)).await {
-                if let Err(error) = emit_matching_security_rules(
-                    &db,
+                delegate_matching_security_rules_for_evaluated_event(
+                    Arc::clone(&db),
                     event_id,
                     RuntimeSecurityEventType::HttpRequest,
-                    &rules,
-                    &net_security_event,
+                    Arc::clone(&rules),
+                    plugin_policy.clone(),
+                    net_security_event,
                     current_unix_ms(),
-                )
-                .await
-                {
-                    warn!(error = %error, "failed to emit HTTP security rule ledger rows");
-                }
+                    "http",
+                );
             }
             if let Some(mc) = model_call {
                 let model_security_event = security_event_from_model_call(&mc);
                 if let Some(event_id) = emit_security_write(&db, WriteOp::ModelCall(mc)).await {
-                    let rules = security_rules.read().unwrap().clone();
-                    if let Err(error) = emit_matching_security_rules(
-                        &db,
+                    delegate_matching_security_rules_for_evaluated_event(
+                        Arc::clone(&db),
                         event_id,
                         RuntimeSecurityEventType::ModelCall,
-                        &rules,
-                        &model_security_event,
+                        rules,
+                        plugin_policy,
+                        model_security_event,
                         current_unix_ms(),
-                    )
-                    .await
-                    {
-                        warn!(error = %error, "failed to emit model security rule ledger rows");
-                    }
+                        "model",
+                    );
                 }
             }
         });
+        record_telemetry_stage(stage_started, "ledger_task_spawn");
+        record_telemetry_response_end(response_end_started, has_model_call);
     }
+}
+
+fn record_telemetry_stage(started: Instant, stage: &'static str) {
+    let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+    ::metrics::histogram!(m::TELEMETRY_STAGE_DURATION_MS, "stage" => stage).record(elapsed_ms);
+    tracing::trace!(
+        target: "capsem.mitm.telemetry",
+        stage,
+        elapsed_ms,
+        "http telemetry stage"
+    );
+}
+
+fn record_telemetry_response_end(started: Instant, has_model_call: bool) {
+    let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+    ::metrics::histogram!(
+        m::TELEMETRY_RESPONSE_END_DURATION_MS,
+        "has_model_call" => if has_model_call { "true" } else { "false" },
+    )
+    .record(elapsed_ms);
+    tracing::trace!(
+        target: "capsem.mitm.telemetry",
+        has_model_call,
+        elapsed_ms,
+        "http telemetry response end"
+    );
 }
 
 /// Pure builder: assembles a `NetEvent` from the context and stats.
@@ -288,11 +362,13 @@ pub fn build_net_event(
         };
         (st.bytes, preview)
     };
+    let req_full = req_preview.clone();
     let resp_preview = if resp_stats.preview.is_empty() {
         None
     } else {
         Some(String::from_utf8_lossy(&resp_stats.preview).into_owned())
     };
+    let resp_full = resp_preview.clone();
 
     NetEvent {
         event_id: None,
@@ -314,6 +390,8 @@ pub fn build_net_event(
         response_headers: req_ctx.response_headers.clone(),
         request_body_preview: req_preview,
         response_body_preview: resp_preview,
+        request_body_full: req_full,
+        response_body_full: resp_full,
         conn_type: Some(req_ctx.conn_type.to_string()),
         policy_mode: req_ctx.policy_mode.clone(),
         policy_action: req_ctx.policy_action.clone(),
@@ -325,20 +403,33 @@ pub fn build_net_event(
 }
 
 fn security_event_from_net_event(event: &NetEvent) -> SecurityEvent {
-    let security_event =
-        SecurityEvent::new(PolicyCallback::HttpRequest).with_http(HttpSecurityEvent {
+    let mut security_event =
+        SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
             host: Some(event.domain.clone()),
             method: event.method.clone(),
             path: event.path.clone(),
+            query: event.query.clone(),
             status: event.status_code.map(|status| status.to_string()),
             body: event.request_body_preview.clone(),
         });
+    security_event = security_event.with_tcp(TcpSecurityEvent {
+        port: Some(event.port.to_string()),
+    });
+    if let Ok(ip) = event.domain.parse::<std::net::IpAddr>() {
+        security_event = security_event.with_ip(IpSecurityEvent {
+            value: Some(event.domain.clone()),
+            version: Some(match ip {
+                std::net::IpAddr::V4(_) => "4".to_string(),
+                std::net::IpAddr::V6(_) => "6".to_string(),
+            }),
+        });
+    }
     apply_security_event_trace(security_event, event.trace_id.clone())
 }
 
 fn security_event_from_model_call(call: &ModelCall) -> SecurityEvent {
     let security_event =
-        SecurityEvent::new(PolicyCallback::ModelRequest).with_model(ModelSecurityEvent {
+        SecurityEvent::new(RuntimeSecurityEventType::ModelCall).with_model(ModelSecurityEvent {
             provider: Some(call.provider.clone()),
             name: call.model.clone(),
             request_body: call.request_body_preview.clone(),
@@ -378,7 +469,10 @@ pub fn maybe_build_model_call(
     trace_state: &Arc<Mutex<TraceState>>,
 ) -> Option<ModelCall> {
     let provider = req_ctx.ai_provider?;
-    if req_ctx.method == "HEAD" || !is_llm_api_path(provider, &req_ctx.path) {
+    let protocol = req_ctx.ai_protocol?;
+    if req_ctx.method == "HEAD"
+        || !(req_ctx.model_traffic || is_llm_api_path(protocol, &req_ctx.path))
+    {
         return None;
     }
     let duration_ms = req_ctx.start_time.elapsed().as_millis() as u64;
@@ -391,30 +485,45 @@ pub fn maybe_build_model_call(
     };
 
     // Parse request body for metadata (model, message count, tools, tool_results).
-    let req_meta = request_parser::parse_request(provider, &req_body_bytes);
+    let req_meta = request_parser::parse_request(protocol, &req_body_bytes);
 
     let summary = if llm_events.is_empty() {
         None
     } else {
         Some(collect_summary(llm_events))
     };
+    let response_summary = if summary.is_none()
+        && !resp_stats.preview.is_empty()
+        && req_ctx.status_code == Some(200)
+    {
+        Some(parse_non_streaming_response_summary(
+            protocol,
+            &resp_stats.preview,
+        ))
+    } else {
+        None
+    };
 
     // Streaming detection: explicit body field OR URL path keyword.
     let stream = req_meta.stream || req_ctx.path.contains("stream");
 
-    let stop_reason_str =
-        summary
-            .as_ref()
-            .and_then(|s| s.stop_reason.as_ref())
-            .map(|sr| match sr {
-                StopReason::EndTurn => "end_turn".to_string(),
-                StopReason::ToolUse => "tool_use".to_string(),
-                StopReason::MaxTokens => "max_tokens".to_string(),
-                StopReason::ContentFilter => "content_filter".to_string(),
-                StopReason::Other(s) => s.clone(),
-            });
+    let stop_reason_str = summary
+        .as_ref()
+        .and_then(|s| s.stop_reason.as_ref())
+        .or_else(|| {
+            response_summary
+                .as_ref()
+                .and_then(|s| s.stop_reason.as_ref())
+        })
+        .map(|sr| match sr {
+            StopReason::EndTurn => "end_turn".to_string(),
+            StopReason::ToolUse => "tool_use".to_string(),
+            StopReason::MaxTokens => "max_tokens".to_string(),
+            StopReason::ContentFilter => "content_filter".to_string(),
+            StopReason::Other(s) => s.clone(),
+        });
 
-    let tool_calls: Vec<ToolCallEntry> = summary
+    let mut tool_calls: Vec<ToolCallEntry> = summary
         .as_ref()
         .map(|s| {
             s.tool_calls
@@ -429,20 +538,34 @@ pub fn maybe_build_model_call(
                         Some(tc.arguments.clone())
                     },
                     origin: tool_origin(&tc.name).to_string(),
-                    trace_id: crate::telemetry::ambient_capsem_trace_id(),
+                    trace_id: None,
                 })
                 .collect()
         })
         .unwrap_or_default();
+    if tool_calls.is_empty() {
+        tool_calls = parse_non_streaming_tool_calls(protocol, &resp_stats.preview)
+            .into_iter()
+            .map(|tc| ToolCallEntry {
+                call_index: tc.index,
+                call_id: tc.call_id,
+                tool_name: tc.name.clone(),
+                arguments: Some(tc.arguments),
+                origin: tool_origin(&tc.name).to_string(),
+                trace_id: None,
+            })
+            .collect();
+    }
 
-    let tool_responses: Vec<ToolResponseEntry> = req_meta
+    let mut tool_responses: Vec<ToolResponseEntry> = req_meta
         .tool_results
         .iter()
         .map(|tr| ToolResponseEntry {
             call_id: tr.call_id.clone(),
             content_preview: Some(tr.content_preview.clone()),
             is_error: tr.is_error,
-            trace_id: crate::telemetry::ambient_capsem_trace_id(),
+            trace_id: None,
+            credential_ref: req_ctx.credential_ref.clone(),
         })
         .collect();
 
@@ -454,7 +577,7 @@ pub fn maybe_build_model_call(
         .unwrap_or(true)
     {
         if !resp_stats.preview.is_empty() && req_ctx.status_code == Some(200) {
-            parse_non_streaming_usage(provider, &resp_stats.preview)
+            parse_non_streaming_usage(protocol, &resp_stats.preview)
         } else {
             (None, None, None, BTreeMap::new())
         }
@@ -502,9 +625,14 @@ pub fn maybe_build_model_call(
     let tool_call_ids: Vec<String> = tool_calls.iter().map(|tc| tc.call_id.clone()).collect();
     let trace_id = {
         let mut state = trace_state.lock().unwrap_or_else(|e| e.into_inner());
-        let tid = state
-            .lookup(&tool_response_ids)
-            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let tid = state.lookup(&tool_response_ids).unwrap_or_else(|| {
+            if tool_call_ids.is_empty() {
+                crate::telemetry::ambient_capsem_trace_id()
+                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+            } else {
+                uuid::Uuid::new_v4().to_string()
+            }
+        });
         let is_tool_use = !tool_call_ids.is_empty()
             || stop_reason_str
                 .as_deref()
@@ -512,11 +640,30 @@ pub fn maybe_build_model_call(
                 .unwrap_or(false);
         if is_tool_use && !tool_call_ids.is_empty() {
             state.register_tool_calls(&tid, &tool_call_ids);
+            state.register_tool_file_hints(
+                &tid,
+                tool_calls
+                    .iter()
+                    .filter_map(|tool_call| tool_call.arguments.as_deref()),
+            );
         } else if !is_tool_use {
             state.complete_trace(&tid);
         }
         tid
     };
+    for tool_call in &mut tool_calls {
+        if tool_call.trace_id.is_none() {
+            tool_call.trace_id = Some(trace_id.clone());
+        }
+    }
+    for tool_response in &mut tool_responses {
+        if tool_response.trace_id.is_none() {
+            tool_response.trace_id = Some(trace_id.clone());
+        }
+        if tool_response.credential_ref.is_none() {
+            tool_response.credential_ref = req_ctx.credential_ref.clone();
+        }
+    }
 
     let request_body_preview = if req_body_bytes.is_empty() {
         None
@@ -528,6 +675,7 @@ pub fn maybe_build_model_call(
         event_id: None,
         timestamp: SystemTime::now(),
         provider: provider.as_str().to_string(),
+        protocol: Some(protocol.as_str().to_string()),
         model: effective_model,
         process_name: req_ctx.process_name.clone(),
         pid: None,
@@ -536,19 +684,31 @@ pub fn maybe_build_model_call(
         stream,
         system_prompt_preview: req_meta.system_prompt_preview,
         messages_count: req_meta.messages_count,
-        tools_count: req_meta.tools_count,
+        tools_count: tool_calls.len(),
         request_bytes: bytes_sent,
         request_body_preview,
+        request_body_full: if req_body_bytes.is_empty() {
+            None
+        } else {
+            Some(String::from_utf8_lossy(&req_body_bytes).into_owned())
+        },
         message_id: summary.as_ref().and_then(|s| s.message_id.clone()),
         status_code: req_ctx.status_code,
         text_content: summary
             .as_ref()
             .map(|s| s.text.clone())
+            .or_else(|| response_summary.as_ref().map(|s| s.text.clone()))
             .filter(|s| !s.is_empty()),
         thinking_content: summary
             .as_ref()
             .map(|s| s.thinking.clone())
+            .or_else(|| response_summary.as_ref().map(|s| s.thinking.clone()))
             .filter(|s| !s.is_empty()),
+        response_body_full: if resp_stats.preview.is_empty() {
+            None
+        } else {
+            Some(String::from_utf8_lossy(&resp_stats.preview).into_owned())
+        },
         stop_reason: stop_reason_str,
         input_tokens,
         output_tokens,

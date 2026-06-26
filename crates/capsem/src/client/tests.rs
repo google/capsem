@@ -2,6 +2,28 @@
 
 use super::*;
 
+struct EnvGuard {
+    key: &'static str,
+    prev: Option<String>,
+}
+
+impl EnvGuard {
+    fn set(key: &'static str, value: &str) -> Self {
+        let prev = std::env::var(key).ok();
+        std::env::set_var(key, value);
+        Self { key, prev }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        match &self.prev {
+            Some(value) => std::env::set_var(self.key, value),
+            None => std::env::remove_var(self.key),
+        }
+    }
+}
+
 // -- validate_id ----------------------------------------------------------
 
 #[test]
@@ -110,10 +132,23 @@ fn parse_env_vars_second_entry_invalid() {
 
 #[test]
 fn api_response_ok_variant() {
-    let json = r#"{"id":"vm-1"}"#;
+    let json = r#"{"id":"vm-1","profile_id":"code","status":"Running","persistent":true,"can_resume":false,"available_actions":["pause","stop","fork","delete"]}"#;
     let resp: ApiResponse<ProvisionResponse> = serde_json::from_str(json).unwrap();
     let result = resp.into_result().unwrap();
     assert_eq!(result.id, "vm-1");
+    assert_eq!(result.profile_id, "code");
+    assert_eq!(result.status, VmLifecycleState::Running);
+    assert!(result.persistent);
+    assert!(!result.can_resume);
+    assert_eq!(
+        result.available_actions,
+        vec![
+            VmAction::Pause,
+            VmAction::Stop,
+            VmAction::Fork,
+            VmAction::Delete
+        ]
+    );
 }
 
 #[test]
@@ -167,6 +202,7 @@ fn api_response_empty_error() {
 fn provision_request_serde() {
     let req = ProvisionRequest {
         name: Some("test".into()),
+        profile_id: "code".into(),
         ram_mb: 4096,
         cpus: 4,
         persistent: true,
@@ -176,6 +212,7 @@ fn provision_request_serde() {
     let json = serde_json::to_string(&req).unwrap();
     let req2: ProvisionRequest = serde_json::from_str(&json).unwrap();
     assert_eq!(req2.name, Some("test".into()));
+    assert_eq!(req2.profile_id, "code");
     assert_eq!(req2.ram_mb, 4096);
     assert!(req2.persistent);
     assert!(req2.env.is_none());
@@ -187,6 +224,7 @@ fn provision_request_with_env() {
     env.insert("FOO".into(), "bar".into());
     let req = ProvisionRequest {
         name: Some("test".into()),
+        profile_id: "code".into(),
         ram_mb: 2048,
         cpus: 2,
         persistent: true,
@@ -203,6 +241,7 @@ fn provision_request_with_env() {
 fn provision_request_env_omitted_when_none() {
     let req = ProvisionRequest {
         name: None,
+        profile_id: "code".into(),
         ram_mb: 2048,
         cpus: 2,
         persistent: false,
@@ -217,6 +256,7 @@ fn provision_request_env_omitted_when_none() {
 fn provision_request_with_from() {
     let req = ProvisionRequest {
         name: None,
+        profile_id: "code".into(),
         ram_mb: 2048,
         cpus: 2,
         persistent: false,
@@ -233,6 +273,7 @@ fn provision_request_with_from() {
 fn provision_request_from_omitted_when_none() {
     let req = ProvisionRequest {
         name: None,
+        profile_id: "code".into(),
         ram_mb: 2048,
         cpus: 2,
         persistent: false,
@@ -261,7 +302,7 @@ fn list_response_with_entries() {
                 id: "vm-1".into(),
                 name: None,
                 pid: 100,
-                status: "Running".into(),
+                status: VmLifecycleState::Running,
                 persistent: false,
                 ram_mb: Some(2048),
                 cpus: Some(2),
@@ -274,19 +315,20 @@ fn list_response_with_entries() {
                 total_output_tokens: None,
                 total_estimated_cost: None,
                 total_tool_calls: None,
-                total_mcp_calls: None,
                 total_requests: None,
                 allowed_requests: None,
                 denied_requests: None,
                 total_file_events: None,
                 model_call_count: None,
                 last_error: None,
+                can_resume: false,
+                resume_blocked_reason: None,
             },
             SessionInfo {
                 id: "mydev".into(),
                 name: Some("mydev".into()),
                 pid: 0,
-                status: "Stopped".into(),
+                status: VmLifecycleState::Stopped,
                 persistent: true,
                 ram_mb: Some(4096),
                 cpus: Some(4),
@@ -299,13 +341,14 @@ fn list_response_with_entries() {
                 total_output_tokens: None,
                 total_estimated_cost: None,
                 total_tool_calls: None,
-                total_mcp_calls: None,
                 total_requests: None,
                 allowed_requests: None,
                 denied_requests: None,
                 total_file_events: None,
                 model_call_count: None,
                 last_error: None,
+                can_resume: true,
+                resume_blocked_reason: None,
             },
         ],
     };
@@ -438,12 +481,14 @@ fn run_request_serde() {
     env.insert("KEY".into(), "val".into());
     let req = RunRequest {
         command: "echo hi".into(),
+        profile_id: "code".into(),
         timeout_secs: Some(60),
         env: Some(env),
     };
     let json = serde_json::to_string(&req).unwrap();
     let req2: RunRequest = serde_json::from_str(&json).unwrap();
     assert_eq!(req2.command, "echo hi");
+    assert_eq!(req2.profile_id, "code");
     assert_eq!(req2.timeout_secs, Some(60));
     assert_eq!(req2.env.unwrap().get("KEY").unwrap(), "val");
 }
@@ -452,6 +497,7 @@ fn run_request_serde() {
 fn run_request_env_omitted_when_none() {
     let req = RunRequest {
         command: "ls".into(),
+        profile_id: "code".into(),
         timeout_secs: None,
         env: None,
     };
@@ -580,5 +626,33 @@ async fn connect_await_startup_eventually_times_out() {
     assert!(
         msg.contains("timed out") || msg.contains("timeout"),
         "expected timeout error, got: {msg}"
+    );
+}
+
+#[test]
+fn request_does_not_auto_launch_after_explicit_stop_marker() {
+    let _lock = crate::lock_test_env();
+    let dir = tempfile::tempdir().unwrap();
+    let run_dir = dir.path().join("run");
+    std::fs::create_dir_all(&run_dir).unwrap();
+    let _run = EnvGuard::set("CAPSEM_RUN_DIR", run_dir.to_str().unwrap());
+
+    std::fs::write(service_install::explicit_stop_marker_path(), b"stopped\n").unwrap();
+    let client = UdsClient::new(run_dir.join("missing.sock"), true);
+    let err = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(client.get::<serde_json::Value>("/status"))
+        .unwrap_err();
+    let msg = format!("{err:#}");
+
+    assert!(
+        msg.contains("explicitly stopped"),
+        "request should respect explicit stop marker, got: {msg}"
+    );
+    assert!(
+        msg.contains("capsem start"),
+        "error should name the explicit recovery command, got: {msg}"
     );
 }

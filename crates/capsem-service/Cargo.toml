@@ -20,6 +20,8 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+toml.workspace = true
+humantime.workspace = true
 clap.workspace = true
 tokio-unix-ipc.workspace = true
 tokio-stream.workspace = true
@@ -30,8 +32,10 @@ tower-http = { version = "0.6", features = ["trace"] }
 rand = "0.8"
 base64.workspace = true
 magika = "1.0.1"
-ort = { version = "=2.0.0-rc.11", features = ["download-binaries", "ndarray"] }
+ort = { version = "=2.0.0-rc.11", default-features = false, features = ["download-binaries", "ndarray", "std", "tls-rustls"] }
 tokio-util = { version = "0.7", features = ["io"] }
+reqwest.workspace = true
+blake3 = "1"
 
 [lints]
 workspace = true
@@ -39,3 +43,5 @@ workspace = true
 [dev-dependencies]
 tempfile = "3"
 filetime = "0.2"
+tower = { version = "0.5", features = ["util"] }
+rusqlite = { workspace = true }

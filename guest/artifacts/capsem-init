@@ -1,7 +1,7 @@
 #!/bin/sh
 # Capsem sandbox init script.
 # Replaces /init in the initramfs.
-# Mounts squashfs/EROFS rootfs from /dev/vda, stacks overlayfs (immutable lower
+# Mounts EROFS rootfs from /dev/vda, stacks overlayfs (immutable lower
 # + ephemeral tmpfs upper), then chroot into the real root.
 
 # Mount essential filesystems
@@ -53,16 +53,12 @@ echo "[capsem-init] listing block devices..."
 ls /dev/vda* 2>&1 || echo "[capsem-init] no /dev/vda found"
 
 # Mount immutable lower rootfs.
-ROOTFS_TYPE=squashfs
-ROOTFS_LABEL=squashfs
+ROOTFS_TYPE=erofs
+ROOTFS_LABEL=erofs
 ROOTFS_MOUNT_OPTS=ro
 if grep -qw 'capsem.rootfs=erofs-dax' /proc/cmdline; then
-    ROOTFS_TYPE=erofs
     ROOTFS_LABEL=erofs-dax
     ROOTFS_MOUNT_OPTS=ro,dax
-elif grep -qw 'capsem.rootfs=erofs' /proc/cmdline; then
-    ROOTFS_TYPE=erofs
-    ROOTFS_LABEL=erofs
 fi
 mkdir -p /mnt/a
 echo "[capsem-init] mounting /dev/vda ($ROOTFS_LABEL, opts=$ROOTFS_MOUNT_OPTS)..."
@@ -147,7 +143,7 @@ if [ "$STORAGE_MODE" = "virtiofs" ]; then
     }
     mkdir -p /mnt/system/upper /mnt/system/work
 
-    # Stack overlayfs: squashfs (lower) + ext4 virtio-blk (upper).
+    # Stack overlayfs: EROFS (lower) + ext4 virtio-blk (upper).
     mount -t overlay overlay \
       -o lowerdir=/mnt/a,upperdir=/mnt/system/upper,workdir=/mnt/system/work,redirect_dir=on,metacopy=on \
       /newroot || \
@@ -180,6 +176,14 @@ else
     }
     boot_mark "overlayfs"
 fi
+
+# The overlay root can inherit a restrictive mount-point mode from the initrd
+# staging directory. Unprivileged tools such as apt's `_apt` sandbox must be
+# able to traverse `/` even though most writes remain constrained elsewhere.
+chmod 755 /newroot
+# Some exported rootfs images preserve `/etc` as root-only. That breaks apt's
+# sandboxed `_apt` user because TLS trust lives under `/etc/ssl/certs`.
+chmod 755 /newroot/etc
 
 # Mount virtual filesystems fresh in the new root.
 # /proc, /sys, /dev exist as empty dirs from docker export.
@@ -242,6 +246,34 @@ fi
 # Must happen after /root is mounted (scratch disk or tmpfs).
 mkdir -p /newroot/root/.local/bin
 
+# Project profile-owned seed files into the writable runtime root.
+# The image stores them under /usr/local/share/capsem/profile-root because
+# rootfs /root is hidden by the runtime workspace mount above.
+if [ -d /newroot/usr/local/share/capsem/profile-root ]; then
+    echo "[capsem-init] projecting profile root seed..."
+    cp -a /newroot/usr/local/share/capsem/profile-root/. /newroot/ || {
+        echo "[capsem-init] FATAL: cannot project profile root seed"
+        exit 1
+    }
+    boot_mark "profile_root_seed"
+fi
+
+# The profile root seed may carry `/etc` metadata. Re-assert traversal after
+# projection so apt's `_apt` sandbox can always read the TLS trust bundle.
+chmod 755 /newroot/etc
+
+# Curl-installed AI CLIs are promoted to /usr/local/bin at image build time
+# because /root is mounted fresh at runtime. Recreate the user-local shims that
+# their own doctor/config checks expect after the runtime /root mount exists.
+for cli in claude agy; do
+    if [ -x "/newroot/usr/local/bin/$cli" ]; then
+        ln -sf "/usr/local/bin/$cli" "/newroot/root/.local/bin/$cli"
+        chroot /newroot /bin/chmod 555 "/root/.local/bin/$cli"
+    fi
+done
+
+chroot /newroot /bin/chmod 755 /
+
 # Remove legacy HTTP sources.list if present (belt-and-suspenders).
 # The rootfs already has HTTPS-only debian.sources from the Docker build.
 rm -f /newroot/etc/apt/sources.list
@@ -258,7 +290,7 @@ echo "force-unsafe-io" > /newroot/etc/dpkg/dpkg.cfg.d/force-unsafe-io
 #     blocked domains; T3).
 #   - port 443 (HTTPS) -> capsem-net-proxy 10443 -- TLS terminated by
 #     host MITM proxy.
-#   - port 80 + plain-HTTP allowlist (11434 for Ollama) ->
+#   - port 80 + plain-HTTP allowlist (3128/3713/8080/11434) ->
 #     capsem-net-proxy 10080 -- T2.2 first-byte sniff classifies on
 #     wire bytes.
 echo "[capsem-init] setting up network..."
@@ -277,10 +309,11 @@ mount --bind /newroot/run/resolv.conf /newroot/etc/resolv.conf
 # iptables-nft REDIRECT: use the nftables backend, not legacy xtables.
 # Port 53 (DNS, UDP+TCP) goes to capsem-dns-proxy on :1053 -- T3.4.
 # Port 443 (HTTPS) goes to the agent's TLS-target listener (10443).
-# Port 80 + the configurable plain-HTTP allowlist (currently 11434
-# for Ollama-shape local LLM servers) go to the plain-HTTP listener
-# (10080) -- T2.2. Both listeners forward to the same vsock port;
-# the host's first-byte sniff (T2.1) classifies on wire bytes.
+# Port 80 + the configurable plain-HTTP allowlist (common proxy/dev
+# ports 3128/8080, doctor fixture 3713, and Ollama 11434) go to the
+# plain-HTTP listener (10080) -- T2.2. Both listeners forward to the
+# same vsock port; the host's first-byte sniff (T2.1) classifies on
+# wire bytes.
 IPTABLES=iptables-nft
 if [ ! -x /newroot/usr/sbin/iptables-nft ]; then
     echo "[capsem-init] FATAL: iptables-nft missing from rootfs"
@@ -296,20 +329,25 @@ iptables_add -t nat -A OUTPUT -p udp --dport 53    -j REDIRECT --to-port 1053
 iptables_add -t nat -A OUTPUT -p tcp --dport 53    -j REDIRECT --to-port 1053
 iptables_add -t nat -A OUTPUT -p tcp --dport 443   -j REDIRECT --to-port 10443
 iptables_add -t nat -A OUTPUT -p tcp --dport 80    -j REDIRECT --to-port 10080
+iptables_add -t nat -A OUTPUT -p tcp --dport 3128  -j REDIRECT --to-port 10080
+iptables_add -t nat -A OUTPUT -p tcp --dport 3713  -j REDIRECT --to-port 10080
+iptables_add -t nat -A OUTPUT -p tcp --dport 8080  -j REDIRECT --to-port 10080
 iptables_add -t nat -A OUTPUT -p tcp --dport 11434 -j REDIRECT --to-port 10080
 iptables_add -t nat -S OUTPUT
 echo "[capsem-init] network ready"
 boot_mark "network"
 
 # Launch net proxy (TCP->vsock bridge) as background process.
-# Prefer initrd-bundled copy, fall back to rootfs.
+# Publish the selected binary into /run so the guest-visible contract is stable.
 NET_PROXY_PATH=""
 if [ -x /capsem-net-proxy ]; then
     cp /capsem-net-proxy /newroot/run/capsem-net-proxy
     chmod 555 /newroot/run/capsem-net-proxy
     NET_PROXY_PATH=/run/capsem-net-proxy
 elif [ -x /newroot/usr/local/bin/capsem-net-proxy ]; then
-    NET_PROXY_PATH=/usr/local/bin/capsem-net-proxy
+    cp /newroot/usr/local/bin/capsem-net-proxy /newroot/run/capsem-net-proxy
+    chmod 555 /newroot/run/capsem-net-proxy
+    NET_PROXY_PATH=/run/capsem-net-proxy
 fi
 if [ -n "$NET_PROXY_PATH" ]; then
     chroot /newroot "$NET_PROXY_PATH" &
@@ -338,7 +376,9 @@ if [ -x /capsem-dns-proxy ]; then
     chmod 555 /newroot/run/capsem-dns-proxy
     DNS_PROXY_PATH=/run/capsem-dns-proxy
 elif [ -x /newroot/usr/local/bin/capsem-dns-proxy ]; then
-    DNS_PROXY_PATH=/usr/local/bin/capsem-dns-proxy
+    cp /newroot/usr/local/bin/capsem-dns-proxy /newroot/run/capsem-dns-proxy
+    chmod 555 /newroot/run/capsem-dns-proxy
+    DNS_PROXY_PATH=/run/capsem-dns-proxy
 fi
 if [ -n "$DNS_PROXY_PATH" ]; then
     chroot /newroot "$DNS_PROXY_PATH" &
@@ -358,8 +398,9 @@ else
 fi
 boot_mark "dns_proxy"
 
-# Deploy MCP server binary (stdio-to-vsock relay for AI agents).
-# Prefer initrd-bundled copy, fall back to rootfs.
+# Publish MCP server binary (stdio-to-vsock relay for AI agents) into /run.
+# The guest-visible path stays stable whether the selected copy comes from
+# initrd or the rootfs image.
 if [ -x /capsem-mcp-server ]; then
     cp /capsem-mcp-server /newroot/run/capsem-mcp-server
     chmod 555 /newroot/run/capsem-mcp-server
@@ -374,13 +415,18 @@ fi
 if [ -x /capsem-sysutil ]; then
     cp /capsem-sysutil /newroot/run/capsem-sysutil
     chmod 555 /newroot/run/capsem-sysutil
-    ln -sf /run/capsem-sysutil /newroot/sbin/shutdown
+elif [ -x /newroot/usr/local/bin/capsem-sysutil ]; then
+    cp /newroot/usr/local/bin/capsem-sysutil /newroot/run/capsem-sysutil
+    chmod 555 /newroot/run/capsem-sysutil
+fi
+if [ -x /newroot/run/capsem-sysutil ]; then
+    rm -f /newroot/sbin/shutdown
     ln -sf /run/capsem-sysutil /newroot/sbin/halt
     ln -sf /run/capsem-sysutil /newroot/sbin/poweroff
     ln -sf /run/capsem-sysutil /newroot/sbin/reboot
     mkdir -p /newroot/usr/local/bin
     ln -sf /run/capsem-sysutil /newroot/usr/local/bin/suspend
-    echo "[capsem-init] capsem-sysutil deployed (shutdown/halt/poweroff/reboot/suspend)"
+    echo "[capsem-init] capsem-sysutil deployed (halt/poweroff/reboot/suspend)"
 fi
 
 # Deploy initrd-bundled capsem-doctor and diagnostics (fast iteration).
@@ -394,6 +440,11 @@ if [ -x /capsem-bench ]; then
     cp /capsem-bench /newroot/usr/local/bin/capsem-bench
     chmod 555 /newroot/usr/local/bin/capsem-bench
     echo "[capsem-init] capsem-bench deployed"
+fi
+if [ -x /capsem-bench-rs ]; then
+    cp /capsem-bench-rs /newroot/usr/local/bin/capsem-bench-rs
+    chmod 555 /newroot/usr/local/bin/capsem-bench-rs
+    echo "[capsem-init] capsem-bench-rs deployed"
 fi
 if [ -d /capsem_bench ]; then
     rm -rf /newroot/usr/local/lib/capsem_bench
@@ -434,8 +485,12 @@ ulimit -n 65536
 # The interactive shell PATH is set by the host via BootConfig SetEnv later.
 export PATH=/opt/ai-clis/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export HOME=/root
+export TERM=xterm-256color
 export COLORTERM=truecolor
 export IS_SANDBOX=1
+export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+export NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
 
 # Optimize Node.js and Python for the sandboxed VM environment
 # 1. Prevent kernel OOMs by capping Node's V8 heap (VM has 4GB RAM by default)
@@ -464,6 +519,10 @@ case ":$PATH:" in
     *:/opt/ai-clis/bin:*) ;;
     *) export PATH="/opt/ai-clis/bin:/root/.local/bin:$PATH" ;;
 esac
+export TERM=xterm-256color
+export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+export NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
 # Wait briefly for background venv creation if not ready yet.
 if [ ! -f /run/capsem-venv-ready ] && [ ! -f /root/.venv/bin/activate ]; then
     _i=0
@@ -488,8 +547,7 @@ echo "[capsem-init] about to chroot..."
 # This gives full terminal features (resize, job control, TUI apps) and
 # high-throughput I/O without serial bottlenecks.
 #
-# Prefer initrd-bundled agent (injected by `just repack`) over rootfs copy.
-# This allows fast agent iteration without a full rootfs rebuild.
+# Publish the selected agent into /run so tests and users see one stable path.
 AGENT_PATH=""
 if [ -x /capsem-pty-agent ]; then
     # Copy from initrd to writable tmpfs so chroot can access it.
@@ -499,7 +557,9 @@ if [ -x /capsem-pty-agent ]; then
     AGENT_PATH=/run/capsem-pty-agent
     echo "[capsem-init] using initrd-bundled agent"
 elif [ -x /newroot/usr/local/bin/capsem-pty-agent ]; then
-    AGENT_PATH=/usr/local/bin/capsem-pty-agent
+    cp /newroot/usr/local/bin/capsem-pty-agent /newroot/run/capsem-pty-agent
+    chmod 555 /newroot/run/capsem-pty-agent
+    AGENT_PATH=/run/capsem-pty-agent
     echo "[capsem-init] using rootfs agent"
 else
     echo "[capsem-init] FATAL: capsem-pty-agent not found"

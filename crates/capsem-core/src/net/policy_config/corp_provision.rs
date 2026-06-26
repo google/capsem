@@ -80,16 +80,21 @@ pub async fn fetch_corp_config(
 /// Validate that a string is valid corp TOML (parseable as SettingsFile).
 pub fn validate_corp_toml(content: &str) -> Result<SettingsFile> {
     let file: SettingsFile = toml::from_str(content).context("invalid corp TOML")?;
+    super::loader::reject_retired_ai_setting_ids_in_content("corp TOML", content)
+        .map_err(anyhow::Error::msg)?;
     Ok(file)
 }
 
-/// Parse refresh_interval_hours from corp TOML content.
+/// Parse refresh_policy from corp TOML content.
 /// Returns DEFAULT_REFRESH_INTERVAL_HOURS if not present or unparseable.
 pub fn parse_refresh_interval(content: &str) -> u32 {
     if let Ok(table) = content.parse::<toml::Table>() {
-        if let Some(toml::Value::Integer(hours)) = table.get("refresh_interval_hours") {
-            if *hours >= 0 {
-                return *hours as u32;
+        if let Some(toml::Value::String(policy)) = table.get("refresh_policy") {
+            let Some(hours) = policy.strip_suffix('h') else {
+                return DEFAULT_REFRESH_INTERVAL_HOURS;
+            };
+            if let Ok(hours) = hours.parse::<u32>() {
+                return hours;
             }
         }
     }
@@ -253,12 +258,24 @@ mod tests {
     fn test_validate_valid_corp_toml() {
         let content = r#"
 [settings]
-"ai.anthropic.allow" = { value = true, modified = "2024-01-01T00:00:00Z" }
+"repository.providers.github.allow" = { value = true, modified = "2024-01-01T00:00:00Z" }
 "#;
         let result = validate_corp_toml(content);
         assert!(result.is_ok());
         let file = result.unwrap();
-        assert!(file.settings.contains_key("ai.anthropic.allow"));
+        assert!(file
+            .settings
+            .contains_key("repository.providers.github.allow"));
+    }
+
+    #[test]
+    fn test_validate_rejects_retired_ai_settings() {
+        let content = r#"
+[settings]
+"ai.anthropic.allow" = { value = true, modified = "2024-01-01T00:00:00Z" }
+"#;
+        let error = validate_corp_toml(content).unwrap_err().to_string();
+        assert!(error.contains("retired AI setting id ai.anthropic.allow"));
     }
 
     #[test]
@@ -292,7 +309,7 @@ mod tests {
         // Raw string without SettingEntry wrapper should fail
         let content = r#"
 [settings]
-"ai.anthropic.allow" = "yes"
+"repository.providers.github.allow" = "yes"
 "#;
         assert!(validate_corp_toml(content).is_err());
     }
@@ -300,7 +317,7 @@ mod tests {
     #[test]
     fn test_refresh_interval_parsing() {
         assert_eq!(
-            parse_refresh_interval("refresh_interval_hours = 12\n\n[settings]\n"),
+            parse_refresh_interval("refresh_policy = \"12h\"\n\n[settings]\n"),
             12
         );
         assert_eq!(
@@ -312,7 +329,7 @@ mod tests {
     #[test]
     fn test_refresh_interval_zero_means_no_refresh() {
         assert_eq!(
-            parse_refresh_interval("refresh_interval_hours = 0\n\n[settings]\n"),
+            parse_refresh_interval("refresh_policy = \"0h\"\n\n[settings]\n"),
             0
         );
     }
@@ -354,7 +371,7 @@ mod tests {
     #[test]
     fn parse_refresh_interval_rejects_negative() {
         // Negative values must fall back to the default rather than wrap.
-        let content = "refresh_interval_hours = -5\n";
+        let content = "refresh_policy = \"-5h\"\n";
         assert_eq!(
             parse_refresh_interval(content),
             DEFAULT_REFRESH_INTERVAL_HOURS
@@ -363,7 +380,7 @@ mod tests {
 
     #[test]
     fn parse_refresh_interval_ignores_wrong_type() {
-        let content = "refresh_interval_hours = \"twelve\"\n";
+        let content = "refresh_policy = \"twelve\"\n";
         assert_eq!(
             parse_refresh_interval(content),
             DEFAULT_REFRESH_INTERVAL_HOURS
@@ -383,13 +400,13 @@ mod tests {
         let dir = tmp_dir();
         let nested = dir.path().join("capsem-home");
         let source = sample_source();
-        install_corp_config(&nested, "refresh_interval_hours = 6\n", &source).unwrap();
+        install_corp_config(&nested, "refresh_policy = \"6h\"\n", &source).unwrap();
 
         assert!(nested.join("corp.toml").exists());
         assert!(nested.join("corp-source.json").exists());
 
         let corp = std::fs::read_to_string(nested.join("corp.toml")).unwrap();
-        assert!(corp.contains("refresh_interval_hours = 6"));
+        assert!(corp.contains("refresh_policy = \"6h\""));
 
         let roundtrip: CorpSource = serde_json::from_str(
             &std::fs::read_to_string(nested.join("corp-source.json")).unwrap(),
@@ -425,7 +442,7 @@ mod tests {
     #[test]
     fn install_inline_corp_config_validates_and_writes() {
         let dir = tmp_dir();
-        let content = "refresh_interval_hours = 3\n\n[settings]\n";
+        let content = "refresh_policy = \"3h\"\n\n[settings]\n";
         install_inline_corp_config(dir.path(), content).unwrap();
 
         let src = read_corp_source(dir.path()).unwrap();

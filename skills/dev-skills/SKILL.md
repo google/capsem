@@ -1,11 +1,14 @@
 ---
 name: dev-skills
-description: How AI agent skills work -- discovery, loading, triggering, format, and organization. Use when building Capsem's skills system, implementing skill discovery for guest AI agents, or understanding how Claude Code and Gemini CLI consume SKILL.md files. Covers the SKILL.md format, discovery mechanics, progressive disclosure, naming conventions, and lessons learned from setting up this project's skills.
+description: How AI agent skills work -- discovery, loading, triggering, format, and organization. Use when building Capsem's skills system, implementing skill discovery for guest AI agents, or understanding how Claude Code, Gemini CLI, Codex, and Cursor consume SKILL.md files. Covers the SKILL.md format, discovery mechanics, progressive disclosure, naming conventions, and lessons learned from setting up this project's skills.
 ---
 
 # AI Agent Skills System
 
-This documents everything we know about how skills work across Claude Code and Gemini CLI, learned from building and organizing this project's 18+ skills. This knowledge will inform Capsem's own skills system for guest AI agents.
+This documents everything we know about how skills work across Claude Code,
+Gemini CLI, Codex, and Cursor, learned from building and organizing this
+project's skills. This knowledge will inform Capsem's own skills system for
+guest AI agents.
 
 ## Discovery
 
@@ -19,12 +22,57 @@ This documents everything we know about how skills work across Claude Code and G
 ### Gemini CLI
 - Looks in `.agents/skills/` or `.gemini/skills/`
 - Same `<name>/SKILL.md` format as Claude Code
-- We use `.agents/skills -> ../skills` symlink
+- We use `.agents/skills -> ../skills` and `.gemini/skills -> ../skills`
+  symlinks
+
+### Codex and Cursor
+- Project-local `.codex/skills/` and `.cursor/skills/` point to the shared
+  `skills/` directory so those clients consume the same project skills.
+- `bootstrap.sh` creates `.claude`, `.agents`, `.gemini`, `.codex`, and
+  `.cursor` skill symlinks non-destructively.
 
 ### What does NOT work
 - Nested categories: `skills/dev/testing/SKILL.md` is not found by either CLI
 - Files named anything other than `SKILL.md` in a directory are not discovered as skills
 - Files directly in the skills root (not in a subdirectory) are not discovered
+
+### No Escape-Hatch Skill Paths
+
+Do not add alternate skill/bootstrap validation modes named fast, check, or
+dry-run behind separate flags. Forked verification paths are how projects lose
+the real contract. The shared skill rail must be fast, hermetic, and complete
+enough to run every time; if it is not, fix the rail instead of adding a bypass.
+
+### Bank of Iron Feature Tribute
+
+Every feature owes a pure black-box ledger test. The test must exercise the
+public path end to end and account for the exact input and output: client-visible
+result, parsed event facts, security decision, detection/enforcement records,
+protocol rows, structured logs, counters, and route/UI JSON when those surfaces
+exist. No feature is done with a single-entry proof. What goes in must come out
+exactly, and every transformation must be accounted for.
+
+### Profile Build Hook Memory
+
+When image-build work touches `config/profiles/<profile_id>/build.sh`, load the
+`build-images` skill. `build.sh` is not an installer, setup step, boot hook, or
+runtime customization rail. It is the profile-owned rootfs build hook executed
+by the admin/just image pipeline before EROFS assets are produced. The profile
+ledger owns the file descriptor, and the change is only real in a VM after the
+profile assets are rebuilt through that same pipeline.
+
+Use `build.sh` only for rootfs construction work that cannot live in the boring
+profile package files: vendor shell installers, binary tarball installs,
+system-path wrappers, and build-time cleanup. Do not put credentials, corp
+policy, provider state, MCP decisions, runtime settings, or user repair logic
+there. After changing it, run `capsem-admin profile check`, rebuild assets,
+boot a fresh VM, and pay the Ironbank proof for the user-visible behavior.
+Never hand-edit profile payload hashes or sizes; if validation fails, fix the
+source contract or the materialization rail with tests.
+
+`config/skills` is not a development skill location. Read `config/README.md`
+before adding any profile-owned skill payload, and keep repository development
+skills in top-level `skills/`.
 
 ## SKILL.md format
 
@@ -78,7 +126,8 @@ skills/
   meta-find-skills/SKILL.md     meta category
 ```
 
-Categories we use: `meta-*`, `dev-*`, `build-*`, `release-*`, `site-*`, `frontend-*`.
+Categories we use: `meta-*`, `dev-*`, `build-*`, `release-*`, `site-*`,
+`frontend-*`.
 
 ## Bundled resources pattern
 
@@ -130,4 +179,5 @@ Skills in `~/.claude/skills/` are available across all projects. We install meta
 5. **One skill per concern.** MCP and MITM proxy are separate skills even though both handle network traffic -- they have different trigger conditions.
 6. **Cross-reference between skills** using "See dev-testing-vm for..." style pointers in the body.
 7. **Skills load on demand** -- having 18 skills costs nothing when they're not triggered. Don't try to merge skills to save space.
-8. **Both CLIs read the same format.** SKILL.md with YAML frontmatter works for Claude Code and Gemini CLI. No duplication needed.
+8. **Agent clients read the same format.** SKILL.md with YAML frontmatter works
+   for Claude Code, Gemini CLI, Codex, and Cursor. No duplication needed.

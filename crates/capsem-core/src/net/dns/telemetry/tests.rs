@@ -6,7 +6,12 @@ use capsem_logger::events::Decision;
 
 fn allowed_result() -> DnsHandlerResult {
     DnsHandlerResult {
-        answer_bytes: vec![1, 2, 3, 4],
+        answer_bytes: vec![
+            0x12, 0x34, 0x81, 0x80, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x09, b'a',
+            b'n', b't', b'h', b'r', b'o', b'p', b'i', b'c', 0x03, b'c', b'o', b'm', 0x00, 0x00,
+            0x01, 0x00, 0x01, 0xc0, 0x0c, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x3c, 0x00,
+            0x04, 93, 184, 216, 34,
+        ],
         query: Some(DnsQuery {
             id: 0x1234,
             qname: "anthropic.com".into(),
@@ -54,6 +59,7 @@ fn build_event_for_allowed_query() {
     assert_eq!(evt.qtype, 1);
     assert_eq!(evt.qclass, 1);
     assert_eq!(evt.rcode, 0);
+    assert_eq!(evt.answer_ip.as_deref(), Some("93.184.216.34"));
     assert_eq!(evt.decision, "allowed");
     assert!(evt.matched_rule.is_none());
     assert_eq!(evt.source_proto.as_deref(), Some("udp"));
@@ -135,12 +141,12 @@ fn build_event_process_name_passthrough() {
 }
 
 #[test]
-fn build_event_carries_policy_v2_fields() {
+fn build_event_carries_security_rule_fields() {
     let mut res = denied_result();
-    res.matched_rule = Some("policy.dns.block_openai".into());
+    res.matched_rule = Some("profiles.rules.block_openai_dns".into());
     res.policy_mode = Some("enforce".into());
     res.policy_action = Some("block".into());
-    res.policy_rule = Some("policy.dns.block_openai".into());
+    res.policy_rule = Some("profiles.rules.block_openai_dns".into());
     res.policy_reason = Some("DNS to OpenAI API is blocked".into());
 
     let evt = build_dns_event(
@@ -151,10 +157,16 @@ fn build_event_carries_policy_v2_fields() {
     );
 
     assert_eq!(evt.decision, "denied");
-    assert_eq!(evt.matched_rule.as_deref(), Some("policy.dns.block_openai"));
+    assert_eq!(
+        evt.matched_rule.as_deref(),
+        Some("profiles.rules.block_openai_dns")
+    );
     assert_eq!(evt.policy_mode.as_deref(), Some("enforce"));
     assert_eq!(evt.policy_action.as_deref(), Some("block"));
-    assert_eq!(evt.policy_rule.as_deref(), Some("policy.dns.block_openai"));
+    assert_eq!(
+        evt.policy_rule.as_deref(),
+        Some("profiles.rules.block_openai_dns")
+    );
     assert_eq!(
         evt.policy_reason.as_deref(),
         Some("DNS to OpenAI API is blocked")

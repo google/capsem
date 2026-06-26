@@ -3,6 +3,7 @@
 
 use super::*;
 use std::os::unix::net::UnixStream;
+use std::sync::mpsc;
 
 #[test]
 fn negotiate_succeeds_when_both_sides_match() {
@@ -37,26 +38,22 @@ fn negotiate_times_out_when_peer_silent() {
 #[test]
 fn negotiate_fails_on_schema_mismatch() {
     let (mut a, mut b) = UnixStream::pair().unwrap();
+    let (done_tx, done_rx) = mpsc::channel();
 
     // Consume the initiator's Hello, then write a bad one. Reading first
     // makes the test deterministic against the initiator's write ordering.
     std::thread::spawn(move || {
-        let mut len_buf = [0u8; 4];
-        b.read_exact(&mut len_buf).unwrap();
-        let n = u32::from_be_bytes(len_buf);
-        let mut payload = vec![0u8; n as usize];
-        b.read_exact(&mut payload).unwrap();
+        let peer = read_hello(&mut b, HELLO_TIMEOUT).unwrap();
+        verify(&peer).unwrap();
 
         let mut bad = Hello::ours("capsem-process-stale", "");
         bad.schema_hash = bad.schema_hash.wrapping_add(0xdead);
-        let payload = rmp_serde::to_vec_named(&bad).unwrap();
-        let len = (payload.len() as u32).to_be_bytes();
-        b.write_all(&len).unwrap();
-        b.write_all(&payload).unwrap();
-        b.flush().unwrap();
+        write_hello(&mut b, &bad).unwrap();
+        let _ = done_rx.recv();
     });
 
     let err = negotiate_initiator(&mut a, "capsem-service-test", "").unwrap_err();
+    let _ = done_tx.send(());
     assert!(matches!(err, HandshakeError::Schema { .. }), "{err:?}");
     let msg = err.to_string();
     assert!(msg.contains("capsem-process-stale"), "msg: {msg}");

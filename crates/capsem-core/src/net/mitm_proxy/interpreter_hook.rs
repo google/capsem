@@ -24,7 +24,7 @@ use bytes::Bytes;
 use super::hooks::{ChunkCtx, ChunkHook, ConnMeta};
 use super::sse_parser_hook::SseEventStream;
 use crate::net::ai_traffic::events::{LlmEvent, ProviderStreamParser};
-use crate::net::ai_traffic::provider::ProviderKind;
+use crate::net::ai_traffic::provider::{ModelProtocol, ProviderKind};
 use crate::net::interpreters::anthropic_interpreter::AnthropicStreamParserWithState;
 use crate::net::interpreters::google_interpreter::GoogleStreamParser;
 use crate::net::interpreters::openai_interpreter::OpenAiStreamParser;
@@ -40,8 +40,8 @@ pub struct LlmEventStream {
     pub provider: Option<ProviderKind>,
 }
 
-fn conn_matches_provider(conn: &ConnMeta, provider: ProviderKind) -> bool {
-    conn.ai_provider == Some(provider)
+fn conn_matches_protocol(conn: &ConnMeta, protocol: ModelProtocol) -> bool {
+    conn.ai_protocol == Some(protocol)
 }
 
 /// Run an interpreter pass: drain `SseEventStream`, parse via the
@@ -109,7 +109,7 @@ impl ChunkHook for AnthropicInterpreterHook {
     }
 
     fn on_response_chunk(&self, _chunk: &mut Bytes, ctx: &mut ChunkCtx<'_>) {
-        if !conn_matches_provider(ctx.conn(), ProviderKind::Anthropic) {
+        if !conn_matches_protocol(ctx.conn(), ModelProtocol::Anthropic) {
             return;
         }
         run::<AnthropicStreamParserWithState, _, _>(
@@ -150,7 +150,7 @@ impl ChunkHook for OpenAiInterpreterHook {
     }
 
     fn on_response_chunk(&self, _chunk: &mut Bytes, ctx: &mut ChunkCtx<'_>) {
-        if !conn_matches_provider(ctx.conn(), ProviderKind::OpenAi) {
+        if !conn_matches_protocol(ctx.conn(), ModelProtocol::OpenAi) {
             return;
         }
         run::<OpenAiStreamParser, _, _>(
@@ -191,7 +191,7 @@ impl ChunkHook for GoogleInterpreterHook {
     }
 
     fn on_response_chunk(&self, _chunk: &mut Bytes, ctx: &mut ChunkCtx<'_>) {
-        if !conn_matches_provider(ctx.conn(), ProviderKind::Google) {
+        if !conn_matches_protocol(ctx.conn(), ModelProtocol::Google) {
             return;
         }
         run::<GoogleStreamParser, _, _>(

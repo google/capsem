@@ -1,0 +1,68 @@
+# Code profile enforcement rules.
+#
+# These are visible rules compiled into the single SecurityRuleSet/CEL rail.
+
+[profiles.rules.capsem_mock_server]
+name = "capsem_mock_server"
+action = "allow"
+priority = 10
+reason = "Allow Capsem doctor, benchmark, and Ironbank traffic to the local hermetic mock server."
+match = '(http.host == "127.0.0.1" || http.host == "localhost") && ip.value == "127.0.0.1" && tcp.port == "3713"'
+
+[default.http]
+name = "http"
+action = "allow"
+priority = "default"
+reason = "Default allow for HTTP requests."
+match = "has(http.host)"
+
+[default.dns]
+name = "dns"
+action = "allow"
+priority = "default"
+reason = "Default allow for DNS queries."
+match = "has(dns.qname)"
+
+[default.mcp]
+name = "mcp"
+action = "allow"
+priority = "default"
+reason = "Default allow for MCP server activity and tool calls."
+match = "has(mcp.method) || has(mcp.server.name) || has(mcp.tool_call.name) || has(mcp.tool_list)"
+
+[default.model]
+name = "model"
+action = "allow"
+priority = "default"
+reason = "Default allow for model calls."
+match = "has(model.provider) || has(model.name) || has(model.request.body) || has(model.response.body) || has(model.request.tool_calls)"
+
+[default.unknown_model_provider]
+name = "unknown_model_provider"
+action = "allow"
+priority = "default"
+detection_level = "informational"
+reason = "Detect model traffic whose wire protocol is recognized but whose endpoint owner is not declared."
+match = 'model.provider == "unknown"'
+
+[default.unknown_mcp_server]
+name = "unknown_mcp_server"
+action = "allow"
+priority = "default"
+detection_level = "informational"
+reason = "Detect MCP server activity from observed servers not declared by the active profile."
+match = 'mcp.server.name.contains("observed:")'
+
+[default.file]
+name = "file"
+action = "allow"
+priority = "default"
+reason = "Default allow for file reads, writes, creates, deletes, imports, and exports."
+match = "has(file.read.path) || has(file.write.path) || has(file.create.path) || has(file.delete.path) || has(file.import.path) || has(file.export.path) || has(file.content)"
+
+[default.process]
+name = "process"
+action = "allow"
+priority = "default"
+reason = "Default allow for process execution and audit activity."
+match = "has(process.exec.path) || has(process.command) || has(process.exec.id)"

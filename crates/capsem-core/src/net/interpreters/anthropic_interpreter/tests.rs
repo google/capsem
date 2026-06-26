@@ -22,7 +22,7 @@ fn upstream_url_with_query() {
 
 #[test]
 fn kind_is_anthropic() {
-    assert_eq!(AnthropicProvider.kind(), ProviderKind::Anthropic);
+    assert_eq!(AnthropicProvider.kind(), ModelProtocol::Anthropic);
 }
 
 // ── Stream parser: text-only response ───────────────────────────
@@ -122,6 +122,51 @@ data: {\"type\":\"message_stop\"}\n\
     assert_eq!(summary.tool_calls[0].call_id, "toolu_01");
     assert_eq!(summary.tool_calls[0].name, "get_weather");
     assert_eq!(summary.tool_calls[0].arguments, "{\"city\": \"NYC\"}");
+    assert_eq!(summary.stop_reason, Some(StopReason::ToolUse));
+}
+
+#[test]
+fn streaming_anthropic_tool_call_payload_is_collected() {
+    let raw = b"\
+event: message_start\n\
+data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_stream_tool\",\"model\":\"claude-sonnet-4-20250514\"}}\n\
+\n\
+event: content_block_start\n\
+data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_capsem_write_poem\",\"name\":\"exec_command\",\"input\":{}}}\n\
+\n\
+event: content_block_delta\n\
+data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"cmd\\\":\\\"printf\"}}\n\
+\n\
+event: content_block_delta\n\
+data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\" abc > /root/poem.txt\\\"}\"}}\n\
+\n\
+event: content_block_stop\n\
+data: {\"type\":\"content_block_stop\",\"index\":0}\n\
+\n\
+event: message_delta\n\
+data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":17}}\n\
+\n\
+event: message_stop\n\
+data: {\"type\":\"message_stop\"}\n\
+\n";
+
+    let mut sse_parser = SseParser::new();
+    let sse_events = sse_parser.feed(raw);
+    let mut parser = AnthropicStreamParserWithState::new();
+    let mut llm_events = Vec::new();
+    for sse in &sse_events {
+        llm_events.extend(parser.parse_event(sse));
+    }
+
+    let summary = collect_summary(&llm_events);
+    assert_eq!(summary.tool_calls.len(), 1);
+    assert_eq!(summary.tool_calls[0].index, 0);
+    assert_eq!(summary.tool_calls[0].call_id, "toolu_capsem_write_poem");
+    assert_eq!(summary.tool_calls[0].name, "exec_command");
+    assert_eq!(
+        summary.tool_calls[0].arguments,
+        r#"{"cmd":"printf abc > /root/poem.txt"}"#
+    );
     assert_eq!(summary.stop_reason, Some(StopReason::ToolUse));
 }
 

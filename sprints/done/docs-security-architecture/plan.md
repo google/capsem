@@ -55,7 +55,7 @@ These are the highest-priority pages -- they're linked from existing docs and cu
    - SBOM: cargo-sbom, SPDX 2.3 JSON
    - SLSA attestation: actions/attest-build-provenance@v4 for all release artifacts
    - Asset integrity: BLAKE3 hashes in manifest.json, compile-time hash embedding, runtime verification
-   - Manifest signing: minisign for release manifests
+   - Asset release evidence: SBOM, provenance, and BLAKE3 metadata
    - Supply chain: Rust stable toolchain, pinned Docker base images, cargo-audit
 
 ### S2: Architecture Deep Dives (new pages)

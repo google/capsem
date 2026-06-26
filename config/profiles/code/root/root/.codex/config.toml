@@ -1,0 +1,7 @@
+check_for_update_on_startup = false
+
+[analytics]
+enabled = false
+
+[mcp_servers.capsem]
+command = "/run/capsem-mcp-server"

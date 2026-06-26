@@ -26,7 +26,6 @@ match = 'http.host.matches("(^|.*\.)(openai\.com|chatgpt\.com|oaistatic\.com|oai
 ```toml
 [profiles.rules.redact_pii]
 name = "openai_prompt_pii_redact"
-plugin = "pii"
 action = "preprocess"
 match = 'has(model.request.body)'
 ```
@@ -35,14 +34,9 @@ Provider-scoped rules are convenience/default authoring only. They normalize
 into profile rules before runtime:
 
 ```toml
-[ai.openai.rules.api_key_broker]
-name = "openai_api_key_broker"
-plugin = "credential_broker"
-action = "postprocess"
-type = "api-key"
-header = "Authorization"
-prefix = "Bearer "
-credential = "api_key"
+[plugins.credential_broker]
+mode = "rewrite"
+detection_level = "informational"
 match = 'http.host.matches("(^|.*\.)(openai\.com|chatgpt\.com|oaistatic\.com|oaiusercontent\.com)$")'
 ```
 

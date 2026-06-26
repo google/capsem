@@ -1,0 +1,103 @@
+{
+  "version": "0.3.0",
+  "timestamp": 1782292334.4013574,
+  "hostname": "mock-server-protocol-f4a9e74b",
+  "mock_server_protocol": {
+    "version": "1.0",
+    "base_url": "http://127.0.0.1:3713",
+    "total_requests": 50000,
+    "concurrency": 64,
+    "timeout_s": 30.0,
+    "selected_scenarios": [
+      "model_json_response",
+      "credential_response"
+    ],
+    "scenarios": [
+      {
+        "name": "model_json_response",
+        "path": "/model/response",
+        "body_kind": "model_json",
+        "total_requests": 50000,
+        "concurrency": 64,
+        "successful": 50000,
+        "failed": 0,
+        "total_duration_ms": 16626.2,
+        "requests_per_sec": 3007.3,
+        "transfer_bytes": 29300000,
+        "bytes_per_sec": 1762277.8,
+        "latency_ms": {
+          "min": 0.7,
+          "max": 188.5,
+          "mean": 21.0,
+          "p50": 18.8,
+          "p95": 43.1,
+          "p99": 57.8
+        },
+        "errors": {}
+      },
+      {
+        "name": "credential_response",
+        "path": "/credential/response",
+        "body_kind": "credential",
+        "total_requests": 50000,
+        "concurrency": 64,
+        "successful": 50000,
+        "failed": 0,
+        "total_duration_ms": 30455.9,
+        "requests_per_sec": 1641.7,
+        "transfer_bytes": 11950000,
+        "bytes_per_sec": 392371.2,
+        "latency_ms": {
+          "min": 0.8,
+          "max": 293.8,
+          "mean": 38.5,
+          "p50": 33.0,
+          "p95": 84.1,
+          "p99": 111.0
+        },
+        "errors": {},
+        "secret_shaped_fixture_seen": true,
+        "raw_secret_stored_in_result": false
+      }
+    ],
+    "websocket": [
+      {
+        "name": "websocket_echo",
+        "path": "/ws/echo",
+        "skipped": false,
+        "frames": 10,
+        "failed": false,
+        "duration_ms": 6.6,
+        "frames_per_sec": 1513.0,
+        "latency_ms": {
+          "min": 0.2,
+          "max": 1.4,
+          "mean": 0.3,
+          "p50": 0.2,
+          "p95": 0.9,
+          "p99": 1.3
+        }
+      },
+      {
+        "name": "websocket_close",
+        "path": "/ws/close",
+        "skipped": false,
+        "frames": 1,
+        "failed": false,
+        "duration_ms": 11.9,
+        "frames_per_sec": 84.1,
+        "latency_ms": {
+          "min": 11.9,
+          "max": 11.9,
+          "mean": 11.9,
+          "p50": 11.9,
+          "p95": 11.9,
+          "p99": 11.9
+        }
+      }
+    ]
+  },
+  "host_recorded_at": 1782292392.045151,
+  "arch": "arm64",
+  "mock_server_base_url": "http://127.0.0.1:3713"
+}

@@ -23,17 +23,24 @@ The manifest tracks both with compatibility ranges (`min_binary`, `min_assets`).
 | `just shell` | Daily driver: repack initrd, build, sign, boot (~10s) |
 | `just shell "capsem-doctor"` | Verify VM boots correctly after changes |
 
+On macOS, `just build-assets`, `just _pack-initrd`, and any Docker-backed
+asset recipe depend on Colima. If Docker cannot connect but Colima appears to
+be running, follow `/dev-setup`'s Colima recovery discipline before treating
+the asset build as blocked: check `colima list`, `docker version`, and
+`colima ssh -- docker ps`; then try `colima stop && colima start` once and
+rerun the failing recipe.
+
 ## File Locations
 
 | What | Where |
 |------|-------|
-| Guest config (TOML) | `guest/config/` |
+| Profile source config | `config/profiles/<id>/` |
 | Guest artifacts | `guest/artifacts/` |
-| Built assets (dev) | `assets/{arch}/vmlinuz, initrd.img, rootfs.squashfs` |
+| Built assets (dev) | `assets/{arch}/vmlinuz, initrd.img, rootfs.erofs` |
 | Installed assets | `~/.capsem/assets/{name}-{hash16}.{ext}` (flat, hash-based) |
 | Manifest | `assets/manifest.json` |
 | Checksums | `assets/B3SUMS` |
-| Manifest regenerator | `scripts/gen_manifest.py` |
+| Manifest generator | `capsem-admin manifest generate <assets_dir>` |
 | Asset types + cleanup | `crates/capsem-core/src/asset_manager.rs` |
 | Hash extraction for build.rs | `crates/capsem-core/src/manifest_compat.rs` |
 
@@ -53,7 +60,7 @@ The manifest tracks both with compatibility ranges (`min_binary`, `min_assets`).
           "arm64": {
             "vmlinuz": { "hash": "<64-char blake3>", "size": 7797248 },
             "initrd.img": { "hash": "...", "size": 2270154 },
-            "rootfs.squashfs": { "hash": "...", "size": 454230016 }
+            "rootfs.erofs": { "hash": "...", "size": 454230016 }
           }
         }
       }
@@ -72,7 +79,9 @@ The manifest tracks both with compatibility ranges (`min_binary`, `min_assets`).
 }
 ```
 
-Two producers: `docker.py:generate_checksums()` (full build) and `scripts/gen_manifest.py` (initrd repack). Both produce v2 format.
+The public producer is `capsem-admin manifest generate <assets_dir>`. Full
+asset builds and initrd repacks feed that same profile-derived build rail so local, CI, and
+corporate manifests use one contract.
 
 ## Disk Layouts
 
@@ -80,7 +89,7 @@ Two producers: `docker.py:generate_checksums()` (full build) and `scripts/gen_ma
 ```
 assets/arm64/vmlinuz
 assets/arm64/initrd.img
-assets/arm64/rootfs.squashfs
+assets/arm64/rootfs.erofs
 assets/manifest.json
 ```
 
@@ -89,7 +98,7 @@ assets/manifest.json
 manifest.json
 vmlinuz-2c0bd752db929642
 initrd-e5e910e9ab38b873.img
-rootfs-89eb92b83534d9d0.squashfs
+rootfs-89eb92b83534d9d0.erofs
 ```
 
 Hash-based naming: `{stem}-{hash[..16]}{ext}`. Same hash = same file across versions = natural dedup.

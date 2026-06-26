@@ -20,13 +20,13 @@ pytestmark = pytest.mark.cleanup
 
 def _get_vm_pid(client, name):
     """Get the OS process ID for a VM."""
-    info = client.get(f"/info/{name}")
+    info = client.get(f"/vms/{name}/info")
     return info.get("pid") if info else None
 
 
 def _vm_in_list(client, name):
     """Check if a VM appears in the service list."""
-    listing = client.get("/list")
+    listing = client.get("/vms/list")
     ids = [s["id"] for s in listing.get("sandboxes", [])]
     return name in ids
 
@@ -35,7 +35,7 @@ def test_ephemeral_cleaned_on_process_death(cleanup_env):
     """Crash an ephemeral VM process; service should preserve a failed session dir."""
     client = cleanup_env.client()
     name = f"eph-{uuid.uuid4().hex[:6]}"
-    client.post("/provision", {
+    client.post("/vms/create", {
         "name": name,
         "ram_mb": DEFAULT_RAM_MB,
         "cpus": DEFAULT_CPUS,
@@ -72,7 +72,7 @@ def test_persistent_preserved_on_process_death(cleanup_env):
     """Kill a persistent VM process; service should preserve session dir."""
     client = cleanup_env.client()
     name = f"prs-{uuid.uuid4().hex[:6]}"
-    client.post("/provision", {
+    client.post("/vms/create", {
         "name": name,
         "ram_mb": DEFAULT_RAM_MB,
         "cpus": DEFAULT_CPUS,
@@ -88,29 +88,27 @@ def test_persistent_preserved_on_process_death(cleanup_env):
     # Give the service time to run stale-instance cleanup
     time.sleep(5)
 
-    # Persistent VM session dir should still exist
-    persistent_dir = cleanup_env.tmp_dir / "persistent" / name
     # The VM should still appear in list (as Stopped)
-    listing = client.get("/list")
-    vm = next((s for s in listing.get("sandboxes", []) if s["id"] == name), None)
+    listing = client.get("/vms/list")
+    assert isinstance(listing.get("sandboxes", []), list)
     # Note: the stale-instance cleanup removes from instances map but the
-    # persistent registry keeps it, so it shows in /list as Stopped
+    # persistent registry keeps it, so it shows in /vms/list as Stopped
     # (or it may have been cleaned from instances but still in registry)
 
     # Explicit cleanup
-    client.delete(f"/delete/{name}")
+    client.delete(f"/vms/{name}/delete")
 
 
 def test_explicit_delete_always_works(cleanup_env):
     """Explicit delete should destroy any VM regardless of persistence."""
     client = cleanup_env.client()
     name = f"del-{uuid.uuid4().hex[:6]}"
-    client.post("/provision", {
+    client.post("/vms/create", {
         "name": name,
         "ram_mb": DEFAULT_RAM_MB,
         "cpus": DEFAULT_CPUS,
     })
     wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
 
-    client.delete(f"/delete/{name}")
+    client.delete(f"/vms/{name}/delete")
     assert not _vm_in_list(client, name), f"VM {name} still in list after explicit delete"

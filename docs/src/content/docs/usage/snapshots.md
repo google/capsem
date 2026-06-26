@@ -120,7 +120,7 @@ The Capsem GUI shows snapshot data in the **Stats > Snapshots** tab. The table u
 
 ## Configuration
 
-Set these in `~/.capsem/user.toml`:
+Set these in the active profile:
 
 ```toml
 [vm.snapshots]

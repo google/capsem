@@ -1,4 +1,4 @@
-use super::loader::load_settings_files;
+use super::loader::load_settings_and_corp_files;
 use super::resolver::resolve_settings;
 use super::types::*;
 use serde::{Deserialize, Serialize};
@@ -219,7 +219,7 @@ pub fn config_lint(resolved: &[ResolvedSetting]) -> Vec<ConfigIssue> {
 
 /// Run lint on current merged settings.
 pub fn load_merged_lint() -> Vec<ConfigIssue> {
-    let (user, corp) = load_settings_files();
+    let (user, corp) = load_settings_and_corp_files();
     let resolved = resolve_settings(&user, &corp);
     config_lint(&resolved)
 }

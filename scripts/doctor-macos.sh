@@ -26,7 +26,9 @@ check_platform() {
 
     # Colima
     if command -v colima &>/dev/null; then
-        if colima status 2>&1 | grep -qi "running"; then
+        local colima_status
+        colima_status=$(colima status 2>&1 || true)
+        if printf '%s\n' "$colima_status" | grep -qi "running"; then
             pass "colima (running)"
         else
             fail "colima not running -- start: colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8"

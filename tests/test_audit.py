@@ -15,7 +15,6 @@ from capsem.builder.audit import (
     parse_trivy_json,
     summarize_vulns,
 )
-from capsem.builder.manifest import VulnEntry
 
 # ---------------------------------------------------------------------------
 # Inline fixtures

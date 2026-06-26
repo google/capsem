@@ -3,11 +3,13 @@ mod ipc;
 mod job_store;
 mod mcp_runtime;
 mod pty_log;
+mod runtime_config;
 mod terminal;
 mod vsock;
 
 use anyhow::{Context, Result};
 use capsem_core::fs_monitor::FsMonitor;
+use capsem_core::net::dns::{DnsAnswerCache, DnsResolver};
 use capsem_core::{boot_vm, BootOptions, VirtioFsShare, VsockConnection};
 use capsem_logger::DbWriter;
 use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
@@ -18,7 +20,6 @@ use tokio::net::UnixListener;
 use tokio::sync::{broadcast, mpsc, Mutex};
 use tracing::{error, info, warn};
 
-use helpers::query_max_fs_event_id;
 use job_store::JobStore;
 use mcp_runtime::McpRuntime;
 use vsock::VsockOptions;
@@ -66,10 +67,14 @@ struct Args {
     initrd: Option<PathBuf>,
     #[arg(long)]
     session_dir: PathBuf,
+    #[arg(long)]
+    active_profile: PathBuf,
     #[arg(long, default_value_t = 2)]
     cpus: u32,
     #[arg(long, default_value_t = 2048)]
     ram_mb: u64,
+    #[arg(long, default_value_t = 16)]
+    scratch_disk_size_gb: u32,
     #[arg(long)]
     uds_path: PathBuf,
     #[arg(long)]
@@ -113,6 +118,11 @@ fn aggregator_log_path(session_dir: &Path) -> PathBuf {
     session_dir.join("mcp-aggregator.stderr.log")
 }
 
+fn prepare_session_layout(session_dir: &Path, scratch_disk_size_gb: u32) -> Result<PathBuf> {
+    capsem_core::create_virtiofs_session(session_dir, scratch_disk_size_gb)?;
+    Ok(capsem_core::guest_share_dir(session_dir))
+}
+
 fn main() -> Result<()> {
     let _telemetry_guard = capsem_core::telemetry::init(capsem_core::telemetry::TelemetryConfig {
         service: "capsem-process",
@@ -140,8 +150,7 @@ fn main() -> Result<()> {
         session_dir = resolved;
     }
 
-    capsem_core::create_virtiofs_session(&session_dir, 2)?;
-    let guest_dir = capsem_core::guest_share_dir(&session_dir);
+    let guest_dir = prepare_session_layout(&session_dir, args.scratch_disk_size_gb)?;
     let virtiofs_shares = vec![VirtioFsShare {
         tag: "capsem".into(),
         host_path: guest_dir.clone(),
@@ -300,21 +309,40 @@ async fn run_async_main_loop(
     // starts, we still want a clean checkpoint.
     shutdown.lock().await.db = Some(Arc::clone(&db));
 
-    // Load settings files once and derive everything from them before any
-    // producer starts emitting security events.
-    let (user_sf, corp_sf) = capsem_core::net::policy_config::load_settings_files();
-    let merged = capsem_core::net::policy_config::MergedPolicies::from_files(&user_sf, &corp_sf);
-    let snap_settings = capsem_core::net::policy_config::resolve_settings(&user_sf, &corp_sf);
-    let guest_config = merged.guest.clone();
-    let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(merged.security_rules)));
+    let runtime_source = runtime_config::RuntimeProfileSource::new(args.active_profile.clone());
+    let runtime_config = runtime_source.load()?;
+    let security_rule_ids = runtime_config
+        .security_rules
+        .rules()
+        .iter()
+        .map(|rule| rule.rule_id.as_str())
+        .collect::<Vec<_>>();
+    info!(
+        profile_id = %runtime_config.profile_id,
+        active_profile = %runtime_config.active_profile_path.display(),
+        security_rule_count = security_rule_ids.len(),
+        security_rule_ids = ?security_rule_ids,
+        plugin_count = runtime_config.plugins.len(),
+        dns_upstreams = ?runtime_config.dns_upstreams,
+        "capsem-process loaded profile runtime config"
+    );
+    let guest_config = capsem_core::net::policy_config::GuestConfig::default();
+    let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(
+        runtime_config.security_rules.clone(),
+    )));
+    let plugin_policy = Arc::new(std::sync::RwLock::new(runtime_config.plugins.clone()));
+    let model_trace_state = Arc::new(std::sync::Mutex::new(
+        capsem_core::net::ai_traffic::TraceState::new(),
+    ));
 
     // Start host file monitor to record fs_events.
-    let workspace_dir = session_dir.join("workspace");
+    let workspace_dir = capsem_core::guest_share_dir(&session_dir).join("workspace");
     match capsem_core::fs_monitor::FsMonitor::start(
         workspace_dir.clone(),
         workspace_dir.clone(),
         Arc::clone(&db),
         Arc::clone(&security_rules),
+        Arc::clone(&model_trace_state),
     ) {
         Ok(monitor) => {
             info!("host file monitor started");
@@ -328,7 +356,7 @@ async fn run_async_main_loop(
     let net_state = Arc::new(capsem_core::create_net_state_with_policy(
         &args.id,
         Arc::clone(&db),
-        merged.network.clone(),
+        runtime_config.network.clone(),
     )?);
     // Locate the builtin MCP server binary next to our own binary.
     let builtin_bin = std::env::current_exe()
@@ -344,28 +372,17 @@ async fn run_async_main_loop(
         "CAPSEM_SESSION_DB".into(),
         db_path.to_string_lossy().to_string(),
     );
-    mcp_runtime::insert_builtin_domain_policy_env(&mut builtin_env, &merged.domain);
-    let mcp_servers = capsem_core::mcp::build_server_list_with_builtin(
-        &user_sf.mcp.clone().unwrap_or_default(),
-        &corp_sf.mcp.clone().unwrap_or_default(),
-        builtin_bin.as_deref(),
-        builtin_env,
+    builtin_env.insert(
+        "CAPSEM_ACTIVE_PROFILE".into(),
+        runtime_config
+            .active_profile_path
+            .to_string_lossy()
+            .to_string(),
     );
-    let snap_auto_max = snap_settings
-        .iter()
-        .find(|s| s.id == "vm.snapshots.auto_max")
-        .and_then(|s| s.effective_value.as_number())
-        .unwrap_or(10) as usize;
-    let snap_manual_max = snap_settings
-        .iter()
-        .find(|s| s.id == "vm.snapshots.manual_max")
-        .and_then(|s| s.effective_value.as_number())
-        .unwrap_or(12) as usize;
-    let snap_interval = snap_settings
-        .iter()
-        .find(|s| s.id == "vm.snapshots.auto_interval")
-        .and_then(|s| s.effective_value.as_number())
-        .unwrap_or(300) as u64;
+    let mcp_servers = runtime_config.mcp_servers(builtin_bin.as_deref(), builtin_env.clone());
+    let snap_auto_max = 10usize;
+    let snap_manual_max = 12usize;
+    let snap_interval = 300u64;
 
     let scheduler = capsem_core::auto_snapshot::AutoSnapshotScheduler::new(
         session_dir.clone(),
@@ -378,29 +395,15 @@ async fn run_async_main_loop(
     // Defer initial snapshot to background -- workspace is empty at boot, no need to block.
     {
         let sched = Arc::clone(&scheduler);
-        let db_snap = Arc::clone(&db);
-        let security_rules_snap = Arc::clone(&security_rules);
         tokio::spawn(async move {
             let mut s = sched.lock().await;
             if let Ok(slot) = s.take_snapshot() {
-                let stop_id = query_max_fs_event_id(&db_snap);
-                let rules = security_rules_snap.read().unwrap().clone();
-                capsem_core::security_engine::emit_snapshot_security_write_and_rules(
-                    &db_snap,
-                    &rules,
-                    capsem_logger::SnapshotEvent {
-                        event_id: None,
-                        timestamp: slot.timestamp,
-                        slot: slot.slot,
-                        origin: "auto".into(),
-                        name: None,
-                        files_count: slot.files_count,
-                        start_fs_event_id: 0,
-                        stop_fs_event_id: stop_id,
-                        trace_id: capsem_core::telemetry::ambient_capsem_trace_id(),
-                    },
-                )
-                .await;
+                info!(
+                    slot = slot.slot,
+                    files_count = slot.files_count,
+                    origin = "auto",
+                    "auto snapshot captured"
+                );
             }
         });
     }
@@ -451,25 +454,23 @@ async fn run_async_main_loop(
 
     let inflight_cap = capsem_core::mcp::resolve_inflight_cap();
     info!(inflight_cap, "MITM MCP endpoint in-flight handler cap");
-    let mcp_policy = Arc::new(tokio::sync::RwLock::new(Arc::new(merged.mcp)));
-    let policy_v2 = Arc::new(tokio::sync::RwLock::new(Arc::new(merged.policy)));
-    let mcp_domain_policy = Arc::new(std::sync::RwLock::new(Arc::new(merged.domain)));
-    let model_endpoints = Arc::new(std::sync::RwLock::new(Arc::new(merged.model_endpoints)));
+    let model_endpoints = Arc::new(std::sync::RwLock::new(Arc::new(
+        runtime_config.model_endpoints.clone(),
+    )));
     let mcp_inflight = Arc::new(tokio::sync::Semaphore::new(inflight_cap));
     let mcp_endpoint = Arc::new(capsem_core::net::mitm_proxy::McpEndpointState::new(
         aggregator_client.clone(),
-        Arc::clone(&mcp_policy),
-        Arc::clone(&policy_v2),
         Arc::clone(&security_rules),
+        Arc::clone(&plugin_policy),
         Arc::clone(&mcp_inflight),
         capsem_core::net::mitm_proxy::McpTimeouts::from_env(),
     ));
     let mcp_runtime = Arc::new(McpRuntime {
         aggregator: aggregator_client,
-        policy: Arc::clone(&mcp_policy),
-        policy_v2: Arc::clone(&policy_v2),
+        endpoint: Arc::clone(&mcp_endpoint),
+        db: Arc::clone(&db),
         security_rules: Arc::clone(&security_rules),
-        domain_policy: Arc::clone(&mcp_domain_policy),
+        plugin_policy: Arc::clone(&plugin_policy),
         model_endpoints: Arc::clone(&model_endpoints),
     });
 
@@ -477,21 +478,18 @@ async fn run_async_main_loop(
         capsem_core::net::mitm_proxy::telemetry_hook::TelemetryDeps {
             db: Arc::clone(&db),
             pricing: Arc::new(capsem_core::net::ai_traffic::pricing::PricingTable::load()),
-            trace_state: Arc::new(std::sync::Mutex::new(
-                capsem_core::net::ai_traffic::TraceState::new(),
-            )),
+            trace_state: Arc::clone(&model_trace_state),
             security_rules: Arc::clone(&security_rules),
+            plugin_policy: Arc::clone(&plugin_policy),
         },
     );
-    let mitm_pipeline = capsem_core::net::mitm_proxy::make_production_pipeline_with_policy_v2(
+    let mitm_pipeline = capsem_core::net::mitm_proxy::make_production_pipeline(
         Arc::clone(&net_state.policy),
-        Arc::clone(&policy_v2),
         Arc::clone(&telemetry_deps),
     );
     let mitm_config = Arc::new(capsem_core::net::mitm_proxy::MitmProxyConfig {
         ca: Arc::clone(&net_state.ca),
         policy: Arc::clone(&net_state.policy),
-        policy_v2: Arc::clone(&policy_v2),
         model_endpoints,
         db: Arc::clone(&db),
         upstream_tls: Arc::clone(&net_state.upstream_tls),
@@ -500,23 +498,23 @@ async fn run_async_main_loop(
         mcp_endpoint: Some(mcp_endpoint),
     });
 
-    // T3.2 -- DNS handler shares the same `NetworkPolicy` as the MITM
-    // proxy so an admin policy edit takes effect for both protocols at
-    // once. Default upstream nameservers (1.1.1.1, 8.8.8.8) until T5
-    // adds operator-configurable upstreams.
-    let dns_handler = Arc::new(
-        capsem_core::net::dns::DnsHandler::with_default_resolver_and_policy_v2(
-            Arc::clone(&net_state.policy),
-            Arc::clone(&policy_v2),
-        ),
-    );
+    // DNS handler shares the same security rule/plugin handles as MITM
+    // so admin enforcement edits take effect across protocols at once.
+    let dns_resolver = if runtime_config.dns_upstreams.is_empty() {
+        DnsResolver::new()
+    } else {
+        DnsResolver::with_upstreams(runtime_config.dns_upstreams.clone())
+    };
+    let dns_handler = Arc::new(capsem_core::net::dns::DnsHandler::with_cache(
+        Arc::clone(&net_state.policy),
+        Arc::clone(&security_rules),
+        Arc::clone(&plugin_policy),
+        Arc::new(dns_resolver),
+        Arc::new(DnsAnswerCache::default()),
+    ));
 
-    let db_clone = Arc::clone(&db);
     let sched_clone = Arc::clone(&scheduler);
-    let security_rules_snap = Arc::clone(&security_rules);
-    let initial_stop = query_max_fs_event_id(&db_clone);
     tokio::spawn(async move {
-        let mut last_stop = initial_stop;
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(snap_interval));
         tick.tick().await;
         loop {
@@ -532,25 +530,12 @@ async fn run_async_main_loop(
             .await;
             match result {
                 Ok(Ok(slot)) => {
-                    let stop_id = query_max_fs_event_id(&db_clone);
-                    let rules = security_rules_snap.read().unwrap().clone();
-                    capsem_core::security_engine::emit_snapshot_security_write_and_rules(
-                        &db_clone,
-                        &rules,
-                        capsem_logger::SnapshotEvent {
-                            event_id: None,
-                            timestamp: slot.timestamp,
-                            slot: slot.slot,
-                            origin: "auto".into(),
-                            name: None,
-                            files_count: slot.files_count,
-                            start_fs_event_id: last_stop,
-                            stop_fs_event_id: stop_id,
-                            trace_id: capsem_core::telemetry::ambient_capsem_trace_id(),
-                        },
-                    )
-                    .await;
-                    last_stop = stop_id;
+                    info!(
+                        slot = slot.slot,
+                        files_count = slot.files_count,
+                        origin = "auto",
+                        "auto snapshot captured"
+                    );
                 }
                 Ok(Err(e)) => tracing::warn!("auto-snapshot failed: {e}"),
                 Err(e) => tracing::warn!("auto-snapshot task panicked: {e}"),
@@ -614,6 +599,7 @@ async fn run_async_main_loop(
             mitm_config: mitm_config_clone,
             dns_handler: dns_handler_clone,
             security_rules: Arc::clone(&security_rules),
+            plugin_policy: Arc::clone(&plugin_policy),
             _net_state: net_state_clone,
             is_restore,
             vm_ready: vm_ready_vsock,
@@ -699,6 +685,10 @@ async fn run_async_main_loop(
         let job_c = Arc::clone(&job_store);
         let net_c = Arc::clone(&net_state);
         let mcp_c = Arc::clone(&mcp_runtime);
+        let runtime_source_c = runtime_source.clone();
+        let builtin_bin_c = builtin_bin.clone();
+        let builtin_env_c = builtin_env.clone();
+        let sched_c = Arc::clone(&scheduler);
         let ready_c = Arc::clone(&vm_ready);
 
         tokio::spawn(async move {
@@ -710,6 +700,10 @@ async fn run_async_main_loop(
                 job_c,
                 net_c,
                 mcp_c,
+                runtime_source_c,
+                builtin_bin_c,
+                builtin_env_c,
+                sched_c,
                 ready_c,
             )
             .await
@@ -726,9 +720,6 @@ async fn run_async_main_loop(
 /// via length-prefixed MessagePack frames on stdin/stdout.
 ///
 /// Frame format: [4 bytes big-endian payload length] [N bytes msgpack]
-///
-/// If the aggregator binary is not found (dev builds), falls back to an in-process
-/// mock that returns empty results.
 async fn spawn_mcp_aggregator(
     servers: &[capsem_core::mcp::types::McpServerDef],
     session_dir: &Path,
@@ -740,47 +731,8 @@ async fn spawn_mcp_aggregator(
 
     let (client, mut rx) = AggregatorClient::channel(64);
 
-    // Find the aggregator binary next to our own binary.
     let exe_path = std::env::current_exe()?;
-    let bin_dir = exe_path.parent().unwrap_or(std::path::Path::new("."));
-    let aggregator_bin = bin_dir.join("capsem-mcp-aggregator");
-
-    if !aggregator_bin.exists() {
-        // Dev fallback: no aggregator binary. Return a client with an empty mock driver.
-        info!(
-            "aggregator binary not found at {}, using empty stub",
-            aggregator_bin.display()
-        );
-        tokio::spawn(async move {
-            while let Some((req, resp_tx)) = rx.recv().await {
-                let body = match req.method {
-                    AggregatorMethod::ListServers => AggregatorResult::Servers { servers: vec![] },
-                    AggregatorMethod::ListTools => AggregatorResult::Tools { tools: vec![] },
-                    AggregatorMethod::ListResources => {
-                        AggregatorResult::Resources { resources: vec![] }
-                    }
-                    AggregatorMethod::ListPrompts => AggregatorResult::Prompts { prompts: vec![] },
-                    AggregatorMethod::CallTool { name, .. } => AggregatorResult::Error {
-                        error: format!("aggregator not available: {name}"),
-                    },
-                    AggregatorMethod::ReadResource { uri, .. } => AggregatorResult::Error {
-                        error: format!("aggregator not available: {uri}"),
-                    },
-                    AggregatorMethod::GetPrompt { name, .. } => AggregatorResult::Error {
-                        error: format!("aggregator not available: {name}"),
-                    },
-                    AggregatorMethod::Refresh { .. } | AggregatorMethod::Shutdown => {
-                        AggregatorResult::Ok { ok: true }
-                    }
-                };
-                capsem_core::try_send!(
-                    "aggregator_response",
-                    resp_tx.send(AggregatorResponse { id: req.id, body })
-                );
-            }
-        });
-        return Ok(client);
-    }
+    let aggregator_bin = resolve_mcp_aggregator_binary(&exe_path)?;
 
     // Dedicated stderr log for the aggregator -- keeps its JSON tracing
     // stream out of the parent's process.log. 0o600 to match the
@@ -906,6 +858,31 @@ async fn spawn_mcp_aggregator(
     Ok(client)
 }
 
+fn resolve_mcp_aggregator_binary(exe_path: &Path) -> Result<PathBuf> {
+    let bin_dir = exe_path.parent().unwrap_or(std::path::Path::new("."));
+    let mut candidates = vec![bin_dir.join("capsem-mcp-aggregator")];
+    if bin_dir.file_name().and_then(|name| name.to_str()) == Some("deps") {
+        if let Some(target_debug) = bin_dir.parent() {
+            candidates.push(target_debug.join("capsem-mcp-aggregator"));
+        }
+    }
+
+    for candidate in &candidates {
+        if candidate.exists() {
+            return Ok(candidate.clone());
+        }
+    }
+
+    let searched = candidates
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    anyhow::bail!(
+        "required MCP aggregator binary capsem-mcp-aggregator is missing; searched: {searched}"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -927,6 +904,8 @@ mod tests {
             "/tmp/rootfs.img",
             "--session-dir",
             "/tmp/session",
+            "--active-profile",
+            "/tmp/config/profiles/code",
             "--uds-path",
             "/tmp/vm.sock",
         ])
@@ -935,6 +914,10 @@ mod tests {
         assert_eq!(args.assets_dir, PathBuf::from("/tmp/assets"));
         assert_eq!(args.rootfs, PathBuf::from("/tmp/rootfs.img"));
         assert_eq!(args.session_dir, PathBuf::from("/tmp/session"));
+        assert_eq!(
+            args.active_profile,
+            PathBuf::from("/tmp/config/profiles/code")
+        );
         assert_eq!(args.uds_path, PathBuf::from("/tmp/vm.sock"));
     }
 
@@ -950,6 +933,8 @@ mod tests {
             "/r",
             "--session-dir",
             "/s",
+            "--active-profile",
+            "/profiles/code",
             "--uds-path",
             "/u",
         ])
@@ -969,6 +954,8 @@ mod tests {
             "/r",
             "--session-dir",
             "/s",
+            "--active-profile",
+            "/profiles/code",
             "--uds-path",
             "/u",
         ])
@@ -977,7 +964,7 @@ mod tests {
     }
 
     #[test]
-    fn args_custom_cpus_and_ram() {
+    fn args_default_scratch_disk_size_gb() {
         let args = Args::try_parse_from([
             "capsem-process",
             "--id",
@@ -988,16 +975,55 @@ mod tests {
             "/r",
             "--session-dir",
             "/s",
+            "--active-profile",
+            "/profiles/code",
+            "--uds-path",
+            "/u",
+        ])
+        .unwrap();
+        assert_eq!(args.scratch_disk_size_gb, 16);
+    }
+
+    #[test]
+    fn args_custom_cpus_ram_and_scratch_disk_size() {
+        let args = Args::try_parse_from([
+            "capsem-process",
+            "--id",
+            "vm",
+            "--assets-dir",
+            "/a",
+            "--rootfs",
+            "/r",
+            "--session-dir",
+            "/s",
+            "--active-profile",
+            "/profiles/code",
             "--uds-path",
             "/u",
             "--cpus",
             "8",
             "--ram-mb",
             "16384",
+            "--scratch-disk-size-gb",
+            "64",
         ])
         .unwrap();
         assert_eq!(args.cpus, 8);
         assert_eq!(args.ram_mb, 16384);
+        assert_eq!(args.scratch_disk_size_gb, 64);
+    }
+
+    #[test]
+    fn prepare_session_layout_uses_requested_scratch_disk_size() {
+        let dir = tempfile::tempdir().unwrap();
+        let session_dir = dir.path().join("session");
+
+        let guest_dir = prepare_session_layout(&session_dir, 64).unwrap();
+
+        assert_eq!(guest_dir, session_dir.join("guest"));
+        let rootfs_img = guest_dir.join("system/rootfs.img");
+        let metadata = std::fs::metadata(&rootfs_img).unwrap();
+        assert_eq!(metadata.len(), 64 * 1024 * 1024 * 1024);
     }
 
     #[test]
@@ -1010,6 +1036,8 @@ mod tests {
             "/r",
             "--session-dir",
             "/s",
+            "--active-profile",
+            "/profiles/code",
             "--uds-path",
             "/u",
         ]);
@@ -1022,6 +1050,26 @@ mod tests {
             "capsem-process",
             "--id",
             "vm",
+            "--rootfs",
+            "/r",
+            "--session-dir",
+            "/s",
+            "--active-profile",
+            "/profiles/code",
+            "--uds-path",
+            "/u",
+        ]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn args_missing_required_active_profile_fails() {
+        let result = Args::try_parse_from([
+            "capsem-process",
+            "--id",
+            "vm",
+            "--assets-dir",
+            "/a",
             "--rootfs",
             "/r",
             "--session-dir",
@@ -1044,6 +1092,8 @@ mod tests {
             "/r",
             "--session-dir",
             "/s",
+            "--active-profile",
+            "/profiles/code",
             "--uds-path",
             "/u",
             "--cpus",
@@ -1064,6 +1114,8 @@ mod tests {
             "/r",
             "--session-dir",
             "/s",
+            "--active-profile",
+            "/profiles/code",
             "--uds-path",
             "/u",
         ])
@@ -1083,6 +1135,8 @@ mod tests {
             "/r",
             "--session-dir",
             "/s",
+            "--active-profile",
+            "/profiles/code",
             "--uds-path",
             "/u",
             "--checkpoint-path",
@@ -1107,6 +1161,8 @@ mod tests {
             "/r",
             "--session-dir",
             "/s",
+            "--active-profile",
+            "/profiles/code",
             "--uds-path",
             "/u",
             "--env",
@@ -1199,5 +1255,29 @@ mod tests {
         let session = PathBuf::from("/tmp/some-session");
         let log = aggregator_log_path(&session);
         assert_eq!(log, session.join("mcp-aggregator.stderr.log"));
+    }
+
+    #[test]
+    fn missing_mcp_aggregator_fails_loud_instead_of_empty_stub() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake_exe = dir.path().join("capsem-process");
+        let error = resolve_mcp_aggregator_binary(&fake_exe)
+            .expect_err("missing aggregator binary must not resolve");
+        assert!(
+            error.to_string().contains("capsem-mcp-aggregator"),
+            "error should name the missing component: {error:#}"
+        );
+    }
+
+    #[test]
+    fn mcp_aggregator_resolver_supports_cargo_test_deps_layout() {
+        let dir = tempfile::tempdir().unwrap();
+        let deps = dir.path().join("deps");
+        std::fs::create_dir_all(&deps).unwrap();
+        let aggregator = dir.path().join("capsem-mcp-aggregator");
+        std::fs::write(&aggregator, "").unwrap();
+
+        let resolved = resolve_mcp_aggregator_binary(&deps.join("capsem-process-test")).unwrap();
+        assert_eq!(resolved, aggregator);
     }
 }

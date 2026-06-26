@@ -4,8 +4,9 @@
 // MITM proxy via vsock port 5002:
 //   * 127.0.0.1:10443 -- intercepts iptables-redirected port 443 (HTTPS).
 //   * 127.0.0.1:10080 -- intercepts iptables-redirected plain-HTTP ports
-//                         (80 + the configured allowlist, e.g. 11434 for
-//                         Ollama). T2.2 added this listener.
+//                         (80 + the configured allowlist, including
+//                         3128/3713/8080 and 11434 for Ollama). T2.2 added
+//                         this listener.
 //
 // The host proxy runs a first-byte sniff (T2.1) and routes TLS handshakes
 // to the rustls termination path and plain HTTP request lines to the
@@ -41,7 +42,7 @@ use vsock_io::{vsock_connect, VSOCK_HOST_CID};
 const LISTEN_PORT_HTTPS: u16 = 10443;
 /// TCP port to listen on for plain-HTTP traffic (iptables REDIRECT
 /// target for outbound :80 + the configurable allowlist, e.g.
-/// :11434 for Ollama). Added in T2.2; the host proxy's first-byte
+/// :3128/:3713/:8080/:11434). Added in T2.2; the host proxy's first-byte
 /// sniff distinguishes TLS from plain HTTP, so a dedicated guest
 /// listener is just an iptables-target convenience.
 const LISTEN_PORT_HTTP: u16 = 10080;

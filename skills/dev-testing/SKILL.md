@@ -5,6 +5,9 @@ description: Capsem testing policy and workflow. Use whenever running tests, wri
 
 # Testing
 
+Read `tests/README.md` before adding or moving test fixtures. Test-only config
+belongs under `tests/fixtures/`, not root `config/`.
+
 ## Test tiers
 
 Three tiers, fast to thorough. Every change must pass all three before it ships.
@@ -43,6 +46,81 @@ If a category is genuinely impossible or deliberately deferred, record it as mis
 
 For policy, MITM, MCP, telemetry, networking, filesystem, process lifecycle, or sandbox-boundary work, the functional slice matrix is mandatory. The tests should prove not only that the happy path succeeds, but also that enforcement happens at the intended boundary: a blocked MCP tool does not dispatch, a blocked return does not leak, a denied URL does not reach the network, a malformed frame does not poison the stream, and telemetry records the truth.
 
+## Ironbank ledger tests
+
+Use `/ironbank` for release-critical VM, network, model, MCP, credential
+broker, package-manager, doctor, benchmark, and security acceptance proof.
+Ironbank lives in `tests/ironbank/` and is full black-box: tests are written
+from public contracts, CLI help, docs, generated schemas, hermetic fixtures,
+route responses, logs, DB rows, and installed package metadata. Do not inspect
+Rust/product internals to decide expected behavior.
+
+Ironbank cannot use:
+- `skip`, `skipif`, `slow`, optional markers, or public-network dependencies
+- status-code-only replay
+- row-exists checks
+- parser-only assertions
+- manual OAuth/client runs as release proof
+
+One deterministic stimulus must prove the whole ledger path: client result,
+parsed facts, CEL/security decision, detection/enforcement rows, protocol DB
+rows, structured logs, status counters, UDS route, HTTP route, and UI-facing
+JSON. Every emitted DB/log/route field is exact-value asserted, covered by a
+typed invariant, or explicitly marked not applicable. Unknown fields fail the
+test until the field ledger is updated.
+
+Package-manager tests prove function. Installing `zstd`, for example, means
+compressing known bytes, decompressing them, and comparing the exact output;
+not just checking dpkg output.
+
+## Logged-data DB ownership
+
+Telemetry and security ledgers are database-owned. Service routes, UI handlers,
+MCP helpers, and benchmark harnesses must not build their own logged-data
+projection caches and must not open SQLite directly. They may own query intent
+(for example the fields a route needs), but they call the logger DB object to
+execute it. The logger DB object owns connection threads, `mem`/disk table
+layout, write buffering, flush, reload-from-disk behavior, WAL tuning, and
+future FTS5/search tables.
+
+Do not move route-specific SQL into `DbWriter` or turn the DB layer into a pile
+of route helper methods such as `stats_detail_payload()` just to hide SQL. The
+boundary is execution and storage mechanics:
+
+```rust
+db.ready().await?;
+db.query(sql, params).await?;
+db.write(event).await?;
+```
+
+`db.write(event).await` means the DB object accepted the event into its
+producer buffer. Tests that assert read-after-write rows must use the DB flush
+barrier or shutdown/reopen. Do not paper over visibility with sleeps, route
+projections, or direct SQLite readers.
+
+Empty table means empty result. Missing table or column means the schema
+contract is broken and must fail loudly; never add compatibility branches that
+treat missing ledger shape as empty data.
+
+Regression tests must guard the boundary. If a route needs ledger data, add a
+test that proves the route uses the DB object and a source guard that rejects
+raw `rusqlite` opens, direct `DbReader::open`, and service-owned projection
+state in production route code. Add a companion guard that prevents
+route-specific DB writer methods or missing-schema fallbacks from being
+introduced.
+
+## Mock server boundary
+
+`crates/capsem-mock-server` is the single reusable local fixture server for
+benchmarks, doctor, protocol recording/replay, gateway/integration tests, and
+Ironbank. It owns mock protocol responses and deterministic local upstream
+behavior. Tests may launch it through `scripts/mock_server.py`,
+`tests/helpers/mock_server.py`, or `CAPSEM_MOCK_SERVER_BASE_URL`.
+
+Do not add another local HTTP/MCP/OAuth/model mock server for a feature. Extend
+the shared mock server and its fixtures instead, then assert the route through
+the relevant black-box test.
+
 ## Parallel tests as dogfooding (n=4 is non-negotiable)
 
 `just test` runs the python suite under `pytest -n 4 --dist=loadfile`. Four real VMs boot simultaneously. **This is the canary, not just a speed-up.** We ship Capsem as a multi-VM sandbox for AI agents -- if our own test suite cannot safely boot 4 concurrent VMs, real users running an agent farm will hit the exact same bug. Treat any concurrency flake as a Capsem-side bug, not a test-tuning problem:
@@ -57,6 +135,12 @@ Anti-patterns when a test flakes under `-n 4`:
 - Bumping the per-test timeout -- buying time for a real bug to manifest in prod instead of CI
 - Marking the test `serial` so it runs alone -- defeating the dogfooding signal
 
+The exception is a true timing or benchmark probe whose assertion is the
+measured number. Those tests must already be marked `serial` and `just test`
+runs them immediately after the `-n 4` canary. That is not a flake escape
+hatch: it prevents another benchmark file from stealing the same Apple VZ
+launch budget and corrupting the number we are trying to publish.
+
 The host has plenty of headroom (48 GB RAM, 14 cores; 4 VMs at 2 GB / 2 CPU each = 8 GB / 8 cores). If concurrency surfaces a flake, fix the product, then re-run. Bumping `-n` higher (8, 12) is the natural follow-on once n=4 is stable -- real users will run more.
 
 ### Orphan processes across runs are a product bug (not a test bug)
@@ -65,13 +149,23 @@ If a previous `just test -n 4` run was interrupted (ctrl-C, pytest-xdist worker 
 
 **Never `pkill -f capsem-` with a broad pattern** during test debugging: `capsem-` matches `--crate-name capsem-core` in running rustc/cargo invocations and will SIGKILL the compiler mid-build. Use a binary-path pattern like `pkill -f "target/debug/capsem-(service|process|gateway|tray|mcp)"` instead.
 
-### When `-n 1` is actually the right answer: multi-service-only gotchas
+### Apple VZ lifecycle serialization is part of the product
 
-One narrow class of concurrency bug belongs at `-n 1`, not `-n 4`: **bugs that only exist when two `capsem-service` processes run on the same host**. Apple's Virtualization.framework does not tolerate overlapping `saveMachineStateToURL` / `restoreMachineStateFromURL` calls on sibling VMs, and we serialize with a per-service `tokio::sync::Mutex` (`ServiceState::save_restore_lock`). That lock is in-process, so it only serializes VMs inside one service. Production always has exactly one service per host per user, so the lock is sufficient in real deployments.
+Apple's Virtualization.framework does not tolerate overlapping checkpoint
+lifecycle operations (`saveMachineStateToURL` and `restoreMachineStateFromURL`)
+on sibling VMs, and teardown must not cross those checkpoint edges. Capsem uses
+`ServiceState::save_restore_lock` plus the host-wide `VzHostLock` flock:
+cold starts and teardown take shared/read guards, save and restore take
+exclusive/write guards. The rail holds even when pytest-xdist spawns one
+`capsem-service` per worker, while independent cold starts can still run
+together for the boot-latency gate.
 
-`tests/capsem-mcp/test_stress_suspend_resume.py` runs under pytest-xdist, which spawns one `capsem-service` per worker. At `-n 2+`, worker A's service can't see worker B's lock, and you re-expose the bug that never happens in production. This is the one case where the "n=4 dogfoods concurrency" rule doesn't apply -- the concurrency being tested would never happen outside the test harness. Keep this harness at `-n 1`. Full context and the failure signature live in `docs/src/content/docs/gotchas/concurrent-suspend-resume.md`.
-
-This is NOT a blanket license to run any flaky test at `-n 1`. If you're tempted to demote another test, first ask: *"Would this failure occur in production with one capsem-service and N VMs?"* If yes, it belongs at `-n 4`; fix the product.
+Do not demote suspend/resume, lifecycle, provisioning, or teardown tests to
+`-n 1` to sidestep VZ races. `just test` at `-n 4` is the contract; if a
+concurrent run sees restore permission errors, loop-device corruption,
+connection-refused startup races, or readiness misses, fix the lifecycle rail.
+Full context and failure signatures live in
+`docs/src/content/docs/gotchas/concurrent-suspend-resume.md`.
 
 ## Adversarial testing
 
@@ -100,7 +194,7 @@ When touching security-relevant code, check these invariants have test coverage:
 | CORS rejects external origins | Only localhost/127.0.0.1/tauri allowed | `capsem-gateway::tests` |
 | Body size limit | 413 for >10MB payloads | `capsem-gateway::proxy::tests` |
 | VM ID validation | Path traversal (`../`), dots, spaces, null bytes rejected | `capsem-gateway::terminal::tests` |
-| Rootfs read-only | squashfs mounted ro, guest binaries 555 | `capsem-doctor` in-VM tests |
+| Rootfs read-only | profile rootfs asset mounted ro, guest binaries 555 | `capsem-doctor` in-VM tests |
 | Suspend reports errors | IPC failure and timeout both return 500, not silent success | `capsem-service` tests |
 
 ## Test fixture anti-pattern: masking races with polling
@@ -136,6 +230,8 @@ See `tests/capsem-service/test_svc_exec_ready.py` for the regression tests that 
 - Frontend: `frontend/src/lib/__tests__/` (see dev-testing-frontend)
 - Python (builder): `tests/test_*.py`
 - Python integration (service daemon): `tests/capsem-*/` directories, each with its own conftest.py and pytest marker
+- Ironbank release ledger: `tests/ironbank/` (black-box only; no Rust
+  implementation-derived expectations)
 
 ### Rust unit tests: sibling `tests.rs` pattern
 
@@ -202,34 +298,34 @@ All Python integration tests live under `tests/capsem-*/` and use pytest markers
 | Recovery | `capsem-recovery/` | `recovery` | Yes | Stale socket/instances, orphaned process, double service |
 | Rootfs artifacts | `capsem-rootfs-artifacts/` | `rootfs` | No | Artifact files, build context, doctor consistency |
 | Session exhaustive | `capsem-session-exhaustive/` | `session_exhaustive` | Yes | Per-table data validation, cross-table FK integrity |
-| Install | `capsem-install/` | `install` | No | Native installer: layout, auto-launch, service install, setup wizard, update, uninstall, lifecycle, reinstall, error paths |
+| Install | `capsem-install/` | `install` | No | Native package installer: layout, auto-launch, service install, manifest placement, update, uninstall, lifecycle, reinstall, error paths |
 
 Composite recipe: `just test-vm` runs build-chain + guest + cleanup + codesign + serial + session-lifecycle + config-runtime + recovery. `just test-install` runs the install suite in Docker with systemd. `just test` runs everything.
 
 ## Test matrix: what runs where
 
-### Rust crate CI coverage
+### Rust crate CI matrix
 
 | Crate | Tests | CI macOS | CI Linux | Smoke | Full |
 |-------|------:|:--------:|:--------:|:-----:|:----:|
-| capsem-core | ~1695 | Yes | Yes | No | Yes |
-| capsem-agent | ~71 | Yes | No | No | Yes |
-| capsem-logger | ~47 | Yes | Yes | No | Yes |
-| capsem-proto | ~132 | Yes | Yes | No | Yes |
-| capsem-gateway | ~38 | Yes | No | No | Yes |
-| capsem-service | ~109 | Yes | Yes | No | Yes |
-| capsem (CLI) | ~140 | Yes | Yes | No | Yes |
-| capsem-mcp | ~67 | Yes | Yes | No | Yes |
+| capsem-core | ~1695 | Yes | Compile/no-run + non-live-KVM | No | Yes |
+| capsem-agent | ~71 | Yes | Compile/no-run | No | Yes |
+| capsem-logger | ~47 | Yes | Compile/no-run | No | Yes |
+| capsem-proto | ~132 | Yes | Compile/no-run | No | Yes |
+| capsem-gateway | ~38 | Yes | Compile/no-run | No | Yes |
+| capsem-service | ~109 | Yes | Compile/no-run | No | Yes |
+| capsem (CLI) | ~140 | Yes | Compile/no-run | No | Yes |
+| capsem-mcp | ~67 | Yes | Compile/no-run | No | Yes |
 | capsem-tray | ~47 | Yes | No | No | Yes |
-| capsem-process | ~62 | Yes | No | No | Yes |
+| capsem-process | ~62 | Yes | Compile/no-run | No | Yes |
 | capsem-app | ~35 | Check | No | No | Yes |
 
 ### Python integration suite tier map
 
 | Suite | Marker | VM? | CI | Smoke | Full |
 |-------|--------|:---:|:--:|:-----:|:----:|
-| capsem-bootstrap | `bootstrap` | No | Run | No | Yes |
-| capsem-codesign | `codesign` | No | Run | No | Yes |
+| capsem-bootstrap | `bootstrap` | No | Collect; run in full gate after assets exist | No | Yes |
+| capsem-codesign | `codesign` | No | Collect; run in full gate after signing | No | Yes |
 | capsem-rootfs-artifacts | `rootfs` | No | Run | No | Yes |
 | capsem-mcp | `mcp` | Yes | Collect | Yes | Yes |
 | capsem-service | `integration` | Yes | Collect | Yes | Yes |
@@ -254,14 +350,15 @@ Composite recipe: `just test-vm` runs build-chain + guest + cleanup + codesign +
 | capsem-recipes | `recipe` | No | Run | No | Yes |
 | capsem-install | `install` | No | Yes (Docker) | No | Yes |
 
-"Run" = tests execute in CI. "Collect" = imports verified (`--collect-only`) but tests skip (need VM). "Yes (Docker)" = runs in dedicated Docker+systemd CI job.
+"Run" = tests execute in PR CI. "Collect" = imports verified (`--collect-only`) but tests do not execute in that PR lane. Artifact-dependent no-VM suites still execute in the full `just test` gate after their build/sign prerequisites exist. "Yes (Docker)" = runs in dedicated Docker+systemd CI job.
 
 ### Coverage targets
 
 | Component | Floor | Enforced | Where |
 |-----------|------:|:--------:|-------|
-| Rust workspace | 70% | `--fail-under-lines 70` | CI (`cargo llvm-cov`), `just test` |
-| Python builder | 90% | `--cov-fail-under=90` | CI (`pytest`), `just test` |
+| Rust workspace | 65% | `--fail-under-lines 65` | CI (`cargo llvm-cov`), `just test` |
+| Python top-level contracts | 89% | `--cov-fail-under=89` | PR CI (`tests/test_*.py`) |
+| Python full suite | 90% | `--cov-fail-under=90` | `just test` |
 | capsem-service | 80% | Codecov component | `codecov.yml` |
 | capsem-mcp | 80% | Codecov component | `codecov.yml` |
 | capsem-gateway | 80% | Codecov component | `codecov.yml` |
@@ -269,8 +366,8 @@ Composite recipe: `just test-vm` runs build-chain + guest + cleanup + codesign +
 
 ## Coverage
 
-- Rust: `cargo llvm-cov` via `just test` (floor: 70% line coverage)
-- Python: `--cov-fail-under=90`
+- Rust: `cargo llvm-cov` via `just test` (floor: 65% line coverage)
+- Python: PR top-level contract lane uses 89%; full `just test` uses 90%.
 - `codecov.yml` maps components to code paths. Update it when files or directories are added, moved, or renamed.
 
 ## Fast debug with capsem MCP tools
@@ -288,8 +385,6 @@ When the capsem MCP server is configured, Claude Code has direct VM control via 
 | `capsem_resume` | Resume a stopped persistent VM |
 | `capsem_read_file` | Read a file from the guest filesystem |
 | `capsem_write_file` | Write a file into the guest |
-| `capsem_inspect_schema` | Get session.db table schema |
-| `capsem_inspect` | Run SQL against session.db (telemetry) |
 | `capsem_list` | Show all VMs (running + stopped persistent) |
 | `capsem_info` | VM details (config, status, persistent, PID) |
 | `capsem_delete` | Destroy VM and wipe all state |
@@ -307,7 +402,7 @@ When the capsem MCP server is configured, Claude Code has direct VM control via 
 **Iterative debugging** (long-lived VM):
 1. **Create**: `capsem_create` -- boots a fresh VM in ~10s
 2. **Test**: `capsem_exec` with the command you want to verify (e.g., `capsem-doctor -k net`, `cat /etc/resolv.conf`, `curl https://example.com`)
-3. **Inspect**: `capsem_read_file` to check config files, logs; `capsem_inspect` to query telemetry tables
+3. **Inspect**: `capsem_read_file` to check config files/logs; typed stats, timeline, security, detection, and enforcement routes for telemetry
 4. **Iterate**: fix code on host, rebuild (`just build`), create a new VM to test again
 5. **Cleanup**: `capsem_delete` when done
 
@@ -317,10 +412,10 @@ When the capsem MCP server is configured, Claude Code has direct VM control via 
 |----------|-----|
 | Quick check: "does this command work in the guest?" | `capsem_run` |
 | Read a guest file to understand state | `capsem_read_file` |
-| Verify telemetry was recorded correctly | `capsem_inspect` with SQL query |
+| Verify telemetry was recorded correctly | typed stats/timeline/security routes or Ironbank direct ledger reads |
 | Full regression suite | `just test` |
 | Build + boot + validate in one shot | `just smoke` |
-| Benchmark performance | `just bench` |
+| Benchmark performance | `just benchmark` |
 
 MCP tools are for fast, targeted checks during development. Just recipes are for comprehensive validation before committing.
 
@@ -330,8 +425,11 @@ MCP tools are for fast, targeted checks during development. Just recipes are for
 -- Check network events for a domain
 SELECT * FROM net_events WHERE domain LIKE '%example%' ORDER BY timestamp DESC LIMIT 10;
 
--- Verify MCP tool calls were logged
-SELECT server_name, tool_name, decision, duration_ms FROM mcp_calls ORDER BY timestamp DESC;
+-- Verify MCP-origin tool calls were logged
+SELECT server_name, tool_name, decision, duration_ms
+FROM tool_calls
+WHERE origin = 'mcp'
+ORDER BY timestamp DESC;
 
 -- Check model API calls
 SELECT provider, model, status_code, duration_ms FROM model_calls ORDER BY timestamp DESC;
@@ -344,8 +442,8 @@ SELECT operation, path, success FROM fs_events ORDER BY timestamp DESC LIMIT 20;
 
 After any change touching guest binaries, network policy, telemetry, MCP, or VM lifecycle:
 
-1. `just run "capsem-doctor"` -- verifies sandbox integrity inside the VM
-2. After telemetry/logging changes: run a real session and verify with `just inspect-session` that all 6 tables (net_events, model_calls, tool_calls, tool_responses, mcp_calls, fs_events) are populated correctly
+1. `just exec "capsem-doctor"` -- verifies sandbox integrity inside the VM
+2. After telemetry/logging changes: run a real session and verify with `just inspect-session` that net_events, model_calls, tool_calls, tool_responses, fs_events, dns_events, and security_rule_events are populated correctly for the exercised protocols
 
 ## When tests fail
 

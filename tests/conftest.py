@@ -97,12 +97,12 @@ def _snapshot_baseline_pids() -> set[int]:
     pre-existing orphan as a leak.
     """
     pids: set[int] = set()
-    for proc in psutil.process_iter(['pid', 'name']):
+    for proc in psutil.process_iter():
         try:
-            name = proc.info['name'] or ''
+            name = proc.name() or ''
             if name.startswith('capsem-'):
-                pids.add(proc.info['pid'])
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pids.add(proc.pid)
+        except (psutil.Error, OSError, SystemError):
             continue
     return pids
 
@@ -195,7 +195,7 @@ def pytest_sessionstart(session):
     if missing:
         pytest.exit(
             "CAPSEM_REQUIRE_ARTIFACTS=1 but the following artifacts are "
-            f"missing: {missing}. Run `just build-assets` (for assets/) "
+            f"missing: {missing}. Run `just build-assets code` (for assets/) "
             "and `uv run capsem-builder agent` (for target/linux-agent/) "
             "before invoking pytest. Locally, unset the env var to let "
             "tests skip on missing artifacts.",
@@ -262,10 +262,10 @@ def get_capsem_processes() -> dict[int, dict]:
     per-iteration try/except can run. Fetch per-proc, catch per-proc.
     """
     procs: dict[int, dict] = {}
-    for proc in psutil.process_iter(['pid', 'name']):
+    for proc in psutil.process_iter():
         try:
-            name = proc.info['name'] or ''
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            name = proc.name() or ''
+        except (psutil.Error, OSError, SystemError):
             continue
         if not name.startswith('capsem-'):
             continue
@@ -277,7 +277,7 @@ def get_capsem_processes() -> dict[int, dict]:
             # Either way we know this is a capsem-* proc, so record it with a
             # blank cmdline rather than drop it.
             cmdline = ''
-        procs[proc.info['pid']] = {'name': name, 'cmdline': cmdline}
+        procs[proc.pid] = {'name': name, 'cmdline': cmdline}
     return procs
 
 

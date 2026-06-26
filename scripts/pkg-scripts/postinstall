@@ -24,10 +24,27 @@ fi
 PKG_SHARE="/usr/local/share/capsem"
 USER_HOME=$(eval echo "~$USER")
 CAPSEM_DIR="$USER_HOME/.capsem"
+INSTALL_LOG="$CAPSEM_DIR/logs/install.log"
+mkdir -p "$CAPSEM_DIR/logs"
+INSTALL_RUN_FILE="$CAPSEM_DIR/logs/install-current-run"
+INSTALL_RUN_ID=$(cat "$INSTALL_RUN_FILE" 2>/dev/null || date -u '+%Y%m%dT%H%M%SZ')
+INSTALL_RUN_LOG="$CAPSEM_DIR/logs/install-$INSTALL_RUN_ID.log"
+touch "$INSTALL_LOG" "$INSTALL_RUN_LOG"
+ln -sf "$(basename "$INSTALL_RUN_LOG")" "$CAPSEM_DIR/logs/install-latest.log"
+chown -R "$USER" "$CAPSEM_DIR/logs"
+exec > >(tee -a "$INSTALL_LOG" "$INSTALL_RUN_LOG") 2>&1
+echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=start user=$USER pkg_share=$PKG_SHARE install_run_id=$INSTALL_RUN_ID install_run_log=$INSTALL_RUN_LOG"
 
 # Create user-level directory layout. Remove stale asset symlinks from dev
 # installs so this package never writes through to an old worktree.
+rm -rf "$CAPSEM_DIR"/bin.backup*
+echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=retired_binary_backups_removed"
+retired_user_config="user"".toml"
+rm -f "$CAPSEM_DIR/$retired_user_config" "$CAPSEM_DIR/service.toml"
+echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=retired_config_removed"
 mkdir -p "$CAPSEM_DIR/bin" "$CAPSEM_DIR/run"
+rm -rf "$CAPSEM_DIR/bin/capsem-admin-python"
+echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=retired_python_admin_bundle_removed"
 if [ -L "$CAPSEM_DIR/assets" ]; then
     rm "$CAPSEM_DIR/assets"
 elif [ -e "$CAPSEM_DIR/assets" ] && [ ! -d "$CAPSEM_DIR/assets" ]; then
@@ -35,30 +52,85 @@ elif [ -e "$CAPSEM_DIR/assets" ] && [ ! -d "$CAPSEM_DIR/assets" ]; then
 fi
 mkdir -p "$CAPSEM_DIR/assets"
 chown -R "$USER" "$CAPSEM_DIR"
+echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=layout_ready capsem_dir=$CAPSEM_DIR"
 
 # Copy companion binaries from pkg payload
-for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray; do
+for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin; do
     src="$PKG_SHARE/bin/$bin"
-    if [ -f "$src" ]; then
-        cp "$src" "$CAPSEM_DIR/bin/$bin"
-        chmod 755 "$CAPSEM_DIR/bin/$bin"
+    if [ ! -f "$src" ]; then
+        echo "capsem: packaged binary missing: $src" >&2
+        echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=binary_missing bin=$bin src=$src"
+        exit 1
     fi
+    cp "$src" "$CAPSEM_DIR/bin/$bin"
+    chmod 755 "$CAPSEM_DIR/bin/$bin"
 done
+echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=binaries_copied"
+
+codesign_identifier_for_bin() {
+    case "$(basename "$1")" in
+        capsem) echo "org.capsem.cli" ;;
+        capsem-service) echo "org.capsem.service" ;;
+        capsem-process) echo "org.capsem.process" ;;
+        capsem-tui) echo "org.capsem.tui" ;;
+        capsem-mcp) echo "org.capsem.mcp" ;;
+        capsem-mcp-aggregator) echo "org.capsem.mcp.aggregator" ;;
+        capsem-mcp-builtin) echo "org.capsem.mcp.builtin" ;;
+        capsem-gateway) echo "org.capsem.gateway" ;;
+        capsem-tray) echo "org.capsem.tray" ;;
+        capsem-admin) echo "org.capsem.admin" ;;
+        *) return 1 ;;
+    esac
+}
 
 # Codesign all binaries with virtualization entitlements
 if [ -f "$PKG_SHARE/entitlements.plist" ]; then
     for bin in "$CAPSEM_DIR/bin"/capsem*; do
-        codesign --sign - --entitlements "$PKG_SHARE/entitlements.plist" --force "$bin" 2>/dev/null || true
+        identifier=$(codesign_identifier_for_bin "$bin" || true)
+        if [ -n "$identifier" ]; then
+            codesign --sign - --identifier "$identifier" --entitlements "$PKG_SHARE/entitlements.plist" --force "$bin" 2>/dev/null || true
+        fi
     done
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=binaries_codesigned identity_prefix=org.capsem"
 fi
 
-# Copy assets (manifest + versioned dir)
-if [ -d "$PKG_SHARE/assets" ]; then
-    cp -R "$PKG_SHARE/assets/"* "$CAPSEM_DIR/assets/" 2>/dev/null || true
+# Copy the package-selected manifest and provenance. VM asset payloads are
+# external to the package and are reconciled by the service from this manifest.
+if [ -f "$PKG_SHARE/assets/manifest.json" ]; then
+    install -m 0644 "$PKG_SHARE/assets/manifest.json" "$CAPSEM_DIR/assets/manifest.json"
+    if [ -f "$PKG_SHARE/assets/manifest-origin.json" ]; then
+        install -m 0644 "$PKG_SHARE/assets/manifest-origin.json" "$CAPSEM_DIR/assets/manifest-origin.json"
+    fi
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=manifest_copied"
+    MANIFEST_REPORT=$("$CAPSEM_DIR/bin/capsem-admin" manifest check --json "$CAPSEM_DIR/assets/manifest.json" | tr '\n' ' ')
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=manifest_report $MANIFEST_REPORT"
+    if [ -f "$CAPSEM_DIR/assets/manifest-origin.json" ]; then
+        MANIFEST_ORIGIN=$(tr '\n' ' ' < "$CAPSEM_DIR/assets/manifest-origin.json")
+        echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=manifest_origin $MANIFEST_ORIGIN"
+    fi
+fi
+
+# Copy the materialized profile catalog and its rule files. Profiles pin the
+# asset hashes the service boots, so they must be installed atomically with the
+# package assets instead of falling back to compiled source defaults.
+if [ -d "$PKG_SHARE/profiles" ]; then
+    rm -rf "$CAPSEM_DIR/profiles"
+    mkdir -p "$CAPSEM_DIR/profiles"
+    cp -R "$PKG_SHARE/profiles/." "$CAPSEM_DIR/profiles/"
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=profiles_copied"
 fi
 
 # Fix ownership (we ran as root)
 chown -R "$USER" "$CAPSEM_DIR"
+
+if [ -f "$CAPSEM_DIR/assets/manifest.json" ] && [ -x "$CAPSEM_DIR/bin/capsem" ]; then
+    if ! su "$USER" -c "CAPSEM_HOME=\"$CAPSEM_DIR\" CAPSEM_RUN_DIR=\"$CAPSEM_DIR/run\" \"$CAPSEM_DIR/bin/capsem\" update --assets"; then
+        echo "capsem: asset hydration failed" >&2
+        echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=asset_hydration_failed"
+        exit 1
+    fi
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=assets_hydrated"
+fi
 
 # Add ~/.capsem/bin to PATH in shell profile
 CAPSEM_BIN="$CAPSEM_DIR/bin"
@@ -85,13 +157,16 @@ chown -R "$USER" "$USER_HOME/.config/fish"
 # exposed through the service/UI rather than a setup side effect.
 if ! su "$USER" -c "$CAPSEM_DIR/bin/capsem install" 2>/dev/null; then
     echo "capsem: service registration failed" >&2
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=service_registration_failed"
     exit 1
 fi
+echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=service_registered"
 
 READY=0
 STATUS_OUTPUT=""
-for _ in $(seq 1 30); do
+for attempt in $(seq 1 30); do
     STATUS_OUTPUT=$(su "$USER" -c "$CAPSEM_DIR/bin/capsem status" 2>/dev/null || true)
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=readiness_poll attempt=$attempt"
     if echo "$STATUS_OUTPUT" | grep -q "Service:   ok" \
         && echo "$STATUS_OUTPUT" | grep -q "Gateway:   ok"; then
         READY=1
@@ -104,7 +179,11 @@ done
 # Open the desktop app only when the daemon and gateway are up. Assets may
 # still be downloading; the UI can show that state once it has a live service.
 if [ "$READY" -eq 1 ] && [ "$(uname)" = "Darwin" ] && [ -d "/Applications/Capsem.app" ]; then
+    # Kill stale pre-install GUI instances so Installer.app cannot leave a
+    # skipped or cached frontend talking to the freshly installed daemon.
+    pkill -x capsem-app 2>/dev/null || true
     su "$USER" -c "open /Applications/Capsem.app" 2>/dev/null || true
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=gui_opened"
 elif [ "$READY" -eq 1 ] && [ "$(uname)" = "Linux" ]; then
     if [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; then
         if command -v capsem-app >/dev/null 2>&1; then
@@ -115,7 +194,9 @@ elif [ "$READY" -eq 1 ] && [ "$(uname)" = "Linux" ]; then
 elif [ "$READY" -ne 1 ]; then
     echo "capsem: service is not ready after install" >&2
     echo "$STATUS_OUTPUT" >&2
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=service_not_ready"
     exit 1
 fi
 
+echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=complete"
 exit 0

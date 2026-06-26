@@ -19,17 +19,14 @@ use crate::net::mitm_proxy;
 use crate::net::policy_config;
 use crate::{
     decode_guest_msg, encode_host_msg, GuestToHost, HostToGuest, VirtioFsShare, MAX_FRAME_SIZE,
-    VSOCK_PORT_CONTROL, VSOCK_PORT_EXEC, VSOCK_PORT_LIFECYCLE, VSOCK_PORT_SNI_PROXY,
-    VSOCK_PORT_TERMINAL,
 };
 use capsem_logger::DbWriter;
-use capsem_proto::{VSOCK_PORT_AUDIT, VSOCK_PORT_DNS_PROXY};
 
 use super::registry::SandboxNetworkState;
 
 /// Static CA keypair embedded at compile time.
-pub const CA_KEY_PEM: &str = include_str!("../../../../config/capsem-ca.key");
-pub const CA_CERT_PEM: &str = include_str!("../../../../config/capsem-ca.crt");
+pub const CA_KEY_PEM: &str = include_str!("../../../../security/keys/capsem-ca.key");
+pub const CA_CERT_PEM: &str = include_str!("../../../../security/keys/capsem-ca.crt");
 
 /// Create per-sandbox network state (CA + policy for MITM proxy).
 pub fn create_net_state(vm_id: &str, db: Arc<DbWriter>) -> Result<SandboxNetworkState> {
@@ -41,18 +38,19 @@ pub fn create_net_state(vm_id: &str, db: Arc<DbWriter>) -> Result<SandboxNetwork
 pub fn create_net_state_with_policy(
     vm_id: &str,
     db: Arc<DbWriter>,
-    policy: crate::net::policy::NetworkPolicy,
+    mechanics: crate::net::policy::NetworkMechanics,
 ) -> Result<SandboxNetworkState> {
     let ca = CertAuthority::load(CA_KEY_PEM, CA_CERT_PEM).context("failed to load MITM CA")?;
     info!(vm_id, "loaded MITM CA");
     info!(
         vm_id,
-        "loaded network policy ({} rules)",
-        policy.rules.len()
+        http_upstream_ports = ?mechanics.http_upstream_ports,
+        dns_redirects = mechanics.dns_redirects.len(),
+        "loaded network mechanics"
     );
 
     Ok(SandboxNetworkState {
-        policy: Arc::new(std::sync::RwLock::new(Arc::new(policy))),
+        policy: Arc::new(std::sync::RwLock::new(Arc::new(mechanics))),
         db,
         ca: Arc::new(ca),
         upstream_tls: mitm_proxy::make_upstream_tls_config(),
@@ -149,27 +147,10 @@ pub fn boot_vm(
             builder = builder.serial_log_path(slp);
         }
 
-        // Load expected asset hashes from the manifest on disk. Tamper model:
-        // the binary ships with the release minisign pubkey baked in; the
-        // manifest on disk is verified against that pubkey before its asset
-        // hashes are trusted. Release builds hard-fail if the manifest exists
-        // but is unsigned or signature-invalid (can't verify == can't trust).
-        // Debug builds allow unsigned manifests so dev loops with locally
-        // built assets keep working.
-        let require_sig = !cfg!(debug_assertions);
-        let manifest = match crate::asset_manager::load_verified_manifest_for_assets(
-            assets,
-            require_sig,
-        ) {
-            Ok(m) => m,
-            Err(e) => {
-                if require_sig {
-                    return Err(e).context("manifest verification failed (release build)");
-                }
-                warn!("[boot-audit] manifest verification failed; proceeding without expected hashes: {e:#}");
-                None
-            }
-        };
+        // Load expected asset hashes from the manifest on disk. The manifest is
+        // metadata, not an authority root: profile-selected asset hashes and
+        // corp/profile-controlled asset URLs are the runtime contract.
+        let manifest = crate::asset_manager::load_manifest_for_assets(assets);
         let expected_hashes = manifest
             .and_then(|m| m.expected_hashes_current(crate::asset_manager::host_manifest_arch()));
         match expected_hashes {
@@ -209,11 +190,10 @@ pub fn boot_vm(
         }
 
         // Use explicit rootfs override if provided (e.g. from ~/.capsem/assets/),
-        // otherwise prefer the release EROFS rootfs and fall back to squashfs.
+        // otherwise use the release EROFS rootfs contract.
         let rootfs_path = rootfs_override
             .map(|p| p.to_path_buf())
-            .or_else(|| Some(assets.join("rootfs.erofs")).filter(|p| p.exists()))
-            .or_else(|| Some(assets.join("rootfs.squashfs")).filter(|p| p.exists()));
+            .or_else(|| Some(assets.join("rootfs.erofs")).filter(|p| p.exists()));
 
         if let Some(ref rootfs) = rootfs_path {
             info!(
@@ -248,21 +228,6 @@ pub fn boot_vm(
     };
     info!("[boot-audit] VmConfig built successfully");
 
-    let vsock_ports = [
-        VSOCK_PORT_CONTROL,
-        VSOCK_PORT_TERMINAL,
-        VSOCK_PORT_SNI_PROXY,
-        VSOCK_PORT_LIFECYCLE,
-        VSOCK_PORT_EXEC,
-        VSOCK_PORT_AUDIT,
-        // T3.2 -- DNS proxy. capsem-dns-proxy in the guest opens a
-        // fresh vsock conn to (HOST_CID, 5007) per query. Without
-        // this entry the host has no listener; the kernel rejects
-        // the connect, which surfaces as "Connection reset by peer
-        // (os error 104)" in the agent's forward_query_blocking.
-        VSOCK_PORT_DNS_PROXY,
-    ];
-
     info!("[boot-audit] calling hypervisor boot");
     let boot_span = debug_span!(
         target: "capsem.launch",
@@ -272,9 +237,9 @@ pub fn boot_vm(
     let (vm, vsock_rx) = {
         let _span = boot_span.clone().entered();
         #[cfg(target_os = "macos")]
-        let result = AppleVzHypervisor.boot(&config, &vsock_ports);
+        let result = AppleVzHypervisor.boot(&config, capsem_proto::host_vsock_ports());
         #[cfg(target_os = "linux")]
-        let result = KvmHypervisor.boot(&config, &vsock_ports);
+        let result = KvmHypervisor.boot(&config, capsem_proto::host_vsock_ports());
         match result {
             Ok(value) => {
                 boot_span.record("status", "ok");
@@ -411,7 +376,7 @@ pub fn send_boot_config(
         }
     }
 
-    // 2. Send metadata-driven env vars from settings registry.
+    // 2. Send metadata-driven env vars from settings UI metadata.
     let guest_config =
         preloaded_guest_config.unwrap_or_else(policy_config::load_merged_guest_config);
     let mut env_count: usize = 0;

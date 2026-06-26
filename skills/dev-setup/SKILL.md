@@ -56,6 +56,39 @@ colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8
 docker info | grep -E 'Total Memory|CPUs'
 ```
 
+### Colima recovery discipline
+
+If Docker-dependent recipes fail on macOS, do not report Docker/Colima as
+unavailable until you have checked for the common half-running Colima state.
+The signature is:
+
+- `colima list` says the profile is `Running`
+- `docker version` / `docker info` cannot connect to
+  `~/.colima/default/docker.sock`
+- `colima ssh -- docker ps` fails with `kex_exchange_identification`,
+  `Connection reset by peer`, or `colima status` reports
+  `error retrieving current runtime: empty value`
+
+First recovery attempt:
+
+```bash
+colima stop
+colima start
+docker version
+```
+
+If the profile needs its expected resources restored, start with the explicit
+Capsem defaults instead:
+
+```bash
+colima stop
+colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8
+docker version
+```
+
+Only after that restart fails should you treat Colima as a real environment
+blocker. Record the exact failed command and the Docker/Colima output.
+
 ### Linux
 
 Docker runs natively on Linux -- no Colima or memory tuning needed.
@@ -77,7 +110,7 @@ git clone <repo> && cd capsem
 #   ./bootstrap.sh --yes    # non-interactive
 
 # 3. Boot the VM to verify everything works
-just run "echo hello from capsem"
+just exec "echo hello from capsem"
 ```
 
 `bootstrap.sh` lives at the **repo root** (not under `scripts/`). It runs `just build-assets` as part of doctor's auto-fix, so step 3 just confirms the VM boots.
@@ -101,7 +134,11 @@ Three phases. Default at every prompt is **Yes** (Enter accepts; type `n` to dec
 
 ### Kernel version
 
-`guest/config/build.toml` ships `kernel_branch = "auto"`, which makes `resolve_kernel_version` pick the newest non-EOL longterm release from `kernel.org/releases.json` and fetch its latest patch (e.g. `6.18.26`). Set `kernel_branch = "X.Y"` (e.g. `"6.6"`) to pin for reproducibility.
+Kernel selection is part of the profile-derived image build, not a standalone
+developer setting. The build backend resolves the configured kernel branch
+while materializing and building profile assets through `capsem-admin`/`just`.
+Do not add a parallel kernel setting under runtime settings or backend-only
+config.
 
 Or step by step:
 
@@ -109,7 +146,7 @@ Or step by step:
 just doctor          # Check tools (colored output, structured recap)
 just doctor-fix      # Auto-fix missing targets, cargo tools, config files
 just build-assets    # Build kernel + rootfs (~10 min)
-just run "echo hi"   # Verify VM boots
+just exec "echo hi"   # Verify VM boots
 ```
 
 If step 4 prints "hello from capsem" and exits cleanly, you're set.
@@ -117,8 +154,8 @@ If step 4 prints "hello from capsem" and exits cleanly, you're set.
 ## Daily workflow
 
 ```bash
-just run              # Build + boot VM interactively (~10s)
-just run "CMD"        # Build + boot + run command + exit
+just shell            # Build + boot VM interactively (~10s)
+just exec "CMD"        # Build + boot + run command + exit
 just test             # Unit tests + cross-compile + frontend check
 just ui               # Frontend dev server (mock mode, no VM)
 just dev              # Full Tauri app with hot-reload
@@ -126,18 +163,17 @@ just dev              # Full Tauri app with hot-reload
 
 See `/dev-just` for the complete recipe reference.
 
-## API keys (optional, needed for integration tests)
+## Credentials
 
-Create `~/.capsem/user.toml`:
-```toml
-[providers.anthropic]
-api_key = "sk-ant-..."
+Do not create `~/.capsem/user.toml`. Credentials are captured and replayed by
+the credential broker plugin through profile/corp policy. Hermetic tests use
+the local mock server and Ironbank fixtures; real OAuth/API-key manual runs are
+debug evidence, not release proof.
 
-[providers.google]
-api_key = "AIza..."
-```
-
-Needed for: `just test` (integration tests exercise real AI API calls), interactive AI sessions inside the VM.
+Do not add setup-time admin or guest config roots. Runtime behavior is
+profile/corp-owned; settings are UI/application preferences only. Generated
+settings UI metadata may render controls, but it is not a product config
+authority.
 
 ## Claude Code permissions
 
@@ -182,9 +218,9 @@ Virtualization.framework calls crash. The justfile handles this automatically vi
 the entitlements, and verifies the operation succeeds. Run `just doctor` after initial setup to
 confirm signing works.
 
-**Linux developers**: codesign is not available and not needed on Linux. VM features (`just run`,
-`just dev`, `just bench`) require macOS. You can use `just test`, `just build-assets`, and
-`just audit` on Linux.
+**Linux developers**: codesign is not available and not needed on Linux. VM features use the
+KVM backend when `/dev/kvm` and `/dev/vhost-vsock` are available. Use `just benchmark`
+for the same artifact-recording performance suite as macOS.
 
 ## Troubleshooting
 
@@ -210,7 +246,7 @@ The container VM's clock has drifted. The builder uses `Acquire::Check-Valid-Unt
 
 ### `just build-assets` fails (other)
 - Check Docker is running: `docker info`
-- Check guest config is valid: `uv run capsem-builder validate guest/`
+- Check the profile contract is valid: `capsem-admin profile check config/profiles/code/profile.toml --config-root config`
 - On first run, Docker image pulls can be slow
 
 ### `just run` fails with "assets not found"
@@ -252,7 +288,7 @@ Fix: set `credsStore` to empty string in `~/.docker/config.json`:
 
 ### VM boot hangs
 - Check codesigning: `codesign -dvv target/debug/capsem 2>&1 | grep entitlements`
-- Check assets exist: `ls assets/arm64/vmlinuz assets/arm64/rootfs.squashfs`
+- Check assets exist: `ls assets/arm64/vmlinuz assets/arm64/rootfs.erofs`
 - Check kernel architecture matches host: wrong-arch kernel causes silent hang. `VmConfig::build()` now rejects mismatched kernels at config time.
 - Try with debug logs: `RUST_LOG=capsem=debug just run`
 
@@ -288,4 +324,7 @@ Registry order (each depends on the ones above it):
 - **Non-fixable checks use `fail()` with an install hint.** System tools (node, docker, etc.) can't be auto-installed safely.
 - **Platform-specific checks live in `doctor-macos.sh` / `doctor-linux.sh`.** Each defines `check_platform()` and `tool_hint()`.
 - **Test, don't just check.** The codesigning section compiles and signs a test binary. `docker buildx version` tests functionality, not just file existence.
+- **Recover Colima before declaring Docker dead.** On macOS, a stale Colima VM
+  can leave the Docker socket present but unusable. Use the Colima recovery
+  discipline above before filing or reporting a Docker/Colima blocker.
 - **Bootstrap calls doctor.** `bootstrap.sh` checks bare minimums (bash, git, curl, rustup, just), installs Python/frontend deps, then runs `doctor-common.sh --fix`.

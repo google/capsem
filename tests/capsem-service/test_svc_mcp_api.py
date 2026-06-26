@@ -1,12 +1,11 @@
-"""MCP API endpoints: /mcp/servers, /mcp/tools, /mcp/policy,
-/mcp/tools/refresh, /mcp/tools/{name}/approve, /mcp/tools/{name}/call.
+"""MCP API endpoints under /profiles/{profile_id}/mcp/servers/{server_id}.
 
-These endpoints read from CAPSEM_HOME (user.toml, corp.toml,
-mcp_tool_cache.json) and for /mcp/tools/{name}/call route through a running
-capsem-process over IPC. Without a running VM, /mcp/tools/{name}/call hits
-the "no running sessions" path -- the fixture tests that error branch; full
-happy-path coverage would need a downstream MCP aggregator in the guest
-(tracked as a follow-up, same as test_mcp_call.py in tests/capsem-mcp/).
+These endpoints read MCP server configuration from the selected profile and
+tool cache from CAPSEM_HOME. Tool calls route through a running capsem-process
+over IPC. Without a running VM, tool calls hit the "no running sessions" path
+-- the fixture tests that error branch; full happy-path coverage would need a
+downstream MCP aggregator in the guest (tracked as a follow-up, same as
+test_mcp_call.py in tests/capsem-mcp/).
 """
 
 import json
@@ -18,20 +17,23 @@ from helpers.service import wait_exec_ready, vm_name
 
 pytestmark = pytest.mark.integration
 
+PROFILE = "code"
+SERVER = "local"
+
 
 class TestMcpServers:
 
     def test_servers_returns_list(self, client):
-        """/mcp/servers returns the merged server list (possibly empty)."""
-        resp = client.get("/mcp/servers")
+        """Profile MCP servers endpoint returns the merged server list."""
+        resp = client.get(f"/profiles/{PROFILE}/mcp/servers/list")
         assert isinstance(resp, list), f"/mcp/servers did not return list: {resp!r}"
         for server in resp:
             for key in (
-                "name", "url", "has_bearer_token", "custom_header_count",
+                "name", "url", "has_auth_credential", "custom_header_count",
                 "source", "enabled", "running", "tool_count", "is_stdio",
             ):
                 assert key in server, f"server missing '{key}': {server}"
-            assert isinstance(server["has_bearer_token"], bool)
+            assert isinstance(server["has_auth_credential"], bool)
             assert isinstance(server["enabled"], bool)
             assert isinstance(server["tool_count"], int)
             assert server["tool_count"] >= 0
@@ -40,8 +42,8 @@ class TestMcpServers:
 class TestMcpTools:
 
     def test_tools_returns_list(self, client):
-        """/mcp/tools returns the isolated tool cache shape."""
-        resp = client.get("/mcp/tools")
+        """Profile/server MCP tools endpoint returns the isolated tool cache shape."""
+        resp = client.get(f"/profiles/{PROFILE}/mcp/servers/{SERVER}/tools/list")
         assert isinstance(resp, list), f"/mcp/tools did not return list: {resp!r}"
         if not resp:
             return
@@ -51,43 +53,49 @@ class TestMcpTools:
         for tool in resp:
             for key in (
                 "server_name", "original_name", "namespaced_name",
-                "description", "approved", "pin_changed",
+                "description", "pin_changed", "permission_action", "permission_source",
             ):
                 assert key in tool, f"tool missing '{key}': {tool}"
             assert tool["server_name"] == "local"
-            assert isinstance(tool["approved"], bool)
             assert isinstance(tool["pin_changed"], bool)
+            assert tool["permission_action"] in {"allow", "ask", "block"}
+            assert "approved" not in tool
 
-
-class TestMcpPolicy:
-
-    def test_policy_returns_merged_shape(self, client):
-        """/mcp/policy returns McpPolicyInfoResponse shape with defaults."""
-        resp = client.get("/mcp/policy")
-        assert resp is not None
-        expected = {
-            "global_policy", "default_tool_permission",
-            "blocked_servers", "tool_permissions",
-        }
-        missing = expected - resp.keys()
-        assert not missing, f"missing policy keys: {missing}"
-        # Handler defaults default_tool_permission to "allow" when unset.
-        assert resp["default_tool_permission"] == "allow", (
-            f"unexpected default_tool_permission: {resp['default_tool_permission']}"
+    def test_tools_unknown_profile_server_rejected(self, client):
+        """Profile/server tool listing must reject servers absent from the profile."""
+        resp = client.get(f"/profiles/{PROFILE}/mcp/servers/settings-only/tools/list")
+        assert resp is None or "error" in resp or "not found" in str(resp).lower(), (
+            f"unknown profile server should reject: {resp}"
         )
-        assert isinstance(resp["blocked_servers"], list)
-        assert isinstance(resp["tool_permissions"], dict)
+
+
+class TestRetiredMcpSecurity:
+
+    def test_retired_mcp_endpoints_are_burned(self, client):
+        """Retired global MCP endpoints must not expose alternate authoring."""
+        for method, path in [
+            ("get", "/mcp/policy"),
+            ("get", "/mcp/servers"),
+            ("get", "/mcp/tools"),
+            ("post", "/mcp/tools/refresh"),
+            ("post", "/mcp/tools/local__echo/approve"),
+            ("post", "/mcp/tools/local__echo/call"),
+        ]:
+            call = getattr(client, method)
+            resp = call(path, {}) if method == "post" else call(path)
+            assert resp is None or "not found" in str(resp).lower() or "error" in resp
 
 
 class TestMcpToolsRefresh:
 
     def test_refresh_no_instances_succeeds(self, client):
-        """/mcp/tools/refresh with zero running VMs returns instances=0."""
+        """Profile/server refresh with zero running VMs returns instances=0."""
         # Ensure no VMs so the loop is over an empty list.
         client.post("/purge", {"all": True})
-        resp = client.post("/mcp/tools/refresh", {})
+        resp = client.post(f"/profiles/{PROFILE}/mcp/servers/{SERVER}/refresh", {})
         assert resp is not None, "refresh returned no body"
         assert resp.get("success") is True, f"refresh failed: {resp}"
+        assert resp.get("server_id") == SERVER
         assert resp.get("instances") == 0, (
             f"expected 0 instances, got {resp.get('instances')}: {resp}"
         )
@@ -95,13 +103,22 @@ class TestMcpToolsRefresh:
 
 class TestMcpApprove:
 
-    def test_approve_unknown_tool_rejected(self, client):
-        """Approving a tool that is not in the cache must 404."""
-        resp = client.post("/mcp/tools/not-a-real-tool/approve", {})
-        # 404 from AppError gives a body like {"error": "tool not found: ..."}.
-        assert resp is None or "error" in resp or "not found" in str(resp).lower(), (
-            f"unknown tool should 404: {resp}"
+    def test_tool_permission_mutation_records_rule_for_uncached_tool(self, client):
+        """Tool permission edits are profile rule mutations, not cache approvals."""
+        declared_server = "capsem"
+        resp = client.patch(
+            f"/profiles/{PROFILE}/mcp/servers/{declared_server}/tools/not-a-real-tool/edit",
+            {"action": "ask"},
         )
+        assert resp is not None, "tool permission mutation returned no body"
+        assert resp.get("profile_id") == PROFILE
+        assert resp.get("server_id") == declared_server
+        assert resp.get("tool_id") == "not-a-real-tool"
+        assert resp.get("action") == "ask"
+        mutation = resp.get("mutation") or {}
+        assert mutation.get("category") == "mcp"
+        assert mutation.get("operation") == "permission"
+        assert mutation.get("profile_id") == PROFILE
 
 
 class TestMcpCall:
@@ -116,7 +133,10 @@ class TestMcpCall:
         (same follow-up as test_mcp_call.py on the MCP side).
         """
         client.post("/purge", {"all": True})
-        resp = client.post("/mcp/tools/some-tool/call", {})
+        resp = client.post(
+            f"/profiles/{PROFILE}/mcp/servers/{SERVER}/tools/some-tool/call",
+            {},
+        )
         assert resp is None or "error" in resp or "no running" in str(resp).lower(), (
             f"no-session call should 503: {resp}"
         )
@@ -130,12 +150,18 @@ class TestMcpCall:
         -> aggregator), even if the downstream MCP call itself fails.
         """
         name = vm_name("mcpcall")
-        client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        client.post(
+            "/vms/create",
+            {"name": name, "profile_id": PROFILE, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS},
+        )
         try:
             assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT), (
                 f"{name} never exec-ready"
             )
-            resp = client.post("/mcp/tools/definitely-not-a-real-tool/call", {})
+            resp = client.post(
+                f"/profiles/{PROFILE}/mcp/servers/{SERVER}/tools/definitely-not-a-real-tool/call",
+                {},
+            )
             # Either the aggregator reports "unknown tool" or we get an
             # AppError body. Both are acceptable negative outcomes.
             assert resp is None or "error" in resp or "unknown" in json.dumps(resp).lower(), (
@@ -143,6 +169,6 @@ class TestMcpCall:
             )
         finally:
             try:
-                client.delete(f"/delete/{name}")
+                client.delete(f"/vms/{name}/delete")
             except Exception:
                 pass

@@ -37,6 +37,7 @@ struct PendingRequests {
 struct PendingRequest {
     json_id: Value,
     method: Option<String>,
+    snapshot_revert_path: Option<String>,
 }
 
 impl PendingRequests {
@@ -53,11 +54,11 @@ impl PendingRequests {
             .insert(stream_id, request);
     }
 
-    fn remove(&self, stream_id: u32) {
+    fn remove(&self, stream_id: u32) -> Option<PendingRequest> {
         self.inner
             .lock()
             .expect("pending MCP requests mutex poisoned")
-            .remove(&stream_id);
+            .remove(&stream_id)
     }
 
     fn take_all(&self) -> Vec<PendingRequest> {
@@ -148,10 +149,15 @@ fn main() {
                 }
                 let id = next_stream_id;
                 next_stream_id += 1;
+                let snapshot_revert_path = extract_snapshot_revert_path(&line);
                 (
                     id,
                     0,
-                    json_id.map(|json_id| PendingRequest { json_id, method }),
+                    json_id.map(|json_id| PendingRequest {
+                        json_id,
+                        method,
+                        snapshot_revert_path,
+                    }),
                 )
             }
         };
@@ -266,11 +272,14 @@ fn framed_vsock_to_stdout(
             }
         };
         if frame.payload.is_empty() {
-            pending.remove(frame.stream_id);
+            let _ = pending.remove(frame.stream_id);
             continue;
         }
 
-        pending.remove(frame.stream_id);
+        let pending_request = pending.remove(frame.stream_id);
+        if let Some(request) = pending_request.as_ref() {
+            apply_guest_snapshot_revert_side_effect(request, &frame.payload);
+        }
         let mut out = stdout.lock().expect("stdout mutex poisoned");
         if out.write_all(&frame.payload).is_err() {
             break;
@@ -293,6 +302,101 @@ fn framed_vsock_to_stdout(
 
     unsafe {
         nix::libc::close(dup_fd);
+    }
+}
+
+fn extract_snapshot_revert_path(line: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(line).ok()?;
+    let object = value.as_object()?;
+    if object.get("method")?.as_str()? != "tools/call" {
+        return None;
+    }
+    let params = object.get("params")?.as_object()?;
+    let name = params.get("name")?.as_str()?;
+    if name != "snapshots_revert" && name != "local__snapshots_revert" {
+        return None;
+    }
+    params
+        .get("arguments")?
+        .as_object()?
+        .get("path")?
+        .as_str()
+        .map(str::to_string)
+}
+
+fn response_reports_snapshot_delete(payload: &[u8]) -> bool {
+    let value: Value = match serde_json::from_slice(payload) {
+        Ok(value) => value,
+        Err(_) => return false,
+    };
+    if value.get("error").is_some() {
+        return false;
+    }
+    let Some(content) = value
+        .get("result")
+        .and_then(|result| result.get("content"))
+        .and_then(|content| content.as_array())
+    else {
+        return false;
+    };
+    content.iter().any(|item| {
+        item.get("text")
+            .and_then(|text| text.as_str())
+            .and_then(|text| serde_json::from_str::<Value>(text).ok())
+            .and_then(|inner| {
+                inner
+                    .get("action")
+                    .and_then(|action| action.as_str())
+                    .map(str::to_string)
+            })
+            .as_deref()
+            == Some("deleted")
+    })
+}
+
+fn normalize_guest_snapshot_path(raw: &str) -> Option<std::path::PathBuf> {
+    if raw.contains('\0') {
+        return None;
+    }
+    let stripped = raw.strip_prefix("/root/").unwrap_or(raw);
+    let path = std::path::Path::new(stripped);
+    if path.is_absolute()
+        || path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return None;
+    }
+    Some(std::path::Path::new("/root").join(path))
+}
+
+fn apply_guest_snapshot_revert_side_effect(request: &PendingRequest, payload: &[u8]) {
+    let Some(path) = request.snapshot_revert_path.as_deref() else {
+        return;
+    };
+    if !response_reports_snapshot_delete(payload) {
+        return;
+    }
+    let Some(guest_path) = normalize_guest_snapshot_path(path) else {
+        eprintln!("[capsem-mcp-server] refusing unsafe snapshot delete path: {path}");
+        return;
+    };
+    match std::fs::symlink_metadata(&guest_path) {
+        Ok(meta) if meta.is_file() || meta.file_type().is_symlink() => {
+            if let Err(e) = std::fs::remove_file(&guest_path) {
+                eprintln!(
+                    "[capsem-mcp-server] failed to apply guest-visible snapshot delete for {}: {e}",
+                    guest_path.display()
+                );
+            }
+        }
+        Ok(_) => {
+            eprintln!(
+                "[capsem-mcp-server] refusing snapshot delete for non-file path: {}",
+                guest_path.display()
+            );
+        }
+        Err(_) => {}
     }
 }
 

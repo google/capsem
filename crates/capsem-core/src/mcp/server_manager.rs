@@ -4,18 +4,29 @@
 //! - HTTP: Streamable HTTP endpoint via `StreamableHttpClientTransport`
 //! - Stdio: Subprocess via `TokioChildProcess` (for local/builtin servers)
 
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use rmcp::model::{CallToolRequestParams, GetPromptRequestParams, ReadResourceRequestParams};
+use futures::{stream::BoxStream, StreamExt};
+use http::header::{ACCEPT, WWW_AUTHENTICATE};
+use http::{HeaderName, HeaderValue};
+use rmcp::model::{
+    CallToolRequestParams, ClientJsonRpcMessage, GetPromptRequestParams, JsonRpcMessage,
+    ReadResourceRequestParams, ServerJsonRpcMessage,
+};
 use rmcp::service::{Peer, RunningService};
 use rmcp::transport::child_process::TokioChildProcess;
 use rmcp::transport::streamable_http_client::{
-    StreamableHttpClientTransport, StreamableHttpClientTransportConfig,
+    AuthRequiredError, InsufficientScopeError, SseError, StreamableHttpClient,
+    StreamableHttpClientTransport, StreamableHttpClientTransportConfig, StreamableHttpError,
+    StreamableHttpPostResponse,
 };
 use rmcp::{RoleClient, ServiceExt};
+use sse_stream::{Sse, SseStream};
 use tracing::{debug, info, warn};
 
 use super::types::*;
@@ -58,6 +69,277 @@ fn next_peer_index(peer_count: usize, is_pool_safe: bool, counter: &AtomicUsize)
         return 0;
     }
     counter.fetch_add(1, Ordering::Relaxed) % peer_count
+}
+
+const MCP_HEADER_SESSION_ID: &str = "Mcp-Session-Id";
+const MCP_HEADER_LAST_EVENT_ID: &str = "Last-Event-Id";
+const MCP_HEADER_PROTOCOL_VERSION: &str = "MCP-Protocol-Version";
+const EVENT_STREAM_MIME_TYPE: &str = "text/event-stream";
+const JSON_MIME_TYPE: &str = "application/json";
+
+#[derive(Clone)]
+struct CapsemMcpHttpClient {
+    client: reqwest::Client,
+}
+
+impl CapsemMcpHttpClient {
+    fn new(client: reqwest::Client) -> Self {
+        Self { client }
+    }
+}
+
+fn apply_mcp_custom_headers(
+    mut builder: reqwest::RequestBuilder,
+    custom_headers: HashMap<HeaderName, HeaderValue>,
+) -> Result<reqwest::RequestBuilder, StreamableHttpError<reqwest::Error>> {
+    for (name, value) in custom_headers {
+        validate_mcp_custom_header(&name).map_err(StreamableHttpError::ReservedHeaderConflict)?;
+        builder = builder.header(name, value);
+    }
+    Ok(builder)
+}
+
+fn validate_mcp_custom_header(name: &HeaderName) -> Result<(), String> {
+    let reserved = [
+        "accept",
+        MCP_HEADER_SESSION_ID,
+        MCP_HEADER_PROTOCOL_VERSION,
+        MCP_HEADER_LAST_EVENT_ID,
+    ];
+    if reserved
+        .iter()
+        .any(|reserved| name.as_str().eq_ignore_ascii_case(reserved))
+        && !name
+            .as_str()
+            .eq_ignore_ascii_case(MCP_HEADER_PROTOCOL_VERSION)
+    {
+        return Err(name.to_string());
+    }
+    Ok(())
+}
+
+fn extract_mcp_scope_from_header(header: &str) -> Option<String> {
+    let header_lowercase = header.to_ascii_lowercase();
+    let scope_key = "scope=";
+    let pos = header_lowercase.find(scope_key)?;
+    let value_slice = &header[pos + scope_key.len()..];
+    if let Some(stripped) = value_slice.strip_prefix('"') {
+        let end_quote = stripped.find('"')?;
+        return Some(stripped[..end_quote].to_string());
+    }
+    let end = value_slice
+        .find(|c: char| c == ',' || c == ';' || c.is_whitespace())
+        .unwrap_or(value_slice.len());
+    (end > 0).then(|| value_slice[..end].to_string())
+}
+
+fn parse_mcp_json_rpc_error(body: &str) -> Option<ServerJsonRpcMessage> {
+    match serde_json::from_str::<ServerJsonRpcMessage>(body) {
+        Ok(message @ JsonRpcMessage::Error(_)) => Some(message),
+        _ => None,
+    }
+}
+
+impl StreamableHttpClient for CapsemMcpHttpClient {
+    type Error = reqwest::Error;
+
+    async fn get_stream(
+        &self,
+        uri: Arc<str>,
+        session_id: Arc<str>,
+        last_event_id: Option<String>,
+        auth_header: Option<String>,
+        custom_headers: HashMap<HeaderName, HeaderValue>,
+    ) -> Result<BoxStream<'static, Result<Sse, SseError>>, StreamableHttpError<Self::Error>> {
+        let mut request_builder = self
+            .client
+            .get(uri.as_ref())
+            .header(ACCEPT, [EVENT_STREAM_MIME_TYPE, JSON_MIME_TYPE].join(", "))
+            .header(MCP_HEADER_SESSION_ID, session_id.as_ref());
+        if let Some(last_event_id) = last_event_id {
+            request_builder = request_builder.header(MCP_HEADER_LAST_EVENT_ID, last_event_id);
+        }
+        if let Some(auth_header) = auth_header {
+            request_builder = request_builder.bearer_auth(auth_header);
+        }
+        request_builder = apply_mcp_custom_headers(request_builder, custom_headers)?;
+        let response = request_builder
+            .send()
+            .await
+            .map_err(StreamableHttpError::Client)?;
+        if response.status() == reqwest::StatusCode::METHOD_NOT_ALLOWED {
+            return Err(StreamableHttpError::ServerDoesNotSupportSse);
+        }
+        let response = response
+            .error_for_status()
+            .map_err(StreamableHttpError::Client)?;
+        match response.headers().get(reqwest::header::CONTENT_TYPE) {
+            Some(content_type) => {
+                if !content_type
+                    .as_bytes()
+                    .starts_with(EVENT_STREAM_MIME_TYPE.as_bytes())
+                    && !content_type
+                        .as_bytes()
+                        .starts_with(JSON_MIME_TYPE.as_bytes())
+                {
+                    return Err(StreamableHttpError::UnexpectedContentType(Some(
+                        String::from_utf8_lossy(content_type.as_bytes()).to_string(),
+                    )));
+                }
+            }
+            None => return Err(StreamableHttpError::UnexpectedContentType(None)),
+        }
+        Ok(SseStream::from_byte_stream(response.bytes_stream()).boxed())
+    }
+
+    async fn delete_session(
+        &self,
+        uri: Arc<str>,
+        session_id: Arc<str>,
+        auth_header: Option<String>,
+        custom_headers: HashMap<HeaderName, HeaderValue>,
+    ) -> Result<(), StreamableHttpError<Self::Error>> {
+        let mut request_builder = self
+            .client
+            .delete(uri.as_ref())
+            .header(MCP_HEADER_SESSION_ID, session_id.as_ref());
+        if let Some(auth_header) = auth_header {
+            request_builder = request_builder.bearer_auth(auth_header);
+        }
+        request_builder = apply_mcp_custom_headers(request_builder, custom_headers)?;
+        let response = request_builder
+            .send()
+            .await
+            .map_err(StreamableHttpError::Client)?;
+        if response.status() == reqwest::StatusCode::METHOD_NOT_ALLOWED {
+            tracing::debug!("this server doesn't support deleting session");
+            return Ok(());
+        }
+        response
+            .error_for_status()
+            .map_err(StreamableHttpError::Client)?;
+        Ok(())
+    }
+
+    async fn post_message(
+        &self,
+        uri: Arc<str>,
+        message: ClientJsonRpcMessage,
+        session_id: Option<Arc<str>>,
+        auth_header: Option<String>,
+        custom_headers: HashMap<HeaderName, HeaderValue>,
+    ) -> Result<StreamableHttpPostResponse, StreamableHttpError<Self::Error>> {
+        let mut request = self
+            .client
+            .post(uri.as_ref())
+            .header(ACCEPT, [EVENT_STREAM_MIME_TYPE, JSON_MIME_TYPE].join(", "));
+        if let Some(auth_header) = auth_header {
+            request = request.bearer_auth(auth_header);
+        }
+        request = apply_mcp_custom_headers(request, custom_headers)?;
+        let session_was_attached = session_id.is_some();
+        if let Some(session_id) = session_id {
+            request = request.header(MCP_HEADER_SESSION_ID, session_id.as_ref());
+        }
+        let response = request
+            .json(&message)
+            .send()
+            .await
+            .map_err(StreamableHttpError::Client)?;
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            if let Some(header) = response.headers().get(WWW_AUTHENTICATE) {
+                let header = header
+                    .to_str()
+                    .map_err(|_| {
+                        StreamableHttpError::UnexpectedServerResponse(Cow::from(
+                            "invalid www-authenticate header value",
+                        ))
+                    })?
+                    .to_string();
+                return Err(StreamableHttpError::AuthRequired(AuthRequiredError::new(
+                    header,
+                )));
+            }
+        }
+        if response.status() == reqwest::StatusCode::FORBIDDEN {
+            if let Some(header) = response.headers().get(WWW_AUTHENTICATE) {
+                let header_str = header.to_str().map_err(|_| {
+                    StreamableHttpError::UnexpectedServerResponse(Cow::from(
+                        "invalid www-authenticate header value",
+                    ))
+                })?;
+                return Err(StreamableHttpError::InsufficientScope(
+                    InsufficientScopeError::new(
+                        header_str.to_string(),
+                        extract_mcp_scope_from_header(header_str),
+                    ),
+                ));
+            }
+        }
+
+        let status = response.status();
+        if matches!(
+            status,
+            reqwest::StatusCode::ACCEPTED | reqwest::StatusCode::NO_CONTENT
+        ) {
+            return Ok(StreamableHttpPostResponse::Accepted);
+        }
+        if status == reqwest::StatusCode::NOT_FOUND && session_was_attached {
+            return Err(StreamableHttpError::SessionExpired);
+        }
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .map(|ct| String::from_utf8_lossy(ct.as_bytes()).to_string());
+        let session_id = response
+            .headers()
+            .get(MCP_HEADER_SESSION_ID)
+            .and_then(|value| value.to_str().ok())
+            .map(|value| value.to_string());
+
+        if !status.is_success() {
+            let body = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "<failed to read response body>".to_owned());
+            if content_type
+                .as_deref()
+                .is_some_and(|ct| ct.as_bytes().starts_with(JSON_MIME_TYPE.as_bytes()))
+            {
+                if let Some(message) = parse_mcp_json_rpc_error(&body) {
+                    return Ok(StreamableHttpPostResponse::Json(message, session_id));
+                }
+                tracing::warn!("HTTP {status}: could not parse JSON body as a JSON-RPC error");
+            }
+            return Err(StreamableHttpError::UnexpectedServerResponse(Cow::Owned(
+                format!("HTTP {status}: {body}"),
+            )));
+        }
+
+        match content_type.as_deref() {
+            Some(ct) if ct.as_bytes().starts_with(EVENT_STREAM_MIME_TYPE.as_bytes()) => {
+                Ok(StreamableHttpPostResponse::Sse(
+                    SseStream::from_byte_stream(response.bytes_stream()).boxed(),
+                    session_id,
+                ))
+            }
+            Some(ct) if ct.as_bytes().starts_with(JSON_MIME_TYPE.as_bytes()) => {
+                match response.json::<ServerJsonRpcMessage>().await {
+                    Ok(message) => Ok(StreamableHttpPostResponse::Json(message, session_id)),
+                    Err(error) => {
+                        tracing::warn!(
+                            "could not parse JSON response as ServerJsonRpcMessage, treating as accepted: {error}"
+                        );
+                        Ok(StreamableHttpPostResponse::Accepted)
+                    }
+                }
+            }
+            _ => {
+                tracing::error!("unexpected content type: {:?}", content_type);
+                Err(StreamableHttpError::UnexpectedContentType(content_type))
+            }
+        }
+    }
 }
 
 /// Manages host-side MCP server connections and provides a unified tool catalog.
@@ -282,8 +564,19 @@ impl McpServerManager {
     /// Connect to an HTTP MCP server.
     async fn connect_http(&self, def: &McpServerDef) -> Result<RunningService<RoleClient, ()>> {
         let mut config = StreamableHttpClientTransportConfig::with_uri(def.url.as_str());
-        if let Some(ref token) = def.bearer_token {
-            config = config.auth_header(token.clone());
+        if let Some(auth) = &def.auth {
+            let token = crate::credential_broker::resolve_broker_reference_for_provider(
+                crate::credential_broker::CredentialProvider::Mcp,
+                &auth.credential_ref,
+            )
+            .map_err(|error| anyhow::anyhow!(error))?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "MCP auth credential reference could not be resolved for server '{}'",
+                    def.name
+                )
+            })?;
+            config = config.auth_header(token);
         }
         if !def.headers.is_empty() {
             let mut headers = HashMap::new();
@@ -298,8 +591,10 @@ impl McpServerManager {
             }
             config = config.custom_headers(headers);
         }
-        let transport =
-            StreamableHttpClientTransport::with_client(self.http_client.clone(), config);
+        let transport = StreamableHttpClientTransport::with_client(
+            CapsemMcpHttpClient::new(self.http_client.clone()),
+            config,
+        );
         ().serve(transport)
             .await
             .with_context(|| format!("failed to connect to HTTP MCP server '{}'", def.name))
@@ -546,12 +841,34 @@ impl McpServerManager {
 mod tests {
     use super::*;
 
+    struct EnvVarGuard {
+        key: &'static str,
+        old: Option<String>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: impl AsRef<std::path::Path>) -> Self {
+            let old = std::env::var(key).ok();
+            std::env::set_var(key, value.as_ref());
+            Self { key, old }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match &self.old {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
     fn test_server_def() -> McpServerDef {
         McpServerDef {
             name: "test".to_string(),
             url: "https://mcp.example.com/v1".to_string(),
             headers: HashMap::new(),
-            bearer_token: None,
+            auth: None,
             enabled: true,
             source: "test".to_string(),
             command: None,
@@ -744,16 +1061,12 @@ mod tests {
         }
     }
 
-    /// Live integration test against DeepWiki's public MCP server (no auth).
-    /// Uses connect_and_initialize directly so errors propagate instead of
-    /// being silently swallowed by initialize_all's warn-and-continue logic.
-    #[tokio::test]
-    async fn integration_live_mcp_server() {
+    fn local_http_mcp_def(url: String, auth: Option<McpAuthConfig>) -> McpServerDef {
         let def = McpServerDef {
-            name: "deepwiki".to_string(),
-            url: "https://mcp.deepwiki.com/mcp".to_string(),
+            name: "localtest".to_string(),
+            url,
             headers: HashMap::new(),
-            bearer_token: None,
+            auth,
             enabled: true,
             source: "test".to_string(),
             command: None,
@@ -762,78 +1075,126 @@ mod tests {
             pool_size: None,
             pool_safe_tools: Vec::new(),
         };
+        assert!(!def.is_stdio());
+        def
+    }
+
+    #[tokio::test]
+    async fn local_http_mcp_e2e_uses_brokered_oauth_and_records_tool_call() {
+        let _lock = crate::credential_broker::TEST_ENV_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let _store_guard = EnvVarGuard::set(
+            crate::credential_broker::STORE_PATH_ENV,
+            dir.path().join("store.json"),
+        );
+        let harness = crate::test_support::mcp::spawn_recording_mcp_server()
+            .await
+            .unwrap();
+        let observation = crate::credential_broker::CredentialObservation {
+            provider: crate::credential_broker::CredentialProvider::Mcp,
+            raw_value: "local-mcp-oauth-token".to_string(),
+            source: "mcp.auth.local_e2e".to_string(),
+            event_type: Some("mcp.server.auth".to_string()),
+            trace_id: Some("trace-local-mcp".to_string()),
+            context_json: None,
+        };
+        let brokered = crate::credential_broker::broker_observed_credential(&observation)
+            .expect("test credential should broker");
+        let def = local_http_mcp_def(
+            harness.url.clone(),
+            Some(McpAuthConfig {
+                kind: McpAuthKind::OAuth,
+                credential_ref: brokered.credential_ref.clone(),
+            }),
+        );
         let mut mgr = McpServerManager::new(vec![def.clone()], reqwest::Client::new());
-        // Call connect_and_initialize directly -- errors surface immediately
-        // instead of being silently logged by initialize_all.
+
         mgr.connect_and_initialize(&def)
             .await
-            .expect("failed to connect to DeepWiki MCP server");
+            .expect("local MCP server should initialize");
 
         assert!(
-            mgr.is_running("deepwiki"),
-            "server should be running after successful init"
+            mgr.is_running("localtest"),
+            "local server should be running after successful init"
         );
         assert!(
-            mgr.tool_count_for_server("deepwiki") > 0,
-            "DeepWiki should expose at least one tool, got catalog: {:?}",
             mgr.tool_catalog()
+                .iter()
+                .any(|tool| tool.namespaced_name == "localtest__echo"),
+            "local MCP should expose echo, got catalog: {:?}",
+            mgr.tool_catalog()
+        );
+
+        let result = mgr
+            .call_tool(
+                "localtest__echo",
+                serde_json::json!({ "message": "winter" }),
+            )
+            .await
+            .expect("local echo tool should dispatch");
+        let result_json = serde_json::to_string(&result).unwrap();
+        assert!(
+            result_json.contains("echo:winter"),
+            "tool result should include echo output: {result_json}"
+        );
+
+        let tool_calls = harness.state.tool_calls();
+        assert_eq!(
+            tool_calls,
+            vec![crate::test_support::mcp::RecordedMcpToolCall {
+                tool: "echo".to_string(),
+                arguments: serde_json::json!({ "message": "winter" }),
+            }]
+        );
+
+        let requests = harness.state.http_requests();
+        assert!(
+            requests.iter().any(|request| request
+                .header("authorization")
+                .is_some_and(|value| value == "Bearer local-mcp-oauth-token")),
+            "local MCP server should receive the broker-resolved bearer token: {requests:?}"
+        );
+        assert!(
+            requests.iter().all(|request| !request
+                .header("authorization")
+                .unwrap_or_default()
+                .contains("credential:blake3:")),
+            "broker references must not be sent as auth material: {requests:?}"
         );
     }
 
-    /// Live integration test that connects to all HTTP MCP servers from the
-    /// developer's config (user.toml manual servers + auto-detected from
-    /// ~/.claude/settings.json and ~/.gemini/settings.json). Skips if none found.
-    /// Covers bearer_token auth, custom headers, and multi-server catalog building.
     #[tokio::test]
-    async fn integration_live_configured_mcp_servers() {
-        use crate::mcp::build_server_list;
-        use crate::mcp::policy::McpUserConfig;
-        use crate::net::policy_config::{load_settings_file, user_config_path};
-
-        let user_mcp = user_config_path()
-            .and_then(|p| load_settings_file(&p).ok())
-            .and_then(|f| f.mcp)
-            .unwrap_or_default();
-        let corp_mcp = McpUserConfig::default();
-
-        let servers = build_server_list(&user_mcp, &corp_mcp);
-        let http_servers: Vec<_> = servers
-            .iter()
-            .filter(|s| s.enabled && !s.is_stdio())
-            .collect();
-
-        if http_servers.is_empty() {
-            eprintln!("no HTTP MCP servers configured, skipping");
-            return;
-        }
-
-        let mut mgr = McpServerManager::new(
-            http_servers.iter().map(|s| (*s).clone()).collect(),
-            reqwest::Client::new(),
+    async fn local_http_mcp_unresolved_broker_ref_fails_before_network_dispatch() {
+        let _lock = crate::credential_broker::TEST_ENV_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let _store_guard = EnvVarGuard::set(
+            crate::credential_broker::STORE_PATH_ENV,
+            dir.path().join("store.json"),
         );
+        let harness = crate::test_support::mcp::spawn_recording_mcp_server()
+            .await
+            .unwrap();
+        let def = local_http_mcp_def(
+            harness.url.clone(),
+            Some(McpAuthConfig {
+                kind: McpAuthKind::Bearer,
+                credential_ref: "credential:blake3:missing-local-mcp-token".to_string(),
+            }),
+        );
+        let mut mgr = McpServerManager::new(vec![def.clone()], reqwest::Client::new());
 
-        for def in &http_servers {
-            match mgr.connect_and_initialize(def).await {
-                Ok(()) => {
-                    assert!(
-                        mgr.is_running(&def.name),
-                        "server '{}' should be running after init",
-                        def.name,
-                    );
-                    assert!(
-                        mgr.tool_count_for_server(&def.name) > 0,
-                        "server '{}' should expose at least one tool, got catalog: {:?}",
-                        def.name,
-                        mgr.tool_catalog(),
-                    );
-                }
-                Err(e) => {
-                    panic!(
-                        "failed to connect to configured MCP server '{}' (url={}): {e:#}",
-                        def.name, def.url,
-                    );
-                }
-            }
-        }
+        let err = mgr
+            .connect_and_initialize(&def)
+            .await
+            .expect_err("unresolved broker ref must fail closed");
+
+        assert!(
+            err.to_string().contains("could not be resolved"),
+            "unexpected error: {err:#}"
+        );
+        assert!(
+            harness.state.http_requests().is_empty(),
+            "unresolved broker refs must fail before any remote MCP request"
+        );
     }
 }

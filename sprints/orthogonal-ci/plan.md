@@ -67,7 +67,7 @@ Split the single release pipeline into two independent CI workflows: one for bin
 - [ ] Each workflow downloads the current manifest from the latest release
 - [ ] Merges its section (binary or asset) into the existing manifest
 - [ ] Preserves the other section untouched
-- [ ] Signs the merged manifest with minisign
+- [ ] Publishes the merged manifest as BLAKE3 asset metadata
 - [ ] Uploads as release artifact
 
 ### 4. `just cut-release` (binary-only)

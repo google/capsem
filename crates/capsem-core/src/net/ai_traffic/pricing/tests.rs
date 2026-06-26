@@ -179,83 +179,36 @@ fn tiered_price_uses_base_rate() {
     assert!(cost > 0.0, "tiered model should still return positive cost");
 }
 
-// --- Fuzzy matching tests ---
-
 #[test]
-fn fuzzy_suffix_strip() {
+fn uses_upstream_match_without_suffix_guessing() {
     let table = PricingTable::load();
     let exact = table.estimate_cost(
-        "google",
-        Some("gemini-3.1-pro-preview"),
+        "openai",
+        Some("gpt-5-nano"),
         Some(1000),
-        Some(500),
+        Some(250),
         &no_details(),
     );
-    let fuzzy = table.estimate_cost(
-        "google",
-        Some("gemini-3.1-pro-preview-customtools"),
+    let guessed = table.estimate_cost(
+        "openai",
+        Some("gpt-5-private-fork"),
         Some(1000),
-        Some(500),
+        Some(250),
         &no_details(),
     );
     assert!(exact > 0.0, "exact match should have a cost");
-    assert_eq!(fuzzy, exact, "suffixed variant should match same price");
-}
-
-#[test]
-fn fuzzy_date_stamp_strip() {
-    let table = PricingTable::load();
-    let base_cost = table.estimate_cost(
-        "openai",
-        Some("gpt-4o"),
-        Some(1_000_000),
-        Some(500_000),
-        &no_details(),
-    );
-    let dated_cost = table.estimate_cost(
-        "openai",
-        Some("gpt-4o-2025-01-15"),
-        Some(1_000_000),
-        Some(500_000),
-        &no_details(),
-    );
-    assert!(base_cost > 0.0, "gpt-4o should have a cost");
     assert_eq!(
-        dated_cost, base_cost,
-        "date-stamped gpt-4o should match base gpt-4o price via suffix stripping"
+        guessed, 0.0,
+        "unknown suffixed variants must not inherit pricing by guesswork"
     );
 }
 
 #[test]
-fn fuzzy_version_closest() {
+fn unknown_model_does_not_prefix_match() {
     let table = PricingTable::load();
     let cost = table.estimate_cost(
         "anthropic",
         Some("claude-sonnet-4.future"),
-        Some(1000),
-        Some(500),
-        &no_details(),
-    );
-    let known_cost = table.estimate_cost(
-        "anthropic",
-        Some("claude-sonnet-4-20250514"),
-        Some(1000),
-        Some(500),
-        &no_details(),
-    );
-    assert!(known_cost > 0.0, "known sonnet should have cost");
-    assert_eq!(
-        cost, known_cost,
-        "prefix-matched model should use the same pricing"
-    );
-}
-
-#[test]
-fn fuzzy_no_nonsense_match() {
-    let table = PricingTable::load();
-    let cost = table.estimate_cost(
-        "anthropic",
-        Some("totally-unknown-model"),
         Some(1000),
         Some(500),
         &no_details(),
@@ -267,7 +220,7 @@ fn fuzzy_no_nonsense_match() {
 }
 
 #[test]
-fn fuzzy_strip_depth_limit() {
+fn unknown_deep_suffix_model_is_zero() {
     let table = PricingTable::load();
     let cost = table.estimate_cost(
         "openai",
@@ -280,22 +233,6 @@ fn fuzzy_strip_depth_limit() {
         cost, 0.0,
         "too many segments should exhaust strip budget and prefix too short"
     );
-}
-
-#[test]
-fn common_prefix_len_basic() {
-    assert_eq!(common_prefix_len("abc", "abd"), 2);
-    assert_eq!(common_prefix_len("abc", "abc"), 3);
-    assert_eq!(common_prefix_len("abc", "xyz"), 0);
-    assert_eq!(common_prefix_len("", "abc"), 0);
-}
-
-#[test]
-fn extract_trailing_version_basic() {
-    assert_eq!(extract_trailing_version("claude-opus-4-6"), Some(6));
-    assert_eq!(extract_trailing_version("claude-opus-4-0"), Some(0));
-    assert_eq!(extract_trailing_version("gpt-4o"), None);
-    assert_eq!(extract_trailing_version("model"), None);
 }
 
 #[test]

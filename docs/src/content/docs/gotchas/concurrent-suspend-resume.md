@@ -44,35 +44,48 @@ interaction. It is not caused by our guest code, the agent's
 `sync + BLKFLSBUF + fsync(/dev/loop0)` quiescence, or anything in the
 Rust host code paths.
 
-## Fix: serialize save/restore in capsem-service
+## Fix: serialize Apple VZ lifecycle in capsem-service
 
-`capsem-service` holds a single `tokio::sync::Mutex` across **every**
-`handle_suspend` and `handle_resume` call. The lock is acquired at
-the top of each handler and held until:
+`capsem-service` holds a single in-process `tokio::sync::RwLock` plus a
+host-wide flock across Apple VZ lifecycle edges. Cold provision/start and
+stop/delete teardown take shared/read guards; suspend and resume take
+exclusive/write guards. The guard is acquired before the service spawns or
+signals `capsem-process` and is held until:
 
 - For suspend: the per-VM `capsem-process` has exited, meaning the
   checkpoint file is durable.
 - For resume: the new `capsem-process` has signalled
   `.ready` (boot through `restoreMachineStateFromURL` has returned).
+- For provision/start: the new `capsem-process` has signalled `.ready`
+  (boot through `startWithCompletionHandler` has returned).
+- For stop/delete: the `capsem-process` has exited and VZ teardown has
+  completed.
 
-Concurrent clients still see their requests succeed; they just queue
-behind the in-flight save/restore. The lock is per-service, so in
-production (one `capsem-service` per host per user) this fully
-serializes VZ save/restore on that host.
+Concurrent clients still see their requests succeed. Independent cold starts
+can overlap, but checkpoint save/restore remains exclusive and teardown cannot
+cross a checkpoint edge. The in-process `RwLock` orders VMs managed by one
+service, and the host-wide flock at
+`/tmp/capsem-vz-save-restore-<uid>.lock` extends the same ordering across
+pytest-xdist workers or any other sibling `capsem-service` process owned by
+the same user.
 
 See `crates/capsem-service/src/main.rs`
-(`ServiceState::save_restore_lock`).
+(`ServiceState::save_restore_lock`) and
+`crates/capsem-service/src/startup.rs` (`VzHostLock`).
 
 ## Tests
 
-`tests/capsem-mcp/test_stress_suspend_resume.py` must run serially
-(`-n 1` under pytest-xdist, or without xdist). Running the stress
-harness at `-n 2` or higher creates **multiple `capsem-service`
-processes** (one per xdist worker). The in-service lock does not span
-services, so each worker's service can race another worker's. That's
-an artificial scenario -- a deployed host runs exactly one service --
-but the test cannot observe the fix under concurrency. Stick to
-`-n 1` for correctness measurement.
+`just test` intentionally runs Python integration tests under
+`pytest -n 4 --dist=loadfile`. That creates multiple service processes, so
+the host-wide flock is required test and product infrastructure. Do not
+demote suspend/resume, lifecycle, or provisioning tests to `-n 1` to avoid
+this class of failure; a concurrent VZ lifecycle failure means the shared
+rail regressed.
+
+Timing and benchmark probes are different: their assertion is the measured
+number. `just test` runs the non-serial integration canary first, then runs
+`tests/capsem-serial/` alone so boot and lifecycle numbers measure Capsem
+rather than a sibling benchmark stealing the same VZ launch budget.
 
 ## Related past bugs
 

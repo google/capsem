@@ -5,19 +5,20 @@
 //!
 //! SSE stream format: Each SSE event is a complete JSON object (not deltas).
 //! Parts contain `text`, `functionCall`, or `thought` fields.
-//! Gemini doesn't provide tool call IDs -- we generate synthetic ones.
+//! Gemini doesn't provide tool call IDs; Google Code Assist may provide
+//! `functionCall.id`, which we preserve for request/response correlation.
 
 use std::collections::BTreeMap;
 
 use crate::net::ai_traffic::events::{LlmEvent, ProviderStreamParser, StopReason};
-use crate::net::ai_traffic::provider::{Provider, ProviderKind};
+use crate::net::ai_traffic::provider::{ModelProtocol, Provider};
 use crate::net::parsers::sse_parser::SseEvent;
 
 pub struct GoogleProvider;
 
 impl Provider for GoogleProvider {
-    fn kind(&self) -> ProviderKind {
-        ProviderKind::Google
+    fn kind(&self) -> ModelProtocol {
+        ModelProtocol::Google
     }
 
     fn upstream_base_url(&self) -> &str {
@@ -49,6 +50,11 @@ mod wire {
     use serde::Deserialize;
 
     #[derive(Deserialize)]
+    pub struct StreamEnvelope {
+        pub response: Option<Box<serde_json::value::RawValue>>,
+    }
+
+    #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     pub struct StreamChunk {
         pub candidates: Option<Vec<Candidate>>,
@@ -78,6 +84,7 @@ mod wire {
 
     #[derive(Deserialize)]
     pub struct FunctionCall {
+        pub id: Option<String>,
         pub name: Option<String>,
         pub args: Option<Box<serde_json::value::RawValue>>,
     }
@@ -120,11 +127,20 @@ impl GoogleStreamParser {
             other => StopReason::Other(other.into()),
         }
     }
+
+    fn parse_stream_chunk(data: &str) -> Result<wire::StreamChunk, serde_json::Error> {
+        let envelope = serde_json::from_str::<wire::StreamEnvelope>(data)?;
+        if let Some(response) = envelope.response {
+            serde_json::from_str(response.get())
+        } else {
+            serde_json::from_str(data)
+        }
+    }
 }
 
 impl ProviderStreamParser for GoogleStreamParser {
     fn parse_event(&mut self, sse: &SseEvent) -> Vec<LlmEvent> {
-        let Ok(chunk) = serde_json::from_str::<wire::StreamChunk>(&sse.data) else {
+        let Ok(chunk) = Self::parse_stream_chunk(&sse.data) else {
             return vec![LlmEvent::Unknown {
                 event_type: sse.event_type.clone(),
                 raw: sse.data.clone(),
@@ -174,9 +190,6 @@ impl ProviderStreamParser for GoogleStreamParser {
                             // Function call (complete, not streamed)
                             if let Some(fc) = &part.function_call {
                                 let name = fc.name.clone().unwrap_or_default();
-                                // Gemini doesn't return tool call IDs, so we use the name as the call_id
-                                // to link the tool_response later (which also only has the name).
-                                let call_id = name.clone();
                                 let arguments = fc
                                     .args
                                     .as_ref()
@@ -185,6 +198,11 @@ impl ProviderStreamParser for GoogleStreamParser {
 
                                 let idx = self.block_index;
                                 self.block_index += 1;
+                                let call_id = fc
+                                    .id
+                                    .clone()
+                                    .filter(|id| !id.is_empty())
+                                    .unwrap_or_else(|| format!("gemini_{}_{}", name, idx));
                                 events.push(LlmEvent::ToolCallStart {
                                     index: idx,
                                     call_id: call_id.clone(),

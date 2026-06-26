@@ -41,6 +41,8 @@ fn sample_net_event(domain: &str, decision: Decision) -> NetEvent {
         response_headers: None,
         request_body_preview: None,
         response_body_preview: None,
+        request_body_full: None,
+        response_body_full: None,
         conn_type: None,
         policy_mode: None,
         policy_action: None,
@@ -72,6 +74,8 @@ fn http_net_event(domain: &str) -> NetEvent {
         response_headers: Some("Content-Type: application/json".to_string()),
         request_body_preview: None,
         response_body_preview: Some("{\"repos\":[]}".to_string()),
+        request_body_full: None,
+        response_body_full: Some("{\"repos\":[]}".to_string()),
         conn_type: Some("https".to_string()),
         policy_mode: None,
         policy_action: None,
@@ -87,6 +91,7 @@ fn sample_model_call(provider: &str) -> ModelCall {
         event_id: None,
         timestamp: SystemTime::UNIX_EPOCH + Duration::from_secs(1700000000),
         provider: provider.to_string(),
+        protocol: Some(provider.to_string()),
         model: Some("claude-sonnet-4-20250514".to_string()),
         process_name: Some("claude".to_string()),
         pid: Some(1234),
@@ -98,10 +103,12 @@ fn sample_model_call(provider: &str) -> ModelCall {
         tools_count: 2,
         request_bytes: 2048,
         request_body_preview: Some("{\"model\":\"...\"}".to_string()),
+        request_body_full: Some("{\"model\":\"...\"}".to_string()),
         message_id: Some("msg_01".to_string()),
         status_code: Some(200),
         text_content: Some("Hello world!".to_string()),
         thinking_content: None,
+        response_body_full: Some("{\"content\":[{\"text\":\"Hello world!\"}]}".to_string()),
         stop_reason: Some("end_turn".to_string()),
         input_tokens: Some(25),
         output_tokens: Some(10),
@@ -124,6 +131,7 @@ fn sample_model_call(provider: &str) -> ModelCall {
             content_preview: Some("72F and sunny".to_string()),
             is_error: false,
             trace_id: None,
+            credential_ref: None,
         }],
     }
 }
@@ -177,6 +185,7 @@ async fn model_call_roundtrip() {
     let (id, c) = &calls[0];
     assert!(*id > 0);
     assert_eq!(c.provider, "anthropic");
+    assert_eq!(c.protocol.as_deref(), Some("anthropic"));
     assert_eq!(c.model.as_deref(), Some("claude-sonnet-4-20250514"));
     assert_eq!(c.method, "POST");
     assert_eq!(c.path, "/v1/messages");
@@ -205,6 +214,110 @@ async fn model_call_roundtrip() {
     assert_eq!(trs[0].call_id, "toolu_prev");
     assert_eq!(trs[0].content_preview.as_deref(), Some("72F and sunny"));
     assert!(!trs[0].is_error);
+}
+
+#[tokio::test]
+async fn model_items_dedup_by_trace_kind_hash_and_call_id_across_restarts() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("session.db");
+
+    let mut call = sample_model_call("openai");
+    call.trace_id = Some("trace_ironbank_dedup".to_string());
+    call.model = Some("gemma4:latest".to_string());
+    call.path = "/v1/responses".to_string();
+    call.request_body_preview = Some(
+        r#"{"model":"gemma4:latest","input":"write nonce","tools":[{"name":"exec_command"}]}"#
+            .to_string(),
+    );
+    call.thinking_content = Some("dedup reasoning".to_string());
+    call.text_content = Some("dedup response".to_string());
+    call.tool_calls = vec![ToolCallEntry {
+        call_index: 0,
+        call_id: "call_dedup_01".to_string(),
+        tool_name: "exec_command".to_string(),
+        arguments: Some(r#"{"cmd":"printf nonce > /root/dedup.txt"}"#.to_string()),
+        origin: "native".to_string(),
+        trace_id: None,
+    }];
+    call.tool_responses = Vec::new();
+
+    {
+        let writer = DbWriter::open(&path, 64).unwrap();
+        writer.write(WriteOp::ModelCall(call.clone())).await;
+        writer.write(WriteOp::ModelCall(call.clone())).await;
+        drop(writer);
+    }
+
+    let mut response_call = call.clone();
+    response_call.request_body_preview = Some(
+        r#"{"input":[{"type":"function_call_output","call_id":"call_dedup_01","output":"Process exited with code 0"}]}"#
+            .to_string(),
+    );
+    response_call.thinking_content = None;
+    response_call.text_content = None;
+    response_call.tool_calls = Vec::new();
+    response_call.tool_responses = vec![ToolResponseEntry {
+        call_id: "call_dedup_01".to_string(),
+        content_preview: Some("Process exited with code 0".to_string()),
+        is_error: false,
+        trace_id: None,
+        credential_ref: None,
+    }];
+
+    {
+        let writer = DbWriter::open(&path, 64).unwrap();
+        writer
+            .write(WriteOp::ModelCall(response_call.clone()))
+            .await;
+        writer.write(WriteOp::ModelCall(response_call)).await;
+        drop(writer);
+    }
+
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let rows = conn
+        .prepare(
+            "SELECT kind, call_id, tool_name, arguments, content, content_hash
+             FROM model_items
+             WHERE trace_id = 'trace_ironbank_dedup'
+             ORDER BY kind",
+        )
+        .unwrap()
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, String>(5)?,
+            ))
+        })
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+
+    assert_eq!(rows.len(), 5, "{rows:#?}");
+    let kinds: Vec<_> = rows.iter().map(|row| row.0.as_str()).collect();
+    assert_eq!(
+        kinds,
+        [
+            "reasoning",
+            "request",
+            "response",
+            "tool_call",
+            "tool_response"
+        ]
+    );
+    assert!(rows
+        .iter()
+        .all(|row| row.5.len() == 71 && row.5.starts_with("blake3:")));
+    assert!(rows.iter().any(|row| row.1 == "call_dedup_01"
+        && row.2.as_deref() == Some("exec_command")
+        && row.3.as_deref() == Some(r#"{"cmd":"printf nonce > /root/dedup.txt"}"#)));
+    assert!(rows
+        .iter()
+        .any(|row| row.1 == "call_dedup_01"
+            && row.4.as_deref() == Some("Process exited with code 0")));
 }
 
 // ── Count queries ────────────────────────────────────────────────────
@@ -367,8 +480,9 @@ async fn reader_works_while_writer_active() {
             .await;
     }
 
-    // Give writer thread a moment to flush.
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    // `DbWriter::write` is an enqueue path. Use the DB-owned flush barrier
+    // before asserting that a standalone reader observes the committed ledger.
+    writer.flush().await;
 
     // Open a reader while writer is still alive.
     let reader = writer.reader().unwrap();
@@ -382,7 +496,7 @@ async fn reader_works_while_writer_active() {
             Decision::Denied,
         )))
         .await;
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    writer.flush().await;
 
     let events = reader.recent_net_events(10).unwrap();
     assert_eq!(events.len(), 6);
@@ -418,6 +532,8 @@ async fn empty_strings() {
         response_headers: Some("".to_string()),
         request_body_preview: Some("".to_string()),
         response_body_preview: Some("".to_string()),
+        request_body_full: None,
+        response_body_full: None,
         conn_type: Some("".to_string()),
         policy_mode: None,
         policy_action: None,
@@ -449,6 +565,7 @@ async fn unicode_strings() {
         event_id: None,
         timestamp: SystemTime::UNIX_EPOCH + Duration::from_secs(1700000000),
         provider: "anthropic".to_string(),
+        protocol: Some("anthropic".to_string()),
         model: Some("claude".to_string()),
         process_name: None,
         pid: None,
@@ -460,10 +577,12 @@ async fn unicode_strings() {
         tools_count: 0,
         request_bytes: 100,
         request_body_preview: None,
+        request_body_full: None,
         message_id: None,
         status_code: Some(200),
         text_content: Some("Bonjour le monde!".to_string()),
         thinking_content: None,
+        response_body_full: Some("Bonjour le monde!".to_string()),
         stop_reason: Some("end_turn".to_string()),
         input_tokens: Some(5),
         output_tokens: Some(3),
@@ -615,6 +734,7 @@ async fn model_call_many_tools() {
             content_preview: Some(format!("result {i}")),
             is_error: i == 3,
             trace_id: None,
+            credential_ref: None,
         })
         .collect();
     writer.write(WriteOp::ModelCall(call)).await;
@@ -882,8 +1002,9 @@ async fn writer_reader_on_file_backed_sees_data() {
             Decision::Allowed,
         )))
         .await;
-    // Give writer thread time to flush.
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    // writer.reader() opens a file-backed reader, so use the explicit DB
+    // flush barrier before asserting disk-visible rows.
+    writer.flush().await;
 
     let reader = writer.reader().unwrap();
     let events = reader.recent_net_events(10).unwrap();
@@ -1826,6 +1947,7 @@ async fn model_call_tool_data_roundtrip() {
         content_preview: Some("72F and sunny".to_string()),
         is_error: false,
         trace_id: None,
+        credential_ref: None,
     }];
 
     writer.write(WriteOp::ModelCall(call)).await;
@@ -1913,6 +2035,7 @@ fn sample_mcp_call(server: &str, decision: &str) -> McpCall {
         process_name: Some("claude".to_string()),
         bytes_sent: 0,
         bytes_received: 0,
+        transport: "vsock_frame".to_string(),
         policy_mode: Some("audit_only".to_string()),
         policy_action: Some(decision_to_policy_action(decision).to_string()),
         policy_rule: Some(format!("mcp.tool.{server}__search_repos")),
@@ -1920,6 +2043,22 @@ fn sample_mcp_call(server: &str, decision: &str) -> McpCall {
         trace_id: None,
         credential_ref: None,
     }
+}
+
+fn mcp_tool_rows(reader: &DbReader) -> Vec<BTreeMap<String, serde_json::Value>> {
+    let json = reader
+        .query_raw(
+            "SELECT event_id, timestamp, server_name, method, tool_name, request_id,
+                    arguments AS request_preview, response_preview, decision, duration_ms,
+                    error_message, process_name, bytes_sent, bytes_received, policy_mode,
+                    policy_action, policy_rule, policy_reason, origin, transport
+             FROM tool_calls
+             WHERE origin = 'mcp'
+             ORDER BY id DESC",
+        )
+        .unwrap();
+    let (_, rows) = parse_query_result(&json);
+    rows
 }
 
 fn decision_to_policy_action(decision: &str) -> &'static str {
@@ -1930,7 +2069,7 @@ fn decision_to_policy_action(decision: &str) -> &'static str {
 }
 
 #[tokio::test]
-async fn mcp_call_roundtrip() {
+async fn tool_call_roundtrip_from_mcp_observation() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("mcp.db");
     let writer = DbWriter::open(&path, 64).unwrap();
@@ -1941,27 +2080,25 @@ async fn mcp_call_roundtrip() {
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
-    let calls = reader.recent_mcp_calls(10).unwrap();
+    let calls = mcp_tool_rows(&reader);
     assert_eq!(calls.len(), 1);
     let c = &calls[0];
-    assert_eq!(c.server_name, "github");
-    assert_eq!(c.method, "tools/call");
-    assert_eq!(c.tool_name.as_deref(), Some("github__search_repos"));
-    assert_eq!(c.request_id.as_deref(), Some("req-1"));
-    assert_eq!(c.decision, "allowed");
-    assert_eq!(c.duration_ms, 250);
-    assert_eq!(c.process_name.as_deref(), Some("claude"));
-    assert_eq!(c.policy_mode.as_deref(), Some("audit_only"));
-    assert_eq!(c.policy_action.as_deref(), Some("allow"));
-    assert_eq!(
-        c.policy_rule.as_deref(),
-        Some("mcp.tool.github__search_repos")
-    );
-    assert_eq!(c.policy_reason.as_deref(), Some("local policy allowed"));
+    assert_eq!(c["server_name"], "github");
+    assert_eq!(c["method"], "tools/call");
+    assert_eq!(c["tool_name"], "github__search_repos");
+    assert_eq!(c["request_id"], "req-1");
+    assert_eq!(c["decision"], "allowed");
+    assert_eq!(c["duration_ms"], 250);
+    assert_eq!(c["process_name"], "claude");
+    assert_eq!(c["policy_mode"], "audit_only");
+    assert_eq!(c["policy_action"], "allow");
+    assert_eq!(c["policy_rule"], "mcp.tool.github__search_repos");
+    assert_eq!(c["policy_reason"], "local policy allowed");
+    assert_eq!(reader.recent_tool_calls(10).unwrap().len(), 1);
 }
 
 #[tokio::test]
-async fn mcp_call_search() {
+async fn tool_call_search_from_unified_ledger() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("mcp-search.db");
     let writer = DbWriter::open(&path, 64).unwrap();
@@ -1979,25 +2116,39 @@ async fn mcp_call_search() {
 
     let reader = DbReader::open(&path).unwrap();
 
-    // Search by server_name
-    let results = reader.search_mcp_calls("github", 10).unwrap();
-    assert_eq!(results.len(), 2);
+    let rows = mcp_tool_rows(&reader);
+    assert_eq!(
+        rows.iter()
+            .filter(|row| row["server_name"] == "github")
+            .count(),
+        2
+    );
 
-    // Search by tool_name
-    let results = reader.search_mcp_calls("search_repos", 10).unwrap();
-    assert_eq!(results.len(), 3); // all have search_repos in tool_name
+    assert_eq!(
+        rows.iter()
+            .filter(|row| row["tool_name"].as_str().unwrap().contains("search_repos"))
+            .count(),
+        3
+    );
 
-    // Search by method
-    let results = reader.search_mcp_calls("tools/call", 10).unwrap();
-    assert_eq!(results.len(), 3);
+    assert_eq!(
+        rows.iter()
+            .filter(|row| row["method"] == "tools/call")
+            .count(),
+        3
+    );
 
-    // No match
-    let results = reader.search_mcp_calls("nonexistent", 10).unwrap();
-    assert_eq!(results.len(), 0);
+    assert_eq!(
+        rows.iter()
+            .filter(|row| row["tool_name"].as_str().unwrap().contains("nonexistent"))
+            .count(),
+        0
+    );
+    assert_eq!(reader.recent_tool_calls(10).unwrap().len(), 3);
 }
 
 #[tokio::test]
-async fn mcp_call_stats() {
+async fn tool_call_stats() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("mcp-stats.db");
     let writer = DbWriter::open(&path, 64).unwrap();
@@ -2024,7 +2175,7 @@ async fn mcp_call_stats() {
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
-    let stats = reader.mcp_call_stats().unwrap();
+    let stats = reader.tool_call_stats().unwrap();
 
     assert_eq!(stats.total, 5);
     assert_eq!(stats.allowed, 2);
@@ -2043,14 +2194,14 @@ async fn mcp_call_stats() {
 }
 
 #[tokio::test]
-async fn mcp_call_stats_empty_db() {
+async fn tool_call_stats_empty_db() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("mcp-empty.db");
     let writer = DbWriter::open(&path, 64).unwrap();
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
-    let stats = reader.mcp_call_stats().unwrap();
+    let stats = reader.tool_call_stats().unwrap();
     assert_eq!(stats.total, 0);
     assert_eq!(stats.allowed, 0);
     assert_eq!(stats.by_server.len(), 0);
@@ -2068,10 +2219,10 @@ async fn mcp_call_cap_field_truncation() {
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
-    let calls = reader.recent_mcp_calls(1).unwrap();
+    let calls = mcp_tool_rows(&reader);
     assert_eq!(calls.len(), 1);
     // Preview should be truncated to MAX_FIELD_BYTES (256KB)
-    let preview = calls[0].request_preview.as_ref().unwrap();
+    let preview = calls[0]["request_preview"].as_str().unwrap();
     assert!(
         preview.len() <= 256 * 1024,
         "preview not capped: {}",
@@ -2099,8 +2250,9 @@ async fn mcp_schema_migration_idempotent() {
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
-    let calls = reader.recent_mcp_calls(10).unwrap();
+    let calls = mcp_tool_rows(&reader);
     assert_eq!(calls.len(), 2);
+    assert_eq!(reader.recent_tool_calls(10).unwrap().len(), 2);
 }
 
 #[tokio::test]
@@ -2116,10 +2268,10 @@ async fn mcp_call_bytes_roundtrip() {
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
-    let calls = reader.recent_mcp_calls(10).unwrap();
+    let calls = mcp_tool_rows(&reader);
     assert_eq!(calls.len(), 1);
-    assert_eq!(calls[0].bytes_sent, 1024);
-    assert_eq!(calls[0].bytes_received, 4096);
+    assert_eq!(calls[0]["bytes_sent"], 1024);
+    assert_eq!(calls[0]["bytes_received"], 4096);
 }
 
 #[tokio::test]
@@ -2137,9 +2289,9 @@ async fn mcp_call_full_preview_not_truncated() {
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
-    let calls = reader.recent_mcp_calls(10).unwrap();
-    assert_eq!(calls[0].request_preview.as_ref().unwrap().len(), 10_000);
-    assert_eq!(calls[0].response_preview.as_ref().unwrap().len(), 10_000);
+    let calls = mcp_tool_rows(&reader);
+    assert_eq!(calls[0]["request_preview"].as_str().unwrap().len(), 10_000);
+    assert_eq!(calls[0]["response_preview"].as_str().unwrap().len(), 10_000);
 }
 
 #[tokio::test]
@@ -2156,8 +2308,8 @@ async fn mcp_call_huge_payload_truncated_at_256kb() {
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
-    let calls = reader.recent_mcp_calls(10).unwrap();
-    let stored = calls[0].request_preview.as_ref().unwrap();
+    let calls = mcp_tool_rows(&reader);
+    let stored = calls[0]["request_preview"].as_str().unwrap();
     assert!(stored.len() <= 256 * 1024);
 }
 
@@ -2175,9 +2327,9 @@ async fn mcp_call_200_char_payload_not_truncated() {
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
-    let calls = reader.recent_mcp_calls(10).unwrap();
-    assert_eq!(calls[0].request_preview.as_ref().unwrap().len(), 200);
-    assert_eq!(calls[0].request_preview.as_ref().unwrap(), &preview);
+    let calls = mcp_tool_rows(&reader);
+    assert_eq!(calls[0]["request_preview"].as_str().unwrap().len(), 200);
+    assert_eq!(calls[0]["request_preview"].as_str().unwrap(), &preview);
 }
 
 // ── File event tests ──────────────────────────────────────────────────
@@ -2716,65 +2868,45 @@ async fn test_file_event_limit_zero() {
     assert!(search.is_empty());
 }
 
-// ── try_write silently drops events when channel is full ────────────
+// ── DB-owned producer buffer preserves try_write bursts ─────────────
 
-/// Proves that try_write() silently drops events when the channel is saturated.
-/// This is the root cause of empty session databases: the production code uses
-/// try_write() in mitm_proxy.rs and main.rs, which returns false (ignored) when
-/// the bounded channel is full, causing every event to be silently lost.
+/// Proves try_write() accepts a burst into the DB-owned producer buffer
+/// instead of silently dropping rows when a tiny channel would have filled.
 #[tokio::test]
-async fn try_write_drops_events_when_channel_full() {
+async fn try_write_accepts_burst_into_db_owned_buffer() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("try-write-drop.db");
+    let path = dir.path().join("try-write-burst.db");
 
-    // Capacity of 1: the channel can hold exactly 1 unsent message.
+    // Capacity of 1 used to make try_write unreliable. The DB now owns a
+    // producer buffer and channelizes whole batches internally.
     let writer = DbWriter::open(&path, 1).unwrap();
 
-    // First try_write succeeds -- fills the single slot.
     let ok1 = writer.try_write(WriteOp::FileEvent(sample_file_event(
         "first.rs",
         FileAction::Created,
         Some(10),
     )));
-    assert!(ok1, "first try_write should succeed (channel has 1 slot)");
+    assert!(ok1, "first try_write should be accepted");
 
-    // Immediately fire more try_writes without yielding -- the writer thread
-    // has no chance to drain the channel, so these SILENTLY FAIL.
-    let mut dropped = 0;
     for i in 0..20 {
         let ok = writer.try_write(WriteOp::FileEvent(sample_file_event(
-            &format!("dropped{i}.rs"),
+            &format!("burst{i}.rs"),
             FileAction::Modified,
             Some(100),
         )));
-        if !ok {
-            dropped += 1;
-        }
+        assert!(ok, "DB-owned producer buffer must accept burst item {i}");
     }
 
-    // At least some events must have been silently dropped.
-    assert!(
-        dropped > 0,
-        "try_write should have dropped events, but none were dropped"
-    );
-
-    // Flush and check: the DB will be MISSING the dropped events with zero indication.
+    writer.flush().await;
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
     let events = reader.recent_file_events(100).unwrap();
 
-    // We sent 21 total (1 + 20), but the DB has far fewer -- silent data loss.
-    assert!(
-        events.len() < 21,
-        "expected silent data loss from try_write, but all 21 events were written (got {})",
-        events.len()
-    );
-    // The dropped events are gone forever -- no log, no error, no indication.
-    eprintln!(
-        "PROOF: sent 21 events via try_write, only {} persisted, {} silently lost",
+    assert_eq!(
         events.len(),
-        21 - events.len()
+        21,
+        "DB-owned producer buffer must preserve every accepted try_write row"
     );
 }
 
@@ -2822,125 +2954,70 @@ async fn async_write_never_drops_events() {
     );
 }
 
-/// Simulates the exact production scenario: a burst of mixed event types
-/// (NetEvent, FileEvent, ModelCall) via try_write with the production
-/// channel capacity of 256. Under burst conditions, events are lost.
+/// Simulates a production burst of file events via try_write. The writer
+/// must accept the whole burst and persist it after the explicit DB barrier.
 #[tokio::test]
-async fn try_write_production_burst_loses_events() {
+async fn try_write_production_burst_preserves_events() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("burst-drop.db");
+    let path = dir.path().join("burst-preserve.db");
 
-    // Use production capacity.
     let writer = DbWriter::open(&path, 256).unwrap();
 
-    // Blast 500 events as fast as possible without yielding -- simulates
-    // a burst of network activity + file watches + model calls arriving
-    // concurrently. The writer thread batches 128 at a time and can't
-    // keep up with a synchronous flood.
     let total = 500;
-    let mut sent = 0;
     for i in 0..total {
         let ok = writer.try_write(WriteOp::FileEvent(sample_file_event(
             &format!("burst{i}.rs"),
             FileAction::Modified,
             Some(i as u64),
         )));
-        if ok {
-            sent += 1;
-        }
+        assert!(ok, "production burst try_write {i} must be accepted");
     }
 
+    writer.flush().await;
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
     let events = reader.recent_file_events(1000).unwrap();
 
-    eprintln!(
-        "BURST: tried {total}, channel accepted {sent}, DB persisted {}",
-        events.len()
-    );
-
-    // With capacity 256, we can't push all 500 without the writer draining.
-    // Some will be lost. (If the writer thread is fast enough on this machine
-    // to drain between try_sends, we might get lucky -- but the point is
-    // try_write makes NO guarantee, unlike write().await which guarantees all.)
-    //
-    // The real bug: even if this particular run doesn't drop events (fast CPU),
-    // try_write offers ZERO delivery guarantee. The async write() path does.
-    // We assert that try_write accepted fewer than we tried OR that async
-    // write would have accepted all.
-    if sent < total {
-        assert!(
-            events.len() < total,
-            "some events were rejected by try_write, confirming silent drop risk"
-        );
-        eprintln!(
-            "CONFIRMED: {total} attempted, {sent} accepted, {} dropped silently",
-            total - sent
-        );
-    } else {
-        eprintln!(
-            "NOTE: writer thread drained fast enough on this machine -- \
-             try_write accepted all {total}. The bug is still real: try_write \
-             offers no delivery guarantee. Run under load to reproduce."
-        );
-    }
+    assert_eq!(events.len(), total);
 }
 
-/// The production code ignores try_write's return value. This test proves
-/// that pattern causes silent data loss by exactly mimicking the call sites
-/// in mitm_proxy.rs:694 and main.rs:807.
+/// Ignoring try_write's return value must no longer create a silent-loss
+/// footgun for accepted rows. The DB object owns buffering and flushes the
+/// accepted burst as a unit.
 #[tokio::test]
-async fn ignored_try_write_return_value_causes_silent_loss() {
+async fn ignored_try_write_return_value_preserves_accepted_rows() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("ignored-return.db");
 
     let writer = DbWriter::open(&path, 1).unwrap();
 
-    // Mimic the exact production pattern: call try_write, ignore the bool.
-    // This is what mitm_proxy.rs:694 and main.rs:807 do.
     writer.try_write(WriteOp::FileEvent(sample_file_event(
         "a.rs",
         FileAction::Created,
         Some(1),
-    ))); // return value ignored -- fills the channel
+    )));
 
-    // These mirror a rapid sequence of file touches or network events.
-    // The channel is full, so these are silently discarded.
     for i in 0..10 {
         writer.try_write(WriteOp::FileEvent(sample_file_event(
-            &format!("lost{i}.rs"),
+            &format!("kept{i}.rs"),
             FileAction::Created,
             Some(1),
-        ))); // return value ignored -- SILENTLY DROPPED
+        )));
     }
 
+    writer.flush().await;
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
     let events = reader.recent_file_events(100).unwrap();
 
-    // If all 11 were persisted, the channel drained fast enough.
-    // But the fundamental issue remains: try_write + ignored return = unreliable.
-    if events.len() < 11 {
-        eprintln!(
-            "PROVED: production pattern (ignore try_write return) lost {} of 11 events",
-            11 - events.len()
-        );
-    }
-
-    // The important assertion: with capacity=1, it's nearly impossible
-    // to persist all 11 without backpressure. At best we get 1-2.
-    assert!(
-        events.len() < 11,
-        "expected data loss with capacity=1 and ignored try_write, got all {}",
-        events.len()
-    );
+    assert_eq!(events.len(), 11);
 }
 
 // ========================================================================
 // Phase 2: End-to-end SQL dedup tests
-// Injects data into tool_calls + mcp_calls + tool_responses, then runs
+// Injects data into tool_calls + tool_responses, then runs
 // the exact SQL from frontend/src/lib/sql.ts to verify dedup + response
 // joining.
 // ========================================================================
@@ -2950,8 +3027,8 @@ async fn ignored_try_write_return_value_causes_silent_loss() {
 /// Creates:
 /// - model_call 1: native tool "bash" (origin=native) + tool_response for "toolu_prev"
 /// - model_call 2: MCP tool "mcp__capsem__fetch_http" (origin=mcp_proxy) + tool_response
-/// - mcp_call: tools/call fetch_http (matches the MCP tool above)
-/// - mcp_call: tools/list (no tool_name -- discovery call)
+/// - tool_call origin=mcp: tools/call fetch_http (from MCP transport evidence)
+/// - mcp_call: tools/list (protocol discovery, not a user tool call)
 async fn setup_dedup_scenario(writer: &DbWriter) {
     // Model call 1: native tool "bash"
     let mut call1 = sample_model_call("anthropic");
@@ -2984,6 +3061,7 @@ async fn setup_dedup_scenario(writer: &DbWriter) {
         content_preview: Some("file1.txt\nfile2.txt".to_string()),
         is_error: false,
         trace_id: None,
+        credential_ref: None,
     }];
     writer.write(WriteOp::ModelCall(call2)).await;
 
@@ -3008,49 +3086,38 @@ async fn setup_dedup_scenario(writer: &DbWriter) {
 
 const TOOL_COUNT_SQL: &str = "
     SELECT
-        (SELECT COUNT(*) FROM tool_calls WHERE origin = 'native')
-      + (SELECT COUNT(*) FROM mcp_calls WHERE tool_name IS NOT NULL) as cnt
+        COUNT(*) as cnt
+    FROM tool_calls
+    WHERE origin IN ('native', 'mcp', 'builtin', 'local')
 ";
 
 const TOOLS_STATS_SQL: &str = "
     SELECT
-        (SELECT COUNT(*) FROM tool_calls WHERE origin = 'native') + (SELECT COUNT(*) FROM mcp_calls) as total,
+        (SELECT COUNT(*) FROM tool_calls WHERE origin IN ('native', 'mcp', 'builtin', 'local')) as total,
         (SELECT COUNT(*) FROM tool_calls WHERE origin = 'native') as native,
-        (SELECT COUNT(*) FROM mcp_calls) as mcp,
-        (SELECT COUNT(*) FROM mcp_calls WHERE decision = 'allowed') as allowed,
-        (SELECT COUNT(*) FROM mcp_calls WHERE decision != 'allowed') as denied
+        (SELECT COUNT(*) FROM tool_calls WHERE origin = 'mcp') as mcp,
+        (SELECT COUNT(*) FROM tool_calls WHERE origin IN ('native', 'mcp', 'builtin', 'local') AND decision = 'allowed') as allowed,
+        (SELECT COUNT(*) FROM tool_calls WHERE origin IN ('native', 'mcp', 'builtin', 'local') AND decision != 'allowed') as denied
 ";
 
 const TOOLS_TOP_TOOLS_SQL: &str = "
-    SELECT tool_name, cnt, source FROM (
-        SELECT tc.tool_name, COUNT(*) as cnt, 'native' as source
-        FROM tool_calls tc
-        WHERE tc.origin = 'native'
-        GROUP BY tc.tool_name
-        UNION ALL
-        SELECT tool_name, COUNT(*) as cnt, 'mcp' as source
-        FROM mcp_calls
-        WHERE tool_name IS NOT NULL
-        GROUP BY tool_name
-    )
+    SELECT tool_name, COUNT(*) as cnt, origin as source
+    FROM tool_calls
+    WHERE origin IN ('native', 'mcp', 'builtin', 'local')
+    GROUP BY tool_name, origin
     ORDER BY cnt DESC
     LIMIT 10
 ";
 
 const TOOLS_OVER_TIME_SQL: &str = "
-    WITH all_calls AS (
-        SELECT mc.timestamp, 'native' as source
-        FROM tool_calls tc
-        JOIN model_calls mc ON tc.model_call_id = mc.id
-        WHERE tc.origin = 'native'
-        UNION ALL
-        SELECT timestamp, 'mcp' as source
-        FROM mcp_calls
-    ),
-    numbered AS (
+    WITH numbered AS (
         SELECT source,
             (ROW_NUMBER() OVER (ORDER BY timestamp) - 1) / 5 as bucket
-        FROM all_calls
+        FROM (
+            SELECT COALESCE(NULLIF(timestamp, ''), '1970-01-01T00:00:00Z') as timestamp, origin as source
+            FROM tool_calls
+            WHERE origin IN ('native', 'mcp', 'builtin', 'local')
+        )
     )
     SELECT bucket,
         SUM(CASE WHEN source = 'native' THEN 1 ELSE 0 END) as native,
@@ -3061,53 +3128,53 @@ const TOOLS_OVER_TIME_SQL: &str = "
 ";
 
 const TOOLS_UNIFIED_SQL: &str = "
-    SELECT timestamp, process_name, server_name, tool_name, method,
+    SELECT event_id, timestamp, process_name, server_name, tool_name, method,
            decision, duration_ms, bytes, arguments, response_preview,
            error_message, source
     FROM (
-        SELECT mc.timestamp, NULL as process_name, 'local' as server_name,
-               tc.tool_name, NULL as method, 'allowed' as decision,
-               mc.duration_ms,
-               COALESCE(LENGTH(tc.arguments), 0) as bytes,
-               tc.arguments, tr.content_preview as response_preview,
-               NULL as error_message, 'native' as source
+        SELECT tc.event_id,
+               COALESCE(NULLIF(tc.timestamp, ''), mc.timestamp) as timestamp,
+               tc.process_name,
+               COALESCE(tc.server_name, 'model') as server_name,
+               tc.tool_name,
+               tc.method,
+               tc.decision,
+               COALESCE(tc.duration_ms, mc.duration_ms, 0) as duration_ms,
+               COALESCE(LENGTH(tc.arguments), 0) + COALESCE(LENGTH(COALESCE(tc.response_preview, tr.content_preview)), 0) as bytes,
+               tc.arguments,
+               COALESCE(tc.response_preview, tr.content_preview) as response_preview,
+               tc.error_message,
+               tc.origin as source
         FROM tool_calls tc
-        JOIN model_calls mc ON tc.model_call_id = mc.id
+        LEFT JOIN model_calls mc ON tc.model_call_id = mc.id
         LEFT JOIN tool_responses tr ON tc.call_id = tr.call_id
-        WHERE tc.origin = 'native'
-        UNION ALL
-        SELECT timestamp, process_name, server_name, tool_name, method,
-               decision, duration_ms,
-               COALESCE(LENGTH(request_preview), 0) + COALESCE(LENGTH(response_preview), 0) as bytes,
-               request_preview as arguments, response_preview,
-               error_message, 'mcp' as source
-        FROM mcp_calls
+        WHERE origin IN ('native', 'mcp', 'builtin', 'local')
     )
     ORDER BY timestamp DESC
 ";
 
 const TOOLS_UNIFIED_SEARCH_SQL: &str = "
-    SELECT timestamp, process_name, server_name, tool_name, method,
+    SELECT event_id, timestamp, process_name, server_name, tool_name, method,
            decision, duration_ms, bytes, arguments, response_preview,
            error_message, source
     FROM (
-        SELECT mc.timestamp, NULL as process_name, 'local' as server_name,
-               tc.tool_name, NULL as method, 'allowed' as decision,
-               mc.duration_ms,
-               COALESCE(LENGTH(tc.arguments), 0) as bytes,
-               tc.arguments, tr.content_preview as response_preview,
-               NULL as error_message, 'native' as source
+        SELECT tc.event_id,
+               COALESCE(NULLIF(tc.timestamp, ''), mc.timestamp) as timestamp,
+               tc.process_name,
+               COALESCE(tc.server_name, 'model') as server_name,
+               tc.tool_name,
+               tc.method,
+               tc.decision,
+               COALESCE(tc.duration_ms, mc.duration_ms, 0) as duration_ms,
+               COALESCE(LENGTH(tc.arguments), 0) + COALESCE(LENGTH(COALESCE(tc.response_preview, tr.content_preview)), 0) as bytes,
+               tc.arguments,
+               COALESCE(tc.response_preview, tr.content_preview) as response_preview,
+               tc.error_message,
+               tc.origin as source
         FROM tool_calls tc
-        JOIN model_calls mc ON tc.model_call_id = mc.id
+        LEFT JOIN model_calls mc ON tc.model_call_id = mc.id
         LEFT JOIN tool_responses tr ON tc.call_id = tr.call_id
-        WHERE tc.origin = 'native'
-        UNION ALL
-        SELECT timestamp, process_name, server_name, tool_name, method,
-               decision, duration_ms,
-               COALESCE(LENGTH(request_preview), 0) + COALESCE(LENGTH(response_preview), 0) as bytes,
-               request_preview as arguments, response_preview,
-               error_message, 'mcp' as source
-        FROM mcp_calls
+        WHERE origin IN ('native', 'mcp', 'builtin', 'local')
     )
     WHERE tool_name LIKE ? OR method LIKE ? OR server_name LIKE ? OR process_name LIKE ?
     ORDER BY timestamp DESC
@@ -3155,7 +3222,7 @@ async fn tool_unified_no_duplicates() {
     assert_eq!(bash_rows.len(), 1, "bash should appear exactly once");
     assert_eq!(bash_rows[0]["source"], "native");
 
-    // "fetch_http" should appear once (from mcp_calls, source=mcp)
+    // "fetch_http" should appear once (from tool_calls origin=mcp)
     let fetch_rows: Vec<_> = rows
         .iter()
         .filter(|r| r["tool_name"].as_str() == Some("fetch_http"))
@@ -3174,12 +3241,16 @@ async fn tool_unified_no_duplicates() {
         "mcp_proxy tool_call should be filtered out"
     );
 
-    // tools/list should appear (MCP discovery, no tool_name)
+    // tools/list is protocol discovery, not a user tool call.
     let list_rows: Vec<_> = rows
         .iter()
         .filter(|r| r["method"].as_str() == Some("tools/list"))
         .collect();
-    assert_eq!(list_rows.len(), 1, "tools/list MCP call should be present");
+    assert_eq!(
+        list_rows.len(),
+        0,
+        "tools/list must not appear as a tool call"
+    );
 }
 
 #[tokio::test]
@@ -3224,10 +3295,10 @@ async fn tool_stats_no_double_counting() {
         1,
         "native should be 1 (only bash)"
     );
-    // mcp = 2 (tools/call fetch_http + tools/list)
-    assert_eq!(r["mcp"].as_i64().unwrap(), 2, "mcp should be 2");
-    // total = native + mcp = 3
-    assert_eq!(r["total"].as_i64().unwrap(), 3, "total should be 3");
+    // mcp = 1 (tools/call fetch_http only; tools/list is protocol evidence)
+    assert_eq!(r["mcp"].as_i64().unwrap(), 1, "mcp should be 1");
+    // total = native + mcp = 2
+    assert_eq!(r["total"].as_i64().unwrap(), 2, "total should be 2");
 }
 
 #[tokio::test]
@@ -3360,6 +3431,7 @@ async fn tool_responses_linked_by_call_id_not_model_call_id() {
         content_preview: Some("hi".to_string()),
         is_error: false,
         trace_id: None,
+        credential_ref: None,
     }];
     writer.write(WriteOp::ModelCall(call2)).await;
     drop(writer);
@@ -3418,7 +3490,7 @@ async fn tool_unified_empty_tables() {
 }
 
 #[tokio::test]
-async fn tool_unified_only_mcp_calls() {
+async fn tool_unified_counts_mcp_origin_rows() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("dedup-mcp-only.db");
     let writer = DbWriter::open(&path, 64).unwrap();
@@ -3463,6 +3535,7 @@ async fn tool_unified_only_native_calls() {
         content_preview: Some("# README\nContents here".to_string()),
         is_error: false,
         trace_id: None,
+        credential_ref: None,
     }];
     writer.write(WriteOp::ModelCall(call2)).await;
     drop(writer);

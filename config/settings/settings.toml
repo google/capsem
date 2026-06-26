@@ -1,0 +1,14 @@
+# Capsem UI/application settings.
+#
+# This file intentionally contains only app and appearance preferences.
+# Runtime behavior belongs to profiles and corp policy.
+
+[app]
+auto_update = true
+notifications = true
+start_service_at_login = true
+
+[appearance]
+theme = "system"
+font_size = 14
+reduced_motion = false

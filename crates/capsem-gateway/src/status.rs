@@ -31,14 +31,6 @@ impl StatusCache {
 }
 
 #[derive(Serialize, Clone)]
-pub struct AssetHealth {
-    pub ready: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub version: Option<String>,
-    pub missing: Vec<String>,
-}
-
-#[derive(Serialize, Clone)]
 pub struct StatusResponse {
     pub service: String,
     pub gateway_version: String,
@@ -46,15 +38,36 @@ pub struct StatusResponse {
     pub vms: Vec<VmSummary>,
     pub resource_summary: Option<ResourceSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub assets: Option<AssetHealth>,
+    pub profiles: Option<serde_json::Value>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+pub enum VmLifecycleState {
+    Running,
+    Stopped,
+    Suspended,
+    Defunct,
+    Incompatible,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum VmAction {
+    Pause,
+    Stop,
+    Start,
+    Resume,
+    Fork,
+    Delete,
 }
 
 #[derive(Serialize, Clone)]
 pub struct VmSummary {
     pub id: String,
     pub name: Option<String>,
-    pub status: String,
+    pub status: VmLifecycleState,
     pub persistent: bool,
+    pub profile_id: String,
     // Telemetry (present for running VMs, absent for stopped)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub uptime_secs: Option<u64>,
@@ -67,8 +80,6 @@ pub struct VmSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_tool_calls: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub total_mcp_calls: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub total_requests: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub allowed_requests: Option<u64>,
@@ -78,6 +89,11 @@ pub struct VmSummary {
     pub total_file_events: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_call_count: Option<u64>,
+    #[serde(default)]
+    pub can_resume: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resume_blocked_reason: Option<String>,
+    pub available_actions: Vec<VmAction>,
 }
 
 #[derive(Serialize, Clone)]
@@ -118,16 +134,11 @@ pub async fn handle_status(State(state): State<Arc<AppState>>) -> Response {
         }
     }
 
-    let old_vms: Vec<(String, String)> = {
+    let old_vms: Vec<(String, VmLifecycleState)> = {
         let cache = state.status_cache.inner.read().await;
         cache
             .as_ref()
-            .map(|(_, r)| {
-                r.vms
-                    .iter()
-                    .map(|v| (v.id.clone(), v.status.clone()))
-                    .collect()
-            })
+            .map(|(_, r)| r.vms.iter().map(|v| (v.id.clone(), v.status)).collect())
             .unwrap_or_default()
     };
 
@@ -135,10 +146,7 @@ pub async fn handle_status(State(state): State<Arc<AppState>>) -> Response {
 
     // Detect VM state changes and broadcast events.
     for vm in &resp.vms {
-        let old_status = old_vms
-            .iter()
-            .find(|(id, _)| id == &vm.id)
-            .map(|(_, s)| s.as_str());
+        let old_status = old_vms.iter().find(|(id, _)| id == &vm.id).map(|(_, s)| *s);
         let changed = match old_status {
             Some(prev) => prev != vm.status,
             None => true, // new VM appeared
@@ -165,36 +173,25 @@ pub async fn handle_status(State(state): State<Arc<AppState>>) -> Response {
 }
 
 #[derive(Deserialize)]
-struct ServiceAssetHealth {
-    ready: bool,
-    #[serde(default)]
-    version: Option<String>,
-    #[serde(default)]
-    missing: Vec<String>,
-}
-
-#[derive(Deserialize)]
 struct ListResponse {
     #[serde(rename = "sandboxes")]
     sessions: Vec<SessionInfo>,
-    #[serde(default)]
-    asset_health: Option<ServiceAssetHealth>,
 }
 
 #[derive(Deserialize)]
 struct SessionInfo {
     id: String,
+    profile_id: String,
     #[serde(default)]
     name: Option<String>,
-    #[serde(default)]
-    status: String,
+    status: VmLifecycleState,
     #[serde(default)]
     persistent: bool,
     #[serde(default)]
     ram_mb: Option<u64>,
     #[serde(default)]
     cpus: Option<u32>,
-    // Telemetry pass-through from service /list
+    // Telemetry pass-through from service /vms/list
     #[serde(default)]
     uptime_secs: Option<u64>,
     #[serde(default)]
@@ -206,8 +203,6 @@ struct SessionInfo {
     #[serde(default)]
     total_tool_calls: Option<u64>,
     #[serde(default)]
-    total_mcp_calls: Option<u64>,
-    #[serde(default)]
     total_requests: Option<u64>,
     #[serde(default)]
     allowed_requests: Option<u64>,
@@ -217,6 +212,11 @@ struct SessionInfo {
     total_file_events: Option<u64>,
     #[serde(default)]
     model_call_count: Option<u64>,
+    #[serde(default)]
+    can_resume: bool,
+    #[serde(default)]
+    resume_blocked_reason: Option<String>,
+    available_actions: Vec<VmAction>,
 }
 
 async fn fetch_status(state: &AppState) -> StatusResponse {
@@ -226,10 +226,10 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
         vm_count: 0,
         vms: vec![],
         resource_summary: None,
-        assets: None,
+        profiles: None,
     };
 
-    let list = match uds_get(&state.uds_path, "/list").await {
+    let list = match uds_get(&state.uds_path, "/vms/list").await {
         Ok(body) => match serde_json::from_slice::<ListResponse>(&body) {
             Ok(l) => l,
             Err(_) => return unavailable,
@@ -252,39 +252,37 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
             total_cpus += cpus;
         }
 
-        let status_lower = sess.status.to_lowercase();
-        if status_lower.contains("running") {
-            running += 1;
-        } else if status_lower.contains("suspended") {
-            suspended += 1;
-        } else {
-            stopped += 1;
+        match sess.status {
+            VmLifecycleState::Running => running += 1,
+            VmLifecycleState::Suspended => suspended += 1,
+            VmLifecycleState::Stopped
+            | VmLifecycleState::Defunct
+            | VmLifecycleState::Incompatible => stopped += 1,
         }
 
         vms.push(VmSummary {
             id: sess.id.clone(),
             name: sess.name.clone(),
-            status: sess.status.clone(),
+            status: sess.status,
             persistent: sess.persistent,
+            profile_id: sess.profile_id.clone(),
             uptime_secs: sess.uptime_secs,
             total_input_tokens: sess.total_input_tokens,
             total_output_tokens: sess.total_output_tokens,
             total_estimated_cost: sess.total_estimated_cost,
             total_tool_calls: sess.total_tool_calls,
-            total_mcp_calls: sess.total_mcp_calls,
             total_requests: sess.total_requests,
             allowed_requests: sess.allowed_requests,
             denied_requests: sess.denied_requests,
             total_file_events: sess.total_file_events,
             model_call_count: sess.model_call_count,
+            can_resume: sess.can_resume,
+            resume_blocked_reason: sess.resume_blocked_reason.clone(),
+            available_actions: sess.available_actions.clone(),
         });
     }
 
-    let assets = list.asset_health.map(|h| AssetHealth {
-        ready: h.ready,
-        version: h.version,
-        missing: h.missing,
-    });
+    let profiles = fetch_profiles_status(state).await;
 
     StatusResponse {
         service: "running".into(),
@@ -298,8 +296,13 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
             stopped_count: stopped,
             suspended_count: suspended,
         }),
-        assets,
+        profiles,
     }
+}
+
+async fn fetch_profiles_status(state: &AppState) -> Option<serde_json::Value> {
+    let body = uds_get(&state.uds_path, "/profiles/status").await.ok()?;
+    serde_json::from_slice::<serde_json::Value>(&body).ok()
 }
 
 /// Simple GET request over UDS.

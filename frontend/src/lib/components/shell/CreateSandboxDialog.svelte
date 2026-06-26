@@ -1,17 +1,30 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { vmStore } from '../../stores/vms.svelte.ts';
   import { tabStore } from '../../stores/tabs.svelte.ts';
+  import { listProfiles, type ProfileSummary } from '../../api';
   import Modal from './Modal.svelte';
-  import CircleNotch from 'phosphor-svelte/lib/CircleNotch';
 
+  let profiles = $state<ProfileSummary[]>([]);
+  let profileId = $state('code');
   let name = $state('');
   let ramMb = $state(2048);
   let cpus = $state(2);
   let error = $state<string | null>(null);
   let creating = $state(false);
 
+  onMount(async () => {
+    try {
+      profiles = (await listProfiles()).profiles.filter(profile => profile.availability.web);
+      profileId = vmStore.createProfileId ?? profiles[0]?.id ?? 'code';
+    } catch {
+      profiles = [];
+    }
+  });
+
   function close() {
-    vmStore.showCreateModal = false;
+    vmStore.closeCreateModal();
+    profileId = vmStore.createProfileId ?? profiles[0]?.id ?? 'code';
     name = '';
     ramMb = 2048;
     cpus = 2;
@@ -20,14 +33,19 @@
 
   async function handleSubmit() {
     error = null;
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      error = 'Name is required';
+      return;
+    }
     creating = true;
-    const hasName = name.trim().length > 0;
     try {
       const { id, name: finalName } = await vmStore.provision({
-        name: hasName ? name.trim() : undefined,
+        profile_id: profileId,
+        name: trimmedName,
         ram_mb: ramMb,
         cpus: cpus,
-        persistent: hasName,
+        persistent: true,
       });
       tabStore.openVM(id, finalName);
       close();
@@ -37,11 +55,17 @@
       creating = false;
     }
   }
+
+  $effect(() => {
+    if (vmStore.showCreateModal && vmStore.createProfileId) {
+      profileId = vmStore.createProfileId;
+    }
+  });
 </script>
 
 <Modal
   open={vmStore.showCreateModal}
-  title="Customize Session"
+  title="Customize session"
   confirmLabel={creating ? 'Creating...' : 'Create'}
   onconfirm={handleSubmit}
   oncancel={close}
@@ -55,16 +79,37 @@
     {/if}
 
     <div class="space-y-1.5">
-      <label for="sb-name" class="text-sm font-medium text-foreground">Name <span class="text-muted-foreground font-normal">(optional)</span></label>
+      <label for="sb-profile" class="text-sm font-medium text-foreground">Profile</label>
+      <select
+        id="sb-profile"
+        bind:value={profileId}
+        class="w-full px-3 py-2 rounded-lg bg-background-1 border border-line-2 focus:border-primary outline-hidden text-sm text-foreground"
+        disabled={creating}
+      >
+        {#if profiles.length === 0}
+          <option value="code">code</option>
+        {:else}
+          {#each profiles as profile (profile.id)}
+            <option value={profile.id}>{profile.name}</option>
+          {/each}
+        {/if}
+      </select>
+      <p class="text-[11px] text-muted-foreground-1">
+        {profiles.find(profile => profile.id === profileId)?.description ?? 'Profile-selected VM configuration.'}
+      </p>
+    </div>
+
+    <div class="space-y-1.5">
+      <label for="sb-name" class="text-sm font-medium text-foreground">Name</label>
       <input
         id="sb-name"
         type="text"
         bind:value={name}
-        placeholder="Leave empty for a temporary session"
+        placeholder="coding-agent"
         class="w-full px-3 py-2 rounded-lg bg-background-1 border border-line-2 focus:border-primary focus:ring-2 focus:ring-primary/20 outline-hidden transition-all text-sm text-foreground"
         disabled={creating}
       />
-      <p class="text-[11px] text-muted-foreground-1">Named sessions are persistent. Unnamed sessions are ephemeral.</p>
+      <p class="text-[11px] text-muted-foreground-1">Each VM is named and tied to its selected profile.</p>
     </div>
 
     <div class="grid grid-cols-2 gap-4">

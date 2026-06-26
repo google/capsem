@@ -4,7 +4,6 @@ Verifies token, port, and PID files are written correctly and cleaned up.
 """
 
 import os
-import signal
 
 import pytest
 

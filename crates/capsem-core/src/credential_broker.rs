@@ -1,34 +1,43 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use capsem_logger::{credential_reference, DbWriter, SubstitutionEvent, CREDENTIAL_REF_PREFIX};
-use tracing::warn;
+use serde::{Deserialize, Serialize};
+use tracing::{info, warn};
 
 use crate::net::ai_traffic::provider::ProviderKind;
-use crate::net::policy_config::{
-    batch_update_settings_with_provider_discoveries, ProviderDiscovery, ProviderDiscoveryPatch,
-    SecurityRuleSet, SettingValue, SETTING_ANTHROPIC_API_KEY, SETTING_GITHUB_TOKEN,
-    SETTING_GOOGLE_API_KEY, SETTING_OPENAI_API_KEY,
-};
+use crate::net::policy_config::SecurityRuleSet;
 use crate::security_engine::RuntimeSecurityEventType;
 
-#[cfg(target_os = "macos")]
-const KEYCHAIN_SERVICE: &str = "com.capsem.credentials";
-pub(crate) const TEST_STORE_ENV: &str = "CAPSEM_CREDENTIAL_BROKER_TEST_STORE";
+pub(crate) const STORE_PATH_ENV: &str = "CAPSEM_CREDENTIAL_STORE_PATH";
 #[cfg(test)]
 pub(crate) static TEST_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static TEST_STORE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+static CREDENTIAL_STORE: OnceLock<CredentialStore> = OnceLock::new();
+static LOGGED_CREDENTIAL_OBSERVATIONS: OnceLock<Mutex<HashSet<LoggedCredentialObservation>>> =
+    OnceLock::new();
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum CredentialProvider {
     Anthropic,
     Google,
     OpenAi,
     Github,
+    Mcp,
 }
 
 impl CredentialProvider {
     pub fn all() -> &'static [Self] {
-        &[Self::Anthropic, Self::Google, Self::OpenAi, Self::Github]
+        &[
+            Self::Anthropic,
+            Self::Google,
+            Self::OpenAi,
+            Self::Github,
+            Self::Mcp,
+        ]
     }
 
     pub fn as_str(self) -> &'static str {
@@ -37,55 +46,296 @@ impl CredentialProvider {
             Self::Google => "google",
             Self::OpenAi => "openai",
             Self::Github => "github",
-        }
-    }
-
-    pub fn setting_id(self) -> &'static str {
-        match self {
-            Self::Anthropic => SETTING_ANTHROPIC_API_KEY,
-            Self::Google => SETTING_GOOGLE_API_KEY,
-            Self::OpenAi => SETTING_OPENAI_API_KEY,
-            Self::Github => SETTING_GITHUB_TOKEN,
-        }
-    }
-
-    pub fn from_setting_id(setting_id: &str) -> Option<Self> {
-        match setting_id {
-            SETTING_ANTHROPIC_API_KEY => Some(Self::Anthropic),
-            SETTING_GOOGLE_API_KEY => Some(Self::Google),
-            SETTING_OPENAI_API_KEY => Some(Self::OpenAi),
-            SETTING_GITHUB_TOKEN => Some(Self::Github),
-            _ => None,
-        }
-    }
-
-    pub fn ai_provider_id(self) -> Option<&'static str> {
-        match self {
-            Self::Anthropic => Some("anthropic"),
-            Self::Google => Some("google"),
-            Self::OpenAi => Some("openai"),
-            Self::Github => None,
+            Self::Mcp => "mcp",
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+/// Opaque credential storage boundary for the credential broker.
+///
+/// All runtime credential access goes through this object: hot-path
+/// substitution reads the in-memory cache first, capture writes RAM first and
+/// then durable storage, and startup/reload hydrates RAM from durable storage.
+/// UI/status callers must use the memory-only status helpers so they cannot
+/// accidentally read durable credential storage.
+pub struct CredentialStore {
+    cache: Mutex<HashMap<String, String>>,
+    durable_lock: Mutex<()>,
+    status: Mutex<CredentialStoreStatusState>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CredentialStoreStatus {
+    pub backend: String,
+    pub ready: bool,
+    pub status: &'static str,
+    pub cached_count: usize,
+    pub last_hydrated_count: usize,
+    pub last_hydrated_unix_ms: Option<u64>,
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CredentialStoreStatusState {
+    ready: bool,
+    last_hydrated_count: usize,
+    last_hydrated_unix_ms: Option<u64>,
+    last_error: Option<String>,
+}
+
+impl Default for CredentialStoreStatusState {
+    fn default() -> Self {
+        Self {
+            ready: true,
+            last_hydrated_count: 0,
+            last_hydrated_unix_ms: None,
+            last_error: None,
+        }
+    }
+}
+
+impl Default for CredentialStore {
+    fn default() -> Self {
+        Self {
+            cache: Mutex::new(HashMap::new()),
+            durable_lock: Mutex::new(()),
+            status: Mutex::new(CredentialStoreStatusState::default()),
+        }
+    }
+}
+
+impl CredentialStore {
+    pub fn global() -> &'static Self {
+        CREDENTIAL_STORE.get_or_init(Self::default)
+    }
+
+    pub fn capture(
+        &self,
+        provider: CredentialProvider,
+        credential_ref: &str,
+        raw_value: &str,
+    ) -> Result<bool, String> {
+        if let Some(existing) = self.cache_get(provider, credential_ref)? {
+            if existing == raw_value {
+                return Ok(false);
+            }
+            return Err(format!(
+                "credential reference collision for provider {} and ref {credential_ref}",
+                provider.as_str()
+            ));
+        }
+        self.cache_insert(provider, credential_ref, raw_value)?;
+        let _durable_guard = self
+            .durable_lock
+            .lock()
+            .map_err(|_| "credential durable store lock poisoned".to_string())?;
+        if let Err(error) = durable_store_write(provider, credential_ref, raw_value) {
+            self.mark_error(error.clone());
+            warn!(
+                provider = provider.as_str(),
+                credential_ref,
+                error = %error,
+                "credential store: durable write failed; runtime cache will continue serving active sessions"
+            );
+        } else {
+            self.clear_error();
+            info!(
+                provider = provider.as_str(),
+                credential_ref, "credential store: credential captured into durable backend"
+            );
+        }
+        Ok(true)
+    }
+
+    pub fn resolve(
+        &self,
+        provider: CredentialProvider,
+        credential_ref: &str,
+    ) -> Result<Option<String>, String> {
+        if !is_broker_reference(credential_ref) {
+            return Ok(None);
+        }
+        if let Some(raw_value) = self.cache_get(provider, credential_ref)? {
+            return Ok(Some(raw_value));
+        }
+        let _durable_guard = self
+            .durable_lock
+            .lock()
+            .map_err(|_| "credential durable store lock poisoned".to_string())?;
+        match durable_store_read(provider, credential_ref) {
+            Ok(raw_value) => {
+                self.cache_insert(provider, credential_ref, &raw_value)?;
+                self.clear_error();
+                info!(
+                    provider = provider.as_str(),
+                    credential_ref, "credential store: hydrated credential on runtime miss"
+                );
+                Ok(Some(raw_value))
+            }
+            Err(error) => {
+                self.mark_error(error.clone());
+                Err(error)
+            }
+        }
+    }
+
+    pub fn replay_available_in_memory(
+        &self,
+        provider: CredentialProvider,
+        credential_ref: &str,
+    ) -> bool {
+        self.cache_get(provider, credential_ref)
+            .ok()
+            .flatten()
+            .is_some()
+    }
+
+    pub fn hydrate_from_durable_store(&self) -> Result<usize, String> {
+        let _durable_guard = self
+            .durable_lock
+            .lock()
+            .map_err(|_| "credential durable store lock poisoned".to_string())?;
+        let entries = match durable_store_hydrate() {
+            Ok(entries) => entries,
+            Err(error) => {
+                self.mark_degraded(error.clone());
+                return Err(error);
+            }
+        };
+        let count = entries.len();
+        {
+            let mut cache = self
+                .cache
+                .lock()
+                .map_err(|_| "credential runtime cache lock poisoned".to_string())?;
+            for (provider, credential_ref, raw_value) in entries {
+                cache.insert(credential_store_key(provider, &credential_ref), raw_value);
+            }
+        }
+        self.mark_hydrated(count);
+        info!(
+            count,
+            "credential store: hydrated runtime cache from durable backend"
+        );
+        Ok(count)
+    }
+
+    pub fn status(&self) -> CredentialStoreStatus {
+        let cached_count = self.cache.lock().map(|cache| cache.len()).unwrap_or(0);
+        let state = self
+            .status
+            .lock()
+            .map(|state| state.clone())
+            .unwrap_or_else(|_| CredentialStoreStatusState {
+                ready: false,
+                last_hydrated_count: 0,
+                last_hydrated_unix_ms: None,
+                last_error: Some("credential store status lock poisoned".to_string()),
+            });
+        CredentialStoreStatus {
+            backend: credential_store_backend().to_string(),
+            ready: state.ready,
+            status: if state.ready { "ready" } else { "degraded" },
+            cached_count,
+            last_hydrated_count: state.last_hydrated_count,
+            last_hydrated_unix_ms: state.last_hydrated_unix_ms,
+            last_error: state.last_error,
+        }
+    }
+
+    #[cfg(test)]
+    fn clear_for_test(&self) {
+        self.cache.lock().unwrap().clear();
+        *self.status.lock().unwrap() = CredentialStoreStatusState::default();
+    }
+
+    fn cache_insert(
+        &self,
+        provider: CredentialProvider,
+        credential_ref: &str,
+        raw_value: &str,
+    ) -> Result<(), String> {
+        let mut cache = self
+            .cache
+            .lock()
+            .map_err(|_| "credential runtime cache lock poisoned".to_string())?;
+        cache.insert(
+            credential_store_key(provider, credential_ref),
+            raw_value.to_string(),
+        );
+        Ok(())
+    }
+
+    fn cache_get(
+        &self,
+        provider: CredentialProvider,
+        credential_ref: &str,
+    ) -> Result<Option<String>, String> {
+        let cache = self
+            .cache
+            .lock()
+            .map_err(|_| "credential runtime cache lock poisoned".to_string())?;
+        Ok(cache
+            .get(&credential_store_key(provider, credential_ref))
+            .cloned())
+    }
+
+    fn mark_hydrated(&self, count: usize) {
+        if let Ok(mut status) = self.status.lock() {
+            status.ready = true;
+            status.last_hydrated_count = count;
+            status.last_hydrated_unix_ms = Some(now_unix_ms());
+            status.last_error = None;
+        }
+    }
+
+    fn mark_error(&self, error: String) {
+        if let Ok(mut status) = self.status.lock() {
+            status.last_error = Some(error);
+        }
+    }
+
+    fn mark_degraded(&self, error: String) {
+        if let Ok(mut status) = self.status.lock() {
+            status.ready = false;
+            status.last_error = Some(error);
+        }
+    }
+
+    fn clear_error(&self) {
+        if let Ok(mut status) = self.status.lock() {
+            status.ready = true;
+            status.last_error = None;
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CredentialObservation {
     pub provider: CredentialProvider,
     pub raw_value: String,
     pub source: String,
     pub event_type: Option<String>,
-    pub confidence: f64,
     pub trace_id: Option<String>,
     pub context_json: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CredentialInjection {
+    pub provider: Option<CredentialProvider>,
+    pub credential_ref: String,
+    pub source: String,
+    pub event_type: Option<String>,
+    pub trace_id: Option<String>,
+    pub context_json: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BrokeredCredential {
     pub provider: CredentialProvider,
-    pub setting_id: String,
     pub credential_ref: String,
-    pub keychain_account: String,
+    pub store_account: String,
+    pub newly_captured: bool,
 }
 
 impl CredentialObservation {
@@ -104,66 +354,86 @@ impl CredentialObservation {
             substitution_ref: self.credential_ref(),
             outcome: outcome.to_string(),
             provider: Some(self.provider.as_str().to_string()),
-            confidence: Some(self.confidence),
+            confidence: None,
             trace_id: self.trace_id.clone(),
             context_json: self.context_json.clone(),
         }
     }
 }
 
-pub fn broker_to_user_settings(
+impl CredentialInjection {
+    pub fn redacted_event(&self, outcome: &str) -> SubstitutionEvent {
+        SubstitutionEvent {
+            event_id: None,
+            timestamp: std::time::SystemTime::now(),
+            material_class: "credential".to_string(),
+            source: self.source.clone(),
+            event_type: self.event_type.clone(),
+            algorithm: "blake3".to_string(),
+            substitution_ref: self.credential_ref.clone(),
+            outcome: outcome.to_string(),
+            provider: self.provider.map(|provider| provider.as_str().to_string()),
+            confidence: None,
+            trace_id: self.trace_id.clone(),
+            context_json: self.context_json.clone(),
+        }
+    }
+}
+
+pub fn broker_observed_credential(
     observation: &CredentialObservation,
 ) -> Result<BrokeredCredential, String> {
     let credential_ref = observation.credential_ref();
-    let keychain_account = keychain_account(observation.provider, &credential_ref);
-    store_credential_secret(
+    let store_account = credential_store_account(observation.provider, &credential_ref);
+    let newly_captured = CredentialStore::global().capture(
         observation.provider,
         &credential_ref,
         &observation.raw_value,
     )?;
-    let setting_id = observation.provider.setting_id().to_string();
-    let mut changes = HashMap::new();
-    changes.insert(
-        setting_id.clone(),
-        SettingValue::Text(credential_ref.clone()),
-    );
-    let provider_discoveries = observation
-        .provider
-        .ai_provider_id()
-        .map(|provider_id| observation.provider_discovery_patch(provider_id, &credential_ref))
-        .transpose()?
-        .into_iter()
-        .collect::<Vec<_>>();
-    batch_update_settings_with_provider_discoveries(&changes, &provider_discoveries)?;
     Ok(BrokeredCredential {
         provider: observation.provider,
-        setting_id,
         credential_ref,
-        keychain_account,
+        store_account,
+        newly_captured,
     })
-}
-
-pub fn resolve_credential_setting_value(setting_id: &str, value: &str) -> Result<String, String> {
-    if value.is_empty() || !is_broker_reference(value) {
-        return Ok(value.to_string());
-    }
-    let Some(provider) = CredentialProvider::from_setting_id(setting_id) else {
-        return Ok(value.to_string());
-    };
-    load_credential_secret(provider, value)
 }
 
 pub fn resolve_broker_reference_for_provider(
     provider: CredentialProvider,
     credential_ref: &str,
 ) -> Result<Option<String>, String> {
-    if !is_broker_reference(credential_ref) {
-        return Ok(None);
-    }
-    load_credential_secret(provider, credential_ref).map(Some)
+    CredentialStore::global().resolve(provider, credential_ref)
 }
 
-pub fn keychain_account(provider: CredentialProvider, credential_ref: &str) -> String {
+pub fn broker_reference_replay_available(provider: Option<&str>, credential_ref: &str) -> bool {
+    let Some(provider) = provider.and_then(credential_provider_from_str) else {
+        return CredentialProvider::all().iter().copied().any(|provider| {
+            CredentialStore::global().replay_available_in_memory(provider, credential_ref)
+        });
+    };
+    CredentialStore::global().replay_available_in_memory(provider, credential_ref)
+}
+
+pub fn hydrate_credential_runtime_cache_from_durable_store() -> Result<usize, String> {
+    CredentialStore::global().hydrate_from_durable_store()
+}
+
+pub fn credential_store_status() -> CredentialStoreStatus {
+    CredentialStore::global().status()
+}
+
+fn credential_provider_from_str(provider: &str) -> Option<CredentialProvider> {
+    match provider {
+        "anthropic" => Some(CredentialProvider::Anthropic),
+        "google" => Some(CredentialProvider::Google),
+        "openai" => Some(CredentialProvider::OpenAi),
+        "github" => Some(CredentialProvider::Github),
+        "mcp" => Some(CredentialProvider::Mcp),
+        _ => None,
+    }
+}
+
+pub fn credential_store_account(provider: CredentialProvider, credential_ref: &str) -> String {
     format!("{}:{credential_ref}", provider.as_str())
 }
 
@@ -177,7 +447,6 @@ pub fn parse_env_credentials(source_path: &str, content: &str) -> Vec<Credential
                 raw_value: raw_value.to_string(),
                 source: format!("{source_path}:{name}"),
                 event_type: Some(RuntimeSecurityEventType::FileEvent.as_str().to_string()),
-                confidence: 1.0,
                 trace_id: None,
                 context_json: Some(format!(
                     r#"{{"path":"{}","env":"{}"}}"#,
@@ -189,33 +458,17 @@ pub fn parse_env_credentials(source_path: &str, content: &str) -> Vec<Credential
         .collect()
 }
 
-impl CredentialObservation {
-    fn provider_discovery_patch(
-        &self,
-        provider_id: &str,
-        credential_ref: &str,
-    ) -> Result<ProviderDiscoveryPatch, String> {
-        let event_type = self
-            .event_type
-            .as_deref()
-            .and_then(|event_type| RuntimeSecurityEventType::try_from(event_type).ok())
-            .map(|event_type| event_type.as_str().to_string());
-        ProviderDiscoveryPatch::for_builtin_provider(
-            provider_id,
-            ProviderDiscovery {
-                observed_at: crate::session::now_iso(),
-                source: self.source.clone(),
-                event_type,
-                confidence: self.confidence,
-                credential_ref: Some(credential_ref.to_string()),
-                trace_id: self.trace_id.clone(),
-            },
-        )
-    }
-}
-
 pub fn detect_http_credential(
     domain: &str,
+    header_name: &str,
+    header_value: &[u8],
+) -> Option<CredentialObservation> {
+    detect_http_credential_with_provider(domain, None, header_name, header_value)
+}
+
+pub fn detect_http_credential_with_provider(
+    domain: &str,
+    ai_provider: Option<ProviderKind>,
     header_name: &str,
     header_value: &[u8],
 ) -> Option<CredentialObservation> {
@@ -223,14 +476,17 @@ pub fn detect_http_credential(
     if value.is_empty() {
         return None;
     }
+    if header_broker_reference(value).is_some() {
+        return None;
+    }
     let raw = bearer_value(value).unwrap_or(value).trim();
-    let provider = provider_for_token(domain, header_name, raw)?;
+    let provider = provider_for_token(domain, header_name, raw)
+        .or_else(|| provider_for_header_hint(domain, ai_provider, header_name, raw))?;
     Some(CredentialObservation {
         provider,
         raw_value: raw.to_string(),
         source: format!("http.header.{}", header_name.to_ascii_lowercase()),
         event_type: Some("http.request".to_string()),
-        confidence: 1.0,
         trace_id: None,
         context_json: Some(format!(
             r#"{{"domain":"{}","header":"{}"}}"#,
@@ -238,6 +494,35 @@ pub fn detect_http_credential(
             json_escape(header_name)
         )),
     })
+}
+
+fn provider_for_header_hint(
+    domain: &str,
+    ai_provider: Option<ProviderKind>,
+    header_name: &str,
+    raw: &str,
+) -> Option<CredentialProvider> {
+    if raw.is_empty() {
+        return None;
+    }
+    let header = header_name.to_ascii_lowercase();
+    if header == "x-goog-api-key" {
+        return Some(CredentialProvider::Google);
+    }
+    if matches!(ai_provider, Some(ProviderKind::Unknown)) && header == "authorization" {
+        return Some(CredentialProvider::OpenAi);
+    }
+    if matches!(ai_provider, Some(ProviderKind::Unknown)) && header == "x-api-key" {
+        return Some(CredentialProvider::Anthropic);
+    }
+    let credential_header = header == "authorization"
+        || header == "x-api-key"
+        || header == "x-goog-api-key"
+        || header == "api-key"
+        || header == "apikey";
+    credential_header
+        .then(|| credential_provider_for_request(domain, ai_provider))
+        .flatten()
 }
 
 pub fn detect_http_body_credentials(
@@ -249,13 +534,60 @@ pub fn detect_http_body_credentials(
     let Ok(text) = std::str::from_utf8(body) else {
         return Vec::new();
     };
-    let Ok(json) = serde_json::from_str::<serde_json::Value>(text) else {
-        return Vec::new();
-    };
 
     let mut found = Vec::new();
-    collect_json_credentials(domain, path, direction, "$", &json, &mut found);
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(text) {
+        collect_json_credentials(domain, path, direction, "$", &json, &mut found);
+        return found;
+    }
+
+    collect_form_credentials(domain, path, direction, text, &mut found);
     found
+}
+
+pub fn detect_brokered_http_references(
+    domain: &str,
+    ai_provider: Option<ProviderKind>,
+    headers: &http::HeaderMap,
+    query: Option<&str>,
+    trace_id: Option<String>,
+) -> Vec<CredentialInjection> {
+    let mut found = Vec::new();
+    let provider_hint = credential_provider_for_request(domain, ai_provider);
+    for (name, value) in headers.iter() {
+        let Some(reference) = value
+            .to_str()
+            .ok()
+            .and_then(|value| header_broker_reference(value).map(str::to_string))
+        else {
+            continue;
+        };
+        found.push(CredentialInjection {
+            provider: provider_hint.or_else(|| provider_for_stored_reference(&reference)),
+            credential_ref: reference,
+            source: format!("http.header.{}", name.as_str().to_ascii_lowercase()),
+            event_type: Some("http.request".to_string()),
+            trace_id: trace_id.clone(),
+            context_json: Some(format!(
+                r#"{{"domain":"{}","header":"{}"}}"#,
+                json_escape(domain),
+                json_escape(name.as_str())
+            )),
+        });
+    }
+    if let Some(query) = query {
+        collect_query_brokered_references(domain, provider_hint, query, trace_id, &mut found);
+    }
+    found
+}
+
+pub fn is_http_body_credential_candidate(domain: &str, path: &str) -> bool {
+    (domain.ends_with("googleapis.com") && (path.contains("/token") || path.contains("oauth")))
+        || (domain.ends_with("github.com") && path.contains("oauth"))
+        || (is_local_oauth_fixture_domain(domain)
+            && (path.contains("/token")
+                || path.contains("oauth")
+                || path.contains("/credential/response")))
 }
 
 pub fn substitute_credential_value(provider: CredentialProvider, raw_value: &str) -> String {
@@ -275,6 +607,10 @@ pub fn redact_observed_credentials_in_bytes(
     let mut redacted = text.to_string();
     for observation in observations {
         redacted = redacted.replace(&observation.raw_value, &observation.credential_ref());
+        let encoded = percent_encode_query_value(&observation.raw_value);
+        if encoded != observation.raw_value {
+            redacted = redacted.replace(&encoded, &observation.credential_ref());
+        }
     }
     redacted.into_bytes()
 }
@@ -285,18 +621,30 @@ pub async fn broker_and_log_observations(
     observations: Vec<CredentialObservation>,
 ) -> Option<String> {
     let mut first_ref = None;
+    let mut seen = HashSet::new();
     for observation in observations {
         let reference = observation.credential_ref();
+        let key = (
+            observation.provider,
+            reference.clone(),
+            observation.source.clone(),
+            observation.event_type.clone(),
+            observation.trace_id.clone(),
+            observation.context_json.clone(),
+        );
+        if !seen.insert(key) {
+            continue;
+        }
         if first_ref.is_none() {
             first_ref = Some(reference);
         }
-        let save_outcome = match tokio::task::spawn_blocking({
+        let brokered = match tokio::task::spawn_blocking({
             let observation = observation.clone();
-            move || broker_to_user_settings(&observation)
+            move || broker_observed_credential(&observation)
         })
         .await
         {
-            Ok(Ok(_)) => "substituted",
+            Ok(Ok(brokered)) => brokered,
             Ok(Err(error)) => {
                 warn!(
                     provider = observation.provider.as_str(),
@@ -304,7 +652,13 @@ pub async fn broker_and_log_observations(
                     error = %error,
                     "credential broker: failed to save observed credential"
                 );
-                "error"
+                crate::security_engine::emit_substitution_security_write_and_rules(
+                    db,
+                    rules,
+                    observation.redacted_event("error"),
+                )
+                .await;
+                continue;
             }
             Err(error) => {
                 warn!(
@@ -313,17 +667,79 @@ pub async fn broker_and_log_observations(
                     error = %error,
                     "credential broker: save task failed"
                 );
-                "error"
+                crate::security_engine::emit_substitution_security_write_and_rules(
+                    db,
+                    rules,
+                    observation.redacted_event("error"),
+                )
+                .await;
+                continue;
             }
         };
+
+        let first_logged_in_session =
+            mark_credential_observation_logged(db, &observation, &brokered.credential_ref);
+        if first_logged_in_session {
+            crate::security_engine::emit_substitution_security_write_and_rules(
+                db,
+                rules,
+                observation.redacted_event("captured"),
+            )
+            .await;
+        }
+        if first_logged_in_session {
+            crate::security_engine::emit_substitution_security_write_and_rules(
+                db,
+                rules,
+                observation.redacted_event("brokered"),
+            )
+            .await;
+        }
+    }
+    first_ref
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct LoggedCredentialObservation {
+    db_path: PathBuf,
+    provider: CredentialProvider,
+    credential_ref: String,
+    source: String,
+    event_type: Option<String>,
+}
+
+fn mark_credential_observation_logged(
+    db: &DbWriter,
+    observation: &CredentialObservation,
+    credential_ref: &str,
+) -> bool {
+    let key = LoggedCredentialObservation {
+        db_path: db.path().to_path_buf(),
+        provider: observation.provider,
+        credential_ref: credential_ref.to_string(),
+        source: observation.source.clone(),
+        event_type: observation.event_type.clone(),
+    };
+    LOGGED_CREDENTIAL_OBSERVATIONS
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+        .map(|mut logged| logged.insert(key))
+        .unwrap_or(true)
+}
+
+pub async fn log_brokered_injections(
+    db: &DbWriter,
+    rules: &SecurityRuleSet,
+    injections: Vec<CredentialInjection>,
+) {
+    for injection in injections {
         crate::security_engine::emit_substitution_security_write_and_rules(
             db,
             rules,
-            observation.redacted_event(save_outcome),
+            injection.redacted_event("injected"),
         )
         .await;
     }
-    first_ref
 }
 
 pub fn is_broker_reference(value: &str) -> bool {
@@ -345,20 +761,17 @@ pub fn substitute_brokered_upstream_credentials(
     let provider_hint = credential_provider_for_request(domain, ai_provider);
     let mut credential_ref = None;
 
-    for value in headers.iter_mut().filter_map(|(_, value)| {
-        let text = value.to_str().ok()?;
-        is_broker_reference(text).then_some(value)
-    }) {
-        let reference = value
+    for value in headers.values_mut() {
+        let text = value
             .to_str()
-            .map_err(|e| format!("broker reference header is not UTF-8: {e}"))?
-            .to_string();
-        let raw = resolve_broker_reference(provider_hint, &reference)?;
-        *value = http::header::HeaderValue::from_str(&raw)
+            .map_err(|e| format!("broker reference header is not UTF-8: {e}"))?;
+        let Some(substitution) =
+            substitute_brokered_header_value(text, provider_hint, &mut credential_ref)?
+        else {
+            continue;
+        };
+        *value = http::header::HeaderValue::from_str(&substitution)
             .map_err(|e| format!("stored credential is not valid header value: {e}"))?;
-        if credential_ref.is_none() {
-            credential_ref = Some(reference);
-        }
     }
 
     let query = match query {
@@ -374,6 +787,36 @@ pub fn substitute_brokered_upstream_credentials(
         credential_ref,
         query,
     })
+}
+
+fn substitute_brokered_header_value(
+    value: &str,
+    provider_hint: Option<CredentialProvider>,
+    credential_ref: &mut Option<String>,
+) -> Result<Option<String>, String> {
+    let trimmed = value.trim();
+    if is_broker_reference(trimmed) {
+        let raw = resolve_broker_reference(provider_hint, trimmed)?;
+        if credential_ref.is_none() {
+            *credential_ref = Some(trimmed.to_string());
+        }
+        return Ok(Some(raw));
+    }
+    if let Some(reference) =
+        bearer_value(trimmed).filter(|reference| is_broker_reference(reference))
+    {
+        let raw = resolve_broker_reference(provider_hint, reference)?;
+        if credential_ref.is_none() {
+            *credential_ref = Some(reference.to_string());
+        }
+        let prefix = if trimmed.starts_with("bearer ") {
+            "bearer "
+        } else {
+            "Bearer "
+        };
+        return Ok(Some(format!("{prefix}{raw}")));
+    }
+    Ok(None)
 }
 
 fn substitute_brokered_query(
@@ -431,6 +874,47 @@ fn resolve_broker_reference(
     Err("credential broker reference could not be resolved".to_string())
 }
 
+fn provider_for_stored_reference(credential_ref: &str) -> Option<CredentialProvider> {
+    CredentialProvider::all().iter().copied().find(|provider| {
+        resolve_broker_reference_for_provider(*provider, credential_ref)
+            .ok()
+            .flatten()
+            .is_some()
+    })
+}
+
+fn collect_query_brokered_references(
+    domain: &str,
+    provider_hint: Option<CredentialProvider>,
+    query: &str,
+    trace_id: Option<String>,
+    out: &mut Vec<CredentialInjection>,
+) {
+    for part in query.split('&') {
+        let Some((name, value)) = part.split_once('=') else {
+            continue;
+        };
+        let Ok(decoded) = percent_decode(value) else {
+            continue;
+        };
+        if !is_broker_reference(&decoded) {
+            continue;
+        }
+        out.push(CredentialInjection {
+            provider: provider_hint.or_else(|| provider_for_stored_reference(&decoded)),
+            credential_ref: decoded,
+            source: format!("http.query.{name}"),
+            event_type: Some("http.request".to_string()),
+            trace_id: trace_id.clone(),
+            context_json: Some(format!(
+                r#"{{"domain":"{}","query_key":"{}"}}"#,
+                json_escape(domain),
+                json_escape(name)
+            )),
+        });
+    }
+}
+
 fn credential_provider_for_request(
     domain: &str,
     ai_provider: Option<ProviderKind>,
@@ -439,7 +923,8 @@ fn credential_provider_for_request(
         Some(ProviderKind::Anthropic) => Some(CredentialProvider::Anthropic),
         Some(ProviderKind::Google) => Some(CredentialProvider::Google),
         Some(ProviderKind::OpenAi) => Some(CredentialProvider::OpenAi),
-        Some(ProviderKind::Ollama) => None,
+        Some(ProviderKind::Ollama) => Some(CredentialProvider::OpenAi),
+        Some(ProviderKind::Unknown) => None,
         None if domain.ends_with("anthropic.com") || domain.ends_with("claude.com") => {
             Some(CredentialProvider::Anthropic)
         }
@@ -559,13 +1044,12 @@ fn collect_json_credentials(
             for (key, child) in map {
                 let child_path = format!("{json_path}.{key}");
                 if let Some(raw) = child.as_str() {
-                    if let Some(provider) = provider_for_token(domain, key, raw.trim()) {
+                    if let Some(provider) = provider_for_body_field(domain, path, key, raw.trim()) {
                         out.push(CredentialObservation {
                             provider,
                             raw_value: raw.trim().to_string(),
                             source: format!("http.body.{direction}.{child_path}"),
                             event_type: Some(format!("http.{direction}")),
-                            confidence: 1.0,
                             trace_id: None,
                             context_json: Some(format!(
                                 r#"{{"domain":"{}","path":"{}","json_path":"{}","direction":"{}"}}"#,
@@ -590,10 +1074,100 @@ fn collect_json_credentials(
     }
 }
 
+fn collect_form_credentials(
+    domain: &str,
+    path: &str,
+    direction: &str,
+    text: &str,
+    out: &mut Vec<CredentialObservation>,
+) {
+    if !text.contains('=') {
+        return;
+    }
+    for part in text.split('&') {
+        let Some((key, value)) = part.split_once('=') else {
+            continue;
+        };
+        let Ok(raw) = percent_decode(value) else {
+            continue;
+        };
+        let raw = raw.trim();
+        if raw.is_empty() {
+            continue;
+        }
+        if let Some(provider) = provider_for_body_field(domain, path, key, raw) {
+            out.push(CredentialObservation {
+                provider,
+                raw_value: raw.to_string(),
+                source: format!("http.body.{direction}.form.{key}"),
+                event_type: Some(format!("http.{direction}")),
+                trace_id: None,
+                context_json: Some(format!(
+                    r#"{{"domain":"{}","path":"{}","form_key":"{}","direction":"{}"}}"#,
+                    json_escape(domain),
+                    json_escape(path),
+                    json_escape(key),
+                    json_escape(direction)
+                )),
+            });
+        }
+    }
+}
+
+fn provider_for_body_field(
+    domain: &str,
+    path: &str,
+    field_name: &str,
+    value: &str,
+) -> Option<CredentialProvider> {
+    provider_for_oauth_field(domain, path, field_name, value)
+        .or_else(|| provider_for_token(domain, field_name, value))
+}
+
+fn provider_for_oauth_field(
+    domain: &str,
+    path: &str,
+    field_name: &str,
+    value: &str,
+) -> Option<CredentialProvider> {
+    if value.trim().is_empty() {
+        return None;
+    }
+    let field = field_name.to_ascii_lowercase();
+    if !matches!(
+        field.as_str(),
+        "access_token" | "refresh_token" | "id_token" | "code" | "device_code" | "client_secret"
+    ) {
+        return None;
+    }
+    if domain.ends_with("googleapis.com") && is_http_body_credential_candidate(domain, path) {
+        return Some(CredentialProvider::Google);
+    }
+    if domain.ends_with("github.com") && is_http_body_credential_candidate(domain, path) {
+        return Some(CredentialProvider::Github);
+    }
+    if is_local_oauth_fixture_domain(domain) && is_http_body_credential_candidate(domain, path) {
+        return Some(CredentialProvider::Google);
+    }
+    None
+}
+
+fn is_local_oauth_fixture_domain(domain: &str) -> bool {
+    matches!(domain, "127.0.0.1" | "localhost" | "::1")
+}
+
 fn bearer_value(value: &str) -> Option<&str> {
     value
         .strip_prefix("Bearer ")
         .or_else(|| value.strip_prefix("bearer "))
+}
+
+fn header_broker_reference(value: &str) -> Option<&str> {
+    let trimmed = value.trim();
+    if is_broker_reference(trimmed) {
+        return Some(trimmed);
+    }
+    bearer_value(trimmed).filter(|reference| is_broker_reference(reference))
 }
 
 fn unquote(value: &str) -> &str {
@@ -612,42 +1186,78 @@ fn json_escape(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-fn store_credential_secret(
+fn credential_store_key(provider: CredentialProvider, credential_ref: &str) -> String {
+    credential_store_account(provider, credential_ref)
+}
+
+fn credential_store_backend() -> &'static str {
+    if credential_store_path_override().is_some() {
+        return "disk_override";
+    }
+    "disk"
+}
+
+fn now_unix_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX)
+}
+
+fn durable_store_write(
     provider: CredentialProvider,
     credential_ref: &str,
     raw_value: &str,
 ) -> Result<(), String> {
-    if let Some(path) = test_store_path() {
-        return test_store_write(&path, provider, credential_ref, raw_value);
+    if let Some(path) = credential_store_path_override() {
+        return disk_store_write(&path, provider, credential_ref, raw_value);
     }
-    store_credential_secret_native(provider, credential_ref, raw_value)
+    durable_store_write_default(provider, credential_ref, raw_value)
 }
 
-fn load_credential_secret(
+fn durable_store_read(
     provider: CredentialProvider,
     credential_ref: &str,
 ) -> Result<String, String> {
-    if let Some(path) = test_store_path() {
-        return test_store_read(&path, provider, credential_ref);
+    if let Some(path) = credential_store_path_override() {
+        return disk_store_read(&path, provider, credential_ref);
     }
-    load_credential_secret_native(provider, credential_ref)
+    durable_store_read_default(provider, credential_ref)
 }
 
-fn test_store_path() -> Option<PathBuf> {
-    std::env::var_os(TEST_STORE_ENV)
+fn durable_store_hydrate() -> Result<Vec<(CredentialProvider, String, String)>, String> {
+    if let Some(path) = credential_store_path_override() {
+        return disk_store_hydrate(&path);
+    }
+    durable_store_hydrate_default()
+}
+
+fn credential_store_path_override() -> Option<PathBuf> {
+    std::env::var_os(STORE_PATH_ENV)
         .filter(|v| !v.is_empty())
         .map(PathBuf::from)
 }
 
-fn test_store_write(
+fn default_credential_store_path() -> PathBuf {
+    crate::paths::capsem_home()
+        .join("credentials")
+        .join("credential-store.json")
+}
+
+fn disk_store_write(
     path: &PathBuf,
     provider: CredentialProvider,
     credential_ref: &str,
     raw_value: &str,
 ) -> Result<(), String> {
-    let mut map = test_store_load(path)?;
+    let _guard = test_store_lock()
+        .lock()
+        .map_err(|_| "credential disk store lock poisoned".to_string())?;
+    let mut map = disk_store_load(path)?;
     map.insert(
-        keychain_account(provider, credential_ref),
+        credential_store_account(provider, credential_ref),
         raw_value.to_string(),
     );
     if let Some(parent) = path.parent() {
@@ -655,85 +1265,99 @@ fn test_store_write(
             .map_err(|e| format!("create credential test store dir: {e}"))?;
     }
     let json = serde_json::to_string_pretty(&map)
-        .map_err(|e| format!("serialize credential test store: {e}"))?;
-    std::fs::write(path, json).map_err(|e| format!("write credential test store: {e}"))
+        .map_err(|e| format!("serialize credential disk store: {e}"))?;
+    std::fs::write(path, json).map_err(|e| format!("write credential disk store: {e}"))?;
+    restrict_secret_file(path)?;
+    Ok(())
 }
 
-fn test_store_read(
+fn disk_store_read(
     path: &PathBuf,
     provider: CredentialProvider,
     credential_ref: &str,
 ) -> Result<String, String> {
-    let map = test_store_load(path)?;
-    let account = keychain_account(provider, credential_ref);
+    let _guard = test_store_lock()
+        .lock()
+        .map_err(|_| "credential disk store lock poisoned".to_string())?;
+    let map = disk_store_load(path)?;
+    let account = credential_store_account(provider, credential_ref);
     map.get(&account)
         .cloned()
-        .ok_or_else(|| format!("credential reference not found in test store: {account}"))
+        .ok_or_else(|| format!("credential reference not found in disk store: {account}"))
 }
 
-fn test_store_load(path: &PathBuf) -> Result<HashMap<String, String>, String> {
+fn disk_store_hydrate(path: &PathBuf) -> Result<Vec<(CredentialProvider, String, String)>, String> {
+    let _guard = test_store_lock()
+        .lock()
+        .map_err(|_| "credential disk store lock poisoned".to_string())?;
+    let map = disk_store_load(path)?;
+    let mut entries = Vec::new();
+    for (account, raw_value) in map {
+        let Some((provider, credential_ref)) = parse_credential_store_account(&account) else {
+            warn!(account, "credential store: ignoring malformed disk account");
+            continue;
+        };
+        entries.push((provider, credential_ref.to_string(), raw_value));
+    }
+    Ok(entries)
+}
+
+fn test_store_lock() -> &'static Mutex<()> {
+    TEST_STORE_LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn disk_store_load(path: &PathBuf) -> Result<HashMap<String, String>, String> {
     if !path.exists() {
         return Ok(HashMap::new());
     }
     let text =
-        std::fs::read_to_string(path).map_err(|e| format!("read credential test store: {e}"))?;
+        std::fs::read_to_string(path).map_err(|e| format!("read credential disk store: {e}"))?;
     if text.trim().is_empty() {
         return Ok(HashMap::new());
     }
-    serde_json::from_str(&text).map_err(|e| format!("parse credential test store: {e}"))
+    serde_json::from_str(&text).map_err(|e| format!("parse credential disk store: {e}"))
 }
 
-#[cfg(target_os = "macos")]
-fn store_credential_secret_native(
+fn durable_store_write_default(
     provider: CredentialProvider,
     credential_ref: &str,
     raw_value: &str,
 ) -> Result<(), String> {
-    use security_framework::os::macos::keychain::SecKeychain;
-
-    let keychain = SecKeychain::default().map_err(|e| format!("open default keychain: {e}"))?;
-    keychain
-        .set_generic_password(
-            KEYCHAIN_SERVICE,
-            &keychain_account(provider, credential_ref),
-            raw_value.as_bytes(),
-        )
-        .map_err(|e| format!("write credential to keychain: {e}"))
+    disk_store_write(
+        &default_credential_store_path(),
+        provider,
+        credential_ref,
+        raw_value,
+    )
 }
 
-#[cfg(not(target_os = "macos"))]
-fn store_credential_secret_native(
-    _provider: CredentialProvider,
-    _credential_ref: &str,
-    _raw_value: &str,
-) -> Result<(), String> {
-    Err("credential keychain storage is only implemented on macOS".to_string())
-}
-
-#[cfg(target_os = "macos")]
-fn load_credential_secret_native(
+fn durable_store_read_default(
     provider: CredentialProvider,
     credential_ref: &str,
 ) -> Result<String, String> {
-    use security_framework::os::macos::keychain::SecKeychain;
-
-    let keychain = SecKeychain::default().map_err(|e| format!("open default keychain: {e}"))?;
-    let (password, _) = keychain
-        .find_generic_password(
-            KEYCHAIN_SERVICE,
-            &keychain_account(provider, credential_ref),
-        )
-        .map_err(|e| format!("read credential from keychain: {e}"))?;
-    String::from_utf8(password.as_ref().to_vec())
-        .map_err(|e| format!("credential in keychain is not UTF-8: {e}"))
+    disk_store_read(&default_credential_store_path(), provider, credential_ref)
 }
 
-#[cfg(not(target_os = "macos"))]
-fn load_credential_secret_native(
-    _provider: CredentialProvider,
-    _credential_ref: &str,
-) -> Result<String, String> {
-    Err("credential keychain storage is only implemented on macOS".to_string())
+fn durable_store_hydrate_default() -> Result<Vec<(CredentialProvider, String, String)>, String> {
+    disk_store_hydrate(&default_credential_store_path())
+}
+
+fn parse_credential_store_account(account: &str) -> Option<(CredentialProvider, &str)> {
+    let (provider, credential_ref) = account.split_once(':')?;
+    let provider = credential_provider_from_str(provider)?;
+    Some((provider, credential_ref))
+}
+
+#[cfg(unix)]
+fn restrict_secret_file(path: &PathBuf) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+        .map_err(|e| format!("restrict credential disk store permissions: {e}"))
+}
+
+#[cfg(not(unix))]
+fn restrict_secret_file(_path: &PathBuf) -> Result<(), String> {
+    Ok(())
 }
 
 #[cfg(test)]
