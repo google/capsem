@@ -34,6 +34,37 @@ authors = ["Elie Bursztein <github@elie.net>"]
 [profile.dev.package.blake3]
 opt-level = 3
 
+# Always optimize hot wire-format codecs in dev/install builds. `just install`
+# and manual release validation use debug binaries, so leaving these crates at
+# opt-level 0 makes the gateway and ledger paths look broken when the real bug is
+# compiler configuration.
+[profile.dev.package.serde]
+opt-level = 3
+
+[profile.dev.package.serde_core]
+opt-level = 3
+
+[profile.dev.package.serde_json]
+opt-level = 3
+
+[profile.dev.package.rmp]
+opt-level = 3
+
+[profile.dev.package."rmp-serde"]
+opt-level = 3
+
+[profile.dev.package.hickory-proto]
+opt-level = 3
+
+[profile.dev.package.memchr]
+opt-level = 3
+
+[profile.dev.package.itoa]
+opt-level = 3
+
+[profile.dev.package.ryu]
+opt-level = 3
+
 [profile.release]
 lto = "thin"
 codegen-units = 1
