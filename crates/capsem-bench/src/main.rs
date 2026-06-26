@@ -455,6 +455,7 @@ async fn run_protocol(args: ProtocolArgs) -> Result<Artifact> {
         };
         scenario_results.push(result);
     }
+    validate_successful_scenarios(&scenario_results, &args.lane)?;
 
     let artifact = Artifact {
         version: VERSION.to_string(),
@@ -864,6 +865,14 @@ fn build_delta_report(
     host: &Artifact,
     guest: &Artifact,
 ) -> Result<DeltaReport> {
+    validate_successful_scenarios(
+        &host.mock_server_protocol.scenarios,
+        &host.mock_server_protocol.lane,
+    )?;
+    validate_successful_scenarios(
+        &guest.mock_server_protocol.scenarios,
+        &guest.mock_server_protocol.lane,
+    )?;
     let host_rows = rows_by_name(&host.mock_server_protocol.scenarios);
     let guest_rows = rows_by_name(&guest.mock_server_protocol.scenarios);
     let mut scenarios = Vec::new();
@@ -898,6 +907,26 @@ fn build_delta_report(
         guest_lane: guest.mock_server_protocol.lane.clone(),
         scenarios,
     })
+}
+
+fn validate_successful_scenarios(rows: &[ScenarioResult], lane: &str) -> Result<()> {
+    let failures = rows
+        .iter()
+        .filter(|row| row.failed > 0)
+        .map(|row| {
+            format!(
+                "{} failed={}/{} errors={:?}",
+                row.name, row.failed, row.total_requests, row.errors
+            )
+        })
+        .collect::<Vec<_>>();
+    if !failures.is_empty() {
+        bail!(
+            "benchmark lane {lane} has failed scenario requests; refusing to report poisoned numbers: {}",
+            failures.join("; ")
+        );
+    }
+    Ok(())
 }
 
 fn guest_protocol_command(
@@ -1322,7 +1351,6 @@ mod tests {
                 p99: 9.5,
                 ..host.latency_ms.clone()
             },
-            failed: 2,
             ..host.clone()
         };
         let host_values = [host];
@@ -1339,7 +1367,39 @@ mod tests {
             round1(guest_row.latency_ms.p95 - host_row.latency_ms.p95),
             4.0
         );
-        assert_eq!(guest_row.failed as isize - host_row.failed as isize, 2);
+        assert_eq!(guest_row.failed as isize - host_row.failed as isize, 0);
+    }
+
+    #[test]
+    fn failed_scenarios_are_poisoned_benchmark_numbers() {
+        let failed = ScenarioResult {
+            name: "tiny_http".to_string(),
+            path: "/tiny".to_string(),
+            body_kind: "tiny".to_string(),
+            total_requests: 100,
+            concurrency: 10,
+            successful: 0,
+            failed: 100,
+            total_duration_ms: 10.0,
+            requests_per_sec: 10_000.0,
+            transfer_bytes: 0,
+            bytes_per_sec: 0.0,
+            latency_ms: LatencySummary {
+                min: 0.1,
+                max: 2.0,
+                mean: 0.5,
+                p50: 0.4,
+                p95: 1.0,
+                p99: 1.5,
+            },
+            errors: BTreeMap::from([("request:connection refused".to_string(), 100)]),
+            secret_shaped_fixture_seen: None,
+            raw_secret_stored_in_result: None,
+        };
+        let err = validate_successful_scenarios(&[failed], "host_direct").unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("poisoned numbers"), "{message}");
+        assert!(message.contains("tiny_http failed=100/100"), "{message}");
     }
 
     #[test]
