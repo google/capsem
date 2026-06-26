@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
     sync::Mutex,
 };
@@ -524,6 +524,29 @@ pub fn create_memory_read_views(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
+pub(crate) type MemoryFlushWatermarks = BTreeMap<&'static str, i64>;
+
+pub(crate) fn initial_memory_flush_watermarks<'a>(
+    conn: &Connection,
+    tables: impl IntoIterator<Item = &'a str>,
+) -> rusqlite::Result<MemoryFlushWatermarks> {
+    let mut watermarks = MemoryFlushWatermarks::new();
+    for table in tables {
+        if is_disk_only_table(table) {
+            continue;
+        }
+        if !table_exists(conn, "main", table)? {
+            continue;
+        }
+        let Some(table) = canonical_hot_table(table) else {
+            continue;
+        };
+        let max_id = max_table_id(conn, "main", table)?;
+        watermarks.insert(table, max_id);
+    }
+    Ok(watermarks)
+}
+
 pub fn sync_memory_tables_from_disk<'a>(
     conn: &Connection,
     tables: impl IntoIterator<Item = &'a str>,
@@ -547,7 +570,9 @@ pub fn sync_memory_tables_from_disk<'a>(
 pub fn flush_memory_tables_to_disk<'a>(
     conn: &Connection,
     tables: impl IntoIterator<Item = &'a str>,
-) -> rusqlite::Result<()> {
+    watermarks: &MemoryFlushWatermarks,
+) -> rusqlite::Result<MemoryFlushWatermarks> {
+    let mut advanced = MemoryFlushWatermarks::new();
     for table in tables {
         if is_disk_only_table(table) {
             continue;
@@ -555,12 +580,25 @@ pub fn flush_memory_tables_to_disk<'a>(
         if !table_exists(conn, "main", table)? || !table_exists(conn, MEMORY_SCHEMA, table)? {
             continue;
         }
-        conn.execute_batch(&format!(
-            "INSERT OR REPLACE INTO main.{table}
-             SELECT * FROM {MEMORY_SCHEMA}.{table};"
-        ))?;
+        let Some(table) = canonical_hot_table(table) else {
+            continue;
+        };
+        let last_flushed_id = *watermarks.get(table).unwrap_or(&0);
+        let max_memory_id = max_table_id(conn, MEMORY_SCHEMA, table)?;
+        if max_memory_id <= last_flushed_id {
+            continue;
+        }
+        conn.execute(
+            &format!(
+                "INSERT OR REPLACE INTO main.{table}
+                 SELECT * FROM {MEMORY_SCHEMA}.{table}
+                 WHERE id > ?1;"
+            ),
+            [last_flushed_id],
+        )?;
+        advanced.insert(table, max_memory_id);
     }
-    Ok(())
+    Ok(advanced)
 }
 
 pub fn rehydrate_memory_tables_from_disk_once<'a>(
@@ -628,6 +666,21 @@ pub(crate) fn hot_ledger_tables() -> BTreeSet<&'static str> {
         .iter()
         .filter_map(|(table, _)| (!is_disk_only_table(table)).then_some(*table))
         .collect()
+}
+
+fn canonical_hot_table(table: &str) -> Option<&'static str> {
+    READY_SCHEMA_COLUMNS
+        .iter()
+        .map(|(name, _)| *name)
+        .find(|name| *name == table && !is_disk_only_table(name))
+}
+
+fn max_table_id(conn: &Connection, schema: &str, table: &str) -> rusqlite::Result<i64> {
+    conn.query_row(
+        &format!("SELECT COALESCE(MAX(id), 0) FROM {schema}.{table}"),
+        [],
+        |row| row.get::<_, i64>(0),
+    )
 }
 
 fn memory_table_sql(table: &str, sql: &str) -> Option<String> {
@@ -1635,6 +1688,70 @@ mod tests {
         assert!(
             error.contains("mem.net_events"),
             "missing memory schema must fail loudly instead of route projections hiding stale state: {error}"
+        );
+    }
+
+    #[test]
+    fn db_mem_flush_uses_per_table_id_watermark() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        migrate(&conn);
+        create_memory_tables(
+            &conn,
+            &memory_uri_for_name("db_mem_flush_uses_per_table_id_watermark"),
+        )
+        .unwrap();
+        let mut watermarks =
+            initial_memory_flush_watermarks(&conn, ["net_events"]).expect("initial watermarks");
+
+        conn.execute(
+            "INSERT INTO mem.net_events (timestamp, domain, decision)
+             VALUES ('2026-06-26T00:00:00Z', 'flush-one.example', 'allowed')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO mem.net_events (timestamp, domain, decision)
+             VALUES ('2026-06-26T00:00:01Z', 'flush-two.example', 'allowed')",
+            [],
+        )
+        .unwrap();
+
+        let before_first = conn.total_changes();
+        let advanced =
+            flush_memory_tables_to_disk(&conn, ["net_events"], &watermarks).expect("first flush");
+        watermarks.extend(advanced);
+        assert_eq!(
+            conn.total_changes() - before_first,
+            2,
+            "first mem->disk flush should copy exactly the two new rows"
+        );
+
+        conn.execute(
+            "INSERT INTO mem.net_events (timestamp, domain, decision)
+             VALUES ('2026-06-26T00:00:02Z', 'flush-three.example', 'allowed')",
+            [],
+        )
+        .unwrap();
+
+        let before_second = conn.total_changes();
+        let advanced =
+            flush_memory_tables_to_disk(&conn, ["net_events"], &watermarks).expect("second flush");
+        watermarks.extend(advanced);
+        assert_eq!(
+            conn.total_changes() - before_second,
+            1,
+            "second mem->disk flush must use the per-table id watermark instead of replaying the whole memory table"
+        );
+
+        let before_third = conn.total_changes();
+        let advanced =
+            flush_memory_tables_to_disk(&conn, ["net_events"], &watermarks).expect("third flush");
+        watermarks.extend(advanced);
+        assert_eq!(
+            conn.total_changes() - before_third,
+            0,
+            "unchanged dirty-table flush must not rewrite already flushed rows"
         );
     }
 

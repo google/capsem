@@ -594,6 +594,13 @@ fn spawn_producer_sweeper(
 /// The writer thread loop: block-then-drain batching.
 fn writer_loop(conn: Connection, rx: mpsc::Receiver<WriterMessage>, db_path: Option<PathBuf>) {
     let mut model_item_dedup = load_model_item_dedup(&conn);
+    let mut flush_watermarks = schema::with_memory_schema_lock(|| {
+        schema::initial_memory_flush_watermarks(&conn, schema::hot_ledger_tables())
+    })
+    .unwrap_or_else(|error| {
+        warn!(error = %error, "db initial memory flush watermark load failed");
+        schema::MemoryFlushWatermarks::new()
+    });
     let mut dirty_tables = BTreeSet::new();
     let mut dirty_ops = 0_usize;
     let mut last_disk_flush = Instant::now();
@@ -610,9 +617,12 @@ fn writer_loop(conn: Connection, rx: mpsc::Receiver<WriterMessage>, db_path: Opt
             match rx.recv_timeout(DISK_FLUSH_INTERVAL) {
                 Ok(message) => Some(message),
                 Err(mpsc::RecvTimeoutError::Timeout) => {
-                    if let Err(error) =
-                        flush_dirty_tables_to_disk(&conn, &mut dirty_tables, db_path.as_deref())
-                    {
+                    if let Err(error) = flush_dirty_tables_to_disk(
+                        &conn,
+                        &mut dirty_tables,
+                        &mut flush_watermarks,
+                        db_path.as_deref(),
+                    ) {
                         warn!(error = %error, "db interval flush failed");
                     } else {
                         dirty_ops = 0;
@@ -702,9 +712,12 @@ fn writer_loop(conn: Connection, rx: mpsc::Receiver<WriterMessage>, db_path: Opt
             || last_disk_flush.elapsed() >= DISK_FLUSH_INTERVAL
             || !flush_barriers.is_empty();
         if disk_flush_due {
-            if let Err(error) =
-                flush_dirty_tables_to_disk(&conn, &mut dirty_tables, db_path.as_deref())
-            {
+            if let Err(error) = flush_dirty_tables_to_disk(
+                &conn,
+                &mut dirty_tables,
+                &mut flush_watermarks,
+                db_path.as_deref(),
+            ) {
                 warn!(error = %error, "db dirty table flush failed");
             } else {
                 dirty_ops = 0;
@@ -726,7 +739,12 @@ fn writer_loop(conn: Connection, rx: mpsc::Receiver<WriterMessage>, db_path: Opt
         }
     }
 
-    if let Err(error) = flush_dirty_tables_to_disk(&conn, &mut dirty_tables, db_path.as_deref()) {
+    if let Err(error) = flush_dirty_tables_to_disk(
+        &conn,
+        &mut dirty_tables,
+        &mut flush_watermarks,
+        db_path.as_deref(),
+    ) {
         warn!(error = %error, "db shutdown dirty table flush failed");
     }
 
@@ -939,6 +957,7 @@ fn execute_memory_batch(
 fn flush_dirty_tables_to_disk(
     conn: &Connection,
     dirty_tables: &mut BTreeSet<&'static str>,
+    flush_watermarks: &mut schema::MemoryFlushWatermarks,
     db_path: Option<&Path>,
 ) -> rusqlite::Result<()> {
     if dirty_tables.is_empty() {
@@ -951,10 +970,11 @@ fn flush_dirty_tables_to_disk(
     }
     let tables: Vec<&'static str> = dirty_tables.iter().copied().collect();
     let tx = conn.unchecked_transaction()?;
-    schema::with_memory_schema_lock(|| {
-        schema::flush_memory_tables_to_disk(&tx, tables.iter().copied())
+    let advanced_watermarks = schema::with_memory_schema_lock(|| {
+        schema::flush_memory_tables_to_disk(&tx, tables.iter().copied(), flush_watermarks)
     })?;
     tx.commit()?;
+    flush_watermarks.extend(advanced_watermarks);
     if let Some(path) = db_path {
         schema::record_sqlite_mmap_telemetry(conn, path, "writer", "flush");
     }
