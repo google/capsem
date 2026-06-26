@@ -7,6 +7,24 @@ description: Debugging Capsem session databases -- the telemetry pipeline output
 
 Every Capsem VM session produces a SQLite database at `~/.capsem/sessions/<id>/session.db` with ledger tables capturing telemetry. A global `~/.capsem/main.db` aggregates stats across sessions.
 
+## Session identity invariant
+
+`<id>` is the opaque VM/session id used for route paths, DB-handle keys,
+session-directory names, `CAPSEM_VM_ID`, and UI tab routing. Human names such
+as `co-work1` or `code-vm1` are display aliases only and must live in `name`
+fields. User surfaces may accept a name (`capsem resume co-work1`), but they
+must translate it to the VM id before calling `/vms/{id}/...`. Never use a
+persistent registry name as `SandboxInfo.id`, never look up telemetry routes
+with `registry.get(&id)` unless the id has first been resolved to the registry
+key, and never key `session_db_handles` by display name.
+
+If a UI shows telemetry for the wrong provider/model, check this boundary
+first: `/vms/list` and `/vms/{id}/info` must expose `id = session id` and
+`name = display name`, and `/vms/{id}/stats/detail` must open the DB under the
+resolved session directory for that id. A session named `co-work1` showing
+another session's `ollama` rows while its own DB has AGY/Google rows is a route
+identity bug until proven otherwise.
+
 ## Quick inspection
 
 ### Listing sessions

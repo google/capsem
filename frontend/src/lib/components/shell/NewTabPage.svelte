@@ -138,7 +138,7 @@
       actionError = vm.resume_blocked_reason ?? `${vm.name ?? vm.id} cannot be resumed.`;
       return;
     }
-    await vmStore.resume(vm.name ?? vm.id);
+    await vmStore.resume(vm.id);
   }
 
   async function handlePause(e: MouseEvent, vm: VmSummary) {

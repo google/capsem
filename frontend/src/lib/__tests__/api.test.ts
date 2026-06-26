@@ -312,9 +312,9 @@ describe('api', () => {
 
     it('resumeVm sends POST', async () => {
       mockFetch.mockReturnValueOnce(jsonResponse(null));
-      await api.resumeVm('my-vm');
+      await api.resumeVm('11111111-1111-4111-8111-111111111111');
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/vms/my-vm/resume');
+      expect(call[0]).toContain('/vms/11111111-1111-4111-8111-111111111111/resume');
     });
 
     it('forkVm sends POST with body', async () => {

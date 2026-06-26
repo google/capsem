@@ -140,6 +140,7 @@ export interface ProvisionRequest {
 
 export interface ProvisionResponse {
   id: string;
+  name: string;
   profile_id: string;
   status: VmLifecycleState;
   persistent: boolean;

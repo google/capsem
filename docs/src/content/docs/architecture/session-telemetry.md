@@ -7,6 +7,20 @@ sidebar:
 
 Every Capsem VM gets its own SQLite database (`session.db`) that records network requests, DNS queries, AI model calls, MCP tool invocations, exec activity, kernel audit events, file changes, security rule matches, credential substitutions, and snapshots. The database lives in the session directory and follows the VM lifecycle; retained/forked VMs keep their database for forensic review.
 
+## Session Identity
+
+The route/session `id` is an opaque VM id and is the only key that may select a
+session directory, `session.db`, active instance, DB handle, terminal/log/stats
+route, or UI tab. A user-facing VM name such as `co-work1` or `code-vm1` is a
+display/resume alias only.
+
+API payloads that describe persistent sessions must keep both fields:
+`id` for routing and DB lookup, `name` for display. User surfaces may accept
+commands like `capsem resume co-work1`, but that layer must translate the name
+to the VM id before calling `/vms/{id}/...`. Service route code must not
+collapse `name` into `id`; doing so can make a selected session read another
+session's database and show the wrong provider/model data.
+
 ## Schema overview
 
 ```mermaid

@@ -132,10 +132,11 @@ fn parse_env_vars_second_entry_invalid() {
 
 #[test]
 fn api_response_ok_variant() {
-    let json = r#"{"id":"vm-1","profile_id":"code","status":"Running","persistent":true,"can_resume":false,"available_actions":["pause","stop","fork","delete"]}"#;
+    let json = r#"{"id":"vm-1","name":"code-vm1","profile_id":"code","status":"Running","persistent":true,"can_resume":false,"available_actions":["pause","stop","fork","delete"]}"#;
     let resp: ApiResponse<ProvisionResponse> = serde_json::from_str(json).unwrap();
     let result = resp.into_result().unwrap();
     assert_eq!(result.id, "vm-1");
+    assert_eq!(result.name, "code-vm1");
     assert_eq!(result.profile_id, "code");
     assert_eq!(result.status, VmLifecycleState::Running);
     assert!(result.persistent);

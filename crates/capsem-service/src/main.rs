@@ -81,7 +81,7 @@ use capsem_service::api;
 use capsem_service::api::*;
 use capsem_service::naming::{generate_profile_session_name, validate_vm_name};
 use capsem_service::registry::{
-    BootAssetPin, BootAssetPins, PersistentRegistry, PersistentVmEntry,
+    new_persistent_vm_id, BootAssetPin, BootAssetPins, PersistentRegistry, PersistentVmEntry,
 };
 use capsem_service::triage;
 
@@ -544,6 +544,7 @@ struct EnforcementRuleDeleteResponse {
 
 pub struct ProvisionOptions<'a> {
     pub id: &'a str,
+    pub name: &'a str,
     pub profile_id: String,
     pub ram_mb: u64,
     pub cpus: u32,
@@ -652,9 +653,6 @@ impl ServiceState {
                 ));
             }
         };
-        handle
-            .ready_blocking()
-            .with_context(|| format!("session DB for {vm_id} is not ready"))?;
         self.session_db_handles
             .lock()
             .unwrap()
@@ -812,7 +810,7 @@ impl ServiceState {
             registry
                 .list()
                 .filter(|entry| !entry.defunct)
-                .filter(|entry| !instances.contains_key(&entry.name))
+                .filter(|entry| !instances.contains_key(&persistent_entry_vm_id(entry)))
                 .map(|entry| (entry.name.clone(), entry.session_dir.clone()))
                 .collect()
         };
@@ -956,6 +954,7 @@ impl ServiceState {
     fn provision_sandbox(self: &Arc<Self>, options: ProvisionOptions) -> Result<()> {
         let ProvisionOptions {
             id,
+            name,
             profile_id,
             ram_mb,
             cpus,
@@ -979,15 +978,15 @@ impl ServiceState {
             return Err(anyhow!("ram_mb must be between 256 and 16384"));
         }
 
-        // Persistent VMs: validate name and reject duplicates
+        // Persistent VMs: validate the human display name and reject duplicate names.
         if persistent {
-            validate_vm_name(id)?;
+            validate_vm_name(name)?;
             let registry = self.persistent_registry.lock().unwrap();
-            if registry.contains(id) {
+            if registry.contains(name) {
                 return Err(anyhow!(
                     "persistent VM \"{}\" already exists. Use `capsem resume {}` to reconnect.",
-                    id,
-                    id
+                    name,
+                    name
                 ));
             }
         }
@@ -1103,7 +1102,9 @@ impl ServiceState {
 
         // Inject VM identity so the guest knows its own name/ID.
         child_cmd.arg("--env").arg(format!("CAPSEM_VM_ID={}", id));
-        child_cmd.arg("--env").arg(format!("CAPSEM_VM_NAME={}", id));
+        child_cmd
+            .arg("--env")
+            .arg(format!("CAPSEM_VM_NAME={}", name));
 
         // Add --env KEY=VALUE args for each user-specified env var
         if let Some(ref env_vars) = env {
@@ -1182,6 +1183,7 @@ impl ServiceState {
         info!(id, pid, version, asset_version = %resolved.asset_version, "capsem-process spawned");
 
         let id_clone = id.to_string();
+        let name_clone = name.to_string();
         let state_clone = Arc::clone(self);
         let uds_clone = uds_path.clone();
         let session_dir_clone = session_dir.clone();
@@ -1218,7 +1220,7 @@ impl ServiceState {
             // failed suspend and must never become registry truth.
             {
                 let mut registry = state_clone.persistent_registry.lock().unwrap();
-                if let Some(entry) = registry.data.vms.get_mut(&id_clone) {
+                if let Some(entry) = registry.data.vms.get_mut(&name_clone) {
                     let checkpoint_path = session_dir_clone.join(RESUME_CHECKPOINT_NAME);
                     let checkpoint_complete_path = checkpoint_complete_path(&checkpoint_path);
                     if checkpoint_path.exists() && checkpoint_complete_path.exists() {
@@ -1275,7 +1277,8 @@ impl ServiceState {
         if persistent {
             let mut registry = self.persistent_registry.lock().unwrap();
             registry.register(PersistentVmEntry {
-                name: id.to_string(),
+                id: id.to_string(),
+                name: name.to_string(),
                 profile_id: profile_id.clone(),
                 profile_revision: profile_revision.clone(),
                 profile_payload_hash: profile_payload_hash.clone(),
@@ -1341,28 +1344,32 @@ impl ServiceState {
     /// existing session directory.
     fn resume_sandbox(
         self: &Arc<Self>,
-        name: &str,
+        id: &str,
         ram_mb_override: Option<u64>,
         cpus_override: Option<u32>,
     ) -> Result<String> {
         self.cleanup_stale_instances();
         self.reconcile_persistent_defunct_from_logs();
 
+        let entry = find_persistent_entry_by_route_id(self.as_ref(), id)
+            .ok_or_else(|| anyhow!("no persistent VM with id \"{}\"", id))?;
+        let vm_id = persistent_entry_vm_id(&entry);
+        if vm_id != id {
+            return Err(anyhow!(
+                "route id mismatch: requested \"{}\", registry has \"{}\"",
+                id,
+                vm_id
+            ));
+        }
+        let name = entry.name.clone();
+
         // Check if already running
         {
             let instances = self.instances.lock().unwrap();
-            if instances.contains_key(name) {
-                return Ok(name.to_string()); // Already running, just return ID
+            if instances.contains_key(&vm_id) {
+                return Ok(vm_id);
             }
         }
-
-        let entry = {
-            let registry = self.persistent_registry.lock().unwrap();
-            registry
-                .get(name)
-                .cloned()
-                .ok_or_else(|| anyhow!("no persistent VM named \"{}\"", name))?
-        };
 
         if !entry.session_dir.exists() {
             return Err(anyhow!("session directory for \"{}\" is missing", name));
@@ -1381,7 +1388,7 @@ impl ServiceState {
 
         info!(name, version, "resume_sandbox: re-spawning process");
 
-        let uds_path = self.instance_socket_path(name);
+        let uds_path = self.instance_socket_path(&vm_id);
         let _ = std::fs::create_dir_all(uds_path.parent().unwrap());
 
         // Clear stale UDS + ready sentinel from the prior boot. Without this,
@@ -1415,7 +1422,9 @@ impl ServiceState {
         }
 
         // Inject VM identity so the guest knows its own name/ID.
-        child_cmd.arg("--env").arg(format!("CAPSEM_VM_ID={}", name));
+        child_cmd
+            .arg("--env")
+            .arg(format!("CAPSEM_VM_ID={}", vm_id));
         child_cmd
             .arg("--env")
             .arg(format!("CAPSEM_VM_NAME={}", name));
@@ -1453,7 +1462,7 @@ impl ServiceState {
             }
         }
         // W4: propagate trace context (resume path).
-        for (k, v) in capsem_core::telemetry::child_trace_env(name) {
+        for (k, v) in capsem_core::telemetry::child_trace_env(&vm_id) {
             child_cmd.env(k, v);
         }
 
@@ -1472,7 +1481,7 @@ impl ServiceState {
                     }),
                 )
                 .arg("--id")
-                .arg(name)
+                .arg(&vm_id)
                 .arg("--assets-dir")
                 .arg(&self.assets_dir)
                 .arg("--rootfs")
@@ -1508,25 +1517,25 @@ impl ServiceState {
         let pid = child.id().unwrap_or(0);
         info!(name, pid, "capsem-process resumed");
 
-        let name_clone = name.to_string();
+        let vm_id_clone = vm_id.clone();
         let state_clone = Arc::clone(self);
         let uds_clone = uds_path.clone();
         tokio::spawn(async move {
             let exit_status = child.wait().await;
-            info!(name_clone, exit_status = ?exit_status, "capsem-process (resume) exited, cleaning up");
+            info!(vm_id_clone, exit_status = ?exit_status, "capsem-process (resume) exited, cleaning up");
             // Persistent VMs: remove from instances but keep session dir.
-            tracing::warn!(name_clone, exit_status = ?exit_status, "resume_sandbox child exit handler removing instance");
-            state_clone.instances.lock().unwrap().remove(&name_clone);
-            state_clone.unregister_session_db_handle(&name_clone);
+            tracing::warn!(vm_id_clone, exit_status = ?exit_status, "resume_sandbox child exit handler removing instance");
+            state_clone.instances.lock().unwrap().remove(&vm_id_clone);
+            state_clone.unregister_session_db_handle(&vm_id_clone);
             let _ = std::fs::remove_file(&uds_clone);
             let _ = std::fs::remove_file(uds_clone.with_extension("ready"));
         });
 
         if session_db_path_for_session_dir(&entry.session_dir).exists() {
-            self.register_session_db_handle(name, &entry.session_dir)?;
+            self.register_session_db_handle(&vm_id, &entry.session_dir)?;
         } else {
             info!(
-                vm_id = name,
+                vm_id = vm_id,
                 operation = "defer_session_db_handle_registration",
                 session_dir = %entry.session_dir.display(),
                 "session DB not present yet; route will register the external reader lazily"
@@ -1535,9 +1544,9 @@ impl ServiceState {
 
         let mut instances = self.instances.lock().unwrap();
         instances.insert(
-            name.to_string(),
+            vm_id.clone(),
             InstanceInfo {
-                id: name.to_string(),
+                id: vm_id.clone(),
                 profile_id: entry.profile_id.clone(),
                 profile_revision: entry.profile_revision.clone(),
                 profile_payload_hash: entry.profile_payload_hash.clone(),
@@ -1555,12 +1564,11 @@ impl ServiceState {
             },
         );
 
-        Ok(name.to_string())
+        Ok(vm_id)
     }
 
-    fn has_existing_resume_checkpoint(&self, name: &str) -> bool {
-        let registry = self.persistent_registry.lock().unwrap();
-        registry.get(name).is_some_and(|entry| {
+    fn has_existing_resume_checkpoint(&self, id: &str) -> bool {
+        find_persistent_entry_by_route_id(self, id).is_some_and(|entry| {
             entry.suspended
                 && entry.checkpoint_path.as_ref().is_some_and(|cp| {
                     let checkpoint = entry.session_dir.join(cp);
@@ -1569,13 +1577,11 @@ impl ServiceState {
         })
     }
 
-    fn archive_failed_restore_checkpoint(&self, name: &str) -> Option<PathBuf> {
-        let (session_dir, checkpoint_name) = {
-            let registry = self.persistent_registry.lock().unwrap();
-            let entry = registry.get(name)?;
-            let checkpoint_name = entry.checkpoint_path.clone()?;
-            (entry.session_dir.clone(), checkpoint_name)
-        };
+    fn archive_failed_restore_checkpoint(&self, id: &str) -> Option<PathBuf> {
+        let entry = find_persistent_entry_by_route_id(self, id)?;
+        let name = entry.name.clone();
+        let checkpoint_name = entry.checkpoint_path.clone()?;
+        let session_dir = entry.session_dir.clone();
 
         let checkpoint_path = session_dir.join(&checkpoint_name);
         if !checkpoint_path.exists() {
@@ -1625,7 +1631,11 @@ impl ServiceState {
 
     fn clear_resume_checkpoint(&self, id: &str) {
         let mut registry = self.persistent_registry.lock().unwrap();
-        if let Some(entry) = registry.get_mut(id) {
+        let key = registry
+            .list()
+            .find(|entry| persistent_entry_vm_id(entry) == id)
+            .map(|entry| entry.name.clone());
+        if let Some(entry) = key.and_then(|key| registry.get_mut(&key)) {
             if let Some(checkpoint_name) = entry.checkpoint_path.as_ref() {
                 let checkpoint_path = entry.session_dir.join(checkpoint_name);
                 let _ = std::fs::remove_file(checkpoint_complete_path(&checkpoint_path));
@@ -2742,17 +2752,16 @@ async fn handle_fork(
             )
         } else {
             drop(instances);
-            let registry = state.persistent_registry.lock().unwrap();
-            if let Some(p) = registry.get(&id) {
+            if let Some(p) = find_persistent_entry_by_route_id(&state, &id) {
                 (
-                    p.session_dir.clone(),
-                    p.profile_id.clone(),
-                    p.profile_revision.clone(),
-                    p.profile_payload_hash.clone(),
-                    p.asset_pins.clone(),
+                    p.session_dir,
+                    p.profile_id,
+                    p.profile_revision,
+                    p.profile_payload_hash,
+                    p.asset_pins,
                     p.ram_mb,
                     p.cpus,
-                    p.base_version.clone(),
+                    p.base_version,
                     None,
                 )
             } else {
@@ -2794,8 +2803,10 @@ async fn handle_fork(
         }
     }
 
-    // Clone state into new persistent sandbox
-    let new_session_dir = state.run_dir.join("persistent").join(name);
+    // Clone state into new persistent sandbox. The route/runtime id is
+    // separate from the human display name.
+    let vm_id = new_persistent_vm_id();
+    let new_session_dir = state.run_dir.join("persistent").join(&vm_id);
     let _ = std::fs::create_dir_all(state.run_dir.join("persistent"));
     let _ = std::fs::create_dir_all(&new_session_dir);
 
@@ -2827,6 +2838,7 @@ async fn handle_fork(
         let mut registry = state.persistent_registry.lock().unwrap();
         registry
             .register(PersistentVmEntry {
+                id: vm_id.clone(),
                 name: name.clone(),
                 profile_id,
                 profile_revision,
@@ -2947,10 +2959,15 @@ async fn handle_provision(
         return Err(AppError(StatusCode::PRECONDITION_FAILED, reason));
     }
 
-    let id = payload.name.clone().unwrap_or_else(|| {
+    let name = payload.name.clone().unwrap_or_else(|| {
         let existing = existing_session_names(&state);
         generate_profile_session_name(&profile_id, existing.iter().map(|s| s.as_str()))
     });
+    let id = if payload.persistent {
+        new_persistent_vm_id()
+    } else {
+        name.clone()
+    };
 
     let profile = state
         .profile_config(&profile_id)
@@ -2980,6 +2997,7 @@ async fn handle_provision(
     let result = capsem_core::poll::poll_until(opts, || {
         let state = Arc::clone(&state);
         let id = id_for_loop.clone();
+        let name = name.clone();
         let payload_env = payload.env.clone();
         let payload_from = payload.from.clone();
         let payload_profile_id = profile_id.clone();
@@ -2995,7 +3013,7 @@ async fn handle_provision(
             // the persistent entry.
             if attempt > 1 {
                 let mut registry = state.persistent_registry.lock().unwrap();
-                let _ = registry.unregister(&id);
+                let _ = registry.unregister(&name);
                 drop(registry);
                 state.instances.lock().unwrap().remove(&id);
                 warn!(
@@ -3007,6 +3025,7 @@ async fn handle_provision(
             let outcome = provision_attempt(
                 &state,
                 &id,
+                &name,
                 ram_mb,
                 cpus,
                 scratch_disk_size_gb,
@@ -3071,6 +3090,7 @@ async fn handle_provision(
 async fn provision_attempt(
     state: &Arc<ServiceState>,
     id: &str,
+    name: &str,
     ram_mb: u64,
     cpus: u32,
     scratch_disk_size_gb: u32,
@@ -3095,10 +3115,12 @@ async fn provision_attempt(
 
     let state_clone = Arc::clone(state);
     let id_owned = id.to_string();
+    let name_owned = name.to_string();
     let version = state.current_version.clone();
     let provision_result = match tokio::task::spawn_blocking(move || {
         state_clone.provision_sandbox(ProvisionOptions {
             id: &id_owned,
+            name: &name_owned,
             profile_id,
             ram_mb,
             cpus,
@@ -3143,10 +3165,7 @@ async fn provision_attempt(
             // handler) to avoid re-reading the log; fall back to
             // find_failed_session_dir for ephemeral VMs whose dir was
             // renamed to `-failed-*`.
-            let cached = {
-                let registry = state.persistent_registry.lock().unwrap();
-                registry.get(id).and_then(|e| e.last_error.clone())
-            };
+            let cached = find_persistent_entry_by_route_id(&state, id).and_then(|e| e.last_error);
             let tail =
                 cached.unwrap_or_else(|| match find_failed_session_dir(&state.run_dir, id) {
                     Some(dir) => read_process_log_tail(&dir, 20),
@@ -3214,7 +3233,7 @@ async fn handle_list(State(state): State<Arc<ServiceState>>) -> Json<ListRespons
                 i.persistent,
             );
             info.name = if i.persistent {
-                Some(i.id.clone())
+                persistent_name_for_route_id(&state, &i.id).or_else(|| Some(i.id.clone()))
             } else {
                 None
             };
@@ -3238,19 +3257,14 @@ async fn handle_list(State(state): State<Arc<ServiceState>>) -> Json<ListRespons
         let instances = state.instances.lock().unwrap();
         registry
             .list()
-            .filter(|entry| !instances.contains_key(&entry.name))
+            .filter(|entry| !instances.contains_key(&persistent_entry_vm_id(entry)))
             .cloned()
             .collect()
     };
     for entry in inactive_persistent {
+        let vm_id = persistent_entry_vm_id(&entry);
         let (status, can_resume, blocked_reason) = state.persistent_entry_resume_state(&entry);
-        let mut info = SandboxInfo::new(
-            entry.name.clone(),
-            entry.profile_id.clone(),
-            0,
-            status,
-            true,
-        );
+        let mut info = SandboxInfo::new(vm_id, entry.profile_id.clone(), 0, status, true);
         info.name = Some(entry.name.clone());
         info.ram_mb = Some(entry.ram_mb);
         info.cpus = Some(entry.cpus);
@@ -3291,7 +3305,7 @@ async fn handle_info(
                         i.persistent,
                     );
                     info.name = if i.persistent {
-                        Some(i.id.clone())
+                        persistent_name_for_route_id(&state, &i.id).or_else(|| Some(i.id.clone()))
                     } else {
                         None
                     };
@@ -3309,32 +3323,17 @@ async fn handle_info(
         };
         if let (Some(mut info), Some(dir)) = (instance_data, session_dir) {
             apply_session_db_status(&state, &mut info, &dir).await;
-            if let Err(error) = apply_live_session_counters_from_ledger(&state, &mut info).await {
-                warn!(
-                    vm_id = info.id.as_str(),
-                    error = %error.1,
-                    "failed to apply live session counters to info row"
-                );
-            }
             info.storage = storage_diagnostics(&dir);
             return Ok(Json(info));
         }
     }
 
     // Check stopped/suspended/defunct persistent VMs
-    let persistent_entry = {
-        let registry = state.persistent_registry.lock().unwrap();
-        registry.get(&id).cloned()
-    };
+    let persistent_entry = find_persistent_entry_by_route_id(&state, &id);
     if let Some(entry) = persistent_entry {
+        let vm_id = persistent_entry_vm_id(&entry);
         let (status, can_resume, blocked_reason) = state.persistent_entry_resume_state(&entry);
-        let mut info = SandboxInfo::new(
-            entry.name.clone(),
-            entry.profile_id.clone(),
-            0,
-            status,
-            true,
-        );
+        let mut info = SandboxInfo::new(vm_id, entry.profile_id.clone(), 0, status, true);
         info.name = Some(entry.name.clone());
         info.ram_mb = Some(entry.ram_mb);
         info.cpus = Some(entry.cpus);
@@ -3387,12 +3386,11 @@ async fn handle_vm_status(
     }
 
     {
-        let registry = state.persistent_registry.lock().unwrap();
-        if let Some(entry) = registry.get(&id).cloned() {
-            drop(registry);
+        if let Some(entry) = find_persistent_entry_by_route_id(&state, &id) {
+            let vm_id = persistent_entry_vm_id(&entry);
             let (status, can_resume, blocked_reason) = state.persistent_entry_resume_state(&entry);
             return Ok(Json(api::VmStatusResponse {
-                id: entry.name.clone(),
+                id: vm_id,
                 status,
                 pid: None,
                 persistent: true,
@@ -3580,8 +3578,7 @@ async fn handle_logs(
         if let Some(i) = instances.get(&id) {
             i.session_dir.clone()
         } else {
-            let registry = state.persistent_registry.lock().unwrap();
-            match registry.get(&id).map(|e| e.session_dir.clone()) {
+            match find_persistent_entry_by_route_id(&state, &id).map(|e| e.session_dir) {
                 Some(dir) => dir,
                 None => {
                     // VM might have crashed on boot. preserve_failed_session_dir
@@ -7065,29 +7062,53 @@ async fn open_ready_session_db(
             "session.db absent",
         ));
     }
-    let db = if let Some(handle) = state.session_db_handle(vm_id) {
-        handle
-    } else {
-        let session_dir = db_path.parent().ok_or_else(|| {
-            ledger_route_error(
+    let db = match state.session_db_handle(vm_id) {
+        Some(handle) if handle.path() == db_path => handle,
+        Some(handle) => {
+            warn!(
                 vm_id,
                 ledger,
-                "resolve session dir",
-                db_path,
-                "missing parent",
-            )
-        })?;
-        let handle = state
-            .register_session_db_handle(vm_id, session_dir)
-            .map_err(|error| ledger_route_error(vm_id, ledger, "open", db_path, error))?;
-        info!(
-            vm_id,
-            ledger,
-            operation = "lazy_register_session_db_handle",
-            db_path = %db_path.display(),
-            "registered missing session DB handle for route"
-        );
-        handle
+                operation = "replace_stale_session_db_handle",
+                cached_db_path = %handle.path().display(),
+                db_path = %db_path.display(),
+                "session DB handle path did not match resolved session path"
+            );
+            state.unregister_session_db_handle(vm_id);
+            let session_dir = db_path.parent().ok_or_else(|| {
+                ledger_route_error(
+                    vm_id,
+                    ledger,
+                    "resolve session dir",
+                    db_path,
+                    "missing parent",
+                )
+            })?;
+            state
+                .register_session_db_handle(vm_id, session_dir)
+                .map_err(|error| ledger_route_error(vm_id, ledger, "open", db_path, error))?
+        }
+        None => {
+            let session_dir = db_path.parent().ok_or_else(|| {
+                ledger_route_error(
+                    vm_id,
+                    ledger,
+                    "resolve session dir",
+                    db_path,
+                    "missing parent",
+                )
+            })?;
+            let handle = state
+                .register_session_db_handle(vm_id, session_dir)
+                .map_err(|error| ledger_route_error(vm_id, ledger, "open", db_path, error))?;
+            info!(
+                vm_id,
+                ledger,
+                operation = "lazy_register_session_db_handle",
+                db_path = %db_path.display(),
+                "registered missing session DB handle for route"
+            );
+            handle
+        }
     };
     db.ready()
         .await
@@ -7634,28 +7655,6 @@ const TIMELINE_COLUMNS: [&str; 7] = [
 ];
 
 #[derive(Clone, Debug)]
-struct LiveSessionCounters {
-    stats: capsem_logger::SessionStats,
-}
-
-#[derive(Debug, Deserialize)]
-struct LiveSessionCounterRow {
-    net_total: u64,
-    net_allowed: u64,
-    net_denied: u64,
-    net_error: u64,
-    net_bytes_sent: u64,
-    net_bytes_received: u64,
-    model_call_count: u64,
-    total_input_tokens: u64,
-    total_output_tokens: u64,
-    total_model_duration_ms: u64,
-    total_estimated_cost_usd: f64,
-    total_tool_calls: u64,
-    total_usage_details: Option<String>,
-}
-
-#[derive(Clone, Debug)]
 struct TimelineRow {
     timestamp: String,
     layer: String,
@@ -7796,83 +7795,6 @@ async fn read_timeline_rows_from_session_db(
     )
     .await?;
     Ok(Some(timeline_rows_from_query_json(raw)))
-}
-
-const LIVE_SESSION_COUNTERS_SQL: &str = r#"
-SELECT
-    (SELECT COUNT(*) FROM net_events) AS net_total,
-    (SELECT COALESCE(SUM(CASE WHEN decision = 'allowed' THEN 1 ELSE 0 END), 0) FROM net_events) AS net_allowed,
-    (SELECT COALESCE(SUM(CASE WHEN decision = 'denied' THEN 1 ELSE 0 END), 0) FROM net_events) AS net_denied,
-    (SELECT COALESCE(SUM(CASE WHEN decision = 'error' THEN 1 ELSE 0 END), 0) FROM net_events) AS net_error,
-    (SELECT COALESCE(SUM(bytes_sent), 0) FROM net_events) AS net_bytes_sent,
-    (SELECT COALESCE(SUM(bytes_received), 0) FROM net_events) AS net_bytes_received,
-    (SELECT COUNT(*) FROM model_calls) AS model_call_count,
-    (SELECT COALESCE(SUM(COALESCE(input_tokens, 0)), 0) FROM model_calls) AS total_input_tokens,
-    (SELECT COALESCE(SUM(COALESCE(output_tokens, 0)), 0) FROM model_calls) AS total_output_tokens,
-    (SELECT COALESCE(SUM(duration_ms), 0) FROM model_calls) AS total_model_duration_ms,
-    (SELECT COALESCE(SUM(estimated_cost_usd), 0.0) FROM model_calls) AS total_estimated_cost_usd,
-    (SELECT COUNT(*) FROM tool_calls WHERE origin IN ('native', 'mcp', 'builtin', 'local')) AS total_tool_calls,
-    (SELECT json_group_object(je.key, je.total) FROM (
-        SELECT je.key, SUM(je.value) AS total
-        FROM model_calls mc2, json_each(mc2.usage_details) je
-        WHERE mc2.usage_details IS NOT NULL
-        GROUP BY je.key
-    ) je) AS total_usage_details
-"#;
-
-async fn read_live_session_counters_from_session_db(
-    state: &ServiceState,
-    vm_id: &str,
-    db_path: &StdPath,
-) -> Result<Option<LiveSessionCounters>, AppError> {
-    let db = open_ready_session_db(state, vm_id, "session counter", db_path).await?;
-    let row = query_route_typed_rows::<LiveSessionCounterRow>(
-        vm_id,
-        "session counter",
-        "stats",
-        db_path,
-        &db,
-        LIVE_SESSION_COUNTERS_SQL,
-        &[],
-    )
-    .await?
-    .into_iter()
-    .next();
-    let stats = row
-        .map(|row| capsem_logger::SessionStats {
-            net_total: row.net_total,
-            net_allowed: row.net_allowed,
-            net_denied: row.net_denied,
-            net_error: row.net_error,
-            net_bytes_sent: row.net_bytes_sent,
-            net_bytes_received: row.net_bytes_received,
-            model_call_count: row.model_call_count,
-            total_input_tokens: row.total_input_tokens,
-            total_output_tokens: row.total_output_tokens,
-            total_usage_details: row
-                .total_usage_details
-                .and_then(|value| serde_json::from_str(&value).ok())
-                .unwrap_or_default(),
-            total_model_duration_ms: row.total_model_duration_ms,
-            total_tool_calls: row.total_tool_calls,
-            total_estimated_cost_usd: row.total_estimated_cost_usd,
-        })
-        .unwrap_or(capsem_logger::SessionStats {
-            net_total: 0,
-            net_allowed: 0,
-            net_denied: 0,
-            net_error: 0,
-            net_bytes_sent: 0,
-            net_bytes_received: 0,
-            model_call_count: 0,
-            total_input_tokens: 0,
-            total_output_tokens: 0,
-            total_usage_details: BTreeMap::new(),
-            total_model_duration_ms: 0,
-            total_tool_calls: 0,
-            total_estimated_cost_usd: 0.0,
-        });
-    Ok(Some(LiveSessionCounters { stats }))
 }
 
 async fn history_ledger_for_vm(
@@ -8241,119 +8163,6 @@ fn hydrate_startup_route_caches(state: &ServiceState) -> Result<(), AppError> {
             format!("failed to build profile status cache: {message}"),
         )
     })?;
-    Ok(())
-}
-
-async fn apply_live_session_counters_from_ledger(
-    state: &ServiceState,
-    info: &mut SandboxInfo,
-) -> Result<(), AppError> {
-    let session_dir = match resolve_session_dir(state, &info.id) {
-        Ok(session_dir) => session_dir,
-        Err(_) => return Ok(()),
-    };
-    let db_path = session_dir.join("session.db");
-    if let Some(counters) =
-        read_live_session_counters_from_session_db(state, &info.id, &db_path).await?
-    {
-        let stats = &counters.stats;
-        if stats.net_total > 0 {
-            info.total_requests = Some(stats.net_total);
-            info.allowed_requests = Some(stats.net_allowed);
-            info.denied_requests = Some(stats.net_denied);
-        }
-        if stats.model_call_count > 0 {
-            info.model_call_count = Some(stats.model_call_count);
-            info.total_input_tokens = Some(stats.total_input_tokens);
-            info.total_output_tokens = Some(stats.total_output_tokens);
-            info.total_estimated_cost = Some(stats.total_estimated_cost_usd);
-        }
-        if stats.total_tool_calls > 0 {
-            info.total_tool_calls = Some(stats.total_tool_calls);
-        }
-    }
-    let payload = if db_path.exists() {
-        read_stats_detail_payload_from_session_db(state, &info.id, &db_path).await?
-    } else {
-        return Ok(());
-    };
-    let http_events = payload
-        .get("http_events")
-        .and_then(serde_json::Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let model_events = payload
-        .get("model_events")
-        .and_then(serde_json::Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let model_stats = payload
-        .get("model_stats")
-        .and_then(serde_json::Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let file_events = payload
-        .get("file_events")
-        .and_then(serde_json::Value::as_array)
-        .map(|events| events.len() as u64)
-        .unwrap_or(0);
-    let tool_events = payload
-        .get("tool_events")
-        .and_then(serde_json::Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let total_requests = http_events.len() as u64;
-    let allowed_requests = http_events
-        .iter()
-        .filter(|event| {
-            event.get("decision").and_then(serde_json::Value::as_str) == Some("allowed")
-        })
-        .count() as u64;
-    if total_requests > 0 {
-        info.total_requests = Some(total_requests);
-        info.allowed_requests = Some(allowed_requests);
-        info.denied_requests = Some(total_requests.saturating_sub(allowed_requests));
-    }
-    if !model_events.is_empty() {
-        info.model_call_count = Some(model_events.len() as u64);
-        info.total_input_tokens = Some(
-            model_events
-                .iter()
-                .filter_map(|event| {
-                    event
-                        .get("input_tokens")
-                        .and_then(serde_json::Value::as_u64)
-                })
-                .sum(),
-        );
-        info.total_output_tokens = Some(
-            model_events
-                .iter()
-                .filter_map(|event| {
-                    event
-                        .get("output_tokens")
-                        .and_then(serde_json::Value::as_u64)
-                })
-                .sum(),
-        );
-    }
-    if !model_stats.is_empty() {
-        info.total_estimated_cost = Some(
-            model_stats
-                .iter()
-                .filter_map(|stat| {
-                    stat.get("estimated_cost_usd")
-                        .and_then(serde_json::Value::as_f64)
-                })
-                .sum(),
-        );
-    }
-    if file_events > 0 {
-        info.total_file_events = Some(file_events);
-    }
-    if !tool_events.is_empty() {
-        info.total_tool_calls = Some(tool_events.len() as u64);
-    }
     Ok(())
 }
 
@@ -9965,14 +9774,48 @@ fn secs_to_rfc3339(secs: u64) -> String {
 // ---------------------------------------------------------------------------
 
 /// Helper: resolve session_dir from instance ID (running or persistent).
+fn persistent_entry_vm_id(entry: &PersistentVmEntry) -> String {
+    if !entry.id.trim().is_empty() {
+        return entry.id.clone();
+    }
+    entry
+        .session_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or(&entry.name)
+        .to_string()
+}
+
+fn find_persistent_entry_by_route_id(state: &ServiceState, id: &str) -> Option<PersistentVmEntry> {
+    let registry = state.persistent_registry.lock().unwrap();
+    let entry = registry
+        .list()
+        .find(|entry| persistent_entry_vm_id(entry) == id)
+        .cloned();
+    entry
+}
+
+fn persistent_name_for_route_id(state: &ServiceState, id: &str) -> Option<String> {
+    find_persistent_entry_by_route_id(state, id).map(|entry| entry.name)
+}
+
+fn persistent_registry_key_for_route_id(state: &ServiceState, id: &str) -> Option<String> {
+    let registry = state.persistent_registry.lock().unwrap();
+    let key = registry
+        .list()
+        .find(|entry| persistent_entry_vm_id(entry) == id)
+        .map(|entry| entry.name.clone());
+    key
+}
+
 fn resolve_session_dir(state: &ServiceState, id: &str) -> Result<PathBuf, AppError> {
     let instances = state.instances.lock().unwrap();
     if let Some(i) = instances.get(id) {
         return Ok(i.session_dir.clone());
     }
     drop(instances);
-    let registry = state.persistent_registry.lock().unwrap();
-    if let Some(entry) = registry.get(id) {
+    if let Some(entry) = find_persistent_entry_by_route_id(state, id) {
         return Ok(entry.session_dir.clone());
     }
     Err(AppError(
@@ -10360,12 +10203,14 @@ async fn handle_suspend(
 
     // Update persistent registry
     {
-        let mut registry = state.persistent_registry.lock().unwrap();
-        if let Some(entry) = registry.get_mut(&id) {
-            entry.suspended = true;
-            entry.checkpoint_path = Some(RESUME_CHECKPOINT_NAME.to_string());
-            if let Err(e) = registry.save() {
-                error!(id, "failed to save persistent registry: {e}");
+        if let Some(key) = persistent_registry_key_for_route_id(&state, &id) {
+            let mut registry = state.persistent_registry.lock().unwrap();
+            if let Some(entry) = registry.get_mut(&key) {
+                entry.suspended = true;
+                entry.checkpoint_path = Some(RESUME_CHECKPOINT_NAME.to_string());
+                if let Err(e) = registry.save() {
+                    error!(id, "failed to save persistent registry: {e}");
+                }
             }
         }
     }
@@ -10408,9 +10253,8 @@ async fn handle_delete(
             session_dir
         } else {
             // Not running -- check persistent registry for stopped VM
-            let registry = state.persistent_registry.lock().unwrap();
-            if let Some(entry) = registry.get(&id) {
-                entry.session_dir.clone()
+            if let Some(entry) = find_persistent_entry_by_route_id(&state, &id) {
+                entry.session_dir
             } else {
                 return Err(AppError(
                     StatusCode::NOT_FOUND,
@@ -10421,9 +10265,11 @@ async fn handle_delete(
 
     // Unregister from persistent registry if applicable
     {
-        let mut registry = state.persistent_registry.lock().unwrap();
-        if registry.contains(&id) {
-            let _ = registry.unregister(&id);
+        if let Some(key) = persistent_registry_key_for_route_id(&state, &id) {
+            let mut registry = state.persistent_registry.lock().unwrap();
+            if registry.contains(&key) {
+                let _ = registry.unregister(&key);
+            }
         }
     }
 
@@ -10448,7 +10294,7 @@ async fn handle_delete(
 
 async fn handle_resume(
     State(state): State<Arc<ServiceState>>,
-    Path(name): Path<String>,
+    Path(id): Path<String>,
 ) -> Result<Json<ProvisionResponse>, AppError> {
     // See handle_suspend: same lock, same reason. Restore happens in the
     // freshly spawned capsem-process's boot, so the lock must bridge the
@@ -10457,21 +10303,22 @@ async fn handle_resume(
     let _vz_guard = state.save_restore_lock.write().await;
     let _vz_host_guard = acquire_vz_host_lock(startup::VzHostLockMode::Exclusive).await?;
 
-    let attempted_checkpoint = state.has_existing_resume_checkpoint(&name);
+    let attempted_checkpoint = state.has_existing_resume_checkpoint(&id);
 
-    match state.resume_sandbox(&name, None, None) {
-        Ok(id) => {
-            let uds_path = state.instance_socket_path(&id);
-            if let Err(e) = wait_for_vm_ready(&uds_path, 30, Some(&state), Some(&id)).await {
-                error!(name, "resume ready-wait failed: {e}");
+    match state.resume_sandbox(&id, None, None) {
+        Ok(resumed_id) => {
+            let uds_path = state.instance_socket_path(&resumed_id);
+            if let Err(e) = wait_for_vm_ready(&uds_path, 30, Some(&state), Some(&resumed_id)).await
+            {
+                error!(id, "resume ready-wait failed: {e}");
                 if attempted_checkpoint {
                     warn!(
-                        name,
+                        id,
                         "warm restore failed; archiving checkpoint and retrying as a cold persistent boot"
                     );
-                    state.archive_failed_restore_checkpoint(&id);
+                    state.archive_failed_restore_checkpoint(&resumed_id);
 
-                    match state.resume_sandbox(&name, None, None) {
+                    match state.resume_sandbox(&resumed_id, None, None) {
                         Ok(cold_id) => {
                             let cold_uds_path = state.instance_socket_path(&cold_id);
                             if let Err(cold_e) =
@@ -10479,7 +10326,7 @@ async fn handle_resume(
                                     .await
                             {
                                 error!(
-                                    name,
+                                    id,
                                     "cold resume fallback failed after warm restore failure: {cold_e}"
                                 );
                                 return Err(AppError(
@@ -10495,7 +10342,7 @@ async fn handle_resume(
                         }
                         Err(cold_e) => {
                             error!(
-                                name,
+                                id,
                                 "cold resume fallback spawn failed after warm restore failure: {cold_e}"
                             );
                             return Err(AppError(
@@ -10512,13 +10359,13 @@ async fn handle_resume(
                     format!("resume failed: {e}"),
                 ));
             }
-            state.clear_resume_checkpoint(&id);
-            provision_response_for_running(&state, id, uds_path).map(Json)
+            state.clear_resume_checkpoint(&resumed_id);
+            provision_response_for_running(&state, resumed_id, uds_path).map(Json)
         }
         Err(e) => {
-            error!(name, "resume failed: {e}");
+            error!(id, "resume failed: {e}");
             Err(AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
+                StatusCode::NOT_FOUND,
                 format!("resume failed: {e}"),
             ))
         }
@@ -10539,6 +10386,7 @@ fn provision_response_for_running(
     })?;
     let status = VmLifecycleState::Running;
     Ok(ProvisionResponse {
+        name: persistent_name_for_route_id(state, &id).unwrap_or_else(|| id.clone()),
         id,
         profile_id: instance.profile_id.clone(),
         status,
@@ -10616,8 +10464,8 @@ async fn handle_persist(
         )
         .map_err(|e| AppError(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
 
-    // Move session dir to persistent location
-    let new_session_dir = state.run_dir.join("persistent").join(name);
+    // Move session dir to persistent location without changing the runtime id.
+    let new_session_dir = state.run_dir.join("persistent").join(&id);
     let _ = std::fs::create_dir_all(state.run_dir.join("persistent"));
     std::fs::rename(&old_session_dir, &new_session_dir).map_err(|e| {
         AppError(
@@ -10631,6 +10479,7 @@ async fn handle_persist(
         let mut registry = state.persistent_registry.lock().unwrap();
         registry
             .register(PersistentVmEntry {
+                id: id.clone(),
                 name: name.clone(),
                 profile_id: profile_id.clone(),
                 profile_revision: profile_revision.clone(),
@@ -10662,11 +10511,16 @@ async fn handle_persist(
     {
         let mut instances = state.instances.lock().unwrap();
         if let Some(info) = instances.remove(&id) {
-            state.rename_session_db_handle(&id, name);
+            state.unregister_session_db_handle(&id);
+            if session_db_path_for_session_dir(&new_session_dir).exists() {
+                state
+                    .register_session_db_handle(&id, &new_session_dir)
+                    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            }
             instances.insert(
-                name.clone(),
+                id.clone(),
                 InstanceInfo {
-                    id: name.clone(),
+                    id: id.clone(),
                     profile_id,
                     profile_revision,
                     profile_payload_hash,
@@ -10726,8 +10580,10 @@ async fn handle_purge(
             continue;
         };
         if persistent {
-            let mut registry = state.persistent_registry.lock().unwrap();
-            let _ = registry.unregister(&id);
+            if let Some(key) = persistent_registry_key_for_route_id(&state, &id) {
+                let mut registry = state.persistent_registry.lock().unwrap();
+                let _ = registry.unregister(&key);
+            }
         }
         let dir = session_dir;
         tokio::task::spawn_blocking(move || {
@@ -10813,6 +10669,7 @@ async fn handle_run(
         let provision_result = tokio::task::spawn_blocking(move || {
             state_clone.provision_sandbox(ProvisionOptions {
                 id: &id_clone,
+                name: &id_clone,
                 profile_id,
                 ram_mb,
                 cpus,

@@ -56,6 +56,7 @@ pub struct ForkResponse {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ProvisionResponse {
     pub id: String,
+    pub name: String,
     pub profile_id: String,
     pub status: VmLifecycleState,
     #[serde(default)]
@@ -754,6 +755,7 @@ mod tests {
     fn provision_response_roundtrip() {
         let r = ProvisionResponse {
             id: "vm-123".into(),
+            name: "co-work1".into(),
             profile_id: "code".into(),
             status: VmLifecycleState::Running,
             persistent: true,
@@ -769,6 +771,7 @@ mod tests {
         let json = serde_json::to_string(&r).unwrap();
         let r2: ProvisionResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(r2.id, "vm-123");
+        assert_eq!(r2.name, "co-work1");
         assert_eq!(r2.profile_id, "code");
         assert_eq!(r2.status, VmLifecycleState::Running);
         assert!(r2.persistent);

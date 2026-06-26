@@ -38,6 +38,7 @@ pub struct ProvisionRequest {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ProvisionResponse {
     pub id: String,
+    pub name: String,
     pub profile_id: String,
     pub status: VmLifecycleState,
     #[serde(default)]

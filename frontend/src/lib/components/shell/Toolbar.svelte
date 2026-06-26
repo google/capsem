@@ -151,7 +151,7 @@
                 class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"
                 disabled={busy}
                 title={startLabel(activeVm)}
-                onclick={async () => { if (activeVm) { await vmStore.resume(activeVm.name ?? activeVm.id); } menuOpen = false; }}
+                onclick={async () => { if (activeVm) { await vmStore.resume(activeVm.id); } menuOpen = false; }}
               >
                 <Play size={16} />
                 <span>{startLabel(activeVm)}</span>

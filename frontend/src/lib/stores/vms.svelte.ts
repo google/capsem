@@ -85,10 +85,8 @@ class VmStore {
     console.log('[vmStore] restart(%s)', id);
     this.acting = true;
     try {
-      const vm = this.vms.find(v => v.id === id);
-      const name = vm?.name;
       await api.stopVm(id);
-      if (name) await api.resumeVm(name);
+      await api.resumeVm(id);
       await this.refresh();
     } finally {
       this.acting = false;
@@ -118,10 +116,10 @@ class VmStore {
     }
   }
 
-  async resume(name: string): Promise<void> {
+  async resume(id: string): Promise<void> {
     this.acting = true;
     try {
-      await api.resumeVm(name);
+      await api.resumeVm(id);
       await this.refresh();
     } finally {
       this.acting = false;

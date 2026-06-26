@@ -582,8 +582,8 @@ export async function purge(): Promise<Record<string, unknown>> {
   return await resp.json();
 }
 
-export async function resumeVm(name: string): Promise<void> {
-  await _post(`/vms/${encodeURIComponent(name)}/resume`);
+export async function resumeVm(id: string): Promise<void> {
+  await _post(`/vms/${encodeURIComponent(id)}/resume`);
 }
 
 export async function forkVm(id: string, opts: ForkRequest): Promise<ForkResponse> {

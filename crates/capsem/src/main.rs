@@ -692,6 +692,22 @@ fn print_session_info(info: &SessionInfo) {
     }
 }
 
+async fn resolve_session_route_id(client: &UdsClient, typed: &str) -> anyhow::Result<String> {
+    let resp: ApiResponse<ListResponse> = client.get("/vms/list").await?;
+    let list = resp.into_result()?;
+    if let Some(session) = list.sessions.iter().find(|session| session.id == typed) {
+        return Ok(session.id.clone());
+    }
+    if let Some(session) = list
+        .sessions
+        .iter()
+        .find(|session| session.name.as_deref() == Some(typed))
+    {
+        return Ok(session.id.clone());
+    }
+    anyhow::bail!("unknown session name or id: {typed}")
+}
+
 fn purge_summary_message(result: &PurgeResponse, all: bool) -> String {
     if all {
         return format!(
@@ -1445,12 +1461,14 @@ async fn main() -> Result<()> {
             description,
         }) => {
             client::validate_id(session)?;
+            let session_id = resolve_session_route_id(&client, session).await?;
             let req = ForkRequest {
                 name: name.clone(),
                 description: description.clone(),
             };
-            let resp: ApiResponse<ForkResponse> =
-                client.post(&format!("/vms/{}/fork", session), &req).await?;
+            let resp: ApiResponse<ForkResponse> = client
+                .post(&format!("/vms/{}/fork", session_id), &req)
+                .await?;
             let info = resp.into_result()?;
             let size_mb = info.size_bytes as f64 / 1024.0 / 1024.0;
             println!(
@@ -1460,8 +1478,12 @@ async fn main() -> Result<()> {
         }
         Commands::Session(SessionCommands::Resume { name }) => {
             client::validate_id(name)?;
+            let session_id = resolve_session_route_id(&client, name).await?;
             let resp: ApiResponse<ProvisionResponse> = client
-                .post(&format!("/vms/{}/resume", name), &serde_json::json!({}))
+                .post(
+                    &format!("/vms/{}/resume", session_id),
+                    &serde_json::json!({}),
+                )
                 .await?;
             let info = resp.into_result()?;
             println!("{}", info.id);
@@ -1469,8 +1491,12 @@ async fn main() -> Result<()> {
         Commands::Session(SessionCommands::Suspend { session }) => {
             client::validate_id(session)?;
             println!("Suspending session: {}", session);
+            let session_id = resolve_session_route_id(&client, session).await?;
             let resp: ApiResponse<serde_json::Value> = client
-                .post(&format!("/vms/{}/pause", session), &serde_json::json!({}))
+                .post(
+                    &format!("/vms/{}/pause", session_id),
+                    &serde_json::json!({}),
+                )
                 .await?;
             resp.into_result()?;
             println!("Session suspended.");
@@ -1544,12 +1570,14 @@ async fn main() -> Result<()> {
             timeout,
         }) => {
             client::validate_id(session)?;
+            let session_id = resolve_session_route_id(&client, session).await?;
             let req = ExecRequest {
                 command: command.clone(),
                 timeout_secs: *timeout,
             };
-            let resp: ApiResponse<ExecResponse> =
-                client.post(&format!("/vms/{}/exec", session), req).await?;
+            let resp: ApiResponse<ExecResponse> = client
+                .post(&format!("/vms/{}/exec", session_id), req)
+                .await?;
             let resp = resp.into_result()?;
             if !resp.stdout.is_empty() {
                 print!("{}", resp.stdout);
@@ -1586,16 +1614,20 @@ async fn main() -> Result<()> {
         Commands::Session(SessionCommands::Delete { session }) => {
             client::validate_id(session)?;
             println!("Deleting session: {}", session);
-            let resp: ApiResponse<serde_json::Value> =
-                client.delete(&format!("/vms/{}/delete", session)).await?;
+            let session_id = resolve_session_route_id(&client, session).await?;
+            let resp: ApiResponse<serde_json::Value> = client
+                .delete(&format!("/vms/{}/delete", session_id))
+                .await?;
             resp.into_result()?;
             println!("Session deleted.");
         }
         Commands::Session(SessionCommands::Persist { session, name }) => {
             client::validate_id(session)?;
+            let session_id = resolve_session_route_id(&client, session).await?;
             let req = PersistRequest { name: name.clone() };
-            let resp: ApiResponse<serde_json::Value> =
-                client.post(&format!("/vms/{}/save", session), &req).await?;
+            let resp: ApiResponse<serde_json::Value> = client
+                .post(&format!("/vms/{}/save", session_id), &req)
+                .await?;
             resp.into_result()?;
             println!(
                 "[*] Session \"{}\" is now persistent as \"{}\"",
@@ -1628,8 +1660,9 @@ async fn main() -> Result<()> {
         }
         Commands::Session(SessionCommands::Info { session, json }) => {
             client::validate_id(session)?;
+            let session_id = resolve_session_route_id(&client, session).await?;
             let resp: ApiResponse<SessionInfo> =
-                client.get(&format!("/vms/{}/info", session)).await?;
+                client.get(&format!("/vms/{}/info", session_id)).await?;
             let info = resp.into_result()?;
             if *json {
                 println!("{}", serde_json::to_string_pretty(&info)?);
@@ -1639,8 +1672,9 @@ async fn main() -> Result<()> {
         }
         Commands::Session(SessionCommands::Logs { session, tail }) => {
             client::validate_id(session)?;
+            let session_id = resolve_session_route_id(&client, session).await?;
             let resp: ApiResponse<LogsResponse> =
-                client.get(&format!("/vms/{}/logs", session)).await?;
+                client.get(&format!("/vms/{}/logs", session_id)).await?;
             let logs = resp.into_result()?;
 
             let tail_lines = |text: &str, n: usize| -> String {
@@ -1687,7 +1721,11 @@ async fn main() -> Result<()> {
         }) => {
             client::validate_id(session)?;
             let limit = if *all { 100_000 } else { *tail };
-            let mut url = format!("/vms/{}/history?limit={}&layer={}", session, limit, layer);
+            let session_id = resolve_session_route_id(&client, session).await?;
+            let mut url = format!(
+                "/vms/{}/history?limit={}&layer={}",
+                session_id, limit, layer
+            );
             if let Some(q) = search {
                 url.push_str(&format!(
                     "&search={}",
@@ -1765,8 +1803,9 @@ async fn main() -> Result<()> {
         }
         Commands::Session(SessionCommands::Restart { name }) => {
             client::validate_id(name)?;
+            let session_id = resolve_session_route_id(&client, name).await?;
             let info_resp: ApiResponse<SessionInfo> =
-                client.get(&format!("/vms/{}/info", name)).await?;
+                client.get(&format!("/vms/{}/info", session_id)).await?;
             let info = info_resp.into_result()?;
             if !info.persistent {
                 anyhow::bail!("Cannot restart ephemeral session \"{}\". Only persistent sessions support restart.", name);
@@ -1774,13 +1813,16 @@ async fn main() -> Result<()> {
 
             // Stop, then resume
             let stop_resp: ApiResponse<serde_json::Value> = client
-                .post(&format!("/vms/{}/stop", name), &serde_json::json!({}))
+                .post(&format!("/vms/{}/stop", session_id), &serde_json::json!({}))
                 .await?;
             stop_resp
                 .into_result()
                 .context("failed to stop session during restart")?;
             let resp: ApiResponse<ProvisionResponse> = client
-                .post(&format!("/vms/{}/resume", name), &serde_json::json!({}))
+                .post(
+                    &format!("/vms/{}/resume", session_id),
+                    &serde_json::json!({}),
+                )
                 .await?;
             let resumed = resp.into_result()?;
             println!("{}", resumed.id);
@@ -2205,8 +2247,9 @@ async fn handle_cp(client: &client::UdsClient, src: &str, dst: &str) -> Result<(
         // Download: SESSION:PATH -> local
         (Some((session, guest_path)), None) => {
             client::validate_id(session)?;
+            let session_id = resolve_session_route_id(client, session).await?;
             let url = format!(
-                "/vms/{session}/files/content?path={}",
+                "/vms/{session_id}/files/content?path={}",
                 urlencoding::encode(guest_path)
             );
             let (bytes, _ct) = client.request_bytes("GET", &url, None, None).await?;
@@ -2227,6 +2270,7 @@ async fn handle_cp(client: &client::UdsClient, src: &str, dst: &str) -> Result<(
         // Upload: local -> SESSION:PATH
         (None, Some((session, guest_path))) => {
             client::validate_id(session)?;
+            let session_id = resolve_session_route_id(client, session).await?;
             let bytes = if src == "-" {
                 use std::io::Read;
                 let mut buf = Vec::new();
@@ -2236,7 +2280,7 @@ async fn handle_cp(client: &client::UdsClient, src: &str, dst: &str) -> Result<(
                 std::fs::read(src).with_context(|| format!("read {src}"))?
             };
             let url = format!(
-                "/vms/{session}/files/content?path={}",
+                "/vms/{session_id}/files/content?path={}",
                 urlencoding::encode(guest_path)
             );
             let (resp_body, _ct) = client

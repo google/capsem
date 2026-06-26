@@ -13,6 +13,8 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PersistentVmEntry {
+    #[serde(default)]
+    pub id: String,
     pub name: String,
     pub profile_id: String,
     pub profile_revision: String,
@@ -85,7 +87,22 @@ impl PersistentRegistry {
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
-        Self { path, data }
+        let mut registry = Self { path, data };
+        if registry.ensure_entry_ids() {
+            let _ = registry.save();
+        }
+        registry
+    }
+
+    fn ensure_entry_ids(&mut self) -> bool {
+        let mut changed = false;
+        for entry in self.data.vms.values_mut() {
+            if entry.id.trim().is_empty() {
+                entry.id = new_persistent_vm_id();
+                changed = true;
+            }
+        }
+        changed
     }
 
     pub fn save(&self) -> Result<()> {
@@ -100,12 +117,23 @@ impl PersistentRegistry {
         Ok(())
     }
 
-    pub fn register(&mut self, entry: PersistentVmEntry) -> Result<()> {
+    pub fn register(&mut self, mut entry: PersistentVmEntry) -> Result<()> {
         if self.data.vms.contains_key(&entry.name) {
             return Err(anyhow!(
                 "persistent VM \"{}\" already exists. Use resume to reconnect.",
                 entry.name
             ));
+        }
+        if entry.id.trim().is_empty() {
+            entry.id = new_persistent_vm_id();
+        }
+        if self
+            .data
+            .vms
+            .values()
+            .any(|existing| existing.id == entry.id)
+        {
+            return Err(anyhow!("persistent VM id \"{}\" already exists", entry.id));
         }
         self.data.vms.insert(entry.name.clone(), entry);
         self.save()
@@ -133,6 +161,12 @@ impl PersistentRegistry {
     }
 }
 
+pub fn new_persistent_vm_id() -> String {
+    capsem_core::security_engine::SecurityEventId::new_uuid4()
+        .as_str()
+        .to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -140,6 +174,7 @@ mod tests {
 
     fn make_entry(name: &str, session_dir: PathBuf) -> PersistentVmEntry {
         PersistentVmEntry {
+            id: new_persistent_vm_id(),
             name: name.into(),
             profile_id: "code".into(),
             profile_revision: "2026.06.08.7".into(),
@@ -201,6 +236,50 @@ mod tests {
         let registry2 = PersistentRegistry::load(path);
         assert!(registry2.contains("mydev"));
         assert_eq!(registry2.get("mydev").unwrap().cpus, 4);
+    }
+
+    #[test]
+    fn persistent_registry_backfills_missing_ids() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("test_registry.json");
+        std::fs::write(
+            &path,
+            r#"{
+  "vms": {
+    "legacy": {
+      "name": "legacy",
+      "profile_id": "code",
+      "profile_revision": "2026.06.08.7",
+      "profile_payload_hash": "blake3:1111111111111111111111111111111111111111111111111111111111111111",
+      "asset_pins": {
+        "kernel": {"name": "vmlinuz", "hash": "blake3:aa933a569fe27ed014ae76b58eb278d72fbde8a3cbd4c06a23da2987e70d0bd1"},
+        "initrd": {"name": "initrd.img", "hash": "blake3:ad31b76e82d487b207302109396b6dfa9bca97cb624c576dd3ccb6f59946cc96"},
+        "rootfs": {"name": "rootfs.erofs", "hash": "blake3:dd32949abf690412c611f1a558d1bb6462089f98e585009d70fb70e8ad6a6620"}
+      },
+      "ram_mb": 2048,
+      "cpus": 2,
+      "base_version": "0.1.0",
+      "created_at": "12345",
+      "session_dir": "/tmp/legacy"
+    }
+  }
+}"#,
+        )
+        .unwrap();
+
+        let registry = PersistentRegistry::load(path.clone());
+        let id = &registry.get("legacy").unwrap().id;
+        assert!(
+            !id.is_empty(),
+            "legacy registry entries must get durable ids"
+        );
+
+        let reloaded = PersistentRegistry::load(path);
+        assert_eq!(
+            reloaded.get("legacy").unwrap().id,
+            *id,
+            "backfilled ids must be saved instead of regenerated on each load"
+        );
     }
 
     #[test]

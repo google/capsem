@@ -567,6 +567,32 @@ struct McpCallParams {
     arguments: Option<Value>,
 }
 
+async fn resolve_session_route_id(client: &UdsClient, typed: &str) -> Result<String, String> {
+    let listing = client
+        .request::<Value, Value>("GET", "/vms/list", None)
+        .await
+        .map_err(|e| e.to_string())?;
+    let rows = listing
+        .get("sandboxes")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "service /vms/list response missing sandboxes".to_string())?;
+    if let Some(id) = rows
+        .iter()
+        .find(|row| row.get("id").and_then(Value::as_str) == Some(typed))
+        .and_then(|row| row.get("id").and_then(Value::as_str))
+    {
+        return Ok(id.to_string());
+    }
+    if let Some(id) = rows
+        .iter()
+        .find(|row| row.get("name").and_then(Value::as_str) == Some(typed))
+        .and_then(|row| row.get("id").and_then(Value::as_str))
+    {
+        return Ok(id.to_string());
+    }
+    Err(format!("unknown session name or id: {typed}"))
+}
+
 #[tool_router]
 impl CapsemHandler {
     #[tool(
@@ -586,9 +612,10 @@ impl CapsemHandler {
         description = "Get serial and process logs for a session. Use grep to filter lines, tail to limit to last N lines"
     )]
     async fn vm_logs(&self, Parameters(params): Parameters<LogsParams>) -> Result<String, String> {
+        let id = resolve_session_route_id(&self.client, &params.id).await?;
         match self
             .client
-            .request::<Value, Value>("GET", &format!("/vms/{}/logs", params.id), None)
+            .request::<Value, Value>("GET", &format!("/vms/{}/logs", id), None)
             .await
         {
             Ok(mut val) => {
@@ -705,9 +732,10 @@ impl CapsemHandler {
         &self,
         Parameters(params): Parameters<TimelineMcpParams>,
     ) -> Result<String, String> {
+        let id = resolve_session_route_id(&self.client, &params.id).await?;
         let path = format!(
             "/vms/{}/timeline{}",
-            params.id,
+            id,
             query_string(&[
                 ("trace_id", params.trace_id.clone()),
                 ("since", params.since.clone()),
@@ -743,9 +771,10 @@ impl CapsemHandler {
         description = "Get session details: ID, name, profile, status, resources, version, and telemetry"
     )]
     async fn info(&self, Parameters(params): Parameters<IdParams>) -> Result<String, String> {
+        let id = resolve_session_route_id(&self.client, &params.id).await?;
         let resp = self
             .client
-            .request::<Value, Value>("GET", &format!("/vms/{}/info", params.id), None)
+            .request::<Value, Value>("GET", &format!("/vms/{}/info", id), None)
             .await;
         format_service_response(resp)
     }
@@ -755,10 +784,11 @@ impl CapsemHandler {
         description = "Run a shell command inside a session. Returns stdout, stderr, exit_code. Default 30s timeout"
     )]
     async fn exec(&self, Parameters(params): Parameters<ExecParams>) -> Result<String, String> {
+        let id = resolve_session_route_id(&self.client, &params.id).await?;
         let body = build_exec_body(&params);
         let resp = self
             .client
-            .request::<Value, Value>("POST", &format!("/vms/{}/exec", params.id), Some(body))
+            .request::<Value, Value>("POST", &format!("/vms/{}/exec", id), Some(body))
             .await;
         format_service_response(resp)
     }
@@ -771,14 +801,11 @@ impl CapsemHandler {
         &self,
         Parameters(params): Parameters<FileReadParams>,
     ) -> Result<String, String> {
+        let id = resolve_session_route_id(&self.client, &params.id).await?;
         let body = build_read_file_body(&params);
         let resp = self
             .client
-            .request::<Value, Value>(
-                "POST",
-                &format!("/vms/{}/files/read", params.id),
-                Some(body),
-            )
+            .request::<Value, Value>("POST", &format!("/vms/{}/files/read", id), Some(body))
             .await;
         format_service_response(resp)
     }
@@ -791,7 +818,8 @@ impl CapsemHandler {
         &self,
         Parameters(params): Parameters<FileWriteParams>,
     ) -> Result<String, String> {
-        let path = format!("/vms/{}/files/write", params.id);
+        let id = resolve_session_route_id(&self.client, &params.id).await?;
+        let path = format!("/vms/{}/files/write", id);
         let resp = self
             .client
             .request::<FileWriteParams, Value>("POST", &path, Some(params))
@@ -804,18 +832,20 @@ impl CapsemHandler {
         description = "Delete a session and destroy its state"
     )]
     async fn delete(&self, Parameters(params): Parameters<IdParams>) -> Result<String, String> {
+        let id = resolve_session_route_id(&self.client, &params.id).await?;
         let resp = self
             .client
-            .request::<Value, Value>("DELETE", &format!("/vms/{}/delete", params.id), None)
+            .request::<Value, Value>("DELETE", &format!("/vms/{}/delete", id), None)
             .await;
         format_service_response(resp)
     }
 
     #[tool(name = "capsem_stop", description = "Stop a session")]
     async fn stop(&self, Parameters(params): Parameters<IdParams>) -> Result<String, String> {
+        let id = resolve_session_route_id(&self.client, &params.id).await?;
         let resp = self
             .client
-            .request::<Value, Value>("POST", &format!("/vms/{}/stop", params.id), Some(json!({})))
+            .request::<Value, Value>("POST", &format!("/vms/{}/stop", id), Some(json!({})))
             .await;
         format_service_response(resp)
     }
@@ -825,13 +855,10 @@ impl CapsemHandler {
         description = "Pause a session by saving RAM and CPU state"
     )]
     async fn suspend(&self, Parameters(params): Parameters<IdParams>) -> Result<String, String> {
+        let id = resolve_session_route_id(&self.client, &params.id).await?;
         let resp = self
             .client
-            .request::<Value, Value>(
-                "POST",
-                &format!("/vms/{}/pause", params.id),
-                Some(json!({})),
-            )
+            .request::<Value, Value>("POST", &format!("/vms/{}/pause", id), Some(json!({})))
             .await;
         format_service_response(resp)
     }
@@ -841,13 +868,10 @@ impl CapsemHandler {
         description = "Resume a stopped session or get the ID of a running one"
     )]
     async fn resume(&self, Parameters(params): Parameters<NameParams>) -> Result<String, String> {
+        let id = resolve_session_route_id(&self.client, &params.name).await?;
         let resp = self
             .client
-            .request::<Value, Value>(
-                "POST",
-                &format!("/vms/{}/resume", params.name),
-                Some(json!({})),
-            )
+            .request::<Value, Value>("POST", &format!("/vms/{}/resume", id), Some(json!({})))
             .await;
         format_service_response(resp)
     }
@@ -860,10 +884,11 @@ impl CapsemHandler {
         &self,
         Parameters(params): Parameters<PersistParams>,
     ) -> Result<String, String> {
+        let id = resolve_session_route_id(&self.client, &params.id).await?;
         let body = build_persist_body(&params);
         let resp = self
             .client
-            .request::<Value, Value>("POST", &format!("/vms/{}/save", params.id), Some(body))
+            .request::<Value, Value>("POST", &format!("/vms/{}/save", id), Some(body))
             .await;
         format_service_response(resp)
     }
@@ -900,10 +925,11 @@ impl CapsemHandler {
     )]
     async fn fork(&self, Parameters(params): Parameters<ForkParams>) -> Result<String, String> {
         info!(?params, "capsem_fork tool called");
+        let id = resolve_session_route_id(&self.client, &params.id).await?;
         let body = build_fork_body(&params);
         let resp = self
             .client
-            .request::<Value, Value>("POST", &format!("/vms/{}/fork", params.id), Some(body))
+            .request::<Value, Value>("POST", &format!("/vms/{}/fork", id), Some(body))
             .await;
         format_service_response(resp)
     }

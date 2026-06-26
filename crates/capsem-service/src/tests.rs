@@ -369,6 +369,7 @@ fn install_test_profile_catalog(state: &ServiceState, profile: &ProfileConfigFil
 
 fn test_persistent_entry(name: &str, session_dir: PathBuf) -> PersistentVmEntry {
     PersistentVmEntry {
+        id: new_persistent_vm_id(),
         name: name.into(),
         profile_id: "code".into(),
         profile_revision: test_profile_revision(),
@@ -820,6 +821,11 @@ async fn profile_mcp_tool_edit_writes_profile_rule_and_mutation_ledger() {
         ))
     );
 
+    state
+        .profile_mutation_db
+        .flush()
+        .await
+        .expect("flush profile mutation DB before ledger assertion");
     let main_db = state.main_db_path();
     let reader = capsem_logger::DbReader::open(&main_db).expect("main.db mutation ledger");
     let rows = reader
@@ -932,6 +938,11 @@ async fn profile_mcp_default_edit_writes_default_rule_and_mutation_ledger() {
         ))
     );
 
+    state
+        .profile_mutation_db
+        .flush()
+        .await
+        .expect("flush profile mutation DB before ledger assertion");
     let main_db = state.main_db_path();
     let reader = capsem_logger::DbReader::open(&main_db).expect("main.db mutation ledger");
     let rows = reader
@@ -1070,12 +1081,17 @@ async fn profile_mcp_server_edit_delete_persist_profile_and_mutation_ledger() {
         .iter()
         .any(|server| server.name == "github"));
 
+    state
+        .profile_mutation_db
+        .flush()
+        .await
+        .expect("flush profile mutation DB before ledger assertion");
     let main_db = state.main_db_path();
     let reader = capsem_logger::DbReader::open(&main_db).expect("main.db mutation ledger");
     let rows = reader
         .query_raw(
             "SELECT profile_id, category, filename, target_kind, target_key, operation, status \
-             FROM profile_mutation_events ORDER BY rowid ASC",
+             FROM profile_mutation_events ORDER BY mutation_id ASC",
         )
         .expect("query profile mutation events");
     let rows: serde_json::Value = serde_json::from_str(&rows).unwrap();
@@ -1670,6 +1686,7 @@ async fn triage_route_reads_triage_ledger_from_session_db() {
             server_name: "local".to_string(),
             method: "tools/call".to_string(),
             tool_name: Some("fetch_http".to_string()),
+            transport: "vsock_frame".to_string(),
             request_id: Some("mcp-request-1".to_string()),
             request_preview: Some(r#"{"url":"https://evil.test"}"#.to_string()),
             response_preview: None,
@@ -2661,47 +2678,53 @@ async fn profile_skills_routes_persist_profile_and_mutation_ledger() {
     .unwrap();
     assert!(profile.skills.paths.is_empty());
 
+    state
+        .profile_mutation_db
+        .flush()
+        .await
+        .expect("flush profile mutation DB before ledger assertion");
     let main_db = state.main_db_path();
     let reader = capsem_logger::DbReader::open(&main_db).expect("main.db mutation ledger");
     let rows = reader
         .query_raw(
             "SELECT profile_id, category, filename, target_kind, target_key, operation, status \
-             FROM profile_mutation_events ORDER BY rowid ASC",
+             FROM profile_mutation_events ORDER BY mutation_id ASC",
         )
         .expect("query profile mutation events");
     let rows: serde_json::Value = serde_json::from_str(&rows).unwrap();
-    assert_eq!(
-        rows["rows"],
+    let rows = rows["rows"].as_array().expect("mutation rows");
+    assert_eq!(rows.len(), 3, "{rows:?}");
+    for expected in [
         json!([
-            [
-                "code",
-                "skills",
-                "profile.toml",
-                "skill",
-                "security",
-                "add",
-                "applied"
-            ],
-            [
-                "code",
-                "skills",
-                "profile.toml",
-                "skill",
-                "review",
-                "edit",
-                "applied"
-            ],
-            [
-                "code",
-                "skills",
-                "profile.toml",
-                "skill",
-                "review",
-                "delete",
-                "applied"
-            ]
-        ])
-    );
+            "code",
+            "skills",
+            "profile.toml",
+            "skill",
+            "security",
+            "add",
+            "applied"
+        ]),
+        json!([
+            "code",
+            "skills",
+            "profile.toml",
+            "skill",
+            "review",
+            "edit",
+            "applied"
+        ]),
+        json!([
+            "code",
+            "skills",
+            "profile.toml",
+            "skill",
+            "review",
+            "delete",
+            "applied"
+        ]),
+    ] {
+        assert!(rows.contains(&expected), "missing {expected}: {rows:?}");
+    }
 }
 
 #[tokio::test]
@@ -5215,6 +5238,7 @@ fn asset_cleanup_preserves_profile_catalog_and_persistent_vm_pins() {
     registry.data.vms.insert(
         "saved-vm".into(),
         PersistentVmEntry {
+            id: new_persistent_vm_id(),
             name: "saved-vm".into(),
             profile_id: "code".into(),
             profile_revision: test_profile_revision(),
@@ -5998,6 +6022,7 @@ fn provision_accepts_name_just_under_uds_limit() {
     let ok_name = "x".repeat(name_len);
     let result = state.provision_sandbox(ProvisionOptions {
         id: &ok_name,
+        name: &ok_name,
         profile_id: "code".into(),
         ram_mb: 2048,
         cpus: 2,
@@ -6023,6 +6048,7 @@ fn provision_short_name_passes_path_check() {
     let state = make_test_state();
     let result = state.provision_sandbox(ProvisionOptions {
         id: "my-vm",
+        name: "my-vm",
         profile_id: "code".into(),
         ram_mb: 2048,
         cpus: 2,
@@ -6048,6 +6074,7 @@ fn provision_rejects_unknown_profile_before_boot() {
     let (state, _dir) = make_test_state_with_tempdir();
     let result = state.provision_sandbox(ProvisionOptions {
         id: "my-vm",
+        name: "my-vm",
         profile_id: "missing-profile".into(),
         ram_mb: 2048,
         cpus: 2,
@@ -6082,6 +6109,7 @@ fn provision_persistent_rejects_duplicate_name() {
         reg.data.vms.insert(
             "taken".into(),
             PersistentVmEntry {
+                id: new_persistent_vm_id(),
                 name: "taken".into(),
                 profile_id: "code".into(),
                 profile_revision: test_profile_revision(),
@@ -6104,6 +6132,7 @@ fn provision_persistent_rejects_duplicate_name() {
     }
     let result = state.provision_sandbox(ProvisionOptions {
         id: "taken",
+        name: "taken",
         profile_id: "code".into(),
         ram_mb: 2048,
         cpus: 2,
@@ -6139,6 +6168,7 @@ async fn purge_default_removes_defunct_persistent_and_keeps_healthy_stopped() {
         reg.data.vms.insert(
             "defunct-vm".into(),
             PersistentVmEntry {
+                id: new_persistent_vm_id(),
                 name: "defunct-vm".into(),
                 profile_id: "code".into(),
                 profile_revision: test_profile_revision(),
@@ -6161,6 +6191,7 @@ async fn purge_default_removes_defunct_persistent_and_keeps_healthy_stopped() {
         reg.data.vms.insert(
             "healthy-vm".into(),
             PersistentVmEntry {
+                id: new_persistent_vm_id(),
                 name: "healthy-vm".into(),
                 profile_id: "code".into(),
                 profile_revision: test_profile_revision(),
@@ -6208,6 +6239,7 @@ fn provision_persistent_validates_name() {
     let state = make_test_state();
     let result = state.provision_sandbox(ProvisionOptions {
         id: "../evil",
+        name: "../evil",
         profile_id: "code".into(),
         ram_mb: 2048,
         cpus: 2,
@@ -6395,11 +6427,13 @@ async fn handle_fork_from_persistent_registry() {
     std::fs::create_dir_all(session_dir.join("system")).unwrap();
     std::fs::create_dir_all(session_dir.join("workspace")).unwrap();
     std::fs::write(session_dir.join("system/rootfs.img"), b"data").unwrap();
+    let vm_id = new_persistent_vm_id();
     {
         let mut reg = state.persistent_registry.lock().unwrap();
         reg.data.vms.insert(
             "pers-vm".into(),
             PersistentVmEntry {
+                id: vm_id.clone(),
                 name: "pers-vm".into(),
                 profile_id: "code".into(),
                 profile_revision: test_profile_revision(),
@@ -6423,7 +6457,7 @@ async fn handle_fork_from_persistent_registry() {
     // state is already Arc<ServiceState> from make_test_state*
     let result = handle_fork(
         State(state.clone()),
-        Path("pers-vm".into()),
+        Path(vm_id),
         Json(ForkRequest {
             name: "from-pers".into(),
             description: None,
@@ -6479,6 +6513,8 @@ async fn handle_persist_preserves_profile_identity() {
 
     let registry = state.persistent_registry.lock().unwrap();
     let entry = registry.get("persisted").unwrap();
+    assert_eq!(entry.id, "persist-src");
+    assert_eq!(entry.name, "persisted");
     assert_eq!(entry.profile_id, "code");
     assert_eq!(entry.profile_revision, test_profile_revision());
     assert_eq!(entry.profile_payload_hash, test_profile_payload_hash());
@@ -6486,7 +6522,8 @@ async fn handle_persist_preserves_profile_identity() {
     drop(registry);
 
     let instances = state.instances.lock().unwrap();
-    let info = instances.get("persisted").unwrap();
+    let info = instances.get("persist-src").unwrap();
+    assert_eq!(info.id, "persist-src");
     assert_eq!(info.profile_id, "code");
     assert_eq!(info.profile_revision, test_profile_revision());
     assert_eq!(info.profile_payload_hash, test_profile_payload_hash());
@@ -6500,11 +6537,13 @@ fn resume_rejects_profile_revision_drift() {
     install_test_profile_assets(&state);
     let session_dir = state.run_dir.join("persistent/revision-drift");
     std::fs::create_dir_all(&session_dir).unwrap();
+    let vm_id = new_persistent_vm_id();
     {
         let mut reg = state.persistent_registry.lock().unwrap();
         reg.data.vms.insert(
             "revision-drift".into(),
             PersistentVmEntry {
+                id: vm_id.clone(),
                 name: "revision-drift".into(),
                 profile_id: "code".into(),
                 profile_revision: "old-revision".into(),
@@ -6526,9 +6565,7 @@ fn resume_rejects_profile_revision_drift() {
         );
     }
 
-    let err = state
-        .resume_sandbox("revision-drift", None, None)
-        .unwrap_err();
+    let err = state.resume_sandbox(&vm_id, None, None).unwrap_err();
     assert!(
         err.to_string().contains("revision mismatch"),
         "resume must fail closed on profile revision drift, got: {err}"
@@ -6541,11 +6578,13 @@ fn resume_rejects_profile_payload_hash_drift() {
     install_test_profile_assets(&state);
     let session_dir = state.run_dir.join("persistent/payload-hash-drift");
     std::fs::create_dir_all(&session_dir).unwrap();
+    let vm_id = new_persistent_vm_id();
     {
         let mut reg = state.persistent_registry.lock().unwrap();
         reg.data.vms.insert(
             "payload-hash-drift".into(),
             PersistentVmEntry {
+                id: vm_id.clone(),
                 name: "payload-hash-drift".into(),
                 profile_id: "code".into(),
                 profile_revision: test_profile_revision(),
@@ -6569,9 +6608,7 @@ fn resume_rejects_profile_payload_hash_drift() {
         );
     }
 
-    let err = state
-        .resume_sandbox("payload-hash-drift", None, None)
-        .unwrap_err();
+    let err = state.resume_sandbox(&vm_id, None, None).unwrap_err();
     assert!(
         err.to_string().contains("payload hash mismatch"),
         "resume must fail closed on profile payload hash drift, got: {err}"
@@ -6589,11 +6626,13 @@ async fn handle_fork_rejects_asset_pin_drift() {
     let mut pins = test_asset_pins();
     pins.rootfs.hash =
         "blake3:0000000000000000000000000000000000000000000000000000000000000000".into();
+    let vm_id = new_persistent_vm_id();
     {
         let mut reg = state.persistent_registry.lock().unwrap();
         reg.data.vms.insert(
             "pin-drift".into(),
             PersistentVmEntry {
+                id: vm_id.clone(),
                 name: "pin-drift".into(),
                 profile_id: "code".into(),
                 profile_revision: test_profile_revision(),
@@ -6617,7 +6656,7 @@ async fn handle_fork_rejects_asset_pin_drift() {
 
     let err = handle_fork(
         State(state),
-        Path("pin-drift".into()),
+        Path(vm_id),
         Json(ForkRequest {
             name: "blocked-fork".into(),
             description: None,
@@ -6638,6 +6677,7 @@ fn provision_rejects_nonexistent_source_sandbox() {
     let (state, _dir) = make_test_state_with_tempdir();
     let result = state.provision_sandbox(ProvisionOptions {
         id: "vm1",
+        name: "vm1",
         profile_id: "code".into(),
         ram_mb: 2048,
         cpus: 2,
@@ -6664,6 +6704,7 @@ fn provision_rejects_source_with_different_profile() {
         reg.data.vms.insert(
             "other-profile-source".into(),
             PersistentVmEntry {
+                id: new_persistent_vm_id(),
                 name: "other-profile-source".into(),
                 profile_id: "other-profile".into(),
                 profile_revision: test_profile_revision(),
@@ -6686,6 +6727,7 @@ fn provision_rejects_source_with_different_profile() {
     }
     let result = state.provision_sandbox(ProvisionOptions {
         id: "vm1",
+        name: "vm1",
         profile_id: "code".into(),
         ram_mb: 2048,
         cpus: 2,
@@ -6722,6 +6764,7 @@ async fn handle_list_shows_suspended_status() {
         reg.data.vms.insert(
             "susp-vm".into(),
             PersistentVmEntry {
+                id: new_persistent_vm_id(),
                 name: "susp-vm".into(),
                 profile_id: "code".into(),
                 profile_revision: test_profile_revision(),
@@ -6749,6 +6792,7 @@ async fn handle_list_shows_suspended_status() {
         reg.data.vms.insert(
             "stop-vm".into(),
             PersistentVmEntry {
+                id: new_persistent_vm_id(),
                 name: "stop-vm".into(),
                 profile_id: "code".into(),
                 profile_revision: test_profile_revision(),
@@ -6772,14 +6816,24 @@ async fn handle_list_shows_suspended_status() {
 
     let Json(list) = handle_list(State(state)).await;
 
-    let susp = list.sandboxes.iter().find(|s| s.id == "susp-vm").unwrap();
+    let susp = list
+        .sandboxes
+        .iter()
+        .find(|s| s.name.as_deref() == Some("susp-vm"))
+        .unwrap();
+    assert_ne!(susp.id, "susp-vm");
     assert_eq!(
         susp.status,
         VmLifecycleState::Suspended,
         "suspended VM should show Suspended status"
     );
 
-    let stop = list.sandboxes.iter().find(|s| s.id == "stop-vm").unwrap();
+    let stop = list
+        .sandboxes
+        .iter()
+        .find(|s| s.name.as_deref() == Some("stop-vm"))
+        .unwrap();
+    assert_ne!(stop.id, "stop-vm");
     assert_eq!(
         stop.status,
         VmLifecycleState::Stopped,
@@ -6794,11 +6848,13 @@ async fn handle_info_shows_suspended_status() {
     let session_dir = state.run_dir.join("persistent/info-susp");
     capsem_core::create_virtiofs_session(&session_dir, 64).unwrap();
 
+    let vm_id = new_persistent_vm_id();
     {
         let mut reg = state.persistent_registry.lock().unwrap();
         reg.data.vms.insert(
             "info-susp".into(),
             PersistentVmEntry {
+                id: vm_id.clone(),
                 name: "info-susp".into(),
                 profile_id: "code".into(),
                 profile_revision: test_profile_revision(),
@@ -6820,7 +6876,7 @@ async fn handle_info_shows_suspended_status() {
         );
     }
 
-    let result = handle_info(State(state), Path("info-susp".into())).await;
+    let result = handle_info(State(state), Path(vm_id)).await;
     let Json(info) = result.unwrap();
     assert_eq!(info.status, VmLifecycleState::Suspended);
 }
@@ -6835,17 +6891,14 @@ async fn handle_info_reports_storage_diagnostics_for_persistent_vm() {
     let file = std::fs::File::create(&rootfs).unwrap();
     file.set_len(8 * 1024 * 1024 * 1024).unwrap();
 
+    let entry = test_persistent_entry("storage-info", session_dir.clone());
+    let vm_id = entry.id.clone();
     {
         let mut reg = state.persistent_registry.lock().unwrap();
-        reg.data.vms.insert(
-            "storage-info".into(),
-            test_persistent_entry("storage-info", session_dir.clone()),
-        );
+        reg.data.vms.insert("storage-info".into(), entry);
     }
 
-    let Json(info) = handle_info(State(state), Path("storage-info".into()))
-        .await
-        .unwrap();
+    let Json(info) = handle_info(State(state), Path(vm_id)).await.unwrap();
     let storage = info.storage.expect("info must include storage diagnostics");
     assert_eq!(
         storage.rootfs_image_path,
@@ -6869,17 +6922,14 @@ async fn handle_vm_status_reports_storage_diagnostics_for_persistent_vm() {
     capsem_core::create_virtiofs_session(&session_dir, 4).unwrap();
     let rootfs = session_dir.join("guest/system/rootfs.img");
 
+    let entry = test_persistent_entry("storage-status", session_dir);
+    let vm_id = entry.id.clone();
     {
         let mut reg = state.persistent_registry.lock().unwrap();
-        reg.data.vms.insert(
-            "storage-status".into(),
-            test_persistent_entry("storage-status", session_dir),
-        );
+        reg.data.vms.insert("storage-status".into(), entry);
     }
 
-    let Json(status) = handle_vm_status(State(state), Path("storage-status".into()))
-        .await
-        .unwrap();
+    let Json(status) = handle_vm_status(State(state), Path(vm_id)).await.unwrap();
     let storage = status
         .storage
         .expect("status must include storage diagnostics");
@@ -6902,6 +6952,7 @@ async fn handle_list_marks_profile_payload_drift_incompatible() {
         reg.data.vms.insert(
             "payload-drift".into(),
             PersistentVmEntry {
+            id: new_persistent_vm_id(),
                 name: "payload-drift".into(),
                 profile_id: "code".into(),
                 profile_revision: test_profile_revision(),
@@ -6929,8 +6980,9 @@ async fn handle_list_marks_profile_payload_drift_incompatible() {
     let vm = list
         .sandboxes
         .iter()
-        .find(|s| s.id == "payload-drift")
+        .find(|s| s.name.as_deref() == Some("payload-drift"))
         .unwrap();
+    assert_ne!(vm.id, "payload-drift");
     assert_eq!(vm.status, VmLifecycleState::Incompatible);
     assert!(!vm.can_resume);
     assert!(vm
@@ -6944,11 +6996,13 @@ async fn handle_list_marks_profile_payload_drift_incompatible() {
 async fn handle_info_marks_profile_payload_drift_incompatible() {
     let (state, _dir) = make_test_state_with_tempdir();
     install_test_profile_assets(&state);
+    let vm_id = new_persistent_vm_id();
     {
         let mut reg = state.persistent_registry.lock().unwrap();
         reg.data.vms.insert(
             "payload-drift-info".into(),
             PersistentVmEntry {
+                id: vm_id.clone(),
                 name: "payload-drift-info".into(),
                 profile_id: "code".into(),
                 profile_revision: test_profile_revision(),
@@ -6972,9 +7026,7 @@ async fn handle_info_marks_profile_payload_drift_incompatible() {
         );
     }
 
-    let Json(info) = handle_info(State(state), Path("payload-drift-info".into()))
-        .await
-        .unwrap();
+    let Json(info) = handle_info(State(state), Path(vm_id)).await.unwrap();
     assert_eq!(info.status, VmLifecycleState::Incompatible);
     assert!(!info.can_resume);
     assert!(info
@@ -6995,6 +7047,7 @@ async fn handle_list_marks_profile_rootfs_size_drift_incompatible() {
         reg.data.vms.insert(
             "rootfs-size-drift".into(),
             PersistentVmEntry {
+                id: new_persistent_vm_id(),
                 name: "rootfs-size-drift".into(),
                 profile_id: "code".into(),
                 profile_revision: test_profile_revision(),
@@ -7020,8 +7073,9 @@ async fn handle_list_marks_profile_rootfs_size_drift_incompatible() {
     let vm = list
         .sandboxes
         .iter()
-        .find(|s| s.id == "rootfs-size-drift")
+        .find(|s| s.name.as_deref() == Some("rootfs-size-drift"))
         .unwrap();
+    assert_ne!(vm.id, "rootfs-size-drift");
     assert_eq!(vm.status, VmLifecycleState::Incompatible);
     assert!(!vm.can_resume);
     let reason = vm.resume_blocked_reason.as_deref().unwrap_or_default();
@@ -7036,7 +7090,7 @@ async fn handle_list_marks_profile_rootfs_size_drift_incompatible() {
         VmLifecycleState::Incompatible.available_actions(false)
     );
 
-    let Json(info) = handle_info(State(state.clone()), Path("rootfs-size-drift".into()))
+    let Json(info) = handle_info(State(state.clone()), Path(vm.id.clone()))
         .await
         .unwrap();
     assert_eq!(info.status, VmLifecycleState::Incompatible);
@@ -7047,7 +7101,7 @@ async fn handle_list_marks_profile_rootfs_size_drift_incompatible() {
         .unwrap_or_default()
         .contains("rootfs.img logical size mismatch"));
 
-    let Json(status) = handle_vm_status(State(state), Path("rootfs-size-drift".into()))
+    let Json(status) = handle_vm_status(State(state), Path(vm.id.clone()))
         .await
         .unwrap();
     assert_eq!(status.status, VmLifecycleState::Incompatible);
@@ -7143,11 +7197,13 @@ fn archive_failed_restore_checkpoint_moves_checkpoint_aside() {
     std::fs::write(&checkpoint, b"bad checkpoint").unwrap();
     std::fs::write(&complete, b"ok\n").unwrap();
 
+    let vm_id = new_persistent_vm_id();
     {
         let mut reg = state.persistent_registry.lock().unwrap();
         reg.data.vms.insert(
             "resume-vm".into(),
             PersistentVmEntry {
+                id: vm_id.clone(),
                 name: "resume-vm".into(),
                 profile_id: "code".into(),
                 profile_revision: test_profile_revision(),
@@ -7170,7 +7226,7 @@ fn archive_failed_restore_checkpoint_moves_checkpoint_aside() {
     }
 
     let archived = state
-        .archive_failed_restore_checkpoint("resume-vm")
+        .archive_failed_restore_checkpoint(&vm_id)
         .expect("checkpoint should be archived");
 
     assert!(!checkpoint.exists(), "original checkpoint must be moved");
@@ -7205,11 +7261,13 @@ fn existing_resume_checkpoint_requires_completion_marker() {
     let complete = session_dir.join("checkpoint.vzsave.complete");
     std::fs::write(&checkpoint, b"partial checkpoint").unwrap();
 
+    let vm_id = new_persistent_vm_id();
     {
         let mut reg = state.persistent_registry.lock().unwrap();
         reg.data.vms.insert(
             "resume-vm".into(),
             PersistentVmEntry {
+                id: vm_id.clone(),
                 name: "resume-vm".into(),
                 profile_id: "code".into(),
                 profile_revision: test_profile_revision(),
@@ -7232,13 +7290,13 @@ fn existing_resume_checkpoint_requires_completion_marker() {
     }
 
     assert!(
-        !state.has_existing_resume_checkpoint("resume-vm"),
+        !state.has_existing_resume_checkpoint(&vm_id),
         "bare checkpoint without completion marker must not be resumable"
     );
 
     std::fs::write(&complete, b"ok\n").unwrap();
     assert!(
-        state.has_existing_resume_checkpoint("resume-vm"),
+        state.has_existing_resume_checkpoint(&vm_id),
         "checkpoint with completion marker should be resumable"
     );
 }
@@ -7252,11 +7310,13 @@ fn clear_resume_checkpoint_removes_completion_marker() {
     std::fs::write(session_dir.join("checkpoint.vzsave"), b"checkpoint").unwrap();
     std::fs::write(&complete, b"ok\n").unwrap();
 
+    let vm_id = new_persistent_vm_id();
     {
         let mut reg = state.persistent_registry.lock().unwrap();
         reg.data.vms.insert(
             "resume-vm".into(),
             PersistentVmEntry {
+                id: vm_id.clone(),
                 name: "resume-vm".into(),
                 profile_id: "code".into(),
                 profile_revision: test_profile_revision(),
@@ -7278,7 +7338,7 @@ fn clear_resume_checkpoint_removes_completion_marker() {
         );
     }
 
-    state.clear_resume_checkpoint("resume-vm");
+    state.clear_resume_checkpoint(&vm_id);
     assert!(
         !complete.exists(),
         "completion marker must be removed once checkpoint state is cleared"
@@ -7594,62 +7654,60 @@ async fn stats_detail_route_reads_session_db_ledger() {
 
     let db_path = session_dir.join("session.db");
     let writer = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
-    writer
-        .write(capsem_logger::WriteOp::ModelCall(
-            capsem_logger::ModelCall {
-                event_id: Some("abc123abc123".to_string()),
-                timestamp: std::time::SystemTime::now(),
-                provider: "google".to_string(),
-                protocol: Some("google".to_string()),
-                model: Some("gemini-3.5-flash".to_string()),
-                process_name: Some("agy".to_string()),
-                pid: Some(42),
-                method: "POST".to_string(),
-                path: "/v1internal:streamGenerateContent".to_string(),
-                stream: true,
-                system_prompt_preview: None,
-                messages_count: 1,
-                tools_count: 1,
-                request_bytes: 32,
-                request_body_preview: Some(r#"{"contents":[{"text":"write"}]}"#.to_string()),
-                request_body_full: Some(
-                    r#"{"contents":[{"text":"write full bounded body"}]}"#.to_string(),
-                ),
-                message_id: Some("msg-1".to_string()),
-                status_code: Some(200),
-                text_content: Some("created poem.md".to_string()),
-                thinking_content: Some("plan file write".to_string()),
-                response_body_full: Some(
-                    r#"{"candidates":[{"content":{"parts":[{"text":"created poem.md"}]}}]}"#
-                        .to_string(),
-                ),
-                stop_reason: Some("end_turn".to_string()),
-                input_tokens: Some(12),
-                output_tokens: Some(7),
-                usage_details: BTreeMap::new(),
-                duration_ms: 25,
-                response_bytes: 64,
-                estimated_cost_usd: 0.001,
+    writer.write_blocking(capsem_logger::WriteOp::ModelCall(
+        capsem_logger::ModelCall {
+            event_id: Some("abc123abc123".to_string()),
+            timestamp: std::time::SystemTime::now(),
+            provider: "google".to_string(),
+            protocol: Some("google".to_string()),
+            model: Some("gemini-3.5-flash".to_string()),
+            process_name: Some("agy".to_string()),
+            pid: Some(42),
+            method: "POST".to_string(),
+            path: "/v1internal:streamGenerateContent".to_string(),
+            stream: true,
+            system_prompt_preview: None,
+            messages_count: 1,
+            tools_count: 1,
+            request_bytes: 32,
+            request_body_preview: Some(r#"{"contents":[{"text":"write"}]}"#.to_string()),
+            request_body_full: Some(
+                r#"{"contents":[{"text":"write full bounded body"}]}"#.to_string(),
+            ),
+            message_id: Some("msg-1".to_string()),
+            status_code: Some(200),
+            text_content: Some("created poem.md".to_string()),
+            thinking_content: Some("plan file write".to_string()),
+            response_body_full: Some(
+                r#"{"candidates":[{"content":{"parts":[{"text":"created poem.md"}]}}]}"#
+                    .to_string(),
+            ),
+            stop_reason: Some("end_turn".to_string()),
+            input_tokens: Some(12),
+            output_tokens: Some(7),
+            usage_details: BTreeMap::new(),
+            duration_ms: 25,
+            response_bytes: 64,
+            estimated_cost_usd: 0.001,
+            trace_id: Some("trace-stats-detail".to_string()),
+            credential_ref: None,
+            tool_calls: vec![capsem_logger::ToolCallEntry {
+                call_index: 0,
+                call_id: "tool-1".to_string(),
+                tool_name: "Create".to_string(),
+                arguments: Some(r#"{"path":"/root/poem.md"}"#.to_string()),
+                origin: "native".to_string(),
+                trace_id: Some("trace-stats-detail".to_string()),
+            }],
+            tool_responses: vec![capsem_logger::ToolResponseEntry {
+                call_id: "tool-1".to_string(),
+                content_preview: Some("Wrote 4 lines to poem.md".to_string()),
+                is_error: false,
                 trace_id: Some("trace-stats-detail".to_string()),
                 credential_ref: None,
-                tool_calls: vec![capsem_logger::ToolCallEntry {
-                    call_index: 0,
-                    call_id: "tool-1".to_string(),
-                    tool_name: "Create".to_string(),
-                    arguments: Some(r#"{"path":"/root/poem.md"}"#.to_string()),
-                    origin: "native".to_string(),
-                    trace_id: Some("trace-stats-detail".to_string()),
-                }],
-                tool_responses: vec![capsem_logger::ToolResponseEntry {
-                    call_id: "tool-1".to_string(),
-                    content_preview: Some("Wrote 4 lines to poem.md".to_string()),
-                    is_error: false,
-                    trace_id: Some("trace-stats-detail".to_string()),
-                    credential_ref: None,
-                }],
-            },
-        ))
-        .await;
+            }],
+        },
+    ));
     writer
         .write(capsem_logger::WriteOp::NetEvent(capsem_logger::NetEvent {
             event_id: Some("def456def456".to_string()),
@@ -7782,14 +7840,205 @@ async fn stats_detail_route_reads_session_db_ledger() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{info}");
-    assert_eq!(info["model_call_count"], 1);
-    assert_eq!(info["total_input_tokens"], 12);
-    assert_eq!(info["total_output_tokens"], 7);
     assert_eq!(
-        info["total_tool_calls"],
-        body["tool_events"].as_array().unwrap().len() as u64,
-        "session info counters must agree with stats/detail tool_events"
+        info.get("model_call_count"),
+        None,
+        "/vms/{{id}}/info stays lifecycle/storage only; stats/detail is the ledger surface"
     );
+    assert_eq!(info.get("total_input_tokens"), None);
+    assert_eq!(info.get("total_output_tokens"), None);
+    assert_eq!(info.get("total_tool_calls"), None);
+}
+
+async fn write_test_model_call(
+    db_path: &std::path::Path,
+    provider: &str,
+    model: &str,
+    event_id: &str,
+) {
+    let writer = capsem_logger::DbWriter::open(db_path, 16).unwrap();
+    writer.write_blocking(capsem_logger::WriteOp::ModelCall(
+        capsem_logger::ModelCall {
+            event_id: Some(event_id.to_string()),
+            timestamp: std::time::SystemTime::now(),
+            provider: provider.to_string(),
+            protocol: Some(provider.to_string()),
+            model: Some(model.to_string()),
+            process_name: Some("agy".to_string()),
+            pid: Some(42),
+            method: "POST".to_string(),
+            path: "/v1internal:streamGenerateContent".to_string(),
+            stream: true,
+            system_prompt_preview: None,
+            messages_count: 1,
+            tools_count: 0,
+            request_bytes: 32,
+            request_body_preview: None,
+            request_body_full: None,
+            message_id: Some(format!("{event_id}-message")),
+            status_code: Some(200),
+            text_content: Some("ok".to_string()),
+            thinking_content: None,
+            response_body_full: None,
+            stop_reason: Some("end_turn".to_string()),
+            input_tokens: Some(12),
+            output_tokens: Some(7),
+            usage_details: BTreeMap::new(),
+            duration_ms: 25,
+            response_bytes: 64,
+            estimated_cost_usd: 0.001,
+            trace_id: Some(format!("trace-{event_id}")),
+            credential_ref: None,
+            tool_calls: vec![],
+            tool_responses: vec![],
+        },
+    ));
+    writer.shutdown_blocking();
+}
+
+#[tokio::test]
+async fn stats_detail_route_reopens_session_db_handle_when_vm_id_rebinds_to_new_path() {
+    let state = make_test_state();
+    let app = build_service_router(Arc::clone(&state));
+    let dir = tempfile::tempdir().unwrap();
+    let old_session_dir = dir.path().join("sessions").join("co-work1-old");
+    let selected_session_dir = dir.path().join("sessions").join("co-work1-selected");
+    std::fs::create_dir_all(&old_session_dir).unwrap();
+    std::fs::create_dir_all(&selected_session_dir).unwrap();
+
+    write_test_model_call(
+        &old_session_dir.join("session.db"),
+        "ollama",
+        "llama3.2",
+        "badbadbadbad",
+    )
+    .await;
+    write_test_model_call(
+        &selected_session_dir.join("session.db"),
+        "google",
+        "gemini-3.5-flash",
+        "abcabcabcabc",
+    )
+    .await;
+    let conn = rusqlite::Connection::open(selected_session_dir.join("session.db")).unwrap();
+    let direct_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM model_calls", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(
+        direct_count, 1,
+        "selected DB fixture must contain one model call"
+    );
+
+    state
+        .register_session_db_handle("co-work1", &old_session_dir)
+        .expect("test installs stale cached DB handle");
+    insert_fake_instance_with_session_dir(
+        &state,
+        "co-work1",
+        std::process::id(),
+        selected_session_dir.clone(),
+    );
+
+    let (status, body) = route_request(
+        app,
+        axum::http::Method::GET,
+        "/vms/co-work1/stats/detail",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["model_stats"][0]["provider"], "google",
+        "stats/detail must use the DB resolved for the selected session id, not a stale cached handle: {body}"
+    );
+    assert_eq!(body["model_stats"][0]["model"], "gemini-3.5-flash");
+    assert_eq!(body["model_events"][0]["event_id"], "abcabcabcabc");
+    assert_eq!(
+        state.session_db_handle("co-work1").unwrap().path(),
+        selected_session_dir.join("session.db").as_path(),
+        "the stale cached handle must be replaced with the selected session DB"
+    );
+}
+
+#[tokio::test]
+async fn persistent_session_routes_keep_uuid_id_separate_from_display_name() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let vm_id = "11111111-1111-4111-8111-111111111111";
+    let session_dir = state.run_dir.join("persistent").join(vm_id);
+    std::fs::create_dir_all(&session_dir).unwrap();
+    let mut entry = test_persistent_entry("co-work1", session_dir.clone());
+    entry.id = vm_id.to_string();
+    state
+        .persistent_registry
+        .lock()
+        .unwrap()
+        .data
+        .vms
+        .insert("co-work1".to_string(), entry);
+
+    let listing = handle_list(State(Arc::clone(&state))).await.0;
+    let row = listing
+        .sandboxes
+        .iter()
+        .find(|row| row.name.as_deref() == Some("co-work1"))
+        .expect("persistent session appears by display name");
+    assert_eq!(row.id, vm_id);
+    assert_eq!(row.name.as_deref(), Some("co-work1"));
+
+    let info = handle_info(State(Arc::clone(&state)), Path(vm_id.to_string()))
+        .await
+        .unwrap()
+        .0;
+    assert_eq!(info.id, vm_id);
+    assert_eq!(info.name.as_deref(), Some("co-work1"));
+
+    let status = handle_vm_status(State(state), Path(vm_id.to_string()))
+        .await
+        .unwrap()
+        .0;
+    assert_eq!(status.id, vm_id);
+}
+
+#[test]
+fn resume_sandbox_requires_uuid_route_id_not_display_name() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let vm_id = "22222222-2222-4222-8222-222222222222";
+    let session_dir = state.run_dir.join("persistent").join(vm_id);
+    std::fs::create_dir_all(&session_dir).unwrap();
+    let mut entry = test_persistent_entry("co-work1", session_dir);
+    entry.id = vm_id.to_string();
+    state
+        .persistent_registry
+        .lock()
+        .unwrap()
+        .data
+        .vms
+        .insert("co-work1".to_string(), entry);
+
+    let err = state.resume_sandbox("co-work1", None, None).unwrap_err();
+    assert!(
+        err.to_string().contains("no persistent VM with id"),
+        "display names must be translated before service routes call resume: {err}"
+    );
+}
+
+#[test]
+fn persistent_route_identity_source_guard() {
+    let source = include_str!("main.rs");
+    for forbidden in [
+        "registry.get(&id)",
+        "registry.get(id)",
+        "registry.get_mut(&id)",
+        "registry.get_mut(id)",
+        "registry.unregister(&id)",
+        "instances.contains_key(&entry.name)",
+        "SandboxInfo::new(\n            entry.name.clone()",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "{forbidden} reintroduced the VM identity footgun: route `id` is the opaque session id; registry `name` is display/resume identity only"
+        );
+    }
 }
 
 #[tokio::test]
@@ -8024,20 +8273,25 @@ async fn broken_session_db_schema_is_explicit_error_for_session_status() {
     conn.execute("CREATE TABLE net_events (id INTEGER PRIMARY KEY)", [])
         .unwrap();
     drop(conn);
-    state.persistent_registry.lock().unwrap().data.vms.insert(
-        "status-broken-db-vm".to_string(),
-        test_persistent_entry("status-broken-db-vm", session_dir),
-    );
+    let entry = test_persistent_entry("status-broken-db-vm", session_dir);
+    let vm_id = entry.id.clone();
+    state
+        .persistent_registry
+        .lock()
+        .unwrap()
+        .data
+        .vms
+        .insert("status-broken-db-vm".to_string(), entry);
     state.hydrate_session_db_handles();
     assert!(
-        state.session_db_handle("status-broken-db-vm").is_none(),
+        state.session_db_handle(&vm_id).is_none(),
         "startup hydration must not install a ready handle for malformed session schema"
     );
 
     let (status, body) = route_request(
         app,
         axum::http::Method::GET,
-        "/vms/status-broken-db-vm/info",
+        &format!("/vms/{vm_id}/info"),
         None,
     )
     .await;
@@ -8202,7 +8456,11 @@ async fn stats_detail_ledger_exposes_orphan_tool_parent_inconsistency() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{info}");
-    assert_eq!(info["total_tool_calls"], 1);
+    assert_eq!(
+        info.get("total_tool_calls"),
+        None,
+        "/vms/{{id}}/info stays lifecycle/storage only; stats/detail is the ledger surface"
+    );
     assert!(
         info.get("model_call_count").is_none()
             || info["model_call_count"] == serde_json::Value::Null,

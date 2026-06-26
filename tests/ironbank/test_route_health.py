@@ -15,6 +15,7 @@ import socket
 import statistics
 import threading
 import time
+import uuid
 from typing import Any, Callable
 
 import psutil
@@ -588,6 +589,11 @@ def _assert_vm_absent(listing: dict[str, Any], vm_id: str) -> None:
     assert vm_id not in {row["id"] for row in rows}, rows
 
 
+def _assert_uuid_route_id(vm_id: str) -> None:
+    parsed = uuid.UUID(vm_id)
+    assert str(parsed) == vm_id
+
+
 def _service_route_contracts() -> list[RouteContract]:
     profile = CODE_PROFILE_ID
     return [
@@ -815,6 +821,49 @@ def test_control_route_contracts_exist_for_ui_tui_blocking_and_vm_surfaces() -> 
         for action in ("allow", "ask", "block"):
             _assert_evaluation_decision(client, profile=CODE_PROFILE_ID, action=action)
     finally:
+        service.stop()
+
+
+def test_vm_list_table_record_uses_uuid_id_not_display_name_blackbox() -> None:
+    service = ServiceInstance()
+    client = None
+    requested_name = vm_name("ironbank-id-row")
+    vm_id: str | None = None
+    try:
+        service.start()
+        client = service.client()
+        created = client.post(
+            "/vms/create",
+            {
+                "name": requested_name,
+                "profile_id": CODE_PROFILE_ID,
+                "ram_mb": DEFAULT_RAM_MB,
+                "cpus": DEFAULT_CPUS,
+                "persistent": True,
+            },
+            timeout=90,
+        )
+        assert created is not None
+        vm_id = created["id"]
+        assert created["name"] == requested_name
+        assert vm_id != requested_name
+        _assert_uuid_route_id(vm_id)
+
+        listing = client.get("/vms/list", timeout=30)
+        row = _assert_vm_row(listing, vm_id, status="Running", persistent=True)
+        assert row["id"] == vm_id
+        assert row["name"] == requested_name
+        assert row["id"] != row["name"]
+
+        info = client.get(f"/vms/{vm_id}/info", timeout=30)
+        assert info["id"] == vm_id
+        assert info["name"] == requested_name
+    finally:
+        if client is not None:
+            try:
+                client.delete(f"/vms/{vm_id or requested_name}/delete", timeout=60)
+            except Exception:
+                pass
         service.stop()
 
 

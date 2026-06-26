@@ -391,11 +391,22 @@ impl DbHandle {
         Ok(())
     }
 
+    /// Flush accepted writes through the DB-owned writer path.
+    ///
+    /// Tests and read-after-write callers use this as the visibility barrier.
+    /// Route code should not sleep or poll around ledger writes; the DB layer
+    /// owns batching and the point at which accepted writes become queryable.
+    pub async fn flush(&self) -> DbResult<()> {
+        let Some(writer) = &self.inner.writer else {
+            return Err("db handle is read-only; no writer is available to flush".to_string());
+        };
+        writer.flush().await;
+        Ok(())
+    }
+
     #[cfg(test)]
     pub(crate) async fn flush_for_tests(&self) {
-        if let Some(writer) = &self.inner.writer {
-            writer.flush().await;
-        }
+        let _ = self.flush().await;
     }
 
     /// Transitional blocking readiness bridge for legacy synchronous callers.
