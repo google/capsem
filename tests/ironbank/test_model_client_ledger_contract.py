@@ -177,7 +177,8 @@ def model_client_env():
     client = None
     mock_proc = None
     old_corp_config = os.environ.get("CAPSEM_CORP_CONFIG")
-    session_id = vm_name("ironbank-model")
+    session_name = vm_name("ironbank-model")
+    session_id: str | None = None
     try:
         mock_proc, ready = start_mock_server(
             request_log=service.tmp_dir / "upstream-transcript.jsonl"
@@ -288,7 +289,7 @@ def model_client_env():
         create = client.post(
             "/vms/create",
             {
-                "name": session_id,
+                "name": session_name,
                 "profile_id": CODE_PROFILE_ID,
                 "ram_mb": DEFAULT_RAM_MB,
                 "cpus": DEFAULT_CPUS,
@@ -297,7 +298,9 @@ def model_client_env():
             timeout=90,
         )
         assert create is not None
-        assert create.get("id") == session_id or create.get("name") == session_id
+        assert create.get("name") == session_name
+        session_id = create["id"]
+        assert session_id != session_name
         active_profile = vm_session_dir(service.tmp_dir, client, session_id) / "vm" / "active_profile.toml"
         assert active_profile.exists(), f"active profile missing at {active_profile}"
         active_profile_text = active_profile.read_text(encoding="utf-8")
@@ -321,7 +324,8 @@ def model_client_env():
         stop_process(mock_proc)
         if client is not None:
             try:
-                client.delete(f"/vms/{session_id}/delete", timeout=60)
+                if session_id is not None:
+                    client.delete(f"/vms/{session_id}/delete", timeout=60)
             except Exception:
                 pass
         service.stop()

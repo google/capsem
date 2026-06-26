@@ -441,7 +441,7 @@ event: model.done\ndata: {\"finish_reason\":\"stop\"}\n\n",
             if payload.get("stream").and_then(Value::as_bool) == Some(true) {
                 response(
                     StatusCode::OK,
-                    responses_stream(payload_has_function_call_output(&payload)),
+                    responses_stream(&payload, payload_has_function_call_output(&payload)),
                     "text/event-stream",
                 )
             } else {
@@ -544,11 +544,12 @@ event: model.done\ndata: {\"finish_reason\":\"stop\"}\n\n",
             gemini_api_stream(parse_json(&request_body), google_model_from_path(path)),
             "text/event-stream",
         ),
-        (&Method::POST, _) if path.ends_with(":generateContent") => json_response(json!({
-            "modelVersion": "gemini-3.5-flash",
-            "candidates": [{"content": {"parts": [{"text": EXPECTED_POEM}], "role": "model"}}],
-            "usageMetadata": {"promptTokenCount": 24, "candidatesTokenCount": 32, "totalTokenCount": 56}
-        })),
+        (&Method::POST, _) if path.ends_with(":generateContent") => {
+            json_response(gemini_api_response(
+                parse_json(&request_body),
+                google_model_from_path(path),
+            ))
+        }
         _ => response(StatusCode::NOT_FOUND, Bytes::new(), "text/plain"),
     }
 }
@@ -825,22 +826,32 @@ fn payload_has_function_call_output(payload: &Value) -> bool {
         .unwrap_or(false)
 }
 
-fn responses_stream(final_turn: bool) -> Bytes {
+fn responses_stream(payload: &Value, final_turn: bool) -> Bytes {
     if final_turn {
-        return Bytes::from_static(
-            b"event: response.output_text.delta\ndata: {\"delta\":\"Capsem ironbank poem\"}\n\n\
-event: response.output_text.done\ndata: {\"text\":\"Capsem ironbank poem\"}\n\n\
-event: response.completed\ndata: {\"response\":{\"id\":\"resp_capsem_mock\",\"status\":\"completed\",\"model\":\"gpt-5-nano\",\"usage\":{\"input_tokens\":7,\"output_tokens\":5,\"total_tokens\":12,\"output_tokens_details\":{\"reasoning_tokens\":2}}}}\n\n",
+        let (token, _) = write_target(payload, "openai-responses");
+        return Bytes::from(
+            format!(
+                "event: response.output_text.delta\ndata: {{\"delta\":\"{token}\"}}\n\n\
+event: response.output_text.done\ndata: {{\"text\":\"{token}\"}}\n\n\
+event: response.completed\ndata: {{\"response\":{{\"id\":\"resp_capsem_mock\",\"status\":\"completed\",\"model\":\"gpt-5-nano\",\"usage\":{{\"input_tokens\":7,\"output_tokens\":5,\"total_tokens\":12,\"output_tokens_details\":{{\"reasoning_tokens\":2}}}}}}}}\n\n"
+            ),
         );
     }
-    Bytes::from_static(
-        b"event: response.output_item.added\ndata: {\"item\":{\"type\":\"reasoning\",\"id\":\"rs_capsem_mock\"}}\n\n\
-event: response.output_item.added\ndata: {\"item\":{\"type\":\"function_call\",\"id\":\"fc_capsem_mock\",\"call_id\":\"call_capsem_write_poem\",\"name\":\"write_file\",\"arguments\":\"{\\\"path\\\":\\\"/root/poem.md\\\"}\"}}\n\n\
-event: response.function_call_arguments.delta\ndata: {\"delta\":\"{\\\"path\\\":\\\"/root/poem.md\\\"}\"}\n\n\
-event: response.output_text.delta\ndata: {\"delta\":\"Capsem ironbank poem\"}\n\n\
-event: response.output_text.done\ndata: {\"text\":\"Capsem ironbank poem\"}\n\n\
-event: response.completed\ndata: {\"response\":{\"id\":\"resp_capsem_mock\",\"status\":\"completed\",\"model\":\"gpt-5-nano\",\"usage\":{\"input_tokens\":7,\"output_tokens\":5,\"total_tokens\":12,\"output_tokens_details\":{\"reasoning_tokens\":2}}}}\n\n",
-    )
+    let (token, path) = write_target(payload, "openai-responses");
+    let call_id = format!("call_capsem_exec_command_{token}");
+    let arguments = json_compact(json!({
+        "cmd": shell_write_command(&token, &path),
+        "yield_time_ms": 1000,
+        "max_output_tokens": 2000
+    }));
+    let arguments_json = json_compact(json!(arguments));
+    Bytes::from(format!(
+        "event: response.output_item.added\ndata: {{\"item\":{{\"type\":\"reasoning\",\"id\":\"rs_capsem_mock\"}}}}\n\n\
+event: response.output_item.added\ndata: {{\"item\":{{\"type\":\"function_call\",\"id\":\"fc_capsem_mock\",\"call_id\":\"{call_id}\",\"name\":\"exec_command\",\"arguments\":{arguments_json}}}}}\n\n\
+event: response.function_call_arguments.delta\ndata: {{\"delta\":{arguments_json}}}\n\n\
+event: response.reasoning_summary_text.delta\ndata: {{\"delta\":\"ledger reasoning\"}}\n\n\
+event: response.completed\ndata: {{\"response\":{{\"id\":\"resp_capsem_mock\",\"status\":\"completed\",\"model\":\"gpt-5-nano\",\"usage\":{{\"input_tokens\":7,\"output_tokens\":5,\"total_tokens\":12,\"output_tokens_details\":{{\"reasoning_tokens\":2}}}}}}}}\n\n"
+    ))
 }
 
 fn anthropic_response(payload: Value) -> Value {
@@ -1002,6 +1013,31 @@ fn google_code_assist_stream(payload: Value) -> Bytes {
 
 fn gemini_api_stream(payload: Value, model: String) -> Bytes {
     let (token, path) = write_target(&payload, "gemini");
+    let has_function_response = serde_json::to_string(&payload)
+        .map(|raw| raw.contains("functionResponse"))
+        .unwrap_or(false);
+    if has_function_response {
+        let chunk = json!({
+            "candidates": [{
+                "content": {
+                    "parts": [
+                        {"text": "ledger reasoning", "thought": true},
+                        {"text": token}
+                    ],
+                    "role": "model"
+                },
+                "finishReason": "STOP"
+            }],
+            "usageMetadata": {
+                "promptTokenCount": 31,
+                "candidatesTokenCount": 17,
+                "thoughtsTokenCount": 2,
+                "totalTokenCount": 50
+            },
+            "modelVersion": model
+        });
+        return Bytes::from(format!("data: {}\n\n", json_compact(chunk)));
+    }
     let chunk = json!({
         "candidates": [{
             "content": {
@@ -1024,6 +1060,15 @@ fn gemini_api_stream(payload: Value, model: String) -> Bytes {
         "modelVersion": model
     });
     Bytes::from(format!("data: {}\n\n", json_compact(chunk)))
+}
+
+fn gemini_api_response(payload: Value, model: String) -> Value {
+    let (token, _) = write_target(&payload, "gemini");
+    json!({
+        "modelVersion": model,
+        "candidates": [{"content": {"parts": [{"text": format!("{token} nonstream")}], "role": "model"}}],
+        "usageMetadata": {"promptTokenCount": 11, "candidatesTokenCount": 7, "totalTokenCount": 18}
+    })
 }
 
 fn google_model_from_path(path: &str) -> String {
