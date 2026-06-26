@@ -31,16 +31,17 @@ def lifecycle_env():
 
     client = svc.client()
     vm_name = f"lifecycle-{uuid.uuid4().hex[:8]}"
-    client.post("/vms/create", {"name": vm_name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+    created = client.post("/vms/create", {"name": vm_name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+    vm_id = created["id"]
 
-    if not wait_exec_ready(client, vm_name):
+    if not wait_exec_ready(client, vm_id):
         svc.stop()
-        pytest.fail(f"VM {vm_name} never became exec-ready")
+        pytest.fail(f"VM {vm_id} ({vm_name}) never became exec-ready")
 
-    yield client, vm_name, svc.tmp_dir, svc
+    yield client, vm_id, svc.tmp_dir, svc
 
     try:
-        client.delete(f"/vms/{vm_name}/delete")
+        client.delete(f"/vms/{vm_id}/delete")
     except Exception:
         pass
     svc.stop()

@@ -240,8 +240,9 @@ class TestGatewayPersistence:
             import time
             time.sleep(2)
 
-            # Resume
-            resume_resp = e2e_client.post(f"/vms/{name}/resume", {})
+            # Resume by route id; user-facing CLIs translate names before
+            # hitting service/gateway routes.
+            resume_resp = e2e_client.post(f"/vms/{vm_id}/resume", {})
             assert resume_resp is not None
 
             # Wait for exec ready again

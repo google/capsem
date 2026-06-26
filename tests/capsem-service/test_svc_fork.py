@@ -11,7 +11,7 @@ pytestmark = pytest.mark.integration
 
 
 def _provision_persistent(client, prefix="fork"):
-    """Provision a persistent (named) VM and return its name."""
+    """Provision a persistent VM and return its route id plus display name."""
     name = vm_name(prefix)
     resp = client.post("/vms/create", {
         "name": name,
@@ -20,30 +20,32 @@ def _provision_persistent(client, prefix="fork"):
         "cpus": DEFAULT_CPUS,
         "persistent": True,
     })
-    assert resp is not None and resp.get("id") == name, f"provision failed: {resp}"
-    return name
+    assert resp is not None, f"provision failed: {resp}"
+    assert resp.get("name") == name, f"provision used wrong display name: {resp}"
+    assert resp.get("id") != name, f"route id must not be the display name: {resp}"
+    return resp["id"], name
 
 
 class TestFork:
 
     def test_fork_running_persistent(self, client):
         """Forking a running persistent VM preserves workspace content in the child."""
-        source = _provision_persistent(client, "fork-src")
+        source_id, _source_name = _provision_persistent(client, "fork-src")
         children = []
         try:
-            assert wait_exec_ready(client, source, timeout=EXEC_READY_TIMEOUT), (
-                f"source {source} never exec-ready"
+            assert wait_exec_ready(client, source_id, timeout=EXEC_READY_TIMEOUT), (
+                f"source {source_id} never exec-ready"
             )
 
             marker = f"fork-marker-{uuid.uuid4().hex[:8]}"
-            client.post(f"/vms/{source}/files/write", {
+            client.post(f"/vms/{source_id}/files/write", {
                 "path": "/root/fork-marker.txt",
                 "content": marker,
             })
 
             child = f"fork-child-{uuid.uuid4().hex[:6]}"
             children.append(child)
-            resp = client.post(f"/vms/{source}/fork", {
+            resp = client.post(f"/vms/{source_id}/fork", {
                 "name": child,
                 "description": "coverage test fork",
             }, timeout=60)
@@ -64,7 +66,7 @@ class TestFork:
                 f"marker did not survive fork: {read}"
             )
         finally:
-            for vm in children + [source]:
+            for vm in children + [source_id]:
                 try:
                     client.delete(f"/vms/{vm}/delete")
                 except Exception:
@@ -72,16 +74,16 @@ class TestFork:
 
     def test_fork_duplicate_name_rejected(self, client):
         """Fork into a name that is already a registered persistent VM fails."""
-        source = _provision_persistent(client, "fork-dup-src")
-        taken = _provision_persistent(client, "fork-dup-dest")
+        source_id, _source_name = _provision_persistent(client, "fork-dup-src")
+        taken_id, taken_name = _provision_persistent(client, "fork-dup-dest")
         try:
-            resp = client.post(f"/vms/{source}/fork", {"name": taken}, timeout=30)
+            resp = client.post(f"/vms/{source_id}/fork", {"name": taken_name}, timeout=30)
             assert resp is not None
             assert "error" in resp or "already exists" in str(resp).lower(), (
                 f"expected duplicate name rejection, got: {resp}"
             )
         finally:
-            for vm in (source, taken):
+            for vm in (source_id, taken_id):
                 try:
                     client.delete(f"/vms/{vm}/delete")
                 except Exception:

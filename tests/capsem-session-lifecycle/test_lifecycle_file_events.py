@@ -9,10 +9,10 @@ pytestmark = pytest.mark.session_lifecycle
 
 def test_file_write_creates_fs_event(lifecycle_env, lifecycle_db):
     """Writing a file via API should appear in fs_events."""
-    client, vm_name, _, _ = lifecycle_env
+    client, vm_id, _, _ = lifecycle_env
 
     # Write a file via the file API
-    client.post(f"/write-file/{vm_name}", {
+    client.post(f"/vms/{vm_id}/files/write", {
         "path": "/capsem/workspace/test-lifecycle.txt",
         "content": "lifecycle test data",
     })

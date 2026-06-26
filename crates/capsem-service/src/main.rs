@@ -1102,11 +1102,14 @@ impl ServiceState {
             .open(&process_log_path)
             .context("failed to open process.log")?;
 
-        // Inject VM identity so the guest knows its own name/ID.
+        // Inject VM identity so the guest knows its own name/ID. Anonymous
+        // sessions have a generated display name for UI lists, but the guest
+        // hostname must remain the opaque route id.
+        let guest_name = if persistent { name } else { id };
         child_cmd.arg("--env").arg(format!("CAPSEM_VM_ID={}", id));
         child_cmd
             .arg("--env")
-            .arg(format!("CAPSEM_VM_NAME={}", name));
+            .arg(format!("CAPSEM_VM_NAME={}", guest_name));
 
         // Add --env KEY=VALUE args for each user-specified env var
         if let Some(ref env_vars) = env {
