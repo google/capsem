@@ -635,7 +635,7 @@ impl ServiceState {
     ) -> anyhow::Result<Arc<capsem_logger::DbHandle>> {
         let db_path = session_db_path_for_session_dir(session_dir);
         let started = std::time::Instant::now();
-        let handle = match capsem_logger::DbHandle::open(&db_path) {
+        let handle = match capsem_logger::DbHandle::open_external_reader(&db_path) {
             Ok(handle) => Arc::new(handle),
             Err(error) => {
                 error!(
@@ -652,6 +652,9 @@ impl ServiceState {
                 ));
             }
         };
+        handle
+            .ready_blocking()
+            .with_context(|| format!("session DB for {vm_id} is not ready"))?;
         self.session_db_handles
             .lock()
             .unwrap()
@@ -1298,7 +1301,16 @@ impl ServiceState {
             })?;
         }
 
-        self.register_session_db_handle(id, &session_dir)?;
+        if session_db_path_for_session_dir(&session_dir).exists() {
+            self.register_session_db_handle(id, &session_dir)?;
+        } else {
+            info!(
+                vm_id = id,
+                operation = "defer_session_db_handle_registration",
+                session_dir = %session_dir.display(),
+                "session DB not present yet; route will register the external reader lazily"
+            );
+        }
 
         let mut instances = self.instances.lock().unwrap();
         instances.insert(
@@ -1510,7 +1522,16 @@ impl ServiceState {
             let _ = std::fs::remove_file(uds_clone.with_extension("ready"));
         });
 
-        self.register_session_db_handle(name, &entry.session_dir)?;
+        if session_db_path_for_session_dir(&entry.session_dir).exists() {
+            self.register_session_db_handle(name, &entry.session_dir)?;
+        } else {
+            info!(
+                vm_id = name,
+                operation = "defer_session_db_handle_registration",
+                session_dir = %entry.session_dir.display(),
+                "session DB not present yet; route will register the external reader lazily"
+            );
+        }
 
         let mut instances = self.instances.lock().unwrap();
         instances.insert(

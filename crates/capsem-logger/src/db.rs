@@ -139,7 +139,7 @@ struct DbHandleInner {
     path: PathBuf,
     reader_tx: mpsc::Sender<ReadRequest>,
     reader_join: Mutex<Option<JoinHandle<()>>>,
-    writer: Arc<DbWriter>,
+    writer: Option<Arc<DbWriter>>,
     ready_cache: Mutex<Option<DbResult<()>>>,
 }
 
@@ -162,7 +162,7 @@ impl DbHandle {
         let started = Instant::now();
         let writer = Arc::new(DbWriter::open(path, 1024)?);
         DbReader::open(path)?;
-        let handle = Self::open_with_writer(path.to_path_buf(), writer)?;
+        let handle = Self::open_with_writer(path.to_path_buf(), writer, false)?;
 
         tracing::debug!(
             db_path = %path.display(),
@@ -174,12 +174,32 @@ impl DbHandle {
         Ok(handle)
     }
 
-    fn open_with_writer(db_path: PathBuf, writer: Arc<DbWriter>) -> rusqlite::Result<Self> {
+    /// Open a DB handle for a session DB written by another process.
+    ///
+    /// Capsem service routes read session ledgers, but capsem-process owns the
+    /// telemetry/security writes. This handle keeps the same `ready/query`
+    /// contract while syncing its DB-owned memory tables from disk before
+    /// reads. It rejects `write` so caller mistakes fail loudly instead of
+    /// creating a second writer rail.
+    pub fn open_external_reader(path: &Path) -> rusqlite::Result<Self> {
+        let started = Instant::now();
+        DbReader::open(path)?;
+        let handle = Self::open_reader(path.to_path_buf(), true)?;
+        tracing::debug!(
+            db_path = %path.display(),
+            operation = "open_external_reader",
+            duration_ms = elapsed_ms(started),
+            "session db external reader handle opened"
+        );
+        Ok(handle)
+    }
+
+    fn open_reader(db_path: PathBuf, sync_from_disk_before_query: bool) -> rusqlite::Result<Self> {
         let (reader_tx, reader_rx) = mpsc::channel();
         let reader_path = db_path.clone();
         let reader_join = std::thread::Builder::new()
             .name("capsem-db-reader".into())
-            .spawn(move || reader_loop(reader_path, reader_rx))
+            .spawn(move || reader_loop(reader_path, reader_rx, sync_from_disk_before_query))
             .expect("failed to spawn db reader thread");
 
         Ok(Self {
@@ -187,9 +207,24 @@ impl DbHandle {
                 path: db_path,
                 reader_tx,
                 reader_join: Mutex::new(Some(reader_join)),
-                writer,
+                writer: None,
                 ready_cache: Mutex::new(None),
             }),
+        })
+    }
+
+    fn open_with_writer(
+        db_path: PathBuf,
+        writer: Arc<DbWriter>,
+        sync_from_disk_before_query: bool,
+    ) -> rusqlite::Result<Self> {
+        let handle = Self::open_reader(db_path, sync_from_disk_before_query)?;
+        let mut inner = Arc::try_unwrap(handle.inner)
+            .ok()
+            .expect("new handle is unique");
+        inner.writer = Some(writer);
+        Ok(Self {
+            inner: Arc::new(inner),
         })
     }
 
@@ -197,7 +232,7 @@ impl DbHandle {
     pub(crate) fn open_existing_for_tests(path: &Path) -> rusqlite::Result<Self> {
         DbReader::open(path)?;
         let writer = Arc::new(DbWriter::open_in_memory(1)?);
-        Self::open_with_writer(path.to_path_buf(), writer)
+        Self::open_with_writer(path.to_path_buf(), writer, false)
     }
 
     pub fn path(&self) -> &Path {
@@ -321,7 +356,21 @@ impl DbHandle {
     pub async fn write(&self, op: WriteOp) -> DbResult<()> {
         let started = Instant::now();
         let op_kind = op.kind();
-        self.inner.writer.write_checked(op).await.map_err(|error| {
+        let Some(writer) = &self.inner.writer else {
+            let error =
+                "db handle is read-only; session writes must use the owning process DB handle"
+                    .to_string();
+            tracing::error!(
+                db_path = %self.inner.path.display(),
+                operation = "write",
+                op_kind,
+                duration_ms = elapsed_ms(started),
+                error = %error,
+                "session db handle operation failed"
+            );
+            return Err(error);
+        };
+        writer.write_checked(op).await.map_err(|error| {
             tracing::error!(
                 db_path = %self.inner.path.display(),
                 operation = "write",
@@ -344,7 +393,9 @@ impl DbHandle {
 
     #[cfg(test)]
     pub(crate) async fn flush_for_tests(&self) {
-        self.inner.writer.flush().await;
+        if let Some(writer) = &self.inner.writer {
+            writer.flush().await;
+        }
     }
 
     /// Transitional blocking readiness bridge for legacy synchronous callers.
@@ -418,7 +469,7 @@ impl DbHandle {
     }
 }
 
-fn reader_loop(path: PathBuf, rx: mpsc::Receiver<ReadRequest>) {
+fn reader_loop(path: PathBuf, rx: mpsc::Receiver<ReadRequest>, sync_from_disk_before_query: bool) {
     let started = Instant::now();
     let reader = match DbReader::open(&path) {
         Ok(reader) => reader,
@@ -465,7 +516,14 @@ fn reader_loop(path: PathBuf, rx: mpsc::Receiver<ReadRequest>) {
                 let started = Instant::now();
                 let sql_hash = sql_fingerprint(&sql);
                 let params_count = params.len();
-                let result = reader.query_raw_with_params(&sql, &params);
+                let result = if sync_from_disk_before_query {
+                    reader
+                        .sync_from_disk()
+                        .map_err(|error| error.to_string())
+                        .and_then(|()| reader.query_raw_with_params(&sql, &params))
+                } else {
+                    reader.query_raw_with_params(&sql, &params)
+                };
                 record_query_metrics("execute", started, params_count, &result);
                 match &result {
                     Ok(_) => tracing::debug!(

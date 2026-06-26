@@ -573,6 +573,7 @@ pub(crate) async fn handle_ipc_connection(
                 let job_store = job_store.clone();
                 let ctrl_tx = ctrl_tx.clone();
                 let ipc_tx_out = ipc_tx_out.clone();
+                let db = Arc::clone(&net_state.db);
                 tokio::spawn(async move {
                     info!(
                         id,
@@ -602,6 +603,7 @@ pub(crate) async fn handle_ipc_connection(
                             data,
                             error,
                         })) => {
+                            db.flush().await;
                             capsem_core::try_send!(
                                 "ipc_log_file_boundary_result",
                                 ipc_tx_out

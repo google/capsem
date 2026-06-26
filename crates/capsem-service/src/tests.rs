@@ -300,9 +300,6 @@ fn insert_fake_instance_with_session_dir_and_pins(
             forked_from: None,
         },
     );
-    state
-        .register_session_db_handle(id, &session_dir)
-        .expect("fake instance session DB handle");
 }
 
 fn test_profile_revision() -> String {
@@ -1721,9 +1718,9 @@ async fn triage_route_reads_triage_ledger_from_session_db() {
     writer.shutdown_blocking();
 
     let db = state
-        .session_db_handle("diag-vm")
-        .expect("fake instance registers DB handle");
-    let direct_triage = session_db_triage("diag-vm", &db, &db_path, 5)
+        .register_session_db_handle("triage-vm", &session_dir)
+        .expect("test installs external DB reader after the process writer created session.db");
+    let direct_triage = session_db_triage("triage-vm", &db, &db_path, 5)
         .await
         .unwrap();
     assert_eq!(
@@ -4311,6 +4308,12 @@ async fn plugin_runtime_reports_execution_latency_from_security_ledger_payloads(
                 "stage": "logging",
                 "applied": true,
                 "duration_us": 77
+            },
+            {
+                "plugin_id": "dummy_post_allow",
+                "stage": "postprocess",
+                "applied": true,
+                "duration_us": 31
             }
         ],
         "detections": [
@@ -4321,6 +4324,15 @@ async fn plugin_runtime_reports_execution_latency_from_security_ledger_payloads(
                 "plugin_id": "log_sanitizer",
                 "action": null,
                 "plugin_mode": "rewrite",
+                "reason": null
+            },
+            {
+                "source": "plugin",
+                "detection_level": "low",
+                "rule_id": null,
+                "plugin_id": "dummy_post_allow",
+                "action": null,
+                "plugin_mode": "allow",
                 "reason": null
             }
         ]
@@ -4378,6 +4390,24 @@ async fn plugin_runtime_reports_execution_latency_from_security_ledger_payloads(
     assert_eq!(sanitizer_detail["runtime"]["detection_count"], 1);
     assert_eq!(sanitizer_detail["runtime"]["total_duration_us"], 77);
     assert_eq!(sanitizer_detail["runtime"]["max_duration_us"], 77);
+
+    let (status, dummy_post) = route_request(
+        app.clone(),
+        axum::http::Method::GET,
+        "/profiles/code/plugins/dummy_post_allow/info",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{dummy_post}");
+    assert_eq!(
+        dummy_post["runtime"]["execution_count"], 1,
+        "postprocess plugin executions must hydrate from the same security ledger payloads"
+    );
+    assert_eq!(dummy_post["runtime"]["applied_count"], 1);
+    assert_eq!(dummy_post["runtime"]["skipped_count"], 0);
+    assert_eq!(dummy_post["runtime"]["detection_count"], 1);
+    assert_eq!(dummy_post["runtime"]["total_duration_us"], 31);
+    assert_eq!(dummy_post["runtime"]["max_duration_us"], 31);
 
     let (status, broker) = route_request(
         app,
@@ -7776,28 +7806,25 @@ async fn db_boundary_route_contract_db_handle_route_rewire() {
         session_dir.clone(),
     );
 
-    let db = state
-        .session_db_handle("db-handle-route-vm")
-        .expect("fake instance registers DB handle");
-    db.ready().await.unwrap();
-    db.write(capsem_logger::WriteOp::SecurityRuleEvent(
-        capsem_logger::SecurityRuleEvent::new(
-            1_789_111_000_000,
-            "abcdef123456",
-            "http.request",
-            "profiles.rules.default_http",
-            r#"{"name":"default_http"}"#,
-            r#"{"event_type":"http.request"}"#,
-        )
-        .with_rule_action(capsem_logger::SecurityRuleAction::Allow),
-    ))
-    .await
-    .unwrap();
-    let written = db
-        .query("SELECT COUNT(*) AS total FROM security_rule_events", &[])
-        .await
-        .unwrap();
-    assert_eq!(written, r#"{"columns":["total"],"rows":[[1]]}"#);
+    assert!(
+        state.session_db_handle("db-handle-route-vm").is_none(),
+        "session handles are registered lazily after capsem-process creates session.db"
+    );
+    let writer = capsem_logger::DbWriter::open(&session_dir.join("session.db"), 16).unwrap();
+    writer
+        .write(capsem_logger::WriteOp::SecurityRuleEvent(
+            capsem_logger::SecurityRuleEvent::new(
+                1_789_111_000_000,
+                "abcdef123456",
+                "http.request",
+                "profiles.rules.default_http",
+                r#"{"name":"default_http"}"#,
+                r#"{"event_type":"http.request"}"#,
+            )
+            .with_rule_action(capsem_logger::SecurityRuleAction::Allow),
+        ))
+        .await;
+    writer.shutdown_blocking();
 
     let (status, stats_detail) = route_request(
         app.clone(),
@@ -7820,6 +7847,10 @@ async fn db_boundary_route_contract_db_handle_route_rewire() {
     assert_eq!(status, StatusCode::OK, "{security_status}");
     assert_eq!(security_status["total"], 1);
     assert_eq!(security_status["by_action"][0]["rule_action"], "allow");
+    assert!(
+        state.session_db_handle("db-handle-route-vm").is_some(),
+        "first ledger route registers the external DB reader once session.db exists"
+    );
 }
 
 #[tokio::test]
@@ -7836,6 +7867,8 @@ async fn db_boundary_route_contract_stats_routes_do_not_return_empty_on_broken_s
         session_dir.clone(),
     );
     let db_path = session_dir.join("session.db");
+    let writer = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
+    writer.shutdown_blocking();
     let conn = rusqlite::Connection::open(&db_path).unwrap();
     conn.execute("DROP TABLE net_events", []).unwrap();
     conn.execute("CREATE TABLE net_events (id INTEGER PRIMARY KEY)", [])
@@ -7853,7 +7886,8 @@ async fn db_boundary_route_contract_stats_routes_do_not_return_empty_on_broken_s
     let body_text = body.to_string();
     assert!(
         body_text.contains("stats_detail ledger")
-            && (body_text.contains("no such column")
+            && (body_text.contains("not ready")
+                || body_text.contains("no such column")
                 || body_text.contains("missing required column")),
         "broken schemas must fail loudly, not return empty fake data: {body}"
     );
@@ -7890,7 +7924,17 @@ async fn session_db_handle_state_contract() {
     let dir = tempfile::tempdir().unwrap();
     let session_dir = dir.path().join("sessions").join("db-state-old");
     std::fs::create_dir_all(&session_dir).unwrap();
-    insert_fake_instance_with_session_dir(&state, "db-state-old", std::process::id(), session_dir);
+    let writer = capsem_logger::DbWriter::open(&session_dir.join("session.db"), 16).unwrap();
+    writer.shutdown_blocking();
+    insert_fake_instance_with_session_dir(
+        &state,
+        "db-state-old",
+        std::process::id(),
+        session_dir.clone(),
+    );
+    state
+        .register_session_db_handle("db-state-old", &session_dir)
+        .expect("test installs external reader after session.db exists");
 
     let original = state
         .session_db_handle("db-state-old")
@@ -8006,7 +8050,9 @@ async fn broken_session_db_schema_is_explicit_error_for_session_status() {
         .as_str()
         .expect("broken DB status must carry the explicit DB readiness error");
     assert!(
-        error.contains("missing required column") || error.contains("no such column"),
+        error.contains("not ready")
+            || error.contains("missing required column")
+            || error.contains("no such column"),
         "broken DB status must expose the schema failure, got: {error}"
     );
 }
@@ -8016,17 +8062,23 @@ fn service_db_handle_open_is_owned_by_explicit_service_state_owners() {
     let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs"))
         .expect("service source must be readable");
     let opens = source.matches("DbHandle::open(").count();
+    let external_reader_opens = source.matches("DbHandle::open_external_reader(").count();
     assert_eq!(
-        opens, 2,
-        "DbHandle::open must live only in explicit ServiceState DB owners: \
-         register_session_db_handle for per-session ledgers and \
-         open_profile_mutation_db_handle for the service main ledger. Routes and helpers \
+        opens, 1,
+        "DbHandle::open must live only in the service main-ledger owner. Per-session \
+         route ledgers are external readers because capsem-process owns writes. Routes and helpers \
          resolve registered handles and call ready/query/write; they do not create a second \
          DB lifecycle."
     );
+    assert_eq!(
+        external_reader_opens, 1,
+        "DbHandle::open_external_reader must live only in register_session_db_handle for \
+         per-session ledgers written by capsem-process."
+    );
     assert!(
-        source.contains("fn register_session_db_handle("),
-        "one DbHandle::open owner must be the session-state registration method"
+        source.contains("fn register_session_db_handle(")
+            && source.contains("DbHandle::open_external_reader("),
+        "the session-state registration method must own the external DB reader lifecycle"
     );
     assert!(
         source.contains("fn open_profile_mutation_db_handle("),

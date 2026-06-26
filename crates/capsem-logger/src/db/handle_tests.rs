@@ -403,6 +403,68 @@ async fn db_write_accepts_before_flush_and_flush_makes_visible() {
 }
 
 #[tokio::test]
+async fn db_external_reader_observes_rows_flushed_by_process_writer() {
+    let p = temp_db_path("external-reader-process-writer");
+    let writer = crate::writer::DbWriter::open(&p, 16).expect("process-owned writer opens schema");
+    let db = DbHandle::open_external_reader(&p).expect("service route external reader opens");
+    db.ready()
+        .await
+        .expect("external reader must validate the schema before route reads");
+
+    writer
+        .write(WriteOp::SecurityRuleEvent(
+            SecurityRuleEvent::new(
+                1_789_000_555_000,
+                "abc555def000",
+                "file.import",
+                "profiles.rules.default_file_import",
+                r#"{"name":"default_file_import"}"#,
+                r#"{"event_type":"file.import","plugin_executions":[{"plugin_id":"dummy_post_allow","stage":"postprocess","applied":true,"duration_us":31}]}"#,
+            )
+            .with_rule_action(SecurityRuleAction::Allow)
+            .with_detection_level(SecurityDetectionLevel::Low)
+            .with_trace_id("trace-external-reader")
+            .with_turn_id("turn-external-reader"),
+        ))
+        .await;
+    writer.flush().await;
+
+    let raw = db
+        .query(
+            "SELECT event_id, event_type, rule_id, detection_level, trace_id, turn_id
+             FROM security_rule_events WHERE event_id = ?",
+            &[json!("abc555def000")],
+        )
+        .await
+        .expect("external reader must see rows flushed by the process writer");
+    let value = query_json(&raw);
+    assert_eq!(
+        value["rows"],
+        json!([[
+            "abc555def000",
+            "file.import",
+            "profiles.rules.default_file_import",
+            "low",
+            "trace-external-reader",
+            "turn-external-reader"
+        ]]),
+        "service route DB handles read ledgers written by capsem-process; DB-owned external readers must sync disk truth before query. {DB_BOUNDARY_RATIONALE}"
+    );
+
+    let error = db
+        .write(WriteOp::NetEvent(make_net_event(
+            "must-not-write-from-route.example",
+            Decision::Allowed,
+        )))
+        .await
+        .expect_err("external route reader must reject writes");
+    assert!(
+        error.contains("read-only"),
+        "external route readers must fail loudly if a caller tries to create a second writer rail: {error}"
+    );
+}
+
+#[tokio::test]
 async fn db_batch_flush_persists_memory_rows_idempotently() {
     let p = temp_db_path("flush-memory-idempotent");
     let db = DbHandle::open(&p).expect("open handle");

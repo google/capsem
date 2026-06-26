@@ -407,6 +407,19 @@ impl DbReader {
         schema::validate_ready_schema(&self.conn)
     }
 
+    /// Refresh DB-owned hot memory tables from disk for externally-written DBs.
+    ///
+    /// Normal writer-owned handles do not call this on read because their
+    /// memory tables are the write truth. Service session route handles use it
+    /// because capsem-process owns the writes and disk is the process boundary.
+    pub(crate) fn sync_from_disk(&self) -> rusqlite::Result<()> {
+        self.conn.pragma_update(None, "query_only", "OFF")?;
+        let result = schema::sync_memory_tables_from_disk(&self.conn, schema::hot_ledger_tables())
+            .and_then(|()| schema::create_memory_read_views(&self.conn));
+        let restore = self.conn.pragma_update(None, "query_only", "ON");
+        result.and(restore)
+    }
+
     fn has_column(&self, table: &str, column: &str) -> bool {
         let Ok(mut stmt) = self.conn.prepare(&format!("PRAGMA table_info({table})")) else {
             return false;
