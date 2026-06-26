@@ -151,6 +151,7 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
     mock_proc = None
     old_corp_config = os.environ.get("CAPSEM_CORP_CONFIG")
     session_id = vm_name("ironbank-mcp-protocol")
+    vm_id: str | None = None
     nonce = uuid.uuid4().hex[:12]
     try:
         corp_path = service.tmp_dir / "ironbank-corp.toml"
@@ -191,13 +192,15 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
             timeout=90,
         )
         assert created is not None
-        assert created.get("id") == session_id or created.get("name") == session_id
-        assert wait_exec_ready(client, session_id, timeout=EXEC_READY_TIMEOUT)
+        vm_id = created["id"]
+        assert isinstance(vm_id, str)
+        assert created.get("name") == session_id
+        assert wait_exec_ready(client, vm_id, timeout=EXEC_READY_TIMEOUT)
 
         script_name = f"ironbank-mcp-protocol-{uuid.uuid4().hex[:8]}.py"
         script = _mcp_probe_script(mock_base_url, nonce).encode()
         upload = client.post_bytes(
-            f"/vms/{session_id}/files/content?path={script_name}",
+            f"/vms/{vm_id}/files/content?path={script_name}",
             script,
             timeout=30,
         )
@@ -205,7 +208,7 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
         assert upload["success"] is True
         assert upload["size"] == len(script)
         exec_resp = client.post(
-            f"/vms/{session_id}/exec",
+            f"/vms/{vm_id}/exec",
             {"command": f"python3 /root/{script_name}", "timeout_secs": 120},
             timeout=150,
         )
@@ -241,7 +244,7 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
         }
         assert all(row["status"] == 200 for row in upstream_records[:3])
 
-        with closing(_connect_session_db(service, session_id)) as conn:
+        with closing(_connect_session_db(service, vm_id)) as conn:
             assert "mcp_calls" not in {
                 row["name"]
                 for row in conn.execute(
@@ -381,7 +384,7 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
 
         uds_tool_rows = _query_rows(
             client,
-            session_id,
+            vm_id,
             f"""
             SELECT event_id, server_name, method, tool_name, decision,
                    policy_action, policy_rule, trace_id
@@ -397,7 +400,7 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
 
         timeline = _eventually(
             lambda: client.get(
-                f"/vms/{session_id}/timeline?layers=tool&limit=50",
+                f"/vms/{vm_id}/timeline?layers=tool&limit=50",
                 timeout=30,
             ),
             lambda payload: any(
@@ -422,7 +425,7 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
         )
 
         security_latest = _eventually(
-            lambda: client.get(f"/vms/{session_id}/security/latest?limit=100", timeout=30),
+            lambda: client.get(f"/vms/{vm_id}/security/latest?limit=100", timeout=30),
             lambda rows: {row["event_id"] for row in uds_tool_rows}
             <= {row["event_id"] for row in rows},
         )
@@ -438,12 +441,12 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
         )
 
         gateway_latest = gateway_client.get(
-            f"/vms/{session_id}/security/latest?limit=100",
+            f"/vms/{vm_id}/security/latest?limit=100",
             timeout=30,
         )
         assert gateway_latest == security_latest
 
-        security_status = client.get(f"/vms/{session_id}/security/status", timeout=30)
+        security_status = client.get(f"/vms/{vm_id}/security/status", timeout=30)
         by_action = {row["rule_action"]: row["count"] for row in security_status["by_action"]}
         by_event_type = {
             row["event_type"]: row["count"] for row in security_status["by_event_type"]
@@ -455,16 +458,26 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
         assert by_level["informational"] >= 2
 
         info = _eventually(
-            lambda: client.get(f"/vms/{session_id}/info", timeout=30),
+            lambda: client.get(f"/vms/{vm_id}/info", timeout=30),
             lambda value: (
                 value is not None
-                and (value.get("id") == session_id or value.get("name") == session_id)
-                and value.get("total_tool_calls") == 1
+                and value.get("id") == vm_id
+                and value.get("name") == session_id
+                and value.get("session_db", {}).get("ready") is True
             ),
             timeout_s=20,
         )
         assert info["profile_id"] == CODE_PROFILE_ID
-        assert info["total_tool_calls"] == 1
+        assert info.get("total_tool_calls") is None
+        stats_detail = client.get(f"/vms/{vm_id}/stats/detail", timeout=30)
+        assert isinstance(stats_detail, dict)
+        mcp_tool_events = [
+            row
+            for row in stats_detail.get("tool_events", [])
+            if row["source"] == "mcp" and row["method"] == "tools/call"
+        ]
+        assert len(mcp_tool_events) == 1
+        assert mcp_tool_events[0]["tool_name"] == "fixture_lookup"
 
         service_log = (service.tmp_dir / "service.log").read_text(encoding="utf-8")
         gateway_log = gateway.stop_and_read_log()
@@ -481,7 +494,8 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
         if gateway is not None:
             gateway.stop()
         try:
-            service.client().delete(f"/vms/{session_id}/delete", timeout=30)
+            assert vm_id is not None
+            service.client().delete(f"/vms/{vm_id}/delete", timeout=30)
         except Exception:
             pass
         service.stop()

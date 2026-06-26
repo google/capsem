@@ -165,6 +165,7 @@ def test_profile_mcp_call_pays_full_ledger_blackbox():
     mock_proc = None
     old_corp_config = os.environ.get("CAPSEM_CORP_CONFIG")
     session_id = vm_name("ironbank-mcp")
+    vm_id: str | None = None
     try:
         corp_path = service.tmp_dir / "ironbank-mcp-profile-corp.toml"
         corp_path.write_text(
@@ -196,8 +197,10 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
             timeout=90,
         )
         assert created is not None
-        assert created.get("id") == session_id or created.get("name") == session_id
-        assert wait_exec_ready(client, session_id, timeout=EXEC_READY_TIMEOUT)
+        vm_id = created["id"]
+        assert isinstance(vm_id, str)
+        assert created.get("name") == session_id
+        assert wait_exec_ready(client, vm_id, timeout=EXEC_READY_TIMEOUT)
 
         with _mcp_session(service.uds_path) as mcp:
             route_servers = client.get(
@@ -240,7 +243,7 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
             )
             assert mcp_http_tool == route_http_tool
 
-            with _connect_session_db(service, client, session_id) as conn:
+            with _connect_session_db(service, client, vm_id) as conn:
                 assert "mcp_calls" not in {
                     row["name"]
                     for row in conn.execute(
@@ -267,7 +270,7 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
             assert "Status: 200 OK" in call_text
             assert "content-type:" in call_text.lower()
 
-        with _connect_session_db(service, client, session_id) as conn:
+        with _connect_session_db(service, client, vm_id) as conn:
             tool_rows = _eventually(
                 lambda: _rows(
                     conn,
@@ -356,7 +359,7 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
         if mock_proc is not None:
             stop_process(mock_proc)
         try:
-            service.client().delete(f"/vms/{session_id}/delete", timeout=30)
+            service.client().delete(f"/vms/{vm_id or session_id}/delete", timeout=30)
         except Exception:
             pass
         service.stop()

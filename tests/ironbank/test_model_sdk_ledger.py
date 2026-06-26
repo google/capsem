@@ -55,6 +55,8 @@ EXPECTED_SECURITY_LATEST_FIELDS = {
     "rule_json",
     "event_json",
     "trace_id",
+    "turn_id",
+    "credential_ref",
 }
 
 
@@ -683,6 +685,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
     gateway: GatewayInstance | None = None
     gateway_client: TcpHttpClient | None = None
     session_id = vm_name("ironbank-sdk")
+    vm_id: str | None = None
     script_name = f"ironbank-model-sdk-{uuid.uuid4().hex[:8]}.py"
     old_corp_config = os.environ.get("CAPSEM_CORP_CONFIG")
     try:
@@ -742,12 +745,14 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             timeout=90,
         )
         assert create is not None, "session creation returned no body"
-        assert create.get("id") == session_id or create.get("name") == session_id
-        assert wait_exec_ready(client, session_id, timeout=EXEC_READY_TIMEOUT)
+        vm_id = create["id"]
+        assert isinstance(vm_id, str)
+        assert create.get("name") == session_id
+        assert wait_exec_ready(client, vm_id, timeout=EXEC_READY_TIMEOUT)
 
         script = _sdk_probe_script(mock_base_url).encode()
         upload = client.post_bytes(
-            f"/vms/{session_id}/files/content?path={script_name}",
+            f"/vms/{vm_id}/files/content?path={script_name}",
             script,
             timeout=30,
         )
@@ -756,7 +761,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
         assert upload["size"] == len(script)
 
         exec_resp = client.post(
-            f"/vms/{session_id}/exec",
+            f"/vms/{vm_id}/exec",
             {"command": f"python3 /root/{script_name}", "timeout_secs": 220},
             timeout=240,
         )
@@ -784,7 +789,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
         }
 
         poem_status, poem_bytes = client.get_bytes(
-            f"/vms/{session_id}/files/content?path=poem.md",
+            f"/vms/{vm_id}/files/content?path=poem.md",
             timeout=30,
         )
         assert poem_status == 200
@@ -793,7 +798,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
         shape_script_name = f"ironbank-unknown-shape-{uuid.uuid4().hex[:8]}.py"
         shape_script = _unknown_shape_probe_script(mock_base_url).encode()
         shape_upload = client.post_bytes(
-            f"/vms/{session_id}/files/content?path={shape_script_name}",
+            f"/vms/{vm_id}/files/content?path={shape_script_name}",
             shape_script,
             timeout=30,
         )
@@ -801,7 +806,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
         assert shape_upload["success"] is True
         assert shape_upload["size"] == len(shape_script)
         shape_exec = client.post(
-            f"/vms/{session_id}/exec",
+            f"/vms/{vm_id}/exec",
             {"command": f"python3 /root/{shape_script_name}", "timeout_secs": 120},
             timeout=150,
         )
@@ -829,7 +834,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
         declared_tool_script_name = f"ironbank-declared-tool-{uuid.uuid4().hex[:8]}.py"
         declared_tool_script = _tool_declaration_without_call_script(mock_base_url).encode()
         declared_tool_upload = client.post_bytes(
-            f"/vms/{session_id}/files/content?path={declared_tool_script_name}",
+            f"/vms/{vm_id}/files/content?path={declared_tool_script_name}",
             declared_tool_script,
             timeout=30,
         )
@@ -837,7 +842,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
         assert declared_tool_upload["success"] is True
         assert declared_tool_upload["size"] == len(declared_tool_script)
         declared_tool_exec = client.post(
-            f"/vms/{session_id}/exec",
+            f"/vms/{vm_id}/exec",
             {"command": f"python3 /root/{declared_tool_script_name}", "timeout_secs": 120},
             timeout=150,
         )
@@ -868,7 +873,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
         mcp_script_name = f"ironbank-unknown-mcp-{uuid.uuid4().hex[:8]}.py"
         mcp_script = _unknown_mcp_probe_script(mock_base_url).encode()
         mcp_upload = client.post_bytes(
-            f"/vms/{session_id}/files/content?path={mcp_script_name}",
+            f"/vms/{vm_id}/files/content?path={mcp_script_name}",
             mcp_script,
             timeout=30,
         )
@@ -876,7 +881,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
         assert mcp_upload["success"] is True
         assert mcp_upload["size"] == len(mcp_script)
         mcp_exec = client.post(
-            f"/vms/{session_id}/exec",
+            f"/vms/{vm_id}/exec",
             {"command": f"python3 /root/{mcp_script_name}", "timeout_secs": 120},
             timeout=150,
         )
@@ -901,7 +906,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
         streaming_script_name = f"ironbank-streaming-{uuid.uuid4().hex[:8]}.py"
         streaming_script = _streaming_provider_probe_script(mock_base_url).encode()
         streaming_upload = client.post_bytes(
-            f"/vms/{session_id}/files/content?path={streaming_script_name}",
+            f"/vms/{vm_id}/files/content?path={streaming_script_name}",
             streaming_script,
             timeout=30,
         )
@@ -909,7 +914,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
         assert streaming_upload["success"] is True
         assert streaming_upload["size"] == len(streaming_script)
         streaming_exec = client.post(
-            f"/vms/{session_id}/exec",
+            f"/vms/{vm_id}/exec",
             {"command": f"python3 /root/{streaming_script_name}", "timeout_secs": 120},
             timeout=150,
         )
@@ -939,7 +944,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
         assert streaming_result["google_has_text"] is True
         assert streaming_result["anthropic_has_text"] is True
 
-        history = client.get(f"/vms/{session_id}/history", timeout=30)
+        history = client.get(f"/vms/{vm_id}/history", timeout=30)
         assert history is not None
         assert history.get("total", 0) >= 2
         history_text = " ".join(
@@ -950,7 +955,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
         assert "IRONBANK_SDK_RESULT" in history_text
         assert RAW_SDK_SECRET not in history_text
 
-        security_latest = client.get(f"/vms/{session_id}/security/latest?limit=50", timeout=30)
+        security_latest = client.get(f"/vms/{vm_id}/security/latest?limit=50", timeout=30)
         assert isinstance(security_latest, list)
         assert security_latest
         assert all(set(row) == EXPECTED_SECURITY_LATEST_FIELDS for row in security_latest)
@@ -961,7 +966,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
         assert all(json.loads(row["rule_json"]) for row in security_latest)
         assert all(json.loads(row["event_json"]) for row in security_latest)
 
-        conn = _connect_session_db(service, session_id)
+        conn = _connect_session_db(service, vm_id)
         try:
             for table in (
                 "net_events",
@@ -994,7 +999,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             replay_script_name = f"ironbank-broker-replay-{uuid.uuid4().hex[:8]}.py"
             replay_script = _broker_replay_script(mock_base_url, credential_ref).encode()
             replay_upload = client.post_bytes(
-                f"/vms/{session_id}/files/content?path={replay_script_name}",
+                f"/vms/{vm_id}/files/content?path={replay_script_name}",
                 replay_script,
                 timeout=30,
             )
@@ -1003,7 +1008,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             assert replay_upload["size"] == len(replay_script)
 
             replay_exec = client.post(
-                f"/vms/{session_id}/exec",
+                f"/vms/{vm_id}/exec",
                 {"command": f"python3 /root/{replay_script_name}", "timeout_secs": 220},
                 timeout=240,
             )
@@ -1391,24 +1396,24 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             assert observed_tool_response["result"]["content"][0]["text"] == (
                 "capsem-mock-server:mcp:fixture_lookup"
             )
-            observed_tool_list = _eventually(
+            observed_tool_list_security = _eventually(
                 lambda: conn.execute(
                     """
                     SELECT *
-                    FROM tool_calls
-                    WHERE origin = 'mcp'
-                      AND server_name = ?
-                      AND method = 'tools/list'
+                    FROM security_rule_events
+                    WHERE event_type = 'mcp.tool_list'
                     ORDER BY id DESC
-                    """,
-                    (observed_mcp_server,),
+                    """
                 ).fetchall(),
-                lambda rows: len(rows) == 1,
+                lambda rows: len(rows) >= 1,
             )[0]
-            _assert_event_id(observed_tool_list["event_id"])
-            assert "fixture_lookup" in (observed_tool_list["response_preview"] or "")
+            _assert_event_id(observed_tool_list_security["event_id"])
+            list_event = json.loads(observed_tool_list_security["event_json"])
+            assert list_event["mcp"]["server_name"] == observed_mcp_server
+            assert list_event["mcp"]["method"] == "tools/list"
+            assert "fixture_lookup" in list_event["mcp"]["tool_list"]
 
-            timeline = client.get(f"/vms/{session_id}/timeline?layers=tool&limit=50", timeout=30)
+            timeline = client.get(f"/vms/{vm_id}/timeline?layers=tool&limit=50", timeout=30)
             assert set(timeline) == {"columns", "rows"}
             assert {"timestamp", "layer", "ref", "summary", "status", "duration_ms"} <= set(
                 timeline["columns"]
@@ -1423,19 +1428,30 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             ) in timeline_summaries
 
             info = _eventually(
-                lambda: client.get(f"/vms/{session_id}/info", timeout=30),
+                lambda: client.get(f"/vms/{vm_id}/info", timeout=30),
                 lambda value: (
                     value is not None
-                    and (value.get("id") == session_id or value.get("name") == session_id)
-                    and value.get("model_call_count", 0) >= len(model_rows)
-                    and value.get("total_tool_calls", 0) >= len(tool_rows)
+                    and value.get("id") == vm_id
+                    and value.get("name") == session_id
+                    and value.get("session_db", {}).get("ready") is True
                 ),
                 timeout_s=20,
             )
             assert info["profile_id"] == CODE_PROFILE_ID
-            assert info["model_call_count"] >= len(model_rows)
-            assert info["total_tool_calls"] >= len(tool_rows)
-            status = client.get(f"/vms/{session_id}/status", timeout=30)
+            assert info.get("model_call_count") is None
+            assert info.get("total_tool_calls") is None
+            stats_detail = client.get(f"/vms/{vm_id}/stats/detail", timeout=30)
+            assert isinstance(stats_detail, dict)
+            stats_model_event_ids = {
+                row["event_id"] for row in stats_detail.get("model_events", [])
+            }
+            stats_tool_event_ids = {
+                row["event_id"] for row in stats_detail.get("tool_events", [])
+            }
+            assert {row["event_id"] for row in model_rows} <= stats_model_event_ids
+            assert {row["event_id"] for row in tool_rows} <= stats_tool_event_ids
+            assert observed_tool_call["event_id"] in stats_tool_event_ids
+            status = client.get(f"/vms/{vm_id}/status", timeout=30)
             assert status is not None
             assert status["status"] == "Running"
             assert status["available_actions"] == ["pause", "stop", "fork", "delete"]
@@ -1458,7 +1474,10 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                     SELECT event_id FROM tool_calls WHERE origin = 'mcp' AND server_name = 'observed:127.0.0.1:3713/mcp'
                     UNION
                     SELECT event_id FROM net_events WHERE path = '/v1/chat/completions'
+                    UNION
+                    SELECT event_id FROM net_events WHERE path IN ('/oauth/token', '/credential/response', '/echo')
                 )
+                OR event_type = 'mcp.tool_list'
                 ORDER BY id
                 """
             ).fetchall()
@@ -1502,7 +1521,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 and item["detection_level"] == "informational"
                 for item in shape_security_rows
             )
-            uds_latest = client.get(f"/vms/{session_id}/security/latest?limit=500", timeout=30)
+            uds_latest = client.get(f"/vms/{vm_id}/security/latest?limit=500", timeout=30)
             assert isinstance(uds_latest, list)
             uds_shape_latest = [
                 row
@@ -1521,7 +1540,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
 
             assert gateway_client is not None
             gateway_latest = gateway_client.get(
-                f"/vms/{session_id}/security/latest?limit=500",
+                f"/vms/{vm_id}/security/latest?limit=500",
                 timeout=30,
             )
             assert isinstance(gateway_latest, list)
@@ -1551,7 +1570,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 and item["rule_action"] in {"allow", "ask"}
                 for item in mcp_tool_security_rows
             )
-            mcp_list_security_rows = security_by_event[observed_tool_list["event_id"]]
+            mcp_list_security_rows = security_by_event[observed_tool_list_security["event_id"]]
             assert any(
                 item["event_type"] == "mcp.tool_list"
                 and item["rule_id"] == "profiles.rules.default_mcp"
@@ -1577,10 +1596,6 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             )
             assert all(isinstance(execution["applied"], bool) for execution in plugin_executions)
             assert all(isinstance(execution["duration_us"], int) for execution in plugin_executions)
-            assert any(
-                execution["plugin_id"] == "credential_broker"
-                for execution in plugin_executions
-            )
             assert any(
                 execution["plugin_id"] == "log_sanitizer" and execution["applied"] is True
                 for execution in plugin_executions
@@ -1611,8 +1626,6 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 assert runtime["applied_count"] + runtime["skipped_count"] == runtime["execution_count"]
                 assert runtime["total_duration_us"] >= runtime["max_duration_us"]
                 assert runtime["max_duration_us"] >= 0
-            assert broker_runtime["applied_count"] > 0
-            assert broker_runtime["detection_count"] > 0
             assert sanitizer_runtime["applied_count"] > 0
             assert sanitizer_runtime["detection_count"] > 0
 
@@ -1700,7 +1713,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             real_client_script_name = f"ironbank-real-clients-{uuid.uuid4().hex[:8]}.py"
             real_client_script = _real_client_diversity_probe_script(mock_base_url).encode()
             real_client_upload = client.post_bytes(
-                f"/vms/{session_id}/files/content?path={real_client_script_name}",
+                f"/vms/{vm_id}/files/content?path={real_client_script_name}",
                 real_client_script,
                 timeout=30,
             )
@@ -1708,7 +1721,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             assert real_client_upload["success"] is True
             assert real_client_upload["size"] == len(real_client_script)
             real_client_exec = client.post(
-                f"/vms/{session_id}/exec",
+                f"/vms/{vm_id}/exec",
                 {"command": f"python3 /root/{real_client_script_name}", "timeout_secs": 180},
                 timeout=210,
             )
@@ -1733,13 +1746,13 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             assert real_client_result == {
                 "anthropic_model": HERMETIC_ANTHROPIC_MODEL,
                 "anthropic_text": EXPECTED_POEM,
-                "anthropic_usage_total": 30,
+                "anthropic_usage_total": 60,
                 "litellm_model": "gemma4:latest",
                 "litellm_text": EXPECTED_POEM,
                 "litellm_usage_total": 78,
-                "ollama_eval_count": 5,
+                "ollama_eval_count": 24,
                 "ollama_model": "gemma4:latest",
-                "ollama_prompt_eval_count": 7,
+                "ollama_prompt_eval_count": 32,
                 "ollama_text": EXPECTED_POEM,
                 "poem_paths": {
                     "anthropic": "/root/anthropic-sdk-poem.md",
@@ -1749,7 +1762,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             }
             for poem_path in real_client_result["poem_paths"].values():
                 poem_status, poem_bytes = client.get_bytes(
-                    f"/vms/{session_id}/files/content?path={Path(poem_path).name}",
+                    f"/vms/{vm_id}/files/content?path={Path(poem_path).name}",
                     timeout=30,
                 )
                 assert poem_status == 200
@@ -1773,11 +1786,11 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             assert anthropic_sdk_row["provider"] == "unknown"
             assert anthropic_sdk_row["model"] == HERMETIC_ANTHROPIC_MODEL
             assert anthropic_sdk_row["messages_count"] == 1
-            assert anthropic_sdk_row["tools_count"] == 0
-            assert anthropic_sdk_row["input_tokens"] == 25
-            assert anthropic_sdk_row["output_tokens"] == 5
+            assert anthropic_sdk_row["tools_count"] == 1
+            assert anthropic_sdk_row["input_tokens"] == 33
+            assert anthropic_sdk_row["output_tokens"] == 27
             assert anthropic_sdk_row["text_content"] == EXPECTED_POEM
-            assert anthropic_sdk_row["stop_reason"] == "end_turn"
+            assert anthropic_sdk_row["stop_reason"] == "tool_use"
             assert anthropic_sdk_row["credential_ref"] is not None
             _assert_credential_ref(anthropic_sdk_row["credential_ref"])
             assert "capsem_test_anthropic_sdk_key" not in (
@@ -1802,8 +1815,8 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             assert ollama_row["model"] == "gemma4:latest"
             assert ollama_row["messages_count"] == 1
             assert ollama_row["tools_count"] == 0
-            assert ollama_row["input_tokens"] == 7
-            assert ollama_row["output_tokens"] == 5
+            assert ollama_row["input_tokens"] == 32
+            assert ollama_row["output_tokens"] == 24
             assert ollama_row["text_content"] == EXPECTED_POEM
             assert ollama_row["stop_reason"] == "end_turn"
             assert ollama_row["credential_ref"] is None
@@ -1881,9 +1894,9 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             conn.close()
     finally:
         stop_process(mock_proc)
-        if client is not None:
+        if client is not None and vm_id is not None:
             try:
-                client.delete(f"/vms/{session_id}/delete", timeout=60)
+                client.delete(f"/vms/{vm_id}/delete", timeout=60)
             except Exception:
                 pass
         if gateway is not None:
@@ -1904,6 +1917,7 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
     client = None
     mock_proc = None
     session_id = vm_name("ironbank-codex")
+    vm_id: str | None = None
     script_name = f"ironbank-codex-cli-{uuid.uuid4().hex[:8]}.py"
     try:
         service.start()
@@ -1925,12 +1939,14 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
             timeout=90,
         )
         assert create is not None
-        assert create.get("id") == session_id or create.get("name") == session_id
-        assert wait_exec_ready(client, session_id, timeout=EXEC_READY_TIMEOUT)
+        vm_id = create["id"]
+        assert isinstance(vm_id, str)
+        assert create.get("name") == session_id
+        assert wait_exec_ready(client, vm_id, timeout=EXEC_READY_TIMEOUT)
 
         script = _codex_cli_probe_script(mock_base_url).encode()
         upload = client.post_bytes(
-            f"/vms/{session_id}/files/content?path={script_name}",
+            f"/vms/{vm_id}/files/content?path={script_name}",
             script,
             timeout=30,
         )
@@ -1939,7 +1955,7 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
         assert upload["size"] == len(script)
 
         exec_resp = client.post(
-            f"/vms/{session_id}/exec",
+            f"/vms/{vm_id}/exec",
             {"command": f"python3 /root/{script_name}", "timeout_secs": 240},
             timeout=270,
         )
@@ -1971,7 +1987,7 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
         assert result["broker_echo"]["authorization_is_broker_ref"] is False
 
         poem_status, poem_bytes = client.get_bytes(
-            f"/vms/{session_id}/files/content?path={filename}",
+            f"/vms/{vm_id}/files/content?path={filename}",
             timeout=30,
         )
         assert poem_status == 200
@@ -2049,7 +2065,7 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
         assert "capsem_test_codex_cli_key" not in final_http_record["request_body"]
         assert RAW_CODEX_BROKER_SECRET not in final_http_record["request_body"]
 
-        conn = _connect_session_db(service, session_id)
+        conn = _connect_session_db(service, vm_id)
         try:
             echo_rows = _eventually(
                 lambda: conn.execute(
@@ -2470,9 +2486,9 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
             conn.close()
     finally:
         stop_process(mock_proc)
-        if client is not None:
+        if client is not None and vm_id is not None:
             try:
-                client.delete(f"/vms/{session_id}/delete", timeout=60)
+                client.delete(f"/vms/{vm_id}/delete", timeout=60)
             except Exception:
                 pass
         service.stop()

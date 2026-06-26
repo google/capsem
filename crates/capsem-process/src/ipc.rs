@@ -900,6 +900,7 @@ pub(crate) async fn handle_ipc_connection(
                         "capsem-service".to_string(),
                     )
                     .await;
+                    mcp.db.flush().await;
                     let result_json = response
                         .as_ref()
                         .and_then(|result| serde_json::to_string(&result.response).ok());

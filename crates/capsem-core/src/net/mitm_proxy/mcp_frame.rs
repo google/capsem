@@ -18,7 +18,7 @@ use tracing::{debug, warn};
 use crate::mcp::types::{parse_namespaced, parse_resource_uri, JsonRpcRequest, JsonRpcResponse};
 use crate::net::policy_config::SecurityRuleSet;
 use crate::security_engine::{
-    delegate_matching_security_rules_for_evaluated_event, emit_security_write,
+    emit_matching_security_rules_for_evaluated_event, emit_security_write,
     evaluate_security_boundary, McpSecurityEvent, ProcessSecurityEvent, RuntimeSecurityEventType,
     SecurityEnforcementAction, SecurityEnforcementDecision, SecurityEvent,
 };
@@ -632,16 +632,19 @@ async fn log_mcp_call_with_policy(
     let security_event = security_event_from_mcp_call(&call);
     if let Some(event_id) = emit_security_write(&db, WriteOp::McpCall(call)).await {
         let rules = security_rules.read().unwrap().clone();
-        delegate_matching_security_rules_for_evaluated_event(
-            db,
+        if let Err(error) = emit_matching_security_rules_for_evaluated_event(
+            &db,
             event_id.clone(),
             runtime_mcp_event_type(&req.method),
-            rules,
+            &rules,
             BTreeMap::new(),
             security_event,
             current_unix_ms(),
-            "mcp",
-        );
+        )
+        .await
+        {
+            warn!(error = %error, "failed to emit MCP security rule ledger rows");
+        }
         return LoggedMcpEmission {
             event_id: Some(event_id.as_str().to_string()),
         };

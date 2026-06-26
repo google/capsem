@@ -377,6 +377,8 @@ event: model.done\ndata: {\"finish_reason\":\"stop\"}\n\n",
         })),
         (&Method::GET, "/api/client/features") => json_response(json!({"features": []})),
         (&Method::GET, "/credential/response") => json_response(json!({
+            "kind": "synthetic_credential_fixture",
+            "api_key": "sk-capsem_test_api_key_0123456789abcdef",
             "oauth": {
                 "access_token": "capsem_test_oauth_access_0123456789abcdef",
                 "refresh_token": "capsem_test_oauth_refresh_0123456789abcdef",
@@ -457,12 +459,40 @@ event: model.done\ndata: {\"finish_reason\":\"stop\"}\n\n",
             }
         }
         (&Method::POST, "/model/shape") => json_response(json!({
-            "model": "mock-local",
-            "shape": "ok",
+            "id": "chatcmpl_shape_fixture",
+            "object": "chat.completion",
+            "model": parse_json(&request_body).get("model").and_then(Value::as_str).unwrap_or("gpt-4.1"),
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": EXPECTED_POEM,
+                    "tool_calls": [{
+                        "id": OLLAMA_OPENAI_TOOL_CALL_ID,
+                        "type": "function",
+                        "function": {
+                            "name": "fixture_lookup",
+                            "arguments": "{\"query\":\"Capsem ironbank poem\"}"
+                        }
+                    }]
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 66, "completion_tokens": 390, "total_tokens": 456}
         })),
         (&Method::POST, "/model/no-tool-call") => json_response(json!({
-            "model": "mock-local",
-            "content": EXPECTED_POEM,
+            "id": "chatcmpl_no_tool_fixture",
+            "object": "chat.completion",
+            "model": parse_json(&request_body).get("model").and_then(Value::as_str).unwrap_or("gpt-4.1"),
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": EXPECTED_POEM
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 26, "completion_tokens": 52, "total_tokens": 78}
         })),
         (&Method::POST, "/v1/messages") => {
             let payload = parse_json(&request_body);
@@ -847,7 +877,7 @@ event: response.completed\ndata: {{\"type\":\"response.completed\",\"response\":
         );
     }
     let (token, path) = write_target(payload, "openai-responses");
-    let call_id = format!("call_capsem_exec_command_{token}");
+    let call_id = format!("call_{}", &token[..token.len().min(12)]);
     let arguments = json_compact(json!({
         "cmd": shell_write_command(&token, &path),
         "yield_time_ms": 1000,
@@ -860,8 +890,7 @@ event: response.output_item.added\ndata: {{\"type\":\"response.output_item.added
 event: response.function_call_arguments.delta\ndata: {{\"type\":\"response.function_call_arguments.delta\",\"delta\":{arguments_json}}}\n\n\
 event: response.function_call_arguments.done\ndata: {{\"type\":\"response.function_call_arguments.done\",\"arguments\":{arguments_json}}}\n\n\
 event: response.output_item.done\ndata: {{\"type\":\"response.output_item.done\",\"item\":{{\"type\":\"function_call\",\"id\":\"fc_capsem_mock\",\"status\":\"completed\",\"call_id\":\"{call_id}\",\"name\":\"exec_command\",\"arguments\":{arguments_json}}}}}\n\n\
-event: response.reasoning_summary_text.delta\ndata: {{\"type\":\"response.reasoning_summary_text.delta\",\"delta\":\"ledger reasoning\"}}\n\n\
-event: response.completed\ndata: {{\"type\":\"response.completed\",\"response\":{{\"id\":\"resp_capsem_mock\",\"status\":\"completed\",\"model\":\"gpt-5-nano\",\"usage\":{{\"input_tokens\":7,\"output_tokens\":5,\"total_tokens\":12,\"output_tokens_details\":{{\"reasoning_tokens\":2}}}}}}}}\n\n"
+event: response.completed\ndata: {{\"type\":\"response.completed\",\"response\":{{\"id\":\"resp_capsem_mock\",\"status\":\"completed\",\"model\":\"gpt-5-nano\",\"usage\":{{\"input_tokens\":31,\"output_tokens\":17,\"total_tokens\":48,\"output_tokens_details\":{{\"reasoning_tokens\":2}}}}}}}}\n\n"
     ))
 }
 
@@ -929,6 +958,21 @@ event: content_block_delta\ndata: {{\"type\":\"content_block_delta\",\"index\":1
 event: message_delta\ndata: {{\"type\":\"message_delta\",\"delta\":{{\"stop_reason\":\"end_turn\"}},\"usage\":{{\"output_tokens\":17}}}}\n\n\
 event: message_stop\ndata: {{\"type\":\"message_stop\"}}\n\n",
             json_compact(json!({"type": "message_start", "message": message}))
+        ));
+    }
+    if payload.get("tools").is_none() {
+        let model = payload
+            .get("model")
+            .and_then(Value::as_str)
+            .unwrap_or("claude-sonnet-4-6");
+        return Bytes::from(format!(
+            "event: message_start\ndata: {{\"type\":\"message_start\",\"message\":{{\"id\":\"msg_ironbank_stream_text\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"{model}\",\"content\":[],\"usage\":{{\"input_tokens\":25,\"output_tokens\":5}}}}}}\n\n\
+event: content_block_start\ndata: {{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{{\"type\":\"text\",\"text\":\"\"}}}}\n\n\
+event: content_block_delta\ndata: {{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{{\"type\":\"text_delta\",\"text\":\"Hello \"}}}}\n\n\
+event: content_block_delta\ndata: {{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{{\"type\":\"text_delta\",\"text\":\"world!\"}}}}\n\n\
+event: content_block_stop\ndata: {{\"type\":\"content_block_stop\",\"index\":0}}\n\n\
+event: message_delta\ndata: {{\"type\":\"message_delta\",\"delta\":{{\"stop_reason\":\"end_turn\"}},\"usage\":{{\"output_tokens\":5}}}}\n\n\
+event: message_stop\ndata: {{\"type\":\"message_stop\"}}\n\n"
         ));
     }
 
@@ -1091,6 +1135,24 @@ fn gemini_api_stream(payload: Value, model: String) -> Bytes {
                 "candidatesTokenCount": 17,
                 "thoughtsTokenCount": 2,
                 "totalTokenCount": 50
+            },
+            "modelVersion": model
+        });
+        return Bytes::from(format!("data: {}\n\n", json_compact(chunk)));
+    }
+    if payload.get("tools").is_none() {
+        let chunk = json!({
+            "candidates": [{
+                "content": {
+                    "parts": [{"text": "Hello world!"}],
+                    "role": "model"
+                },
+                "finishReason": "STOP"
+            }],
+            "usageMetadata": {
+                "promptTokenCount": 5,
+                "candidatesTokenCount": 3,
+                "totalTokenCount": 8
             },
             "modelVersion": model
         });

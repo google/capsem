@@ -6531,11 +6531,7 @@ async fn handle_profile_mcp_servers(
         builtin_bin.as_deref(),
         std::collections::HashMap::new(),
     );
-    let cache = state
-        .mcp_tool_cache
-        .lock()
-        .map(|cache| cache.clone())
-        .unwrap_or_default();
+    let cache = latest_mcp_tool_cache(&state);
 
     let resp: Vec<api::McpServerInfoResponse> = servers
         .iter()
@@ -6576,6 +6572,17 @@ async fn handle_profile_mcp_default_info(
     }))
 }
 
+fn latest_mcp_tool_cache(state: &ServiceState) -> Vec<ToolCacheEntry> {
+    let latest = capsem_core::mcp::load_tool_cache();
+    let Ok(mut cache) = state.mcp_tool_cache.lock() else {
+        return latest;
+    };
+    if !latest.is_empty() || cache.is_empty() {
+        *cache = latest;
+    }
+    cache.clone()
+}
+
 /// GET /profiles/:profile_id/mcp/servers/:server_id/tools/list -- list one server's tools.
 async fn handle_profile_mcp_server_tools(
     State(state): State<Arc<ServiceState>>,
@@ -6598,11 +6605,7 @@ async fn handle_profile_mcp_server_tools(
         ));
     }
 
-    let cache = state
-        .mcp_tool_cache
-        .lock()
-        .map(|cache| cache.clone())
-        .unwrap_or_default();
+    let cache = latest_mcp_tool_cache(&state);
     let resp: Result<Vec<api::McpToolInfoResponse>, AppError> = cache
         .iter()
         .filter(|entry| entry.server_name == server_id)
