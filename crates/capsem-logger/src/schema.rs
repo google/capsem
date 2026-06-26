@@ -637,11 +637,23 @@ fn memory_table_sql(table: &str, sql: &str) -> Option<String> {
         .map(|rest| format!("CREATE TABLE IF NOT EXISTS {MEMORY_SCHEMA}.{table}{rest}"))
 }
 
+/// SQLite mmap window for file-backed ledger databases.
+///
+/// Keep this in the DB layer: routes and security components should not know
+/// whether a query reads through SQLite's page cache, mmap, or DB-owned memory
+/// tables.
+pub const SQLITE_MMAP_SIZE_BYTES: i64 = 256 * 1024 * 1024;
+
+fn apply_mmap_pragma(conn: &Connection) -> rusqlite::Result<()> {
+    conn.pragma_update(None, "mmap_size", SQLITE_MMAP_SIZE_BYTES)
+}
+
 /// Apply write-mode pragmas: WAL journal + relaxed synchronous.
 /// Only call on read-write connections (the writer).
 pub fn apply_pragmas(conn: &Connection) -> rusqlite::Result<()> {
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "synchronous", "NORMAL")?;
+    apply_mmap_pragma(conn)?;
     Ok(())
 }
 
@@ -1464,6 +1476,7 @@ pub fn migrate(conn: &Connection) {
 /// attach and populate its private `mem` schema. After setup, `query_only`
 /// prevents writes through the read worker.
 pub fn apply_reader_pragmas(conn: &Connection) -> rusqlite::Result<()> {
+    apply_mmap_pragma(conn)?;
     conn.pragma_update(None, "query_only", "ON")?;
     Ok(())
 }
@@ -1572,6 +1585,22 @@ mod tests {
     fn apply_pragmas_succeeds() {
         let conn = Connection::open_in_memory().unwrap();
         apply_pragmas(&conn).unwrap();
+    }
+
+    #[test]
+    fn writer_pragmas_enable_file_backed_mmap() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.db");
+        let conn = Connection::open(&path).unwrap();
+        apply_pragmas(&conn).unwrap();
+
+        let mmap_size: i64 = conn
+            .query_row("PRAGMA mmap_size", [], |row| row.get(0))
+            .unwrap();
+        assert!(
+            mmap_size >= SQLITE_MMAP_SIZE_BYTES,
+            "writer connections must enable SQLite mmap inside the DB layer; got {mmap_size}"
+        );
     }
 
     #[test]
@@ -2300,6 +2329,35 @@ mod tests {
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
         let conn = Connection::open_with_flags(&path, flags).unwrap();
         apply_reader_pragmas(&conn).unwrap();
+    }
+
+    #[test]
+    fn reader_pragmas_enable_mmap_before_query_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            apply_pragmas(&conn).unwrap();
+            create_tables(&conn).unwrap();
+        }
+
+        let flags =
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
+        let conn = Connection::open_with_flags(&path, flags).unwrap();
+        apply_reader_pragmas(&conn).unwrap();
+
+        let mmap_size: i64 = conn
+            .query_row("PRAGMA mmap_size", [], |row| row.get(0))
+            .unwrap();
+        assert!(
+            mmap_size >= SQLITE_MMAP_SIZE_BYTES,
+            "reader worker connections must enable SQLite mmap before query_only; got {mmap_size}"
+        );
+
+        let query_only: i64 = conn
+            .query_row("PRAGMA query_only", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(query_only, 1, "reader worker must still be query-only");
     }
 
     #[test]
