@@ -105,6 +105,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance.
 
 ### Fixed (service control)
+- Fixed DNS load latency by replacing per-query guest vsock connect/close
+  with a persistent worker pool and matching host-side framed DNS sessions,
+  while keeping every DNS query on the single security/logging rail before
+  the response is returned.
 - Fixed logger DB read latency by reusing the DB-owned reader connection,
   moving read-query timeouts to SQLite's progress handler, and caching DB
   readiness after validation; the Ironbank route gate now measures `/stats`

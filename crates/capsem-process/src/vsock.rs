@@ -887,12 +887,9 @@ fn dispatch_aux_connection(
             });
         }
         Some(HostVsockService::DnsProxy) => {
-            // T3.2 -- one envelope round-trip per vsock connection.
-            // The agent opens a fresh conn per query (UDP datagram or
-            // TCP DNS query), writes a length-framed `DnsRequest`,
-            // reads back a length-framed `DnsResponse`, and closes.
-            // Lifetime is per-query; if this becomes a bottleneck T5
-            // can swap to a multiplexed long-lived conn.
+            // DNS proxy connections are long-lived framed sessions.
+            // The guest keeps a small worker pool of persistent vsock
+            // fds; each frame is one DNS query/response round trip.
             // T3.3 -- after the handler returns we build a `DnsEvent`
             // and push it through the shared `DbWriter` so a
             // `dns_events` row is recorded for every query (allowed,
@@ -1067,17 +1064,16 @@ fn dispatch_aux_connection(
     }
 }
 
-/// One-shot DNS query handler over the vsock DNS port (T3.2).
+/// Persistent DNS query handler over the vsock DNS port (T3.2).
 ///
 /// Wire shape:
 ///   guest -> host: `[u32 BE length][rmp DnsRequest]`
 ///   host -> guest: `[u32 BE length][rmp DnsResponse]`
 ///
-/// The connection is closed after one round-trip. The agent opens a
-/// fresh conn per DNS query so we don't have to multiplex responses
-/// against transaction ids on the wire -- DNS already has a transaction
-/// id in the wire bytes themselves and the agent matches on those when
-/// returning the answer to the original UDP peer.
+/// Each connection carries many serialized request/response frames.
+/// The guest-side worker pool owns concurrency: one in-flight DNS query
+/// per persistent vsock fd. This removes per-query connection churn
+/// without introducing response multiplexing ambiguity.
 async fn serve_dns_session(
     conn: VsockConnection,
     handler: Arc<capsem_core::net::dns::DnsHandler>,
@@ -1087,85 +1083,103 @@ async fn serve_dns_session(
     use std::io::{Read as _, Write as _};
 
     let conn_fd = conn.fd;
-    // Move the fd in/out via spawn_blocking so we don't run sync I/O on
-    // the tokio runtime. The DNS handler itself is async (UDP forwarder
-    // returns Future), so we read the request, run the handler, then
-    // write the response.
-    let read_res = tokio::task::spawn_blocking(move || -> Result<Vec<u8>> {
-        let mut file = clone_fd(conn_fd)?;
-        let mut len_buf = [0u8; 4];
-        file.read_exact(&mut len_buf)
-            .context("DNS port: failed to read length prefix")?;
-        let len = u32::from_be_bytes(len_buf) as usize;
-        if len > capsem_proto::MAX_FRAME_SIZE as usize {
-            anyhow::bail!("DNS port: frame too large ({len} > MAX_FRAME_SIZE)");
+    loop {
+        // Move the fd in/out via spawn_blocking so we don't run sync I/O on
+        // the tokio runtime. The DNS handler itself is async (UDP forwarder
+        // returns Future), so we read one request, run the handler, then
+        // write one response.
+        let read_res = tokio::task::spawn_blocking(move || -> Result<Option<Vec<u8>>> {
+            let mut file = clone_fd(conn_fd)?;
+            let mut len_buf = [0u8; 4];
+            match file.read_exact(&mut len_buf) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => {
+                    return Ok(None);
+                }
+                Err(error) => {
+                    return Err(error).context("DNS port: failed to read length prefix");
+                }
+            }
+            let len = u32::from_be_bytes(len_buf) as usize;
+            if len > capsem_proto::MAX_FRAME_SIZE as usize {
+                anyhow::bail!("DNS port: frame too large ({len} > MAX_FRAME_SIZE)");
+            }
+            let mut payload = vec![0u8; len];
+            file.read_exact(&mut payload)
+                .context("DNS port: failed to read payload")?;
+            Ok(Some(payload))
+        })
+        .await;
+
+        let payload = match read_res {
+            Ok(Ok(Some(p))) => p,
+            Ok(Ok(None)) => break,
+            Ok(Err(e)) => {
+                warn!(error = %e, "DNS port: read failed");
+                break;
+            }
+            Err(e) => {
+                warn!(error = %e, "DNS port: read task panicked");
+                break;
+            }
+        };
+
+        let req = match capsem_proto::decode_dns_request(&payload) {
+            Ok(r) => r,
+            Err(e) => {
+                warn!(error = %e, "DNS port: decode_dns_request failed");
+                break;
+            }
+        };
+
+        let result = handler.handle(&req.raw).await;
+
+        // T3.3 -- record one `dns_events` row per query. trace_id ties it
+        // back to the agent action; source_proto distinguishes UDP from
+        // TCP DNS at the source side. Await the security emitter so DNS audit
+        // rows are accepted by the single security/logging rail before the
+        // DNS response is returned.
+        let event = capsem_core::net::dns::build_dns_event(
+            &result,
+            Some(req.proto.as_str()),
+            req.process_name.clone(),
+            capsem_core::telemetry::ambient_capsem_trace_id(),
+        );
+        emit_dns_security_write_and_rules(&db, &security_rules, event).await;
+
+        let response = capsem_proto::DnsResponse {
+            raw: result.answer_bytes,
+            decision: result.decision.as_str().to_string(),
+            rcode: result.rcode,
+        };
+
+        let frame = match capsem_proto::encode_dns_response(&response) {
+            Ok(f) => f,
+            Err(e) => {
+                warn!(error = %e, "DNS port: encode_dns_response failed");
+                break;
+            }
+        };
+
+        let write_res = tokio::task::spawn_blocking(move || -> Result<()> {
+            let mut file = clone_fd(conn_fd)?;
+            file.write_all(&frame)
+                .context("DNS port: failed to write response frame")?;
+            Ok(())
+        })
+        .await;
+        match write_res {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                warn!(error = %e, "DNS port: write failed");
+                break;
+            }
+            Err(e) => {
+                warn!(error = %e, "DNS port: write task panicked");
+                break;
+            }
         }
-        let mut payload = vec![0u8; len];
-        file.read_exact(&mut payload)
-            .context("DNS port: failed to read payload")?;
-        Ok(payload)
-    })
-    .await;
-
-    let payload = match read_res {
-        Ok(Ok(p)) => p,
-        Ok(Err(e)) => {
-            warn!(error = %e, "DNS port: read failed");
-            drop(conn);
-            return;
-        }
-        Err(e) => {
-            warn!(error = %e, "DNS port: read task panicked");
-            drop(conn);
-            return;
-        }
-    };
-
-    let req = match capsem_proto::decode_dns_request(&payload) {
-        Ok(r) => r,
-        Err(e) => {
-            warn!(error = %e, "DNS port: decode_dns_request failed");
-            drop(conn);
-            return;
-        }
-    };
-
-    let result = handler.handle(&req.raw).await;
-
-    // T3.3 -- record one `dns_events` row per query. trace_id ties it
-    // back to the agent action; source_proto distinguishes UDP from
-    // TCP DNS at the source side. Await the security emitter so DNS audit
-    // rows are durable instead of lossy under writer back-pressure.
-    let event = capsem_core::net::dns::build_dns_event(
-        &result,
-        Some(req.proto.as_str()),
-        req.process_name.clone(),
-        capsem_core::telemetry::ambient_capsem_trace_id(),
-    );
-    emit_dns_security_write_and_rules(&db, &security_rules, event).await;
-
-    let response = capsem_proto::DnsResponse {
-        raw: result.answer_bytes,
-        decision: result.decision.as_str().to_string(),
-        rcode: result.rcode,
-    };
-
-    let frame = match capsem_proto::encode_dns_response(&response) {
-        Ok(f) => f,
-        Err(e) => {
-            warn!(error = %e, "DNS port: encode_dns_response failed");
-            drop(conn);
-            return;
-        }
-    };
-
-    let _ = tokio::task::spawn_blocking(move || -> Result<()> {
-        let mut file = clone_fd(conn_fd)?;
-        file.write_all(&frame)
-            .context("DNS port: failed to write response frame")?;
-        Ok(())
-    })
-    .await;
+    }
 
     drop(conn);
 }
