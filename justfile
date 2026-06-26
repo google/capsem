@@ -1439,7 +1439,7 @@ _pack-initrd:
     # Cross-compile guest binaries only if missing or source changed
     RELEASE_DIR="$ROOT/target/linux-agent/$arch"
     NEED_BUILD=false
-    for b in capsem-pty-agent capsem-net-proxy capsem-dns-proxy capsem-mcp-server capsem-sysutil; do
+    for b in capsem-pty-agent capsem-net-proxy capsem-dns-proxy capsem-mcp-server capsem-sysutil capsem-bench-rs; do
         if [ ! -f "$RELEASE_DIR/$b" ]; then
             NEED_BUILD=true
             break
