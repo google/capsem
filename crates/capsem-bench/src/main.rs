@@ -949,27 +949,27 @@ fn guest_protocol_command(
     timeout_ms: u64,
     scenarios: &str,
 ) -> String {
-    let timeout_s = timeout_ms as f64 / 1000.0;
     let mut parts = vec![
-        "env".to_string(),
-        format!("CAPSEM_MOCK_SERVER_BASE_URL={}", shell_quote(base_url)),
-        format!("CAPSEM_BENCH_TOTAL_REQUESTS={requests}"),
-        format!("CAPSEM_BENCH_CONCURRENCY={concurrency}"),
-        format!(
-            "CAPSEM_BENCH_TIMEOUT_S={}",
-            shell_quote(&timeout_s.to_string())
-        ),
-        format!("CAPSEM_BENCH_SCENARIOS={}", shell_quote(scenarios)),
-    ];
-    if let Some(dns_udp_addr) = dns_udp_addr {
-        parts.push(format!(
-            "CAPSEM_MOCK_SERVER_DNS_UDP_ADDR={}",
-            shell_quote(dns_udp_addr)
-        ));
-    }
-    parts.extend([
         "capsem-bench-rs".to_string(),
         "protocol".to_string(),
+        "--base-url".to_string(),
+        shell_quote(base_url),
+        "--requests".to_string(),
+        requests.to_string(),
+        "--concurrency".to_string(),
+        concurrency.to_string(),
+        "--timeout-ms".to_string(),
+        timeout_ms.to_string(),
+        "--scenarios".to_string(),
+        shell_quote(scenarios),
+    ];
+    if let Some(dns_udp_addr) = dns_udp_addr {
+        parts.push("--dns-udp-addr".to_string());
+        parts.push(shell_quote(dns_udp_addr));
+    }
+    parts.push("--json-out".to_string());
+    parts.push("/tmp/capsem-benchmark.json".to_string());
+    parts.extend([
         "&&".to_string(),
         "cat".to_string(),
         "/tmp/capsem-benchmark.json".to_string(),
@@ -1395,16 +1395,18 @@ mod tests {
             30_000,
             "tiny_http,mcp_tool_call,dns_local_nxdomain",
         );
-        assert!(command.starts_with("env "), "{command}");
-        assert!(command.contains("CAPSEM_MOCK_SERVER_BASE_URL=http://127.0.0.1:3713"));
-        assert!(command.contains("CAPSEM_MOCK_SERVER_DNS_UDP_ADDR=127.0.0.1:3713"));
-        assert!(command.contains("CAPSEM_BENCH_TOTAL_REQUESTS=50000"));
-        assert!(command.contains("CAPSEM_BENCH_CONCURRENCY=64"));
-        assert!(command.contains("CAPSEM_BENCH_TIMEOUT_S=30"));
         assert!(
-            command.contains("CAPSEM_BENCH_SCENARIOS=tiny_http,mcp_tool_call,dns_local_nxdomain")
+            command.starts_with("capsem-bench-rs protocol "),
+            "{command}"
         );
-        assert!(command.ends_with("capsem-bench-rs protocol && cat /tmp/capsem-benchmark.json"));
+        assert!(command.contains("--base-url http://127.0.0.1:3713"));
+        assert!(command.contains("--dns-udp-addr 127.0.0.1:3713"));
+        assert!(command.contains("--requests 50000"));
+        assert!(command.contains("--concurrency 64"));
+        assert!(command.contains("--timeout-ms 30000"));
+        assert!(command.contains("--scenarios tiny_http,mcp_tool_call,dns_local_nxdomain"));
+        assert!(command
+            .ends_with("--json-out /tmp/capsem-benchmark.json && cat /tmp/capsem-benchmark.json"));
     }
 
     #[test]
