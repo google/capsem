@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::process::Command as StdCommand;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::net::UdpSocket;
 
@@ -24,6 +25,8 @@ struct Cli {
 enum Command {
     /// Run deterministic protocol scenarios against capsem-mock-server.
     Protocol(ProtocolArgs),
+    /// Run host-direct and guest-through-Capsem protocol lanes, then report delta.
+    ProtocolDelta(ProtocolDeltaArgs),
     /// Compare host-direct and guest-through-Capsem artifacts.
     Delta(DeltaArgs),
 }
@@ -55,6 +58,34 @@ struct DeltaArgs {
     #[arg(long)]
     guest: PathBuf,
     #[arg(long, default_value = "/tmp/capsem-benchmark-delta.json")]
+    json_out: PathBuf,
+}
+
+#[derive(Parser, Debug)]
+struct ProtocolDeltaArgs {
+    #[arg(long)]
+    base_url: String,
+    #[arg(long)]
+    dns_udp_addr: Option<String>,
+    #[arg(long)]
+    guest_base_url: Option<String>,
+    #[arg(long)]
+    guest_dns_udp_addr: Option<String>,
+    #[arg(long, default_value_t = 50_000)]
+    requests: usize,
+    #[arg(long, default_value_t = 64)]
+    concurrency: usize,
+    #[arg(long, default_value_t = 300)]
+    guest_timeout_secs: u64,
+    #[arg(long, default_value_t = 30_000)]
+    timeout_ms: u64,
+    #[arg(long)]
+    scenarios: Option<String>,
+    #[arg(long)]
+    session: Option<String>,
+    #[arg(long, default_value = "capsem")]
+    capsem_bin: PathBuf,
+    #[arg(long, default_value = "/tmp/capsem-benchmark-protocol-delta.json")]
     json_out: PathBuf,
 }
 
@@ -209,7 +240,7 @@ const SCENARIOS: &[Scenario] = &[
     },
 ];
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 struct Artifact {
     version: String,
     timestamp: f64,
@@ -218,7 +249,7 @@ struct Artifact {
     mock_server_protocol: ProtocolReport,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 struct ProtocolReport {
     version: String,
     lane: String,
@@ -282,6 +313,16 @@ struct DeltaArtifact {
 }
 
 #[derive(Debug, Serialize)]
+struct ProtocolDeltaArtifact {
+    version: String,
+    timestamp: f64,
+    benchmark: String,
+    host: Artifact,
+    guest: Artifact,
+    abstraction_delta: DeltaReport,
+}
+
+#[derive(Debug, Serialize)]
 struct DeltaReport {
     host_artifact: String,
     guest_artifact: String,
@@ -320,6 +361,10 @@ async fn main() -> Result<()> {
     })) {
         Command::Protocol(args) => {
             let artifact = run_protocol(args).await?;
+            println!("{}", serde_json::to_string_pretty(&artifact)?);
+        }
+        Command::ProtocolDelta(args) => {
+            let artifact = run_protocol_delta(args).await?;
             println!("{}", serde_json::to_string_pretty(&artifact)?);
         }
         Command::Delta(args) => {
@@ -430,6 +475,81 @@ async fn run_protocol(args: ProtocolArgs) -> Result<Artifact> {
                 .collect(),
             scenarios: scenario_results,
         },
+    };
+    write_json(&args.json_out, &artifact)?;
+    Ok(artifact)
+}
+
+async fn run_protocol_delta(args: ProtocolDeltaArgs) -> Result<ProtocolDeltaArtifact> {
+    let selected = select_scenarios(args.scenarios.as_deref())?;
+    let selected_names = selected
+        .iter()
+        .map(|scenario| scenario.name)
+        .collect::<Vec<_>>()
+        .join(",");
+    let needs_dns = selected
+        .iter()
+        .any(|scenario| matches!(scenario.transport, ScenarioTransport::DnsUdp { .. }));
+    let host_dns_udp_addr = args.dns_udp_addr.clone().or_else(|| {
+        std::env::var("CAPSEM_MOCK_SERVER_DNS_UDP_ADDR")
+            .ok()
+            .filter(|value| !value.is_empty())
+    });
+    if needs_dns && host_dns_udp_addr.is_none() {
+        bail!("selected DNS scenarios require --dns-udp-addr for the host lane");
+    }
+    let guest_dns_udp_addr = args.guest_dns_udp_addr.clone().or_else(|| {
+        std::env::var("CAPSEM_GUEST_DNS_UDP_ADDR")
+            .ok()
+            .filter(|value| !value.is_empty())
+    });
+    if needs_dns && guest_dns_udp_addr.is_none() {
+        bail!("selected DNS scenarios require --guest-dns-udp-addr; do not fake DNS lane parity");
+    }
+    let host_artifact = run_protocol(ProtocolArgs {
+        base_url: Some(args.base_url.trim_end_matches('/').to_string()),
+        dns_udp_addr: host_dns_udp_addr,
+        requests: args.requests,
+        concurrency: args.concurrency,
+        timeout_ms: args.timeout_ms,
+        scenarios: Some(selected_names.clone()),
+        lane: "host_direct".to_string(),
+        json_out: temp_artifact_path("host"),
+    })
+    .await?;
+
+    let guest_base_url = args
+        .guest_base_url
+        .unwrap_or_else(|| args.base_url.trim_end_matches('/').to_string());
+    let guest_command = guest_protocol_command(
+        &guest_base_url,
+        guest_dns_udp_addr.as_deref(),
+        args.requests,
+        args.concurrency,
+        args.timeout_ms,
+        &selected_names,
+    );
+    let guest_stdout = run_capsem_guest_command(
+        &args.capsem_bin,
+        args.session.as_deref(),
+        &guest_command,
+        args.guest_timeout_secs,
+    )?;
+    let guest_artifact = parse_guest_protocol_artifact(&guest_stdout)
+        .context("parse guest capsem-bench protocol JSON")?;
+    let delta = build_delta_report(
+        "host_direct:inline".to_string(),
+        "guest_capsem:inline".to_string(),
+        &host_artifact,
+        &guest_artifact,
+    )?;
+    let artifact = ProtocolDeltaArtifact {
+        version: VERSION.to_string(),
+        timestamp: timestamp(),
+        benchmark: "capsem-bench-rs-protocol-delta".to_string(),
+        host: host_artifact,
+        guest: guest_artifact,
+        abstraction_delta: delta,
     };
     write_json(&args.json_out, &artifact)?;
     Ok(artifact)
@@ -722,6 +842,28 @@ fn summarize(
 fn run_delta(args: DeltaArgs) -> Result<DeltaArtifact> {
     let host = read_artifact(&args.host)?;
     let guest = read_artifact(&args.guest)?;
+    let delta = build_delta_report(
+        args.host.display().to_string(),
+        args.guest.display().to_string(),
+        &host,
+        &guest,
+    )?;
+    let artifact = DeltaArtifact {
+        version: VERSION.to_string(),
+        timestamp: timestamp(),
+        benchmark: "capsem-bench-rs-delta".to_string(),
+        abstraction_delta: delta,
+    };
+    write_json(&args.json_out, &artifact)?;
+    Ok(artifact)
+}
+
+fn build_delta_report(
+    host_artifact: String,
+    guest_artifact: String,
+    host: &Artifact,
+    guest: &Artifact,
+) -> Result<DeltaReport> {
     let host_rows = rows_by_name(&host.mock_server_protocol.scenarios);
     let guest_rows = rows_by_name(&guest.mock_server_protocol.scenarios);
     let mut scenarios = Vec::new();
@@ -749,20 +891,152 @@ fn run_delta(args: DeltaArgs) -> Result<DeltaArtifact> {
     if scenarios.is_empty() {
         bail!("host and guest artifacts have no shared scenarios");
     }
-    let artifact = DeltaArtifact {
-        version: VERSION.to_string(),
-        timestamp: timestamp(),
-        benchmark: "capsem-bench-rs-delta".to_string(),
-        abstraction_delta: DeltaReport {
-            host_artifact: args.host.display().to_string(),
-            guest_artifact: args.guest.display().to_string(),
-            host_lane: host.mock_server_protocol.lane,
-            guest_lane: guest.mock_server_protocol.lane,
-            scenarios,
-        },
-    };
-    write_json(&args.json_out, &artifact)?;
-    Ok(artifact)
+    Ok(DeltaReport {
+        host_artifact,
+        guest_artifact,
+        host_lane: host.mock_server_protocol.lane.clone(),
+        guest_lane: guest.mock_server_protocol.lane.clone(),
+        scenarios,
+    })
+}
+
+fn guest_protocol_command(
+    base_url: &str,
+    dns_udp_addr: Option<&str>,
+    requests: usize,
+    concurrency: usize,
+    timeout_ms: u64,
+    scenarios: &str,
+) -> String {
+    let timeout_s = timeout_ms as f64 / 1000.0;
+    let mut parts = vec![
+        "env".to_string(),
+        format!("CAPSEM_MOCK_SERVER_BASE_URL={}", shell_quote(base_url)),
+        format!("CAPSEM_BENCH_TOTAL_REQUESTS={requests}"),
+        format!("CAPSEM_BENCH_CONCURRENCY={concurrency}"),
+        format!(
+            "CAPSEM_BENCH_TIMEOUT_S={}",
+            shell_quote(&timeout_s.to_string())
+        ),
+        format!("CAPSEM_BENCH_SCENARIOS={}", shell_quote(scenarios)),
+    ];
+    if let Some(dns_udp_addr) = dns_udp_addr {
+        parts.push(format!(
+            "CAPSEM_MOCK_SERVER_DNS_UDP_ADDR={}",
+            shell_quote(dns_udp_addr)
+        ));
+    }
+    parts.extend([
+        "capsem-bench".to_string(),
+        "protocol".to_string(),
+        "&&".to_string(),
+        "cat".to_string(),
+        "/tmp/capsem-benchmark.json".to_string(),
+    ]);
+    parts.join(" ")
+}
+
+fn parse_guest_protocol_artifact(stdout: &str) -> Result<Artifact> {
+    if let Ok(artifact) = serde_json::from_str::<Artifact>(stdout.trim()) {
+        return Ok(artifact);
+    }
+    let legacy = extract_first_json_value(stdout)
+        .or_else(|| serde_json::from_str(stdout.trim()).ok())
+        .with_context(|| {
+            let preview = stdout.chars().take(600).collect::<String>();
+            format!("parse legacy guest capsem-bench JSON from stdout preview: {preview:?}")
+        })?;
+    let mut report = legacy
+        .get("mock_server_protocol")
+        .cloned()
+        .context("guest benchmark JSON missing mock_server_protocol")?;
+    if let Some(report) = report.as_object_mut() {
+        report
+            .entry("lane".to_string())
+            .or_insert_with(|| serde_json::Value::String("guest_capsem".to_string()));
+        report
+            .entry("dns_udp_addr".to_string())
+            .or_insert(serde_json::Value::Null);
+        if !report.contains_key("timeout_ms") {
+            let timeout_ms = report
+                .get("timeout_s")
+                .and_then(serde_json::Value::as_f64)
+                .map(|seconds| (seconds * 1000.0).round() as u64)
+                .unwrap_or(30_000);
+            report.insert(
+                "timeout_ms".to_string(),
+                serde_json::Value::Number(timeout_ms.into()),
+            );
+        }
+    }
+    let mut protocol: ProtocolReport =
+        serde_json::from_value(report).context("parse legacy mock_server_protocol report")?;
+    protocol.lane = "guest_capsem".to_string();
+    Ok(Artifact {
+        version: legacy
+            .get("version")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(VERSION)
+            .to_string(),
+        timestamp: legacy
+            .get("timestamp")
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or_else(timestamp),
+        hostname: legacy
+            .get("hostname")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("guest")
+            .to_string(),
+        benchmark: "capsem-bench-guest-protocol".to_string(),
+        mock_server_protocol: protocol,
+    })
+}
+
+fn extract_first_json_value(output: &str) -> Option<serde_json::Value> {
+    for (start, _) in output.match_indices('{') {
+        let mut deserializer = serde_json::Deserializer::from_str(&output[start..]);
+        if let Ok(value) = serde_json::Value::deserialize(&mut deserializer) {
+            return Some(value);
+        }
+    }
+    None
+}
+
+fn run_capsem_guest_command(
+    capsem_bin: &Path,
+    session: Option<&str>,
+    command: &str,
+    timeout_secs: u64,
+) -> Result<String> {
+    let mut cmd = StdCommand::new(capsem_bin);
+    match session {
+        Some(session) => {
+            cmd.arg("exec")
+                .arg(session)
+                .arg(command)
+                .arg("--timeout")
+                .arg(timeout_secs.to_string());
+        }
+        None => {
+            cmd.arg("run")
+                .arg(command)
+                .arg("--timeout")
+                .arg(timeout_secs.to_string());
+        }
+    }
+    let output = cmd
+        .output()
+        .with_context(|| format!("run guest benchmark via {}", capsem_bin.display()))?;
+    if !output.status.success() {
+        bail!(
+            "guest capsem-bench failed via {}: status={}\nstdout:\n{}\nstderr:\n{}",
+            capsem_bin.display(),
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    String::from_utf8(output.stdout).context("guest capsem-bench stdout was not UTF-8")
 }
 
 fn select_scenarios(selected: Option<&str>) -> Result<Vec<Scenario>> {
@@ -892,6 +1166,25 @@ fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     }
     fs::write(path, serde_json::to_vec_pretty(value)?)
         .with_context(|| format!("write {}", path.display()))
+}
+
+fn temp_artifact_path(lane: &str) -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "capsem-bench-{lane}-{}-{}.json",
+        std::process::id(),
+        timestamp().to_bits()
+    ))
+}
+
+fn shell_quote(value: &str) -> String {
+    if value
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || b"@%_+=:,./-".contains(&byte))
+    {
+        value.to_string()
+    } else {
+        format!("'{}'", value.replace('\'', "'\"'\"'"))
+    }
 }
 
 fn ratio(numerator: f64, denominator: f64) -> f64 {
@@ -1047,5 +1340,171 @@ mod tests {
             4.0
         );
         assert_eq!(guest_row.failed as isize - host_row.failed as isize, 2);
+    }
+
+    #[test]
+    fn guest_protocol_command_uses_one_capsem_bench_invocation() {
+        let command = guest_protocol_command(
+            "http://127.0.0.1:3713",
+            Some("127.0.0.1:3713"),
+            50_000,
+            64,
+            30_000,
+            "tiny_http,mcp_tool_call,dns_local_nxdomain",
+        );
+        assert!(command.starts_with("env "), "{command}");
+        assert!(command.contains("CAPSEM_MOCK_SERVER_BASE_URL=http://127.0.0.1:3713"));
+        assert!(command.contains("CAPSEM_MOCK_SERVER_DNS_UDP_ADDR=127.0.0.1:3713"));
+        assert!(command.contains("CAPSEM_BENCH_TOTAL_REQUESTS=50000"));
+        assert!(command.contains("CAPSEM_BENCH_CONCURRENCY=64"));
+        assert!(command.contains("CAPSEM_BENCH_TIMEOUT_S=30"));
+        assert!(
+            command.contains("CAPSEM_BENCH_SCENARIOS=tiny_http,mcp_tool_call,dns_local_nxdomain")
+        );
+        assert!(command.ends_with("capsem-bench protocol && cat /tmp/capsem-benchmark.json"));
+    }
+
+    #[test]
+    fn parse_guest_protocol_artifact_accepts_legacy_guest_wrapper_json() {
+        let stdout = r#"mock-server-protocol base_url=http://127.0.0.1:3713 requests=100 concurrency=10
+JSON results saved to /tmp/capsem-benchmark.json
+{
+          "version": "0.3.0",
+          "timestamp": 1782339183.0,
+          "hostname": "capsem",
+          "mock_server_protocol": {
+            "version": "1.0",
+            "base_url": "http://127.0.0.1:3713",
+            "total_requests": 100,
+            "concurrency": 10,
+            "timeout_s": 30.0,
+            "selected_scenarios": ["tiny_http"],
+            "scenarios": [{
+              "name": "tiny_http",
+              "path": "/tiny",
+              "body_kind": "tiny",
+              "method": "GET",
+              "expected_status": 200,
+              "total_requests": 100,
+              "concurrency": 10,
+              "successful": 100,
+              "failed": 0,
+              "total_duration_ms": 100.0,
+              "requests_per_sec": 1000.0,
+              "transfer_bytes": 2100,
+              "bytes_per_sec": 21000.0,
+              "latency_ms": {
+                "min": 0.1,
+                "max": 0.5,
+                "mean": 0.2,
+                "p50": 0.2,
+                "p95": 0.4,
+                "p99": 0.5
+              },
+              "errors": {},
+              "secret_shaped_fixture_seen": null,
+              "raw_secret_stored_in_result": null
+            }],
+            "websocket": []
+          }
+        }"#;
+        let artifact = parse_guest_protocol_artifact(stdout).unwrap();
+        assert_eq!(artifact.version, "0.3.0");
+        assert_eq!(artifact.mock_server_protocol.lane, "guest_capsem");
+        assert_eq!(artifact.mock_server_protocol.timeout_ms, 30_000);
+        assert_eq!(artifact.mock_server_protocol.dns_udp_addr, None);
+        assert_eq!(artifact.mock_server_protocol.scenarios[0].name, "tiny_http");
+        assert_eq!(
+            artifact.mock_server_protocol.scenarios[0].requests_per_sec,
+            1000.0
+        );
+    }
+
+    #[test]
+    fn shell_quote_preserves_single_argument_boundaries() {
+        assert_eq!(
+            shell_quote("http://127.0.0.1:3713"),
+            "http://127.0.0.1:3713"
+        );
+        assert_eq!(
+            shell_quote("tiny_http,mcp_tool_call"),
+            "tiny_http,mcp_tool_call"
+        );
+        assert_eq!(shell_quote("weird value"), "'weird value'");
+        assert_eq!(shell_quote("can't"), "'can'\"'\"'t'");
+    }
+
+    #[test]
+    fn build_delta_report_keeps_inline_artifact_identity() {
+        let row = ScenarioResult {
+            name: "tiny_http".to_string(),
+            path: "/tiny".to_string(),
+            body_kind: "tiny".to_string(),
+            total_requests: 100,
+            concurrency: 10,
+            successful: 100,
+            failed: 0,
+            total_duration_ms: 10.0,
+            requests_per_sec: 10_000.0,
+            transfer_bytes: 2400,
+            bytes_per_sec: 240_000.0,
+            latency_ms: LatencySummary {
+                min: 0.1,
+                max: 2.0,
+                mean: 0.5,
+                p50: 0.4,
+                p95: 1.0,
+                p99: 1.5,
+            },
+            errors: BTreeMap::new(),
+            secret_shaped_fixture_seen: None,
+            raw_secret_stored_in_result: None,
+        };
+        let host = Artifact {
+            version: VERSION.to_string(),
+            timestamp: 1.0,
+            hostname: "host".to_string(),
+            benchmark: "capsem-bench-rs".to_string(),
+            mock_server_protocol: ProtocolReport {
+                version: "1.1-rust".to_string(),
+                lane: "host_direct".to_string(),
+                base_url: "http://127.0.0.1:3713".to_string(),
+                dns_udp_addr: None,
+                total_requests: 100,
+                concurrency: 10,
+                timeout_ms: 30_000,
+                selected_scenarios: vec!["tiny_http".to_string()],
+                scenarios: vec![row.clone()],
+            },
+        };
+        let mut guest = Artifact {
+            mock_server_protocol: ProtocolReport {
+                lane: "guest_capsem".to_string(),
+                scenarios: vec![ScenarioResult {
+                    requests_per_sec: 5_000.0,
+                    latency_ms: LatencySummary {
+                        p50: 1.4,
+                        p95: 3.0,
+                        p99: 4.5,
+                        ..row.latency_ms.clone()
+                    },
+                    ..row
+                }],
+                ..host.mock_server_protocol.clone()
+            },
+            ..host.clone()
+        };
+        guest.hostname = "guest".to_string();
+        let delta = build_delta_report(
+            "host:inline".to_string(),
+            "guest:inline".to_string(),
+            &host,
+            &guest,
+        )
+        .unwrap();
+        assert_eq!(delta.host_artifact, "host:inline");
+        assert_eq!(delta.guest_artifact, "guest:inline");
+        assert_eq!(delta.host_lane, "host_direct");
+        assert_eq!(delta.guest_lane, "guest_capsem");
     }
 }

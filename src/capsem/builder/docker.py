@@ -39,7 +39,12 @@ GUEST_BINARIES = [
     "capsem-dns-proxy",
     "capsem-mcp-server",
     "capsem-sysutil",
+    "capsem-bench-rs",
 ]
+
+GUEST_BINARY_SOURCES = {
+    "capsem-bench-rs": "capsem-bench",
+}
 
 # --- Single source of truth for rootfs artifacts from guest/artifacts/ ---
 # Scripts and tools that must be copied into the rootfs build context and
@@ -68,6 +73,11 @@ def enforce_guest_binary_perms(paths: list[Path]) -> None:
         if not p.exists():
             raise FileNotFoundError(p)
         os.chmod(p, 0o555)
+
+
+def _guest_binary_source(binary: str) -> str:
+    return GUEST_BINARY_SOURCES.get(binary, binary)
+
 
 def _rootfs_context(config: GuestImageConfig, arch_name: str) -> dict[str, Any]:
     """Build Jinja context for Dockerfile.rootfs.j2."""
@@ -537,7 +547,7 @@ def container_compile_agent(
 
     # Build all shell commands from GUEST_BINARIES constant
     cp_cmds = " && ".join(
-        f"cp target/{rust_target}/release/{b} /output/{b}"
+        f"cp target/{rust_target}/release/{_guest_binary_source(b)} /output/{b}"
         for b in GUEST_BINARIES
     )
     rm_cmds = " ".join(f"/output/{b}" for b in GUEST_BINARIES)
@@ -572,7 +582,7 @@ def container_compile_agent(
         f"cp -r /src/crates /build/crates && "
         f"apt-get update -qq && apt-get install -y -qq musl-tools >/dev/null 2>&1 && "
         f"rustup target add {rust_target} && "
-        f"cargo build --release --target {rust_target} -p capsem-agent && "
+        f"cargo build --release --target {rust_target} -p capsem-agent -p capsem-bench && "
         f"rm -f {rm_cmds} && "
         f"{cp_cmds} && chmod 555 {chmod_cmds} && {file_cmds}",
     ])
@@ -623,13 +633,14 @@ def cross_compile_agent(
         "cargo", "build", "--release",
         "--target", rust_target,
         "-p", "capsem-agent",
+        "-p", "capsem-bench",
     ], cwd=repo_root)
 
     release_dir = repo_root / "target" / rust_target / "release"
     output_dir.mkdir(parents=True, exist_ok=True)
     copied: list[Path] = []
     for binary in GUEST_BINARIES:
-        src = release_dir / binary
+        src = release_dir / _guest_binary_source(binary)
         if not src.exists():
             raise RuntimeError(f"Expected binary not found: {src}")
         dst = output_dir / binary

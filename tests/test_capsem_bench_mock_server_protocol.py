@@ -55,6 +55,51 @@ def test_mock_server_protocol_is_not_a_top_level_escape_hatch():
     assert "all" in bench_main.VALID_MODES
 
 
+def test_protocol_mode_delegates_to_required_rust_bench(monkeypatch):
+    calls = []
+
+    class Completed:
+        returncode = 7
+
+    monkeypatch.setattr(sys, "argv", [
+        "capsem-bench",
+        "protocol",
+        "--base-url",
+        "http://127.0.0.1:3713",
+    ])
+    monkeypatch.setattr(
+        bench_main.os.path,
+        "exists",
+        lambda path: path == "/usr/local/bin/capsem-bench-rs",
+    )
+    monkeypatch.setattr(
+        bench_main.subprocess,
+        "run",
+        lambda argv, check=False: calls.append((argv, check)) or Completed(),
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        bench_main.main()
+
+    assert exc.value.code == 7
+    assert calls == [([
+        "/usr/local/bin/capsem-bench-rs",
+        "protocol",
+        "--base-url",
+        "http://127.0.0.1:3713",
+    ], False)]
+
+
+def test_protocol_mode_fails_if_required_rust_bench_is_missing(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["capsem-bench", "protocol"])
+    monkeypatch.setattr(bench_main.os.path, "exists", lambda path: False)
+
+    with pytest.raises(SystemExit) as exc:
+        bench_main.main()
+
+    assert exc.value.code == 127
+
+
 def test_all_mode_includes_mock_server_protocol_when_mock_server_is_configured(monkeypatch):
     monkeypatch.setenv(mock_server_protocol.BASE_URL_ENV, "http://127.0.0.1:3713")
 

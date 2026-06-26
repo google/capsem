@@ -2,6 +2,7 @@
 
 import json
 import os
+import subprocess
 import sys
 import time
 
@@ -24,6 +25,16 @@ def _should_run_mock_server_protocol(mode):
 def main():
     args = sys.argv[1:]
     mode = args[0] if args else "all"
+
+    if mode == "protocol":
+        rust_bench = "/usr/local/bin/capsem-bench-rs"
+        if not os.path.exists(rust_bench):
+            console.print(
+                f"ERROR: {rust_bench} is required for capsem-bench protocol"
+            )
+            sys.exit(127)
+        completed = subprocess.run([rust_bench, *args], check=False)
+        sys.exit(completed.returncode)
 
     if mode in ("-h", "--help"):
         console.print(

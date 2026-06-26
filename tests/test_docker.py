@@ -211,6 +211,7 @@ class TestRenderRootfs:
         for binary in GUEST_BINARIES:
             assert f"COPY {binary} " in rendered_arm64
             assert f"chmod 555 /usr/local/bin/{binary}" in rendered_arm64
+        assert "COPY capsem-bench-rs /usr/local/bin/capsem-bench-rs" in rendered_arm64
 
     def test_ca_cert(self, rendered_arm64):
         assert "capsem-ca.crt" in rendered_arm64
@@ -1971,6 +1972,13 @@ class TestRootfsArtifactConstants:
             assert "chmod" in rendered_arm64 and artifact in rendered_arm64, (
                 f"{artifact} missing chmod line in Dockerfile.rootfs.j2"
             )
+
+    def test_protocol_benchmark_rust_binary_is_mandatory_guest_binary(self):
+        from capsem.builder.docker import GUEST_BINARY_SOURCES
+
+        assert "capsem-bench-rs" in GUEST_BINARIES
+        assert GUEST_BINARY_SOURCES["capsem-bench-rs"] == "capsem-bench"
+        assert "capsem-bench" in ROOTFS_SCRIPTS
 
 
 class TestCrossCompileAgent:

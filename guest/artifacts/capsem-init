@@ -441,6 +441,11 @@ if [ -x /capsem-bench ]; then
     chmod 555 /newroot/usr/local/bin/capsem-bench
     echo "[capsem-init] capsem-bench deployed"
 fi
+if [ -x /capsem-bench-rs ]; then
+    cp /capsem-bench-rs /newroot/usr/local/bin/capsem-bench-rs
+    chmod 555 /newroot/usr/local/bin/capsem-bench-rs
+    echo "[capsem-init] capsem-bench-rs deployed"
+fi
 if [ -d /capsem_bench ]; then
     rm -rf /newroot/usr/local/lib/capsem_bench
     cp -a /capsem_bench /newroot/usr/local/lib/capsem_bench
