@@ -12,6 +12,7 @@ use hyper::header::{
 };
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
+use hyper::upgrade::Upgraded;
 use hyper::{HeaderMap, Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use rcgen::generate_simple_self_signed;
@@ -27,13 +28,11 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use hyper::upgrade::Upgraded;
 use tokio::net::{TcpListener, UdpSocket};
 use tokio_rustls::TlsAcceptor;
 
 const TINY_BODY: &[u8] = b"capsem-mock-server:tiny\n";
-const EXPECTED_POEM: &str =
-    "Capsem ironbank poem\nledgers count the sparks\nno secret crosses raw";
+const EXPECTED_POEM: &str = "Capsem ironbank poem\nledgers count the sparks\nno secret crosses raw";
 const OLLAMA_OPENAI_TOOL_CALL_ID: &str = "call_fm3e3d2f";
 const OLLAMA_OPENAI_TOOL_ARGUMENTS: &str = "{\"query\":\"Capsem ironbank poem\"}";
 
@@ -127,6 +126,7 @@ async fn main() -> Result<()> {
         )
         .with_writer(std::io::stderr)
         .init();
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
     let args = Args::parse();
     let request_log = match &args.request_log {
@@ -162,6 +162,8 @@ async fn main() -> Result<()> {
         .context("bind DNS TCP")?;
     let dns_tcp_addr = dns_tcp_listener.local_addr().context("read DNS TCP addr")?;
 
+    let tls_acceptor = tls_acceptor()?;
+
     let mut dns_fixtures = DNS_FIXTURES.to_vec();
     dns_fixtures.sort_unstable();
     let ready = ReadyPayload {
@@ -181,7 +183,6 @@ async fn main() -> Result<()> {
     };
     println!("{}", serde_json::to_string(&ready)?);
 
-    let tls_acceptor = tls_acceptor()?;
     tokio::spawn(serve_http(http_listener, state.clone(), false));
     tokio::spawn(serve_https(https_listener, state.clone(), tls_acceptor));
     tokio::spawn(serve_dns_udp(dns_udp_socket));
@@ -272,7 +273,15 @@ async fn handle_request(
         .await
         .map(|body| body.to_bytes())
         .unwrap_or_default();
-    let response = route(&method, &path, query.as_deref(), &headers, request_body.clone(), tls).await;
+    let response = route(
+        &method,
+        &path,
+        query.as_deref(),
+        &headers,
+        request_body.clone(),
+        tls,
+    )
+    .await;
     log_request(&state, &method, &path, &request_body, &response);
     Ok(response)
 }
@@ -320,7 +329,35 @@ event: model.done\ndata: {\"finish_reason\":\"stop\"}\n\n",
         (&Method::GET, "/model/response") => json_response(json!({
             "id": "mock-model-response",
             "model": "mock-local",
+            "output": [
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": EXPECTED_POEM
+                        }
+                    ]
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_mock_model_response",
+                    "name": "write_file",
+                    "arguments": "{\"path\":\"/root/poem.md\",\"content\":\"Capsem ironbank poem\"}"
+                }
+            ],
             "output_text": EXPECTED_POEM,
+            "tool_calls": [
+                {
+                    "id": "call_mock_model_response",
+                    "type": "function",
+                    "function": {
+                        "name": "write_file",
+                        "arguments": "{\"path\":\"/root/poem.md\",\"content\":\"Capsem ironbank poem\"}"
+                    }
+                }
+            ]
         })),
         (&Method::GET, "/oauth/authorize") => json_response(json!({
             "kind": "synthetic_oauth_authorization_fixture",
@@ -608,10 +645,25 @@ fn deterministic_gzip(size: &str) -> Option<Bytes> {
     static ONE_MB: OnceLock<Bytes> = OnceLock::new();
     static TEN_MB: OnceLock<Bytes> = OnceLock::new();
     match size {
-        "10kb" => Some(TEN_KB.get_or_init(|| gzip_bytes(&build_bytes(10 * 1024))).clone()),
-        "1mb" => Some(ONE_MB.get_or_init(|| gzip_bytes(&build_bytes(1024 * 1024))).clone()),
-        "10mb" => Some(TEN_MB.get_or_init(|| gzip_bytes(&build_bytes(10 * 1024 * 1024))).clone()),
-        _ => size.parse::<usize>().ok().map(|len| gzip_bytes(&build_bytes(len))),
+        "10kb" => Some(
+            TEN_KB
+                .get_or_init(|| gzip_bytes(&build_bytes(10 * 1024)))
+                .clone(),
+        ),
+        "1mb" => Some(
+            ONE_MB
+                .get_or_init(|| gzip_bytes(&build_bytes(1024 * 1024)))
+                .clone(),
+        ),
+        "10mb" => Some(
+            TEN_MB
+                .get_or_init(|| gzip_bytes(&build_bytes(10 * 1024 * 1024)))
+                .clone(),
+        ),
+        _ => size
+            .parse::<usize>()
+            .ok()
+            .map(|len| gzip_bytes(&build_bytes(len))),
     }
 }
 
@@ -633,7 +685,8 @@ fn openai_chat_response(payload: Value) -> Value {
         .get("model")
         .and_then(Value::as_str)
         .unwrap_or("mock-local");
-    let include_tool_call = payload.get("tools").is_some() || is_baked_doctor_openai_smoke(&payload);
+    let include_tool_call =
+        payload.get("tools").is_some() || is_baked_doctor_openai_smoke(&payload);
     let message = if include_tool_call {
         json!({
             "role": "assistant",
@@ -824,8 +877,8 @@ fn load_google_fixture(name: &str) -> Result<Value> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../tests/fixtures/protocols/google_code_assist")
         .join(name);
-    let text = std::fs::read_to_string(&path)
-        .with_context(|| format!("read {}", path.display()))?;
+    let text =
+        std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
     serde_json::from_str(&text).with_context(|| format!("parse {}", path.display()))
 }
 
@@ -950,8 +1003,8 @@ fn google_model_from_path(path: &str) -> String {
 fn write_target(payload: &Value, default_prefix: &str) -> (String, String) {
     let raw = serde_json::to_string(payload).unwrap_or_default();
     let token = find_hex32(&raw).unwrap_or_else(|| EXPECTED_POEM.to_string());
-    let path = find_root_txt_path(&raw)
-        .unwrap_or_else(|| format!("/root/{default_prefix}-output.txt"));
+    let path =
+        find_root_txt_path(&raw).unwrap_or_else(|| format!("/root/{default_prefix}-output.txt"));
     (token, path)
 }
 
@@ -1034,7 +1087,9 @@ fn mcp_response(payload: Value) -> Value {
                 "contents": [{"uri": payload.pointer("/params/uri").and_then(Value::as_str).unwrap_or("doc://unknown"), "mimeType": "text/plain", "text": "capsem-mock-server:mcp:resource"}]
             }
         }),
-        _ => json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32601, "message": "method not found"}}),
+        _ => {
+            json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32601, "message": "method not found"}})
+        }
     }
 }
 

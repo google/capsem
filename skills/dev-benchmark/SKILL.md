@@ -17,9 +17,19 @@ just test                           # Full validation including benchmarks
 
 ## capsem-bench
 
-Python tool that runs inside the VM. Rich tables to stderr (human), structured JSON saved to `/tmp/capsem-benchmark.json` (machine).
+`capsem-bench` is the benchmark contract. Hot protocol/load benchmarks are
+being ported to the Rust binary at `crates/capsem-bench`; do not use Python
+load generation as release truth for HTTP, DNS, MCP/tools, model/SSE, or
+credential-broker paths. Python guest modules still cover legacy disk/rootfs,
+storage, startup, and snapshot modes until those modes are ported.
 
-**Location:** `guest/artifacts/capsem_bench/` (Python package, invoked via `capsem-bench` shell wrapper)
+Structured JSON is saved to `/tmp/capsem-benchmark.json` for machine
+consumption. Hot protocol artifacts must include lane metadata so the same
+scenario can be compared as `host_direct` and `guest_capsem`.
+
+**Locations:**
+- Rust hot benchmark binary: `crates/capsem-bench`
+- Legacy guest modules: `guest/artifacts/capsem_bench/`
 
 ### Benchmark categories
 
@@ -33,6 +43,18 @@ Python tool that runs inside the VM. Rich tables to stderr (human), structured J
 | throughput | `capsem-bench throughput` | 100MB download through MITM proxy (end-to-end MB/s) |
 | snapshot | `capsem-bench snapshot` | Snapshot create/list/changes/revert/delete via MCP (ms per op at 10/100/500 files) |
 | all | `capsem-bench` | Default production suite including storage split diagnostics; excludes long-running load diagnostics |
+
+### Abstraction delta
+
+Every hot protocol benchmark needs paired lanes:
+
+- `host_direct`: host Rust `capsem-bench` directly against `capsem-mock-server`
+- `guest_capsem`: guest Rust `capsem-bench` through the real Capsem network path
+
+The delta artifact must report the cost of Capsem's abstraction for each
+scenario: RPS ratio, throughput ratio, p50/p95/p99 latency delta, and error
+delta. If a benchmark cannot produce both lanes, it is diagnostic only and not
+a release performance gate.
 
 `just bench` also records host-side benchmark artifacts under
 `benchmarks/lifecycle/`, `benchmarks/fork/`, and `benchmarks/route-latency/`.

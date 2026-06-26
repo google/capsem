@@ -39,6 +39,15 @@ def _post_json(url: str, value: object) -> dict:
     return parsed
 
 
+def _get_json(url: str) -> dict:
+    with urlopen(url, timeout=5) as response:
+        assert response.status == 200
+        assert response.headers["content-type"] == "application/json"
+        parsed = json.loads(response.read().decode())
+    assert isinstance(parsed, dict)
+    return parsed
+
+
 def _dns_query(name: str, query_id: int = 0xCAFE) -> bytes:
     labels = b"".join(bytes([len(part)]) + part.encode("ascii") for part in name.split("."))
     question = labels + b"\0" + struct.pack("!HH", 1, 1)
@@ -114,6 +123,15 @@ def test_mock_server_serves_release_protocol_fixtures_from_one_process() -> None
             sse = response.read().decode()
         assert "event: model.delta" in sse
         assert "event: model.tool_call" in sse
+
+        model_response = _get_json(f"{base_url}/model/response")
+        assert model_response["id"] == "mock-model-response"
+        assert model_response["model"] == "mock-local"
+        assert model_response["output_text"]
+        assert model_response["output"][1]["type"] == "function_call"
+        assert model_response["output"][1]["name"] == "write_file"
+        assert model_response["tool_calls"][0]["function"]["name"] == "write_file"
+        assert "/root/poem.md" in model_response["tool_calls"][0]["function"]["arguments"]
 
         openai = _post_json(
             f"{base_url}/v1/responses",
