@@ -2653,6 +2653,7 @@ fn mcp_write(method: &str, credential_ref: Option<&str>) -> WriteOp {
         process_name: None,
         bytes_sent: 0,
         bytes_received: 0,
+        transport: "vsock_frame".to_string(),
         policy_mode: None,
         policy_action: None,
         policy_rule: None,

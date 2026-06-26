@@ -564,11 +564,6 @@ fn mcp_call_tool_result_roundtrip_bincode() {
         id: 30,
         result_json: Some(serde_json::json!({"items": [1, 2]}).to_string()),
         event_id: Some("abcdef123456".to_string()),
-        security_rule_events_json: vec![serde_json::json!({
-            "event_id": "abcdef123456",
-            "event_type": "mcp.tool_call"
-        })
-        .to_string()],
         error: None,
     };
     let bytes = bincode::serialize(&msg).unwrap();
@@ -578,7 +573,6 @@ fn mcp_call_tool_result_roundtrip_bincode() {
             id,
             result_json,
             event_id,
-            security_rule_events_json,
             error,
         } => {
             assert_eq!(id, 30);
@@ -586,9 +580,6 @@ fn mcp_call_tool_result_roundtrip_bincode() {
             assert!(error.is_none());
             let parsed: serde_json::Value = serde_json::from_str(&result_json.unwrap()).unwrap();
             assert_eq!(parsed["items"], serde_json::json!([1, 2]));
-            let row: serde_json::Value =
-                serde_json::from_str(&security_rule_events_json[0]).unwrap();
-            assert_eq!(row["event_type"], "mcp.tool_call");
         }
         _ => panic!("wrong variant"),
     }
@@ -650,11 +641,6 @@ fn mcp_call_tool_result_roundtrip() {
         id: 30,
         result_json: Some(serde_json::json!({"content": []}).to_string()),
         event_id: Some("abcdef123456".to_string()),
-        security_rule_events_json: vec![serde_json::json!({
-            "event_id": "abcdef123456",
-            "event_type": "mcp.tool_call"
-        })
-        .to_string()],
         error: None,
     };
     let bytes = serde_json::to_vec(&msg).unwrap();
@@ -664,13 +650,11 @@ fn mcp_call_tool_result_roundtrip() {
             id,
             result_json,
             event_id,
-            security_rule_events_json,
             error,
         } => {
             assert_eq!(id, 30);
             assert!(result_json.is_some());
             assert_eq!(event_id.as_deref(), Some("abcdef123456"));
-            assert_eq!(security_rule_events_json.len(), 1);
             assert!(error.is_none());
         }
         _ => panic!("wrong variant"),

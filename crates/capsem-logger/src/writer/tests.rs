@@ -1270,6 +1270,7 @@ fn mcp_call_insert_populates_row() {
                     process_name: Some("agent".into()),
                     bytes_sent: 64,
                     bytes_received: 128,
+                    transport: "vsock_frame".into(),
                     policy_mode: Some("audit_only".into()),
                     policy_action: Some("allow".into()),
                     policy_rule: Some("mcp.tool.github__list_issues".into()),

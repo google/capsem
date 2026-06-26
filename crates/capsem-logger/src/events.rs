@@ -584,6 +584,10 @@ fn default_origin() -> String {
     "native".to_string()
 }
 
+fn default_tool_transport() -> String {
+    "unknown".to_string()
+}
+
 /// A tool result sent back to the model in a subsequent request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolResponseEntry {
@@ -619,6 +623,10 @@ pub struct McpCall {
     pub process_name: Option<String>,
     pub bytes_sent: u64,
     pub bytes_received: u64,
+    /// Transport carrying the MCP evidence: "vsock_frame", "http",
+    /// "sse", "websocket", "direct", or "unknown".
+    #[serde(default = "default_tool_transport")]
+    pub transport: String,
     #[serde(default)]
     pub policy_mode: Option<String>,
     #[serde(default)]

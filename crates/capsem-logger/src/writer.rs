@@ -1161,10 +1161,10 @@ fn insert_model_call(
             &format!(
                 "INSERT INTO {} (
                 event_id, timestamp, model_call_id, provider, status, call_index, call_id,
-                tool_name, arguments, origin, server_name, decision, duration_ms,
+                tool_name, arguments, origin, transport, server_name, decision, duration_ms,
                 trace_id, turn_id, credential_ref
              )
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
                 target.table("tool_calls")
             ),
             params![
@@ -1178,6 +1178,7 @@ fn insert_model_call(
                 tc.tool_name,
                 tc.arguments,
                 tc.origin,
+                model_tool_transport(call),
                 "model",
                 "allowed",
                 call.duration_ms as i64,
@@ -1310,6 +1311,14 @@ fn insert_model_items(
     Ok(())
 }
 
+fn model_tool_transport(call: &ModelCall) -> &'static str {
+    if call.stream {
+        "sse"
+    } else {
+        "http"
+    }
+}
+
 fn insert_file_event(
     conn: &Connection,
     event: &FileEvent,
@@ -1358,11 +1367,11 @@ fn insert_mcp_call(conn: &Connection, call: &McpCall, target: WriteTarget) -> ru
         conn.execute(
             &format!("INSERT INTO {} (
                 event_id, timestamp, model_call_id, provider, status, call_index, call_id,
-                tool_name, arguments, response_preview, origin, server_name, method, request_id,
+                tool_name, arguments, response_preview, origin, transport, server_name, method, request_id,
                 decision, duration_ms, error_message, process_name, bytes_sent, bytes_received,
                 policy_mode, policy_action, policy_rule, policy_reason, trace_id, turn_id, credential_ref
             )
-             VALUES (?1, ?2, NULL, '', ?3, 0, ?4, ?5, ?6, ?7, 'mcp', ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)", target.table("tool_calls")),
+             VALUES (?1, ?2, NULL, '', ?3, 0, ?4, ?5, ?6, ?7, 'mcp', ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)", target.table("tool_calls")),
             params![
                 &event_id,
                 &timestamp,
@@ -1371,6 +1380,7 @@ fn insert_mcp_call(conn: &Connection, call: &McpCall, target: WriteTarget) -> ru
                 tool_name,
                 req_preview.as_deref(),
                 resp_preview.as_deref(),
+                &call.transport,
                 &call.server_name,
                 &call.method,
                 call.request_id.as_deref(),

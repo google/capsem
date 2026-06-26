@@ -2035,6 +2035,7 @@ fn sample_mcp_call(server: &str, decision: &str) -> McpCall {
         process_name: Some("claude".to_string()),
         bytes_sent: 0,
         bytes_received: 0,
+        transport: "vsock_frame".to_string(),
         policy_mode: Some("audit_only".to_string()),
         policy_action: Some(decision_to_policy_action(decision).to_string()),
         policy_rule: Some(format!("mcp.tool.{server}__search_repos")),
@@ -2050,7 +2051,7 @@ fn mcp_tool_rows(reader: &DbReader) -> Vec<BTreeMap<String, serde_json::Value>> 
             "SELECT event_id, timestamp, server_name, method, tool_name, request_id,
                     arguments AS request_preview, response_preview, decision, duration_ms,
                     error_message, process_name, bytes_sent, bytes_received, policy_mode,
-                    policy_action, policy_rule, policy_reason, origin
+                    policy_action, policy_rule, policy_reason, origin, transport
              FROM tool_calls
              WHERE origin = 'mcp'
              ORDER BY id DESC",

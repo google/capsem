@@ -5,22 +5,22 @@
 //! the low-privilege aggregator, unified tool-call telemetry, and
 //! `tool_calls origin = mcp` for actual tool invocations.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime};
 
 use anyhow::{bail, Context, Result};
-use capsem_logger::{DbWriter, Decision, McpCall, SecurityRuleEvent, WriteOp};
+use capsem_logger::{DbWriter, Decision, McpCall, WriteOp};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing::{debug, warn};
 
 use crate::mcp::types::{parse_namespaced, parse_resource_uri, JsonRpcRequest, JsonRpcResponse};
 use crate::net::policy_config::SecurityRuleSet;
 use crate::security_engine::{
-    emit_matching_security_rules_with_decision, emit_security_write, evaluate_security_boundary,
-    McpSecurityEvent, RuntimeSecurityEventType, SecurityEnforcementAction,
-    SecurityEnforcementDecision, SecurityEvent,
+    delegate_matching_security_rules_for_evaluated_event, emit_security_write,
+    evaluate_security_boundary, McpSecurityEvent, RuntimeSecurityEventType,
+    SecurityEnforcementAction, SecurityEnforcementDecision, SecurityEvent,
 };
 
 use super::fd_stream::{AsyncFdStream, ReplayReader};
@@ -51,7 +51,6 @@ pub(super) async fn serve(
 pub struct LoggedMcpResponse {
     pub response: JsonRpcResponse,
     pub event_id: Option<String>,
-    pub security_rule_events: Vec<SecurityRuleEvent>,
 }
 
 pub async fn dispatch_logged_mcp_request(
@@ -70,7 +69,7 @@ pub async fn dispatch_logged_mcp_request(
     if !request_decision.is_allowed() {
         let response = policy_blocked_response(request.id.clone(), "request", &request_decision);
         let emission = log_mcp_call_with_policy(
-            &db,
+            Arc::clone(&db),
             &endpoint.security_rules,
             &request,
             &response,
@@ -82,7 +81,6 @@ pub async fn dispatch_logged_mcp_request(
         return Some(LoggedMcpResponse {
             response,
             event_id: emission.event_id,
-            security_rule_events: emission.security_rule_events,
         });
     }
 
@@ -110,7 +108,7 @@ pub async fn dispatch_logged_mcp_request(
         policy_blocked_response(request.id.clone(), "response", &final_decision)
     };
     let emission = log_mcp_call_with_policy(
-        &db,
+        Arc::clone(&db),
         &endpoint.security_rules,
         &request,
         &response,
@@ -122,7 +120,6 @@ pub async fn dispatch_logged_mcp_request(
     Some(LoggedMcpResponse {
         response,
         event_id: emission.event_id,
-        security_rule_events: emission.security_rule_events,
     })
 }
 
@@ -258,7 +255,7 @@ where
                         meta: None,
                     };
                     log_mcp_call_with_policy(
-                        &db_h,
+                        db_h,
                         &endpoint_h.security_rules,
                         &request_h,
                         &response,
@@ -275,7 +272,7 @@ where
             if !request_decision.is_allowed() {
                 let response = policy_blocked_response(request.id.clone(), "request", &request_decision);
                 log_mcp_call_with_policy(
-                    &db,
+                    Arc::clone(&db),
                     &endpoint.security_rules,
                     &dispatch_request,
                     &response,
@@ -340,7 +337,7 @@ where
                 };
                 let policy_fields = McpCallPolicyFields::from(&final_decision);
                 log_mcp_call_with_policy(
-                    &db_h,
+                    db_h,
                     &endpoint_h.security_rules,
                     &dispatch_request,
                     &response,
@@ -557,11 +554,10 @@ impl From<&SecurityEnforcementDecision> for McpCallPolicyFields {
 #[derive(Debug, Clone, Default)]
 struct LoggedMcpEmission {
     event_id: Option<String>,
-    security_rule_events: Vec<SecurityRuleEvent>,
 }
 
 async fn log_mcp_call_with_policy(
-    db: &DbWriter,
+    db: Arc<DbWriter>,
     security_rules: &Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>,
     req: &JsonRpcRequest,
     resp: &JsonRpcResponse,
@@ -625,6 +621,7 @@ async fn log_mcp_call_with_policy(
         process_name: Some(process_name.to_string()),
         bytes_sent,
         bytes_received,
+        transport: "vsock_frame".to_string(),
         policy_mode: policy_fields.policy_mode,
         policy_action: policy_fields.policy_action,
         policy_rule: policy_fields.policy_rule,
@@ -633,32 +630,21 @@ async fn log_mcp_call_with_policy(
         credential_ref: None,
     };
     let security_event = security_event_from_mcp_call(&call);
-    if let Some(event_id) = emit_security_write(db, WriteOp::McpCall(call)).await {
+    if let Some(event_id) = emit_security_write(&db, WriteOp::McpCall(call)).await {
         let rules = security_rules.read().unwrap().clone();
-        match emit_matching_security_rules_with_decision(
+        delegate_matching_security_rules_for_evaluated_event(
             db,
             event_id.clone(),
             runtime_mcp_event_type(&req.method),
-            &rules,
-            &security_event,
+            rules,
+            BTreeMap::new(),
+            security_event,
             current_unix_ms(),
-        )
-        .await
-        {
-            Ok(emission) => {
-                return LoggedMcpEmission {
-                    event_id: Some(event_id.as_str().to_string()),
-                    security_rule_events: emission.rule_events,
-                };
-            }
-            Err(error) => {
-                warn!(error = %error, "failed to emit MCP security rule ledger rows");
-                return LoggedMcpEmission {
-                    event_id: Some(event_id.as_str().to_string()),
-                    security_rule_events: Vec::new(),
-                };
-            }
-        }
+            "mcp",
+        );
+        return LoggedMcpEmission {
+            event_id: Some(event_id.as_str().to_string()),
+        };
     }
     LoggedMcpEmission::default()
 }

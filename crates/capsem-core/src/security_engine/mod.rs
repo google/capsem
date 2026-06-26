@@ -863,6 +863,46 @@ pub fn emit_matching_security_rules_for_evaluated_event_blocking(
     )
 }
 
+pub async fn emit_matching_security_rules_for_evaluated_event(
+    db: &DbWriter,
+    event_id: SecurityEventId,
+    event_type: RuntimeSecurityEventType,
+    rules: &SecurityRuleSet,
+    plugin_policy: BTreeMap<String, SecurityPluginConfig>,
+    event: SecurityEvent,
+    timestamp_unix_ms: i64,
+) -> Result<usize, String> {
+    let event = prepare_evaluated_event_for_security_rule_ledger(plugin_policy, event)?;
+    emit_matching_security_rules(db, event_id, event_type, rules, &event, timestamp_unix_ms).await
+}
+
+pub fn delegate_matching_security_rules_for_evaluated_event(
+    db: Arc<DbWriter>,
+    event_id: SecurityEventId,
+    event_type: RuntimeSecurityEventType,
+    rules: Arc<SecurityRuleSet>,
+    plugin_policy: BTreeMap<String, SecurityPluginConfig>,
+    event: SecurityEvent,
+    timestamp_unix_ms: i64,
+    context: &'static str,
+) {
+    tokio::spawn(async move {
+        if let Err(error) = emit_matching_security_rules_for_evaluated_event(
+            &db,
+            event_id,
+            event_type,
+            &rules,
+            plugin_policy,
+            event,
+            timestamp_unix_ms,
+        )
+        .await
+        {
+            tracing::warn!(error = %error, context, "failed to emit delegated security rule ledger rows");
+        }
+    });
+}
+
 fn prepare_event_for_security_rule_ledger(
     plugin_policy: BTreeMap<String, SecurityPluginConfig>,
     mut event: SecurityEvent,

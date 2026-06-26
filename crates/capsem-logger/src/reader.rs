@@ -104,6 +104,7 @@ pub struct ToolCallLedgerEntry {
     pub timestamp: String,
     pub model_call_id: Option<i64>,
     pub origin: String,
+    pub transport: String,
     pub server_name: Option<String>,
     pub method: Option<String>,
     pub request_id: Option<String>,
@@ -1497,7 +1498,7 @@ impl DbReader {
     /// Query the user-facing tool-call ledger, ordered newest first.
     pub fn recent_tool_calls(&self, limit: usize) -> rusqlite::Result<Vec<ToolCallLedgerEntry>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, event_id, timestamp, model_call_id, origin, server_name, method,
+            "SELECT id, event_id, timestamp, model_call_id, origin, transport, server_name, method,
                     request_id, call_id, tool_name, arguments, response_preview, decision,
                     duration_ms, error_message, bytes_sent, bytes_received, policy_rule,
                     trace_id, credential_ref
@@ -1513,21 +1514,22 @@ impl DbReader {
                 timestamp: row.get(2)?,
                 model_call_id: row.get(3)?,
                 origin: row.get(4)?,
-                server_name: row.get(5)?,
-                method: row.get(6)?,
-                request_id: row.get(7)?,
-                call_id: row.get(8)?,
-                tool_name: row.get(9)?,
-                arguments: row.get(10)?,
-                response_preview: row.get(11)?,
-                decision: row.get(12)?,
-                duration_ms: row.get::<_, i64>(13)? as u64,
-                error_message: row.get(14)?,
-                bytes_sent: row.get::<_, i64>(15)? as u64,
-                bytes_received: row.get::<_, i64>(16)? as u64,
-                policy_rule: row.get(17)?,
-                trace_id: row.get(18)?,
-                credential_ref: row.get(19)?,
+                transport: row.get(5)?,
+                server_name: row.get(6)?,
+                method: row.get(7)?,
+                request_id: row.get(8)?,
+                call_id: row.get(9)?,
+                tool_name: row.get(10)?,
+                arguments: row.get(11)?,
+                response_preview: row.get(12)?,
+                decision: row.get(13)?,
+                duration_ms: row.get::<_, i64>(14)? as u64,
+                error_message: row.get(15)?,
+                bytes_sent: row.get::<_, i64>(16)? as u64,
+                bytes_received: row.get::<_, i64>(17)? as u64,
+                policy_rule: row.get(18)?,
+                trace_id: row.get(19)?,
+                credential_ref: row.get(20)?,
             })
         })?;
         rows.collect()
@@ -2325,11 +2327,11 @@ mod tests {
         let r = DbReader::open_in_memory().unwrap();
         r.conn
             .execute_batch(
-                "INSERT INTO tool_calls (timestamp, origin, server_name, method, call_index, call_id, tool_name, arguments, decision, duration_ms)
+                "INSERT INTO tool_calls (timestamp, origin, transport, server_name, method, call_index, call_id, tool_name, arguments, decision, duration_ms)
                  VALUES
-                    ('2026-01-01T00:00:04Z', 'mcp', 'capsem', 'tools/call', 0, 'mcp-1', 'local__fetch_http', '{}', 'allowed', 9),
-                    ('2026-01-01T00:00:05Z', 'mcp', 'github', 'tools/call', 0, 'mcp-2', 'github__search', '{}', 'denied', 11),
-                    ('2026-01-01T00:00:06Z', 'native', 'model', NULL, 0, 'native-1', 'bash', '{}', 'allowed', 1);",
+                    ('2026-01-01T00:00:04Z', 'mcp', 'vsock_frame', 'capsem', 'tools/call', 0, 'mcp-1', 'local__fetch_http', '{}', 'allowed', 9),
+                    ('2026-01-01T00:00:05Z', 'mcp', 'http', 'github', 'tools/call', 0, 'mcp-2', 'github__search', '{}', 'denied', 11),
+                    ('2026-01-01T00:00:06Z', 'native', 'http', 'model', NULL, 0, 'native-1', 'bash', '{}', 'allowed', 1);",
             )
             .unwrap();
 
@@ -2352,14 +2354,14 @@ mod tests {
         r.conn
             .execute_batch(
                 "INSERT INTO tool_calls (
-                    id, event_id, timestamp, model_call_id, origin, server_name, method,
+                    id, event_id, timestamp, model_call_id, origin, transport, server_name, method,
                     request_id, call_index, call_id, tool_name, arguments, response_preview,
                     decision, duration_ms, bytes_sent, bytes_received, policy_rule, trace_id
                  ) VALUES
-                    (100, 'aaaaaaaaaaaa', '2026-01-01T00:00:01Z', 1, 'native', 'model', NULL,
+                    (100, 'aaaaaaaaaaaa', '2026-01-01T00:00:01Z', 1, 'native', 'http', 'model', NULL,
                      NULL, 0, 'call-model', 'write_file', '{\"path\":\"poem.md\"}',
                      'ok', 'allowed', 7, 10, 20, NULL, 'trace-model'),
-                    (101, 'bbbbbbbbbbbb', '2026-01-01T00:00:02Z', NULL, 'mcp', 'capsem', 'tools/call',
+                    (101, 'bbbbbbbbbbbb', '2026-01-01T00:00:02Z', NULL, 'mcp', 'vsock_frame', 'capsem', 'tools/call',
                      'req-1', 0, 'req-1', 'local__fetch_http', '{\"url\":\"https://example.com\"}',
                      '{\"status\":200}', 'denied', 9, 30, 40, 'profiles.rules.block_fetch', 'trace-mcp');",
             )
@@ -2369,6 +2371,7 @@ mod tests {
         let mcp = rows.iter().find(|row| row.origin == "mcp").unwrap();
         assert_eq!(mcp.event_id, "bbbbbbbbbbbb");
         assert_eq!(mcp.model_call_id, None);
+        assert_eq!(mcp.transport, "vsock_frame");
         assert_eq!(mcp.server_name.as_deref(), Some("capsem"));
         assert_eq!(mcp.method.as_deref(), Some("tools/call"));
         assert_eq!(mcp.request_id.as_deref(), Some("req-1"));
@@ -2386,6 +2389,7 @@ mod tests {
 
         let native = rows.iter().find(|row| row.origin == "native").unwrap();
         assert_eq!(native.model_call_id, Some(1));
+        assert_eq!(native.transport, "http");
         assert_eq!(native.tool_name, "write_file");
         assert_eq!(native.response_preview.as_deref(), Some("ok"));
     }

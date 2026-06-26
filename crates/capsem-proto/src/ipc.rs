@@ -147,7 +147,6 @@ pub enum ProcessToService {
         id: u64,
         result_json: Option<String>,
         event_id: Option<String>,
-        security_rule_events_json: Vec<String>,
         error: Option<String>,
     },
 }

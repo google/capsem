@@ -913,6 +913,7 @@ mod tests {
             process_name: Some("claude".into()),
             bytes_sent: 50,
             bytes_received: 200,
+            transport: "vsock_frame".into(),
             policy_mode: None,
             policy_action: None,
             policy_rule: None,

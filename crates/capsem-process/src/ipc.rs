@@ -894,16 +894,6 @@ pub(crate) async fn handle_ipc_connection(
                         .as_ref()
                         .and_then(|result| serde_json::to_string(&result.response).ok());
                     let event_id = response.as_ref().and_then(|result| result.event_id.clone());
-                    let security_rule_events_json = response
-                        .as_ref()
-                        .map(|result| {
-                            result
-                                .security_rule_events
-                                .iter()
-                                .filter_map(|event| serde_json::to_string(event).ok())
-                                .collect::<Vec<_>>()
-                        })
-                        .unwrap_or_default();
                     let error = response
                         .as_ref()
                         .and_then(|result| result.response.error.as_ref())
@@ -920,7 +910,6 @@ pub(crate) async fn handle_ipc_connection(
                                 id,
                                 result_json,
                                 event_id,
-                                security_rule_events_json,
                                 error
                             })
                             .await

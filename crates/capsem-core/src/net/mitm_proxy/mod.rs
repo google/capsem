@@ -45,7 +45,8 @@ use tokio_rustls::TlsAcceptor;
 use tracing::{debug, warn, Instrument};
 
 use crate::security_engine::{
-    emit_matching_security_rules, emit_security_write, McpSecurityEvent, RuntimeSecurityEventType,
+    delegate_matching_security_rules_for_evaluated_event, emit_security_write, McpSecurityEvent,
+    RuntimeSecurityEventType,
 };
 
 trait TokioReadWrite: AsyncRead + AsyncWrite {}
@@ -1816,6 +1817,7 @@ async fn handle_request(
                 process_name: process_name.clone(),
                 bytes_sent: observed.bytes_sent,
                 bytes_received: body_text.len() as u64,
+                transport: "http".to_string(),
                 policy_mode: request_security_decision.policy_mode.clone(),
                 policy_action: request_security_decision.policy_action.clone(),
                 policy_rule: request_security_decision.policy_rule.clone(),
@@ -1826,18 +1828,16 @@ async fn handle_request(
             if let Some(event_id) =
                 emit_security_write(&config.db, WriteOp::McpCall(denied_call)).await
             {
-                if let Err(error) = emit_matching_security_rules(
-                    &config.db,
+                delegate_matching_security_rules_for_evaluated_event(
+                    Arc::clone(&config.db),
                     event_id,
                     observed.event_type(),
-                    &rules,
-                    &security_event,
+                    Arc::clone(&rules),
+                    std::collections::BTreeMap::new(),
+                    security_event,
                     current_unix_ms(),
-                )
-                .await
-                {
-                    warn!(error = %error, "failed to emit denied observed MCP-over-HTTP security rule ledger rows");
-                }
+                    "mcp_over_http_denied",
+                );
             }
             let mut scrubbed_stats = BodyStats::new(0);
             scrubbed_stats.bytes = observed.bytes_sent;
@@ -2632,6 +2632,7 @@ async fn handle_request(
                 process_name: process_name.clone(),
                 bytes_sent: observed.bytes_sent,
                 bytes_received: response_body.len() as u64,
+                transport: "http".to_string(),
                 policy_mode: mcp_request_security_decision.policy_mode.clone(),
                 policy_action: mcp_request_security_decision.policy_action.clone(),
                 policy_rule: mcp_request_security_decision.policy_rule.clone(),
@@ -2640,18 +2641,16 @@ async fn handle_request(
                 credential_ref: credential_ref.clone(),
             };
             if let Some(event_id) = emit_security_write(&config.db, WriteOp::McpCall(call)).await {
-                if let Err(error) = emit_matching_security_rules(
-                    &config.db,
+                delegate_matching_security_rules_for_evaluated_event(
+                    Arc::clone(&config.db),
                     event_id,
                     observed.event_type(),
-                    &rules,
-                    &security_event,
+                    Arc::clone(&rules),
+                    std::collections::BTreeMap::new(),
+                    security_event,
                     current_unix_ms(),
-                )
-                .await
-                {
-                    warn!(error = %error, "failed to emit observed MCP-over-HTTP security rule ledger rows");
-                }
+                    "mcp_over_http",
+                );
             }
         }
         materialize_collected_response_headers(

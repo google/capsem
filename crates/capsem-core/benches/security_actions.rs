@@ -220,6 +220,7 @@ fn mcp_write() -> WriteOp {
         process_name: Some("bench".to_string()),
         bytes_sent: 16,
         bytes_received: 16,
+        transport: "vsock_frame".to_string(),
         policy_mode: None,
         policy_action: None,
         policy_rule: None,

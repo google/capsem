@@ -136,6 +136,7 @@ pub const CREATE_SCHEMA: &str = "
         arguments TEXT,
         response_preview TEXT,
         origin TEXT NOT NULL DEFAULT 'native',
+        transport TEXT NOT NULL DEFAULT 'unknown' CHECK (transport IN ('http', 'sse', 'websocket', 'vsock_frame', 'direct', 'unknown')),
         server_name TEXT,
         method TEXT,
         request_id TEXT,
@@ -1004,6 +1005,7 @@ fn rebuild_tool_calls_nullable_model_call(conn: &Connection) {
             arguments TEXT,
             response_preview TEXT,
             origin TEXT NOT NULL DEFAULT 'native',
+            transport TEXT NOT NULL DEFAULT 'unknown' CHECK (transport IN ('http', 'sse', 'websocket', 'vsock_frame', 'direct', 'unknown')),
             server_name TEXT,
             method TEXT,
             request_id TEXT,
@@ -1023,14 +1025,20 @@ fn rebuild_tool_calls_nullable_model_call(conn: &Connection) {
         );
         INSERT INTO tool_calls_new (
             id, event_id, timestamp, model_call_id, provider, status, call_index, call_id,
-            tool_name, arguments, response_preview, origin, server_name, method,
+            tool_name, arguments, response_preview, origin, transport, server_name, method,
             request_id, decision, duration_ms, error_message, process_name, bytes_sent,
             bytes_received, policy_mode, policy_action, policy_rule, policy_reason,
             trace_id, turn_id, credential_ref
         )
         SELECT
             id, event_id, timestamp, model_call_id, provider, status, call_index, call_id,
-            tool_name, arguments, response_preview, origin, server_name, method,
+            tool_name, arguments, response_preview, origin,
+            CASE
+                WHEN origin = 'mcp' THEN 'vsock_frame'
+                WHEN origin = 'local' THEN 'direct'
+                ELSE 'unknown'
+            END,
+            server_name, method,
             request_id, decision, duration_ms, error_message, process_name, bytes_sent,
             bytes_received, policy_mode, policy_action, policy_rule, policy_reason,
             trace_id, turn_id, credential_ref
@@ -1155,6 +1163,10 @@ pub fn migrate(conn: &Connection) {
     );
     let _ = conn.execute(
         "ALTER TABLE tool_calls ADD COLUMN response_preview TEXT",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE tool_calls ADD COLUMN transport TEXT NOT NULL DEFAULT 'unknown' CHECK (transport IN ('http', 'sse', 'websocket', 'vsock_frame', 'direct', 'unknown'))",
         [],
     );
     let _ = conn.execute("ALTER TABLE tool_calls ADD COLUMN server_name TEXT", []);

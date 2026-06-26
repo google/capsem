@@ -596,6 +596,29 @@ fn shadow_mode_when_request_context_unseeded() {
     assert!(state.peek::<TelemetryResponseStats>().is_none());
 }
 
+#[test]
+fn telemetry_completion_must_not_block_on_security_ledger_writes() {
+    let source = include_str!("../telemetry_hook.rs");
+    let completion = source
+        .split("fn on_response_end(&self, ctx: &mut ChunkCtx<'_>)")
+        .nth(1)
+        .expect("telemetry completion hook must exist")
+        .split("/// Pure builder: assembles a `NetEvent`")
+        .next()
+        .expect("telemetry completion hook body must be bounded");
+
+    for forbidden in [
+        "emit_security_write_blocking",
+        "emit_matching_security_rules_for_evaluated_event_blocking",
+        "emit_matching_security_rules_blocking",
+    ] {
+        assert!(
+            !completion.contains(forbidden),
+            "MITM telemetry completion must not call {forbidden}. The HTTP response path must enqueue/spawn ledger work asynchronously; blocking forensic JSON/SQLite work caused route latency collapse under tiny HTTP load."
+        );
+    }
+}
+
 /// With a seeded request context, the hook tallies bytes + preview
 /// across chunks.
 #[tokio::test]
@@ -854,6 +877,7 @@ match = 'http.host == "api.anthropic.com" && http.path == "/v1/messages" && tcp.
     let mut seen = false;
     for _ in 0..50 {
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        db.flush().await;
         let conn = rusqlite::Connection::open(&db_path).unwrap();
         let joined: Option<(String, String, String)> = conn
             .query_row(
@@ -924,6 +948,7 @@ match = 'model.provider == "anthropic" && model.name == "claude-test"'
     let mut seen = false;
     for _ in 0..50 {
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        db.flush().await;
         let conn = rusqlite::Connection::open(&db_path).unwrap();
         let joined: Option<(String, String, String)> = conn
             .query_row(
