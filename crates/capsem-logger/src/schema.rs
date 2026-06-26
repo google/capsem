@@ -1,4 +1,8 @@
-use std::{collections::BTreeSet, path::Path, sync::Mutex};
+use std::{
+    collections::BTreeSet,
+    path::{Path, PathBuf},
+    sync::Mutex,
+};
 
 use rusqlite::{Connection, OptionalExtension};
 
@@ -643,9 +647,80 @@ fn memory_table_sql(table: &str, sql: &str) -> Option<String> {
 /// whether a query reads through SQLite's page cache, mmap, or DB-owned memory
 /// tables.
 pub const SQLITE_MMAP_SIZE_BYTES: i64 = 256 * 1024 * 1024;
+pub const DB_SQLITE_MMAP_CONFIG_BYTES: &str = "db.sqlite_mmap_config_bytes";
+pub const DB_SQLITE_MMAP_EFFECTIVE_BYTES: &str = "db.sqlite_mmap_effective_bytes";
+pub const DB_SQLITE_FILE_SIZE_BYTES: &str = "db.sqlite_file_size_bytes";
+pub const DB_SQLITE_WAL_SIZE_BYTES: &str = "db.sqlite_wal_size_bytes";
+pub const DB_SQLITE_MMAP_COVERAGE_RATIO: &str = "db.sqlite_mmap_coverage_ratio";
+pub const DB_SQLITE_MMAP_BUDGET_CHECKS_TOTAL: &str = "db.sqlite_mmap_budget_checks_total";
 
 fn apply_mmap_pragma(conn: &Connection) -> rusqlite::Result<()> {
     conn.pragma_update(None, "mmap_size", SQLITE_MMAP_SIZE_BYTES)
+}
+
+fn sqlite_sidecar_path(path: &Path, suffix: &str) -> PathBuf {
+    PathBuf::from(format!("{}{}", path.display(), suffix))
+}
+
+fn file_len(path: &Path) -> u64 {
+    std::fs::metadata(path).map(|meta| meta.len()).unwrap_or(0)
+}
+
+pub fn record_sqlite_mmap_telemetry(
+    conn: &Connection,
+    path: &Path,
+    role: &'static str,
+    phase: &'static str,
+) {
+    let effective_mmap: i64 = conn
+        .query_row("PRAGMA mmap_size", [], |row| row.get(0))
+        .unwrap_or(0);
+    let db_file_size = file_len(path);
+    let wal_file_size = file_len(&sqlite_sidecar_path(path, "-wal"));
+    let status = if db_file_size == 0 {
+        "empty"
+    } else if db_file_size <= effective_mmap.max(0) as u64 {
+        "within_window"
+    } else {
+        "over_window"
+    };
+    let coverage_ratio = if db_file_size == 0 {
+        1.0
+    } else {
+        (effective_mmap.max(0) as u64).min(db_file_size) as f64 / db_file_size as f64
+    };
+
+    ::metrics::gauge!(DB_SQLITE_MMAP_CONFIG_BYTES, "role" => role, "phase" => phase)
+        .set(SQLITE_MMAP_SIZE_BYTES as f64);
+    ::metrics::gauge!(DB_SQLITE_MMAP_EFFECTIVE_BYTES, "role" => role, "phase" => phase)
+        .set(effective_mmap as f64);
+    ::metrics::gauge!(DB_SQLITE_FILE_SIZE_BYTES, "role" => role, "phase" => phase)
+        .set(db_file_size as f64);
+    ::metrics::gauge!(DB_SQLITE_WAL_SIZE_BYTES, "role" => role, "phase" => phase)
+        .set(wal_file_size as f64);
+    ::metrics::gauge!(DB_SQLITE_MMAP_COVERAGE_RATIO, "role" => role, "phase" => phase)
+        .set(coverage_ratio);
+    ::metrics::counter!(
+        DB_SQLITE_MMAP_BUDGET_CHECKS_TOTAL,
+        "role" => role,
+        "phase" => phase,
+        "status" => status
+    )
+    .increment(1);
+
+    tracing::debug!(
+        target: "capsem.db",
+        db_path = %path.display(),
+        role,
+        phase,
+        mmap_config_bytes = SQLITE_MMAP_SIZE_BYTES,
+        mmap_effective_bytes = effective_mmap,
+        db_file_size_bytes = db_file_size,
+        wal_file_size_bytes = wal_file_size,
+        mmap_coverage_ratio = coverage_ratio,
+        mmap_budget_status = status,
+        "sqlite mmap telemetry recorded"
+    );
 }
 
 /// Apply write-mode pragmas: WAL journal + relaxed synchronous.
@@ -2358,6 +2433,45 @@ mod tests {
             .query_row("PRAGMA query_only", [], |row| row.get(0))
             .unwrap();
         assert_eq!(query_only, 1, "reader worker must still be query-only");
+    }
+
+    #[test]
+    fn mmap_telemetry_records_budget_and_size_metrics() {
+        use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let _guard = metrics::set_default_local_recorder(&recorder);
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.db");
+        let conn = Connection::open(&path).unwrap();
+        apply_pragmas(&conn).unwrap();
+        create_tables(&conn).unwrap();
+        record_sqlite_mmap_telemetry(&conn, &path, "writer", "test");
+
+        let snapshot = snapshotter.snapshot().into_vec();
+        assert!(snapshot.iter().any(|(key, _, _, value)| {
+            key.key().name() == DB_SQLITE_MMAP_CONFIG_BYTES && matches!(value, DebugValue::Gauge(_))
+        }));
+        assert!(snapshot.iter().any(|(key, _, _, value)| {
+            key.key().name() == DB_SQLITE_MMAP_EFFECTIVE_BYTES
+                && matches!(value, DebugValue::Gauge(_))
+        }));
+        assert!(snapshot.iter().any(|(key, _, _, value)| {
+            key.key().name() == DB_SQLITE_FILE_SIZE_BYTES && matches!(value, DebugValue::Gauge(_))
+        }));
+        assert!(snapshot.iter().any(|(key, _, _, value)| {
+            key.key().name() == DB_SQLITE_WAL_SIZE_BYTES && matches!(value, DebugValue::Gauge(_))
+        }));
+        assert!(snapshot.iter().any(|(key, _, _, value)| {
+            key.key().name() == DB_SQLITE_MMAP_COVERAGE_RATIO
+                && matches!(value, DebugValue::Gauge(_))
+        }));
+        assert!(snapshot.iter().any(|(key, _, _, value)| {
+            key.key().name() == DB_SQLITE_MMAP_BUDGET_CHECKS_TOTAL
+                && matches!(value, DebugValue::Counter(1))
+        }));
     }
 
     #[test]

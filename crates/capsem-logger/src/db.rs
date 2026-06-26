@@ -49,13 +49,55 @@ pub type DbQueryParams = [serde_json::Value];
 /// execution and schema failures remain DB-owned.
 pub type DbQueryJson = String;
 
+pub const DB_QUERY_TOTAL: &str = "db.query_total";
+pub const DB_QUERY_DURATION_MS: &str = "db.query_duration_ms";
+pub const DB_QUERY_RESULT_ROWS: &str = "db.query_result_rows";
+pub const DB_QUERY_RESULT_BYTES: &str = "db.query_result_bytes";
+pub const DB_QUERY_PARAMS_COUNT: &str = "db.query_params_count";
+
 fn elapsed_ms(started: Instant) -> u128 {
     started.elapsed().as_millis()
+}
+
+fn elapsed_ms_f64(started: Instant) -> f64 {
+    started.elapsed().as_secs_f64() * 1000.0
 }
 
 fn sql_fingerprint(sql: &str) -> String {
     let hash = blake3::hash(sql.as_bytes()).to_hex();
     hash[..12].to_string()
+}
+
+fn query_result_rows(raw: &str) -> Option<usize> {
+    serde_json::from_str::<serde_json::Value>(raw)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("rows")
+                .and_then(|rows| rows.as_array())
+                .map(Vec::len)
+        })
+}
+
+fn record_query_metrics(
+    phase: &'static str,
+    started: Instant,
+    params_count: usize,
+    result: &DbResult<String>,
+) {
+    let status = if result.is_ok() { "ok" } else { "error" };
+    let elapsed_ms = elapsed_ms_f64(started);
+    ::metrics::counter!(DB_QUERY_TOTAL, "phase" => phase, "status" => status).increment(1);
+    ::metrics::histogram!(DB_QUERY_DURATION_MS, "phase" => phase, "status" => status)
+        .record(elapsed_ms);
+    ::metrics::histogram!(DB_QUERY_PARAMS_COUNT, "phase" => phase, "status" => status)
+        .record(params_count as f64);
+    if let Ok(raw) = result {
+        ::metrics::histogram!(DB_QUERY_RESULT_BYTES, "phase" => phase).record(raw.len() as f64);
+        if let Some(rows) = query_result_rows(raw) {
+            ::metrics::histogram!(DB_QUERY_RESULT_ROWS, "phase" => phase).record(rows as f64);
+        }
+    }
 }
 
 enum ReadRequest {
@@ -248,6 +290,7 @@ impl DbHandle {
         let result = rx
             .await
             .map_err(|error| format!("db reader worker dropped query reply: {error}"))?;
+        record_query_metrics("handle", started, params_count, &result);
         match &result {
             Ok(_) => tracing::debug!(
                 db_path = %self.inner.path.display(),
@@ -423,6 +466,7 @@ fn reader_loop(path: PathBuf, rx: mpsc::Receiver<ReadRequest>) {
                 let sql_hash = sql_fingerprint(&sql);
                 let params_count = params.len();
                 let result = reader.query_raw_with_params(&sql, &params);
+                record_query_metrics("execute", started, params_count, &result);
                 match &result {
                     Ok(_) => tracing::debug!(
                         db_path = %path.display(),

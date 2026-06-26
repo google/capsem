@@ -33,34 +33,61 @@ pub const DB_ENQUEUE_WAIT_MS: &str = "db.enqueue_wait_ms";
 pub const DB_WRITE_BATCH_TOTAL: &str = "db.write_batch_total";
 pub const DB_WRITE_BATCH_DURATION_MS: &str = "db.write_batch_duration_ms";
 pub const DB_WRITE_BATCH_SIZE: &str = "db.write_batch_size";
+pub const DB_WRITE_BATCH_CAPACITY: &str = "db.write_batch_capacity";
+pub const DB_WRITE_BATCH_ROWS_PER_SEC: &str = "db.write_batch_rows_per_sec";
+pub const DB_WRITE_OPS_TOTAL: &str = "db.write_ops_total";
+pub const DB_PRODUCER_BUFFER_SIZE: &str = "db.producer_buffer_size";
+pub const DB_PRODUCER_BUFFER_CAPACITY: &str = "db.producer_buffer_capacity";
 pub const DB_SHUTDOWN_FLUSH_MS: &str = "db.shutdown_flush_ms";
 
 static IN_MEMORY_WRITER_ID: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(test)]
-static FAIL_DISK_FLUSHES_FOR_TESTS: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
+static FAIL_DISK_FLUSHES_FOR_TESTS: std::sync::Mutex<Option<(PathBuf, usize)>> =
+    std::sync::Mutex::new(None);
 
 #[cfg(test)]
 pub(crate) fn fail_disk_flushes_for_tests(count: usize) {
-    FAIL_DISK_FLUSHES_FOR_TESTS.store(count, Ordering::SeqCst);
+    let mut guard = FAIL_DISK_FLUSHES_FOR_TESTS.lock().unwrap();
+    if count == 0 {
+        *guard = None;
+    } else {
+        *guard = Some((PathBuf::new(), count));
+    }
 }
 
 #[cfg(test)]
-fn take_disk_flush_failure_for_tests() -> bool {
-    FAIL_DISK_FLUSHES_FOR_TESTS
-        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |count| {
-            if count > 0 {
-                Some(count - 1)
-            } else {
-                None
-            }
-        })
-        .is_ok()
+pub(crate) fn fail_disk_flushes_for_path_for_tests(path: &Path, count: usize) {
+    let mut guard = FAIL_DISK_FLUSHES_FOR_TESTS.lock().unwrap();
+    if count == 0 {
+        *guard = None;
+    } else {
+        *guard = Some((path.to_path_buf(), count));
+    }
+}
+
+#[cfg(test)]
+fn take_disk_flush_failure_for_tests(db_path: Option<&Path>) -> bool {
+    let mut guard = FAIL_DISK_FLUSHES_FOR_TESTS.lock().unwrap();
+    let Some((configured_path, remaining)) = guard.as_mut() else {
+        return false;
+    };
+    if *remaining == 0 {
+        *guard = None;
+        return false;
+    }
+    if !configured_path.as_os_str().is_empty() && db_path != Some(configured_path.as_path()) {
+        return false;
+    }
+    *remaining -= 1;
+    if *remaining == 0 {
+        *guard = None;
+    }
+    true
 }
 
 #[cfg(not(test))]
-fn take_disk_flush_failure_for_tests() -> bool {
+fn take_disk_flush_failure_for_tests(_db_path: Option<&Path>) -> bool {
     false
 }
 
@@ -243,6 +270,7 @@ impl DbWriter {
             | OpenFlags::SQLITE_OPEN_URI;
         let conn = Connection::open_with_flags(path, flags)?;
         schema::apply_pragmas(&conn)?;
+        schema::record_sqlite_mmap_telemetry(&conn, path, "writer", "open");
         schema::create_tables(&conn)?;
         schema::migrate(&conn);
         let memory_uri = schema::memory_uri_for_path(path);
@@ -261,6 +289,7 @@ impl DbWriter {
             std::sync::Arc::new(std::sync::Mutex::new(Vec::with_capacity(batch_capacity)));
         let (sweeper_shutdown_tx, sweeper_shutdown_rx) = mpsc::channel();
         let db_path = path.to_path_buf();
+        let writer_loop_db_path = Some(db_path.clone());
 
         let sweeper_join_handle = spawn_producer_sweeper(
             producer_buffer.clone(),
@@ -270,7 +299,7 @@ impl DbWriter {
         );
         let join_handle = std::thread::Builder::new()
             .name("capsem-db-writer".into())
-            .spawn(move || writer_loop(conn, rx))
+            .spawn(move || writer_loop(conn, rx, writer_loop_db_path))
             .expect("failed to spawn db writer thread");
 
         Ok(Self {
@@ -318,7 +347,7 @@ impl DbWriter {
         );
         let join_handle = std::thread::Builder::new()
             .name("capsem-db-writer".into())
-            .spawn(move || writer_loop(conn, rx))
+            .spawn(move || writer_loop(conn, rx, None))
             .expect("failed to spawn db writer thread");
 
         Ok(Self {
@@ -482,6 +511,7 @@ impl DbWriter {
         {
             let mut buffer = self.producer_buffer.lock().unwrap();
             buffer.push(op);
+            record_producer_buffer(buffer.len(), buffer.capacity());
             if buffer.len() >= self.batch_capacity {
                 ready_batch = Some(take_buffer_batch(&mut buffer, self.batch_capacity));
             }
@@ -562,7 +592,7 @@ fn spawn_producer_sweeper(
 }
 
 /// The writer thread loop: block-then-drain batching.
-fn writer_loop(conn: Connection, rx: mpsc::Receiver<WriterMessage>) {
+fn writer_loop(conn: Connection, rx: mpsc::Receiver<WriterMessage>, db_path: Option<PathBuf>) {
     let mut model_item_dedup = load_model_item_dedup(&conn);
     let mut dirty_tables = BTreeSet::new();
     let mut dirty_ops = 0_usize;
@@ -580,7 +610,9 @@ fn writer_loop(conn: Connection, rx: mpsc::Receiver<WriterMessage>) {
             match rx.recv_timeout(DISK_FLUSH_INTERVAL) {
                 Ok(message) => Some(message),
                 Err(mpsc::RecvTimeoutError::Timeout) => {
-                    if let Err(error) = flush_dirty_tables_to_disk(&conn, &mut dirty_tables) {
+                    if let Err(error) =
+                        flush_dirty_tables_to_disk(&conn, &mut dirty_tables, db_path.as_deref())
+                    {
                         warn!(error = %error, "db interval flush failed");
                     } else {
                         dirty_ops = 0;
@@ -629,17 +661,39 @@ fn writer_loop(conn: Connection, rx: mpsc::Receiver<WriterMessage>) {
             status = tracing::field::Empty,
         );
         let started = Instant::now();
+        let batch_capacity = batch.capacity();
         if batch.is_empty() {
-            record_batch(started, batch_size, batch_bucket, "ok", &span);
+            record_batch(
+                started,
+                batch_size,
+                batch_capacity,
+                batch_bucket,
+                "ok",
+                &span,
+            );
         } else {
             match span.in_scope(|| execute_memory_batch(&conn, &batch, &mut model_item_dedup)) {
                 Ok(affected) => {
                     dirty_tables.extend(affected);
                     dirty_ops += batch_size;
-                    record_batch(started, batch_size, batch_bucket, "ok", &span);
+                    record_batch(
+                        started,
+                        batch_size,
+                        batch_capacity,
+                        batch_bucket,
+                        "ok",
+                        &span,
+                    );
                 }
                 Err(e) => {
-                    record_batch(started, batch_size, batch_bucket, "error", &span);
+                    record_batch(
+                        started,
+                        batch_size,
+                        batch_capacity,
+                        batch_bucket,
+                        "error",
+                        &span,
+                    );
                     warn!(error = %e, count = batch.len(), "db memory write batch failed");
                 }
             }
@@ -648,7 +702,9 @@ fn writer_loop(conn: Connection, rx: mpsc::Receiver<WriterMessage>) {
             || last_disk_flush.elapsed() >= DISK_FLUSH_INTERVAL
             || !flush_barriers.is_empty();
         if disk_flush_due {
-            if let Err(error) = flush_dirty_tables_to_disk(&conn, &mut dirty_tables) {
+            if let Err(error) =
+                flush_dirty_tables_to_disk(&conn, &mut dirty_tables, db_path.as_deref())
+            {
                 warn!(error = %error, "db dirty table flush failed");
             } else {
                 dirty_ops = 0;
@@ -670,7 +726,7 @@ fn writer_loop(conn: Connection, rx: mpsc::Receiver<WriterMessage>) {
         }
     }
 
-    if let Err(error) = flush_dirty_tables_to_disk(&conn, &mut dirty_tables) {
+    if let Err(error) = flush_dirty_tables_to_disk(&conn, &mut dirty_tables, db_path.as_deref()) {
         warn!(error = %error, "db shutdown dirty table flush failed");
     }
 
@@ -729,14 +785,25 @@ fn record_enqueue(started: Instant, queue_result: &'static str, span: &tracing::
     span.record("queue_result", queue_result);
 }
 
+fn record_producer_buffer(len: usize, capacity: usize) {
+    ::metrics::gauge!(DB_PRODUCER_BUFFER_SIZE).set(len as f64);
+    ::metrics::gauge!(DB_PRODUCER_BUFFER_CAPACITY).set(capacity as f64);
+}
+
 fn record_batch(
     started: Instant,
     batch_size: usize,
+    batch_capacity: usize,
     batch_size_bucket: &'static str,
     status: &'static str,
     span: &tracing::Span,
 ) {
     let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+    let rows_per_sec = if elapsed_ms > 0.0 {
+        batch_size as f64 / (elapsed_ms / 1000.0)
+    } else {
+        0.0
+    };
     ::metrics::counter!(DB_WRITE_BATCH_TOTAL,
         "batch_size_bucket" => batch_size_bucket,
         "status" => status)
@@ -748,6 +815,11 @@ fn record_batch(
     ::metrics::histogram!(DB_WRITE_BATCH_SIZE,
         "batch_size_bucket" => batch_size_bucket)
     .record(batch_size as f64);
+    ::metrics::gauge!(DB_WRITE_BATCH_CAPACITY).set(batch_capacity as f64);
+    ::metrics::histogram!(DB_WRITE_BATCH_ROWS_PER_SEC,
+        "batch_size_bucket" => batch_size_bucket,
+        "status" => status)
+    .record(rows_per_sec);
     span.record("status", status);
 }
 
@@ -827,7 +899,9 @@ fn execute_memory_batch(
 ) -> rusqlite::Result<BTreeSet<&'static str>> {
     let tx = conn.unchecked_transaction()?;
     let mut affected_tables = BTreeSet::new();
+    let mut op_counts = std::collections::BTreeMap::<&'static str, usize>::new();
     for op in batch {
+        *op_counts.entry(op.kind()).or_default() += 1;
         affected_memory_tables(op, &mut affected_tables);
         match op {
             WriteOp::NetEvent(e) => insert_net_event(&tx, e, WriteTarget::Memory)?,
@@ -856,17 +930,21 @@ fn execute_memory_batch(
         }
     }
     tx.commit()?;
+    for (kind, count) in op_counts {
+        ::metrics::counter!(DB_WRITE_OPS_TOTAL, "insert_type" => kind).increment(count as u64);
+    }
     Ok(affected_tables)
 }
 
 fn flush_dirty_tables_to_disk(
     conn: &Connection,
     dirty_tables: &mut BTreeSet<&'static str>,
+    db_path: Option<&Path>,
 ) -> rusqlite::Result<()> {
     if dirty_tables.is_empty() {
         return Ok(());
     }
-    if take_disk_flush_failure_for_tests() {
+    if take_disk_flush_failure_for_tests(db_path) {
         return Err(rusqlite::Error::InvalidParameterName(
             "injected disk flush failure before copy".to_string(),
         ));
@@ -877,6 +955,9 @@ fn flush_dirty_tables_to_disk(
         schema::flush_memory_tables_to_disk(&tx, tables.iter().copied())
     })?;
     tx.commit()?;
+    if let Some(path) = db_path {
+        schema::record_sqlite_mmap_telemetry(conn, path, "writer", "flush");
+    }
     dirty_tables.clear();
     Ok(())
 }

@@ -377,6 +377,7 @@ impl DbReader {
             schema::create_memory_read_views(&conn)
         })?;
         schema::apply_reader_pragmas(&conn)?;
+        schema::record_sqlite_mmap_telemetry(&conn, path, "reader", "open");
         Ok(Self { conn })
     }
 

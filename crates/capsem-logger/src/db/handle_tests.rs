@@ -454,7 +454,7 @@ async fn db_correctness_db_interrupted_flush_is_transactional() {
     )))
     .await
     .expect("interrupted write must acknowledge memory row before disk flush");
-    crate::writer::fail_disk_flushes_for_tests(1);
+    crate::writer::fail_disk_flushes_for_path_for_tests(&p, 1);
     db.flush_for_tests().await;
 
     let memory_before_failed_flush = query_json(
@@ -487,7 +487,7 @@ async fn db_correctness_db_interrupted_flush_is_transactional() {
         "rows from an interrupted disk flush must remain visible in DB-owned memory. {DB_BOUNDARY_RATIONALE}"
     );
 
-    crate::writer::fail_disk_flushes_for_tests(100);
+    crate::writer::fail_disk_flushes_for_path_for_tests(&p, 100);
     db.flush_for_tests().await;
 
     assert_eq!(
@@ -1042,6 +1042,55 @@ async fn db_handle_query_returns_exact_columns_rows() {
         json!([["exact.example", 443, "denied", "GET", "/api", 11, 22]]),
         "DbHandle::query must preserve exact row values. {DB_BOUNDARY_RATIONALE}"
     );
+}
+
+#[tokio::test]
+async fn db_handle_query_records_read_metrics() {
+    use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+
+    let recorder = DebuggingRecorder::new();
+    let snapshotter = recorder.snapshotter();
+    let _guard = metrics::set_default_local_recorder(&recorder);
+
+    let p = temp_db_path("query-records-read-metrics");
+    let db = DbHandle::open(&p).expect("open handle");
+    db.ready().await.expect("db ready");
+    db.write(WriteOp::NetEvent(make_net_event(
+        "metrics.example",
+        Decision::Allowed,
+    )))
+    .await
+    .expect("write metric fixture");
+    db.flush_for_tests().await;
+
+    let raw = db
+        .query(
+            "SELECT domain, decision FROM net_events WHERE domain = ?",
+            &[json!("metrics.example")],
+        )
+        .await
+        .expect("query metric rows");
+    assert!(
+        raw.contains("metrics.example"),
+        "metric test must exercise a real DB query"
+    );
+
+    let snapshot = snapshotter.snapshot().into_vec();
+    assert!(snapshot.iter().any(|(key, _, _, value)| {
+        key.key().name() == DB_QUERY_TOTAL && matches!(value, DebugValue::Counter(_))
+    }));
+    assert!(snapshot.iter().any(|(key, _, _, value)| {
+        key.key().name() == DB_QUERY_DURATION_MS && matches!(value, DebugValue::Histogram(_))
+    }));
+    assert!(snapshot.iter().any(|(key, _, _, value)| {
+        key.key().name() == DB_QUERY_RESULT_ROWS && matches!(value, DebugValue::Histogram(_))
+    }));
+    assert!(snapshot.iter().any(|(key, _, _, value)| {
+        key.key().name() == DB_QUERY_RESULT_BYTES && matches!(value, DebugValue::Histogram(_))
+    }));
+    assert!(snapshot.iter().any(|(key, _, _, value)| {
+        key.key().name() == DB_QUERY_PARAMS_COUNT && matches!(value, DebugValue::Histogram(_))
+    }));
 }
 
 #[tokio::test]

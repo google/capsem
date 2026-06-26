@@ -138,6 +138,7 @@ fn net_event_stores_bounded_body_blobs_and_small_previews() {
                     credential_ref: None,
                 }))
                 .await;
+            writer.flush().await;
         });
     }
 
@@ -927,8 +928,13 @@ fn db_writer_records_enqueue_batch_and_shutdown_metrics() {
     crate::schema::apply_pragmas(&conn).unwrap();
     crate::schema::create_tables(&conn).unwrap();
     crate::schema::migrate(&conn);
+    crate::schema::create_memory_tables(
+        &conn,
+        &crate::schema::memory_uri_for_name("writer-metrics-test"),
+    )
+    .unwrap();
 
-    metrics::with_local_recorder(&recorder, || writer_loop(conn, rx));
+    metrics::with_local_recorder(&recorder, || writer_loop(conn, rx, None));
 
     let snapshot = snapshotter.snapshot().into_vec();
     assert!(snapshot.iter().any(
@@ -940,6 +946,15 @@ fn db_writer_records_enqueue_batch_and_shutdown_metrics() {
     }));
     assert!(snapshot.iter().any(|(key, _, _, value)| {
         key.key().name() == DB_WRITE_BATCH_SIZE && matches!(value, DebugValue::Histogram(_))
+    }));
+    assert!(snapshot.iter().any(|(key, _, _, value)| {
+        key.key().name() == DB_WRITE_BATCH_CAPACITY && matches!(value, DebugValue::Gauge(_))
+    }));
+    assert!(snapshot.iter().any(|(key, _, _, value)| {
+        key.key().name() == DB_WRITE_BATCH_ROWS_PER_SEC && matches!(value, DebugValue::Histogram(_))
+    }));
+    assert!(snapshot.iter().any(|(key, _, _, value)| {
+        key.key().name() == DB_WRITE_OPS_TOTAL && matches!(value, DebugValue::Counter(1))
     }));
     assert!(snapshot.iter().any(|(key, _, _, value)| {
         key.key().name() == DB_SHUTDOWN_FLUSH_MS && matches!(value, DebugValue::Histogram(_))
@@ -971,6 +986,12 @@ fn db_writer_records_enqueue_metrics() {
     let snapshot = snapshotter.snapshot().into_vec();
     assert!(snapshot.iter().any(|(key, _, _, value)| {
         key.key().name() == DB_ENQUEUE_WAIT_MS && matches!(value, DebugValue::Histogram(_))
+    }));
+    assert!(snapshot.iter().any(|(key, _, _, value)| {
+        key.key().name() == DB_PRODUCER_BUFFER_SIZE && matches!(value, DebugValue::Gauge(_))
+    }));
+    assert!(snapshot.iter().any(|(key, _, _, value)| {
+        key.key().name() == DB_PRODUCER_BUFFER_CAPACITY && matches!(value, DebugValue::Gauge(_))
     }));
 }
 
@@ -1414,6 +1435,7 @@ fn audit_event_insert_preserves_microsecond_precision() {
                     }))
                     .await;
             }
+            writer.flush().await;
         });
     }
 
