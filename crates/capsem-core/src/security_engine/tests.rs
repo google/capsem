@@ -168,6 +168,12 @@ fn security_event_emitter_is_the_auditable_event_boundary() {
 
 #[test]
 fn security_event_engine_runs_enabled_plugins_by_stage() {
+    use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+
+    let recorder = DebuggingRecorder::new();
+    let snapshotter = recorder.snapshotter();
+    let _guard = ::metrics::set_default_local_recorder(&recorder);
+
     let emitter = Arc::new(RecordingEmitter::new());
     let registry = SecurityActionRegistry::new()
         .with_plugin_policy(BTreeMap::from([
@@ -265,6 +271,57 @@ fn security_event_engine_runs_enabled_plugins_by_stage() {
         "plugin execution counters must ride on the same security event as detections"
     );
     assert_eq!(emitter.events.lock().unwrap().as_slice(), [returned]);
+
+    let snapshot = snapshotter.snapshot().into_vec();
+    let plugin_counter_ids = snapshot
+        .iter()
+        .filter_map(|(key, _, _, value)| {
+            if key.key().name() != SECURITY_PLUGIN_EXECUTION_TOTAL
+                || !matches!(value, DebugValue::Counter(1))
+            {
+                return None;
+            }
+            let labels = key.key().labels().collect::<Vec<_>>();
+            let plugin_id = labels
+                .iter()
+                .find(|label| label.key() == "plugin_id")
+                .map(|label| label.value().to_string())?;
+            let status_ok = labels
+                .iter()
+                .any(|label| label.key() == "status" && label.value() == "ok");
+            let applied = labels
+                .iter()
+                .any(|label| label.key() == "applied" && label.value() == "true");
+            status_ok.then_some(())?;
+            applied.then_some(plugin_id)
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        plugin_counter_ids,
+        ["trace_logging", "trace_post", "trace_pre"]
+            .into_iter()
+            .map(str::to_string)
+            .collect::<std::collections::BTreeSet<_>>(),
+        "every enabled plugin execution must emit a labeled counter"
+    );
+    let plugin_histogram_ids = snapshot
+        .iter()
+        .filter_map(|(key, _, _, value)| {
+            if key.key().name() != SECURITY_PLUGIN_EXECUTION_DURATION_MS
+                || !matches!(value, DebugValue::Histogram(_))
+            {
+                return None;
+            }
+            key.key()
+                .labels()
+                .find(|label| label.key() == "plugin_id")
+                .map(|label| label.value().to_string())
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        plugin_histogram_ids, plugin_counter_ids,
+        "every enabled plugin counter must have a matching duration histogram"
+    );
 }
 
 #[test]

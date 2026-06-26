@@ -29,6 +29,7 @@ use tracing::{info, warn};
 use super::body::BodyStats;
 use super::hooks::{ChunkCtx, ChunkHook};
 use super::interpreter_hook::LlmEventStream;
+use super::metrics as m;
 use super::util::is_llm_api_path;
 use crate::credential_broker::{
     broker_and_log_observations, detect_http_body_credentials, log_brokered_injections,
@@ -163,6 +164,7 @@ impl ChunkHook for TelemetryHook {
     }
 
     fn on_response_end(&self, ctx: &mut ChunkCtx<'_>) {
+        let response_end_started = Instant::now();
         // Move the request context out of the slot so we can take
         // ownership of its fields. After this the slot is `None` --
         // duplicate end firings (Drop fallback in ChunkDispatchBody)
@@ -174,11 +176,14 @@ impl ChunkHook for TelemetryHook {
 
         let mut resp_stats =
             std::mem::take(ctx.state::<TelemetryResponseStats>(TelemetryResponseStats::default));
+        let stage_started = Instant::now();
         let llm_events = ctx
             .state::<LlmEventStream>(LlmEventStream::default)
             .events
             .clone();
+        record_telemetry_stage(stage_started, "llm_event_clone");
 
+        let stage_started = Instant::now();
         let request_body_preview = {
             req_ctx
                 .request_body_stats
@@ -187,6 +192,9 @@ impl ChunkHook for TelemetryHook {
                 .preview
                 .clone()
         };
+        record_telemetry_stage(stage_started, "request_body_snapshot");
+
+        let stage_started = Instant::now();
         let mut credential_observations = req_ctx.credential_observations.clone();
         let header_observations_len = credential_observations.len();
         credential_observations.extend(detect_http_body_credentials(
@@ -226,7 +234,9 @@ impl ChunkHook for TelemetryHook {
                 );
             }
         }
+        record_telemetry_stage(stage_started, "credential_detect_and_redact");
 
+        let stage_started = Instant::now();
         let model_call = maybe_build_model_call(
             &req_ctx,
             &resp_stats,
@@ -234,6 +244,9 @@ impl ChunkHook for TelemetryHook {
             &self.deps.pricing,
             &self.deps.trace_state,
         );
+        record_telemetry_stage(stage_started, "model_call_build");
+
+        let stage_started = Instant::now();
         let mut net_event = build_net_event(&req_ctx, &resp_stats);
         if let Some(model_call) = &model_call {
             net_event.trace_id = model_call.trace_id.clone();
@@ -243,9 +256,11 @@ impl ChunkHook for TelemetryHook {
                 observation.trace_id = net_event.trace_id.clone();
             }
         }
+        record_telemetry_stage(stage_started, "net_event_build");
 
         log_outcome(&req_ctx);
 
+        let stage_started = Instant::now();
         let db = Arc::clone(&self.deps.db);
         let rules = self.deps.security_rules.read().unwrap().clone();
         let plugin_policy = self.deps.plugin_policy.read().unwrap().clone();
@@ -258,9 +273,16 @@ impl ChunkHook for TelemetryHook {
             log_brokered_injections(&broker_db, &broker_rules, broker_injections).await;
             broker_and_log_observations(&broker_db, &broker_rules, broker_observations).await;
         });
+        record_telemetry_stage(stage_started, "broker_task_spawn");
+
+        let stage_started = Instant::now();
         let net_security_event = security_event_from_net_event(&net_event)
             .with_credential_observations(credential_observations)
             .with_credential_injections(credential_injections);
+        record_telemetry_stage(stage_started, "security_event_build");
+
+        let stage_started = Instant::now();
+        let has_model_call = model_call.is_some();
         tokio::spawn(async move {
             if let Some(event_id) = emit_security_write(&db, WriteOp::NetEvent(net_event)).await {
                 delegate_matching_security_rules_for_evaluated_event(
@@ -290,7 +312,35 @@ impl ChunkHook for TelemetryHook {
                 }
             }
         });
+        record_telemetry_stage(stage_started, "ledger_task_spawn");
+        record_telemetry_response_end(response_end_started, has_model_call);
     }
+}
+
+fn record_telemetry_stage(started: Instant, stage: &'static str) {
+    let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+    ::metrics::histogram!(m::TELEMETRY_STAGE_DURATION_MS, "stage" => stage).record(elapsed_ms);
+    tracing::trace!(
+        target: "capsem.mitm.telemetry",
+        stage,
+        elapsed_ms,
+        "http telemetry stage"
+    );
+}
+
+fn record_telemetry_response_end(started: Instant, has_model_call: bool) {
+    let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+    ::metrics::histogram!(
+        m::TELEMETRY_RESPONSE_END_DURATION_MS,
+        "has_model_call" => if has_model_call { "true" } else { "false" },
+    )
+    .record(elapsed_ms);
+    tracing::trace!(
+        target: "capsem.mitm.telemetry",
+        has_model_call,
+        elapsed_ms,
+        "http telemetry response end"
+    );
 }
 
 /// Pure builder: assembles a `NetEvent` from the context and stats.

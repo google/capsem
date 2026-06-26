@@ -34,6 +34,8 @@ use plugins::{
 pub const SECURITY_EVENT_EMIT_SPAN: &str = "capsem.security_event.emit";
 pub const SECURITY_EVENT_EMIT_TOTAL: &str = "security_event.emit_total";
 pub const SECURITY_EVENT_EMIT_DURATION_MS: &str = "security_event.emit_duration_ms";
+pub const SECURITY_PLUGIN_EXECUTION_TOTAL: &str = "security_plugin.execution_total";
+pub const SECURITY_PLUGIN_EXECUTION_DURATION_MS: &str = "security_plugin.execution_duration_ms";
 pub const DUMMY_EICAR_TEST_STRING: &str =
     r#"X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"#;
 
@@ -2585,6 +2587,16 @@ pub enum SecurityPluginStage {
     Logging,
 }
 
+impl SecurityPluginStage {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Preprocess => "preprocess",
+            Self::Postprocess => "postprocess",
+            Self::Logging => "logging",
+        }
+    }
+}
+
 pub struct SecurityPluginResult {
     pub event: SecurityEvent,
     pub applied: bool,
@@ -2688,8 +2700,29 @@ impl SecurityActionRegistry {
                 continue;
             }
             let started = std::time::Instant::now();
-            let result = plugin.apply(event, plugin_config)?;
+            let result = match plugin.apply(event, plugin_config) {
+                Ok(result) => result,
+                Err(error) => {
+                    record_plugin_metrics(
+                        plugin_id,
+                        stage,
+                        plugin_config.mode,
+                        false,
+                        "error",
+                        started,
+                    );
+                    return Err(error);
+                }
+            };
             let duration_us = started.elapsed().as_micros().min(u128::from(u64::MAX)) as u64;
+            record_plugin_metrics(
+                plugin_id,
+                stage,
+                plugin_config.mode,
+                result.applied,
+                "ok",
+                started,
+            );
             event = result.event;
             event.record_plugin_execution(SecurityPluginExecution {
                 plugin_id: plugin_id.clone(),
@@ -2707,6 +2740,48 @@ impl SecurityActionRegistry {
         }
         Ok(event)
     }
+}
+
+fn record_plugin_metrics(
+    plugin_id: &str,
+    stage: SecurityPluginStage,
+    mode: SecurityPluginMode,
+    applied: bool,
+    status: &'static str,
+    started: Instant,
+) {
+    let stage = stage.as_str();
+    let mode = mode.as_str();
+    let applied = if applied { "true" } else { "false" };
+    let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+    ::metrics::counter!(
+        SECURITY_PLUGIN_EXECUTION_TOTAL,
+        "plugin_id" => plugin_id.to_string(),
+        "stage" => stage,
+        "mode" => mode,
+        "applied" => applied,
+        "status" => status,
+    )
+    .increment(1);
+    ::metrics::histogram!(
+        SECURITY_PLUGIN_EXECUTION_DURATION_MS,
+        "plugin_id" => plugin_id.to_string(),
+        "stage" => stage,
+        "mode" => mode,
+        "applied" => applied,
+        "status" => status,
+    )
+    .record(elapsed_ms);
+    tracing::trace!(
+        target: "capsem.security_plugin",
+        plugin_id,
+        stage,
+        mode,
+        applied,
+        status,
+        elapsed_ms,
+        "security plugin execution"
+    );
 }
 
 fn record_plugin_detection(

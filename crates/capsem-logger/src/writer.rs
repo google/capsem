@@ -30,6 +30,10 @@ pub const DB_WRITE_BATCH_SPAN: &str = "capsem.db.write_batch";
 pub const DB_SHUTDOWN_FLUSH_SPAN: &str = "capsem.db.shutdown_flush";
 
 pub const DB_ENQUEUE_WAIT_MS: &str = "db.enqueue_wait_ms";
+pub const DB_ENQUEUE_LOCK_WAIT_MS: &str = "db.enqueue_lock_wait_ms";
+pub const DB_ENQUEUE_TOTAL: &str = "db.enqueue_total";
+pub const DB_PRODUCER_BATCH_SEND_MS: &str = "db.producer_batch_send_ms";
+pub const DB_PRODUCER_BATCH_SENT_TOTAL: &str = "db.producer_batch_sent_total";
 pub const DB_WRITE_BATCH_TOTAL: &str = "db.write_batch_total";
 pub const DB_WRITE_BATCH_DURATION_MS: &str = "db.write_batch_duration_ms";
 pub const DB_WRITE_BATCH_SIZE: &str = "db.write_batch_size";
@@ -509,7 +513,9 @@ impl DbWriter {
             .ok_or_else(|| "db writer sender missing".to_string())?;
         let mut ready_batch = None;
         {
+            let lock_started = Instant::now();
             let mut buffer = self.producer_buffer.lock().unwrap();
+            record_enqueue_lock_wait(lock_started);
             buffer.push(op);
             record_producer_buffer(buffer.len(), buffer.capacity());
             if buffer.len() >= self.batch_capacity {
@@ -555,8 +561,15 @@ fn send_nonempty_batch(
     if batch.is_empty() {
         return Ok(());
     }
-    tx.send(WriterMessage::Batch(batch))
-        .map_err(|error| format!("db writer channel closed: {error}"))
+    let batch_size = batch.len();
+    let batch_bucket = batch_size_bucket(batch_size);
+    let started = Instant::now();
+    tx.send(WriterMessage::Batch(batch)).map_err(|error| {
+        record_producer_batch_send(started, batch_size, batch_bucket, "closed");
+        format!("db writer channel closed: {error}")
+    })?;
+    record_producer_batch_send(started, batch_size, batch_bucket, "queued");
+    Ok(())
 }
 
 fn spawn_producer_sweeper(
@@ -791,6 +804,7 @@ fn load_model_item_dedup(conn: &Connection) -> ModelItemDedup {
 
 fn record_enqueue(started: Instant, queue_result: &'static str, span: &tracing::Span) {
     let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+    ::metrics::counter!(DB_ENQUEUE_TOTAL, "queue_result" => queue_result).increment(1);
     ::metrics::histogram!(DB_ENQUEUE_WAIT_MS, "queue_result" => queue_result).record(elapsed_ms);
     span.record(
         "status",
@@ -803,9 +817,43 @@ fn record_enqueue(started: Instant, queue_result: &'static str, span: &tracing::
     span.record("queue_result", queue_result);
 }
 
+fn record_enqueue_lock_wait(started: Instant) {
+    let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+    ::metrics::histogram!(DB_ENQUEUE_LOCK_WAIT_MS).record(elapsed_ms);
+}
+
 fn record_producer_buffer(len: usize, capacity: usize) {
     ::metrics::gauge!(DB_PRODUCER_BUFFER_SIZE).set(len as f64);
     ::metrics::gauge!(DB_PRODUCER_BUFFER_CAPACITY).set(capacity as f64);
+}
+
+fn record_producer_batch_send(
+    started: Instant,
+    batch_size: usize,
+    batch_size_bucket: &'static str,
+    queue_result: &'static str,
+) {
+    let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+    ::metrics::counter!(
+        DB_PRODUCER_BATCH_SENT_TOTAL,
+        "queue_result" => queue_result,
+        "batch_size_bucket" => batch_size_bucket,
+    )
+    .increment(1);
+    ::metrics::histogram!(
+        DB_PRODUCER_BATCH_SEND_MS,
+        "queue_result" => queue_result,
+        "batch_size_bucket" => batch_size_bucket,
+    )
+    .record(elapsed_ms);
+    tracing::trace!(
+        target: "capsem.db",
+        queue_result,
+        batch_size,
+        batch_size_bucket,
+        elapsed_ms,
+        "db producer batch sent"
+    );
 }
 
 fn record_batch(

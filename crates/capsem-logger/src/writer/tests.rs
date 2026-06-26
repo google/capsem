@@ -970,7 +970,7 @@ fn db_writer_records_enqueue_metrics() {
     let _guard = metrics::set_default_local_recorder(&recorder);
 
     let dir = tempfile::tempdir().unwrap();
-    let writer = DbWriter::open(&dir.path().join("enqueue.db"), 64).unwrap();
+    let writer = DbWriter::open(&dir.path().join("enqueue.db"), 1).unwrap();
     let accepted = writer.try_write(WriteOp::FileEvent(crate::events::FileEvent {
         event_id: None,
         timestamp: std::time::SystemTime::now(),
@@ -988,10 +988,22 @@ fn db_writer_records_enqueue_metrics() {
         key.key().name() == DB_ENQUEUE_WAIT_MS && matches!(value, DebugValue::Histogram(_))
     }));
     assert!(snapshot.iter().any(|(key, _, _, value)| {
+        key.key().name() == DB_ENQUEUE_TOTAL && matches!(value, DebugValue::Counter(_))
+    }));
+    assert!(snapshot.iter().any(|(key, _, _, value)| {
+        key.key().name() == DB_ENQUEUE_LOCK_WAIT_MS && matches!(value, DebugValue::Histogram(_))
+    }));
+    assert!(snapshot.iter().any(|(key, _, _, value)| {
         key.key().name() == DB_PRODUCER_BUFFER_SIZE && matches!(value, DebugValue::Gauge(_))
     }));
     assert!(snapshot.iter().any(|(key, _, _, value)| {
         key.key().name() == DB_PRODUCER_BUFFER_CAPACITY && matches!(value, DebugValue::Gauge(_))
+    }));
+    assert!(snapshot.iter().any(|(key, _, _, value)| {
+        key.key().name() == DB_PRODUCER_BATCH_SENT_TOTAL && matches!(value, DebugValue::Counter(_))
+    }));
+    assert!(snapshot.iter().any(|(key, _, _, value)| {
+        key.key().name() == DB_PRODUCER_BATCH_SEND_MS && matches!(value, DebugValue::Histogram(_))
     }));
 }
 
