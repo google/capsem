@@ -282,7 +282,15 @@ async fn handle_request(
         tls,
     )
     .await;
-    log_request(&state, &method, &path, &request_body, &response);
+    log_request(
+        &state,
+        &method,
+        &path,
+        query.as_deref(),
+        &headers,
+        &request_body,
+        &response,
+    );
     Ok(response)
 }
 
@@ -1197,6 +1205,8 @@ fn log_request(
     state: &State,
     method: &Method,
     path: &str,
+    query: Option<&str>,
+    headers: &HeaderMap,
     request_body: &[u8],
     response: &Response<RespBody>,
 ) {
@@ -1207,6 +1217,16 @@ fn log_request(
         "timestamp": now_unix(),
         "method": method.as_str(),
         "path": path,
+        "query": query.unwrap_or(""),
+        "headers": headers
+            .iter()
+            .filter_map(|(name, value)| {
+                value
+                    .to_str()
+                    .ok()
+                    .map(|value| (name.as_str().to_ascii_lowercase(), json!(value)))
+            })
+            .collect::<serde_json::Map<String, Value>>(),
         "request_bytes": request_body.len(),
         "response_bytes": response
             .extensions()

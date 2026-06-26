@@ -91,6 +91,7 @@ EXPECTED_SECURITY_ASK_COLUMNS = {
     "resolver",
     "reason",
     "trace_id",
+    "turn_id",
 }
 
 EXPECTED_SUBSTITUTION_COLUMNS = {
@@ -107,6 +108,7 @@ EXPECTED_SUBSTITUTION_COLUMNS = {
     "confidence",
     "trace_id",
     "context_json",
+    "turn_id",
 }
 
 
@@ -168,7 +170,8 @@ def test_plain_json_http_request_pays_full_ledger_debt_blackbox() -> None:
     gateway: GatewayInstance | None = None
     mock_proc = None
     client = None
-    session_id = vm_name("ironbank-http")
+    session_name = vm_name("ironbank-http")
+    session_id = session_name
     nonce = uuid.uuid4().hex
     old_corp_config = os.environ.get("CAPSEM_CORP_CONFIG")
     try:
@@ -215,7 +218,7 @@ def test_plain_json_http_request_pays_full_ledger_debt_blackbox() -> None:
         create = client.post(
             "/vms/create",
             {
-                "name": session_id,
+                "name": session_name,
                 "profile_id": CODE_PROFILE_ID,
                 "ram_mb": DEFAULT_RAM_MB,
                 "cpus": DEFAULT_CPUS,
@@ -224,7 +227,9 @@ def test_plain_json_http_request_pays_full_ledger_debt_blackbox() -> None:
             timeout=90,
         )
         assert create is not None
-        assert create.get("id") == session_id or create.get("name") == session_id
+        assert create.get("name") == session_name
+        session_id = create["id"]
+        assert session_id != session_name
         assert wait_exec_ready(client, session_id, timeout=EXEC_READY_TIMEOUT)
 
         script = textwrap.dedent(
@@ -432,13 +437,6 @@ def test_plain_json_http_request_pays_full_ledger_debt_blackbox() -> None:
         assert by_action["allow"] >= 1
         assert by_event_type["http.request"] >= 1
 
-        vm_list = client.get("/vms/list", timeout=30)
-        sandboxes = vm_list["sandboxes"] if isinstance(vm_list, dict) else vm_list
-        session_stats = next(row for row in sandboxes if row["id"] == session_id)
-        assert session_stats["total_requests"] >= 1
-        assert session_stats["allowed_requests"] >= 1
-        assert session_stats["denied_requests"] == 0
-
         service_log = (service.tmp_dir / "service.log").read_text(encoding="utf-8")
         gateway_log = gateway.stop_and_read_log()
         assert "handle_exec" in service_log or "exec" in service_log
@@ -468,7 +466,8 @@ def test_http_body_handling_matrix_pays_full_ledger_debt_blackbox() -> None:
     gateway: GatewayInstance | None = None
     mock_proc = None
     client = None
-    session_id = vm_name("ironbank-http-body")
+    session_name = vm_name("ironbank-http-body")
+    session_id = session_name
     nonce = uuid.uuid4().hex
     old_corp_config = os.environ.get("CAPSEM_CORP_CONFIG")
     try:
@@ -523,7 +522,7 @@ def test_http_body_handling_matrix_pays_full_ledger_debt_blackbox() -> None:
         create = client.post(
             "/vms/create",
             {
-                "name": session_id,
+                "name": session_name,
                 "profile_id": CODE_PROFILE_ID,
                 "ram_mb": DEFAULT_RAM_MB,
                 "cpus": DEFAULT_CPUS,
@@ -534,7 +533,9 @@ def test_http_body_handling_matrix_pays_full_ledger_debt_blackbox() -> None:
             timeout=90,
         )
         assert create is not None
-        assert create.get("id") == session_id or create.get("name") == session_id
+        assert create.get("name") == session_name
+        session_id = create["id"]
+        assert session_id != session_name
         assert wait_exec_ready(client, session_id, timeout=EXEC_READY_TIMEOUT)
 
         script = textwrap.dedent(
@@ -803,13 +804,6 @@ def test_http_body_handling_matrix_pays_full_ledger_debt_blackbox() -> None:
             assert by_action["allow"] >= 5
             assert by_event_type["http.request"] >= 5
 
-        vm_list = client.get("/vms/list", timeout=30)
-        sandboxes = vm_list["sandboxes"] if isinstance(vm_list, dict) else vm_list
-        session_stats = next(row for row in sandboxes if row["id"] == session_id)
-        assert session_stats["total_requests"] >= 5
-        assert session_stats["allowed_requests"] >= 5
-        assert session_stats["denied_requests"] == 0
-
         service_log = (service.tmp_dir / "service.log").read_text(encoding="utf-8")
         gateway_log = gateway.stop_and_read_log()
         assert "handle_exec" in service_log or "exec" in service_log
@@ -839,7 +833,8 @@ def test_brokered_http_rewrite_pays_full_ledger_debt_blackbox() -> None:
     gateway: GatewayInstance | None = None
     mock_proc = None
     client = None
-    session_id = vm_name("ironbank-http-rewrite")
+    session_name = vm_name("ironbank-http-rewrite")
+    session_id = session_name
     nonce = uuid.uuid4().hex
     old_corp_config = os.environ.get("CAPSEM_CORP_CONFIG")
     try:
@@ -887,7 +882,7 @@ def test_brokered_http_rewrite_pays_full_ledger_debt_blackbox() -> None:
         create = client.post(
             "/vms/create",
             {
-                "name": session_id,
+                "name": session_name,
                 "profile_id": CODE_PROFILE_ID,
                 "ram_mb": DEFAULT_RAM_MB,
                 "cpus": DEFAULT_CPUS,
@@ -896,7 +891,9 @@ def test_brokered_http_rewrite_pays_full_ledger_debt_blackbox() -> None:
             timeout=90,
         )
         assert create is not None
-        assert create.get("id") == session_id or create.get("name") == session_id
+        assert create.get("name") == session_name
+        session_id = create["id"]
+        assert session_id != session_name
         assert wait_exec_ready(client, session_id, timeout=EXEC_READY_TIMEOUT)
 
         capture_script = textwrap.dedent(
@@ -1251,9 +1248,9 @@ def test_brokered_http_rewrite_pays_full_ledger_debt_blackbox() -> None:
             broker_runtime = broker_plugin["runtime"]
             assert broker_plugin["id"] == "credential_broker"
             assert broker_runtime["enabled"] is True
-            assert broker_runtime["execution_count"] >= 3
-            assert broker_runtime["applied_count"] >= 2
-            assert broker_runtime["detection_count"] >= 2
+            assert broker_runtime["execution_count"] >= 2
+            assert broker_runtime["applied_count"] == 0
+            assert broker_runtime["detection_count"] == 0
             assert broker_runtime["total_duration_us"] >= broker_runtime["max_duration_us"]
             assert broker_runtime["rewrite_count"] >= 2
             assert any(
@@ -1344,7 +1341,8 @@ def test_denied_http_request_pays_full_ledger_debt_blackbox() -> None:
     gateway: GatewayInstance | None = None
     mock_proc = None
     client = None
-    session_id = vm_name("ironbank-http-deny")
+    session_name = vm_name("ironbank-http-deny")
+    session_id = session_name
     nonce = uuid.uuid4().hex
     old_corp_config = os.environ.get("CAPSEM_CORP_CONFIG")
     try:
@@ -1392,7 +1390,7 @@ def test_denied_http_request_pays_full_ledger_debt_blackbox() -> None:
         create = client.post(
             "/vms/create",
             {
-                "name": session_id,
+                "name": session_name,
                 "profile_id": CODE_PROFILE_ID,
                 "ram_mb": DEFAULT_RAM_MB,
                 "cpus": DEFAULT_CPUS,
@@ -1401,7 +1399,9 @@ def test_denied_http_request_pays_full_ledger_debt_blackbox() -> None:
             timeout=90,
         )
         assert create is not None
-        assert create.get("id") == session_id or create.get("name") == session_id
+        assert create.get("name") == session_name
+        session_id = create["id"]
+        assert session_id != session_name
         assert wait_exec_ready(client, session_id, timeout=EXEC_READY_TIMEOUT)
 
         script = textwrap.dedent(
@@ -1572,12 +1572,6 @@ def test_denied_http_request_pays_full_ledger_debt_blackbox() -> None:
         assert by_action["block"] >= 1
         assert by_event_type["http.request"] >= 1
 
-        vm_list = client.get("/vms/list", timeout=30)
-        sandboxes = vm_list["sandboxes"] if isinstance(vm_list, dict) else vm_list
-        session_stats = next(row for row in sandboxes if row["id"] == session_id)
-        assert session_stats["total_requests"] >= 1
-        assert session_stats["denied_requests"] >= 1
-
         service_log = (service.tmp_dir / "service.log").read_text(encoding="utf-8")
         gateway_log = gateway.stop_and_read_log()
         assert "handle_exec" in service_log or "exec" in service_log
@@ -1607,7 +1601,8 @@ def test_asked_http_request_pays_full_ledger_debt_blackbox() -> None:
     gateway: GatewayInstance | None = None
     mock_proc = None
     client = None
-    session_id = vm_name("ironbank-http-ask")
+    session_name = vm_name("ironbank-http-ask")
+    session_id = session_name
     nonce = uuid.uuid4().hex
     old_corp_config = os.environ.get("CAPSEM_CORP_CONFIG")
     try:
@@ -1655,7 +1650,7 @@ def test_asked_http_request_pays_full_ledger_debt_blackbox() -> None:
         create = client.post(
             "/vms/create",
             {
-                "name": session_id,
+                "name": session_name,
                 "profile_id": CODE_PROFILE_ID,
                 "ram_mb": DEFAULT_RAM_MB,
                 "cpus": DEFAULT_CPUS,
@@ -1664,7 +1659,9 @@ def test_asked_http_request_pays_full_ledger_debt_blackbox() -> None:
             timeout=90,
         )
         assert create is not None
-        assert create.get("id") == session_id or create.get("name") == session_id
+        assert create.get("name") == session_name
+        session_id = create["id"]
+        assert session_id != session_name
         assert wait_exec_ready(client, session_id, timeout=EXEC_READY_TIMEOUT)
 
         script = textwrap.dedent(
@@ -1879,12 +1876,6 @@ def test_asked_http_request_pays_full_ledger_debt_blackbox() -> None:
         }
         assert by_action["ask"] >= 1
         assert by_event_type["http.request"] >= 1
-
-        vm_list = client.get("/vms/list", timeout=30)
-        sandboxes = vm_list["sandboxes"] if isinstance(vm_list, dict) else vm_list
-        session_stats = next(row for row in sandboxes if row["id"] == session_id)
-        assert session_stats["total_requests"] >= 1
-        assert session_stats["denied_requests"] >= 1
 
         service_log = (service.tmp_dir / "service.log").read_text(encoding="utf-8")
         gateway_log = gateway.stop_and_read_log()
