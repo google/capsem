@@ -44,6 +44,7 @@ EXPECTED_DNS_COLUMNS = {
     "policy_rule",
     "policy_reason",
     "credential_ref",
+    "turn_id",
 }
 
 EXPECTED_SECURITY_COLUMNS = {
@@ -57,6 +58,8 @@ EXPECTED_SECURITY_COLUMNS = {
     "rule_json",
     "event_json",
     "trace_id",
+    "turn_id",
+    "credential_ref",
 }
 
 
@@ -402,7 +405,17 @@ def test_dns_query_and_block_matrix_pays_full_ledger_debt_blackbox() -> None:
         assert next(row for row in uds_rows if row["qname"] == allowed_qname)["event_id"] == allowed_event_id
         assert next(row for row in uds_rows if row["qname"] == blocked_qname)["event_id"] == blocked_event_id
 
-        security_latest = client.get(f"/vms/{session_id}/security/latest?limit=100", timeout=30)
+        security_latest = _eventually(
+            lambda: client.get(f"/vms/{session_id}/security/latest?limit=100", timeout=30),
+            lambda rows: {
+                (row["event_id"], row["rule_id"])
+                for row in rows
+            }
+            >= {
+                (allowed_event_id, "corp.rules.allow_ironbank_dns_fixture"),
+                (blocked_event_id, "corp.rules.block_ironbank_dns_exfil"),
+            },
+        )
         latest_by_rule = {(row["event_id"], row["rule_id"]): row for row in security_latest}
         assert latest_by_rule[(allowed_event_id, "corp.rules.allow_ironbank_dns_fixture")][
             "detection_level"
@@ -411,7 +424,14 @@ def test_dns_query_and_block_matrix_pays_full_ledger_debt_blackbox() -> None:
             "detection_level"
         ] == "high"
 
-        security_status = client.get(f"/vms/{session_id}/security/status", timeout=30)
+        security_status = _eventually(
+            lambda: client.get(f"/vms/{session_id}/security/status", timeout=30),
+            lambda payload: {
+                row["detection_level"]: row["count"]
+                for row in payload["by_level"]
+            }.get("high", 0)
+            >= 1,
+        )
         by_action = {row["rule_action"]: row["count"] for row in security_status["by_action"]}
         by_event_type = {
             row["event_type"]: row["count"] for row in security_status["by_event_type"]

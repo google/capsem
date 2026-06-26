@@ -310,13 +310,13 @@ The MCP integration tests (`tests/capsem-mcp/`) are black-box tests that boot a 
 
 ### In-VM diagnostics
 
-`just run "capsem-doctor -k mcp"` -- tests tool routing and domain blocking inside the guest.
+`just exec "capsem-doctor -k mcp"` -- tests tool routing and domain blocking inside the guest.
 
 ### Manual validation
 
 Boot interactively, run a workload, then inspect telemetry:
 ```bash
-just run
+just shell
 # (in another terminal)
 just inspect-session <vm_id> "SELECT * FROM tool_calls WHERE origin = 'mcp'"
 ```

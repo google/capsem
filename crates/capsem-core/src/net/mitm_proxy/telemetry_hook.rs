@@ -45,7 +45,7 @@ use crate::net::ai_traffic::provider::{
 use crate::net::ai_traffic::{request_parser, TraceState};
 use crate::net::policy_config::SecurityRuleSet;
 use crate::security_engine::{
-    emit_matching_security_rules_with_plugins_blocking, emit_security_write_blocking,
+    emit_matching_security_rules_for_evaluated_event_blocking, emit_security_write_blocking,
     HttpSecurityEvent, IpSecurityEvent, ModelSecurityEvent, RuntimeSecurityEventType,
     SecurityEvent, TcpSecurityEvent,
 };
@@ -263,7 +263,7 @@ impl ChunkHook for TelemetryHook {
             .with_credential_observations(credential_observations)
             .with_credential_injections(credential_injections);
         if let Some(event_id) = emit_security_write_blocking(&db, WriteOp::NetEvent(net_event)) {
-            if let Err(error) = emit_matching_security_rules_with_plugins_blocking(
+            if let Err(error) = emit_matching_security_rules_for_evaluated_event_blocking(
                 &db,
                 event_id,
                 RuntimeSecurityEventType::HttpRequest,
@@ -278,7 +278,7 @@ impl ChunkHook for TelemetryHook {
         if let Some(mc) = model_call {
             let model_security_event = security_event_from_model_call(&mc);
             if let Some(event_id) = emit_security_write_blocking(&db, WriteOp::ModelCall(mc)) {
-                if let Err(error) = emit_matching_security_rules_with_plugins_blocking(
+                if let Err(error) = emit_matching_security_rules_for_evaluated_event_blocking(
                     &db,
                     event_id,
                     RuntimeSecurityEventType::ModelCall,

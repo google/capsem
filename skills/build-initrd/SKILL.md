@@ -34,7 +34,7 @@ Update three places:
 |---------|---------|-----|
 | Guest binary source (Rust agent code) | `just run` | Auto-repacks initrd with new binary |
 | `capsem-init` script | `just run` | Init script is repacked into initrd |
-| `guest/artifacts/diagnostics/*.py` | `just run "capsem-doctor"` | Test files repacked into initrd |
+| `guest/artifacts/diagnostics/*.py` | `just exec "capsem-doctor"` | Test files repacked into initrd |
 | `guest/artifacts/capsem-bashrc` | `just build-assets` | Baked into rootfs, not initrd |
 | Profile package/root/build inputs (`config/profiles/<id>/`) | `just build-assets` | Affects profile-derived rootfs rendering |
 | Installed packages (apt, pip) | `just build-assets` | Baked into the profile rootfs asset |

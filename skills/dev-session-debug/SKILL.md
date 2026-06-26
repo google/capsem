@@ -307,7 +307,7 @@ Rollup happens when a session ends.
 
 ### Missing net_events
 - Guest didn't make HTTPS requests, or VM shut down before proxy flushed
-- Check: `just run 'curl -s https://api.anthropic.com/ && sleep 1'` then inspect
+- Check: `just exec 'curl -s https://api.anthropic.com/ && sleep 1'` then inspect
 
 ### model_calls has NULL model or NULL tokens
 - **Gzip bug**: response was gzip-compressed and proxy didn't decompress before SSE parsing. Check if `Accept-Encoding: gzip` was sent and `Content-Encoding: gzip` was in response.

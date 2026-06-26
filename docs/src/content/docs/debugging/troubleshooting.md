@@ -61,10 +61,10 @@ colima ssh -- docker system df              # Docker usage inside VM
 When something goes wrong, `capsem-doctor` is the fastest way to pinpoint the issue:
 
 ```bash
-just run "capsem-doctor"          # Full diagnostic suite (~10s)
-just run "capsem-doctor -k sandbox"   # Just sandbox/security checks
-just run "capsem-doctor -k network"   # Just network stack
-just run "capsem-doctor -x"           # Stop on first failure
+just exec "capsem-doctor"          # Full diagnostic suite (~10s)
+just exec "capsem-doctor -k sandbox"   # Just sandbox/security checks
+just exec "capsem-doctor -k network"   # Just network stack
+just exec "capsem-doctor -x"           # Stop on first failure
 ```
 
 The test suite is layered L1-L7. Failures at lower layers explain failures at higher layers -- fix from the bottom up.

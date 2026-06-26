@@ -417,6 +417,40 @@ fn broker_stores_secret_without_writing_user_settings() {
 }
 
 #[test]
+fn duplicate_capture_is_memory_fast_and_does_not_rewrite_durable_store() {
+    let _lock = TEST_ENV_LOCK.blocking_lock();
+    let dir = tempfile::tempdir().unwrap();
+    let capsem_home = dir.path().join("capsem-home");
+    let test_store = dir.path().join("credential-store.json");
+    let _guard = EnvGuard::install(&capsem_home, dir.path(), &test_store);
+
+    let obs = CredentialObservation {
+        provider: CredentialProvider::OpenAi,
+        raw_value: "sk-capsem_test_duplicate_capture_0123456789abcdef".to_string(),
+        source: "http.body.response.$.api_key".to_string(),
+        event_type: Some("http.response".to_string()),
+        trace_id: Some("trace-duplicate-capture".to_string()),
+        context_json: None,
+    };
+
+    let first = broker_observed_credential(&obs).unwrap();
+    let mut perms = std::fs::metadata(&test_store).unwrap().permissions();
+    perms.set_readonly(true);
+    std::fs::set_permissions(&test_store, perms).unwrap();
+
+    let second = broker_observed_credential(&obs)
+        .expect("duplicate capture must use memory cache, not rewrite disk");
+    assert_eq!(second.credential_ref, first.credential_ref);
+    assert!(first.newly_captured);
+    assert!(!second.newly_captured);
+    assert_eq!(credential_store_status().cached_count, 1);
+
+    let mut perms = std::fs::metadata(&test_store).unwrap().permissions();
+    perms.set_readonly(false);
+    std::fs::set_permissions(&test_store, perms).unwrap();
+}
+
+#[test]
 fn replay_status_is_memory_only_and_hydration_is_explicit() {
     let _lock = TEST_ENV_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();

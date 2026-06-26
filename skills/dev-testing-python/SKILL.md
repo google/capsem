@@ -70,7 +70,7 @@ config/settings/settings.toml -> Pydantic models -> config/settings/schema.gener
 
 ## In-VM tests (NOT pytest on host)
 
-`guest/artifacts/diagnostics/` contains 207 pytest tests that run INSIDE the VM via `just run "capsem-doctor"`. These are NOT part of the host `uv run pytest` suite. They test the guest environment (mounts, networking, sandbox, MCP, runtimes). See `/dev-testing-vm` for details.
+`guest/artifacts/diagnostics/` contains 207 pytest tests that run INSIDE the VM via `just exec "capsem-doctor"`. These are NOT part of the host `uv run pytest` suite. They test the guest environment (mounts, networking, sandbox, MCP, runtimes). See `/dev-testing-vm` for details.
 
 ## Source layout
 

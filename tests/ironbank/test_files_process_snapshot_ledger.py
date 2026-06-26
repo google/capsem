@@ -31,6 +31,7 @@ EXPECTED_FS_COLUMNS = {
     "name",
     "size",
     "trace_id",
+    "turn_id",
     "credential_ref",
 }
 
@@ -50,6 +51,7 @@ EXPECTED_EXEC_COLUMNS = {
     "trace_id",
     "process_name",
     "pid",
+    "turn_id",
     "credential_ref",
 }
 
@@ -71,6 +73,7 @@ EXPECTED_AUDIT_COLUMNS = {
     "exec_event_id",
     "parent_exe",
     "trace_id",
+    "turn_id",
     "credential_ref",
 }
 
@@ -373,9 +376,16 @@ def test_file_process_snapshot_routes_pay_full_ledger_debt_blackbox():
                 assert event_json["decision"]["effective"] == "allow"
                 assert row["detection_level"] == "none"
 
-            timeline = client.get(
-                f"/vms/{session_id}/timeline?layers=fs,exec&limit=200",
-                timeout=30,
+            timeline = _eventually(
+                lambda: client.get(
+                    f"/vms/{session_id}/timeline?layers=fs,exec&limit=200",
+                    timeout=30,
+                ),
+                lambda payload: (
+                    len(_columnar_rows(payload)) >= len(paths)
+                    and {"fs", "exec"}
+                    <= {event["layer"] for event in _columnar_rows(payload)}
+                ),
             )
             timeline_rows = _columnar_rows(timeline)
             assert len(timeline_rows) >= len(paths)

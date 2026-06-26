@@ -117,14 +117,14 @@ cargo run -p capsem-admin -- profile check config/profiles/code/profile.toml --c
 just build-rootfs arm64 code
 
 # 3. Boot and verify
-just run "capsem-doctor"
+just exec "capsem-doctor"
 ```
 
 If you changed kernel config, rebuild everything:
 
 ```bash
 just build-assets code
-just run "capsem-doctor"
+just exec "capsem-doctor"
 ```
 
 ### What triggers a full rebuild?

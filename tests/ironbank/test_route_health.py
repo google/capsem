@@ -30,6 +30,12 @@ from helpers.constants import (
 )
 from helpers.gateway import GatewayInstance, TcpHttpClient
 from helpers.service import ServiceInstance, wait_exec_ready, vm_name
+from tests.ironbank.test_stats_detail_contract import (
+    SESSION_ID as SEEDED_SESSION_ID,
+    _profile_contract,
+    _seed_session_db,
+    _write_registry,
+)
 
 
 pytestmark = pytest.mark.integration
@@ -338,6 +344,45 @@ def route_timing_summary(timing: RouteTiming) -> dict[str, Any]:
 
 
 def _hot_route_budget(path: str, *, gateway: bool = False) -> tuple[float, float, float]:
+    if "/vms/" in path and (path.endswith("/status") or path.endswith("/info")):
+        # Per-session state routes touch richer lifecycle/profile metadata than
+        # global scalar status, but must still stay memory-backed and responsive
+        # enough for TUI/UI polling.
+        return (
+            3.0 if not gateway else 4.0,
+            8.0 if not gateway else 10.0,
+            0.10 if not gateway else 0.14,
+        )
+    if "/stats/detail" in path:
+        # Detail is the largest user-facing ledger route and includes body blob
+        # metadata/content. It must still be DB-handle/memory backed rather
+        # than rebuilding projections or blocking on route-owned SQLite.
+        return (
+            12.0 if not gateway else 16.0,
+            35.0 if not gateway else 45.0,
+            0.36 if not gateway else 0.48,
+        )
+    if any(
+        marker in path
+        for marker in (
+            "/history",
+            "/timeline",
+            "/security/status",
+            "/security/latest",
+            "/detection/status",
+            "/detection/latest",
+            "/enforcement/status",
+            "/enforcement/latest",
+        )
+    ):
+        # Ledger list/status routes should be near-constant DB-handle reads.
+        # These budgets are loose enough for debug JSON encoding but tight
+        # enough to catch route-time disk scans/projection rebuilds.
+        return (
+            5.0 if not gateway else 7.0,
+            14.0 if not gateway else 18.0,
+            0.12 if not gateway else 0.18,
+        )
     if path.endswith("/assets/status"):
         # Asset status returns a richer per-file readiness payload than scalar
         # status routes. It is still byte-cache backed; this budget keeps 64
@@ -665,6 +710,101 @@ def _service_route_contracts() -> list[RouteContract]:
     ]
 
 
+def _seeded_session_route_contracts(session_id: str) -> list[RouteContract]:
+    return [
+        RouteContract("GET", f"/vms/{session_id}/status", None, {"id", "status"}, dict),
+        RouteContract("GET", f"/vms/{session_id}/info", None, {"id", "status"}, dict),
+        RouteContract(
+            "GET",
+            f"/vms/{session_id}/stats/detail",
+            None,
+            {
+                "model_stats",
+                "model_events",
+                "tool_events",
+                "http_events",
+                "dns_events",
+                "file_events",
+                "process_events",
+                "audit_events",
+                "credential_events",
+                "body_blobs",
+            },
+            dict,
+        ),
+        RouteContract(
+            "GET",
+            f"/vms/{session_id}/history?layer=net&limit=50",
+            None,
+            {"commands", "total"},
+            dict,
+        ),
+        RouteContract(
+            "GET",
+            f"/vms/{session_id}/history/counts",
+            None,
+            {"exec_count", "audit_count"},
+            dict,
+        ),
+        RouteContract(
+            "GET",
+            f"/vms/{session_id}/history/processes",
+            None,
+            {"processes"},
+            dict,
+        ),
+        RouteContract(
+            "GET",
+            f"/vms/{session_id}/timeline?layers=net,model,tools,dns,fs,exec,security&limit=100",
+            None,
+            {"columns", "rows"},
+            dict,
+        ),
+        RouteContract(
+            "GET",
+            f"/vms/{session_id}/security/status",
+            None,
+            {"total", "by_action", "by_level", "by_event_type"},
+            dict,
+        ),
+        RouteContract(
+            "GET",
+            f"/vms/{session_id}/security/latest?limit=50",
+            None,
+            None,
+            list,
+        ),
+        RouteContract(
+            "GET",
+            f"/vms/{session_id}/detection/status",
+            None,
+            {"total", "by_action", "by_level", "by_event_type"},
+            dict,
+        ),
+        RouteContract(
+            "GET",
+            f"/vms/{session_id}/detection/latest?limit=50",
+            None,
+            None,
+            list,
+        ),
+        RouteContract(
+            "GET",
+            f"/vms/{session_id}/enforcement/status",
+            None,
+            {"total", "by_action", "by_level", "by_event_type"},
+            dict,
+        ),
+        RouteContract(
+            "GET",
+            f"/vms/{session_id}/enforcement/latest?limit=50",
+            None,
+            None,
+            list,
+        ),
+    ]
+
+
 def test_control_route_contracts_exist_for_ui_tui_blocking_and_vm_surfaces() -> None:
     service = ServiceInstance()
     try:
@@ -734,6 +874,66 @@ def test_hot_control_routes_have_latency_and_cpu_budgets() -> None:
             )
             p95_ms, max_ms, cpu_s = _hot_route_budget(contract.path, gateway=True)
             _assert_timing_budget(timing, p95_ms=p95_ms, max_ms=max_ms, cpu_s=cpu_s)
+    finally:
+        if fast_service_client is not None:
+            fast_service_client.close()
+        if fast_gateway_client is not None:
+            fast_gateway_client.close()
+        if gateway is not None:
+            gateway.stop()
+        service.stop()
+
+
+@pytest.mark.serial
+def test_seeded_session_ledger_routes_have_latency_and_cpu_budgets() -> None:
+    service = ServiceInstance()
+    gateway: GatewayInstance | None = None
+    fast_service_client: PersistentJsonClient | None = None
+    fast_gateway_client: PersistentJsonClient | None = None
+    try:
+        session_dir = service.tmp_dir / "persistent" / SEEDED_SESSION_ID
+        session_dir.mkdir(parents=True, exist_ok=True)
+        contract = _profile_contract(service.tmp_dir)
+        _seed_session_db(session_dir / "session.db")
+        _write_registry(service.tmp_dir, session_dir, contract)
+
+        service.start()
+        gateway = GatewayInstance(uds_path=service.uds_path)
+        gateway.start()
+        fast_service_client = _fast_service_client(service)
+        fast_gateway_client = _fast_gateway_client(gateway)
+        assert service.proc is not None
+        assert gateway.proc is not None
+        service_proc = psutil.Process(service.proc.pid)
+        gateway_proc = psutil.Process(gateway.proc.pid)
+
+        for client_label, client, gateway_for_cpu in (
+            ("service", fast_service_client, None),
+            ("gateway", fast_gateway_client, gateway_proc),
+        ):
+            is_gateway = gateway_for_cpu is not None
+            for route_contract in _seeded_session_route_contracts(SEEDED_SESSION_ID):
+                timing = _measure_route(
+                    f"{client_label} {route_contract.path}",
+                    lambda c=route_contract, route_client=client: _assert_contract(
+                        route_client,
+                        c,
+                    ),
+                    service_proc=service_proc,
+                    gateway_proc=gateway_for_cpu,
+                )
+                summary = route_timing_summary(timing)
+                print("ROUTE_LATENCY_JSON " + json.dumps(summary, sort_keys=True))
+                p95_ms, max_ms, cpu_s = _hot_route_budget(
+                    route_contract.path,
+                    gateway=is_gateway,
+                )
+                _assert_timing_budget(
+                    timing,
+                    p95_ms=p95_ms,
+                    max_ms=max_ms,
+                    cpu_s=cpu_s,
+                )
     finally:
         if fast_service_client is not None:
             fast_service_client.close()

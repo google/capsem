@@ -35,6 +35,8 @@ EXPECTED_SECURITY_COLUMNS = {
     "rule_json",
     "event_json",
     "trace_id",
+    "turn_id",
+    "credential_ref",
 }
 
 
@@ -395,7 +397,19 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
         assert uds_tool_rows[0]["tool_name"] == "fixture_lookup"
         assert uds_tool_rows[0]["policy_rule"] == "corp.rules.allow_ironbank_mock_mcp_server"
 
-        timeline = client.get(f"/vms/{session_id}/timeline?layers=tool&limit=50", timeout=30)
+        timeline = _eventually(
+            lambda: client.get(
+                f"/vms/{session_id}/timeline?layers=tool&limit=50",
+                timeout=30,
+            ),
+            lambda payload: any(
+                row["summary"].startswith(f"{observed_server}/fixture_lookup")
+                for row in [
+                    dict(zip(payload["columns"], row, strict=True))
+                    for row in payload["rows"]
+                ]
+            ),
+        )
         assert set(timeline) == {"columns", "rows"}
         assert {"timestamp", "layer", "ref", "summary", "status", "duration_ms"} <= set(
             timeline["columns"]
@@ -409,7 +423,11 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
             for summary in timeline_summaries
         )
 
-        security_latest = client.get(f"/vms/{session_id}/security/latest?limit=100", timeout=30)
+        security_latest = _eventually(
+            lambda: client.get(f"/vms/{session_id}/security/latest?limit=100", timeout=30),
+            lambda rows: {row["event_id"] for row in uds_tool_rows}
+            <= {row["event_id"] for row in rows},
+        )
         assert isinstance(security_latest, list)
         latest_ids = {row["event_id"] for row in security_latest}
         assert {row["event_id"] for row in uds_tool_rows} <= latest_ids

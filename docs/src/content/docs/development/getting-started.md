@@ -74,7 +74,7 @@ the runtime profile for the current local build is generated under
 ## Verify
 
 ```bash
-just run "echo hello from capsem"
+just exec "echo hello from capsem"
 ```
 
 If this prints "hello from capsem" and exits cleanly, you're set. See [Life of a Build](./stack) for what `just run` does under the hood.
@@ -82,8 +82,8 @@ If this prints "hello from capsem" and exits cleanly, you're set. See [Life of a
 ## Daily workflow
 
 ```bash
-just run              # Build + boot VM interactively (~10s)
-just run "CMD"        # Boot + run command + exit
+just shell            # Build + boot VM interactively (~10s)
+just exec "CMD"        # Boot + run command + exit
 just test             # Unit tests + cross-compile + frontend check
 just dev              # Hot-reloading Tauri app (frontend + Rust)
 just ui               # Frontend-only dev server (mock mode, no VM)

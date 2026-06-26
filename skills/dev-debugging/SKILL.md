@@ -18,7 +18,7 @@ Before touching any implementation code, write a test that captures the bug. Thi
 
 If you can't reproduce it in a test, you don't understand it well enough to fix it. For VM-level issues, use capsem-doctor or write a targeted diagnostic command:
 ```bash
-just run "<command that triggers the bug>"
+just exec "<command that triggers the bug>"
 ```
 
 For telemetry issues, use session inspection:
@@ -62,8 +62,8 @@ persistent/<name>/...           persistent-VM state (checkpoint.vzsave, workspac
 
 **Guest VM issues**: Boot with targeted commands and inspect behavior:
 ```bash
-just run "capsem-doctor -k <category>"   # Run specific diagnostic category
-just run "<manual investigation command>"
+just exec "capsem-doctor -k <category>"   # Run specific diagnostic category
+just exec "<manual investigation command>"
 ```
 Check boot logs for daemon startup failures, vsock connection issues, or timing problems.
 
@@ -139,7 +139,7 @@ Now that you understand the root cause, write the fix. The fix should:
 
 After the fix, run the full validation:
 1. `just test` -- unit + cross-compile + frontend
-2. `just run "capsem-doctor"` -- VM smoke test
+2. `just exec "capsem-doctor"` -- VM smoke test
 3. If the bug touched telemetry: `just inspect-session` after a real session
 
 ## What NOT to do

@@ -11,7 +11,7 @@ description: Quick-start guide for new Capsem developers. Use when someone asks 
 git clone <repo> && cd capsem
 ./bootstrap.sh                  # interactive, prompts [Y/n] before each install
 ./bootstrap.sh --yes            # non-interactive (CI / unattended setup)
-just run "echo hello"           # verify VM boots (build-assets runs as part of bootstrap)
+just exec "echo hello"           # verify VM boots (build-assets runs as part of bootstrap)
 ```
 
 `bootstrap.sh` lives at the **repo root**, not under `scripts/`.

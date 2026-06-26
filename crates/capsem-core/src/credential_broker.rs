@@ -16,6 +16,8 @@ pub(crate) const STORE_PATH_ENV: &str = "CAPSEM_CREDENTIAL_STORE_PATH";
 pub(crate) static TEST_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static TEST_STORE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 static CREDENTIAL_STORE: OnceLock<CredentialStore> = OnceLock::new();
+static LOGGED_CREDENTIAL_OBSERVATIONS: OnceLock<Mutex<HashSet<LoggedCredentialObservation>>> =
+    OnceLock::new();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -112,7 +114,16 @@ impl CredentialStore {
         provider: CredentialProvider,
         credential_ref: &str,
         raw_value: &str,
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
+        if let Some(existing) = self.cache_get(provider, credential_ref)? {
+            if existing == raw_value {
+                return Ok(false);
+            }
+            return Err(format!(
+                "credential reference collision for provider {} and ref {credential_ref}",
+                provider.as_str()
+            ));
+        }
         self.cache_insert(provider, credential_ref, raw_value)?;
         let _durable_guard = self
             .durable_lock
@@ -133,7 +144,7 @@ impl CredentialStore {
                 credential_ref, "credential store: credential captured into durable backend"
             );
         }
-        Ok(())
+        Ok(true)
     }
 
     pub fn resolve(
@@ -324,6 +335,7 @@ pub struct BrokeredCredential {
     pub provider: CredentialProvider,
     pub credential_ref: String,
     pub store_account: String,
+    pub newly_captured: bool,
 }
 
 impl CredentialObservation {
@@ -373,7 +385,7 @@ pub fn broker_observed_credential(
 ) -> Result<BrokeredCredential, String> {
     let credential_ref = observation.credential_ref();
     let store_account = credential_store_account(observation.provider, &credential_ref);
-    CredentialStore::global().capture(
+    let newly_captured = CredentialStore::global().capture(
         observation.provider,
         &credential_ref,
         &observation.raw_value,
@@ -382,6 +394,7 @@ pub fn broker_observed_credential(
         provider: observation.provider,
         credential_ref,
         store_account,
+        newly_captured,
     })
 }
 
@@ -625,13 +638,13 @@ pub async fn broker_and_log_observations(
         if first_ref.is_none() {
             first_ref = Some(reference);
         }
-        let save_outcome = match tokio::task::spawn_blocking({
+        let brokered = match tokio::task::spawn_blocking({
             let observation = observation.clone();
             move || broker_observed_credential(&observation)
         })
         .await
         {
-            Ok(Ok(_)) => "captured",
+            Ok(Ok(brokered)) => brokered,
             Ok(Err(error)) => {
                 warn!(
                     provider = observation.provider.as_str(),
@@ -639,7 +652,13 @@ pub async fn broker_and_log_observations(
                     error = %error,
                     "credential broker: failed to save observed credential"
                 );
-                "error"
+                crate::security_engine::emit_substitution_security_write_and_rules(
+                    db,
+                    rules,
+                    observation.redacted_event("error"),
+                )
+                .await;
+                continue;
             }
             Err(error) => {
                 warn!(
@@ -648,16 +667,27 @@ pub async fn broker_and_log_observations(
                     error = %error,
                     "credential broker: save task failed"
                 );
-                "error"
+                crate::security_engine::emit_substitution_security_write_and_rules(
+                    db,
+                    rules,
+                    observation.redacted_event("error"),
+                )
+                .await;
+                continue;
             }
         };
-        crate::security_engine::emit_substitution_security_write_and_rules(
-            db,
-            rules,
-            observation.redacted_event(save_outcome),
-        )
-        .await;
-        if save_outcome == "captured" {
+
+        let first_logged_in_session =
+            mark_credential_observation_logged(db, &observation, &brokered.credential_ref);
+        if first_logged_in_session {
+            crate::security_engine::emit_substitution_security_write_and_rules(
+                db,
+                rules,
+                observation.redacted_event("captured"),
+            )
+            .await;
+        }
+        if first_logged_in_session {
             crate::security_engine::emit_substitution_security_write_and_rules(
                 db,
                 rules,
@@ -667,6 +697,34 @@ pub async fn broker_and_log_observations(
         }
     }
     first_ref
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct LoggedCredentialObservation {
+    db_path: PathBuf,
+    provider: CredentialProvider,
+    credential_ref: String,
+    source: String,
+    event_type: Option<String>,
+}
+
+fn mark_credential_observation_logged(
+    db: &DbWriter,
+    observation: &CredentialObservation,
+    credential_ref: &str,
+) -> bool {
+    let key = LoggedCredentialObservation {
+        db_path: db.path().to_path_buf(),
+        provider: observation.provider,
+        credential_ref: credential_ref.to_string(),
+        source: observation.source.clone(),
+        event_type: observation.event_type.clone(),
+    };
+    LOGGED_CREDENTIAL_OBSERVATIONS
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+        .map(|mut logged| logged.insert(key))
+        .unwrap_or(true)
 }
 
 pub async fn log_brokered_injections(

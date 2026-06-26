@@ -43,6 +43,7 @@ EXPECTED_EXEC_COLUMNS = {
     "trace_id",
     "process_name",
     "pid",
+    "turn_id",
     "credential_ref",
 }
 

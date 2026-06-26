@@ -110,7 +110,7 @@ git clone <repo> && cd capsem
 #   ./bootstrap.sh --yes    # non-interactive
 
 # 3. Boot the VM to verify everything works
-just run "echo hello from capsem"
+just exec "echo hello from capsem"
 ```
 
 `bootstrap.sh` lives at the **repo root** (not under `scripts/`). It runs `just build-assets` as part of doctor's auto-fix, so step 3 just confirms the VM boots.
@@ -146,7 +146,7 @@ Or step by step:
 just doctor          # Check tools (colored output, structured recap)
 just doctor-fix      # Auto-fix missing targets, cargo tools, config files
 just build-assets    # Build kernel + rootfs (~10 min)
-just run "echo hi"   # Verify VM boots
+just exec "echo hi"   # Verify VM boots
 ```
 
 If step 4 prints "hello from capsem" and exits cleanly, you're set.
@@ -154,8 +154,8 @@ If step 4 prints "hello from capsem" and exits cleanly, you're set.
 ## Daily workflow
 
 ```bash
-just run              # Build + boot VM interactively (~10s)
-just run "CMD"        # Build + boot + run command + exit
+just shell            # Build + boot VM interactively (~10s)
+just exec "CMD"        # Build + boot + run command + exit
 just test             # Unit tests + cross-compile + frontend check
 just ui               # Frontend dev server (mock mode, no VM)
 just dev              # Full Tauri app with hot-reload

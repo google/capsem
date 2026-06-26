@@ -3,7 +3,11 @@ use std::time::{Instant, SystemTime};
 
 use capsem_logger::{schema, DbHandle, Decision, DnsEvent, WriteOp};
 use memmap2::Mmap;
-use rusqlite::{params, serialize::OwnedData, Connection, DatabaseName};
+use rusqlite::{
+    params,
+    serialize::{Data, OwnedData},
+    Connection, DatabaseName,
+};
 
 const WRITE_ROWS: usize = 100_000;
 const READ_ROWS: usize = 1_000_000;
@@ -69,14 +73,22 @@ fn seed_dns_rows(path: &std::path::Path, rows: usize) {
 fn sqlite_owned_data_from_mmap(path: &std::path::Path) -> OwnedData {
     let file = std::fs::File::open(path).expect("open db file for mmap");
     let mmap = unsafe { Mmap::map(&file).expect("mmap db file") };
-    let len = mmap.len();
+    sqlite_owned_data_from_bytes(&mmap)
+}
+
+fn sqlite_owned_data_from_bytes(bytes: &[u8]) -> OwnedData {
+    let len = bytes.len();
     assert!(len > 0, "cannot deserialize an empty SQLite file");
     let ptr = unsafe { rusqlite::ffi::sqlite3_malloc64(len as u64) } as *mut u8;
     let ptr = NonNull::new(ptr).expect("sqlite3_malloc64 returned null");
     unsafe {
-        std::ptr::copy_nonoverlapping(mmap.as_ptr(), ptr.as_ptr(), len);
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr.as_ptr(), len);
         OwnedData::from_raw_nonnull(ptr, len)
     }
+}
+
+fn sqlite_owned_data_from_serialized(data: Data<'_>) -> OwnedData {
+    sqlite_owned_data_from_bytes(&data)
 }
 
 async fn write_100k_rows() -> (f64, f64, f64) {
@@ -185,6 +197,46 @@ fn deserialize_scan_1m_rows() -> (f64, f64, String) {
     )
 }
 
+fn serialize_deserialize_scan_1m_rows() -> (f64, f64, String) {
+    let dir = tempfile::tempdir().expect("temp db dir");
+    let path = dir.path().join("session.db");
+    seed_dns_rows(&path, READ_ROWS);
+
+    let deserialize_started = Instant::now();
+    let source = Connection::open(&path).expect("open source db for sqlite serialize");
+    let data = source
+        .serialize(DatabaseName::Main)
+        .expect("serialize source DB");
+    let data = sqlite_owned_data_from_serialized(data);
+    let mut conn = Connection::open_in_memory().expect("open in-memory sqlite serialize db");
+    conn.deserialize(DatabaseName::Main, data, true)
+        .expect("deserialize sqlite serialized DB into memory");
+    let deserialize_elapsed = deserialize_started.elapsed();
+
+    let scan_started = Instant::now();
+    let scan_json: (i64, i64, i64) = conn
+        .query_row(
+            "SELECT COUNT(*) AS count, SUM(qtype) AS qtype_sum, SUM(upstream_resolver_ms) AS upstream_sum FROM dns_events",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("scan sqlite serialized 1m rows");
+    let scan_elapsed = scan_started.elapsed();
+    assert_eq!(
+        scan_json.0, READ_ROWS as i64,
+        "sqlite serialize scan count mismatch"
+    );
+
+    (
+        deserialize_elapsed.as_secs_f64() * 1000.0,
+        scan_elapsed.as_secs_f64() * 1000.0,
+        format!(
+            r#"{{"columns":["count","qtype_sum","upstream_sum"],"rows":[[{},{},{}]]}}"#,
+            scan_json.0, scan_json.1, scan_json.2
+        ),
+    )
+}
+
 fn main() {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_time()
@@ -194,6 +246,8 @@ fn main() {
     let (write_ms, post_write_count_ms, shutdown_flush_ms) = rt.block_on(write_100k_rows());
     let (seed_ms, open_rehydrate_ms, scan_ms, scan_json) = rt.block_on(read_1m_rows());
     let (deserialize_ms, deserialize_scan_ms, deserialize_scan_json) = deserialize_scan_1m_rows();
+    let (serialize_deserialize_ms, serialize_deserialize_scan_ms, serialize_deserialize_scan_json) =
+        serialize_deserialize_scan_1m_rows();
 
     println!("db read/write microbench");
     println!("| bench | rows | elapsed ms | rows/sec | notes |");
@@ -247,5 +301,18 @@ fn main() {
         deserialize_scan_ms,
         READ_ROWS as f64 / (deserialize_scan_ms / 1000.0),
         deserialize_scan_json.replace('|', "\\|")
+    );
+    println!(
+        "| sqlite_serialize_deserialize_1m | {} | {:.3} | {:.0} | sqlite3_serialize from source DB + sqlite3_deserialize into in-memory main |",
+        READ_ROWS,
+        serialize_deserialize_ms,
+        READ_ROWS as f64 / (serialize_deserialize_ms / 1000.0)
+    );
+    println!(
+        "| sqlite_serialize_deserialize_query_scan_1m | {} | {:.3} | {:.0} | aggregate scan after sqlite serialize/deserialize; result={} |",
+        READ_ROWS,
+        serialize_deserialize_scan_ms,
+        READ_ROWS as f64 / (serialize_deserialize_scan_ms / 1000.0),
+        serialize_deserialize_scan_json.replace('|', "\\|")
     );
 }

@@ -11,16 +11,16 @@ Capsem includes `capsem-bench`, a Python benchmarking tool that runs inside the 
 
 ```bash
 just bench                          # All benchmarks in VM (~2 min)
-just run "capsem-bench disk"        # Disk I/O only
-just run "capsem-bench rootfs"      # Rootfs reads only
-just run "capsem-bench storage"     # Rootfs/workspace/tmpfs/overlay split
-just run "capsem-bench startup"     # CLI cold-start only
-just run "capsem-bench http"        # HTTP through proxy
-just run "capsem-bench throughput"  # 100MB download
-just run "capsem-bench snapshot"    # Snapshot operations only
-just run "capsem-bench mitm-load 64 5"  # MITM proxy concurrency/load test
-just run "capsem-bench mcp-load 64 5"   # Guest MCP endpoint concurrency/load test
-just run "capsem-bench dns-load 64 5"   # DNS proxy concurrency/load test
+just exec "capsem-bench disk"        # Disk I/O only
+just exec "capsem-bench rootfs"      # Rootfs reads only
+just exec "capsem-bench storage"     # Rootfs/workspace/tmpfs/overlay split
+just exec "capsem-bench startup"     # CLI cold-start only
+just exec "capsem-bench http"        # HTTP through proxy
+just exec "capsem-bench throughput"  # 100MB download
+just exec "capsem-bench snapshot"    # Snapshot operations only
+just exec "capsem-bench mitm-load 64 5"  # MITM proxy concurrency/load test
+just exec "capsem-bench mcp-load 64 5"   # Guest MCP endpoint concurrency/load test
+just exec "capsem-bench dns-load 64 5"   # DNS proxy concurrency/load test
 just full-test                      # Full validation including benchmarks
 ```
 

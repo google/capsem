@@ -1392,9 +1392,20 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             assert observed_tool_response["result"]["content"][0]["text"] == (
                 "capsem-mock-server:mcp:fixture_lookup"
             )
-            observed_tool_list = next(
-                row for row in observed_mcp_rows if row["method"] == "tools/list"
-            )
+            observed_tool_list = _eventually(
+                lambda: conn.execute(
+                    """
+                    SELECT *
+                    FROM tool_calls
+                    WHERE origin = 'mcp'
+                      AND server_name = ?
+                      AND method = 'tools/list'
+                    ORDER BY id DESC
+                    """,
+                    (observed_mcp_server,),
+                ).fetchall(),
+                lambda rows: len(rows) == 1,
+            )[0]
             _assert_event_id(observed_tool_list["event_id"])
             assert "fixture_lookup" in (observed_tool_list["response_preview"] or "")
 

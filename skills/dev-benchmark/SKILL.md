@@ -9,9 +9,9 @@ description: Capsem benchmarking with capsem-bench. Use when running benchmarks,
 
 ```bash
 just bench                          # Run the standard artifact-recording benchmark suite
-just run "capsem-bench snapshot"    # Snapshot benchmarks only
-just run "capsem-bench disk"        # Disk I/O only
-just run "capsem-bench storage"     # Storage split diagnostics
+just exec "capsem-bench snapshot"    # Snapshot benchmarks only
+just exec "capsem-bench disk"        # Disk I/O only
+just exec "capsem-bench storage"     # Storage split diagnostics
 just test                           # Full validation including benchmarks
 ```
 
@@ -116,8 +116,8 @@ Key metrics: per-operation latency in ms. Regressions in `create` usually mean t
 
 ### Snapshot performance
 
-1. Run snapshot benchmark: `just run "capsem-bench snapshot"`
-2. Check per-stage timing: `RUST_LOG=capsem=debug just run "capsem-bench snapshot"` -- look for `snapshot_into_slot timing` log lines showing `clone_ws_ms`, `clone_sys_ms`, `hash_ms`
+1. Run snapshot benchmark: `just exec "capsem-bench snapshot"`
+2. Check per-stage timing: `RUST_LOG=capsem=debug just exec "capsem-bench snapshot"` -- look for `snapshot_into_slot timing` log lines showing `clone_ws_ms`, `clone_sys_ms`, `hash_ms`
 3. Check session data: `just inspect-session` -- MCP tool usage section shows avg duration per snapshot operation
 4. Query detailed durations: `just query-session "SELECT tool_name, duration_ms FROM tool_calls WHERE origin = 'mcp' AND tool_name LIKE 'snapshot%' ORDER BY duration_ms DESC LIMIT 20"`
 
@@ -128,13 +128,13 @@ Common causes:
 
 ### Disk I/O regression
 
-1. Run: `just run "capsem-bench disk"`
+1. Run: `just exec "capsem-bench disk"`
 2. Compare sequential write/read throughput against baseline
 3. Check if VirtioFS mode changed (block mode has different I/O characteristics)
 
 ### Storage split regression
 
-1. Run: `just run "capsem-bench storage"`
+1. Run: `just exec "capsem-bench storage"`
 2. Compare `/root` against `/tmp`, `/var/tmp`, `/var/log`, and `/run` to separate VirtioFS workspace costs from tmpfs, overlay, and rootfs read costs
 3. Check `storage.kernel` for `/proc/cmdline`, virtio block queue settings, FUSE connection backpressure knobs, and known host-side KVM queue sizes
 4. Check `storage.rootfs.backing.erofs_mounts` for the booted EROFS rootfs before comparing Linux/macOS rootfs reads; SquashFS fields are historical diagnostics only, not the 1.3 release gate
@@ -143,7 +143,7 @@ Common causes:
 
 ### Rootfs read regression
 
-1. Run: `just run "capsem-bench rootfs"`
+1. Run: `just exec "capsem-bench rootfs"`
 2. Compare `rootfs.seq_read` for the historical largest-file sequential read gate
 3. Compare `rootfs.large_binary_seq_read` to isolate large CLI binary reads
 4. Compare `rootfs.small_js_read` for loader-style reads across many small JS/JSON/package files
@@ -335,7 +335,7 @@ projection.
 
 ## Tests
 
-- In-VM benchmark test: `just run "capsem-bench all"`
+- In-VM benchmark test: `just exec "capsem-bench all"`
 - In-VM availability: `test_utilities.py::test_utility_available[capsem-bench]`
 - Host-side lifecycle: `uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py::test_lifecycle_benchmark -xvs`
 - Host-side fork: `uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py::test_fork_benchmark -xvs`

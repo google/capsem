@@ -714,6 +714,107 @@ async fn hook_writes_substitution_event_and_shared_credential_ref() {
 }
 
 #[tokio::test]
+async fn hook_does_not_repay_capture_ledger_for_repeated_identical_credential() {
+    let _lock = crate::credential_broker::TEST_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("session.db");
+    let capsem_home = dir.path().join("capsem-home");
+    let test_store = dir.path().join("credential-store.json");
+    let _guard = EnvGuard::install(&capsem_home, dir.path(), &test_store);
+
+    let db = Arc::new(DbWriter::open(&db_path, 64).expect("test db"));
+    let deps = Arc::new(TelemetryDeps {
+        db: Arc::clone(&db),
+        pricing: Arc::new(PricingTable::load()),
+        trace_state: Arc::new(Mutex::new(TraceState::new())),
+        security_rules: empty_security_rules(),
+        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new())),
+    });
+    let hook = TelemetryHook::new(deps);
+    let raw = "sk-ant-hook-repeat-test";
+    let credential_ref = credential_reference("anthropic", raw);
+    let observation = CredentialObservation {
+        provider: CredentialProvider::Anthropic,
+        raw_value: raw.to_string(),
+        source: "http.header.x-api-key".to_string(),
+        event_type: Some("http.request".to_string()),
+        trace_id: Some("trace-hook-repeat".to_string()),
+        context_json: Some(r#"{"domain":"api.anthropic.com"}"#.to_string()),
+    };
+
+    for _ in 0..2 {
+        let mut req_ctx = anthropic_req_ctx();
+        req_ctx.credential_ref = Some(credential_ref.clone());
+        req_ctx.credential_observations = vec![observation.clone()];
+        let mut state = HookState::default();
+        let conn = any_conn();
+        {
+            let mut c = ctx_for(&mut state, &conn);
+            *c.state::<Option<TelemetryRequestContext>>(|| None) = Some(req_ctx);
+        }
+        {
+            let mut c = ctx_for(&mut state, &conn);
+            hook.on_response_end(&mut c);
+        }
+    }
+
+    let seen = wait_for_db(&db_path, |conn| {
+        let net_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM net_events WHERE credential_ref = ?1",
+                [&credential_ref],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let captured_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM substitution_events WHERE substitution_ref = ?1 AND outcome = 'captured'",
+                [&credential_ref],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let brokered_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM substitution_events WHERE substitution_ref = ?1 AND outcome = 'brokered'",
+                [&credential_ref],
+                |row| row.get(0),
+            )
+            .unwrap();
+        net_count == 2 && captured_count == 1 && brokered_count == 1
+    })
+    .await;
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let net_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM net_events WHERE credential_ref = ?1",
+            [&credential_ref],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let captured_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM substitution_events WHERE substitution_ref = ?1 AND outcome = 'captured'",
+            [&credential_ref],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let brokered_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM substitution_events WHERE substitution_ref = ?1 AND outcome = 'brokered'",
+            [&credential_ref],
+            |row| row.get(0),
+        )
+        .unwrap();
+
+    assert!(
+        seen,
+        "repeated request rows must keep credential_ref, but capture/broker ledger identity emits once; net={net_count} captured={captured_count} brokered={brokered_count}"
+    );
+    db.shutdown_blocking();
+}
+
+#[tokio::test]
 async fn hook_writes_security_rule_ledger_for_matching_http_event() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("session.db");

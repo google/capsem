@@ -450,6 +450,7 @@ impl StreamTracker {
 struct McpMethodSummary {
     kind: McpMethodKind,
     method: String,
+    request_id: Option<String>,
     server_name: Option<String>,
     tool_name: Option<String>,
     resource_uri: Option<String>,
@@ -663,21 +664,21 @@ async fn log_mcp_call_with_policy(
 }
 
 fn security_event_from_mcp_call(call: &McpCall) -> SecurityEvent {
-    let security_event = SecurityEvent::new(RuntimeSecurityEventType::McpToolCall).with_mcp(
-        McpSecurityEvent {
-            method: Some(call.method.clone()),
-            server_name: Some(call.server_name.clone()),
-            tool_call_name: call.tool_name.clone(),
-            tool_list: if call.method == "tools/list" {
-                call.response_preview.clone()
-            } else {
-                None
-            },
-            ..Default::default()
-        }
-        .with_request_preview(call.request_preview.as_deref())
-        .with_response_preview(call.response_preview.as_deref()),
-    );
+    let mut mcp = McpSecurityEvent {
+        method: Some(call.method.clone()),
+        server_name: Some(call.server_name.clone()),
+        tool_call_name: call.tool_name.clone(),
+        tool_list: if call.method == "tools/list" {
+            call.response_preview.clone()
+        } else {
+            None
+        },
+        ..Default::default()
+    }
+    .with_request_preview(call.request_preview.as_deref())
+    .with_response_preview(call.response_preview.as_deref());
+    ensure_mcp_request_identity(&mut mcp, call.request_id.clone(), Some(call.method.clone()));
+    let security_event = SecurityEvent::new(RuntimeSecurityEventType::McpToolCall).with_mcp(mcp);
     match call.trace_id.clone() {
         Some(trace_id) => security_event.with_trace_id(trace_id),
         None => security_event,
@@ -711,23 +712,44 @@ fn mcp_security_event_from_summary(
     } else {
         None
     };
-    let event = SecurityEvent::new(event_type).with_mcp(
-        McpSecurityEvent {
-            method: Some(summary.method.clone()),
-            server_name: summary
-                .server_name
-                .clone()
-                .or_else(|| Some(process_name.to_string())),
-            tool_call_name: summary.tool_name.clone(),
-            tool_list,
-            ..Default::default()
-        }
-        .with_request_preview(summary.request_preview.as_deref())
-        .with_response_preview(response_preview.as_deref()),
+    let mut mcp = McpSecurityEvent {
+        method: Some(summary.method.clone()),
+        server_name: summary
+            .server_name
+            .clone()
+            .or_else(|| Some(process_name.to_string())),
+        tool_call_name: summary.tool_name.clone(),
+        tool_list,
+        ..Default::default()
+    }
+    .with_request_preview(summary.request_preview.as_deref())
+    .with_response_preview(response_preview.as_deref());
+    ensure_mcp_request_identity(
+        &mut mcp,
+        summary.request_id.clone(),
+        Some(summary.method.clone()),
     );
+    let event = SecurityEvent::new(event_type).with_mcp(mcp);
     match crate::telemetry::ambient_capsem_trace_id() {
         Some(trace_id) => event.with_trace_id(trace_id),
         None => event,
+    }
+}
+
+fn ensure_mcp_request_identity(
+    mcp: &mut McpSecurityEvent,
+    request_id: Option<String>,
+    method: Option<String>,
+) {
+    if request_id.is_none() && method.is_none() {
+        return;
+    }
+    let request = mcp.request.get_or_insert_with(Default::default);
+    if request.id.is_none() {
+        request.id = request_id;
+    }
+    if request.method.is_none() {
+        request.method = method;
     }
 }
 
@@ -968,6 +990,7 @@ fn interpret_mcp_method(req: &JsonRpcRequest) -> McpMethodSummary {
     McpMethodSummary {
         kind,
         method: req.method.clone(),
+        request_id: req.id.as_ref().and_then(json_rpc_id_to_log_string),
         server_name,
         tool_name,
         resource_uri,

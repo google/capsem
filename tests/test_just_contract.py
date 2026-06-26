@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
@@ -49,6 +50,36 @@ def test_justfile_and_scripts_do_not_reintroduce_retired_escape_paths() -> None:
         text = path.read_text()
         for needle in retired:
             assert needle not in text, f"{needle!r} still appears in {path}"
+
+
+def test_active_docs_and_skills_do_not_teach_retired_just_run() -> None:
+    """`just run` is gone; docs must teach `just exec` or `just shell`.
+
+    This guard intentionally scans only active instruction surfaces, not
+    changelog or sprint archaeology. `just run-service` and `just run-ui` remain
+    valid recipe names and are not matched by the retired-command regex.
+    """
+    retired = re.compile(r"\bjust run(?:\s|['\"]|$)")
+    roots = [
+        PROJECT_ROOT / "docs" / "src" / "content" / "docs",
+        PROJECT_ROOT / "skills",
+    ]
+    failures: list[str] = []
+    for root in roots:
+        for path in sorted(root.rglob("*")):
+            if not path.is_file() or path.suffix.lower() not in {".md", ".mdx"}:
+                continue
+            for line_no, line in enumerate(path.read_text().splitlines(), start=1):
+                if retired.search(line):
+                    failures.append(
+                        f"{path.relative_to(PROJECT_ROOT)}:{line_no}: {line.strip()}"
+                    )
+
+    assert not failures, (
+        "active docs/skills still teach retired `just run`; use `just exec` for "
+        "one-shot commands and `just shell` for interactive VMs:\n"
+        + "\n".join(failures)
+    )
 
 
 def test_justfile_exposes_docs_release_gate() -> None:

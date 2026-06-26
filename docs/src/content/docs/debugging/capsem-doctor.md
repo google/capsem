@@ -11,7 +11,7 @@ capsem-doctor is a pytest-based diagnostic suite that runs inside the guest VM. 
 
 | Command | What it does |
 |---------|-------------|
-| `just run "capsem-doctor"` | Repack initrd, build, sign, boot VM, run all tests, shut down (~10s) |
+| `just exec "capsem-doctor"` | Repack initrd, build, sign, boot VM, run all tests, shut down (~10s) |
 | `capsem-doctor` | Run all tests (inside a running VM) |
 | `capsem-doctor -k sandbox` | Run only sandbox tests |
 | `capsem-doctor -k "network and not throughput"` | Run network tests excluding throughput |
@@ -64,5 +64,5 @@ The `test_sandbox.py` file also uses a fixture-based parametrization pattern for
 1. Add test functions to the appropriate `guest/artifacts/diagnostics/test_<category>.py` file, or create a new `test_<category>.py`.
 2. Use `from conftest import run` for shell commands and the `output_dir` fixture for temp files.
 3. Tests auto-skip outside the capsem VM -- conftest checks for root user with writable `/root`.
-4. Run `just run "capsem-doctor"` to test. Initrd repacking picks up modified `diagnostics/` files automatically.
+4. Run `just exec "capsem-doctor"` to test. Initrd repacking picks up modified `diagnostics/` files automatically.
 5. For new rootfs-level changes (packages, configs), run `just build-assets code` instead.

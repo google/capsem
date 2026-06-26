@@ -143,7 +143,7 @@ Every sprint ends with testing. No exceptions.
 
 ```bash
 just test                           # ALL tests: unit + integration + cross-compile + frontend + bench
-just run "capsem-doctor"            # VM smoke test
+just exec "capsem-doctor"            # VM smoke test
 ```
 
 If the sprint touched telemetry:

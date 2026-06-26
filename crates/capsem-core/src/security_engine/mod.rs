@@ -843,6 +843,26 @@ pub fn emit_matching_security_rules_with_plugins_blocking(
     )
 }
 
+pub fn emit_matching_security_rules_for_evaluated_event_blocking(
+    db: &DbWriter,
+    event_id: SecurityEventId,
+    event_type: RuntimeSecurityEventType,
+    rules: &SecurityRuleSet,
+    plugin_policy: BTreeMap<String, SecurityPluginConfig>,
+    event: SecurityEvent,
+    timestamp_unix_ms: i64,
+) -> Result<usize, String> {
+    let event = prepare_evaluated_event_for_security_rule_ledger(plugin_policy, event)?;
+    emit_matching_security_rules_blocking(
+        db,
+        event_id,
+        event_type,
+        rules,
+        &event,
+        timestamp_unix_ms,
+    )
+}
+
 fn prepare_event_for_security_rule_ledger(
     plugin_policy: BTreeMap<String, SecurityPluginConfig>,
     mut event: SecurityEvent,
@@ -855,6 +875,18 @@ fn prepare_event_for_security_rule_ledger(
     event = action_registry
         .apply_security_plugins(SecurityPluginStage::Postprocess, event)
         .map_err(|error| error.to_string())?;
+    event = action_registry
+        .apply_security_plugins(SecurityPluginStage::Logging, event)
+        .map_err(|error| error.to_string())?;
+    Ok(event)
+}
+
+fn prepare_evaluated_event_for_security_rule_ledger(
+    plugin_policy: BTreeMap<String, SecurityPluginConfig>,
+    mut event: SecurityEvent,
+) -> Result<SecurityEvent, String> {
+    let action_registry =
+        SecurityActionRegistry::with_builtin_actions().with_plugin_policy(plugin_policy);
     event = action_registry
         .apply_security_plugins(SecurityPluginStage::Logging, event)
         .map_err(|error| error.to_string())?;
@@ -2027,7 +2059,7 @@ impl DnsSecurityEvent {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct McpSecurityEvent {
     pub method: Option<String>,
     pub server_name: Option<String>,
@@ -2035,6 +2067,47 @@ pub struct McpSecurityEvent {
     pub tool_list: Option<String>,
     pub request: Option<McpRequestSecurityEvent>,
     pub response: Option<McpResponseSecurityEvent>,
+}
+
+impl Serialize for McpSecurityEvent {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        #[derive(Serialize)]
+        struct ValidFact<'a> {
+            valid: bool,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            name: Option<&'a str>,
+        }
+
+        let server = ValidFact {
+            valid: self.server_name.is_some(),
+            name: self.server_name.as_deref(),
+        };
+        let tool_call = ValidFact {
+            valid: self.tool_call_name.is_some(),
+            name: self.tool_call_name.as_deref(),
+        };
+
+        let mut state = serializer.serialize_struct("McpSecurityEvent", 9)?;
+        state.serialize_field("method", &self.method)?;
+        state.serialize_field("server_name", &self.server_name)?;
+        state.serialize_field("tool_call_name", &self.tool_call_name)?;
+        state.serialize_field("tool_list", &self.tool_list)?;
+        state.serialize_field("request", &self.request)?;
+        state.serialize_field("response", &self.response)?;
+        state.serialize_field("server", &server)?;
+        state.serialize_field("tool_call", &tool_call)?;
+        state.serialize_field(
+            "event",
+            &ValidFact {
+                valid: self.method.is_some(),
+                name: None,
+            },
+        )?;
+        state.end()
+    }
 }
 
 impl McpSecurityEvent {
@@ -2059,6 +2132,16 @@ impl McpSecurityEvent {
             "tool_list.valid" => Some(PolicySubjectValue::Bool(self.tool_list.is_some())),
             "tool_list" => borrowed_string(self.tool_list.as_deref()),
             "request.valid" => Some(PolicySubjectValue::Bool(self.request.is_some())),
+            "request.id" => borrowed_string(
+                self.request
+                    .as_ref()
+                    .and_then(|request| request.id.as_deref()),
+            ),
+            "request.method" => borrowed_string(
+                self.request
+                    .as_ref()
+                    .and_then(|request| request.method.as_deref()),
+            ),
             "request.arguments" => json_string(
                 self.request
                     .as_ref()
@@ -2078,6 +2161,8 @@ impl McpSecurityEvent {
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
 pub struct McpRequestSecurityEvent {
+    pub id: Option<String>,
+    pub method: Option<String>,
     pub arguments: Option<serde_json::Value>,
 }
 
@@ -2092,7 +2177,11 @@ fn mcp_request_from_preview(preview: &str) -> Option<McpRequestSecurityEvent> {
         .pointer("/params/arguments")
         .or_else(|| value.pointer("/arguments"))
         .cloned();
-    Some(McpRequestSecurityEvent { arguments })
+    Some(McpRequestSecurityEvent {
+        id: None,
+        method: None,
+        arguments,
+    })
 }
 
 fn mcp_response_from_preview(preview: &str) -> Option<McpResponseSecurityEvent> {
