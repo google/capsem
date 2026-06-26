@@ -23,7 +23,7 @@ All workflows use `just` (not make). The justfile is the single entry point.
 | `just build-assets [arch]` | Full VM asset rebuild through capsem-admin/profile materialization and the private Python builder backend. Default: both arches. |
 | `just smoke` | Hermetic smoke gate: audit + doctor + injection + integration + parallel pytest groups |
 | `just test` | ALL tests: unit (warnings-as-errors) + cov + cross-compile + frontend + python + injection + integration + bench + install e2e |
-| `just test-gateway` | Gateway unit + Python mock-UDS tests (no VM needed) |
+| `just test-gateway` | Gateway unit + mock-UDS tests (no VM needed) |
 | `just test-gateway-e2e` | Gateway E2E tests (real service + VMs) |
 | `just test-install` | Install e2e in Docker + systemd (real .deb, dpkg -i, pytest) |
 | `just coverage` | HTML coverage report across all Rust crates (opens `target/llvm-cov/html/index.html`) |

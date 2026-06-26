@@ -1,7 +1,7 @@
 # Gemini Protocol Fixtures
 
 Gemini API Ironbank tests use deterministic responses from
-`scripts/mock_server_impl.py` for:
+`crates/capsem-mock-server` for:
 
 - `:streamGenerateContent` with function-call and function-response turns.
 - `:generateContent` non-streaming text generation.

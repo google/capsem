@@ -20,7 +20,7 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 @pytest.fixture(scope="module")
 def mock_server():
     if not MOCK_SERVER_BINARY.exists():
-        pytest.fail(f"{MOCK_SERVER_BINARY} not found; restore scripts/mock_server_impl.py")
+        pytest.fail(f"{MOCK_SERVER_BINARY} not found; build capsem-mock-server")
     proc, ready = start_mock_server()
     try:
         yield ready["base_url"]

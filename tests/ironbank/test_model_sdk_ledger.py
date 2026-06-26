@@ -674,7 +674,7 @@ def _codex_cli_probe_script(base_url: str) -> str:
 
 
 def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
-    assert MOCK_SERVER_BINARY.exists(), f"{MOCK_SERVER_BINARY} missing; restore mock server runtime"
+    assert MOCK_SERVER_BINARY.exists(), f"{MOCK_SERVER_BINARY} missing; build capsem-mock-server"
     assert ASSETS_DIR.exists(), f"{ASSETS_DIR} missing; build VM assets before Ironbank"
     assert PROFILES_DIR.exists(), f"{PROFILES_DIR} missing; materialize profile config before Ironbank"
 
@@ -1897,7 +1897,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
 
 
 def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
-    assert MOCK_SERVER_BINARY.exists(), f"{MOCK_SERVER_BINARY} missing; restore mock server runtime"
+    assert MOCK_SERVER_BINARY.exists(), f"{MOCK_SERVER_BINARY} missing; build capsem-mock-server"
     assert ASSETS_DIR.exists(), f"{ASSETS_DIR} missing; build VM assets before Ironbank"
     assert PROFILES_DIR.exists(), f"{PROFILES_DIR} missing; materialize profile config before Ironbank"
 

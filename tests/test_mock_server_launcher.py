@@ -10,7 +10,11 @@ import time
 from pathlib import Path
 from urllib.request import Request, urlopen
 
-from helpers.mock_server import start_mock_server, stop_process
+from helpers.mock_server import (
+    read_ready_json,
+    start_mock_server,
+    stop_process,
+)
 
 
 def test_mock_server_launcher_waits_for_busy_address_then_starts() -> None:
@@ -175,6 +179,23 @@ def _post_json(url: str, value: object) -> dict:
     return body
 
 
+def _post_json_with_headers(url: str, value: object, headers: dict[str, str]) -> dict:
+    request_headers = {"content-type": "application/json"}
+    request_headers.update(headers)
+    request = Request(
+        url,
+        data=json.dumps(value).encode(),
+        headers=request_headers,
+        method="POST",
+    )
+    with urlopen(request, timeout=2) as response:
+        assert response.status == 200
+        assert response.headers["content-type"] == "application/json"
+        body = json.loads(response.read().decode())
+    assert isinstance(body, dict)
+    return body
+
+
 def _post_raw(url: str, value: object) -> str:
     request = Request(
         url,
@@ -195,6 +216,84 @@ def _get_json(url: str) -> dict:
         body = json.loads(response.read().decode())
     assert isinstance(body, dict)
     return body
+
+
+def test_rust_mock_server_is_the_only_fixture_contract() -> None:
+    proc = None
+    try:
+        proc, ready = start_mock_server()
+
+        assert ready["service"] == "capsem-mock-server"
+        assert {
+            "/tiny",
+            "/v1/chat/completions",
+            "/v1internal:listExperiments",
+            "/mcp",
+            "/echo",
+            "/oauth/token",
+            "/ws/echo",
+        } <= set(ready["endpoints"])
+        assert {
+            "fixture.capsem.test",
+            "api.openai.com",
+            "api.anthropic.com",
+            "daily-cloudcode-pa.googleapis.com",
+        } <= set(ready["dns_fixtures"])
+
+        with urlopen(f"{ready['base_url']}/tiny", timeout=2) as response:
+            assert response.read() == b"capsem-mock-server:tiny\n"
+
+        tool_request = {
+            "model": "gemma4:latest",
+            "messages": [{"role": "user", "content": "call fixture_lookup"}],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "fixture_lookup",
+                        "parameters": {"type": "object"},
+                    },
+                }
+            ],
+        }
+        tool_response = _post_json(f"{ready['base_url']}/v1/chat/completions", tool_request)
+        tool_call = tool_response["choices"][0]["message"]["tool_calls"][0]
+        assert tool_call["type"] == "function"
+        assert tool_call["function"]["name"] == "fixture_lookup"
+        assert tool_call["function"]["arguments"] == '{"query":"Capsem ironbank poem"}'
+
+        experiments = _post_json(f"{ready['base_url']}/v1internal:listExperiments", {})
+        assert "experimentIds" in experiments
+
+        mcp_request = {"jsonrpc": "2.0", "id": 7, "method": "tools/list"}
+        mcp_response = _post_json(f"{ready['base_url']}/mcp", mcp_request)
+        assert mcp_response["jsonrpc"] == "2.0"
+        assert mcp_response["id"] == 7
+        assert mcp_response["result"]["tools"][0]["name"] == "fixture_lookup"
+
+        echo_request = {"kind": "broker-parity"}
+        echo_headers = {
+            "authorization": "Bearer credential:blake3:abc123",
+            "cookie": "session=credential:blake3:def456",
+            "x-api-key": "credential:blake3:fedcba",
+            "user-agent": "capsem-parity",
+        }
+        echo_query = "?access_token=credential:blake3:feedface"
+        echo = _post_json_with_headers(
+            f"{ready['base_url']}/echo{echo_query}",
+            echo_request,
+            echo_headers,
+        )
+        assert echo["path"] == "/echo"
+        assert echo["body_size"] == len(json.dumps(echo_request).encode())
+        assert echo["has_authorization"] is True
+        assert echo["authorization_is_broker_ref"] is True
+        assert echo["query_has_broker_ref"] is True
+        assert echo["query_has_access_token"] is True
+        assert echo["has_cookie"] is True
+        assert echo["has_x_api_key"] is True
+    finally:
+        stop_process(proc)
 
 
 def _post_chunked_raw(host: str, port: int, path: str, value: object) -> str:

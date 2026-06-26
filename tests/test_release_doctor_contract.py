@@ -223,8 +223,8 @@ def test_release_scripts_use_shared_mock_server_helper() -> None:
 def test_mock_server_is_the_only_hermetic_fixture_server_contract() -> None:
     current_files = [
         PROJECT_ROOT / "scripts" / "mock_server.py",
-        PROJECT_ROOT / "scripts" / "mock_server_impl.py",
         PROJECT_ROOT / "tests" / "helpers" / "mock_server.py",
+        PROJECT_ROOT / "crates" / "capsem-mock-server" / "src" / "main.rs",
         PROJECT_ROOT / "guest" / "artifacts" / "capsem_bench" / "__main__.py",
         PROJECT_ROOT / "guest" / "artifacts" / "capsem_bench" / "helpers.py",
     ]
@@ -236,7 +236,8 @@ def test_mock_server_is_the_only_hermetic_fixture_server_contract() -> None:
         assert "CAPSEM_BENCH_MOCK_SERVER_PROTOCOL_BASE_URL" not in text
 
     assert (PROJECT_ROOT / "crates" / OLD_DEBUG_CRATE).exists() is False
-    assert (PROJECT_ROOT / "crates" / "capsem-mock-server").exists() is False
+    assert (PROJECT_ROOT / "crates" / "capsem-mock-server").exists()
+    assert not list((PROJECT_ROOT / "scripts").glob("*mock_server_impl*"))
     assert (PROJECT_ROOT / "scripts" / "debug_upstream.py").exists() is False
     assert (PROJECT_ROOT / "tests" / "helpers" / "debug_upstream.py").exists() is False
 
@@ -703,13 +704,15 @@ def test_kvm_checkpoint_x86_state_tests_are_arch_gated() -> None:
         assert '#[cfg(target_arch = "x86_64")]' in window
 
 
-def test_mock_server_has_no_rust_fixture_crate() -> None:
+def test_mock_server_uses_rust_fixture_crate() -> None:
     root_cargo = (PROJECT_ROOT / "Cargo.toml").read_text()
     cli_cargo = (PROJECT_ROOT / "crates" / "capsem" / "Cargo.toml").read_text()
+    cli_main = (PROJECT_ROOT / "crates" / "capsem" / "src" / "main.rs").read_text()
 
-    assert "crates/capsem-mock-server" not in root_cargo
+    assert '"crates/capsem-mock-server"' in root_cargo
     assert "capsem-mock-server" not in cli_cargo
-    assert "capsem_mock_server" not in (PROJECT_ROOT / "crates" / "capsem" / "src" / "main.rs").read_text()
+    assert "mock_server_impl" not in cli_main
+    assert "capsem-mock-server" in cli_main
 
 
 def test_serial_benchmark_release_proofs_are_not_env_gated() -> None:

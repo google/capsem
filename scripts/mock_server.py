@@ -6,7 +6,6 @@ import fcntl
 import json
 import selectors
 import subprocess
-import sys
 import tempfile
 import time
 from pathlib import Path
@@ -14,7 +13,8 @@ from typing import Any
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-MOCK_SERVER_BINARY = PROJECT_ROOT / "scripts" / "mock_server_impl.py"
+MOCK_SERVER_BINARY = PROJECT_ROOT / "target" / "debug" / "capsem-mock-server"
+MOCK_SERVER_CRATE = PROJECT_ROOT / "crates" / "capsem-mock-server"
 MOCK_SERVER_ADDR = "127.0.0.1:3713"
 MOCK_SERVER_LOCK = Path(tempfile.gettempdir()) / "capsem-mock-server-3713.lock"
 
@@ -39,7 +39,12 @@ def _acquire_lock(addr: str = MOCK_SERVER_ADDR, timeout_s: float = 120) -> Any:
 
 def _address_in_use_error(exc: BaseException) -> bool:
     text = str(exc)
-    return "Address already in use" in text or "[Errno 48]" in text or "[Errno 98]" in text
+    return (
+        "Address already in use" in text
+        or "[Errno 48]" in text
+        or "[Errno 98]" in text
+        or "bind HTTP" in text
+    )
 
 
 def read_ready_json(proc: subprocess.Popen[str], timeout_s: float = 10) -> dict[str, Any]:
@@ -89,6 +94,27 @@ def stop_process(proc: subprocess.Popen[str] | None) -> None:
         lock_file.close()
 
 
+def _mock_server_binary_is_stale() -> bool:
+    if not MOCK_SERVER_BINARY.exists():
+        return True
+    binary_mtime = MOCK_SERVER_BINARY.stat().st_mtime
+    for path in MOCK_SERVER_CRATE.rglob("*"):
+        if path.is_file() and path.suffix in {".rs", ".toml"} and path.stat().st_mtime > binary_mtime:
+            return True
+    return False
+
+
+def _ensure_mock_server_binary() -> None:
+    if _mock_server_binary_is_stale():
+        subprocess.run(
+            ["cargo", "build", "-p", "capsem-mock-server"],
+            cwd=PROJECT_ROOT,
+            check=True,
+        )
+    if not MOCK_SERVER_BINARY.exists():
+        raise FileNotFoundError(f"{MOCK_SERVER_BINARY} not found after cargo build")
+
+
 def start_mock_server(
     *,
     addr: str = MOCK_SERVER_ADDR,
@@ -96,10 +122,7 @@ def start_mock_server(
     timeout_s: float = 120,
     retry_interval_s: float = 0.2,
 ) -> tuple[subprocess.Popen[str], dict[str, Any]]:
-    if not MOCK_SERVER_BINARY.exists():
-        raise FileNotFoundError(
-            f"{MOCK_SERVER_BINARY} not found; restore scripts/mock_server_impl.py"
-        )
+    _ensure_mock_server_binary()
     lock_file = _acquire_lock(addr, timeout_s=timeout_s)
     deadline = time.monotonic() + timeout_s
     last_error: BaseException | None = None
@@ -109,7 +132,6 @@ def start_mock_server(
         )
         proc = subprocess.Popen(
             [
-                sys.executable,
                 str(MOCK_SERVER_BINARY),
                 "--addr",
                 addr,

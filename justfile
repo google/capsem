@@ -56,10 +56,10 @@ process_binary := "target/debug/capsem-process"
 mcp_binary := "target/debug/capsem-mcp"
 gateway_binary := "target/debug/capsem-gateway"
 admin_binary := "target/debug/capsem-admin"
-host_binaries := "target/debug/capsem target/debug/capsem-service target/debug/capsem-process target/debug/capsem-mcp target/debug/capsem-mcp-aggregator target/debug/capsem-mcp-builtin target/debug/capsem-gateway target/debug/capsem-tray target/debug/capsem-admin target/debug/capsem-tui"
+host_binaries := "target/debug/capsem target/debug/capsem-service target/debug/capsem-process target/debug/capsem-mcp target/debug/capsem-mcp-aggregator target/debug/capsem-mcp-builtin target/debug/capsem-gateway target/debug/capsem-tray target/debug/capsem-admin target/debug/capsem-tui target/debug/capsem-mock-server"
 assets_dir := "assets"
 entitlements := "entitlements.plist"
-host_crates := "-p capsem-service -p capsem-process -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray -p capsem-admin"
+host_crates := "-p capsem-service -p capsem-process -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray -p capsem-admin -p capsem-mock-server"
 
 # Stamp version as 1.3.{unix_timestamp} in Cargo.toml, tauri.conf.json, and pyproject.toml.
 _stamp-version:

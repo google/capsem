@@ -1,0 +1,41 @@
+[package]
+name = "capsem-mock-server"
+version.workspace = true
+edition = "2021"
+rust-version.workspace = true
+license.workspace = true
+description.workspace = true
+homepage.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "capsem-mock-server"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+base64.workspace = true
+bytes.workspace = true
+clap.workspace = true
+flate2 = "1"
+futures.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+rcgen.workspace = true
+rustls.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha1 = "0.10"
+tokio.workspace = true
+tokio-rustls.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+reqwest.workspace = true
+tempfile = "3"
+
+[lints]
+workspace = true

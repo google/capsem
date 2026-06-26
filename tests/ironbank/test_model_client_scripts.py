@@ -21,7 +21,7 @@ def test_gemini_replay_uses_release_target_model() -> None:
 
 def test_anthropic_replay_uses_release_target_model() -> None:
     sdk_test = PROJECT_ROOT / "tests" / "ironbank" / "test_model_sdk_ledger.py"
-    mock_server = PROJECT_ROOT / "scripts" / "mock_server_impl.py"
+    mock_server = PROJECT_ROOT / "crates" / "capsem-mock-server" / "src" / "main.rs"
 
     assert HERMETIC_ANTHROPIC_MODEL == "claude-sonnet-4-6"
     sdk_text = sdk_test.read_text(encoding="utf-8")

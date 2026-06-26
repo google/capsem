@@ -1,7 +1,7 @@
 //! Dumps builtin MCP tool definitions to JSON on stdout.
 //!
 //! Used by `_generate-settings` to produce `target/config/profiles/catalog.generated.json`,
-//! which the Python mock generator reads to create frontend mock data.
+//! which the frontend mock-data generator reads to create sample payloads.
 
 fn main() {
     let mut tools = capsem_core::mcp::builtin_tools::builtin_tool_defs();

@@ -60,37 +60,36 @@ impl Drop for DoctorMockServer {
     }
 }
 
-fn mock_server_impl_path() -> Result<PathBuf> {
+fn mock_server_binary_path() -> Result<PathBuf> {
     let cwd_candidate = std::env::current_dir()
         .context("read current directory")?
-        .join("scripts/mock_server_impl.py");
+        .join("target/debug/capsem-mock-server");
     if cwd_candidate.exists() {
         return Ok(cwd_candidate);
     }
 
     let manifest_candidate =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../scripts/mock_server_impl.py");
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/capsem-mock-server");
     if manifest_candidate.exists() {
         return manifest_candidate
             .canonicalize()
-            .context("resolve source-tree scripts/mock_server_impl.py");
+            .context("resolve source-tree capsem-mock-server binary");
     }
 
     Err(anyhow!(
-        "scripts/mock_server_impl.py not found; restore the shared Python mock server implementation"
+        "target/debug/capsem-mock-server not found; run cargo build -p capsem-mock-server"
     ))
 }
 
 fn spawn_doctor_mock_server() -> Result<DoctorMockServer> {
-    let script = mock_server_impl_path()?;
-    let mut child = StdCommand::new("python3")
-        .arg(&script)
+    let binary = mock_server_binary_path()?;
+    let mut child = StdCommand::new(&binary)
         .arg("--addr")
         .arg(DOCTOR_MOCK_SERVER_ADDR)
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .spawn()
-        .with_context(|| format!("start {}", script.display()))?;
+        .with_context(|| format!("start {}", binary.display()))?;
 
     let stdout = child
         .stdout
