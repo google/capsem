@@ -839,9 +839,10 @@ fn responses_stream(payload: &Value, final_turn: bool) -> Bytes {
         let (token, _) = write_target(payload, "openai-responses");
         return Bytes::from(
             format!(
-                "event: response.output_text.delta\ndata: {{\"delta\":\"{token}\"}}\n\n\
-event: response.output_text.done\ndata: {{\"text\":\"{token}\"}}\n\n\
-event: response.completed\ndata: {{\"response\":{{\"id\":\"resp_capsem_mock\",\"status\":\"completed\",\"model\":\"gpt-5-nano\",\"usage\":{{\"input_tokens\":7,\"output_tokens\":5,\"total_tokens\":12,\"output_tokens_details\":{{\"reasoning_tokens\":2}}}}}}}}\n\n"
+                "event: response.reasoning_summary_text.delta\ndata: {{\"type\":\"response.reasoning_summary_text.delta\",\"delta\":\"ledger reasoning\"}}\n\n\
+event: response.output_text.delta\ndata: {{\"type\":\"response.output_text.delta\",\"delta\":\"{token}\"}}\n\n\
+event: response.output_text.done\ndata: {{\"type\":\"response.output_text.done\",\"text\":\"{token}\"}}\n\n\
+event: response.completed\ndata: {{\"type\":\"response.completed\",\"response\":{{\"id\":\"resp_capsem_mock\",\"status\":\"completed\",\"model\":\"gpt-5-nano\",\"usage\":{{\"input_tokens\":7,\"output_tokens\":5,\"total_tokens\":12,\"output_tokens_details\":{{\"reasoning_tokens\":2}}}}}}}}\n\n"
             ),
         );
     }
@@ -854,19 +855,41 @@ event: response.completed\ndata: {{\"response\":{{\"id\":\"resp_capsem_mock\",\"
     }));
     let arguments_json = json_compact(json!(arguments));
     Bytes::from(format!(
-        "event: response.output_item.added\ndata: {{\"item\":{{\"type\":\"reasoning\",\"id\":\"rs_capsem_mock\"}}}}\n\n\
-event: response.output_item.added\ndata: {{\"item\":{{\"type\":\"function_call\",\"id\":\"fc_capsem_mock\",\"call_id\":\"{call_id}\",\"name\":\"exec_command\",\"arguments\":{arguments_json}}}}}\n\n\
-event: response.function_call_arguments.delta\ndata: {{\"delta\":{arguments_json}}}\n\n\
-event: response.reasoning_summary_text.delta\ndata: {{\"delta\":\"ledger reasoning\"}}\n\n\
-event: response.completed\ndata: {{\"response\":{{\"id\":\"resp_capsem_mock\",\"status\":\"completed\",\"model\":\"gpt-5-nano\",\"usage\":{{\"input_tokens\":7,\"output_tokens\":5,\"total_tokens\":12,\"output_tokens_details\":{{\"reasoning_tokens\":2}}}}}}}}\n\n"
+        "event: response.output_item.added\ndata: {{\"type\":\"response.output_item.added\",\"item\":{{\"type\":\"reasoning\",\"id\":\"rs_capsem_mock\"}}}}\n\n\
+event: response.output_item.added\ndata: {{\"type\":\"response.output_item.added\",\"item\":{{\"type\":\"function_call\",\"id\":\"fc_capsem_mock\",\"call_id\":\"{call_id}\",\"name\":\"exec_command\",\"arguments\":{arguments_json}}}}}\n\n\
+event: response.function_call_arguments.delta\ndata: {{\"type\":\"response.function_call_arguments.delta\",\"delta\":{arguments_json}}}\n\n\
+event: response.function_call_arguments.done\ndata: {{\"type\":\"response.function_call_arguments.done\",\"arguments\":{arguments_json}}}\n\n\
+event: response.output_item.done\ndata: {{\"type\":\"response.output_item.done\",\"item\":{{\"type\":\"function_call\",\"id\":\"fc_capsem_mock\",\"status\":\"completed\",\"call_id\":\"{call_id}\",\"name\":\"exec_command\",\"arguments\":{arguments_json}}}}}\n\n\
+event: response.reasoning_summary_text.delta\ndata: {{\"type\":\"response.reasoning_summary_text.delta\",\"delta\":\"ledger reasoning\"}}\n\n\
+event: response.completed\ndata: {{\"type\":\"response.completed\",\"response\":{{\"id\":\"resp_capsem_mock\",\"status\":\"completed\",\"model\":\"gpt-5-nano\",\"usage\":{{\"input_tokens\":7,\"output_tokens\":5,\"total_tokens\":12,\"output_tokens_details\":{{\"reasoning_tokens\":2}}}}}}}}\n\n"
     ))
 }
 
 fn anthropic_response(payload: Value) -> Value {
+    let has_tool_result = serde_json::to_string(&payload)
+        .map(|raw| raw.contains("\"type\":\"tool_result\""))
+        .unwrap_or(false);
+    let (token, path) = write_target(&payload, "claude");
     let model = payload
         .get("model")
         .and_then(Value::as_str)
         .unwrap_or("claude-sonnet-4-6");
+    if has_tool_result {
+        return json!({
+            "id": "msg_capsem_mock_final",
+            "type": "message",
+            "role": "assistant",
+            "model": model,
+            "content": [
+                {"type": "thinking", "thinking": "ledger reasoning"},
+                {"type": "text", "text": token}
+            ],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 7, "output_tokens": 17}
+        });
+    }
+
+    let command = shell_write_command(&token, &path);
     json!({
         "id": "msg_capsem_mock",
         "type": "message",
@@ -874,8 +897,8 @@ fn anthropic_response(payload: Value) -> Value {
         "model": model,
         "content": [
             {"type": "thinking", "thinking": "Plan file write"},
-            {"type": "tool_use", "id": "toolu_capsem_write_poem", "name": "write_file", "input": {"path": "/root/poem.md", "content": "Capsem ironbank poem"}},
-            {"type": "text", "text": EXPECTED_POEM}
+            {"type": "tool_use", "id": "toolu_capsem_write_poem", "name": "exec_command", "input": {"cmd": command}},
+            {"type": "text", "text": token}
         ],
         "stop_reason": "tool_use",
         "usage": {"input_tokens": 33, "output_tokens": 27}
@@ -1105,9 +1128,23 @@ fn find_hex32(raw: &str) -> Option<String> {
 }
 
 fn find_root_txt_path(raw: &str) -> Option<String> {
-    let start = raw.find("/root/")?;
-    let end = raw[start..].find(".txt")? + start + 4;
-    Some(raw[start..end].replace("\\/", "/"))
+    raw.match_indices("/root/")
+        .filter_map(|(start, _)| {
+            let tail = &raw[start..];
+            let end = tail
+                .char_indices()
+                .find_map(|(index, ch)| {
+                    let allowed = ch.is_ascii_alphanumeric() || matches!(ch, '/' | '.' | '_' | '-');
+                    (!allowed).then_some(index)
+                })
+                .unwrap_or(tail.len());
+            let candidate = &tail[..end];
+            candidate.find(".txt").map(|index| {
+                let end = index + 4;
+                candidate[..end].replace("\\/", "/")
+            })
+        })
+        .last()
 }
 
 fn shell_write_command(token: &str, path: &str) -> String {
