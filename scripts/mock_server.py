@@ -119,6 +119,7 @@ def start_mock_server(
     *,
     addr: str = MOCK_SERVER_ADDR,
     request_log: Path | None = None,
+    capture_requests: bool = True,
     timeout_s: float = 120,
     retry_interval_s: float = 0.2,
 ) -> tuple[subprocess.Popen[str], dict[str, Any]]:
@@ -127,17 +128,21 @@ def start_mock_server(
     deadline = time.monotonic() + timeout_s
     last_error: BaseException | None = None
     while time.monotonic() < deadline:
-        request_log_path = request_log or (
-            Path(tempfile.mkdtemp(prefix="capsem-mock-server-")) / "requests.jsonl"
-        )
+        command = [
+            str(MOCK_SERVER_BINARY),
+            "--addr",
+            addr,
+        ]
+        if capture_requests:
+            request_log_path = request_log or (
+                Path(tempfile.mkdtemp(prefix="capsem-mock-server-")) / "requests.jsonl"
+            )
+            command.extend(["--request-log", str(request_log_path)])
+        elif request_log is not None:
+            raise ValueError("request_log requires capture_requests=True")
+
         proc = subprocess.Popen(
-            [
-                str(MOCK_SERVER_BINARY),
-                "--addr",
-                addr,
-                "--request-log",
-                str(request_log_path),
-            ],
+            command,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,

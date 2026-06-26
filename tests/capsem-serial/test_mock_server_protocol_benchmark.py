@@ -140,8 +140,12 @@ def test_mock_server_protocol_benchmark_artifact():
     upstream_proc = None
     base_url = os.environ.get("CAPSEM_MOCK_SERVER_BASE_URL")
     if not base_url:
-        upstream_proc, ready = start_mock_server()
+        upstream_proc, ready = start_mock_server(capture_requests=False)
         base_url = ready["base_url"]
+        assert ready["request_log"] is None, (
+            "release protocol benchmark must run capsem-mock-server in perf mode; "
+            "request capture serializes every request and poisons tiny_http numbers"
+        )
     parsed_base = urlsplit(base_url)
     assert parsed_base.hostname == "127.0.0.1"
     assert (parsed_base.port or 80) == 3713

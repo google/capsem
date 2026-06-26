@@ -54,6 +54,19 @@ def test_mock_server_serves_https_fixture() -> None:
         stop_process(proc)
 
 
+def test_mock_server_perf_mode_disables_request_capture() -> None:
+    proc = None
+    try:
+        proc, ready = start_mock_server(capture_requests=False)
+        assert ready["service"] == "capsem-mock-server"
+        assert ready["request_log"] is None
+        with urlopen(f"{ready['base_url']}/tiny", timeout=2) as response:
+            assert response.status == 200
+            assert response.read() == b"capsem-mock-server:tiny\n"
+    finally:
+        stop_process(proc)
+
+
 def test_mock_server_head_tiny_matches_get_fixture_headers() -> None:
     proc = None
     try:
