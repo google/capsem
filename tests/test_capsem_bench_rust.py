@@ -20,19 +20,21 @@ def _ensure_bench_binary() -> None:
     assert BENCH_BINARY.exists()
 
 
-def _run_protocol(base_url: str, out: Path, lane: str) -> dict:
+def _run_protocol(base_url: str, dns_udp_addr: str, out: Path, lane: str) -> dict:
     subprocess.run(
         [
             str(BENCH_BINARY),
             "protocol",
             "--base-url",
             base_url,
+            "--dns-udp-addr",
+            dns_udp_addr,
             "--requests",
             "200",
             "--concurrency",
             "16",
             "--scenarios",
-            "tiny_http,model_json_response,credential_response",
+            "tiny_http,model_json_response,credential_response,dns_local_nxdomain",
             "--lane",
             lane,
             "--json-out",
@@ -50,18 +52,30 @@ def test_rust_capsem_bench_protocol_and_delta_contract(tmp_path: Path) -> None:
     proc = None
     try:
         proc, ready = start_mock_server()
-        host = _run_protocol(ready["base_url"], tmp_path / "host.json", "host_direct")
-        guest = _run_protocol(ready["base_url"], tmp_path / "guest.json", "guest_capsem")
+        host = _run_protocol(
+            ready["base_url"],
+            ready["dns_udp_addr"],
+            tmp_path / "host.json",
+            "host_direct",
+        )
+        guest = _run_protocol(
+            ready["base_url"],
+            ready["dns_udp_addr"],
+            tmp_path / "guest.json",
+            "guest_capsem",
+        )
 
         result = host["mock_server_protocol"]
         assert result["version"] == "1.1-rust"
         assert result["lane"] == "host_direct"
+        assert result["dns_udp_addr"] == ready["dns_udp_addr"]
         assert result["total_requests"] == 200
         assert result["concurrency"] == 16
         assert result["selected_scenarios"] == [
             "tiny_http",
             "model_json_response",
             "credential_response",
+            "dns_local_nxdomain",
         ]
 
         rows = {row["name"]: row for row in result["scenarios"]}
@@ -73,6 +87,11 @@ def test_rust_capsem_bench_protocol_and_delta_contract(tmp_path: Path) -> None:
         assert rows["credential_response"]["successful"] == 200
         assert rows["credential_response"]["secret_shaped_fixture_seen"] is True
         assert rows["credential_response"]["raw_secret_stored_in_result"] is False
+        assert rows["dns_local_nxdomain"]["successful"] == 200
+        assert rows["dns_local_nxdomain"]["failed"] == 0
+        assert rows["dns_local_nxdomain"]["path"] == "load-test.capsem-bogus"
+        assert rows["dns_local_nxdomain"]["body_kind"] == "dns_udp"
+        assert rows["dns_local_nxdomain"]["errors"] == {}
         assert "capsem_test_api_key" not in json.dumps(host)
 
         delta_out = tmp_path / "delta.json"
@@ -102,6 +121,7 @@ def test_rust_capsem_bench_protocol_and_delta_contract(tmp_path: Path) -> None:
             "tiny_http",
             "model_json_response",
             "credential_response",
+            "dns_local_nxdomain",
         }
         for row in delta_rows.values():
             assert row["rps_ratio_guest_over_host"] > 0

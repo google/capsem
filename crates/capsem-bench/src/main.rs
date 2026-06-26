@@ -5,8 +5,10 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tokio::net::UdpSocket;
 
 const VERSION: &str = "0.4.0-rust";
 const SECRET_SHAPED_MARKER: &str = "capsem_test_";
@@ -30,6 +32,8 @@ enum Command {
 struct ProtocolArgs {
     #[arg(long)]
     base_url: Option<String>,
+    #[arg(long)]
+    dns_udp_addr: Option<String>,
     #[arg(long, default_value_t = 50_000)]
     requests: usize,
     #[arg(long, default_value_t = 64)]
@@ -57,6 +61,7 @@ struct DeltaArgs {
 #[derive(Clone, Copy, Debug)]
 struct Scenario {
     name: &'static str,
+    transport: ScenarioTransport,
     path: &'static str,
     expected_status: u16,
     expected_bytes: Option<usize>,
@@ -65,9 +70,16 @@ struct Scenario {
     secret_shaped_fixture: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ScenarioTransport {
+    Http,
+    DnsUdp { qtype: u16 },
+}
+
 const SCENARIOS: &[Scenario] = &[
     Scenario {
         name: "tiny_http",
+        transport: ScenarioTransport::Http,
         path: "/tiny",
         expected_status: 200,
         expected_bytes: Some(24),
@@ -77,6 +89,7 @@ const SCENARIOS: &[Scenario] = &[
     },
     Scenario {
         name: "http_1mb",
+        transport: ScenarioTransport::Http,
         path: "/bytes/1mb",
         expected_status: 200,
         expected_bytes: Some(1024 * 1024),
@@ -86,6 +99,7 @@ const SCENARIOS: &[Scenario] = &[
     },
     Scenario {
         name: "sse_model",
+        transport: ScenarioTransport::Http,
         path: "/sse/model",
         expected_status: 200,
         expected_bytes: None,
@@ -95,6 +109,7 @@ const SCENARIOS: &[Scenario] = &[
     },
     Scenario {
         name: "model_json_response",
+        transport: ScenarioTransport::Http,
         path: "/model/response",
         expected_status: 200,
         expected_bytes: None,
@@ -104,6 +119,7 @@ const SCENARIOS: &[Scenario] = &[
     },
     Scenario {
         name: "credential_response",
+        transport: ScenarioTransport::Http,
         path: "/credential/response",
         expected_status: 200,
         expected_bytes: None,
@@ -113,10 +129,31 @@ const SCENARIOS: &[Scenario] = &[
     },
     Scenario {
         name: "denied_target",
+        transport: ScenarioTransport::Http,
         path: "/deny-target",
         expected_status: 200,
         expected_bytes: None,
         body_kind: "tiny",
+        required_text: None,
+        secret_shaped_fixture: false,
+    },
+    Scenario {
+        name: "dns_local_nxdomain",
+        transport: ScenarioTransport::DnsUdp { qtype: 1 },
+        path: "load-test.capsem-bogus",
+        expected_status: 3,
+        expected_bytes: None,
+        body_kind: "dns_udp",
+        required_text: None,
+        secret_shaped_fixture: false,
+    },
+    Scenario {
+        name: "dns_fixture_a",
+        transport: ScenarioTransport::DnsUdp { qtype: 1 },
+        path: "fixture.capsem.test",
+        expected_status: 0,
+        expected_bytes: None,
+        body_kind: "dns_udp",
         required_text: None,
         secret_shaped_fixture: false,
     },
@@ -136,6 +173,8 @@ struct ProtocolReport {
     version: String,
     lane: String,
     base_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dns_udp_addr: Option<String>,
     total_requests: usize,
     concurrency: usize,
     timeout_ms: u64,
@@ -221,6 +260,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command.unwrap_or(Command::Protocol(ProtocolArgs {
         base_url: None,
+        dns_udp_addr: None,
         requests: 50_000,
         concurrency: 64,
         timeout_ms: 30_000,
@@ -247,16 +287,43 @@ async fn run_protocol(args: ProtocolArgs) -> Result<Artifact> {
     if args.concurrency == 0 {
         bail!("--concurrency must be greater than zero");
     }
-    let base_url = args
-        .base_url
-        .or_else(|| std::env::var("CAPSEM_MOCK_SERVER_BASE_URL").ok())
-        .context("CAPSEM_MOCK_SERVER_BASE_URL or --base-url is required")?
-        .trim_end_matches('/')
-        .to_string();
-    if !(base_url.starts_with("http://") || base_url.starts_with("https://")) {
-        bail!("--base-url must start with http:// or https://");
-    }
     let selected = select_scenarios(args.scenarios.as_deref())?;
+    let needs_http = selected
+        .iter()
+        .any(|scenario| scenario.transport == ScenarioTransport::Http);
+    let needs_dns = selected
+        .iter()
+        .any(|scenario| matches!(scenario.transport, ScenarioTransport::DnsUdp { .. }));
+    let base_url = if needs_http {
+        let base_url = args
+            .base_url
+            .or_else(|| std::env::var("CAPSEM_MOCK_SERVER_BASE_URL").ok())
+            .context("CAPSEM_MOCK_SERVER_BASE_URL or --base-url is required for HTTP scenarios")?
+            .trim_end_matches('/')
+            .to_string();
+        if !(base_url.starts_with("http://") || base_url.starts_with("https://")) {
+            bail!("--base-url must start with http:// or https://");
+        }
+        base_url
+    } else {
+        String::new()
+    };
+    let dns_udp_addr = if needs_dns {
+        Some(
+            args.dns_udp_addr
+                .or_else(|| std::env::var("CAPSEM_MOCK_SERVER_DNS_UDP_ADDR").ok())
+                .context(
+                    "CAPSEM_MOCK_SERVER_DNS_UDP_ADDR or --dns-udp-addr is required for DNS scenarios",
+                )?,
+        )
+    } else {
+        None
+    };
+    let parsed_dns_udp_addr = dns_udp_addr
+        .as_deref()
+        .map(str::parse::<SocketAddr>)
+        .transpose()
+        .context("parse --dns-udp-addr")?;
     let client = Client::builder()
         .danger_accept_invalid_certs(true)
         .pool_max_idle_per_host(args.concurrency)
@@ -266,17 +333,32 @@ async fn run_protocol(args: ProtocolArgs) -> Result<Artifact> {
 
     let mut scenario_results = Vec::with_capacity(selected.len());
     for scenario in &selected {
-        scenario_results.push(
-            run_http_scenario(
-                client.clone(),
-                &base_url,
-                *scenario,
-                args.requests,
-                args.concurrency,
-                Duration::from_millis(args.timeout_ms),
-            )
-            .await?,
-        );
+        let result = match scenario.transport {
+            ScenarioTransport::Http => {
+                run_http_scenario(
+                    client.clone(),
+                    &base_url,
+                    *scenario,
+                    args.requests,
+                    args.concurrency,
+                    Duration::from_millis(args.timeout_ms),
+                )
+                .await?
+            }
+            ScenarioTransport::DnsUdp { qtype } => {
+                let addr = parsed_dns_udp_addr.context("DNS scenario missing UDP address")?;
+                run_dns_scenario(
+                    addr,
+                    *scenario,
+                    qtype,
+                    args.requests,
+                    args.concurrency,
+                    Duration::from_millis(args.timeout_ms),
+                )
+                .await?
+            }
+        };
+        scenario_results.push(result);
     }
 
     let artifact = Artifact {
@@ -288,6 +370,7 @@ async fn run_protocol(args: ProtocolArgs) -> Result<Artifact> {
             version: "1.1-rust".to_string(),
             lane: args.lane,
             base_url,
+            dns_udp_addr,
             total_requests: args.requests,
             concurrency: args.concurrency,
             timeout_ms: args.timeout_ms,
@@ -339,6 +422,133 @@ async fn run_http_scenario(
         total_requests,
         concurrency,
     ))
+}
+
+async fn run_dns_scenario(
+    dns_udp_addr: SocketAddr,
+    scenario: Scenario,
+    qtype: u16,
+    total_requests: usize,
+    concurrency: usize,
+    timeout: Duration,
+) -> Result<ScenarioResult> {
+    let workers = concurrency.min(total_requests);
+    let per_worker = total_requests / workers;
+    let remainder = total_requests % workers;
+    let started = Instant::now();
+    let tasks = (0..workers).map(|idx| {
+        let count = per_worker + usize::from(idx < remainder);
+        tokio::spawn(async move {
+            let socket = match UdpSocket::bind("0.0.0.0:0").await {
+                Ok(socket) => socket,
+                Err(error) => {
+                    return vec![RequestSample {
+                        status: 0,
+                        size: 0,
+                        latency_ms: 0.0,
+                        error: Some(format!("dns bind: {error}")),
+                        required_text_present: false,
+                        secret_shaped_fixture_seen: false,
+                    }];
+                }
+            };
+            let mut out = Vec::with_capacity(count);
+            for request_idx in 0..count {
+                let query_id = ((idx as u32 * 4099 + request_idx as u32) & 0xFFFF) as u16;
+                out.push(
+                    run_one_dns_query(
+                        &socket,
+                        dns_udp_addr,
+                        scenario.path,
+                        qtype,
+                        query_id,
+                        timeout,
+                    )
+                    .await,
+                );
+            }
+            out
+        })
+    });
+    let joined = try_join_all(tasks)
+        .await
+        .context("join DNS benchmark workers")?;
+    let wall_time = started.elapsed();
+    let samples: Vec<RequestSample> = joined.into_iter().flatten().collect();
+    Ok(summarize(
+        scenario,
+        &samples,
+        wall_time,
+        total_requests,
+        concurrency,
+    ))
+}
+
+async fn run_one_dns_query(
+    socket: &UdpSocket,
+    dns_udp_addr: SocketAddr,
+    qname: &str,
+    qtype: u16,
+    query_id: u16,
+    timeout: Duration,
+) -> RequestSample {
+    let query = match build_dns_query(qname, qtype, query_id) {
+        Ok(query) => query,
+        Err(error) => {
+            return RequestSample {
+                status: 0,
+                size: 0,
+                latency_ms: 0.0,
+                error: Some(format!("dns query: {error}")),
+                required_text_present: false,
+                secret_shaped_fixture_seen: false,
+            };
+        }
+    };
+    let started = Instant::now();
+    if let Err(error) = socket.send_to(&query, dns_udp_addr).await {
+        return RequestSample {
+            status: 0,
+            size: 0,
+            latency_ms: started.elapsed().as_secs_f64() * 1000.0,
+            error: Some(format!("dns send: {error}")),
+            required_text_present: false,
+            secret_shaped_fixture_seen: false,
+        };
+    }
+    let mut buf = [0_u8; 1500];
+    match tokio::time::timeout(timeout, socket.recv_from(&mut buf)).await {
+        Ok(Ok((len, _peer))) => {
+            let latency_ms = started.elapsed().as_secs_f64() * 1000.0;
+            let response = &buf[..len];
+            let id_matches = response.len() >= 2 && response[..2] == query_id.to_be_bytes();
+            let rcode = parse_dns_rcode(response).unwrap_or(2);
+            RequestSample {
+                status: rcode,
+                size: len,
+                latency_ms,
+                error: (!id_matches).then(|| "dns id mismatch".to_string()),
+                required_text_present: true,
+                secret_shaped_fixture_seen: false,
+            }
+        }
+        Ok(Err(error)) => RequestSample {
+            status: 0,
+            size: 0,
+            latency_ms: started.elapsed().as_secs_f64() * 1000.0,
+            error: Some(format!("dns recv: {error}")),
+            required_text_present: false,
+            secret_shaped_fixture_seen: false,
+        },
+        Err(_) => RequestSample {
+            status: 0,
+            size: 0,
+            latency_ms: started.elapsed().as_secs_f64() * 1000.0,
+            error: Some("dns timeout".to_string()),
+            required_text_present: false,
+            secret_shaped_fixture_seen: false,
+        },
+    }
 }
 
 async fn run_one_request(
@@ -521,6 +731,25 @@ fn select_scenarios(selected: Option<&str>) -> Result<Vec<Scenario>> {
     Ok(out)
 }
 
+fn build_dns_query(qname: &str, qtype: u16, query_id: u16) -> Result<Vec<u8>> {
+    let mut query = Vec::with_capacity(512);
+    query.extend_from_slice(&query_id.to_be_bytes());
+    query.extend_from_slice(&[0x01, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0]);
+    for label in qname.split('.').filter(|label| !label.is_empty()) {
+        if label.len() > 63 {
+            bail!("DNS label too long in {qname:?}: {label:?}");
+        }
+        query.push(u8::try_from(label.len()).expect("label length checked"));
+        query.extend_from_slice(label.as_bytes());
+    }
+    query.extend_from_slice(&[0, (qtype >> 8) as u8, qtype as u8, 0, 1]);
+    Ok(query)
+}
+
+fn parse_dns_rcode(response: &[u8]) -> Option<u16> {
+    (response.len() >= 4).then(|| u16::from(response[3] & 0x0F))
+}
+
 fn result_ok(sample: &RequestSample, scenario: Scenario) -> bool {
     if sample.error.is_some() || sample.status != scenario.expected_status {
         return false;
@@ -690,6 +919,19 @@ mod tests {
             },
             scenario
         ));
+    }
+
+    #[test]
+    fn dns_query_builder_and_rcode_parser_are_strict() {
+        let query = build_dns_query("load-test.capsem-bogus", 1, 0xCAFE).unwrap();
+        assert_eq!(&query[..2], b"\xCA\xFE");
+        assert!(query
+            .windows("capsem-bogus".len())
+            .any(|w| w == b"capsem-bogus"));
+        let mut response = vec![0xCA, 0xFE, 0x81, 0x83];
+        response.extend_from_slice(&query[4..]);
+        assert_eq!(parse_dns_rcode(&response), Some(3));
+        assert!(build_dns_query(&format!("{}.test", "x".repeat(64)), 1, 1).is_err());
     }
 
     #[test]
