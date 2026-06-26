@@ -9,6 +9,8 @@ import pytest
 
 from helpers.mcp import content_text
 from helpers.mock_server import start_mock_server, stop_process
+from helpers.service import vm_session_db_path
+from helpers.uds_client import UdsHttpClient
 
 pytestmark = pytest.mark.mcp
 
@@ -19,25 +21,35 @@ def _json_tool_result(result):
 
 def _ledger_rows(service_uds_path, vm_name, sql, params=()):
     """Read the isolated test session ledger directly, not through product routes."""
-    candidates = [
-        service_uds_path.parent / "sessions" / vm_name / "session.db",
-        service_uds_path.parent / "persistent" / vm_name / "session.db",
-    ]
+    client = UdsHttpClient(service_uds_path)
     deadline = time.monotonic() + 10
+    db_path = None
     while time.monotonic() < deadline:
-        db_path = next((path for path in candidates if path.exists()), None)
-        if db_path is not None:
+        try:
+            db_path = vm_session_db_path(service_uds_path.parent, client, vm_name)
             break
+        except AssertionError:
+            db_path = None
         time.sleep(0.1)
-    else:
-        db_path = None
-    assert db_path is not None, f"session ledger missing at {candidates}"
+    assert db_path is not None, f"session ledger missing for {vm_name}"
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     try:
         conn.row_factory = sqlite3.Row
         return [dict(row) for row in conn.execute(sql, params).fetchall()]
     finally:
         conn.close()
+
+
+def _eventually(query, predicate, timeout: float = 10.0):
+    deadline = time.monotonic() + timeout
+    last = None
+    while time.monotonic() < deadline:
+        last = query()
+        if predicate(last):
+            return last
+        time.sleep(0.1)
+    assert predicate(last), f"condition not met before timeout; last={last!r}"
+    return last
 
 
 def test_mcp_call_builtin_http_headers_pays_full_ledger(capsem_service, shared_vm, mcp_session):
@@ -51,15 +63,18 @@ def test_mcp_call_builtin_http_headers_pays_full_ledger(capsem_service, shared_v
             "SELECT COUNT(*) AS count FROM tool_calls WHERE origin = 'mcp'",
         )[0]["count"]
 
+        service_client = UdsHttpClient(capsem_service)
+        service_client.post("/profiles/code/mcp/servers/local/refresh", {})
+
         servers = _json_tool_result(mcp_session.call_tool("capsem_mcp_servers"))
         local_server = next(server for server in servers if server["name"] == "local")
         assert local_server["enabled"] is True
         assert local_server["is_stdio"] is True
-        assert local_server["tool_count"] >= 3
 
         tools = _json_tool_result(
             mcp_session.call_tool("capsem_mcp_tools", {"server": "local"})
         )
+        assert len(tools) >= 3
         by_name = {tool["namespaced_name"]: tool for tool in tools}
         http_headers = by_name["local__http_headers"]
         assert http_headers["server_name"] == "local"
@@ -93,20 +108,23 @@ def test_mcp_call_builtin_http_headers_pays_full_ledger(capsem_service, shared_v
         assert "Status: 200 OK" in call_text
         assert "content-type:" in call_text.lower()
 
-        mcp_rows = _ledger_rows(
-            capsem_service,
-            vm_name,
-            """
-            SELECT event_id, server_name, method, tool_name, decision,
-                   bytes_sent, bytes_received, arguments AS request_preview,
-                   response_preview, trace_id, model_call_id, origin
-            FROM tool_calls
-            WHERE method = 'tools/call'
-              AND origin = 'mcp'
-              AND tool_name IN ('http_headers', 'local__http_headers')
-            ORDER BY id DESC
-            LIMIT 1
-            """,
+        mcp_rows = _eventually(
+            lambda: _ledger_rows(
+                capsem_service,
+                vm_name,
+                """
+                SELECT event_id, server_name, method, tool_name, decision,
+                       bytes_sent, bytes_received, arguments AS request_preview,
+                       response_preview, trace_id, model_call_id, origin
+                FROM tool_calls
+                WHERE method = 'tools/call'
+                  AND origin = 'mcp'
+                  AND tool_name IN ('http_headers', 'local__http_headers')
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+            ),
+            lambda rows: len(rows) == 1,
         )
         assert len(mcp_rows) == 1
         mcp_row = mcp_rows[0]

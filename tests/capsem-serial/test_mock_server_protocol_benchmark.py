@@ -19,7 +19,7 @@ import pytest
 
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.mock_server import start_mock_server, stop_process
-from helpers.service import ServiceInstance, wait_exec_ready
+from helpers.service import ServiceInstance, vm_session_db_path, wait_exec_ready
 
 pytestmark = [pytest.mark.serial, pytest.mark.benchmark]
 
@@ -77,9 +77,9 @@ def _assert_mock_server_protocol_succeeded(data):
 
 
 def _assert_session_db_contains_protocol_events(
-    capsem_home, vm_name, total_requests, selected_scenarios
+    capsem_home, client, vm_name, total_requests, selected_scenarios
 ):
-    db_path = capsem_home / "sessions" / vm_name / "session.db"
+    db_path = vm_session_db_path(capsem_home, client, vm_name, must_exist=False)
     expected_paths = {SCENARIO_PATHS[name] for name in selected_scenarios}
     expected_paths.update({"/ws/echo", "/ws/close"})
     expected_count = total_requests * len(selected_scenarios) + 2
@@ -214,7 +214,7 @@ def test_mock_server_protocol_benchmark_artifact():
         assert tuple(data["mock_server_protocol"]["selected_scenarios"]) == selected_scenarios
         assert "capsem_test_api_key" not in json.dumps(data)
         _assert_session_db_contains_protocol_events(
-            svc.tmp_dir, name, total_requests, selected_scenarios
+            svc.tmp_dir, client, name, total_requests, selected_scenarios
         )
 
         data["host_recorded_at"] = time.time()

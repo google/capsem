@@ -6,7 +6,7 @@ import uuid
 import pytest
 
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
-from helpers.service import ServiceInstance, wait_exec_ready
+from helpers.service import ServiceInstance, vm_session_db_path, wait_exec_ready
 
 pytestmark = pytest.mark.session_lifecycle
 
@@ -25,11 +25,12 @@ def test_wal_absent_after_clean_shutdown():
         # Generate some activity to create WAL entries
         client.post(f"/vms/{name}/exec", {"command": "echo wal-test"})
 
+        db_path = vm_session_db_path(svc.tmp_dir, client, name)
+
         # Clean shutdown
         client.delete(f"/vms/{name}/delete")
 
         # Check WAL state
-        db_path = svc.tmp_dir / "sessions" / name / "session.db"
         wal_path = db_path.with_suffix(".db-wal")
 
         if wal_path.exists():

@@ -6,7 +6,7 @@ import uuid
 import pytest
 
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
-from helpers.service import ServiceInstance, wait_exec_ready
+from helpers.service import ServiceInstance, vm_session_dir, wait_exec_ready
 
 pytestmark = pytest.mark.snapshot
 
@@ -33,18 +33,16 @@ def snapshot_vm():
 
 def test_auto_snapshots_dir_exists(snapshot_vm):
     """Session dir should have an auto_snapshots/ directory."""
-    _, name, tmp_dir = snapshot_vm
-    session_dir = tmp_dir / "sessions" / name
-    # May not exist yet if no snapshots taken -- the test documents the expectation
+    client, name, tmp_dir = snapshot_vm
+    session_dir = vm_session_dir(tmp_dir, client, name, must_exist=False)
     if session_dir.exists():
-        # At minimum the session dir exists
         assert session_dir.is_dir()
 
 
 def test_snapshot_metadata_valid_json(snapshot_vm):
     """Any snapshot slot with metadata.json should contain valid JSON."""
-    _, name, tmp_dir = snapshot_vm
-    snap_dir = tmp_dir / "sessions" / name / "auto_snapshots"
+    client, name, tmp_dir = snapshot_vm
+    snap_dir = vm_session_dir(tmp_dir, client, name, must_exist=False) / "auto_snapshots"
     if not snap_dir.exists():
         pytest.skip("No auto_snapshots dir")
 

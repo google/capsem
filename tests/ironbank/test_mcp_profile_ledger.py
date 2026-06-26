@@ -17,7 +17,7 @@ import pytest
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.mcp import content_text, kill_mcp_proc
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
-from helpers.service import ServiceInstance, wait_exec_ready, vm_name
+from helpers.service import ServiceInstance, vm_session_db_path, wait_exec_ready, vm_name
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -124,9 +124,8 @@ def _json_tool_result(result: dict) -> object:
 
 
 @contextmanager
-def _connect_session_db(session_root: Path, session_id: str):
-    db_path = session_root / session_id / "session.db"
-    assert db_path.exists(), f"session DB missing at {db_path}"
+def _connect_session_db(service: ServiceInstance, client, session_id: str):
+    db_path = vm_session_db_path(service.tmp_dir, client, session_id)
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     try:
@@ -241,7 +240,7 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
             )
             assert mcp_http_tool == route_http_tool
 
-            with _connect_session_db(service.tmp_dir / "sessions", session_id) as conn:
+            with _connect_session_db(service, client, session_id) as conn:
                 assert "mcp_calls" not in {
                     row["name"]
                     for row in conn.execute(
@@ -268,7 +267,7 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
             assert "Status: 200 OK" in call_text
             assert "content-type:" in call_text.lower()
 
-        with _connect_session_db(service.tmp_dir / "sessions", session_id) as conn:
+        with _connect_session_db(service, client, session_id) as conn:
             tool_rows = _eventually(
                 lambda: _rows(
                     conn,

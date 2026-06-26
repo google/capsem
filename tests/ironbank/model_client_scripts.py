@@ -59,10 +59,13 @@ def run_tool(arguments):
             timeout=30,
         )
         return "Process exited with code " + str(completed.returncode)
-    path = arguments.get("file_path")
+    path = arguments.get("file_path") or arguments.get("path")
     content = arguments.get("content")
     if path and content is not None:
         Path(path).write_text(content, encoding="utf-8")
+        return "Process exited with code 0"
+    if path:
+        Path(TARGET).write_text(NONCE + "\\n", encoding="utf-8")
         return "Process exited with code 0"
     raise RuntimeError("unsupported tool args: " + json.dumps(arguments, sort_keys=True))
 
@@ -115,9 +118,16 @@ def openai_responses_api_script(base_url: str) -> str:
         + r'''
 def parse_sse(body):
     events = []
+    event_type = None
     for line in body.splitlines():
+        if line.startswith("event: "):
+            event_type = line[7:]
         if line.startswith("data: ") and line[6:] != "[DONE]":
-            events.append(json.loads(line[6:]))
+            event = json.loads(line[6:])
+            if event_type and "type" not in event:
+                event["type"] = event_type
+            events.append(event)
+            event_type = None
     return events
 
 def post(body):
@@ -139,7 +149,12 @@ first_body = {
     "tools": [{"type": "function", "name": "exec_command"}],
 }
 first_events = parse_sse(post(first_body))
-tool_item = next(event["item"] for event in first_events if event.get("type") == "response.output_item.done")
+tool_item = next(
+    event["item"]
+    for event in first_events
+    if event.get("type") in {"response.output_item.added", "response.output_item.done"}
+    and event.get("item", {}).get("type") == "function_call"
+)
 call_args = json.loads(tool_item["arguments"])
 call_response = run_tool(call_args)
 second_body = {
@@ -154,7 +169,14 @@ second_body = {
 }
 second_events = parse_sse(post(second_body))
 output = next(event["text"] for event in second_events if event.get("type") == "response.output_text.done")
-reasoning = next(event["delta"] for event in second_events if event.get("type") == "response.reasoning_summary_text.delta")
+reasoning = next(
+    (
+        event["delta"]
+        for event in second_events
+        if event.get("type") == "response.reasoning_summary_text.delta"
+    ),
+    "",
+)
 emit_result("openai", BASE_DOMAIN, "/v1/responses", HERMETIC_OPENAI_PRICED_MODEL, output, reasoning, tool_item["name"], call_args, call_response)
 '''
     ).strip()
@@ -211,9 +233,16 @@ def gemini_api_script(base_url: str) -> str:
         + r'''
 def parse_sse(body):
     events = []
+    event_type = None
     for line in body.splitlines():
+        if line.startswith("event: "):
+            event_type = line[7:]
         if line.startswith("data: ") and line[6:] != "[DONE]":
-            events.append(json.loads(line[6:]))
+            event = json.loads(line[6:])
+            if event_type and "type" not in event:
+                event["type"] = event_type
+            events.append(event)
+            event_type = None
     return events
 
 def post(path, body, *, stream=False):
@@ -598,9 +627,16 @@ def openai_two_tool_calls_script(base_url: str) -> str:
         + r'''
 def parse_sse(body):
     events = []
+    event_type = None
     for line in body.splitlines():
+        if line.startswith("event: "):
+            event_type = line[7:]
         if line.startswith("data: ") and line[6:] != "[DONE]":
-            events.append(json.loads(line[6:]))
+            event = json.loads(line[6:])
+            if event_type and "type" not in event:
+                event["type"] = event_type
+            events.append(event)
+            event_type = None
     return events
 
 def post(body):
@@ -626,7 +662,12 @@ def run_one(index):
         "input": prompt,
         "tools": [{"type": "function", "name": "exec_command"}],
     }))
-    tool_item = next(event["item"] for event in first_events if event.get("type") == "response.output_item.done")
+    tool_item = next(
+        event["item"]
+        for event in first_events
+        if event.get("type") in {"response.output_item.added", "response.output_item.done"}
+        and event.get("item", {}).get("type") == "function_call"
+    )
     call_args = json.loads(tool_item["arguments"])
     call_response = run_tool(call_args)
     second_events = parse_sse(post({
@@ -640,7 +681,14 @@ def run_one(index):
         "tools": [{"type": "function", "name": "exec_command"}],
     }))
     output = next(event["text"] for event in second_events if event.get("type") == "response.output_text.done")
-    reasoning = next(event["delta"] for event in second_events if event.get("type") == "response.reasoning_summary_text.delta")
+    reasoning = next(
+        (
+            event["delta"]
+            for event in second_events
+            if event.get("type") == "response.reasoning_summary_text.delta"
+        ),
+        "",
+    )
     file_text = Path(target).read_text(encoding="utf-8")
     return {
         "index": index,
@@ -720,9 +768,16 @@ def claude_streaming_api_script(base_url: str) -> str:
         + r'''
 def parse_sse(body):
     events = []
+    event_type = None
     for line in body.splitlines():
+        if line.startswith("event: "):
+            event_type = line[7:]
         if line.startswith("data: "):
-            events.append(json.loads(line[6:]))
+            event = json.loads(line[6:])
+            if event_type and "type" not in event:
+                event["type"] = event_type
+            events.append(event)
+            event_type = None
     return events
 
 def post(body):

@@ -424,18 +424,23 @@ event: model.done\ndata: {\"finish_reason\":\"stop\"}\n\n",
         }
         (&Method::POST, "/v1/embeddings") => json_response(json!({
             "object": "list",
-            "data": [{"object": "embedding", "index": 0, "embedding": [0.1, 0.2, 0.3]}],
+            "data": [{"object": "embedding", "index": 0, "embedding": [0.125, -0.25, 0.5, 0.75]}],
             "model": "text-embedding-3-small",
-            "usage": {"prompt_tokens": 4, "total_tokens": 4}
+            "usage": {"prompt_tokens": 9, "total_tokens": 9}
         })),
         (&Method::POST, "/v1/images/generations") => json_response(json!({
             "created": now_unix(),
-            "data": [{"b64_json": "Y2Fwc2VtLW1vY2staW1hZ2U="}]
+            "data": [{"b64_json": "Y2Fwc2VtLW1vY2staW1hZ2U="}],
+            "usage": {"input_tokens": 11, "output_tokens": 17, "total_tokens": 28}
         })),
         (&Method::POST, "/v1/responses") => {
             let payload = parse_json(&request_body);
             if payload.get("stream").and_then(Value::as_bool) == Some(true) {
-                response(StatusCode::OK, responses_stream(), "text/event-stream")
+                response(
+                    StatusCode::OK,
+                    responses_stream(payload_has_function_call_output(&payload)),
+                    "text/event-stream",
+                )
             } else {
                 json_response(responses_response(payload))
             }
@@ -799,12 +804,33 @@ fn responses_response(payload: Value) -> Value {
     })
 }
 
-fn responses_stream() -> Bytes {
+fn payload_has_function_call_output(payload: &Value) -> bool {
+    payload
+        .get("input")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items.iter().any(|item| {
+                item.get("type").and_then(Value::as_str) == Some("function_call_output")
+            })
+        })
+        .unwrap_or(false)
+}
+
+fn responses_stream(final_turn: bool) -> Bytes {
+    if final_turn {
+        return Bytes::from_static(
+            b"event: response.output_text.delta\ndata: {\"delta\":\"Capsem ironbank poem\"}\n\n\
+event: response.output_text.done\ndata: {\"text\":\"Capsem ironbank poem\"}\n\n\
+event: response.completed\ndata: {\"response\":{\"id\":\"resp_capsem_mock\",\"status\":\"completed\",\"model\":\"gpt-5-nano\",\"usage\":{\"input_tokens\":7,\"output_tokens\":5,\"total_tokens\":12,\"output_tokens_details\":{\"reasoning_tokens\":2}}}}\n\n",
+        );
+    }
     Bytes::from_static(
         b"event: response.output_item.added\ndata: {\"item\":{\"type\":\"reasoning\",\"id\":\"rs_capsem_mock\"}}\n\n\
 event: response.output_item.added\ndata: {\"item\":{\"type\":\"function_call\",\"id\":\"fc_capsem_mock\",\"call_id\":\"call_capsem_write_poem\",\"name\":\"write_file\",\"arguments\":\"{\\\"path\\\":\\\"/root/poem.md\\\"}\"}}\n\n\
+event: response.function_call_arguments.delta\ndata: {\"delta\":\"{\\\"path\\\":\\\"/root/poem.md\\\"}\"}\n\n\
+event: response.output_text.delta\ndata: {\"delta\":\"Capsem ironbank poem\"}\n\n\
 event: response.output_text.done\ndata: {\"text\":\"Capsem ironbank poem\"}\n\n\
-event: response.completed\ndata: {\"response\":{\"id\":\"resp_capsem_mock\",\"status\":\"completed\"}}\n\n",
+event: response.completed\ndata: {\"response\":{\"id\":\"resp_capsem_mock\",\"status\":\"completed\",\"model\":\"gpt-5-nano\",\"usage\":{\"input_tokens\":7,\"output_tokens\":5,\"total_tokens\":12,\"output_tokens_details\":{\"reasoning_tokens\":2}}}}\n\n",
     )
 }
 

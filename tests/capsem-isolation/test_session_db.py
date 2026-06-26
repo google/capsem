@@ -3,6 +3,7 @@
 import sqlite3
 
 import pytest
+from helpers.service import vm_session_db_path, vm_session_dir
 
 
 pytestmark = pytest.mark.isolation
@@ -10,14 +11,10 @@ pytestmark = pytest.mark.isolation
 
 def test_separate_session_dirs(multi_vm_env):
     """Each VM's session directory is distinct."""
-    _, vm_a, vm_b, tmp_dir = multi_vm_env
-    sessions_dir = tmp_dir / "sessions"
-    if not sessions_dir.exists():
-        pytest.skip("sessions dir not found")
-
-    dirs = [d.name for d in sessions_dir.iterdir() if d.is_dir()]
-    assert vm_a in dirs or any(vm_a in d for d in dirs)
-    assert vm_b in dirs or any(vm_b in d for d in dirs)
+    client, vm_a, vm_b, tmp_dir = multi_vm_env
+    dir_a = vm_session_dir(tmp_dir, client, vm_a)
+    dir_b = vm_session_dir(tmp_dir, client, vm_b)
+    assert dir_a != dir_b
 
 
 def test_exec_event_only_in_own_db(multi_vm_env):
@@ -29,7 +26,7 @@ def test_exec_event_only_in_own_db(multi_vm_env):
     client.post(f"/vms/{vm_a}/exec", {"command": f"echo {marker}"})
 
     # Check VM-B's session.db does NOT contain the marker
-    db_b = tmp_dir / "sessions" / vm_b / "session.db"
+    db_b = vm_session_db_path(tmp_dir, client, vm_b)
     if not db_b.exists():
         pytest.skip("VM-B session.db not found")
 

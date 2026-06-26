@@ -18,7 +18,7 @@ import pytest
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.mcp import content_text, kill_mcp_proc
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
-from helpers.service import ServiceInstance, wait_exec_ready, vm_name
+from helpers.service import ServiceInstance, vm_session_db_path, wait_exec_ready, vm_name
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -146,19 +146,16 @@ def _eventually(query, predicate, timeout: float = 20.0):
 
 
 def _connect_session_db(service: ServiceInstance, session_id: str):
-    candidates = [
-        service.tmp_dir / "sessions" / session_id / "session.db",
-        service.tmp_dir / "persistent" / session_id / "session.db",
-    ]
     deadline = time.monotonic() + 10
+    db_path = None
     while time.monotonic() < deadline:
-        db_path = next((path for path in candidates if path.exists()), None)
-        if db_path is not None:
+        try:
+            db_path = vm_session_db_path(service.tmp_dir, service.client(), session_id)
             break
+        except AssertionError:
+            db_path = None
         time.sleep(0.1)
-    else:
-        db_path = None
-    assert db_path is not None, f"session DB missing at {candidates}"
+    assert db_path is not None, f"session DB missing for {session_id}"
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     return conn

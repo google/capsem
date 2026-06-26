@@ -1,6 +1,7 @@
 """Verify session.db exists after boot with all expected tables."""
 
 import pytest
+from helpers.service import vm_session_db_path
 
 pytestmark = pytest.mark.session_lifecycle
 
@@ -15,8 +16,8 @@ EXPECTED_TABLES = [
 
 def test_db_exists_after_boot(lifecycle_env):
     """session.db file exists in the session directory."""
-    _, vm_name, tmp_dir, _ = lifecycle_env
-    db_path = tmp_dir / "sessions" / vm_name / "session.db"
+    client, vm_name, tmp_dir, _ = lifecycle_env
+    db_path = vm_session_db_path(tmp_dir, client, vm_name)
     assert db_path.exists(), f"session.db not found at {db_path}"
 
 

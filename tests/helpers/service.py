@@ -331,6 +331,51 @@ def wait_exec_ready(client, vm_name, timeout=EXEC_READY_TIMEOUT):
         return False
 
 
+def vm_record(client, typed_id):
+    """Return the /vms/list row for a route id or user-facing VM name."""
+    listing = client.get("/vms/list")
+    for row in listing.get("sandboxes", []):
+        if row.get("id") == typed_id or row.get("name") == typed_id:
+            return row
+    raise AssertionError(f"VM {typed_id!r} not found in /vms/list: {listing!r}")
+
+
+def vm_route_id(client, typed_id):
+    """Resolve a user-facing VM name to the UUID route id."""
+    return vm_record(client, typed_id)["id"]
+
+
+def vm_session_dir(tmp_dir, client, typed_id, *, must_exist=True):
+    """Return the canonical on-disk session dir for a VM.
+
+    VM names are display labels. The service owns random UUID ids and stores
+    session state under those ids, so tests must not derive paths from names.
+    """
+    row = vm_record(client, typed_id)
+    route_id = row["id"]
+    candidates = [
+        Path(tmp_dir) / "persistent" / route_id,
+        Path(tmp_dir) / "sessions" / route_id,
+        # Transitional fallbacks make assertion errors readable if an older
+        # fixture or preserved artifact still uses the retired layout.
+        Path(tmp_dir) / "persistent" / str(typed_id),
+        Path(tmp_dir) / "sessions" / str(typed_id),
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    if must_exist:
+        raise AssertionError(f"session dir missing for {typed_id!r}: {candidates}")
+    return candidates[0] if row.get("persistent") else candidates[1]
+
+
+def vm_session_db_path(tmp_dir, client, typed_id, *, must_exist=True):
+    db_path = vm_session_dir(tmp_dir, client, typed_id, must_exist=must_exist) / "session.db"
+    if must_exist and not db_path.exists():
+        raise AssertionError(f"session.db missing at {db_path}")
+    return db_path
+
+
 def vm_name(prefix="test"):
     """Generate a unique VM name with the given prefix."""
     return f"{prefix}-{uuid.uuid4().hex[:8]}"

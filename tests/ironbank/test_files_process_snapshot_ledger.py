@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
-from helpers.service import ServiceInstance, wait_exec_ready, vm_name
+from helpers.service import ServiceInstance, vm_session_db_path, vm_session_dir, wait_exec_ready, vm_name
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -91,8 +91,7 @@ SECURITY_ROUTE_FIELDS = {
 
 
 def _connect_session_db(service: ServiceInstance, session_id: str) -> sqlite3.Connection:
-    db_path = service.tmp_dir / "sessions" / session_id / "session.db"
-    assert db_path.exists(), f"session.db missing at {db_path}"
+    db_path = vm_session_db_path(service.tmp_dir, service.client(), session_id)
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     return conn
@@ -436,7 +435,7 @@ def test_file_process_snapshot_routes_pay_full_ledger_debt_blackbox():
         finally:
             conn.close()
 
-        process_log = (service.tmp_dir / "sessions" / session_id / "process.log").read_text(
+        process_log = (vm_session_dir(service.tmp_dir, client, session_id) / "process.log").read_text(
             encoding="utf-8",
             errors="replace",
         )

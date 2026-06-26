@@ -6,7 +6,7 @@ import pytest
 
 
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
-from helpers.service import wait_exec_ready
+from helpers.service import vm_session_dir, wait_exec_ready
 
 pytestmark = pytest.mark.cleanup
 
@@ -19,13 +19,12 @@ def test_session_dir_removed_after_delete(cleanup_env):
     client.post("/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
     wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
 
-    sessions_dir = cleanup_env.tmp_dir / "sessions" / name
-    # Session dir may or may not exist depending on implementation
+    session_dir = vm_session_dir(cleanup_env.tmp_dir, client, name)
 
     client.delete(f"/vms/{name}/delete")
 
     import time
     time.sleep(2)
 
-    if sessions_dir.exists():
-        pytest.fail(f"Session dir {sessions_dir} still exists after delete")
+    if session_dir.exists():
+        pytest.fail(f"Session dir {session_dir} still exists after delete")

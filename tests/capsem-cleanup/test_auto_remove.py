@@ -13,7 +13,7 @@ import uuid
 import pytest
 
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
-from helpers.service import wait_exec_ready
+from helpers.service import vm_session_dir, wait_exec_ready
 
 pytestmark = pytest.mark.cleanup
 
@@ -27,22 +27,23 @@ def _get_vm_pid(client, name):
 def _vm_in_list(client, name):
     """Check if a VM appears in the service list."""
     listing = client.get("/vms/list")
-    ids = [s["id"] for s in listing.get("sandboxes", [])]
-    return name in ids
+    return any(
+        row.get("id") == name or row.get("name") == name
+        for row in listing.get("sandboxes", [])
+    )
 
 
 def test_ephemeral_cleaned_on_process_death(cleanup_env):
     """Crash an ephemeral VM process; service should preserve a failed session dir."""
     client = cleanup_env.client()
-    name = f"eph-{uuid.uuid4().hex[:6]}"
-    client.post("/vms/create", {
-        "name": name,
+    create = client.post("/vms/create", {
         "ram_mb": DEFAULT_RAM_MB,
         "cpus": DEFAULT_CPUS,
     })
+    name = create["id"]
     wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
 
-    sessions_dir = cleanup_env.tmp_dir / "sessions" / name
+    session_dir = vm_session_dir(cleanup_env.tmp_dir, client, name)
     pid = _get_vm_pid(client, name)
     assert pid, f"Could not get PID for VM {name}"
 
@@ -58,13 +59,13 @@ def test_ephemeral_cleaned_on_process_death(cleanup_env):
 
     failed_dirs = []
     for _ in range(10):
-        failed_dirs = list(sessions_dir.parent.glob(f"{name}-failed-*"))
-        if not sessions_dir.exists() and failed_dirs:
+        failed_dirs = list(session_dir.parent.glob(f"{session_dir.name}-failed-*"))
+        if not session_dir.exists() and failed_dirs:
             break
         time.sleep(0.5)
     else:
         pytest.fail(
-            f"Session dir {sessions_dir} was not moved to a failed-session dir"
+            f"Session dir {session_dir} was not moved to a failed-session dir"
         )
 
 

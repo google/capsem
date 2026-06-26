@@ -7,7 +7,7 @@ import uuid
 import pytest
 
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
-from helpers.service import ServiceInstance, wait_exec_ready
+from helpers.service import ServiceInstance, vm_session_db_path, wait_exec_ready
 
 pytestmark = pytest.mark.session_exhaustive
 
@@ -52,8 +52,8 @@ def exhaustive_env():
 @pytest.fixture
 def exhaust_db(exhaustive_env):
     """Open the VM's session.db as read-only sqlite3 connection."""
-    _, vm_name, tmp_dir = exhaustive_env
-    db_path = tmp_dir / "sessions" / vm_name / "session.db"
+    client, vm_name, tmp_dir = exhaustive_env
+    db_path = vm_session_db_path(tmp_dir, client, vm_name)
     if not db_path.exists():
         pytest.skip(f"session.db not found at {db_path}")
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)

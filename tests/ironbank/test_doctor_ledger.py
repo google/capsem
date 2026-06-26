@@ -13,7 +13,7 @@ import pytest
 
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
-from helpers.service import ServiceInstance, wait_exec_ready, vm_name
+from helpers.service import ServiceInstance, vm_session_db_path, wait_exec_ready, vm_name
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -88,9 +88,8 @@ RAW_SECRET_MARKERS = {
 EICAR_TEXT = "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
 
 
-def _connect_session_db(session_root: Path, session_id: str) -> sqlite3.Connection:
-    db_path = session_root / session_id / "session.db"
-    assert db_path.exists(), f"session DB missing at {db_path}"
+def _connect_session_db(service: ServiceInstance, client, session_id: str) -> sqlite3.Connection:
+    db_path = vm_session_db_path(service.tmp_dir, client, session_id)
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     return conn
@@ -280,7 +279,7 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
             assert tool["permission_action"] in {"allow", "ask", "block", "disable"}
             assert tool["permission_source"]
 
-        conn = _connect_session_db(service.tmp_dir / "sessions", session_id)
+        conn = _connect_session_db(service, client, session_id)
         assert "mcp_calls" not in {
             row["name"]
             for row in conn.execute(
@@ -705,7 +704,7 @@ def test_runtime_plugin_action_matrix_pays_file_import_ledger_debt():
         assert read_status == 200
         assert read_body.decode() == EICAR_TEXT
 
-        conn = _connect_session_db(service.tmp_dir / "sessions", session_id)
+        conn = _connect_session_db(service, client, session_id)
         security_rows = conn.execute(
             """
             SELECT *

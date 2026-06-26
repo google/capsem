@@ -10,7 +10,7 @@ import pytest
 
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.mock_server import MOCK_SERVER_BINARY, MOCK_SERVER_ADDR, start_mock_server, stop_process
-from helpers.service import ServiceInstance, wait_exec_ready
+from helpers.service import ServiceInstance, vm_session_db_path, wait_exec_ready
 
 pytestmark = pytest.mark.gateway
 
@@ -81,11 +81,7 @@ def test_mitm_policy_telemetry(service_env, client):
         # Wait a bit for telemetry to be flushed to DB
         time.sleep(2)
         
-        # Check session.db
-        # ServiceInstance creates a temp dir, and sessions are in `sessions/` subdirectory
-        db_path = service_env.tmp_dir / "sessions" / vm_name / "session.db"
-        
-        assert db_path.exists(), f"Session DB not found at {db_path}"
+        db_path = vm_session_db_path(service_env.tmp_dir, client, vm_name)
         
         conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         try:

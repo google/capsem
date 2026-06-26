@@ -7,7 +7,7 @@ import uuid
 import pytest
 
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
-from helpers.service import ServiceInstance, wait_exec_ready
+from helpers.service import ServiceInstance, vm_session_db_path, wait_exec_ready
 
 pytestmark = pytest.mark.session_lifecycle
 
@@ -29,7 +29,7 @@ def test_db_survives_clean_shutdown():
         import time
         time.sleep(3)
 
-        db_path = svc.tmp_dir / "sessions" / vm_name / "session.db"
+        db_path = vm_session_db_path(svc.tmp_dir, client, vm_name)
 
         # Force WAL flush by executing PRAGMA wal_checkpoint
         try:

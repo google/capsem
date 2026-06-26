@@ -22,7 +22,7 @@ import pytest
 
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
-from helpers.service import ServiceInstance, wait_exec_ready, vm_name
+from helpers.service import ServiceInstance, vm_session_db_path, vm_session_dir, wait_exec_ready, vm_name
 from ironbank.model_client_assertions import assert_one_model_client
 from ironbank.model_client_config import HERMETIC_OPENAI_PRICED_MODEL
 from ironbank.model_ledger import _assert_event_id
@@ -127,11 +127,11 @@ class ModelClientEnv:
 
     @property
     def db_path(self) -> Path:
-        return self.service.tmp_dir / "sessions" / self.session_id / "session.db"
+        return vm_session_db_path(self.service.tmp_dir, self.client, self.session_id)
 
     @property
     def log_paths(self) -> tuple[Path, ...]:
-        session_dir = self.service.tmp_dir / "sessions" / self.session_id
+        session_dir = vm_session_dir(self.service.tmp_dir, self.client, self.session_id)
         return (
             self.service.tmp_dir / "service.log",
             self.service.tmp_dir / "service.stderr.log",
@@ -298,7 +298,7 @@ def model_client_env():
         )
         assert create is not None
         assert create.get("id") == session_id or create.get("name") == session_id
-        active_profile = service.tmp_dir / "sessions" / session_id / "vm" / "active_profile.toml"
+        active_profile = vm_session_dir(service.tmp_dir, client, session_id) / "vm" / "active_profile.toml"
         assert active_profile.exists(), f"active profile missing at {active_profile}"
         active_profile_text = active_profile.read_text(encoding="utf-8")
         assert ready["dns_udp_addr"] in active_profile_text

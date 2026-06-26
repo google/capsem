@@ -17,7 +17,7 @@ import pytest
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.gateway import GatewayInstance, TcpHttpClient
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
-from helpers.service import ServiceInstance, wait_exec_ready, vm_name
+from helpers.service import ServiceInstance, vm_session_db_path, wait_exec_ready, vm_name
 
 pytestmark = pytest.mark.integration
 
@@ -111,8 +111,7 @@ EXPECTED_SUBSTITUTION_COLUMNS = {
 
 
 def _connect_session_db(service: ServiceInstance, session_id: str) -> sqlite3.Connection:
-    db_path = service.tmp_dir / "sessions" / session_id / "session.db"
-    assert db_path.exists(), f"session DB missing at {db_path}"
+    db_path = vm_session_db_path(service.tmp_dir, service.client(), session_id)
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     return conn
@@ -123,8 +122,7 @@ def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
 
 
 def _query_rows(client, session_id: str, sql: str) -> list[dict]:
-    db_path = Path(client.socket_path).parent / "sessions" / session_id / "session.db"
-    assert db_path.exists(), f"session DB missing at {db_path}"
+    db_path = vm_session_db_path(Path(client.socket_path).parent, client, session_id)
     with closing(sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)) as conn:
         conn.row_factory = sqlite3.Row
         return [dict(row) for row in conn.execute(sql).fetchall()]
