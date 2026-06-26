@@ -335,7 +335,7 @@ mod tests {
 
     #[test]
     fn dns_proxy_uses_persistent_vsock_worker_pool() {
-        assert!(
+        const _: () = assert!(
             DNS_VSOCK_WORKERS >= 2,
             "DNS must not regress to per-query vsock connect/close; keep a persistent worker pool"
         );

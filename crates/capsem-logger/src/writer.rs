@@ -392,9 +392,8 @@ impl DbWriter {
             record_enqueue(started, "missing_sender", &span);
             return Err("db writer sender missing".to_string());
         }
-        self.accept_op(op).map_err(|error| {
+        self.accept_op(op).inspect_err(|_| {
             record_enqueue(started, "closed", &span);
-            error
         })?;
         record_enqueue(started, "queued", &span);
         Ok(())
@@ -622,10 +621,7 @@ fn writer_loop(conn: Connection, rx: mpsc::Receiver<WriterMessage>, db_path: Opt
     //    Senders are dropped (clean shutdown) and ends the loop.
     loop {
         let first_message = if dirty_ops == 0 {
-            match rx.recv() {
-                Ok(message) => Some(message),
-                Err(_) => None,
-            }
+            rx.recv().ok()
         } else {
             match rx.recv_timeout(DISK_FLUSH_INTERVAL) {
                 Ok(message) => Some(message),

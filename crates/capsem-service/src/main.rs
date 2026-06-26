@@ -3167,7 +3167,7 @@ async fn provision_attempt(
             // handler) to avoid re-reading the log; fall back to
             // find_failed_session_dir for ephemeral VMs whose dir was
             // renamed to `-failed-*`.
-            let cached = find_persistent_entry_by_route_id(&state, id).and_then(|e| e.last_error);
+            let cached = find_persistent_entry_by_route_id(state, id).and_then(|e| e.last_error);
             let tail =
                 cached.unwrap_or_else(|| match find_failed_session_dir(&state.run_dir, id) {
                     Some(dir) => read_process_log_tail(&dir, 20),
@@ -7120,6 +7120,7 @@ async fn open_ready_session_db(
     Ok(db)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn query_route_db_json(
     vm_id: &str,
     ledger: &str,

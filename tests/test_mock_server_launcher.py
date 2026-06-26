@@ -11,7 +11,6 @@ from pathlib import Path
 from urllib.request import Request, urlopen
 
 from helpers.mock_server import (
-    read_ready_json,
     start_mock_server,
     stop_process,
 )

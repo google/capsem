@@ -1,5 +1,8 @@
 use super::*;
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 struct EnvGuard {
     old_home_override: Option<String>,
     old_home: Option<String>,
@@ -446,7 +449,7 @@ fn duplicate_capture_is_memory_fast_and_does_not_rewrite_durable_store() {
     assert_eq!(credential_store_status().cached_count, 1);
 
     let mut perms = std::fs::metadata(&test_store).unwrap().permissions();
-    perms.set_readonly(false);
+    perms.set_mode(0o600);
     std::fs::set_permissions(&test_store, perms).unwrap();
 }
 

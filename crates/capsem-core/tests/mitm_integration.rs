@@ -268,8 +268,8 @@ async fn mitm_proxy_allows_elie_net() {
     drop(sender);
     proxy_task.await.unwrap();
 
-    // Give writer thread time to flush.
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    // Make DB-owned accepted writes visible before opening the reader.
+    db.flush().await;
 
     // Verify telemetry.
     let reader = db.reader().unwrap();
@@ -315,7 +315,7 @@ async fn mitm_proxy_denies_forbidden_domain() {
     drop(sender);
     proxy_task.await.unwrap();
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    db.flush().await;
 
     let reader = db.reader().unwrap();
     let events = reader.recent_net_events(10).unwrap();
@@ -356,7 +356,7 @@ async fn mitm_proxy_denies_default_deny_unlisted_domain() {
     drop(sender);
     proxy_task.await.unwrap();
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    db.flush().await;
 
     let reader = db.reader().unwrap();
     let events = reader.recent_net_events(10).unwrap();
@@ -394,7 +394,7 @@ async fn mitm_proxy_records_http_method_and_path() {
     drop(sender);
     proxy_task.await.unwrap();
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    db.flush().await;
 
     let reader = db.reader().unwrap();
     let events = reader.recent_net_events(10).unwrap();
@@ -439,7 +439,7 @@ async fn mitm_proxy_denies_bad_upstream_cert() {
     drop(sender);
     proxy_task.await.unwrap();
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    db.flush().await;
 
     let reader = db.reader().unwrap();
     let events = reader.recent_net_events(10).unwrap();
@@ -467,7 +467,7 @@ async fn mitm_proxy_handles_garbage_data() {
 
     proxy_task.await.unwrap();
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    db.flush().await;
 
     let reader = db.reader().unwrap();
     let events = reader.recent_net_events(10).unwrap();
@@ -504,7 +504,7 @@ async fn mitm_proxy_plain_http_denies_disallowed_host() {
     drop(tcp);
 
     proxy_task.await.unwrap();
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    db.flush().await;
 
     let reader = db.reader().unwrap();
     let events = reader.recent_net_events(10).unwrap();
@@ -555,7 +555,7 @@ async fn mitm_proxy_plain_http_port_mechanics_do_not_deny_outside_security_rail(
 
     upstream_task.await.unwrap();
     proxy_task.await.unwrap();
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    db.flush().await;
 
     let response = String::from_utf8_lossy(&buf);
     assert!(
@@ -668,7 +668,7 @@ async fn mitm_proxy_plain_http_ollama_shape_records_telemetry() {
     );
 
     // 6. Telemetry records the right fields.
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    db.flush().await;
     let reader = db.reader().unwrap();
     let events = reader.recent_net_events(10).unwrap();
     assert_eq!(events.len(), 1, "exactly one NetEvent for one request");
@@ -798,7 +798,7 @@ async fn mitm_proxy_plain_http_post_forwards_body_and_records_bytes_sent() {
 
     upstream_task.await.unwrap();
     proxy_task.await.unwrap();
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    db.flush().await;
 
     // The upstream must have seen the request body verbatim.
     let recv = received.lock().unwrap().clone();
@@ -880,7 +880,7 @@ async fn mitm_proxy_plain_http_unknown_openai_shape_emits_model_call() {
 
     upstream_task.await.unwrap();
     proxy_task.await.unwrap();
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    db.flush().await;
 
     let recv = received.lock().unwrap().clone();
     let recv_str = std::str::from_utf8(&recv).unwrap_or("");
@@ -950,7 +950,7 @@ async fn mitm_proxy_plain_http_unknown_mcp_shape_emits_tool_call() {
 
     upstream_task.await.unwrap();
     proxy_task.await.unwrap();
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    db.flush().await;
 
     let recv = received.lock().unwrap().clone();
     let recv_str = std::str::from_utf8(&recv).unwrap_or("");
@@ -1025,7 +1025,7 @@ match = 'mcp.tool_call.name == "search_web"'
     drop(tcp);
 
     proxy_task.await.unwrap();
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    db.flush().await;
 
     let resp_text = String::from_utf8_lossy(&resp_buf);
     assert!(
@@ -1098,7 +1098,7 @@ async fn mitm_proxy_plain_http_chunked_streaming_response_aggregates_bytes() {
 
     upstream_task.await.unwrap();
     proxy_task.await.unwrap();
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    db.flush().await;
 
     let resp_text = String::from_utf8_lossy(&resp_buf);
     for s in &chunk_strs {
@@ -1201,7 +1201,7 @@ async fn mitm_proxy_plain_http_keep_alive_emits_one_netevent_per_request() {
 
     upstream_task.await.unwrap();
     proxy_task.await.unwrap();
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    db.flush().await;
 
     let reader = db.reader().unwrap();
     let events = reader.recent_net_events(10).unwrap();
@@ -1290,7 +1290,7 @@ async fn mitm_proxy_plain_http_unresolvable_upstream_emits_502_netevent() {
     drop(tcp);
 
     proxy_task.await.unwrap();
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    db.flush().await;
 
     let resp_text = String::from_utf8_lossy(&resp_buf);
     assert!(
@@ -1381,7 +1381,7 @@ async fn mitm_proxy_plain_http_records_every_http_method() {
 
     upstream_task.await.unwrap();
     proxy_task.await.unwrap();
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    db.flush().await;
 
     let reader = db.reader().unwrap();
     let events = reader.recent_net_events(20).unwrap();
@@ -1438,7 +1438,7 @@ async fn mitm_proxy_plain_http_records_query_string_with_parameters() {
 
     upstream_task.await.unwrap();
     proxy_task.await.unwrap();
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    db.flush().await;
 
     // Upstream saw the full request line including the query.
     let recv = received.lock().unwrap().clone();
@@ -1582,7 +1582,7 @@ async fn mitm_proxy_plain_http_telemetry_hashes_non_allowlisted_headers() {
 
     upstream_task.await.unwrap();
     proxy_task.await.unwrap();
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    db.flush().await;
 
     let reader = db.reader().unwrap();
     let events = reader.recent_net_events(10).unwrap();
@@ -1703,7 +1703,7 @@ async fn mitm_proxy_plain_http_body_larger_than_preview_cap_forwards_full_but_ca
 
     upstream_task.await.unwrap();
     proxy_task.await.unwrap();
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    db.flush().await;
 
     let reader = db.reader().unwrap();
     let events = reader.recent_net_events(10).unwrap();
@@ -1748,7 +1748,7 @@ async fn mitm_proxy_plain_http_ipv6_host_header_does_not_silently_succeed() {
     drop(tcp);
 
     proxy_task.await.unwrap();
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    db.flush().await;
 
     let resp_text = String::from_utf8_lossy(&resp_buf);
     assert!(
@@ -1826,7 +1826,7 @@ async fn mitm_proxy_plain_http_corrupted_gzip_response_doesnt_crash() {
 
     upstream_task.await.unwrap();
     proxy_task.await.unwrap();
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    db.flush().await;
 
     // The load-bearing assertion is "the proxy still recorded a
     // NetEvent for this request" -- a panic in the chunk path
@@ -1904,7 +1904,7 @@ async fn mitm_proxy_plain_http_truncated_upstream_response_doesnt_hang() {
     drop(tcp);
     upstream_task.await.unwrap();
     proxy_task.await.unwrap();
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    db.flush().await;
 
     assert!(read.is_ok(), "proxy hung on truncated upstream body");
 
@@ -1962,7 +1962,7 @@ async fn mitm_proxy_plain_http_zero_length_response_body_emits_netevent() {
     drop(tcp);
     upstream_task.await.unwrap();
     proxy_task.await.unwrap();
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    db.flush().await;
 
     let reader = db.reader().unwrap();
     let events = reader.recent_net_events(10).unwrap();
@@ -1995,7 +1995,7 @@ async fn mitm_proxy_classifies_unknown_first_byte() {
     drop(tcp);
 
     proxy_task.await.unwrap();
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    db.flush().await;
 
     let reader = db.reader().unwrap();
     let events = reader.recent_net_events(10).unwrap();
@@ -2061,7 +2061,7 @@ async fn mitm_proxy_streams_large_payload() {
         "large streaming request failed:\n{resp_text}"
     );
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    db.flush().await;
 
     let reader = db.reader().unwrap();
     let events = reader.recent_net_events(10).unwrap();
@@ -2111,7 +2111,7 @@ async fn multiple_requests_reuse_upstream_connection() {
     drop(sender);
     proxy_task.await.unwrap();
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    db.flush().await;
 
     let reader = db.reader().unwrap();
     let events = reader.recent_net_events(10).unwrap();

@@ -878,6 +878,7 @@ pub async fn emit_matching_security_rules_for_evaluated_event(
     emit_matching_security_rules(db, event_id, event_type, rules, &event, timestamp_unix_ms).await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn delegate_matching_security_rules_for_evaluated_event(
     db: Arc<DbWriter>,
     event_id: SecurityEventId,
