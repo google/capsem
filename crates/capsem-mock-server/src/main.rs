@@ -934,7 +934,10 @@ event: message_stop\ndata: {{\"type\":\"message_stop\"}}\n\n",
 
     let (token, path) = write_target(&payload, "claude");
     let command = shell_write_command(&token, &path);
-    let partial = json_compact(json!({"command": command}));
+    let partial = json_compact(json!({
+        "command": command,
+        "description": "write ironbank token"
+    }));
     let model = payload
         .get("model")
         .and_then(Value::as_str)
@@ -984,6 +987,30 @@ fn google_code_assist_stream(payload: Value) -> Bytes {
     let call_id = format!("call_{}", &token[..token.len().min(12)]);
     let response_id = format!("agy_{}", &token[..token.len().min(12)]);
     let trace_id = format!("trace_{}", &token[..token.len().min(12)]);
+    let has_function_response = serde_json::to_string(&payload)
+        .map(|raw| raw.contains("functionResponse"))
+        .unwrap_or(false);
+    if has_function_response {
+        let final_response = json!({
+            "response": {
+                "candidates": [{
+                    "content": {"parts": [{"text": token}], "role": "model"},
+                    "finishReason": "STOP"
+                }],
+                "usageMetadata": {
+                    "promptTokenCount": 31,
+                    "candidatesTokenCount": 17,
+                    "thoughtsTokenCount": 2,
+                    "totalTokenCount": 50
+                },
+                "modelVersion": "gemini-3.5-flash-low",
+                "responseId": response_id
+            },
+            "traceId": trace_id,
+            "metadata": {}
+        });
+        return Bytes::from(format!("data: {}\n\n", json_compact(final_response)));
+    }
     let first = json!({
         "response": {
             "candidates": [{
@@ -1250,6 +1277,14 @@ fn log_request(
     let Some(file) = &state.request_log else {
         return;
     };
+    let request_body_text = if path == "/log" {
+        format!(
+            "<{} bytes omitted from telemetry log request>",
+            request_body.len()
+        )
+    } else {
+        String::from_utf8_lossy(request_body).to_string()
+    };
     let record = json!({
         "timestamp": now_unix(),
         "method": method.as_str(),
@@ -1272,7 +1307,7 @@ fn log_request(
             .unwrap_or(0),
         "status": response.status().as_u16(),
         "content_type": response.headers().get(CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or(""),
-        "request_body": String::from_utf8_lossy(request_body),
+        "request_body": request_body_text,
         "response_body": response
             .extensions()
             .get::<LogBody>()
