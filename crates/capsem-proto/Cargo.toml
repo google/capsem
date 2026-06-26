@@ -23,3 +23,7 @@ workspace = true
 [dev-dependencies]
 tempfile = "3"
 bincode = "1"
+
+[[bench]]
+name = "vsock_framing_micro"
+harness = false
