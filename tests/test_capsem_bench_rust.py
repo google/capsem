@@ -34,7 +34,7 @@ def _run_protocol(base_url: str, dns_udp_addr: str, out: Path, lane: str) -> dic
             "--concurrency",
             "16",
             "--scenarios",
-            "tiny_http,model_json_response,credential_response,dns_local_nxdomain",
+            "tiny_http,model_json_response,credential_response,mcp_tools_list,mcp_tool_call,dns_local_nxdomain",
             "--lane",
             lane,
             "--json-out",
@@ -75,6 +75,8 @@ def test_rust_capsem_bench_protocol_and_delta_contract(tmp_path: Path) -> None:
             "tiny_http",
             "model_json_response",
             "credential_response",
+            "mcp_tools_list",
+            "mcp_tool_call",
             "dns_local_nxdomain",
         ]
 
@@ -87,6 +89,14 @@ def test_rust_capsem_bench_protocol_and_delta_contract(tmp_path: Path) -> None:
         assert rows["credential_response"]["successful"] == 200
         assert rows["credential_response"]["secret_shaped_fixture_seen"] is True
         assert rows["credential_response"]["raw_secret_stored_in_result"] is False
+        assert rows["mcp_tools_list"]["successful"] == 200
+        assert rows["mcp_tools_list"]["failed"] == 0
+        assert rows["mcp_tools_list"]["path"] == "/mcp"
+        assert rows["mcp_tools_list"]["body_kind"] == "mcp_jsonrpc"
+        assert rows["mcp_tool_call"]["successful"] == 200
+        assert rows["mcp_tool_call"]["failed"] == 0
+        assert rows["mcp_tool_call"]["path"] == "/mcp"
+        assert rows["mcp_tool_call"]["body_kind"] == "mcp_jsonrpc"
         assert rows["dns_local_nxdomain"]["successful"] == 200
         assert rows["dns_local_nxdomain"]["failed"] == 0
         assert rows["dns_local_nxdomain"]["path"] == "load-test.capsem-bogus"
@@ -121,6 +131,8 @@ def test_rust_capsem_bench_protocol_and_delta_contract(tmp_path: Path) -> None:
             "tiny_http",
             "model_json_response",
             "credential_response",
+            "mcp_tools_list",
+            "mcp_tool_call",
             "dns_local_nxdomain",
         }
         for row in delta_rows.values():

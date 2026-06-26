@@ -1,7 +1,7 @@
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use futures::future::try_join_all;
-use reqwest::Client;
+use reqwest::{Client, Method};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
@@ -63,6 +63,8 @@ struct Scenario {
     name: &'static str,
     transport: ScenarioTransport,
     path: &'static str,
+    method: HttpMethod,
+    request_body: Option<&'static str>,
     expected_status: u16,
     expected_bytes: Option<usize>,
     body_kind: &'static str,
@@ -76,11 +78,19 @@ enum ScenarioTransport {
     DnsUdp { qtype: u16 },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HttpMethod {
+    Get,
+    PostJson,
+}
+
 const SCENARIOS: &[Scenario] = &[
     Scenario {
         name: "tiny_http",
         transport: ScenarioTransport::Http,
         path: "/tiny",
+        method: HttpMethod::Get,
+        request_body: None,
         expected_status: 200,
         expected_bytes: Some(24),
         body_kind: "tiny",
@@ -91,6 +101,8 @@ const SCENARIOS: &[Scenario] = &[
         name: "http_1mb",
         transport: ScenarioTransport::Http,
         path: "/bytes/1mb",
+        method: HttpMethod::Get,
+        request_body: None,
         expected_status: 200,
         expected_bytes: Some(1024 * 1024),
         body_kind: "1mb",
@@ -101,6 +113,8 @@ const SCENARIOS: &[Scenario] = &[
         name: "sse_model",
         transport: ScenarioTransport::Http,
         path: "/sse/model",
+        method: HttpMethod::Get,
+        request_body: None,
         expected_status: 200,
         expected_bytes: None,
         body_kind: "sse",
@@ -111,6 +125,8 @@ const SCENARIOS: &[Scenario] = &[
         name: "model_json_response",
         transport: ScenarioTransport::Http,
         path: "/model/response",
+        method: HttpMethod::Get,
+        request_body: None,
         expected_status: 200,
         expected_bytes: None,
         body_kind: "model_json",
@@ -121,6 +137,8 @@ const SCENARIOS: &[Scenario] = &[
         name: "credential_response",
         transport: ScenarioTransport::Http,
         path: "/credential/response",
+        method: HttpMethod::Get,
+        request_body: None,
         expected_status: 200,
         expected_bytes: None,
         body_kind: "credential",
@@ -131,6 +149,8 @@ const SCENARIOS: &[Scenario] = &[
         name: "denied_target",
         transport: ScenarioTransport::Http,
         path: "/deny-target",
+        method: HttpMethod::Get,
+        request_body: None,
         expected_status: 200,
         expected_bytes: None,
         body_kind: "tiny",
@@ -138,9 +158,37 @@ const SCENARIOS: &[Scenario] = &[
         secret_shaped_fixture: false,
     },
     Scenario {
+        name: "mcp_tools_list",
+        transport: ScenarioTransport::Http,
+        path: "/mcp",
+        method: HttpMethod::PostJson,
+        request_body: Some(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#),
+        expected_status: 200,
+        expected_bytes: None,
+        body_kind: "mcp_jsonrpc",
+        required_text: Some("fixture_lookup"),
+        secret_shaped_fixture: false,
+    },
+    Scenario {
+        name: "mcp_tool_call",
+        transport: ScenarioTransport::Http,
+        path: "/mcp",
+        method: HttpMethod::PostJson,
+        request_body: Some(
+            r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"fixture_lookup","arguments":{"query":"capsem-bench"}}}"#,
+        ),
+        expected_status: 200,
+        expected_bytes: None,
+        body_kind: "mcp_jsonrpc",
+        required_text: Some("capsem-mock-server:mcp:fixture_lookup"),
+        secret_shaped_fixture: false,
+    },
+    Scenario {
         name: "dns_local_nxdomain",
         transport: ScenarioTransport::DnsUdp { qtype: 1 },
         path: "load-test.capsem-bogus",
+        method: HttpMethod::Get,
+        request_body: None,
         expected_status: 3,
         expected_bytes: None,
         body_kind: "dns_udp",
@@ -151,6 +199,8 @@ const SCENARIOS: &[Scenario] = &[
         name: "dns_fixture_a",
         transport: ScenarioTransport::DnsUdp { qtype: 1 },
         path: "fixture.capsem.test",
+        method: HttpMethod::Get,
+        request_body: None,
         expected_status: 0,
         expected_bytes: None,
         body_kind: "dns_udp",
@@ -558,7 +608,17 @@ async fn run_one_request(
     timeout: Duration,
 ) -> RequestSample {
     let started = Instant::now();
-    match tokio::time::timeout(timeout, client.get(url).send()).await {
+    let request = match scenario.method {
+        HttpMethod::Get => client.request(Method::GET, url),
+        HttpMethod::PostJson => {
+            let body = scenario.request_body.unwrap_or("{}");
+            client
+                .request(Method::POST, url)
+                .header("content-type", "application/json")
+                .body(body.to_string())
+        }
+    };
+    match tokio::time::timeout(timeout, request.send()).await {
         Ok(Ok(response)) => {
             let status = response.status().as_u16();
             match response.bytes().await {
