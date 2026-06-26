@@ -25,7 +25,7 @@ import pytest
 
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.mock_server import start_mock_server, stop_process
-from helpers.service import PROFILES_DIR, ServiceInstance, wait_exec_ready
+from helpers.service import PROFILES_DIR, ServiceInstance, vm_session_db_path, wait_exec_ready
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 CLI_BINARY = PROJECT_ROOT / "target/debug/capsem"
@@ -224,8 +224,8 @@ def _start_cli_exec(svc: ServiceInstance, vm: str, command: str, *, timeout: int
 
 
 def _session_db(svc: ServiceInstance, vm: str, *, persistent: bool = False) -> Path:
-    kind = "persistent" if persistent else "sessions"
-    return svc.tmp_dir / kind / vm / "session.db"
+    _ = persistent
+    return vm_session_db_path(svc.tmp_dir, svc.client(), vm)
 
 
 def _event_json_value(event: dict, *paths: tuple[str, ...]):
@@ -239,6 +239,13 @@ def _event_json_value(event: dict, *paths: tuple[str, ...]):
         if cur is not None:
             return cur
     return None
+
+
+def _ledger_decision(value: str | None) -> str | None:
+    return {
+        "allow": "allowed",
+        "block": "denied",
+    }.get(value or "", value)
 
 
 def _query_mcp_event_rows(db_path: Path):
@@ -263,6 +270,7 @@ def _query_mcp_event_rows(db_path: Path):
             response = mcp.get("response") or {}
             tool_call = mcp.get("tool_call") or {}
             decision = event.get("decision") or {}
+            decision_value = decision.get("effective") or decision.get("action") or row["rule_action"]
             out.append({
                 "request_id": _event_json_value(
                     event,
@@ -284,7 +292,7 @@ def _query_mcp_event_rows(db_path: Path):
                     ("mcp", "tool_call", "name"),
                     ("mcp", "tool_name"),
                 ),
-                "decision": decision.get("effective") or decision.get("action") or row["rule_action"],
+                "decision": _ledger_decision(decision_value),
                 "process_name": _event_json_value(event, ("process", "name")),
                 "policy_mode": "security_event",
                 "policy_action": row["rule_action"],

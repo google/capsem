@@ -77,9 +77,13 @@ def test_two_vms_isolated(mcp_session):
 
     res_a = mcp_session.call_tool("capsem_create", {"name": vm_a})
     assert not res_a.get("isError"), f"Failed to create VM A: {res_a}"
+    vm_a_id = parse_content(res_a)["id"]
+    assert vm_a_id != vm_a
     
     res_b = mcp_session.call_tool("capsem_create", {"name": vm_b})
     assert not res_b.get("isError"), f"Failed to create VM B: {res_b}"
+    vm_b_id = parse_content(res_b)["id"]
+    assert vm_b_id != vm_b
 
     try:
         # Wait for both to be exec-ready
@@ -108,9 +112,10 @@ def test_two_vms_isolated(mcp_session):
 
         # Both present in list
         res = mcp_session.call_tool("capsem_list")
-        ids = [s["id"] for s in parse_content(res)["sandboxes"]]
-        assert vm_a in ids
-        assert vm_b in ids
+        rows = parse_content(res)["sandboxes"]
+        by_id = {s["id"]: s for s in rows}
+        assert by_id[vm_a_id]["name"] == vm_a
+        assert by_id[vm_b_id]["name"] == vm_b
     finally:
         for vm in (vm_a, vm_b):
             try:

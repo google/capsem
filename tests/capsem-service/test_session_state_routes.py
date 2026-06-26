@@ -9,6 +9,11 @@ from pathlib import Path
 
 from helpers.service import ServiceInstance, materialize_test_profiles
 
+DEFUNCT_ID = "33333333-3333-4333-8333-333333333333"
+DRIFT_ID = "44444444-4444-4444-8444-444444444444"
+DEFUNCT_NAME = "code-stale-overlay"
+DRIFT_NAME = "code-payload-drift"
+
 
 def _curl_json_with_status(service: ServiceInstance, method: str, path: str, body=None):
     cmd = [
@@ -60,10 +65,11 @@ def _profile_contract(tmp_dir: Path):
     }
 
 
-def _entry(name: str, tmp_dir: Path, contract: dict, **overrides):
-    session_dir = tmp_dir / "persistent" / name
+def _entry(vm_id: str, name: str, tmp_dir: Path, contract: dict, **overrides):
+    session_dir = tmp_dir / "persistent" / vm_id
     session_dir.mkdir(parents=True, exist_ok=True)
     data = {
+        "id": vm_id,
         "name": name,
         "profile_id": "code",
         "profile_revision": contract["revision"],
@@ -110,7 +116,8 @@ def test_defunct_overlayfs_session_is_non_resumable_and_purgeable():
             "Kernel panic - not syncing: Attempted to kill init"
         )
         defunct = _entry(
-            "code-stale-overlay",
+            DEFUNCT_ID,
+            DEFUNCT_NAME,
             svc.tmp_dir,
             contract,
             defunct=False,
@@ -118,41 +125,44 @@ def test_defunct_overlayfs_session_is_non_resumable_and_purgeable():
         )
         Path(defunct["session_dir"], "process.log").write_text("boot died before ready\n")
         Path(defunct["session_dir"], "serial.log").write_text(last_error)
-        incompatible = _entry("code-payload-drift", svc.tmp_dir, contract)
+        incompatible = _entry(DRIFT_ID, DRIFT_NAME, svc.tmp_dir, contract)
         _write_registry(svc.tmp_dir, [defunct, incompatible])
 
         svc.start()
         client = svc.client()
 
         listing = client.get("/vms/list")
-        defunct_row = _row(listing, "code-stale-overlay")
+        defunct_row = _row(listing, DEFUNCT_ID)
+        assert defunct_row["name"] == DEFUNCT_NAME
         _assert_not_resumable(defunct_row, "Defunct")
         assert "Stale file handle" in defunct_row["last_error"]
         assert "resume_blocked_reason" not in defunct_row
 
-        info = client.get("/vms/code-stale-overlay/info")
+        info = client.get(f"/vms/{DEFUNCT_ID}/info")
         _assert_not_resumable(info, "Defunct")
         assert "Kernel panic" in info["last_error"]
-        assert info["name"] == "code-stale-overlay"
+        assert info["id"] == DEFUNCT_ID
+        assert info["name"] == DEFUNCT_NAME
 
-        status = client.get("/vms/code-stale-overlay/status")
+        status = client.get(f"/vms/{DEFUNCT_ID}/status")
         _assert_not_resumable(status, "Defunct")
         assert "pid" not in status
         assert "Stale file handle" in status["last_error"]
 
         http_status, error = _curl_json_with_status(
-            svc, "POST", "/vms/code-stale-overlay/resume", {}
+            svc, "POST", f"/vms/{DEFUNCT_ID}/resume", {}
         )
         assert http_status >= 400
         assert "resume failed" in error["error"]
         assert "Stale file handle" in error["error"]
 
-        drift_row = _row(client.get("/vms/list"), "code-payload-drift")
+        drift_row = _row(client.get("/vms/list"), DRIFT_ID)
+        assert drift_row["name"] == DRIFT_NAME
         _assert_not_resumable(drift_row, "Incompatible")
         assert "payload hash mismatch" in drift_row["resume_blocked_reason"]
         assert "last_error" not in drift_row
 
-        drift_status = client.get("/vms/code-payload-drift/status")
+        drift_status = client.get(f"/vms/{DRIFT_ID}/status")
         _assert_not_resumable(drift_status, "Incompatible")
         assert "payload hash mismatch" in drift_status["resume_blocked_reason"]
         assert drift_status.get("last_error") is None
@@ -162,7 +172,7 @@ def test_defunct_overlayfs_session_is_non_resumable_and_purgeable():
         assert purge["purged"] == 1
 
         listing_after_purge = client.get("/vms/list")
-        assert not [row for row in listing_after_purge["sandboxes"] if row["id"] == "code-stale-overlay"]
-        assert _row(listing_after_purge, "code-payload-drift")["status"] == "Incompatible"
+        assert not [row for row in listing_after_purge["sandboxes"] if row["id"] == DEFUNCT_ID]
+        assert _row(listing_after_purge, DRIFT_ID)["status"] == "Incompatible"
     finally:
         svc.stop()

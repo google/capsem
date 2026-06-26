@@ -15,6 +15,11 @@ from typing import Any
 
 from helpers.service import ServiceInstance, materialize_test_profiles
 
+DEFUNCT_ID = "55555555-5555-4555-8555-555555555555"
+DRIFT_ID = "66666666-6666-4666-8666-666666666666"
+DEFUNCT_NAME = "code-stale-overlay"
+DRIFT_NAME = "code-payload-drift"
+
 
 def _curl_json_with_status(service: ServiceInstance, method: str, path: str, body=None):
     cmd = [
@@ -56,10 +61,11 @@ def _profile_contract(tmp_dir: Path) -> dict[str, Any]:
     }
 
 
-def _registry_entry(name: str, tmp_dir: Path, contract: dict[str, Any], **overrides):
-    session_dir = tmp_dir / "persistent" / name
+def _registry_entry(vm_id: str, name: str, tmp_dir: Path, contract: dict[str, Any], **overrides):
+    session_dir = tmp_dir / "persistent" / vm_id
     session_dir.mkdir(parents=True, exist_ok=True)
     data = {
+        "id": vm_id,
         "name": name,
         "profile_id": "code",
         "profile_revision": contract["revision"],
@@ -88,8 +94,9 @@ def _row(payload: dict[str, Any], session_id: str) -> dict[str, Any]:
     return rows[0]
 
 
-def _assert_delete_only(row: dict[str, Any], *, session_id: str, status: str) -> None:
+def _assert_delete_only(row: dict[str, Any], *, session_id: str, name: str, status: str) -> None:
     assert row["id"] == session_id
+    assert row["name"] == name
     assert row["status"] == status
     assert row["persistent"] is True
     assert row["can_resume"] is False
@@ -102,11 +109,11 @@ def test_tui_session_routes_expose_profile_truth_and_delete_only_broken_sessions
     service = ServiceInstance()
     try:
         contract = _profile_contract(service.tmp_dir)
-        defunct = _registry_entry("code-stale-overlay", service.tmp_dir, contract)
+        defunct = _registry_entry(DEFUNCT_ID, DEFUNCT_NAME, service.tmp_dir, contract)
         Path(defunct["session_dir"], "serial.log").write_text(
             "overlayfs mount failed: Stale file handle\nKernel panic - not syncing"
         )
-        incompatible = _registry_entry("code-payload-drift", service.tmp_dir, contract)
+        incompatible = _registry_entry(DRIFT_ID, DRIFT_NAME, service.tmp_dir, contract)
         _write_registry(service.tmp_dir, [defunct, incompatible])
 
         service.start()
@@ -121,18 +128,19 @@ def test_tui_session_routes_expose_profile_truth_and_delete_only_broken_sessions
         assert by_id["co-work"]["availability"]["shell"] is True
 
         listing = client.get("/vms/list")
-        defunct_row = _row(listing, "code-stale-overlay")
-        incompatible_row = _row(listing, "code-payload-drift")
-        _assert_delete_only(defunct_row, session_id="code-stale-overlay", status="Defunct")
+        defunct_row = _row(listing, DEFUNCT_ID)
+        incompatible_row = _row(listing, DRIFT_ID)
+        _assert_delete_only(defunct_row, session_id=DEFUNCT_ID, name=DEFUNCT_NAME, status="Defunct")
         _assert_delete_only(
             incompatible_row,
-            session_id="code-payload-drift",
+            session_id=DRIFT_ID,
+            name=DRIFT_NAME,
             status="Incompatible",
         )
         assert "Stale file handle" in defunct_row["last_error"]
         assert "payload hash mismatch" in incompatible_row["resume_blocked_reason"]
 
-        for session_id in ("code-stale-overlay", "code-payload-drift"):
+        for session_id in (DEFUNCT_ID, DRIFT_ID):
             status, payload = _curl_json_with_status(service, "POST", f"/vms/{session_id}/resume", {})
             assert status >= 400
             assert "resume" in payload["error"].lower()

@@ -15,6 +15,11 @@ from typing import Any
 
 from helpers.service import ServiceInstance, materialize_test_profiles
 
+DEFUNCT_ID = "11111111-1111-4111-8111-111111111111"
+DRIFT_ID = "22222222-2222-4222-8222-222222222222"
+DEFUNCT_NAME = "code-stale-overlay"
+DRIFT_NAME = "code-payload-drift"
+
 
 def _curl_json_with_status(service: ServiceInstance, method: str, path: str, body=None):
     cmd = [
@@ -56,10 +61,11 @@ def _profile_contract(tmp_dir: Path) -> dict[str, Any]:
     }
 
 
-def _registry_entry(name: str, tmp_dir: Path, contract: dict[str, Any], **overrides):
-    session_dir = tmp_dir / "persistent" / name
+def _registry_entry(vm_id: str, name: str, tmp_dir: Path, contract: dict[str, Any], **overrides):
+    session_dir = tmp_dir / "persistent" / vm_id
     session_dir.mkdir(parents=True, exist_ok=True)
     data = {
+        "id": vm_id,
         "name": name,
         "profile_id": "code",
         "profile_revision": contract["revision"],
@@ -88,10 +94,10 @@ def _row(listing: dict[str, Any], session_id: str) -> dict[str, Any]:
     return matches[0]
 
 
-def _assert_delete_only_session(payload: dict[str, Any], *, session_id: str, status: str) -> None:
+def _assert_delete_only_session(payload: dict[str, Any], *, session_id: str, name: str, status: str) -> None:
     assert payload["id"] == session_id
     if "name" in payload:
-        assert payload["name"] == session_id
+        assert payload["name"] == name
     if "profile_id" in payload:
         assert payload["profile_id"] == "code"
     assert payload["status"] == status
@@ -108,11 +114,12 @@ def test_session_routes_make_defunct_and_incompatible_sessions_delete_only() -> 
     try:
         contract = _profile_contract(service.tmp_dir)
         stale_log = "overlayfs mount failed: Stale file handle\nKernel panic - not syncing"
-        defunct = _registry_entry("code-stale-overlay", service.tmp_dir, contract)
+        defunct = _registry_entry(DEFUNCT_ID, DEFUNCT_NAME, service.tmp_dir, contract)
         Path(defunct["session_dir"], "process.log").write_text("boot failed\n")
         Path(defunct["session_dir"], "serial.log").write_text(stale_log)
         incompatible = _registry_entry(
-            "code-payload-drift",
+            DRIFT_ID,
+            DRIFT_NAME,
             service.tmp_dir,
             contract,
             profile_payload_hash="blake3:0000000000000000000000000000000000000000000000000000000000000000",
@@ -123,39 +130,42 @@ def test_session_routes_make_defunct_and_incompatible_sessions_delete_only() -> 
         client = service.client()
 
         listing = client.get("/vms/list")
-        defunct_row = _row(listing, "code-stale-overlay")
-        incompatible_row = _row(listing, "code-payload-drift")
-        _assert_delete_only_session(defunct_row, session_id="code-stale-overlay", status="Defunct")
+        defunct_row = _row(listing, DEFUNCT_ID)
+        incompatible_row = _row(listing, DRIFT_ID)
+        _assert_delete_only_session(defunct_row, session_id=DEFUNCT_ID, name=DEFUNCT_NAME, status="Defunct")
         _assert_delete_only_session(
             incompatible_row,
-            session_id="code-payload-drift",
+            session_id=DRIFT_ID,
+            name=DRIFT_NAME,
             status="Incompatible",
         )
         assert "Stale file handle" in defunct_row["last_error"]
         assert "payload hash mismatch" in incompatible_row["resume_blocked_reason"]
 
-        for session_id, status in (
-            ("code-stale-overlay", "Defunct"),
-            ("code-payload-drift", "Incompatible"),
+        for session_id, name, status in (
+            (DEFUNCT_ID, DEFUNCT_NAME, "Defunct"),
+            (DRIFT_ID, DRIFT_NAME, "Incompatible"),
         ):
             _assert_delete_only_session(
                 client.get(f"/vms/{session_id}/status"),
                 session_id=session_id,
+                name=name,
                 status=status,
             )
             _assert_delete_only_session(
                 client.get(f"/vms/{session_id}/info"),
                 session_id=session_id,
+                name=name,
                 status=status,
             )
             http_status, error = _curl_json_with_status(service, "POST", f"/vms/{session_id}/resume", {})
             assert http_status >= 400
             assert "resume" in error["error"].lower()
 
-        assert client.delete("/vms/code-stale-overlay/delete") == {"success": True}
-        assert client.delete("/vms/code-payload-drift/delete") == {"success": True}
+        assert client.delete(f"/vms/{DEFUNCT_ID}/delete") == {"success": True}
+        assert client.delete(f"/vms/{DRIFT_ID}/delete") == {"success": True}
         listing_after_delete = client.get("/vms/list")
-        assert "code-stale-overlay" not in {row["id"] for row in listing_after_delete["sandboxes"]}
-        assert "code-payload-drift" not in {row["id"] for row in listing_after_delete["sandboxes"]}
+        assert DEFUNCT_ID not in {row["id"] for row in listing_after_delete["sandboxes"]}
+        assert DRIFT_ID not in {row["id"] for row in listing_after_delete["sandboxes"]}
     finally:
         service.stop()

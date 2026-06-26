@@ -107,20 +107,24 @@ class TestMcpLifecycle:
 
             # Create
             result = client.tool_json("capsem_create", {"name": name})
-            assert result.get("id") == name or name in str(result)
+            vm_id = result["id"]
+            assert vm_id != name
+            assert result.get("name") == name
 
             # List
             result = client.tool_json("capsem_list")
-            ids = [s["id"] for s in result.get("sandboxes", [])]
-            assert name in ids
+            rows = result.get("sandboxes", [])
+            listed = [s for s in rows if s["id"] == vm_id]
+            assert len(listed) == 1, rows
+            assert listed[0]["name"] == name
 
             # Delete
-            client.call_tool("capsem_delete", {"id": name})
+            client.call_tool("capsem_delete", {"id": vm_id})
 
             # Verify gone
             result = client.tool_json("capsem_list")
             ids = [s["id"] for s in result.get("sandboxes", [])]
-            assert name not in ids
+            assert vm_id not in ids
         finally:
             kill_mcp_proc(proc)
 

@@ -11,11 +11,17 @@ import json
 import platform
 import subprocess
 import tomllib
+import uuid
 from pathlib import Path
 from typing import Any
 
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.service import ServiceInstance, materialize_test_profiles
+
+DEFUNCT_ID = "77777777-7777-4777-8777-777777777777"
+DRIFT_ID = "88888888-8888-4888-8888-888888888888"
+DEFUNCT_NAME = "code-stale-overlay"
+DRIFT_NAME = "code-payload-drift"
 
 
 def _curl_json_with_status(service: ServiceInstance, method: str, path: str, body=None):
@@ -58,10 +64,11 @@ def _profile_contract(tmp_dir: Path) -> dict[str, Any]:
     }
 
 
-def _registry_entry(name: str, tmp_dir: Path, contract: dict[str, Any], **overrides):
-    session_dir = tmp_dir / "persistent" / name
+def _registry_entry(vm_id: str, name: str, tmp_dir: Path, contract: dict[str, Any], **overrides):
+    session_dir = tmp_dir / "persistent" / vm_id
     session_dir.mkdir(parents=True, exist_ok=True)
     data = {
+        "id": vm_id,
         "name": name,
         "profile_id": CODE_PROFILE_ID,
         "profile_revision": contract["revision"],
@@ -91,8 +98,9 @@ def _row(payload: dict[str, Any], session_id: str) -> dict[str, Any]:
     return rows[0]
 
 
-def _assert_delete_only(row: dict[str, Any], *, session_id: str, status: str) -> None:
+def _assert_delete_only(row: dict[str, Any], *, session_id: str, name: str, status: str) -> None:
     assert row["id"] == session_id
+    assert row["name"] == name
     assert row["status"] == status
     if "profile_id" in row:
         assert row["profile_id"] == CODE_PROFILE_ID
@@ -107,13 +115,14 @@ def test_session_dashboard_routes_are_profile_owned_and_delete_only_for_broken_s
     service = ServiceInstance()
     try:
         contract = _profile_contract(service.tmp_dir)
-        defunct = _registry_entry("code-stale-overlay", service.tmp_dir, contract)
+        defunct = _registry_entry(DEFUNCT_ID, DEFUNCT_NAME, service.tmp_dir, contract)
         Path(defunct["session_dir"], "serial.log").write_text(
             "overlayfs mount failed: Stale file handle\nKernel panic - not syncing",
             encoding="utf-8",
         )
         incompatible = _registry_entry(
-            "code-payload-drift",
+            DRIFT_ID,
+            DRIFT_NAME,
             service.tmp_dir,
             contract,
             profile_payload_hash="blake3:0000000000000000000000000000000000000000000000000000000000000000",
@@ -134,31 +143,34 @@ def test_session_dashboard_routes_are_profile_owned_and_delete_only_for_broken_s
 
         listing = client.get("/vms/list", timeout=30)
         assert "sandboxes" in listing
-        defunct_row = _row(listing, "code-stale-overlay")
-        incompatible_row = _row(listing, "code-payload-drift")
+        defunct_row = _row(listing, DEFUNCT_ID)
+        incompatible_row = _row(listing, DRIFT_ID)
         assert defunct_row["profile_id"] == CODE_PROFILE_ID
         assert incompatible_row["profile_id"] == CODE_PROFILE_ID
-        _assert_delete_only(defunct_row, session_id="code-stale-overlay", status="Defunct")
+        _assert_delete_only(defunct_row, session_id=DEFUNCT_ID, name=DEFUNCT_NAME, status="Defunct")
         _assert_delete_only(
             incompatible_row,
-            session_id="code-payload-drift",
+            session_id=DRIFT_ID,
+            name=DRIFT_NAME,
             status="Incompatible",
         )
         assert "Stale file handle" in defunct_row["last_error"]
         assert "payload hash mismatch" in incompatible_row["resume_blocked_reason"]
 
-        for session_id, status in (
-            ("code-stale-overlay", "Defunct"),
-            ("code-payload-drift", "Incompatible"),
+        for session_id, name, status in (
+            (DEFUNCT_ID, DEFUNCT_NAME, "Defunct"),
+            (DRIFT_ID, DRIFT_NAME, "Incompatible"),
         ):
             _assert_delete_only(
                 client.get(f"/vms/{session_id}/status", timeout=30),
                 session_id=session_id,
+                name=name,
                 status=status,
             )
             _assert_delete_only(
                 client.get(f"/vms/{session_id}/info", timeout=30),
                 session_id=session_id,
+                name=name,
                 status=status,
             )
             assert client.get(f"/vms/{session_id}/info", timeout=30)["profile_id"] == CODE_PROFILE_ID
@@ -175,12 +187,12 @@ def test_session_dashboard_routes_are_profile_owned_and_delete_only_for_broken_s
         assert purge["persistent_purged"] == 1
         assert purge["purged"] == 1
         after_purge = client.get("/vms/list", timeout=30)
-        assert "code-stale-overlay" not in {row["id"] for row in after_purge["sandboxes"]}
-        assert _row(after_purge, "code-payload-drift")["status"] == "Incompatible"
+        assert DEFUNCT_ID not in {row["id"] for row in after_purge["sandboxes"]}
+        assert _row(after_purge, DRIFT_ID)["status"] == "Incompatible"
 
-        assert client.delete("/vms/code-payload-drift/delete", timeout=30) == {"success": True}
+        assert client.delete(f"/vms/{DRIFT_ID}/delete", timeout=30) == {"success": True}
         after_delete = client.get("/vms/list", timeout=30)
-        assert "code-payload-drift" not in {row["id"] for row in after_delete["sandboxes"]}
+        assert DRIFT_ID not in {row["id"] for row in after_delete["sandboxes"]}
     finally:
         service.stop()
 
@@ -192,7 +204,7 @@ def test_session_dashboard_create_names_are_profile_scoped_not_tmp() -> None:
         service.start()
         client = service.client()
 
-        for expected_id in ("code-1", "code-2"):
+        for expected_name in ("code-1", "code-2"):
             response = client.post(
                 "/vms/create",
                 {
@@ -204,13 +216,17 @@ def test_session_dashboard_create_names_are_profile_scoped_not_tmp() -> None:
             )
             session_id = response["id"]
             created.append(session_id)
-            assert session_id == expected_id
+            uuid.UUID(session_id)
+            assert session_id != expected_name
+            assert response["name"] == expected_name
             assert not session_id.startswith("tmp-")
             status = client.get(f"/vms/{session_id}/status", timeout=30)
             assert status["id"] == session_id
+            assert status["name"] == expected_name
             assert set(status["available_actions"]) >= {"fork", "delete"}
             info = client.get(f"/vms/{session_id}/info", timeout=30)
             assert info["id"] == session_id
+            assert info["name"] == expected_name
             assert info["profile_id"] == CODE_PROFILE_ID
 
         listing = client.get("/vms/list", timeout=30)
@@ -220,6 +236,7 @@ def test_session_dashboard_create_names_are_profile_scoped_not_tmp() -> None:
             CODE_PROFILE_ID,
             CODE_PROFILE_ID,
         ]
+        assert [listed[session_id]["name"] for session_id in created] == ["code-1", "code-2"]
     finally:
         if service.proc is not None:
             client = service.client()
