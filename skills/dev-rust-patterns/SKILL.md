@@ -60,6 +60,12 @@ db.query(sql, params).await?;
 db.write(event).await?;
 ```
 
+`db.write(event).await` is an accept boundary: the DB-owned producer buffer
+has taken responsibility for the event. Read-after-write tests must use the DB
+flush barrier or shutdown/reopen before asserting route-visible rows. Never add
+route sleeps, route projection caches, or caller-owned SQLite reads to force
+visibility.
+
 Do not hide route SQL by adding route-specific helpers to `DbWriter`; the DB
 writer is not a product route registry. Put connection threads, `mem`/disk
 tables, batching, flushing, rehydration, WAL tuning, and future FTS5/search in

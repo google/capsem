@@ -1002,8 +1002,9 @@ async fn writer_reader_on_file_backed_sees_data() {
             Decision::Allowed,
         )))
         .await;
-    // Give writer thread time to flush.
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    // writer.reader() opens a file-backed reader, so use the explicit DB
+    // flush barrier before asserting disk-visible rows.
+    writer.flush().await;
 
     let reader = writer.reader().unwrap();
     let events = reader.recent_net_events(10).unwrap();
@@ -2866,65 +2867,45 @@ async fn test_file_event_limit_zero() {
     assert!(search.is_empty());
 }
 
-// ── try_write silently drops events when channel is full ────────────
+// ── DB-owned producer buffer preserves try_write bursts ─────────────
 
-/// Proves that try_write() silently drops events when the channel is saturated.
-/// This is the root cause of empty session databases: the production code uses
-/// try_write() in mitm_proxy.rs and main.rs, which returns false (ignored) when
-/// the bounded channel is full, causing every event to be silently lost.
+/// Proves try_write() accepts a burst into the DB-owned producer buffer
+/// instead of silently dropping rows when a tiny channel would have filled.
 #[tokio::test]
-async fn try_write_drops_events_when_channel_full() {
+async fn try_write_accepts_burst_into_db_owned_buffer() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("try-write-drop.db");
+    let path = dir.path().join("try-write-burst.db");
 
-    // Capacity of 1: the channel can hold exactly 1 unsent message.
+    // Capacity of 1 used to make try_write unreliable. The DB now owns a
+    // producer buffer and channelizes whole batches internally.
     let writer = DbWriter::open(&path, 1).unwrap();
 
-    // First try_write succeeds -- fills the single slot.
     let ok1 = writer.try_write(WriteOp::FileEvent(sample_file_event(
         "first.rs",
         FileAction::Created,
         Some(10),
     )));
-    assert!(ok1, "first try_write should succeed (channel has 1 slot)");
+    assert!(ok1, "first try_write should be accepted");
 
-    // Immediately fire more try_writes without yielding -- the writer thread
-    // has no chance to drain the channel, so these SILENTLY FAIL.
-    let mut dropped = 0;
     for i in 0..20 {
         let ok = writer.try_write(WriteOp::FileEvent(sample_file_event(
-            &format!("dropped{i}.rs"),
+            &format!("burst{i}.rs"),
             FileAction::Modified,
             Some(100),
         )));
-        if !ok {
-            dropped += 1;
-        }
+        assert!(ok, "DB-owned producer buffer must accept burst item {i}");
     }
 
-    // At least some events must have been silently dropped.
-    assert!(
-        dropped > 0,
-        "try_write should have dropped events, but none were dropped"
-    );
-
-    // Flush and check: the DB will be MISSING the dropped events with zero indication.
+    writer.flush().await;
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
     let events = reader.recent_file_events(100).unwrap();
 
-    // We sent 21 total (1 + 20), but the DB has far fewer -- silent data loss.
-    assert!(
-        events.len() < 21,
-        "expected silent data loss from try_write, but all 21 events were written (got {})",
-        events.len()
-    );
-    // The dropped events are gone forever -- no log, no error, no indication.
-    eprintln!(
-        "PROOF: sent 21 events via try_write, only {} persisted, {} silently lost",
+    assert_eq!(
         events.len(),
-        21 - events.len()
+        21,
+        "DB-owned producer buffer must preserve every accepted try_write row"
     );
 }
 
@@ -2972,120 +2953,65 @@ async fn async_write_never_drops_events() {
     );
 }
 
-/// Simulates the exact production scenario: a burst of mixed event types
-/// (NetEvent, FileEvent, ModelCall) via try_write with the production
-/// channel capacity of 256. Under burst conditions, events are lost.
+/// Simulates a production burst of file events via try_write. The writer
+/// must accept the whole burst and persist it after the explicit DB barrier.
 #[tokio::test]
-async fn try_write_production_burst_loses_events() {
+async fn try_write_production_burst_preserves_events() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("burst-drop.db");
+    let path = dir.path().join("burst-preserve.db");
 
-    // Use production capacity.
     let writer = DbWriter::open(&path, 256).unwrap();
 
-    // Blast 500 events as fast as possible without yielding -- simulates
-    // a burst of network activity + file watches + model calls arriving
-    // concurrently. The writer thread batches 128 at a time and can't
-    // keep up with a synchronous flood.
     let total = 500;
-    let mut sent = 0;
     for i in 0..total {
         let ok = writer.try_write(WriteOp::FileEvent(sample_file_event(
             &format!("burst{i}.rs"),
             FileAction::Modified,
             Some(i as u64),
         )));
-        if ok {
-            sent += 1;
-        }
+        assert!(ok, "production burst try_write {i} must be accepted");
     }
 
+    writer.flush().await;
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
     let events = reader.recent_file_events(1000).unwrap();
 
-    eprintln!(
-        "BURST: tried {total}, channel accepted {sent}, DB persisted {}",
-        events.len()
-    );
-
-    // With capacity 256, we can't push all 500 without the writer draining.
-    // Some will be lost. (If the writer thread is fast enough on this machine
-    // to drain between try_sends, we might get lucky -- but the point is
-    // try_write makes NO guarantee, unlike write().await which guarantees all.)
-    //
-    // The real bug: even if this particular run doesn't drop events (fast CPU),
-    // try_write offers ZERO delivery guarantee. The async write() path does.
-    // We assert that try_write accepted fewer than we tried OR that async
-    // write would have accepted all.
-    if sent < total {
-        assert!(
-            events.len() < total,
-            "some events were rejected by try_write, confirming silent drop risk"
-        );
-        eprintln!(
-            "CONFIRMED: {total} attempted, {sent} accepted, {} dropped silently",
-            total - sent
-        );
-    } else {
-        eprintln!(
-            "NOTE: writer thread drained fast enough on this machine -- \
-             try_write accepted all {total}. The bug is still real: try_write \
-             offers no delivery guarantee. Run under load to reproduce."
-        );
-    }
+    assert_eq!(events.len(), total);
 }
 
-/// The production code ignores try_write's return value. This test proves
-/// that pattern causes silent data loss by exactly mimicking the call sites
-/// in mitm_proxy.rs:694 and main.rs:807.
+/// Ignoring try_write's return value must no longer create a silent-loss
+/// footgun for accepted rows. The DB object owns buffering and flushes the
+/// accepted burst as a unit.
 #[tokio::test]
-async fn ignored_try_write_return_value_causes_silent_loss() {
+async fn ignored_try_write_return_value_preserves_accepted_rows() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("ignored-return.db");
 
     let writer = DbWriter::open(&path, 1).unwrap();
 
-    // Mimic the exact production pattern: call try_write, ignore the bool.
-    // This is what mitm_proxy.rs:694 and main.rs:807 do.
     writer.try_write(WriteOp::FileEvent(sample_file_event(
         "a.rs",
         FileAction::Created,
         Some(1),
-    ))); // return value ignored -- fills the channel
+    )));
 
-    // These mirror a rapid sequence of file touches or network events.
-    // The channel is full, so these are silently discarded.
     for i in 0..10 {
         writer.try_write(WriteOp::FileEvent(sample_file_event(
-            &format!("lost{i}.rs"),
+            &format!("kept{i}.rs"),
             FileAction::Created,
             Some(1),
-        ))); // return value ignored -- SILENTLY DROPPED
+        )));
     }
 
+    writer.flush().await;
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
     let events = reader.recent_file_events(100).unwrap();
 
-    // If all 11 were persisted, the channel drained fast enough.
-    // But the fundamental issue remains: try_write + ignored return = unreliable.
-    if events.len() < 11 {
-        eprintln!(
-            "PROVED: production pattern (ignore try_write return) lost {} of 11 events",
-            11 - events.len()
-        );
-    }
-
-    // The important assertion: with capacity=1, it's nearly impossible
-    // to persist all 11 without backpressure. At best we get 1-2.
-    assert!(
-        events.len() < 11,
-        "expected data loss with capacity=1 and ignored try_write, got all {}",
-        events.len()
-    );
+    assert_eq!(events.len(), 11);
 }
 
 // ========================================================================

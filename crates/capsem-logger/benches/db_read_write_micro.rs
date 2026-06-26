@@ -71,8 +71,14 @@ async fn write_100k_rows() -> (f64, f64, f64) {
     }
     let ack_elapsed = started.elapsed();
 
+    let shutdown_started = Instant::now();
+    drop(db);
+    let shutdown_elapsed = shutdown_started.elapsed();
+
     let query_started = Instant::now();
-    let count_json = db
+    let reopened = DbHandle::open(&path).expect("reopen db handle");
+    reopened.ready().await.expect("reopened db ready");
+    let count_json = reopened
         .query("SELECT COUNT(*) AS count FROM dns_events", &[])
         .await
         .expect("count written rows");
@@ -81,10 +87,6 @@ async fn write_100k_rows() -> (f64, f64, f64) {
         count_json.contains(&WRITE_ROWS.to_string()),
         "write bench count mismatch: {count_json}"
     );
-
-    let shutdown_started = Instant::now();
-    drop(db);
-    let shutdown_elapsed = shutdown_started.elapsed();
 
     (
         ack_elapsed.as_secs_f64() * 1000.0,
@@ -140,13 +142,13 @@ fn main() {
     println!("| bench | rows | elapsed ms | rows/sec | notes |");
     println!("|---|---:|---:|---:|---|");
     println!(
-        "| db_handle_write_ack_dns | {} | {:.3} | {:.0} | write() ack means memory-visible, not disk-flushed |",
+        "| db_handle_write_accept_dns | {} | {:.3} | {:.0} | write() ack means accepted into DB-owned producer buffer |",
         WRITE_ROWS,
         write_ms,
         WRITE_ROWS as f64 / (write_ms / 1000.0)
     );
     println!(
-        "| db_handle_count_after_write | {} | {:.3} | {:.0} | validates db.query sees acknowledged memory rows |",
+        "| db_handle_reopen_count_after_flush | {} | {:.3} | {:.0} | validates durable rows after shutdown flush and rehydrate |",
         WRITE_ROWS,
         post_write_count_ms,
         WRITE_ROWS as f64 / (post_write_count_ms / 1000.0)

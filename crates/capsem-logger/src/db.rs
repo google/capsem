@@ -906,6 +906,7 @@ mod tests {
                 )))
                 .await;
         }
+        writer.flush().await;
         drop(writer);
 
         let reader = DbReader::open(&p).unwrap();

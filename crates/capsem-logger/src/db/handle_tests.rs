@@ -334,6 +334,7 @@ async fn db_handle_ready_query_write() {
     )))
     .await
     .expect("write event");
+    db.flush_for_tests().await;
 
     let raw = db
         .query(
@@ -352,7 +353,7 @@ async fn db_handle_ready_query_write() {
 }
 
 #[tokio::test]
-async fn db_write_acknowledges_memory_before_disk_flush() {
+async fn db_write_accepts_before_flush_and_flush_makes_visible() {
     let p = temp_db_path("memory-before-disk-flush");
     let db = DbHandle::open(&p).expect("open handle");
     db.ready().await.expect("db ready");
@@ -362,13 +363,29 @@ async fn db_write_acknowledges_memory_before_disk_flush() {
         Decision::Allowed,
     )))
     .await
-    .expect("write must acknowledge after DB-owned memory commit");
+    .expect("write must acknowledge after DB-owned buffer accepts the event");
 
     assert_eq!(
         disk_net_event_count(&p, "memory-first.example"),
         0,
-        "db.write() must not force a disk flush. S06-003 contract: acknowledged writes are memory-visible, and disk batching remains DB-owned."
+        "db.write() must not force a disk flush. S08 contract: write accepts into DB-owned batching, and flush controls visibility/durability."
     );
+    let buffered_raw = db
+        .query(
+            "SELECT domain, decision, bytes_sent FROM net_events WHERE domain = ?",
+            &[json!("memory-first.example")],
+        )
+        .await
+        .expect("query before flush");
+    let buffered_value: serde_json::Value =
+        serde_json::from_str(&buffered_raw).expect("query JSON");
+    assert_eq!(
+        buffered_value["rows"],
+        json!([]),
+        "write() accepts into the DB-owned batch buffer; query visibility starts at flush(). {DB_BOUNDARY_RATIONALE}"
+    );
+
+    db.flush_for_tests().await;
 
     let raw = db
         .query(
@@ -381,7 +398,7 @@ async fn db_write_acknowledges_memory_before_disk_flush() {
     assert_eq!(
         value["rows"],
         json!([["memory-first.example", "allowed", 11]]),
-        "query() must observe the memory table immediately after write(). {DB_BOUNDARY_RATIONALE}"
+        "query() must observe rows after the DB-owned flush barrier. {DB_BOUNDARY_RATIONALE}"
     );
 }
 
@@ -437,6 +454,8 @@ async fn db_correctness_db_interrupted_flush_is_transactional() {
     )))
     .await
     .expect("interrupted write must acknowledge memory row before disk flush");
+    crate::writer::fail_disk_flushes_for_tests(1);
+    db.flush_for_tests().await;
 
     let memory_before_failed_flush = query_json(
         &db.query(
@@ -465,7 +484,7 @@ async fn db_correctness_db_interrupted_flush_is_transactional() {
                 "trace-db-handle"
             ]
         ]),
-        "acknowledged writes must remain visible in DB-owned memory before disk flush. {DB_BOUNDARY_RATIONALE}"
+        "rows from an interrupted disk flush must remain visible in DB-owned memory. {DB_BOUNDARY_RATIONALE}"
     );
 
     crate::writer::fail_disk_flushes_for_tests(100);
@@ -683,6 +702,7 @@ async fn db_correctness_db_query_exact_after_flush_and_restart() {
         )))
         .await
         .expect("write correctness security event");
+        db.flush_for_tests().await;
 
         let snapshot = correctness_snapshot(&db).await;
 
@@ -701,7 +721,7 @@ async fn db_correctness_db_query_exact_after_flush_and_restart() {
                 "informational",
                 credential_ref
             ]]),
-            "before flush, db.query() must see exact joined protocol/security truth from DB-owned memory tables. {DB_BOUNDARY_RATIONALE}"
+            "after the DB-owned flush barrier, db.query() must see exact joined protocol/security truth. {DB_BOUNDARY_RATIONALE}"
         );
         assert_eq!(
             snapshot["model_tool"]["rows"],
@@ -992,6 +1012,7 @@ async fn db_handle_query_returns_exact_columns_rows() {
     )))
     .await
     .expect("write exact fixture");
+    db.flush_for_tests().await;
 
     let raw = db
         .query(
@@ -1092,6 +1113,7 @@ async fn db_write_event_contract() {
     ))
     .await
     .expect("write(security event) must use the logger-owned writer path");
+    db.flush_for_tests().await;
 
     let raw = db
         .query(
@@ -1136,6 +1158,7 @@ async fn db_handle_write_then_query_observes_event() {
     )))
     .await
     .expect("write event through DbHandle");
+    db.flush_for_tests().await;
 
     let raw = db
         .query(
@@ -1153,7 +1176,7 @@ async fn db_handle_write_then_query_observes_event() {
 }
 
 #[tokio::test]
-async fn db_write_is_immediately_queryable() {
+async fn db_write_flush_then_queryable() {
     let p = temp_db_path("write-immediately-queryable");
     let db = DbHandle::open(&p).expect("open handle");
     db.ready().await.expect("db ready");
@@ -1184,6 +1207,7 @@ async fn db_write_is_immediately_queryable() {
     ))
     .await
     .expect("acknowledged security write");
+    db.flush_for_tests().await;
 
     {
         let conn = rusqlite::Connection::open(&p).expect("open disk verifier");
@@ -1203,8 +1227,8 @@ async fn db_write_is_immediately_queryable() {
             .expect("count security disk rows after acknowledged memory write");
         assert_eq!(
             (protocol_rows, security_rows),
-            (0, 0),
-            "test must prove query() reads the DB-owned memory truth before disk flush"
+            (1, 1),
+            "flush() is the DB-owned visibility/durability barrier for accepted writes"
         );
     }
 
@@ -1228,7 +1252,7 @@ async fn db_write_is_immediately_queryable() {
             22,
             "trace-db-handle"
         ]]),
-        "acknowledged protocol writes must be immediately visible through db.query(), independent of disk flush timing. {DB_BOUNDARY_RATIONALE}"
+        "accepted protocol writes must be visible through db.query() after the DB-owned flush barrier. {DB_BOUNDARY_RATIONALE}"
     );
 
     let security_raw = db
@@ -1254,7 +1278,7 @@ async fn db_write_is_immediately_queryable() {
             "turn-memory-visible",
             credential_ref
         ]]),
-        "acknowledged security writes must be immediately visible through db.query(), independent of disk flush timing. {DB_BOUNDARY_RATIONALE}"
+        "accepted security writes must be visible through db.query() after the DB-owned flush barrier. {DB_BOUNDARY_RATIONALE}"
     );
 }
 
@@ -1272,6 +1296,7 @@ async fn db_handle_contract_ready_query_write_exactness() {
     )))
     .await
     .expect("write(event) must persist through the logger DB path only. DB boundary contract: no caller-owned SQLite writes.");
+    db.flush_for_tests().await;
 
     let raw = db
         .query(

@@ -93,6 +93,11 @@ db.query(sql, params).await?;
 db.write(event).await?;
 ```
 
+`db.write(event).await` means the DB object accepted the event into its
+producer buffer. Tests that assert read-after-write rows must use the DB flush
+barrier or shutdown/reopen. Do not paper over visibility with sleeps, route
+projections, or direct SQLite readers.
+
 Empty table means empty result. Missing table or column means the schema
 contract is broken and must fail loudly; never add compatibility branches that
 treat missing ledger shape as empty data.
@@ -437,7 +442,7 @@ SELECT operation, path, success FROM fs_events ORDER BY timestamp DESC LIMIT 20;
 
 After any change touching guest binaries, network policy, telemetry, MCP, or VM lifecycle:
 
-1. `just run "capsem-doctor"` -- verifies sandbox integrity inside the VM
+1. `just exec "capsem-doctor"` -- verifies sandbox integrity inside the VM
 2. After telemetry/logging changes: run a real session and verify with `just inspect-session` that net_events, model_calls, tool_calls, tool_responses, fs_events, dns_events, and security_rule_events are populated correctly for the exercised protocols
 
 ## When tests fail

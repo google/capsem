@@ -23,6 +23,10 @@ Telemetry and security ledgers are database-owned.
 - Do not hardcode route-specific query helpers in `DbWriter` as a substitute
   for this boundary. The DB object is an execution/storage owner, not a route
   semantics registry.
+- `write(event).await` means the event was accepted into the DB-owned producer
+  buffer. Tests that need read-after-write visibility must use the DB flush
+  barrier or shutdown/reopen; route code must not sleep, poll, or build a
+  projection cache to make ledger rows appear.
 - Empty table means empty result. Missing table or column means broken schema
   and must fail loudly; do not add compatibility branches that treat missing
   ledger shape as empty data.
