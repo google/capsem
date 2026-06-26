@@ -119,10 +119,17 @@ def test_mock_server_serves_release_protocol_fixtures_from_one_process() -> None
             assert response.status == 200
             assert response.read() == b"capsem-mock-server:tiny\n"
 
+        with urlopen(f"{base_url}/html/about", timeout=5) as response:
+            html = response.read().decode()
+        assert "Capsem mock server about page" in html
+        assert "Google" in html
+        assert "<p>" in html
+
         with urlopen(f"{base_url}/sse/model", timeout=5) as response:
             sse = response.read().decode()
         assert "event: model.delta" in sse
         assert "event: model.tool_call" in sse
+        assert "fixture_lookup" in sse
 
         model_response = _get_json(f"{base_url}/model/response")
         assert model_response["id"] == "mock-model-response"

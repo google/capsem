@@ -307,7 +307,9 @@ async fn route(
         ),
         (&Method::GET, "/html/about") => response(
             StatusCode::OK,
-            Bytes::from_static(b"<html><body><h1>Capsem fixture</h1></body></html>\n"),
+            Bytes::from_static(
+                b"<html><body><main><h1>Capsem mock server about page</h1><p>Google fixture content for local MCP extraction.</p></main></body></html>\n",
+            ),
             "text/html; charset=utf-8",
         ),
         (&Method::GET, "/html/large") => {
@@ -322,6 +324,7 @@ async fn route(
             Bytes::from_static(
                 b"event: model.delta\ndata: {\"delta\":\"hello\"}\n\n\
 event: model.tool_call\ndata: {\"name\":\"write_file\",\"arguments\":{\"path\":\"/root/poem.md\"}}\n\n\
+event: model.tool_call\ndata: {\"name\":\"fixture_lookup\",\"arguments\":{\"query\":\"capsem\"}}\n\n\
 event: model.done\ndata: {\"finish_reason\":\"stop\"}\n\n",
             ),
             "text/event-stream",

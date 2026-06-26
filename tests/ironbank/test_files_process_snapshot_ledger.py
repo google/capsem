@@ -87,6 +87,8 @@ SECURITY_ROUTE_FIELDS = {
     "rule_json",
     "event_json",
     "trace_id",
+    "turn_id",
+    "credential_ref",
 }
 
 
