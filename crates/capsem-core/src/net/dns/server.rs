@@ -40,6 +40,9 @@ use crate::security_engine::{
     SecurityEnforcementDecision, SecurityEvent,
 };
 
+const CAPSEM_LOCAL_NXDOMAIN_SUFFIX: &str = ".capsem-bogus";
+const CAPSEM_LOCAL_NXDOMAIN_RULE: &str = "resolver.local_nxdomain.capsem_bogus";
+
 /// Result of handling one DNS query. The answer bytes are always
 /// populated -- on every path we have something to send back to the
 /// guest, even if it's a synthetic SERVFAIL covering an upstream
@@ -375,6 +378,27 @@ impl DnsHandler {
 
         let policy = self.policy_snapshot();
 
+        if is_capsem_local_nxdomain_name(&query.qname) {
+            debug!(
+                qname = %query.qname,
+                qtype = query.qtype,
+                matched_rule = CAPSEM_LOCAL_NXDOMAIN_RULE,
+                "dns handler: local NXDOMAIN fixture"
+            );
+            let nxd = match build_nxdomain(query_bytes) {
+                Ok(b) => b,
+                Err(e) => {
+                    warn!(error = %e, "dns handler: failed to encode local NXDOMAIN fixture");
+                    let sf = build_servfail(query_bytes).unwrap_or_default();
+                    return DnsHandlerResult::upstream_failed(sf, query, 0);
+                }
+            };
+            let mut result =
+                DnsHandlerResult::denied(nxd, query, CAPSEM_LOCAL_NXDOMAIN_RULE.to_string());
+            apply_security_enforcement_fields(&mut result, &dns_evaluation.enforcement);
+            return result;
+        }
+
         // T3.d -- DNS redirect rules. Checked AFTER security enforcement
         // (a blocked query stays NXDOMAIN; redirect never weakens a block)
         // and BEFORE the upstream forward (no network round trip when an
@@ -469,6 +493,11 @@ fn response_rcode(bytes: &[u8]) -> u16 {
         return 2;
     }
     u16::from(bytes[3] & 0x0F)
+}
+
+fn is_capsem_local_nxdomain_name(qname: &str) -> bool {
+    let name = qname.trim_end_matches('.').to_ascii_lowercase();
+    name == "capsem-bogus" || name.ends_with(CAPSEM_LOCAL_NXDOMAIN_SUFFIX)
 }
 
 #[cfg(test)]

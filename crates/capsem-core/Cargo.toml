@@ -110,3 +110,7 @@ harness = false
 [[bench]]
 name = "security_actions"
 harness = false
+
+[[bench]]
+name = "dns_handler"
+harness = false

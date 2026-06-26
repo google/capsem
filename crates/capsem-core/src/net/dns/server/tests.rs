@@ -69,3 +69,32 @@ async fn dns_handler_blocks_query_through_security_event_rules() {
     );
     assert_eq!(result.policy_reason.as_deref(), Some("dns test block"));
 }
+
+#[tokio::test]
+async fn dns_handler_returns_local_nxdomain_for_capsem_bogus_without_upstream() {
+    let handler = DnsHandler::new(
+        shared_policy(),
+        security_rules(""),
+        plugin_policy(),
+        Arc::new(DnsResolver::with_upstreams(Vec::new())),
+    );
+
+    let result = handler
+        .handle(&build_query_bytes(
+            "load-test.capsem-bogus.",
+            RecordType::A,
+            0xBEEF,
+        ))
+        .await;
+
+    assert_eq!(result.decision, Decision::Denied);
+    assert_eq!(result.rcode, 3);
+    assert_eq!(result.upstream_resolver_ms, 0);
+    assert_eq!(
+        result.matched_rule.as_deref(),
+        Some(CAPSEM_LOCAL_NXDOMAIN_RULE)
+    );
+    assert_eq!(result.policy_action.as_deref(), Some("allow"));
+    assert_eq!(result.policy_mode.as_deref(), Some("security_event"));
+    assert!(!result.answer_bytes.is_empty());
+}

@@ -38,9 +38,11 @@ share machinery:
     ]
   }
 
-Default qname is `api.openai.com` so the benchmark exercises the
-security-rule evaluation path. Override via `CAPSEM_BENCH_DNS_QNAME`
-to benchmark another domain or the upstream-forward path (e.g. `elie.net`).
+Default qname is `load-test.capsem-bogus`, a Capsem-local bogus TLD
+fixture resolved as local NXDOMAIN in the host DNS handler. That keeps
+the benchmark self-contained: no upstream resolver latency, timeouts,
+or public DNS variance. Override via `CAPSEM_BENCH_DNS_QNAME` to
+benchmark another domain or the upstream-forward path (e.g. `elie.net`).
 """
 
 import os
@@ -78,7 +80,7 @@ def _percentile(sorted_values, q):
     return sorted_values[f] + (sorted_values[c] - sorted_values[f]) * (k - f)
 
 
-DEFAULT_QNAME = "api.openai.com"
+DEFAULT_QNAME = "load-test.capsem-bogus"
 DEFAULT_QTYPE = 1  # A
 DEFAULT_CONCURRENCY = (1, 10, 50, 200)
 DEFAULT_DURATION_S = 10.0
