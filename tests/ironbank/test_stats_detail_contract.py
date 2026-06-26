@@ -173,6 +173,32 @@ def _create_schema(conn: sqlite3.Connection) -> None:
             trace_id TEXT,
             credential_ref TEXT
         );
+        CREATE TABLE tool_responses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            model_call_id INTEGER NOT NULL,
+            call_id TEXT NOT NULL,
+            content_preview TEXT,
+            trace_id TEXT,
+            credential_ref TEXT
+        );
+        CREATE TABLE model_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id TEXT NOT NULL,
+            model_call_id INTEGER NOT NULL,
+            timestamp TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            model TEXT,
+            path TEXT NOT NULL,
+            trace_id TEXT,
+            kind TEXT NOT NULL,
+            item_index INTEGER NOT NULL,
+            call_id TEXT NOT NULL DEFAULT '',
+            tool_name TEXT,
+            arguments TEXT,
+            content TEXT,
+            content_hash TEXT NOT NULL,
+            credential_ref TEXT
+        );
         CREATE TABLE event_body_blobs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             event_id TEXT NOT NULL,
@@ -286,8 +312,45 @@ def _create_schema(conn: sqlite3.Connection) -> None:
             event_json TEXT NOT NULL,
             trace_id TEXT
         );
+        CREATE TABLE security_decision_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id TEXT NOT NULL,
+            stage TEXT NOT NULL,
+            effective_decision TEXT NOT NULL,
+            credential_ref TEXT
+        );
+        CREATE TABLE security_ask_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id TEXT NOT NULL,
+            ask_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            event_json TEXT NOT NULL,
+            trace_id TEXT
+        );
+        CREATE TABLE profile_mutation_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            mutation_id TEXT NOT NULL,
+            profile_id TEXT NOT NULL,
+            status TEXT NOT NULL
+        );
         """
     )
+    for table in (
+        "net_events",
+        "model_calls",
+        "tool_calls",
+        "tool_responses",
+        "model_items",
+        "event_body_blobs",
+        "dns_events",
+        "fs_events",
+        "exec_events",
+        "audit_events",
+        "substitution_events",
+        "security_rule_events",
+    ):
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN turn_id TEXT")
+    conn.execute("ALTER TABLE security_rule_events ADD COLUMN credential_ref TEXT")
 
 
 def _seed_session_db(db_path: Path) -> None:

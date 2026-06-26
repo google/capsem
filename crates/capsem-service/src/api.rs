@@ -49,6 +49,7 @@ pub struct ForkRequest {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ForkResponse {
+    pub id: String,
     pub name: String,
     pub size_bytes: u64,
 }
@@ -259,6 +260,7 @@ impl SandboxInfo {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct VmStatusResponse {
     pub id: String,
+    pub name: String,
     pub status: VmLifecycleState,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pid: Option<u32>,

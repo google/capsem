@@ -162,9 +162,7 @@ impl PersistentRegistry {
 }
 
 pub fn new_persistent_vm_id() -> String {
-    capsem_core::security_engine::SecurityEventId::new_uuid4()
-        .as_str()
-        .to_string()
+    uuid::Uuid::new_v4().to_string()
 }
 
 #[cfg(test)]

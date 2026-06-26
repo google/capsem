@@ -678,6 +678,7 @@ impl ServiceState {
         }
     }
 
+    #[cfg(test)]
     fn rename_session_db_handle(&self, old_vm_id: &str, new_vm_id: &str) {
         let mut handles = self.session_db_handles.lock().unwrap();
         if let Some(handle) = handles.remove(old_vm_id) {
@@ -2867,6 +2868,7 @@ async fn handle_fork(
     }
 
     Ok(Json(ForkResponse {
+        id: vm_id,
         name: name.clone(),
         size_bytes,
     }))
@@ -3371,6 +3373,7 @@ async fn handle_vm_status(
         if let Some(i) = instances.get(&id) {
             return Ok(Json(api::VmStatusResponse {
                 id: i.id.clone(),
+                name: persistent_name_for_route_id(&state, &id).unwrap_or_else(|| i.id.clone()),
                 status: VmLifecycleState::Running,
                 pid: Some(i.pid),
                 persistent: i.persistent,
@@ -3391,6 +3394,7 @@ async fn handle_vm_status(
             let (status, can_resume, blocked_reason) = state.persistent_entry_resume_state(&entry);
             return Ok(Json(api::VmStatusResponse {
                 id: vm_id,
+                name: entry.name.clone(),
                 status,
                 pid: None,
                 persistent: true,

@@ -1091,7 +1091,7 @@ async fn profile_mcp_server_edit_delete_persist_profile_and_mutation_ledger() {
     let rows = reader
         .query_raw(
             "SELECT profile_id, category, filename, target_kind, target_key, operation, status \
-             FROM profile_mutation_events ORDER BY mutation_id ASC",
+             FROM profile_mutation_events ORDER BY id ASC",
         )
         .expect("query profile mutation events");
     let rows: serde_json::Value = serde_json::from_str(&rows).unwrap();
@@ -2688,7 +2688,7 @@ async fn profile_skills_routes_persist_profile_and_mutation_ledger() {
     let rows = reader
         .query_raw(
             "SELECT profile_id, category, filename, target_kind, target_key, operation, status \
-             FROM profile_mutation_events ORDER BY mutation_id ASC",
+             FROM profile_mutation_events ORDER BY id ASC",
         )
         .expect("query profile mutation events");
     let rows: serde_json::Value = serde_json::from_str(&rows).unwrap();
@@ -6334,6 +6334,8 @@ async fn handle_fork_creates_persistent_sandbox() {
     )
     .await
     .unwrap();
+    assert_ne!(result.0.id, "my-fork");
+    uuid::Uuid::parse_str(&result.0.id).expect("fork response id should be a UUID");
     assert_eq!(result.0.name, "my-fork");
     assert!(result.0.size_bytes > 0);
     // Verify fork created a persistent sandbox entry in the registry
@@ -6465,6 +6467,8 @@ async fn handle_fork_from_persistent_registry() {
     )
     .await
     .unwrap();
+    assert_ne!(result.0.id, "from-pers");
+    uuid::Uuid::parse_str(&result.0.id).expect("fork response id should be a UUID");
     assert_eq!(result.0.name, "from-pers");
     let registry = state.persistent_registry.lock().unwrap();
     let entry = registry.get("from-pers").unwrap();

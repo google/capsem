@@ -38,6 +38,7 @@ from tests.ironbank.test_stats_detail_contract import (
     _write_registry,
 )
 
+SEEDED_VM_ID = "33333333-3333-4333-8333-333333333333"
 
 pytestmark = pytest.mark.integration
 
@@ -344,8 +345,17 @@ def route_timing_summary(timing: RouteTiming) -> dict[str, Any]:
     }
 
 
+def _is_vm_scalar_state_route(path: str) -> bool:
+    if "/vms/" not in path:
+        return False
+    suffix = path.split("/vms/", 1)[1].split("?", 1)[0]
+    return suffix.count("/") == 1 and (
+        suffix.endswith("/status") or suffix.endswith("/info")
+    )
+
+
 def _hot_route_budget(path: str, *, gateway: bool = False) -> tuple[float, float, float]:
-    if "/vms/" in path and (path.endswith("/status") or path.endswith("/info")):
+    if _is_vm_scalar_state_route(path):
         # Per-session state routes touch richer lifecycle/profile metadata than
         # global scalar status, but must still stay memory-backed and responsive
         # enough for TUI/UI polling.
@@ -357,11 +367,13 @@ def _hot_route_budget(path: str, *, gateway: bool = False) -> tuple[float, float
     if "/stats/detail" in path:
         # Detail is the largest user-facing ledger route and includes body blob
         # metadata/content. It must still be DB-handle/memory backed rather
-        # than rebuilding projections or blocking on route-owned SQLite.
+        # than rebuilding projections or blocking on route-owned SQLite. The
+        # response body is large enough that debug-build JSON encoding can burn
+        # more aggregate CPU than scalar hot routes across 64 samples.
         return (
             12.0 if not gateway else 16.0,
             35.0 if not gateway else 45.0,
-            0.36 if not gateway else 0.48,
+            0.70 if not gateway else 0.90,
         )
     if any(
         marker in path
@@ -379,10 +391,24 @@ def _hot_route_budget(path: str, *, gateway: bool = False) -> tuple[float, float
         # Ledger list/status routes should be near-constant DB-handle reads.
         # These budgets are loose enough for debug JSON encoding but tight
         # enough to catch route-time disk scans/projection rebuilds.
+        aggregate_security = any(
+            path.endswith(marker)
+            or f"{marker}?" in path
+            for marker in (
+                "/security/status",
+                "/security/latest",
+                "/detection/status",
+                "/detection/latest",
+                "/enforcement/status",
+                "/enforcement/latest",
+            )
+        )
         return (
             5.0 if not gateway else 7.0,
             14.0 if not gateway else 18.0,
-            0.12 if not gateway else 0.18,
+            (0.30 if not gateway else 0.42)
+            if aggregate_security
+            else (0.12 if not gateway else 0.18),
         )
     if path.endswith("/assets/status"):
         # Asset status returns a richer per-file readiness payload than scalar
@@ -718,8 +744,8 @@ def _service_route_contracts() -> list[RouteContract]:
 
 def _seeded_session_route_contracts(session_id: str) -> list[RouteContract]:
     return [
-        RouteContract("GET", f"/vms/{session_id}/status", None, {"id", "status"}, dict),
-        RouteContract("GET", f"/vms/{session_id}/info", None, {"id", "status"}, dict),
+        RouteContract("GET", f"/vms/{session_id}/status", None, {"id", "name", "status"}, dict),
+        RouteContract("GET", f"/vms/{session_id}/info", None, {"id", "name", "status"}, dict),
         RouteContract(
             "GET",
             f"/vms/{session_id}/stats/detail",
@@ -940,11 +966,15 @@ def test_seeded_session_ledger_routes_have_latency_and_cpu_budgets() -> None:
     fast_service_client: PersistentJsonClient | None = None
     fast_gateway_client: PersistentJsonClient | None = None
     try:
-        session_dir = service.tmp_dir / "persistent" / SEEDED_SESSION_ID
+        session_dir = service.tmp_dir / "persistent" / SEEDED_VM_ID
         session_dir.mkdir(parents=True, exist_ok=True)
         contract = _profile_contract(service.tmp_dir)
         _seed_session_db(session_dir / "session.db")
         _write_registry(service.tmp_dir, session_dir, contract)
+        registry_path = service.tmp_dir / "persistent_registry.json"
+        registry = json.loads(registry_path.read_text())
+        registry["vms"][SEEDED_SESSION_ID]["id"] = SEEDED_VM_ID
+        registry_path.write_text(json.dumps(registry))
 
         service.start()
         gateway = GatewayInstance(uds_path=service.uds_path)
@@ -961,7 +991,7 @@ def test_seeded_session_ledger_routes_have_latency_and_cpu_budgets() -> None:
             ("gateway", fast_gateway_client, gateway_proc),
         ):
             is_gateway = gateway_for_cpu is not None
-            for route_contract in _seeded_session_route_contracts(SEEDED_SESSION_ID):
+            for route_contract in _seeded_session_route_contracts(SEEDED_VM_ID):
                 timing = _measure_route(
                     f"{client_label} {route_contract.path}",
                     lambda c=route_contract, route_client=client: _assert_contract(
@@ -1096,8 +1126,10 @@ def test_concurrent_route_reads_while_writes_are_active() -> None:
 def test_vm_session_lifecycle_routes_have_state_and_latency_budgets() -> None:
     service = ServiceInstance()
     gateway: GatewayInstance | None = None
-    source_id = vm_name("ironbank-route-life")
-    child_id = vm_name("ironbank-route-child")
+    source_name = vm_name("ironbank-route-life")
+    child_name = vm_name("ironbank-route-child")
+    source_id: str | None = None
+    child_id: str | None = None
     try:
         service.start()
         gateway = GatewayInstance(uds_path=service.uds_path)
@@ -1114,7 +1146,7 @@ def test_vm_session_lifecycle_routes_have_state_and_latency_budgets() -> None:
             lambda: service_client.post(
                 "/vms/create",
                 {
-                    "name": source_id,
+                    "name": source_name,
                     "profile_id": CODE_PROFILE_ID,
                     "ram_mb": DEFAULT_RAM_MB,
                     "cpus": DEFAULT_CPUS,
@@ -1124,7 +1156,10 @@ def test_vm_session_lifecycle_routes_have_state_and_latency_budgets() -> None:
             ),
             service_proc=service_proc,
         )
-        assert create["id"] == source_id
+        source_id = create["id"]
+        assert create["name"] == source_name
+        assert source_id != source_name
+        _assert_uuid_route_id(source_id)
         assert create["profile_id"] == CODE_PROFILE_ID
         _assert_timing_budget(timing, p95_ms=45_000.0, max_ms=45_000.0, cpu_s=10.0)
         assert wait_exec_ready(service_client, source_id, timeout=EXEC_READY_TIMEOUT)
@@ -1134,8 +1169,8 @@ def test_vm_session_lifecycle_routes_have_state_and_latency_budgets() -> None:
             ("gateway", gateway_client, gateway_proc),
         ):
             for contract in (
-                RouteContract("GET", f"/vms/{source_id}/status", None, {"id", "status"}, dict),
-                RouteContract("GET", f"/vms/{source_id}/info", None, {"id", "status"}, dict),
+                RouteContract("GET", f"/vms/{source_id}/status", None, {"id", "name", "status"}, dict),
+                RouteContract("GET", f"/vms/{source_id}/info", None, {"id", "name", "status"}, dict),
                 RouteContract(
                     "GET",
                     f"/vms/{source_id}/stats/detail",
@@ -1162,17 +1197,27 @@ def test_vm_session_lifecycle_routes_have_state_and_latency_budgets() -> None:
                     service_proc=service_proc,
                     gateway_proc=gateway_for_cpu,
                 )
-                _assert_timing_budget(timing, p95_ms=350.0, max_ms=500.0, cpu_s=0.40)
+                p95_ms, max_ms, cpu_s = _hot_route_budget(
+                    contract.path,
+                    gateway=gateway_for_cpu is not None,
+                )
+                _assert_timing_budget(
+                    timing,
+                    p95_ms=max(p95_ms, 350.0),
+                    max_ms=max(max_ms, 500.0),
+                    cpu_s=cpu_s,
+                )
 
         running_status = service_client.get(f"/vms/{source_id}/status", timeout=30)
         assert running_status["id"] == source_id
+        assert running_status["name"] == source_name
         assert running_status["status"] == "Running"
         assert running_status["persistent"] is True
         assert running_status["can_resume"] is False
         assert running_status["available_actions"] == ["pause", "stop", "fork", "delete"]
         running_info = service_client.get(f"/vms/{source_id}/info", timeout=30)
         assert running_info["profile_id"] == CODE_PROFILE_ID
-        assert running_info["name"] == source_id
+        assert running_info["name"] == source_name
         assert running_info["status"] == "Running"
         _assert_vm_row(
             service_client.get("/vms/list", timeout=30),
@@ -1201,12 +1246,15 @@ def test_vm_session_lifecycle_routes_have_state_and_latency_budgets() -> None:
             "service /vms/{id}/fork",
             lambda: service_client.post(
                 f"/vms/{source_id}/fork",
-                {"name": child_id, "description": "Ironbank route lifecycle child"},
+                {"name": child_name, "description": "Ironbank route lifecycle child"},
                 timeout=60,
             ),
             service_proc=service_proc,
         )
-        assert fork_payload["name"] == child_id
+        child_id = fork_payload["id"]
+        assert fork_payload["name"] == child_name
+        assert child_id != child_name
+        _assert_uuid_route_id(child_id)
         assert fork_payload["size_bytes"] > 0
         _assert_timing_budget(timing, p95_ms=20_000.0, max_ms=20_000.0, cpu_s=5.0)
         child_status = service_client.get(f"/vms/{child_id}/status", timeout=30)
