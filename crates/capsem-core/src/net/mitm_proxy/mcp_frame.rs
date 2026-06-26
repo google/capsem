@@ -19,7 +19,7 @@ use crate::mcp::types::{parse_namespaced, parse_resource_uri, JsonRpcRequest, Js
 use crate::net::policy_config::SecurityRuleSet;
 use crate::security_engine::{
     delegate_matching_security_rules_for_evaluated_event, emit_security_write,
-    evaluate_security_boundary, McpSecurityEvent, RuntimeSecurityEventType,
+    evaluate_security_boundary, McpSecurityEvent, ProcessSecurityEvent, RuntimeSecurityEventType,
     SecurityEnforcementAction, SecurityEnforcementDecision, SecurityEvent,
 };
 
@@ -662,9 +662,15 @@ fn security_event_from_mcp_call(call: &McpCall) -> SecurityEvent {
         ..Default::default()
     }
     .with_request_preview(call.request_preview.as_deref())
-    .with_response_preview(call.response_preview.as_deref());
+    .with_response_preview(call.response_preview.as_deref())
+    .with_error_message(call.error_message.as_deref());
     ensure_mcp_request_identity(&mut mcp, call.request_id.clone(), Some(call.method.clone()));
-    let security_event = SecurityEvent::new(RuntimeSecurityEventType::McpToolCall).with_mcp(mcp);
+    let security_event = SecurityEvent::new(RuntimeSecurityEventType::McpToolCall)
+        .with_mcp(mcp)
+        .with_process(ProcessSecurityEvent {
+            name: call.process_name.clone(),
+            ..Default::default()
+        });
     match call.trace_id.clone() {
         Some(trace_id) => security_event.with_trace_id(trace_id),
         None => security_event,
@@ -693,6 +699,9 @@ fn mcp_security_event_from_summary(
     response: Option<&JsonRpcResponse>,
 ) -> SecurityEvent {
     let response_preview = response.and_then(response_content);
+    let error_message = response
+        .and_then(|response| response.error.as_ref())
+        .map(|error| error.message.as_str());
     let tool_list = if summary.kind == McpMethodKind::ToolsList {
         response_preview.clone()
     } else {
@@ -709,13 +718,19 @@ fn mcp_security_event_from_summary(
         ..Default::default()
     }
     .with_request_preview(summary.request_preview.as_deref())
-    .with_response_preview(response_preview.as_deref());
+    .with_response_preview(response_preview.as_deref())
+    .with_error_message(error_message);
     ensure_mcp_request_identity(
         &mut mcp,
         summary.request_id.clone(),
         Some(summary.method.clone()),
     );
-    let event = SecurityEvent::new(event_type).with_mcp(mcp);
+    let event = SecurityEvent::new(event_type)
+        .with_mcp(mcp)
+        .with_process(ProcessSecurityEvent {
+            name: Some(process_name.to_string()),
+            ..Default::default()
+        });
     match crate::telemetry::ambient_capsem_trace_id() {
         Some(trace_id) => event.with_trace_id(trace_id),
         None => event,

@@ -687,11 +687,21 @@ pub(crate) async fn handle_ipc_connection(
                 let new_security_rules = Arc::new(runtime_config.security_rules);
                 let new_plugin_policy = runtime_config.plugins;
                 let new_model_endpoints = Arc::new(runtime_config.model_endpoints);
+                let security_rule_ids = new_security_rules
+                    .rules()
+                    .iter()
+                    .map(|rule| rule.rule_id.clone())
+                    .collect::<Vec<_>>();
 
                 *net_state.policy.write().unwrap() = new_network;
                 *mcp_runtime.security_rules.write().unwrap() = new_security_rules;
                 *mcp_runtime.plugin_policy.write().unwrap() = new_plugin_policy;
                 *mcp_runtime.model_endpoints.write().unwrap() = new_model_endpoints;
+                info!(
+                    security_rule_count = security_rule_ids.len(),
+                    security_rule_ids = ?security_rule_ids,
+                    "Reloaded profile runtime config"
+                );
 
                 capsem_core::try_send!(
                     "ipc_pong_reload",

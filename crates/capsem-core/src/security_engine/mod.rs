@@ -720,6 +720,7 @@ pub fn security_event_from_exec_event(event: &ExecEvent) -> SecurityEvent {
         ProcessSecurityEvent {
             exec_id: Some(event.exec_id.to_string()),
             exec_path: None,
+            name: event.process_name.clone(),
             command: Some(event.command.clone()),
             exit_code: None,
             stdout: None,
@@ -737,6 +738,7 @@ pub fn security_event_from_exec_complete_event(event: &ExecEventComplete) -> Sec
         ProcessSecurityEvent {
             exec_id: Some(event.exec_id.to_string()),
             exec_path: None,
+            name: None,
             command: None,
             exit_code: Some(event.exit_code.to_string()),
             stdout: event.stdout_preview.clone(),
@@ -750,6 +752,7 @@ pub fn security_event_from_audit_event(event: &AuditEvent) -> SecurityEvent {
         ProcessSecurityEvent {
             exec_id: event.audit_id.clone(),
             exec_path: Some(event.exe.clone()),
+            name: event.comm.clone(),
             command: Some(event.argv.clone()),
             exit_code: None,
             stdout: None,
@@ -2110,6 +2113,7 @@ pub struct McpSecurityEvent {
     pub tool_list: Option<String>,
     pub request: Option<McpRequestSecurityEvent>,
     pub response: Option<McpResponseSecurityEvent>,
+    pub error: Option<McpErrorSecurityEvent>,
 }
 
 impl Serialize for McpSecurityEvent {
@@ -2133,13 +2137,14 @@ impl Serialize for McpSecurityEvent {
             name: self.tool_call_name.as_deref(),
         };
 
-        let mut state = serializer.serialize_struct("McpSecurityEvent", 9)?;
+        let mut state = serializer.serialize_struct("McpSecurityEvent", 10)?;
         state.serialize_field("method", &self.method)?;
         state.serialize_field("server_name", &self.server_name)?;
         state.serialize_field("tool_call_name", &self.tool_call_name)?;
         state.serialize_field("tool_list", &self.tool_list)?;
         state.serialize_field("request", &self.request)?;
         state.serialize_field("response", &self.response)?;
+        state.serialize_field("error", &self.error)?;
         state.serialize_field("server", &server)?;
         state.serialize_field("tool_call", &tool_call)?;
         state.serialize_field(
@@ -2161,6 +2166,13 @@ impl McpSecurityEvent {
 
     pub fn with_response_preview(mut self, preview: Option<&str>) -> Self {
         self.response = preview.and_then(mcp_response_from_preview);
+        self
+    }
+
+    pub fn with_error_message(mut self, message: Option<&str>) -> Self {
+        self.error = message.map(|message| McpErrorSecurityEvent {
+            message: Some(message.to_string()),
+        });
         self
     }
 
@@ -2212,6 +2224,11 @@ pub struct McpRequestSecurityEvent {
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
 pub struct McpResponseSecurityEvent {
     pub content: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
+pub struct McpErrorSecurityEvent {
+    pub message: Option<String>,
 }
 
 fn mcp_request_from_preview(preview: &str) -> Option<McpRequestSecurityEvent> {
@@ -2382,6 +2399,7 @@ impl FileSecurityEvent {
 pub struct ProcessSecurityEvent {
     pub exec_id: Option<String>,
     pub exec_path: Option<String>,
+    pub name: Option<String>,
     pub command: Option<String>,
     pub exit_code: Option<String>,
     pub stdout: Option<String>,
@@ -2395,6 +2413,7 @@ impl ProcessSecurityEvent {
             "exec.valid" => Some(PolicySubjectValue::Bool(
                 self.exec_id.is_some()
                     || self.exec_path.is_some()
+                    || self.name.is_some()
                     || self.command.is_some()
                     || self.exit_code.is_some(),
             )),
@@ -2404,6 +2423,7 @@ impl ProcessSecurityEvent {
             "exec.stdout" => borrowed_string(self.stdout.as_deref()),
             "exec.stderr" => borrowed_string(self.stderr.as_deref()),
             "audit.valid" => Some(PolicySubjectValue::Bool(self.command.is_some())),
+            "name" => borrowed_string(self.name.as_deref()),
             "command" => borrowed_string(self.command.as_deref()),
             _ => None,
         }

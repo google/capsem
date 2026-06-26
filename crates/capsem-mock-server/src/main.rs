@@ -491,7 +491,13 @@ event: model.done\ndata: {\"finish_reason\":\"stop\"}\n\n",
             response(StatusCode::ACCEPTED, Bytes::new(), "application/json")
         }
         (&Method::POST, "/api/client/features") => json_response(json!({"version": 1, "features": []})),
-        (&Method::POST, "/mcp") => json_response(mcp_response(parse_json(&request_body))),
+        (&Method::POST, "/mcp") => {
+            let payload = parse_json(&request_body);
+            if mcp_payload_should_delay(&payload) {
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+            json_response(mcp_response(payload))
+        }
         (&Method::POST, "/echo") => json_response(echo_response(query, headers, request_body.len())),
         (&Method::POST, _) if path.starts_with("/v1internal") => {
             if path == "/v1internal:streamGenerateContent" {
@@ -1116,6 +1122,19 @@ fn mcp_response(payload: Value) -> Value {
         _ => {
             json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32601, "message": "method not found"}})
         }
+    }
+}
+
+fn mcp_payload_should_delay(payload: &Value) -> bool {
+    match payload.get("method").and_then(Value::as_str) {
+        Some("tools/call") => {
+            payload.pointer("/params/name").and_then(Value::as_str) == Some("slow_sleep")
+        }
+        Some("resources/read") => payload
+            .pointer("/params/uri")
+            .and_then(Value::as_str)
+            .is_some_and(|uri| uri == "doc://slow" || uri.ends_with("/doc://slow")),
+        _ => false,
     }
 }
 

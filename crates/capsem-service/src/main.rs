@@ -9717,6 +9717,7 @@ impl EnforcementEventInput {
             event = event.with_process(ProcessSecurityEvent {
                 exec_id: self.process_exec_id,
                 exec_path: self.process_exec_path,
+                name: None,
                 command: self.process_command,
                 exit_code: self.process_exit_code,
                 stdout: self.process_stdout,

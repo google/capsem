@@ -78,6 +78,15 @@ def _start_service():
     return svc
 
 
+def _start_mutable_profile_service():
+    svc = ServiceInstance()
+    profiles_dir = svc.tmp_dir / "config" / "profiles"
+    shutil.copytree(PROFILES_DIR, profiles_dir)
+    svc.profiles_dir = profiles_dir
+    svc.start()
+    return svc
+
+
 def _install_profile_mcp_servers(svc: ServiceInstance, mcp_servers: dict[str, dict]) -> None:
     profiles_dir = svc.tmp_dir / "config" / "profiles"
     shutil.copytree(PROFILES_DIR, profiles_dir)
@@ -511,7 +520,7 @@ sys.exit(proc.returncode)
             if row["request_id"] is None:
                 continue
             counts[row["request_id"]] = counts.get(row["request_id"], 0) + 1
-        assert counts == {"1": 1, "2": 1, "4": 1, "5": 1}
+        assert counts == {"1": 1, "2": 1, "3": 1, "4": 1, "5": 1}
         assert echo["tool_name"] == "local__echo"
         assert echo["server_name"] == "local"
         assert "framed-e2e" in echo["arguments"]
@@ -768,7 +777,7 @@ print(json.dumps({
 
 
 def test_framed_guest_mcp_policy_reload_blocks_existing_connection():
-    svc = _start_service()
+    svc = _start_mutable_profile_service()
     vm = None
     proc = None
     try:
@@ -776,6 +785,7 @@ def test_framed_guest_mcp_policy_reload_blocks_existing_connection():
         db_path = _session_db(svc, vm)
         script = r'''
 import json
+import os
 import subprocess
 import time
 
@@ -804,7 +814,11 @@ responses.append(send({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "param
     "name": "local__echo",
     "arguments": {"text": "before-reload"},
 }}))
-time.sleep(8)
+deadline = time.time() + 30
+while not os.path.exists("/root/reload-go"):
+    if time.time() > deadline:
+        raise TimeoutError("timed out waiting for reload-go sentinel")
+    time.sleep(0.2)
 responses.append(send({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
     "name": "local__echo",
     "arguments": {"text": "after-reload"},
@@ -833,6 +847,11 @@ print(json.dumps({"responses": responses, "stderr": proc.stderr.read()}))
         )
         reload_response = svc.client().post(f"/profiles/{CODE_PROFILE_ID}/reload", {}, timeout=15)
         assert reload_response["success"] is True
+        svc.client().post(
+            f"/vms/{vm}/files/write",
+            {"path": "/root/reload-go", "content": "go\n"},
+            timeout=30,
+        )
 
         stdout, stderr = proc.communicate(timeout=60)
         assert proc.returncode == 0, stderr
@@ -866,7 +885,7 @@ print(json.dumps({"responses": responses, "stderr": proc.stderr.read()}))
 
 def test_framed_guest_mcp_builtin_http_policy_writes_mcp_and_net_rows():
     with _local_builtin_http_fixture() as allowed_url:
-        svc = _start_service()
+        svc = _start_mutable_profile_service()
         vm = None
         try:
             allowed_port = allowed_url.rsplit(":", 1)[1]
@@ -1228,9 +1247,12 @@ sys.exit(proc.returncode)
         timeout_row = _wait_for_mcp_event_row(
             _session_db(svc, vm),
             lambda r: (
-                r["request_id"] == "slow-resource-request" and r["decision"] == "error"
+                r["request_id"] == "slow-resource-request"
+                and r["error_message"] is not None
+                and "timed out" in r["error_message"]
             ),
         )
+        assert timeout_row["decision"] == "allowed"
         assert timeout_row["server_name"] == server_name
         assert timeout_row["method"] == "resources/read"
         assert timeout_row["policy_action"] == "allow"
@@ -1259,13 +1281,15 @@ def test_framed_guest_mcp_reconnects_after_persistent_resume():
         stop_response = svc.client().post(f"/vms/{vm}/stop", {}, timeout=90)
         assert stop_response["success"] is True
         resume_response = svc.client().post(f"/vms/{vm}/resume", {}, timeout=120)
-        assert resume_response["id"] == vm
-        if not wait_exec_ready(svc.client(), vm):
-            pytest.fail(f"VM {vm} never became exec-ready after resume")
+        resumed_id = resume_response["id"]
+        assert resumed_id != vm
+        assert resume_response["name"] == vm
+        if not wait_exec_ready(svc.client(), resumed_id):
+            pytest.fail(f"VM {resumed_id} never became exec-ready after resume")
 
         second = _exec_cli(
             svc,
-            vm,
+            resumed_id,
             _guest_mcp_smoke_command("resume-e2e-after", "after-resume-list"),
             timeout=90,
         )

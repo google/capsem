@@ -27,5 +27,8 @@ walkdir = "2"
 blake3 = "1"
 capsem-guard = { version = "1.0.1776688771", path = "../capsem-guard" }
 
+[dev-dependencies]
+tempfile = "3"
+
 [lints]
 workspace = true

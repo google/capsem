@@ -389,6 +389,27 @@ fn build_profile_server_list_respects_local_builtin_enablement() {
 }
 
 #[test]
+fn build_profile_server_list_disables_builtin_pool_when_session_db_is_shared() {
+    let dir = tempfile::tempdir().unwrap();
+    let builtin = dir.path().join("capsem-mcp-builtin");
+    std::fs::write(&builtin, "#!/bin/sh\n").unwrap();
+    let mut env = HashMap::new();
+    env.insert(
+        "CAPSEM_SESSION_DB".to_string(),
+        dir.path().join("session.db").display().to_string(),
+    );
+
+    let list = build_profile_server_list(&McpProfileConfig::default(), Some(&builtin), env);
+
+    let local = list.iter().find(|server| server.name == "local").unwrap();
+    assert_eq!(
+        local.pool_size,
+        Some(1),
+        "pooled builtin peers cannot share one session DB writer safely"
+    );
+}
+
+#[test]
 fn build_profile_server_list_rejects_names_with_separator() {
     let mut profile = McpProfileConfig::default();
     profile.servers.push(crate::mcp::policy::McpManualServer {

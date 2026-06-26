@@ -41,21 +41,26 @@ fn local_builtin_server_def(
     enabled: bool,
 ) -> McpServerDef {
     // Stateless builtin tools that are safe to round-robin across pool
-    // peers. Snapshot tools (`snapshots_*`) mutate per-process state and
-    // therefore pin to peers[0].
+    // peers when the builtin is not writing a shared session ledger.
+    // Snapshot tools (`snapshots_*`) mutate per-process state and therefore
+    // pin to peers[0].
     let pool_safe_tools: Vec<String> = ["echo", "fetch_http", "grep_http", "http_headers"]
         .iter()
         .map(|s| (*s).to_string())
         .collect();
 
-    let default_pool = std::thread::available_parallelism()
-        .ok()
-        .map(|n| (n.get() as u32).clamp(1, 4));
-    let pool_size = std::env::var("CAPSEM_MCP_BUILTIN_POOL")
-        .ok()
-        .and_then(|s| s.parse::<u32>().ok())
-        .map(|n| n.clamp(1, 16))
-        .or(default_pool);
+    let pool_size = if builtin_env.contains_key("CAPSEM_SESSION_DB") {
+        Some(1)
+    } else {
+        let default_pool = std::thread::available_parallelism()
+            .ok()
+            .map(|n| (n.get() as u32).clamp(1, 4));
+        std::env::var("CAPSEM_MCP_BUILTIN_POOL")
+            .ok()
+            .and_then(|s| s.parse::<u32>().ok())
+            .map(|n| n.clamp(1, 16))
+            .or(default_pool)
+    };
 
     McpServerDef {
         name: "local".to_string(),
