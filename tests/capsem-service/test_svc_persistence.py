@@ -32,8 +32,13 @@ class TestPersistentCreate:
             "persistent": True,
         })
         assert resp is not None
+        vm_id = resp["id"]
+        assert uuid.UUID(vm_id)
+        assert resp["name"] == name
         try:
             info = client.get(f"/vms/{name}/info")
+            assert info["id"] == vm_id
+            assert info["name"] == name
             assert info["persistent"] is True
         finally:
             client.delete(f"/vms/{name}/delete")
@@ -92,8 +97,9 @@ class TestStopSemantics:
         client.post(f"/vms/{name}/stop", {})
 
         listing = client.get("/vms/list")
-        vm = next((s for s in listing["sandboxes"] if s["id"] == name), None)
+        vm = next((s for s in listing["sandboxes"] if s.get("name") == name), None)
         assert vm is not None, f"Persistent VM {name} not in list after stop"
+        assert uuid.UUID(vm["id"])
         assert vm["status"] == "Stopped"
         assert vm["persistent"] is True
 
@@ -167,19 +173,21 @@ class TestResumeLifecycle:
     def test_resume_running_returns_id(self, client):
         """Resuming an already-running persistent VM should return its ID."""
         name = vm_name("runres")
-        client.post("/vms/create", {
+        create = client.post("/vms/create", {
             "name": name,
             "profile_id": CODE_PROFILE_ID,
             "ram_mb": DEFAULT_RAM_MB,
             "cpus": DEFAULT_CPUS,
             "persistent": True,
         })
+        vm_id = create["id"]
         wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
 
         # Resume while running
         resp = client.post(f"/vms/{name}/resume", {})
         assert resp is not None
-        assert resp.get("id") == name
+        assert resp.get("id") == vm_id
+        assert resp.get("name") == name
 
         client.delete(f"/vms/{name}/delete")
 
@@ -203,6 +211,8 @@ class TestPersistConvert:
         # Verify it shows as persistent
         info = client.get(f"/vms/{new_name}/info")
         assert info is not None
+        assert info["id"] == vm_id
+        assert info["name"] == new_name
         assert info["persistent"] is True
 
         client.delete(f"/vms/{new_name}/delete")
@@ -257,8 +267,9 @@ class TestPurge:
         assert purge_resp is not None
 
         listing = client.get("/vms/list")
+        names = [s.get("name") for s in listing["sandboxes"]]
         ids = [s["id"] for s in listing["sandboxes"]]
-        assert persistent_name in ids, "Persistent VM was killed by purge without --all"
+        assert persistent_name in names, "Persistent VM was killed by purge without --all"
         assert eph_id not in ids, "Ephemeral VM survived purge"
 
         client.delete(f"/vms/{persistent_name}/delete")
@@ -279,8 +290,8 @@ class TestPurge:
         assert purge_resp.get("persistent_purged", 0) >= 1
 
         listing = client.get("/vms/list")
-        ids = [s["id"] for s in listing["sandboxes"]]
-        assert persistent_name not in ids, "Persistent VM survived purge --all"
+        names = [s.get("name") for s in listing["sandboxes"]]
+        assert persistent_name not in names, "Persistent VM survived purge --all"
 
     def test_purge_default_all_is_false(self, client):
         """Purge with empty body defaults all=false (safe default)."""
@@ -298,8 +309,8 @@ class TestPurge:
         assert purge_resp is not None
 
         listing = client.get("/vms/list")
-        ids = [s["id"] for s in listing["sandboxes"]]
-        assert persistent_name in ids, "Persistent VM was killed by purge with default all=false"
+        names = [s.get("name") for s in listing["sandboxes"]]
+        assert persistent_name in names, "Persistent VM was killed by purge with default all=false"
 
         client.delete(f"/vms/{persistent_name}/delete")
 
@@ -369,8 +380,9 @@ class TestListPersistence:
         client.post(f"/vms/{name}/stop", {})
 
         listing = client.get("/vms/list")
-        vm = next((s for s in listing["sandboxes"] if s["id"] == name), None)
+        vm = next((s for s in listing["sandboxes"] if s.get("name") == name), None)
         assert vm is not None, "Stopped persistent VM not in list"
+        assert uuid.UUID(vm["id"])
         assert vm["status"] == "Stopped"
         assert vm["pid"] == 0
 
@@ -388,8 +400,10 @@ class TestListPersistence:
         })
         try:
             listing = client.get("/vms/list")
-            vm = next((s for s in listing["sandboxes"] if s["id"] == name), None)
+            vm = next((s for s in listing["sandboxes"] if s.get("name") == name), None)
             assert vm is not None
+            assert uuid.UUID(vm["id"])
+            assert vm["name"] == name
             assert "persistent" in vm
             assert vm["persistent"] is True
         finally:

@@ -178,8 +178,8 @@ class TestPurge:
         from helpers.uds_client import UdsHttpClient
         client = UdsHttpClient(uds_path)
         listing = client.get("/vms/list")
-        ids = [s["id"] for s in listing["sandboxes"]]
-        assert name in ids, f"Persistent VM {name} was destroyed despite user saying 'n'"
+        names = [s.get("name") for s in listing["sandboxes"]]
+        assert name in names, f"Persistent VM {name} was destroyed despite user saying 'n'"
         # Cleanup
         client.delete(f"/vms/{name}/delete")
 
@@ -195,8 +195,8 @@ class TestPurge:
         from helpers.uds_client import UdsHttpClient
         client = UdsHttpClient(uds_path)
         listing = client.get("/vms/list")
-        ids = [s["id"] for s in listing["sandboxes"]]
-        assert name not in ids, f"Persistent VM {name} survived purge --all with 'y'"
+        names = [s.get("name") for s in listing["sandboxes"]]
+        assert name not in names, f"Persistent VM {name} survived purge --all with 'y'"
 
 
 class TestListQuiet:
@@ -208,8 +208,10 @@ class TestListQuiet:
         try:
             stdout, _, rc = run_cli("list", "-q", uds_path=uds_path)
             assert rc == 0
-            # Should contain the VM name as a line, no header
-            assert name in stdout
+            # Quiet mode is intentionally route-id oriented.
+            quiet_ids = [line.strip() for line in stdout.splitlines() if line.strip()]
+            assert any(uuid.UUID(line) for line in quiet_ids)
+            assert name not in quiet_ids
             assert "STATUS" not in stdout  # no table header
         finally:
             run_cli("delete", name, uds_path=uds_path)

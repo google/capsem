@@ -128,10 +128,12 @@ def test_persist_converts_ephemeral(mcp_session):
 
         # After persist the sandbox is known by its new name.
         listing = parse_content(mcp_session.call_tool("capsem_list"))
-        ids = {s["id"] for s in listing["sandboxes"]}
-        assert new_name in ids, f"{new_name} missing from list after persist: {ids}"
+        names = {s.get("name") for s in listing["sandboxes"]}
+        assert new_name in names, f"{new_name} missing from list after persist: {names}"
 
         info = parse_content(mcp_session.call_tool("capsem_info", {"id": new_name}))
+        assert uuid.UUID(info["id"])
+        assert info["name"] == new_name
         assert info.get("persistent") is True, f"info after persist: {info}"
     finally:
         for candidate in (new_name, vm_id):
@@ -174,8 +176,9 @@ def test_purge_ephemeral_only(fresh_vm, mcp_session):
     mcp_session.call_tool("capsem_purge", {"all": False})
 
     listing = parse_content(mcp_session.call_tool("capsem_list"))
+    names = {s.get("name") for s in listing["sandboxes"]}
     ids = {s["id"] for s in listing["sandboxes"]}
-    assert named in ids, f"persistent VM {named} removed by purge all=false"
+    assert named in names, f"persistent VM {named} removed by purge all=false"
     assert eph_id not in ids, f"ephemeral {eph_id} survived purge all=false"
 
 
@@ -217,8 +220,8 @@ def test_isolated_mcp_session_does_not_affect_shared_service(
         isolated_mcp_session.call_tool("capsem_purge", {"all": True})
 
         listing = parse_content(mcp_session.call_tool("capsem_list"))
-        ids = {s["id"] for s in listing["sandboxes"]}
-        assert bystander in ids, (
+        names = {s.get("name") for s in listing["sandboxes"]}
+        assert bystander in names, (
             f"{bystander} destroyed by isolated purge -- services are not isolated"
         )
     finally:

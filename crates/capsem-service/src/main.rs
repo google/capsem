@@ -237,6 +237,7 @@ struct AssetReconcileState {
 
 struct InstanceInfo {
     id: String,
+    name: String,
     profile_id: String,
     profile_revision: String,
     profile_payload_hash: String,
@@ -1321,6 +1322,7 @@ impl ServiceState {
             id.to_string(),
             InstanceInfo {
                 id: id.to_string(),
+                name: name.to_string(),
                 profile_id,
                 profile_revision,
                 profile_payload_hash,
@@ -1548,6 +1550,7 @@ impl ServiceState {
             vm_id.clone(),
             InstanceInfo {
                 id: vm_id.clone(),
+                name: entry.name.clone(),
                 profile_id: entry.profile_id.clone(),
                 profile_revision: entry.profile_revision.clone(),
                 profile_payload_hash: entry.profile_payload_hash.clone(),
@@ -2927,7 +2930,13 @@ fn classify_attempt_decision(outcome: ProvisionAttemptOutcome, id: &str) -> Atte
 }
 
 fn existing_session_names(state: &ServiceState) -> Vec<String> {
-    let mut existing: Vec<String> = state.instances.lock().unwrap().keys().cloned().collect();
+    let mut existing: Vec<String> = state
+        .instances
+        .lock()
+        .unwrap()
+        .values()
+        .map(|instance| instance.name.clone())
+        .collect();
     existing.extend(
         state
             .persistent_registry
@@ -2965,11 +2974,17 @@ async fn handle_provision(
         let existing = existing_session_names(&state);
         generate_profile_session_name(&profile_id, existing.iter().map(|s| s.as_str()))
     });
-    let id = if payload.persistent {
-        new_persistent_vm_id()
-    } else {
-        name.clone()
-    };
+    let persistent = payload.persistent || payload.name.is_some() || payload.from.is_some();
+    if existing_session_names(&state)
+        .iter()
+        .any(|existing| existing == &name)
+    {
+        return Err(AppError(
+            StatusCode::CONFLICT,
+            format!("persistent VM \"{}\" already exists", name),
+        ));
+    }
+    let id = new_persistent_vm_id();
 
     let profile = state
         .profile_config(&profile_id)
@@ -3003,7 +3018,7 @@ async fn handle_provision(
         let payload_env = payload.env.clone();
         let payload_from = payload.from.clone();
         let payload_profile_id = profile_id.clone();
-        let payload_persistent = payload.persistent;
+        let payload_persistent = persistent;
         let attempt = attempt_num.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
         async move {
             // Before retry attempts (>1), clear any state the prior
@@ -3234,11 +3249,7 @@ async fn handle_list(State(state): State<Arc<ServiceState>>) -> Json<ListRespons
                 VmLifecycleState::Running,
                 i.persistent,
             );
-            info.name = if i.persistent {
-                persistent_name_for_route_id(&state, &i.id).or_else(|| Some(i.id.clone()))
-            } else {
-                None
-            };
+            info.name = Some(i.name.clone());
             info.ram_mb = Some(i.ram_mb);
             info.cpus = Some(i.cpus);
             info.version = Some(i.base_version.clone());
@@ -3306,11 +3317,7 @@ async fn handle_info(
                         VmLifecycleState::Running,
                         i.persistent,
                     );
-                    info.name = if i.persistent {
-                        persistent_name_for_route_id(&state, &i.id).or_else(|| Some(i.id.clone()))
-                    } else {
-                        None
-                    };
+                    info.name = Some(i.name.clone());
                     info.ram_mb = Some(i.ram_mb);
                     info.cpus = Some(i.cpus);
                     info.version = Some(i.base_version.clone());
@@ -3373,7 +3380,7 @@ async fn handle_vm_status(
         if let Some(i) = instances.get(&id) {
             return Ok(Json(api::VmStatusResponse {
                 id: i.id.clone(),
-                name: persistent_name_for_route_id(&state, &id).unwrap_or_else(|| i.id.clone()),
+                name: i.name.clone(),
                 status: VmLifecycleState::Running,
                 pid: Some(i.pid),
                 persistent: i.persistent,
@@ -9801,10 +9808,6 @@ fn find_persistent_entry_by_route_id(state: &ServiceState, id: &str) -> Option<P
     entry
 }
 
-fn persistent_name_for_route_id(state: &ServiceState, id: &str) -> Option<String> {
-    find_persistent_entry_by_route_id(state, id).map(|entry| entry.name)
-}
-
 fn persistent_registry_key_for_route_id(state: &ServiceState, id: &str) -> Option<String> {
     let registry = state.persistent_registry.lock().unwrap();
     let key = registry
@@ -10391,7 +10394,7 @@ fn provision_response_for_running(
     })?;
     let status = VmLifecycleState::Running;
     Ok(ProvisionResponse {
-        name: persistent_name_for_route_id(state, &id).unwrap_or_else(|| id.clone()),
+        name: instance.name.clone(),
         id,
         profile_id: instance.profile_id.clone(),
         status,
@@ -10526,6 +10529,7 @@ async fn handle_persist(
                 id.clone(),
                 InstanceInfo {
                     id: id.clone(),
+                    name: name.clone(),
                     profile_id,
                     profile_revision,
                     profile_payload_hash,
@@ -10608,7 +10612,7 @@ async fn handle_purge(
         let instances = state.instances.lock().unwrap();
         registry
             .list()
-            .filter(|e| !instances.contains_key(&e.name))
+            .filter(|e| !instances.contains_key(&persistent_entry_vm_id(e)))
             .filter(|e| payload.all || e.defunct)
             .map(|e| e.name.clone())
             .collect()

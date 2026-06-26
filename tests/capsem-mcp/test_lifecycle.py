@@ -17,16 +17,16 @@ def test_create_and_delete(mcp_session):
 
     # Present in list
     res = mcp_session.call_tool("capsem_list")
-    ids = [s["id"] for s in parse_content(res)["sandboxes"]]
-    assert vm_name in ids
+    names = [s.get("name") for s in parse_content(res)["sandboxes"]]
+    assert vm_name in names
 
     # Delete
     mcp_session.call_tool("capsem_delete", {"id": vm_name})
 
     # Absent from list
     res = mcp_session.call_tool("capsem_list")
-    ids = [s["id"] for s in parse_content(res)["sandboxes"]]
-    assert vm_name not in ids
+    names = [s.get("name") for s in parse_content(res)["sandboxes"]]
+    assert vm_name not in names
 
 
 def test_create_with_resources(mcp_session):
@@ -40,7 +40,8 @@ def test_create_with_resources(mcp_session):
     try:
         res = mcp_session.call_tool("capsem_info", {"id": vm_name})
         info = parse_content(res)
-        assert info["id"] == vm_name
+        assert uuid.UUID(info["id"])
+        assert info["name"] == vm_name
     finally:
         try:
             mcp_session.call_tool("capsem_delete", {"id": vm_name})
@@ -80,7 +81,8 @@ def test_info_fields(shared_vm, mcp_session):
     vm_name, _ = shared_vm
     res = mcp_session.call_tool("capsem_info", {"id": vm_name})
     info = parse_content(res)
-    assert info["id"] == vm_name
+    assert uuid.UUID(info["id"])
+    assert info["name"] == vm_name
     assert "status" in info
     assert "pid" in info
 

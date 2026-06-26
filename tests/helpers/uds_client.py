@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+import uuid
 
 from helpers.constants import CODE_PROFILE_ID
 
@@ -12,7 +13,34 @@ class UdsHttpClient:
     def __init__(self, socket_path):
         self.socket_path = str(socket_path)
 
-    def _curl(self, method, path, body=None, timeout=60):
+    def _is_uuid(self, value):
+        try:
+            uuid.UUID(value)
+            return True
+        except ValueError:
+            return False
+
+    def _resolve_vm_path(self, path, timeout):
+        prefix = "/vms/"
+        if not path.startswith(prefix):
+            return path
+        rest = path[len(prefix):]
+        segment, sep, suffix = rest.partition("/")
+        if segment in {"create", "list"} or self._is_uuid(segment):
+            return path
+        try:
+            listing = self._curl("GET", "/vms/list", timeout=timeout, translate=False)
+        except Exception:
+            return path
+        for row in listing.get("sandboxes", []):
+            if row.get("id") == segment or row.get("name") == segment:
+                resolved = row["id"]
+                return f"{prefix}{resolved}{sep}{suffix}" if sep else f"{prefix}{resolved}"
+        return path
+
+    def _curl(self, method, path, body=None, timeout=60, translate=True):
+        if translate:
+            path = self._resolve_vm_path(path, timeout)
         cmd = [
             "curl", "-s", "-S",
             "--unix-socket", self.socket_path,
@@ -46,6 +74,7 @@ class UdsHttpClient:
 
     def get_text(self, path, timeout=60):
         """GET returning raw text (for endpoints that don't return JSON, e.g. /service-logs)."""
+        path = self._resolve_vm_path(path, timeout)
         cmd = [
             "curl", "-s", "-S",
             "--unix-socket", self.socket_path,
@@ -63,6 +92,7 @@ class UdsHttpClient:
 
     def post_bytes(self, path, data, timeout=60):
         """POST with a raw bytes body (for /vms/{id}/files/content uploads). Returns parsed JSON."""
+        path = self._resolve_vm_path(path, timeout)
         cmd = [
             "curl", "-s", "-S",
             "--unix-socket", self.socket_path,
@@ -81,6 +111,7 @@ class UdsHttpClient:
 
     def get_bytes(self, path, timeout=60):
         """GET returning raw bytes and status code (for binary downloads). Returns (status, body)."""
+        path = self._resolve_vm_path(path, timeout)
         cmd = [
             "curl", "-s", "-S", "-o", "-", "-w", "\n__STATUS__%{http_code}",
             "--unix-socket", self.socket_path,

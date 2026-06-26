@@ -284,6 +284,7 @@ fn insert_fake_instance_with_session_dir_and_pins(
         id.to_string(),
         InstanceInfo {
             id: id.to_string(),
+            name: id.to_string(),
             profile_id: "code".into(),
             profile_revision,
             profile_payload_hash,
@@ -6308,6 +6309,7 @@ async fn handle_fork_creates_persistent_sandbox() {
         "fork-src".into(),
         InstanceInfo {
             id: "fork-src".into(),
+            name: "fork-src".into(),
             profile_id: "code".into(),
             profile_revision: test_profile_revision(),
             profile_payload_hash: test_profile_payload_hash(),
@@ -6379,6 +6381,7 @@ async fn handle_fork_duplicate_returns_conflict() {
         "dup-src".into(),
         InstanceInfo {
             id: "dup-src".into(),
+            name: "dup-src".into(),
             profile_id: "code".into(),
             profile_revision: test_profile_revision(),
             profile_payload_hash: test_profile_payload_hash(),
@@ -6488,6 +6491,7 @@ async fn handle_persist_preserves_profile_identity() {
         "persist-src".into(),
         InstanceInfo {
             id: "persist-src".into(),
+            name: "persist-src".into(),
             profile_id: "code".into(),
             profile_revision: test_profile_revision(),
             profile_payload_hash: test_profile_payload_hash(),
@@ -7159,6 +7163,7 @@ async fn handle_suspend_rejects_ephemeral_vm() {
             "eph-vm".into(),
             InstanceInfo {
                 id: "eph-vm".into(),
+                name: "eph-vm".into(),
                 profile_id: "code".into(),
                 profile_revision: test_profile_revision(),
                 profile_payload_hash: test_profile_payload_hash(),
@@ -8732,6 +8737,7 @@ fn resolve_rejects_symlink_escape() {
         "test-vm".into(),
         InstanceInfo {
             id: "test-vm".into(),
+            name: "test-vm".into(),
             profile_id: "code".into(),
             profile_revision: test_profile_revision(),
             profile_payload_hash: test_profile_payload_hash(),
@@ -8766,6 +8772,7 @@ fn resolve_valid_path_inside_workspace() {
         "test-vm".into(),
         InstanceInfo {
             id: "test-vm".into(),
+            name: "test-vm".into(),
             profile_id: "code".into(),
             profile_revision: test_profile_revision(),
             profile_payload_hash: test_profile_payload_hash(),
@@ -8889,6 +8896,7 @@ fn setup_vm_with_workspace_and_uds(
         vm_id.into(),
         InstanceInfo {
             id: vm_id.into(),
+            name: vm_id.into(),
             profile_id: "code".into(),
             profile_revision: test_profile_revision(),
             profile_payload_hash: test_profile_payload_hash(),
@@ -9252,6 +9260,7 @@ async fn write_file_logs_import_before_guest_write() {
         "write-ledger-vm".into(),
         InstanceInfo {
             id: "write-ledger-vm".into(),
+            name: "write-ledger-vm".into(),
             profile_id: "code".into(),
             profile_revision: test_profile_revision(),
             profile_payload_hash: test_profile_payload_hash(),

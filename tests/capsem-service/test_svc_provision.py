@@ -1,6 +1,7 @@
 """Provision, list, info, and delete endpoint tests."""
 
 import pytest
+import uuid
 
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.service import vm_name
@@ -13,7 +14,8 @@ class TestProvision:
     def test_create_with_name(self, fresh_vm):
         name, resp = fresh_vm("prov")
         assert resp is not None
-        assert resp.get("id") == name or name in str(resp)
+        assert uuid.UUID(resp["id"])
+        assert resp["name"] == name
 
     def test_create_without_name(self, client):
         resp = client.post(
@@ -37,13 +39,15 @@ class TestProvision:
         first_id = first.get("id")
         second_id = second.get("id")
         try:
-            assert first_id.startswith("code-")
-            assert second_id.startswith("code-")
-            first_num = int(first_id.removeprefix("code-"))
-            second_num = int(second_id.removeprefix("code-"))
+            assert uuid.UUID(first_id)
+            assert uuid.UUID(second_id)
+            assert first["name"].startswith("code-")
+            assert second["name"].startswith("code-")
+            first_num = int(first["name"].removeprefix("code-"))
+            second_num = int(second["name"].removeprefix("code-"))
             assert second_num == first_num + 1
-            assert not first_id.startswith("tmp-")
-            assert not second_id.startswith("tmp-")
+            assert not first["name"].startswith("tmp-")
+            assert not second["name"].startswith("tmp-")
         finally:
             if first_id:
                 client.delete(f"/vms/{first_id}/delete")
@@ -83,7 +87,9 @@ class TestPersistence:
         assert resp is not None
         info = client.get(f"/vms/{name}/info")
         assert info is not None
-        assert info["id"] == name
+        assert uuid.UUID(info["id"])
+        assert info["id"] == resp["id"]
+        assert info["name"] == name
 
     def test_provision_default_not_persistent(self, client):
         resp = client.post(
@@ -111,14 +117,16 @@ class TestList:
     def test_list_contains_created_vm(self, fresh_vm, client):
         name, _ = fresh_vm("list")
         resp = client.get("/vms/list")
-        ids = [s["id"] for s in resp["sandboxes"]]
-        assert name in ids
+        names = [s.get("name") for s in resp["sandboxes"]]
+        assert name in names
 
     def test_list_fields(self, fresh_vm, client):
         name, _ = fresh_vm("fields")
         resp = client.get("/vms/list")
-        vm = next(s for s in resp["sandboxes"] if s["id"] == name)
+        vm = next(s for s in resp["sandboxes"] if s.get("name") == name)
         assert "id" in vm
+        assert uuid.UUID(vm["id"])
+        assert vm["name"] == name
         assert "status" in vm
 
 
@@ -128,7 +136,8 @@ class TestInfo:
         name, _ = fresh_vm("info")
         info = client.get(f"/vms/{name}/info")
         assert info is not None
-        assert info["id"] == name
+        assert uuid.UUID(info["id"])
+        assert info["name"] == name
 
     def test_info_nonexistent(self, client):
         resp = client.get("/vms/ghost-vm-404/info")

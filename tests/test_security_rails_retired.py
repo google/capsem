@@ -85,6 +85,7 @@ def test_session_event_writes_stay_behind_dbwriter():
         "crates/capsem-logger/src/db.rs",
         "crates/capsem-logger/src/reader.rs",
         "crates/capsem-logger/src/schema.rs",
+        "crates/capsem-logger/src/session_index.rs",
         "crates/capsem-logger/src/writer.rs",
         "crates/capsem-core/src/auto_snapshot.rs",
         "crates/capsem-core/src/session/index.rs",
@@ -135,7 +136,7 @@ def test_session_event_writes_stay_behind_dbwriter():
             continue
         for path in src.rglob("*.rs"):
             rel = path.relative_to(PROJECT_ROOT).as_posix()
-            if rel.endswith("/tests.rs") or "/tests/" in rel:
+            if rel.endswith("/tests.rs") or rel.endswith("_tests.rs") or "/tests/" in rel:
                 continue
             text = _production_text(path)
             if rel not in allowed_direct_sqlite:

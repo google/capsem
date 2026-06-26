@@ -162,8 +162,8 @@ def test_dbwriter_and_snapshot_source_boundaries_are_single_rail() -> None:
 
     assert 'DbWriter::open(&resolve_session_dir(&state' not in service_prod
     assert 'DbWriter::open(&session_dir.join("session.db")' not in service_prod
-    assert "profile_mutation_writer: Arc<capsem_logger::DbWriter>" in service_prod
-    assert "DbWriter::open(&main_db_path_for_run_dir(&run_dir)" in service_prod
+    assert "profile_mutation_db: Arc<capsem_logger::DbHandle>" in service_prod
+    assert "DbHandle::open(&db_path)" in service_prod
     assert "DbWriter::open(&state.main_db_path()" not in service_prod
     assert 'session_dir.join("session.db")' in service_prod
     assert "snapshot_status_from_session_dir(&session_dir)" in service_prod
@@ -179,5 +179,5 @@ def test_dbwriter_and_snapshot_source_boundaries_are_single_rail() -> None:
     assert "DROP TABLE IF EXISTS snapshot_events" in logger_schema
     assert "snapshot.event must not be a security-event type" in logger_schema
     assert "pub struct DbWriter" in logger_writer
-    assert "tokio::sync::mpsc::channel(capacity)" in logger_writer
+    assert "mpsc::channel()" in logger_writer
     assert '.name("capsem-db-writer".into())' in logger_writer

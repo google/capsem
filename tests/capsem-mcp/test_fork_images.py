@@ -59,6 +59,7 @@ def test_full_lifecycle(mcp_session):
     try:
         mcp_session.call_tool("capsem_create", {"name": vm_name})
         assert _wait_exec_ready(mcp_session, vm_name), f"VM {vm_name} never exec-ready"
+        source_info = parse_content(mcp_session.call_tool("capsem_info", {"id": vm_name}))
 
         mcp_session.call_tool("capsem_exec", {
             "id": vm_name,
@@ -89,7 +90,7 @@ def test_full_lifecycle(mcp_session):
         info = parse_content(res)
         assert info["name"] == fork_name
         assert info["description"] == "MCP lifecycle test fork"
-        assert info["forked_from"] == vm_name
+        assert info["forked_from"] == source_info["id"]
 
         # Boot a child from the fork
         mcp_session.call_tool("capsem_create", {
