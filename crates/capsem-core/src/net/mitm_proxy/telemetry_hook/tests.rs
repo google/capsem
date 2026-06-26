@@ -9,11 +9,13 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 async fn wait_for_db(
+    db: &capsem_logger::DbWriter,
     db_path: &std::path::Path,
     mut predicate: impl FnMut(&rusqlite::Connection) -> bool,
 ) -> bool {
     for _ in 0..250 {
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        db.flush().await;
         let conn = rusqlite::Connection::open(db_path).unwrap();
         if predicate(&conn) {
             return true;
@@ -698,7 +700,7 @@ async fn hook_writes_substitution_event_and_shared_credential_ref() {
         hook.on_response_end(&mut c);
     }
 
-    let seen = wait_for_db(&db_path, |conn| {
+    let seen = wait_for_db(&db, &db_path, |conn| {
         let net_count: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM net_events WHERE credential_ref = ?1",
@@ -781,7 +783,7 @@ async fn hook_does_not_repay_capture_ledger_for_repeated_identical_credential() 
         }
     }
 
-    let seen = wait_for_db(&db_path, |conn| {
+    let seen = wait_for_db(&db, &db_path, |conn| {
         let net_count: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM net_events WHERE credential_ref = ?1",
@@ -1022,7 +1024,7 @@ async fn hook_writes_injected_substitution_event_for_broker_ref_replay() {
         hook.on_response_end(&mut c);
     }
 
-    let seen = wait_for_db(&db_path, |conn| {
+    let seen = wait_for_db(&db, &db_path, |conn| {
         let injected_count: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM substitution_events WHERE substitution_ref = ?1 AND outcome = 'injected'",
@@ -1102,7 +1104,7 @@ async fn hook_detects_response_body_token_exchange_and_redacts_preview() {
         hook.on_response_end(&mut c);
     }
 
-    let seen = wait_for_db(&db_path, |conn| {
+    let seen = wait_for_db(&db, &db_path, |conn| {
         let row: Option<(String, String)> = conn
             .query_row(
                 "SELECT credential_ref, response_body_preview FROM net_events WHERE domain = 'api.github.com'",
