@@ -185,7 +185,7 @@ def test_mock_server_protocol_benchmark_artifact():
                 f"CAPSEM_BENCH_TOTAL_REQUESTS={total_requests}",
                 f"CAPSEM_BENCH_CONCURRENCY={concurrency}",
                 f"CAPSEM_BENCH_SCENARIOS={','.join(selected_scenarios)}",
-                "capsem-bench",
+                "capsem-bench-rs",
                 "protocol",
             ]
         )
@@ -195,7 +195,7 @@ def test_mock_server_protocol_benchmark_artifact():
             timeout=310,
         )
         assert resp and resp.get("exit_code") == 0, (
-            f"capsem-bench protocol failed to run local protocol scenarios: "
+            f"capsem-bench-rs protocol failed to run local protocol scenarios: "
             f"exit={resp.get('exit_code') if resp else None}\n"
             f"stdout: {(resp or {}).get('stdout', '')[:1000]}\n"
             f"stderr: {(resp or {}).get('stderr', '')[:1000]}"
@@ -207,7 +207,7 @@ def test_mock_server_protocol_benchmark_artifact():
             timeout=20,
         )
         assert resp and resp.get("exit_code") == 0, (
-            "capsem-bench protocol did not write /tmp/capsem-benchmark.json"
+            "capsem-bench-rs protocol did not write /tmp/capsem-benchmark.json"
         )
         data = json.loads(resp.get("stdout", "").strip())
         _assert_mock_server_protocol_succeeded(data)

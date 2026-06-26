@@ -10,7 +10,7 @@ repository.workspace = true
 authors.workspace = true
 
 [[bin]]
-name = "capsem-bench"
+name = "capsem-bench-rs"
 path = "src/main.rs"
 
 [dependencies]

@@ -1,6 +1,6 @@
 ---
 name: dev-benchmark
-description: Capsem benchmarking with capsem-bench. Use when running benchmarks, adding new benchmark categories, interpreting results, or investigating performance regressions. Covers benchmark categories (disk, rootfs, storage, startup, http, throughput, snapshot, all), the JSON output format, and how to add new benchmarks.
+description: Capsem benchmarking with capsem-bench and capsem-bench-rs. Use when running benchmarks, adding new benchmark categories, interpreting results, or investigating performance regressions. Covers benchmark categories (disk, rootfs, storage, startup, protocol/http, snapshot, all), the JSON output format, and how to add new benchmarks.
 ---
 
 # Benchmarking
@@ -12,16 +12,19 @@ just bench                          # Run the standard artifact-recording benchm
 just exec "capsem-bench snapshot"    # Snapshot benchmarks only
 just exec "capsem-bench disk"        # Disk I/O only
 just exec "capsem-bench storage"     # Storage split diagnostics
+just exec "capsem-bench-rs protocol" # Rust HTTP/model/MCP/DNS protocol benchmark
 just test                           # Full validation including benchmarks
 ```
 
 ## capsem-bench
 
-`capsem-bench` is the benchmark contract. Hot protocol/load benchmarks are
-being ported to the Rust binary at `crates/capsem-bench`; do not use Python
-load generation as release truth for HTTP, DNS, MCP/tools, model/SSE, or
-credential-broker paths. Python guest modules still cover legacy disk/rootfs,
-storage, startup, and snapshot modes until those modes are ported.
+`capsem-bench all` is the guest benchmark contract. Hot protocol benchmarks are
+implemented only by the Rust binary `capsem-bench-rs`; the Python wrapper may
+orchestrate them for `all`, but must not generate HTTP/protocol/throughput
+numbers itself. Do not add Python load generation as release truth for HTTP,
+DNS, MCP/tools, model/SSE, or credential-broker paths. Python guest modules
+still cover legacy disk/rootfs, storage, startup, and snapshot modes until
+those modes are ported.
 
 Structured JSON is saved to `/tmp/capsem-benchmark.json` for machine
 consumption. Hot protocol artifacts must include lane metadata so the same
@@ -39,17 +42,16 @@ scenario can be compared as `host_direct` and `guest_capsem`.
 | rootfs | `capsem-bench rootfs` | Read-only rootfs performance: largest-file sequential read, random 4K reads, large-binary sequential reads, small JS/package reads, and metadata stat-walk throughput |
 | storage | `capsem-bench storage` | Diagnostic split across rootfs reads and writable paths such as `/root`, `/tmp`, `/var/tmp`, `/var/log`, and `/run` |
 | startup | `capsem-bench startup` | Cold-start latency for python3, node, claude, gemini, codex |
-| http | `capsem-bench http [URL] [N] [C]` | HTTP throughput through MITM proxy (requests/sec, latency percentiles) |
-| throughput | `capsem-bench throughput` | 100MB download through MITM proxy (end-to-end MB/s) |
+| protocol/http | `capsem-bench-rs protocol` | HTTP, model/SSE, credential, MCP/tools, and DNS protocol scenarios against `capsem-mock-server` |
 | snapshot | `capsem-bench snapshot` | Snapshot create/list/changes/revert/delete via MCP (ms per op at 10/100/500 files) |
-| all | `capsem-bench` | Default production suite including storage split diagnostics; excludes long-running load diagnostics |
+| all | `capsem-bench all` | Default production suite including storage split diagnostics; with `CAPSEM_MOCK_SERVER_BASE_URL`, calls `capsem-bench-rs protocol` and merges the Rust network sections |
 
 ### Abstraction delta
 
 Every hot protocol benchmark needs paired lanes:
 
-- `host_direct`: host Rust `capsem-bench` directly against `capsem-mock-server`
-- `guest_capsem`: guest Rust `capsem-bench` through the real Capsem network path
+- `host_direct`: host Rust `capsem-bench-rs` directly against `capsem-mock-server`
+- `guest_capsem`: guest Rust `capsem-bench-rs` through the real Capsem network path
 
 The delta artifact must report the cost of Capsem's abstraction for each
 scenario: RPS ratio, throughput ratio, p50/p95/p99 latency delta, and error

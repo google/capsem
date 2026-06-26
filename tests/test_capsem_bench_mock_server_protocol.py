@@ -12,10 +12,10 @@ sys.path.insert(0, str(ARTIFACTS))
 
 class _StubConsole:
     def __init__(self, *args, **kwargs):
-        pass
+        self.messages = []
 
     def print(self, *args, **kwargs):
-        pass
+        self.messages.append(" ".join(str(arg) for arg in args))
 
 
 class _StubTable:
@@ -42,36 +42,44 @@ sys.modules.setdefault("rich.table", rich_table)
 sys.modules.setdefault("rich.text", rich_text)
 
 from capsem_bench import __main__ as bench_main  # noqa: E402
-from capsem_bench import http_bench, throughput  # noqa: E402
-from capsem_bench import mock_server_protocol  # noqa: E402
 from capsem_bench import load_harness  # noqa: E402
-from helpers.mock_server import start_mock_server, stop_process  # noqa: E402
 
 
-def test_mock_server_protocol_is_not_a_top_level_escape_hatch():
-    assert "mock-server-protocol" not in bench_main.VALID_MODES
-    assert "protocol" in bench_main.VALID_MODES
+def test_python_capsem_bench_has_no_http_protocol_or_throughput_modes():
+    assert "http" not in bench_main.VALID_MODES
+    assert "throughput" not in bench_main.VALID_MODES
+    assert "protocol" not in bench_main.VALID_MODES
     assert "storage" in bench_main.VALID_MODES
     assert "all" in bench_main.VALID_MODES
 
 
-def test_protocol_mode_delegates_to_required_rust_bench(monkeypatch):
+@pytest.mark.parametrize("mode", ["http", "throughput"])
+def test_python_hot_bench_modes_fail_closed_and_point_to_rust(mode, monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["capsem-bench", mode])
+    console = _StubConsole()
+    monkeypatch.setattr(bench_main, "console", console)
+
+    with pytest.raises(SystemExit) as exc:
+        bench_main.main()
+
+    assert exc.value.code == 127
+    output = "\n".join(console.messages)
+    assert f"capsem-bench {mode} is retired from Python" in output
+    assert "capsem-bench-rs" in output
+
+
+def test_protocol_mode_delegates_to_rust_bench(monkeypatch):
     calls = []
 
     class Completed:
         returncode = 7
 
-    monkeypatch.setattr(sys, "argv", [
-        "capsem-bench",
-        "protocol",
-        "--base-url",
-        "http://127.0.0.1:3713",
-    ])
     monkeypatch.setattr(
-        bench_main.os.path,
-        "exists",
-        lambda path: path == "/usr/local/bin/capsem-bench-rs",
+        sys,
+        "argv",
+        ["capsem-bench", "protocol", "--base-url", "http://127.0.0.1:3713"],
     )
+    monkeypatch.setattr(bench_main.os.path, "exists", lambda path: path == bench_main.RUST_BENCH)
     monkeypatch.setattr(
         bench_main.subprocess,
         "run",
@@ -82,236 +90,95 @@ def test_protocol_mode_delegates_to_required_rust_bench(monkeypatch):
         bench_main.main()
 
     assert exc.value.code == 7
-    assert calls == [([
-        "/usr/local/bin/capsem-bench-rs",
-        "protocol",
-        "--base-url",
-        "http://127.0.0.1:3713",
-    ], False)]
-
-
-def test_protocol_mode_fails_if_required_rust_bench_is_missing(monkeypatch):
-    monkeypatch.setattr(sys, "argv", ["capsem-bench", "protocol"])
-    monkeypatch.setattr(bench_main.os.path, "exists", lambda path: False)
-
-    with pytest.raises(SystemExit) as exc:
-        bench_main.main()
-
-    assert exc.value.code == 127
-
-
-def test_all_mode_includes_mock_server_protocol_when_mock_server_is_configured(monkeypatch):
-    monkeypatch.setenv(mock_server_protocol.BASE_URL_ENV, "http://127.0.0.1:3713")
-
-    assert bench_main._should_run_mock_server_protocol("all") is True
-    assert bench_main._should_run_mock_server_protocol("protocol") is True
-    assert bench_main._should_run_mock_server_protocol("disk") is False
-
-
-def test_http_bench_default_skips_without_local_or_public(monkeypatch):
-    monkeypatch.delenv(http_bench.LOCAL_MOCK_SERVER_ENV, raising=False)
-    monkeypatch.delenv("CAPSEM_BENCH_ALLOW_PUBLIC_NETWORK", raising=False)
-    result = http_bench.http_bench()
-    assert result["skipped"] is True
-    assert "local lab" in result["reason"]
-
-
-def test_http_bench_prefers_local_mock_server(monkeypatch):
-    monkeypatch.setenv(http_bench.LOCAL_MOCK_SERVER_ENV, "http://127.0.0.1:1234/")
-    monkeypatch.delenv("CAPSEM_BENCH_ALLOW_PUBLIC_NETWORK", raising=False)
-    assert http_bench._default_http_url() == "http://127.0.0.1:1234/tiny"
-
-
-def test_throughput_default_skips_without_local_or_public(monkeypatch):
-    monkeypatch.delenv(throughput.LOCAL_MOCK_SERVER_ENV, raising=False)
-    monkeypatch.delenv("CAPSEM_BENCH_ALLOW_PUBLIC_NETWORK", raising=False)
-    result = throughput.throughput_bench()
-    assert result["skipped"] is True
-    assert "local lab" in result["reason"]
-
-
-def test_throughput_prefers_local_mock_server(monkeypatch):
-    monkeypatch.setenv(throughput.LOCAL_MOCK_SERVER_ENV, "http://127.0.0.1:1234/")
-    monkeypatch.delenv("CAPSEM_BENCH_ALLOW_PUBLIC_NETWORK", raising=False)
-    target = throughput._throughput_target()
-    assert target == (
-        "http://127.0.0.1:1234/bytes/10mb",
-        throughput.LOCAL_THROUGHPUT_EXPECTED_BYTES,
-        "local",
-    )
-
-
-def test_base_url_requires_explicit_local_upstream(monkeypatch):
-    monkeypatch.delenv(mock_server_protocol.BASE_URL_ENV, raising=False)
-    with pytest.raises(ValueError, match=mock_server_protocol.BASE_URL_ENV):
-        mock_server_protocol._base_url(None)
-
-
-def test_base_url_accepts_env_and_strips_trailing_slash(monkeypatch):
-    monkeypatch.setenv(mock_server_protocol.BASE_URL_ENV, "http://127.0.0.1:1234/")
-    assert mock_server_protocol._base_url(None) == "http://127.0.0.1:1234"
-
-
-def test_base_url_rejects_non_http():
-    with pytest.raises(ValueError, match="invalid mock-server-protocol base URL"):
-        mock_server_protocol._base_url("file:///tmp/mock-server")
-
-
-def test_ws_url_matches_base_scheme():
-    assert (
-        mock_server_protocol._ws_url("http://127.0.0.1:1234", "/ws/echo")
-        == "ws://127.0.0.1:1234/ws/echo"
-    )
-    assert (
-        mock_server_protocol._ws_url("https://example.test", "/ws/echo")
-        == "wss://example.test/ws/echo"
-    )
-
-
-def test_websocket_uses_plain_url_without_socket_override(monkeypatch):
-    captured = {}
-
-    class FakeWebSocket:
-        def __init__(self):
-            self.last_payload = None
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return False
-
-        def send(self, payload):
-            self.last_payload = payload
-
-        def recv(self, timeout=None):
-            return self.last_payload
-
-        def close(self):
-            captured["closed"] = True
-
-    def fake_connect(url, **kwargs):
-        captured["url"] = url
-        captured["connect_kwargs"] = kwargs
-        return FakeWebSocket()
-
-    import websockets.sync.client as ws_client
-
-    monkeypatch.setattr(ws_client, "connect", fake_connect)
-
-    result = mock_server_protocol._run_websocket_scenario(
-        "http://127.0.0.1:50233",
-        {"name": "websocket_echo", "path": "/ws/echo", "frames": 1},
-        timeout_s=5,
-    )
-
-    assert result["failed"] is False
-    assert captured["url"] == "ws://127.0.0.1:50233/ws/echo"
-    assert "sock" not in captured["connect_kwargs"]
-    assert captured["connect_kwargs"]["proxy"] is None
-    assert captured["connect_kwargs"]["close_timeout"] <= 1.0
-    assert captured["closed"] is True
-
-
-def test_http_summary_has_latency_and_no_raw_secret_storage():
-    scenario = {
-        "name": "credential_response",
-        "path": "/credential/response",
-        "expected_status": 200,
-        "body_kind": "credential",
-        "secret_shaped_fixture": True,
-    }
-    results = [
-        {
-            "status": 200,
-            "size": 128,
-            "latency_ms": 1.0,
-            "error": None,
-            "required_text_present": True,
-            "secret_shaped_fixture_seen": True,
-        },
-        {
-            "status": 200,
-            "size": 128,
-            "latency_ms": 5.0,
-            "error": None,
-            "required_text_present": True,
-            "secret_shaped_fixture_seen": True,
-        },
+    assert calls == [
+        ([
+            bench_main.RUST_BENCH,
+            "protocol",
+            "--base-url",
+            "http://127.0.0.1:3713",
+        ], False)
     ]
-    summary = mock_server_protocol._summarize_http_results(
-        scenario, results, wall_time_s=0.01, total_requests=2, concurrency=1
-    )
-    assert summary["successful"] == 2
-    assert summary["failed"] == 0
-    assert summary["latency_ms"]["p50"] == 3.0
-    assert summary["secret_shaped_fixture_seen"] is True
-    assert summary["raw_secret_stored_in_result"] is False
-    assert "capsem_test_" not in repr(summary)
 
 
-def test_env_defaults_are_fast_and_overrideable(monkeypatch):
+def test_all_mode_keeps_network_sections_by_merging_rust_protocol(monkeypatch):
+    def fake_module(module_name, function_name):
+        module = types.ModuleType(module_name)
+        setattr(module, function_name, lambda: {"ok": module_name})
+        monkeypatch.setitem(sys.modules, module_name, module)
+
+    fake_module("capsem_bench.disk", "disk_bench")
+    fake_module("capsem_bench.rootfs", "rootfs_bench")
+    fake_module("capsem_bench.storage", "storage_bench")
+    fake_module("capsem_bench.startup", "startup_bench")
+    fake_module("capsem_bench.snapshot", "snapshot_bench")
+    monkeypatch.setattr(sys, "argv", ["capsem-bench", "all"])
+    monkeypatch.setenv(bench_main.MOCK_SERVER_PROTOCOL_BASE_URL_ENV, "http://127.0.0.1:3713")
     calls = []
 
-    def fake_http(base_url, scenario, total_requests, concurrency, timeout_s):
-        calls.append((scenario["name"], total_requests, concurrency, timeout_s))
+    def fake_rust_protocol_artifact(scenarios=None, requests=None, concurrency=None):
+        calls.append((scenarios, requests, concurrency))
+        rows = []
+        if scenarios is None:
+            rows.append(
+                {
+                    "name": "model_json_response",
+                    "path": "/model/response",
+                    "total_requests": 50,
+                    "successful": 50,
+                    "failed": 0,
+                    "requests_per_sec": 1000.0,
+                    "latency_ms": {"p99": 1.0},
+                    "bytes_per_sec": 24000.0,
+                    "transfer_bytes": 1200,
+                }
+            )
+        elif scenarios == "tiny_http":
+            rows.append(
+                {
+                    "name": "tiny_http",
+                    "path": "/tiny",
+                    "total_requests": 50,
+                    "successful": 50,
+                    "failed": 0,
+                    "requests_per_sec": 1000.0,
+                    "latency_ms": {"p99": 1.0},
+                    "bytes_per_sec": 24000.0,
+                    "transfer_bytes": 1200,
+                }
+            )
+        elif scenarios == "http_10mb":
+            rows.append(
+                {
+                    "name": "http_10mb",
+                    "path": "/bytes/10mb",
+                    "total_requests": 1,
+                    "successful": 1,
+                    "failed": 0,
+                    "requests_per_sec": 1.0,
+                    "latency_ms": {"p99": 10.0},
+                    "bytes_per_sec": 10 * 1024 * 1024,
+                    "transfer_bytes": 10 * 1024 * 1024,
+                    "total_duration_ms": 1000.0,
+                }
+            )
         return {
-            "name": scenario["name"],
-            "path": scenario["path"],
-            "body_kind": scenario["body_kind"],
-            "total_requests": total_requests,
-            "concurrency": concurrency,
-            "successful": total_requests,
-            "failed": 0,
-            "total_duration_ms": 1.0,
-            "requests_per_sec": 1000.0,
-            "transfer_bytes": 1,
-            "bytes_per_sec": 1000.0,
-            "latency_ms": {
-                "min": 1.0,
-                "max": 1.0,
-                "mean": 1.0,
-                "p50": 1.0,
-                "p95": 1.0,
-                "p99": 1.0,
-            },
-            "errors": {},
+            "mock_server_protocol": {
+                "base_url": "http://127.0.0.1:3713",
+                "scenarios": rows,
+            }
         }
 
-    monkeypatch.setenv(mock_server_protocol.BASE_URL_ENV, "http://127.0.0.1:9999")
-    monkeypatch.setenv(load_harness.GLOBAL_TOTAL_REQUESTS_ENV, "3")
-    monkeypatch.setenv(load_harness.GLOBAL_CONCURRENCY_ENV, "2")
-    monkeypatch.setenv(load_harness.GLOBAL_TIMEOUT_ENV, "4")
-    monkeypatch.setattr(mock_server_protocol, "_run_http_scenario", fake_http)
-    monkeypatch.setattr(mock_server_protocol, "_run_websocket_scenario", lambda *_: {
-        "name": "websocket_echo",
-        "path": "/ws/echo",
-        "skipped": True,
-        "frames": 0,
-        "frames_per_sec": 0.0,
-        "latency_ms": {
-            "min": 0.0,
-            "max": 0.0,
-            "mean": 0.0,
-            "p50": 0.0,
-            "p95": 0.0,
-            "p99": 0.0,
-        },
-    })
+    monkeypatch.setattr(bench_main, "_run_rust_protocol_artifact", fake_rust_protocol_artifact)
 
-    result = mock_server_protocol.mock_server_protocol_bench()
+    bench_main.main()
 
-    assert result["base_url"] == "http://127.0.0.1:9999"
-    assert result["total_requests"] == 3
-    assert result["concurrency"] == 2
-    assert result["timeout_s"] == 4.0
-    assert len(result["scenarios"]) == len(mock_server_protocol.HTTP_SCENARIOS)
-    assert calls[0] == ("tiny_http", 3, 2, 4.0)
-
-
-def test_mock_server_protocol_defaults_are_release_grade():
-    assert mock_server_protocol.DEFAULT_TOTAL_REQUESTS >= 50_000
-    assert mock_server_protocol.DEFAULT_CONCURRENCY >= 64
+    data = json.loads(Path("/tmp/capsem-benchmark.json").read_text())
+    assert data["http"]["total_requests"] == 50
+    assert data["http"]["failed"] == 0
+    assert data["throughput"]["http_code"] == 200
+    assert data["throughput"]["size_bytes"] == 10 * 1024 * 1024
+    assert "mock_server_protocol" in data
+    assert calls == [(None, None, None), ("tiny_http", None, None), ("http_10mb", "1", "1")]
 
 
 def test_global_load_config_parses_count_and_duration_modes(monkeypatch):
@@ -329,7 +196,7 @@ def test_global_load_config_parses_count_and_duration_modes(monkeypatch):
     monkeypatch.setenv(load_harness.GLOBAL_TIMEOUT_ENV, "9")
     monkeypatch.setenv(load_harness.GLOBAL_SCENARIOS_ENV, "model_json_response")
     count = load_harness.CountLoadConfig.from_inputs(
-        "mock-server-protocol",
+        "capsem-bench-rs protocol",
         default_total_requests=20,
         default_concurrency=1,
         default_timeout_s=30,
@@ -355,101 +222,3 @@ def test_mode_specific_load_config_overrides_global(monkeypatch):
 def test_load_config_rejects_bad_concurrency(value):
     with pytest.raises(ValueError):
         load_harness.parse_concurrency_levels(value)
-
-
-def test_scenario_selection_filters_http_scenarios(monkeypatch):
-    calls = []
-
-    def fake_http(base_url, scenario, total_requests, concurrency, timeout_s):
-        calls.append((scenario["name"], total_requests, concurrency, timeout_s))
-        return {
-            "name": scenario["name"],
-            "path": scenario["path"],
-            "body_kind": scenario["body_kind"],
-            "total_requests": total_requests,
-            "concurrency": concurrency,
-            "successful": total_requests,
-            "failed": 0,
-            "total_duration_ms": 1.0,
-            "requests_per_sec": 1000.0,
-            "transfer_bytes": 1,
-            "bytes_per_sec": 1000.0,
-            "latency_ms": {
-                "min": 1.0,
-                "max": 1.0,
-                "mean": 1.0,
-                "p50": 1.0,
-                "p95": 1.0,
-                "p99": 1.0,
-            },
-            "errors": {},
-        }
-
-    monkeypatch.setattr(mock_server_protocol, "_run_http_scenario", fake_http)
-    monkeypatch.setattr(mock_server_protocol, "_run_websocket_scenario", lambda *_: {
-        "name": "websocket_echo",
-        "path": "/ws/echo",
-        "skipped": True,
-        "frames": 0,
-        "frames_per_sec": 0.0,
-        "latency_ms": {
-            "min": 0.0,
-            "max": 0.0,
-            "mean": 0.0,
-            "p50": 0.0,
-            "p95": 0.0,
-            "p99": 0.0,
-        },
-    })
-
-    result = mock_server_protocol.mock_server_protocol_bench(
-        base_url="http://127.0.0.1:9999",
-        total_requests=50_000,
-        concurrency=64,
-        timeout_s=4,
-        scenarios="model_json_response,credential_response",
-    )
-
-    assert result["selected_scenarios"] == [
-        "model_json_response",
-        "credential_response",
-    ]
-    assert [call[0] for call in calls] == [
-        "model_json_response",
-        "credential_response",
-    ]
-    assert all(call[1] == 50_000 for call in calls)
-    assert all(call[2] == 64 for call in calls)
-
-
-def test_scenario_selection_rejects_unknown_name():
-    with pytest.raises(ValueError, match="unknown mock-server-protocol scenario"):
-        mock_server_protocol.mock_server_protocol_bench(
-            base_url="http://127.0.0.1:9999",
-            scenarios="model_json_response,not_real",
-        )
-
-
-def test_mock_server_protocol_drives_mock_http_fixture():
-    proc = None
-    try:
-        proc, ready = start_mock_server()
-        result = mock_server_protocol.mock_server_protocol_bench(
-            base_url=ready["base_url"],
-            total_requests=1,
-            concurrency=1,
-            timeout_s=5,
-        )
-    finally:
-        stop_process(proc)
-
-    by_name = {row["name"]: row for row in result["scenarios"]}
-    assert by_name["tiny_http"]["successful"] == 1
-    assert by_name["http_1mb"]["successful"] == 1
-    assert by_name["gzip_1mb"]["successful"] == 1
-    assert by_name["sse_model"]["successful"] == 1
-    assert by_name["model_json_response"]["successful"] == 1
-    assert by_name["denied_target"]["successful"] == 1
-    assert by_name["credential_response"]["successful"] == 1
-    assert by_name["credential_response"]["secret_shaped_fixture_seen"] is True
-    assert "capsem_test_api_key" not in json.dumps(result)

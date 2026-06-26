@@ -141,6 +141,18 @@ const SCENARIOS: &[Scenario] = &[
         secret_shaped_fixture: false,
     },
     Scenario {
+        name: "http_10mb",
+        transport: ScenarioTransport::Http,
+        path: "/bytes/10mb",
+        method: HttpMethod::Get,
+        request_body: None,
+        expected_status: 200,
+        expected_bytes: Some(10 * 1024 * 1024),
+        body_kind: "10mb",
+        required_text: None,
+        secret_shaped_fixture: false,
+    },
+    Scenario {
         name: "sse_model",
         transport: ScenarioTransport::Http,
         path: "/sse/model",
@@ -956,7 +968,7 @@ fn guest_protocol_command(
         ));
     }
     parts.extend([
-        "capsem-bench".to_string(),
+        "capsem-bench-rs".to_string(),
         "protocol".to_string(),
         "&&".to_string(),
         "cat".to_string(),
@@ -967,58 +979,29 @@ fn guest_protocol_command(
 
 fn parse_guest_protocol_artifact(stdout: &str) -> Result<Artifact> {
     if let Ok(artifact) = serde_json::from_str::<Artifact>(stdout.trim()) {
-        return Ok(artifact);
+        if artifact.benchmark == "capsem-bench-rs" {
+            return Ok(artifact);
+        }
+        bail!(
+            "guest protocol benchmark must be produced by capsem-bench-rs, got {}",
+            artifact.benchmark
+        );
     }
-    let legacy = extract_first_json_value(stdout)
+    let value = extract_first_json_value(stdout)
         .or_else(|| serde_json::from_str(stdout.trim()).ok())
         .with_context(|| {
             let preview = stdout.chars().take(600).collect::<String>();
-            format!("parse legacy guest capsem-bench JSON from stdout preview: {preview:?}")
+            format!("parse guest capsem-bench-rs JSON from stdout preview: {preview:?}")
         })?;
-    let mut report = legacy
-        .get("mock_server_protocol")
-        .cloned()
-        .context("guest benchmark JSON missing mock_server_protocol")?;
-    if let Some(report) = report.as_object_mut() {
-        report
-            .entry("lane".to_string())
-            .or_insert_with(|| serde_json::Value::String("guest_capsem".to_string()));
-        report
-            .entry("dns_udp_addr".to_string())
-            .or_insert(serde_json::Value::Null);
-        if !report.contains_key("timeout_ms") {
-            let timeout_ms = report
-                .get("timeout_s")
-                .and_then(serde_json::Value::as_f64)
-                .map(|seconds| (seconds * 1000.0).round() as u64)
-                .unwrap_or(30_000);
-            report.insert(
-                "timeout_ms".to_string(),
-                serde_json::Value::Number(timeout_ms.into()),
-            );
-        }
+    let artifact: Artifact =
+        serde_json::from_value(value).context("parse guest capsem-bench-rs artifact")?;
+    if artifact.benchmark != "capsem-bench-rs" {
+        bail!(
+            "guest protocol benchmark must be produced by capsem-bench-rs, got {}",
+            artifact.benchmark
+        );
     }
-    let mut protocol: ProtocolReport =
-        serde_json::from_value(report).context("parse legacy mock_server_protocol report")?;
-    protocol.lane = "guest_capsem".to_string();
-    Ok(Artifact {
-        version: legacy
-            .get("version")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or(VERSION)
-            .to_string(),
-        timestamp: legacy
-            .get("timestamp")
-            .and_then(serde_json::Value::as_f64)
-            .unwrap_or_else(timestamp),
-        hostname: legacy
-            .get("hostname")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("guest")
-            .to_string(),
-        benchmark: "capsem-bench-guest-protocol".to_string(),
-        mock_server_protocol: protocol,
-    })
+    Ok(artifact)
 }
 
 fn extract_first_json_value(output: &str) -> Option<serde_json::Value> {
@@ -1421,11 +1404,11 @@ mod tests {
         assert!(
             command.contains("CAPSEM_BENCH_SCENARIOS=tiny_http,mcp_tool_call,dns_local_nxdomain")
         );
-        assert!(command.ends_with("capsem-bench protocol && cat /tmp/capsem-benchmark.json"));
+        assert!(command.ends_with("capsem-bench-rs protocol && cat /tmp/capsem-benchmark.json"));
     }
 
     #[test]
-    fn parse_guest_protocol_artifact_accepts_legacy_guest_wrapper_json() {
+    fn parse_guest_protocol_artifact_rejects_legacy_guest_wrapper_json() {
         let stdout = r#"mock-server-protocol base_url=http://127.0.0.1:3713 requests=100 concurrency=10
 JSON results saved to /tmp/capsem-benchmark.json
 {
@@ -1468,15 +1451,12 @@ JSON results saved to /tmp/capsem-benchmark.json
             "websocket": []
           }
         }"#;
-        let artifact = parse_guest_protocol_artifact(stdout).unwrap();
-        assert_eq!(artifact.version, "0.3.0");
-        assert_eq!(artifact.mock_server_protocol.lane, "guest_capsem");
-        assert_eq!(artifact.mock_server_protocol.timeout_ms, 30_000);
-        assert_eq!(artifact.mock_server_protocol.dns_udp_addr, None);
-        assert_eq!(artifact.mock_server_protocol.scenarios[0].name, "tiny_http");
-        assert_eq!(
-            artifact.mock_server_protocol.scenarios[0].requests_per_sec,
-            1000.0
+        let err = parse_guest_protocol_artifact(stdout).unwrap_err();
+        let message = err.to_string();
+        assert!(
+            message.contains("parse guest capsem-bench-rs artifact")
+                || message.contains("must be produced by capsem-bench-rs"),
+            "{message}"
         );
     }
 

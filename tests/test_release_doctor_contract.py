@@ -724,7 +724,7 @@ def test_serial_benchmark_release_proofs_are_not_env_gated() -> None:
     assert "total_requests = 10" not in source
     assert 'CAPSEM_BENCH_TOTAL_REQUESTS", "10"' not in source
     assert 'CAPSEM_BENCH_CONCURRENCY", "1"' not in source
-    assert '"capsem-bench",' in source
+    assert '"capsem-bench-rs",' in source
     assert '"protocol",' in source
 
 

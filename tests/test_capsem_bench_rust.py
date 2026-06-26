@@ -8,7 +8,7 @@ from helpers.mock_server import start_mock_server, stop_process
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-BENCH_BINARY = PROJECT_ROOT / "target" / "debug" / "capsem-bench"
+BENCH_BINARY = PROJECT_ROOT / "target" / "debug" / "capsem-bench-rs"
 
 
 def _ensure_bench_binary() -> None:
@@ -64,6 +64,7 @@ def test_rust_capsem_bench_protocol_and_delta_contract(tmp_path: Path) -> None:
             tmp_path / "guest.json",
             "guest_capsem",
         )
+        assert guest["mock_server_protocol"]["lane"] == "guest_capsem"
 
         result = host["mock_server_protocol"]
         assert result["version"] == "1.1-rust"

@@ -42,9 +42,7 @@ GUEST_BINARIES = [
     "capsem-bench-rs",
 ]
 
-GUEST_BINARY_SOURCES = {
-    "capsem-bench-rs": "capsem-bench",
-}
+GUEST_BINARY_SOURCES = {}
 
 # --- Single source of truth for rootfs artifacts from guest/artifacts/ ---
 # Scripts and tools that must be copied into the rootfs build context and

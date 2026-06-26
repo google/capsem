@@ -1974,10 +1974,7 @@ class TestRootfsArtifactConstants:
             )
 
     def test_protocol_benchmark_rust_binary_is_mandatory_guest_binary(self):
-        from capsem.builder.docker import GUEST_BINARY_SOURCES
-
         assert "capsem-bench-rs" in GUEST_BINARIES
-        assert GUEST_BINARY_SOURCES["capsem-bench-rs"] == "capsem-bench"
         assert "capsem-bench" in ROOTFS_SCRIPTS
 
 
