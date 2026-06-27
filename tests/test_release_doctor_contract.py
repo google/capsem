@@ -634,6 +634,14 @@ def test_pr_ci_python_coverage_is_not_a_monolithic_vm_tree_rerun() -> None:
     assert "--cov=src/capsem" in coverage_step
 
 
+def test_focused_route_latency_wrapper_stays_serial() -> None:
+    wrapper = PROJECT_ROOT / "tests" / "ironbank" / "test_route_latency.py"
+    source = wrapper.read_text(encoding="utf-8")
+
+    assert "pytest.mark.serial" in source
+    assert "pytestmark" in source
+
+
 def test_generate_settings_creates_catalog_directory_before_redirect() -> None:
     script = (PROJECT_ROOT / "scripts" / "generate-settings.sh").read_text()
 
