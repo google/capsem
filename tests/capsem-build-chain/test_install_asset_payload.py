@@ -237,9 +237,20 @@ def test_macos_postinstall_adds_capsem_bin_to_fish_path() -> None:
 
 def test_release_workflow_uses_profile_asset_rail_and_full_host_binary_set() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "release.yaml").read_text()
+    build_assets = workflow.split("  build-assets:", 1)[1].split("\n  test:", 1)[0]
 
     assert "just build-kernel ${{ matrix.arch }} code" in workflow
     assert "just build-rootfs ${{ matrix.arch }} code" in workflow
+    pnpm_pos = build_assets.find("pnpm/action-setup@v5")
+    setup_node_pos = build_assets.find("actions/setup-node@v5")
+    build_kernel_pos = build_assets.find("just build-kernel ${{ matrix.arch }} code")
+    assert pnpm_pos != -1
+    assert setup_node_pos != -1
+    assert build_kernel_pos != -1
+    assert pnpm_pos < setup_node_pos < build_kernel_pos
+    assert "version: 10" in build_assets
+    assert "cache: pnpm" in build_assets
+    assert "cache-dependency-path: frontend/pnpm-lock.yaml" in build_assets
     assert "-p capsem-admin" in workflow
     assert "-p capsem-tui" in workflow
     assert "-p capsem-mcp-aggregator" in workflow
