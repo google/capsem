@@ -478,12 +478,15 @@ def test_changelog_does_not_advertise_keychain_credential_storage_for_1_3() -> N
     unreleased = changelog.split("## [Unreleased]", maxsplit=1)[1].split(
         "\n## [", maxsplit=1
     )[0]
+    section = unreleased
+    if not section.strip():
+        section = changelog.split("\n## [", maxsplit=2)[2]
 
-    assert "Disabled the macOS Keychain-backed credential broker store" in unreleased
-    assert "file-backed durable storage" in unreleased
-    assert "Added credential broker plugin support with Keychain-backed storage" not in unreleased
-    assert "single `org.capsem.credentials` Keychain vault item" not in unreleased
-    assert "credential store/keychain" not in unreleased
+    assert "Disabled the macOS Keychain-backed credential broker store" in section
+    assert "file-backed durable storage" in section
+    assert "Added credential broker plugin support with Keychain-backed storage" not in section
+    assert "single `org.capsem.credentials` Keychain vault item" not in section
+    assert "credential store/keychain" not in section
 
 
 def test_release_docs_identify_body_blobs_as_forensic_truth() -> None:

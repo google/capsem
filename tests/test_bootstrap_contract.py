@@ -74,8 +74,10 @@ def test_just_test_invokes_bootstrap_and_release_quality_gates() -> None:
 def test_frontend_release_gate_recipe_exists_and_is_complete() -> None:
     justfile = _read("justfile")
 
-    assert "\ntest-frontend: _pnpm-install\n" in justfile
-    block = justfile.split("\ntest-frontend: _pnpm-install\n", 1)[1].split("\n\n", 1)[0]
+    assert "\ntest-frontend: _pnpm-install _generate-settings\n" in justfile
+    block = justfile.split(
+        "\ntest-frontend: _pnpm-install _generate-settings\n", 1
+    )[1].split("\n\n", 1)[0]
     assert "cd frontend" in block
     assert "pnpm run check" in block
     assert "pnpm run test" in block
