@@ -59,7 +59,7 @@ class TestConcurrentRequests:
         threads = [
             threading.Thread(target=do_request, args=("list", "GET", "/vms/list")),
             threading.Thread(target=do_request, args=("status", "GET", "/status")),
-            threading.Thread(target=do_request, args=("info", "GET", "/vms/vm-001/info")),
+            threading.Thread(target=do_request, args=("info", "GET", "/vms/11111111-1111-4111-8111-111111111111/info")),
             threading.Thread(target=do_request, args=("images", "GET", "/images")),
             threading.Thread(
                 target=do_request,

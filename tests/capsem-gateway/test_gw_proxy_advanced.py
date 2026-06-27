@@ -20,9 +20,9 @@ class TestProxyEndpointCoverage:
 
     def test_get_info_existing_vm(self, gw_client):
         """GET /vms/{id}/info returns VM details for known VM."""
-        resp = gw_client.get("/vms/vm-001/info")
+        resp = gw_client.get("/vms/11111111-1111-4111-8111-111111111111/info")
         assert resp is not None
-        assert resp.get("id") == "vm-001"
+        assert resp.get("id") == "11111111-1111-4111-8111-111111111111"
         assert resp.get("name") == "dev"
         assert resp.get("status") == "Running"
 
@@ -34,9 +34,9 @@ class TestProxyEndpointCoverage:
 
     def test_get_status_existing_vm(self, gw_client):
         """GET /vms/{id}/status returns runtime state without info fields."""
-        resp = gw_client.get("/vms/vm-001/status")
+        resp = gw_client.get("/vms/11111111-1111-4111-8111-111111111111/status")
         assert resp is not None
-        assert resp.get("id") == "vm-001"
+        assert resp.get("id") == "11111111-1111-4111-8111-111111111111"
         assert resp.get("status") == "Running"
         assert resp.get("pid") == 100
         assert "ram_mb" not in resp
@@ -44,19 +44,19 @@ class TestProxyEndpointCoverage:
 
     def test_post_exec_command(self, gw_client):
         """POST /vms/{id}/exec returns stdout, stderr, exit_code."""
-        resp = gw_client.post("/vms/vm-001/exec", {"command": "whoami"})
+        resp = gw_client.post("/vms/11111111-1111-4111-8111-111111111111/exec", {"command": "whoami"})
         assert resp is not None
         assert "stdout" in resp
         assert resp.get("exit_code") == 0
 
     def test_post_stop_vm(self, gw_client):
         """POST /vms/{id}/stop returns success."""
-        resp = gw_client.post("/vms/vm-001/stop", {})
+        resp = gw_client.post("/vms/11111111-1111-4111-8111-111111111111/stop", {})
         assert resp is not None
 
     def test_post_write_file(self, gw_client):
         """POST /vms/{id}/files/write returns success."""
-        resp = gw_client.post("/vms/vm-001/files/write", {
+        resp = gw_client.post("/vms/11111111-1111-4111-8111-111111111111/files/write", {
             "path": "/root/test.txt",
             "content": "hello",
         })
@@ -64,7 +64,7 @@ class TestProxyEndpointCoverage:
 
     def test_post_read_file(self, gw_client):
         """POST /vms/{id}/files/read returns file content."""
-        resp = gw_client.post("/vms/vm-001/files/read", {"path": "/root/test.txt"})
+        resp = gw_client.post("/vms/11111111-1111-4111-8111-111111111111/files/read", {"path": "/root/test.txt"})
         assert resp is not None
 
     def test_post_inspect_not_forwarded(self, gw_client):
@@ -78,7 +78,7 @@ class TestProxyEndpointCoverage:
                 "-H", "Content-Type: application/json",
                 "-H", f"Authorization: Bearer {gw_client.token}",
                 "-d", '{"sql":"SELECT 1"}',
-                f"{gw_client.base_url}/vms/vm-001/inspect",
+                f"{gw_client.base_url}/vms/11111111-1111-4111-8111-111111111111/inspect",
             ],
             capture_output=True,
             text=True,
@@ -89,7 +89,7 @@ class TestProxyEndpointCoverage:
 
     def test_post_persist(self, gw_client):
         """POST /vms/{id}/save converts ephemeral to persistent."""
-        resp = gw_client.post("/vms/vm-001/save", {"name": "saved"})
+        resp = gw_client.post("/vms/11111111-1111-4111-8111-111111111111/save", {"name": "saved"})
         assert resp is not None
 
     def test_post_purge(self, gw_client):
@@ -110,19 +110,19 @@ class TestProxyEndpointCoverage:
 
     def test_post_fork(self, gw_client):
         """POST /vms/{id}/fork creates a fork image."""
-        resp = gw_client.post("/vms/vm-001/fork", {"name": "snapshot1"})
+        resp = gw_client.post("/vms/11111111-1111-4111-8111-111111111111/fork", {"name": "snapshot1"})
         assert resp is not None
         assert resp.get("name") == "snapshot1"
 
     def test_get_logs(self, gw_client):
         """GET /vms/{id}/logs returns boot logs."""
-        resp = gw_client.get("/vms/vm-001/logs")
+        resp = gw_client.get("/vms/11111111-1111-4111-8111-111111111111/logs")
         assert resp is not None
         assert "logs" in resp
 
     def test_delete_vm(self, gw_client):
         """DELETE /vms/{id}/delete destroys a VM."""
-        resp = gw_client.delete("/vms/vm-001/delete")
+        resp = gw_client.delete("/vms/11111111-1111-4111-8111-111111111111/delete")
         assert resp is not None
 
     def test_post_profile_reload(self, gw_client):
@@ -143,7 +143,7 @@ class TestProxyEdgeCases:
     def test_very_long_query_string(self, gw_client):
         """Long query strings are forwarded without truncation."""
         long_query = "x=" + "a" * 4000
-        resp = gw_client.get(f"/vms/vm-001/info?{long_query}")
+        resp = gw_client.get(f"/vms/11111111-1111-4111-8111-111111111111/info?{long_query}")
         # Should succeed (query is forwarded, mock ignores it)
         assert resp is not None
 
@@ -160,7 +160,7 @@ class TestProxyEdgeCases:
             "env": {"FOO": "bar", "BAZ": "qux"},
             "options": {"timeout": 30, "verbose": True},
         }
-        resp = gw_client.post("/vms/vm-001/exec", payload)
+        resp = gw_client.post("/vms/11111111-1111-4111-8111-111111111111/exec", payload)
         assert resp is not None
         assert resp.get("exit_code") == 0
 
@@ -176,7 +176,7 @@ class TestProxyEdgeCases:
                  "-H", f"Authorization: Bearer {gateway_env.token}",
                  "-H", "Content-Type: application/octet-stream",
                  "--data-binary", f"@{tmp_path}",
-                 f"http://127.0.0.1:{gateway_env.port}/vms/vm-001/files/content?path=/root/boundary.bin"],
+                 f"http://127.0.0.1:{gateway_env.port}/vms/11111111-1111-4111-8111-111111111111/files/content?path=/root/boundary.bin"],
                 capture_output=True, text=True, timeout=60,
             )
             status = result.stdout.strip()

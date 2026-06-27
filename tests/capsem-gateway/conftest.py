@@ -38,8 +38,8 @@ pytestmark = pytest.mark.gateway
 # --- Mock capsem-service on UDS ---
 
 MOCK_VMS = {
-    "vm-001": {
-        "id": "vm-001",
+    "11111111-1111-4111-8111-111111111111": {
+        "id": "11111111-1111-4111-8111-111111111111",
         "pid": 100,
         "name": "dev",
         "status": "Running",
@@ -48,8 +48,8 @@ MOCK_VMS = {
         "cpus": DEFAULT_CPUS,
         "version": "0.16.1",
     },
-    "vm-002": {
-        "id": "vm-002",
+    "22222222-2222-4222-8222-222222222222": {
+        "id": "22222222-2222-4222-8222-222222222222",
         "pid": 200,
         "name": None,
         "status": "Running",
@@ -252,7 +252,7 @@ class MockServiceHandler(BaseHTTPRequestHandler):
                 return
             self._send_json({"stdout": "mock run output\n", "stderr": "", "exit_code": 0})
         elif path_only.startswith("/vms/") and path_only.endswith("/resume"):
-            self._send_json({"id": "vm-resumed"})
+            self._send_json({"id": "33333333-3333-4333-8333-333333333333"})
         elif path_only.startswith("/vms/") and path_only.endswith("/fork"):
             data = json.loads(body) if body else {}
             self._send_json({"name": data.get("name", "fork"), "size_bytes": 1024})
@@ -277,8 +277,9 @@ class MockServiceHandler(BaseHTTPRequestHandler):
             self._send_error(404, f"unknown endpoint: {self.clean_path}")
 
 
-class UnixStreamServer(socketserver.UnixStreamServer):
+class UnixStreamServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
     allow_reuse_address = True
+    daemon_threads = True
 
 
 class MockServiceServer:

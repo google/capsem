@@ -33,22 +33,22 @@ class TestProxyForwarding:
 
     def test_post_exec_returns_stdout(self, gw_client):
         """POST /vms/{id}/exec returns command output."""
-        resp = gw_client.post("/vms/vm-001/exec", {"command": "echo hello"})
+        resp = gw_client.post("/vms/11111111-1111-4111-8111-111111111111/exec", {"command": "echo hello"})
         assert resp is not None
         assert resp.get("exit_code") == 0
         assert "echo hello" in resp.get("stdout", "")
 
     def test_delete_through_gateway(self, gw_client):
         """DELETE /vms/{id}/delete returns success."""
-        resp = gw_client.delete("/vms/vm-001/delete")
+        resp = gw_client.delete("/vms/11111111-1111-4111-8111-111111111111/delete")
         assert resp is not None
 
     def test_preserves_query_string(self, gw_client):
         """Query parameters are preserved through proxy."""
         # Use /info with query -- mock doesn't use query but it must not crash
-        resp = gw_client.get("/vms/vm-001/info?detail=true")
+        resp = gw_client.get("/vms/11111111-1111-4111-8111-111111111111/info?detail=true")
         assert resp is not None
-        assert resp.get("id") == "vm-001"
+        assert resp.get("id") == "11111111-1111-4111-8111-111111111111"
 
     def test_preserves_upstream_404(self, gw_client):
         """404 from upstream service is proxied as-is."""
@@ -94,7 +94,7 @@ class TestProxySecurity:
                  "-H", f"Authorization: Bearer {gateway_env.token}",
                  "-H", "Content-Type: application/octet-stream",
                  "--data-binary", f"@{tmp_path}",
-                 f"http://127.0.0.1:{gateway_env.port}/vms/vm-001/files/content?path=/root/oversized.bin"],
+                 f"http://127.0.0.1:{gateway_env.port}/vms/11111111-1111-4111-8111-111111111111/files/content?path=/root/oversized.bin"],
                 capture_output=True, text=True, timeout=60,
             )
             assert result.stdout.strip() == "413"
