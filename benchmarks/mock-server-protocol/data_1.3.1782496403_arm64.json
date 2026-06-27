@@ -1,0 +1,69 @@
+{
+  "version": "0.4.0-rust",
+  "timestamp": 1782519876.4452565,
+  "hostname": "unknown",
+  "benchmark": "capsem-bench-rs",
+  "mock_server_protocol": {
+    "version": "1.1-rust",
+    "lane": "host_direct",
+    "base_url": "http://127.0.0.1:3713",
+    "total_requests": 50000,
+    "concurrency": 64,
+    "timeout_ms": 30000,
+    "selected_scenarios": [
+      "model_json_response",
+      "credential_response"
+    ],
+    "scenarios": [
+      {
+        "name": "model_json_response",
+        "path": "/model/response",
+        "body_kind": "model_json",
+        "total_requests": 50000,
+        "concurrency": 64,
+        "successful": 50000,
+        "failed": 0,
+        "total_duration_ms": 6331.7,
+        "requests_per_sec": 7896.8,
+        "transfer_bytes": 32000000,
+        "bytes_per_sec": 5053936.9,
+        "latency_ms": {
+          "min": 0.5,
+          "max": 85.5,
+          "mean": 8.1,
+          "p50": 7.8,
+          "p95": 12.2,
+          "p99": 14.7
+        },
+        "errors": {}
+      },
+      {
+        "name": "credential_response",
+        "path": "/credential/response",
+        "body_kind": "credential",
+        "total_requests": 50000,
+        "concurrency": 64,
+        "successful": 50000,
+        "failed": 0,
+        "total_duration_ms": 7039.0,
+        "requests_per_sec": 7103.3,
+        "transfer_bytes": 11050000,
+        "bytes_per_sec": 1569821.7,
+        "latency_ms": {
+          "min": 0.5,
+          "max": 28.7,
+          "mean": 8.9,
+          "p50": 8.8,
+          "p95": 14.5,
+          "p99": 17.3
+        },
+        "errors": {},
+        "secret_shaped_fixture_seen": true,
+        "raw_secret_stored_in_result": false
+      }
+    ]
+  },
+  "host_recorded_at": 1782519885.242069,
+  "arch": "arm64",
+  "mock_server_base_url": "http://127.0.0.1:3713"
+}

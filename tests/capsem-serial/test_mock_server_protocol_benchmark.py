@@ -70,19 +70,21 @@ def _assert_mock_server_protocol_succeeded(data):
             f"{row['name']} should have no transport errors: {row['errors']}"
         )
 
-    for row in result["websocket"]:
+    for row in result.get("websocket", []):
         assert not row.get("skipped"), f"{row['name']} should not be skipped: {row}"
         assert not row.get("failed"), f"{row['name']} should not fail: {row}"
         assert row["frames"] > 0, f"{row['name']} should relay frames: {row}"
 
 
 def _assert_session_db_contains_protocol_events(
-    capsem_home, client, vm_name, total_requests, selected_scenarios
+    capsem_home, client, vm_name, total_requests, selected_scenarios, *, include_websocket
 ):
     db_path = vm_session_db_path(capsem_home, client, vm_name, must_exist=False)
     expected_paths = {SCENARIO_PATHS[name] for name in selected_scenarios}
-    expected_paths.update({"/ws/echo", "/ws/close"})
-    expected_count = total_requests * len(selected_scenarios) + 2
+    expected_count = total_requests * len(selected_scenarios)
+    if include_websocket:
+        expected_paths.update({"/ws/echo", "/ws/close"})
+        expected_count += 2
 
     deadline = time.monotonic() + 5
     rows = []
@@ -112,9 +114,10 @@ def _assert_session_db_contains_protocol_events(
     assert expected_paths.issubset(paths), (
         f"session.db missing benchmark paths: {expected_paths - paths}; rows={rows}"
     )
-    assert any(row[1] == 101 for row in rows), (
-        f"session.db should include WebSocket 101 upgrade events: {rows}"
-    )
+    if include_websocket:
+        assert any(row[1] == 101 for row in rows), (
+            f"session.db should include WebSocket 101 upgrade events: {rows}"
+        )
     assert all(row[2] == "allowed" for row in rows), (
         f"all benchmark events should be allowed: {rows}"
     )
@@ -139,13 +142,19 @@ def _assert_session_db_contains_protocol_events(
 def test_mock_server_protocol_benchmark_artifact():
     upstream_proc = None
     base_url = os.environ.get("CAPSEM_MOCK_SERVER_BASE_URL")
+    dns_udp_addr = os.environ.get("CAPSEM_MOCK_SERVER_DNS_UDP_ADDR")
     if not base_url:
         upstream_proc, ready = start_mock_server(capture_requests=False)
         base_url = ready["base_url"]
+        dns_udp_addr = ready["dns_udp_addr"]
         assert ready["request_log"] is None, (
             "release protocol benchmark must run capsem-mock-server in perf mode; "
             "request capture serializes every request and poisons tiny_http numbers"
         )
+    assert dns_udp_addr, (
+        "CAPSEM_MOCK_SERVER_DNS_UDP_ADDR is required when CAPSEM_MOCK_SERVER_BASE_URL "
+        "points at an existing mock server"
+    )
     parsed_base = urlsplit(base_url)
     assert parsed_base.hostname == "127.0.0.1"
     assert (parsed_base.port or 80) == 3713
@@ -180,13 +189,18 @@ def test_mock_server_protocol_benchmark_artifact():
 
         command = shlex.join(
             [
-                "env",
-                f"CAPSEM_MOCK_SERVER_BASE_URL={base_url}",
-                f"CAPSEM_BENCH_TOTAL_REQUESTS={total_requests}",
-                f"CAPSEM_BENCH_CONCURRENCY={concurrency}",
-                f"CAPSEM_BENCH_SCENARIOS={','.join(selected_scenarios)}",
                 "capsem-bench-rs",
                 "protocol",
+                "--base-url",
+                base_url,
+                "--dns-udp-addr",
+                dns_udp_addr,
+                "--requests",
+                str(total_requests),
+                "--concurrency",
+                str(concurrency),
+                "--scenarios",
+                ",".join(selected_scenarios),
             ]
         )
         resp = client.post(
@@ -214,7 +228,12 @@ def test_mock_server_protocol_benchmark_artifact():
         assert tuple(data["mock_server_protocol"]["selected_scenarios"]) == selected_scenarios
         assert "capsem_test_api_key" not in json.dumps(data)
         _assert_session_db_contains_protocol_events(
-            svc.tmp_dir, client, name, total_requests, selected_scenarios
+            svc.tmp_dir,
+            client,
+            name,
+            total_requests,
+            selected_scenarios,
+            include_websocket=bool(data["mock_server_protocol"].get("websocket")),
         )
 
         data["host_recorded_at"] = time.time()
