@@ -217,6 +217,12 @@ component_management:
       paths:
         - crates/capsem-mock-server/src/**
 
+    # Guest/host benchmark binary and protocol load generator.
+    - component_id: bench
+      name: Bench
+      paths:
+        - crates/capsem-bench/src/**
+
 ignore:
   - crates/*/tests/**
   - crates/capsem-app/gen/**

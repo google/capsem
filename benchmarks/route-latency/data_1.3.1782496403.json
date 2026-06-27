@@ -1,6 +1,6 @@
 {
   "version": "0.1.0",
-  "timestamp": 1782519400.185405,
+  "timestamp": 1782520886.241162,
   "scenario": "service_stats_reads_during_profile_mutation_writes",
   "reader": {
     "route": "/stats",
@@ -8,11 +8,11 @@
     "summary": {
       "label": "service /stats during profile-mutation writes",
       "samples": 160,
-      "p50_ms": 0.648,
-      "p95_ms": 0.707,
-      "p99_ms": 0.741,
-      "max_ms": 2.006,
-      "service_cpu_s": 0.208932,
+      "p50_ms": 0.652,
+      "p95_ms": 0.717,
+      "p99_ms": 0.829,
+      "max_ms": 1.444,
+      "service_cpu_s": 0.226239,
       "gateway_cpu_s": null
     }
   },
