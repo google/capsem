@@ -259,7 +259,7 @@ build-kernel arch profile="":
         exit 2
     fi
     just _install-tools
-    CAPSEM_SKIP_ASSET_CHECK=1 just doctor
+    CAPSEM_SKIP_ASSET_CHECK=1 CAPSEM_SKIP_KVM_CHECK=1 just doctor
     cargo run -p capsem-admin -- image build \
         --profile "config/profiles/${PROFILE_ARG}/profile.toml" \
         --config-root config \
@@ -279,7 +279,7 @@ build-rootfs arch profile="":
         exit 2
     fi
     just _install-tools
-    CAPSEM_SKIP_ASSET_CHECK=1 just doctor
+    CAPSEM_SKIP_ASSET_CHECK=1 CAPSEM_SKIP_KVM_CHECK=1 just doctor
     cargo run -p capsem-admin -- image build \
         --profile "config/profiles/${PROFILE_ARG}/profile.toml" \
         --config-root config \
@@ -302,7 +302,7 @@ build-assets profile="" arch="":
     fi
     just _install-tools
     just _clean-stale
-    CAPSEM_SKIP_ASSET_CHECK=1 just doctor
+    CAPSEM_SKIP_ASSET_CHECK=1 CAPSEM_SKIP_KVM_CHECK=1 just doctor
     ARGS=(
         --profile "config/profiles/${PROFILE_ARG}/profile.toml"
         --config-root config

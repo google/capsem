@@ -261,6 +261,21 @@ def test_release_workflow_uses_profile_asset_rail_and_full_host_binary_set() -> 
     assert "capsem-mcp-builtin" in workflow
 
 
+def test_asset_build_recipes_skip_kvm_only_for_build_prereq_doctor() -> None:
+    justfile = (PROJECT_ROOT / "justfile").read_text()
+    doctor_linux = (PROJECT_ROOT / "scripts" / "doctor-linux.sh").read_text()
+
+    assert "CAPSEM_SKIP_KVM_CHECK" in doctor_linux
+    assert 'skip "/dev/kvm (CAPSEM_SKIP_KVM_CHECK set)"' in doctor_linux
+
+    for recipe in ("build-kernel", "build-rootfs", "build-assets"):
+        block = justfile.split(f"\n{recipe} ", 1)[1].split("\n# ", 1)[0]
+        assert "CAPSEM_SKIP_ASSET_CHECK=1 CAPSEM_SKIP_KVM_CHECK=1 just doctor" in block
+
+    smoke_block = justfile.split("\nsmoke", 1)[1].split("\n# ", 1)[0]
+    assert "CAPSEM_SKIP_KVM_CHECK" not in smoke_block
+
+
 def test_security_event_rows_go_through_security_engine_emitter() -> None:
     roots = [
         PROJECT_ROOT / "crates" / "capsem-core" / "src",

@@ -64,7 +64,9 @@ check_platform() {
     section "Platform (Linux)"
 
     # KVM
-    if [[ -e /dev/kvm ]]; then
+    if [[ -n "${CAPSEM_SKIP_KVM_CHECK:-}" ]]; then
+        skip "/dev/kvm (CAPSEM_SKIP_KVM_CHECK set)"
+    elif [[ -e /dev/kvm ]]; then
         if [[ -r /dev/kvm ]] && [[ -w /dev/kvm ]]; then
             pass "/dev/kvm (accessible)"
         else
