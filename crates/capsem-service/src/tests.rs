@@ -2238,6 +2238,66 @@ async fn handle_profiles_status_reports_builtin_catalog_and_rejects_fake_assets(
     drop(dir);
 }
 
+#[tokio::test]
+async fn profiles_status_byte_cache_refreshes_when_asset_manifest_appears() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = make_asset_state(dir.path().to_path_buf());
+
+    let stale_response = handle_profiles_status(State(Arc::clone(&state)))
+        .await
+        .expect("initial profile status should load");
+    let stale_status: serde_json::Value = decode_response_json(stale_response).await;
+    assert_eq!(stale_status["asset_manifest"]["origin"], "missing");
+    assert!(stale_status["asset_manifest"].get("format").is_none());
+
+    std::fs::write(
+        dir.path().join("manifest.json"),
+        serde_json::json!({
+            "format": 2,
+            "refresh_policy": "24h",
+            "assets": {
+                "current": "2099.0101.1",
+                "releases": {
+                    "2099.0101.1": {
+                        "date": "2099-01-01",
+                        "deprecated": false,
+                        "min_binary": "1.0.0",
+                        "arches": {}
+                    }
+                }
+            },
+            "binaries": {
+                "current": "1.3.1782496403",
+                "releases": {
+                    "1.3.1782496403": {
+                        "date": "2026-06-26",
+                        "deprecated": false,
+                        "min_assets": "2099.0101.1"
+                    }
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let refreshed_response = handle_profiles_status(State(state))
+        .await
+        .expect("profile status should refresh when manifest file appears");
+    let refreshed_status: serde_json::Value = decode_response_json(refreshed_response).await;
+
+    assert_eq!(refreshed_status["asset_manifest"]["origin"], "installed");
+    assert_eq!(
+        refreshed_status["asset_manifest"]["validation_status"],
+        "valid"
+    );
+    assert_eq!(refreshed_status["asset_manifest"]["format"], 2);
+    assert_eq!(
+        refreshed_status["asset_manifest"]["assets_current"],
+        "2099.0101.1"
+    );
+}
+
 #[test]
 fn profile_catalog_status_reports_directory_catalog_readiness() {
     let dir = tempfile::tempdir().unwrap();

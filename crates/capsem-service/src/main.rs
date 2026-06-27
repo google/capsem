@@ -5755,21 +5755,7 @@ fn profile_status_cache(state: &ServiceState) -> Result<ProfileStatusCache, AppE
 }
 
 fn profile_status_catalog_body(state: &ServiceState) -> Result<Bytes, AppError> {
-    if let Some(body) = state
-        .profile_status_cache
-        .lock()
-        .map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("profile status cache lock poisoned: {error}"),
-            )
-        })?
-        .as_ref()
-        .map(|cache| cache.catalog_body.clone())
-    {
-        return Ok(body);
-    }
-    Ok(rebuild_profile_status_cache(state)?.catalog_body)
+    Ok(profile_status_cache(state)?.catalog_body)
 }
 
 fn cached_profile_status_for_route(
@@ -5804,15 +5790,7 @@ fn cached_profile_status_body_for_route(
     state: &ServiceState,
     profile_id: &str,
 ) -> Result<Option<Bytes>, AppError> {
-    let guard = state.profile_status_cache.lock().map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("profile status cache lock poisoned: {error}"),
-        )
-    })?;
-    let Some(cache) = guard.as_ref() else {
-        return Ok(None);
-    };
+    let cache = profile_status_cache(state)?;
     if let Some(body) = cache.profile_bodies.get(profile_id).cloned() {
         return Ok(Some(body));
     }
