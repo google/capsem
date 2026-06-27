@@ -24,6 +24,7 @@ from capsem.builder.docker import (
     _directory_tree_hash,
     _file_ledger_entry,
     _rootfs_config_input_record,
+    build_all_architectures,
     build_version_script,
     build_image,
     container_compile_agent,
@@ -1698,6 +1699,44 @@ class TestGenerateChecksums:
 
         with pytest.raises(FileNotFoundError, match="rootfs.erofs"):
             generate_checksums(tmp_path, "0.13.0")
+
+
+class TestBuildAllArchitectures:
+    def test_kernel_only_template_does_not_generate_full_asset_manifest(self, real_config, tmp_path):
+        """Kernel-only CI primitive must not require rootfs.erofs before rootfs build runs."""
+        with (
+            patch("capsem.builder.docker.build_image") as build_image_mock,
+            patch("capsem.builder.docker.detect_runtime", return_value="docker"),
+            patch("capsem.builder.docker.run_cmd"),
+            patch("capsem.builder.docker.generate_checksums") as checksums,
+            patch("capsem.builder.docker.get_project_version", return_value="0.13.0"),
+        ):
+            build_all_architectures(
+                real_config,
+                template="kernel",
+                output_dir=tmp_path,
+                repo_root=PROJECT_ROOT,
+            )
+
+        assert build_image_mock.call_count == len(real_config.build.architectures)
+        checksums.assert_not_called()
+
+    def test_rootfs_template_generates_full_asset_manifest(self, real_config, tmp_path):
+        with (
+            patch("capsem.builder.docker.build_image"),
+            patch("capsem.builder.docker.detect_runtime", return_value="docker"),
+            patch("capsem.builder.docker.run_cmd"),
+            patch("capsem.builder.docker.generate_checksums") as checksums,
+            patch("capsem.builder.docker.get_project_version", return_value="0.13.0"),
+        ):
+            build_all_architectures(
+                real_config,
+                template="rootfs",
+                output_dir=tmp_path,
+                repo_root=PROJECT_ROOT,
+            )
+
+        checksums.assert_called_once_with(tmp_path, "0.13.0")
 
 
 # ---------------------------------------------------------------------------

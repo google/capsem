@@ -1460,6 +1460,7 @@ def build_all_architectures(
     except RuntimeError:
         pass
 
-    version = get_project_version(repo_root)
-    print(f"\nGenerating checksums (version {version})...")
-    generate_checksums(output_dir, version)
+    if template != "kernel":
+        version = get_project_version(repo_root)
+        print(f"\nGenerating checksums (version {version})...")
+        generate_checksums(output_dir, version)

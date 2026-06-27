@@ -1656,11 +1656,13 @@ fn image_build_plan(args: &ImageBuildArgs) -> Result<ImageBuildPlan> {
             });
         }
     }
-    commands.push(manifest_generate_command_report(&ManifestGenerateArgs {
-        assets_dir: args.output.clone(),
-        version: None,
-        json: false,
-    }));
+    if !matches!(args.template, ImageBuildTemplate::Kernel) {
+        commands.push(manifest_generate_command_report(&ManifestGenerateArgs {
+            assets_dir: args.output.clone(),
+            version: None,
+            json: false,
+        }));
+    }
 
     Ok(ImageBuildPlan {
         schema: "capsem.admin.image_build_plan.v1",
@@ -3483,6 +3485,35 @@ decision = "block"
             Some(&"12".to_string())
         );
         assert_eq!(plan.commands[2].step, "manifest");
+    }
+
+    #[test]
+    fn image_plan_kernel_only_does_not_generate_manifest() {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let repo_root = manifest_dir
+            .parent()
+            .and_then(Path::parent)
+            .expect("repo root");
+        let args = ImageBuildArgs {
+            profile: repo_root.join("config/profiles/code/profile.toml"),
+            config_root: repo_root.join("config"),
+            guest_dir: repo_root.join("guest"),
+            output: repo_root.join("assets"),
+            arch: Some("arm64".to_string()),
+            template: ImageBuildTemplate::Kernel,
+            clean: true,
+            json: true,
+        };
+
+        let plan = image_build_plan(&args).expect("image plan");
+
+        assert_eq!(
+            plan.commands
+                .iter()
+                .map(|command| command.step.as_str())
+                .collect::<Vec<_>>(),
+            vec!["kernel"]
+        );
     }
 
     #[test]
