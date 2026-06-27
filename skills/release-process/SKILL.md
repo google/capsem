@@ -123,6 +123,14 @@ Test runs in parallel with builds. A test failure blocks `create-release` but do
 - **Per-arch VM assets use arch-prefixed names on GitHub.** CI uploads with `gh release upload "$f#${arch}-${base}"`, renaming `vmlinuz` to `arm64-vmlinuz`, etc. The v2 manifest keeps bare filenames in per-arch `arches` maps.
 - **Use justfile recipes in CI.** `build-assets` must call `just build-kernel` and `just build-rootfs`, not reimplement the builder commands. Drift between the justfile and CI caused v0.14.2-v0.14.4 to ship without vmlinuz/initrd.img.
 - **Build both kernel and rootfs.** The builder defaults to `--template rootfs` only. The kernel template must be built explicitly.
+- **Asset CI needs the musl C toolchain, not just Rust targets.** The
+  `build-assets` matrix must install `musl-tools` and pass
+  `CC_aarch64_unknown_linux_musl=musl-gcc`,
+  `CC_x86_64_unknown_linux_musl=musl-gcc`,
+  `CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc`, and
+  `CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc` into the
+  `just build-kernel` / `just build-rootfs` step. Crates such as `ring` compile
+  C/ASM during guest binary builds; `rustup target add` alone is not enough.
 - **`assets/current` must be a real directory, not a symlink.** `generate_checksums()` creates a symlink, but GitHub Actions strips symlinks from artifacts. After calling `generate_checksums`, replace the symlink with `rm -rf assets/current && cp -r assets/arm64 assets/current`.
 - **`Cargo.lock` is gitignored.** CI resolves a fresh lockfile each build. This means dependency versions can drift between builds. Acceptable for now but a reproducibility risk.
 - **Verify assets before Tauri build.** The `Verify assets layout` step lists assets/arm64/ and assets/current/ to catch missing files early. Tauri's build.rs resolves `../../assets/current/vmlinuz` relative to `crates/capsem-app/`.

@@ -105,6 +105,11 @@ jobs:
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
 
+      - name: Install musl C toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends musl-tools
+
       - name: Install OBOM generator
         run: |
           npm install -g @cyclonedx/cdxgen@latest
@@ -117,6 +122,10 @@ jobs:
       - name: Build VM assets (kernel + rootfs)
         env:
           CAPSEM_CDXGEN_CMD: cdxgen
+          CC_aarch64_unknown_linux_musl: musl-gcc
+          CC_x86_64_unknown_linux_musl: musl-gcc
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
         run: |
           just build-kernel ${{ matrix.arch }} code
           just build-rootfs ${{ matrix.arch }} code

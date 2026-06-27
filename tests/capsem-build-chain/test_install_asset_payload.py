@@ -251,6 +251,12 @@ def test_release_workflow_uses_profile_asset_rail_and_full_host_binary_set() -> 
     assert "version: 10" in build_assets
     assert "cache: pnpm" in build_assets
     assert "cache-dependency-path: frontend/pnpm-lock.yaml" in build_assets
+    assert "Install musl C toolchain" in build_assets
+    assert "musl-tools" in build_assets
+    assert "CC_aarch64_unknown_linux_musl: musl-gcc" in build_assets
+    assert "CC_x86_64_unknown_linux_musl: musl-gcc" in build_assets
+    assert "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc" in build_assets
+    assert "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc" in build_assets
     assert "-p capsem-admin" in workflow
     assert "-p capsem-tui" in workflow
     assert "-p capsem-mcp-aggregator" in workflow
