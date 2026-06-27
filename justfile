@@ -177,7 +177,7 @@ ui: _ensure-dev-ready _pnpm-install run-service
     CAPSEM_ASSETS_DIR={{assets_dir}} cargo tauri dev --config crates/capsem-app/tauri.conf.json
 
 # Frontend-only dev server with mock data (no Tauri/VM needed)
-dev-frontend: _pnpm-install
+dev-frontend: _pnpm-install _generate-settings
     cd frontend && pnpm run dev
 
 # Build the Tauri desktop app (capsem-app) with a fresh frontend bundle.
@@ -186,7 +186,7 @@ dev-frontend: _pnpm-install
 # on the running binary. This recipe keeps the two in lockstep.
 #   just build-ui          # debug binary at ./target/debug/capsem-app
 #   just build-ui release  # release binary at ./target/release/capsem-app
-build-ui profile="debug": _pnpm-install
+build-ui profile="debug": _pnpm-install _generate-settings
     #!/bin/bash
     set -euo pipefail
     echo "=== Frontend build ==="
@@ -206,7 +206,7 @@ build-ui profile="debug": _pnpm-install
     fi
 
 # Frontend release gate used by Sprinty and docs.
-test-frontend: _pnpm-install
+test-frontend: _pnpm-install _generate-settings
     #!/bin/bash
     set -euo pipefail
     cd frontend

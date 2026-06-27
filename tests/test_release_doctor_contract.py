@@ -275,18 +275,29 @@ def test_ci_builds_frontend_before_compiling_tauri_app_tests() -> None:
 
 def test_frontend_generated_settings_use_one_shared_rail() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
+    release_workflow = (
+        PROJECT_ROOT / ".github" / "workflows" / "release.yaml"
+    ).read_text()
     just = (PROJECT_ROOT / "justfile").read_text()
 
     generate_pos = workflow.find("bash scripts/generate-settings.sh")
     first_frontend_build_pos = workflow.find("cd frontend && pnpm run build")
     frontend_check_pos = workflow.find("pnpm run check")
+    release_generate_pos = release_workflow.find("bash scripts/generate-settings.sh")
+    release_frontend_check_pos = release_workflow.find("pnpm run check")
 
     assert generate_pos != -1
     assert first_frontend_build_pos != -1
     assert frontend_check_pos != -1
+    assert release_generate_pos != -1
+    assert release_frontend_check_pos != -1
     assert generate_pos < first_frontend_build_pos
     assert generate_pos < frontend_check_pos
+    assert release_generate_pos < release_frontend_check_pos
     assert "bash scripts/generate-settings.sh" in just
+    assert "dev-frontend: _pnpm-install _generate-settings" in just
+    assert 'build-ui profile="debug": _pnpm-install _generate-settings' in just
+    assert "test-frontend: _pnpm-install _generate-settings" in just
     assert "uv run python scripts/generate_schema.py" not in just
 
 

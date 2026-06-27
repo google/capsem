@@ -143,6 +143,9 @@ jobs:
           node-version: 24
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync
+      - run: bash scripts/generate-settings.sh
       - run: cd frontend && pnpm install --frozen-lockfile
 
       - name: Dependency audit
