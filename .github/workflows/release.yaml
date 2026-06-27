@@ -305,7 +305,24 @@ jobs:
         run: cd frontend && pnpm build
 
       - name: Install cargo tools
-        run: cargo install tauri-cli cargo-auditable cargo-sbom --locked
+        env:
+          CARGO_NET_RETRY: 10
+        run: |
+          install_cargo_tool() {
+            tool="$1"
+            for attempt in 1 2 3; do
+              if cargo install "$tool" --locked; then
+                return 0
+              fi
+              echo "cargo install $tool failed on attempt $attempt/3"
+              sleep $((attempt * 15))
+            done
+            return 1
+          }
+
+          install_cargo_tool tauri-cli
+          install_cargo_tool cargo-auditable
+          install_cargo_tool cargo-sbom
 
       - name: Import Apple certificate
         env:
@@ -522,7 +539,23 @@ jobs:
         run: cd frontend && pnpm build
 
       - name: Install cargo tools
-        run: cargo install tauri-cli cargo-auditable --locked
+        env:
+          CARGO_NET_RETRY: 10
+        run: |
+          install_cargo_tool() {
+            tool="$1"
+            for attempt in 1 2 3; do
+              if cargo install "$tool" --locked; then
+                return 0
+              fi
+              echo "cargo install $tool failed on attempt $attempt/3"
+              sleep $((attempt * 15))
+            done
+            return 1
+          }
+
+          install_cargo_tool tauri-cli
+          install_cargo_tool cargo-auditable
 
       - name: Verify assets layout
         run: |

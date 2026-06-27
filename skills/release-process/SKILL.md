@@ -131,6 +131,12 @@ Test runs in parallel with builds. A test failure blocks `create-release` but do
   `CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc` into the
   `just build-kernel` / `just build-rootfs` step. Crates such as `ring` compile
   C/ASM during guest binary builds; `rustup target add` alone is not enough.
+- **App packaging cargo-tool installs must be retryable and independent.**
+  GitHub-hosted runners can hit transient crates.io DNS timeouts while
+  installing release tools. Do not install `tauri-cli`, `cargo-auditable`, and
+  `cargo-sbom` in one `cargo install` command: one timeout discards all useful
+  progress. Install each tool separately with `CARGO_NET_RETRY=10` and a small
+  shell retry loop so a single registry lookup hiccup does not fail the release.
 - **`assets/current` must be a real directory, not a symlink.** `generate_checksums()` creates a symlink, but GitHub Actions strips symlinks from artifacts. After calling `generate_checksums`, replace the symlink with `rm -rf assets/current && cp -r assets/arm64 assets/current`.
 - **`Cargo.lock` is gitignored.** CI resolves a fresh lockfile each build. This means dependency versions can drift between builds. Acceptable for now but a reproducibility risk.
 - **Verify assets before Tauri build.** The `Verify assets layout` step lists assets/arm64/ and assets/current/ to catch missing files early. Tauri's build.rs resolves `../../assets/current/vmlinuz` relative to `crates/capsem-app/`.

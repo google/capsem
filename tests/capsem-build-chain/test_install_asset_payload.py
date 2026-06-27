@@ -258,6 +258,31 @@ def test_release_workflow_uses_profile_asset_rail_and_full_host_binary_set() -> 
     assert "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc" in build_assets
     assert "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc" in build_assets
     assert "-p capsem-admin" in workflow
+
+
+def test_release_workflow_retries_app_cargo_tool_installs() -> None:
+    workflow = (PROJECT_ROOT / ".github" / "workflows" / "release.yaml").read_text()
+    build_app_macos = workflow.split("  build-app-macos:", 1)[1].split(
+        "\n  build-app-linux:", 1
+    )[0]
+    build_app_linux = workflow.split("  build-app-linux:", 1)[1].split(
+        "\n  create-release:", 1
+    )[0]
+
+    assert "cargo install tauri-cli cargo-auditable cargo-sbom --locked" not in workflow
+    assert "cargo install tauri-cli cargo-auditable --locked" not in workflow
+
+    for block, required_tools in (
+        (build_app_macos, ("tauri-cli", "cargo-auditable", "cargo-sbom")),
+        (build_app_linux, ("tauri-cli", "cargo-auditable")),
+    ):
+        assert "CARGO_NET_RETRY: 10" in block
+        assert "install_cargo_tool() {" in block
+        assert "for attempt in 1 2 3; do" in block
+        assert 'cargo install "$tool" --locked' in block
+        assert 'echo "cargo install $tool failed on attempt $attempt/3"' in block
+        for tool in required_tools:
+            assert f"install_cargo_tool {tool}" in block
     assert "-p capsem-tui" in workflow
     assert "-p capsem-mcp-aggregator" in workflow
     assert "-p capsem-mcp-builtin" in workflow
