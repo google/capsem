@@ -87,7 +87,6 @@ sidebar:
 | Workspace sequential read | 3715.8 MB/s |
 | Workspace random 4K write | 6959.0 IOPS |
 | Workspace random 4K read | 43921.1 IOPS |
-| 10 MiB HTTP transfer | 64.7 MB/s |
 
 ## App
 
@@ -110,7 +109,7 @@ sidebar:
   <text x="138" y="270" text-anchor="middle" font-size="13" fill="currentColor">python3</text>
   <text x="253" y="270" text-anchor="middle" font-size="13" fill="currentColor">node</text>
   <text x="368" y="270" text-anchor="middle" font-size="13" fill="currentColor">claude</text>
-  <text x="483" y="270" text-anchor="middle" font-size="13" fill="currentColor">gemini</text>
+  <text x="483" y="270" text-anchor="middle" font-size="13" fill="currentColor">AGY</text>
   <text x="598" y="270" text-anchor="middle" font-size="13" fill="currentColor">codex</text>
 </svg>
 
@@ -119,7 +118,7 @@ sidebar:
 | python3 --version | 3.4ms | 3.8ms | 4.4ms |
 | node --version | 26.9ms | 28.1ms | 29.0ms |
 | claude --version | 134.8ms | 137.0ms | 138.2ms |
-| gemini --version | 772.6ms | 802.3ms | 818.0ms |
+| AGY --version | 772.6ms | 802.3ms | 818.0ms |
 | codex --version | 85.3ms | 116.9ms | 134.3ms |
 
 ## Network
@@ -164,9 +163,10 @@ sidebar:
   <text x="574" y="270" text-anchor="middle" font-size="13" fill="currentColor">Model</text>
 </svg>
 
-| Workload | RPS | p50 | p95 | p99 | Errors |
-|---|---:|---:|---:|---:|---:|
-| HTTP | 3098.3 | 19.7ms | 35.2ms | 45.4ms | 0 |
-| DNS | 3905.5 | 14.3ms | 30.3ms | 34.9ms | 0 |
-| MCP | 5723.4 | 9.0ms | 22.3ms | 27.0ms | 0 |
-| Model | 2477.2 | 25.1ms | 40.7ms | 51.7ms | 0 |
+| Workload | RPS | Throughput | p50 | p95 | p99 | Errors |
+|---|---:|---:|---:|---:|---:|---:|
+| HTTP | 3098.3 | - | 19.7ms | 35.2ms | 45.4ms | 0 |
+| DNS | 3905.5 | - | 14.3ms | 30.3ms | 34.9ms | 0 |
+| MCP | 5723.4 | - | 9.0ms | 22.3ms | 27.0ms | 0 |
+| Model | 2477.2 | - | 25.1ms | 40.7ms | 51.7ms | 0 |
+| 10 MiB HTTP transfer | - | 64.7 MB/s | - | - | - | 0 |

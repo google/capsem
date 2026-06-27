@@ -165,6 +165,12 @@ def test_benchmark_results_page_is_graph_dashboard() -> None:
     assert "DNS" in text
     assert "MCP" in text
     assert "Model" in text
+    assert "AGY" in text
+
+    disk_section = text.split("## Disk", 1)[1].split("## App", 1)[0]
+    network_section = text.split("## Network", 1)[1]
+    assert "10 MiB HTTP transfer" not in disk_section
+    assert "10 MiB HTTP transfer" in network_section
 
     retired_sections = [
         "Rootfs Decision",
@@ -189,6 +195,7 @@ def test_benchmark_results_page_is_graph_dashboard() -> None:
         "http_tiny",
         "model_json",
         "credential_response",
+        "gemini",
     ]
     for term in retired_chart_terms:
         assert term not in text
