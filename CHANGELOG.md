@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.1782579305] - 2026-06-27
+
+### Fixed
+- Installed and exported the musl C linker in release asset jobs so guest
+  binaries with C/ASM dependencies cross-compile during rootfs builds.
+
 ## [1.3.1782578203] - 2026-06-27
 
 ### Fixed
