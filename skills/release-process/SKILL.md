@@ -229,6 +229,22 @@ xcrun notarytool history --key private/apple-certificate/capsem.p8 --key-id KEY_
 
 Propagation can lag 1-5 min after accepting. `notarytool history` must return a list (possibly empty) before you tag -- the CI preflight step runs the same check and fails fast on 403.
 
+When a release gate needs user action, say so plainly. Do not describe an
+Apple agreement 403 as a transient notarization error or a credential problem.
+Tell the user:
+
+- what blocked the release (`notarytool history` returned 403 because an Apple
+  agreement is missing or expired)
+- why the agent cannot fix it (only the Apple Account Holder can accept it)
+- exactly what to do (sign in to the two Apple pages above and accept any
+  pending agreements or banking/tax terms)
+- when to retry (after the agreement is accepted and 1-5 minutes have passed)
+- what was intentionally not done (`just cut-release` was not run, so no
+  release commit/tag/push happened)
+
+If a timed retry is useful, offer or create a heartbeat retry. Keep the release
+paused until `notarytool history` succeeds locally.
+
 ## CI secrets
 
 | Secret | Purpose |
