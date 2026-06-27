@@ -177,6 +177,16 @@ fn make_test_state() -> Arc<ServiceState> {
         profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
         profile_mutation_db: test_profile_mutation_db(&run_dir),
+        last_defunct_reconcile_ms: AtomicU64::new(0),
+        stats_response_cache: Mutex::new(None),
+        stats_detail_response_cache: Mutex::new(HashMap::new()),
+        storage_diagnostics_cache: Mutex::new(HashMap::new()),
+        persistent_resume_state_cache: Mutex::new(HashMap::new()),
+        evaluate_rule_cache: Mutex::new(HashMap::new()),
+        profile_rule_response_cache: Mutex::new(HashMap::new()),
+        profile_plugin_response_cache: Mutex::new(HashMap::new()),
+        evaluate_response_cache: Mutex::new(HashMap::new()),
+        evaluate_last_response_cache: Mutex::new(None),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
@@ -210,6 +220,17 @@ async fn route_request(
     (status, json)
 }
 
+async fn decode_response_json<T: serde::de::DeserializeOwned>(
+    response: axum::response::Response,
+) -> T {
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    serde_json::from_slice(&bytes).unwrap()
+}
+
+fn enforcement_evaluate_body(request: &EnforcementEvaluateRequest) -> Bytes {
+    Bytes::from(serde_json::to_vec(request).unwrap())
+}
+
 fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
     let run_dir = assets_dir.join("run");
     let asset_status_path = asset_status_path_for_run_dir(&run_dir);
@@ -238,6 +259,16 @@ fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
         profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
         profile_mutation_db: test_profile_mutation_db(&run_dir),
+        last_defunct_reconcile_ms: AtomicU64::new(0),
+        stats_response_cache: Mutex::new(None),
+        stats_detail_response_cache: Mutex::new(HashMap::new()),
+        storage_diagnostics_cache: Mutex::new(HashMap::new()),
+        persistent_resume_state_cache: Mutex::new(HashMap::new()),
+        evaluate_rule_cache: Mutex::new(HashMap::new()),
+        profile_rule_response_cache: Mutex::new(HashMap::new()),
+        profile_plugin_response_cache: Mutex::new(HashMap::new()),
+        evaluate_response_cache: Mutex::new(HashMap::new()),
+        evaluate_last_response_cache: Mutex::new(None),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
@@ -1222,10 +1253,12 @@ async fn profile_enforcement_list_uses_profile_files_and_corp_not_user_settings(
     );
     capsem_core::net::policy_config::write_settings_file(&corp_path, &corp).unwrap();
 
-    let Json(response) =
+    let response: api::EnforcementRuleListResponse = decode_response_json(
         handle_enforcement_rules_list(State(make_test_state()), Path("code".to_string()))
             .await
-            .expect("profile and corp rules compile");
+            .expect("profile and corp rules compile"),
+    )
+    .await;
 
     assert!(response
         .rules
@@ -1279,13 +1312,15 @@ async fn security_routes_read_security_ledger_from_session_db() {
     })
     .await
     .unwrap();
-    let Json(events) = handle_security_latest(
+    let response = handle_security_latest(
         State(Arc::clone(&state)),
         Path("vm-ledger".to_string()),
         Query(SecurityLedgerQuery { limit: Some(10) }),
     )
     .await
     .expect("security latest reads session ledger");
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let events: Vec<capsem_logger::SecurityRuleEvent> = serde_json::from_slice(&bytes).unwrap();
 
     assert_eq!(events.len(), 1);
     let event = &events[0];
@@ -1301,9 +1336,11 @@ async fn security_routes_read_security_ledger_from_session_db() {
     assert!(event.event_json.contains(r#""provider":"ollama""#));
     assert_eq!(event.trace_id.as_deref(), Some("trace_ollama"));
 
-    let Json(stats) = handle_security_info(State(state), Path("vm-ledger".to_string()))
+    let response = handle_security_info(State(state), Path("vm-ledger".to_string()))
         .await
         .expect("security status reads session ledger");
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let stats: capsem_logger::SecurityRuleStats = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(stats.total, 1);
     assert_eq!(stats.by_action[0].rule_action, "allow");
     assert_eq!(stats.by_action[0].count, 1);
@@ -2175,9 +2212,10 @@ async fn handle_profiles_list_returns_code_profile_inventory() {
 async fn handle_profiles_status_reports_builtin_catalog_and_rejects_fake_assets() {
     let (state, dir) = make_test_state_with_tempdir();
 
-    let Json(status) = handle_profiles_status(State(state))
+    let status_response = handle_profiles_status(State(state))
         .await
         .expect("profile status should load built-in catalog");
+    let status: serde_json::Value = decode_response_json(status_response).await;
 
     assert_eq!(status["source"], "built_in");
     assert_eq!(status["profile_count"], 2);
@@ -3419,10 +3457,12 @@ async fn handle_enforcement_rules_list_returns_compiled_profile_rules() {
     let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
     let (_settings_guard, _, _) = install_empty_settings_env(&dir);
 
-    let Json(response) =
+    let response: api::EnforcementRuleListResponse = decode_response_json(
         handle_enforcement_rules_list(State(make_test_state()), Path("code".to_string()))
             .await
-            .expect("rules list should compile effective profile");
+            .expect("rules list should compile effective profile"),
+    )
+    .await;
 
     assert_eq!(response.profile_id, "code");
     assert!(
@@ -3474,10 +3514,12 @@ async fn disabled_rules_are_listed_but_do_not_evaluate() {
     let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
     let (_settings_guard, _, _) = install_empty_settings_env(&dir);
 
-    let Json(response) =
+    let response: api::EnforcementRuleListResponse = decode_response_json(
         handle_enforcement_rules_list(State(make_test_state()), Path("code".to_string()))
             .await
-            .expect("rules list should include disabled rules");
+            .expect("rules list should include disabled rules"),
+    )
+    .await;
     let disabled = response
         .rules
         .iter()
@@ -3511,10 +3553,12 @@ async fn disabled_rules_are_listed_but_do_not_evaluate() {
         "disabled rule must not participate in enforcement or detection"
     );
 
-    let Json(detection_response) =
+    let detection_response: api::DetectionRuleListResponse = decode_response_json(
         handle_detection_rules_list(State(make_test_state()), Path("code".to_string()))
             .await
-            .expect("detection rules list should include disabled detection rules");
+            .expect("detection rules list should include disabled detection rules"),
+    )
+    .await;
     assert!(detection_response
         .rules
         .iter()
@@ -3599,10 +3643,12 @@ async fn handle_detection_rules_list_returns_detection_rules_only() {
     let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
     let (_settings_guard, _, _) = install_empty_settings_env(&dir);
 
-    let Json(response) =
+    let response: api::DetectionRuleListResponse = decode_response_json(
         handle_detection_rules_list(State(make_test_state()), Path("code".to_string()))
             .await
-            .expect("detection rules list should compile effective profile");
+            .expect("detection rules list should compile effective profile"),
+    )
+    .await;
 
     assert_eq!(response.profile_id, "code");
     assert!(
@@ -3692,9 +3738,12 @@ async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluat
     let _home_guard = EnvVarGuard::set("CAPSEM_HOME", dir.path());
     let state = make_test_state();
 
-    let Json(list) = handle_profile_plugins(State(Arc::clone(&state)), Path("code".to_string()))
-        .await
-        .expect("list plugins");
+    let list = list_plugins_for_scope(
+        &state,
+        profile_plugin_scope(&state, "code".to_string()).expect("profile scope"),
+    )
+    .await
+    .expect("list plugins");
     assert_eq!(list.scope.profile_id, "code");
     assert!(
         list.plugins
@@ -3844,14 +3893,15 @@ async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluat
     );
 
     let request = EnforcementEvaluateRequest::eicar_fixture();
-    let Json(default_disabled) = handle_enforcement_evaluate(
+    let default_disabled_response = handle_enforcement_evaluate(
         State(Arc::clone(&state)),
         Path("code".to_string()),
-        Json(request.clone()),
+        enforcement_evaluate_body(&request),
     )
     .await
     .expect("default-disabled plugin evaluates");
-    let default_disabled_event = serde_json::to_value(&default_disabled.event).unwrap();
+    let default_disabled: serde_json::Value = decode_response_json(default_disabled_response).await;
+    let default_disabled_event = &default_disabled["event"];
     assert_eq!(default_disabled_event["decision"]["effective"], "allow");
     let default_disabled_detections = default_disabled_event["detections"].as_array().unwrap();
     assert!(default_disabled_detections.iter().any(|detection| {
@@ -3899,14 +3949,15 @@ async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluat
     );
     assert!(enabled_post.runtime.enabled);
 
-    let Json(enabled) = handle_enforcement_evaluate(
+    let enabled_response = handle_enforcement_evaluate(
         State(Arc::clone(&state)),
         Path("code".to_string()),
-        Json(request.clone()),
+        enforcement_evaluate_body(&request),
     )
     .await
     .expect("explicitly enabled plugin evaluates");
-    let enabled_event = serde_json::to_value(&enabled.event).unwrap();
+    let enabled: serde_json::Value = decode_response_json(enabled_response).await;
+    let enabled_event = &enabled["event"];
     assert_eq!(enabled_event["decision"]["effective"], "allow");
     assert_eq!(
         enabled_event["file"]["import_content"],
@@ -3937,14 +3988,15 @@ async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluat
         capsem_core::net::policy_config::SecurityPluginMode::Disable
     );
 
-    let Json(after_disable) = handle_enforcement_evaluate(
+    let after_disable_response = handle_enforcement_evaluate(
         State(Arc::clone(&state)),
         Path("code".to_string()),
-        Json(request.clone()),
+        enforcement_evaluate_body(&request),
     )
     .await
     .expect("disabled plugin evaluates");
-    let after_disable_event = serde_json::to_value(&after_disable.event).unwrap();
+    let after_disable: serde_json::Value = decode_response_json(after_disable_response).await;
+    let after_disable_event = &after_disable["event"];
     assert_eq!(after_disable_event["decision"]["effective"], "allow");
     let after_disable_detections = after_disable_event["detections"].as_array().unwrap();
     assert!(after_disable_detections.iter().any(|detection| {
@@ -4008,11 +4060,15 @@ async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluat
         capsem_core::net::policy_config::DetectionLevel::Critical
     );
 
-    let Json(after_enable) =
-        handle_enforcement_evaluate(State(state), Path("code".to_string()), Json(request))
-            .await
-            .expect("reenabled plugin evaluates");
-    let after_enable_event = serde_json::to_value(&after_enable.event).unwrap();
+    let after_enable_response = handle_enforcement_evaluate(
+        State(state),
+        Path("code".to_string()),
+        enforcement_evaluate_body(&request),
+    )
+    .await
+    .expect("reenabled plugin evaluates");
+    let after_enable: serde_json::Value = decode_response_json(after_enable_response).await;
+    let after_enable_event = &after_enable["event"];
     assert_eq!(after_enable_event["decision"]["effective"], "block");
     let detections = after_enable_event["detections"].as_array().unwrap();
     assert!(detections.iter().any(|detection| {
@@ -4475,10 +4531,12 @@ async fn enforcement_rule_endpoints_add_delete_reload_and_reject_invalid_rules_a
     .expect("valid profile enforcement rule should save");
     assert_eq!(saved.rule_id, "eicar_block");
     assert_eq!(saved.compiled_rule_id, "profiles.rules.eicar_block");
-    let Json(list_after_save) =
+    let list_after_save: api::EnforcementRuleListResponse = decode_response_json(
         handle_enforcement_rules_list(State(Arc::clone(&state)), Path("code".to_string()))
             .await
-            .expect("rules list cache should refresh after upsert");
+            .expect("rules list cache should refresh after upsert"),
+    )
+    .await;
     assert!(
         list_after_save
             .rules
@@ -4567,10 +4625,12 @@ async fn enforcement_rule_endpoints_add_delete_reload_and_reject_invalid_rules_a
     .expect("delete should remove existing rule");
     assert!(deleted.deleted);
     assert_eq!(deleted.rule_id, "eicar_block");
-    let Json(list_after_delete) =
+    let list_after_delete: api::EnforcementRuleListResponse = decode_response_json(
         handle_enforcement_rules_list(State(Arc::clone(&state)), Path("code".to_string()))
             .await
-            .expect("rules list cache should refresh after delete");
+            .expect("rules list cache should refresh after delete"),
+    )
+    .await;
     assert!(
         list_after_delete
             .rules
@@ -4814,6 +4874,42 @@ match = 'file.import.content.contains("EICAR")'
         events.is_empty(),
         "evaluate routes are dry-run only; runtime boundaries must own ledger writes"
     )
+}
+
+#[tokio::test]
+async fn handle_enforcement_evaluate_reuses_cached_raw_body_response() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (config_root, _) = install_file_asset_profile_fixture(&dir);
+    let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
+    let _home_guard = EnvVarGuard::set("CAPSEM_HOME", dir.path());
+    let state = make_test_state();
+    let request = EnforcementEvaluateRequest::eicar_fixture();
+    let body = enforcement_evaluate_body(&request);
+
+    let first_response = handle_enforcement_evaluate(
+        State(Arc::clone(&state)),
+        Path("code".to_string()),
+        body.clone(),
+    )
+    .await
+    .expect("first evaluate");
+    let first: serde_json::Value = decode_response_json(first_response).await;
+    assert_eq!(first["event"]["event_type"], "file.import");
+
+    {
+        assert_eq!(state.evaluate_response_cache.lock().unwrap().len(), 1);
+        let mut last = state.evaluate_last_response_cache.lock().unwrap();
+        let cached = last.as_mut().expect("last cached evaluate body");
+        cached.response_body = Bytes::from_static(br#"{"event":{"event_type":"cached-sentinel"}}"#);
+    }
+
+    let second_response = handle_enforcement_evaluate(State(state), Path("code".to_string()), body)
+        .await
+        .expect("second evaluate");
+    let second: serde_json::Value = decode_response_json(second_response).await;
+    assert_eq!(second["event"]["event_type"], "cached-sentinel");
 }
 
 #[tokio::test]
@@ -5753,6 +5849,16 @@ fn make_state_in(run_dir: PathBuf) -> Arc<ServiceState> {
         profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
         profile_mutation_db: test_profile_mutation_db(&run_dir),
+        last_defunct_reconcile_ms: AtomicU64::new(0),
+        stats_response_cache: Mutex::new(None),
+        stats_detail_response_cache: Mutex::new(HashMap::new()),
+        storage_diagnostics_cache: Mutex::new(HashMap::new()),
+        persistent_resume_state_cache: Mutex::new(HashMap::new()),
+        evaluate_rule_cache: Mutex::new(HashMap::new()),
+        profile_rule_response_cache: Mutex::new(HashMap::new()),
+        profile_plugin_response_cache: Mutex::new(HashMap::new()),
+        evaluate_response_cache: Mutex::new(HashMap::new()),
+        evaluate_last_response_cache: Mutex::new(None),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
@@ -6288,6 +6394,16 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
         profile_mutation_db: test_profile_mutation_db(&run_dir),
+        last_defunct_reconcile_ms: AtomicU64::new(0),
+        stats_response_cache: Mutex::new(None),
+        stats_detail_response_cache: Mutex::new(HashMap::new()),
+        storage_diagnostics_cache: Mutex::new(HashMap::new()),
+        persistent_resume_state_cache: Mutex::new(HashMap::new()),
+        evaluate_rule_cache: Mutex::new(HashMap::new()),
+        profile_rule_response_cache: Mutex::new(HashMap::new()),
+        profile_plugin_response_cache: Mutex::new(HashMap::new()),
+        evaluate_response_cache: Mutex::new(HashMap::new()),
+        evaluate_last_response_cache: Mutex::new(None),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });
@@ -8763,6 +8879,16 @@ fn make_test_state_with_tempdir_at(
         profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
         profile_mutation_db: test_profile_mutation_db(&run_dir),
+        last_defunct_reconcile_ms: AtomicU64::new(0),
+        stats_response_cache: Mutex::new(None),
+        stats_detail_response_cache: Mutex::new(HashMap::new()),
+        storage_diagnostics_cache: Mutex::new(HashMap::new()),
+        persistent_resume_state_cache: Mutex::new(HashMap::new()),
+        evaluate_rule_cache: Mutex::new(HashMap::new()),
+        profile_rule_response_cache: Mutex::new(HashMap::new()),
+        profile_plugin_response_cache: Mutex::new(HashMap::new()),
+        evaluate_response_cache: Mutex::new(HashMap::new()),
+        evaluate_last_response_cache: Mutex::new(None),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });

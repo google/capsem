@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Instant;
@@ -148,6 +149,7 @@ struct DbHandleInner {
     writer: Option<Arc<DbWriter>>,
     ready_cache: Mutex<Option<DbResult<()>>>,
     query_many_cache: Mutex<DbQueryManyCache>,
+    read_cache_epoch: AtomicU64,
 }
 
 impl Drop for DbHandleInner {
@@ -217,6 +219,7 @@ impl DbHandle {
                 writer: None,
                 ready_cache: Mutex::new(None),
                 query_many_cache: Mutex::new(None),
+                read_cache_epoch: AtomicU64::new(0),
             }),
         })
     }
@@ -430,6 +433,13 @@ impl DbHandle {
     /// mutate the same database.
     pub fn invalidate_read_cache(&self) {
         *self.inner.query_many_cache.lock().unwrap() = None;
+        self.inner.read_cache_epoch.fetch_add(1, Ordering::AcqRel);
+    }
+
+    /// Monotonic read-cache generation for callers that cache derived route
+    /// bytes from DB-owned query results.
+    pub fn read_cache_epoch(&self) -> u64 {
+        self.inner.read_cache_epoch.load(Ordering::Acquire)
     }
 
     /// Write one telemetry/security event through the DB-owned writer path.

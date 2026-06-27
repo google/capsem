@@ -194,6 +194,42 @@ struct ServiceState {
     /// Profile/MCP/rule/plugin edit routes call `write`; they must never open
     /// SQLite directly or hold a side `DbWriter`.
     profile_mutation_db: Arc<capsem_logger::DbHandle>,
+    /// Last wall-clock millisecond when preserved boot logs were scanned for
+    /// defunct persistent VMs. Hot list/status/info polls must not rescan the
+    /// filesystem on every request.
+    last_defunct_reconcile_ms: AtomicU64,
+    /// Final `/stats` HTTP response bytes derived from the logger-owned
+    /// `main.db` query. The epoch ties this cache to the DB handle's own
+    /// invalidation generation so writes cannot leave stale route bytes behind.
+    stats_response_cache: Mutex<Option<CachedStatsResponse>>,
+    /// Final stats/detail bytes for inactive sessions. Running sessions keep
+    /// reading live DB state; stopped/seeded sessions can reuse bytes until
+    /// their session.db metadata changes.
+    stats_detail_response_cache: Mutex<HashMap<String, CachedStatsDetailResponse>>,
+    /// Session storage diagnostics cached by session directory. These values
+    /// describe the rootfs image path/size and host filesystem for status/info
+    /// routes; repeated polling must not stat the filesystem on every sample.
+    storage_diagnostics_cache: Mutex<HashMap<PathBuf, api::StorageDiagnostics>>,
+    /// Derived persistent VM resume state keyed by stable VM id. The
+    /// fingerprint covers registry fields that affect status so route polling
+    /// does not reload profile files and revalidate asset pins every sample.
+    persistent_resume_state_cache: Mutex<HashMap<String, CachedPersistentResumeState>>,
+    /// User-supplied evaluate-route rule snippets compiled by exact TOML
+    /// content. Evaluation remains per request; parsing/compilation does not.
+    evaluate_rule_cache: Mutex<HashMap<String, SecurityRuleSet>>,
+    /// Final JSON bytes for profile rule inventory routes, cleared whenever
+    /// the route-owned rule cache is refreshed.
+    profile_rule_response_cache: Mutex<HashMap<String, Bytes>>,
+    /// Final JSON bytes for profile plugin inventory routes, cleared whenever
+    /// profile/plugin policy caches are refreshed.
+    profile_plugin_response_cache: Mutex<HashMap<String, Bytes>>,
+    /// Final evaluate-route JSON bytes keyed by profile id and exact request
+    /// body. Plugin policy refresh clears this cache so repeated UI/TUI probes
+    /// do not re-run plugin simulation or serialize identical payloads.
+    evaluate_response_cache: Mutex<HashMap<Vec<u8>, Bytes>>,
+    /// One-entry hot evaluate cache for repeated probes with the same exact
+    /// body. Checked before allocating the multi-entry cache key.
+    evaluate_last_response_cache: Mutex<Option<CachedEvaluateResponse>>,
     /// Guards Apple VZ lifecycle edges across all VMs managed by this
     /// service. Cold starts and teardown take a read guard; save/restore take
     /// a write guard. That keeps checkpoint edges exclusive without
@@ -213,6 +249,31 @@ struct ServiceState {
     /// sufficient because production runs exactly one capsem-service per
     /// user-host.
     shutdown_lock: tokio::sync::Mutex<()>,
+}
+
+#[derive(Clone)]
+struct CachedStatsResponse {
+    db_epoch: u64,
+    bytes: Vec<u8>,
+}
+
+#[derive(Clone)]
+struct CachedStatsDetailResponse {
+    db_fingerprint: String,
+    bytes: Vec<u8>,
+}
+
+#[derive(Clone)]
+struct CachedPersistentResumeState {
+    fingerprint: String,
+    state: (VmLifecycleState, bool, Option<String>),
+}
+
+#[derive(Clone)]
+struct CachedEvaluateResponse {
+    profile_id: String,
+    request_body: Bytes,
+    response_body: Bytes,
 }
 
 fn session_db_path_for_session_dir(session_dir: &StdPath) -> PathBuf {
@@ -421,7 +482,7 @@ struct ProfileSkillEditRequest {
     path: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 struct EnforcementEvaluateRequest {
     rules_toml: String,
     event: EnforcementEventInput,
@@ -450,7 +511,7 @@ match = 'file.import.content.contains("EICAR")'
     }
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 struct EnforcementEventInput {
     event_type: String,
     #[serde(default)]
@@ -525,7 +586,7 @@ struct EnforcementEventInput {
     udp_port: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct EnforcementEvaluateResponse {
     event: SerializableSecurityEvent,
 }
@@ -681,7 +742,7 @@ impl ServiceState {
         };
 
         capsem_logger::record_session_start(&self.main_db_path(), &record)
-            .map(|()| self.profile_mutation_db.invalidate_read_cache())
+            .map(|()| self.invalidate_main_db_route_caches())
             .context("create or mark running main.db session row")
     }
 
@@ -701,7 +762,7 @@ impl ServiceState {
             Some(&stopped_at),
             session_db_path.as_deref(),
         )
-        .map(|()| self.profile_mutation_db.invalidate_read_cache())
+        .map(|()| self.invalidate_main_db_route_caches())
         .with_context(|| {
             if let Some(session_db_path) = session_db_path.as_ref() {
                 format!(
@@ -713,6 +774,30 @@ impl ServiceState {
             }
         })?;
         Ok(())
+    }
+
+    fn invalidate_main_db_route_caches(&self) {
+        self.profile_mutation_db.invalidate_read_cache();
+        *self.stats_response_cache.lock().unwrap() = None;
+    }
+
+    fn storage_diagnostics_cached(&self, session_dir: &StdPath) -> Option<api::StorageDiagnostics> {
+        if let Some(cached) = self
+            .storage_diagnostics_cache
+            .lock()
+            .unwrap()
+            .get(session_dir)
+            .cloned()
+        {
+            return Some(cached);
+        }
+
+        let diagnostics = storage_diagnostics(session_dir)?;
+        self.storage_diagnostics_cache
+            .lock()
+            .unwrap()
+            .insert(session_dir.to_path_buf(), diagnostics.clone());
+        Some(diagnostics)
     }
 
     fn register_session_db_handle(
@@ -891,6 +976,22 @@ impl ServiceState {
     }
 
     fn reconcile_persistent_defunct_from_logs(&self) {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
+            .unwrap_or_default();
+        let last_ms = self.last_defunct_reconcile_ms.load(Ordering::Acquire);
+        if now_ms.saturating_sub(last_ms) < 1_000 {
+            return;
+        }
+        if self
+            .last_defunct_reconcile_ms
+            .compare_exchange(last_ms, now_ms, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return;
+        }
+
         let candidates: Vec<(String, PathBuf)> = {
             let registry = self.persistent_registry.lock().unwrap();
             let instances = self.instances.lock().unwrap();
@@ -1931,6 +2032,7 @@ impl ServiceState {
                 cache.insert(profile_id, rules);
             }
         }
+        self.profile_rule_response_cache.lock().unwrap().clear();
         Ok(())
     }
 
@@ -1945,6 +2047,9 @@ impl ServiceState {
                 cache.insert(profile_id, plugins);
             }
         }
+        self.profile_plugin_response_cache.lock().unwrap().clear();
+        self.evaluate_response_cache.lock().unwrap().clear();
+        *self.evaluate_last_response_cache.lock().unwrap() = None;
         Ok(())
     }
 
@@ -2076,6 +2181,35 @@ impl ServiceState {
             Ok(()) => (status, true, None),
             Err(err) => (status, false, Some(err.to_string())),
         }
+    }
+
+    fn persistent_entry_resume_state_cached(
+        &self,
+        entry: &PersistentVmEntry,
+    ) -> (VmLifecycleState, bool, Option<String>) {
+        let vm_id = persistent_entry_vm_id(entry);
+        let fingerprint = persistent_resume_state_fingerprint(entry);
+        if let Some(cached) = self
+            .persistent_resume_state_cache
+            .lock()
+            .unwrap()
+            .get(&vm_id)
+            .cloned()
+        {
+            if cached.fingerprint == fingerprint {
+                return cached.state;
+            }
+        }
+
+        let state = self.persistent_entry_resume_state(entry);
+        self.persistent_resume_state_cache.lock().unwrap().insert(
+            vm_id,
+            CachedPersistentResumeState {
+                fingerprint,
+                state: state.clone(),
+            },
+        );
+        state
     }
 }
 
@@ -3390,7 +3524,8 @@ async fn handle_list(State(state): State<Arc<ServiceState>>) -> Json<ListRespons
     };
     for entry in inactive_persistent {
         let vm_id = persistent_entry_vm_id(&entry);
-        let (status, can_resume, blocked_reason) = state.persistent_entry_resume_state(&entry);
+        let (status, can_resume, blocked_reason) =
+            state.persistent_entry_resume_state_cached(&entry);
         let mut info = SandboxInfo::new(vm_id, entry.profile_id.clone(), 0, status, true);
         info.name = Some(entry.name.clone());
         info.ram_mb = Some(entry.ram_mb);
@@ -3446,7 +3581,7 @@ async fn handle_info(
         };
         if let (Some(mut info), Some(dir)) = (instance_data, session_dir) {
             apply_session_db_status(&state, &mut info, &dir).await;
-            info.storage = storage_diagnostics(&dir);
+            info.storage = state.storage_diagnostics_cached(&dir);
             return Ok(Json(info));
         }
     }
@@ -3455,7 +3590,8 @@ async fn handle_info(
     let persistent_entry = find_persistent_entry_by_route_id(&state, &id);
     if let Some(entry) = persistent_entry {
         let vm_id = persistent_entry_vm_id(&entry);
-        let (status, can_resume, blocked_reason) = state.persistent_entry_resume_state(&entry);
+        let (status, can_resume, blocked_reason) =
+            state.persistent_entry_resume_state_cached(&entry);
         let mut info = SandboxInfo::new(vm_id, entry.profile_id.clone(), 0, status, true);
         info.name = Some(entry.name.clone());
         info.ram_mb = Some(entry.ram_mb);
@@ -3474,7 +3610,7 @@ async fn handle_info(
         info.refresh_available_actions();
         info.size_bytes = capsem_core::auto_snapshot::sandbox_disk_usage(&entry.session_dir).ok();
         apply_session_db_status(&state, &mut info, &entry.session_dir).await;
-        info.storage = storage_diagnostics(&entry.session_dir);
+        info.storage = state.storage_diagnostics_cached(&entry.session_dir);
         return Ok(Json(info));
     }
 
@@ -3503,7 +3639,7 @@ async fn handle_vm_status(
                 last_error: None,
                 can_resume: false,
                 resume_blocked_reason: None,
-                storage: storage_diagnostics(&i.session_dir),
+                storage: state.storage_diagnostics_cached(&i.session_dir),
                 available_actions: VmLifecycleState::Running.available_actions(false),
             }));
         }
@@ -3512,7 +3648,8 @@ async fn handle_vm_status(
     {
         if let Some(entry) = find_persistent_entry_by_route_id(&state, &id) {
             let vm_id = persistent_entry_vm_id(&entry);
-            let (status, can_resume, blocked_reason) = state.persistent_entry_resume_state(&entry);
+            let (status, can_resume, blocked_reason) =
+                state.persistent_entry_resume_state_cached(&entry);
             return Ok(Json(api::VmStatusResponse {
                 id: vm_id,
                 name: entry.name.clone(),
@@ -3532,7 +3669,7 @@ async fn handle_vm_status(
                 } else {
                     blocked_reason
                 },
-                storage: storage_diagnostics(&entry.session_dir),
+                storage: state.storage_diagnostics_cached(&entry.session_dir),
                 available_actions: status.available_actions(can_resume),
             }));
         }
@@ -3674,6 +3811,10 @@ async fn handle_stats_detail(
 ) -> Result<impl IntoResponse, AppError> {
     let session_dir = resolve_session_dir(&state, &id)?;
     let db_path = session_dir.join("session.db");
+    if let Some(body) = session_response_cache_get(&state, &id, "stats_detail", &db_path) {
+        return Ok(json_bytes_response(body));
+    }
+
     let payload = read_stats_detail_payload_from_session_db(&state, &id, &db_path).await?;
     let body = serde_json::to_vec(&payload).map_err(|error| {
         AppError(
@@ -3681,11 +3822,8 @@ async fn handle_stats_detail(
             format!("failed to serialize stats detail response: {error}"),
         )
     })?;
-    Ok((
-        StatusCode::OK,
-        [(axum::http::header::CONTENT_TYPE, "application/json")],
-        Bytes::from(body),
-    ))
+    session_response_cache_store(&state, &id, "stats_detail", &db_path, &body);
+    Ok(json_bytes_response(Bytes::from(body)))
 }
 
 async fn handle_logs(
@@ -5221,7 +5359,7 @@ async fn handle_profile_assets_status(
     Path(profile_id): Path<String>,
     State(state): State<Arc<ServiceState>>,
 ) -> Result<axum::response::Response, AppError> {
-    let profile_id = validate_profile_route_id(profile_id)?;
+    let profile_id = validate_profile_route_id_from_state(&state, profile_id)?;
     if !asset_reconcile_has_route_fields(&state) {
         if let Some(body) = cached_profile_status_body_for_route(&state, &profile_id)? {
             return Ok(json_bytes_response(body));
@@ -5472,6 +5610,7 @@ fn profile_for_route(profile_id: String) -> Result<Profile, AppError> {
 #[derive(Clone, Debug)]
 struct ProfileStatusCache {
     catalog: serde_json::Value,
+    catalog_body: Bytes,
     profiles: BTreeMap<String, serde_json::Value>,
     profile_bodies: BTreeMap<String, Bytes>,
 }
@@ -5539,8 +5678,10 @@ fn build_profile_status_cache(
         "ready_count": ready_count,
         "profiles": profiles,
     });
+    let catalog_body = Bytes::from(serde_json::to_vec(&catalog_status).unwrap_or_default());
     ProfileStatusCache {
         catalog: catalog_status,
+        catalog_body,
         profiles: profile_statuses,
         profile_bodies,
     }
@@ -5550,7 +5691,7 @@ fn asset_reconcile_has_route_fields(state: &ServiceState) -> bool {
     state
         .asset_reconcile
         .lock()
-        .map(|reconcile| reconcile.in_progress || reconcile.current_asset.is_some())
+        .map(|reconcile| reconcile.in_progress)
         .unwrap_or(true)
 }
 
@@ -5611,6 +5752,24 @@ fn profile_status_cache(state: &ServiceState) -> Result<ProfileStatusCache, AppE
         }
     }
     rebuild_profile_status_cache(state)
+}
+
+fn profile_status_catalog_body(state: &ServiceState) -> Result<Bytes, AppError> {
+    if let Some(body) = state
+        .profile_status_cache
+        .lock()
+        .map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("profile status cache lock poisoned: {error}"),
+            )
+        })?
+        .as_ref()
+        .map(|cache| cache.catalog_body.clone())
+    {
+        return Ok(body);
+    }
+    Ok(rebuild_profile_status_cache(state)?.catalog_body)
 }
 
 fn cached_profile_status_for_route(
@@ -5831,6 +5990,11 @@ fn refresh_profile_route_caches(state: &ServiceState) -> Result<(), AppError> {
             format!("profile status cache lock poisoned: {error}"),
         )
     })? = Some(status_cache);
+    state.persistent_resume_state_cache.lock().unwrap().clear();
+    state.profile_rule_response_cache.lock().unwrap().clear();
+    state.profile_plugin_response_cache.lock().unwrap().clear();
+    state.evaluate_response_cache.lock().unwrap().clear();
+    *state.evaluate_last_response_cache.lock().unwrap() = None;
     Ok(())
 }
 
@@ -5902,9 +6066,19 @@ async fn handle_profiles_list(
 
 async fn handle_profiles_status(
     State(state): State<Arc<ServiceState>>,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<axum::response::Response, AppError> {
+    if !asset_reconcile_has_route_fields(&state) {
+        return Ok(json_bytes_response(profile_status_catalog_body(&state)?));
+    }
     let cache = profile_status_cache(&state)?;
-    Ok(Json(refresh_reconcile_fields(&state, cache.catalog)))
+    let value = refresh_reconcile_fields(&state, cache.catalog);
+    let body = serde_json::to_vec(&value).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to serialize profiles status response: {error}"),
+        )
+    })?;
+    Ok(json_bytes_response(Bytes::from(body)))
 }
 
 async fn handle_profiles_reload(
@@ -6411,6 +6585,7 @@ async fn write_profile_mutation_event(
                 format!("profile mutation ledger write failed: {error}"),
             )
         })?;
+    state.invalidate_main_db_route_caches();
     refresh_profile_route_caches(state)?;
     log_profile_mutation_applied("profile_mutation_ledger", &event);
     Ok(event)
@@ -6975,6 +7150,16 @@ async fn handle_timeline(
     let session_dir = resolve_session_dir(&state, &id)?;
     let cutoff = since_filter.map(secs_to_rfc3339);
     let db_path = session_dir.join("session.db");
+    let route_key = format!(
+        "timeline:layers={}:limit={}:since={}:trace={}",
+        layers.join(","),
+        limit,
+        params.since.as_deref().unwrap_or(""),
+        params.trace_id.as_deref().unwrap_or("")
+    );
+    if let Some(body) = session_response_cache_get(&state, &id, &route_key, &db_path) {
+        return Ok(json_bytes_response(body));
+    }
     let sql = timeline_base_sql();
     let rows = read_timeline_rows_from_session_db(&state, &id, &db_path, &sql)
         .await?
@@ -7004,12 +7189,9 @@ async fn handle_timeline(
             format!("timeline ledger serialization failed: {error}"),
         )
     })?;
+    session_response_cache_store(&state, &id, &route_key, &db_path, json_str.as_bytes());
 
-    Ok((
-        axum::http::StatusCode::OK,
-        [(axum::http::header::CONTENT_TYPE, "application/json")],
-        json_str,
-    ))
+    Ok(json_bytes_response(Bytes::from(json_str)))
 }
 
 #[derive(Deserialize, Debug, Default)]
@@ -7027,9 +7209,14 @@ async fn handle_security_latest(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
     Query(params): Query<SecurityLedgerQuery>,
-) -> Result<Json<Vec<capsem_logger::SecurityRuleEvent>>, AppError> {
+) -> Result<axum::response::Response, AppError> {
     let limit = params.limit.unwrap_or(100).min(2000);
-    let _ = resolve_session_dir(&state, &id)?;
+    let session_dir = resolve_session_dir(&state, &id)?;
+    let db_path = session_dir.join("session.db");
+    let route_key = format!("security_latest:limit={limit}");
+    if let Some(body) = session_response_cache_get(&state, &id, &route_key, &db_path) {
+        return Ok(json_bytes_response(body));
+    }
     let rows = security_latest_for_vm(&state, &id, limit, false).await?;
     info!(
         route = "/vms/{id}/security/latest",
@@ -7038,7 +7225,14 @@ async fn handle_security_latest(
         row_count = rows.len(),
         "security_latest"
     );
-    Ok(Json(rows))
+    let body = serde_json::to_vec(&rows).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to serialize security latest response: {error}"),
+        )
+    })?;
+    session_response_cache_store(&state, &id, &route_key, &db_path, &body);
+    Ok(json_bytes_response(Bytes::from(body)))
 }
 
 /// GET /vms/{id}/detection/latest -- latest detection-bearing rule rows.
@@ -7046,21 +7240,44 @@ async fn handle_detection_latest(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
     Query(params): Query<SecurityLedgerQuery>,
-) -> Result<Json<Vec<capsem_logger::SecurityRuleEvent>>, AppError> {
+) -> Result<axum::response::Response, AppError> {
     let limit = params.limit.unwrap_or(100).min(2000);
-    let _ = resolve_session_dir(&state, &id)?;
-    Ok(Json(
-        security_latest_for_vm(&state, &id, limit, true).await?,
-    ))
+    let session_dir = resolve_session_dir(&state, &id)?;
+    let db_path = session_dir.join("session.db");
+    let route_key = format!("detection_latest:limit={limit}");
+    if let Some(body) = session_response_cache_get(&state, &id, &route_key, &db_path) {
+        return Ok(json_bytes_response(body));
+    }
+    let rows = security_latest_for_vm(&state, &id, limit, true).await?;
+    let body = serde_json::to_vec(&rows).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to serialize detection latest response: {error}"),
+        )
+    })?;
+    session_response_cache_store(&state, &id, &route_key, &db_path, &body);
+    Ok(json_bytes_response(Bytes::from(body)))
 }
 
 /// GET /vms/{id}/security/status -- security rule ledger aggregates.
 async fn handle_security_info(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
-) -> Result<Json<capsem_logger::SecurityRuleStats>, AppError> {
-    let _ = resolve_session_dir(&state, &id)?;
-    Ok(Json(security_stats_for_vm(&state, &id).await?))
+) -> Result<axum::response::Response, AppError> {
+    let session_dir = resolve_session_dir(&state, &id)?;
+    let db_path = session_dir.join("session.db");
+    if let Some(body) = session_response_cache_get(&state, &id, "security_status", &db_path) {
+        return Ok(json_bytes_response(body));
+    }
+    let stats = security_stats_for_vm(&state, &id).await?;
+    let body = serde_json::to_vec(&stats).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to serialize security status response: {error}"),
+        )
+    })?;
+    session_response_cache_store(&state, &id, "security_status", &db_path, &body);
+    Ok(json_bytes_response(Bytes::from(body)))
 }
 
 fn service_session_dirs(state: &ServiceState) -> Vec<(String, PathBuf)> {
@@ -8041,6 +8258,58 @@ fn body_blob_map(rows: Vec<serde_json::Value>) -> serde_json::Value {
     serde_json::Value::Object(by_event)
 }
 
+fn stats_detail_db_fingerprint(db_path: &StdPath) -> Option<String> {
+    let metadata = std::fs::metadata(db_path).ok()?;
+    let modified = metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    Some(format!("{}:{modified}", metadata.len()))
+}
+
+fn session_response_cache_key(vm_id: &str, route_key: &str) -> String {
+    format!("{vm_id}:{route_key}")
+}
+
+fn session_response_cache_get(
+    state: &ServiceState,
+    vm_id: &str,
+    route_key: &str,
+    db_path: &StdPath,
+) -> Option<Bytes> {
+    let db_fingerprint = stats_detail_db_fingerprint(db_path)?;
+    let cache_key = session_response_cache_key(vm_id, route_key);
+    let cached = state
+        .stats_detail_response_cache
+        .lock()
+        .unwrap()
+        .get(&cache_key)
+        .cloned()?;
+    (cached.db_fingerprint == db_fingerprint).then(|| Bytes::from(cached.bytes))
+}
+
+fn session_response_cache_store(
+    state: &ServiceState,
+    vm_id: &str,
+    route_key: &str,
+    db_path: &StdPath,
+    bytes: &[u8],
+) {
+    let Some(db_fingerprint) = stats_detail_db_fingerprint(db_path) else {
+        return;
+    };
+    let cache_key = session_response_cache_key(vm_id, route_key);
+    state.stats_detail_response_cache.lock().unwrap().insert(
+        cache_key,
+        CachedStatsDetailResponse {
+            db_fingerprint,
+            bytes: bytes.to_vec(),
+        },
+    );
+}
+
 async fn read_stats_detail_payload_from_session_db(
     state: &ServiceState,
     vm_id: &str,
@@ -8182,6 +8451,13 @@ async fn read_stats_response_from_main_db_handle(
 ) -> Result<Vec<u8>, AppError> {
     let db_path = state.main_db_path();
     let db = &state.profile_mutation_db;
+    let db_epoch = db.read_cache_epoch();
+    if let Some(cached) = state.stats_response_cache.lock().unwrap().clone() {
+        if cached.db_epoch == db_epoch {
+            return Ok(cached.bytes);
+        }
+    }
+
     db.ready()
         .await
         .map_err(|error| main_ledger_route_error("stats", "ready", &db_path, error))?;
@@ -8215,10 +8491,24 @@ async fn read_stats_response_from_main_db_handle(
             )
         })?;
     match payload {
-        serde_json::Value::String(payload) => Ok(payload.as_bytes().to_vec()),
-        serde_json::Value::Object(_) => serde_json::to_vec(payload).map_err(|error| {
-            main_ledger_route_error("stats", "serialize response payload", &db_path, error)
-        }),
+        serde_json::Value::String(payload) => {
+            let bytes = payload.as_bytes().to_vec();
+            *state.stats_response_cache.lock().unwrap() = Some(CachedStatsResponse {
+                db_epoch,
+                bytes: bytes.clone(),
+            });
+            Ok(bytes)
+        }
+        serde_json::Value::Object(_) => {
+            let bytes = serde_json::to_vec(payload).map_err(|error| {
+                main_ledger_route_error("stats", "serialize response payload", &db_path, error)
+            })?;
+            *state.stats_response_cache.lock().unwrap() = Some(CachedStatsResponse {
+                db_epoch,
+                bytes: bytes.clone(),
+            });
+            Ok(bytes)
+        }
         other => Err(main_ledger_route_error(
             "stats",
             "read response payload",
@@ -8918,8 +9208,31 @@ async fn hydrate_credential_broker_runtime(
 async fn handle_profile_plugins(
     State(state): State<Arc<ServiceState>>,
     Path(profile_id): Path<String>,
-) -> Result<Json<PluginListResponse>, AppError> {
-    list_plugins_for_scope(&state, profile_plugin_scope(&state, profile_id)?).await
+) -> Result<axum::response::Response, AppError> {
+    let scope = profile_plugin_scope(&state, profile_id)?;
+    let cache_key = format!("plugins:list:{}", scope.profile_id);
+    if let Some(body) = state
+        .profile_plugin_response_cache
+        .lock()
+        .unwrap()
+        .get(&cache_key)
+        .cloned()
+    {
+        return Ok(json_bytes_response(body));
+    }
+    let response = list_plugins_for_scope(&state, scope).await?;
+    let body = serde_json::to_vec(&response).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to serialize plugin list response: {error}"),
+        )
+    })?;
+    state
+        .profile_plugin_response_cache
+        .lock()
+        .unwrap()
+        .insert(cache_key, Bytes::from(body.clone()));
+    Ok(json_bytes_response(Bytes::from(body)))
 }
 
 async fn handle_profile_plugins_info(
@@ -8990,12 +9303,12 @@ async fn handle_profile_credential_broker_credentials_reload(
 async fn list_plugins_for_scope(
     state: &Arc<ServiceState>,
     scope: PluginScope,
-) -> Result<Json<PluginListResponse>, AppError> {
+) -> Result<PluginListResponse, AppError> {
     let mut plugins = Vec::new();
     for plugin_id in plugin_catalog().keys() {
         plugins.push(plugin_info_for(state, plugin_id, scope.clone(), false).await?);
     }
-    Ok(Json(PluginListResponse { scope, plugins }))
+    Ok(PluginListResponse { scope, plugins })
 }
 
 async fn handle_profile_plugin_info(
@@ -9107,25 +9420,81 @@ impl SecurityEventEmitter for ServiceEvaluateEmitter {
 async fn handle_enforcement_evaluate(
     State(state): State<Arc<ServiceState>>,
     Path(profile_id): Path<String>,
-    Json(request): Json<EnforcementEvaluateRequest>,
-) -> Result<Json<EnforcementEvaluateResponse>, AppError> {
-    let profile_id = validate_profile_route_id(profile_id)?;
-    let profile = SecurityRuleProfile::parse_toml(&request.rules_toml).map_err(|error| {
-        AppError(
-            StatusCode::BAD_REQUEST,
-            format!("invalid enforcement rules: {error}"),
-        )
-    })?;
-    let rules =
-        SecurityRuleProfile::compile(&profile, SecurityRuleSource::User).map_err(|error| {
+    body: Bytes,
+) -> Result<axum::response::Response, AppError> {
+    let profile_id = validate_profile_route_id_from_state(&state, profile_id)?;
+    let request_body = body;
+    if let Some(response_body) = state
+        .evaluate_last_response_cache
+        .lock()
+        .unwrap()
+        .as_ref()
+        .and_then(|cached| {
+            (cached.profile_id == profile_id && cached.request_body == request_body)
+                .then(|| cached.response_body.clone())
+        })
+    {
+        return Ok(json_bytes_response(response_body));
+    }
+    let mut response_cache_key = Vec::with_capacity(profile_id.len() + request_body.len() + 1);
+    response_cache_key.extend_from_slice(profile_id.as_bytes());
+    response_cache_key.push(0);
+    response_cache_key.extend_from_slice(&request_body);
+    if let Some(response_body) = state
+        .evaluate_response_cache
+        .lock()
+        .unwrap()
+        .get(&response_cache_key)
+        .cloned()
+    {
+        *state.evaluate_last_response_cache.lock().unwrap() = Some(CachedEvaluateResponse {
+            profile_id,
+            request_body,
+            response_body: response_body.clone(),
+        });
+        return Ok(json_bytes_response(response_body));
+    }
+    let request: EnforcementEvaluateRequest =
+        serde_json::from_slice(&request_body).map_err(|error| {
+            AppError(
+                StatusCode::BAD_REQUEST,
+                format!("invalid enforcement evaluation request: {error}"),
+            )
+        })?;
+    let policy = effective_plugin_policy(&state, &profile_id);
+    let cached_rule_set = {
+        state
+            .evaluate_rule_cache
+            .lock()
+            .unwrap()
+            .get(&request.rules_toml)
+            .cloned()
+    };
+    let rule_set = if let Some(rule_set) = cached_rule_set {
+        rule_set
+    } else {
+        let profile = SecurityRuleProfile::parse_toml(&request.rules_toml).map_err(|error| {
             AppError(
                 StatusCode::BAD_REQUEST,
                 format!("invalid enforcement rules: {error}"),
             )
         })?;
-    let rule_set = SecurityRuleSet::new(rules);
+        let rules =
+            SecurityRuleProfile::compile(&profile, SecurityRuleSource::User).map_err(|error| {
+                AppError(
+                    StatusCode::BAD_REQUEST,
+                    format!("invalid enforcement rules: {error}"),
+                )
+            })?;
+        let rule_set = SecurityRuleSet::new(rules);
+        state
+            .evaluate_rule_cache
+            .lock()
+            .unwrap()
+            .insert(request.rules_toml.clone(), rule_set.clone());
+        rule_set
+    };
     let event = request.event.into_security_event()?;
-    let policy = effective_plugin_policy(&state, &profile_id);
     let engine = SecurityEventEngine::new(
         SecurityActionRegistry::with_builtin_actions().with_plugin_policy(policy),
         Arc::new(ServiceEvaluateEmitter),
@@ -9138,17 +9507,34 @@ async fn handle_enforcement_evaluate(
                 format!("enforcement evaluation failed: {error}"),
             )
         })?;
-    Ok(Json(EnforcementEvaluateResponse {
+    let response = EnforcementEvaluateResponse {
         event: event.serializable(),
-    }))
+    };
+    let body = serde_json::to_vec(&response).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to serialize enforcement evaluation response: {error}"),
+        )
+    })?;
+    state
+        .evaluate_response_cache
+        .lock()
+        .unwrap()
+        .insert(response_cache_key, Bytes::from(body.clone()));
+    *state.evaluate_last_response_cache.lock().unwrap() = Some(CachedEvaluateResponse {
+        profile_id,
+        request_body,
+        response_body: Bytes::from(body.clone()),
+    });
+    Ok(json_bytes_response(Bytes::from(body)))
 }
 
 async fn handle_detection_evaluate(
     State(state): State<Arc<ServiceState>>,
     Path(profile_id): Path<String>,
-    Json(request): Json<EnforcementEvaluateRequest>,
-) -> Result<Json<EnforcementEvaluateResponse>, AppError> {
-    handle_enforcement_evaluate(State(state), Path(profile_id), Json(request)).await
+    body: Bytes,
+) -> Result<axum::response::Response, AppError> {
+    handle_enforcement_evaluate(State(state), Path(profile_id), body).await
 }
 
 fn enforcement_rule_source(source: SecurityRuleSource) -> api::EnforcementRuleSource {
@@ -9336,24 +9722,68 @@ async fn handle_detection_info(
 async fn handle_enforcement_rules_list(
     State(state): State<Arc<ServiceState>>,
     Path(profile_id): Path<String>,
-) -> Result<Json<api::EnforcementRuleListResponse>, AppError> {
-    Ok(Json(api::EnforcementRuleListResponse {
+) -> Result<axum::response::Response, AppError> {
+    let cache_key = format!("enforcement_rules:{profile_id}");
+    if let Some(body) = state
+        .profile_rule_response_cache
+        .lock()
+        .unwrap()
+        .get(&cache_key)
+        .cloned()
+    {
+        return Ok(json_bytes_response(body));
+    }
+    let response = api::EnforcementRuleListResponse {
         rules: cached_rules_for_profile(&state, &profile_id)?,
         profile_id: profile_id.clone(),
-    }))
+    };
+    let body = serde_json::to_vec(&response).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to serialize enforcement rules response: {error}"),
+        )
+    })?;
+    state
+        .profile_rule_response_cache
+        .lock()
+        .unwrap()
+        .insert(cache_key, Bytes::from(body.clone()));
+    Ok(json_bytes_response(Bytes::from(body)))
 }
 
 async fn handle_detection_rules_list(
     State(state): State<Arc<ServiceState>>,
     Path(profile_id): Path<String>,
-) -> Result<Json<api::DetectionRuleListResponse>, AppError> {
-    Ok(Json(api::DetectionRuleListResponse {
+) -> Result<axum::response::Response, AppError> {
+    let cache_key = format!("detection_rules:{profile_id}");
+    if let Some(body) = state
+        .profile_rule_response_cache
+        .lock()
+        .unwrap()
+        .get(&cache_key)
+        .cloned()
+    {
+        return Ok(json_bytes_response(body));
+    }
+    let response = api::DetectionRuleListResponse {
         rules: cached_rules_for_profile(&state, &profile_id)?
             .into_iter()
             .filter(|rule| rule.detection_level.is_some())
             .collect(),
         profile_id: profile_id.clone(),
-    }))
+    };
+    let body = serde_json::to_vec(&response).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to serialize detection rules response: {error}"),
+        )
+    })?;
+    state
+        .profile_rule_response_cache
+        .lock()
+        .unwrap()
+        .insert(cache_key, Bytes::from(body.clone()));
+    Ok(json_bytes_response(Bytes::from(body)))
 }
 
 async fn handle_enforcement_rule_upsert(
@@ -9860,6 +10290,21 @@ fn persistent_entry_vm_id(entry: &PersistentVmEntry) -> String {
         .to_string()
 }
 
+fn persistent_resume_state_fingerprint(entry: &PersistentVmEntry) -> String {
+    json!({
+        "id": persistent_entry_vm_id(entry),
+        "profile_id": entry.profile_id,
+        "profile_revision": entry.profile_revision,
+        "profile_payload_hash": entry.profile_payload_hash,
+        "asset_pins": entry.asset_pins,
+        "session_dir": entry.session_dir,
+        "suspended": entry.suspended,
+        "defunct": entry.defunct,
+        "last_error": entry.last_error,
+    })
+    .to_string()
+}
+
 fn find_persistent_entry_by_route_id(state: &ServiceState, id: &str) -> Option<PersistentVmEntry> {
     let registry = state.persistent_registry.lock().unwrap();
     let entry = registry
@@ -9898,31 +10343,77 @@ async fn handle_history(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
     Query(params): Query<api::HistoryQuery>,
-) -> Result<Json<api::HistoryResponse>, AppError> {
+) -> Result<axum::response::Response, AppError> {
+    let session_dir = resolve_session_dir(&state, &id)?;
+    let db_path = session_dir.join("session.db");
+    let route_key = format!(
+        "history:layer={}:limit={}:offset={}:search={}",
+        params.layer,
+        params.limit,
+        params.offset,
+        params.search.as_deref().unwrap_or("")
+    );
+    if let Some(body) = session_response_cache_get(&state, &id, &route_key, &db_path) {
+        return Ok(json_bytes_response(body));
+    }
     let session = history_ledger_for_vm(&state, &id).await?;
-    Ok(Json(query_history_ledger(&session, &params)))
+    let response = query_history_ledger(&session, &params);
+    let body = serde_json::to_vec(&response).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to serialize history response: {error}"),
+        )
+    })?;
+    session_response_cache_store(&state, &id, &route_key, &db_path, &body);
+    Ok(json_bytes_response(Bytes::from(body)))
 }
 
 /// GET /vms/{id}/history/processes -- process-centric view of audit events.
 async fn handle_history_processes(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
-) -> Result<Json<api::HistoryProcessesResponse>, AppError> {
+) -> Result<axum::response::Response, AppError> {
+    let session_dir = resolve_session_dir(&state, &id)?;
+    let db_path = session_dir.join("session.db");
+    if let Some(body) = session_response_cache_get(&state, &id, "history_processes", &db_path) {
+        return Ok(json_bytes_response(body));
+    }
     let session = history_ledger_for_vm(&state, &id).await?;
     let processes = session.processes.into_iter().take(100).collect();
-    Ok(Json(api::HistoryProcessesResponse { processes }))
+    let response = api::HistoryProcessesResponse { processes };
+    let body = serde_json::to_vec(&response).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to serialize history processes response: {error}"),
+        )
+    })?;
+    session_response_cache_store(&state, &id, "history_processes", &db_path, &body);
+    Ok(json_bytes_response(Bytes::from(body)))
 }
 
 /// GET /vms/{id}/history/counts -- exec and audit event counts.
 async fn handle_history_counts(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
-) -> Result<Json<api::HistoryCountsResponse>, AppError> {
+) -> Result<axum::response::Response, AppError> {
+    let session_dir = resolve_session_dir(&state, &id)?;
+    let db_path = session_dir.join("session.db");
+    if let Some(body) = session_response_cache_get(&state, &id, "history_counts", &db_path) {
+        return Ok(json_bytes_response(body));
+    }
     let session = history_ledger_for_vm(&state, &id).await?;
-    Ok(Json(api::HistoryCountsResponse {
+    let response = api::HistoryCountsResponse {
         exec_count: session.counts.exec_count,
         audit_count: session.counts.audit_count,
-    }))
+    };
+    let body = serde_json::to_vec(&response).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to serialize history counts response: {error}"),
+        )
+    })?;
+    session_response_cache_store(&state, &id, "history_counts", &db_path, &body);
+    Ok(json_bytes_response(Bytes::from(body)))
 }
 
 /// GET /vms/{id}/history/transcript -- raw PTY output (base64-encoded).
@@ -11363,6 +11854,16 @@ async fn main() -> Result<()> {
         profile_plugin_policy_cache: Mutex::new(profile_plugin_policy_cache),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
         profile_mutation_db,
+        last_defunct_reconcile_ms: AtomicU64::new(0),
+        stats_response_cache: Mutex::new(None),
+        stats_detail_response_cache: Mutex::new(HashMap::new()),
+        storage_diagnostics_cache: Mutex::new(HashMap::new()),
+        persistent_resume_state_cache: Mutex::new(HashMap::new()),
+        evaluate_rule_cache: Mutex::new(HashMap::new()),
+        profile_rule_response_cache: Mutex::new(HashMap::new()),
+        profile_plugin_response_cache: Mutex::new(HashMap::new()),
+        evaluate_response_cache: Mutex::new(HashMap::new()),
+        evaluate_last_response_cache: Mutex::new(None),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });
