@@ -1156,6 +1156,119 @@ async fn db_handle_query_records_read_metrics() {
 }
 
 #[tokio::test]
+async fn db_handle_query_many_preserves_order_and_exact_rows() {
+    let p = temp_db_path("query-many-preserves-order");
+    let db = DbHandle::open(&p).expect("open handle");
+    db.ready().await.expect("db ready");
+    db.write(WriteOp::NetEvent(make_net_event(
+        "batch-one.example",
+        Decision::Allowed,
+    )))
+    .await
+    .expect("write first fixture");
+    db.write(WriteOp::NetEvent(make_net_event(
+        "batch-two.example",
+        Decision::Denied,
+    )))
+    .await
+    .expect("write second fixture");
+    db.flush_for_tests().await;
+
+    let raw = db
+        .query_many(vec![
+            (
+                "SELECT decision FROM net_events WHERE domain = ?".to_string(),
+                vec![json!("batch-one.example")],
+            ),
+            (
+                "SELECT domain FROM net_events WHERE decision = ? ORDER BY domain".to_string(),
+                vec![json!("denied")],
+            ),
+        ])
+        .await
+        .expect("query batch rows");
+
+    assert_eq!(raw.len(), 2);
+    let first: serde_json::Value = serde_json::from_str(&raw[0]).expect("first query JSON");
+    let second: serde_json::Value = serde_json::from_str(&raw[1]).expect("second query JSON");
+    assert_eq!(first["columns"], json!(["decision"]));
+    assert_eq!(first["rows"], json!([["allowed"]]));
+    assert_eq!(second["columns"], json!(["domain"]));
+    assert_eq!(second["rows"], json!([["batch-two.example"]]));
+}
+
+#[tokio::test]
+async fn db_handle_query_many_rejects_mutations() {
+    let p = temp_db_path("query-many-rejects-mutations");
+    let db = DbHandle::open(&p).expect("open handle");
+    db.ready().await.expect("db ready");
+
+    let error = db
+        .query_many(vec![
+            (
+                "SELECT COUNT(*) AS count FROM net_events".to_string(),
+                vec![],
+            ),
+            (
+                "DELETE FROM net_events WHERE domain = ?".to_string(),
+                vec![json!("x")],
+            ),
+        ])
+        .await
+        .expect_err("query_many must reject mutation SQL");
+    assert!(
+        error.contains("DELETE") && error.contains("not allowed"),
+        "DbHandle::query_many must reject mutations before SQLite execution: {error}. {DB_BOUNDARY_RATIONALE}"
+    );
+}
+
+#[tokio::test]
+async fn db_handle_query_many_cache_invalidates_after_write() {
+    let p = temp_db_path("query-many-cache-invalidates");
+    let db = DbHandle::open(&p).expect("open handle");
+    db.ready().await.expect("db ready");
+    db.write(WriteOp::NetEvent(make_net_event(
+        "cache-one.example",
+        Decision::Allowed,
+    )))
+    .await
+    .expect("write first fixture");
+    db.flush_for_tests().await;
+
+    let count_query = || {
+        vec![(
+            "SELECT COUNT(*) AS count FROM net_events".to_string(),
+            Vec::new(),
+        )]
+    };
+    let first = db
+        .query_many(count_query())
+        .await
+        .expect("first cached batch query");
+    let first: serde_json::Value = serde_json::from_str(&first[0]).expect("first count JSON");
+    assert_eq!(first["rows"], json!([[1]]));
+
+    db.write(WriteOp::NetEvent(make_net_event(
+        "cache-two.example",
+        Decision::Allowed,
+    )))
+    .await
+    .expect("write second fixture");
+    db.flush_for_tests().await;
+
+    let second = db
+        .query_many(count_query())
+        .await
+        .expect("second cached batch query after invalidation");
+    let second: serde_json::Value = serde_json::from_str(&second[0]).expect("second count JSON");
+    assert_eq!(
+        second["rows"],
+        json!([[2]]),
+        "DbHandle-owned query_many cache must invalidate when the DB handle accepts writes. {DB_BOUNDARY_RATIONALE}"
+    );
+}
+
+#[tokio::test]
 async fn db_handle_query_rejects_mutations() {
     let p = temp_db_path("query-rejects-mutations");
     let db = DbHandle::open(&p).expect("open handle");

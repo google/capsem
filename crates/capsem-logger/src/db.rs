@@ -48,6 +48,8 @@ pub type DbQueryParams = [serde_json::Value];
 /// `DbReader::query_raw_with_params`. Routes may map it into product JSON, but
 /// execution and schema failures remain DB-owned.
 pub type DbQueryJson = String;
+type DbQueryOwned = (String, Vec<serde_json::Value>);
+type DbQueryManyCache = Option<(Vec<DbQueryOwned>, Vec<DbQueryJson>)>;
 
 pub const DB_QUERY_TOTAL: &str = "db.query_total";
 pub const DB_QUERY_DURATION_MS: &str = "db.query_duration_ms";
@@ -109,6 +111,10 @@ enum ReadRequest {
         params: Vec<serde_json::Value>,
         reply: tokio::sync::oneshot::Sender<DbResult<String>>,
     },
+    QueryMany {
+        queries: Vec<DbQueryOwned>,
+        reply: tokio::sync::oneshot::Sender<DbResult<Vec<String>>>,
+    },
     Shutdown,
 }
 
@@ -141,6 +147,7 @@ struct DbHandleInner {
     reader_join: Mutex<Option<JoinHandle<()>>>,
     writer: Option<Arc<DbWriter>>,
     ready_cache: Mutex<Option<DbResult<()>>>,
+    query_many_cache: Mutex<DbQueryManyCache>,
 }
 
 impl Drop for DbHandleInner {
@@ -209,6 +216,7 @@ impl DbHandle {
                 reader_join: Mutex::new(Some(reader_join)),
                 writer: None,
                 ready_cache: Mutex::new(None),
+                query_many_cache: Mutex::new(None),
             }),
         })
     }
@@ -348,6 +356,82 @@ impl DbHandle {
         result
     }
 
+    /// Execute several read-only queries through one DB-owned worker request.
+    ///
+    /// This is still caller-owned query intent and DB-owned execution. It exists
+    /// for hot routes that need several independent projections but must not pay
+    /// one worker round trip per projection.
+    pub async fn query_many(&self, queries: Vec<DbQueryOwned>) -> DbResult<Vec<DbQueryJson>> {
+        let started = Instant::now();
+        let query_count = queries.len();
+        let params_count: usize = queries.iter().map(|(_, params)| params.len()).sum();
+        if let Some((cached_queries, cached_result)) =
+            self.inner.query_many_cache.lock().unwrap().clone()
+        {
+            if cached_queries == queries {
+                tracing::debug!(
+                    db_path = %self.inner.path.display(),
+                    operation = "query_many",
+                    cached = true,
+                    query_count,
+                    params_count,
+                    duration_ms = elapsed_ms(started),
+                    "session db handle operation completed"
+                );
+                return Ok(cached_result);
+            }
+        }
+        let cache_key = queries.clone();
+        let (reply, rx) = tokio::sync::oneshot::channel();
+        self.inner
+            .reader_tx
+            .send(ReadRequest::QueryMany { queries, reply })
+            .map_err(|error| {
+                tracing::error!(
+                    db_path = %self.inner.path.display(),
+                    operation = "query_many",
+                    query_count,
+                    params_count,
+                    duration_ms = elapsed_ms(started),
+                    error = %error,
+                    "session db handle operation failed"
+                );
+                format!("db reader worker closed: {error}")
+            })?;
+        let result = rx
+            .await
+            .map_err(|error| format!("db reader worker dropped query_many reply: {error}"))?;
+        if let Ok(raw) = &result {
+            *self.inner.query_many_cache.lock().unwrap() = Some((cache_key, raw.clone()));
+        }
+        match &result {
+            Ok(_) => tracing::debug!(
+                db_path = %self.inner.path.display(),
+                operation = "query_many",
+                query_count,
+                params_count,
+                duration_ms = elapsed_ms(started),
+                "session db handle operation completed"
+            ),
+            Err(error) => tracing::error!(
+                db_path = %self.inner.path.display(),
+                operation = "query_many",
+                query_count,
+                params_count,
+                duration_ms = elapsed_ms(started),
+                error = %error,
+                "session db handle operation failed"
+            ),
+        }
+        result
+    }
+
+    /// Invalidate DB-owned read caches after external logger lifecycle helpers
+    /// mutate the same database.
+    pub fn invalidate_read_cache(&self) {
+        *self.inner.query_many_cache.lock().unwrap() = None;
+    }
+
     /// Write one telemetry/security event through the DB-owned writer path.
     ///
     /// This is the public write boundary for ledger events. The DB layer owns
@@ -381,6 +465,7 @@ impl DbHandle {
             );
             error
         })?;
+        self.invalidate_read_cache();
         tracing::debug!(
             db_path = %self.inner.path.display(),
             operation = "write",
@@ -401,6 +486,7 @@ impl DbHandle {
             return Err("db handle is read-only; no writer is available to flush".to_string());
         };
         writer.flush().await;
+        self.invalidate_read_cache();
         Ok(())
     }
 
@@ -557,6 +643,39 @@ fn reader_loop(path: PathBuf, rx: mpsc::Receiver<ReadRequest>, sync_from_disk_be
                 }
                 let _ = reply.send(result);
             }
+            ReadRequest::QueryMany { queries, reply } => {
+                let started = Instant::now();
+                let query_count = queries.len();
+                let params_count: usize = queries.iter().map(|(_, params)| params.len()).sum();
+                let result = if sync_from_disk_before_query {
+                    reader
+                        .sync_from_disk()
+                        .map_err(|error| error.to_string())
+                        .and_then(|()| execute_query_many(&reader, queries))
+                } else {
+                    execute_query_many(&reader, queries)
+                };
+                match &result {
+                    Ok(_) => tracing::debug!(
+                        db_path = %path.display(),
+                        operation = "query_many_execute",
+                        query_count,
+                        params_count,
+                        duration_ms = elapsed_ms(started),
+                        "session db query batch completed"
+                    ),
+                    Err(error) => tracing::error!(
+                        db_path = %path.display(),
+                        operation = "query_many_execute",
+                        query_count,
+                        params_count,
+                        duration_ms = elapsed_ms(started),
+                        error = %error,
+                        "session db query batch failed"
+                    ),
+                }
+                let _ = reply.send(result);
+            }
             ReadRequest::Shutdown => {
                 tracing::debug!(
                     db_path = %path.display(),
@@ -567,6 +686,17 @@ fn reader_loop(path: PathBuf, rx: mpsc::Receiver<ReadRequest>, sync_from_disk_be
             }
         }
     }
+}
+
+fn execute_query_many(reader: &DbReader, queries: Vec<DbQueryOwned>) -> DbResult<Vec<String>> {
+    let mut results = Vec::with_capacity(queries.len());
+    for (sql, params) in queries {
+        let started = Instant::now();
+        let result = reader.query_raw_with_params(&sql, &params);
+        record_query_metrics("execute_many", started, params.len(), &result);
+        results.push(result?);
+    }
+    Ok(results)
 }
 
 impl SessionDb {
