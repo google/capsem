@@ -128,6 +128,7 @@ def test_dns_query_and_block_matrix_pays_full_ledger_debt_blackbox() -> None:
     mock_proc = None
     client = None
     session_id = vm_name("ironbank-dns")
+    vm_id: str | None = None
     nonce = uuid.uuid4().hex[:12]
     allowed_qname = "fixture.capsem.test"
     blocked_qname = f"{nonce}.attacker.test"
@@ -184,8 +185,9 @@ def test_dns_query_and_block_matrix_pays_full_ledger_debt_blackbox() -> None:
             timeout=90,
         )
         assert create is not None
-        assert create.get("id") == session_id or create.get("name") == session_id
-        assert wait_exec_ready(client, session_id, timeout=EXEC_READY_TIMEOUT)
+        vm_id = create["id"]
+        assert create.get("name") == session_id
+        assert wait_exec_ready(client, vm_id, timeout=EXEC_READY_TIMEOUT)
 
         script = textwrap.dedent(
             f"""
@@ -268,7 +270,7 @@ def test_dns_query_and_block_matrix_pays_full_ledger_debt_blackbox() -> None:
             """
         ).strip()
         upload = client.post_bytes(
-            f"/vms/{session_id}/files/content?path=ironbank-dns.py",
+            f"/vms/{vm_id}/files/content?path=ironbank-dns.py",
             script.encode(),
             timeout=30,
         )
@@ -276,7 +278,7 @@ def test_dns_query_and_block_matrix_pays_full_ledger_debt_blackbox() -> None:
         assert upload["success"] is True
 
         exec_resp = client.post(
-            f"/vms/{session_id}/exec",
+            f"/vms/{vm_id}/exec",
             {"command": "python3 /root/ironbank-dns.py", "timeout_secs": 120},
             timeout=150,
         )
@@ -304,7 +306,7 @@ def test_dns_query_and_block_matrix_pays_full_ledger_debt_blackbox() -> None:
         ], upstream_dns
         assert not [row for row in upstream_dns if row["qname"] == blocked_qname], upstream_dns
 
-        with closing(_connect_session_db(service, session_id)) as conn:
+        with closing(_connect_session_db(service, vm_id)) as conn:
             assert _table_columns(conn, "dns_events") == EXPECTED_DNS_COLUMNS
             assert _table_columns(conn, "security_rule_events") == EXPECTED_SECURITY_COLUMNS
             dns_rows = _eventually(
@@ -443,7 +445,7 @@ def test_dns_query_and_block_matrix_pays_full_ledger_debt_blackbox() -> None:
 
         service_log = (service.tmp_dir / "service.log").read_text(encoding="utf-8")
         process_log = (
-            vm_session_dir(service.tmp_dir, client, session_id) / "process.log"
+            vm_session_dir(service.tmp_dir, client, vm_id) / "process.log"
         ).read_text(encoding="utf-8")
         gateway_log = gateway.stop_and_read_log()
         assert "handle_exec" in service_log or "exec" in service_log
@@ -453,7 +455,7 @@ def test_dns_query_and_block_matrix_pays_full_ledger_debt_blackbox() -> None:
         stop_process(mock_proc)
         if client is not None:
             try:
-                client.delete(f"/vms/{session_id}/delete", timeout=60)
+                client.delete(f"/vms/{vm_id or session_id}/delete", timeout=60)
             except Exception:
                 pass
         if gateway is not None:

@@ -104,6 +104,15 @@ struct State {
     request_log: Option<Arc<Mutex<File>>>,
 }
 
+struct DnsExchange {
+    qname: String,
+    qtype: u16,
+    qclass: u16,
+    rcode: u8,
+    request_bytes: usize,
+    response_bytes: usize,
+}
+
 #[derive(Serialize)]
 struct ReadyPayload {
     service: &'static str,
@@ -185,8 +194,8 @@ async fn main() -> Result<()> {
 
     tokio::spawn(serve_http(http_listener, state.clone(), false));
     tokio::spawn(serve_https(https_listener, state.clone(), tls_acceptor));
-    tokio::spawn(serve_dns_udp(dns_udp_socket));
-    tokio::spawn(serve_dns_tcp(dns_tcp_listener));
+    tokio::spawn(serve_dns_udp(dns_udp_socket, state.clone()));
+    tokio::spawn(serve_dns_tcp(dns_tcp_listener, state.clone()));
 
     future::pending::<()>().await;
     #[allow(unreachable_code)]
@@ -1490,23 +1499,25 @@ async fn write_ws_frame(io: &mut TokioIo<Upgraded>, opcode: u8, payload: &[u8]) 
     Ok(())
 }
 
-async fn serve_dns_udp(socket: UdpSocket) {
+async fn serve_dns_udp(socket: UdpSocket, state: State) {
     let mut buf = vec![0_u8; 1500];
     loop {
         let Ok((len, peer)) = socket.recv_from(&mut buf).await else {
             continue;
         };
-        if let Some(response) = dns_response(&buf[..len]) {
+        if let Some((response, exchange)) = dns_response_with_exchange(&buf[..len]) {
+            log_dns_request(&state, "udp", &exchange);
             let _ = socket.send_to(&response, peer).await;
         }
     }
 }
 
-async fn serve_dns_tcp(listener: TcpListener) {
+async fn serve_dns_tcp(listener: TcpListener, state: State) {
     loop {
         let Ok((mut stream, _)) = listener.accept().await else {
             continue;
         };
+        let state = state.clone();
         tokio::spawn(async move {
             loop {
                 let mut len_bytes = [0_u8; 2];
@@ -1518,12 +1529,13 @@ async fn serve_dns_tcp(listener: TcpListener) {
                 if stream.read_exact(&mut query).await.is_err() {
                     return;
                 }
-                let Some(response) = dns_response(&query) else {
+                let Some((response, exchange)) = dns_response_with_exchange(&query) else {
                     return;
                 };
                 let Ok(response_len) = u16::try_from(response.len()) else {
                     return;
                 };
+                log_dns_request(&state, "tcp", &exchange);
                 if stream.write_all(&response_len.to_be_bytes()).await.is_err() {
                     return;
                 }
@@ -1535,7 +1547,12 @@ async fn serve_dns_tcp(listener: TcpListener) {
     }
 }
 
+#[cfg(test)]
 fn dns_response(query: &[u8]) -> Option<Vec<u8>> {
+    dns_response_with_exchange(query).map(|(response, _)| response)
+}
+
+fn dns_response_with_exchange(query: &[u8]) -> Option<(Vec<u8>, DnsExchange)> {
     if query.len() < 12 {
         return None;
     }
@@ -1557,6 +1574,8 @@ fn dns_response(query: &[u8]) -> Option<Vec<u8>> {
     if offset + 4 > query.len() {
         return None;
     }
+    let qtype = u16::from_be_bytes([query[offset], query[offset + 1]]);
+    let qclass = u16::from_be_bytes([query[offset + 2], query[offset + 3]]);
     let question_end = offset + 4;
     let name = labels.join(".").to_ascii_lowercase();
     let known = DNS_FIXTURES.iter().any(|fixture| *fixture == name);
@@ -1577,7 +1596,36 @@ fn dns_response(query: &[u8]) -> Option<Vec<u8>> {
             127, 0, 0, 1,
         ]);
     }
-    Some(response)
+    let exchange = DnsExchange {
+        qname: name,
+        qtype,
+        qclass,
+        rcode: if known { 0 } else { 3 },
+        request_bytes: query.len(),
+        response_bytes: response.len(),
+    };
+    Some((response, exchange))
+}
+
+fn log_dns_request(state: &State, source_proto: &str, exchange: &DnsExchange) {
+    let Some(file) = &state.request_log else {
+        return;
+    };
+    let record = json!({
+        "timestamp": now_unix(),
+        "kind": "dns",
+        "source_proto": source_proto,
+        "qname": exchange.qname,
+        "qtype": exchange.qtype,
+        "qclass": exchange.qclass,
+        "rcode": exchange.rcode,
+        "request_bytes": exchange.request_bytes,
+        "response_bytes": exchange.response_bytes,
+    });
+    if let Ok(mut file) = file.lock() {
+        let _ = writeln!(file, "{record}");
+        let _ = file.flush();
+    }
 }
 
 #[cfg(test)]

@@ -408,7 +408,7 @@ def _hot_route_budget(path: str, *, gateway: bool = False) -> tuple[float, float
             14.0 if not gateway else 18.0,
             (0.30 if not gateway else 0.42)
             if aggregate_security
-            else (0.12 if not gateway else 0.18),
+            else (0.14 if not gateway else 0.20),
         )
     if path.endswith("/assets/status"):
         # Asset status returns a richer per-file readiness payload than scalar

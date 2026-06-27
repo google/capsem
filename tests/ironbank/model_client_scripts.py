@@ -668,14 +668,6 @@ def run_one(index):
         if event.get("type") in {"response.output_item.added", "response.output_item.done"}
         and event.get("item", {}).get("type") == "function_call"
     )
-    reasoning = next(
-        (
-            event["delta"]
-            for event in first_events
-            if event.get("type") == "response.reasoning_summary_text.delta"
-        ),
-        "",
-    )
     call_args = json.loads(tool_item["arguments"])
     call_response = run_tool(call_args)
     second_events = parse_sse(post({
@@ -688,6 +680,14 @@ def run_one(index):
         ],
         "tools": [{"type": "function", "name": "exec_command"}],
     }))
+    reasoning = next(
+        (
+            event["delta"]
+            for event in second_events
+            if event.get("type") == "response.reasoning_summary_text.delta"
+        ),
+        "",
+    )
     output = next(event["text"] for event in second_events if event.get("type") == "response.output_text.done")
     file_text = Path(target).read_text(encoding="utf-8")
     return {

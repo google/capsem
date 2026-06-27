@@ -75,7 +75,7 @@ class TestGuestShutdownPersistent:
         for _ in range(20):
             time.sleep(1)
             listing = client.get("/vms/list")
-            vm = next((s for s in listing["sandboxes"] if s["id"] == name), None)
+            vm = next((s for s in listing["sandboxes"] if s.get("name") == name), None)
             if vm and vm["status"] == "Stopped":
                 stopped = True
                 break
@@ -240,32 +240,34 @@ class TestSuspendResume:
     def test_suspend_resume_round_trip(self, client):
         """Suspend a persistent VM, resume it, verify file survives."""
         name = vm_name("susp")
-        client.post("/vms/create", {
+        create = client.post("/vms/create", {
             "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS, "persistent": True,
         })
-        assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT), \
+        vm_id = create["id"]
+        assert wait_exec_ready(client, vm_id, timeout=EXEC_READY_TIMEOUT), \
             f"VM {name} never became exec-ready"
 
         # Write a marker file
         marker = f"suspend-test-{uuid.uuid4().hex[:8]}"
-        client.post(f"/vms/{name}/files/write", {
+        client.post(f"/vms/{vm_id}/files/write", {
             "path": f"/root/{marker}",
             "content": f"hello from {marker}",
         })
 
         # Suspend via service API
-        suspend_resp = client.post(f"/vms/{name}/pause", {}, timeout=EXEC_READY_TIMEOUT)
+        suspend_resp = client.post(f"/vms/{vm_id}/pause", {}, timeout=EXEC_READY_TIMEOUT)
         assert suspend_resp is not None and suspend_resp.get("success") is True, \
             f"Suspend failed: {suspend_resp}"
 
         # Verify VM shows as Suspended
         listing = client.get("/vms/list")
-        vm = next((s for s in listing["sandboxes"] if s["id"] == name), None)
+        vm = next((s for s in listing["sandboxes"] if s["id"] == vm_id), None)
         assert vm is not None, f"Suspended VM {name} not in list"
+        assert vm["name"] == name
         assert vm["status"] == "Suspended", f"Expected Suspended, got {vm['status']}"
 
         # Resume (warm restore)
-        resume_resp = client.post(f"/vms/{name}/resume", {})
+        resume_resp = client.post(f"/vms/{vm_id}/resume", {})
         assert resume_resp is not None
         resumed_id = resume_resp.get("id", name)
         assert wait_exec_ready(client, resumed_id, timeout=EXEC_READY_TIMEOUT), \

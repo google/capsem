@@ -63,7 +63,7 @@ markers = [
     "session_exhaustive: Exhaustive per-table session.db data validation",
     "e2e: End-to-end tests via real CLI binary (the actual user path)",
     "gateway: Gateway TCP-to-UDS proxy tests (mock UDS or real service)",
-    "live_provider: Optional public-provider canaries; skipped unless the matching real credential is provided",
+    "live_provider: Optional public-provider canaries; skipped unless CAPSEM_RUN_LIVE_PROVIDER_CANARIES=1 and the matching real credential is provided",
 ]
 
 [tool.ruff]

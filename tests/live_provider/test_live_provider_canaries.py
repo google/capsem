@@ -1,14 +1,15 @@
 """Optional live-provider canaries for model ledger compatibility.
 
 These tests are compatibility diagnostics, not release proof. They run only
-when an operator explicitly provides provider credentials in the environment or
-in the configured live-provider dotenv file. Hermetic replay tests remain the
-release gate.
+when an operator explicitly opts in and provides provider credentials in the
+environment or in the configured live-provider dotenv file. Hermetic replay
+tests remain the release gate.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from typing import Callable
 
 import pytest
@@ -107,6 +108,18 @@ def test_live_provider_scripts_are_provider_specific() -> None:
     assert "/v1/messages" in rendered["claude_messages"]
 
 
+def test_live_provider_canaries_require_explicit_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-live-provider-disabled")
+    monkeypatch.delenv("CAPSEM_RUN_LIVE_PROVIDER_CANARIES", raising=False)
+    assert _first_available_secret(("OPENAI_API_KEY",)) is None
+
+
+def test_live_provider_canaries_read_secrets_after_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CAPSEM_RUN_LIVE_PROVIDER_CANARIES", "1")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-live-provider-enabled")
+    assert _first_available_secret(("OPENAI_API_KEY",)) == "sk-test-live-provider-enabled"
+
+
 @pytest.mark.live_provider
 @pytest.mark.parametrize(
     "canary",
@@ -138,6 +151,8 @@ def test_optional_live_provider_canary_pays_ledger_debt(
 
 
 def _first_available_secret(env_keys: tuple[str, ...]) -> str | None:
+    if os.environ.get("CAPSEM_RUN_LIVE_PROVIDER_CANARIES") != "1":
+        return None
     for key in env_keys:
         if secret := _live_provider_secret(key):
             return secret

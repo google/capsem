@@ -21,27 +21,27 @@ def test_create_five_vms():
             name = f"stress-{i}-{uuid.uuid4().hex[:6]}"
             resp = client.post("/vms/create", {"name": name, "ram_mb": 1024, "cpus": 1})
             assert resp is not None, f"VM {i} provision failed"
-            vms.append(name)
+            vms.append((name, resp["id"]))
 
         # Wait for all to be exec-ready
-        for name in vms:
-            assert wait_exec_ready(client, name, timeout=60), f"VM {name} never exec-ready"
+        for name, vm_id in vms:
+            assert wait_exec_ready(client, vm_id, timeout=60), f"VM {name} never exec-ready"
 
         # Exec in each, verify isolation
-        for i, name in enumerate(vms):
-            resp = client.post(f"/vms/{name}/exec", {"command": f"echo vm-{i}"})
+        for i, (name, vm_id) in enumerate(vms):
+            resp = client.post(f"/vms/{vm_id}/exec", {"command": f"echo vm-{i}"})
             assert f"vm-{i}" in resp.get("stdout", "")
 
         # All in list
         list_resp = client.get("/vms/list")
         ids = [s["id"] for s in list_resp["sandboxes"]]
-        for name in vms:
-            assert name in ids
+        for name, vm_id in vms:
+            assert vm_id in ids, f"VM {name} missing id {vm_id}"
 
     finally:
-        for name in vms:
+        for _name, vm_id in vms:
             try:
-                client.delete(f"/vms/{name}/delete")
+                client.delete(f"/vms/{vm_id}/delete")
             except Exception:
                 pass
         svc.stop()

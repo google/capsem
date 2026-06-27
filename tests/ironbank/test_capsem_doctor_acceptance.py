@@ -30,7 +30,7 @@ def test_capsem_doctor_gate_is_backed_by_full_ledger_proof() -> None:
     assert "CAPSEM_MOCK_SERVER_BASE_URL" in source
     assert '"command": (' in source
     assert "capsem-doctor" in source
-    assert "/vms/{session_id}/exec" in source
+    assert "/vms/{vm_id}/exec" in source
 
     for table in [
         "net_events",
