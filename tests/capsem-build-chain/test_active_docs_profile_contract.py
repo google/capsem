@@ -160,8 +160,11 @@ def test_benchmark_results_page_is_graph_dashboard() -> None:
     ]
 
     assert headings == ["VM lifecycle", "Disk", "App", "Network"]
-    assert text.count("```mermaid") >= 8
-    assert text.count("xychart-beta") >= 8
+    assert text.count("<svg ") >= 6
+    assert "HTTP" in text
+    assert "DNS" in text
+    assert "MCP" in text
+    assert "Model" in text
 
     retired_sections = [
         "Rootfs Decision",
@@ -174,6 +177,21 @@ def test_benchmark_results_page_is_graph_dashboard() -> None:
     ]
     for section in retired_sections:
         assert f"## {section}" not in text
+
+    retired_chart_terms = [
+        "squashfs",
+        "erofs-zstd",
+        "Fork mean latency",
+        "large_cold",
+        "large_warm",
+        "small_js",
+        "metadata_stat",
+        "http_tiny",
+        "model_json",
+        "credential_response",
+    ]
+    for term in retired_chart_terms:
+        assert term not in text
 
 
 def test_config_root_has_only_declared_authority_directories() -> None:
