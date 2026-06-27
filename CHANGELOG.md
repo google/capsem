@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.1782578203] - 2026-06-27
+
+### Fixed
+- Deferred full asset manifest generation for kernel-only image builds so
+  release CI can build kernel and rootfs in sequence.
+
 ## [1.3.1782577071] - 2026-06-27
 
 ### Fixed

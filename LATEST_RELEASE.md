@@ -1,5 +1,5 @@
-version: 1.3.1782577071
+version: 1.3.1782578203
 ---
 ### Fixed
-- Skipped the KVM platform check only for release asset build prerequisite
-  doctor runs, keeping full doctor strict for booting gates.
+- Deferred full asset manifest generation for kernel-only image builds so
+  release CI can build kernel and rootfs in sequence.
