@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.1782577071] - 2026-06-27
+
+### Fixed
+- Skipped the KVM platform check only for release asset build prerequisite
+  doctor runs, keeping full doctor strict for booting gates.
+
 ## [1.3.1782576216] - 2026-06-27
 
 ### Fixed

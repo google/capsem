@@ -1,5 +1,5 @@
-version: 1.3.1782576216
+version: 1.3.1782577071
 ---
 ### Fixed
-- Installed pnpm in release asset build jobs before the shared frontend install
-  rail used by `just build-kernel`.
+- Skipped the KVM platform check only for release asset build prerequisite
+  doctor runs, keeping full doctor strict for booting gates.
