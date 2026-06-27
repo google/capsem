@@ -645,18 +645,18 @@ def verify_session(session_id: str) -> bool:
         "no tool call responses mention blocking (capsem-doctor blocked tests may have failed)",
     )
 
-    preview_rows = conn.execute(
-        "SELECT id, request_preview FROM tool_calls WHERE origin = 'mcp'"
+    argument_rows = conn.execute(
+        "SELECT id, arguments FROM tool_calls WHERE origin = 'mcp'"
     ).fetchall()
-    bad_previews = [
+    bad_arguments = [
         row["id"]
-        for row in preview_rows
-        if not row["request_preview"] or len(row["request_preview"]) <= 10
+        for row in argument_rows
+        if not row["arguments"] or len(row["arguments"]) <= 10
     ]
     r.check(
-        len(bad_previews) == 0,
-        f"all {len(preview_rows)} MCP-origin tool_calls have meaningful request_preview",
-        f"{len(bad_previews)} MCP-origin tool_calls have empty/tiny request_preview (ids: {bad_previews[:5]})",
+        len(bad_arguments) == 0,
+        f"all {len(argument_rows)} MCP-origin tool_calls have meaningful arguments",
+        f"{len(bad_arguments)} MCP-origin tool_calls have empty/tiny arguments (ids: {bad_arguments[:5]})",
     )
 
     mcp_with_bytes = conn.execute(

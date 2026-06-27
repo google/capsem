@@ -760,6 +760,13 @@ def test_integration_script_has_no_live_ai_provider_escape_hatch() -> None:
     assert "include_gemini_probe" not in source
 
 
+def test_integration_script_uses_current_tool_call_arguments_column() -> None:
+    source = (PROJECT_ROOT / "scripts" / "integration_test.py").read_text()
+
+    assert "request_preview FROM tool_calls" not in source
+    assert "SELECT id, arguments FROM tool_calls WHERE origin = 'mcp'" in source
+
+
 def test_builder_has_no_legacy_ai_provider_authoring_rail() -> None:
     forbidden = (
         "AiProviderConfig",
