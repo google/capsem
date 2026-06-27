@@ -1,5 +1,5 @@
-version: 1.3.1782579305
+version: 1.3.1782582155
 ---
 ### Fixed
-- Installed and exported the musl C linker in release asset jobs so guest
-  binaries with C/ASM dependencies cross-compile during rootfs builds.
+- Retried release app cargo-tool installs one tool at a time so transient
+  crates.io DNS failures do not abort macOS/Linux packaging.

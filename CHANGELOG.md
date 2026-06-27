@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.1782582155] - 2026-06-27
+
+### Fixed
+- Retried release app cargo-tool installs one tool at a time so transient
+  crates.io DNS failures do not abort macOS/Linux packaging.
+
 ## [1.3.1782579305] - 2026-06-27
 
 ### Fixed
