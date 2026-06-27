@@ -614,6 +614,12 @@ impl ServiceState {
         run_dir: &StdPath,
     ) -> anyhow::Result<Arc<capsem_logger::DbHandle>> {
         let db_path = main_db_path_for_run_dir(run_dir);
+        capsem_logger::ensure_session_index_schema(&db_path).with_context(|| {
+            format!(
+                "failed to initialize session index in main.db: {}",
+                db_path.display()
+            )
+        })?;
         let started = std::time::Instant::now();
         let handle = Arc::new(capsem_logger::DbHandle::open(&db_path).with_context(|| {
             format!(
@@ -628,6 +634,83 @@ impl ServiceState {
             "opened profile mutation DB handle"
         );
         Ok(handle)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn record_session_index_start(
+        &self,
+        id: &str,
+        persistent: bool,
+        scratch_disk_size_gb: u32,
+        ram_mb: u64,
+        rootfs_hash: Option<&str>,
+        rootfs_version: Option<&str>,
+        forked_from: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let record = capsem_core::session::SessionRecord {
+            id: id.to_string(),
+            mode: if persistent {
+                "persistent"
+            } else {
+                "ephemeral"
+            }
+            .to_string(),
+            command: None,
+            status: "running".to_string(),
+            created_at: capsem_core::session::now_iso(),
+            stopped_at: None,
+            scratch_disk_size_gb,
+            ram_bytes: ram_mb.saturating_mul(1024 * 1024),
+            total_requests: 0,
+            allowed_requests: 0,
+            denied_requests: 0,
+            total_input_tokens: 0,
+            total_output_tokens: 0,
+            total_estimated_cost: 0.0,
+            total_tool_calls: 0,
+            total_file_events: 0,
+            compressed_size_bytes: None,
+            vacuumed_at: None,
+            storage_mode: "virtiofs".to_string(),
+            rootfs_hash: rootfs_hash.map(ToOwned::to_owned),
+            rootfs_version: rootfs_version.map(ToOwned::to_owned),
+            forked_from: forked_from.map(ToOwned::to_owned),
+            persistent,
+            exec_count: 0,
+            audit_event_count: 0,
+        };
+
+        capsem_logger::record_session_start(&self.main_db_path(), &record)
+            .context("create or mark running main.db session row")
+    }
+
+    fn record_session_index_stop(
+        &self,
+        id: &str,
+        status: &str,
+        session_dir: &StdPath,
+    ) -> anyhow::Result<()> {
+        let stopped_at = capsem_core::session::now_iso();
+        let session_db_path = session_db_path_for_session_dir(session_dir);
+        let session_db_path = session_db_path.exists().then_some(session_db_path);
+        capsem_logger::record_session_stop(
+            &self.main_db_path(),
+            id,
+            status,
+            Some(&stopped_at),
+            session_db_path.as_deref(),
+        )
+        .with_context(|| {
+            if let Some(session_db_path) = session_db_path.as_ref() {
+                format!(
+                    "roll up session.db into main.db for {id}: {}",
+                    session_db_path.display()
+                )
+            } else {
+                format!("mark main.db session row {status} for {id} without session.db")
+            }
+        })?;
+        Ok(())
     }
 
     fn register_session_db_handle(
@@ -1187,6 +1270,19 @@ impl ServiceState {
         let pid = child.id().unwrap_or(0);
         info!(id, pid, version, asset_version = %resolved.asset_version, "capsem-process spawned");
 
+        if let Err(error) = self.record_session_index_start(
+            id,
+            persistent,
+            scratch_disk_size_gb,
+            ram_mb,
+            Some(&asset_pins.rootfs.hash),
+            Some(&version),
+            from.as_deref(),
+        ) {
+            let _ = child.start_kill();
+            return Err(error.context("failed to record main.db session start"));
+        }
+
         let id_clone = id.to_string();
         let name_clone = name.to_string();
         let state_clone = Arc::clone(self);
@@ -1218,6 +1314,19 @@ impl ServiceState {
             state_clone.unregister_session_db_handle(&id_clone);
             let clean_exit = exit_status.as_ref().is_some_and(|s| s.success());
             let unexpected_exit = removed.is_some() && !clean_exit;
+            if removed.is_some() {
+                let status = if clean_exit { "stopped" } else { "crashed" };
+                if let Err(error) =
+                    state_clone.record_session_index_stop(&id_clone, status, &session_dir_clone)
+                {
+                    error!(
+                        id_clone,
+                        status,
+                        error = %error,
+                        "failed to record main.db session stop after child exit"
+                    );
+                }
+            }
 
             // Persistent-VM registry bookkeeping. A checkpoint only takes
             // precedence when the process wrote the completion marker after
@@ -10081,6 +10190,14 @@ async fn shutdown_vm_process(
     wait_for_process_exit(pid, exit_timeout).await;
     let _ = std::fs::remove_file(&uds_path);
     let _ = std::fs::remove_file(uds_path.with_extension("ready"));
+    state
+        .record_session_index_stop(id, "stopped", &session_dir)
+        .map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("session index rollup failed for {id}: {error}"),
+            )
+        })?;
 
     Ok(Some((session_dir, persistent, pid)))
 }

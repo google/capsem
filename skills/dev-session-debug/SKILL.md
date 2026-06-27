@@ -5,7 +5,7 @@ description: Debugging Capsem session databases -- the telemetry pipeline output
 
 # Session Database Debugging
 
-Every Capsem VM session produces a SQLite database at `~/.capsem/sessions/<id>/session.db` with ledger tables capturing telemetry. A global `~/.capsem/main.db` aggregates stats across sessions.
+Every Capsem VM session produces a SQLite database at `~/.capsem/run/sessions/<id>/session.db` with ledger tables capturing telemetry. A global `~/.capsem/sessions/main.db` aggregates stats across sessions.
 
 ## Session identity invariant
 
@@ -312,7 +312,7 @@ CREATE TABLE fs_events (
 
 ## Main database (main.db)
 
-Global rollup at `~/.capsem/main.db`. Key tables:
+Global rollup at `~/.capsem/sessions/main.db`. Key tables:
 
 - **sessions** -- one row per session: id, mode, status, timestamps, aggregated counts (total_requests, allowed/denied, tokens, cost, tool_calls, file_events)
 - **ai_usage** -- per-session per-provider aggregates (call_count, tokens, cost, duration)

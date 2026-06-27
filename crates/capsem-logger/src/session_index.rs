@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OpenFlags};
 
 use crate::session_types::*;
 
@@ -75,6 +75,29 @@ pub const SESSION_SCHEMA: &str = "
         PRIMARY KEY (session_id, tool_name)
     );
 ";
+
+pub fn ensure_session_index_schema(path: &Path) -> rusqlite::Result<()> {
+    SessionIndex::open(path).map(|_| ())
+}
+
+pub fn record_session_start(path: &Path, record: &SessionRecord) -> rusqlite::Result<()> {
+    SessionIndex::open(path)?.create_or_mark_running(record)
+}
+
+pub fn record_session_stop(
+    path: &Path,
+    id: &str,
+    status: &str,
+    stopped_at: Option<&str>,
+    session_db_path: Option<&Path>,
+) -> rusqlite::Result<()> {
+    let idx = SessionIndex::open(path)?;
+    if let Some(session_db_path) = session_db_path {
+        idx.update_session_rollup_from_session_db(id, status, stopped_at, session_db_path)
+    } else {
+        idx.update_status(id, status, stopped_at)
+    }
+}
 
 impl SessionIndex {
     /// Open (or create) the session index at the given path.
@@ -197,6 +220,24 @@ impl SessionIndex {
             ],
         )?;
         Ok(())
+    }
+
+    /// Insert a session start row, or mark an existing row running again.
+    ///
+    /// Provision retries can reuse the same VM UUID after a boot-before-ready
+    /// transient. Keep `create_session` strict for callers/tests that need
+    /// duplicate IDs to fail, and use this lifecycle-specific helper when the
+    /// retry semantics are intentional.
+    pub fn create_or_mark_running(&self, record: &SessionRecord) -> rusqlite::Result<()> {
+        match self.create_session(record) {
+            Ok(()) => Ok(()),
+            Err(rusqlite::Error::SqliteFailure(error, _))
+                if error.code == rusqlite::ErrorCode::ConstraintViolation =>
+            {
+                self.update_status(&record.id, "running", None)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     /// Update session status and optionally set stopped_at.
@@ -759,6 +800,87 @@ impl SessionIndex {
                 id,
             ],
         )?;
+        Ok(())
+    }
+
+    /// Update a main.db session row by rolling up durable counts from its
+    /// per-session `session.db`.
+    ///
+    /// This intentionally queries the canonical session ledger tables directly
+    /// inside capsem-logger. Missing tables or columns are schema violations
+    /// and bubble up as errors instead of being treated as empty ledgers.
+    pub fn update_session_rollup_from_session_db(
+        &self,
+        id: &str,
+        status: &str,
+        stopped_at: Option<&str>,
+        session_db_path: &Path,
+    ) -> rusqlite::Result<()> {
+        let session_conn =
+            Connection::open_with_flags(session_db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        let (total_requests, allowed_requests, denied_requests): (i64, i64, i64) = session_conn
+            .query_row(
+                "SELECT
+                    COUNT(*),
+                    COALESCE(SUM(CASE WHEN decision = 'allowed' THEN 1 ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN decision = 'denied' THEN 1 ELSE 0 END), 0)
+                 FROM net_events",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )?;
+        let (input_tokens, output_tokens, estimated_cost): (i64, i64, f64) = session_conn
+            .query_row(
+                "SELECT
+                    COALESCE(SUM(input_tokens), 0),
+                    COALESCE(SUM(output_tokens), 0),
+                    COALESCE(SUM(estimated_cost_usd), 0.0)
+                 FROM model_calls",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )?;
+        let total_tool_calls: i64 =
+            session_conn.query_row("SELECT COUNT(*) FROM tool_calls", [], |row| row.get(0))?;
+        let total_file_events: i64 =
+            session_conn.query_row("SELECT COUNT(*) FROM fs_events", [], |row| row.get(0))?;
+        let exec_count: i64 =
+            session_conn.query_row("SELECT COUNT(*) FROM exec_events", [], |row| row.get(0))?;
+        let audit_event_count: i64 =
+            session_conn.query_row("SELECT COUNT(*) FROM audit_events", [], |row| row.get(0))?;
+
+        let updated = self.conn.execute(
+            "UPDATE sessions SET
+                status = ?1,
+                stopped_at = ?2,
+                total_requests = ?3,
+                allowed_requests = ?4,
+                denied_requests = ?5,
+                total_input_tokens = ?6,
+                total_output_tokens = ?7,
+                total_estimated_cost = ?8,
+                total_tool_calls = ?9,
+                total_file_events = ?10,
+                exec_count = ?11,
+                audit_event_count = ?12
+             WHERE id = ?13",
+            params![
+                status,
+                stopped_at,
+                total_requests,
+                allowed_requests,
+                denied_requests,
+                input_tokens,
+                output_tokens,
+                estimated_cost,
+                total_tool_calls,
+                total_file_events,
+                exec_count,
+                audit_event_count,
+                id,
+            ],
+        )?;
+        if updated == 0 {
+            return Err(rusqlite::Error::QueryReturnedNoRows);
+        }
         Ok(())
     }
 

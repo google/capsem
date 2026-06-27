@@ -148,9 +148,7 @@ fn test_profile_plugin_policy_cache(
 }
 
 fn test_profile_mutation_db(run_dir: &StdPath) -> Arc<capsem_logger::DbHandle> {
-    let db_path = main_db_path_for_run_dir(run_dir);
-    std::fs::create_dir_all(db_path.parent().expect("main.db has parent")).unwrap();
-    Arc::new(capsem_logger::DbHandle::open(&db_path).unwrap())
+    ServiceState::open_profile_mutation_db_handle(run_dir).unwrap()
 }
 
 fn make_test_state() -> Arc<ServiceState> {
@@ -7372,6 +7370,69 @@ fn main_db_path_resolves_to_sessions_dir() {
         "got: {}",
         path.display()
     );
+}
+
+#[test]
+fn profile_mutation_db_startup_initializes_session_index_schema() {
+    let dir = tempfile::tempdir().unwrap();
+    let run_dir = dir.path().join("run");
+    std::fs::create_dir_all(&run_dir).unwrap();
+
+    let handle = ServiceState::open_profile_mutation_db_handle(&run_dir).unwrap();
+    drop(handle);
+
+    let db_path = main_db_path_for_run_dir(&run_dir);
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let session_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(session_count, 0);
+
+    let mutation_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM profile_mutation_events", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(mutation_count, 0);
+}
+
+#[test]
+fn session_index_start_records_uuid_id_not_display_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let (state, _dir) = make_test_state_with_tempdir_at(dir);
+    let id = new_persistent_vm_id();
+    uuid::Uuid::parse_str(&id).expect("VM route id should be a UUID");
+    let display_name = "code-1";
+
+    state
+        .record_session_index_start(
+            &id,
+            false,
+            16,
+            2048,
+            Some("blake3:abc"),
+            Some("1.3.1782496403"),
+            None,
+        )
+        .unwrap();
+
+    let conn = rusqlite::Connection::open(state.main_db_path()).unwrap();
+    let by_id: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sessions WHERE id = ?1",
+            [&id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let by_name: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sessions WHERE id = ?1",
+            [display_name],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(by_id, 1);
+    assert_eq!(by_name, 0);
 }
 
 // -----------------------------------------------------------------------

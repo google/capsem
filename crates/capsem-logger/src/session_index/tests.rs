@@ -118,6 +118,113 @@ fn create_duplicate_returns_error() {
 }
 
 #[test]
+fn update_session_rollup_from_session_db_copies_counts_by_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let main_path = dir.path().join("main.db");
+    let session_path = dir.path().join("session.db");
+    let idx = SessionIndex::open(&main_path).unwrap();
+    idx.create_session(&sample_record(
+        "5134d89f-090d-4f88-8d62-7bc5e9231ed8",
+        "running",
+    ))
+    .unwrap();
+
+    let session_conn = Connection::open(&session_path).unwrap();
+    session_conn
+        .execute_batch(
+            "
+            CREATE TABLE net_events (decision TEXT NOT NULL);
+            INSERT INTO net_events (decision) VALUES ('allowed'), ('denied'), ('error');
+
+            CREATE TABLE model_calls (
+                input_tokens INTEGER,
+                output_tokens INTEGER,
+                estimated_cost_usd REAL
+            );
+            INSERT INTO model_calls (input_tokens, output_tokens, estimated_cost_usd)
+                VALUES (10, 20, 0.25), (NULL, 3, 0.05);
+
+            CREATE TABLE tool_calls (id INTEGER PRIMARY KEY);
+            INSERT INTO tool_calls DEFAULT VALUES;
+            INSERT INTO tool_calls DEFAULT VALUES;
+
+            CREATE TABLE fs_events (id INTEGER PRIMARY KEY);
+            INSERT INTO fs_events DEFAULT VALUES;
+            INSERT INTO fs_events DEFAULT VALUES;
+            INSERT INTO fs_events DEFAULT VALUES;
+
+            CREATE TABLE exec_events (id INTEGER PRIMARY KEY);
+            INSERT INTO exec_events DEFAULT VALUES;
+
+            CREATE TABLE audit_events (id INTEGER PRIMARY KEY);
+            INSERT INTO audit_events DEFAULT VALUES;
+            INSERT INTO audit_events DEFAULT VALUES;
+            ",
+        )
+        .unwrap();
+    drop(session_conn);
+
+    idx.update_session_rollup_from_session_db(
+        "5134d89f-090d-4f88-8d62-7bc5e9231ed8",
+        "stopped",
+        Some("2026-06-26T12:00:00Z"),
+        &session_path,
+    )
+    .unwrap();
+
+    let records = idx.recent(1).unwrap();
+    let record = &records[0];
+    assert_eq!(record.id, "5134d89f-090d-4f88-8d62-7bc5e9231ed8");
+    assert_eq!(record.status, "stopped");
+    assert_eq!(record.stopped_at.as_deref(), Some("2026-06-26T12:00:00Z"));
+    assert_eq!(record.total_requests, 3);
+    assert_eq!(record.allowed_requests, 1);
+    assert_eq!(record.denied_requests, 1);
+    assert_eq!(record.total_input_tokens, 10);
+    assert_eq!(record.total_output_tokens, 23);
+    assert!((record.total_estimated_cost - 0.30).abs() < 1e-9);
+    assert_eq!(record.total_tool_calls, 2);
+    assert_eq!(record.total_file_events, 3);
+    assert_eq!(record.exec_count, 1);
+    assert_eq!(record.audit_event_count, 2);
+}
+
+#[test]
+fn update_session_rollup_from_session_db_fails_when_id_is_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let session_path = dir.path().join("session.db");
+    let idx = SessionIndex::open_in_memory().unwrap();
+
+    let session_conn = Connection::open(&session_path).unwrap();
+    session_conn
+        .execute_batch(
+            "
+            CREATE TABLE net_events (decision TEXT NOT NULL);
+            CREATE TABLE model_calls (
+                input_tokens INTEGER,
+                output_tokens INTEGER,
+                estimated_cost_usd REAL
+            );
+            CREATE TABLE tool_calls (id INTEGER PRIMARY KEY);
+            CREATE TABLE fs_events (id INTEGER PRIMARY KEY);
+            CREATE TABLE exec_events (id INTEGER PRIMARY KEY);
+            CREATE TABLE audit_events (id INTEGER PRIMARY KEY);
+            ",
+        )
+        .unwrap();
+    drop(session_conn);
+
+    let result = idx.update_session_rollup_from_session_db(
+        "co-work1",
+        "stopped",
+        Some("2026-06-26T12:00:00Z"),
+        &session_path,
+    );
+
+    assert!(matches!(result, Err(rusqlite::Error::QueryReturnedNoRows)));
+}
+
+#[test]
 fn recent_newest_first() {
     let idx = SessionIndex::open_in_memory().unwrap();
     for (i, ts) in [

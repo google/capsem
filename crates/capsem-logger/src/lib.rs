@@ -23,7 +23,9 @@ pub use reader::{
     ToolServerCallCount, ToolUsageCount, ToolUsageWithStats, TraceDetail, TraceModelCall,
     TraceSummary,
 };
-pub use session_index::SessionIndex;
+pub use session_index::{
+    ensure_session_index_schema, record_session_start, record_session_stop, SessionIndex,
+};
 pub use session_types::{
     epoch_to_iso, generate_session_id, is_valid_session_id, now_iso, GlobalStats, McpToolSummary,
     ProviderSummary, SessionRecord, ToolSummary,
