@@ -280,6 +280,7 @@ class MockServiceHandler(BaseHTTPRequestHandler):
 class UnixStreamServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
     allow_reuse_address = True
     daemon_threads = True
+    request_queue_size = 64
 
 
 class MockServiceServer:
