@@ -274,7 +274,7 @@ authority path.
 ```
 ~/.capsem/
   bin/                 capsem, capsem-service, capsem-process, capsem-mcp, capsem-gateway, capsem-tray
-  assets/              manifest.json, v{VERSION}/{vmlinuz, initrd.img, rootfs.erofs}
+  assets/              manifest.json, vmlinuz-{hash16}, initrd-{hash16}.img, rootfs-{hash16}.erofs
   run/                 service.sock, service.pid, gateway.token, gateway.port, instances/
   update-check.json    Self-update cache (24h TTL)
   settings.toml        UI/application preferences
@@ -284,7 +284,10 @@ authority path.
 
 ### Self-update
 
-`capsem update` checks GitHub for new asset versions, downloads in background, cleans up old versions. Binary swap is handled by the platform package manager (DMG/deb).
+`capsem update` checks GitHub for new asset versions, downloads missing
+kernel/initrd/rootfs bytes in the background, verifies BLAKE3 hashes, and
+cleans up old hash-named files. Binary swap is handled by the platform package
+manager (`.pkg` on macOS, `.deb` on Linux).
 
 ## Rust crate architecture
 

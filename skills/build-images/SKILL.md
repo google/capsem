@@ -294,11 +294,13 @@ Guest binaries are compiled from `crates/capsem-agent/`. On macOS, `cross_compil
 
 ## Verifying Linux builds locally
 
-`just cross-compile [arch]` builds everything in a container: agent binaries, frontend, and the full Tauri app (deb + AppImage). Useful for catching linuxdeploy and system dep issues before CI.
+`just cross-compile [arch]` builds everything in a container: agent binaries,
+frontend, and the full Linux `.deb` package. Useful for catching system
+dependency issues before CI.
 
 ```bash
 just cross-compile           # Build for host arch (arm64 on Apple Silicon)
-just cross-compile x86_64    # Build x86_64 deb + AppImage
+just cross-compile x86_64    # Build x86_64 deb
 ```
 
 ## Backend Workspace Schema

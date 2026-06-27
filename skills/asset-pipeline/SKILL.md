@@ -10,7 +10,7 @@ How VM assets (kernel, initrd, rootfs) are built, checksummed, resolved, and ver
 ## Versioning
 
 Binary and asset versions are **independent**:
-- **Binary**: `1.0.{unix_timestamp}` -- changes every build
+- **Binary**: `1.3.{unix_timestamp}` on the current release line -- changes every build
 - **Assets**: `YYYY.MMDD.patch` -- changes only on kernel/rootfs/initrd rebuilds
 
 The manifest tracks both with compatibility ranges (`min_binary`, `min_assets`).
@@ -82,6 +82,10 @@ rerun the failing recipe.
 The public producer is `capsem-admin manifest generate <assets_dir>`. Full
 asset builds and initrd repacks feed that same profile-derived build rail so local, CI, and
 corporate manifests use one contract.
+
+GitHub release assets are arch-prefixed (`arm64-vmlinuz`,
+`arm64-initrd.img`, `arm64-rootfs.erofs`, `arm64-obom.cdx.json`, and x86_64
+equivalents). The v2 manifest keeps bare logical filenames inside each arch map.
 
 ## Disk Layouts
 

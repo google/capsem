@@ -33,11 +33,14 @@ ACTIVE_DOCS_AND_SKILLS = [
     PROJECT_ROOT / "docs/src/content/docs/architecture/build-system.md",
     PROJECT_ROOT / "docs/src/content/docs/architecture/custom-images.md",
     PROJECT_ROOT / "docs/src/content/docs/architecture/mcp-gateway.md",
+    PROJECT_ROOT / "docs/src/content/docs/architecture/service-architecture.md",
     PROJECT_ROOT / "docs/src/content/docs/architecture/settings-schema.md",
+    PROJECT_ROOT / "docs/src/content/docs/development/ci.md",
     PROJECT_ROOT / "docs/src/content/docs/development/custom-images.md",
     PROJECT_ROOT / "docs/src/content/docs/development/getting-started.md",
     PROJECT_ROOT / "docs/src/content/docs/development/just-recipes.md",
     PROJECT_ROOT / "docs/src/content/docs/development/stack.md",
+    PROJECT_ROOT / "docs/src/content/docs/security/build-verification.md",
     PROJECT_ROOT / "docs/src/content/docs/security/plugins/credential-broker.md",
     PROJECT_ROOT / "skills/asset-pipeline/SKILL.md",
     PROJECT_ROOT / "skills/build-images/SKILL.md",
@@ -80,6 +83,14 @@ STALE_GUIDANCE = [
     "AI providers declare how their CLI gets installed",
     "providers are allowed out of the box",
     "rootfs.squashfs",
+    "DMG (codesigned",
+    "DMG/deb",
+    "capsem-{version}-{arch}.dmg",
+    "deb + AppImage",
+    "Merges latest.json",
+    "latest.json -- Tauri auto-updater metadata",
+    "signs manifest",
+    "v{VERSION}/{vmlinuz, initrd.img, rootfs.erofs}",
     "hash-pinned sibling",
     "pinned sibling files",
     "BLAKE3/size pins",
@@ -92,6 +103,13 @@ STALE_GUIDANCE = [
     "source pins",
 ]
 
+RELEASE_ASSET_DOCS = [
+    PROJECT_ROOT / "docs/src/content/docs/architecture/asset-pipeline.md",
+    PROJECT_ROOT / "docs/src/content/docs/development/ci.md",
+    PROJECT_ROOT / "docs/src/content/docs/development/stack.md",
+    PROJECT_ROOT / "docs/src/content/docs/security/build-verification.md",
+]
+
 
 def test_active_docs_do_not_teach_retired_guest_config_authority() -> None:
     failures: list[str] = []
@@ -102,6 +120,33 @@ def test_active_docs_do_not_teach_retired_guest_config_authority() -> None:
                 failures.append(f"{path.relative_to(PROJECT_ROOT)} contains {needle!r}")
 
     assert not failures, "stale active docs/skills:\n" + "\n".join(sorted(failures))
+
+
+def test_release_asset_docs_teach_thin_packages_and_release_assets() -> None:
+    required = [
+        "arch-prefixed",
+        "manifest",
+        "rootfs.erofs",
+        "verified",
+    ]
+
+    failures: list[str] = []
+    for path in RELEASE_ASSET_DOCS:
+        text = path.read_text()
+        for needle in required:
+            if needle not in text:
+                failures.append(f"{path.relative_to(PROJECT_ROOT)} missing {needle!r}")
+
+    ci_text = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
+    stack_text = (PROJECT_ROOT / "docs/src/content/docs/development/stack.md").read_text()
+    asset_text = (PROJECT_ROOT / "docs/src/content/docs/architecture/asset-pipeline.md").read_text()
+    security_text = (PROJECT_ROOT / "docs/src/content/docs/security/build-verification.md").read_text()
+
+    assert "Installers carry host binaries and the selected manifest" in ci_text
+    assert "VM assets are not bundled into the installers" in stack_text
+    assert "Release installers are intentionally thin" in asset_text
+    assert "`arm64-rootfs.erofs`; inside the manifest they remain bare names" in security_text
+    assert not failures, "release asset docs missing required wording:\n" + "\n".join(failures)
 
 
 def test_config_root_has_only_declared_authority_directories() -> None:

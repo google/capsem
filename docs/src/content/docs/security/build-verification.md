@@ -76,7 +76,7 @@ cargo sbom --output-format spdx_json_2_3 > capsem-sbom.spdx.json
 | Format | SPDX 2.3 JSON |
 | Scope | All Rust crate dependencies |
 | Published as | `capsem-sbom.spdx.json` in GitHub release |
-| Attestation | SBOM attested against DMG and deb artifacts |
+| Attestation | SBOM attested against the macOS `.pkg` artifact |
 
 VM base images publish an Operations Bill of Materials as CycloneDX JSON. CI
 generates it with `cdxgen -t os` against the exported Linux rootfs before EROFS
@@ -109,21 +109,21 @@ Release artifacts receive [SLSA build provenance](https://slsa.dev/) attestation
 
 | Artifact | Attestation |
 |----------|-------------|
-| `.dmg` (macOS installer) | Build provenance |
+| `.pkg` (macOS installer) | Build provenance |
 | `.deb` (Linux package) | Build provenance |
 | `rootfs.erofs` (arm64) | Build provenance |
 | `rootfs.erofs` (x86_64) | Build provenance |
-| `.dmg`, `.deb` | SBOM (SPDX 2.3) |
-| `rootfs.erofs` | OBOM (CycloneDX JSON) |
+| `.pkg` | SBOM (SPDX 2.3) |
+| `<arch>-obom.cdx.json` | OBOM document, hash-pinned in `manifest.json` |
 
 Attestations are published to the GitHub Attestations API and can be verified with `gh attestation verify`.
 
 ## Asset integrity
 
-VM assets (kernel, initrd, rootfs) are verified via BLAKE3 hashes at every stage from build to boot.
-The checked-in profile is materialized into `target/config/` before runtime, so
-the service boots from a generated profile whose asset URLs, hashes, and sizes
-come directly from `assets/manifest.json`.
+VM assets (kernel, initrd, rootfs) are verified via BLAKE3 hashes at every stage
+from build to boot. The checked-in profile is materialized into
+`target/config/` before runtime, so the service boots from a generated profile
+whose asset URLs, hashes, and sizes come directly from `assets/manifest.json`.
 
 `assets/manifest.json` is generated through `capsem-admin manifest generate
 <assets_dir>`. Release automation, local packaging, and corp custom builds use
@@ -135,7 +135,7 @@ supported public path.
 ```mermaid
 graph TD
     A["Build assets<br/>capsem-admin manifest generate"] --> B["manifest.json<br/>(BLAKE3 hashes + sizes)"]
-    B --> C["Release<br/>SBOM + provenance attestations"]
+    B --> C["Release<br/>packages + arch-prefixed VM assets"]
     C --> D["Download<br/>profile/corp selected URL"]
     D --> E["Verify hashes<br/>BLAKE3 per-file check"]
     E --> F["Boot<br/>assets loaded from verified dir"]
@@ -145,16 +145,32 @@ graph TD
 
 ```json
 {
-  "latest": "0.16.1",
-  "releases": {
-    "0.16.1": {
-      "assets": [
-        {
-          "filename": "vmlinuz",
-          "hash": "2c0bd752db929642...",
-          "size": 7797248
+  "format": 2,
+  "assets": {
+    "current": "2026.0627.1",
+    "releases": {
+      "2026.0627.1": {
+        "min_binary": "1.0.0",
+        "arches": {
+          "arm64": {
+            "vmlinuz": {"hash": "<64-char blake3>", "size": 8786432},
+            "initrd.img": {"hash": "<64-char blake3>", "size": 996043},
+            "rootfs.erofs": {"hash": "<64-char blake3>", "size": 978903040},
+            "obom.cdx.json": {"hash": "<64-char blake3>", "size": 3499593}
+          }
         }
-      ]
+      }
+    }
+  },
+  "binaries": {
+    "current": "1.3.1782582155",
+    "releases": {
+      "1.3.1782582155": {
+        "min_assets": "2026.0627.1",
+        "files": [
+          {"name": "Capsem-1.3.1782582155.pkg", "sha256": "<sha256>"}
+        ]
+      }
     }
   }
 }
@@ -162,11 +178,16 @@ graph TD
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `latest` | string | Most recent version |
-| `releases` | map | Version -> release entry |
-| `assets[].filename` | string | Asset filename (validated: no path separators or `..`) |
-| `assets[].hash` | string | 64-character hex BLAKE3 hash |
-| `assets[].size` | integer | File size in bytes |
+| `format` | integer | Manifest format; current format is `2` |
+| `assets.current` | string | Current VM asset release id |
+| `assets.releases.*.arches` | map | Arch -> logical asset names |
+| `vmlinuz`, `initrd.img`, `rootfs.erofs`, `obom.cdx.json` | object | Bare logical filename with BLAKE3 hash and byte size |
+| `binaries.current` | string | Current binary release id |
+| `binaries.releases.*.files` | list | Published package filenames with SHA-256 metadata |
+
+On GitHub Releases the VM files are arch-prefixed, for example
+`arm64-rootfs.erofs`; inside the manifest they remain bare names under the
+corresponding arch map.
 
 ### Hash verification
 

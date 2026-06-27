@@ -95,8 +95,8 @@ preflight (30s) ──> build-assets (arm64 + x86_64, 10 min) ──> build-app-
 | `build-assets` | ubuntu arm64 + x86_64 | preflight | Kernel + rootfs via Docker |
 | `test` | macos-14 | preflight | Unit tests + coverage, frontend, audit |
 | `build-app-macos` | macos-14 | preflight, build-assets | Tauri `.app` build, companion binaries, `scripts/build-pkg.sh`, notarize + staple `.pkg` |
-| `build-app-linux` | ubuntu arm64 + x86_64 | preflight, build-assets | Tauri build, deb (+ AppImage on x86_64) |
-| `create-release` | ubuntu-latest | test, build-app-macos, build-app-linux | Merge latest.json when present, publish package/assets manifest, GitHub release |
+| `build-app-linux` | ubuntu arm64 + x86_64 | preflight, build-assets | Tauri build, `.deb` packages |
+| `create-release` | ubuntu-latest | test, build-app-macos, build-app-linux | Publish `.pkg`, `.deb`, manifest, SBOM/OBOM, and arch-prefixed VM assets |
 
 Test runs in parallel with builds. A test failure blocks `create-release` but doesn't delay compilation.
 
@@ -179,8 +179,10 @@ Test runs in parallel with builds. A test failure blocks `create-release` but do
   `report_type: test_results`.
 - **No AppImage on any platform.** linuxdeploy cannot run on GitHub CI runners -- Ubuntu 24.04 lacks FUSE2, and neither `libfuse2` nor `APPIMAGE_EXTRACT_AND_RUN=1` fixes it reliably. All Linux platforms ship `.deb` only. CI matrix passes `bundles: deb` for both arm64 and x86_64. `just cross-compile` matches this. This cost 14 consecutive failed releases (v0.12.1 through v0.14.14) to discover.
 - **Tauri signing keys on all platforms.** `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` must be passed to every `cargo tauri build` step (macOS and Linux). Missing keys cause "public key found but no private key" failure. The macOS job had them from the start; the Linux job was missing them until v0.14.11.
-- **Collect all updater artifacts.** Linux artifact collection must include `.tar.gz`, `.tar.gz.sig`, `.AppImage.tar.gz`, `.AppImage.tar.gz.sig` -- not just `.deb` and `.AppImage`. Tauri's updater needs the `.sig` files.
-- **`just cross-compile` is not a perfect CI replica.** It runs in a docker container on macOS, which has FUSE (via Colima's Linux VM). CI runners may not have FUSE, so AppImage bundling that works locally can fail in CI. The recipe catches compile errors and most packaging issues, but environment differences (FUSE, linuxdeploy availability) can still slip through. Always verify the first CI run of a new Linux packaging change.
+- **`just cross-compile` is not a perfect CI replica.** It runs in a Docker
+  container on macOS and catches compile errors plus most `.deb` packaging
+  issues, but environment differences can still slip through. Always verify the
+  first CI run of a new Linux packaging change.
 - **Platform-gate all macOS-only APIs.** Every use of `libc::clonefile`, `AppleVzHypervisor`, `core_foundation_sys`, etc. must be wrapped in `#[cfg(target_os = "macos")]` -- struct, impl, AND tests. The Linux app build compiles the full workspace. `cargo test --test platform_gating` catches ungated symbols at unit test time. This burned v0.14.7 through v0.14.9.
 - **Pin Xcode version on macOS runners.** Always `sudo xcode-select -s /Applications/Xcode_16.2.app` (or latest) before any Apple toolchain use. GitHub periodically updates runner images and the default Xcode can break (Abort trap in xcodebuild). The preflight may pass on one runner instance while build-app-macos gets a different one. v0.14.12 failed because Xcode 15.4's xcodebuild crashed with `Abort trap: 6` when Tauri tried to locate notarytool -- despite zero workflow changes from v0.14.11 which passed 9 hours earlier.
 - **Installer identity and Gatekeeper checks are release gates.** Release
@@ -197,7 +199,9 @@ Test runs in parallel with builds. A test failure blocks `create-release` but do
   scripts; local install paths already stamp a fresh version before packaging
   when they need upgrade ordering. macOS `.pkg` manifest validation must also
   expand into a fresh directory or remove the previous expansion first.
-- **`latest.json` is optional in `gh release create`.** Tauri only generates updater `latest.json` for bundle types that produce `.tar.gz` + `.sig` artifacts (AppImage, not deb). With deb-only builds, no `latest.json` exists. The create-release step must handle this gracefully.
+- **`latest.json` is absent in the current release rail.** The current Linux
+  rail is `.deb`-only and macOS ships a `.pkg`; there is no AppImage updater
+  bundle. Do not make release creation depend on `latest.json`.
 - **AppImage was dropped after 14 failed releases.** linuxdeploy (a FUSE2 AppImage) cannot run on Ubuntu 24.04 CI runners (FUSE3 only). Tested: `libfuse2` install, `APPIMAGE_EXTRACT_AND_RUN=1` env var, both together -- none worked reliably. If AppImage support is needed in the future, the approach would be to pre-extract linuxdeploy (`--appimage-extract`) and run the extracted binary directly, bypassing FUSE entirely.
 
 ## Full-test gates
@@ -361,8 +365,8 @@ Keep a Changelog format in `CHANGELOG.md`. Every user-visible change gets an ent
 
 Binary and asset versions are **orthogonal**:
 
-- **Binary**: `1.2.{unix_timestamp}` for the current release line -- auto-stamped by `just _stamp-version` on every `just install` and `just cut-release`. Set `CAPSEM_RELEASE_VERSION=x.y.z` when you need an exact preselected stamp.
-- **Assets**: `YYYY.MMDD.patch` -- auto-derived by `gen_manifest.py` from the build date
+- **Binary**: `1.3.{unix_timestamp}` for the current release line -- auto-stamped by `just _stamp-version` on every `just install` and `just cut-release`. Set `CAPSEM_RELEASE_VERSION=x.y.z` when you need an exact preselected stamp.
+- **Assets**: `YYYY.MMDD.patch` -- derived by `capsem-admin manifest generate` from the build date
 
 Three files hold the binary version (kept in sync by `_stamp-version`): `Cargo.toml` (workspace), `crates/capsem-app/tauri.conf.json`, `pyproject.toml`.
 

@@ -96,9 +96,9 @@ preflight (30s) --> build-assets (arm64 + x86_64, 10 min) --> build-app-macos (1
 | `preflight` | macos-14 | Validates Apple cert, Tauri signing key, notarization creds |
 | `build-assets` | ubuntu arm64 + x86_64 | vmlinuz, initrd.img, rootfs.erofs per arch |
 | `test` | macos-14 | Unit tests + coverage + audit (gates release) |
-| `build-app-macos` | macos-14 | DMG (codesigned + notarized), host binaries, latest.json |
-| `build-app-linux` | ubuntu arm64 + x86_64 | deb packages (both arches), latest.json |
-| `create-release` | ubuntu | Merges latest.json, signs manifest, creates GitHub release |
+| `build-app-macos` | macos-14 | `.pkg` installer, notarized + stapled |
+| `build-app-linux` | ubuntu arm64 + x86_64 | `.deb` packages for both arches |
+| `create-release` | ubuntu | Publishes packages, unified manifest, and arch-prefixed VM assets |
 
 ### Apple code signing
 
@@ -111,11 +111,16 @@ The macOS build signs all binaries with a Developer ID certificate:
 ### Release artifacts
 
 Each release publishes:
-- `capsem-{version}-{arch}.dmg` -- macOS desktop app
-- `capsem_{version}_{arch}.deb` -- Linux package
-- `{arch}-vmlinuz`, `{arch}-initrd.img`, `{arch}-rootfs.erofs` -- VM images
-- `manifest.json` -- asset manifest with BLAKE3 hashes
-- `latest.json` -- Tauri auto-updater metadata
+- `Capsem-{version}.pkg` -- macOS installer, codesigned, notarized, and stapled
+- `Capsem_{version}_amd64.deb` and `Capsem_{version}_arm64.deb` -- Linux packages
+- `{arch}-vmlinuz`, `{arch}-initrd.img`, `{arch}-rootfs.erofs` -- VM assets
+- `{arch}-obom.cdx.json` -- per-arch rootfs OBOM
+- `manifest.json` -- v2 asset/binary manifest with BLAKE3 hashes and sizes
+- `capsem-sbom.spdx.json` -- host SBOM
+
+Installers carry host binaries and the selected manifest. Heavy VM assets are
+downloaded from the release on first use through `capsem update --assets` and
+verified against the manifest before boot.
 
 Release packaging materializes runtime profiles through the same profile-derived build rail as
 local development: `capsem-admin profile materialize` copies checked-in config

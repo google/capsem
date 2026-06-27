@@ -89,9 +89,9 @@ LIMIT 20;"
 | Recipe | What it does | Time |
 |--------|-------------|------|
 | `just build-assets code [arch]` | Full profile-derived rebuild: kernel + rootfs via `capsem-admin` (needs Docker) | ~10 min |
-| `just build-kernel <arch> code` | Kernel only through the profile-derived profile-derived build rail | ~5 min |
-| `just build-rootfs <arch> code` | Rootfs only through the profile-derived profile-derived build rail | ~8 min |
-| `just cross-compile [arch]` | Full Linux build in container: agent binaries + deb + AppImage | ~15 min |
+| `just build-kernel <arch> code` | Kernel only through the profile-derived build rail | ~5 min |
+| `just build-rootfs <arch> code` | Rootfs only through the profile-derived build rail | ~8 min |
+| `just cross-compile [arch]` | Full Linux build in container: agent binaries + `.deb` package | ~15 min |
 
 You only need `just build-assets code` on first setup or when profile-owned
 package/root/install inputs or backend image templates change rootfs contents.

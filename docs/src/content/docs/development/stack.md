@@ -85,7 +85,9 @@ linker = "rust-lld"
 
 ### Verifying the full Linux build locally
 
-`just cross-compile [arch]` builds everything in a container: agent binaries, frontend, and all host binaries (deb package). This catches system dep issues before CI.
+`just cross-compile [arch]` builds everything in a container: agent binaries,
+frontend, and all host binaries for the Linux `.deb` package. This catches
+system dependency issues before CI.
 
 ```bash
 just cross-compile           # Build for host arch (arm64 on Apple Silicon)
@@ -222,14 +224,18 @@ flowchart LR
 | `preflight` | macos-14 | Validates Apple cert, Tauri key, notarization creds |
 | `build-assets` | ubuntu arm64 + x86_64 | vmlinuz, initrd.img, rootfs.erofs per arch |
 | `test` | macos-14 | Unit tests + coverage, frontend check, audit |
-| `build-app-macos` | macos-14 | DMG (codesigned + notarized), host binaries, latest.json |
-| `build-app-linux` | ubuntu arm64 + x86_64 | deb (both arches), latest.json |
-| `create-release` | ubuntu | Merges latest.json, signs manifest, creates GitHub release |
+| `build-app-macos` | macos-14 | `.pkg` installer, notarized + stapled |
+| `build-app-linux` | ubuntu arm64 + x86_64 | `.deb` packages for both arches |
+| `create-release` | ubuntu | Publishes packages, `manifest.json`, and arch-prefixed VM assets |
 
 **Key design decisions:**
 - `test` runs in parallel with `build-assets` and app builds -- it gates `create-release` but doesn't block compilation
-- arm64 Linux produces `.deb` only
-- Each platform's `latest.json` is merged in `create-release` for the Tauri auto-updater
+- Linux produces `.deb` only on both arm64 and x86_64. AppImage is intentionally disabled.
+- VM assets are not bundled into the installers. They are uploaded as GitHub
+  release assets named `<arch>-vmlinuz`, `<arch>-initrd.img`,
+  `<arch>-rootfs.erofs`, and `<arch>-obom.cdx.json`; the v2 manifest keeps bare
+  logical names under each arch map and every downloaded asset is verified
+  before boot.
 
 ### Local vs CI
 

@@ -103,6 +103,10 @@ The manifest (`assets/manifest.json`, format 2) is a single top-level file cover
 Key points:
 - **Single file, not per-arch.** Arches are nested under `assets.releases.<ver>.arches.<arch>`.
 - **Filenames are bare** (`"vmlinuz"`, not `"arm64/vmlinuz"`) -- the arch map provides the context.
+- **GitHub release asset names are arch-prefixed.** The published files are
+  named `arm64-vmlinuz`, `arm64-initrd.img`, `arm64-rootfs.erofs`,
+  `x86_64-vmlinuz`, and so on. The manifest intentionally keeps bare logical
+  filenames because the arch map already names the architecture.
 - **Hashes are BLAKE3**, 64 lowercase hex characters. Format is validated by `asset_manager.rs`; non-format-2 manifests are rejected.
 - **Compatibility is explicit.** `min_binary` on an asset release and `min_assets` on a binary release define the allowed pairings for upgrades and downloads.
 
@@ -215,6 +219,11 @@ If rootfs is not found locally, `create_asset_manager()` loads the manifest and 
 2. Downloads the URL when the hash-prefixed local asset is missing
 3. Verifies BLAKE3 hash and size after download, deletes on mismatch
 4. Atomically renames temp file to final path
+
+Release installers are intentionally thin. They install host binaries and the
+selected `manifest.json`; kernel/initrd/rootfs bytes are downloaded from the
+GitHub release as separate arch-prefixed assets on first use and verified before
+boot.
 
 ### Step 4: Boot
 
