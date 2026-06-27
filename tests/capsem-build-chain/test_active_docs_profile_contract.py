@@ -110,6 +110,8 @@ RELEASE_ASSET_DOCS = [
     PROJECT_ROOT / "docs/src/content/docs/security/build-verification.md",
 ]
 
+BENCHMARK_RESULTS_DOC = PROJECT_ROOT / "docs/src/content/docs/benchmarks/results.md"
+
 
 def test_active_docs_do_not_teach_retired_guest_config_authority() -> None:
     failures: list[str] = []
@@ -147,6 +149,31 @@ def test_release_asset_docs_teach_thin_packages_and_release_assets() -> None:
     assert "Release installers are intentionally thin" in asset_text
     assert "`arm64-rootfs.erofs`; inside the manifest they remain bare names" in security_text
     assert not failures, "release asset docs missing required wording:\n" + "\n".join(failures)
+
+
+def test_benchmark_results_page_is_graph_dashboard() -> None:
+    text = BENCHMARK_RESULTS_DOC.read_text()
+    headings = [
+        line.removeprefix("## ").strip()
+        for line in text.splitlines()
+        if line.startswith("## ")
+    ]
+
+    assert headings == ["VM lifecycle", "Disk", "App", "Network"]
+    assert text.count("```mermaid") >= 8
+    assert text.count("xychart-beta") >= 8
+
+    retired_sections = [
+        "Rootfs Decision",
+        "Mac DAX Probe",
+        "Reproducing",
+        "Discussion",
+        "Local Network And Model Fixtures",
+        "DNS Load",
+        "MCP Load",
+    ]
+    for section in retired_sections:
+        assert f"## {section}" not in text
 
 
 def test_config_root_has_only_declared_authority_directories() -> None:
