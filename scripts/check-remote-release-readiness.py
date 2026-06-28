@@ -405,6 +405,14 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
             failures.append("health profile update compatibility mismatch")
         if health_update_profiles.get("requires_newer") != health_profiles.get("requires_newer"):
             failures.append("health profile update requirement mismatch")
+    failures.extend(
+        check_profile_catalog_artifact(
+            site,
+            profile_source,
+            health_profiles.get("hash"),
+            health_profiles.get("revision"),
+        )
+    )
     if not isinstance(health_update_assets, dict):
         failures.append("health asset update metadata missing")
     else:
@@ -854,6 +862,61 @@ def check_host_binary_files(
     for url in sorted(set(files_by_url) - expected_urls):
         failures.append(f"{label} unexpected host binary file {url}")
 
+    return failures
+
+
+def check_profile_catalog_artifact(
+    site: str,
+    source: Any,
+    expected_hash: Any,
+    expected_revision: Any,
+) -> list[str]:
+    if not isinstance(source, str):
+        return ["profile catalog source missing or not a string"]
+    if not source.startswith("/profiles/releases/") or not source.endswith("/catalog.json"):
+        return ["profile catalog source must be a release-channel artifact path"]
+    if not isinstance(expected_hash, str):
+        return [f"profile catalog {source} hash missing or not a string"]
+    if not isinstance(expected_revision, str):
+        return [f"profile catalog {source} revision missing or not a string"]
+
+    try:
+        resolved_url = resolve_release_url(site, source)
+    except ValueError as error:
+        return [f"profile catalog {source}: {error}"]
+
+    catalog = fetch_bytes(resolved_url)
+    if catalog.error:
+        return [catalog.error]
+
+    failures: list[str] = []
+    if blake3 is None:
+        failures.append(
+            f"profile catalog {source} cannot verify blake3 without Python dependency blake3"
+        )
+    else:
+        actual_hash = blake3.blake3(catalog.data).hexdigest()
+        if actual_hash != expected_hash:
+            failures.append(f"profile catalog {source} blake3 mismatch")
+
+    try:
+        text = catalog.data.decode("utf-8")
+    except UnicodeDecodeError:
+        return failures + [f"profile catalog {source} is not UTF-8"]
+    if "file://" in text:
+        failures.append(f"profile catalog {source} must not contain file:// URLs")
+
+    try:
+        document = json.loads(text)
+    except json.JSONDecodeError as error:
+        return failures + [f"profile catalog {source} JSON parse failed: {error}"]
+    if not isinstance(document, dict):
+        failures.append(f"profile catalog {source} document is not an object")
+        return failures
+    if document.get("schema") != "capsem.profile_catalog.v1":
+        failures.append(f"profile catalog {source} schema mismatch")
+    if document.get("revision") != expected_revision:
+        failures.append(f"profile catalog {source} revision mismatch")
     return failures
 
 

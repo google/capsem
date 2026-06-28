@@ -312,6 +312,49 @@ jobs:
               for url in sorted(set(files_by_url) - expected_urls):
                   failures.append(f"{label} unexpected host binary file {url}")
 
+          def check_profile_catalog_artifact(source, expected_hash, expected_revision):
+              if not isinstance(source, str):
+                  failures.append("profile catalog source missing or not a string")
+                  return
+              if not source.startswith("/profiles/releases/") or not source.endswith("/catalog.json"):
+                  failures.append("profile catalog source must be a release-channel artifact path")
+                  return
+              if not isinstance(expected_hash, str):
+                  failures.append(f"profile catalog {source} hash missing or not a string")
+                  return
+              if not isinstance(expected_revision, str):
+                  failures.append(f"profile catalog {source} revision missing or not a string")
+                  return
+
+              try:
+                  data = fetch_bytes(resolve_release_url(source))
+              except Exception as error:
+                  failures.append(f"profile catalog {source} fetch failed: {error}")
+                  return
+
+              actual_hash = blake3.blake3(data).hexdigest()
+              if actual_hash != expected_hash:
+                  failures.append(f"profile catalog {source} blake3 mismatch")
+              try:
+                  text = data.decode("utf-8")
+              except UnicodeDecodeError:
+                  failures.append(f"profile catalog {source} is not UTF-8")
+                  return
+              if "file://" in text:
+                  failures.append(f"profile catalog {source} must not contain file:// URLs")
+              try:
+                  document = json.loads(text)
+              except json.JSONDecodeError as error:
+                  failures.append(f"profile catalog {source} JSON parse failed: {error}")
+                  return
+              if not isinstance(document, dict):
+                  failures.append(f"profile catalog {source} document is not an object")
+                  return
+              if document.get("schema") != "capsem.profile_catalog.v1":
+                  failures.append(f"profile catalog {source} schema mismatch")
+              if document.get("revision") != expected_revision:
+                  failures.append(f"profile catalog {source} revision mismatch")
+
           expected_manifest = f"/assets/{channel}/manifest.json"
           failures = []
           current = health.get("current", {})
@@ -420,6 +463,11 @@ jobs:
                   failures.append("health profile update compatibility mismatch")
               if updates.get("profiles", {}).get("requires_newer") != health.get("profiles", {}).get("requires_newer"):
                   failures.append("health profile update requirement mismatch")
+          check_profile_catalog_artifact(
+              health.get("profiles", {}).get("source"),
+              health.get("profiles", {}).get("hash"),
+              health.get("profiles", {}).get("revision"),
+          )
           for key in ("binary", "assets"):
               if not isinstance(updates.get(key, {}).get("latest"), str):
                   failures.append(f"health updates.{key}.latest missing or not a string")

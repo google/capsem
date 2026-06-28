@@ -89,7 +89,9 @@ URLs, BLAKE3 hashes, and sizes match the fetched channel manifest's current
 asset release; and that the profile update hash, compatibility, and
 newer-version requirements match the canonical profile catalog metadata. Image
 freshness must remain explicitly unpublished until an image release rail is
-added to the asset channel.
+added to the asset channel. The immutable profile catalog artifact is fetched
+and checked against its advertised BLAKE3 hash, schema, revision, and URL
+policy.
 It also resolves published host SBOM and VM OBOM evidence artifacts, verifies
 their advertised hashes and sizes, and validates attestation subjects and
 predicate URLs against the published evidence lists. It verifies live

@@ -108,7 +108,9 @@ manifest's current asset release. It must also
 verify that the profile update hash, compatibility, and newer-version
 requirements match the canonical profile catalog metadata, and that the
 profile catalog's current binary/assets compatibility, minimum binary/assets,
-and requires-newer flags match the fetched channel manifest. It must also
+and requires-newer flags match the fetched channel manifest. It must also fetch
+the immutable profile catalog artifact and verify its BLAKE3 hash, schema,
+revision, and absence of `file://` URLs. It must also
 verify that image freshness remains explicitly unpublished until image release
 metadata is added to the asset channel. It must also
 resolve published host SBOM and VM OBOM evidence artifacts from `health.json`, verify their advertised
