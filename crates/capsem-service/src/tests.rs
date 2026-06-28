@@ -525,6 +525,87 @@ async fn route_request(
     (status, json)
 }
 
+#[tokio::test]
+async fn update_route_check_dry_run_plans_cli_check() {
+    let app = build_service_router(make_test_state());
+    let (status, body) = route_request(
+        app,
+        axum::http::Method::POST,
+        "/update/check",
+        Some(json!({ "dry_run": true })),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["status"], "planned");
+    assert_eq!(body["command"]["args"], json!(["update"]));
+}
+
+#[tokio::test]
+async fn update_route_check_rejects_live_mutating_cli_check() {
+    let app = build_service_router(make_test_state());
+    let (status, body) = route_request(
+        app,
+        axum::http::Method::POST,
+        "/update/check",
+        Some(json!({})),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        body["error"],
+        "update check requires dry_run=true until a non-mutating check runner is available"
+    );
+}
+
+#[tokio::test]
+async fn update_route_apply_dry_run_plans_binary_profiles_and_assets() {
+    let app = build_service_router(make_test_state());
+    let (binary_status, binary_body) = route_request(
+        app.clone(),
+        axum::http::Method::POST,
+        "/update/apply",
+        Some(json!({ "action": "binary_profiles", "dry_run": true })),
+    )
+    .await;
+    let (assets_status, assets_body) = route_request(
+        app,
+        axum::http::Method::POST,
+        "/update/apply",
+        Some(json!({ "action": "assets", "dry_run": true })),
+    )
+    .await;
+
+    assert_eq!(binary_status, StatusCode::OK);
+    assert_eq!(binary_body["status"], "planned");
+    assert_eq!(binary_body["command"]["args"], json!(["update", "--yes"]));
+    assert_eq!(assets_status, StatusCode::OK);
+    assert_eq!(assets_body["status"], "planned");
+    assert_eq!(
+        assets_body["command"]["args"],
+        json!(["update", "--assets"])
+    );
+}
+
+#[tokio::test]
+async fn update_route_apply_requires_confirmation_for_live_command() {
+    let app = build_service_router(make_test_state());
+    let (status, body) = route_request(
+        app,
+        axum::http::Method::POST,
+        "/update/apply",
+        Some(json!({ "action": "assets" })),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        body["error"],
+        "update apply requires confirmed=true or dry_run=true"
+    );
+}
+
 async fn decode_response_json<T: serde::de::DeserializeOwned>(
     response: axum::response::Response,
 ) -> T {

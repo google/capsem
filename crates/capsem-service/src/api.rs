@@ -330,6 +330,46 @@ pub struct UpdateStatusResponse {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+pub struct UpdateCheckRequest {
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdateApplyAction {
+    BinaryProfiles,
+    Assets,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct UpdateApplyRequest {
+    pub action: UpdateApplyAction,
+    #[serde(default)]
+    pub dry_run: bool,
+    #[serde(default)]
+    pub confirmed: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct UpdateCommandPlan {
+    pub program: String,
+    pub args: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct UpdateActionResponse {
+    pub status: String,
+    pub command: UpdateCommandPlan,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stdout: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stderr: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
 pub struct SupplyChainEvidence {
     pub manifest: SupplyChainManifestEvidence,
     pub channel_index: SupplyChainChannelEvidence,

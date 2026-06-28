@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added service and gateway update action routes that expose dry-run command
+  plans for release checks, binary/profile updates, and VM asset refreshes
+  while requiring explicit confirmation for live apply.
 - Added profile-dashboard release-state rows for profile catalog, VM asset, and
   VM image freshness so new-session actions stay distinct from binary app
   updates.

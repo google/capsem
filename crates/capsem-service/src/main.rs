@@ -35,6 +35,7 @@ use std::path::{Path as StdPath, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 use tokio::net::UnixListener;
+use tokio::process::Command;
 use tokio_unix_ipc::{channel_from_std, Receiver, Sender};
 use tower_http::trace::TraceLayer;
 use tracing::{error, info, warn, Instrument};
@@ -11658,6 +11659,8 @@ fn build_service_router(state: Arc<ServiceState>) -> Router {
     Router::new()
         .route("/status", get(handle_service_status))
         .route("/update/status", get(handle_update_status))
+        .route("/update/check", post(handle_update_check))
+        .route("/update/apply", post(handle_update_apply))
         .route(
             "/version",
             get(|| async { Json(serde_json::json!({ "version": env!("CARGO_PKG_VERSION") })) }),
@@ -11885,6 +11888,111 @@ async fn handle_update_status(
     State(state): State<Arc<ServiceState>>,
 ) -> Result<Json<api::UpdateStatusResponse>, AppError> {
     Ok(Json(update_status_response(&state)))
+}
+
+async fn handle_update_check(
+    Json(request): Json<api::UpdateCheckRequest>,
+) -> Result<Json<api::UpdateActionResponse>, AppError> {
+    let plan = update_command_plan(UpdateCommandKind::Check);
+    if request.dry_run {
+        return Ok(Json(planned_update_response(plan)));
+    }
+    Err(AppError(
+        StatusCode::BAD_REQUEST,
+        "update check requires dry_run=true until a non-mutating check runner is available"
+            .to_string(),
+    ))
+}
+
+async fn handle_update_apply(
+    Json(request): Json<api::UpdateApplyRequest>,
+) -> Result<Json<api::UpdateActionResponse>, AppError> {
+    let kind = match request.action {
+        api::UpdateApplyAction::BinaryProfiles => UpdateCommandKind::BinaryProfiles,
+        api::UpdateApplyAction::Assets => UpdateCommandKind::Assets,
+    };
+    let plan = update_command_plan(kind);
+    if request.dry_run {
+        return Ok(Json(planned_update_response(plan)));
+    }
+    if !request.confirmed {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            "update apply requires confirmed=true or dry_run=true".to_string(),
+        ));
+    }
+    execute_update_command(plan).await.map(Json)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UpdateCommandKind {
+    Check,
+    BinaryProfiles,
+    Assets,
+}
+
+fn update_command_plan(kind: UpdateCommandKind) -> api::UpdateCommandPlan {
+    let args = match kind {
+        UpdateCommandKind::Check => vec!["update".to_string()],
+        UpdateCommandKind::BinaryProfiles => vec!["update".to_string(), "--yes".to_string()],
+        UpdateCommandKind::Assets => vec!["update".to_string(), "--assets".to_string()],
+    };
+    api::UpdateCommandPlan {
+        program: capsem_cli_program(),
+        args,
+    }
+}
+
+fn capsem_cli_program() -> String {
+    if let Some(path) = std::env::var_os("CAPSEM_CLI") {
+        return PathBuf::from(path).display().to_string();
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let sibling = dir.join("capsem");
+            if sibling.exists() {
+                return sibling.display().to_string();
+            }
+        }
+    }
+    "capsem".to_string()
+}
+
+fn planned_update_response(plan: api::UpdateCommandPlan) -> api::UpdateActionResponse {
+    api::UpdateActionResponse {
+        status: "planned".to_string(),
+        command: plan,
+        exit_code: None,
+        stdout: None,
+        stderr: None,
+    }
+}
+
+async fn execute_update_command(
+    plan: api::UpdateCommandPlan,
+) -> Result<api::UpdateActionResponse, AppError> {
+    let output = Command::new(&plan.program)
+        .args(&plan.args)
+        .output()
+        .await
+        .map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to start update command: {error}"),
+            )
+        })?;
+    let status = if output.status.success() {
+        "succeeded"
+    } else {
+        "failed"
+    };
+    Ok(api::UpdateActionResponse {
+        status: status.to_string(),
+        command: plan,
+        exit_code: output.status.code(),
+        stdout: Some(String::from_utf8_lossy(&output.stdout).to_string()),
+        stderr: Some(String::from_utf8_lossy(&output.stderr).to_string()),
+    })
 }
 
 async fn handle_service_status(

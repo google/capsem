@@ -215,6 +215,8 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/version", get(proxy::handle_proxy))
         .route("/update/status", get(proxy::handle_proxy))
+        .route("/update/check", post(proxy::handle_proxy))
+        .route("/update/apply", post(proxy::handle_proxy))
         .route("/vms/create", post(proxy::handle_proxy))
         .route("/vms/list", get(proxy::handle_proxy))
         .route("/vms/{id}/info", get(proxy::handle_proxy))
@@ -642,6 +644,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn gateway_update_action_routes_are_post_only() {
+        for uri in ["/update/check", "/update/apply"] {
+            let app = service_proxy_app("/tmp/capsem-gateway-missing-service.sock");
+            let post_resp = app
+                .clone()
+                .oneshot(
+                    http::Request::builder()
+                        .method("POST")
+                        .uri(uri)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(post_resp.status(), http::StatusCode::BAD_GATEWAY, "{uri}");
+
+            let get_resp = app
+                .oneshot(
+                    http::Request::builder()
+                        .method("GET")
+                        .uri(uri)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                get_resp.status(),
+                http::StatusCode::METHOD_NOT_ALLOWED,
+                "{uri}"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn gateway_fake_vm_mutation_routes_are_not_forwarded() {
         let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
         for (method, uri) in [
@@ -682,6 +719,8 @@ mod tests {
             ("GET", "/profiles/list"),
             ("GET", "/profiles/status"),
             ("GET", "/update/status"),
+            ("POST", "/update/check"),
+            ("POST", "/update/apply"),
             ("POST", "/profiles/reload"),
             ("GET", "/profiles/code/info"),
             ("GET", "/profiles/code/obom"),
