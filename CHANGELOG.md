@@ -33,6 +33,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   paths.
 
 ### Changed
+- Added CLI integration coverage that keeps `capsem update --manifest` and
+  `--corp` URL-only, while still allowing `file://` overrides for local
+  corporate/update endpoints.
 - Guarded binary release channel updates so profile catalog artifacts publish
   without rebuilding VM assets.
 - Changed manual VM asset releases to publish GitHub build provenance

@@ -250,6 +250,44 @@ class TestVersion:
         assert "capsem" in stdout.lower()
 
 
+class TestUpdate:
+
+    @pytest.mark.parametrize(
+        ("flag", "value"),
+        [
+            ("--manifest", "assets/stable/manifest.json"),
+            ("--corp", "config/corp.toml"),
+        ],
+    )
+    def test_update_rejects_bare_path_overrides(self, flag, value):
+        """Update source overrides must be URL-shaped, not bare local paths."""
+        stdout, stderr, rc = run_cli("update", flag, value)
+        assert rc == 2
+        assert stdout == ""
+        assert f"invalid value '{value}' for '{flag} <URL>'" in stderr
+        assert "must be a URL" in stderr
+
+    @pytest.mark.parametrize(
+        ("flag", "url", "handoff_error"),
+        [
+            ("--manifest", "file:///tmp/capsem-missing-manifest.json", "read manifest"),
+            ("--corp", "file:///tmp/capsem-missing-corp.toml", "read corp config"),
+        ],
+    )
+    def test_update_accepts_file_url_overrides_for_single_update_path(
+        self,
+        flag,
+        url,
+        handoff_error,
+    ):
+        """file:// overrides are accepted URLs and fail later in updater I/O."""
+        stdout, stderr, rc = run_cli("update", flag, url)
+        assert rc == 1
+        assert stdout == ""
+        assert "invalid value" not in stderr
+        assert handoff_error in stderr
+
+
 class TestEnv:
 
     def test_create_with_env(self, uds_path):
