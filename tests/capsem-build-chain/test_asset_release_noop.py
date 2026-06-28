@@ -178,6 +178,9 @@ def test_asset_release_noop_gate_controls_preview_and_deploy_workflow() -> None:
     assert "outputs:" in workflow
     assert "asset_changed: ${{ steps.asset-delta.outputs.changed }}" in workflow
     assert "if: ${{ steps.asset-delta.outputs.changed == 'true' }}" in workflow
+    assert "name: asset-release-plan" in workflow
+    assert "if: ${{ inputs.dry_run == true && steps.asset-delta.outputs.changed == 'true' }}" in workflow
+    assert "path: target/asset-release/" in workflow
     assert "name: asset-channel-preview" in workflow
     assert (
         "if: ${{ inputs.dry_run == false && needs.assemble-channel.outputs.asset_changed == 'true' }}"
@@ -211,9 +214,11 @@ def test_asset_release_upload_publishes_arch_prefixed_immutable_release_only_whe
     assert 'if [[ "$DRY_RUN" == "true" ]]; then' in upload_step
     assert "DRY-RUN:" in upload_step
     assert '"$UPLOAD_SCRIPT"' in upload_step
+    assert 'UPLOAD_SCRIPT="target/asset-release/upload-assets.sh"' in upload_step
 
     for text in (docs, release_skill):
         assert "assets-v<asset-version>" in text
         assert "arch-prefixed" in text
+        assert "asset-release-plan" in text
         for logical_name in ("`vmlinuz`", "`initrd.img`", "`rootfs.erofs`", "`obom.cdx.json`"):
             assert logical_name in text

@@ -230,6 +230,8 @@ release produces the manifest, immutable blob paths, and OBOM/provenance
 evidence, then publishes an immutable GitHub Release tagged
 `assets-v<asset-version>` with arch-prefixed `vmlinuz`, `initrd.img`,
 `rootfs.erofs`, and `obom.cdx.json` artifacts before deploying the channel.
+Dry runs upload `asset-release-plan` with the generated upload script so the
+planned `gh release` commands can be reviewed without scraping workflow logs.
 The first channel publication may continue when the previous
 `release.capsem.org/assets/<channel>/manifest.json` is unavailable; the delta
 gate records `previous_manifest_unavailable` as a changed asset release so the

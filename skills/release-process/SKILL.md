@@ -52,7 +52,8 @@ generated site as the `asset-channel-preview` artifact, and calls
 running in dry-run mode. Live asset releases must publish GitHub build
 provenance attestations for those four arch-prefixed VM asset subjects. In
 dry-run mode the workflow must print the exact `gh release` commands it would
-execute without publishing or attesting. `build-ledger.log` and `B3SUMS` remain
+execute without publishing or attesting, and upload `asset-release-plan` with
+the generated upload script for review. `build-ledger.log` and `B3SUMS` remain
 debug evidence unless deliberately published as separate evidence artifacts.
 The manifest artifact is diagnostic/source evidence only; release-channel deploys consume the
 generated dist artifact so the manifest, blobs, index page, health JSON, and

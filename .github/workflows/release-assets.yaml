@@ -231,6 +231,12 @@ jobs:
           path: assets/manifest.json
 
       - uses: actions/upload-artifact@v7
+        if: ${{ inputs.dry_run == true && steps.asset-delta.outputs.changed == 'true' }}
+        with:
+          name: asset-release-plan
+          path: target/asset-release/
+
+      - uses: actions/upload-artifact@v7
         if: ${{ steps.asset-delta.outputs.changed == 'true' }}
         with:
           name: asset-channel-preview
