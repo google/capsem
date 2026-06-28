@@ -538,11 +538,26 @@ async fn update_route_check_dry_run_plans_cli_check() {
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["status"], "planned");
-    assert_eq!(body["command"]["args"], json!(["update"]));
+    assert_eq!(body["command"]["args"], json!(["update", "--check"]));
 }
 
 #[tokio::test]
-async fn update_route_check_rejects_live_mutating_cli_check() {
+async fn update_route_check_live_executes_non_mutating_cli_check() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let cli = dir.path().join("capsem");
+    let log = dir.path().join("args.log");
+    std::fs::write(
+        &cli,
+        format!("#!/bin/sh\nprintf '%s\\n' \"$*\" > '{}'\n", log.display()),
+    )
+    .unwrap();
+    let mut permissions = std::fs::metadata(&cli).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+    std::fs::set_permissions(&cli, permissions).unwrap();
+    let previous = std::env::var_os("CAPSEM_CLI");
+    std::env::set_var("CAPSEM_CLI", &cli);
+
     let app = build_service_router(make_test_state());
     let (status, body) = route_request(
         app,
@@ -551,12 +566,15 @@ async fn update_route_check_rejects_live_mutating_cli_check() {
         Some(json!({})),
     )
     .await;
+    match previous {
+        Some(value) => std::env::set_var("CAPSEM_CLI", value),
+        None => std::env::remove_var("CAPSEM_CLI"),
+    }
 
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(
-        body["error"],
-        "update check requires dry_run=true until a non-mutating check runner is available"
-    );
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["status"], "succeeded");
+    assert_eq!(body["command"]["args"], json!(["update", "--check"]));
+    assert_eq!(std::fs::read_to_string(log).unwrap(), "update --check\n");
 }
 
 #[tokio::test]

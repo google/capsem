@@ -51,6 +51,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   paths.
 
 ### Changed
+- Changed update checks to use a non-mutating `capsem update --check` path so
+  service/UI freshness probes refresh release-channel status without applying
+  binary, profile, corporate config, or VM asset changes.
 - Added release-index contract coverage proving manual VM asset releases update
   the asset channel without moving the current binary pointer.
 - Added CLI integration coverage that keeps `capsem update --manifest` and

@@ -956,11 +956,15 @@ fn is_newer(latest: &str, current: &str) -> bool {
 /// package and hand it to the platform package manager when `--yes` is set.
 pub async fn run_update(
     yes: bool,
+    check_only: bool,
     assets: bool,
     manifest_source: Option<&str>,
     corp_source: Option<&str>,
 ) -> Result<()> {
     let layout = platform::detect_install_layout();
+    if check_only && (yes || assets || manifest_source.is_some() || corp_source.is_some()) {
+        anyhow::bail!("--check cannot be combined with mutating update options");
+    }
 
     let mut did_work = false;
     if let Some(source) = corp_source {
@@ -993,6 +997,11 @@ pub async fn run_update(
     let _ = write_cache(&check);
 
     let current = env!("CARGO_PKG_VERSION");
+    if check_only {
+        print_update_check_summary(&check, current, &layout);
+        return Ok(());
+    }
+
     let mut did_update = false;
     match check.latest_version.as_deref() {
         Some(latest) if check.update_available => {
@@ -1054,6 +1063,44 @@ pub async fn run_update(
         }
     }
     Ok(())
+}
+
+fn print_update_check_summary(check: &UpdateCheck, current: &str, layout: &InstallLayout) {
+    match check.latest_version.as_deref() {
+        Some(latest) if check.update_available => {
+            println!("Binary update available: {current} -> {latest}");
+            if let Some(installer) = check.binary_installer.as_ref() {
+                let mb = installer.size as f64 / 1_048_576.0;
+                println!("Installer: {}", installer.url);
+                println!("Package:   {} ({mb:.1} MB)", installer.name);
+                println!("SHA-256:   {}", installer.sha256);
+            } else {
+                println!(
+                    "No installer package in release health matches this install layout ({layout:?})."
+                );
+            }
+        }
+        Some(_) => println!("Capsem binary is current ({current})."),
+        None => println!("Release channel did not advertise a binary version."),
+    }
+
+    if let Some(reason) = check.profiles_blocked_reason.as_deref() {
+        println!("Profile catalog update blocked: {reason}.");
+    } else if check.profiles_update_available {
+        let current_profiles = check.current_profiles.as_deref().unwrap_or("unknown");
+        let latest_profiles = check.latest_profiles.as_deref().unwrap_or("unknown");
+        println!("Profile catalog update available: {current_profiles} -> {latest_profiles}");
+    }
+
+    if check.assets_update_available {
+        let latest_assets = check.latest_assets.as_deref().unwrap_or("unknown");
+        println!("VM asset update available: {latest_assets}.");
+    }
+
+    if !check.update_available && !check.profiles_update_available && !check.assets_update_available
+    {
+        println!("Capsem is current ({current}).");
+    }
 }
 
 async fn apply_profile_catalog_update(check: &UpdateCheck) -> Result<()> {
@@ -2129,6 +2176,36 @@ mod tests {
             home.path().join("updates/installers/Capsem-99.99.99.pkg")
         );
         assert_eq!(std::fs::read(path).unwrap(), payload);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn update_check_rejects_mutating_options_programmatically() {
+        for result in [
+            run_update(true, true, false, None, None).await,
+            run_update(false, true, true, None, None).await,
+            run_update(
+                false,
+                true,
+                false,
+                Some("https://release.capsem.org/assets/stable/manifest.json"),
+                None,
+            )
+            .await,
+            run_update(
+                false,
+                true,
+                false,
+                None,
+                Some("https://corp.example/capsem/corp.json"),
+            )
+            .await,
+        ] {
+            let err = result.expect_err("check-only update must reject mutating options");
+            assert!(
+                format!("{err:#}").contains("--check cannot be combined"),
+                "{err:#}"
+            );
+        }
     }
 
     fn test_sha256(bytes: &[u8]) -> String {

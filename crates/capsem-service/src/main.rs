@@ -11897,11 +11897,7 @@ async fn handle_update_check(
     if request.dry_run {
         return Ok(Json(planned_update_response(plan)));
     }
-    Err(AppError(
-        StatusCode::BAD_REQUEST,
-        "update check requires dry_run=true until a non-mutating check runner is available"
-            .to_string(),
-    ))
+    execute_update_command(plan).await.map(Json)
 }
 
 async fn handle_update_apply(
@@ -11933,7 +11929,7 @@ enum UpdateCommandKind {
 
 fn update_command_plan(kind: UpdateCommandKind) -> api::UpdateCommandPlan {
     let args = match kind {
-        UpdateCommandKind::Check => vec!["update".to_string()],
+        UpdateCommandKind::Check => vec!["update".to_string(), "--check".to_string()],
         UpdateCommandKind::BinaryProfiles => vec!["update".to_string(), "--yes".to_string()],
         UpdateCommandKind::Assets => vec!["update".to_string(), "--assets".to_string()],
     };

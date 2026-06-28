@@ -465,6 +465,9 @@ enum MiscCommands {
         /// Skip confirmation prompt
         #[arg(long, short)]
         yes: bool,
+        /// Check the release channel and refresh update status without applying changes.
+        #[arg(long, conflicts_with_all = ["yes", "assets", "manifest", "corp"])]
+        check: bool,
         /// Refresh only VM assets (kernel/initrd/rootfs) from the release URL.
         /// Useful when an asset-only release ships independently of binaries.
         #[arg(long)]
@@ -1449,11 +1452,12 @@ async fn main() -> Result<()> {
         }
         Commands::Misc(MiscCommands::Update {
             yes,
+            check,
             assets,
             manifest,
             corp,
         }) => {
-            update::run_update(*yes, *assets, manifest.as_deref(), corp.as_deref()).await?;
+            update::run_update(*yes, *check, *assets, manifest.as_deref(), corp.as_deref()).await?;
             return Ok(());
         }
         _ => {}
@@ -3076,11 +3080,13 @@ mod tests {
         match cli.command.unwrap() {
             Commands::Misc(MiscCommands::Update {
                 yes,
+                check,
                 assets,
                 manifest,
                 corp,
             }) => {
                 assert!(!yes);
+                assert!(!check);
                 assert!(!assets);
                 assert_eq!(manifest, None);
                 assert_eq!(corp, None);
@@ -3095,11 +3101,13 @@ mod tests {
         match cli.command.unwrap() {
             Commands::Misc(MiscCommands::Update {
                 yes,
+                check,
                 assets,
                 manifest,
                 corp,
             }) => {
                 assert!(yes);
+                assert!(!check);
                 assert!(!assets);
                 assert_eq!(manifest, None);
                 assert_eq!(corp, None);
@@ -3109,16 +3117,66 @@ mod tests {
     }
 
     #[test]
-    fn parse_update_assets() {
-        let cli = Cli::parse_from(["capsem", "update", "--assets"]);
+    fn parse_update_check() {
+        let cli = Cli::parse_from(["capsem", "update", "--check"]);
         match cli.command.unwrap() {
             Commands::Misc(MiscCommands::Update {
                 yes,
+                check,
                 assets,
                 manifest,
                 corp,
             }) => {
                 assert!(!yes);
+                assert!(check);
+                assert!(!assets);
+                assert_eq!(manifest, None);
+                assert_eq!(corp, None);
+            }
+            _ => panic!("expected Update"),
+        }
+    }
+
+    #[test]
+    fn parse_update_check_rejects_mutating_options() {
+        for args in [
+            vec!["capsem", "update", "--check", "--yes"],
+            vec!["capsem", "update", "--check", "--assets"],
+            vec![
+                "capsem",
+                "update",
+                "--check",
+                "--manifest",
+                "https://release.capsem.org/assets/stable/manifest.json",
+            ],
+            vec![
+                "capsem",
+                "update",
+                "--check",
+                "--corp",
+                "https://corp.example/capsem/corp.json",
+            ],
+        ] {
+            assert!(
+                Cli::try_parse_from(args.clone()).is_err(),
+                "expected {args:?} to be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_update_assets() {
+        let cli = Cli::parse_from(["capsem", "update", "--assets"]);
+        match cli.command.unwrap() {
+            Commands::Misc(MiscCommands::Update {
+                yes,
+                check,
+                assets,
+                manifest,
+                corp,
+            }) => {
+                assert!(!yes);
+                assert!(!check);
                 assert!(assets);
                 assert_eq!(manifest, None);
                 assert_eq!(corp, None);
