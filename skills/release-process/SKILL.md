@@ -73,8 +73,9 @@ previous `release.capsem.org/assets/<channel>/manifest.json` is unavailable;
 the asset delta gate records `previous_manifest_unavailable` as changed so the
 initial site can bootstrap. The first channel bootstrap may have no host binary
 evidence yet because the tag-triggered binary rail has not recorded package
-files, host SBOM references, or host binary attestations; once binary files are
-published, missing host SBOM evidence is release-blocking.
+files, the canonical `capsem-sbom.spdx.json` host SBOM reference, or host
+binary attestations; once binary files are published, missing host SBOM
+evidence is release-blocking.
 Later publications still compare against the live
 previous manifest and skip deployment only when current VM blob hashes, asset release metadata, and manifest policy are all unchanged. Manifest policy includes channel-visible fields such as `refresh_policy`. After
 Cloudflare deploys, the channel workflow must
@@ -430,9 +431,10 @@ packaged manifest, and payload layout. The script handles `.tar.zst` Debian
 payloads with a streaming zstandard reader because published `.deb` members may
 omit an embedded content-size header.
 
-Binary GitHub releases publish host packages and host SBOM. VM asset manifests,
-blobs, OBOM evidence, and channel health live on `release.capsem.org`; do not
-verify or publish VM `manifest.json` through the tag release.
+Binary GitHub releases publish host packages and the canonical host SBOM
+artifact, `capsem-sbom.spdx.json`. VM asset manifests, blobs, OBOM evidence,
+and channel health live on `release.capsem.org`; do not verify or publish VM
+`manifest.json` through the tag release.
 
 For a demo-facing macOS release, also prove the installer path users see:
 

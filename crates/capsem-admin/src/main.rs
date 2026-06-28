@@ -1126,7 +1126,7 @@ fn record_binary_release_metadata(
     let files = binary_files_from_artifacts(artifacts)?;
     if !files.iter().any(|file| is_host_sbom_file(&file.name)) {
         return Err(anyhow!(
-            "binary release metadata must include a host SBOM artifact"
+            "binary release metadata must include capsem-sbom.spdx.json"
         ));
     }
     if !files.iter().any(|file| !is_host_sbom_file(&file.name)) {
@@ -3011,7 +3011,7 @@ fn current_utc_date() -> Result<String> {
 }
 
 fn is_host_sbom_file(name: &str) -> bool {
-    name.ends_with(".spdx.json") || name.contains("sbom")
+    name == "capsem-sbom.spdx.json"
 }
 
 fn is_host_package_file(name: &str) -> bool {
@@ -6882,6 +6882,32 @@ decision = "block"
         assert!(
             format!("{error:#}")
                 .contains("binary release package artifact name must match version"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn assets_channel_record_binary_rejects_noncanonical_sbom_artifact() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
+        let artifacts_dir = temp.path().join("release-artifacts");
+        fs::create_dir_all(&artifacts_dir).expect("artifacts dir");
+        let pkg_path = artifacts_dir.join("Capsem-1.4.1234567890.pkg");
+        let sbom_path = artifacts_dir.join("host-sbom.spdx.json");
+        fs::write(&pkg_path, b"pkg bytes").expect("pkg");
+        fs::write(&sbom_path, br#"{"spdxVersion":"SPDX-2.3"}"#).expect("sbom");
+
+        let error = record_binary_release_metadata(
+            &manifest_path,
+            "1.4.1234567890",
+            None,
+            &[pkg_path, sbom_path],
+            "2030-02-03",
+        )
+        .expect_err("noncanonical SBOM artifact rejected");
+
+        assert!(
+            format!("{error:#}").contains("capsem-sbom.spdx.json"),
             "{error:#}"
         );
     }

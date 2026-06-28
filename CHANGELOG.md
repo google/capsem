@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Fixed binary release metadata recording so only the canonical
+  `capsem-sbom.spdx.json` artifact satisfies the host SBOM evidence
+  requirement for the release channel.
 - Fixed binary release metadata recording so package artifact filenames must
   match the binary version being advertised in the release channel.
 - Fixed binary release metadata recording so zero-byte host package or SBOM
