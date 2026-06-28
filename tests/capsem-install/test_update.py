@@ -277,7 +277,8 @@ url = "https://release.capsem.org/assets/releases/2030.0101.1/x86_64-rootfs.erof
 
 
 def _fresh_capsem_binary() -> Path | None:
-    binary = REPO_ROOT / "target" / "debug" / "capsem"
+    bin_src = Path(os.environ.get("CAPSEM_BIN_SRC", REPO_ROOT / "target" / "debug"))
+    binary = bin_src / "capsem"
     source_paths = [
         REPO_ROOT / "crates" / "capsem" / "src" / "update.rs",
         REPO_ROOT / "crates" / "capsem" / "src" / "client.rs",
@@ -293,6 +294,10 @@ def _fresh_capsem_binary() -> Path | None:
         capture_output=True,
         text=True,
         timeout=120,
+        env={
+            **os.environ,
+            "CARGO_TARGET_DIR": str(bin_src.parent),
+        },
     )
     assert result.returncode == 0, (
         f"cargo build -p capsem failed\nstdout={result.stdout}\nstderr={result.stderr}"

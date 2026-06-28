@@ -36,6 +36,9 @@ class TestUninstall:
 
     def test_uninstall_when_nothing_installed(self, clean_state):
         """Uninstall with no ~/.capsem gives clean message."""
+        if os.environ.get("CAPSEM_DEB_INSTALLED") == "1":
+            pytest.skip("removes the package harness install; covered by live-system uninstall tests")
+
         # Remove capsem dir entirely. Overlayfs workdirs may be mode 000, so
         # walk and chmod before rmtree.
         import shutil

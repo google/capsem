@@ -1069,8 +1069,8 @@ test-install:
     docker exec "$CONTAINER" bash -c \
         "dpkg -i /cargo-target/debug/bundle/deb/*.deb 2>&1 || apt-get install -f -y"
     echo "Running install e2e tests..."
-    docker exec -u capsem -e XDG_RUNTIME_DIR=/run/user/1000 -e CAPSEM_DEB_INSTALLED=1 "$CONTAINER" bash -c \
-        "cd /src && uv run pytest tests/capsem-install/ -v --tb=short"
+    docker exec -u capsem -e XDG_RUNTIME_DIR=/run/user/1000 -e CAPSEM_DEB_INSTALLED=1 -e CAPSEM_BIN_SRC=/cargo-target/debug "$CONTAINER" bash -c \
+        "mkdir -p /home/capsem/tmp && cd /src && TMPDIR=/home/capsem/tmp uv run pytest tests/capsem-install/ -v --tb=short"
 
 # Wait for CI to build and publish a tag.
 # Usage: just release          (uses latest vX.Y.Z tag on HEAD)
