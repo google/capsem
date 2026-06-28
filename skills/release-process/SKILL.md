@@ -53,9 +53,14 @@ running in dry-run mode. Live asset releases must publish GitHub build
 provenance attestations for those four arch-prefixed VM asset subjects. In
 dry-run mode the workflow must print the exact `gh release` commands it would
 execute without publishing or attesting, and upload `asset-release-plan` with
-the generated upload script for review. Every run must also upload
-`asset-release-delta` with the manifest comparison decision. `build-ledger.log`
-and `B3SUMS` remain debug evidence unless deliberately published as separate evidence artifacts.
+the generated upload script for review when current VM blobs changed. Every run
+must also upload `asset-release-delta` with the manifest comparison decision.
+The delta emits both `asset_changed` and `asset_blobs_changed`: metadata-only
+asset release changes, such as deprecating an older VM asset release, still
+deploy the release channel without republishing immutable VM blobs, and
+`asset-release-plan`, GitHub Release upload, and provenance attestation run
+only when `asset_blobs_changed` is true. `build-ledger.log` and `B3SUMS` remain
+debug evidence unless deliberately published as separate evidence artifacts.
 The manifest artifact is diagnostic/source evidence only; release-channel deploys consume the
 generated dist artifact so the manifest, blobs, index page, health JSON, and
 headers stay in lock-step. The first channel publication may continue when the
@@ -101,12 +106,16 @@ later steps depend on earlier public state being true.
    all pass.
 6. Run the manual VM asset workflow as a dry run and review the
    `asset-release-plan`, `asset-release-delta`, and `asset-channel-preview`
-   artifacts.
+   artifacts. For metadata-only asset release changes, review
+   `asset-release-delta` and `asset-channel-preview`; no `asset-release-plan`
+   is expected because there are no immutable VM blobs to republish.
 7. Run the tag-triggered binary release rail only from an immutable `vX.Y.Z`
    tag after confirming the tag does not already exist remotely.
 8. Run the manual VM asset workflow live only after reviewing
-   `asset-release-plan`; it must publish changed VM blobs, attest them, and
-   deploy `release.capsem.org`.
+   `asset-release-plan` when `asset_blobs_changed` is true, or reviewing the
+   metadata-only delta and channel preview when only release-channel metadata
+   changed; it must publish changed VM blobs, attest them, and deploy
+   `release.capsem.org`.
 9. Run installed update smokes for the signed macOS `.pkg`, Linux `.deb`, VM
    asset refresh, profile update path, and staged cross-surface update state.
 

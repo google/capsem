@@ -102,12 +102,16 @@ later steps depend on earlier public state being true.
    all pass.
 6. Run the manual VM asset workflow as a dry run and review the
    `asset-release-plan`, `asset-release-delta`, and `asset-channel-preview`
-   artifacts.
+   artifacts. For metadata-only asset release changes, review
+   `asset-release-delta` and `asset-channel-preview`; no `asset-release-plan`
+   is expected because there are no immutable VM blobs to republish.
 7. Run the tag-triggered binary release rail only from an immutable `vX.Y.Z`
    tag after confirming the tag does not already exist remotely.
 8. Run the manual VM asset workflow live only after reviewing
-   `asset-release-plan`; it must publish changed VM blobs, attest them, and
-   deploy `release.capsem.org`.
+   `asset-release-plan` when `asset_blobs_changed` is true, or reviewing the
+   metadata-only delta and channel preview when only release-channel metadata
+   changed; it must publish changed VM blobs, attest them, and deploy
+   `release.capsem.org`.
 9. Run installed update smokes for the signed macOS `.pkg`, Linux `.deb`, VM
    asset refresh, profile update path, and staged cross-surface update state.
 
@@ -290,6 +294,11 @@ Dry runs upload `asset-release-plan` with the generated upload script so the
 planned `gh release` commands can be reviewed without scraping workflow logs.
 Every asset release run also uploads `asset-release-delta` with the manifest
 comparison result that decided whether the channel should publish.
+The delta emits both `asset_changed` and `asset_blobs_changed`: metadata-only
+asset release changes, such as deprecating an older VM asset release, still
+deploy the release channel without republishing immutable VM blobs. The
+`asset-release-plan`, GitHub Release upload, and provenance attestation steps
+run only when `asset_blobs_changed` is true.
 The first channel publication may continue when the previous
 `release.capsem.org/assets/<channel>/manifest.json` is unavailable; the delta
 gate records `previous_manifest_unavailable` as a changed asset release so the

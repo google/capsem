@@ -232,6 +232,10 @@ def test_vm_asset_release_is_manual_and_deploys_asset_channel() -> None:
     assert "cargo run -p capsem-admin -- assets channel check" in workflow
     assert "name: asset-release-plan" in workflow
     assert "path: target/asset-release/" in workflow
+    assert "asset_changed: ${{ steps.asset-delta.outputs.changed }}" in workflow
+    assert "asset_blobs_changed: ${{ steps.asset-delta.outputs.asset_blobs_changed }}" in workflow
+    assert "if: ${{ steps.asset-delta.outputs.asset_blobs_changed == 'true' }}" in workflow
+    assert "if: ${{ inputs.dry_run == false && steps.asset-delta.outputs.asset_blobs_changed == 'true' }}" in workflow
     assert "--json-output target/asset-release-delta/delta.json" in workflow
     assert "name: asset-release-delta" in workflow
     assert "path: target/asset-release-delta/" in workflow
@@ -242,6 +246,13 @@ def test_vm_asset_release_is_manual_and_deploys_asset_channel() -> None:
         "if: ${{ inputs.dry_run == false && needs.assemble-channel.outputs.asset_changed == 'true' }}"
         in workflow
     )
+    docs = _source_text("docs/src/content/docs/development/ci.md")
+    release_skill = _source_text("skills/release-process/SKILL.md")
+    asset_skill = _source_text("skills/asset-pipeline/SKILL.md")
+    for text in (docs, release_skill, asset_skill):
+        assert "metadata-only asset release changes" in text
+        assert "deploy the release channel without republishing immutable VM blobs" in text
+        assert "asset_blobs_changed" in text
 
 
 def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
