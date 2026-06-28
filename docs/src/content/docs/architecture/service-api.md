@@ -40,6 +40,7 @@ catalog entry points. They are not profile behavior.
 | Method | Route | Contract |
 |---|---|---|
 | `GET` | `/version` | Installed service version. |
+| `GET` | `/update/status` | Binary, VM asset, profile, and image update availability from the installed manifest and release-channel cache. |
 | `GET` | `/stats` | Service-wide runtime counters. |
 | `GET` | `/service-logs` | Service log tail for diagnostics. |
 | `GET` | `/triage` | Structured support bundle summary. |

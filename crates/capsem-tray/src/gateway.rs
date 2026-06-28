@@ -12,6 +12,12 @@ pub struct StatusResponse {
     /// Client-side measured latency (not from gateway). Set by the tray poller.
     #[serde(skip)]
     pub latency_ms: Option<u32>,
+    /// Best-effort update status from `/update/status`. A failure here should
+    /// not hide the ordinary session menu.
+    #[serde(skip)]
+    pub updates: Option<UpdateStatusResponse>,
+    #[serde(skip)]
+    pub update_error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -21,6 +27,51 @@ pub struct VmSummary {
     pub name: Option<String>,
     pub status: String,
     pub persistent: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[allow(dead_code)]
+pub struct UpdateStatusResponse {
+    #[serde(default)]
+    pub checked_at: Option<u64>,
+    #[serde(default)]
+    pub channel_url: Option<String>,
+    pub stale: bool,
+    #[serde(default)]
+    pub last_error: Option<String>,
+    pub binary: UpdateTrackStatus,
+    pub assets: UpdateTrackStatus,
+    pub profiles: UpdateTrackStatus,
+    pub images: UpdateTrackStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[allow(dead_code)]
+pub struct UpdateTrackStatus {
+    #[serde(default)]
+    pub current: Option<String>,
+    #[serde(default)]
+    pub latest: Option<String>,
+    pub update_available: bool,
+    pub state: UpdateTrackState,
+    pub compatibility: UpdateCompatibilityState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdateTrackState {
+    Current,
+    UpdateAvailable,
+    Unknown,
+    NotPublished,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdateCompatibilityState {
+    Compatible,
+    Unknown,
+    NotApplicable,
 }
 
 pub struct GatewayClient {
@@ -153,7 +204,18 @@ impl GatewayClient {
             .await
             .context("failed to parse status response")?;
         status.latency_ms = Some(start.elapsed().as_millis() as u32);
+        match self.update_status().await {
+            Ok(updates) => status.updates = Some(updates),
+            Err(err) => status.update_error = Some(err.to_string()),
+        }
         Ok(status)
+    }
+
+    pub async fn update_status(&self) -> Result<UpdateStatusResponse> {
+        let resp = self.get("/update/status").await?;
+        resp.json()
+            .await
+            .context("failed to parse update status response")
     }
 
     pub async fn stop_vm(&self, id: &str) -> Result<()> {
@@ -367,6 +429,50 @@ mod tests {
         (format!("http://{addr}"), captures, handle)
     }
 
+    async fn spawn_http_probe_sequence(
+        routes: Vec<(&'static str, &'static str, u16, &'static str)>,
+    ) -> (String, Arc<Mutex<Vec<String>>>, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let captures: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let captures_clone = Arc::clone(&captures);
+
+        let handle = tokio::spawn(async move {
+            for (match_method, match_path, status, body) in routes {
+                if let Ok((mut sock, _)) = listener.accept().await {
+                    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                    let mut buf = [0u8; 4096];
+                    let n = sock.read(&mut buf).await.unwrap_or(0);
+                    let req = String::from_utf8_lossy(&buf[..n]).to_string();
+                    captures_clone.lock().unwrap().push(req.clone());
+
+                    let first_line = req.lines().next().unwrap_or("");
+                    let matches = first_line.starts_with(&format!("{match_method} {match_path} "));
+                    let (code, reason, resp_body) = if matches {
+                        (status, if status == 200 { "OK" } else { "NO" }, body)
+                    } else {
+                        (500, "ERR", "mismatch")
+                    };
+                    let content_type = if resp_body.starts_with('{') || resp_body.starts_with('[') {
+                        "application/json"
+                    } else {
+                        "text/plain"
+                    };
+                    let response = format!(
+                        "HTTP/1.1 {code} {reason}\r\nContent-Length: {}\r\nContent-Type: {}\r\nConnection: close\r\n\r\n{}",
+                        resp_body.len(),
+                        content_type,
+                        resp_body,
+                    );
+                    let _ = sock.write_all(response.as_bytes()).await;
+                    let _ = sock.shutdown().await;
+                }
+            }
+        });
+
+        (format!("http://{addr}"), captures, handle)
+    }
+
     fn captured_auth(captures: &Arc<Mutex<Vec<String>>>) -> Option<String> {
         let g = captures.lock().unwrap();
         let req = g.first()?;
@@ -396,6 +502,58 @@ mod tests {
         // Auth header was sent.
         let auth = captured_auth(&captures).expect("authorization header missing");
         assert_eq!(auth, "Bearer tok");
+    }
+
+    #[tokio::test]
+    async fn status_attaches_update_status_when_available() {
+        let status_body = r#"{"service":"running","vm_count":0,"vms":[]}"#;
+        let update_body = r#"{
+            "checked_at": 1718444400,
+            "channel_url": "https://release.capsem.org/health.json",
+            "stale": false,
+            "binary": {
+                "current": "1.4.0",
+                "latest": "1.4.1",
+                "update_available": true,
+                "state": "update_available",
+                "compatibility": "compatible"
+            },
+            "assets": {
+                "current": "assets-1",
+                "latest": "assets-1",
+                "update_available": false,
+                "state": "current",
+                "compatibility": "compatible"
+            },
+            "profiles": {
+                "update_available": false,
+                "state": "not_published",
+                "compatibility": "not_applicable"
+            },
+            "images": {
+                "update_available": false,
+                "state": "not_published",
+                "compatibility": "not_applicable"
+            }
+        }"#;
+        let (base, captures, handle) = spawn_http_probe_sequence(vec![
+            ("GET", "/status", 200, status_body),
+            ("GET", "/update/status", 200, update_body),
+        ])
+        .await;
+        let client = GatewayClient::new_with_base_url(base, "tok".into());
+
+        let status = client.status().await.unwrap();
+        handle.await.unwrap();
+
+        let updates = status.updates.expect("update status should be attached");
+        assert!(updates.binary.update_available);
+        assert_eq!(updates.binary.latest.as_deref(), Some("1.4.1"));
+        assert_eq!(status.update_error, None);
+
+        let captures = captures.lock().unwrap();
+        assert!(captures[0].starts_with("GET /status "));
+        assert!(captures[1].starts_with("GET /update/status "));
     }
 
     #[tokio::test]

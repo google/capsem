@@ -12,6 +12,7 @@ import type {
   ForkRequest,
   ForkResponse,
   StatsResponse,
+  UpdateStatusResponse,
 } from './types/gateway';
 import type {
   SettingsResponse,
@@ -519,10 +520,11 @@ function settledValue(result: PromiseSettledResult<unknown>): unknown {
 }
 
 export async function debugSnapshot(): Promise<unknown> {
-  const [status, profilesStatus, corpInfo] = await Promise.allSettled([
+  const [status, profilesStatus, corpInfo, updateStatus] = await Promise.allSettled([
     getStatus(),
     routeJson('/profiles/status'),
     routeJson('/corp/info'),
+    getUpdateStatus(),
   ]);
   return {
     generated_at: new Date().toISOString(),
@@ -531,6 +533,7 @@ export async function debugSnapshot(): Promise<unknown> {
     status: settledValue(status),
     profiles_status: settledValue(profilesStatus),
     corp_info: settledValue(corpInfo),
+    update_status: settledValue(updateStatus),
   };
 }
 
@@ -1265,6 +1268,13 @@ export async function getAssetsStatus(profileId: string): Promise<AssetStatusRes
 /** Ensure missing/corrupt VM assets, then return refreshed status. */
 export async function ensureAssets(profileId: string): Promise<AssetStatusResponse> {
   const resp = await _post(`/profiles/${encodeURIComponent(profileId)}/assets/ensure`, {});
+  return await resp.json();
+}
+
+// -- Release channel / updates --
+
+export async function getUpdateStatus(): Promise<UpdateStatusResponse> {
+  const resp = await _get('/update/status');
   return await resp.json();
 }
 

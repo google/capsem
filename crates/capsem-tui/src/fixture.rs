@@ -27,6 +27,7 @@ pub fn fixture_state() -> AppState {
             control_message: None,
         },
         active_session_id: "profile-v2".to_string(),
+        update_notice: None,
         profiles: vec![
             ProfileOption {
                 id: "corp-default".to_string(),
@@ -94,6 +95,7 @@ pub fn offline_state() -> AppState {
             control_message: None,
         },
         active_session_id: String::new(),
+        update_notice: None,
         profiles: Vec::new(),
         sessions: Vec::new(),
     }

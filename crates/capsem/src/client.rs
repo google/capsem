@@ -288,6 +288,49 @@ pub struct AssetStatusResponse {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct UpdateStatusResponse {
+    #[serde(default)]
+    pub checked_at: Option<u64>,
+    #[serde(default)]
+    pub channel_url: Option<String>,
+    pub stale: bool,
+    #[serde(default)]
+    pub last_error: Option<String>,
+    pub binary: UpdateTrackStatus,
+    pub assets: UpdateTrackStatus,
+    pub profiles: UpdateTrackStatus,
+    pub images: UpdateTrackStatus,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct UpdateTrackStatus {
+    #[serde(default)]
+    pub current: Option<String>,
+    #[serde(default)]
+    pub latest: Option<String>,
+    pub update_available: bool,
+    pub state: UpdateTrackState,
+    pub compatibility: UpdateCompatibilityState,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdateTrackState {
+    Current,
+    UpdateAvailable,
+    Unknown,
+    NotPublished,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdateCompatibilityState {
+    Compatible,
+    Unknown,
+    NotApplicable,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct ErrorResponse {
     error: String,
 }
@@ -626,6 +669,10 @@ impl UdsClient {
 
     pub async fn get<R: for<'de> Deserialize<'de>>(&self, path: &str) -> Result<R> {
         self.request::<(), R>("GET", path, None).await
+    }
+
+    pub async fn get_update_status(&self) -> Result<UpdateStatusResponse> {
+        self.get("/update/status").await
     }
 
     /// Like `request` but returns the raw response bytes + content-type

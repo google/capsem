@@ -8,7 +8,7 @@ use serde::Deserialize;
 use crate::app::ControlAction;
 use crate::model::{
     AppState, Attention, ProfileOption, ServiceState, ServiceStatus, SessionLifecycle,
-    SessionStats, SessionSummary,
+    SessionStats, SessionSummary, UpdateNotice, UpdateNoticeKind, UpdateTrack,
 };
 use crate::provider::StateProvider;
 
@@ -96,6 +96,14 @@ impl GatewayProvider {
         };
         let mut state = status_response_to_state(status, started.elapsed());
         state.profiles = self.profile_options(&token, &state).await;
+        state.update_notice = match fetch_update_status(&self.client, &self.base_url, &token).await
+        {
+            Ok(updates) => update_response_to_notice(updates),
+            Err(_) => Some(UpdateNotice {
+                kind: UpdateNoticeKind::Unavailable,
+                channel_url: None,
+            }),
+        };
         Ok(state)
     }
 
@@ -184,6 +192,24 @@ async fn fetch_profiles(
     Ok(response.into_options())
 }
 
+async fn fetch_update_status(
+    client: &reqwest::Client,
+    base_url: &str,
+    token: &str,
+) -> Result<UpdateStatusResponse> {
+    client
+        .get(format!("{base_url}/update/status"))
+        .bearer_auth(token)
+        .send()
+        .await
+        .context("fetch capsem update status")?
+        .error_for_status()
+        .context("capsem update status request failed")?
+        .json()
+        .await
+        .context("parse capsem update status response")
+}
+
 fn gateway_port() -> Option<u16> {
     let path = run_dir().join("gateway.port");
     let raw = std::fs::read_to_string(path).ok()?;
@@ -224,7 +250,39 @@ fn status_response_to_state(status: StatusResponse, latency: Duration) -> AppSta
         active_session_id,
         sessions,
         profiles: Vec::new(),
+        update_notice: None,
     }
+}
+
+fn update_response_to_notice(status: UpdateStatusResponse) -> Option<UpdateNotice> {
+    let mut tracks = Vec::new();
+    if status.binary.update_available {
+        tracks.push(UpdateTrack::Binary);
+    }
+    if status.assets.update_available {
+        tracks.push(UpdateTrack::VmAssets);
+    }
+    if status.profiles.update_available {
+        tracks.push(UpdateTrack::Profiles);
+    }
+    if status.images.update_available {
+        tracks.push(UpdateTrack::Images);
+    }
+
+    let kind = if !tracks.is_empty() {
+        UpdateNoticeKind::Available(tracks)
+    } else if status.last_error.is_some() {
+        UpdateNoticeKind::Unavailable
+    } else if status.stale {
+        UpdateNoticeKind::Stale
+    } else {
+        return None;
+    };
+
+    Some(UpdateNotice {
+        kind,
+        channel_url: status.channel_url,
+    })
 }
 
 fn vm_response_to_summary(vm: VmSummary) -> SessionSummary {
@@ -536,6 +594,24 @@ struct StatusResponse {
 }
 
 #[derive(Debug, Deserialize)]
+struct UpdateStatusResponse {
+    #[serde(default)]
+    channel_url: Option<String>,
+    stale: bool,
+    #[serde(default)]
+    last_error: Option<String>,
+    binary: UpdateTrackStatusResponse,
+    assets: UpdateTrackStatusResponse,
+    profiles: UpdateTrackStatusResponse,
+    images: UpdateTrackStatusResponse,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateTrackStatusResponse {
+    update_available: bool,
+}
+
+#[derive(Debug, Deserialize)]
 struct VmSummary {
     id: String,
     #[serde(default)]
@@ -617,4 +693,17 @@ struct ProfileAvailabilityResponse {
 pub(crate) fn state_from_status_json_for_test(raw: &str, latency: Duration) -> Result<AppState> {
     let response: StatusResponse = serde_json::from_str(raw)?;
     Ok(status_response_to_state(response, latency))
+}
+
+#[cfg(test)]
+pub(crate) fn state_from_status_and_update_json_for_test(
+    status_raw: &str,
+    update_raw: &str,
+    latency: Duration,
+) -> Result<AppState> {
+    let response: StatusResponse = serde_json::from_str(status_raw)?;
+    let updates: UpdateStatusResponse = serde_json::from_str(update_raw)?;
+    let mut state = status_response_to_state(response, latency);
+    state.update_notice = update_response_to_notice(updates);
+    Ok(state)
 }

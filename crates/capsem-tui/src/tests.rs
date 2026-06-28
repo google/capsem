@@ -5,9 +5,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use crate::app::{App, AppAction, AppOverlay, ControlAction};
 use crate::fixture::{fixture_state, offline_state};
 use crate::gateway_provider::{
-    start_service_with_binary, state_from_status_json_for_test, GatewayProvider,
+    start_service_with_binary, state_from_status_and_update_json_for_test,
+    state_from_status_json_for_test, GatewayProvider,
 };
-use crate::model::{Attention, ServiceStatus, SessionLifecycle};
+use crate::model::{Attention, ServiceStatus, SessionLifecycle, UpdateNoticeKind, UpdateTrack};
 use crate::ui::{render_app_snapshot, render_app_test_buffer, render_snapshot, render_test_buffer};
 
 #[test]
@@ -57,6 +58,20 @@ fn no_session_status_bar_keeps_help_hint_on_the_right() {
     let snapshot = render_snapshot(&state, 100, 24).expect("render empty snapshot");
 
     assert!(snapshot.contains("no session | help: alt+?"));
+}
+
+#[test]
+fn status_bar_shows_update_notice_without_hiding_session_stats() {
+    let mut state = fixture_state();
+    state.update_notice = Some(crate::model::UpdateNotice {
+        kind: UpdateNoticeKind::Available(vec![UpdateTrack::Binary, UpdateTrack::VmAssets]),
+        channel_url: Some("https://release.capsem.org/health.json".to_string()),
+    });
+
+    let snapshot = render_snapshot(&state, 120, 24).expect("render update snapshot");
+
+    assert!(snapshot.contains("updates: binary, assets"));
+    assert!(snapshot.contains("help: alt+?"));
 }
 
 #[test]
@@ -858,6 +873,26 @@ fn gateway_status_json_maps_to_tui_state() {
 }
 
 #[test]
+fn gateway_update_status_json_maps_to_tui_notice() {
+    let state = state_from_status_and_update_json_for_test(
+        gateway_empty_status_body(),
+        gateway_update_status_body(),
+        std::time::Duration::from_millis(11),
+    )
+    .expect("parse service and update status");
+
+    let notice = state.update_notice.expect("update notice");
+    assert_eq!(
+        notice.kind,
+        UpdateNoticeKind::Available(vec![UpdateTrack::Binary, UpdateTrack::VmAssets])
+    );
+    assert_eq!(
+        notice.channel_url.as_deref(),
+        Some("https://release.capsem.org/health.json")
+    );
+}
+
+#[test]
 fn gateway_status_can_resume_false_blocks_tui_resume_even_when_profile_ready() {
     let state = state_from_status_json_for_test(
         r#"{
@@ -934,6 +969,51 @@ async fn gateway_provider_loads_status_over_http_gateway() {
 
     assert_eq!(state.sessions.len(), 2);
     assert_eq!(state.sessions[0].id, "vm-1");
+
+    server.await.expect("server task");
+}
+
+#[tokio::test]
+async fn gateway_provider_loads_update_status_over_http_gateway() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind test gateway");
+    let addr = listener.local_addr().expect("local addr");
+    let server = tokio::spawn(async move {
+        for _ in 0..4 {
+            let (mut stream, _) = listener.accept().await.expect("accept request");
+            let request = read_http_request(&mut stream).await;
+            if request.contains("GET /token ") {
+                write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
+            } else if request.contains("GET /status ") {
+                write_json_response(&mut stream, gateway_empty_status_body()).await;
+            } else if request.contains("GET /profiles/list ") {
+                write_json_response(&mut stream, gateway_profiles_body()).await;
+            } else {
+                assert!(
+                    request.contains("GET /update/status "),
+                    "unexpected request: {request:?}"
+                );
+                assert!(
+                    request.contains("authorization: Bearer test-token")
+                        || request.contains("Authorization: Bearer test-token"),
+                    "missing bearer auth: {request:?}"
+                );
+                write_json_response(&mut stream, gateway_update_status_body()).await;
+            }
+        }
+    });
+
+    let state = GatewayProvider::new(format!("http://{addr}"))
+        .load_async()
+        .await
+        .expect("load state over gateway");
+
+    assert_eq!(state.profiles.len(), 2);
+    assert_eq!(
+        state.update_notice.expect("update notice").kind,
+        UpdateNoticeKind::Available(vec![UpdateTrack::Binary, UpdateTrack::VmAssets])
+    );
 
     server.await.expect("server task");
 }
@@ -1034,7 +1114,8 @@ async fn gateway_provider_reuses_token_across_status_refreshes() {
         let mut token_requests = 0;
         let mut status_requests = 0;
         let mut profile_requests = 0;
-        for _ in 0..5 {
+        let mut update_requests = 0;
+        for _ in 0..7 {
             let (mut stream, _) = listener.accept().await.expect("accept request");
             let request = read_http_request(&mut stream).await;
             if request.contains("GET /token ") {
@@ -1043,6 +1124,9 @@ async fn gateway_provider_reuses_token_across_status_refreshes() {
             } else if request.contains("GET /profiles/list ") {
                 profile_requests += 1;
                 write_json_response(&mut stream, gateway_profiles_body()).await;
+            } else if request.contains("GET /update/status ") {
+                update_requests += 1;
+                write_json_response(&mut stream, gateway_update_current_status_body()).await;
             } else {
                 status_requests += 1;
                 assert!(
@@ -1062,6 +1146,10 @@ async fn gateway_provider_reuses_token_across_status_refreshes() {
         assert_eq!(
             profile_requests, 2,
             "profile list should stay live across refreshes"
+        );
+        assert_eq!(
+            update_requests, 2,
+            "update status should use the cached token across refreshes"
         );
     });
 
@@ -1575,6 +1663,70 @@ fn gateway_empty_status_body() -> &'static str {
         "vm_count": 0,
         "resource_summary": null,
         "vms": []
+    }"#
+}
+
+fn gateway_update_status_body() -> &'static str {
+    r#"{
+        "checked_at": 1718444400,
+        "channel_url": "https://release.capsem.org/health.json",
+        "stale": false,
+        "binary": {
+            "current": "1.4.0",
+            "latest": "1.4.1",
+            "update_available": true,
+            "state": "update_available",
+            "compatibility": "compatible"
+        },
+        "assets": {
+            "current": "assets-1",
+            "latest": "assets-2",
+            "update_available": true,
+            "state": "update_available",
+            "compatibility": "compatible"
+        },
+        "profiles": {
+            "update_available": false,
+            "state": "not_published",
+            "compatibility": "not_applicable"
+        },
+        "images": {
+            "update_available": false,
+            "state": "not_published",
+            "compatibility": "not_applicable"
+        }
+    }"#
+}
+
+fn gateway_update_current_status_body() -> &'static str {
+    r#"{
+        "checked_at": 1718444400,
+        "channel_url": "https://release.capsem.org/health.json",
+        "stale": false,
+        "binary": {
+            "current": "1.4.0",
+            "latest": "1.4.0",
+            "update_available": false,
+            "state": "current",
+            "compatibility": "compatible"
+        },
+        "assets": {
+            "current": "assets-1",
+            "latest": "assets-1",
+            "update_available": false,
+            "state": "current",
+            "compatibility": "compatible"
+        },
+        "profiles": {
+            "update_available": false,
+            "state": "not_published",
+            "compatibility": "not_applicable"
+        },
+        "images": {
+            "update_available": false,
+            "state": "not_published",
+            "compatibility": "not_applicable"
+        }
     }"#
 }
 

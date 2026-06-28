@@ -184,7 +184,7 @@ describe('api', () => {
       expect(status.vms).toEqual([]);
     });
 
-    it('debugSnapshot reads status, profiles status, and corp info routes', async () => {
+    it('debugSnapshot reads status, profiles, corp, and update routes', async () => {
       mockFetch
         .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
         .mockReturnValueOnce(jsonResponse({ token: 'tok' }))
@@ -194,7 +194,8 @@ describe('api', () => {
       mockFetch
         .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }))
         .mockReturnValueOnce(jsonResponse({ source: 'built_in', profile_count: 1, ready_count: 1, profiles: [] }))
-        .mockReturnValueOnce(jsonResponse({ installed: true, source: { content_hash: 'blake3:test' } }));
+        .mockReturnValueOnce(jsonResponse({ installed: true, source: { content_hash: 'blake3:test' } }))
+        .mockReturnValueOnce(jsonResponse(updateStatusFixture()));
 
       const snapshot = await api.debugSnapshot() as Record<string, unknown>;
 
@@ -202,10 +203,12 @@ describe('api', () => {
       expect((snapshot.status as Record<string, unknown>).service).toBe('running');
       expect((snapshot.profiles_status as Record<string, unknown>).profile_count).toBe(1);
       expect((snapshot.corp_info as Record<string, unknown>).installed).toBe(true);
-      const paths = mockFetch.mock.calls.slice(-3).map(call => call[0]);
+      expect((snapshot.update_status as Record<string, any>).binary.update_available).toBe(true);
+      const paths = mockFetch.mock.calls.slice(-4).map(call => call[0]);
       expect(paths[0]).toContain('/status');
       expect(paths[1]).toContain('/profiles/status');
       expect(paths[2]).toContain('/corp/info');
+      expect(paths[3]).toContain('/update/status');
     });
   });
 
@@ -1239,6 +1242,28 @@ describe('api', () => {
     });
   });
 
+  describe('getUpdateStatus', () => {
+    beforeEach(async () => {
+      mockFetch
+        .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
+        .mockReturnValueOnce(jsonResponse({ token: 'tok' }))
+        .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
+      await api.init();
+    });
+
+    it('reads the unified update status route', async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse(updateStatusFixture()));
+
+      const result = await api.getUpdateStatus();
+
+      expect(result.binary.update_available).toBe(true);
+      expect(result.assets.latest).toBe('assets-2');
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/update/status');
+      expect(call[1].headers.Authorization).toBe('Bearer tok');
+    });
+  });
+
   // ---- Terminal ----
 
   describe('terminal', () => {
@@ -1334,3 +1359,35 @@ describe('api', () => {
     });
   });
 });
+
+function updateStatusFixture() {
+  return {
+    checked_at: 1718444400,
+    channel_url: 'https://release.capsem.org/health.json',
+    stale: false,
+    binary: {
+      current: '1.4.0',
+      latest: '1.4.1',
+      update_available: true,
+      state: 'update_available',
+      compatibility: 'compatible',
+    },
+    assets: {
+      current: 'assets-1',
+      latest: 'assets-2',
+      update_available: true,
+      state: 'update_available',
+      compatibility: 'compatible',
+    },
+    profiles: {
+      update_available: false,
+      state: 'not_published',
+      compatibility: 'not_applicable',
+    },
+    images: {
+      update_available: false,
+      state: 'not_published',
+      compatibility: 'not_applicable',
+    },
+  };
+}

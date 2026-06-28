@@ -22,6 +22,37 @@ export interface StatusResponse {
   resource_summary: ResourceSummary | null;
 }
 
+// GET /update/status
+export interface UpdateStatusResponse {
+  checked_at?: number | null;
+  channel_url?: string | null;
+  stale: boolean;
+  last_error?: string | null;
+  binary: UpdateTrackStatus;
+  assets: UpdateTrackStatus;
+  profiles: UpdateTrackStatus;
+  images: UpdateTrackStatus;
+}
+
+export interface UpdateTrackStatus {
+  current?: string | null;
+  latest?: string | null;
+  update_available: boolean;
+  state: UpdateTrackState;
+  compatibility: UpdateCompatibilityState;
+}
+
+export type UpdateTrackState =
+  | 'current'
+  | 'update_available'
+  | 'unknown'
+  | 'not_published';
+
+export type UpdateCompatibilityState =
+  | 'compatible'
+  | 'unknown'
+  | 'not_applicable';
+
 export interface VmSummary {
   id: string;
   name: string | null;

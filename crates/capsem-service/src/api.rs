@@ -308,6 +308,49 @@ pub struct VmOperationStatusResponse {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct UpdateStatusResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checked_at: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub channel_url: Option<String>,
+    pub stale: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    pub binary: UpdateTrackStatus,
+    pub assets: UpdateTrackStatus,
+    pub profiles: UpdateTrackStatus,
+    pub images: UpdateTrackStatus,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct UpdateTrackStatus {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest: Option<String>,
+    pub update_available: bool,
+    pub state: UpdateTrackState,
+    pub compatibility: UpdateCompatibilityState,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdateTrackState {
+    Current,
+    UpdateAvailable,
+    Unknown,
+    NotPublished,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdateCompatibilityState {
+    Compatible,
+    Unknown,
+    NotApplicable,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct ProfileSummary {
     pub id: String,
     pub name: String,

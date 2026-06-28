@@ -1,6 +1,6 @@
 use muda::{Menu, MenuId, MenuItem, PredefinedMenuItem, Submenu};
 
-use crate::gateway::{StatusResponse, VmSummary};
+use crate::gateway::{StatusResponse, UpdateStatusResponse, VmSummary};
 
 /// Actions the tray can trigger, parsed from menu item IDs.
 #[derive(Debug, PartialEq)]
@@ -53,6 +53,9 @@ pub(crate) fn menu_spec(status: &StatusResponse) -> Vec<MenuEntry> {
         label: format!("Connected -- {}ms", status.latency_ms.unwrap_or(0)),
         enabled: false,
     });
+    if let Some(entry) = update_menu_entry(status) {
+        entries.push(entry);
+    }
     entries.push(MenuEntry::Separator);
 
     if !status.vms.is_empty() {
@@ -152,6 +155,49 @@ fn vm_submenu_spec(vm: &VmSummary) -> MenuEntry {
     }
 
     MenuEntry::Sub { label, items }
+}
+
+fn update_menu_entry(status: &StatusResponse) -> Option<MenuEntry> {
+    let label = if let Some(updates) = &status.updates {
+        update_status_label(updates)?
+    } else if status.update_error.is_some() {
+        "Updates: unavailable".into()
+    } else {
+        return None;
+    };
+
+    Some(MenuEntry::Item {
+        id: "updates".into(),
+        label,
+        enabled: false,
+    })
+}
+
+fn update_status_label(updates: &UpdateStatusResponse) -> Option<String> {
+    let mut labels = Vec::new();
+    if updates.binary.update_available {
+        labels.push("Binary");
+    }
+    if updates.assets.update_available {
+        labels.push("VM assets");
+    }
+    if updates.profiles.update_available {
+        labels.push("Profiles");
+    }
+    if updates.images.update_available {
+        labels.push("Images");
+    }
+
+    if !labels.is_empty() {
+        return Some(format!("Updates: {}", labels.join(", ")));
+    }
+    if updates.last_error.is_some() {
+        return Some("Updates: unavailable".into());
+    }
+    if updates.stale {
+        return Some("Updates: check stale".into());
+    }
+    None
 }
 
 pub(crate) fn unavailable_spec() -> Vec<MenuEntry> {
@@ -261,6 +307,9 @@ pub(crate) fn vm_label(vm: &VmSummary) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gateway::{
+        UpdateCompatibilityState, UpdateStatusResponse, UpdateTrackState, UpdateTrackStatus,
+    };
     use muda::MenuId;
 
     fn make_status(vms: Vec<VmSummary>) -> StatusResponse {
@@ -270,6 +319,8 @@ mod tests {
             vm_count,
             vms,
             latency_ms: Some(5),
+            updates: None,
+            update_error: None,
         }
     }
 
@@ -280,7 +331,52 @@ mod tests {
             vm_count,
             vms,
             latency_ms: Some(5),
+            updates: None,
+            update_error: None,
         }
+    }
+
+    fn current_track() -> UpdateTrackStatus {
+        UpdateTrackStatus {
+            current: Some("1.4.0".into()),
+            latest: Some("1.4.0".into()),
+            update_available: false,
+            state: UpdateTrackState::Current,
+            compatibility: UpdateCompatibilityState::Compatible,
+        }
+    }
+
+    fn available_track(current: &str, latest: &str) -> UpdateTrackStatus {
+        UpdateTrackStatus {
+            current: Some(current.into()),
+            latest: Some(latest.into()),
+            update_available: true,
+            state: UpdateTrackState::UpdateAvailable,
+            compatibility: UpdateCompatibilityState::Compatible,
+        }
+    }
+
+    fn update_status() -> UpdateStatusResponse {
+        UpdateStatusResponse {
+            checked_at: Some(1_718_444_400),
+            channel_url: Some("https://release.capsem.org/health.json".into()),
+            stale: false,
+            last_error: None,
+            binary: current_track(),
+            assets: current_track(),
+            profiles: current_track(),
+            images: current_track(),
+        }
+    }
+
+    fn with_updates(mut status: StatusResponse, updates: UpdateStatusResponse) -> StatusResponse {
+        status.updates = Some(updates);
+        status
+    }
+
+    fn with_update_error(mut status: StatusResponse, error: &str) -> StatusResponse {
+        status.update_error = Some(error.into());
+        status
     }
 
     fn named_vm(id: &str, name: &str, status: &str) -> VmSummary {
@@ -465,9 +561,61 @@ mod tests {
         let spec = menu_spec(&make_status(vec![]));
         let ids = collect_ids(&spec);
         assert!(!ids.contains(&"header-sessions".into()));
+        assert!(!ids.contains(&"updates".into()));
         assert!(ids.contains(&"new-session".into()));
         assert!(ids.contains(&"open".into()));
         assert!(ids.contains(&"quit".into()));
+    }
+
+    #[test]
+    fn spec_current_updates_stays_quiet() {
+        let spec = menu_spec(&with_updates(make_status(vec![]), update_status()));
+        let ids = collect_ids(&spec);
+        assert!(!ids.contains(&"updates".into()));
+    }
+
+    #[test]
+    fn spec_binary_update_shows_update_indicator() {
+        let mut updates = update_status();
+        updates.binary = available_track("1.4.0", "1.4.1");
+
+        let spec = menu_spec(&with_updates(make_status(vec![]), updates));
+
+        assert!(spec.iter().any(|entry| matches!(
+            entry,
+            MenuEntry::Item { id, label, enabled: false }
+                if id == "updates" && label == "Updates: Binary"
+        )));
+    }
+
+    #[test]
+    fn spec_asset_profile_and_image_updates_share_indicator() {
+        let mut updates = update_status();
+        updates.assets = available_track("assets-1", "assets-2");
+        updates.profiles = available_track("profiles-1", "profiles-2");
+        updates.images = available_track("images-1", "images-2");
+
+        let spec = menu_spec(&with_updates(make_status(vec![]), updates));
+
+        assert!(spec.iter().any(|entry| matches!(
+            entry,
+            MenuEntry::Item { id, label, enabled: false }
+                if id == "updates" && label == "Updates: VM assets, Profiles, Images"
+        )));
+    }
+
+    #[test]
+    fn spec_update_fetch_error_shows_unavailable_indicator() {
+        let spec = menu_spec(&with_update_error(
+            make_status(vec![]),
+            "gateway returned 404",
+        ));
+
+        assert!(spec.iter().any(|entry| matches!(
+            entry,
+            MenuEntry::Item { id, label, enabled: false }
+                if id == "updates" && label == "Updates: unavailable"
+        )));
     }
 
     #[test]

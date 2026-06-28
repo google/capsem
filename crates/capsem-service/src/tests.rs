@@ -7,6 +7,174 @@ use tower::ServiceExt;
 static SETTINGS_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[test]
+fn update_status_reports_binary_and_asset_tracks_from_cache_and_manifest() {
+    let dir = tempfile::tempdir().unwrap();
+    let assets_dir = dir.path().join("assets");
+    std::fs::create_dir_all(&assets_dir).unwrap();
+    std::fs::write(
+        assets_dir.join("manifest.json"),
+        serde_json::json!({
+            "format": 2,
+            "refresh_policy": "24h",
+            "assets": {
+                "current": "2026.0627.1",
+                "releases": {}
+            },
+            "binaries": {
+                "current": "1.3.1782582155",
+                "releases": {}
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        assets_dir.join("manifest-origin.json"),
+        serde_json::json!({
+            "schema": "capsem.manifest_origin.v1",
+            "origin": "update",
+            "source": "https://release.capsem.org/assets/stable/manifest.json"
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let cache_path = dir.path().join("update-check.json");
+    std::fs::write(
+        &cache_path,
+        serde_json::json!({
+            "checked_at": 1000,
+            "latest_version": "1.3.1782600000",
+            "update_available": true,
+            "latest_assets": "2026.0628.1",
+            "assets_update_available": true,
+            "source": "https://release.capsem.org/health.json"
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let status =
+        update_status_response_from_paths("1.3.1782582155", &assets_dir, &cache_path, 1200);
+
+    assert_eq!(status.checked_at, Some(1000));
+    assert!(!status.stale);
+    assert_eq!(
+        status.channel_url.as_deref(),
+        Some("https://release.capsem.org/health.json")
+    );
+    assert_eq!(status.last_error, None);
+    assert_eq!(status.binary.current.as_deref(), Some("1.3.1782582155"));
+    assert_eq!(status.binary.latest.as_deref(), Some("1.3.1782600000"));
+    assert_eq!(status.binary.state, api::UpdateTrackState::UpdateAvailable);
+    assert_eq!(
+        status.binary.compatibility,
+        api::UpdateCompatibilityState::Compatible
+    );
+    assert_eq!(status.assets.current.as_deref(), Some("2026.0627.1"));
+    assert_eq!(status.assets.latest.as_deref(), Some("2026.0628.1"));
+    assert_eq!(status.assets.state, api::UpdateTrackState::UpdateAvailable);
+    assert_eq!(status.profiles.state, api::UpdateTrackState::NotPublished);
+    assert_eq!(status.images.state, api::UpdateTrackState::NotPublished);
+}
+
+#[test]
+fn update_status_reports_profile_and_image_tracks_from_release_cache() {
+    let dir = tempfile::tempdir().unwrap();
+    let assets_dir = dir.path().join("assets");
+    std::fs::create_dir_all(&assets_dir).unwrap();
+    let cache_path = dir.path().join("update-check.json");
+    std::fs::write(
+        &cache_path,
+        serde_json::json!({
+            "checked_at": 1000,
+            "latest_version": "1.3.1782582155",
+            "update_available": false,
+            "latest_profiles": "profiles-2030.0101.1",
+            "profiles_update_available": true,
+            "profiles_state": "update_available",
+            "latest_images": "images-2030.0101.1",
+            "images_update_available": false,
+            "images_state": "published",
+            "source": "https://release.capsem.org/health.json"
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let status =
+        update_status_response_from_paths("1.3.1782582155", &assets_dir, &cache_path, 1200);
+
+    assert_eq!(
+        status.profiles.latest.as_deref(),
+        Some("profiles-2030.0101.1")
+    );
+    assert!(status.profiles.update_available);
+    assert_eq!(
+        status.profiles.state,
+        api::UpdateTrackState::UpdateAvailable
+    );
+    assert_eq!(
+        status.profiles.compatibility,
+        api::UpdateCompatibilityState::Compatible
+    );
+    assert_eq!(status.images.latest.as_deref(), Some("images-2030.0101.1"));
+    assert!(!status.images.update_available);
+    assert_eq!(status.images.state, api::UpdateTrackState::Current);
+}
+
+#[test]
+fn update_status_reports_unknown_when_cache_is_missing_and_keeps_manifest_channel() {
+    let dir = tempfile::tempdir().unwrap();
+    let assets_dir = dir.path().join("assets");
+    std::fs::create_dir_all(&assets_dir).unwrap();
+    std::fs::write(
+        assets_dir.join("manifest-origin.json"),
+        serde_json::json!({
+            "schema": "capsem.manifest_origin.v1",
+            "origin": "package",
+            "source": "https://corp.example/capsem/assets/internal/manifest.json"
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let status = update_status_response_from_paths(
+        "1.3.1782582155",
+        &assets_dir,
+        &dir.path().join("missing-update-check.json"),
+        1200,
+    );
+
+    assert_eq!(status.checked_at, None);
+    assert!(status.stale);
+    assert_eq!(
+        status.channel_url.as_deref(),
+        Some("https://corp.example/capsem/assets/internal/manifest.json")
+    );
+    assert_eq!(status.last_error, None);
+    assert_eq!(status.binary.current.as_deref(), Some("1.3.1782582155"));
+    assert_eq!(status.binary.latest, None);
+    assert_eq!(status.binary.state, api::UpdateTrackState::Current);
+    assert_eq!(status.assets.current, None);
+    assert_eq!(status.assets.state, api::UpdateTrackState::Unknown);
+}
+
+#[test]
+fn update_status_reports_cache_parse_errors_without_panicking() {
+    let dir = tempfile::tempdir().unwrap();
+    let cache_path = dir.path().join("update-check.json");
+    std::fs::write(&cache_path, "not json").unwrap();
+
+    let status = update_status_response_from_paths("1.3.1782582155", dir.path(), &cache_path, 1200);
+
+    assert!(status.stale);
+    assert!(status
+        .last_error
+        .as_deref()
+        .is_some_and(|error| error.contains("parse")));
+}
+
+#[test]
 fn process_env_allowlist_forwards_mcp_timeout_knobs() {
     assert!(
         PROCESS_ENV_ALLOWLIST.contains(&"CAPSEM_HOME"),

@@ -4,6 +4,13 @@
   import { settingsStore } from '../../stores/settings.svelte.ts';
   import { THEME_FAMILIES, getTheme, resolveThemeKey } from '../../terminal/themes';
   import * as api from '../../api';
+  import type { UpdateStatusResponse, UpdateTrackStatus } from '../../types/gateway';
+  import {
+    UPDATE_TRACK_LABELS,
+    updateSummary,
+    updateTrackVersion,
+    type UpdateTrackKey,
+  } from '../../models/update-status';
   import SettingsSection from '../settings/SettingsSection.svelte';
   import Palette from 'phosphor-svelte/lib/Palette';
   import GearSix from 'phosphor-svelte/lib/GearSix';
@@ -59,6 +66,16 @@
   let diagnostics = $state<Record<string, any> | null>(null);
   let diagnosticsError = $state<string | null>(null);
   let diagnosticsCopied = $state(false);
+  let updateStatus = $derived.by(() => {
+    const value = diagnostics?.update_status;
+    return isUpdateStatus(value) ? value : null;
+  });
+  let updateStatusError = $derived.by(() => {
+    const value = diagnostics?.update_status;
+    if (!value || isUpdateStatus(value)) return null;
+    if (typeof value === 'object' && 'error' in value) return String((value as { error: unknown }).error);
+    return 'Update status unavailable';
+  });
 
   onMount(() => {
     settingsStore.load();
@@ -110,6 +127,31 @@
     await navigator.clipboard.writeText(JSON.stringify(snapshot, null, 2));
     diagnosticsCopied = true;
     window.setTimeout(() => { diagnosticsCopied = false; }, 1500);
+  }
+
+  function isUpdateStatus(value: unknown): value is UpdateStatusResponse {
+    return !!value
+      && typeof value === 'object'
+      && 'binary' in value
+      && 'assets' in value
+      && 'profiles' in value
+      && 'images' in value;
+  }
+
+  function checkedAtLabel(value: number | null | undefined): string {
+    if (!value) return 'never';
+    return new Date(value * 1000).toLocaleString();
+  }
+
+  function trackStateLabel(track: UpdateTrackStatus): string {
+    if (track.update_available) return 'Update available';
+    if (track.state === 'not_published') return 'Not published';
+    if (track.state === 'unknown') return 'Unknown';
+    return 'Current';
+  }
+
+  function trackRow(status: UpdateStatusResponse, key: UpdateTrackKey): UpdateTrackStatus {
+    return status[key];
   }
 </script>
 
@@ -342,6 +384,60 @@
         {#if appGroup}
           <SettingsSection group={appGroup} depth={1} />
         {/if}
+
+        <!-- Release channel -->
+        <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider mb-2 mt-6">Release channel</h3>
+        <div class="bg-card border border-card-line rounded-xl divide-y divide-card-divider">
+          <div class="flex items-center justify-between p-4 gap-x-4">
+            <div>
+              <p class="text-sm font-medium text-foreground">Update status</p>
+              <p class="text-xs text-muted-foreground-1 mt-0.5">
+                {#if updateStatus}
+                  {updateStatus.channel_url ?? 'default channel'} · checked {checkedAtLabel(updateStatus.checked_at)}
+                {:else if updateStatusError}
+                  {updateStatusError}
+                {:else}
+                  Checking release channel
+                {/if}
+              </p>
+              {#if updateStatus?.last_error}
+                <p class="text-xs text-destructive mt-1">{updateStatus.last_error}</p>
+              {/if}
+            </div>
+            <div class="flex items-center gap-x-2">
+              {#if updateStatus}
+                <span class="text-xs px-2 py-1 rounded-lg bg-primary/10 text-primary">
+                  {updateSummary(updateStatus)}
+                </span>
+              {:else}
+                <span class="text-xs px-2 py-1 rounded-lg bg-destructive/10 text-destructive">
+                  Unavailable
+                </span>
+              {/if}
+              <button
+                type="button"
+                class="py-2 px-4 inline-flex items-center gap-x-2 text-sm font-medium rounded-lg border border-line-2 bg-layer text-foreground hover:bg-layer-hover transition-colors"
+                onclick={refreshDiagnostics}
+              >
+                Refresh
+              </button>
+            </div>
+          </div>
+          {#if updateStatus}
+            {#each (['binary', 'assets', 'profiles', 'images'] as UpdateTrackKey[]) as key (key)}
+              {@const track = trackRow(updateStatus, key)}
+              <div class="flex items-center justify-between p-4 gap-x-4">
+                <div>
+                  <p class="text-sm text-foreground">{UPDATE_TRACK_LABELS[key]}</p>
+                  <p class="text-xs text-muted-foreground-1 mt-0.5">{updateTrackVersion(track)}</p>
+                </div>
+                <p class="text-sm {track.update_available ? 'text-primary' : 'text-muted-foreground-1'}">
+                  {trackStateLabel(track)}
+                </p>
+              </div>
+            {/each}
+          {/if}
+        </div>
 
         <!-- Diagnostics -->
         <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider mb-2 mt-6">Diagnostics</h3>

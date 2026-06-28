@@ -12,6 +12,7 @@ use crate::app::{
     ForkDraft,
 };
 use crate::model::{AppState, ServiceStatus, SessionLifecycle, SessionSummary};
+use crate::model::{UpdateNotice, UpdateNoticeKind};
 use crate::terminal::{TerminalColor, TerminalLine, TerminalStyle, TerminalSurface};
 
 const MAX_VISIBLE_TABS: usize = 4;
@@ -172,6 +173,12 @@ fn render_status_bar(frame: &mut Frame<'_>, state: &AppState, area: Rect) {
             muted_style(),
         ));
     }
+    if let Some(notice) = &state.update_notice {
+        left.push(Span::styled(
+            format!(" {}", update_notice_label(notice)),
+            update_notice_style(notice),
+        ));
+    }
 
     let right = state
         .active_session()
@@ -207,6 +214,30 @@ fn render_status_bar(frame: &mut Frame<'_>, state: &AppState, area: Rect) {
         Paragraph::new(Line::from(right)).style(base),
         Rect::new(right_x, area.y, right_width, area.height),
     );
+}
+
+fn update_notice_label(notice: &UpdateNotice) -> String {
+    match &notice.kind {
+        UpdateNoticeKind::Available(tracks) => {
+            let labels = tracks
+                .iter()
+                .map(|track| track.label())
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("updates: {labels}")
+        }
+        UpdateNoticeKind::Stale => "updates: stale".to_string(),
+        UpdateNoticeKind::Unavailable => "updates: unavailable".to_string(),
+    }
+}
+
+fn update_notice_style(notice: &UpdateNotice) -> Style {
+    match notice.kind {
+        UpdateNoticeKind::Available(_) | UpdateNoticeKind::Stale => {
+            status_base_style().fg(ATTENTION)
+        }
+        UpdateNoticeKind::Unavailable => status_base_style().fg(BAD),
+    }
 }
 
 fn render_control_progress_surface(frame: &mut Frame<'_>, area: Rect, label: &str) {

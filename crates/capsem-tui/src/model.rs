@@ -6,6 +6,7 @@ pub struct AppState {
     pub active_session_id: String,
     pub sessions: Vec<SessionSummary>,
     pub profiles: Vec<ProfileOption>,
+    pub update_notice: Option<UpdateNotice>,
 }
 
 impl AppState {
@@ -21,6 +22,38 @@ pub struct ProfileOption {
     pub id: String,
     pub name: String,
     pub description: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UpdateNotice {
+    pub kind: UpdateNoticeKind,
+    pub channel_url: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum UpdateNoticeKind {
+    Available(Vec<UpdateTrack>),
+    Stale,
+    Unavailable,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UpdateTrack {
+    Binary,
+    VmAssets,
+    Profiles,
+    Images,
+}
+
+impl UpdateTrack {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Binary => "binary",
+            Self::VmAssets => "assets",
+            Self::Profiles => "profiles",
+            Self::Images => "images",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

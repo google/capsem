@@ -182,6 +182,59 @@ fn api_response_ok_tried_first() {
 }
 
 #[test]
+fn update_status_response_parses_service_contract() {
+    let json = r#"{
+        "checked_at": 1718444400,
+        "channel_url": "https://release.capsem.org/health.json",
+        "stale": false,
+        "binary": {
+            "current": "1.3.1782582155",
+            "latest": "1.3.1782600000",
+            "update_available": true,
+            "state": "update_available",
+            "compatibility": "compatible"
+        },
+        "assets": {
+            "current": "2026.0627.1",
+            "latest": "2026.0628.1",
+            "update_available": true,
+            "state": "update_available",
+            "compatibility": "compatible"
+        },
+        "profiles": {
+            "update_available": false,
+            "state": "not_published",
+            "compatibility": "not_applicable"
+        },
+        "images": {
+            "update_available": false,
+            "state": "not_published",
+            "compatibility": "not_applicable"
+        }
+    }"#;
+
+    let status: UpdateStatusResponse = serde_json::from_str(json).unwrap();
+
+    assert_eq!(status.checked_at, Some(1718444400));
+    assert_eq!(
+        status.channel_url.as_deref(),
+        Some("https://release.capsem.org/health.json")
+    );
+    assert!(!status.stale);
+    assert_eq!(status.binary.state, UpdateTrackState::UpdateAvailable);
+    assert_eq!(
+        status.binary.compatibility,
+        UpdateCompatibilityState::Compatible
+    );
+    assert_eq!(status.assets.current.as_deref(), Some("2026.0627.1"));
+    assert_eq!(status.profiles.state, UpdateTrackState::NotPublished);
+    assert_eq!(
+        status.images.compatibility,
+        UpdateCompatibilityState::NotApplicable
+    );
+}
+
+#[test]
 fn api_response_err_only_when_ok_fails() {
     // When the JSON only has "error" and the Ok type needs "id",
     // serde falls through to Err variant.

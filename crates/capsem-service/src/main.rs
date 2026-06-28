@@ -43,6 +43,7 @@ mod startup;
 
 const RESUME_CHECKPOINT_NAME: &str = "checkpoint.vzsave";
 const RESUME_CHECKPOINT_COMPLETE_NAME: &str = "checkpoint.vzsave.complete";
+const UPDATE_CACHE_TTL_SECS: u64 = 24 * 3600;
 
 fn checkpoint_complete_path(checkpoint_path: &StdPath) -> PathBuf {
     let marker_name = checkpoint_path
@@ -4881,6 +4882,200 @@ fn asset_manifest_status_value(state: &ServiceState) -> serde_json::Value {
         );
     }
     value
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct UpdateCheckCache {
+    checked_at: u64,
+    #[serde(default)]
+    latest_version: Option<String>,
+    #[serde(default)]
+    update_available: bool,
+    #[serde(default)]
+    latest_assets: Option<String>,
+    #[serde(default)]
+    assets_update_available: bool,
+    #[serde(default)]
+    latest_profiles: Option<String>,
+    #[serde(default)]
+    profiles_update_available: bool,
+    #[serde(default)]
+    profiles_state: Option<String>,
+    #[serde(default)]
+    latest_images: Option<String>,
+    #[serde(default)]
+    images_update_available: bool,
+    #[serde(default)]
+    images_state: Option<String>,
+    #[serde(default)]
+    source: Option<String>,
+}
+
+fn update_status_response(state: &ServiceState) -> api::UpdateStatusResponse {
+    let capsem_home = capsem_core::paths::capsem_home();
+    update_status_response_from_paths(
+        &state.current_version,
+        &state.assets_dir,
+        &capsem_home.join("update-check.json"),
+        unix_now_secs(),
+    )
+}
+
+fn unix_now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn update_status_response_from_paths(
+    current_binary: &str,
+    assets_dir: &StdPath,
+    cache_path: &StdPath,
+    now: u64,
+) -> api::UpdateStatusResponse {
+    let current_assets = current_asset_version_from_manifest(assets_dir);
+    let manifest_channel = manifest_channel_source(assets_dir);
+    let cache_result = read_update_check_cache(cache_path);
+    let (cache, last_error) = match cache_result {
+        Ok(cache) => (cache, None),
+        Err(error) => (None, Some(error)),
+    };
+    let checked_at = cache.as_ref().map(|cache| cache.checked_at);
+    let stale = checked_at
+        .map(|checked_at| now.saturating_sub(checked_at) > UPDATE_CACHE_TTL_SECS)
+        .unwrap_or(true);
+    let channel_url = cache
+        .as_ref()
+        .and_then(|cache| cache.source.clone())
+        .or(manifest_channel);
+
+    api::UpdateStatusResponse {
+        checked_at,
+        channel_url,
+        stale,
+        last_error,
+        binary: update_track(
+            Some(current_binary.to_string()),
+            cache
+                .as_ref()
+                .and_then(|cache| cache.latest_version.clone()),
+            cache.as_ref().is_some_and(|cache| cache.update_available),
+        ),
+        assets: update_track(
+            current_assets,
+            cache.as_ref().and_then(|cache| cache.latest_assets.clone()),
+            cache
+                .as_ref()
+                .is_some_and(|cache| cache.assets_update_available),
+        ),
+        profiles: cache
+            .as_ref()
+            .map(|cache| {
+                channel_update_track(
+                    cache.latest_profiles.clone(),
+                    cache.profiles_update_available,
+                    cache.profiles_state.as_deref(),
+                )
+            })
+            .unwrap_or_else(not_published_update_track),
+        images: cache
+            .as_ref()
+            .map(|cache| {
+                channel_update_track(
+                    cache.latest_images.clone(),
+                    cache.images_update_available,
+                    cache.images_state.as_deref(),
+                )
+            })
+            .unwrap_or_else(not_published_update_track),
+    }
+}
+
+fn read_update_check_cache(
+    path: &StdPath,
+) -> std::result::Result<Option<UpdateCheckCache>, String> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let content = std::fs::read_to_string(path)
+        .map_err(|error| format!("read {}: {error}", path.display()))?;
+    serde_json::from_str(&content)
+        .map(Some)
+        .map_err(|error| format!("parse {}: {error}", path.display()))
+}
+
+fn current_asset_version_from_manifest(assets_dir: &StdPath) -> Option<String> {
+    let content = std::fs::read_to_string(assets_dir.join("manifest.json")).ok()?;
+    capsem_core::asset_manager::ManifestV2::from_json(&content)
+        .ok()
+        .map(|manifest| manifest.assets.current)
+}
+
+fn manifest_channel_source(assets_dir: &StdPath) -> Option<String> {
+    let content = std::fs::read_to_string(assets_dir.join("manifest-origin.json")).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&content).ok()?;
+    value
+        .get("source")
+        .and_then(|source| source.as_str())
+        .map(ToOwned::to_owned)
+}
+
+fn update_track(
+    current: Option<String>,
+    latest: Option<String>,
+    update_available: bool,
+) -> api::UpdateTrackStatus {
+    let state = if update_available {
+        api::UpdateTrackState::UpdateAvailable
+    } else if latest.is_some() || current.is_some() {
+        api::UpdateTrackState::Current
+    } else {
+        api::UpdateTrackState::Unknown
+    };
+    let compatibility = if current.is_some() || latest.is_some() {
+        api::UpdateCompatibilityState::Compatible
+    } else {
+        api::UpdateCompatibilityState::Unknown
+    };
+    api::UpdateTrackStatus {
+        current,
+        latest,
+        update_available,
+        state,
+        compatibility,
+    }
+}
+
+fn not_published_update_track() -> api::UpdateTrackStatus {
+    api::UpdateTrackStatus {
+        current: None,
+        latest: None,
+        update_available: false,
+        state: api::UpdateTrackState::NotPublished,
+        compatibility: api::UpdateCompatibilityState::NotApplicable,
+    }
+}
+
+fn channel_update_track(
+    latest: Option<String>,
+    update_available: bool,
+    channel_state: Option<&str>,
+) -> api::UpdateTrackStatus {
+    match channel_state {
+        Some("not_published") => not_published_update_track(),
+        Some("unknown") => api::UpdateTrackStatus {
+            current: None,
+            latest,
+            update_available: false,
+            state: api::UpdateTrackState::Unknown,
+            compatibility: api::UpdateCompatibilityState::Unknown,
+        },
+        Some("update_available") => update_track(None, latest, true),
+        Some("current") | Some("published") => update_track(None, latest, update_available),
+        _ if latest.is_some() || update_available => update_track(None, latest, update_available),
+        _ => not_published_update_track(),
+    }
 }
 
 struct AssetManifestValidation {
@@ -11318,6 +11513,7 @@ async fn handle_run(
 fn build_service_router(state: Arc<ServiceState>) -> Router {
     Router::new()
         .route("/status", get(handle_service_status))
+        .route("/update/status", get(handle_update_status))
         .route(
             "/version",
             get(|| async { Json(serde_json::json!({ "version": env!("CARGO_PKG_VERSION") })) }),
@@ -11539,6 +11735,12 @@ fn build_service_router(state: Arc<ServiceState>) -> Router {
         )
         .layer(TraceLayer::new_for_http().on_request(()).on_response(()))
         .with_state(state)
+}
+
+async fn handle_update_status(
+    State(state): State<Arc<ServiceState>>,
+) -> Result<Json<api::UpdateStatusResponse>, AppError> {
+    Ok(Json(update_status_response(&state)))
 }
 
 async fn handle_service_status(

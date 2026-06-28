@@ -34,17 +34,5 @@
     "tailwindcss": "^4.2.2",
     "typescript": "^5.9.3",
     "vitest": "^4.1.4"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild",
-      "sharp"
-    ],
-    "overrides": {
-      "yaml": ">=2.8.3",
-      "postcss": ">=8.5.10",
-      "fast-uri": ">=3.1.2",
-      "esbuild": "0.28.1"
-    }
   }
 }

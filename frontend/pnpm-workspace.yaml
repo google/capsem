@@ -1,1 +1,16 @@
-approveBuilds: esbuild
+packages:
+  - .
+
+allowBuilds:
+  esbuild: true
+  sharp: true
+
+onlyBuiltDependencies:
+  - esbuild
+  - sharp
+
+overrides:
+  yaml: ">=2.8.3"
+  postcss: ">=8.5.10"
+  fast-uri: ">=3.1.2"
+  esbuild: 0.28.1
