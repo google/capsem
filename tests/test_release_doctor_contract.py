@@ -704,6 +704,7 @@ def test_asset_channel_documented_as_assets_manifest_url_not_release_index_json(
     release_skill = (PROJECT_ROOT / "skills/release-process/SKILL.md").read_text()
 
     for text in (docs, asset_skill, release_skill):
+        normalized_text = " ".join(text.split())
         assert "https://release.capsem.org/assets/stable/manifest.json" in text
         assert "target/release-channel/assets/<channel>/manifest.json" in text or (
             "target/release-channel/assets/stable/manifest.json" in text
@@ -714,6 +715,11 @@ def test_asset_channel_documented_as_assets_manifest_url_not_release_index_json(
         assert "`latest` targets" in text
         assert "binary/assets/profile/image freshness checks" in text
         assert "dated asset release history" in text
+        assert "first channel bootstrap may have no host binary evidence yet" in normalized_text
+        assert (
+            "once binary files are published, missing host SBOM evidence is release-blocking"
+            in normalized_text
+        )
         assert "channels/stable/index.json" not in text
 
 

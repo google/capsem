@@ -71,7 +71,11 @@ generated dist artifact so the manifest, blobs, index page, health JSON, and
 headers stay in lock-step. The first channel publication may continue when the
 previous `release.capsem.org/assets/<channel>/manifest.json` is unavailable;
 the asset delta gate records `previous_manifest_unavailable` as changed so the
-initial site can bootstrap. Later publications still compare against the live
+initial site can bootstrap. The first channel bootstrap may have no host binary
+evidence yet because the tag-triggered binary rail has not recorded package
+files, host SBOM references, or host binary attestations; once binary files are
+published, missing host SBOM evidence is release-blocking.
+Later publications still compare against the live
 previous manifest and skip deployment only when current VM blob hashes, asset release metadata, and manifest policy are all unchanged. Manifest policy includes channel-visible fields such as `refresh_policy`. After
 Cloudflare deploys, the channel workflow must
 smoke-check `https://release.capsem.org/`, `/health.json`, and

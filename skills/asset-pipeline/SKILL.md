@@ -134,7 +134,11 @@ The delta emits both `asset_changed` and `asset_blobs_changed`: metadata-only
 asset release changes, such as deprecating an older VM asset release, still
 deploy the release channel without republishing immutable VM blobs. The
 `asset-release-plan`, GitHub Release upload, and provenance attestation steps
-run only when `asset_blobs_changed` is true. Later publications still compare
+run only when `asset_blobs_changed` is true. The first channel bootstrap may
+have no host binary evidence yet because the tag-triggered binary rail has not
+recorded package files, host SBOM references, or host binary attestations; once
+binary files are published, missing host SBOM evidence is release-blocking.
+Later publications still compare
 against the live previous manifest and skip deployment only when current VM blob hashes, asset release metadata, and manifest policy are all unchanged. Manifest policy includes channel-visible fields such as `refresh_policy`.
 `build-ledger.log` and `B3SUMS` are debug evidence unless deliberately promoted
 to separate published evidence.

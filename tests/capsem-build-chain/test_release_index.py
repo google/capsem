@@ -43,6 +43,7 @@ def _write_release_manifest(
     asset_version: str = "2030.0101.1",
     binary_version: str = "1.4.1234567890",
     date: str = "2030-01-01",
+    include_binary_files: bool = True,
 ) -> Path:
     assets = root / "assets"
     arm64 = assets / "arm64"
@@ -57,6 +58,25 @@ def _write_release_manifest(
     }
     pkg = b"pkg bytes"
     sbom = b'{"spdxVersion":"SPDX-2.3"}'
+    binary_release = {
+        "date": date,
+        "deprecated": False,
+        "min_assets": asset_version,
+    }
+    if include_binary_files:
+        binary_release["files"] = [
+            {
+                "name": f"Capsem-{binary_version}.pkg",
+                "size": len(pkg),
+                "sha256": hashlib.sha256(pkg).hexdigest(),
+            },
+            {
+                "name": "capsem-sbom.spdx.json",
+                "size": len(sbom),
+                "sha256": hashlib.sha256(sbom).hexdigest(),
+            },
+        ]
+
     manifest = {
         "format": 2,
         "refresh_policy": "24h",
@@ -73,25 +93,7 @@ def _write_release_manifest(
         },
         "binaries": {
             "current": binary_version,
-            "releases": {
-                binary_version: {
-                    "date": date,
-                    "deprecated": False,
-                    "min_assets": asset_version,
-                    "files": [
-                        {
-                            "name": f"Capsem-{binary_version}.pkg",
-                            "size": len(pkg),
-                            "sha256": hashlib.sha256(pkg).hexdigest(),
-                        },
-                        {
-                            "name": "capsem-sbom.spdx.json",
-                            "size": len(sbom),
-                            "sha256": hashlib.sha256(sbom).hexdigest(),
-                        },
-                    ],
-                }
-            },
+            "releases": {binary_version: binary_release},
         },
     }
     manifest_path = assets / "manifest.json"
@@ -290,6 +292,50 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
     assert (release_dir / "arm64-initrd.img").read_bytes() == b"initrd-arm64"
     assert (release_dir / "arm64-rootfs.erofs").read_bytes() == b"rootfs-arm64"
     assert (release_dir / "arm64-obom.cdx.json").is_file()
+
+    _run_admin("assets", "channel", "check", "--channel", "stable", "--dist", str(dist))
+
+
+def test_release_index_bootstraps_before_binary_evidence_exists(tmp_path: Path) -> None:
+    manifest_path = _write_release_manifest(tmp_path, include_binary_files=False)
+    profiles_dir = _write_profile_catalog(tmp_path)
+    dist = tmp_path / "target" / "release-channel"
+
+    _run_admin(
+        "assets",
+        "channel",
+        "build",
+        "--manifest",
+        f"file://{manifest_path}",
+        "--assets-dir",
+        str(manifest_path.parent),
+        "--profiles-dir",
+        str(profiles_dir),
+        "--channel",
+        "stable",
+        "--out-dir",
+        str(dist),
+        "--generated-at",
+        "2030-01-01T00:00:00Z",
+        "--json",
+    )
+
+    health = json.loads((dist / "health.json").read_text(encoding="utf-8"))
+    assert health["current"] == {
+        "binary": "1.4.1234567890",
+        "assets": "2030.0101.1",
+    }
+    assert health["evidence"]["host_binary_files"] == []
+    assert health["evidence"]["host_sboms"] == []
+    assert all(
+        item["name"] != "github_attestations_host"
+        for item in health["evidence"]["attestations"]
+    )
+    assert any(
+        item["name"] == "github_attestations_vm_assets"
+        for item in health["evidence"]["attestations"]
+    )
+    assert health["profiles"]["compatibility"]["min_assets"] == "2030.0101.1"
 
     _run_admin("assets", "channel", "check", "--channel", "stable", "--dist", str(dist))
 

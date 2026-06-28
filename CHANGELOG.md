@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   URL points outside the published VM OBOM evidence list.
 
 ### Changed
+- Clarified that the first asset-channel bootstrap may omit host binary
+  evidence until the tag-triggered binary rail publishes package files and host
+  SBOM metadata, while later missing host SBOM evidence remains
+  release-blocking.
 - Removed the manual VM asset release `binary_version` override so asset
   releases preserve, but do not author, binary release metadata.
 - Clarified VM asset no-op guidance so manifest policy changes such as

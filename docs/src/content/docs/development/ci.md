@@ -294,9 +294,13 @@ Before comparing the asset delta or building the channel preview, the asset
 workflow overlays the live channel's `binaries` metadata into the generated
 asset manifest so package hashes, host SBOM references, and binary attestation
 state survive VM asset releases. The first channel publication can still
-bootstrap when the previous manifest is unavailable. Manual VM asset releases
-do not accept or publish a binary-version override; binary release metadata is
-owned by the tag-triggered binary rail.
+bootstrap when the previous manifest is unavailable. The first channel
+bootstrap may have no host binary evidence yet because the tag-triggered binary
+rail has not recorded package files, host SBOM references, or host binary
+attestations; once binary files are published, missing host SBOM evidence is
+release-blocking.
+Manual VM asset releases do not accept or publish a binary-version override;
+binary release metadata is owned by the tag-triggered binary rail.
 Dry runs upload `asset-release-plan` with the generated upload script so the
 planned `gh release` commands can be reviewed without scraping workflow logs.
 Every asset release run also uploads `asset-release-delta` with the manifest

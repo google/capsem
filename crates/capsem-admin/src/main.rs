@@ -6633,6 +6633,53 @@ decision = "block"
     }
 
     #[test]
+    fn assets_channel_build_bootstraps_without_binary_files() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
+        let mut manifest: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&manifest_path).expect("manifest"))
+                .expect("manifest json");
+        manifest["binaries"]["releases"]["1.0.0"]
+            .as_object_mut()
+            .expect("binary release")
+            .remove("files");
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&manifest).expect("serialize manifest"),
+        )
+        .expect("write manifest");
+        let out_dir = temp.path().join("target/release-channel");
+
+        build_assets_channel(
+            &file_url(&manifest_path),
+            &temp.path().join("assets"),
+            &repo_config_profiles_dir(),
+            "stable",
+            &out_dir,
+            "2030-01-01T00:00:00Z",
+            None,
+        )
+        .expect("first asset channel builds before binary evidence exists");
+
+        let health: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(out_dir.join("health.json")).unwrap())
+                .expect("health json parses");
+        assert_eq!(
+            health["evidence"]["host_binary_files"],
+            serde_json::json!([])
+        );
+        assert_eq!(health["evidence"]["host_sboms"], serde_json::json!([]));
+        assert!(health["evidence"]["attestations"]
+            .as_array()
+            .expect("attestations")
+            .iter()
+            .any(|item| item["name"] == "github_attestations_vm_assets"));
+
+        check_assets_channel(&out_dir, "stable")
+            .expect("first asset channel checks before binary evidence exists");
+    }
+
+    #[test]
     fn assets_channel_headers_split_mutable_and_immutable_paths() {
         let headers = render_assets_channel_headers("stable");
 
