@@ -322,6 +322,9 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
     assert 'health.get("urls", {}).get("asset_base") != "/assets/releases"' in workflow
     assert 'for key in ("binary", "assets")' in workflow
     assert "health profile update source mismatch" in workflow
+    assert "health profile update hash mismatch" in workflow
+    assert "health profile update compatibility mismatch" in workflow
+    assert "health profile update requirement mismatch" in workflow
     assert "health updates.{key}.latest missing or not a string" in workflow
     assert 'for key in ("profiles", "images")' in workflow
     assert "health updates.{key}.latest missing" in workflow
@@ -884,6 +887,90 @@ def test_remote_readiness_rejects_profile_update_source_drift() -> None:
 
     assert not result.ok
     assert "health profile update source mismatch" in result.detail
+
+
+def test_remote_readiness_rejects_profile_update_metadata_drift() -> None:
+    checker = _readiness_checker_module()
+    catalog_url = "/profiles/releases/profiles-2030.0101.1/catalog.json"
+
+    checker.fetch_text = lambda _url: checker.FetchText(
+        text=(
+            "1.4.0 2030.0101.1 2030-01-01 "
+            f"2030-01-01T00:00:00Z profiles-2030.0101.1 {catalog_url} "
+            "/assets/stable/manifest.json"
+        )
+    )
+    checker.fetch_json = lambda url: checker.FetchJson(
+        data={
+            "schema": "capsem.assets_channel.health.v1",
+            "generated_at": "2030-01-01T00:00:00Z",
+            "urls": {
+                "manifest": "/assets/stable/manifest.json",
+                "asset_base": "/assets/releases",
+                "profile_catalog": catalog_url,
+            },
+            "current": {"binary": "1.4.0", "assets": "2030.0101.1"},
+            "asset_releases": [
+                {"version": "2030.0101.1", "date": "2030-01-01"}
+            ],
+            "assets": {"files": []},
+            "profiles": {
+                "revision": "profiles-2030.0101.1",
+                "source": catalog_url,
+                "hash": "1" * 64,
+                "compatibility": {
+                    "binary": "current",
+                    "assets": "current",
+                    "min_binary": "1.4.0",
+                    "min_assets": "2030.0101.1",
+                },
+                "requires_newer": {"binary": False, "assets": False},
+            },
+            "updates": {
+                "profiles": {
+                    "latest": "profiles-2030.0101.1",
+                    "current": "profiles-2030.0101.1",
+                    "state": "current",
+                    "source": catalog_url,
+                    "hash": "2" * 64,
+                    "compatibility": {
+                        "binary": "requires_newer",
+                        "assets": "current",
+                        "min_binary": "1.5.0",
+                        "min_assets": "2030.0101.1",
+                    },
+                    "requires_newer": {"binary": True, "assets": False},
+                },
+                "images": {"latest": None, "state": "not_published"},
+            },
+            "evidence": {
+                "vm_oboms": [],
+                "host_sboms": [],
+                "host_binary_files": [],
+                "attestations": [],
+            },
+        }
+        if url.endswith("/health.json")
+        else {
+            "format": 2,
+            "assets": {"current": "2030.0101.1"},
+            "binaries": {"current": "1.4.0"},
+        }
+    )
+    checker.fetch_headers = lambda url: checker.FetchHeaders(
+        headers={
+            "cache-control": "public, max-age=31536000, immutable"
+            if "/profiles/releases/" in url
+            else "no-cache, must-revalidate"
+        }
+    )
+
+    result = checker.check_release_site_contract("https://release.capsem.org", "stable")
+
+    assert not result.ok
+    assert "health profile update hash mismatch" in result.detail
+    assert "health profile update compatibility mismatch" in result.detail
+    assert "health profile update requirement mismatch" in result.detail
 
 
 def test_binary_release_verifies_packages_hydrate_vm_assets_from_public_channel() -> None:

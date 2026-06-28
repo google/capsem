@@ -85,8 +85,10 @@ passes. That smoke must reject stale public HTML: the fetched index page must
 show the same current binary, current VM asset version, asset release date,
 generated timestamp, profile revision, profile catalog URL, profile update source,
 and channel manifest path as the fetched health JSON and manifest. It must also
-resolve published host SBOM and VM OBOM evidence artifacts from `health.json`,
-verify their advertised hashes and sizes, and validate attestation subjects and predicate URLs
+verify that the profile update hash, compatibility, and newer-version
+requirements match the canonical profile catalog metadata. It must also
+resolve published host SBOM and VM OBOM evidence artifacts from `health.json`, verify their advertised
+hashes and sizes, and validate attestation subjects and predicate URLs
 against the published evidence lists. Host SBOM evidence is incomplete unless
 `github_attestations_host_sbom` is present and points at the published
 `capsem-sbom.spdx.json` evidence and covers every published host package

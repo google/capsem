@@ -193,6 +193,15 @@ jobs:
           updates = health.get("updates", {})
           if updates.get("profiles", {}).get("source") != health.get("profiles", {}).get("source"):
               failures.append("health profile update source mismatch")
+          if not isinstance(updates.get("profiles"), dict):
+              failures.append("health profile update metadata missing")
+          else:
+              if updates.get("profiles", {}).get("hash") != health.get("profiles", {}).get("hash"):
+                  failures.append("health profile update hash mismatch")
+              if updates.get("profiles", {}).get("compatibility") != health.get("profiles", {}).get("compatibility"):
+                  failures.append("health profile update compatibility mismatch")
+              if updates.get("profiles", {}).get("requires_newer") != health.get("profiles", {}).get("requires_newer"):
+                  failures.append("health profile update requirement mismatch")
           for key in ("binary", "assets"):
               if not isinstance(updates.get(key, {}).get("latest"), str):
                   failures.append(f"health updates.{key}.latest missing or not a string")

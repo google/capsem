@@ -288,6 +288,15 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
         failures.append("health profile catalog URL mismatch")
     if profile_update_source != profile_source:
         failures.append("health profile update source mismatch")
+    if not isinstance(health_update_profiles, dict):
+        failures.append("health profile update metadata missing")
+    else:
+        if health_update_profiles.get("hash") != health_profiles.get("hash"):
+            failures.append("health profile update hash mismatch")
+        if health_update_profiles.get("compatibility") != health_profiles.get("compatibility"):
+            failures.append("health profile update compatibility mismatch")
+        if health_update_profiles.get("requires_newer") != health_profiles.get("requires_newer"):
+            failures.append("health profile update requirement mismatch")
     if manifest_assets.get("current") != current_assets:
         failures.append("current asset mismatch between health and manifest")
     if manifest_binaries.get("current") != current_binary:

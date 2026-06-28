@@ -79,10 +79,12 @@ active branch rulesets require `pr-gate`; `release.capsem.org` resolves and
 serves the asset channel; and the public index, `health.json`, and manifest
 agree on current binary, VM asset, asset release date, generated timestamp,
 profile revision, profile catalog URL, profile update source, and channel
-manifest path. It also resolves published host SBOM and VM OBOM evidence artifacts, verifies their
-advertised hashes and sizes, and
-validates attestation subjects and predicate URLs against the published evidence
-lists. It verifies live `Cache-Control` headers too: mutable release-channel
+manifest path. It also verifies that the profile update hash, compatibility,
+and newer-version requirements match the canonical profile catalog metadata.
+It also resolves published host SBOM and VM OBOM evidence artifacts, verifies
+their advertised hashes and sizes, and validates attestation subjects and
+predicate URLs against the published evidence lists. It verifies live
+`Cache-Control` headers too: mutable release-channel
 pointers must stay fresh, while immutable asset and profile artifacts must keep
 long-lived immutable caching. If the local checkout has unpublished commits,
 publish or merge those commits before changing remote protection. It does not
@@ -324,8 +326,10 @@ state. After Cloudflare deploys, `release-channel.yaml` smoke checks the public
 rejects stale public HTML: the human index must show the same current binary,
 current VM asset version, asset release date, generated timestamp, profile
 revision, profile catalog URL, profile update source, and channel manifest path
-as the fetched health JSON and manifest. It resolves published host SBOM and VM OBOM evidence artifacts from
-`health.json`, verifies their advertised hashes and sizes, and validates
+as the fetched health JSON and manifest. It verifies that profile update hash,
+compatibility, and newer-version requirements match the canonical profile
+catalog metadata, resolves published host SBOM and VM OBOM evidence artifacts
+from `health.json`, verifies their advertised hashes and sizes, and validates
 attestation subjects and predicate URLs against the published evidence lists.
 It also verifies public `Cache-Control` headers: mutable release-channel
 pointers (`/`, `/health.json`, and `/assets/<channel>/manifest.json`) must stay
