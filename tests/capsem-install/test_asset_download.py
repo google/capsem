@@ -590,6 +590,74 @@ def test_update_assets_missing_remote_channel_manifest_keeps_previous_assets(
         assert target.read_bytes() == blob
 
 
+def test_update_assets_deprecated_remote_release_keeps_previous_assets(
+    tmp_path: Path,
+    http_fixture,
+    installed_layout,
+):
+    base_url, serve_dir, requested_paths = http_fixture
+    arch = _arch()
+    old_files = {
+        "vmlinuz": b"old-deprecated-kernel",
+        "initrd.img": b"old-deprecated-initrd",
+        "rootfs.erofs": b"old-deprecated-rootfs",
+    }
+    deprecated_files = {
+        "vmlinuz": b"deprecated-kernel",
+        "initrd.img": b"deprecated-initrd",
+        "rootfs.erofs": b"deprecated-rootfs",
+    }
+
+    channel_manifest_url = f"{base_url}/assets/stable/manifest.json"
+    channel_manifest = _make_manifest(arch, deprecated_files, NEW_ASSET_VERSION)
+    release = channel_manifest["assets"]["releases"][NEW_ASSET_VERSION]
+    release["deprecated"] = True
+    release["deprecated_date"] = "2030-01-03"
+    channel_manifest_path = serve_dir / "assets" / "stable" / "manifest.json"
+    channel_manifest_path.parent.mkdir(parents=True)
+    channel_manifest_path.write_text(json.dumps(channel_manifest), encoding="utf-8")
+
+    release_dir = serve_dir / "assets" / "releases" / NEW_ASSET_VERSION
+    release_dir.mkdir(parents=True)
+    for name, blob in deprecated_files.items():
+        (release_dir / f"{arch}-{name}").write_bytes(blob)
+
+    capsem_home = tmp_path / ".capsem"
+    assets = capsem_home / "assets"
+    old_origin = {
+        "schema": "capsem.manifest_origin.v1",
+        "origin": "package",
+        "source": channel_manifest_url,
+        "packaged_at": "2026-06-16T00:00:00Z",
+    }
+    old_manifest = _write_installed_manifest_and_assets(
+        assets,
+        arch,
+        old_files,
+        asset_version=ASSET_VERSION,
+        origin=old_origin,
+    )
+
+    result = _run({"CAPSEM_HOME": str(capsem_home)}, "update", "--assets")
+
+    assert result.returncode != 0, "deprecated-only channel must not replace installed assets"
+    err = result.stdout + result.stderr
+    assert "no compatible asset release" in err, err
+    assert "restored previous installed manifest" in err, err
+    assert "/assets/stable/manifest.json" in requested_paths
+    deprecated_blob_paths = {
+        f"/assets/releases/{NEW_ASSET_VERSION}/{arch}-{name}"
+        for name in deprecated_files
+    }
+    assert set(requested_paths).isdisjoint(deprecated_blob_paths), requested_paths
+    assert json.loads((assets / "manifest.json").read_text()) == old_manifest
+    assert json.loads((assets / "manifest-origin.json").read_text()) == old_origin
+    for name, blob in old_files.items():
+        target = assets / arch / _hashed_asset_name(name, blob)
+        assert target.exists(), f"previous working asset was removed: {target}"
+        assert target.read_bytes() == blob
+
+
 def test_update_assets_rejects_bare_asset_base_path(tmp_path: Path, installed_layout):
     arch = _arch()
     files = {
