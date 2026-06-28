@@ -846,6 +846,47 @@ def test_remote_release_readiness_checker_is_read_only_and_covers_live_gates() -
     assert "`release.capsem.org` resolves and serves the asset channel" in docs_text
 
 
+def test_live_release_activation_order_is_documented() -> None:
+    docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
+    release_skill = (PROJECT_ROOT / "skills/release-process/SKILL.md").read_text()
+
+    for text in (docs, release_skill):
+        normalized = " ".join(text.split())
+        normalized_lower = normalized.lower()
+        assert "Live release activation order" in text
+        assert "publish or merge the release-rail commits to `main`" in normalized_lower
+        assert "wait for the expanded `pr-gate` to pass on `main`" in normalized_lower
+        assert "require only `pr-gate` in branch protection or active rulesets" in normalized_lower
+        assert (
+            "provision the `release.capsem.org` cloudflare pages project and dns"
+            in normalized_lower
+        )
+        assert (
+            "run `uv run python scripts/check-remote-release-readiness.py`"
+            in normalized_lower
+        )
+        assert "manual VM asset workflow as a dry run" in normalized
+        assert (
+            "run the tag-triggered binary release rail only from an immutable `vx.y.z` tag"
+            in normalized_lower
+        )
+        assert (
+            "run the manual vm asset workflow live only after reviewing `asset-release-plan`"
+            in normalized_lower
+        )
+        assert "installed update smokes" in normalized
+        assert normalized_lower.index(
+            "publish or merge the release-rail commits to `main`"
+        ) < normalized_lower.index(
+            "require only `pr-gate` in branch protection or active rulesets"
+        )
+        assert normalized_lower.index(
+            "provision the `release.capsem.org` cloudflare pages project and dns"
+        ) < normalized.index(
+            "manual VM asset workflow as a dry run"
+        )
+
+
 def test_remote_release_readiness_requires_expanded_pr_gate() -> None:
     module = _readiness_checker_module()
 

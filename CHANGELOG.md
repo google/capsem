@@ -25,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   platform package manager rather than only printed.
 
 ### Added
+- Added the live release activation order for publishing release-rail commits,
+  enabling `pr-gate`, provisioning `release.capsem.org`, and sequencing binary,
+  VM asset, and installed update smokes.
 - Added service-route regression coverage proving confirmed binary/profile
   updates and VM asset refreshes dispatch separate CLI commands.
 - Added service and gateway update action routes that expose dry-run command

@@ -86,6 +86,31 @@ long-lived immutable caching. If the local checkout has unpublished commits,
 publish or merge those commits before changing remote protection. It does not
 push, deploy, create tags, edit rulesets, or mutate Cloudflare.
 
+### Live release activation order
+
+Use this order when turning the 1.4 release rails on. Do not skip ahead because
+later steps depend on earlier public state being true.
+
+1. Publish or merge the release-rail commits to `main`.
+2. Wait for the expanded `pr-gate` to pass on `main`.
+3. Require only `pr-gate` in branch protection or active rulesets.
+4. Provision the `release.capsem.org` Cloudflare Pages project and DNS for the
+   generated `target/release-channel/` artifact.
+5. Run `uv run python scripts/check-remote-release-readiness.py`; continue only
+   after unpublished commits, remote workflow shape, branch protection,
+   `release.capsem.org` DNS, public cache headers, and release-channel content
+   all pass.
+6. Run the manual VM asset workflow as a dry run and review the
+   `asset-release-plan`, `asset-release-delta`, and `asset-channel-preview`
+   artifacts.
+7. Run the tag-triggered binary release rail only from an immutable `vX.Y.Z`
+   tag after confirming the tag does not already exist remotely.
+8. Run the manual VM asset workflow live only after reviewing
+   `asset-release-plan`; it must publish changed VM blobs, attest them, and
+   deploy `release.capsem.org`.
+9. Run installed update smokes for the signed macOS `.pkg`, Linux `.deb`, VM
+   asset refresh, profile update path, and staged cross-surface update state.
+
 ## PR gate compared with `just test`
 
 `just test` is still the full local/release validation command. GitHub-hosted PR
