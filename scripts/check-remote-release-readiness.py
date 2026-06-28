@@ -26,6 +26,13 @@ else:
 
 
 REQUIRED_PR_GATE_JOBS = ("test-linux", "test", "test-install", "docs-build", "site-build")
+REQUIRED_PR_GATE_RESULT_CHECKS = (
+    ("test-linux", "TEST_LINUX_RESULT"),
+    ("test", "TEST_MACOS_RESULT"),
+    ("test-install", "TEST_INSTALL_RESULT"),
+    ("docs-build", "DOCS_BUILD_RESULT"),
+    ("site-build", "SITE_BUILD_RESULT"),
+)
 
 
 @dataclass
@@ -121,14 +128,18 @@ def check_remote_pr_gate(repo: str) -> CheckResult:
     if "pr-gate:" not in text:
         return CheckResult("remote ci.yaml pr-gate", False, "remote ci.yaml lacks pr-gate")
     pr_gate = workflow_job_block(text, "pr-gate")
-    missing = sorted(set(REQUIRED_PR_GATE_JOBS) - workflow_job_needs(pr_gate))
-    if missing:
+    failures = pr_gate_contract_failures(pr_gate)
+    if failures:
         return CheckResult(
             "remote ci.yaml pr-gate",
             False,
-            "remote pr-gate does not aggregate required jobs: " + ", ".join(missing),
+            "remote pr-gate is not fail-closed: " + "; ".join(failures),
         )
-    return CheckResult("remote ci.yaml pr-gate", True, "pr-gate aggregates required jobs")
+    return CheckResult(
+        "remote ci.yaml pr-gate",
+        True,
+        "pr-gate aggregates required jobs and asserts all results",
+    )
 
 
 def workflow_job_block(workflow: str, name: str) -> str:
@@ -160,6 +171,28 @@ def workflow_job_needs(job_block: str) -> set[str]:
                 needs.add(item.removeprefix("      - ").strip())
             break
     return needs
+
+
+def pr_gate_contract_failures(job_block: str) -> list[str]:
+    failures: list[str] = []
+    missing = sorted(set(REQUIRED_PR_GATE_JOBS) - workflow_job_needs(job_block))
+    if missing:
+        failures.append("does not aggregate required jobs: " + ", ".join(missing))
+    if not re.search(r"(?m)^\s+if:\s*\$\{\{\s*always\(\)\s*\}}\s*$", job_block):
+        failures.append("pr-gate does not run with if: ${{ always() }}")
+    for job, env_name in REQUIRED_PR_GATE_RESULT_CHECKS:
+        if f"needs.{job}.result" not in job_block or not result_success_asserted(
+            job_block, env_name
+        ):
+            failures.append(f"pr-gate does not assert {job} result")
+    return failures
+
+
+def result_success_asserted(job_block: str, env_name: str) -> bool:
+    return re.search(
+        rf"(?m)^\s*(?:test|\[)\s+[\"']?\${re.escape(env_name)}[\"']?\s*=\s*success",
+        job_block,
+    ) is not None
 
 
 def check_remote_branch_protection(repo: str, branch: str) -> CheckResult:

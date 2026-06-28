@@ -1121,6 +1121,24 @@ jobs:
     if: ${{ always() }}
 """.strip()
     stale = inline.replace(", docs-build, site-build", "")
+    non_failing = inline + "\n    steps:\n      - run: echo ok\n"
+    fail_closed = inline + """
+    if: ${{ always() }}
+    steps:
+      - name: Require all CI jobs
+        env:
+          TEST_LINUX_RESULT: ${{ needs.test-linux.result }}
+          TEST_MACOS_RESULT: ${{ needs.test.result }}
+          TEST_INSTALL_RESULT: ${{ needs.test-install.result }}
+          DOCS_BUILD_RESULT: ${{ needs.docs-build.result }}
+          SITE_BUILD_RESULT: ${{ needs.site-build.result }}
+        run: |
+          test "$TEST_LINUX_RESULT" = success
+          test "$TEST_MACOS_RESULT" = success
+          test "$TEST_INSTALL_RESULT" = success
+          test "$DOCS_BUILD_RESULT" = success
+          test "$SITE_BUILD_RESULT" = success
+"""
 
     assert module.workflow_job_needs(module.workflow_job_block(inline, "pr-gate")) == {
         "test-linux",
@@ -1140,6 +1158,19 @@ jobs:
         "docs-build",
         "site-build",
     }.issubset(module.workflow_job_needs(module.workflow_job_block(stale, "pr-gate")))
+    assert module.pr_gate_contract_failures(
+        module.workflow_job_block(fail_closed, "pr-gate")
+    ) == []
+    assert module.pr_gate_contract_failures(
+        module.workflow_job_block(non_failing, "pr-gate")
+    ) == [
+        "pr-gate does not run with if: ${{ always() }}",
+        "pr-gate does not assert test-linux result",
+        "pr-gate does not assert test result",
+        "pr-gate does not assert test-install result",
+        "pr-gate does not assert docs-build result",
+        "pr-gate does not assert site-build result",
+    ]
 
 
 def test_remote_release_readiness_checker_reports_unpublished_local_commits() -> None:

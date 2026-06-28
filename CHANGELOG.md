@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Fixed the remote release readiness checker so it rejects `pr-gate` workflows
+  that aggregate jobs but do not run fail-closed and assert every dependency
+  result.
 - Fixed the remote release readiness checker so malformed live release-site
   contract objects fail with explicit diagnostics instead of a Python exception.
 - Fixed the release-process skill and Debian repack header so they document the
