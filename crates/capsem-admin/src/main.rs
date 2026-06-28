@@ -1129,6 +1129,11 @@ fn record_binary_release_metadata(
             "binary release metadata must include a host SBOM artifact"
         ));
     }
+    if !files.iter().any(|file| !is_host_sbom_file(&file.name)) {
+        return Err(anyhow!(
+            "binary release metadata must include a host package artifact"
+        ));
+    }
     manifest.binaries.current = version.to_string();
     manifest.binaries.releases.insert(
         version.to_string(),
@@ -6746,6 +6751,31 @@ decision = "block"
             format!("{:x}", Sha256::digest(b"pkg bytes"))
         );
         assert_eq!(release["files"][2]["name"], "capsem-sbom.spdx.json");
+    }
+
+    #[test]
+    fn assets_channel_record_binary_rejects_sbom_without_host_package() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
+        let artifacts_dir = temp.path().join("release-artifacts");
+        fs::create_dir_all(&artifacts_dir).expect("artifacts dir");
+        let sbom_path = artifacts_dir.join("capsem-sbom.spdx.json");
+        fs::write(&sbom_path, br#"{"spdxVersion":"SPDX-2.3"}"#).expect("sbom");
+
+        let error = record_binary_release_metadata(
+            &manifest_path,
+            "1.4.1234567890",
+            None,
+            &[sbom_path],
+            "2030-02-03",
+        )
+        .expect_err("SBOM-only binary metadata rejected");
+
+        assert!(
+            format!("{error:#}")
+                .contains("binary release metadata must include a host package artifact"),
+            "{error:#}"
+        );
     }
 
     #[test]

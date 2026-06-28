@@ -876,6 +876,33 @@ def test_binary_release_index_records_host_artifacts_without_changing_assets(
     assert files[sbom.name]["sha256"] == hashlib.sha256(sbom.read_bytes()).hexdigest()
 
 
+def test_binary_release_index_rejects_sbom_without_host_package(tmp_path: Path) -> None:
+    manifest_path = _write_release_manifest(tmp_path)
+    artifacts = tmp_path / "release-artifacts"
+    artifacts.mkdir()
+    sbom = artifacts / "capsem-sbom.spdx.json"
+    sbom.write_bytes(b'{"spdxVersion":"SPDX-2.3","name":"capsem"}')
+
+    result = _run_admin(
+        "assets",
+        "channel",
+        "record-binary",
+        "--manifest-path",
+        str(manifest_path),
+        "--version",
+        "1.4.2234567890",
+        "--date",
+        "2030-02-03",
+        "--artifact",
+        str(sbom),
+        "--json",
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "binary release metadata must include a host package artifact" in result.stderr
+
+
 def test_binary_release_profile_catalog_index_builds_release_site_without_rebuilding_vm_assets(
     tmp_path: Path,
 ) -> None:

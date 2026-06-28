@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Fixed binary release metadata recording so a release cannot update the
+  release channel with only host SBOM evidence and no installable host package
+  artifact.
 - Fixed the manual VM asset release workflow so asset-channel builds preserve
   live binary release metadata, host SBOM references, and binary attestation
   state instead of replacing them with a freshly generated binary section.
