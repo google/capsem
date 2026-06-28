@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Fixed the remote release readiness checker so malformed live release-site
+  contract objects fail with explicit diagnostics instead of a Python exception.
 - Fixed the release-process skill and Debian repack header so they document the
   `.deb` pre-install shutdown rail before binary replacement.
 - Fixed the installation skill so it documents the Linux `.deb` pre-install

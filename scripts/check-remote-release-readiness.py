@@ -226,21 +226,25 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
     failures: list[str] = []
     health_data = health.data if isinstance(health.data, dict) else {}
     manifest_data = manifest.data if isinstance(manifest.data, dict) else {}
+    health_urls = require_object(health_data, "urls", "health urls", failures)
+    health_current = require_object(health_data, "current", "health current", failures)
+    manifest_assets = require_object(manifest_data, "assets", "manifest assets", failures)
+    manifest_binaries = require_object(manifest_data, "binaries", "manifest binaries", failures)
+
     if health_data.get("schema") != "capsem.assets_channel.health.v1":
         failures.append("health schema mismatch")
-    if health_data.get("urls", {}).get("manifest") != manifest_path:
+    if health_urls.get("manifest") != manifest_path:
         failures.append("health manifest URL mismatch")
-    if health_data.get("urls", {}).get("asset_base") != "/assets/releases":
+    if health_urls.get("asset_base") != "/assets/releases":
         failures.append("health asset base mismatch")
     if manifest_data.get("format") != 2:
         failures.append("manifest format mismatch")
 
-    current = health_data.get("current", {})
-    current_binary = current.get("binary")
-    current_assets = current.get("assets")
-    if manifest_data.get("assets", {}).get("current") != current_assets:
+    current_binary = health_current.get("binary")
+    current_assets = health_current.get("assets")
+    if manifest_assets.get("current") != current_assets:
         failures.append("current asset mismatch between health and manifest")
-    if manifest_data.get("binaries", {}).get("current") != current_binary:
+    if manifest_binaries.get("current") != current_binary:
         failures.append("current binary mismatch between health and manifest")
     for label, value in (
         ("current binary", current_binary),
@@ -410,6 +414,19 @@ def attestation_predicate_evidence_urls(
     if has_host_binary_subject and not has_vm_asset_subject:
         return host_sbom_urls, "host SBOM evidence"
     return host_sbom_urls | vm_obom_urls, "host SBOM or VM OBOM evidence"
+
+
+def require_object(
+    root: Any, key: str, label: str, failures: list[str]
+) -> dict[str, Any]:
+    if not isinstance(root, dict):
+        failures.append(f"{label} parent is not an object")
+        return {}
+    value = root.get(key)
+    if not isinstance(value, dict):
+        failures.append(f"{label} missing or not an object")
+        return {}
+    return value
 
 
 def require_list(root: Any, key: str, failures: list[str]) -> list[Any]:

@@ -718,6 +718,41 @@ def test_release_skill_documents_deb_preinstall_restart_rail() -> None:
     assert "stale helper cohort before package replacement" in release_skill
 
 
+def test_remote_readiness_helper_edge_cases_reject_malformed_release_contract() -> None:
+    checker = _readiness_checker_module()
+
+    checker.fetch_text = lambda _url: checker.FetchText(
+        text="1.4.0 2030.0101.1 2030-01-01 /health.json"
+    )
+    checker.fetch_json = lambda url: checker.FetchJson(
+        data={
+            "schema": "capsem.assets_channel.health.v1",
+            "urls": [],
+            "current": [],
+            "assets": {"files": []},
+            "evidence": {
+                "vm_oboms": [],
+                "host_sboms": [],
+                "host_binary_files": [],
+                "attestations": [],
+            },
+        }
+        if url.endswith("/health.json")
+        else {
+            "format": 2,
+            "assets": {"current": "2030.0101.1"},
+            "binaries": {"current": "1.4.0"},
+        }
+    )
+    checker.fetch_headers = lambda _url: checker.FetchHeaders(headers={"cache-control": ""})
+
+    result = checker.check_release_site_contract("https://release.capsem.org", "stable")
+
+    assert not result.ok
+    assert "health urls missing or not an object" in result.detail
+    assert "health current missing or not an object" in result.detail
+
+
 def test_binary_release_verifies_packages_hydrate_vm_assets_from_public_channel() -> None:
     verify_downloads = _workflow_job_block("verify-release-downloads", "release.yaml")
 
