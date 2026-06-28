@@ -26,8 +26,8 @@ def _recipe_block(name: str) -> str:
     return "\n".join(lines[start:end])
 
 
-def _workflow_job_block(name: str) -> str:
-    lines = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text().splitlines()
+def _workflow_job_block(name: str, workflow_name: str = "ci.yaml") -> str:
+    lines = (PROJECT_ROOT / ".github" / "workflows" / workflow_name).read_text().splitlines()
     start = next(i for i, line in enumerate(lines) if line == f"  {name}:")
     end = len(lines)
     for i in range(start + 1, len(lines)):
@@ -264,6 +264,8 @@ def test_docs_and_marketing_sites_build_on_pr_and_deploy_on_main_only() -> None:
 
 def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> None:
     workflow = _workflow_text("release.yaml")
+    create_release = _workflow_job_block("create-release", "release.yaml")
+    assemble_channel = _workflow_job_block("assemble-release-channel", "release.yaml")
     trigger = workflow.split("\npermissions:", maxsplit=1)[0]
 
     assert "push:" in trigger
@@ -279,9 +281,11 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     assert "Create stub v2 asset manifest for unit tests" in workflow
     assert "just build-kernel" not in workflow
     assert "just build-rootfs" not in workflow
+    assert "cargo run -p capsem-admin -- manifest generate assets" not in workflow
     assert "generate_checksums(Path('unified-assets')" not in workflow
     assert 'gh release upload ${{ github.ref_name }} "release-artifacts/$arch' not in workflow
     assert "release-artifacts/manifest.json" not in workflow
+    assert "assets-v" not in workflow
     assert '--manifest "$ASSET_MANIFEST_URL"' in workflow
     assert "release.capsem.org" in workflow
     assert "assets channel record-binary" in workflow
@@ -293,6 +297,24 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     assert "pages deploy" not in workflow
     assert "capsem-release" not in workflow
     assert "CLOUDFLARE_" not in workflow
+    for logical_name in ("vmlinuz", "initrd.img", "rootfs.erofs", "obom.cdx.json"):
+        assert f"release-artifacts/{logical_name}" not in create_release
+        assert f"release-artifacts/*{logical_name}" not in create_release
+    assert "release-artifacts/*.pkg" in create_release
+    assert "release-artifacts/*.deb" in create_release
+    assert "release-artifacts/capsem-sbom.spdx.json" in create_release
+    assert "gh release create ${{ github.ref_name }}" in create_release
+    assert '[ -f "$deb" ] && gh release upload ${{ github.ref_name }} "$deb"' in create_release
+    assert "target/binary-channel/manifest.json" in assemble_channel
+    assert assemble_channel.index("Fetch current asset channel manifest") < assemble_channel.index(
+        "Record binary release metadata in channel manifest"
+    )
+    assert assemble_channel.index("Record binary release metadata in channel manifest") < (
+        assemble_channel.index("Build release channel with existing VM assets")
+    )
+    assert assemble_channel.index("Build release channel with existing VM assets") < (
+        assemble_channel.index("Check binary-updated release channel")
+    )
 
 
 def test_manifest_source_inputs_are_url_only() -> None:

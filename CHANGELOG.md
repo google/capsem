@@ -53,6 +53,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added install-side verification that profile catalog updates leave existing
   VM asset pin registries and installed asset manifests untouched.
 - Added TUI smoke-matrix coverage for mixed binary and VM asset update state.
+- Added release-doctor coverage that binary tag releases update release-channel
+  metadata without rebuilding or publishing VM asset payloads.
 - Proxied update status through the gateway so UI, tray, and TUI surfaces can
   read release-channel freshness state.
 - Published profile catalog artifacts under the asset channel with portable
