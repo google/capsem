@@ -127,6 +127,31 @@ release-channel pointers (`/`, `/health.json`, and
 immutable asset and profile release artifacts stay
 `public, max-age=31536000, immutable`.
 
+## Live release activation order
+
+Use this order when turning the 1.4 release rails on. Do not skip ahead because
+later steps depend on earlier public state being true.
+
+1. Publish or merge the release-rail commits to `main`.
+2. Wait for the expanded `pr-gate` to pass on `main`.
+3. Require only `pr-gate` in branch protection or active rulesets.
+4. Provision the `release.capsem.org` Cloudflare Pages project and DNS for the
+   generated `target/release-channel/` artifact.
+5. Run `uv run python scripts/check-remote-release-readiness.py`; continue only
+   after unpublished commits, remote workflow shape, branch protection,
+   `release.capsem.org` DNS, public cache headers, and release-channel content
+   all pass.
+6. Run the manual VM asset workflow as a dry run and review the
+   `asset-release-plan`, `asset-release-delta`, and `asset-channel-preview`
+   artifacts.
+7. Run the tag-triggered binary release rail only from an immutable `vX.Y.Z`
+   tag after confirming the tag does not already exist remotely.
+8. Run the manual VM asset workflow live only after reviewing
+   `asset-release-plan`; it must publish changed VM blobs, attest them, and
+   deploy `release.capsem.org`.
+9. Run installed update smokes for the signed macOS `.pkg`, Linux `.deb`, VM
+   asset refresh, profile update path, and staged cross-surface update state.
+
 Asset-channel blobs are arch-prefixed (`arm64-vmlinuz`,
 `arm64-initrd.img`, `arm64-rootfs.erofs`, `arm64-obom.cdx.json`, and x86_64
 equivalents). The v2 manifest keeps bare logical filenames inside each arch map.

@@ -849,8 +849,9 @@ def test_remote_release_readiness_checker_is_read_only_and_covers_live_gates() -
 def test_live_release_activation_order_is_documented() -> None:
     docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
     release_skill = (PROJECT_ROOT / "skills/release-process/SKILL.md").read_text()
+    asset_skill = (PROJECT_ROOT / "skills/asset-pipeline/SKILL.md").read_text()
 
-    for text in (docs, release_skill):
+    for text in (docs, release_skill, asset_skill):
         normalized = " ".join(text.split())
         normalized_lower = normalized.lower()
         assert "Live release activation order" in text
