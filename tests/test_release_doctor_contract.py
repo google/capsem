@@ -2847,6 +2847,17 @@ def test_release_skill_keeps_binary_and_asset_verification_decoupled() -> None:
     assert "must not depend on release tags or VM asset publication" in release_skill
 
 
+def test_release_skills_preserve_vm_obom_attestation_predicate_contract() -> None:
+    release_skill = (PROJECT_ROOT / "skills/release-process/SKILL.md").read_text()
+    asset_skill = (PROJECT_ROOT / "skills/asset-pipeline/SKILL.md").read_text()
+
+    for skill in (release_skill, asset_skill):
+        skill_text = " ".join(skill.split())
+        assert "VM asset attestations are incomplete unless" in skill_text
+        assert "`github_attestations_vm_assets`" in skill_text
+        assert "`predicate_url` points at the published VM OBOM evidence" in skill_text
+
+
 def test_site_skills_preserve_every_main_merge_deploy_rail() -> None:
     site_infra_skill = (PROJECT_ROOT / "skills/site-infra/SKILL.md").read_text()
     site_marketing_skill = (PROJECT_ROOT / "skills/site-marketing/SKILL.md").read_text()

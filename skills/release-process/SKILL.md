@@ -123,7 +123,9 @@ passes.
 Host SBOM evidence is incomplete unless
 `github_attestations_host_sbom` is present and points at the published
 `capsem-sbom.spdx.json` evidence and covers every published host package
-subject. It must also verify public `Cache-Control`
+subject. VM asset attestations are incomplete unless
+`github_attestations_vm_assets` is present and its `predicate_url` points at the
+published VM OBOM evidence for the current asset release. It must also verify public `Cache-Control`
 headers: mutable pointers (`/`, `/health.json`, and
 `/assets/<channel>/manifest.json`) stay `no-cache, must-revalidate`, while
 immutable asset and profile release artifacts stay

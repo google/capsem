@@ -182,7 +182,9 @@ unpublished until image release metadata is added to the asset channel.
 It validates host SBOM and VM OBOM evidence document shape (SPDX 2.3 for the
 host SBOM and CycloneDX for VM OBOMs), plus attestation scope, workflow,
 subjects, and predicate URLs against the published host SBOM and VM OBOM
-evidence lists.
+evidence lists. VM asset attestations are incomplete unless
+`github_attestations_vm_assets` is present and its `predicate_url` points at the
+published VM OBOM evidence for the current asset release.
 The deploy smoke must also verify public `Cache-Control` headers: mutable
 release-channel pointers (`/`, `/health.json`, and
 `/assets/<channel>/manifest.json`) stay `no-cache, must-revalidate`, while
