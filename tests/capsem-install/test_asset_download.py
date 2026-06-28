@@ -100,6 +100,14 @@ def _make_manifest(arch: str, files: dict[str, bytes], asset_version: str = ASSE
     }
 
 
+def _hashed_asset_name(logical_name: str, blob: bytes) -> str:
+    prefix = _blake3(blob)[:16]
+    if "." in logical_name:
+        stem, ext = logical_name.split(".", 1)
+        return f"{stem}-{prefix}.{ext}"
+    return f"{logical_name}-{prefix}"
+
+
 @pytest.fixture
 def http_fixture(tmp_path: Path):
     """Spin an http.server in the background; yield (base_url, serve_dir)."""
@@ -271,6 +279,81 @@ def test_update_assets_refreshes_remote_channel_manifest_before_download(
         target = assets / arch / hashed
         assert target.exists(), f"{target} not downloaded. stdout={result.stdout}"
         assert target.read_bytes() == blob
+
+
+def test_update_assets_failed_remote_refresh_keeps_previous_manifest_and_assets(
+    tmp_path: Path,
+    http_fixture,
+    installed_layout,
+):
+    base_url, serve_dir, _requested_paths = http_fixture
+    arch = _arch()
+
+    old_files = {
+        "vmlinuz": b"old-working-kernel",
+        "initrd.img": b"old-working-initrd",
+        "rootfs.erofs": b"old-working-rootfs",
+    }
+    new_declared_files = {
+        "vmlinuz": b"new-declared-kernel",
+        "initrd.img": b"new-declared-initrd",
+        "rootfs.erofs": b"new-declared-rootfs",
+    }
+
+    channel_manifest_url = f"{base_url}/assets/stable/manifest.json"
+    channel_manifest = _make_manifest(arch, new_declared_files, NEW_ASSET_VERSION)
+    channel_manifest_path = serve_dir / "assets" / "stable" / "manifest.json"
+    channel_manifest_path.parent.mkdir(parents=True)
+    channel_manifest_path.write_text(json.dumps(channel_manifest), encoding="utf-8")
+
+    release_dir = serve_dir / "assets" / "releases" / NEW_ASSET_VERSION
+    release_dir.mkdir(parents=True)
+    for name, blob in new_declared_files.items():
+        served = b"corrupt-kernel-bytes" if name == "vmlinuz" else blob
+        (release_dir / f"{arch}-{name}").write_bytes(served)
+
+    capsem_home = tmp_path / ".capsem"
+    assets = capsem_home / "assets"
+    arch_assets = assets / arch
+    arch_assets.mkdir(parents=True)
+    old_manifest = _make_manifest(arch, old_files, ASSET_VERSION)
+    (assets / "manifest.json").write_text(json.dumps(old_manifest), encoding="utf-8")
+    old_origin = {
+        "schema": "capsem.manifest_origin.v1",
+        "origin": "package",
+        "source": channel_manifest_url,
+        "packaged_at": "2026-06-16T00:00:00Z",
+    }
+    (assets / "manifest-origin.json").write_text(
+        json.dumps(old_origin, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    for name, blob in old_files.items():
+        target = arch_assets / _hashed_asset_name(name, blob)
+        target.write_bytes(blob)
+        target.chmod(0o444)
+
+    result = _run({"CAPSEM_HOME": str(capsem_home)}, "update", "--assets")
+
+    assert result.returncode != 0, f"expected corrupt channel update to fail: {result.stdout}"
+    err = (result.stdout + result.stderr).lower()
+    assert "hash mismatch" in err, err
+
+    installed_manifest = json.loads((assets / "manifest.json").read_text())
+    assert installed_manifest["assets"]["current"] == ASSET_VERSION
+    assert installed_manifest == old_manifest
+    assert json.loads((assets / "manifest-origin.json").read_text()) == old_origin
+
+    for name, blob in old_files.items():
+        target = arch_assets / _hashed_asset_name(name, blob)
+        assert target.exists(), f"previous working asset was removed: {target}"
+        assert target.read_bytes() == blob
+
+    corrupt_target = arch_assets / _hashed_asset_name(
+        "vmlinuz", new_declared_files["vmlinuz"]
+    )
+    assert not corrupt_target.exists(), "corrupt candidate must not replace old kernel"
+    assert list(arch_assets.glob("*.tmp")) == []
 
 
 def test_update_assets_rejects_bare_asset_base_path(tmp_path: Path, installed_layout):

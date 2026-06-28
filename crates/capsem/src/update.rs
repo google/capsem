@@ -1369,11 +1369,26 @@ fn validate_blake3_hex(field: &str, value: &str) -> Result<()> {
 async fn refresh_assets(manifest_source: Option<&str>) -> Result<()> {
     let assets_dir = capsem_core::asset_manager::default_assets_dir()
         .context("cannot resolve CAPSEM_HOME -- set $HOME or $CAPSEM_HOME")?;
-    if let Some(source) = manifest_source {
-        install_manifest_source(&assets_dir, source).await?;
-    } else if let Some(source) = remote_manifest_asset_source(&assets_dir)? {
+    let refresh_source = if let Some(source) = manifest_source {
+        Some(source.to_string())
+    } else {
+        remote_manifest_asset_source(&assets_dir)?
+    };
+    if let Some(source) = refresh_source {
+        let previous = InstalledManifestSnapshot::capture(&assets_dir)?;
         install_manifest_source(&assets_dir, &source).await?;
+        if let Err(error) = hydrate_installed_assets(&assets_dir).await {
+            previous.restore(&assets_dir)?;
+            return Err(error)
+                .context("asset refresh failed; restored previous installed manifest");
+        }
+        return Ok(());
     }
+
+    hydrate_installed_assets(&assets_dir).await
+}
+
+async fn hydrate_installed_assets(assets_dir: &Path) -> Result<()> {
     let manifest_path = assets_dir.join("manifest.json");
     let manifest_bytes = std::fs::read_to_string(&manifest_path)
         .with_context(|| format!("read {}", manifest_path.display()))?;
@@ -1434,6 +1449,29 @@ async fn refresh_assets(manifest_source: Option<&str>) -> Result<()> {
         println!("Refreshed {} asset(s).", downloaded.len());
     }
     Ok(())
+}
+
+struct InstalledManifestSnapshot {
+    manifest: Option<Vec<u8>>,
+    origin: Option<Vec<u8>>,
+}
+
+impl InstalledManifestSnapshot {
+    fn capture(assets_dir: &Path) -> Result<Self> {
+        Ok(Self {
+            manifest: read_optional_file(&assets_dir.join("manifest.json"))?,
+            origin: read_optional_file(&assets_dir.join("manifest-origin.json"))?,
+        })
+    }
+
+    fn restore(&self, assets_dir: &Path) -> Result<()> {
+        restore_optional_file(&assets_dir.join("manifest.json"), self.manifest.as_deref())?;
+        restore_optional_file(
+            &assets_dir.join("manifest-origin.json"),
+            self.origin.as_deref(),
+        )?;
+        Ok(())
+    }
 }
 
 async fn provision_corp_config(source: &str) -> Result<()> {
@@ -1514,6 +1552,24 @@ fn atomic_write(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
     std::fs::write(&tmp, bytes).with_context(|| format!("write {}", tmp.display()))?;
     std::fs::rename(&tmp, path).with_context(|| format!("replace {}", path.display()))?;
     Ok(())
+}
+
+fn read_optional_file(path: &Path) -> Result<Option<Vec<u8>>> {
+    match std::fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error).with_context(|| format!("read {}", path.display())),
+    }
+}
+
+fn restore_optional_file(path: &Path, bytes: Option<&[u8]>) -> Result<()> {
+    if let Some(bytes) = bytes {
+        atomic_write(path, bytes)
+    } else if path.exists() {
+        std::fs::remove_file(path).with_context(|| format!("remove {}", path.display()))
+    } else {
+        Ok(())
+    }
 }
 
 fn local_manifest_asset_source(assets_dir: &std::path::Path) -> Result<Option<PathBuf>> {
