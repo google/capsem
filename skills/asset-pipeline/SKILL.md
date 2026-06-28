@@ -124,6 +124,10 @@ remain explicit/manual, build VM assets, publish changed blobs to an immutable
 `target/release-channel/` as the `asset-channel-preview` artifact, and call
 `.github/workflows/release-channel.yaml` to deploy `release.capsem.org` only
 after the asset manifest, blobs, and channel checks have been generated.
+Before the asset delta check and channel build, the workflow preserves the live
+channel's `binaries` metadata in the generated asset manifest so VM asset
+releases do not erase package hashes, host SBOM evidence, or binary attestation
+state from `release.capsem.org`.
 The delta emits both `asset_changed` and `asset_blobs_changed`: metadata-only
 asset release changes, such as deprecating an older VM asset release, still
 deploy the release channel without republishing immutable VM blobs. The

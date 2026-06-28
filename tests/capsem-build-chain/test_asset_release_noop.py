@@ -10,6 +10,9 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = PROJECT_ROOT / "scripts" / "check-asset-release-delta.py"
+PRESERVE_BINARY_SCRIPT = (
+    PROJECT_ROOT / "scripts" / "preserve-binary-channel-metadata.py"
+)
 
 
 def _manifest(path: Path, *, version: str, rootfs_hash: str = "a" * 64) -> Path:
@@ -72,6 +75,34 @@ def _update_current_release_metadata(manifest_path: Path, **updates: object) -> 
 def _update_manifest_metadata(manifest_path: Path, **updates: object) -> None:
     data = json.loads(manifest_path.read_text(encoding="utf-8"))
     data.update(updates)
+    manifest_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
+def _add_binary_release_metadata(manifest_path: Path, *, version: str) -> None:
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    data["binaries"] = {
+        "current": version,
+        "releases": {
+            version: {
+                "date": "2030-01-05",
+                "deprecated": False,
+                "min_assets": data["assets"]["current"],
+                "version": version,
+                "files": [
+                    {
+                        "name": f"Capsem-{version}.pkg",
+                        "size": 42,
+                        "sha256": "1" * 64,
+                    },
+                    {
+                        "name": "capsem-sbom.spdx.json",
+                        "size": 43,
+                        "sha256": "2" * 64,
+                    },
+                ],
+            }
+        },
+    }
     manifest_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
@@ -202,6 +233,61 @@ def test_asset_release_delta_deploys_manifest_policy_without_republishing_blobs(
     assert "Release-channel metadata changed" in summary.read_text(encoding="utf-8")
 
 
+def test_asset_release_preserves_live_binary_metadata_before_channel_build(
+    tmp_path: Path,
+) -> None:
+    previous = _manifest(tmp_path / "previous" / "manifest.json", version="2030.0102.1")
+    new = _manifest(tmp_path / "new" / "manifest.json", version="2030.0103.1")
+    _add_binary_release_metadata(previous, version="1.4.2234567890")
+
+    subprocess.run(
+        [
+            str(PRESERVE_BINARY_SCRIPT),
+            "--manifest",
+            str(new),
+            "--previous-manifest-url",
+            f"file://{previous}",
+        ],
+        cwd=PROJECT_ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+    )
+
+    merged = json.loads(new.read_text(encoding="utf-8"))
+    previous_data = json.loads(previous.read_text(encoding="utf-8"))
+    assert merged["assets"]["current"] == "2030.0103.1"
+    assert merged["binaries"] == previous_data["binaries"]
+
+
+def test_asset_release_binary_metadata_preserver_bootstraps_when_previous_missing(
+    tmp_path: Path,
+) -> None:
+    new = _manifest(tmp_path / "new" / "manifest.json", version="2030.0103.1")
+    before = json.loads(new.read_text(encoding="utf-8"))
+
+    result = subprocess.run(
+        [
+            str(PRESERVE_BINARY_SCRIPT),
+            "--manifest",
+            str(new),
+            "--previous-manifest-url",
+            f"file://{tmp_path / 'missing' / 'manifest.json'}",
+            "--allow-missing-previous",
+        ],
+        cwd=PROJECT_ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+    )
+
+    assert json.loads(new.read_text(encoding="utf-8")) == before
+    assert "could not read previous manifest" in result.stderr
+    assert json.loads(result.stdout)["binary_metadata_preserved"] is False
+
+
 def test_asset_release_delta_writes_reviewable_json_output(tmp_path: Path) -> None:
     previous = _manifest(tmp_path / "previous" / "manifest.json", version="2030.0101.1")
     new = _manifest(tmp_path / "new" / "manifest.json", version="2030.0101.2")
@@ -300,8 +386,18 @@ def test_asset_workflow_allows_missing_previous_manifest_for_first_channel_publi
 
 def test_asset_release_noop_gate_controls_preview_and_deploy_workflow() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "release-assets.yaml").read_text()
+    assemble_channel = workflow.split("  assemble-channel:", maxsplit=1)[1].split(
+        "  deploy-channel:", maxsplit=1
+    )[0]
 
     assert "scripts/check-asset-release-delta.py" in workflow
+    assert "scripts/preserve-binary-channel-metadata.py" in workflow
+    assert assemble_channel.index("scripts/preserve-binary-channel-metadata.py") < (
+        assemble_channel.index("scripts/check-asset-release-delta.py")
+    )
+    assert assemble_channel.index("scripts/preserve-binary-channel-metadata.py") < (
+        assemble_channel.index("cargo run -p capsem-admin -- assets channel build")
+    )
     assert (
         '--previous-manifest-url "https://release.capsem.org/assets/$CHANNEL/manifest.json"'
         in workflow

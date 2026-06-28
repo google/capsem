@@ -230,6 +230,14 @@ def test_vm_asset_release_is_manual_and_deploys_asset_channel() -> None:
     assert "cargo run -p capsem-admin -- assets channel build" in workflow
     assert '--manifest "file://$PWD/assets/manifest.json"' in workflow
     assert "cargo run -p capsem-admin -- assets channel check" in workflow
+    assert "name: Preserve binary channel metadata" in workflow
+    assert "scripts/preserve-binary-channel-metadata.py" in workflow
+    assert workflow.index("scripts/preserve-binary-channel-metadata.py") < workflow.index(
+        "scripts/check-asset-release-delta.py"
+    )
+    assert workflow.index("scripts/preserve-binary-channel-metadata.py") < workflow.index(
+        "cargo run -p capsem-admin -- assets channel build"
+    )
     assert "name: asset-release-plan" in workflow
     assert "path: target/asset-release/" in workflow
     assert "asset_changed: ${{ steps.asset-delta.outputs.changed }}" in workflow
@@ -258,6 +266,9 @@ def test_vm_asset_release_is_manual_and_deploys_asset_channel() -> None:
         ) in text
         assert "manifest policy" in text
         assert "refresh_policy" in text
+        assert "`binaries` metadata" in text
+        assert "host SBOM" in text
+        assert "binary attestation" in text
         assert "skip deployment when asset hashes are unchanged" not in text
         assert "asset_blobs_changed" in text
 

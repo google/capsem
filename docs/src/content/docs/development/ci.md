@@ -290,6 +290,11 @@ release produces the manifest, immutable blob paths, and OBOM/provenance
 evidence, then publishes an immutable GitHub Release tagged
 `assets-v<asset-version>` with arch-prefixed `vmlinuz`, `initrd.img`,
 `rootfs.erofs`, and `obom.cdx.json` artifacts before deploying the channel.
+Before comparing the asset delta or building the channel preview, the asset
+workflow overlays the live channel's `binaries` metadata into the generated
+asset manifest so package hashes, host SBOM references, and binary attestation
+state survive VM asset releases. The first channel publication can still
+bootstrap when the previous manifest is unavailable.
 Dry runs upload `asset-release-plan` with the generated upload script so the
 planned `gh release` commands can be reviewed without scraping workflow logs.
 Every asset release run also uploads `asset-release-delta` with the manifest

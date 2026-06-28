@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Fixed the manual VM asset release workflow so asset-channel builds preserve
+  live binary release metadata, host SBOM references, and binary attestation
+  state instead of replacing them with a freshly generated binary section.
 - Fixed VM asset release delta checks so manifest policy changes such as
   `refresh_policy` deploy the release channel without republishing VM blobs.
 - Fixed current VM asset release metadata comparisons so compatibility/date

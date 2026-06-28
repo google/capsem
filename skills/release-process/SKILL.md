@@ -49,7 +49,10 @@ Release tagged `assets-v<asset-version>` with arch-prefixed `vmlinuz`,
 `initrd.img`, `rootfs.erofs`, and `obom.cdx.json` artifacts, uploads the full
 generated site as the `asset-channel-preview` artifact, and calls
 `.github/workflows/release-channel.yaml` to deploy that generated site when not
-running in dry-run mode. Live asset releases must publish GitHub build
+running in dry-run mode. Before the asset delta check and channel build, it
+preserves the live channel's `binaries` metadata in the generated asset
+manifest so VM asset releases do not erase package hashes, host SBOM evidence,
+or binary attestation state from `release.capsem.org`. Live asset releases must publish GitHub build
 provenance attestations for those four arch-prefixed VM asset subjects. In
 dry-run mode the workflow must print the exact `gh release` commands it would
 execute without publishing or attesting, and upload `asset-release-plan` with
