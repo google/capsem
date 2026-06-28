@@ -6,11 +6,13 @@ installed layout detection, and update cache management.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from contextlib import contextmanager
 import hashlib
 import http.server
 import json
 import os
+import platform
 import shutil
 import socketserver
 import subprocess
@@ -31,16 +33,22 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 class _HealthHandler(http.server.BaseHTTPRequestHandler):
     body: bytes = b""
+    files: dict[str, bytes] = {}
 
     def do_GET(self) -> None:
-        if self.path != "/health.json":
+        if self.path == "/health.json":
+            body = self.body
+        elif self.path in self.files:
+            body = self.files[self.path]
+        else:
             self.send_error(404)
             return
         self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(self.body)))
+        content_type = "application/json" if self.path == "/health.json" else "application/octet-stream"
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(self.body)
+        self.wfile.write(body)
 
     def log_message(self, format: str, *args) -> None:
         return
@@ -48,12 +56,29 @@ class _HealthHandler(http.server.BaseHTTPRequestHandler):
 
 @contextmanager
 def _serve_health(body: bytes):
-    handler = type("HealthHandler", (_HealthHandler,), {"body": body})
+    handler = type("HealthHandler", (_HealthHandler,), {"body": body, "files": {}})
     server = socketserver.TCPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
         yield f"http://127.0.0.1:{server.server_address[1]}/health.json"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+@contextmanager
+def _serve_release(health: dict | Callable[[str], dict], files: dict[str, bytes]):
+    handler = type("ReleaseHandler", (_HealthHandler,), {"body": b"", "files": files})
+    server = socketserver.TCPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    health_payload = health(base) if callable(health) else health
+    handler.body = json.dumps(health_payload, sort_keys=True, separators=(",", ":")).encode()
+    thread.start()
+    try:
+        yield base, f"{base}/health.json"
     finally:
         server.shutdown()
         server.server_close()
@@ -66,6 +91,61 @@ def _copy_user_dir_capsem(source_bin: Path, capsem_home: Path) -> Path:
     shutil.copy2(source_bin, target)
     target.chmod(0o755)
     return target
+
+
+def _copy_layout_capsem(source_bin: Path, root: Path, layout: str) -> Path:
+    if layout == "macos_pkg":
+        target = root / "usr" / "local" / "bin" / "capsem"
+    elif layout == "linux_deb":
+        target = root / "usr" / "bin" / "capsem"
+    else:
+        raise ValueError(layout)
+    target.parent.mkdir(parents=True)
+    shutil.copy2(source_bin, target)
+    target.chmod(0o755)
+    return target
+
+
+def _write_fake_sudo(bin_dir: Path, log_path: Path) -> None:
+    sudo = bin_dir / "sudo"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    sudo.write_text(
+        "#!/bin/sh\n"
+        "printf '%s\\n' \"$*\" >> \"$CAPSEM_FAKE_SUDO_LOG\"\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    sudo.chmod(0o755)
+    log_path.write_text("", encoding="utf-8")
+
+
+def _deb_arch() -> str:
+    machine = platform.machine().lower()
+    return "arm64" if machine in {"aarch64", "arm64"} else "amd64"
+
+
+def _binary_update_health(base_url: str, installer_name: str, payload: bytes) -> dict:
+    return {
+        "schema": "capsem.assets_channel.health.v1",
+        "updates": {
+            "binary": {
+                "latest": "99.99.99",
+                "current": "0.0.0",
+                "files": [
+                    {
+                        "name": installer_name,
+                        "url": f"{base_url}/{installer_name}",
+                        "sha256": hashlib.sha256(payload).hexdigest(),
+                        "size": len(payload),
+                    }
+                ],
+            },
+            "assets": {
+                "latest": "2030.0101.1",
+                "current": "2030.0101.1",
+            },
+        },
+    }
 
 
 def _fresh_capsem_binary() -> Path | None:
@@ -155,6 +235,90 @@ def test_update_fetches_release_health_and_writes_channel_cache(
     assert cache["latest_profiles"] == "profiles-2030.0101.1"
     assert cache["profiles_state"] == "published"
     assert cache["images_state"] == "not_published"
+
+
+def test_macos_update_yes_applies_verified_pkg_with_package_manager(
+    tmp_path: Path,
+) -> None:
+    capsem_home = tmp_path / ".capsem"
+    fresh_capsem = _fresh_capsem_binary()
+    assert fresh_capsem is not None
+    capsem = _copy_layout_capsem(fresh_capsem, tmp_path, "macos_pkg")
+    fake_bin = tmp_path / "fake-bin"
+    sudo_log = tmp_path / "sudo.log"
+    _write_fake_sudo(fake_bin, sudo_log)
+    installer_name = "Capsem-99.99.99.pkg"
+    payload = b"verified macos package payload"
+
+    with _serve_release(
+        lambda base_url: _binary_update_health(base_url, installer_name, payload),
+        {f"/{installer_name}": payload},
+    ) as (_, health_url):
+        result = subprocess.run(
+            [str(capsem), "update", "--yes"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env={
+                **os.environ,
+                "CAPSEM_HOME": str(capsem_home),
+                "CAPSEM_RUN_DIR": str(capsem_home / "run"),
+                "CAPSEM_RELEASE_HEALTH_URL": health_url,
+                "CAPSEM_FAKE_SUDO_LOG": str(sudo_log),
+                "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}",
+            },
+        )
+
+    assert result.returncode == 0, (
+        f"capsem update --yes failed\nstdout={result.stdout}\nstderr={result.stderr}"
+    )
+    cached = capsem_home / "updates" / "installers" / installer_name
+    assert cached.read_bytes() == payload
+    assert f"/usr/sbin/installer -pkg {cached} -target /\n" == sudo_log.read_text(
+        encoding="utf-8"
+    )
+    assert "Binary update applied." in result.stdout
+
+
+def test_linux_update_yes_applies_verified_deb_with_package_manager(
+    tmp_path: Path,
+) -> None:
+    capsem_home = tmp_path / ".capsem"
+    fresh_capsem = _fresh_capsem_binary()
+    assert fresh_capsem is not None
+    capsem = _copy_layout_capsem(fresh_capsem, tmp_path, "linux_deb")
+    fake_bin = tmp_path / "fake-bin"
+    sudo_log = tmp_path / "sudo.log"
+    _write_fake_sudo(fake_bin, sudo_log)
+    installer_name = f"Capsem_99.99.99_{_deb_arch()}.deb"
+    payload = b"verified linux package payload"
+
+    with _serve_release(
+        lambda base_url: _binary_update_health(base_url, installer_name, payload),
+        {f"/{installer_name}": payload},
+    ) as (_, health_url):
+        result = subprocess.run(
+            [str(capsem), "update", "--yes"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env={
+                **os.environ,
+                "CAPSEM_HOME": str(capsem_home),
+                "CAPSEM_RUN_DIR": str(capsem_home / "run"),
+                "CAPSEM_RELEASE_HEALTH_URL": health_url,
+                "CAPSEM_FAKE_SUDO_LOG": str(sudo_log),
+                "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}",
+            },
+        )
+
+    assert result.returncode == 0, (
+        f"capsem update --yes failed\nstdout={result.stdout}\nstderr={result.stderr}"
+    )
+    cached = capsem_home / "updates" / "installers" / installer_name
+    assert cached.read_bytes() == payload
+    assert f"apt-get install --yes {cached}\n" == sudo_log.read_text(encoding="utf-8")
+    assert "Binary update applied." in result.stdout
 
 
 @pytest.mark.live_system

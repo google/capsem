@@ -99,6 +99,24 @@ impl BinaryInstallerApplyPlan {
     }
 }
 
+async fn apply_binary_installer_plan(plan: &BinaryInstallerApplyPlan) -> Result<()> {
+    for command in &plan.commands {
+        let line = command.command_line();
+        info!("applying binary update with package manager: {line}");
+        let status = tokio::process::Command::new(&command.program)
+            .args(&command.args)
+            .status()
+            .await
+            .with_context(|| format!("run binary update apply command: {line}"))?;
+        if !status.success() {
+            anyhow::bail!(
+                "binary update apply command failed with {status}: {line}. Current installation was left for the package manager to preserve or repair."
+            );
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct BinaryInstallerApplyCommand {
     program: String,
@@ -888,8 +906,8 @@ fn is_newer(latest: &str, current: &str) -> bool {
 /// Run the update flow.
 ///
 /// With `assets = true`, refresh only the VM asset files referenced by the
-/// locally-installed manifest. Binary swap is still scoped to the orthogonal
-/// CI sprint and remains a "rebuild from source" step for dev builds.
+/// locally-installed manifest. Binary updates download the matching verified
+/// package and hand it to the platform package manager when `--yes` is set.
 pub async fn run_update(
     yes: bool,
     assets: bool,
@@ -952,7 +970,8 @@ pub async fn run_update(
             for command in plan.command_lines() {
                 println!("  {command}");
             }
-            println!("Automatic package-manager execution is not yet enabled; run the command above to apply this verified binary update.");
+            apply_binary_installer_plan(&plan).await?;
+            println!("Binary update applied. Restart Capsem to use {latest}.");
         } else {
             println!("Re-run with --yes to download and verify the installer package.");
         }
