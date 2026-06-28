@@ -75,6 +75,37 @@ describe('update status model', () => {
     expect(updateTrackVersion(status.binary)).toBe('1.4.0 -> 1.4.1');
   });
 
+  it('summarizes mixed binary and VM asset updates without profile noise', () => {
+    const status = updateStatus({
+      binary: {
+        current: '1.4.0',
+        latest: '1.4.1',
+        update_available: true,
+        state: 'update_available',
+        compatibility: 'compatible',
+      },
+      assets: {
+        current: 'assets-1',
+        latest: 'assets-2',
+        update_available: true,
+        state: 'update_available',
+        compatibility: 'compatible',
+      },
+    });
+
+    expect(updateAvailableTracks(status)).toEqual(['binary', 'assets']);
+    expect(updateSummary(status)).toBe('Binary, VM assets available');
+    expect(profileDashboardUpdateSummary(status)).toBe(
+      'VM assets available for future sessions',
+    );
+    expect(profileDashboardUpdateRows(status).map(row => row.key)).toEqual([
+      'profiles',
+      'assets',
+      'images',
+    ]);
+    expect(profileDashboardUpdateRows(status).map(row => row.label)).not.toContain('Binary');
+  });
+
   it('treats profile catalog updates as a first-class available track', () => {
     const status = updateStatus({
       profiles: {

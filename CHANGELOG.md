@@ -52,6 +52,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the public channel.
 - Added install-side verification that profile catalog updates leave existing
   VM asset pin registries and installed asset manifests untouched.
+- Added frontend update-status coverage for mixed binary and VM asset update
+  summaries without treating binary releases as profile state.
 - Added tray menu coverage for mixed binary and VM asset update state.
 - Added TUI smoke-matrix coverage for mixed binary and VM asset update state.
 - Added release-doctor coverage for the binary release package hydration smoke
