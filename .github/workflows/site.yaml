@@ -6,9 +6,6 @@ on:
       - '.github/workflows/site.yaml'
   push:
     branches: [main]
-    paths:
-      - 'site/**'
-      - '.github/workflows/site.yaml'
 
 jobs:
   build:

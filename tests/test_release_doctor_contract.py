@@ -397,12 +397,18 @@ def test_docs_and_marketing_sites_build_on_pr_and_deploy_on_main_only() -> None:
 
     for workflow_name, directory, project_name, smoke_name, site_url, failure in expectations:
         workflow = _workflow_text(workflow_name)
+        trigger = workflow.split("\njobs:", maxsplit=1)[0]
+        pull_request_trigger = trigger.split("  pull_request:", maxsplit=1)[1].split(
+            "  push:", maxsplit=1
+        )[0]
+        push_trigger = trigger.split("  push:", maxsplit=1)[1]
 
         assert "pull_request:" in workflow, workflow_name
         assert "push:" in workflow, workflow_name
         assert "branches: [main]" in workflow, workflow_name
-        assert f"'{directory}/**'" in workflow, workflow_name
-        assert f"'.github/workflows/{workflow_name}'" in workflow, workflow_name
+        assert f"'{directory}/**'" in pull_request_trigger, workflow_name
+        assert f"'.github/workflows/{workflow_name}'" in pull_request_trigger, workflow_name
+        assert "paths:" not in push_trigger, workflow_name
         assert f"cd {directory} && pnpm install --frozen-lockfile" in workflow
         assert f"cd {directory} && pnpm run build" in workflow
         assert (
@@ -616,11 +622,11 @@ def test_ci_docs_describes_three_independent_publication_rails() -> None:
         in docs
     )
     assert (
-        "| `docs.yaml` | Pull requests and push to main (docs changes) | Build docs on PRs; deploy docs.capsem.org on main, then smoke the live docs site |"
+        "| `docs.yaml` | Docs pull requests and every push to main | Build docs on docs PRs; deploy docs.capsem.org on each main merge, then smoke the live docs site |"
         in docs
     )
     assert (
-        "| `site.yaml` | Pull requests and push to main (site changes) | Build marketing site on PRs; deploy capsem.org on main, then smoke the live marketing site |"
+        "| `site.yaml` | Site pull requests and every push to main | Build marketing on site PRs; deploy capsem.org on each main merge, then smoke the live marketing site |"
         in docs
     )
     assert (

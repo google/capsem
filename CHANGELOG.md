@@ -100,6 +100,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   paths.
 
 ### Changed
+- Changed docs and marketing workflows so every push to `main` redeploys and
+  smokes the public sites while pull-request builds remain path-filtered.
 - Changed update status reporting so VM asset and image tracks can surface
   blocked release-channel candidates, including asset releases that require a
   newer Capsem binary.

@@ -14,8 +14,8 @@ Capsem uses GitHub Actions for continuous integration and release automation.
 | `ci.yaml` | Pull requests and push to main | PR quality gate: Rust unit/integration, frontend, Python contracts, install checks, and explicit runner substitutions |
 | `release.yaml` | Tag push (`v*`) | Build apps (macOS + Linux), package with the current public asset manifest, create GitHub release, then update release.capsem.org binary metadata |
 | `release-assets.yaml` | Manual | Build VM assets, generate `assets/manifest.json`, and optionally deploy the asset channel |
-| `docs.yaml` | Pull requests and push to main (docs changes) | Build docs on PRs; deploy docs.capsem.org on main, then smoke the live docs site |
-| `site.yaml` | Pull requests and push to main (site changes) | Build marketing site on PRs; deploy capsem.org on main, then smoke the live marketing site |
+| `docs.yaml` | Docs pull requests and every push to main | Build docs on docs PRs; deploy docs.capsem.org on each main merge, then smoke the live docs site |
+| `site.yaml` | Site pull requests and every push to main | Build marketing on site PRs; deploy capsem.org on each main merge, then smoke the live marketing site |
 | `release-channel.yaml` | Called by binary or asset release | Deploy release.capsem.org from the generated release-channel site artifact |
 
 ## CI workflow (`ci.yaml`)
