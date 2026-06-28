@@ -1572,6 +1572,11 @@ fn validate_assets_channel_health(
         "health.json profile update min assets mismatch",
     )?;
     let asset_files = require_json_array(health, &["assets", "files"])?;
+    let current_asset_files = current_asset_file_refs(&manifest.assets.current, current_release);
+    let current_asset_subjects = current_asset_files
+        .iter()
+        .map(|file| file.url.as_str())
+        .collect::<BTreeSet<_>>();
     let vm_oboms = require_json_array(health, &["evidence", "vm_oboms"])?;
     let host_sboms = require_json_array(health, &["evidence", "host_sboms"])?;
     let host_binary_files = require_json_array(health, &["evidence", "host_binary_files"])?;
@@ -1646,27 +1651,35 @@ fn validate_assets_channel_health(
             ));
         }
     }
+    let mut saw_vm_asset_attestation = false;
     for attestation in attestations {
         let subjects = attestation
             .get("subjects")
             .and_then(|value| value.as_array())
-            .ok_or_else(|| anyhow!("health.json binary attestation subjects missing"))?;
+            .ok_or_else(|| anyhow!("health.json attestation subjects missing"))?;
         if subjects.is_empty() {
-            return Err(anyhow!("health.json binary attestation subjects empty"));
+            return Err(anyhow!("health.json attestation subjects empty"));
         }
         for subject in subjects {
             let subject_url = subject
                 .as_str()
-                .ok_or_else(|| anyhow!("health.json binary attestation subject is not a string"))?;
-            if !host_binary_files
+                .ok_or_else(|| anyhow!("health.json attestation subject is not a string"))?;
+            let is_host_binary_subject = host_binary_files
                 .iter()
-                .any(|item| item.get("url").and_then(|value| value.as_str()) == Some(subject_url))
-            {
+                .any(|item| item.get("url").and_then(|value| value.as_str()) == Some(subject_url));
+            let is_vm_asset_subject = current_asset_subjects.contains(subject_url);
+            if is_vm_asset_subject {
+                saw_vm_asset_attestation = true;
+            }
+            if !is_host_binary_subject && !is_vm_asset_subject {
                 return Err(anyhow!(
-                    "health.json binary attestation subject {subject_url} missing from host binary files"
+                    "health.json attestation subject {subject_url} missing from host binary files and VM asset files"
                 ));
             }
         }
+    }
+    if !current_asset_subjects.is_empty() && !saw_vm_asset_attestation {
+        return Err(anyhow!("health.json VM asset attestation evidence missing"));
     }
     let mut saw_obom = false;
     for (arch, assets) in &current_release.arches {
@@ -1853,7 +1866,8 @@ fn assets_channel_index(
         .filter(|file| is_host_sbom_file(&file.name))
         .cloned()
         .collect();
-    let attestations = current_binary_attestations(&current_binary_files);
+    let mut attestations = current_binary_attestations(&current_binary_files);
+    attestations.extend(current_asset_attestations(&current_asset_files));
     AssetsChannelIndex {
         schema_version: 1,
         channel: channel.to_string(),
@@ -2214,6 +2228,22 @@ fn current_binary_attestations(files: &[AssetsChannelBinaryFile]) -> Vec<AssetsC
         });
     }
     attestations
+}
+
+fn current_asset_attestations(files: &[AssetsChannelAssetFile]) -> Vec<AssetsChannelAttestation> {
+    if files.is_empty() {
+        return Vec::new();
+    }
+    let subjects = files
+        .iter()
+        .map(|file| file.url.clone())
+        .collect::<Vec<_>>();
+    vec![AssetsChannelAttestation {
+        name: "github_attestations_vm_assets".to_string(),
+        scope: "vm_assets".to_string(),
+        workflow: ".github/workflows/release-assets.yaml".to_string(),
+        subjects,
+    }]
 }
 
 fn render_assets_channel_health(index: &AssetsChannelIndex) -> Result<String> {
@@ -6256,6 +6286,14 @@ decision = "block"
         assert_eq!(
             health["evidence"]["attestations"][1]["name"].as_str(),
             Some("github_attestations_host_sbom")
+        );
+        assert_eq!(
+            health["evidence"]["attestations"][2]["name"].as_str(),
+            Some("github_attestations_vm_assets")
+        );
+        assert_eq!(
+            health["evidence"]["attestations"][2]["subjects"][0].as_str(),
+            Some("/assets/releases/2030.0101.1/arm64-initrd.img")
         );
         assert_eq!(
             health["updates"]["binary"]["latest"].as_str(),

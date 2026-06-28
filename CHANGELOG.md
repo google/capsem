@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added VM asset provenance attestation references to the release-channel
+  evidence index alongside OBOM and binary SBOM evidence.
 - Added supply-chain evidence to update status responses, including manifest
   origin/hash, channel index hash, host SBOM, VM OBOM, and attestation
   references for UI, tray, TUI, and support-bundle consumers.

@@ -105,7 +105,7 @@ references, host SBOM references, binary file metadata when present, an explicit
 `latest` targets for binary/assets/profile/image freshness checks, and a
 profile catalog block with revision, published catalog artifact path, BLAKE3 digest,
 compatibility minimums, and whether the advertised profile catalog requires a
-newer binary or VM asset set, plus an attestations slot.
+newer binary or VM asset set, plus host and VM asset attestation references.
 
 The manual asset workflow is `.github/workflows/release-assets.yaml`. It should
 remain explicit/manual, build VM assets, publish changed blobs to an immutable

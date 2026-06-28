@@ -29,7 +29,7 @@ references, host SBOM references, binary file metadata when present, an explicit
 `latest` targets for binary/assets/profile/image freshness checks, and a
 profile catalog block with revision, published catalog artifact path, BLAKE3 digest,
 compatibility minimums, and whether the advertised profile catalog requires a
-newer binary or VM asset set, plus an attestations slot.
+newer binary or VM asset set, plus host and VM asset attestation references.
 Do not add a separate release-channel source directory or hand-authored channel
 manifest. VM asset releases must deploy `release.capsem.org` after producing the
 asset manifest/evidence. Binary releases remain tag-triggered, update only the
