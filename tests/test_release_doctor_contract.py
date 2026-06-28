@@ -310,6 +310,7 @@ def test_release_channel_cloudflare_prerequisites_are_documented() -> None:
     workflow = _workflow_text("release-channel.yaml")
     docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
     release_skill = (PROJECT_ROOT / "skills/release-process/SKILL.md").read_text()
+    asset_skill = (PROJECT_ROOT / "skills/asset-pipeline/SKILL.md").read_text()
 
     for required in (
         "CLOUDFLARE_ACCOUNT_ID",
@@ -320,10 +321,12 @@ def test_release_channel_cloudflare_prerequisites_are_documented() -> None:
         assert required in workflow
         assert required in docs
         assert required in release_skill
+        assert required in asset_skill
 
     docs_text = " ".join(docs.split())
     release_skill_text = " ".join(release_skill.split())
-    for text in (docs_text, release_skill_text):
+    asset_skill_text = " ".join(asset_skill.split())
+    for text in (docs_text, release_skill_text, asset_skill_text):
         text_lower = text.lower()
         assert "Release-channel Cloudflare prerequisites" in text
         assert "Cloudflare Pages project `capsem-release`" in text

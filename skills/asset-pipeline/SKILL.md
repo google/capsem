@@ -127,6 +127,16 @@ release-channel pointers (`/`, `/health.json`, and
 immutable asset and profile release artifacts stay
 `public, max-age=31536000, immutable`.
 
+### Release-channel Cloudflare prerequisites
+
+Before running a live binary or VM asset channel deploy, create or verify the
+Cloudflare Pages project `capsem-release`, attach the `release.capsem.org`
+custom domain, and configure `CLOUDFLARE_ACCOUNT_ID` plus
+`CLOUDFLARE_API_TOKEN` in GitHub Actions secrets. `release-channel.yaml` fails
+before deploy if either secret is missing, then smokes
+`https://release.capsem.org/`, `/health.json`, and the channel manifest through
+the public custom domain after Cloudflare publishes the generated site.
+
 ## Live release activation order
 
 Use this order when turning the 1.4 release rails on. Do not skip ahead because
