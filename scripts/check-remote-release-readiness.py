@@ -411,6 +411,10 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
             profile_source,
             health_profiles.get("hash"),
             health_profiles.get("revision"),
+            current_binary,
+            current_assets,
+            expected_profile_compatibility,
+            {"binary": False, "assets": False},
         )
     )
     if not isinstance(health_update_assets, dict):
@@ -870,6 +874,10 @@ def check_profile_catalog_artifact(
     source: Any,
     expected_hash: Any,
     expected_revision: Any,
+    expected_current_binary: Any,
+    expected_current_assets: Any,
+    expected_compatibility: dict[str, Any],
+    expected_requires_newer: dict[str, bool],
 ) -> list[str]:
     if not isinstance(source, str):
         return ["profile catalog source missing or not a string"]
@@ -917,6 +925,26 @@ def check_profile_catalog_artifact(
         failures.append(f"profile catalog {source} schema mismatch")
     if document.get("revision") != expected_revision:
         failures.append(f"profile catalog {source} revision mismatch")
+    if document.get("state") != "current":
+        failures.append(f"profile catalog {source} state mismatch")
+    if document.get("current_binary") != expected_current_binary:
+        failures.append(f"profile catalog {source} current_binary mismatch")
+    if document.get("current_assets") != expected_current_assets:
+        failures.append(f"profile catalog {source} current_assets mismatch")
+    actual_compatibility = document.get("compatibility")
+    catalog_expected_compatibility = {
+        **expected_compatibility,
+        "requires_newer_binary": expected_requires_newer["binary"],
+        "requires_newer_assets": expected_requires_newer["assets"],
+    }
+    for field, expected in catalog_expected_compatibility.items():
+        actual = (
+            actual_compatibility.get(field)
+            if isinstance(actual_compatibility, dict)
+            else None
+        )
+        if actual != expected:
+            failures.append(f"profile catalog {source} compatibility {field} mismatch")
     return failures
 
 

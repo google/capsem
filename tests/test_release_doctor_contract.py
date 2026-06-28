@@ -376,6 +376,11 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
     assert "profile catalog {source} blake3 mismatch" in workflow
     assert "profile catalog {source} must not contain file:// URLs" in workflow
     assert "profile catalog {source} revision mismatch" in workflow
+    assert "profile catalog {source} current_binary mismatch" in workflow
+    assert "profile catalog {source} current_assets mismatch" in workflow
+    assert "catalog_expected_compatibility" in workflow
+    assert "requires_newer_assets" in workflow
+    assert "profile catalog {source} compatibility {field} mismatch" in workflow
     assert "health updates.{key}.latest missing or not a string" in workflow
     assert 'for key in ("profiles", "images")' in workflow
     assert "health updates.{key}.latest missing" in workflow
@@ -2097,6 +2102,189 @@ def test_remote_readiness_rejects_profile_catalog_artifact_drift() -> None:
     assert not result.ok
     assert f"profile catalog {catalog_url} blake3 mismatch" in result.detail
     assert f"profile catalog {catalog_url} revision mismatch" in result.detail
+
+
+def test_remote_readiness_rejects_profile_catalog_content_drift() -> None:
+    checker = _readiness_checker_module()
+    catalog_url = "/profiles/releases/profiles-2030.0101.1/catalog.json"
+    catalog_document = {
+        "schema": "capsem.profile_catalog.v1",
+        "revision": "profiles-2030.0101.1",
+        "state": "stale",
+        "current_binary": "1.3.0",
+        "current_assets": "2030.0101.0",
+        "compatibility": {
+            "binary": "1.3.0",
+            "assets": "2030.0101.0",
+            "min_binary": "1.3.0",
+            "min_assets": "2030.0101.0",
+            "requires_newer_binary": True,
+            "requires_newer_assets": True,
+        },
+        "profiles": [],
+    }
+    catalog_bytes = (json.dumps(catalog_document, sort_keys=True) + "\n").encode()
+    catalog_hash = checker.blake3.blake3(catalog_bytes).hexdigest()
+
+    checker.fetch_text = lambda _url: checker.FetchText(
+        text=(
+            "1.4.0 2030.0101.1 2030-01-01 "
+            f"2030-01-01T00:00:00Z profiles-2030.0101.1 {catalog_url} "
+            "/assets/stable/manifest.json"
+        )
+    )
+    checker.fetch_json = lambda url: checker.FetchJson(
+        data={
+            "schema": "capsem.assets_channel.health.v1",
+            "ok": True,
+            "channel": "stable",
+            "state": "published",
+            "generated_at": "2030-01-01T00:00:00Z",
+            "urls": {
+                "index": "/index.html",
+                "health": "/health.json",
+                "manifest": "/assets/stable/manifest.json",
+                "asset_base": "/assets/releases",
+                "profile_catalog": catalog_url,
+            },
+            "current": {"binary": "1.4.0", "assets": "2030.0101.1"},
+            "asset_releases": [
+                {
+                    "version": "2030.0101.1",
+                    "date": "2030-01-01",
+                    "state": "current",
+                    "deprecated": False,
+                    "min_binary": "1.4.0",
+                }
+            ],
+            "binary": {"version": "1.4.0", "state": "current", "files": []},
+            "assets": {
+                "version": "2030.0101.1",
+                "state": "current",
+                "compatibility": {"binary": "1.4.0", "min_binary": "1.4.0"},
+                "requires_newer": {"binary": False},
+                "files": [],
+            },
+            "profiles": {
+                "revision": "profiles-2030.0101.1",
+                "source": catalog_url,
+                "hash": catalog_hash,
+                "state": "current",
+                "compatibility": {
+                    "binary": "1.4.0",
+                    "assets": "2030.0101.1",
+                    "min_binary": "1.4.0",
+                    "min_assets": "2030.0101.1",
+                },
+                "requires_newer": {"binary": False, "assets": False},
+            },
+            "updates": {
+                "binary": {
+                    "latest": "1.4.0",
+                    "current": "1.4.0",
+                    "state": "current",
+                    "source": "manifest.binaries.current",
+                    "files": [],
+                },
+                "assets": {
+                    "latest": "2030.0101.1",
+                    "current": "2030.0101.1",
+                    "state": "current",
+                    "source": "manifest.assets.current",
+                    "manifest": "/assets/stable/manifest.json",
+                    "asset_base": "/assets/releases",
+                    "compatibility": {"binary": "1.4.0", "min_binary": "1.4.0"},
+                    "requires_newer": {"binary": False},
+                },
+                "profiles": {
+                    "latest": "profiles-2030.0101.1",
+                    "current": "profiles-2030.0101.1",
+                    "state": "current",
+                    "source": catalog_url,
+                    "hash": catalog_hash,
+                    "compatibility": {
+                        "binary": "1.4.0",
+                        "assets": "2030.0101.1",
+                        "min_binary": "1.4.0",
+                        "min_assets": "2030.0101.1",
+                    },
+                    "requires_newer": {"binary": False, "assets": False},
+                },
+                "images": {
+                    "latest": None,
+                    "current": None,
+                    "state": "not_published",
+                    "source": "not_in_asset_channel",
+                },
+            },
+            "evidence": {
+                "vm_oboms": [],
+                "host_sboms": [],
+                "host_binary_files": [],
+                "attestations": [],
+            },
+        }
+        if url.endswith("/health.json")
+        else {
+            "format": 2,
+            "assets": {
+                "current": "2030.0101.1",
+                "releases": {
+                    "2030.0101.1": {
+                        "date": "2030-01-01",
+                        "deprecated": False,
+                        "min_binary": "1.4.0",
+                        "arches": {},
+                    }
+                },
+            },
+            "binaries": {
+                "current": "1.4.0",
+                "releases": {
+                    "1.4.0": {
+                        "date": "2030-01-01",
+                        "deprecated": False,
+                        "min_assets": "2030.0101.1",
+                        "files": [],
+                    }
+                },
+            },
+        }
+    )
+    checker.fetch_bytes = lambda url: checker.FetchBytes(
+        catalog_bytes
+        if url == f"https://release.capsem.org{catalog_url}"
+        else b"",
+        None
+        if url == f"https://release.capsem.org{catalog_url}"
+        else f"unexpected fetch {url}",
+    )
+    checker.fetch_headers = lambda url: checker.FetchHeaders(
+        headers={
+            "cache-control": "public, max-age=31536000, immutable"
+            if "/profiles/releases/" in url
+            else "no-cache, must-revalidate"
+        }
+    )
+
+    result = checker.check_release_site_contract("https://release.capsem.org", "stable")
+
+    assert not result.ok
+    assert f"profile catalog {catalog_url} state mismatch" in result.detail
+    assert f"profile catalog {catalog_url} current_binary mismatch" in result.detail
+    assert f"profile catalog {catalog_url} current_assets mismatch" in result.detail
+    assert f"profile catalog {catalog_url} compatibility binary mismatch" in result.detail
+    assert f"profile catalog {catalog_url} compatibility assets mismatch" in result.detail
+    assert f"profile catalog {catalog_url} compatibility min_binary mismatch" in result.detail
+    assert f"profile catalog {catalog_url} compatibility min_assets mismatch" in result.detail
+    assert (
+        f"profile catalog {catalog_url} compatibility requires_newer_binary mismatch"
+        in result.detail
+    )
+    assert (
+        f"profile catalog {catalog_url} compatibility requires_newer_assets mismatch"
+        in result.detail
+    )
 
 
 def test_remote_readiness_rejects_profile_update_metadata_drift() -> None:

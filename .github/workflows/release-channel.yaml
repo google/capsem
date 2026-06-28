@@ -312,7 +312,15 @@ jobs:
               for url in sorted(set(files_by_url) - expected_urls):
                   failures.append(f"{label} unexpected host binary file {url}")
 
-          def check_profile_catalog_artifact(source, expected_hash, expected_revision):
+          def check_profile_catalog_artifact(
+              source,
+              expected_hash,
+              expected_revision,
+              expected_current_binary,
+              expected_current_assets,
+              expected_compatibility,
+              expected_requires_newer,
+          ):
               if not isinstance(source, str):
                   failures.append("profile catalog source missing or not a string")
                   return
@@ -354,6 +362,22 @@ jobs:
                   failures.append(f"profile catalog {source} schema mismatch")
               if document.get("revision") != expected_revision:
                   failures.append(f"profile catalog {source} revision mismatch")
+              if document.get("state") != "current":
+                  failures.append(f"profile catalog {source} state mismatch")
+              if document.get("current_binary") != expected_current_binary:
+                  failures.append(f"profile catalog {source} current_binary mismatch")
+              if document.get("current_assets") != expected_current_assets:
+                  failures.append(f"profile catalog {source} current_assets mismatch")
+              actual_compatibility = document.get("compatibility")
+              catalog_expected_compatibility = {
+                  **expected_compatibility,
+                  "requires_newer_binary": expected_requires_newer["binary"],
+                  "requires_newer_assets": expected_requires_newer["assets"],
+              }
+              for field, expected in catalog_expected_compatibility.items():
+                  actual = actual_compatibility.get(field) if isinstance(actual_compatibility, dict) else None
+                  if actual != expected:
+                      failures.append(f"profile catalog {source} compatibility {field} mismatch")
 
           expected_manifest = f"/assets/{channel}/manifest.json"
           failures = []
@@ -467,6 +491,10 @@ jobs:
               health.get("profiles", {}).get("source"),
               health.get("profiles", {}).get("hash"),
               health.get("profiles", {}).get("revision"),
+              current_binary,
+              current_assets,
+              expected_profile_compatibility,
+              {"binary": False, "assets": False},
           )
           for key in ("binary", "assets"):
               if not isinstance(updates.get(key, {}).get("latest"), str):

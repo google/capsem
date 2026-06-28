@@ -1526,6 +1526,12 @@ fn validate_assets_channel_health(
         "/assets/releases",
         "health.json asset update base mismatch",
     )?;
+    let current_release = manifest
+        .assets
+        .releases
+        .get(&manifest.assets.current)
+        .ok_or_else(|| anyhow!("channel manifest current asset release is missing"))?;
+    let current_binary_release = manifest.binaries.releases.get(&manifest.binaries.current);
     let expected_profile_revision = require_json_string(health, &["profiles", "revision"])?;
     let expected_profile_source = require_json_string(health, &["profiles", "source"])?;
     let expected_profile_hash = require_json_string(health, &["profiles", "hash"])?;
@@ -1540,6 +1546,12 @@ fn validate_assets_channel_health(
         &expected_profile_source,
         &expected_profile_hash,
         &expected_profile_revision,
+        &manifest.binaries.current,
+        &manifest.assets.current,
+        &current_release.min_binary,
+        current_binary_release
+            .map(|release| release.min_assets.as_str())
+            .unwrap_or(""),
     )?;
     require_json_str(
         health,
@@ -1643,12 +1655,6 @@ fn validate_assets_channel_health(
         "health.json image update source mismatch",
     )?;
 
-    let current_release = manifest
-        .assets
-        .releases
-        .get(&manifest.assets.current)
-        .ok_or_else(|| anyhow!("channel manifest current asset release is missing"))?;
-    let current_binary_release = manifest.binaries.releases.get(&manifest.binaries.current);
     require_json_str(
         health,
         &["profiles", "compatibility", "min_binary"],
@@ -1965,6 +1971,10 @@ fn validate_profile_catalog_artifact(
     source: &str,
     expected_hash: &str,
     expected_revision: &str,
+    expected_current_binary: &str,
+    expected_current_assets: &str,
+    expected_min_binary: &str,
+    expected_min_assets: &str,
 ) -> Result<()> {
     if !source.starts_with("/profiles/releases/") || !source.ends_with("/catalog.json") {
         return Err(anyhow!(
@@ -2000,6 +2010,60 @@ fn validate_profile_catalog_artifact(
         &["revision"],
         expected_revision,
         "profile catalog revision mismatch",
+    )?;
+    require_json_str(
+        &catalog,
+        &["state"],
+        "current",
+        "profile catalog state mismatch",
+    )?;
+    require_json_str(
+        &catalog,
+        &["current_binary"],
+        expected_current_binary,
+        "profile catalog current binary mismatch",
+    )?;
+    require_json_str(
+        &catalog,
+        &["current_assets"],
+        expected_current_assets,
+        "profile catalog current assets mismatch",
+    )?;
+    require_json_str(
+        &catalog,
+        &["compatibility", "binary"],
+        expected_current_binary,
+        "profile catalog binary compatibility mismatch",
+    )?;
+    require_json_str(
+        &catalog,
+        &["compatibility", "assets"],
+        expected_current_assets,
+        "profile catalog asset compatibility mismatch",
+    )?;
+    require_json_str(
+        &catalog,
+        &["compatibility", "min_binary"],
+        expected_min_binary,
+        "profile catalog min binary mismatch",
+    )?;
+    require_json_str(
+        &catalog,
+        &["compatibility", "min_assets"],
+        expected_min_assets,
+        "profile catalog min assets mismatch",
+    )?;
+    require_json_bool(
+        &catalog,
+        &["compatibility", "requires_newer_binary"],
+        false,
+        "profile catalog binary requirement mismatch",
+    )?;
+    require_json_bool(
+        &catalog,
+        &["compatibility", "requires_newer_assets"],
+        false,
+        "profile catalog asset requirement mismatch",
     )?;
     Ok(())
 }

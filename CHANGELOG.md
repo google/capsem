@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Fixed live release-site smoke/readiness validation so the immutable profile
+  catalog artifact's state, current binary/assets targets, and compatibility
+  fields cannot drift from `health.json` and the active channel manifest.
+- Fixed live release-site smoke/readiness validation so the immutable profile
   catalog artifact is fetched and checked against its advertised BLAKE3 hash,
   schema, revision, and URL policy.
 - Fixed live release-site smoke/readiness validation so current host binary

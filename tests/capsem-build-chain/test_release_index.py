@@ -665,6 +665,63 @@ def test_release_index_check_rejects_health_manifest_drift(tmp_path: Path) -> No
     assert "health.json asset update manifest mismatch" in result.stderr
 
 
+def test_release_index_check_rejects_profile_catalog_content_drift(tmp_path: Path) -> None:
+    manifest_path = _write_release_manifest(tmp_path)
+    profiles_dir = _write_profile_catalog(tmp_path)
+    dist = tmp_path / "target" / "release-channel"
+    _run_admin(
+        "assets",
+        "channel",
+        "build",
+        "--manifest",
+        f"file://{manifest_path}",
+        "--assets-dir",
+        str(manifest_path.parent),
+        "--profiles-dir",
+        str(profiles_dir),
+        "--channel",
+        "stable",
+        "--out-dir",
+        str(dist),
+    )
+
+    health_path = dist / "health.json"
+    health = json.loads(health_path.read_text(encoding="utf-8"))
+    catalog_path = dist / health["profiles"]["source"].removeprefix("/")
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    catalog["state"] = "current"
+    catalog["current_binary"] = "1.3.0"
+    catalog["current_assets"] = "2030.0101.0"
+    catalog["compatibility"] = {
+        "binary": "1.3.0",
+        "assets": "2030.0101.0",
+        "min_binary": "1.3.0",
+        "min_assets": "2030.0101.0",
+        "requires_newer_binary": True,
+        "requires_newer_assets": True,
+    }
+    catalog_bytes = (json.dumps(catalog, indent=2) + "\n").encode()
+    catalog_path.write_bytes(catalog_bytes)
+    catalog_hash = blake3(catalog_bytes).hexdigest()
+    health["profiles"]["hash"] = catalog_hash
+    health["updates"]["profiles"]["hash"] = catalog_hash
+    health_path.write_text(json.dumps(health, indent=2) + "\n", encoding="utf-8")
+
+    result = _run_admin(
+        "assets",
+        "channel",
+        "check",
+        "--channel",
+        "stable",
+        "--dist",
+        str(dist),
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "profile catalog current binary mismatch" in result.stderr
+
+
 def test_release_index_check_rejects_missing_vm_obom_evidence(tmp_path: Path) -> None:
     manifest_path = _write_release_manifest(tmp_path)
     dist = tmp_path / "target" / "release-channel"

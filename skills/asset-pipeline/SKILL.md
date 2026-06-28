@@ -175,7 +175,8 @@ newer-version requirements match the canonical profile catalog metadata, and
 that the profile catalog's current binary/assets compatibility, minimum
 binary/assets, and requires-newer flags match the fetched channel manifest.
 It also fetches the immutable profile catalog artifact and verifies its BLAKE3
-hash, schema, revision, and absence of `file://` URLs.
+hash, schema, revision, state, current binary/assets targets, compatibility
+fields, and absence of `file://` URLs.
 The deploy smoke also verifies that image freshness remains explicitly
 unpublished until image release metadata is added to the asset channel.
 The deploy smoke must also verify public `Cache-Control` headers: mutable
