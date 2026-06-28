@@ -183,8 +183,8 @@ Each release publishes:
 - `Capsem_{version}_amd64.deb` and `Capsem_{version}_arm64.deb` -- Linux packages
 - `capsem-sbom.spdx.json` -- host SBOM
 
-Installers carry host binaries, materialized profiles, the selected channel
-manifest, and `manifest-origin.json` provenance. Heavy VM assets are downloaded
+Installers carry host binaries and the selected manifest, plus materialized
+profiles and `manifest-origin.json` provenance. Heavy VM assets are downloaded
 from `release.capsem.org/assets/releases/<asset-version>/` on first use through
 `capsem update --assets` and verified against the manifest before boot. Tag
 releases do not rebuild or upload VM assets.
