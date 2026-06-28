@@ -641,6 +641,7 @@ struct AssetsChannelIndex {
 #[derive(Debug, Serialize, Clone)]
 struct AssetsChannelAssetRelease {
     version: String,
+    date: String,
     state: String,
     deprecated: bool,
     deprecated_date: Option<String>,
@@ -1618,6 +1619,22 @@ fn validate_assets_channel_health(
             .unwrap_or(""),
         "health.json profile update min assets mismatch",
     )?;
+    let asset_releases = require_json_array(health, &["asset_releases"])?;
+    for (version, release) in &manifest.assets.releases {
+        let public_release = asset_releases.iter().find(|item| {
+            item.get("version").and_then(|value| value.as_str()) == Some(version.as_str())
+        });
+        let Some(public_release) = public_release else {
+            return Err(anyhow!("health.json missing asset release {version}"));
+        };
+        if public_release.get("date").and_then(|value| value.as_str())
+            != Some(release.date.as_str())
+        {
+            return Err(anyhow!(
+                "health.json asset release date mismatch for {version}"
+            ));
+        }
+    }
     let asset_files = require_json_array(health, &["assets", "files"])?;
     let current_asset_files = current_asset_file_refs(&manifest.assets.current, current_release);
     let current_asset_subjects = current_asset_files
@@ -1999,6 +2016,7 @@ fn summarize_asset_releases(manifest: &ManifestV2) -> Vec<AssetsChannelAssetRele
         .iter()
         .map(|(version, release)| AssetsChannelAssetRelease {
             version: version.clone(),
+            date: release.date.clone(),
             state: release_state(release).to_string(),
             deprecated: release.deprecated,
             deprecated_date: release.deprecated_date.clone(),
@@ -2759,8 +2777,9 @@ fn render_asset_release_rows(releases: &[AssetsChannelAssetRelease]) -> String {
                 release.arches.join(", ")
             };
             format!(
-                "        <tr><td><code>{version}</code></td><td>{state}</td><td>{deprecated}</td><td>{deprecated_date}</td><td>{min_binary}</td><td>{arches}</td></tr>",
+                "        <tr><td><code>{version}</code></td><td>{date}</td><td>{state}</td><td>{deprecated}</td><td>{deprecated_date}</td><td>{min_binary}</td><td>{arches}</td></tr>",
                 version = escape_html(&release.version),
+                date = escape_html(&release.date),
                 state = escape_html(&release.state),
                 deprecated = release.deprecated,
                 deprecated_date = escape_html(deprecated_date),
@@ -2771,7 +2790,7 @@ fn render_asset_release_rows(releases: &[AssetsChannelAssetRelease]) -> String {
         .collect::<Vec<_>>()
         .join("\n");
     format!(
-        "      <table><thead><tr><th>Version</th><th>State</th><th>Deprecated</th><th>Deprecated date</th><th>Min binary</th><th>Architectures</th></tr></thead><tbody>\n{rows}\n      </tbody></table>"
+        "      <table><thead><tr><th>Version</th><th>Date</th><th>State</th><th>Deprecated</th><th>Deprecated date</th><th>Min binary</th><th>Architectures</th></tr></thead><tbody>\n{rows}\n      </tbody></table>"
     )
 }
 
@@ -6424,6 +6443,8 @@ decision = "block"
         assert!(index_html.contains("Profile Catalog"));
         assert!(index_html.contains("gh attestation verify"));
         assert!(index_html.contains("/health.json"));
+        assert!(index_html.contains("<th>Date</th>"));
+        assert!(index_html.contains("2030-01-01"));
         assert!(index_html.contains("/assets/releases/2030.0101.1/arm64-rootfs.erofs"));
         assert!(index_html.contains("/assets/releases/2030.0101.1/arm64-obom.cdx.json"));
         assert!(index_html.contains("capsem-sbom.spdx.json"));
@@ -6455,6 +6476,10 @@ decision = "block"
         assert_eq!(
             health["assets"]["requires_newer"]["binary"].as_bool(),
             Some(false)
+        );
+        assert_eq!(
+            health["asset_releases"][0]["date"].as_str(),
+            Some("2030-01-01")
         );
         assert_eq!(
             health["evidence"]["vm_oboms"][0]["url"].as_str(),
@@ -6775,6 +6800,42 @@ decision = "block"
 
         assert!(
             format!("{error:#}").contains("health.json host SBOM evidence missing"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn assets_channel_check_rejects_missing_asset_release_date() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
+        let out_dir = temp.path().join("target/release-channel");
+        build_assets_channel(
+            &file_url(&manifest_path),
+            &temp.path().join("assets"),
+            &repo_config_profiles_dir(),
+            "stable",
+            &out_dir,
+            "2030-01-01T00:00:00Z",
+            None,
+        )
+        .expect("asset channel builds");
+
+        let health_path = out_dir.join("health.json");
+        let mut health: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&health_path).expect("health"))
+                .expect("health json");
+        health["asset_releases"][0]
+            .as_object_mut()
+            .expect("asset release object")
+            .remove("date");
+        fs::write(&health_path, serde_json::to_string_pretty(&health).unwrap())
+            .expect("write health without asset release date");
+
+        let error =
+            check_assets_channel(&out_dir, "stable").expect_err("missing release date rejected");
+
+        assert!(
+            format!("{error:#}").contains("health.json asset release date mismatch"),
             "{error:#}"
         );
     }

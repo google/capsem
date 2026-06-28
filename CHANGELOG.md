@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added canonical `release.capsem.org` endpoint URLs for the human index,
   health JSON, manifest, profile catalog, and asset base to the generated
   release-channel page and machine health index.
+- Added asset release dates to the generated release-channel index and health
+  JSON so `release.capsem.org` shows when each VM asset release was cut.
 - Added binary self-update package execution for verified macOS `.pkg` and
   Linux `.deb` installers when `capsem update --yes` finds a newer release.
 - Added frontend release-channel evidence links for host SBOM, VM OBOM, and
