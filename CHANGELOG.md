@@ -67,6 +67,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   manifest provenance before downloading VM assets, so compatible asset
   releases can move independently of installed binaries.
 
+### Fixed
+- Fixed the Settings/About release-channel surface so blocked profile or asset
+  tracks render as blocked instead of current.
+
 ## [1.3.1782582155] - 2026-06-27
 
 ### Fixed

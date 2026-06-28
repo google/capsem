@@ -1,6 +1,7 @@
 import type { SupplyChainReference, UpdateStatusResponse, UpdateTrackStatus } from '../types/gateway';
 
 export type UpdateTrackKey = 'binary' | 'assets' | 'profiles' | 'images';
+export type UpdateTrackTone = 'available' | 'blocked' | 'muted';
 
 export interface UpdateEvidenceLink {
   label: string;
@@ -47,6 +48,20 @@ export function updateTrackDetail(track: UpdateTrackStatus): string | null {
   if (track.compatibility === 'unknown') return 'Compatibility unknown';
   if (track.compatibility === 'not_applicable') return null;
   return null;
+}
+
+export function updateTrackStateLabel(track: UpdateTrackStatus): string {
+  if (track.blocked_reason) return 'Blocked';
+  if (track.update_available) return 'Update available';
+  if (track.state === 'not_published') return 'Not published';
+  if (track.state === 'unknown') return 'Unknown';
+  return 'Current';
+}
+
+export function updateTrackTone(track: UpdateTrackStatus): UpdateTrackTone {
+  if (track.blocked_reason) return 'blocked';
+  if (track.update_available) return 'available';
+  return 'muted';
 }
 
 export function updateEvidenceLinks(status: UpdateStatusResponse): UpdateEvidenceLink[] {

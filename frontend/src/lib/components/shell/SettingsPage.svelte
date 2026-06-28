@@ -10,6 +10,8 @@
     updateEvidenceLinks,
     updateSummary,
     updateTrackDetail,
+    updateTrackStateLabel,
+    updateTrackTone,
     updateTrackVersion,
     type UpdateTrackKey,
   } from '../../models/update-status';
@@ -143,13 +145,6 @@
   function checkedAtLabel(value: number | null | undefined): string {
     if (!value) return 'never';
     return new Date(value * 1000).toLocaleString();
-  }
-
-  function trackStateLabel(track: UpdateTrackStatus): string {
-    if (track.update_available) return 'Update available';
-    if (track.state === 'not_published') return 'Not published';
-    if (track.state === 'unknown') return 'Unknown';
-    return 'Current';
   }
 
   function trackRow(status: UpdateStatusResponse, key: UpdateTrackKey): UpdateTrackStatus {
@@ -439,6 +434,7 @@
             {#each (['binary', 'assets', 'profiles', 'images'] as UpdateTrackKey[]) as key (key)}
               {@const track = trackRow(updateStatus, key)}
               {@const detail = updateTrackDetail(track)}
+              {@const tone = updateTrackTone(track)}
               <div class="flex items-center justify-between p-4 gap-x-4">
                 <div>
                   <p class="text-sm text-foreground">{UPDATE_TRACK_LABELS[key]}</p>
@@ -447,8 +443,14 @@
                     <p class="text-xs text-muted-foreground-1 mt-1">{detail}</p>
                   {/if}
                 </div>
-                <p class="text-sm {track.update_available ? 'text-primary' : 'text-muted-foreground-1'}">
-                  {trackStateLabel(track)}
+                <p
+                  class="text-sm {tone === 'available'
+                    ? 'text-primary'
+                    : tone === 'blocked'
+                      ? 'text-destructive'
+                      : 'text-muted-foreground-1'}"
+                >
+                  {updateTrackStateLabel(track)}
                 </p>
               </div>
             {/each}

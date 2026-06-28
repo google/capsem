@@ -4,6 +4,8 @@ import {
   updateEvidenceLinks,
   updateSummary,
   updateTrackDetail,
+  updateTrackStateLabel,
+  updateTrackTone,
   updateTrackVersion,
 } from '../models/update-status';
 import type { UpdateStatusResponse, UpdateTrackStatus } from '../types/gateway';
@@ -70,11 +72,38 @@ describe('update status model', () => {
     expect(updateTrackVersion(status.binary)).toBe('1.4.0 -> 1.4.1');
   });
 
+  it('treats profile catalog updates as a first-class available track', () => {
+    const status = updateStatus({
+      profiles: {
+        current: 'profiles-2030.0101.0',
+        latest: 'profiles-2030.0101.1',
+        update_available: true,
+        state: 'update_available',
+        compatibility: 'compatible',
+      },
+    });
+
+    expect(updateAvailableTracks(status)).toEqual(['profiles']);
+    expect(updateSummary(status)).toBe('Profiles available');
+    expect(updateTrackVersion(status.profiles)).toBe(
+      'profiles-2030.0101.0 -> profiles-2030.0101.1',
+    );
+    expect(updateTrackStateLabel(status.profiles)).toBe('Update available');
+    expect(updateTrackTone(status.profiles)).toBe('available');
+  });
+
   it('distinguishes current, stale, unavailable, and not-published states', () => {
     expect(updateSummary(updateStatus())).toBe('Up to date');
     expect(updateSummary(updateStatus({ stale: true }))).toBe('Update check stale');
     expect(updateSummary(updateStatus({ last_error: 'timeout' }))).toBe('Update status unavailable');
     expect(updateTrackVersion(updateStatus().profiles)).toBe('not published');
+    expect(updateTrackStateLabel(currentTrack())).toBe('Current');
+    expect(updateTrackStateLabel(updateStatus().profiles)).toBe('Not published');
+    expect(updateTrackStateLabel({
+      update_available: false,
+      state: 'unknown',
+      compatibility: 'unknown',
+    })).toBe('Unknown');
   });
 
   it('surfaces blocked track details without inventing detail for normal states', () => {
@@ -87,6 +116,15 @@ describe('update status model', () => {
       ...currentTrack(),
       blocked_reason: 'requires binary 1.4.1',
     })).toBe('requires binary 1.4.1');
+    expect(updateTrackStateLabel({
+      ...currentTrack(),
+      blocked_reason: 'requires binary 1.4.1',
+    })).toBe('Blocked');
+    expect(updateTrackTone({
+      ...currentTrack(),
+      blocked_reason: 'requires binary 1.4.1',
+    })).toBe('blocked');
+    expect(updateTrackTone(currentTrack())).toBe('muted');
   });
 
   it('extracts release evidence links from supply-chain status', () => {
