@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added compatible profile catalog application from the release channel so
+  `capsem update` can refresh `~/.capsem/profiles` independently of binary and
+  VM asset releases.
 - Added canonical `release.capsem.org` endpoint URLs for the human index,
   health JSON, manifest, profile catalog, and asset base to the generated
   release-channel page and machine health index.

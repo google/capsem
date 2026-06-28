@@ -20,6 +20,7 @@ import threading
 from pathlib import Path
 
 import pytest
+from blake3 import blake3
 
 from .conftest import (
     CAPSEM_DIR,
@@ -148,6 +149,133 @@ def _binary_update_health(base_url: str, installer_name: str, payload: bytes) ->
     }
 
 
+def _profile_catalog_path(revision: str) -> str:
+    return f"/profiles/releases/{revision}/catalog.json"
+
+
+def _profile_config(revision: str) -> dict:
+    def assets_for_arch(arch: str) -> dict:
+        base = f"https://release.capsem.org/assets/releases/2030.0101.1/{arch}"
+        return {
+            "kernel": {"name": f"{arch}-vmlinuz", "url": f"{base}-vmlinuz"},
+            "initrd": {"name": f"{arch}-initrd.img", "url": f"{base}-initrd.img"},
+            "rootfs": {"name": f"{arch}-rootfs.erofs", "url": f"{base}-rootfs.erofs"},
+        }
+
+    return {
+        "id": "code",
+        "name": "Code",
+        "description": "Default coding profile",
+        "revision": revision,
+        "refresh_policy": "manual",
+        "assets": {
+            "format": "profile-assets.v1",
+            "refresh_policy": "manual",
+            "arch": {
+                "arm64": assets_for_arch("arm64"),
+                "x86_64": assets_for_arch("x86_64"),
+            },
+        },
+    }
+
+
+def _profile_catalog_bytes(revision: str) -> bytes:
+    catalog = {
+        "schema": "capsem.profile_catalog.v1",
+        "revision": revision,
+        "state": "current",
+        "current_binary": "1.4.1234567890",
+        "current_assets": "2030.0101.1",
+        "compatibility": {
+            "binary": "1.4.1234567890",
+            "assets": "2030.0101.1",
+            "min_binary": "1.0.0",
+            "min_assets": "2030.0101.1",
+            "requires_newer_binary": False,
+            "requires_newer_assets": False,
+        },
+        "profiles": [_profile_config(revision)],
+    }
+    return json.dumps(catalog, sort_keys=True, separators=(",", ":")).encode()
+
+
+def _profile_update_health(catalog_path: str, catalog_bytes: bytes, latest: str) -> dict:
+    return {
+        "schema": "capsem.assets_channel.health.v1",
+        "updates": {
+            "binary": {
+                "latest": "0.0.0",
+                "current": "0.0.0",
+                "files": [],
+            },
+            "assets": {
+                "latest": "2030.0101.1",
+                "current": "2030.0101.1",
+            },
+            "profiles": {
+                "latest": latest,
+                "current": latest,
+                "state": "current",
+                "source": catalog_path,
+                "hash": blake3(catalog_bytes).hexdigest(),
+                "compatibility": {
+                    "binary": "1.4.1234567890",
+                    "assets": "2030.0101.1",
+                    "min_binary": "1.0.0",
+                    "min_assets": "2030.0101.1",
+                },
+                "requires_newer": {
+                    "binary": False,
+                    "assets": False,
+                },
+            },
+        },
+    }
+
+
+def _write_installed_profile_catalog(profiles_dir: Path, revision: str) -> None:
+    profile_dir = profiles_dir / "code"
+    profile_dir.mkdir(parents=True)
+    profile_dir.joinpath("profile.toml").write_text(
+        f"""
+id = "code"
+name = "Code"
+description = "Default coding profile"
+revision = "{revision}"
+refresh_policy = "manual"
+
+[assets]
+format = "profile-assets.v1"
+refresh_policy = "manual"
+
+[assets.arch.arm64.kernel]
+name = "arm64-vmlinuz"
+url = "https://release.capsem.org/assets/releases/2030.0101.1/arm64-vmlinuz"
+
+[assets.arch.arm64.initrd]
+name = "arm64-initrd.img"
+url = "https://release.capsem.org/assets/releases/2030.0101.1/arm64-initrd.img"
+
+[assets.arch.arm64.rootfs]
+name = "arm64-rootfs.erofs"
+url = "https://release.capsem.org/assets/releases/2030.0101.1/arm64-rootfs.erofs"
+
+[assets.arch.x86_64.kernel]
+name = "x86_64-vmlinuz"
+url = "https://release.capsem.org/assets/releases/2030.0101.1/x86_64-vmlinuz"
+
+[assets.arch.x86_64.initrd]
+name = "x86_64-initrd.img"
+url = "https://release.capsem.org/assets/releases/2030.0101.1/x86_64-initrd.img"
+
+[assets.arch.x86_64.rootfs]
+name = "x86_64-rootfs.erofs"
+url = "https://release.capsem.org/assets/releases/2030.0101.1/x86_64-rootfs.erofs"
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+
 def _fresh_capsem_binary() -> Path | None:
     binary = REPO_ROOT / "target" / "debug" / "capsem"
     source_paths = [
@@ -235,6 +363,110 @@ def test_update_fetches_release_health_and_writes_channel_cache(
     assert cache["latest_profiles"] == "profiles-2030.0101.1"
     assert cache["profiles_state"] == "published"
     assert cache["images_state"] == "not_published"
+
+
+def test_update_applies_compatible_profile_catalog_from_release_channel(
+    tmp_path: Path,
+    installed_layout,
+) -> None:
+    capsem_home = tmp_path / ".capsem"
+    _write_installed_profile_catalog(capsem_home / "profiles", "profiles-2030.0101.0")
+    fresh_capsem = _fresh_capsem_binary()
+    source_capsem = fresh_capsem if fresh_capsem is not None else installed_layout / "capsem"
+    capsem = _copy_user_dir_capsem(source_capsem, capsem_home)
+    revision = "profiles-2030.0101.1"
+    catalog_path = _profile_catalog_path(revision)
+    catalog_bytes = _profile_catalog_bytes(revision)
+
+    with _serve_release(
+        _profile_update_health(catalog_path, catalog_bytes, revision),
+        {catalog_path: catalog_bytes},
+    ) as (_, health_url):
+        result = subprocess.run(
+            [str(capsem), "update"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env={
+                **os.environ,
+                "CAPSEM_HOME": str(capsem_home),
+                "CAPSEM_RUN_DIR": str(capsem_home / "run"),
+                "CAPSEM_RELEASE_HEALTH_URL": health_url,
+            },
+        )
+
+    assert result.returncode == 0, (
+        f"capsem update failed\nstdout={result.stdout}\nstderr={result.stderr}"
+    )
+    assert "Profile catalog update available" in result.stdout
+    assert "Profile catalog update applied" in result.stdout
+    profile_toml = (capsem_home / "profiles" / "code" / "profile.toml").read_text(
+        encoding="utf-8"
+    )
+    assert 'revision = "profiles-2030.0101.1"' in profile_toml
+    origin = json.loads(
+        (capsem_home / "profiles" / "catalog-origin.json").read_text(encoding="utf-8")
+    )
+    assert origin["schema"] == "capsem.profile_catalog_origin.v1"
+    assert origin["origin"] == "update"
+    assert origin["revision"] == revision
+    assert origin["hash"] == blake3(catalog_bytes).hexdigest()
+
+    cache = json.loads((capsem_home / "update-check.json").read_text(encoding="utf-8"))
+    assert cache["profile_catalog_source"] == catalog_path
+    assert cache["profile_catalog_hash"] == blake3(catalog_bytes).hexdigest()
+
+
+def test_update_preserves_profile_catalog_when_release_catalog_is_invalid(
+    tmp_path: Path,
+    installed_layout,
+) -> None:
+    capsem_home = tmp_path / ".capsem"
+    _write_installed_profile_catalog(capsem_home / "profiles", "profiles-2030.0101.0")
+    fresh_capsem = _fresh_capsem_binary()
+    source_capsem = fresh_capsem if fresh_capsem is not None else installed_layout / "capsem"
+    capsem = _copy_user_dir_capsem(source_capsem, capsem_home)
+    revision = "profiles-2030.0101.1"
+    catalog_path = _profile_catalog_path(revision)
+    invalid_profile = _profile_config(revision)
+    invalid_profile["assets"]["arch"]["arm64"]["kernel"]["url"] = "assets/arm64-vmlinuz"
+    invalid_catalog = json.dumps(
+        {
+            "schema": "capsem.profile_catalog.v1",
+            "revision": revision,
+            "state": "current",
+            "profiles": [invalid_profile],
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+
+    with _serve_release(
+        _profile_update_health(catalog_path, invalid_catalog, revision),
+        {catalog_path: invalid_catalog},
+    ) as (_, health_url):
+        result = subprocess.run(
+            [str(capsem), "update"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env={
+                **os.environ,
+                "CAPSEM_HOME": str(capsem_home),
+                "CAPSEM_RUN_DIR": str(capsem_home / "run"),
+                "CAPSEM_RELEASE_HEALTH_URL": health_url,
+            },
+        )
+
+    assert result.returncode != 0, (
+        f"invalid profile catalog should fail\nstdout={result.stdout}\nstderr={result.stderr}"
+    )
+    assert "validate profile code" in result.stderr
+    profile_toml = (capsem_home / "profiles" / "code" / "profile.toml").read_text(
+        encoding="utf-8"
+    )
+    assert 'revision = "profiles-2030.0101.0"' in profile_toml
+    assert not (capsem_home / "profiles" / "catalog-origin.json").exists()
 
 
 def test_macos_update_yes_applies_verified_pkg_with_package_manager(

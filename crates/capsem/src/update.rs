@@ -16,6 +16,7 @@ use sha2::{Digest, Sha256};
 use tracing::{info, warn};
 
 use crate::platform::{self, InstallLayout};
+use capsem_core::net::policy_config::{ProfileCatalog, ProfileConfigFile};
 
 /// Cached update check result.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,6 +54,12 @@ pub struct UpdateCheck {
     /// Why the advertised profile catalog cannot be applied by this install.
     #[serde(default)]
     pub profiles_blocked_reason: Option<String>,
+    /// URL or release-channel artifact path for the advertised profile catalog.
+    #[serde(default)]
+    pub profile_catalog_source: Option<String>,
+    /// BLAKE3 digest of the advertised profile catalog payload.
+    #[serde(default)]
+    pub profile_catalog_hash: Option<String>,
     /// Latest VM image catalog advertised by the release channel, when published.
     #[serde(default)]
     pub latest_images: Option<String>,
@@ -162,6 +169,10 @@ struct ReleaseChannelUpdateTarget {
     #[serde(default)]
     state: Option<String>,
     #[serde(default)]
+    source: Option<String>,
+    #[serde(default)]
+    hash: Option<String>,
+    #[serde(default)]
     compatibility: Option<ReleaseChannelCompatibility>,
     #[serde(default)]
     requires_newer: Option<ReleaseChannelRequiresNewer>,
@@ -191,6 +202,15 @@ struct ReleaseChannelBinaryFile {
     url: String,
     sha256: String,
     size: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct PublishedProfileCatalogDocument {
+    schema: String,
+    revision: String,
+    #[allow(dead_code)]
+    state: Option<String>,
+    profiles: Vec<ProfileConfigFile>,
 }
 
 impl ReleaseChannelUpdateTarget {
@@ -336,6 +356,8 @@ fn failed_update_check_from_previous(
         profiles_update_available: false,
         profiles_state: None,
         profiles_blocked_reason: None,
+        profile_catalog_source: None,
+        profile_catalog_hash: None,
         latest_images: None,
         images_update_available: false,
         images_state: None,
@@ -608,11 +630,16 @@ fn update_check_from_release_health(
         .profiles
         .as_ref()
         .and_then(|target| target.state.clone());
-    let profiles_blocked_reason = health
+    let profile_catalog_source = health
         .updates
         .profiles
         .as_ref()
-        .and_then(profile_blocked_reason);
+        .and_then(|target| target.source.clone());
+    let profile_catalog_hash = health
+        .updates
+        .profiles
+        .as_ref()
+        .and_then(|target| target.hash.clone());
     let latest_images = health
         .updates
         .images
@@ -635,11 +662,28 @@ fn update_check_from_release_health(
         (Some(latest), Some(current)) => latest != current,
         _ => false,
     };
+    let profiles_differ = match (latest_profiles.as_deref(), current_profiles) {
+        (Some(latest), Some(current)) => latest != current,
+        _ => false,
+    };
+    let profiles_blocked_reason = health
+        .updates
+        .profiles
+        .as_ref()
+        .and_then(profile_blocked_reason)
+        .or_else(|| {
+            if profiles_differ && profile_catalog_source.is_none() {
+                Some("release channel did not advertise a profile catalog source".to_string())
+            } else if profiles_differ && profile_catalog_hash.is_none() {
+                Some("release channel did not advertise a profile catalog hash".to_string())
+            } else {
+                None
+            }
+        });
     let profiles_update_available = profiles_blocked_reason.is_none()
-        && match (latest_profiles.as_deref(), current_profiles) {
-            (Some(latest), Some(current)) => latest != current,
-            _ => false,
-        };
+        && profile_catalog_source.is_some()
+        && profile_catalog_hash.is_some()
+        && profiles_differ;
     Ok(UpdateCheck {
         checked_at,
         latest_version,
@@ -652,6 +696,8 @@ fn update_check_from_release_health(
         profiles_update_available,
         profiles_state,
         profiles_blocked_reason,
+        profile_catalog_source,
+        profile_catalog_hash,
         latest_images,
         images_update_available: false,
         images_state,
@@ -947,40 +993,290 @@ pub async fn run_update(
     let _ = write_cache(&check);
 
     let current = env!("CARGO_PKG_VERSION");
-    let Some(latest) = check.latest_version.as_deref() else {
-        println!("Release channel did not advertise a binary version.");
-        return Ok(());
-    };
-    if !check.update_available {
-        println!("Capsem is current ({current}).");
-        return Ok(());
+    let mut did_update = false;
+    match check.latest_version.as_deref() {
+        Some(latest) if check.update_available => {
+            println!("Binary update available: {current} -> {latest}");
+            if let Some(installer) = check.binary_installer.as_ref() {
+                let mb = installer.size as f64 / 1_048_576.0;
+                println!("Installer: {}", installer.url);
+                println!("Package:   {} ({mb:.1} MB)", installer.name);
+                println!("SHA-256:   {}", installer.sha256);
+                if yes {
+                    let path = download_binary_installer(installer).await?;
+                    println!("Verified installer: {}", path.display());
+                    let plan = binary_installer_apply_plan(installer, &path)?;
+                    println!("Apply command:");
+                    for command in plan.command_lines() {
+                        println!("  {command}");
+                    }
+                    apply_binary_installer_plan(&plan).await?;
+                    println!("Binary update applied. Restart Capsem to use {latest}.");
+                    did_update = true;
+                } else {
+                    println!("Re-run with --yes to download and verify the installer package.");
+                }
+            } else {
+                println!(
+                    "No installer package in release health matches this install layout ({layout:?})."
+                );
+            }
+        }
+        Some(_) => println!("Capsem binary is current ({current})."),
+        None => println!("Release channel did not advertise a binary version."),
     }
 
-    println!("Binary update available: {current} -> {latest}");
-    if let Some(installer) = check.binary_installer.as_ref() {
-        let mb = installer.size as f64 / 1_048_576.0;
-        println!("Installer: {}", installer.url);
-        println!("Package:   {} ({mb:.1} MB)", installer.name);
-        println!("SHA-256:   {}", installer.sha256);
-        if yes {
-            let path = download_binary_installer(installer).await?;
-            println!("Verified installer: {}", path.display());
-            let plan = binary_installer_apply_plan(installer, &path)?;
-            println!("Apply command:");
-            for command in plan.command_lines() {
-                println!("  {command}");
-            }
-            apply_binary_installer_plan(&plan).await?;
-            println!("Binary update applied. Restart Capsem to use {latest}.");
+    if let Some(reason) = check.profiles_blocked_reason.as_deref() {
+        println!("Profile catalog update blocked: {reason}.");
+    } else if check.profiles_update_available {
+        let current_profiles = check.current_profiles.as_deref().unwrap_or("unknown");
+        let latest_profiles = check.latest_profiles.as_deref().unwrap_or("unknown");
+        println!("Profile catalog update available: {current_profiles} -> {latest_profiles}");
+        apply_profile_catalog_update(&check).await?;
+        println!("Profile catalog update applied. New sessions will use {latest_profiles}.");
+        did_update = true;
+    }
+
+    if check.update_available || check.assets_update_available {
+        println!("Run `capsem update --assets` separately to refresh VM assets.");
+    }
+
+    if !check.update_available && !check.profiles_update_available && !check.assets_update_available
+    {
+        println!("Capsem is current ({current}).");
+    } else if !did_update && !check.update_available && !check.assets_update_available {
+        if check.profiles_blocked_reason.is_none() {
+            println!("No local update action was needed.");
         } else {
-            println!("Re-run with --yes to download and verify the installer package.");
+            println!(
+                "Capsem binary is current; profile catalog update requires a newer dependency."
+            );
         }
-    } else {
-        println!(
-            "No installer package in release health matches this install layout ({layout:?})."
+    }
+    Ok(())
+}
+
+async fn apply_profile_catalog_update(check: &UpdateCheck) -> Result<()> {
+    let source = check
+        .profile_catalog_source
+        .as_deref()
+        .context("release channel did not advertise a profile catalog source")?;
+    let expected_hash = check
+        .profile_catalog_hash
+        .as_deref()
+        .context("release channel did not advertise a profile catalog hash")?;
+    validate_blake3_hex("profile catalog hash", expected_hash)?;
+    let channel_source = check
+        .source
+        .as_deref()
+        .unwrap_or(DEFAULT_RELEASE_HEALTH_URL);
+    let catalog_url = resolve_release_channel_artifact_url(channel_source, source)?;
+    let bytes = read_profile_catalog_source(&catalog_url).await?;
+    let actual_hash = blake3::hash(&bytes).to_hex().to_string();
+    if actual_hash != expected_hash {
+        anyhow::bail!(
+            "profile catalog hash mismatch for {catalog_url}: expected {expected_hash}, got {actual_hash}"
         );
     }
-    println!("Run `capsem update --assets` separately to refresh VM assets.");
+    let document = parse_profile_catalog_document(&bytes, &catalog_url)?;
+    let target_dir = crate::paths::capsem_home()?.join("profiles");
+    install_profile_catalog_document(&target_dir, &document, &catalog_url, expected_hash)?;
+    Ok(())
+}
+
+fn resolve_release_channel_artifact_url(channel_source: &str, artifact: &str) -> Result<String> {
+    let trimmed = artifact.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("release channel profile catalog source is empty");
+    }
+    if trimmed.starts_with("http://")
+        || trimmed.starts_with("https://")
+        || trimmed.starts_with("file://")
+    {
+        let parsed = reqwest::Url::parse(trimmed)
+            .with_context(|| format!("parse profile catalog URL {trimmed}"))?;
+        return Ok(parsed.to_string());
+    }
+
+    let base = reqwest::Url::parse(channel_source)
+        .with_context(|| format!("parse release channel URL {channel_source}"))?;
+    if trimmed.starts_with('/') {
+        let mut root = base;
+        root.set_path(trimmed);
+        root.set_query(None);
+        root.set_fragment(None);
+        return Ok(root.to_string());
+    }
+    base.join(trimmed)
+        .with_context(|| format!("resolve profile catalog {trimmed} against {channel_source}"))
+        .map(|url| url.to_string())
+}
+
+async fn read_profile_catalog_source(source: &str) -> Result<Vec<u8>> {
+    let url = reqwest::Url::parse(source)
+        .with_context(|| format!("profile catalog source must be a URL, got {source}"))?;
+    match url.scheme() {
+        "file" => {
+            if !has_scheme_authority_prefix(source, "file") {
+                anyhow::bail!("profile catalog file URL must start with file://: {source}");
+            }
+            let path = url.to_file_path().map_err(|_| {
+                anyhow::anyhow!("profile catalog file URL must be absolute: {source}")
+            })?;
+            std::fs::read(&path).with_context(|| format!("read profile catalog {}", path.display()))
+        }
+        "http" | "https" => {
+            if !has_scheme_authority_prefix(source, url.scheme()) {
+                anyhow::bail!(
+                    "profile catalog source must use https://, http://, or file:// URLs, got {source}"
+                );
+            }
+            let resp = reqwest::Client::new()
+                .get(url.clone())
+                .header("Accept", "application/json")
+                .header("User-Agent", "capsem")
+                .send()
+                .await
+                .with_context(|| format!("GET {source}"))?;
+            if !resp.status().is_success() {
+                anyhow::bail!("GET {} returned {}", source, resp.status());
+            }
+            Ok(resp
+                .bytes()
+                .await
+                .with_context(|| format!("read profile catalog body from {source}"))?
+                .to_vec())
+        }
+        scheme => anyhow::bail!(
+            "unsupported profile catalog URL scheme {scheme}: use https://, http://, or file://"
+        ),
+    }
+}
+
+fn parse_profile_catalog_document(
+    bytes: &[u8],
+    source: &str,
+) -> Result<PublishedProfileCatalogDocument> {
+    let document: PublishedProfileCatalogDocument = serde_json::from_slice(bytes)
+        .with_context(|| format!("parse profile catalog from {source}"))?;
+    if document.schema != "capsem.profile_catalog.v1" {
+        anyhow::bail!("profile catalog schema mismatch");
+    }
+    if document.profiles.is_empty() {
+        anyhow::bail!("profile catalog contains no profiles");
+    }
+    for profile in &document.profiles {
+        profile
+            .validate()
+            .map_err(|error| anyhow::anyhow!("validate profile {}: {error}", profile.id))?;
+    }
+    let revision =
+        profile_catalog_revision(document.profiles.iter().collect::<Vec<_>>().as_slice())?;
+    if revision != document.revision {
+        anyhow::bail!(
+            "profile catalog revision mismatch: document advertises {}, profiles resolve to {}",
+            document.revision,
+            revision
+        );
+    }
+    Ok(document)
+}
+
+fn install_profile_catalog_document(
+    target_dir: &Path,
+    document: &PublishedProfileCatalogDocument,
+    source: &str,
+    hash: &str,
+) -> Result<()> {
+    let parent = target_dir
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("profile catalog target has no parent"))?;
+    std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    let unique = format!(
+        "{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    );
+    let tmp_dir = parent.join(format!(".profiles.{unique}.tmp"));
+    let backup_dir = parent.join(format!(".profiles.{unique}.backup"));
+    if tmp_dir.exists() {
+        std::fs::remove_dir_all(&tmp_dir)
+            .with_context(|| format!("remove stale {}", tmp_dir.display()))?;
+    }
+    std::fs::create_dir(&tmp_dir).with_context(|| format!("create {}", tmp_dir.display()))?;
+    let result = materialize_profile_catalog(&tmp_dir, document, source, hash)
+        .and_then(|_| replace_profile_catalog_dir(target_dir, &tmp_dir, &backup_dir));
+    if result.is_err() {
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
+    result
+}
+
+fn materialize_profile_catalog(
+    tmp_dir: &Path,
+    document: &PublishedProfileCatalogDocument,
+    source: &str,
+    hash: &str,
+) -> Result<()> {
+    for profile in &document.profiles {
+        let profile_dir = tmp_dir.join(&profile.id);
+        std::fs::create_dir(&profile_dir)
+            .with_context(|| format!("create {}", profile_dir.display()))?;
+        let bytes = toml::to_string_pretty(profile)
+            .with_context(|| format!("serialize profile {}", profile.id))?;
+        atomic_write(&profile_dir.join("profile.toml"), bytes.as_bytes())?;
+    }
+    let origin = serde_json::json!({
+        "schema": "capsem.profile_catalog_origin.v1",
+        "origin": "update",
+        "source": source,
+        "hash": hash,
+        "revision": document.revision
+    });
+    atomic_write(
+        &tmp_dir.join("catalog-origin.json"),
+        &serde_json::to_vec_pretty(&origin)?,
+    )?;
+    ProfileCatalog::load_from_dir(tmp_dir)
+        .map_err(|error| anyhow::anyhow!("validate installed profile catalog: {error}"))?;
+    Ok(())
+}
+
+fn replace_profile_catalog_dir(target_dir: &Path, tmp_dir: &Path, backup_dir: &Path) -> Result<()> {
+    if target_dir.exists() {
+        if !target_dir.is_dir() {
+            anyhow::bail!(
+                "profile catalog target is not a directory: {}",
+                target_dir.display()
+            );
+        }
+        std::fs::rename(target_dir, backup_dir).with_context(|| {
+            format!(
+                "move existing profile catalog {} to {}",
+                target_dir.display(),
+                backup_dir.display()
+            )
+        })?;
+        if let Err(error) = std::fs::rename(tmp_dir, target_dir) {
+            let _ = std::fs::rename(backup_dir, target_dir);
+            return Err(error)
+                .with_context(|| format!("replace profile catalog {}", target_dir.display()));
+        }
+        let _ = std::fs::remove_dir_all(backup_dir);
+    } else {
+        std::fs::rename(tmp_dir, target_dir)
+            .with_context(|| format!("install profile catalog {}", target_dir.display()))?;
+    }
+    Ok(())
+}
+
+fn validate_blake3_hex(field: &str, value: &str) -> Result<()> {
+    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        anyhow::bail!("{field} must be a 64-character BLAKE3 hex digest");
+    }
     Ok(())
 }
 
@@ -1258,6 +1554,10 @@ mod tests {
             profiles_update_available: false,
             profiles_state: Some("published".into()),
             profiles_blocked_reason: Some("requires binary 1.4.0 or newer".into()),
+            profile_catalog_source: Some(
+                "/profiles/releases/profiles-2030.0101.1/catalog.json".into(),
+            ),
+            profile_catalog_hash: Some("b".repeat(64)),
             latest_images: None,
             images_update_available: false,
             images_state: Some("not_published".into()),
@@ -1286,6 +1586,11 @@ mod tests {
             rt.profiles_blocked_reason,
             Some("requires binary 1.4.0 or newer".into())
         );
+        assert_eq!(
+            rt.profile_catalog_source,
+            Some("/profiles/releases/profiles-2030.0101.1/catalog.json".into())
+        );
+        assert_eq!(rt.profile_catalog_hash, Some("b".repeat(64)));
         assert_eq!(rt.latest_images, None);
         assert!(!rt.images_update_available);
         assert_eq!(rt.images_state, Some("not_published".into()));
@@ -1315,6 +1620,8 @@ mod tests {
         assert!(!rt.profiles_update_available);
         assert_eq!(rt.profiles_state, None);
         assert_eq!(rt.profiles_blocked_reason, None);
+        assert_eq!(rt.profile_catalog_source, None);
+        assert_eq!(rt.profile_catalog_hash, None);
         assert_eq!(rt.latest_images, None);
         assert!(!rt.images_update_available);
         assert_eq!(rt.images_state, None);
@@ -1338,6 +1645,8 @@ mod tests {
             profiles_update_available: false,
             profiles_state: None,
             profiles_blocked_reason: None,
+            profile_catalog_source: None,
+            profile_catalog_hash: None,
             latest_images: None,
             images_update_available: false,
             images_state: None,
@@ -1426,6 +1735,8 @@ mod tests {
                 "profiles": {
                     "latest": "profiles-2030.0101.1",
                     "state": "published",
+                    "source": "/profiles/releases/profiles-2030.0101.1/catalog.json",
+                    "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
                     "requires_newer": {
                         "binary": false,
                         "assets": false
@@ -1468,6 +1779,11 @@ mod tests {
         assert!(check.profiles_update_available);
         assert_eq!(check.profiles_state, Some("published".to_string()));
         assert_eq!(check.profiles_blocked_reason, None);
+        assert_eq!(
+            check.profile_catalog_source,
+            Some("/profiles/releases/profiles-2030.0101.1/catalog.json".to_string())
+        );
+        assert_eq!(check.profile_catalog_hash, Some("b".repeat(64)));
         assert_eq!(check.latest_images, None);
         assert!(!check.images_update_available);
         assert_eq!(check.images_state, Some("not_published".to_string()));
