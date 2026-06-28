@@ -1201,6 +1201,59 @@ fn validate_assets_channel_health(
     let vm_oboms = require_json_array(health, &["evidence", "vm_oboms"])?;
     let host_sboms = require_json_array(health, &["evidence", "host_sboms"])?;
     let host_binary_files = require_json_array(health, &["evidence", "host_binary_files"])?;
+    let current_binary_files = manifest
+        .binaries
+        .releases
+        .get(&manifest.binaries.current)
+        .map(|release| current_binary_file_refs(&manifest.binaries.current, release))
+        .unwrap_or_default();
+    if !current_binary_files.is_empty() {
+        if host_binary_files.is_empty() {
+            return Err(anyhow!("health.json host binary files missing"));
+        }
+        if host_sboms.is_empty() {
+            return Err(anyhow!("health.json host SBOM evidence missing"));
+        }
+    }
+    for expected in &current_binary_files {
+        let public_file = host_binary_files.iter().find(|item| {
+            item.get("url").and_then(|value| value.as_str()) == Some(expected.url.as_str())
+        });
+        let Some(public_file) = public_file else {
+            return Err(anyhow!(
+                "health.json missing host binary file {}",
+                expected.url
+            ));
+        };
+        if public_file.get("name").and_then(|value| value.as_str()) != Some(expected.name.as_str())
+        {
+            return Err(anyhow!(
+                "health.json host binary name mismatch for {}",
+                expected.url
+            ));
+        }
+        if public_file.get("sha256").and_then(|value| value.as_str())
+            != Some(expected.sha256.as_str())
+        {
+            return Err(anyhow!(
+                "health.json host binary sha256 mismatch for {}",
+                expected.url
+            ));
+        }
+        if public_file.get("size").and_then(|value| value.as_u64()) != Some(expected.size) {
+            return Err(anyhow!(
+                "health.json host binary size mismatch for {}",
+                expected.url
+            ));
+        }
+        if expected.sha256.len() != 64 || !expected.sha256.chars().all(|ch| ch.is_ascii_hexdigit())
+        {
+            return Err(anyhow!(
+                "channel manifest host binary {} has malformed sha256",
+                expected.name
+            ));
+        }
+    }
     for sbom in host_sboms {
         let sbom_url = sbom
             .get("url")
