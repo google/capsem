@@ -1134,6 +1134,11 @@ fn record_binary_release_metadata(
             "binary release metadata must include a host package artifact"
         ));
     }
+    if !files.iter().any(|file| is_host_package_file(&file.name)) {
+        return Err(anyhow!(
+            "binary release metadata must include a .pkg or .deb artifact"
+        ));
+    }
     manifest.binaries.current = version.to_string();
     manifest.binaries.releases.insert(
         version.to_string(),
@@ -2993,6 +2998,10 @@ fn current_utc_date() -> Result<String> {
 
 fn is_host_sbom_file(name: &str) -> bool {
     name.ends_with(".spdx.json") || name.contains("sbom")
+}
+
+fn is_host_package_file(name: &str) -> bool {
+    name.ends_with(".pkg") || name.ends_with(".deb")
 }
 
 fn escape_html(value: &str) -> String {
@@ -6774,6 +6783,33 @@ decision = "block"
         assert!(
             format!("{error:#}")
                 .contains("binary release metadata must include a host package artifact"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn assets_channel_record_binary_rejects_non_package_host_artifact() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
+        let artifacts_dir = temp.path().join("release-artifacts");
+        fs::create_dir_all(&artifacts_dir).expect("artifacts dir");
+        let readme_path = artifacts_dir.join("release-notes.txt");
+        let sbom_path = artifacts_dir.join("capsem-sbom.spdx.json");
+        fs::write(&readme_path, b"not an installable package").expect("readme");
+        fs::write(&sbom_path, br#"{"spdxVersion":"SPDX-2.3"}"#).expect("sbom");
+
+        let error = record_binary_release_metadata(
+            &manifest_path,
+            "1.4.1234567890",
+            None,
+            &[readme_path, sbom_path],
+            "2030-02-03",
+        )
+        .expect_err("non-package host artifact rejected");
+
+        assert!(
+            format!("{error:#}")
+                .contains("binary release metadata must include a .pkg or .deb artifact"),
             "{error:#}"
         );
     }

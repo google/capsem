@@ -903,6 +903,37 @@ def test_binary_release_index_rejects_sbom_without_host_package(tmp_path: Path) 
     assert "binary release metadata must include a host package artifact" in result.stderr
 
 
+def test_binary_release_index_rejects_non_package_host_artifact(tmp_path: Path) -> None:
+    manifest_path = _write_release_manifest(tmp_path)
+    artifacts = tmp_path / "release-artifacts"
+    artifacts.mkdir()
+    readme = artifacts / "release-notes.txt"
+    sbom = artifacts / "capsem-sbom.spdx.json"
+    readme.write_bytes(b"not an installable package")
+    sbom.write_bytes(b'{"spdxVersion":"SPDX-2.3","name":"capsem"}')
+
+    result = _run_admin(
+        "assets",
+        "channel",
+        "record-binary",
+        "--manifest-path",
+        str(manifest_path),
+        "--version",
+        "1.4.2234567890",
+        "--date",
+        "2030-02-03",
+        "--artifact",
+        str(readme),
+        "--artifact",
+        str(sbom),
+        "--json",
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "binary release metadata must include a .pkg or .deb artifact" in result.stderr
+
+
 def test_binary_release_profile_catalog_index_builds_release_site_without_rebuilding_vm_assets(
     tmp_path: Path,
 ) -> None:
