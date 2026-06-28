@@ -163,6 +163,18 @@ class TestCorpConfig:
             f"empty payload should reject: {resp}"
         )
 
+    def test_corp_config_source_rejects_bare_file_path(self, client, tmp_path):
+        corp_path = tmp_path / "corp.toml"
+        corp_path.write_text('refresh_policy = "24h"\n')
+
+        for method, path in ((client.post, "/corp/validate"), (client.put, "/corp/edit")):
+            resp = method(path, {"source": str(corp_path)})
+
+            assert resp is not None and "error" in resp, (
+                f"{path} should reject bare source path: {resp}"
+            )
+            assert "corp config source must be a URL" in resp["error"], resp
+
     def test_corp_reload_no_instances(self, client):
         client.post("/purge", {"all": True})
         resp = client.post("/corp/reload", {})

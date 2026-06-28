@@ -115,6 +115,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   states.
 - Added CLI update unit coverage proving public and corporate update source
   flags share the same URL-only validation contract.
+- Added service-route coverage proving corporate config source URLs reject bare
+  filesystem paths across validate and edit endpoints.
 - Added release-channel cache-header documentation coverage so CI docs,
   architecture docs, and agent skills stay aligned with the deploy smoke.
 - Added release-doctor coverage that binary releases do not publish
