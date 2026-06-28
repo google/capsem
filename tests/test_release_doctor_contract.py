@@ -611,6 +611,13 @@ def test_binary_release_channel_assembly_preflights_canonical_artifacts() -> Non
     )
 
 
+def test_binary_release_summary_names_pkg_and_deb_sbom_coverage() -> None:
+    create_release = _workflow_job_block("create-release", "release.yaml")
+
+    assert "SBOM attested (SPDX 2.3, pkg + deb)" in create_release
+    assert "SBOM attested (SPDX 2.3, pkg)" not in create_release
+
+
 def test_binary_release_does_not_publish_latest_json_updater_metadata() -> None:
     workflow = _workflow_text("release.yaml")
     docs = _source_text("docs/src/content/docs/development/ci.md")

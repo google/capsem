@@ -609,7 +609,7 @@ jobs:
 
           - Apple codesigned (Developer ID), notarized + stapled (.pkg)
           - SLSA build provenance attested (pkg + deb)
-          - SBOM attested (SPDX 2.3, pkg)
+          - SBOM attested (SPDX 2.3, pkg + deb)
           - VM assets are served by the manual asset workflow through release.capsem.org
           EOF
 
