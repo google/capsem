@@ -93,8 +93,43 @@ def _write_release_manifest(root: Path) -> Path:
     return manifest_path
 
 
+def _write_profile_catalog(root: Path, revision: str = "profiles-2030.0101.1") -> Path:
+    profiles_dir = root / "config" / "profiles"
+    profile_dir = profiles_dir / "code"
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    (profile_dir / "profile.toml").write_text(
+        f"""
+id = "code"
+name = "Code"
+description = "Profile catalog fixture."
+revision = "{revision}"
+refresh_policy = "24h"
+
+[assets]
+format = "profile-assets.v1"
+refresh_policy = "on_profile_refresh"
+
+[assets.arch.arm64.kernel]
+name = "vmlinuz"
+url = "https://release.capsem.org/assets/releases/2030.0101.1/arm64-vmlinuz"
+
+[assets.arch.arm64.initrd]
+name = "initrd.img"
+url = "https://release.capsem.org/assets/releases/2030.0101.1/arm64-initrd.img"
+
+[assets.arch.arm64.rootfs]
+name = "rootfs.erofs"
+url = "https://release.capsem.org/assets/releases/2030.0101.1/arm64-rootfs.erofs"
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    return profiles_dir
+
+
 def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path) -> None:
     manifest_path = _write_release_manifest(tmp_path)
+    profiles_dir = _write_profile_catalog(tmp_path)
     dist = tmp_path / "target" / "release-channel"
 
     result = _run_admin(
@@ -105,6 +140,8 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
         f"file://{manifest_path}",
         "--assets-dir",
         str(manifest_path.parent),
+        "--profiles-dir",
+        str(profiles_dir),
         "--channel",
         "stable",
         "--out-dir",
@@ -124,6 +161,8 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
     assert "Host SBOM Evidence" in index_html
     assert "VM OBOM Evidence" in index_html
     assert "Update Contract" in index_html
+    assert "Profile Catalog" in index_html
+    assert "profiles-2030.0101.1" in index_html
     assert "Realm Discipline" in index_html
     assert "/assets/releases/2030.0101.1/arm64-rootfs.erofs" in index_html
     assert "/assets/releases/2030.0101.1/arm64-obom.cdx.json" in index_html
@@ -144,7 +183,26 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
     }
     assert health["updates"]["binary"]["latest"] == "1.4.1234567890"
     assert health["updates"]["assets"]["manifest"] == "/assets/stable/manifest.json"
-    assert health["updates"]["profiles"]["latest"] is None
+    assert health["profiles"]["revision"] == "profiles-2030.0101.1"
+    assert health["profiles"]["source"] == str(profiles_dir)
+    assert len(health["profiles"]["hash"]) == 64
+    assert health["profiles"]["compatibility"] == {
+        "binary": "1.4.1234567890",
+        "assets": "2030.0101.1",
+        "min_binary": "1.4.0",
+        "min_assets": "2030.0101.1",
+    }
+    assert health["profiles"]["requires_newer"] == {
+        "binary": False,
+        "assets": False,
+    }
+    assert health["updates"]["profiles"]["latest"] == "profiles-2030.0101.1"
+    assert health["updates"]["profiles"]["current"] == "profiles-2030.0101.1"
+    assert health["updates"]["profiles"]["state"] == "current"
+    assert health["updates"]["profiles"]["source"] == str(profiles_dir)
+    assert health["updates"]["profiles"]["hash"] == health["profiles"]["hash"]
+    assert health["updates"]["profiles"]["compatibility"] == health["profiles"]["compatibility"]
+    assert health["updates"]["profiles"]["requires_newer"] == health["profiles"]["requires_newer"]
     assert health["updates"]["images"]["latest"] is None
     assert health["evidence"]["vm_oboms"][0]["url"] == (
         "/assets/releases/2030.0101.1/arm64-obom.cdx.json"
@@ -159,6 +217,46 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
     assert (release_dir / "arm64-obom.cdx.json").is_file()
 
     _run_admin("assets", "channel", "check", "--channel", "stable", "--dist", str(dist))
+
+
+def test_release_index_check_rejects_profile_catalog_index_drift(tmp_path: Path) -> None:
+    manifest_path = _write_release_manifest(tmp_path)
+    profiles_dir = _write_profile_catalog(tmp_path)
+    dist = tmp_path / "target" / "release-channel"
+    _run_admin(
+        "assets",
+        "channel",
+        "build",
+        "--manifest",
+        f"file://{manifest_path}",
+        "--assets-dir",
+        str(manifest_path.parent),
+        "--profiles-dir",
+        str(profiles_dir),
+        "--channel",
+        "stable",
+        "--out-dir",
+        str(dist),
+    )
+
+    health_path = dist / "health.json"
+    health = json.loads(health_path.read_text(encoding="utf-8"))
+    health["updates"]["profiles"]["latest"] = "profiles-stale"
+    health_path.write_text(json.dumps(health, indent=2) + "\n", encoding="utf-8")
+
+    result = _run_admin(
+        "assets",
+        "channel",
+        "check",
+        "--channel",
+        "stable",
+        "--dist",
+        str(dist),
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "health.json profile update latest target does not match catalog" in result.stderr
 
 
 def test_release_index_check_rejects_health_manifest_drift(tmp_path: Path) -> None:

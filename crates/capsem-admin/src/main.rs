@@ -223,6 +223,9 @@ struct AssetsChannelBuildArgs {
     /// Built asset root containing per-arch logical asset files.
     #[arg(long, default_value = "assets")]
     assets_dir: PathBuf,
+    /// Source profile catalog directory to publish in the channel index.
+    #[arg(long, default_value = "config/profiles")]
+    profiles_dir: PathBuf,
     /// Channel name to publish under assets/<channel>/manifest.json.
     #[arg(long, default_value = "stable")]
     channel: String,
@@ -599,9 +602,25 @@ struct AssetsChannelIndex {
     current_binary_files: Vec<AssetsChannelBinaryFile>,
     host_sboms: Vec<AssetsChannelBinaryFile>,
     vm_oboms: Vec<AssetsChannelAssetFile>,
-    profile_update_state: String,
+    profile_catalog: AssetsChannelProfileCatalog,
     image_update_state: String,
     notes: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct AssetsChannelProfileCatalog {
+    revision: String,
+    source: String,
+    hash: String,
+    profile_count: usize,
+    profile_ids: Vec<String>,
+    refresh_policy: String,
+    binary: String,
+    assets: String,
+    min_binary: String,
+    min_assets: String,
+    requires_newer_binary: bool,
+    requires_newer_assets: bool,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -854,6 +873,7 @@ fn assets_channel_build_command(args: AssetsChannelBuildArgs) -> Result<()> {
     let report = build_assets_channel(
         &args.manifest,
         &args.assets_dir,
+        &args.profiles_dir,
         &args.channel,
         &args.out_dir,
         &generated_at,
@@ -886,6 +906,7 @@ fn assets_channel_check_command(args: AssetsChannelCheckArgs) -> Result<()> {
 fn build_assets_channel(
     manifest_url: &str,
     assets_dir: &Path,
+    profiles_dir: &Path,
     channel: &str,
     out_dir: &Path,
     generated_at: &str,
@@ -897,7 +918,13 @@ fn build_assets_channel(
     let manifest = ManifestV2::from_json(manifest_content)
         .with_context(|| format!("parse manifest from {manifest_url}"))?;
     let manifest_blake3 = blake3::hash(&manifest_bytes).to_hex().to_string();
-    let index = assets_channel_index(&manifest, channel, generated_at, &manifest_blake3);
+    let index = assets_channel_index(
+        &manifest,
+        profiles_dir,
+        channel,
+        generated_at,
+        &manifest_blake3,
+    )?;
     let current_release = manifest
         .assets
         .releases
@@ -1011,6 +1038,7 @@ fn validate_assets_channel_index_html(index_html: &str, channel: &str) -> Result
         "VM OBOM Evidence",
         "Host SBOM Evidence",
         "Binary Files",
+        "Profile Catalog",
         "Realm Discipline",
         "Update Contract",
         "/health.json",
@@ -1157,22 +1185,92 @@ fn validate_assets_channel_health(
         "/assets/releases",
         "health.json asset update base mismatch",
     )?;
+    let expected_profile_revision = require_json_string(health, &["profiles", "revision"])?;
+    let expected_profile_source = require_json_string(health, &["profiles", "source"])?;
+    let expected_profile_hash = require_json_string(health, &["profiles", "hash"])?;
+    require_json_str(
+        health,
+        &["profiles", "state"],
+        "current",
+        "health.json profile catalog state mismatch",
+    )?;
+    require_json_str(
+        health,
+        &["profiles", "compatibility", "binary"],
+        &manifest.binaries.current,
+        "health.json profile catalog binary compatibility mismatch",
+    )?;
+    require_json_str(
+        health,
+        &["profiles", "compatibility", "assets"],
+        &manifest.assets.current,
+        "health.json profile catalog asset compatibility mismatch",
+    )?;
+    require_json_bool(
+        health,
+        &["profiles", "requires_newer", "binary"],
+        false,
+        "health.json profile catalog binary requirement mismatch",
+    )?;
+    require_json_bool(
+        health,
+        &["profiles", "requires_newer", "assets"],
+        false,
+        "health.json profile catalog asset requirement mismatch",
+    )?;
+    require_json_str(
+        health,
+        &["updates", "profiles", "latest"],
+        &expected_profile_revision,
+        "health.json profile update latest target does not match catalog",
+    )?;
+    require_json_str(
+        health,
+        &["updates", "profiles", "current"],
+        &expected_profile_revision,
+        "health.json profile update current target does not match catalog",
+    )?;
     require_json_str(
         health,
         &["updates", "profiles", "state"],
-        "not_published",
+        "current",
         "health.json profile update state mismatch",
-    )?;
-    require_json_null(
-        health,
-        &["updates", "profiles", "latest"],
-        "health.json profile update latest should be null while unpublished",
     )?;
     require_json_str(
         health,
         &["updates", "profiles", "source"],
-        "not_in_asset_channel",
+        &expected_profile_source,
         "health.json profile update source mismatch",
+    )?;
+    require_json_str(
+        health,
+        &["updates", "profiles", "hash"],
+        &expected_profile_hash,
+        "health.json profile update hash mismatch",
+    )?;
+    require_json_str(
+        health,
+        &["updates", "profiles", "compatibility", "binary"],
+        &manifest.binaries.current,
+        "health.json profile update binary compatibility mismatch",
+    )?;
+    require_json_str(
+        health,
+        &["updates", "profiles", "compatibility", "assets"],
+        &manifest.assets.current,
+        "health.json profile update asset compatibility mismatch",
+    )?;
+    require_json_bool(
+        health,
+        &["updates", "profiles", "requires_newer", "binary"],
+        false,
+        "health.json profile update binary requirement mismatch",
+    )?;
+    require_json_bool(
+        health,
+        &["updates", "profiles", "requires_newer", "assets"],
+        false,
+        "health.json profile update asset requirement mismatch",
     )?;
     require_json_str(
         health,
@@ -1197,6 +1295,35 @@ fn validate_assets_channel_health(
         .releases
         .get(&manifest.assets.current)
         .ok_or_else(|| anyhow!("channel manifest current asset release is missing"))?;
+    let current_binary_release = manifest.binaries.releases.get(&manifest.binaries.current);
+    require_json_str(
+        health,
+        &["profiles", "compatibility", "min_binary"],
+        &current_release.min_binary,
+        "health.json profile catalog min binary mismatch",
+    )?;
+    require_json_str(
+        health,
+        &["profiles", "compatibility", "min_assets"],
+        current_binary_release
+            .map(|release| release.min_assets.as_str())
+            .unwrap_or(""),
+        "health.json profile catalog min assets mismatch",
+    )?;
+    require_json_str(
+        health,
+        &["updates", "profiles", "compatibility", "min_binary"],
+        &current_release.min_binary,
+        "health.json profile update min binary mismatch",
+    )?;
+    require_json_str(
+        health,
+        &["updates", "profiles", "compatibility", "min_assets"],
+        current_binary_release
+            .map(|release| release.min_assets.as_str())
+            .unwrap_or(""),
+        "health.json profile update min assets mismatch",
+    )?;
     let asset_files = require_json_array(health, &["assets", "files"])?;
     let vm_oboms = require_json_array(health, &["evidence", "vm_oboms"])?;
     let host_sboms = require_json_array(health, &["evidence", "host_sboms"])?;
@@ -1345,6 +1472,13 @@ fn require_json_bool(
     Ok(())
 }
 
+fn require_json_string(root: &serde_json::Value, path: &[&str]) -> Result<String> {
+    json_path(root, path)
+        .and_then(|value| value.as_str())
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| anyhow!("health.json missing {}", path.join(".")))
+}
+
 fn require_json_null(value: &serde_json::Value, path: &[&str], message: &str) -> Result<()> {
     let actual = value
         .pointer(&format!("/{}", path.join("/")))
@@ -1374,10 +1508,11 @@ fn json_path<'a>(root: &'a serde_json::Value, path: &[&str]) -> Option<&'a serde
 
 fn assets_channel_index(
     manifest: &ManifestV2,
+    profiles_dir: &Path,
     channel: &str,
     generated_at: &str,
     manifest_blake3: &str,
-) -> AssetsChannelIndex {
+) -> Result<AssetsChannelIndex> {
     let mut arches = BTreeSet::new();
     for release in manifest.assets.releases.values() {
         arches.extend(release.arches.keys().cloned());
@@ -1401,7 +1536,13 @@ fn assets_channel_index(
         .filter(|file| file.name.ends_with(".spdx.json") || file.name.contains("sbom"))
         .cloned()
         .collect();
-    AssetsChannelIndex {
+    let profile_catalog = assets_channel_profile_catalog(
+        manifest,
+        profiles_dir,
+        current_release,
+        current_binary_release,
+    )?;
+    Ok(AssetsChannelIndex {
         schema_version: 1,
         channel: channel.to_string(),
         state: "published".to_string(),
@@ -1428,7 +1569,7 @@ fn assets_channel_index(
         current_binary_files,
         host_sboms,
         vm_oboms,
-        profile_update_state: "not_published".to_string(),
+        profile_catalog,
         image_update_state: "not_published".to_string(),
         notes: vec![
             "PRs remain the full quality gate before merge.".to_string(),
@@ -1436,7 +1577,77 @@ fn assets_channel_index(
             "Binary releases are triggered by immutable vX.Y.Z tags.".to_string(),
             "VM asset releases are explicit and must deploy this asset channel.".to_string(),
         ],
+    })
+}
+
+fn assets_channel_profile_catalog(
+    manifest: &ManifestV2,
+    profiles_dir: &Path,
+    current_release: Option<&capsem_core::asset_manager::AssetRelease>,
+    current_binary_release: Option<&capsem_core::asset_manager::BinaryRelease>,
+) -> Result<AssetsChannelProfileCatalog> {
+    let catalog = ProfileCatalog::load_from_dir(profiles_dir)
+        .map_err(|error| anyhow!("load profile catalog {}: {error}", profiles_dir.display()))?;
+    let profiles = catalog.profiles().collect::<Vec<_>>();
+    let profile_ids = profiles
+        .iter()
+        .map(|profile| profile.id.clone())
+        .collect::<Vec<_>>();
+    let revision = profile_catalog_revision(&profiles)?;
+    let refresh_policy = profile_catalog_refresh_policy(&profiles);
+    let hash = profile_catalog_hash(&profiles)?;
+    let min_binary = current_release
+        .map(|release| release.min_binary.clone())
+        .unwrap_or_default();
+    let min_assets = current_binary_release
+        .map(|release| release.min_assets.clone())
+        .unwrap_or_default();
+    Ok(AssetsChannelProfileCatalog {
+        revision,
+        source: profiles_dir.display().to_string(),
+        hash,
+        profile_count: profiles.len(),
+        profile_ids,
+        refresh_policy,
+        binary: manifest.binaries.current.clone(),
+        assets: manifest.assets.current.clone(),
+        min_binary,
+        min_assets,
+        requires_newer_binary: false,
+        requires_newer_assets: false,
+    })
+}
+
+fn profile_catalog_revision(profiles: &[&ProfileConfigFile]) -> Result<String> {
+    let mut revisions = profiles
+        .iter()
+        .map(|profile| profile.revision.as_str())
+        .collect::<BTreeSet<_>>();
+    if revisions.len() == 1 {
+        let revision = revisions
+            .pop_first()
+            .ok_or_else(|| anyhow!("profile catalog revision set is empty"))?;
+        return Ok(revision.to_string());
     }
+    let hash = profile_catalog_hash(profiles)?;
+    Ok(format!("catalog-{}", &hash[..16]))
+}
+
+fn profile_catalog_refresh_policy(profiles: &[&ProfileConfigFile]) -> String {
+    let policies = profiles
+        .iter()
+        .map(|profile| profile.refresh_policy.as_str())
+        .collect::<BTreeSet<_>>();
+    if policies.len() == 1 {
+        policies.into_iter().next().unwrap_or("mixed").to_string()
+    } else {
+        "mixed".to_string()
+    }
+}
+
+fn profile_catalog_hash(profiles: &[&ProfileConfigFile]) -> Result<String> {
+    let bytes = serde_json::to_vec(profiles).context("serialize profile catalog for hashing")?;
+    Ok(blake3::hash(&bytes).to_hex().to_string())
 }
 
 fn release_state<T: ReleaseDeprecated>(release: &T) -> &'static str {
@@ -1534,6 +1745,25 @@ fn render_assets_channel_health(index: &AssetsChannelIndex) -> Result<String> {
                 "state": index.current_asset_state,
                 "files": index.current_asset_files,
             },
+            "profiles": {
+                "revision": index.profile_catalog.revision,
+                "state": "current",
+                "source": index.profile_catalog.source,
+                "hash": index.profile_catalog.hash,
+                "profile_count": index.profile_catalog.profile_count,
+                "profile_ids": index.profile_catalog.profile_ids,
+                "refresh_policy": index.profile_catalog.refresh_policy,
+                "compatibility": {
+                    "binary": index.profile_catalog.binary,
+                    "assets": index.profile_catalog.assets,
+                    "min_binary": index.profile_catalog.min_binary,
+                    "min_assets": index.profile_catalog.min_assets,
+                },
+                "requires_newer": {
+                    "binary": index.profile_catalog.requires_newer_binary,
+                    "assets": index.profile_catalog.requires_newer_assets,
+                },
+            },
             "updates": {
                 "binary": {
                     "latest": index.current_binary,
@@ -1552,10 +1782,24 @@ fn render_assets_channel_health(index: &AssetsChannelIndex) -> Result<String> {
                     "files": index.current_asset_files,
                 },
                 "profiles": {
-                    "latest": serde_json::Value::Null,
-                    "current": serde_json::Value::Null,
-                    "state": index.profile_update_state,
-                    "source": "not_in_asset_channel",
+                    "latest": index.profile_catalog.revision,
+                    "current": index.profile_catalog.revision,
+                    "state": "current",
+                    "source": index.profile_catalog.source,
+                    "hash": index.profile_catalog.hash,
+                    "profile_count": index.profile_catalog.profile_count,
+                    "profile_ids": index.profile_catalog.profile_ids,
+                    "refresh_policy": index.profile_catalog.refresh_policy,
+                    "compatibility": {
+                        "binary": index.profile_catalog.binary,
+                        "assets": index.profile_catalog.assets,
+                        "min_binary": index.profile_catalog.min_binary,
+                        "min_assets": index.profile_catalog.min_assets,
+                    },
+                    "requires_newer": {
+                        "binary": index.profile_catalog.requires_newer_binary,
+                        "assets": index.profile_catalog.requires_newer_assets,
+                    },
                 },
                 "images": {
                     "latest": serde_json::Value::Null,
@@ -1604,6 +1848,7 @@ fn render_assets_channel_index(index: &AssetsChannelIndex) -> Result<String> {
         &index.host_sboms,
         "No host SBOM metadata is published in this asset manifest.",
     );
+    let profile_catalog = render_profile_catalog(index);
     let binary_file_rows = render_binary_file_rows(
         &index.current_binary_files,
         "No binary package metadata is published in this asset manifest.",
@@ -1735,6 +1980,7 @@ fn render_assets_channel_index(index: &AssetsChannelIndex) -> Result<String> {
         <dt>Generated</dt><dd>{generated_at}</dd>
         <dt>Current assets</dt><dd>{current_assets} ({current_asset_state})</dd>
         <dt>Current binary</dt><dd>{current_binary} ({current_binary_state})</dd>
+        <dt>Profile catalog</dt><dd>{profile_revision}</dd>
         <dt>Architectures</dt><dd>{arches}</dd>
         <dt>Asset releases</dt><dd>{asset_releases}</dd>
         <dt>Binary releases</dt><dd>{binary_releases}</dd>
@@ -1767,6 +2013,11 @@ fn render_assets_channel_index(index: &AssetsChannelIndex) -> Result<String> {
     </section>
 
     <section>
+      <h2>Profile Catalog</h2>
+{profile_catalog}
+    </section>
+
+    <section>
       <h2>Binary Files</h2>
 {binary_file_rows}
     </section>
@@ -1793,6 +2044,7 @@ fn render_assets_channel_index(index: &AssetsChannelIndex) -> Result<String> {
         current_binary = escape_html(&index.current_binary),
         current_asset_state = escape_html(&index.current_asset_state),
         current_binary_state = escape_html(&index.current_binary_state),
+        profile_revision = escape_html(&index.profile_catalog.revision),
         arches = escape_html(&arches),
         asset_releases = index.asset_releases,
         binary_releases = index.binary_releases,
@@ -1802,10 +2054,44 @@ fn render_assets_channel_index(index: &AssetsChannelIndex) -> Result<String> {
         current_asset_rows = current_asset_rows,
         vm_obom_rows = vm_obom_rows,
         host_sbom_rows = host_sbom_rows,
+        profile_catalog = profile_catalog,
         binary_file_rows = binary_file_rows,
         update_contract_rows = update_contract_rows,
         notes = notes,
     ))
+}
+
+fn render_profile_catalog(index: &AssetsChannelIndex) -> String {
+    let profile_ids = if index.profile_catalog.profile_ids.is_empty() {
+        "none".to_string()
+    } else {
+        index.profile_catalog.profile_ids.join(", ")
+    };
+    format!(
+        r#"      <dl>
+        <dt>Revision</dt><dd><code>{revision}</code></dd>
+        <dt>Source</dt><dd>{source}</dd>
+        <dt>BLAKE3</dt><dd><code>{hash}</code></dd>
+        <dt>Profiles</dt><dd>{profile_count} ({profile_ids})</dd>
+        <dt>Refresh policy</dt><dd>{refresh_policy}</dd>
+        <dt>Binary compatibility</dt><dd>{binary} (min {min_binary})</dd>
+        <dt>Asset compatibility</dt><dd>{assets} (min {min_assets})</dd>
+        <dt>Requires newer binary</dt><dd>{requires_binary}</dd>
+        <dt>Requires newer assets</dt><dd>{requires_assets}</dd>
+      </dl>"#,
+        revision = escape_html(&index.profile_catalog.revision),
+        source = escape_html(&index.profile_catalog.source),
+        hash = escape_html(&index.profile_catalog.hash),
+        profile_count = index.profile_catalog.profile_count,
+        profile_ids = escape_html(&profile_ids),
+        refresh_policy = escape_html(&index.profile_catalog.refresh_policy),
+        binary = escape_html(&index.profile_catalog.binary),
+        min_binary = escape_html(&index.profile_catalog.min_binary),
+        assets = escape_html(&index.profile_catalog.assets),
+        min_assets = escape_html(&index.profile_catalog.min_assets),
+        requires_binary = index.profile_catalog.requires_newer_binary,
+        requires_assets = index.profile_catalog.requires_newer_assets,
+    )
 }
 
 fn render_update_contract_rows(index: &AssetsChannelIndex) -> String {
@@ -1824,9 +2110,9 @@ fn render_update_contract_rows(index: &AssetsChannelIndex) -> String {
         ),
         (
             "Profiles",
-            "",
-            index.profile_update_state.as_str(),
-            "not_in_asset_channel",
+            index.profile_catalog.revision.as_str(),
+            "current",
+            index.profile_catalog.source.as_str(),
         ),
         (
             "Images",
@@ -5319,11 +5605,13 @@ decision = "block"
         let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
         let manifest_url = file_url(&manifest_path);
         let assets_dir = temp.path().join("assets");
+        let profiles_dir = repo_config_profiles_dir();
         let out_dir = temp.path().join("target/release-channel");
 
         let report = build_assets_channel(
             &manifest_url,
             &assets_dir,
+            &profiles_dir,
             "stable",
             &out_dir,
             "2030-01-01T00:00:00Z",
@@ -5352,6 +5640,7 @@ decision = "block"
         assert!(index_html.contains("Current Asset Files"));
         assert!(index_html.contains("Host SBOM Evidence"));
         assert!(index_html.contains("Update Contract"));
+        assert!(index_html.contains("Profile Catalog"));
         assert!(index_html.contains("/health.json"));
         assert!(index_html.contains("/assets/releases/2030.0101.1/arm64-rootfs.erofs"));
         assert!(index_html.contains("/assets/releases/2030.0101.1/arm64-obom.cdx.json"));
@@ -5417,18 +5706,30 @@ decision = "block"
             health["updates"]["assets"]["asset_base"].as_str(),
             Some("/assets/releases")
         );
-        assert_eq!(health["updates"]["profiles"]["latest"].as_str(), None);
-        assert!(
-            health["updates"]["profiles"]["latest"].is_null(),
-            "unpublished profile latest should be explicit null"
+        assert_eq!(
+            health["profiles"]["revision"].as_str(),
+            health["updates"]["profiles"]["latest"].as_str()
+        );
+        assert_eq!(
+            health["profiles"]["hash"].as_str(),
+            health["updates"]["profiles"]["hash"].as_str()
+        );
+        assert_eq!(
+            health["profiles"]["compatibility"]["binary"].as_str(),
+            Some("1.0.0")
+        );
+        assert_eq!(
+            health["profiles"]["compatibility"]["assets"].as_str(),
+            Some("2030.0101.1")
         );
         assert_eq!(
             health["updates"]["profiles"]["state"].as_str(),
-            Some("not_published")
+            Some("current")
         );
+        let profile_source = profiles_dir.display().to_string();
         assert_eq!(
             health["updates"]["profiles"]["source"].as_str(),
-            Some("not_in_asset_channel")
+            Some(profile_source.as_str())
         );
         assert_eq!(health["updates"]["images"]["latest"].as_str(), None);
         assert!(
@@ -5454,10 +5755,12 @@ decision = "block"
         let temp = tempfile::tempdir().expect("tempdir");
         let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
         let assets_dir = temp.path().join("assets");
+        let profiles_dir = repo_config_profiles_dir();
         let out_dir = temp.path().join("target/release-channel");
         build_assets_channel(
             &file_url(&manifest_path),
             &assets_dir,
+            &profiles_dir,
             "stable",
             &out_dir,
             "2030-01-01T00:00:00Z",
@@ -5486,10 +5789,12 @@ decision = "block"
         let temp = tempfile::tempdir().expect("tempdir");
         let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
         let assets_dir = temp.path().join("assets");
+        let profiles_dir = repo_config_profiles_dir();
         let out_dir = temp.path().join("target/release-channel");
         build_assets_channel(
             &file_url(&manifest_path),
             &assets_dir,
+            &profiles_dir,
             "stable",
             &out_dir,
             "2030-01-01T00:00:00Z",
@@ -5513,10 +5818,12 @@ decision = "block"
         let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
         let manifest_url = file_url(&manifest_path);
         let assets_dir = temp.path().join("assets");
+        let profiles_dir = repo_config_profiles_dir();
         for channel in ["../stable", "stable.v1", "stable channel", "<stable>"] {
             let error = build_assets_channel(
                 &manifest_url,
                 &assets_dir,
+                &profiles_dir,
                 channel,
                 &temp.path().join("target/release-channel"),
                 "2030-01-01T00:00:00Z",
@@ -5534,6 +5841,7 @@ decision = "block"
         let error = build_assets_channel(
             &manifest_path.display().to_string(),
             &temp.path().join("assets"),
+            &repo_config_profiles_dir(),
             "stable",
             &temp.path().join("target/release-channel"),
             "2030-01-01T00:00:00Z",
@@ -5549,6 +5857,15 @@ decision = "block"
     fn file_url(path: &Path) -> String {
         let path = path.canonicalize().expect("canonical test path");
         format!("file://{}", path.display())
+    }
+
+    fn repo_config_profiles_dir() -> PathBuf {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        manifest_dir
+            .parent()
+            .and_then(Path::parent)
+            .expect("repo root")
+            .join("config/profiles")
     }
 
     fn serve_manifest_once(body: String) -> String {

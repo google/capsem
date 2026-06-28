@@ -26,8 +26,10 @@ The generated `health.json` is the compact release-site index with schema
 `capsem.assets_channel.health.v1`; it lists the active manifest URL, immutable
 asset base URL, current binary/assets versions, current asset URLs, VM OBOM
 references, host SBOM references, binary file metadata when present, an explicit `updates` block with
-`latest` targets for binary/assets/profile/image freshness checks,
-and an attestations slot.
+`latest` targets for binary/assets/profile/image freshness checks, and a
+profile catalog block with revision, source directory, BLAKE3 digest,
+compatibility minimums, and whether the advertised profile catalog requires a
+newer binary or VM asset set, plus an attestations slot.
 Do not add a separate release-channel source directory or hand-authored channel
 manifest. VM asset releases must deploy `release.capsem.org` after producing the
 asset manifest/evidence; binary releases remain tag-triggered and do not rebuild

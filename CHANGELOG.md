@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Published profile catalog revision, hash, source, and compatibility metadata
+  in the release-channel index so profile freshness is no longer represented as
+  an unpublished track.
 - Stored release-channel cache provenance for update checks, including the
   fetched channel hash, validation status, and validation errors exposed through
   the update status API.
