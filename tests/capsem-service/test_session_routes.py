@@ -13,12 +13,16 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
+import blake3
+
 from helpers.service import ServiceInstance, materialize_test_profiles
 
 DEFUNCT_ID = "11111111-1111-4111-8111-111111111111"
 DRIFT_ID = "22222222-2222-4222-8222-222222222222"
+ASSET_PIN_DRIFT_ID = "77777777-7777-4777-8777-777777777777"
 DEFUNCT_NAME = "code-stale-overlay"
 DRIFT_NAME = "code-payload-drift"
+ASSET_PIN_DRIFT_NAME = "code-asset-pin-drift"
 
 
 def _curl_json_with_status(service: ServiceInstance, method: str, path: str, body=None):
@@ -58,6 +62,7 @@ def _profile_contract(tmp_dir: Path) -> dict[str, Any]:
             "initrd": {"name": assets["initrd"]["name"], "hash": assets["initrd"]["hash"]},
             "rootfs": {"name": assets["rootfs"]["name"], "hash": assets["rootfs"]["hash"]},
         },
+        "payload_hash": f"blake3:{blake3.blake3(json.dumps(profile, separators=(',', ':')).encode()).hexdigest()}",
     }
 
 
@@ -94,7 +99,9 @@ def _row(listing: dict[str, Any], session_id: str) -> dict[str, Any]:
     return matches[0]
 
 
-def _assert_delete_only_session(payload: dict[str, Any], *, session_id: str, name: str, status: str) -> None:
+def _assert_delete_only_session(
+    payload: dict[str, Any], *, session_id: str, name: str, status: str
+) -> None:
     assert payload["id"] == session_id
     if "name" in payload:
         assert payload["name"] == name
@@ -132,7 +139,9 @@ def test_session_routes_make_defunct_and_incompatible_sessions_delete_only() -> 
         listing = client.get("/vms/list")
         defunct_row = _row(listing, DEFUNCT_ID)
         incompatible_row = _row(listing, DRIFT_ID)
-        _assert_delete_only_session(defunct_row, session_id=DEFUNCT_ID, name=DEFUNCT_NAME, status="Defunct")
+        _assert_delete_only_session(
+            defunct_row, session_id=DEFUNCT_ID, name=DEFUNCT_NAME, status="Defunct"
+        )
         _assert_delete_only_session(
             incompatible_row,
             session_id=DRIFT_ID,
@@ -158,7 +167,9 @@ def test_session_routes_make_defunct_and_incompatible_sessions_delete_only() -> 
                 name=name,
                 status=status,
             )
-            http_status, error = _curl_json_with_status(service, "POST", f"/vms/{session_id}/resume", {})
+            http_status, error = _curl_json_with_status(
+                service, "POST", f"/vms/{session_id}/resume", {}
+            )
             assert http_status >= 400
             assert "resume" in error["error"].lower()
 
@@ -167,5 +178,53 @@ def test_session_routes_make_defunct_and_incompatible_sessions_delete_only() -> 
         listing_after_delete = client.get("/vms/list")
         assert DEFUNCT_ID not in {row["id"] for row in listing_after_delete["sandboxes"]}
         assert DRIFT_ID not in {row["id"] for row in listing_after_delete["sandboxes"]}
+    finally:
+        service.stop()
+
+
+def test_asset_pin_drift_makes_persistent_session_incompatible() -> None:
+    service = ServiceInstance()
+    try:
+        contract = _profile_contract(service.tmp_dir)
+        drifted_contract = json.loads(json.dumps(contract))
+        drifted_contract["pins"]["rootfs"]["hash"] = (
+            "blake3:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        )
+        entry = _registry_entry(
+            ASSET_PIN_DRIFT_ID,
+            ASSET_PIN_DRIFT_NAME,
+            service.tmp_dir,
+            drifted_contract,
+            profile_payload_hash=contract["payload_hash"],
+        )
+        _write_registry(service.tmp_dir, [entry])
+
+        service.start()
+        client = service.client()
+
+        listing = client.get("/vms/list")
+        row = _row(listing, ASSET_PIN_DRIFT_ID)
+        _assert_delete_only_session(
+            row,
+            session_id=ASSET_PIN_DRIFT_ID,
+            name=ASSET_PIN_DRIFT_NAME,
+            status="Incompatible",
+        )
+        assert "asset pins changed" in row["resume_blocked_reason"]
+
+        status = client.get(f"/vms/{ASSET_PIN_DRIFT_ID}/status")
+        _assert_delete_only_session(
+            status,
+            session_id=ASSET_PIN_DRIFT_ID,
+            name=ASSET_PIN_DRIFT_NAME,
+            status="Incompatible",
+        )
+        assert "asset pins changed" in status["resume_blocked_reason"]
+
+        http_status, error = _curl_json_with_status(
+            service, "POST", f"/vms/{ASSET_PIN_DRIFT_ID}/resume", {}
+        )
+        assert http_status >= 400
+        assert "asset pins changed" in error["error"]
     finally:
         service.stop()

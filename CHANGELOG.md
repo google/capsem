@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Documented the PR `pr-gate` contract against `just test`, including the
   hosted-runner substitutions that must not be mistaken for full local release
   validation.
+- Locked persistent VM asset-pin drift into the service route contract so
+  profile or asset-channel updates cannot make an existing VM appear resumable
+  with different boot assets.
 - Exposed installed, latest, and blocked profile catalog freshness through the
   update status API so CLI, tray, UI, and TUI consumers can report profile
   updates without inspecting raw profile files.
