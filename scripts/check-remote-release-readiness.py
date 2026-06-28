@@ -266,6 +266,9 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
     health_profiles = require_object(health_data, "profiles", "health profiles", failures)
     manifest_assets = require_object(manifest_data, "assets", "manifest assets", failures)
     manifest_binaries = require_object(manifest_data, "binaries", "manifest binaries", failures)
+    manifest_asset_releases = require_object(
+        manifest_assets, "releases", "manifest asset releases", failures
+    )
 
     if health_data.get("schema") != "capsem.assets_channel.health.v1":
         failures.append("health schema mismatch")
@@ -382,14 +385,37 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
         elif value not in index.text:
             failures.append(f"index missing {label} {value}")
 
-    current_asset_release = next(
-        (
-            release
-            for release in health_data.get("asset_releases", [])
-            if isinstance(release, dict) and release.get("version") == current_assets
-        ),
-        {},
-    )
+    health_asset_releases = health_data.get("asset_releases")
+    if not isinstance(health_asset_releases, list):
+        failures.append("health asset releases missing or not a list")
+        health_asset_releases = []
+    asset_release_by_version = {
+        release.get("version"): release
+        for release in health_asset_releases
+        if isinstance(release, dict) and isinstance(release.get("version"), str)
+    }
+    for version, manifest_release in manifest_asset_releases.items():
+        if not isinstance(version, str) or not isinstance(manifest_release, dict):
+            failures.append("manifest asset release entry malformed")
+            continue
+        public_release = asset_release_by_version.get(version)
+        if not isinstance(public_release, dict):
+            failures.append(f"health missing asset release {version}")
+            continue
+        expected_deprecated = manifest_release.get("deprecated", False)
+        expected_state = "deprecated" if expected_deprecated is True else "current"
+        expected_fields = (
+            ("date", manifest_release.get("date")),
+            ("state", expected_state),
+            ("deprecated", expected_deprecated),
+            ("deprecated_date", manifest_release.get("deprecated_date")),
+            ("min_binary", manifest_release.get("min_binary")),
+        )
+        for field, expected in expected_fields:
+            if public_release.get(field) != expected:
+                failures.append(f"health asset release {version} {field} mismatch")
+
+    current_asset_release = asset_release_by_version.get(current_assets, {})
     current_asset_date = current_asset_release.get("date")
     if not isinstance(current_asset_date, str):
         failures.append("current asset release date missing")

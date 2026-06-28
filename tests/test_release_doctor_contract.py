@@ -365,8 +365,11 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
     assert '("profile catalog", health.get("profiles", {}).get("source"))' in workflow
     assert '("channel manifest", expected_manifest)' in workflow
     assert "index page missing {label} {value}" in workflow
-    assert 'health.get("asset_releases", [])' in workflow
-    assert 'release.get("version") == current_assets' in workflow
+    assert 'manifest_asset_releases = manifest.get("assets", {}).get("releases", {})' in workflow
+    assert "health asset releases missing or not a list" in workflow
+    assert "health missing asset release {version}" in workflow
+    assert '"deprecated_date", manifest_release.get("deprecated_date")' in workflow
+    assert "health asset release {version} {field} mismatch" in workflow
     assert "health current asset release date missing" in workflow
     assert "index page missing current asset release date" in workflow
     assert "def fetch_headers" in workflow
@@ -1037,6 +1040,156 @@ def test_remote_readiness_rejects_health_summary_drift() -> None:
     assert "health health URL mismatch" in result.detail
     assert "health binary version mismatch" in result.detail
     assert "health asset version mismatch" in result.detail
+
+
+def test_remote_readiness_rejects_asset_release_history_drift() -> None:
+    checker = _readiness_checker_module()
+    catalog_url = "/profiles/releases/profiles-2030.0102.1/catalog.json"
+
+    checker.fetch_text = lambda _url: checker.FetchText(
+        text=(
+            "1.4.0 2030.0102.1 2030-01-02 "
+            f"2030-01-02T00:00:00Z profiles-2030.0102.1 {catalog_url} "
+            "/assets/stable/manifest.json"
+        )
+    )
+    checker.fetch_json = lambda url: checker.FetchJson(
+        data={
+            "schema": "capsem.assets_channel.health.v1",
+            "ok": True,
+            "channel": "stable",
+            "state": "published",
+            "generated_at": "2030-01-02T00:00:00Z",
+            "urls": {
+                "index": "/index.html",
+                "health": "/health.json",
+                "manifest": "/assets/stable/manifest.json",
+                "asset_base": "/assets/releases",
+                "profile_catalog": catalog_url,
+            },
+            "current": {"binary": "1.4.0", "assets": "2030.0102.1"},
+            "asset_releases": [
+                {
+                    "version": "2030.0102.1",
+                    "date": "2030-01-02",
+                    "state": "current",
+                    "deprecated": False,
+                    "min_binary": "1.4.0",
+                }
+            ],
+            "binary": {
+                "version": "1.4.0",
+                "state": "current",
+                "files": [],
+            },
+            "assets": {
+                "version": "2030.0102.1",
+                "state": "current",
+                "compatibility": {"binary": "1.4.0", "min_binary": "1.4.0"},
+                "requires_newer": {"binary": False},
+                "files": [],
+            },
+            "profiles": {
+                "revision": "profiles-2030.0102.1",
+                "source": catalog_url,
+                "hash": "1" * 64,
+                "compatibility": {
+                    "binary": "current",
+                    "assets": "current",
+                    "min_binary": "1.4.0",
+                    "min_assets": "2030.0102.1",
+                },
+                "requires_newer": {"binary": False, "assets": False},
+            },
+            "updates": {
+                "binary": {
+                    "latest": "1.4.0",
+                    "current": "1.4.0",
+                    "state": "current",
+                    "source": "manifest.binaries.current",
+                    "files": [],
+                },
+                "assets": {
+                    "latest": "2030.0102.1",
+                    "current": "2030.0102.1",
+                    "state": "current",
+                    "source": "manifest.assets.current",
+                    "manifest": "/assets/stable/manifest.json",
+                    "asset_base": "/assets/releases",
+                    "compatibility": {"binary": "1.4.0", "min_binary": "1.4.0"},
+                    "requires_newer": {"binary": False},
+                },
+                "profiles": {
+                    "latest": "profiles-2030.0102.1",
+                    "current": "profiles-2030.0102.1",
+                    "state": "current",
+                    "source": catalog_url,
+                    "hash": "1" * 64,
+                    "compatibility": {
+                        "binary": "current",
+                        "assets": "current",
+                        "min_binary": "1.4.0",
+                        "min_assets": "2030.0102.1",
+                    },
+                    "requires_newer": {"binary": False, "assets": False},
+                },
+                "images": {
+                    "latest": None,
+                    "current": None,
+                    "state": "not_published",
+                    "source": "not_in_asset_channel",
+                },
+            },
+            "evidence": {
+                "vm_oboms": [],
+                "host_sboms": [],
+                "host_binary_files": [],
+                "attestations": [],
+            },
+        }
+        if url.endswith("/health.json")
+        else {
+            "format": 2,
+            "assets": {
+                "current": "2030.0102.1",
+                "releases": {
+                    "2030.0102.1": {
+                        "date": "2030-01-02",
+                        "deprecated": False,
+                        "min_binary": "1.4.0",
+                    },
+                    "2030.0101.1": {
+                        "date": "2030-01-01",
+                        "deprecated": True,
+                        "deprecated_date": "2030-01-03",
+                        "min_binary": "1.3.0",
+                    },
+                },
+            },
+            "binaries": {
+                "current": "1.4.0",
+                "releases": {
+                    "1.4.0": {
+                        "date": "2030-01-02",
+                        "deprecated": False,
+                        "min_assets": "2030.0102.1",
+                    }
+                },
+            },
+        }
+    )
+    checker.fetch_headers = lambda url: checker.FetchHeaders(
+        headers={
+            "cache-control": "public, max-age=31536000, immutable"
+            if "/profiles/releases/" in url
+            else "no-cache, must-revalidate"
+        }
+    )
+
+    result = checker.check_release_site_contract("https://release.capsem.org", "stable")
+
+    assert not result.ok
+    assert "health missing asset release 2030.0101.1" in result.detail
 
 
 def test_remote_readiness_rejects_profile_update_metadata_drift() -> None:

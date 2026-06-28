@@ -88,6 +88,10 @@ and channel manifest path as the fetched health JSON and manifest. It must also
 reject stale `health.json` summary state: `ok`, channel, published state,
 index/health URLs, and top-level binary/assets versions must match the active
 channel manifest and release-site layout. It must also
+verify every manifest asset release row in `health.json`, including date,
+deprecated state, deprecation date, and minimum binary compatibility, so
+metadata-only deprecation changes cannot leave the public release history
+stale. It must also
 verify that the binary update target, state, source, and package file metadata
 match the canonical binary metadata. It must also
 verify that the VM asset update target, manifest, base URL, compatibility, and
