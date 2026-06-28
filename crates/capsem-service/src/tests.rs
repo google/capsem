@@ -607,21 +607,23 @@ async fn update_route_apply_dry_run_plans_binary_profiles_and_assets() {
 }
 
 #[tokio::test]
-async fn update_route_apply_requires_confirmation_for_live_command() {
+async fn update_route_apply_requires_confirmation_for_live_commands() {
     let app = build_service_router(make_test_state());
-    let (status, body) = route_request(
-        app,
-        axum::http::Method::POST,
-        "/update/apply",
-        Some(json!({ "action": "assets" })),
-    )
-    .await;
+    for action in ["binary_profiles", "assets"] {
+        let (status, body) = route_request(
+            app.clone(),
+            axum::http::Method::POST,
+            "/update/apply",
+            Some(json!({ "action": action })),
+        )
+        .await;
 
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(
-        body["error"],
-        "update apply requires confirmed=true or dry_run=true"
-    );
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{action}");
+        assert_eq!(
+            body["error"], "update apply requires confirmed=true or dry_run=true",
+            "{action}"
+        );
+    }
 }
 
 async fn decode_response_json<T: serde::de::DeserializeOwned>(
