@@ -7,7 +7,9 @@
   import type { UpdateStatusResponse, UpdateTrackStatus } from '../../types/gateway';
   import {
     UPDATE_TRACK_LABELS,
+    updateEvidenceLinks,
     updateSummary,
+    updateTrackDetail,
     updateTrackVersion,
     type UpdateTrackKey,
   } from '../../models/update-status';
@@ -152,6 +154,16 @@
 
   function trackRow(status: UpdateStatusResponse, key: UpdateTrackKey): UpdateTrackStatus {
     return status[key];
+  }
+
+  function evidenceHref(href: string): string {
+    if (href.startsWith('http://') || href.startsWith('https://')) return href;
+    if (href.startsWith('/')) return `${api.getBaseUrl()}${href}`;
+    const channel = updateStatus?.channel_url;
+    if (channel?.startsWith('http://') || channel?.startsWith('https://')) {
+      return new URL(href, channel).toString();
+    }
+    return href;
   }
 </script>
 
@@ -426,16 +438,41 @@
           {#if updateStatus}
             {#each (['binary', 'assets', 'profiles', 'images'] as UpdateTrackKey[]) as key (key)}
               {@const track = trackRow(updateStatus, key)}
+              {@const detail = updateTrackDetail(track)}
               <div class="flex items-center justify-between p-4 gap-x-4">
                 <div>
                   <p class="text-sm text-foreground">{UPDATE_TRACK_LABELS[key]}</p>
                   <p class="text-xs text-muted-foreground-1 mt-0.5">{updateTrackVersion(track)}</p>
+                  {#if detail}
+                    <p class="text-xs text-muted-foreground-1 mt-1">{detail}</p>
+                  {/if}
                 </div>
                 <p class="text-sm {track.update_available ? 'text-primary' : 'text-muted-foreground-1'}">
                   {trackStateLabel(track)}
                 </p>
               </div>
             {/each}
+            {@const evidenceLinks = updateEvidenceLinks(updateStatus)}
+            {#if evidenceLinks.length > 0}
+              <div class="p-4">
+                <p class="text-sm font-medium text-foreground mb-3">Release evidence</p>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  {#each evidenceLinks as link (`${link.label}:${link.href}`)}
+                    <a
+                      class="flex items-center justify-between gap-x-3 rounded-lg border border-line-2 bg-layer px-3 py-2 text-sm text-foreground hover:bg-layer-hover transition-colors"
+                      href={evidenceHref(link.href)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      <span>{link.label}</span>
+                      {#if link.meta}
+                        <span class="text-xs text-muted-foreground-1">{link.meta}</span>
+                      {/if}
+                    </a>
+                  {/each}
+                </div>
+              </div>
+            {/if}
           {/if}
         </div>
 

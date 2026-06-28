@@ -1,6 +1,12 @@
-import type { UpdateStatusResponse, UpdateTrackStatus } from '../types/gateway';
+import type { SupplyChainReference, UpdateStatusResponse, UpdateTrackStatus } from '../types/gateway';
 
 export type UpdateTrackKey = 'binary' | 'assets' | 'profiles' | 'images';
+
+export interface UpdateEvidenceLink {
+  label: string;
+  href: string;
+  meta?: string;
+}
 
 export const UPDATE_TRACK_LABELS: Record<UpdateTrackKey, string> = {
   binary: 'Binary',
@@ -34,4 +40,46 @@ export function updateTrackVersion(track: UpdateTrackStatus): string {
   if (track.update_available) return `${current} -> ${latest}`;
   if (track.state === 'not_published') return 'not published';
   return current;
+}
+
+export function updateTrackDetail(track: UpdateTrackStatus): string | null {
+  if (track.blocked_reason) return track.blocked_reason;
+  if (track.compatibility === 'unknown') return 'Compatibility unknown';
+  if (track.compatibility === 'not_applicable') return null;
+  return null;
+}
+
+export function updateEvidenceLinks(status: UpdateStatusResponse): UpdateEvidenceLink[] {
+  const evidence = status.supply_chain;
+  if (!evidence) return [];
+
+  const links: UpdateEvidenceLink[] = [];
+  const host = referenceLink('Host SBOM', evidence.host_sbom);
+  if (host) links.push(host);
+  const vm = referenceLink('VM OBOM', evidence.vm_obom);
+  if (vm) links.push(vm);
+
+  for (const attestation of evidence.attestations ?? []) {
+    const label = attestation.scope === 'vm_assets'
+      ? 'VM asset attestation'
+      : attestation.scope === 'binary'
+        ? 'Binary attestation'
+        : attestation.name || 'Attestation';
+    const link = referenceLink(label, attestation);
+    if (link) links.push(link);
+  }
+
+  return links;
+}
+
+function referenceLink(label: string, reference: SupplyChainReference | undefined): UpdateEvidenceLink | null {
+  if (!reference) return null;
+  const href = reference.route || reference.release_artifact;
+  if (!href) return null;
+  const meta = [reference.format, reference.scope].filter(Boolean).join(' · ');
+  return {
+    label,
+    href,
+    meta: meta || undefined,
+  };
 }
