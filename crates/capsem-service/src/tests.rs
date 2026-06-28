@@ -226,6 +226,62 @@ fn update_status_reports_blocked_profile_track_from_release_cache() {
 }
 
 #[test]
+fn update_status_reports_blocked_asset_track_from_release_cache() {
+    let dir = tempfile::tempdir().unwrap();
+    let assets_dir = dir.path().join("assets");
+    std::fs::create_dir_all(&assets_dir).unwrap();
+    std::fs::write(
+        assets_dir.join("manifest.json"),
+        serde_json::json!({
+            "format": 2,
+            "refresh_policy": "24h",
+            "assets": {
+                "current": "2026.0627.1",
+                "releases": {}
+            },
+            "binaries": {
+                "current": "1.3.1782582155",
+                "releases": {}
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let cache_path = dir.path().join("update-check.json");
+    std::fs::write(
+        &cache_path,
+        serde_json::json!({
+            "checked_at": 1000,
+            "latest_version": "1.3.1782582155",
+            "update_available": false,
+            "latest_assets": "2030.0101.1",
+            "assets_update_available": false,
+            "assets_state": "published",
+            "assets_blocked_reason": "requires binary 99.99.99 or newer",
+            "source": "https://release.capsem.org/health.json"
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let status =
+        update_status_response_from_paths("1.3.1782582155", &assets_dir, &cache_path, 1200);
+
+    assert_eq!(status.assets.current.as_deref(), Some("2026.0627.1"));
+    assert_eq!(status.assets.latest.as_deref(), Some("2030.0101.1"));
+    assert!(!status.assets.update_available);
+    assert_eq!(status.assets.state, api::UpdateTrackState::Unknown);
+    assert_eq!(
+        status.assets.compatibility,
+        api::UpdateCompatibilityState::Unknown
+    );
+    assert_eq!(
+        status.assets.blocked_reason.as_deref(),
+        Some("requires binary 99.99.99 or newer")
+    );
+}
+
+#[test]
 fn update_status_reports_unknown_when_cache_is_missing_and_keeps_manifest_channel() {
     let dir = tempfile::tempdir().unwrap();
     let assets_dir = dir.path().join("assets");

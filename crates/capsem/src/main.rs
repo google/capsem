@@ -1120,23 +1120,51 @@ fn print_corp_status(info: &serde_json::Value) {
 
 fn print_update_status(status: &UpdateStatusResponse) {
     let mut updates = Vec::new();
+    let mut blocked = Vec::new();
     if status.binary.update_available {
         let current = status.binary.current.as_deref().unwrap_or("unknown");
         let latest = status.binary.latest.as_deref().unwrap_or("unknown");
         updates.push(format!("binary {current} -> {latest}"));
+    }
+    if status.binary.blocked_reason.is_some() {
+        blocked.push("binary");
     }
     if status.assets.update_available {
         let current = status.assets.current.as_deref().unwrap_or("unknown");
         let latest = status.assets.latest.as_deref().unwrap_or("unknown");
         updates.push(format!("assets {current} -> {latest}"));
     }
+    if status.assets.blocked_reason.is_some() {
+        blocked.push("assets");
+    }
     if status.profiles.update_available {
         let current = status.profiles.current.as_deref().unwrap_or("unknown");
         let latest = status.profiles.latest.as_deref().unwrap_or("unknown");
         updates.push(format!("profiles {current} -> {latest}"));
     }
+    if status.profiles.blocked_reason.is_some() {
+        blocked.push("profiles");
+    }
+    if status.images.update_available {
+        let current = status.images.current.as_deref().unwrap_or("unknown");
+        let latest = status.images.latest.as_deref().unwrap_or("unknown");
+        updates.push(format!("images {current} -> {latest}"));
+    }
+    if status.images.blocked_reason.is_some() {
+        blocked.push("images");
+    }
 
-    if updates.is_empty() {
+    if !updates.is_empty() && !blocked.is_empty() {
+        println!(
+            "Updates:   available ({}); blocked ({})",
+            updates.join("; "),
+            blocked.join(", ")
+        );
+    } else if !updates.is_empty() {
+        println!("Updates:   available ({})", updates.join("; "));
+    } else if !blocked.is_empty() {
+        println!("Updates:   blocked ({})", blocked.join(", "));
+    } else {
         let asset_state = match status.assets.state {
             UpdateTrackState::Unknown => "assets unknown",
             UpdateTrackState::NotPublished => "assets not published",
@@ -1144,8 +1172,6 @@ fn print_update_status(status: &UpdateStatusResponse) {
         };
         let freshness = if status.stale { "stale" } else { "fresh" };
         println!("Updates:   current ({asset_state}, cache {freshness})");
-    } else {
-        println!("Updates:   available ({})", updates.join("; "));
     }
     if let Some(channel) = &status.channel_url {
         println!("Channel:   {channel}");
@@ -1153,8 +1179,17 @@ fn print_update_status(status: &UpdateStatusResponse) {
     if let Some(error) = &status.last_error {
         println!("Update err:{error}");
     }
+    if let Some(reason) = &status.binary.blocked_reason {
+        println!("Binary:    blocked ({reason})");
+    }
+    if let Some(reason) = &status.assets.blocked_reason {
+        println!("Assets:    blocked ({reason})");
+    }
     if let Some(reason) = &status.profiles.blocked_reason {
         println!("Profiles:  blocked ({reason})");
+    }
+    if let Some(reason) = &status.images.blocked_reason {
+        println!("Images:    blocked ({reason})");
     }
 }
 

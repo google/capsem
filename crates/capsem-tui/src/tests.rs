@@ -1006,6 +1006,27 @@ fn gateway_blocked_update_status_maps_to_tui_notice() {
 }
 
 #[test]
+fn gateway_blocked_asset_update_status_maps_to_tui_notice() {
+    let state = state_from_status_and_update_json_for_test(
+        gateway_empty_status_body(),
+        gateway_update_blocked_asset_status_body(),
+        std::time::Duration::from_millis(11),
+    )
+    .expect("parse blocked asset update status");
+
+    let notice = state
+        .update_notice
+        .as_ref()
+        .expect("blocked asset update notice");
+    assert_eq!(
+        notice.kind,
+        UpdateNoticeKind::Blocked(vec![UpdateTrack::VmAssets])
+    );
+    let snapshot = render_snapshot(&state, 120, 24).expect("render blocked asset update notice");
+    assert!(snapshot.contains("updates blocked: assets"));
+}
+
+#[test]
 fn gateway_binary_update_with_blocked_profile_keeps_both_tui_labels() {
     let state = state_from_status_and_update_json_for_test(
         gateway_empty_status_body(),
@@ -1980,6 +2001,39 @@ fn gateway_update_blocked_profile_status_body() -> &'static str {
             "state": "current",
             "compatibility": "compatible",
             "blocked_reason": "requires binary 1.4.1 or newer"
+        },
+        "images": {
+            "update_available": false,
+            "state": "not_published",
+            "compatibility": "not_applicable"
+        }
+    }"#
+}
+
+fn gateway_update_blocked_asset_status_body() -> &'static str {
+    r#"{
+        "checked_at": 1718444400,
+        "channel_url": "https://release.capsem.org/health.json",
+        "stale": false,
+        "binary": {
+            "current": "1.4.0",
+            "latest": "1.4.0",
+            "update_available": false,
+            "state": "current",
+            "compatibility": "compatible"
+        },
+        "assets": {
+            "current": "2026.0627.1",
+            "latest": "2030.0101.1",
+            "update_available": false,
+            "state": "unknown",
+            "compatibility": "unknown",
+            "blocked_reason": "requires binary 99.99.99 or newer"
+        },
+        "profiles": {
+            "update_available": false,
+            "state": "not_published",
+            "compatibility": "not_applicable"
         },
         "images": {
             "update_available": false,

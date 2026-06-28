@@ -51,6 +51,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   paths.
 
 ### Changed
+- Changed update status reporting so VM asset and image tracks can surface
+  blocked release-channel candidates, including asset releases that require a
+  newer Capsem binary.
 - Changed profile catalog updates so `capsem update` reports available
   catalogs without applying them, while `capsem update --yes` performs the
   validated apply.

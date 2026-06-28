@@ -177,6 +177,27 @@ describe('update status model', () => {
     expect(profileDashboardUpdateSummary(status)).toBe('Profiles blocked');
   });
 
+  it('surfaces blocked VM asset updates on the profile dashboard', () => {
+    const status = updateStatus({
+      assets: {
+        current: '2026.0627.1',
+        latest: '2030.0101.1',
+        update_available: false,
+        state: 'unknown',
+        compatibility: 'unknown',
+        blocked_reason: 'requires binary 99.99.99 or newer',
+      },
+    });
+
+    expect(updateBlockedTracks(status)).toEqual(['assets']);
+    expect(updateSummary(status)).toBe('VM assets blocked');
+    expect(profileDashboardUpdateSummary(status)).toBe('VM assets blocked');
+    const [, assets] = profileDashboardUpdateRows(status);
+    expect(assets.stateLabel).toBe('Blocked');
+    expect(assets.tone).toBe('blocked');
+    expect(assets.detail).toBe('requires binary 99.99.99 or newer');
+  });
+
   it('keeps blocked profile dashboard tracks visible beside available asset tracks', () => {
     const status = updateStatus({
       assets: {

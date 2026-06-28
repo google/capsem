@@ -42,6 +42,12 @@ pub struct UpdateCheck {
     /// Whether the advertised asset set differs from the installed manifest.
     #[serde(default)]
     pub assets_update_available: bool,
+    /// Release-channel state for VM asset updates.
+    #[serde(default)]
+    pub assets_state: Option<String>,
+    /// Why the advertised VM asset set cannot be applied by this install.
+    #[serde(default)]
+    pub assets_blocked_reason: Option<String>,
     /// Latest profile catalog advertised by the release channel, when published.
     #[serde(default)]
     pub latest_profiles: Option<String>,
@@ -72,6 +78,9 @@ pub struct UpdateCheck {
     /// Release-channel state for image updates.
     #[serde(default)]
     pub images_state: Option<String>,
+    /// Why the advertised image track cannot be applied by this install.
+    #[serde(default)]
+    pub images_blocked_reason: Option<String>,
     /// Machine-readable release channel index used for this check.
     #[serde(default)]
     pub source: Option<String>,
@@ -355,6 +364,8 @@ fn failed_update_check_from_previous(
         latest_assets: None,
         current_assets: None,
         assets_update_available: false,
+        assets_state: None,
+        assets_blocked_reason: None,
         latest_profiles: None,
         current_profiles: None,
         profiles_update_available: false,
@@ -365,6 +376,7 @@ fn failed_update_check_from_previous(
         latest_images: None,
         images_update_available: false,
         images_state: None,
+        images_blocked_reason: None,
         source: Some(source.to_string()),
         channel_hash: None,
         validation_status: None,
@@ -586,17 +598,32 @@ fn profile_catalog_revision(
     Ok(format!("catalog-{}", &hash[..16]))
 }
 
-fn profile_blocked_reason(target: &ReleaseChannelUpdateTarget) -> Option<String> {
-    let requires = target.requires_newer.as_ref()?;
+fn update_target_blocked_reason(
+    target: &ReleaseChannelUpdateTarget,
+    current_binary: &str,
+    current_assets: Option<&str>,
+) -> Option<String> {
+    let requires = target.requires_newer.as_ref();
     let compatibility = target.compatibility.as_ref();
     let mut reasons = Vec::new();
-    if requires.binary {
+
+    if requires.is_some_and(|requires| requires.binary)
+        || compatibility
+            .and_then(|compatibility| compatibility.min_binary.as_deref())
+            .is_some_and(|min_binary| is_newer(min_binary, current_binary))
+    {
         let version = compatibility
             .and_then(|compatibility| compatibility.min_binary.as_deref())
             .unwrap_or("a newer version");
         reasons.push(format!("requires binary {version} or newer"));
     }
-    if requires.assets {
+
+    if requires.is_some_and(|requires| requires.assets)
+        || compatibility
+            .and_then(|compatibility| compatibility.min_assets.as_deref())
+            .zip(current_assets)
+            .is_some_and(|(min_assets, current_assets)| min_assets != current_assets)
+    {
         let version = compatibility
             .and_then(|compatibility| compatibility.min_assets.as_deref())
             .unwrap_or("a newer version");
@@ -624,6 +651,7 @@ fn update_check_from_release_health(
     }
     let latest_version = health.updates.binary.latest_version();
     let latest_assets = health.updates.assets.latest_version();
+    let assets_state = health.updates.assets.state.clone();
     let latest_profiles = health
         .updates
         .profiles
@@ -662,10 +690,22 @@ fn update_check_from_release_health(
     } else {
         None
     };
-    let assets_update_available = match (latest_assets.as_deref(), current_assets) {
+    let assets_differ = match (latest_assets.as_deref(), current_assets) {
         (Some(latest), Some(current)) => latest != current,
         _ => false,
     };
+    let assets_blocked_reason = if assets_differ
+        && assets_state
+            .as_deref()
+            .is_some_and(|state| state.eq_ignore_ascii_case("deprecated"))
+    {
+        Some("latest VM asset release is deprecated".to_string())
+    } else if assets_differ {
+        update_target_blocked_reason(&health.updates.assets, current_binary, current_assets)
+    } else {
+        None
+    };
+    let assets_update_available = assets_differ && assets_blocked_reason.is_none();
     let profiles_differ = match (latest_profiles.as_deref(), current_profiles) {
         (Some(latest), Some(current)) => latest != current,
         _ => false,
@@ -674,7 +714,7 @@ fn update_check_from_release_health(
         .updates
         .profiles
         .as_ref()
-        .and_then(profile_blocked_reason)
+        .and_then(|target| update_target_blocked_reason(target, current_binary, current_assets))
         .or_else(|| {
             if profiles_differ && profile_catalog_source.is_none() {
                 Some("release channel did not advertise a profile catalog source".to_string())
@@ -683,6 +723,10 @@ fn update_check_from_release_health(
             } else {
                 None
             }
+        });
+    let images_blocked_reason =
+        health.updates.images.as_ref().and_then(|target| {
+            update_target_blocked_reason(target, current_binary, current_assets)
         });
     let profiles_update_available = profiles_blocked_reason.is_none()
         && profile_catalog_source.is_some()
@@ -696,6 +740,8 @@ fn update_check_from_release_health(
         latest_assets,
         current_assets: current_assets.map(ToOwned::to_owned),
         assets_update_available,
+        assets_state,
+        assets_blocked_reason,
         latest_profiles,
         current_profiles: current_profiles.map(ToOwned::to_owned),
         profiles_update_available,
@@ -706,6 +752,7 @@ fn update_check_from_release_health(
         latest_images,
         images_update_available: false,
         images_state,
+        images_blocked_reason,
         source: Some(source.to_string()),
         channel_hash,
         validation_status: Some("valid".to_string()),
@@ -1055,24 +1102,35 @@ pub async fn run_update(
         }
     }
 
+    if let Some(reason) = check.assets_blocked_reason.as_deref() {
+        println!("VM asset update blocked: {reason}.");
+    }
+
     if check.update_available || check.assets_update_available {
         println!("Run `capsem update --assets` separately to refresh VM assets.");
     }
     print_image_update_status(&check);
 
+    let has_blocked_update = check.profiles_blocked_reason.is_some()
+        || check.assets_blocked_reason.is_some()
+        || check.images_blocked_reason.is_some();
+
     if !check.update_available
         && !check.profiles_update_available
         && !check.assets_update_available
         && !check.images_update_available
+        && !has_blocked_update
     {
         println!("Capsem is current ({current}).");
     } else if !did_update && !check.update_available && !check.assets_update_available {
-        if check.profiles_blocked_reason.is_none() {
+        if !has_blocked_update {
             println!("No local update action was needed.");
-        } else {
+        } else if check.profiles_blocked_reason.is_some() {
             println!(
                 "Capsem binary is current; profile catalog update requires a newer dependency."
             );
+        } else {
+            println!("Capsem binary is current; one or more update tracks are blocked.");
         }
     }
     Ok(())
@@ -1108,17 +1166,24 @@ fn print_update_check_summary(check: &UpdateCheck, current: &str, layout: &Insta
     print_asset_update_status(check);
     print_image_update_status(check);
 
+    let has_blocked_update = check.profiles_blocked_reason.is_some()
+        || check.assets_blocked_reason.is_some()
+        || check.images_blocked_reason.is_some();
+
     if !check.update_available
         && !check.profiles_update_available
         && !check.assets_update_available
         && !check.images_update_available
+        && !has_blocked_update
     {
         println!("Capsem is current ({current}).");
     }
 }
 
 fn print_asset_update_status(check: &UpdateCheck) {
-    if check.assets_update_available {
+    if let Some(reason) = check.assets_blocked_reason.as_deref() {
+        println!("VM asset update blocked: {reason}.");
+    } else if check.assets_update_available {
         let current_assets = check.current_assets.as_deref().unwrap_or("unknown");
         let latest_assets = check.latest_assets.as_deref().unwrap_or("unknown");
         println!("VM asset update available: {current_assets} -> {latest_assets}.");
@@ -1131,7 +1196,9 @@ fn print_asset_update_status(check: &UpdateCheck) {
 }
 
 fn print_image_update_status(check: &UpdateCheck) {
-    if check.images_update_available {
+    if let Some(reason) = check.images_blocked_reason.as_deref() {
+        println!("VM image update blocked: {reason}.");
+    } else if check.images_update_available {
         let latest_images = check.latest_images.as_deref().unwrap_or("unknown");
         println!("VM image update available: {latest_images}.");
     } else if check.images_state.as_deref() == Some("not_published") {
@@ -1691,6 +1758,8 @@ mod tests {
             latest_assets: Some("2030.0101.1".into()),
             current_assets: Some("2030.0101.0".into()),
             assets_update_available: true,
+            assets_state: Some("published".into()),
+            assets_blocked_reason: None,
             latest_profiles: Some("profiles-2030.0101.1".into()),
             current_profiles: Some("profiles-2030.0101.0".into()),
             profiles_update_available: false,
@@ -1703,6 +1772,7 @@ mod tests {
             latest_images: None,
             images_update_available: false,
             images_state: Some("not_published".into()),
+            images_blocked_reason: None,
             source: Some("https://release.capsem.org/health.json".into()),
             channel_hash: Some("a".repeat(64)),
             validation_status: Some("valid".into()),
@@ -1721,6 +1791,8 @@ mod tests {
         assert_eq!(rt.latest_assets, Some("2030.0101.1".into()));
         assert_eq!(rt.current_assets, Some("2030.0101.0".into()));
         assert!(rt.assets_update_available);
+        assert_eq!(rt.assets_state, Some("published".into()));
+        assert_eq!(rt.assets_blocked_reason, None);
         assert_eq!(rt.latest_profiles, Some("profiles-2030.0101.1".into()));
         assert_eq!(rt.current_profiles, Some("profiles-2030.0101.0".into()));
         assert!(!rt.profiles_update_available);
@@ -1737,6 +1809,7 @@ mod tests {
         assert_eq!(rt.latest_images, None);
         assert!(!rt.images_update_available);
         assert_eq!(rt.images_state, Some("not_published".into()));
+        assert_eq!(rt.images_blocked_reason, None);
         assert_eq!(
             rt.source,
             Some("https://release.capsem.org/health.json".into())
@@ -1759,6 +1832,8 @@ mod tests {
         assert_eq!(rt.latest_assets, None);
         assert_eq!(rt.current_assets, None);
         assert!(!rt.assets_update_available);
+        assert_eq!(rt.assets_state, None);
+        assert_eq!(rt.assets_blocked_reason, None);
         assert_eq!(rt.latest_profiles, None);
         assert_eq!(rt.current_profiles, None);
         assert!(!rt.profiles_update_available);
@@ -1769,6 +1844,7 @@ mod tests {
         assert_eq!(rt.latest_images, None);
         assert!(!rt.images_update_available);
         assert_eq!(rt.images_state, None);
+        assert_eq!(rt.images_blocked_reason, None);
         assert_eq!(rt.source, None);
         assert_eq!(rt.channel_hash, None);
         assert_eq!(rt.validation_status, None);
@@ -1785,6 +1861,8 @@ mod tests {
             latest_assets: Some("2030.0101.1".into()),
             current_assets: Some("2030.0101.0".into()),
             assets_update_available: true,
+            assets_state: Some("published".into()),
+            assets_blocked_reason: None,
             latest_profiles: None,
             current_profiles: None,
             profiles_update_available: false,
@@ -1795,6 +1873,7 @@ mod tests {
             latest_images: None,
             images_update_available: false,
             images_state: None,
+            images_blocked_reason: None,
             source: Some("https://release.capsem.org/health.json".into()),
             channel_hash: Some("f".repeat(64)),
             validation_status: Some("valid".into()),
@@ -1877,7 +1956,14 @@ mod tests {
                         }
                     ]
                 },
-                "assets": {"latest": "2030.0101.1", "current": "2030.0101.0"},
+                "assets": {
+                    "latest": "2030.0101.1",
+                    "current": "2030.0101.0",
+                    "state": "published",
+                    "compatibility": {
+                        "min_binary": "1.0.0"
+                    }
+                },
                 "profiles": {
                     "latest": "profiles-2030.0101.1",
                     "state": "published",
@@ -1914,6 +2000,8 @@ mod tests {
         assert_eq!(installer.install_layout, "macos_pkg");
         assert_eq!(check.latest_assets, Some("2030.0101.1".to_string()));
         assert!(check.assets_update_available);
+        assert_eq!(check.assets_state, Some("published".to_string()));
+        assert_eq!(check.assets_blocked_reason, None);
         assert_eq!(
             check.current_profiles,
             Some("profiles-2030.0101.0".to_string())
@@ -1933,6 +2021,7 @@ mod tests {
         assert_eq!(check.latest_images, None);
         assert!(!check.images_update_available);
         assert_eq!(check.images_state, Some("not_published".to_string()));
+        assert_eq!(check.images_blocked_reason, None);
         assert_eq!(
             check.source,
             Some("https://release.capsem.org/health.json".to_string())
@@ -1967,6 +2056,80 @@ mod tests {
 
         assert_eq!(check.latest_version, Some("99.99.99".to_string()));
         assert_eq!(check.latest_assets, Some("2030.0101.1".to_string()));
+    }
+
+    #[test]
+    fn release_health_asset_update_reports_blocked_compatibility() {
+        let health: ReleaseChannelHealth = serde_json::from_value(serde_json::json!({
+            "schema": "capsem.assets_channel.health.v1",
+            "updates": {
+                "binary": {"current": "1.3.1782582155"},
+                "assets": {
+                    "latest": "2030.0101.1",
+                    "current": "2030.0101.1",
+                    "state": "published",
+                    "compatibility": {
+                        "min_binary": "99.99.99"
+                    }
+                }
+            }
+        }))
+        .unwrap();
+
+        let check = update_check_from_release_health(
+            &health,
+            1718444400,
+            "1.3.1782582155",
+            Some("2026.0627.1"),
+            None,
+            &InstallLayout::MacosPkg,
+            "https://release.capsem.org/health.json",
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(check.latest_assets, Some("2030.0101.1".to_string()));
+        assert_eq!(check.current_assets, Some("2026.0627.1".to_string()));
+        assert!(!check.assets_update_available);
+        assert_eq!(check.assets_state, Some("published".to_string()));
+        assert_eq!(
+            check.assets_blocked_reason.as_deref(),
+            Some("requires binary 99.99.99 or newer")
+        );
+    }
+
+    #[test]
+    fn release_health_deprecated_asset_update_is_blocked() {
+        let health: ReleaseChannelHealth = serde_json::from_value(serde_json::json!({
+            "schema": "capsem.assets_channel.health.v1",
+            "updates": {
+                "binary": {"current": "1.3.1782582155"},
+                "assets": {
+                    "latest": "2030.0101.1",
+                    "current": "2030.0101.1",
+                    "state": "deprecated"
+                }
+            }
+        }))
+        .unwrap();
+
+        let check = update_check_from_release_health(
+            &health,
+            1718444400,
+            "1.3.1782582155",
+            Some("2026.0627.1"),
+            None,
+            &InstallLayout::MacosPkg,
+            "https://release.capsem.org/health.json",
+            None,
+        )
+        .unwrap();
+
+        assert!(!check.assets_update_available);
+        assert_eq!(
+            check.assets_blocked_reason.as_deref(),
+            Some("latest VM asset release is deprecated")
+        );
     }
 
     #[test]

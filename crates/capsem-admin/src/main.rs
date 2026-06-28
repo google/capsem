@@ -622,6 +622,7 @@ struct AssetsChannelIndex {
     current_binary: String,
     current_assets: String,
     current_asset_state: String,
+    current_asset_min_binary: Option<String>,
     current_binary_state: String,
     asset_releases: usize,
     asset_release_history: Vec<AssetsChannelAssetRelease>,
@@ -1927,6 +1928,7 @@ fn assets_channel_index(
             .map(release_state)
             .unwrap_or("missing")
             .to_string(),
+        current_asset_min_binary: current_release.map(|release| release.min_binary.clone()),
         current_binary_state: current_binary_release
             .map(release_state)
             .unwrap_or("missing")
@@ -2337,6 +2339,13 @@ fn render_assets_channel_health(index: &AssetsChannelIndex) -> Result<String> {
             "assets": {
                 "version": index.current_assets,
                 "state": index.current_asset_state,
+                "compatibility": {
+                    "binary": index.current_binary,
+                    "min_binary": index.current_asset_min_binary,
+                },
+                "requires_newer": {
+                    "binary": false,
+                },
                 "files": index.current_asset_files,
             },
             "asset_releases": index.asset_release_history,
@@ -2374,6 +2383,13 @@ fn render_assets_channel_health(index: &AssetsChannelIndex) -> Result<String> {
                     "source": "manifest.assets.current",
                     "manifest": index.manifest,
                     "asset_base": index.asset_base,
+                    "compatibility": {
+                        "binary": index.current_binary,
+                        "min_binary": index.current_asset_min_binary,
+                    },
+                    "requires_newer": {
+                        "binary": false,
+                    },
                     "files": index.current_asset_files,
                 },
                 "profiles": {
@@ -6380,6 +6396,14 @@ decision = "block"
             Some("/assets/releases/2030.0101.1/arm64-initrd.img")
         );
         assert_eq!(
+            health["assets"]["compatibility"]["min_binary"].as_str(),
+            Some("1.0.0")
+        );
+        assert_eq!(
+            health["assets"]["requires_newer"]["binary"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
             health["evidence"]["vm_oboms"][0]["url"].as_str(),
             Some("/assets/releases/2030.0101.1/arm64-obom.cdx.json")
         );
@@ -6434,6 +6458,14 @@ decision = "block"
         assert_eq!(
             health["updates"]["assets"]["asset_base"].as_str(),
             Some("/assets/releases")
+        );
+        assert_eq!(
+            health["updates"]["assets"]["compatibility"]["min_binary"].as_str(),
+            Some("1.0.0")
+        );
+        assert_eq!(
+            health["updates"]["assets"]["requires_newer"]["binary"].as_bool(),
+            Some(false)
         );
         assert_eq!(
             health["profiles"]["revision"].as_str(),

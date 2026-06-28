@@ -4910,6 +4910,10 @@ struct UpdateCheckCache {
     #[serde(default)]
     assets_update_available: bool,
     #[serde(default)]
+    assets_state: Option<String>,
+    #[serde(default)]
+    assets_blocked_reason: Option<String>,
+    #[serde(default)]
     latest_profiles: Option<String>,
     #[serde(default)]
     current_profiles: Option<String>,
@@ -4925,6 +4929,8 @@ struct UpdateCheckCache {
     images_update_available: bool,
     #[serde(default)]
     images_state: Option<String>,
+    #[serde(default)]
+    images_blocked_reason: Option<String>,
     #[serde(default)]
     source: Option<String>,
     #[serde(default)]
@@ -4999,13 +5005,18 @@ fn update_status_response_from_paths(
                 .and_then(|cache| cache.latest_version.clone()),
             cache.as_ref().is_some_and(|cache| cache.update_available),
         ),
-        assets: update_track(
-            current_assets,
-            cache.as_ref().and_then(|cache| cache.latest_assets.clone()),
-            cache
-                .as_ref()
-                .is_some_and(|cache| cache.assets_update_available),
-        ),
+        assets: cache
+            .as_ref()
+            .map(|cache| {
+                channel_update_track(
+                    current_assets.clone(),
+                    cache.latest_assets.clone(),
+                    cache.assets_update_available,
+                    cache.assets_state.as_deref(),
+                    cache.assets_blocked_reason.clone(),
+                )
+            })
+            .unwrap_or_else(|| update_track(current_assets, None, false)),
         profiles: cache
             .as_ref()
             .map(|cache| {
@@ -5026,7 +5037,7 @@ fn update_status_response_from_paths(
                     cache.latest_images.clone(),
                     cache.images_update_available,
                     cache.images_state.as_deref(),
-                    None,
+                    cache.images_blocked_reason.clone(),
                 )
             })
             .unwrap_or_else(not_published_update_track),

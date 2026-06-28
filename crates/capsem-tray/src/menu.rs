@@ -660,6 +660,24 @@ mod tests {
     }
 
     #[test]
+    fn spec_blocked_asset_update_shows_blocked_indicator() {
+        let mut updates = update_status();
+        updates.assets = blocked_track(
+            "2026.0627.1",
+            "2030.0101.1",
+            "requires binary 99.99.99 or newer",
+        );
+
+        let spec = menu_spec(&with_updates(make_status(vec![]), updates));
+
+        assert!(spec.iter().any(|entry| matches!(
+            entry,
+            MenuEntry::Item { id, label, enabled: false }
+                if id == "updates" && label == "Updates blocked: VM assets"
+        )));
+    }
+
+    #[test]
     fn spec_binary_update_keeps_blocked_profile_visible() {
         let mut updates = update_status();
         updates.binary = available_track("1.4.0", "1.4.1");
