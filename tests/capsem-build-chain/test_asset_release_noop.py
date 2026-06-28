@@ -243,7 +243,7 @@ def test_asset_release_preserves_live_binary_metadata_before_channel_build(
     subprocess.run(
         [
             str(PRESERVE_BINARY_SCRIPT),
-            "--manifest",
+            "--manifest-path",
             str(new),
             "--previous-manifest-url",
             f"file://{previous}",
@@ -395,6 +395,8 @@ def test_asset_release_noop_gate_controls_preview_and_deploy_workflow() -> None:
     assert "BINARY_VERSION" not in workflow
     assert '--version "$BINARY_VERSION"' not in workflow
     assert "scripts/preserve-binary-channel-metadata.py" in workflow
+    assert "--manifest-path assets/manifest.json" in workflow
+    assert "--manifest assets/manifest.json" not in workflow
     assert assemble_channel.index("scripts/preserve-binary-channel-metadata.py") < (
         assemble_channel.index("scripts/check-asset-release-delta.py")
     )

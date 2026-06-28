@@ -58,7 +58,7 @@ def preserve_binary_metadata(
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--manifest", required=True, type=Path)
+    parser.add_argument("--manifest-path", required=True, type=Path)
     parser.add_argument("--previous-manifest-url", required=True)
     parser.add_argument("--allow-missing-previous", action="store_true")
     args = parser.parse_args()
@@ -71,14 +71,14 @@ def main() -> int:
         print(f"warning: could not read previous manifest: {exc}", file=sys.stderr)
         previous_manifest = None
 
-    manifest = _load_manifest(args.manifest)
+    manifest = _load_manifest(args.manifest_path)
     merged, preserved = preserve_binary_metadata(manifest, previous_manifest)
     if preserved:
-        _write_manifest(args.manifest, merged)
+        _write_manifest(args.manifest_path, merged)
     print(
         json.dumps(
             {
-                "manifest": str(args.manifest),
+                "manifest": str(args.manifest_path),
                 "binary_metadata_preserved": preserved,
             },
             indent=2,

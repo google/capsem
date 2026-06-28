@@ -235,6 +235,8 @@ def test_vm_asset_release_is_manual_and_deploys_asset_channel() -> None:
     assert "cargo run -p capsem-admin -- assets channel check" in workflow
     assert "name: Preserve binary channel metadata" in workflow
     assert "scripts/preserve-binary-channel-metadata.py" in workflow
+    assert "--manifest-path assets/manifest.json" in workflow
+    assert "--manifest assets/manifest.json" not in workflow
     assert workflow.index("scripts/preserve-binary-channel-metadata.py") < workflow.index(
         "scripts/check-asset-release-delta.py"
     )

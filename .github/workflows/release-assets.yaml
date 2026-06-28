@@ -116,7 +116,7 @@ jobs:
       - name: Preserve binary channel metadata
         run: |
           scripts/preserve-binary-channel-metadata.py \
-            --manifest assets/manifest.json \
+            --manifest-path assets/manifest.json \
             --previous-manifest-url "https://release.capsem.org/assets/$CHANNEL/manifest.json" \
             --allow-missing-previous
 
