@@ -229,13 +229,14 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
         failures.append("index missing current asset release date")
 
     failures.extend(check_release_evidence(site, health_data))
+    failures.extend(check_release_cache_headers(site, channel, health_data))
 
     if failures:
         return CheckResult("release.capsem.org contract", False, "; ".join(failures))
     return CheckResult(
         "release.capsem.org contract",
         True,
-        "index, health.json, manifest, and evidence artifacts agree",
+        "index, health.json, manifest, evidence artifacts, and cache headers agree",
     )
 
 
@@ -381,6 +382,68 @@ def fetch_and_verify_evidence_artifact(
     return []
 
 
+def check_release_cache_headers(site: str, channel: str, health: dict[str, Any]) -> list[str]:
+    site = site.rstrip("/")
+    checks: list[tuple[str, str, tuple[str, ...]]] = [
+        ("release index", f"{site}/", ("no-cache", "must-revalidate")),
+        ("health JSON", f"{site}/health.json", ("no-cache", "must-revalidate")),
+        (
+            "channel manifest",
+            f"{site}/assets/{channel}/manifest.json",
+            ("no-cache", "must-revalidate"),
+        ),
+    ]
+
+    assets = health.get("assets", {})
+    if isinstance(assets, dict) and isinstance(assets.get("files"), list):
+        for item in assets["files"]:
+            if not isinstance(item, dict):
+                continue
+            url = item.get("url")
+            if isinstance(url, str) and release_url_path(url).startswith("/assets/releases/"):
+                checks.append(
+                    (
+                        "immutable asset",
+                        resolve_release_url(site, url),
+                        ("public", "max-age=31536000", "immutable"),
+                    )
+                )
+
+    updates = health.get("updates", {})
+    profiles = updates.get("profiles") if isinstance(updates, dict) else None
+    profile_source = profiles.get("source") if isinstance(profiles, dict) else None
+    if isinstance(profile_source, str) and release_url_path(profile_source).startswith(
+        "/profiles/releases/"
+    ):
+        checks.append(
+            (
+                "immutable profile catalog",
+                resolve_release_url(site, profile_source),
+                ("public", "max-age=31536000", "immutable"),
+            )
+        )
+
+    failures: list[str] = []
+    for label, url, required_directives in checks:
+        headers = fetch_headers(url)
+        if headers.error:
+            failures.append(headers.error)
+            continue
+        cache_control = headers.headers.get("cache-control", "")
+        lower_cache_control = cache_control.lower()
+        for directive in required_directives:
+            if directive not in lower_cache_control:
+                failures.append(f"{label} {url} Cache-Control must contain {directive}")
+    return failures
+
+
+def release_url_path(url: str) -> str:
+    parsed = urlparse(url)
+    if parsed.scheme in {"http", "https"}:
+        return parsed.path
+    return url
+
+
 def resolve_release_url(site: str, url: str) -> str:
     parsed = urlparse(url)
     if parsed.scheme in {"http", "https"}:
@@ -465,6 +528,12 @@ class FetchJson:
     error: str | None = None
 
 
+@dataclass
+class FetchHeaders:
+    headers: dict[str, str]
+    error: str | None = None
+
+
 def run_text(argv: list[str]) -> TextResult:
     completed = subprocess.run(argv, check=False, capture_output=True, text=True)
     return TextResult(completed.returncode, completed.stdout, completed.stderr)
@@ -496,6 +565,15 @@ def fetch_bytes(url: str) -> FetchBytes:
             return FetchBytes(response.read())
     except (OSError, urllib.error.URLError) as error:
         return FetchBytes(b"", f"fetch {url}: {error}")
+
+
+def fetch_headers(url: str) -> FetchHeaders:
+    try:
+        request = urllib.request.Request(url, method="HEAD")
+        with urllib.request.urlopen(request, timeout=20) as response:
+            return FetchHeaders({key.lower(): value for key, value in response.headers.items()})
+    except (OSError, urllib.error.URLError) as error:
+        return FetchHeaders({}, f"fetch headers {url}: {error}")
 
 
 def fetch_json(url: str) -> FetchJson:

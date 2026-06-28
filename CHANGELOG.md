@@ -135,6 +135,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Changed `capsem update --assets` to refresh remote channel manifests from
   manifest provenance before downloading VM assets, so compatible asset
   releases can move independently of installed binaries.
+- Changed the remote release-readiness checker to verify live
+  `release.capsem.org` cache headers for mutable channel pointers and immutable
+  asset/profile release artifacts.
 
 ### Fixed
 - Fixed the release-channel deploy preflight to require generated Cloudflare

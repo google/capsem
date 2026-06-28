@@ -788,6 +788,67 @@ def test_remote_release_readiness_checker_verifies_public_evidence_artifacts() -
     assert "validates attestation subjects and predicate URLs" in docs_text
 
 
+def test_remote_release_readiness_checker_verifies_live_cache_headers() -> None:
+    module = _readiness_checker_module()
+    script = (PROJECT_ROOT / "scripts/check-remote-release-readiness.py").read_text()
+    calls: list[str] = []
+    headers = {
+        "https://release.capsem.test/": "no-cache, must-revalidate",
+        "https://release.capsem.test/health.json": "no-cache, must-revalidate",
+        "https://release.capsem.test/assets/stable/manifest.json": "no-cache, must-revalidate",
+        "https://release.capsem.test/assets/releases/2030.0101.1/arm64-rootfs.erofs": (
+            "public, max-age=31536000, immutable"
+        ),
+        "https://release.capsem.test/profiles/releases/2026.06.08.7/catalog.json": (
+            "public, max-age=31536000, immutable"
+        ),
+    }
+
+    def fake_fetch_headers(url: str):
+        calls.append(url)
+        cache_control = headers.get(url)
+        if cache_control is None:
+            return module.FetchHeaders({}, f"unexpected header fetch {url}")
+        return module.FetchHeaders({"cache-control": cache_control})
+
+    module.fetch_headers = fake_fetch_headers
+    health = {
+        "assets": {
+            "files": [
+                {
+                    "url": "/assets/releases/2030.0101.1/arm64-rootfs.erofs",
+                    "hash": "a" * 64,
+                    "size": 4,
+                }
+            ]
+        },
+        "updates": {
+            "profiles": {
+                "source": "/profiles/releases/2026.06.08.7/catalog.json",
+            }
+        },
+    }
+
+    assert module.check_release_cache_headers("https://release.capsem.test", "stable", health) == []
+    assert calls == list(headers)
+
+    headers["https://release.capsem.test/assets/stable/manifest.json"] = (
+        "public, max-age=31536000, immutable"
+    )
+    failures = module.check_release_cache_headers(
+        "https://release.capsem.test", "stable", health
+    )
+    assert (
+        "channel manifest https://release.capsem.test/assets/stable/manifest.json "
+        "Cache-Control must contain no-cache"
+    ) in failures
+
+    assert "def check_release_cache_headers" in script
+    assert "urllib.request.Request(url, method=\"HEAD\")" in script
+    assert "Cache-Control must contain {directive}" in script
+    assert "max-age=31536000" in script
+
+
 def test_ci_installs_b3sum_before_bootstrap_asset_hash_checks() -> None:
     workflow = _workflow_job_block("test")
 
