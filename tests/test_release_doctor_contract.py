@@ -252,7 +252,12 @@ def test_vm_asset_release_is_manual_and_deploys_asset_channel() -> None:
     for text in (docs, release_skill, asset_skill):
         assert "metadata-only asset release changes" in text
         assert "deploy the release channel without republishing immutable VM blobs" in text
-        assert "skip deployment only when current VM blob hashes and release metadata are both unchanged" in text
+        assert (
+            "skip deployment only when current VM blob hashes, asset release metadata, "
+            "and manifest policy are all unchanged"
+        ) in text
+        assert "manifest policy" in text
+        assert "refresh_policy" in text
         assert "skip deployment when asset hashes are unchanged" not in text
         assert "asset_blobs_changed" in text
 

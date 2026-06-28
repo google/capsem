@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   URL points outside the published VM OBOM evidence list.
 
 ### Changed
+- Clarified VM asset no-op guidance so manifest policy changes such as
+  `refresh_policy` deploy `release.capsem.org` without VM blob publication.
 - Clarified VM asset release guidance so metadata-only asset channel changes
   deploy `release.capsem.org` without requiring immutable blob upload plans.
 - Clarified manual VM asset no-op guidance so unchanged blob hashes alone do
