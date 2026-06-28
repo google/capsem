@@ -665,6 +665,25 @@ jobs:
           path: release-artifacts/
         continue-on-error: true
 
+      - name: Verify binary channel artifacts
+        run: |
+          set -euo pipefail
+          if [ ! -f release-artifacts/capsem-sbom.spdx.json ]; then
+            echo "::error::release-artifacts/capsem-sbom.spdx.json missing"
+            exit 1
+          fi
+          package_found=false
+          for file in release-artifacts/*.pkg release-artifacts/*.deb; do
+            if [ -f "$file" ]; then
+              package_found=true
+              break
+            fi
+          done
+          if [ "$package_found" != true ]; then
+            echo "::error::no installable host package artifact found"
+            exit 1
+          fi
+
       - name: Fetch current asset channel manifest
         run: |
           mkdir -p target/binary-channel

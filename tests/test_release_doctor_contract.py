@@ -594,6 +594,23 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     )
 
 
+def test_binary_release_channel_assembly_preflights_canonical_artifacts() -> None:
+    assemble_channel = _workflow_job_block("assemble-release-channel", "release.yaml")
+
+    assert "Verify binary channel artifacts" in assemble_channel
+    assert "release-artifacts/capsem-sbom.spdx.json" in assemble_channel
+    assert "::error::release-artifacts/capsem-sbom.spdx.json missing" in assemble_channel
+    assert "release-artifacts/*.pkg" in assemble_channel
+    assert "release-artifacts/*.deb" in assemble_channel
+    assert "::error::no installable host package artifact found" in assemble_channel
+    assert assemble_channel.index("Verify binary channel artifacts") < assemble_channel.index(
+        "Fetch current asset channel manifest"
+    )
+    assert assemble_channel.index("Verify binary channel artifacts") < assemble_channel.index(
+        "Record binary release metadata in channel manifest"
+    )
+
+
 def test_binary_release_does_not_publish_latest_json_updater_metadata() -> None:
     workflow = _workflow_text("release.yaml")
     docs = _source_text("docs/src/content/docs/development/ci.md")

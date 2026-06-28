@@ -434,7 +434,10 @@ omit an embedded content-size header.
 Binary GitHub releases publish host packages and the canonical host SBOM
 artifact, `capsem-sbom.spdx.json`. VM asset manifests, blobs, OBOM evidence,
 and channel health live on `release.capsem.org`; do not verify or publish VM
-`manifest.json` through the tag release.
+`manifest.json` through the tag release. Before recording binary metadata in
+the release channel, the tag workflow preflights that the downloaded release
+artifacts contain `capsem-sbom.spdx.json` and at least one installable host
+package (`.pkg` or `.deb`).
 
 For a demo-facing macOS release, also prove the installer path users see:
 
