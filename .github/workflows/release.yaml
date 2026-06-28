@@ -570,6 +570,7 @@ jobs:
         with:
           subject-path: |
             release-artifacts/*.pkg
+            release-artifacts/*.deb
           predicate-type: https://spdx.dev/Document/v2.3
           predicate-path: release-artifacts/capsem-sbom.spdx.json
 

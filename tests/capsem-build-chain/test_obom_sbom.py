@@ -32,7 +32,7 @@ def test_release_workflows_generate_binary_sbom_and_asset_obom() -> None:
     assert "Attest VM asset provenance" in asset_workflow
     assert "actions/attest-build-provenance@v4" in asset_workflow
     assert (
-        "if: ${{ inputs.dry_run == false && steps.asset-delta.outputs.changed == 'true' }}"
+        "if: ${{ inputs.dry_run == false && steps.asset-delta.outputs.asset_blobs_changed == 'true' }}"
         in asset_workflow
     )
     assert "target/asset-release/assets-v*/*-vmlinuz" in asset_workflow
@@ -50,6 +50,11 @@ def test_release_workflows_generate_binary_sbom_and_asset_obom() -> None:
     assert "Generate SBOM" in binary_workflow
     assert "cargo sbom --output-format spdx_json_2_3 > capsem-sbom.spdx.json" in binary_workflow
     assert "Attest SBOM" in binary_workflow
+    sbom_attestation = binary_workflow.split("- name: Attest SBOM", maxsplit=1)[1].split(
+        "- name: Build summary", maxsplit=1
+    )[0]
+    assert "release-artifacts/*.pkg" in sbom_attestation
+    assert "release-artifacts/*.deb" in sbom_attestation
     assert "predicate-type: https://spdx.dev/Document/v2.3" in binary_workflow
     assert "predicate-path: release-artifacts/capsem-sbom.spdx.json" in binary_workflow
 
