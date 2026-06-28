@@ -1118,7 +1118,7 @@ fn print_corp_status(info: &serde_json::Value) {
     }
 }
 
-fn print_update_status(status: &UpdateStatusResponse) {
+fn update_status_lines(status: &UpdateStatusResponse) -> Vec<String> {
     let mut updates = Vec::new();
     let mut blocked = Vec::new();
     if status.binary.update_available {
@@ -1154,16 +1154,17 @@ fn print_update_status(status: &UpdateStatusResponse) {
         blocked.push("images");
     }
 
+    let mut lines = Vec::new();
     if !updates.is_empty() && !blocked.is_empty() {
-        println!(
+        lines.push(format!(
             "Updates:   available ({}); blocked ({})",
             updates.join("; "),
             blocked.join(", ")
-        );
+        ));
     } else if !updates.is_empty() {
-        println!("Updates:   available ({})", updates.join("; "));
+        lines.push(format!("Updates:   available ({})", updates.join("; ")));
     } else if !blocked.is_empty() {
-        println!("Updates:   blocked ({})", blocked.join(", "));
+        lines.push(format!("Updates:   blocked ({})", blocked.join(", ")));
     } else {
         let asset_state = match status.assets.state {
             UpdateTrackState::Unknown => "assets unknown",
@@ -1171,25 +1172,34 @@ fn print_update_status(status: &UpdateStatusResponse) {
             _ => "assets current",
         };
         let freshness = if status.stale { "stale" } else { "fresh" };
-        println!("Updates:   current ({asset_state}, cache {freshness})");
+        lines.push(format!(
+            "Updates:   current ({asset_state}, cache {freshness})"
+        ));
     }
     if let Some(channel) = &status.channel_url {
-        println!("Channel:   {channel}");
+        lines.push(format!("Channel:   {channel}"));
     }
     if let Some(error) = &status.last_error {
-        println!("Update err:{error}");
+        lines.push(format!("Update err:{error}"));
     }
     if let Some(reason) = &status.binary.blocked_reason {
-        println!("Binary:    blocked ({reason})");
+        lines.push(format!("Binary:    blocked ({reason})"));
     }
     if let Some(reason) = &status.assets.blocked_reason {
-        println!("Assets:    blocked ({reason})");
+        lines.push(format!("Assets:    blocked ({reason})"));
     }
     if let Some(reason) = &status.profiles.blocked_reason {
-        println!("Profiles:  blocked ({reason})");
+        lines.push(format!("Profiles:  blocked ({reason})"));
     }
     if let Some(reason) = &status.images.blocked_reason {
-        println!("Images:    blocked ({reason})");
+        lines.push(format!("Images:    blocked ({reason})"));
+    }
+    lines
+}
+
+fn print_update_status(status: &UpdateStatusResponse) {
+    for line in update_status_lines(status) {
+        println!("{line}");
     }
 }
 
@@ -2446,6 +2456,94 @@ mod tests {
         assert_eq!(paths.service_socket, run_dir.path().join("service.sock"));
         assert_eq!(paths.gateway_port, run_dir.path().join("gateway.port"));
         assert_eq!(paths.gateway_token, run_dir.path().join("gateway.token"));
+    }
+
+    fn update_track(
+        current: Option<&str>,
+        latest: Option<&str>,
+        state: UpdateTrackState,
+        available: bool,
+    ) -> client::UpdateTrackStatus {
+        client::UpdateTrackStatus {
+            current: current.map(ToOwned::to_owned),
+            latest: latest.map(ToOwned::to_owned),
+            blocked_reason: None,
+            update_available: available,
+            state,
+            compatibility: client::UpdateCompatibilityState::Compatible,
+        }
+    }
+
+    fn base_update_status() -> UpdateStatusResponse {
+        UpdateStatusResponse {
+            checked_at: Some(1_718_444_400),
+            channel_url: Some("https://release.capsem.org/health.json".into()),
+            channel_hash: None,
+            validation_status: Some("valid".into()),
+            validation_error: None,
+            stale: false,
+            last_error: None,
+            binary: update_track(
+                Some("1.4.0"),
+                Some("1.4.0"),
+                UpdateTrackState::Current,
+                false,
+            ),
+            assets: update_track(
+                Some("2026.0627.1"),
+                Some("2026.0627.1"),
+                UpdateTrackState::Current,
+                false,
+            ),
+            profiles: update_track(
+                Some("profiles-1"),
+                Some("profiles-1"),
+                UpdateTrackState::Current,
+                false,
+            ),
+            images: update_track(None, None, UpdateTrackState::NotPublished, false),
+            supply_chain: client::SupplyChainEvidence::default(),
+        }
+    }
+
+    #[test]
+    fn update_status_lines_separate_available_and_blocked_tracks() {
+        let mut status = base_update_status();
+        status.binary = update_track(
+            Some("1.4.0"),
+            Some("1.4.1"),
+            UpdateTrackState::UpdateAvailable,
+            true,
+        );
+        status.profiles = update_track(
+            Some("profiles-1"),
+            Some("profiles-2"),
+            UpdateTrackState::UpdateAvailable,
+            true,
+        );
+        status.assets.blocked_reason = Some("requires binary 1.4.1 or newer".into());
+        status.images.blocked_reason = Some("image catalog not published".into());
+
+        let lines = update_status_lines(&status);
+
+        assert_eq!(
+            lines[0],
+            "Updates:   available (binary 1.4.0 -> 1.4.1; profiles profiles-1 -> profiles-2); blocked (assets, images)"
+        );
+        assert!(lines.contains(&"Channel:   https://release.capsem.org/health.json".into()));
+        assert!(lines.contains(&"Assets:    blocked (requires binary 1.4.1 or newer)".into()));
+        assert!(lines.contains(&"Images:    blocked (image catalog not published)".into()));
+    }
+
+    #[test]
+    fn update_status_lines_reports_current_stale_asset_state() {
+        let mut status = base_update_status();
+        status.stale = true;
+        status.assets.state = UpdateTrackState::Unknown;
+
+        let lines = update_status_lines(&status);
+
+        assert_eq!(lines[0], "Updates:   current (assets unknown, cache stale)");
     }
 
     // -----------------------------------------------------------------------

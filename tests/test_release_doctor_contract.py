@@ -443,6 +443,7 @@ def test_cdxgen_release_tool_prerequisite_is_documented() -> None:
 
 def test_cross_surface_update_smoke_prerequisites_are_covered_locally() -> None:
     cli = _source_text("crates/capsem/src/update.rs")
+    cli_status = _source_text("crates/capsem/src/main.rs")
     service = _source_text("crates/capsem-service/src/tests.rs")
     tray = _source_text("crates/capsem-tray/src/menu.rs")
     tui = _source_text("crates/capsem-tui/src/tests.rs")
@@ -452,6 +453,9 @@ def test_cross_surface_update_smoke_prerequisites_are_covered_locally() -> None:
     assert "Profile catalog update available" in cli
     assert "Run `capsem update --assets` separately to refresh VM assets." in cli
     assert "--assets cannot be combined with --corp" in cli
+    assert "update_status_lines_separate_available_and_blocked_tracks" in cli_status
+    assert "available (binary" in cli_status
+    assert "blocked (assets, images)" in cli_status
 
     assert "update_route_apply_dry_run_plans_binary_profiles_and_assets" in service
     assert "update_route_apply_confirmed_dispatches_binary_profiles_and_assets" in service
