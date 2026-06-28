@@ -713,6 +713,9 @@ struct AssetsChannelAttestation {
     name: String,
     scope: String,
     workflow: String,
+    predicate_type: String,
+    predicate_url: Option<String>,
+    verify_command: String,
     subjects: Vec<String>,
 }
 
@@ -1697,6 +1700,42 @@ fn validate_assets_channel_health(
     }
     let mut saw_vm_asset_attestation = false;
     for attestation in attestations {
+        let attestation_name = attestation
+            .get("name")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| anyhow!("health.json attestation name missing"))?;
+        let predicate_type = attestation
+            .get("predicate_type")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| anyhow!("health.json attestation predicate_type missing"))?;
+        if predicate_type.is_empty() {
+            return Err(anyhow!("health.json attestation predicate_type empty"));
+        }
+        let verify_command = attestation
+            .get("verify_command")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| anyhow!("health.json attestation verify_command missing"))?;
+        if !verify_command.contains("gh attestation verify") {
+            return Err(anyhow!(
+                "health.json attestation verify_command must use gh attestation verify"
+            ));
+        }
+        if attestation_name == "github_attestations_host_sbom" {
+            let predicate_url = attestation
+                .get("predicate_url")
+                .and_then(|value| value.as_str())
+                .ok_or_else(|| {
+                    anyhow!("health.json host SBOM attestation predicate_url missing")
+                })?;
+            if !host_sboms
+                .iter()
+                .any(|item| item.get("url").and_then(|value| value.as_str()) == Some(predicate_url))
+            {
+                return Err(anyhow!(
+                    "health.json host SBOM attestation predicate {predicate_url} missing from host SBOM evidence"
+                ));
+            }
+        }
         let subjects = attestation
             .get("subjects")
             .and_then(|value| value.as_array())
@@ -2280,15 +2319,21 @@ fn current_binary_attestations(files: &[AssetsChannelBinaryFile]) -> Vec<AssetsC
             name: "github_attestations_host".to_string(),
             scope: "host_binaries".to_string(),
             workflow: ".github/workflows/release.yaml".to_string(),
-            subjects: host_subjects,
+            predicate_type: "https://slsa.dev/provenance/v1".to_string(),
+            predicate_url: None,
+            verify_command: "gh attestation verify <subject-url> --owner google".to_string(),
+            subjects: host_subjects.clone(),
         });
     }
-    if !sbom_subjects.is_empty() {
+    if let (Some(sbom_subject), false) = (sbom_subjects.first(), host_subjects.is_empty()) {
         attestations.push(AssetsChannelAttestation {
             name: "github_attestations_host_sbom".to_string(),
             scope: "host_sbom".to_string(),
             workflow: ".github/workflows/release.yaml".to_string(),
-            subjects: sbom_subjects,
+            predicate_type: "https://spdx.dev/Document/v2.3".to_string(),
+            predicate_url: Some(sbom_subject.clone()),
+            verify_command: "gh attestation verify <subject-url> --owner google".to_string(),
+            subjects: host_subjects,
         });
     }
     attestations
@@ -2306,6 +2351,9 @@ fn current_asset_attestations(files: &[AssetsChannelAssetFile]) -> Vec<AssetsCha
         name: "github_attestations_vm_assets".to_string(),
         scope: "vm_assets".to_string(),
         workflow: ".github/workflows/release-assets.yaml".to_string(),
+        predicate_type: "https://slsa.dev/provenance/v1".to_string(),
+        predicate_url: None,
+        verify_command: "gh attestation verify <subject-url> --owner google".to_string(),
         subjects,
     }]
 }
@@ -2859,18 +2907,22 @@ fn render_attestation_rows(attestations: &[AssetsChannelAttestation]) -> String 
         .iter()
         .map(|attestation| {
             let subjects = attestation.subjects.join(", ");
+            let predicate_url = attestation.predicate_url.as_deref().unwrap_or("");
             format!(
-                "        <tr><td>{name}</td><td>{scope}</td><td>{workflow}</td><td>{subjects}</td></tr>",
+                "        <tr><td>{name}</td><td>{scope}</td><td>{predicate_type}</td><td>{predicate_url}</td><td>{workflow}</td><td><code>{verify_command}</code></td><td>{subjects}</td></tr>",
                 name = escape_html(&attestation.name),
                 scope = escape_html(&attestation.scope),
+                predicate_type = escape_html(&attestation.predicate_type),
+                predicate_url = escape_html(predicate_url),
                 workflow = escape_html(&attestation.workflow),
+                verify_command = escape_html(&attestation.verify_command),
                 subjects = escape_html(&subjects),
             )
         })
         .collect::<Vec<_>>()
         .join("\n");
     format!(
-        "      <table><thead><tr><th>Name</th><th>Scope</th><th>Workflow</th><th>Subjects</th></tr></thead><tbody>\n{rows}\n      </tbody></table>"
+        "      <table><thead><tr><th>Name</th><th>Scope</th><th>Predicate</th><th>Predicate URL</th><th>Workflow</th><th>Verify</th><th>Subjects</th></tr></thead><tbody>\n{rows}\n      </tbody></table>"
     )
 }
 
@@ -6370,6 +6422,7 @@ decision = "block"
         assert!(index_html.contains("Attestation Evidence"));
         assert!(index_html.contains("Update Contract"));
         assert!(index_html.contains("Profile Catalog"));
+        assert!(index_html.contains("gh attestation verify"));
         assert!(index_html.contains("/health.json"));
         assert!(index_html.contains("/assets/releases/2030.0101.1/arm64-rootfs.erofs"));
         assert!(index_html.contains("/assets/releases/2030.0101.1/arm64-obom.cdx.json"));
@@ -6420,8 +6473,28 @@ decision = "block"
             Some("github_attestations_host")
         );
         assert_eq!(
+            health["evidence"]["attestations"][0]["predicate_type"].as_str(),
+            Some("https://slsa.dev/provenance/v1")
+        );
+        assert_eq!(
+            health["evidence"]["attestations"][0]["verify_command"].as_str(),
+            Some("gh attestation verify <subject-url> --owner google")
+        );
+        assert_eq!(
             health["evidence"]["attestations"][1]["name"].as_str(),
             Some("github_attestations_host_sbom")
+        );
+        assert_eq!(
+            health["evidence"]["attestations"][1]["predicate_type"].as_str(),
+            Some("https://spdx.dev/Document/v2.3")
+        );
+        assert_eq!(
+            health["evidence"]["attestations"][1]["predicate_url"].as_str(),
+            Some("https://github.com/google/capsem/releases/download/v1.0.0/capsem-sbom.spdx.json")
+        );
+        assert_eq!(
+            health["evidence"]["attestations"][1]["subjects"][0].as_str(),
+            Some("https://github.com/google/capsem/releases/download/v1.0.0/capsem-1.0.0.pkg")
         );
         assert_eq!(
             health["evidence"]["attestations"][2]["name"].as_str(),
@@ -6777,6 +6850,42 @@ decision = "block"
 
         assert!(
             format!("{error:#}").contains("health.json VM asset attestation evidence missing"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn assets_channel_check_rejects_attestation_without_verification_metadata() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
+        let out_dir = temp.path().join("target/release-channel");
+        build_assets_channel(
+            &file_url(&manifest_path),
+            &temp.path().join("assets"),
+            &repo_config_profiles_dir(),
+            "stable",
+            &out_dir,
+            "2030-01-01T00:00:00Z",
+            None,
+        )
+        .expect("asset channel builds");
+
+        let health_path = out_dir.join("health.json");
+        let mut health: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&health_path).expect("health"))
+                .expect("health json");
+        health["evidence"]["attestations"][0]
+            .as_object_mut()
+            .expect("attestation object")
+            .remove("verify_command");
+        fs::write(&health_path, serde_json::to_string_pretty(&health).unwrap())
+            .expect("write health without verification metadata");
+
+        let error = check_assets_channel(&out_dir, "stable")
+            .expect_err("missing attestation verification metadata rejected");
+
+        assert!(
+            format!("{error:#}").contains("health.json attestation verify_command missing"),
             "{error:#}"
         );
     }

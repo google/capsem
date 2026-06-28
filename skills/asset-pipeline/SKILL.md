@@ -106,7 +106,8 @@ references, host SBOM references, binary file metadata when present, an explicit
 `latest` targets for binary/assets/profile/image freshness checks, and a
 profile catalog block with revision, published catalog artifact path, BLAKE3 digest,
 compatibility minimums, and whether the advertised profile catalog requires a
-newer binary or VM asset set, plus host and VM asset attestation references.
+newer binary or VM asset set, plus host and VM asset attestation references
+with predicate type and `gh attestation verify` command hints.
 It also carries asset release history, including deprecated VM asset releases;
 deprecated releases remain auditable but are not candidates for new
 session/download selection.
