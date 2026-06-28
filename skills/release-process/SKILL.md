@@ -95,7 +95,9 @@ stale. It must also
 verify that the binary update target, state, source, and package file metadata
 match the canonical binary metadata. It must also
 verify that the VM asset update target, manifest, base URL, compatibility, and
-newer-version requirements match the canonical asset metadata. It must also
+newer-version requirements match the canonical asset metadata, and that the
+VM asset compatibility and requires-newer flags match the fetched channel
+manifest's current asset release. It must also
 verify that the profile update hash, compatibility, and newer-version
 requirements match the canonical profile catalog metadata, and that the
 profile catalog's current binary/assets compatibility, minimum binary/assets,

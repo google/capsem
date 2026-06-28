@@ -329,6 +329,29 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
         failures.append("health binary version mismatch")
     if health_assets.get("version") != current_assets:
         failures.append("health asset version mismatch")
+    expected_asset_compatibility = {
+        "binary": current_binary,
+        "min_binary": current_manifest_asset_release.get("min_binary")
+        if isinstance(current_manifest_asset_release, dict)
+        else None,
+    }
+    actual_asset_compatibility = health_assets.get("compatibility")
+    for field, expected in expected_asset_compatibility.items():
+        actual = (
+            actual_asset_compatibility.get(field)
+            if isinstance(actual_asset_compatibility, dict)
+            else None
+        )
+        if actual != expected:
+            failures.append(f"health asset compatibility {field} mismatch")
+    actual_asset_requires_newer = health_assets.get("requires_newer")
+    actual_asset_requires_newer_binary = (
+        actual_asset_requires_newer.get("binary")
+        if isinstance(actual_asset_requires_newer, dict)
+        else None
+    )
+    if actual_asset_requires_newer_binary is not False:
+        failures.append("health asset requirement binary mismatch")
     if health_profiles.get("state") != "current":
         failures.append("health profile state mismatch")
     expected_profile_compatibility = {
@@ -400,6 +423,10 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
             failures.append("health asset update compatibility mismatch")
         if health_update_assets.get("requires_newer") != health_assets.get("requires_newer"):
             failures.append("health asset update requirement mismatch")
+        if health_update_assets.get("compatibility") != expected_asset_compatibility:
+            failures.append("health asset update canonical compatibility mismatch")
+        if health_update_assets.get("requires_newer") != {"binary": False}:
+            failures.append("health asset update canonical requirement mismatch")
     if not isinstance(health_update_images, dict):
         failures.append("health image update metadata missing")
     else:

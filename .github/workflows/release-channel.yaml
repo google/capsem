@@ -206,6 +206,19 @@ jobs:
               failures.append("health asset version mismatch")
           current_manifest_asset_release = manifest.get("assets", {}).get("releases", {}).get(current_assets)
           current_manifest_binary_release = manifest.get("binaries", {}).get("releases", {}).get(current_binary)
+          expected_asset_compatibility = {
+              "binary": current_binary,
+              "min_binary": current_manifest_asset_release.get("min_binary") if isinstance(current_manifest_asset_release, dict) else None,
+          }
+          actual_asset_compatibility = health.get("assets", {}).get("compatibility")
+          for field, expected in expected_asset_compatibility.items():
+              actual = actual_asset_compatibility.get(field) if isinstance(actual_asset_compatibility, dict) else None
+              if actual != expected:
+                  failures.append(f"health asset compatibility {field} mismatch")
+          actual_asset_requires_newer = health.get("assets", {}).get("requires_newer")
+          actual_asset_requires_newer_binary = actual_asset_requires_newer.get("binary") if isinstance(actual_asset_requires_newer, dict) else None
+          if actual_asset_requires_newer_binary is not False:
+              failures.append("health asset requirement binary mismatch")
           if health.get("profiles", {}).get("state") != "current":
               failures.append("health profile state mismatch")
           expected_profile_compatibility = {
@@ -257,6 +270,10 @@ jobs:
                   failures.append("health asset update compatibility mismatch")
               if updates.get("assets", {}).get("requires_newer") != health.get("assets", {}).get("requires_newer"):
                   failures.append("health asset update requirement mismatch")
+              if updates.get("assets", {}).get("compatibility") != expected_asset_compatibility:
+                  failures.append("health asset update canonical compatibility mismatch")
+              if updates.get("assets", {}).get("requires_newer") != {"binary": False}:
+                  failures.append("health asset update canonical requirement mismatch")
           if updates.get("profiles", {}).get("source") != health.get("profiles", {}).get("source"):
               failures.append("health profile update source mismatch")
           if not isinstance(updates.get("profiles"), dict):

@@ -161,7 +161,8 @@ The deploy smoke also verifies that the binary update target, state, source, and
 package file metadata match the canonical binary metadata.
 The deploy smoke also verifies that the VM asset update target, manifest, base
 URL, compatibility, and newer-version requirements match the canonical asset
-metadata.
+metadata, and that the VM asset compatibility and requires-newer flags match
+the fetched channel manifest's current asset release.
 The deploy smoke also verifies that the profile update hash, compatibility, and
 newer-version requirements match the canonical profile catalog metadata, and
 that the profile catalog's current binary/assets compatibility, minimum
