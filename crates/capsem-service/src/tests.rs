@@ -5868,6 +5868,101 @@ fn asset_cleanup_preserves_profile_catalog_and_persistent_vm_pins() {
 }
 
 #[test]
+fn deprecated_asset_cleanup_preserves_persistent_vm_pins() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path();
+    let pinned_rootfs = "rootfs-dddddddddddddddd.erofs";
+    let deprecated_unpinned_rootfs = "rootfs-eeeeeeeeeeeeeeee.erofs";
+    for filename in [pinned_rootfs, deprecated_unpinned_rootfs] {
+        std::fs::write(base.join(filename), filename.as_bytes()).unwrap();
+    }
+
+    let mut pins = test_asset_pins();
+    pins.rootfs.hash =
+        "blake3:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd".into();
+    let registry_path = base.join("persistent_registry.json");
+    let mut registry = PersistentRegistry::load(registry_path);
+    registry.data.vms.insert(
+        "saved-vm".into(),
+        PersistentVmEntry {
+            id: new_persistent_vm_id(),
+            name: "saved-vm".into(),
+            profile_id: "code".into(),
+            profile_revision: test_profile_revision(),
+            profile_payload_hash: test_profile_payload_hash(),
+            asset_pins: pins,
+            ram_mb: 2048,
+            cpus: 2,
+            base_version: "0.0.0".into(),
+            created_at: "0".into(),
+            session_dir: base.join("persistent/saved-vm"),
+            forked_from: None,
+            description: None,
+            suspended: false,
+            defunct: false,
+            last_error: None,
+            checkpoint_path: None,
+            env: None,
+        },
+    );
+
+    let manifest = capsem_core::asset_manager::ManifestV2 {
+        format: 2,
+        refresh_policy: "24h".into(),
+        assets: capsem_core::asset_manager::AssetsSection {
+            current: "2030.0101.1".into(),
+            releases: [(
+                "2030.0101.1".into(),
+                capsem_core::asset_manager::AssetRelease {
+                    date: "2030-01-01".into(),
+                    deprecated: true,
+                    deprecated_date: Some("2030-01-02".into()),
+                    min_binary: "1.0.0".into(),
+                    arches: [(
+                        "arm64".into(),
+                        [
+                            (
+                                "rootfs.erofs".into(),
+                                capsem_core::asset_manager::AssetEntry {
+                                    hash: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee".into(),
+                                    size: 1,
+                                },
+                            ),
+                            (
+                                "rootfs-pinned.erofs".into(),
+                                capsem_core::asset_manager::AssetEntry {
+                                    hash: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd".into(),
+                                    size: 1,
+                                },
+                            ),
+                        ]
+                        .into_iter()
+                        .collect(),
+                    )]
+                    .into_iter()
+                    .collect(),
+                },
+            )]
+            .into_iter()
+            .collect(),
+        },
+        binaries: capsem_core::asset_manager::BinariesSection {
+            current: "1.0.0".into(),
+            releases: HashMap::new(),
+        },
+    };
+    let preserve = persistent_registry_asset_filenames(&registry);
+
+    let removed =
+        capsem_core::asset_manager::cleanup_unused_assets_preserving(base, &manifest, preserve)
+            .unwrap();
+
+    assert_eq!(removed, vec![base.join(deprecated_unpinned_rootfs)]);
+    assert!(base.join(pinned_rootfs).exists());
+    assert!(!base.join(deprecated_unpinned_rootfs).exists());
+}
+
+#[test]
 fn resolve_profile_asset_paths_uses_profile_hash_prefixed_assets() {
     let dir = tempfile::tempdir().unwrap();
     let profile = materialized_test_profile();
