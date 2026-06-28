@@ -48,6 +48,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   paths.
 
 ### Changed
+- Added release-index contract coverage proving manual VM asset releases update
+  the asset channel without moving the current binary pointer.
 - Added CLI integration coverage that keeps `capsem update --manifest` and
   `--corp` URL-only, while still allowing `file://` overrides for local
   corporate/update endpoints.

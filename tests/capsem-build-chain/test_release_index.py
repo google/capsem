@@ -37,7 +37,13 @@ def _write_asset(path: Path, data: bytes) -> dict[str, object]:
     return {"hash": blake3(data).hexdigest(), "size": len(data)}
 
 
-def _write_release_manifest(root: Path) -> Path:
+def _write_release_manifest(
+    root: Path,
+    *,
+    asset_version: str = "2030.0101.1",
+    binary_version: str = "1.4.1234567890",
+    date: str = "2030-01-01",
+) -> Path:
     assets = root / "assets"
     arm64 = assets / "arm64"
     files = {
@@ -55,10 +61,10 @@ def _write_release_manifest(root: Path) -> Path:
         "format": 2,
         "refresh_policy": "24h",
         "assets": {
-            "current": "2030.0101.1",
+            "current": asset_version,
             "releases": {
-                "2030.0101.1": {
-                    "date": "2030-01-01",
+                asset_version: {
+                    "date": date,
                     "deprecated": False,
                     "min_binary": "1.4.0",
                     "arches": {"arm64": files},
@@ -66,15 +72,15 @@ def _write_release_manifest(root: Path) -> Path:
             },
         },
         "binaries": {
-            "current": "1.4.1234567890",
+            "current": binary_version,
             "releases": {
-                "1.4.1234567890": {
-                    "date": "2030-01-01",
+                binary_version: {
+                    "date": date,
                     "deprecated": False,
-                    "min_assets": "2030.0101.1",
+                    "min_assets": asset_version,
                     "files": [
                         {
-                            "name": "Capsem-1.4.1234567890.pkg",
+                            "name": f"Capsem-{binary_version}.pkg",
                             "size": len(pkg),
                             "sha256": hashlib.sha256(pkg).hexdigest(),
                         },
@@ -245,6 +251,87 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
     assert (release_dir / "arm64-obom.cdx.json").is_file()
 
     _run_admin("assets", "channel", "check", "--channel", "stable", "--dist", str(dist))
+
+
+def test_asset_release_updates_release_index_without_moving_binary_pointer(
+    tmp_path: Path,
+) -> None:
+    manifest_path = _write_release_manifest(
+        tmp_path,
+        asset_version="2030.0102.1",
+        binary_version="1.4.1234567890",
+        date="2030-01-02",
+    )
+    profiles_dir = _write_profile_catalog(tmp_path)
+    dist = tmp_path / "target" / "release-channel"
+
+    _run_admin(
+        "assets",
+        "channel",
+        "build",
+        "--manifest",
+        f"file://{manifest_path}",
+        "--assets-dir",
+        str(manifest_path.parent),
+        "--profiles-dir",
+        str(profiles_dir),
+        "--channel",
+        "stable",
+        "--out-dir",
+        str(dist),
+        "--generated-at",
+        "2030-01-02T00:00:00Z",
+    )
+
+    health = json.loads((dist / "health.json").read_text(encoding="utf-8"))
+    assert health["generated_at"] == "2030-01-02T00:00:00Z"
+    assert health["current"] == {
+        "binary": "1.4.1234567890",
+        "assets": "2030.0102.1",
+    }
+    assert health["updates"]["binary"]["latest"] == "1.4.1234567890"
+    assert health["updates"]["binary"]["current"] == "1.4.1234567890"
+    assert health["updates"]["assets"]["latest"] == "2030.0102.1"
+    assert health["updates"]["assets"]["current"] == "2030.0102.1"
+    assert health["updates"]["assets"]["manifest"] == "/assets/stable/manifest.json"
+    assert (
+        health["assets"]["files"][0]["url"]
+        == "/assets/releases/2030.0102.1/arm64-initrd.img"
+    )
+    assert (
+        dist / "assets" / "releases" / "2030.0102.1" / "arm64-rootfs.erofs"
+    ).read_bytes() == b"rootfs-arm64"
+    assert (dist / "assets" / "stable" / "manifest.json").is_file()
+
+    _run_admin("assets", "channel", "check", "--channel", "stable", "--dist", str(dist))
+
+
+def test_asset_release_index_workflow_deploys_generated_preview_only_after_asset_change() -> None:
+    workflow = (PROJECT_ROOT / ".github/workflows/release-assets.yaml").read_text(
+        encoding="utf-8"
+    )
+    assemble_channel = workflow.split("  assemble-channel:", maxsplit=1)[1].split(
+        "  deploy-channel:", maxsplit=1
+    )[0]
+    deploy_channel = workflow.split("  deploy-channel:", maxsplit=1)[1]
+
+    assert "cargo run -p capsem-admin -- manifest generate assets" in assemble_channel
+    assert "scripts/check-asset-release-delta.py" in assemble_channel
+    assert "cargo run -p capsem-admin -- assets channel build" in assemble_channel
+    assert '--manifest "file://$PWD/assets/manifest.json"' in assemble_channel
+    assert '--out-dir target/release-channel' in assemble_channel
+    assert "cargo run -p capsem-admin -- assets channel check" in assemble_channel
+    assert "name: asset-channel-preview" in assemble_channel
+    assert "path: target/release-channel/" in assemble_channel
+    assert "asset_changed: ${{ steps.asset-delta.outputs.changed }}" in assemble_channel
+    assert "if: ${{ steps.asset-delta.outputs.changed == 'true' }}" in assemble_channel
+
+    assert (
+        "if: ${{ inputs.dry_run == false && needs.assemble-channel.outputs.asset_changed == 'true' }}"
+        in deploy_channel
+    )
+    assert "uses: ./.github/workflows/release-channel.yaml" in deploy_channel
+    assert "dist_artifact: asset-channel-preview" in deploy_channel
 
 
 def test_release_index_check_rejects_profile_catalog_index_drift(tmp_path: Path) -> None:
