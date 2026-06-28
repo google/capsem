@@ -303,7 +303,7 @@ The first channel publication may continue when the previous
 `release.capsem.org/assets/<channel>/manifest.json` is unavailable; the delta
 gate records `previous_manifest_unavailable` as a changed asset release so the
 initial site can bootstrap. Later publications still compare against the live
-previous manifest and skip deployment when asset hashes are unchanged.
+previous manifest and skip deployment only when current VM blob hashes and release metadata are both unchanged.
 Neither rail is complete until `release.capsem.org` reflects the new channel
 state. After Cloudflare deploys, `release-channel.yaml` smoke checks the public
 `https://release.capsem.org/` index, `/health.json`, and

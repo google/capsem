@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Clarified VM asset release guidance so metadata-only asset channel changes
   deploy `release.capsem.org` without requiring immutable blob upload plans.
+- Clarified manual VM asset no-op guidance so unchanged blob hashes alone do
+  not imply a skipped release-channel deploy.
 - Updated the remote release readiness checker to require the expanded
   `pr-gate` contract that includes docs and marketing builds.
 - Moved docs and marketing PR build enforcement under the required `pr-gate`

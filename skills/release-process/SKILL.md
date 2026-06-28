@@ -67,7 +67,7 @@ headers stay in lock-step. The first channel publication may continue when the
 previous `release.capsem.org/assets/<channel>/manifest.json` is unavailable;
 the asset delta gate records `previous_manifest_unavailable` as changed so the
 initial site can bootstrap. Later publications still compare against the live
-previous manifest and skip deployment when asset hashes are unchanged. After
+previous manifest and skip deployment only when current VM blob hashes and release metadata are both unchanged. After
 Cloudflare deploys, the channel workflow must
 smoke-check `https://release.capsem.org/`, `/health.json`, and
 `/assets/<channel>/manifest.json` through the public custom domain before it
