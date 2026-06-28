@@ -229,6 +229,14 @@ Test runs in parallel with builds. A test failure blocks `create-release` but do
   embedding VM blobs. Tag releases consume
   `https://release.capsem.org/assets/stable/manifest.json`; VM payload rebuilds
   live in the manual asset workflow.
+- **Linux `.deb` self-updates stop stale helpers before replacement.**
+  `scripts/repack-deb.sh` must include `scripts/deb-preinst.sh` as
+  `DEBIAN/preinst`. That preinstall script runs
+  `systemctl --user stop capsem.service` when a user systemd session is
+  available, then kills the stale helper cohort before package replacement so
+  old service/gateway/tray/process binaries cannot survive from old inodes.
+  `scripts/deb-postinst.sh` owns symlink refresh, asset hydration, and service
+  registration after replacement.
 - **Clean-checkout proof belongs before tagging.** When fixing release-only
   failures, test the exact path a runner takes: fresh checkout, install deps,
   then focused checks (`pnpm -C frontend run check`, generated-config conformance

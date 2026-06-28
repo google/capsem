@@ -701,6 +701,23 @@ def test_installation_skill_documents_deb_preinstall_restart_rail() -> None:
     assert "stale helper cohort before package replacement" in install_skill
 
 
+def test_release_skill_documents_deb_preinstall_restart_rail() -> None:
+    release_skill = _source_text("skills/release-process/SKILL.md")
+    deb_preinst = _source_text("scripts/deb-preinst.sh")
+    repack_deb = _source_text("scripts/repack-deb.sh")
+
+    assert "systemctl --user stop capsem.service" in deb_preinst
+    assert "event=kill_process" in deb_preinst
+    assert 'cp "$SCRIPT_DIR/deb-preinst.sh" "$WORK_DIR/deb/DEBIAN/preinst"' in repack_deb
+    assert "preinst plus postinst scripts" in repack_deb
+    assert "DEBIAN/preinst script" in repack_deb
+
+    assert "deb-preinst.sh" in release_skill
+    assert "DEBIAN/preinst" in release_skill
+    assert "systemctl --user stop capsem.service" in release_skill
+    assert "stale helper cohort before package replacement" in release_skill
+
+
 def test_binary_release_verifies_packages_hydrate_vm_assets_from_public_channel() -> None:
     verify_downloads = _workflow_job_block("verify-release-downloads", "release.yaml")
 

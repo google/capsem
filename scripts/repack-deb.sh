@@ -1,5 +1,5 @@
 #!/bin/bash
-# repack-deb.sh -- Repack a Tauri .deb to include companion binaries and a postinst script.
+# repack-deb.sh -- Repack a Tauri .deb with companion binaries and preinst plus postinst scripts.
 #
 # Usage: repack-deb.sh [--manifest file://...|http://...|https://...] <input.deb> <bin_dir> <config_root> [assets_dir] [output.deb]
 #
@@ -21,6 +21,7 @@
 #   /usr/bin/capsem-tray
 #   /usr/bin/capsem-admin
 #   /usr/share/capsem/profiles/
+#   DEBIAN/preinst script
 #   DEBIAN/postinst script
 set -euo pipefail
 export COPYFILE_DISABLE=1
