@@ -671,6 +671,21 @@ def test_self_update_docs_match_verified_package_execution() -> None:
     assert "executes that command through\n`sudo`" in service_docs
 
 
+def test_installation_skill_documents_full_host_binary_cohort() -> None:
+    install_skill = _source_text("skills/dev-installation/SKILL.md")
+    install_fixture = _source_text("tests/capsem-install/conftest.py")
+
+    binaries_match = re.search(r"BINARIES = \[(.*?)\]", install_fixture, re.S)
+    assert binaries_match is not None
+    binaries = re.findall(r'"([^"]+)"', binaries_match.group(1))
+    assert binaries
+
+    for binary in binaries:
+        assert binary in install_skill
+    assert "all packaged host binaries expose a version surface" in install_skill
+    assert "capsem update --yes" in install_skill
+
+
 def test_binary_release_verifies_packages_hydrate_vm_assets_from_public_channel() -> None:
     verify_downloads = _workflow_job_block("verify-release-downloads", "release.yaml")
 

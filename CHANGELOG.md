@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Fixed the installation skill so it documents the full packaged host binary
+  cohort and version-surface check used by installed update smokes.
 - Fixed the remaining packaged admin and MCP helper binaries so they expose a
   package-version surface for installed update cohort verification.
 - Fixed the install-layout test harness so it verifies every packaged host

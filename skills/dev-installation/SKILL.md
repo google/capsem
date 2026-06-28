@@ -9,7 +9,9 @@ description: Capsem native package installer -- package install, service registr
 
 ```
 ~/.capsem/
-  bin/capsem, capsem-service, capsem-process, capsem-mcp, capsem-gateway, capsem-tray
+  bin/capsem, capsem-service, capsem-process, capsem-tui,
+      capsem-mcp, capsem-mcp-aggregator, capsem-mcp-builtin,
+      capsem-gateway, capsem-tray, capsem-admin
   assets/manifest.json, {asset-name}-{hash16}.{ext}
   run/service.sock, service.pid, instances/, persistent/
   update-check.json
@@ -33,7 +35,10 @@ These commands dispatch before UdsClient creation -- they work without the servi
 
 `discover_paths()` finds sibling binaries and assets:
 
-1. `current_exe().parent()` -> bin_dir -> capsem-service, capsem-process
+1. `current_exe().parent()` -> bin_dir -> the packaged host binary cohort:
+   `capsem`, `capsem-service`, `capsem-process`, `capsem-tui`,
+   `capsem-mcp`, `capsem-mcp-aggregator`, `capsem-mcp-builtin`,
+   `capsem-gateway`, `capsem-tray`, `capsem-admin`
 2. Assets: `~/.capsem/assets/` (the only installed layout -- packages install
    a manifest and assets are resolved from that manifest)
 
@@ -77,6 +82,7 @@ wizard and it does not create a user policy file.
 - `capsem update --assets` -> hydrate the locally installed manifest or an explicit `--manifest` URL
 - Corporate VM asset channels use `capsem update --assets --manifest <URL>`; `--corp <URL>` provisions policy config and must not be combined with `--assets`
 - Layout detection: MacosPkg, LinuxDeb, UserDir, Development (development bails with "build from source")
+- Installed update smokes require that all packaged host binaries expose a version surface and report the same installed Capsem package version after replacement.
 
 ## Corp config provisioning (capsem-core: corp_provision.rs)
 
