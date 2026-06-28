@@ -1,0 +1,147 @@
+name: Release VM Assets
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Asset channel to publish.
+        required: true
+        default: stable
+      profile:
+        description: Profile id that owns the VM image build.
+        required: true
+        default: code
+      binary_version:
+        description: Optional binary version recorded for compatibility. Empty uses project version.
+        required: false
+        default: ''
+      dry_run:
+        description: Build and validate without deploying release.capsem.org.
+        required: true
+        type: boolean
+        default: true
+
+jobs:
+  build-assets:
+    strategy:
+      matrix:
+        include:
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            rust-target: aarch64-unknown-linux-musl
+          - arch: x86_64
+            runner: ubuntu-24.04
+            rust-target: x86_64-unknown-linux-musl
+    runs-on: ${{ matrix.runner }}
+    name: Build VM assets (${{ matrix.arch }})
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync
+      - uses: extractions/setup-just@v3
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install musl C toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends musl-tools
+
+      - name: Install OBOM generator
+        run: |
+          npm install -g @cyclonedx/cdxgen@latest
+          cdxgen --version
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-target }}
+
+      - name: Build VM assets (kernel + rootfs)
+        env:
+          CAPSEM_CDXGEN_CMD: cdxgen
+          CC_aarch64_unknown_linux_musl: musl-gcc
+          CC_x86_64_unknown_linux_musl: musl-gcc
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+        run: |
+          just build-kernel ${{ matrix.arch }} "${{ inputs.profile }}"
+          just build-rootfs ${{ matrix.arch }} "${{ inputs.profile }}"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: vm-assets-${{ matrix.arch }}
+          path: assets/${{ matrix.arch }}/
+
+  assemble-channel:
+    needs: build-assets
+    runs-on: ubuntu-latest
+    name: Assemble asset channel
+    env:
+      CHANNEL: ${{ inputs.channel }}
+      BINARY_VERSION: ${{ inputs.binary_version }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: vm-assets-arm64
+          path: assets/arm64/
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: vm-assets-x86_64
+          path: assets/x86_64/
+
+      - name: Generate asset manifest
+        run: |
+          if [ -n "$BINARY_VERSION" ]; then
+            cargo run -p capsem-admin -- manifest generate assets --version "$BINARY_VERSION"
+          else
+            cargo run -p capsem-admin -- manifest generate assets
+          fi
+
+      - name: Build asset channel preview
+        run: |
+          cargo run -p capsem-admin -- assets channel build \
+            --manifest "file://$PWD/assets/manifest.json" \
+            --channel "$CHANNEL" \
+            --out-dir target/release-channel
+
+      - name: Check asset channel preview
+        run: |
+          cargo run -p capsem-admin -- assets channel check \
+            --channel "$CHANNEL" \
+            --dist target/release-channel
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: asset-channel-source
+          path: assets/manifest.json
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: asset-channel-preview
+          path: target/release-channel/
+
+  deploy-channel:
+    needs: assemble-channel
+    if: ${{ inputs.dry_run == false }}
+    uses: ./.github/workflows/release-channel.yaml
+    with:
+      channel: ${{ inputs.channel }}
+      dist_artifact: asset-channel-preview
+    secrets: inherit

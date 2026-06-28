@@ -40,6 +40,10 @@ def _workflow_job_block(name: str) -> str:
     return "\n".join(lines[start:end])
 
 
+def _workflow_text(name: str) -> str:
+    return (PROJECT_ROOT / ".github" / "workflows" / name).read_text()
+
+
 def test_smoke_runs_full_doctor_without_fast_escape_hatch() -> None:
     block = _recipe_block("smoke:")
 
@@ -98,6 +102,44 @@ def test_ci_python_schema_pytest_paths_exist() -> None:
     assert missing == []
 
 
+def test_ci_has_stable_pr_gate_over_all_required_jobs() -> None:
+    workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
+    gate = _workflow_job_block("pr-gate")
+
+    assert "pull_request:" in workflow
+    assert "push:" in workflow
+    assert "needs: [test-linux, test, test-install]" in gate
+    assert "if: ${{ always() }}" in gate
+    assert "TEST_LINUX_RESULT: ${{ needs.test-linux.result }}" in gate
+    assert "TEST_MACOS_RESULT: ${{ needs.test.result }}" in gate
+    assert "TEST_INSTALL_RESULT: ${{ needs.test-install.result }}" in gate
+    assert 'test "$TEST_LINUX_RESULT" = success' in gate
+    assert 'test "$TEST_MACOS_RESULT" = success' in gate
+    assert 'test "$TEST_INSTALL_RESULT" = success' in gate
+
+
+def test_ci_test_steps_do_not_mask_failures_with_true() -> None:
+    workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
+
+    for step_name in [
+        "Unit tests (KVM backend) with coverage",
+        "Unit tests with coverage",
+        "Integration tests with coverage",
+        "Frontend type-check, test, and build",
+        "Python schema tests with coverage",
+        "Python integration tests (non-VM suites)",
+        "Verify all integration test imports",
+        "Schema drift check",
+        "Run install e2e tests",
+    ]:
+        assert f"- name: {step_name}" in workflow
+        step = workflow.split(f"- name: {step_name}", maxsplit=1)[1].split(
+            "\n      - name:", maxsplit=1
+        )[0]
+        assert "|| true" not in step, step_name
+        assert "continue-on-error: true" not in step, step_name
+
+
 def test_install_e2e_generates_manifest_through_admin_rail() -> None:
     script = (PROJECT_ROOT / "scripts" / "prepare-install-test-assets.sh").read_text()
 
@@ -111,6 +153,275 @@ def test_install_e2e_generates_manifest_through_admin_rail() -> None:
     assert "TRAILER!!!" in script
     assert 'write_if_missing "$ASSETS_DIR/$arch/rootfs.erofs"' in script
     assert "scripts/gen_manifest.py" not in script
+
+
+def test_vm_asset_release_is_manual_and_deploys_asset_channel() -> None:
+    workflow = _workflow_text("release-assets.yaml")
+
+    assert "workflow_dispatch:" in workflow
+    assert "push:" not in workflow
+    assert "tags:" not in workflow
+    assert "just build-kernel" in workflow
+    assert "just build-rootfs" in workflow
+    assert "cargo run -p capsem-admin -- manifest generate assets" in workflow
+    assert "cargo run -p capsem-admin -- assets channel build" in workflow
+    assert '--manifest "file://$PWD/assets/manifest.json"' in workflow
+    assert "cargo run -p capsem-admin -- assets channel check" in workflow
+    assert "uses: ./.github/workflows/release-channel.yaml" in workflow
+    assert "dist_artifact: asset-channel-preview" in workflow
+    assert "if: ${{ inputs.dry_run == false }}" in workflow
+
+
+def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
+    workflow = _workflow_text("release-channel.yaml")
+
+    assert "workflow_call:" in workflow
+    assert "workflow_dispatch:" not in workflow
+    assert "dist_artifact:" in workflow
+    assert "actions/download-artifact@v8" in workflow
+    assert "DIST_DIR: target/release-channel" in workflow
+    assert 'test -f "$DIST_DIR/assets/$CHANNEL/manifest.json"' in workflow
+    assert 'test -d "$DIST_DIR/assets/releases"' in workflow
+    assert "cargo run -p capsem-admin -- assets channel build" not in workflow
+    assert "Require Cloudflare credentials" in workflow
+    assert "CLOUDFLARE_ACCOUNT_ID secret is required to deploy release.capsem.org" in workflow
+    assert "CLOUDFLARE_API_TOKEN secret is required to deploy release.capsem.org" in workflow
+    assert workflow.index("Require Cloudflare credentials") < workflow.index(
+        "cloudflare/wrangler-action@v3"
+    )
+    assert (
+        "pages deploy target/release-channel/ --project-name=capsem-release --branch=main"
+        in workflow
+    )
+    assert "assets/stable/manifest.json" not in workflow
+    assert "Smoke public asset channel" in workflow
+    assert "RELEASE_SITE_URL: https://release.capsem.org" in workflow
+    assert 'curl -fsSL "$RELEASE_SITE_URL/" -o /tmp/release-index.html' in workflow
+    assert (
+        'curl -fsSL "$RELEASE_SITE_URL/health.json" -o /tmp/release-health.json'
+        in workflow
+    )
+    assert (
+        'curl -fsSL "$RELEASE_SITE_URL/assets/$CHANNEL/manifest.json" -o /tmp/release-manifest.json'
+        in workflow
+    )
+    assert 'health.get("schema") != "capsem.assets_channel.health.v1"' in workflow
+    assert 'health.get("urls", {}).get("manifest") != expected_manifest' in workflow
+    assert 'health.get("urls", {}).get("asset_base") != "/assets/releases"' in workflow
+    assert 'for key in ("binary", "assets")' in workflow
+    assert "health updates.{key}.latest missing or not a string" in workflow
+    assert 'for key in ("profiles", "images")' in workflow
+    assert "health updates.{key}.latest missing" in workflow
+    assert "health updates.{key}.state missing or not a string" in workflow
+    assert 'for key in ("vm_oboms", "host_sboms", "host_binary_files", "attestations")' in workflow
+    assert 'health evidence.{key} missing or not a list' in workflow
+    assert 'manifest.get("format") != 2' in workflow
+    assert "release.capsem.org smoke failed after deploy." in workflow
+
+
+def test_docs_and_marketing_sites_build_on_pr_and_deploy_on_main_only() -> None:
+    expectations = [
+        (
+            "docs.yaml",
+            "docs",
+            "capsem-docs",
+            "Smoke public docs site",
+            "https://docs.capsem.org",
+            "docs.capsem.org smoke failed after deploy.",
+        ),
+        (
+            "site.yaml",
+            "site",
+            "capsem",
+            "Smoke public marketing site",
+            "https://capsem.org",
+            "capsem.org smoke failed after deploy.",
+        ),
+    ]
+
+    for workflow_name, directory, project_name, smoke_name, site_url, failure in expectations:
+        workflow = _workflow_text(workflow_name)
+
+        assert "pull_request:" in workflow, workflow_name
+        assert "push:" in workflow, workflow_name
+        assert "branches: [main]" in workflow, workflow_name
+        assert f"'{directory}/**'" in workflow, workflow_name
+        assert f"'.github/workflows/{workflow_name}'" in workflow, workflow_name
+        assert f"cd {directory} && pnpm install --frozen-lockfile" in workflow
+        assert f"cd {directory} && pnpm run build" in workflow
+        assert (
+            "if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}"
+            in workflow
+        )
+        assert (
+            f"pages deploy {directory}/dist/ --project-name={project_name}"
+            in workflow
+        )
+        assert smoke_name in workflow
+        assert f"SITE_URL: {site_url}" in workflow
+        assert "curl -fsSLI \"$SITE_URL/\" -o" in workflow
+        assert "grep -qi '^content-type: text/html'" in workflow
+        assert 'grep -q "The fastest way to ship with AI securely."' in workflow
+        assert failure in workflow
+        assert "release-channel.yaml" not in workflow
+        assert "release.yaml" not in workflow
+        assert "release-assets.yaml" not in workflow
+
+
+def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> None:
+    workflow = _workflow_text("release.yaml")
+
+    assert "ASSET_MANIFEST_URL: https://release.capsem.org/assets/stable/manifest.json" in workflow
+    assert "  build-assets:" not in workflow
+    assert "vm-assets-" not in workflow
+    assert "assets/current" not in workflow
+    assert """echo '{"releases":{}}'""" not in workflow
+    assert "Create stub v2 asset manifest for unit tests" in workflow
+    assert "just build-kernel" not in workflow
+    assert "just build-rootfs" not in workflow
+    assert "generate_checksums(Path('unified-assets')" not in workflow
+    assert "gh release upload ${{ github.ref_name }} \"release-artifacts/$arch" not in workflow
+    assert "release-artifacts/manifest.json" not in workflow
+    assert '--manifest "$ASSET_MANIFEST_URL"' in workflow
+    assert "release.capsem.org" in workflow
+    assert "uses: ./.github/workflows/release-channel.yaml" not in workflow
+    assert "cloudflare/wrangler-action" not in workflow
+    assert "pages deploy" not in workflow
+    assert "capsem-release" not in workflow
+    assert "CLOUDFLARE_" not in workflow
+
+
+def test_manifest_source_inputs_are_url_only() -> None:
+    build_pkg = (PROJECT_ROOT / "scripts" / "build-pkg.sh").read_text()
+    repack_deb = (PROJECT_ROOT / "scripts" / "repack-deb.sh").read_text()
+    release = _workflow_text("release.yaml")
+    release_assets = _workflow_text("release-assets.yaml")
+    release_channel = _workflow_text("release-channel.yaml")
+    admin = (PROJECT_ROOT / "crates/capsem-admin/src/main.rs").read_text()
+
+    for script in (build_pkg, repack_deb):
+        assert "--manifest requires a URL" in script
+        assert "manifest must be a URL" in script
+        assert "pathlib.Path(source).read_bytes()" not in script
+
+    for workflow in (release, release_assets, release_channel):
+        source_lines = [
+            line.strip()
+            for line in workflow.splitlines()
+            if line.strip().startswith("--manifest ")
+        ]
+        for line in source_lines:
+            if "profile materialize" in line:
+                continue
+            if "$ASSET_MANIFEST_URL" in line:
+                assert (
+                    "ASSET_MANIFEST_URL: https://release.capsem.org/assets/stable/manifest.json"
+                    in workflow
+                )
+            else:
+                assert "file://" in line or "https://" in line or "http://" in line
+            assert "--manifest assets/manifest.json" not in line
+            assert '--manifest "$MANIFEST_PATH"' not in line
+
+    assert "manifest must be a URL" in admin
+    assert "unsupported manifest URL scheme" in admin
+
+
+def test_asset_channel_documented_as_assets_manifest_url_not_release_index_json() -> None:
+    docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
+    asset_skill = (PROJECT_ROOT / "skills/asset-pipeline/SKILL.md").read_text()
+    release_skill = (PROJECT_ROOT / "skills/release-process/SKILL.md").read_text()
+
+    for text in (docs, asset_skill, release_skill):
+        assert "https://release.capsem.org/assets/stable/manifest.json" in text
+        assert "target/release-channel/assets/<channel>/manifest.json" in text or (
+            "target/release-channel/assets/stable/manifest.json" in text
+        )
+        assert "capsem.assets_channel.health.v1" in text
+        assert "host SBOM references" in text
+        assert "explicit `updates` block" in text
+        assert "`latest` targets" in text
+        assert "binary/assets/profile/image freshness checks" in text
+        assert "channels/stable/index.json" not in text
+
+
+def test_release_skill_keeps_binary_and_asset_verification_decoupled() -> None:
+    release_skill = (PROJECT_ROOT / "skills/release-process/SKILL.md").read_text()
+
+    assert "asset-channel-preview" in release_skill
+    assert "generated dist artifact" in release_skill
+    assert "smoke-check `https://release.capsem.org/`, `/health.json`, and" in release_skill
+    assert "`/assets/<channel>/manifest.json`" in release_skill
+    assert "curl -fsSL https://release.capsem.org/health.json" in release_skill
+    assert (
+        "curl -fsSL https://release.capsem.org/assets/stable/manifest.json"
+        in release_skill
+    )
+    assert "gh release download vX.Y.Z --pattern manifest.json" not in release_skill
+    assert "VM asset manifests" in release_skill
+    assert "channel health live on `release.capsem.org`" in release_skill
+    assert "`docs.yaml` and `site.yaml` build on pull requests" in release_skill
+    assert "deploy only on pushes to `main`" in release_skill
+    assert "`https://docs.capsem.org/` plus `/getting-started/`" in release_skill
+    assert "`https://capsem.org/` for marketing" in release_skill
+    assert "must not depend on release tags or VM asset publication" in release_skill
+
+
+def test_capsem_update_checks_release_channel_health_not_github_latest() -> None:
+    update_rs = (PROJECT_ROOT / "crates/capsem/src/update.rs").read_text()
+
+    assert "https://release.capsem.org/health.json" in update_rs
+    assert "capsem.assets_channel.health.v1" in update_rs
+    assert "CAPSEM_RELEASE_HEALTH_URL" in update_rs
+    assert "api.github.com/repos/google/capsem/releases/latest" not in update_rs
+
+
+def test_docs_do_not_teach_bare_manifest_paths_for_package_inputs() -> None:
+    docs = [
+        PROJECT_ROOT / "docs/src/content/docs/architecture/asset-pipeline.md",
+        PROJECT_ROOT / "docs/src/content/docs/security/build-verification.md",
+    ]
+
+    for path in docs:
+        text = path.read_text()
+        assert "--manifest /path/to/assets/manifest.json" not in text, path
+        assert "--manifest file:///path/to/assets/manifest.json" in text, path
+
+
+def test_ci_docs_describes_three_independent_publication_rails() -> None:
+    docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
+
+    assert (
+        "| `release.yaml` | Tag push (`v*`) | Build apps (macOS + Linux), package with the current public asset manifest, create GitHub release |"
+        in docs
+    )
+    assert (
+        "| `release-assets.yaml` | Manual | Build VM assets, generate `assets/manifest.json`, and optionally deploy the asset channel |"
+        in docs
+    )
+    assert (
+        "| `docs.yaml` | Pull requests and push to main (docs changes) | Build docs on PRs; deploy docs.capsem.org on main, then smoke the live docs site |"
+        in docs
+    )
+    assert (
+        "| `site.yaml` | Pull requests and push to main (site changes) | Build marketing site on PRs; deploy capsem.org on main, then smoke the live marketing site |"
+        in docs
+    )
+    assert (
+        "| `release-channel.yaml` | Called by asset release | Deploy release.capsem.org from the generated asset channel site artifact |"
+        in docs
+    )
+    assert "release.yaml` | Tag push (`v*`) | Build assets" not in docs
+    assert "generated asset manifest artifact" not in docs
+    assert "### pr-gate (ubuntu-latest)" in docs
+    assert "`test-linux`, `test`, and `test-install`" in docs
+    assert "fails unless all three dependency jobs report `success`" in docs
+    assert "After Cloudflare deploys, `release-channel.yaml` smoke" in docs
+    assert "`https://release.capsem.org/` index" in docs
+    assert "`/health.json`, and `/assets/<channel>/manifest.json`" in docs
+    assert "`docs.yaml` and `site.yaml` are independent from binary and VM asset release" in docs
+    assert "`https://docs.capsem.org/`, content type `text/html`" in docs
+    assert "`https://capsem.org/`, content type `text/html`" in docs
 
 
 def test_ci_installs_b3sum_before_bootstrap_asset_hash_checks() -> None:

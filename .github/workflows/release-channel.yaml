@@ -1,0 +1,130 @@
+name: Publish Asset Channel
+
+on:
+  workflow_call:
+    inputs:
+      channel:
+        type: string
+        required: false
+        default: stable
+      dist_artifact:
+        type: string
+        required: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    name: Publish asset channel
+    permissions:
+      contents: read
+      deployments: write
+
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CHANNEL: ${{ inputs.channel || 'stable' }}
+      DIST_DIR: target/release-channel
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Download generated asset channel
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.dist_artifact }}
+          path: target/release-channel/
+
+      - name: Require generated asset channel
+        run: |
+          test -f "$DIST_DIR/assets/$CHANNEL/manifest.json"
+          test -d "$DIST_DIR/assets/releases"
+
+      - name: Check asset channel
+        run: |
+          cargo run -p capsem-admin -- assets channel check \
+            --channel "$CHANNEL" \
+            --dist "$DIST_DIR"
+
+      - name: Require Cloudflare credentials
+        run: |
+          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::CLOUDFLARE_ACCOUNT_ID secret is required to deploy release.capsem.org"
+            exit 1
+          fi
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "::error::CLOUDFLARE_API_TOKEN secret is required to deploy release.capsem.org"
+            exit 1
+          fi
+
+      - name: Deploy
+        uses: cloudflare/wrangler-action@v3
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy target/release-channel/ --project-name=capsem-release --branch=main
+
+      - name: Smoke public asset channel
+        env:
+          RELEASE_SITE_URL: https://release.capsem.org
+        run: |
+          for attempt in 1 2 3 4 5 6; do
+            echo "Checking $RELEASE_SITE_URL (attempt $attempt)..."
+            if curl -fsSL "$RELEASE_SITE_URL/" -o /tmp/release-index.html \
+              && curl -fsSL "$RELEASE_SITE_URL/health.json" -o /tmp/release-health.json \
+              && curl -fsSL "$RELEASE_SITE_URL/assets/$CHANNEL/manifest.json" -o /tmp/release-manifest.json \
+              && python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          channel = os.environ["CHANNEL"]
+          health = json.load(open("/tmp/release-health.json", encoding="utf-8"))
+          manifest = json.load(open("/tmp/release-manifest.json", encoding="utf-8"))
+          index = open("/tmp/release-index.html", encoding="utf-8").read()
+
+          expected_manifest = f"/assets/{channel}/manifest.json"
+          failures = []
+          if health.get("schema") != "capsem.assets_channel.health.v1":
+              failures.append("health schema mismatch")
+          if health.get("urls", {}).get("manifest") != expected_manifest:
+              failures.append("health manifest URL mismatch")
+          if health.get("urls", {}).get("asset_base") != "/assets/releases":
+              failures.append("health asset base mismatch")
+          updates = health.get("updates", {})
+          for key in ("binary", "assets"):
+              if not isinstance(updates.get(key, {}).get("latest"), str):
+                  failures.append(f"health updates.{key}.latest missing or not a string")
+          for key in ("profiles", "images"):
+              track = updates.get(key, {})
+              if "latest" not in track:
+                  failures.append(f"health updates.{key}.latest missing")
+              if not isinstance(track.get("state"), str):
+                  failures.append(f"health updates.{key}.state missing or not a string")
+          evidence = health.get("evidence", {})
+          for key in ("vm_oboms", "host_sboms", "host_binary_files", "attestations"):
+              if not isinstance(evidence.get(key), list):
+                  failures.append(f"health evidence.{key} missing or not a list")
+          if manifest.get("format") != 2:
+              failures.append("manifest format mismatch")
+          if "Current Asset Files" not in index or "/health.json" not in index:
+              failures.append("index page missing release status content")
+          if failures:
+              print("; ".join(failures), file=sys.stderr)
+              sys.exit(1)
+          PY
+            then
+              echo "release.capsem.org smoke passed."
+              exit 0
+            fi
+            sleep 10
+          done
+
+          echo "release.capsem.org smoke failed after deploy." >&2
+          exit 1

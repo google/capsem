@@ -160,7 +160,7 @@ jobs:
       # Integration tests (tests/ directory, cross-crate)
       - name: Integration tests with coverage
         run: |
-          cargo llvm-cov nextest --no-cfg-coverage --profile ci --codecov --output-path codecov-integration.json -p capsem-core --test '*' || true
+          cargo llvm-cov nextest --no-cfg-coverage --profile ci --codecov --output-path codecov-integration.json -p capsem-core --test '*'
 
       # Frontend tests with coverage + JUnit output
       - name: Frontend type-check, test, and build
@@ -328,3 +328,25 @@ jobs:
 
       - name: Run install e2e tests
         run: just test-install
+
+  # ---------------------------------------------------------------------------
+  # Stable branch-protection check: one required status for the real PR gate.
+  # ---------------------------------------------------------------------------
+  pr-gate:
+    runs-on: ubuntu-latest
+    needs: [test-linux, test, test-install]
+    if: ${{ always() }}
+    steps:
+      - name: Require all CI jobs
+        env:
+          TEST_LINUX_RESULT: ${{ needs.test-linux.result }}
+          TEST_MACOS_RESULT: ${{ needs.test.result }}
+          TEST_INSTALL_RESULT: ${{ needs.test-install.result }}
+        run: |
+          echo "test-linux:   $TEST_LINUX_RESULT"
+          echo "test:         $TEST_MACOS_RESULT"
+          echo "test-install: $TEST_INSTALL_RESULT"
+
+          test "$TEST_LINUX_RESULT" = success
+          test "$TEST_MACOS_RESULT" = success
+          test "$TEST_INSTALL_RESULT" = success

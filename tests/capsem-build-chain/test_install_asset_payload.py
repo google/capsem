@@ -239,28 +239,18 @@ def test_macos_postinstall_adds_capsem_bin_to_fish_path() -> None:
     assert "attempt=$attempt" in postinstall
 
 
-def test_release_workflow_uses_profile_asset_rail_and_full_host_binary_set() -> None:
+def test_release_workflow_decouples_vm_assets_and_keeps_full_host_binary_set() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "release.yaml").read_text()
-    build_assets = workflow.split("  build-assets:", 1)[1].split("\n  test:", 1)[0]
 
-    assert "just build-kernel ${{ matrix.arch }} code" in workflow
-    assert "just build-rootfs ${{ matrix.arch }} code" in workflow
-    pnpm_pos = build_assets.find("pnpm/action-setup@v5")
-    setup_node_pos = build_assets.find("actions/setup-node@v5")
-    build_kernel_pos = build_assets.find("just build-kernel ${{ matrix.arch }} code")
-    assert pnpm_pos != -1
-    assert setup_node_pos != -1
-    assert build_kernel_pos != -1
-    assert pnpm_pos < setup_node_pos < build_kernel_pos
-    assert "version: 10" in build_assets
-    assert "cache: pnpm" in build_assets
-    assert "cache-dependency-path: frontend/pnpm-lock.yaml" in build_assets
-    assert "Install musl C toolchain" in build_assets
-    assert "musl-tools" in build_assets
-    assert "CC_aarch64_unknown_linux_musl: musl-gcc" in build_assets
-    assert "CC_x86_64_unknown_linux_musl: musl-gcc" in build_assets
-    assert "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc" in build_assets
-    assert "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc" in build_assets
+    assert "  build-assets:" not in workflow
+    assert "vm-assets-" not in workflow
+    assert "assets/current" not in workflow
+    assert """echo '{"releases":{}}'""" not in workflow
+    assert "Create stub v2 asset manifest for unit tests" in workflow
+    assert "just build-kernel" not in workflow
+    assert "just build-rootfs" not in workflow
+    assert "ASSET_MANIFEST_URL: https://release.capsem.org/assets/stable/manifest.json" in workflow
+    assert '--manifest "$ASSET_MANIFEST_URL"' in workflow
     assert "-p capsem-admin" in workflow
 
 

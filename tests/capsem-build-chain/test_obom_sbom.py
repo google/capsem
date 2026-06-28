@@ -12,26 +12,31 @@ def _read(path: str) -> str:
     return (PROJECT_ROOT / path).read_text(encoding="utf-8")
 
 
-def test_release_workflow_generates_and_publishes_sbom_and_obom() -> None:
-    workflow = _read(".github/workflows/release.yaml")
+def test_release_workflows_generate_binary_sbom_and_asset_obom() -> None:
+    binary_workflow = _read(".github/workflows/release.yaml")
+    asset_workflow = _read(".github/workflows/release-assets.yaml")
+    channel_workflow = _read(".github/workflows/release-channel.yaml")
 
-    assert "npm install -g @cyclonedx/cdxgen@latest" in workflow
-    assert "CAPSEM_CDXGEN_CMD: cdxgen" in workflow
-    assert workflow.index("Install OBOM generator") < workflow.index("Build VM assets")
-    assert workflow.index("CAPSEM_CDXGEN_CMD: cdxgen") < workflow.index("just build-rootfs")
+    assert "npm install -g @cyclonedx/cdxgen@latest" in asset_workflow
+    assert "CAPSEM_CDXGEN_CMD: cdxgen" in asset_workflow
+    assert asset_workflow.index("Install OBOM generator") < asset_workflow.index(
+        "- name: Build VM assets"
+    )
+    assert asset_workflow.index("CAPSEM_CDXGEN_CMD: cdxgen") < asset_workflow.index(
+        "just build-rootfs"
+    )
+    assert "asset-channel-preview" in asset_workflow
+    assert 'for key in ("vm_oboms", "host_sboms", "host_binary_files", "attestations")' in channel_workflow
 
-    assert "Generate SBOM" in workflow
-    assert "cargo sbom --output-format spdx_json_2_3 > capsem-sbom.spdx.json" in workflow
-    assert "Attest SBOM" in workflow
-    assert "predicate-type: https://spdx.dev/Document/v2.3" in workflow
-    assert "predicate-path: release-artifacts/capsem-sbom.spdx.json" in workflow
+    assert "Generate SBOM" in binary_workflow
+    assert "cargo sbom --output-format spdx_json_2_3 > capsem-sbom.spdx.json" in binary_workflow
+    assert "Attest SBOM" in binary_workflow
+    assert "predicate-type: https://spdx.dev/Document/v2.3" in binary_workflow
+    assert "predicate-path: release-artifacts/capsem-sbom.spdx.json" in binary_workflow
 
-    assert "obom.cdx.json (arm64)" in workflow
-    assert "obom.cdx.json (x86_64)" in workflow
-    assert "VM base-image OBOM published (CycloneDX, cdxgen, per arch)" in workflow
-    assert 'build-ledger.log|tool-versions.txt|B3SUMS)' in workflow
-    assert "Skipping debug-only $arch/$base from release upload" in workflow
-    assert "vm-build-ledger-" not in workflow
+    assert "build-assets:" not in binary_workflow
+    assert "obom.cdx.json (arm64)" not in binary_workflow
+    assert "vm-build-ledger-" not in binary_workflow
 
 
 def test_builder_emits_obom_and_keeps_build_ledger_debug_scoped() -> None:
@@ -53,7 +58,8 @@ def test_admin_materialization_and_service_routes_expose_verified_obom_evidence(
     api = _read("crates/capsem-service/src/api.rs")
 
     assert "materialize_profile_obom_descriptor" in admin
-    assert "check_local_asset(assets_dir, arch, \"obom.cdx.json\"" in admin
+    assert 'manifest_assets.get("obom.cdx.json")' in admin
+    assert "check_local_asset(assets_dir, arch, logical_name, hash, size)" in admin
     assert "read_obom_generator" in admin
     assert "ProfileMaterializedObomReport" in admin
     assert "scope: \"base_image\"" in admin

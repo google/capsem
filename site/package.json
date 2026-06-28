@@ -7,11 +7,6 @@
     "build": "astro build",
     "preview": "astro preview"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ]
-  },
   "dependencies": {
     "astro": "^6.1.8",
     "@astrojs/svelte": "^8.0.0",
