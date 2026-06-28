@@ -78,11 +78,12 @@ immutable asset and profile release artifacts stay
 `public, max-age=31536000, immutable`.
 
 Docs and marketing deploy independently from binary, VM asset, and asset-channel
-release rails. `docs.yaml` and `site.yaml` keep pull-request builds
-path-filtered, but every push to `main` deploys and smokes the public
-Cloudflare custom domains: `https://docs.capsem.org/` plus `/getting-started/`
-for docs, and `https://capsem.org/` for marketing. Those smokes are deploy
-checks only; they must not depend on release tags or VM asset publication.
+release rails. `ci.yaml` runs `docs-build` and `site-build` under `pr-gate` so
+broken docs or marketing builds cannot merge while branch protection still
+requires one stable status. `docs.yaml` and `site.yaml` deploy and smoke only on
+every push to `main`: `https://docs.capsem.org/` plus `/getting-started/` for
+docs, and `https://capsem.org/` for marketing. Those smokes are deploy checks
+only; they must not depend on release tags or VM asset publication.
 
 ## Cutting a release
 

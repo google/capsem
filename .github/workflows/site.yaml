@@ -1,9 +1,5 @@
 name: Publish Site
 on:
-  pull_request:
-    paths:
-      - 'site/**'
-      - '.github/workflows/site.yaml'
   push:
     branches: [main]
 

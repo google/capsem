@@ -124,14 +124,59 @@ def test_ci_has_stable_pr_gate_over_all_required_jobs() -> None:
 
     assert "pull_request:" in workflow
     assert "push:" in workflow
-    assert "needs: [test-linux, test, test-install]" in gate
+    assert "needs: [test-linux, test, test-install, docs-build, site-build]" in gate
     assert "if: ${{ always() }}" in gate
     assert "TEST_LINUX_RESULT: ${{ needs.test-linux.result }}" in gate
     assert "TEST_MACOS_RESULT: ${{ needs.test.result }}" in gate
     assert "TEST_INSTALL_RESULT: ${{ needs.test-install.result }}" in gate
+    assert "DOCS_BUILD_RESULT: ${{ needs.docs-build.result }}" in gate
+    assert "SITE_BUILD_RESULT: ${{ needs.site-build.result }}" in gate
     assert 'test "$TEST_LINUX_RESULT" = success' in gate
     assert 'test "$TEST_MACOS_RESULT" = success' in gate
     assert 'test "$TEST_INSTALL_RESULT" = success' in gate
+    assert 'test "$DOCS_BUILD_RESULT" = success' in gate
+    assert 'test "$SITE_BUILD_RESULT" = success' in gate
+
+
+def test_pr_gate_blocks_broken_docs_and_marketing_builds() -> None:
+    workflow = _workflow_text("ci.yaml")
+    docs_job = _workflow_job_block("docs-build")
+    site_job = _workflow_job_block("site-build")
+    gate = _workflow_job_block("pr-gate")
+    docs_deploy = _workflow_text("docs.yaml")
+    site_deploy = _workflow_text("site.yaml")
+    docs_ci = _source_text("docs/src/content/docs/development/ci.md")
+    docs_ci_text = " ".join(docs_ci.split())
+
+    assert "pr-gate:" in workflow
+    assert "docs-build:" in workflow
+    assert "site-build:" in workflow
+    assert "needs: [test-linux, test, test-install, docs-build, site-build]" in gate
+    assert "DOCS_BUILD_RESULT: ${{ needs.docs-build.result }}" in gate
+    assert "SITE_BUILD_RESULT: ${{ needs.site-build.result }}" in gate
+    assert 'test "$DOCS_BUILD_RESULT" = success' in gate
+    assert 'test "$SITE_BUILD_RESULT" = success' in gate
+
+    assert "cache-dependency-path: docs/pnpm-lock.yaml" in docs_job
+    assert "cd docs && pnpm install --frozen-lockfile" in docs_job
+    assert "cd docs && pnpm run build" in docs_job
+    assert "pages deploy" not in docs_job
+
+    assert "cache-dependency-path: site/pnpm-lock.yaml" in site_job
+    assert "cd site && pnpm install --frozen-lockfile" in site_job
+    assert "cd site && pnpm run build" in site_job
+    assert "pages deploy" not in site_job
+
+    assert "pull_request:" not in docs_deploy
+    assert "pull_request:" not in site_deploy
+    assert "push:" in docs_deploy
+    assert "push:" in site_deploy
+    assert "branches: [main]" in docs_deploy
+    assert "branches: [main]" in site_deploy
+
+    assert "docs-build" in docs_ci
+    assert "site-build" in docs_ci
+    assert "`pr-gate` depends on `docs-build` and `site-build`" in docs_ci_text
 
 
 def test_ci_test_steps_do_not_mask_failures_with_true() -> None:
@@ -147,6 +192,8 @@ def test_ci_test_steps_do_not_mask_failures_with_true() -> None:
         "Verify all integration test imports",
         "Schema drift check",
         "Run install e2e tests",
+        "Build docs",
+        "Build site",
     ]:
         assert f"- name: {step_name}" in workflow
         step = workflow.split(f"- name: {step_name}", maxsplit=1)[1].split(
@@ -376,10 +423,12 @@ def test_cross_surface_update_smoke_prerequisites_are_covered_locally() -> None:
 
 
 def test_docs_and_marketing_sites_build_on_pr_and_deploy_on_main_only() -> None:
+    ci_workflow = _workflow_text("ci.yaml")
     expectations = [
         (
             "docs.yaml",
             "docs",
+            "docs-build",
             "capsem-docs",
             "Smoke public docs site",
             "https://docs.capsem.org",
@@ -388,6 +437,7 @@ def test_docs_and_marketing_sites_build_on_pr_and_deploy_on_main_only() -> None:
         (
             "site.yaml",
             "site",
+            "site-build",
             "capsem",
             "Smoke public marketing site",
             "https://capsem.org",
@@ -395,20 +445,20 @@ def test_docs_and_marketing_sites_build_on_pr_and_deploy_on_main_only() -> None:
         ),
     ]
 
-    for workflow_name, directory, project_name, smoke_name, site_url, failure in expectations:
+    for workflow_name, directory, ci_job, project_name, smoke_name, site_url, failure in expectations:
         workflow = _workflow_text(workflow_name)
         trigger = workflow.split("\njobs:", maxsplit=1)[0]
-        pull_request_trigger = trigger.split("  pull_request:", maxsplit=1)[1].split(
-            "  push:", maxsplit=1
-        )[0]
         push_trigger = trigger.split("  push:", maxsplit=1)[1]
+        ci_block = _workflow_job_block(ci_job)
 
-        assert "pull_request:" in workflow, workflow_name
+        assert "pull_request:" not in trigger, workflow_name
         assert "push:" in workflow, workflow_name
         assert "branches: [main]" in workflow, workflow_name
-        assert f"'{directory}/**'" in pull_request_trigger, workflow_name
-        assert f"'.github/workflows/{workflow_name}'" in pull_request_trigger, workflow_name
         assert "paths:" not in push_trigger, workflow_name
+        assert f"cache-dependency-path: {directory}/pnpm-lock.yaml" in ci_block
+        assert f"cd {directory} && pnpm install --frozen-lockfile" in ci_block
+        assert f"cd {directory} && pnpm run build" in ci_block
+        assert "needs: [test-linux, test, test-install, docs-build, site-build]" in ci_workflow
         assert f"cd {directory} && pnpm install --frozen-lockfile" in workflow
         assert f"cd {directory} && pnpm run build" in workflow
         assert (
@@ -622,8 +672,8 @@ def test_release_skill_keeps_binary_and_asset_verification_decoupled() -> None:
     assert "gh release download vX.Y.Z --pattern manifest.json" not in release_skill
     assert "VM asset manifests" in release_skill
     assert "channel health live on `release.capsem.org`" in release_skill
-    assert "`docs.yaml` and `site.yaml` keep pull-request builds" in release_skill
-    assert "path-filtered, but every push to `main` deploys and smokes" in release_skill
+    assert "`ci.yaml` runs `docs-build` and `site-build` under `pr-gate`" in release_skill
+    assert "`docs.yaml` and `site.yaml` deploy and smoke only on" in release_skill
     assert "`https://docs.capsem.org/` plus `/getting-started/`" in release_skill
     assert "`https://capsem.org/` for marketing" in release_skill
     assert "must not depend on release tags or VM asset publication" in release_skill
@@ -632,15 +682,19 @@ def test_release_skill_keeps_binary_and_asset_verification_decoupled() -> None:
 def test_site_skills_preserve_every_main_merge_deploy_rail() -> None:
     site_infra_skill = (PROJECT_ROOT / "skills/site-infra/SKILL.md").read_text()
     site_marketing_skill = (PROJECT_ROOT / "skills/site-marketing/SKILL.md").read_text()
+    site_infra_text = " ".join(site_infra_skill.split())
+    site_marketing_text = " ".join(site_marketing_skill.split())
 
-    assert "`docs.yaml` keeps pull-request builds path-filtered" in site_infra_skill
-    assert "every push to `main` deploys and smokes `https://docs.capsem.org/`" in (
-        site_infra_skill
+    assert "`ci.yaml` runs the merge-blocking `docs-build` job" in site_infra_text
+    assert (
+        "deploys only on every push to `main` and smokes `https://docs.capsem.org/`"
+        in site_infra_text
     )
-    assert "plus `/getting-started/`" in site_infra_skill
-    assert "`site.yaml` keeps pull-request builds path-filtered" in site_marketing_skill
-    assert "every push to `main` deploys and smokes `https://capsem.org/`" in (
-        site_marketing_skill
+    assert "plus `/getting-started/`" in site_infra_text
+    assert "`ci.yaml` runs the merge-blocking `site-build` job" in site_marketing_text
+    assert (
+        "deploys only on every push to `main` and smokes `https://capsem.org/`"
+        in site_marketing_text
     )
 
     for skill in (site_infra_skill, site_marketing_skill):
@@ -682,11 +736,11 @@ def test_ci_docs_describes_three_independent_publication_rails() -> None:
         in docs
     )
     assert (
-        "| `docs.yaml` | Docs pull requests and every push to main | Build docs on docs PRs; deploy docs.capsem.org on each main merge, then smoke the live docs site |"
+        "| `docs.yaml` | Push to main | Deploy docs.capsem.org on each main merge, then smoke the live docs site |"
         in docs
     )
     assert (
-        "| `site.yaml` | Site pull requests and every push to main | Build marketing on site PRs; deploy capsem.org on each main merge, then smoke the live marketing site |"
+        "| `site.yaml` | Push to main | Deploy capsem.org on each main merge, then smoke the live marketing site |"
         in docs
     )
     assert (
@@ -696,8 +750,8 @@ def test_ci_docs_describes_three_independent_publication_rails() -> None:
     assert "release.yaml` | Tag push (`v*`) | Build assets" not in docs
     assert "generated asset manifest artifact" not in docs
     assert "### pr-gate (ubuntu-latest)" in docs
-    assert "`test-linux`, `test`, and `test-install`" in docs
-    assert "fails unless all three dependency jobs report `success`" in docs
+    assert "`test-linux`, `test`, `test-install`, `docs-build`, and `site-build`" in docs
+    assert "fails unless every dependency job reports" in docs
     assert "After Cloudflare deploys, `release-channel.yaml` smoke" in docs
     assert "`https://release.capsem.org/` index" in docs
     assert "`/health.json`, and" in docs
@@ -709,6 +763,7 @@ def test_ci_docs_describes_three_independent_publication_rails() -> None:
 
 def test_ci_docs_compare_pr_gate_to_just_test_with_named_substitutions() -> None:
     docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
+    docs_text = " ".join(docs.split())
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
     just_test = _recipe_block("test:")
 
@@ -740,8 +795,13 @@ def test_ci_docs_compare_pr_gate_to_just_test_with_named_substitutions() -> None
         "| Legacy injection/integration scripts and benchmark recording | Not run in hosted PR CI | Runner substitution: still required by local `just test` before release work is claimed |"
         in docs
     )
+    assert (
+        "| Docs and marketing builds | `docs-build` and `site-build` jobs install and build `docs/` and `site/` before `pr-gate` can pass | Merge-blocking build proof; deploy happens only after merge |"
+        in docs
+    )
     assert "`pr-gate` is the only status that should be required by branch protection" in docs
-    assert "needs: [test-linux, test, test-install]" in workflow
+    assert "`pr-gate` depends on `docs-build` and `site-build`" in docs_text
+    assert "needs: [test-linux, test, test-install, docs-build, site-build]" in workflow
 
 
 def test_remote_release_readiness_checker_is_read_only_and_covers_live_gates() -> None:

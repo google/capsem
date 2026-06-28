@@ -17,10 +17,10 @@ cd site && pnpm run preview # Preview production build
 
 ## CI and deploy rail
 
-`site.yaml` keeps pull-request builds path-filtered to `site/**` and the site
-workflow, but every push to `main` deploys and smokes `https://capsem.org/`.
-This deploy rail is independent from binary releases, manual VM asset releases,
-and the `release.capsem.org` asset-channel workflow.
+`ci.yaml` runs the merge-blocking `site-build` job under `pr-gate`. `site.yaml`
+deploys only on every push to `main` and smokes `https://capsem.org/`. This
+deploy rail is independent from binary releases, manual VM asset releases, and
+the `release.capsem.org` asset-channel workflow.
 
 ## Architecture
 

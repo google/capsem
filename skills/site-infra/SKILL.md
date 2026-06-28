@@ -16,9 +16,9 @@ cd docs && pnpm run build   # Production build
 
 ## CI and deploy rail
 
-`docs.yaml` keeps pull-request builds path-filtered to `docs/**` and the docs
-workflow, but every push to `main` deploys and smokes `https://docs.capsem.org/`
-plus `/getting-started/`. This deploy rail is independent from binary releases,
+`ci.yaml` runs the merge-blocking `docs-build` job under `pr-gate`. `docs.yaml`
+deploys only on every push to `main` and smokes `https://docs.capsem.org/` plus
+`/getting-started/`. This deploy rail is independent from binary releases,
 manual VM asset releases, and the `release.capsem.org` asset-channel workflow.
 
 ## Writing style

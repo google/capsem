@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Moved docs and marketing PR build enforcement under the required `pr-gate`
+  status while keeping the docs and marketing Cloudflare workflows as
+  push-to-main deploy rails.
 - Aligned self-update docs and skills with the implemented `capsem update --yes`
   behavior: verified `.pkg` and `.deb` installers are applied through the
   platform package manager rather than only printed.

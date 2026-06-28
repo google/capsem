@@ -14,8 +14,8 @@ Capsem uses GitHub Actions for continuous integration and release automation.
 | `ci.yaml` | Pull requests and push to main | PR quality gate: Rust unit/integration, frontend, Python contracts, install checks, and explicit runner substitutions |
 | `release.yaml` | Tag push (`v*`) | Build apps (macOS + Linux), package with the current public asset manifest, create GitHub release, then update release.capsem.org binary metadata |
 | `release-assets.yaml` | Manual | Build VM assets, generate `assets/manifest.json`, and optionally deploy the asset channel |
-| `docs.yaml` | Docs pull requests and every push to main | Build docs on docs PRs; deploy docs.capsem.org on each main merge, then smoke the live docs site |
-| `site.yaml` | Site pull requests and every push to main | Build marketing on site PRs; deploy capsem.org on each main merge, then smoke the live marketing site |
+| `docs.yaml` | Push to main | Deploy docs.capsem.org on each main merge, then smoke the live docs site |
+| `site.yaml` | Push to main | Deploy capsem.org on each main merge, then smoke the live marketing site |
 | `release-channel.yaml` | Called by binary or asset release | Deploy release.capsem.org from the generated release-channel site artifact |
 
 ## CI workflow (`ci.yaml`)
@@ -54,13 +54,16 @@ path stay valid before a PR can merge.
 ### pr-gate (ubuntu-latest)
 
 This is the stable branch-protection status for code PRs. It depends on
-`test-linux`, `test`, and `test-install`, runs even when one dependency fails,
-and fails unless all three dependency jobs report `success`.
+`test-linux`, `test`, `test-install`, `docs-build`, and `site-build`, runs even
+when one dependency fails, and fails unless every dependency job reports
+`success`.
 
 `pr-gate` is the only status that should be required by branch protection for
 the product CI workflow. Individual dependency job names may change as CI is
 reshaped; `pr-gate` keeps branch protection stable while still failing closed
-when any required lane fails.
+when any required lane fails. `pr-gate` depends on `docs-build` and
+`site-build` so broken docs or marketing builds cannot merge even though the
+Cloudflare deploy workflows are separate.
 
 Before claiming release readiness, run the read-only live gate checker:
 
@@ -95,6 +98,7 @@ of pretending the hosted lane is identical.
 | Rust workspace coverage | `test` and `test-linux` jobs run `cargo llvm-cov nextest` on macOS and Linux crate sets | Same coverage rail with runner-specific package sets |
 | Host binary signing prerequisites | `test` job builds and ad-hoc signs host binaries before non-VM integration suites | Same PR prerequisite for artifact-dependent Python suites |
 | Python schema and no-VM integration suites | `test` job runs schema coverage plus bootstrap, codesign, and rootfs artifact suites | Same no-VM suites, scoped to generated artifacts available in CI |
+| Docs and marketing builds | `docs-build` and `site-build` jobs install and build `docs/` and `site/` before `pr-gate` can pass | Merge-blocking build proof; deploy happens only after merge |
 | VM-heavy Python suites (`pytest tests/ -n 4`) | Import collection only on hosted PR runners | Runner substitution: full execution remains a local/release gate until PR runners can host Apple VZ reliably |
 | Serial timing, build-chain, and route-health suites | Import collection only on hosted PR runners | Runner substitution: local `just test` and release gates remain authoritative |
 | Legacy injection/integration scripts and benchmark recording | Not run in hosted PR CI | Runner substitution: still required by local `just test` before release work is claimed |
@@ -103,8 +107,9 @@ of pretending the hosted lane is identical.
 ## Site deploy workflows
 
 `docs.yaml` and `site.yaml` are independent from binary and VM asset release
-rails. Pull requests build the changed site without deploying. Pushes to `main`
-deploy through Cloudflare Pages and then smoke the public custom domain:
+rails. Pull requests build docs and marketing through the `ci.yaml`
+`docs-build` and `site-build` jobs, which feed the required `pr-gate`. Pushes to
+`main` deploy through Cloudflare Pages and then smoke the public custom domain:
 
 | Workflow | Public smoke |
 |----------|--------------|

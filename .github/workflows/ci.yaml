@@ -330,11 +330,54 @@ jobs:
         run: just test-install
 
   # ---------------------------------------------------------------------------
+  # Web: build docs and marketing before pr-gate can pass
+  # ---------------------------------------------------------------------------
+  docs-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: docs/pnpm-lock.yaml
+
+      - name: Install docs dependencies
+        run: cd docs && pnpm install --frozen-lockfile
+
+      - name: Build docs
+        run: cd docs && pnpm run build
+
+  site-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: site/pnpm-lock.yaml
+
+      - name: Install site dependencies
+        run: cd site && pnpm install --frozen-lockfile
+
+      - name: Build site
+        run: cd site && pnpm run build
+
+  # ---------------------------------------------------------------------------
   # Stable branch-protection check: one required status for the real PR gate.
   # ---------------------------------------------------------------------------
   pr-gate:
     runs-on: ubuntu-latest
-    needs: [test-linux, test, test-install]
+    needs: [test-linux, test, test-install, docs-build, site-build]
     if: ${{ always() }}
     steps:
       - name: Require all CI jobs
@@ -342,11 +385,17 @@ jobs:
           TEST_LINUX_RESULT: ${{ needs.test-linux.result }}
           TEST_MACOS_RESULT: ${{ needs.test.result }}
           TEST_INSTALL_RESULT: ${{ needs.test-install.result }}
+          DOCS_BUILD_RESULT: ${{ needs.docs-build.result }}
+          SITE_BUILD_RESULT: ${{ needs.site-build.result }}
         run: |
           echo "test-linux:   $TEST_LINUX_RESULT"
           echo "test:         $TEST_MACOS_RESULT"
           echo "test-install: $TEST_INSTALL_RESULT"
+          echo "docs-build:   $DOCS_BUILD_RESULT"
+          echo "site-build:   $SITE_BUILD_RESULT"
 
           test "$TEST_LINUX_RESULT" = success
           test "$TEST_MACOS_RESULT" = success
           test "$TEST_INSTALL_RESULT" = success
+          test "$DOCS_BUILD_RESULT" = success
+          test "$SITE_BUILD_RESULT" = success
