@@ -68,11 +68,13 @@ Before claiming release readiness, run the read-only live gate checker:
 uv run python scripts/check-remote-release-readiness.py
 ```
 
-It verifies that remote `ci.yaml` exposes `pr-gate`; branch protection or rulesets require `pr-gate`;
-`release.capsem.org` resolves and serves the asset channel; and the public
-index, `health.json`, and manifest agree on current binary, VM asset, and asset
-release date state. It does not push, deploy, create tags, edit rulesets, or
-mutate Cloudflare.
+It verifies that the local checkout has no unpublished commits relative to
+`origin/main`; remote `ci.yaml` exposes `pr-gate`; branch protection or rulesets
+require `pr-gate`; `release.capsem.org` resolves and serves the asset channel;
+and the public index, `health.json`, and manifest agree on current binary, VM
+asset, and asset release date state. If the local checkout has unpublished
+commits, publish or merge those commits before changing remote protection. It
+does not push, deploy, create tags, edit rulesets, or mutate Cloudflare.
 
 ## PR gate compared with `just test`
 

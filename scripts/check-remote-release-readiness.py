@@ -31,6 +31,7 @@ def main() -> int:
     )
     parser.add_argument("--repo", default="google/capsem", help="GitHub owner/repo")
     parser.add_argument("--branch", default="main", help="Protected branch to inspect")
+    parser.add_argument("--remote", default="origin", help="Git remote to compare with HEAD")
     parser.add_argument("--channel", default="stable", help="Asset channel name")
     parser.add_argument(
         "--release-site",
@@ -40,6 +41,7 @@ def main() -> int:
     args = parser.parse_args()
 
     checks = [
+        check_local_branch_publication(args.remote, args.branch),
         check_remote_pr_gate(args.repo),
         check_remote_branch_protection(args.repo, args.branch),
         check_release_site_dns(args.release_site),
@@ -60,6 +62,34 @@ def main() -> int:
         )
         return 1
     return 0
+
+
+def check_local_branch_publication(remote: str, branch: str) -> CheckResult:
+    base = f"{remote}/{branch}"
+    comparison = run_text(["git", "rev-list", "--left-right", "--count", f"{base}...HEAD"])
+    if comparison.returncode != 0:
+        return CheckResult(
+            "local branch publication",
+            False,
+            f"cannot compare HEAD with {base}: {comparison.stderr.strip()}",
+        )
+    try:
+        behind, ahead = (int(part) for part in comparison.stdout.split())
+    except ValueError:
+        return CheckResult(
+            "local branch publication",
+            False,
+            f"unexpected rev-list output for {base}: {comparison.stdout.strip()}",
+        )
+    if ahead or behind:
+        details = []
+        if ahead:
+            details.append(f"HEAD is ahead of {base} by {ahead} commit(s)")
+        if behind:
+            details.append(f"HEAD is behind {base} by {behind} commit(s)")
+        details.append("publish or merge release-rail commits before claiming remote readiness")
+        return CheckResult("local branch publication", False, "; ".join(details))
+    return CheckResult("local branch publication", True, f"HEAD matches {base}")
 
 
 def check_remote_pr_gate(repo: str) -> CheckResult:

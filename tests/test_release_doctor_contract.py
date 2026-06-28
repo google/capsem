@@ -523,8 +523,10 @@ def test_ci_docs_compare_pr_gate_to_just_test_with_named_substitutions() -> None
 def test_remote_release_readiness_checker_is_read_only_and_covers_live_gates() -> None:
     script = (PROJECT_ROOT / "scripts/check-remote-release-readiness.py").read_text()
     docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
+    docs_text = " ".join(docs.split())
 
     assert "Read-only remote release readiness checks" in script
+    assert "git\", \"rev-list\", \"--left-right\", \"--count\"" in script
     assert "gh\", \"workflow\", \"view\", \"ci.yaml\"" in script
     assert "branches/{branch}/protection" in script
     assert "repos/{repo}/rulesets" in script
@@ -549,9 +551,22 @@ def test_remote_release_readiness_checker_is_read_only_and_covers_live_gates() -
 
     assert "scripts/check-remote-release-readiness.py" in docs
     assert "read-only" in docs
-    assert "remote `ci.yaml` exposes `pr-gate`" in docs
-    assert "branch protection or rulesets require `pr-gate`" in docs
-    assert "`release.capsem.org` resolves and serves the asset channel" in docs
+    assert "remote `ci.yaml` exposes `pr-gate`" in docs_text
+    assert "branch protection or rulesets require `pr-gate`" in docs_text
+    assert "`release.capsem.org` resolves and serves the asset channel" in docs_text
+
+
+def test_remote_release_readiness_checker_reports_unpublished_local_commits() -> None:
+    script = (PROJECT_ROOT / "scripts/check-remote-release-readiness.py").read_text()
+    docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
+    docs_text = " ".join(docs.split())
+
+    assert "def check_local_branch_publication" in script
+    assert "HEAD is ahead of {base} by {ahead} commit(s)" in script
+    assert "HEAD is behind {base} by {behind} commit(s)" in script
+    assert "publish or merge release-rail commits before claiming remote readiness" in script
+    assert "local checkout has unpublished commits" in docs_text
+    assert "publish or merge those commits before changing remote protection" in docs_text
 
 
 def test_ci_installs_b3sum_before_bootstrap_asset_hash_checks() -> None:
