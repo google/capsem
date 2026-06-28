@@ -201,6 +201,8 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
     assert "dist_artifact:" in workflow
     assert "actions/download-artifact@v8" in workflow
     assert "DIST_DIR: target/release-channel" in workflow
+    assert 'test -f "$DIST_DIR/index.html"' in workflow
+    assert 'test -f "$DIST_DIR/health.json"' in workflow
     assert 'test -f "$DIST_DIR/assets/$CHANNEL/manifest.json"' in workflow
     assert 'test -d "$DIST_DIR/assets/releases"' in workflow
     assert "cargo run -p capsem-admin -- assets channel build" not in workflow

@@ -42,6 +42,8 @@ jobs:
 
       - name: Require generated asset channel
         run: |
+          test -f "$DIST_DIR/index.html"
+          test -f "$DIST_DIR/health.json"
           test -f "$DIST_DIR/assets/$CHANNEL/manifest.json"
           test -d "$DIST_DIR/assets/releases"
 
