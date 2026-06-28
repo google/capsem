@@ -879,6 +879,8 @@ async fn refresh_assets(manifest_source: Option<&str>) -> Result<()> {
         .context("cannot resolve CAPSEM_HOME -- set $HOME or $CAPSEM_HOME")?;
     if let Some(source) = manifest_source {
         install_manifest_source(&assets_dir, source).await?;
+    } else if let Some(source) = remote_manifest_asset_source(&assets_dir)? {
+        install_manifest_source(&assets_dir, &source).await?;
     }
     let manifest_path = assets_dir.join("manifest.json");
     let manifest_bytes = std::fs::read_to_string(&manifest_path)
@@ -1058,6 +1060,40 @@ fn local_manifest_asset_source(assets_dir: &std::path::Path) -> Result<Option<Pa
         return Ok(None);
     }
     Ok(path.parent().map(|parent| parent.to_path_buf()))
+}
+
+fn remote_manifest_asset_source(assets_dir: &std::path::Path) -> Result<Option<String>> {
+    let origin_path = assets_dir.join("manifest-origin.json");
+    if !origin_path.exists() {
+        return Ok(None);
+    }
+    let content = std::fs::read_to_string(&origin_path)
+        .with_context(|| format!("read {}", origin_path.display()))?;
+    let value: serde_json::Value = serde_json::from_str(&content)
+        .with_context(|| format!("parse {}", origin_path.display()))?;
+    let Some(source) = value.get("source").and_then(|v| v.as_str()) else {
+        return Ok(None);
+    };
+    if !(source.starts_with("http://") || source.starts_with("https://")) {
+        return Ok(None);
+    }
+    let parsed = reqwest::Url::parse(source).with_context(|| {
+        format!(
+            "asset manifest origin source must be a URL: use https://..., http://..., or file:///absolute/path, got {source}"
+        )
+    })?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        anyhow::bail!(
+            "unsupported asset manifest origin URL scheme {}: use https://, http://, or file://",
+            parsed.scheme()
+        );
+    }
+    if !has_scheme_authority_prefix(source, parsed.scheme()) {
+        anyhow::bail!(
+            "asset manifest origin must use https://, http://, or file:// URLs, got {source}"
+        );
+    }
+    Ok(Some(source.to_string()))
 }
 
 #[cfg(test)]
@@ -1692,6 +1728,52 @@ mod tests {
         .unwrap();
 
         assert_eq!(local_manifest_asset_source(&assets_dir).unwrap(), None);
+    }
+
+    #[test]
+    fn remote_manifest_asset_source_uses_remote_origin() {
+        let dir = tempfile::tempdir().unwrap();
+        let assets_dir = dir.path().join("installed-assets");
+        std::fs::create_dir_all(&assets_dir).unwrap();
+        std::fs::write(
+            assets_dir.join("manifest-origin.json"),
+            serde_json::json!({
+                "schema": "capsem.manifest_origin.v1",
+                "origin": "package",
+                "source": "https://release.capsem.org/assets/stable/manifest.json"
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            remote_manifest_asset_source(&assets_dir).unwrap(),
+            Some("https://release.capsem.org/assets/stable/manifest.json".to_string())
+        );
+    }
+
+    #[test]
+    fn remote_manifest_asset_source_ignores_file_origin() {
+        let dir = tempfile::tempdir().unwrap();
+        let assets_dir = dir.path().join("installed-assets");
+        let source_dir = dir.path().join("source-assets");
+        std::fs::create_dir_all(&assets_dir).unwrap();
+        std::fs::create_dir_all(&source_dir).unwrap();
+        let manifest = source_dir.join("manifest.json");
+        std::fs::write(&manifest, "{}").unwrap();
+        let source = format!("file://{}", manifest.display());
+        std::fs::write(
+            assets_dir.join("manifest-origin.json"),
+            serde_json::json!({
+                "schema": "capsem.manifest_origin.v1",
+                "origin": "package",
+                "source": source
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(remote_manifest_asset_source(&assets_dir).unwrap(), None);
     }
 
     #[test]

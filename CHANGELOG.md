@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Documented the PR `pr-gate` contract against `just test`, including the
   hosted-runner substitutions that must not be mistaken for full local release
   validation.
+- Changed `capsem update --assets` to refresh remote channel manifests from
+  manifest provenance before downloading VM assets, so compatible asset
+  releases can move independently of installed binaries.
 
 ## [1.3.1782582155] - 2026-06-27
 

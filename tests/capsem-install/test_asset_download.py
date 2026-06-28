@@ -45,6 +45,7 @@ def _arch() -> str:
 
 
 ASSET_VERSION = "2030.0101.1"
+NEW_ASSET_VERSION = "2030.0101.2"
 
 
 def _blake3(data: bytes) -> str:
@@ -52,6 +53,7 @@ def _blake3(data: bytes) -> str:
     # shelling out to `b3sum` which is a dev-env requirement via `just doctor`.
     try:
         import blake3 as b3  # type: ignore
+
         return b3.blake3(data).hexdigest()
     except ImportError:
         pass
@@ -64,15 +66,15 @@ def _blake3(data: bytes) -> str:
     return proc.stdout.decode().strip().split()[0]
 
 
-def _make_manifest(arch: str, files: dict[str, bytes]) -> dict:
+def _make_manifest(arch: str, files: dict[str, bytes], asset_version: str = ASSET_VERSION) -> dict:
     """Build a minimal v2 manifest for the given arch + byte blobs."""
     return {
         "format": 2,
         "refresh_policy": "24h",
         "assets": {
-            "current": ASSET_VERSION,
+            "current": asset_version,
             "releases": {
-                ASSET_VERSION: {
+                asset_version: {
                     "date": "2030-01-01",
                     "deprecated": False,
                     "min_binary": "1.0.0",
@@ -91,7 +93,7 @@ def _make_manifest(arch: str, files: dict[str, bytes]) -> dict:
                 "1.0.1": {
                     "date": "2030-01-01",
                     "deprecated": False,
-                    "min_assets": ASSET_VERSION,
+                    "min_assets": asset_version,
                 }
             },
         },
@@ -127,8 +129,7 @@ def http_fixture(tmp_path: Path):
 
 def _run(env: dict, *args: str) -> subprocess.CompletedProcess:
     assert CAPSEM_BIN.exists(), (
-        f"capsem binary not built at {CAPSEM_BIN}; "
-        "run `cargo build -p capsem` first"
+        f"capsem binary not built at {CAPSEM_BIN}; run `cargo build -p capsem` first"
     )
     return subprocess.run(
         [str(CAPSEM_BIN), *args],
@@ -184,6 +185,79 @@ def test_update_assets_downloads_missing(tmp_path: Path, http_fixture, installed
             mode = os.stat(target).st_mode & 0o777
             # 0o444 target (readable by all, writable by none).
             assert mode == 0o444, f"{target} perms {oct(mode)} != 0o444"
+
+
+def test_update_assets_refreshes_remote_channel_manifest_before_download(
+    tmp_path: Path,
+    http_fixture,
+    installed_layout,
+):
+    base_url, serve_dir = http_fixture
+    arch = _arch()
+
+    old_files = {
+        "vmlinuz": b"old-kernel",
+        "initrd.img": b"old-initrd",
+        "rootfs.erofs": b"old-rootfs",
+    }
+    new_files = {
+        "vmlinuz": b"new-kernel-bytes-" + os.urandom(64),
+        "initrd.img": b"new-initrd-bytes-" + os.urandom(64),
+        "rootfs.erofs": b"new-rootfs-bytes-" + os.urandom(64),
+    }
+
+    channel_manifest_url = f"{base_url}/assets/stable/manifest.json"
+    channel_manifest = _make_manifest(arch, new_files, NEW_ASSET_VERSION)
+    channel_manifest_path = serve_dir / "assets" / "stable" / "manifest.json"
+    channel_manifest_path.parent.mkdir(parents=True)
+    channel_manifest_path.write_text(json.dumps(channel_manifest), encoding="utf-8")
+
+    release_dir = serve_dir / "assets" / "releases" / NEW_ASSET_VERSION
+    release_dir.mkdir(parents=True)
+    for name, blob in new_files.items():
+        (release_dir / f"{arch}-{name}").write_bytes(blob)
+
+    capsem_home = tmp_path / ".capsem"
+    assets = capsem_home / "assets"
+    assets.mkdir(parents=True)
+    (assets / "manifest.json").write_text(
+        json.dumps(_make_manifest(arch, old_files, "2030.0101.1")),
+        encoding="utf-8",
+    )
+    (assets / "manifest-origin.json").write_text(
+        json.dumps(
+            {
+                "schema": "capsem.manifest_origin.v1",
+                "origin": "package",
+                "source": channel_manifest_url,
+                "packaged_at": "2026-06-16T00:00:00Z",
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = _run({"CAPSEM_HOME": str(capsem_home)}, "update", "--assets")
+
+    assert result.returncode == 0, f"stdout={result.stdout}\nstderr={result.stderr}"
+    assert f"Installed asset manifest from {channel_manifest_url}" in result.stdout
+    installed_manifest = json.loads((assets / "manifest.json").read_text())
+    assert installed_manifest["assets"]["current"] == NEW_ASSET_VERSION
+    origin = json.loads((assets / "manifest-origin.json").read_text())
+    assert origin["source"] == channel_manifest_url
+
+    for name, blob in new_files.items():
+        expected_hash = _blake3(blob)
+        prefix = expected_hash[:16]
+        if "." in name:
+            stem, ext = name.split(".", 1)
+            hashed = f"{stem}-{prefix}.{ext}"
+        else:
+            hashed = f"{name}-{prefix}"
+        target = assets / arch / hashed
+        assert target.exists(), f"{target} not downloaded. stdout={result.stdout}"
+        assert target.read_bytes() == blob
 
 
 def test_update_assets_rejects_bare_asset_base_path(tmp_path: Path, installed_layout):
