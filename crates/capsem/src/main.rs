@@ -1174,6 +1174,29 @@ fn should_refresh_update_cache_for_command(command: &Commands) -> bool {
     )
 }
 
+fn app_auto_update_enabled() -> bool {
+    let (user, corp) = capsem_core::net::policy_config::load_settings_and_corp_files();
+    let resolved = capsem_core::net::policy_config::resolve_settings(&user, &corp);
+    auto_update_enabled_from_resolved(&resolved)
+}
+
+fn auto_update_enabled_from_resolved(
+    settings: &[capsem_core::net::policy_config::ResolvedSetting],
+) -> bool {
+    settings
+        .iter()
+        .find(|setting| setting.id == "app.auto_update")
+        .and_then(|setting| setting.effective_value.as_bool())
+        .unwrap_or(true)
+}
+
+fn should_start_background_update_refresh(command: Option<&Commands>) -> bool {
+    let Some(command) = command else {
+        return app_auto_update_enabled();
+    };
+    should_refresh_update_cache_for_command(command) && app_auto_update_enabled()
+}
+
 #[cfg(test)]
 fn command_is_handled_before_service_api(command: &Commands) -> bool {
     matches!(
@@ -1223,7 +1246,9 @@ async fn main() -> Result<()> {
     }
 
     if cli.command.is_none() {
-        tokio::spawn(update::refresh_update_cache_if_stale());
+        if should_start_background_update_refresh(None) {
+            tokio::spawn(update::refresh_update_cache_if_stale());
+        }
         let issues = check_service_health().await?;
         if !issues.is_empty() {
             eprintln!("\x1b[31;1m[!] Background service has issues:\x1b[0m");
@@ -1238,7 +1263,7 @@ async fn main() -> Result<()> {
     }
 
     let command = cli.command.as_ref().unwrap();
-    if should_refresh_update_cache_for_command(command) {
+    if should_start_background_update_refresh(Some(command)) {
         tokio::spawn(update::refresh_update_cache_if_stale());
     }
 
@@ -2375,6 +2400,7 @@ async fn handle_cp(client: &client::UdsClient, src: &str, dst: &str) -> Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use capsem_core::net::policy_config::{ResolvedSetting, SettingValue};
     use clap::Parser;
 
     #[test]
@@ -2654,6 +2680,66 @@ mod tests {
         let cli = Cli::parse_from(["capsem", "list"]);
         let command = cli.command.as_ref().expect("parsed command");
         assert!(should_refresh_update_cache_for_command(command));
+    }
+
+    fn resolved_auto_update(value: SettingValue) -> ResolvedSetting {
+        ResolvedSetting {
+            id: "app.auto_update".to_string(),
+            category: "App".to_string(),
+            name: "Auto-check for updates".to_string(),
+            description: String::new(),
+            setting_type: capsem_core::net::policy_config::SettingType::Bool,
+            default_value: SettingValue::Bool(true),
+            effective_value: value,
+            source: capsem_core::net::policy_config::PolicySource::User,
+            modified: Some("test".to_string()),
+            corp_locked: false,
+            enabled_by: None,
+            enabled: true,
+            metadata: capsem_core::net::policy_config::SettingMetadata::default(),
+            collapsed: false,
+            history: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn auto_update_defaults_to_enabled_when_setting_is_absent_or_malformed() {
+        assert!(auto_update_enabled_from_resolved(&[]));
+        assert!(auto_update_enabled_from_resolved(&[resolved_auto_update(
+            SettingValue::Text("false".to_string())
+        )]));
+    }
+
+    #[test]
+    fn auto_update_setting_can_disable_background_refresh() {
+        let off = [resolved_auto_update(SettingValue::Bool(false))];
+        assert!(!auto_update_enabled_from_resolved(&off));
+
+        let on = [resolved_auto_update(SettingValue::Bool(true))];
+        assert!(auto_update_enabled_from_resolved(&on));
+    }
+
+    #[test]
+    fn app_auto_update_false_disables_background_refresh_from_settings_file() {
+        let _guard = lock_test_env();
+        let capsem_home = tempfile::tempdir().unwrap();
+        let previous_home = std::env::var_os("CAPSEM_HOME");
+        std::env::set_var("CAPSEM_HOME", capsem_home.path());
+        std::fs::write(
+            capsem_home.path().join("settings.toml"),
+            "[settings.\"app.auto_update\"]\nvalue = false\nmodified = \"test\"\n",
+        )
+        .unwrap();
+
+        let cli = Cli::parse_from(["capsem", "list"]);
+        let command = cli.command.as_ref().expect("parsed command");
+        assert!(!should_start_background_update_refresh(Some(command)));
+        assert!(!should_start_background_update_refresh(None));
+
+        match previous_home {
+            Some(value) => std::env::set_var("CAPSEM_HOME", value),
+            None => std::env::remove_var("CAPSEM_HOME"),
+        }
     }
 
     #[test]

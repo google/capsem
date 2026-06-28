@@ -92,6 +92,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   releases can move independently of installed binaries.
 
 ### Fixed
+- Fixed background release-channel refreshes so they honor the
+  `app.auto_update` setting instead of checking daily after users disable
+  automatic update checks.
 - Fixed the Settings/About release-channel surface so blocked profile or asset
   tracks render as blocked instead of current.
 
