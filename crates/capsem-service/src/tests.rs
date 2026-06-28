@@ -2414,7 +2414,7 @@ async fn winterfell_routes_read_session_ledgers_after_startup_cache_hydration() 
 }
 
 #[test]
-fn code_profile_summary_reflects_effective_contract() {
+fn profile_update_asset_summary_reflects_effective_contract() {
     let profile = ProfileConfigFile::builtin_primary();
     let summary = build_profile_summary(
         &profile,
@@ -2433,6 +2433,18 @@ fn code_profile_summary_reflects_effective_contract() {
     );
     assert_eq!(summary.source, "built_in");
     assert_eq!(summary.plugin_count, 3);
+    assert_eq!(
+        summary.update_semantics.new_sessions,
+        api::ProfileNewSessionUpdateSemantics::UseCurrentProfileCatalog
+    );
+    assert_eq!(
+        summary.update_semantics.existing_vms,
+        api::ProfileExistingVmUpdateSemantics::PinnedUntilRecreate
+    );
+    assert_eq!(
+        summary.update_semantics.upgrade_action,
+        api::ProfileUpgradeAction::RecreateVm
+    );
     assert!(
         summary.rule_count >= summary.default_rule_count,
         "total rules cannot be lower than default rules"
@@ -2468,6 +2480,10 @@ async fn handle_profiles_list_returns_code_profile_inventory() {
         code.plugin_count > 0,
         "profile inventory should reflect editable plugin policy"
     );
+    assert_eq!(
+        code.update_semantics.existing_vms,
+        api::ProfileExistingVmUpdateSemantics::PinnedUntilRecreate
+    );
 }
 
 #[tokio::test]
@@ -2494,6 +2510,14 @@ async fn handle_profiles_status_reports_builtin_catalog_and_rejects_fake_assets(
     assert_eq!(
         code["profile_payload_hash"],
         profile_payload_hash(&ProfileConfigFile::builtin_primary()).unwrap()
+    );
+    assert_eq!(
+        code["update_semantics"],
+        json!({
+            "new_sessions": "use_current_profile_catalog",
+            "existing_vms": "pinned_until_recreate",
+            "upgrade_action": "recreate_vm",
+        })
     );
     assert_eq!(code["ready"], false);
     assert!(!code["invalid_assets"].as_array().unwrap().is_empty());

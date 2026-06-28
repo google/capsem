@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added explicit profile update semantics to profile list and status APIs so
+  UI, tray, and TUI consumers know new sessions use the current profile catalog
+  while existing VMs stay pinned until recreated.
 - Published profile catalog revision, hash, source, and compatibility metadata
   in the release-channel index so profile freshness is no longer represented as
   an unpublished track.

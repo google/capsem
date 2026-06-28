@@ -228,3 +228,39 @@ def test_asset_pin_drift_makes_persistent_session_incompatible() -> None:
         assert "asset pins changed" in error["error"]
     finally:
         service.stop()
+
+
+def test_profile_update_semantics_keep_existing_vms_explicitly_pinned() -> None:
+    service = ServiceInstance()
+    try:
+        contract = _profile_contract(service.tmp_dir)
+        incompatible = _registry_entry(
+            DRIFT_ID,
+            DRIFT_NAME,
+            service.tmp_dir,
+            contract,
+            profile_payload_hash=contract["payload_hash"].replace("blake3:", "blake3:0"),
+        )
+        _write_registry(service.tmp_dir, [incompatible])
+
+        service.start()
+        client = service.client()
+
+        profiles = client.get("/profiles/status")
+        code = next(profile for profile in profiles["profiles"] if profile["id"] == "code")
+        assert code["update_semantics"] == {
+            "new_sessions": "use_current_profile_catalog",
+            "existing_vms": "pinned_until_recreate",
+            "upgrade_action": "recreate_vm",
+        }
+
+        row = _row(client.get("/vms/list"), DRIFT_ID)
+        _assert_delete_only_session(
+            row,
+            session_id=DRIFT_ID,
+            name=DRIFT_NAME,
+            status="Incompatible",
+        )
+        assert "payload hash mismatch" in row["resume_blocked_reason"]
+    finally:
+        service.stop()

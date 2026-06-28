@@ -371,6 +371,32 @@ pub struct ProfileSummary {
     pub default_rule_count: usize,
     pub plugin_count: usize,
     pub mcp_server_count: usize,
+    pub update_semantics: ProfileUpdateSemantics,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct ProfileUpdateSemantics {
+    pub new_sessions: ProfileNewSessionUpdateSemantics,
+    pub existing_vms: ProfileExistingVmUpdateSemantics,
+    pub upgrade_action: ProfileUpgradeAction,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProfileNewSessionUpdateSemantics {
+    UseCurrentProfileCatalog,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProfileExistingVmUpdateSemantics {
+    PinnedUntilRecreate,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProfileUpgradeAction {
+    RecreateVm,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]

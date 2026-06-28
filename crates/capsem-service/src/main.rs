@@ -4728,6 +4728,18 @@ fn profile_asset_status_value(
     value
 }
 
+fn profile_update_semantics() -> api::ProfileUpdateSemantics {
+    api::ProfileUpdateSemantics {
+        new_sessions: api::ProfileNewSessionUpdateSemantics::UseCurrentProfileCatalog,
+        existing_vms: api::ProfileExistingVmUpdateSemantics::PinnedUntilRecreate,
+        upgrade_action: api::ProfileUpgradeAction::RecreateVm,
+    }
+}
+
+fn profile_update_semantics_value() -> serde_json::Value {
+    serde_json::to_value(profile_update_semantics()).unwrap_or_else(|_| json!({}))
+}
+
 fn profile_status_value(state: &ServiceState, profile: &Profile) -> serde_json::Value {
     let reconcile = state
         .asset_reconcile
@@ -4795,6 +4807,7 @@ fn profile_status_value(state: &ServiceState, profile: &Profile) -> serde_json::
         "profile_id": config.id,
         "revision": config.revision,
         "profile_payload_hash": profile_payload_hash(config).ok(),
+        "update_semantics": profile_update_semantics_value(),
         "manifest": asset_manifest_status_value(state),
         "ready": status.ready,
         "downloading": reconcile.in_progress,
@@ -5894,6 +5907,7 @@ fn build_profile_status_cache(
                 "description": profile.description,
                 "revision": profile.revision,
                 "profile_payload_hash": profile_payload_hash(profile).ok(),
+                "update_semantics": profile_update_semantics_value(),
                 "ready": status["ready"].as_bool().unwrap_or(false),
                 "current_arch": status["current_arch"].clone(),
                 "missing_assets": missing,
@@ -6115,6 +6129,7 @@ fn build_profile_summary(
         default_rule_count,
         plugin_count,
         mcp_server_count,
+        update_semantics: profile_update_semantics(),
     })
 }
 

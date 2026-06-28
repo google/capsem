@@ -25,6 +25,11 @@ def _assert_profile_summary(profile: dict, *, profile_id: str, name: str) -> Non
     assert isinstance(profile["default_rule_count"], int)
     assert isinstance(profile["plugin_count"], int) and profile["plugin_count"] > 0
     assert isinstance(profile["mcp_server_count"], int)
+    assert profile["update_semantics"] == {
+        "new_sessions": "use_current_profile_catalog",
+        "existing_vms": "pinned_until_recreate",
+        "upgrade_action": "recreate_vm",
+    }
     assert "enabled_by" not in profile
     assert "policy" not in profile
 
@@ -47,6 +52,11 @@ def test_profiles_list_and_status_expose_profile_owned_contract(client):
     for profile_id, profile_status in status_by_id.items():
         assert "ready" in profile_status
         assert isinstance(profile_status["asset_count"], int)
+        assert profile_status["update_semantics"] == {
+            "new_sessions": "use_current_profile_catalog",
+            "existing_vms": "pinned_until_recreate",
+            "upgrade_action": "recreate_vm",
+        }
         assert "missing_assets" in profile_status
         assert "invalid_assets" in profile_status
         assert profile_status["id"] == profile_id
@@ -84,7 +94,10 @@ def test_profile_info_routes_expose_assets_rules_plugins_mcp_and_detection(clien
         assert plugins["scope"] == {"kind": "profile", "profile_id": profile_id}
         assert plugins["plugins"]
         assert all(plugin["name"] and plugin["description"] for plugin in plugins["plugins"])
-        assert all(plugin["stage"] in {"preprocess", "postprocess", "logging"} for plugin in plugins["plugins"])
+        assert all(
+            plugin["stage"] in {"preprocess", "postprocess", "logging"}
+            for plugin in plugins["plugins"]
+        )
 
         mcp = client.get(f"/profiles/{profile_id}/mcp/info")
         assert mcp["profile_id"] == profile_id
