@@ -26,20 +26,55 @@ export interface StatusResponse {
 export interface UpdateStatusResponse {
   checked_at?: number | null;
   channel_url?: string | null;
+  channel_hash?: string | null;
+  validation_status?: string | null;
+  validation_error?: string | null;
   stale: boolean;
   last_error?: string | null;
   binary: UpdateTrackStatus;
   assets: UpdateTrackStatus;
   profiles: UpdateTrackStatus;
   images: UpdateTrackStatus;
+  supply_chain?: SupplyChainEvidence;
 }
 
 export interface UpdateTrackStatus {
   current?: string | null;
   latest?: string | null;
+  blocked_reason?: string | null;
   update_available: boolean;
   state: UpdateTrackState;
   compatibility: UpdateCompatibilityState;
+}
+
+export interface SupplyChainEvidence {
+  manifest: SupplyChainManifestEvidence;
+  channel_index: SupplyChainChannelEvidence;
+  host_sbom: SupplyChainReference;
+  vm_obom: SupplyChainReference;
+  attestations: SupplyChainReference[];
+}
+
+export interface SupplyChainManifestEvidence {
+  origin?: string | null;
+  source?: string | null;
+  path: string;
+  blake3?: string | null;
+}
+
+export interface SupplyChainChannelEvidence {
+  url?: string | null;
+  blake3?: string | null;
+}
+
+export interface SupplyChainReference {
+  name: string;
+  format?: string | null;
+  scope?: string | null;
+  generator?: string | null;
+  release_artifact?: string | null;
+  route?: string | null;
+  workflow?: string | null;
 }
 
 export type UpdateTrackState =

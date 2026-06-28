@@ -28,6 +28,8 @@ fn update_status_reports_binary_and_asset_tracks_from_cache_and_manifest() {
         .to_string(),
     )
     .unwrap();
+    let manifest_hash = capsem_core::asset_manager::hash_file(&assets_dir.join("manifest.json"))
+        .expect("manifest hash should be computable");
     std::fs::write(
         assets_dir.join("manifest-origin.json"),
         serde_json::json!({
@@ -67,6 +69,47 @@ fn update_status_reports_binary_and_asset_tracks_from_cache_and_manifest() {
     assert_eq!(
         status.channel_hash.as_deref(),
         Some("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+    );
+    assert_eq!(
+        status.supply_chain.manifest.origin.as_deref(),
+        Some("update")
+    );
+    assert_eq!(
+        status.supply_chain.manifest.source.as_deref(),
+        Some("https://release.capsem.org/assets/stable/manifest.json")
+    );
+    assert_eq!(
+        status.supply_chain.manifest.path,
+        assets_dir.join("manifest.json").display().to_string()
+    );
+    assert_eq!(
+        status.supply_chain.manifest.blake3.as_deref(),
+        Some(manifest_hash.as_str())
+    );
+    assert_eq!(
+        status.supply_chain.channel_index.url.as_deref(),
+        Some("https://release.capsem.org/health.json")
+    );
+    assert_eq!(
+        status.supply_chain.channel_index.blake3.as_deref(),
+        Some("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+    );
+    assert_eq!(status.supply_chain.host_sbom.name, "host_sbom");
+    assert_eq!(
+        status.supply_chain.host_sbom.release_artifact.as_deref(),
+        Some("capsem-sbom.spdx.json")
+    );
+    assert_eq!(
+        status.supply_chain.vm_obom.route.as_deref(),
+        Some("/profiles/{profile_id}/obom")
+    );
+    assert!(
+        status
+            .supply_chain
+            .attestations
+            .iter()
+            .any(|reference| reference.name == "github_attestations_vm_assets"),
+        "asset rail attestation reference should be explicit"
     );
     assert_eq!(status.validation_status.as_deref(), Some("valid"));
     assert_eq!(status.validation_error, None);

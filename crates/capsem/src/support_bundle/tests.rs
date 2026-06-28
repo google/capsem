@@ -343,6 +343,14 @@ fn bundle_includes_supply_chain_debug_references() {
         "/profiles/{profile_id}/obom"
     );
     assert_eq!(supply_chain["profile_obom"]["scope"], "base_image");
+    assert_eq!(
+        supply_chain["manifest"]["runtime_update_status"],
+        "/update/status"
+    );
+    assert_eq!(
+        supply_chain["manifest"]["runtime_update_status_field"],
+        "supply_chain"
+    );
 }
 
 #[test]

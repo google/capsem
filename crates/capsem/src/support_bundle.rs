@@ -951,6 +951,8 @@ fn supply_chain_debug_references() -> serde_json::Value {
         "manifest": {
             "hash": "blake3",
             "runtime_status": "/status",
+            "runtime_update_status": "/update/status",
+            "runtime_update_status_field": "supply_chain",
             "support_bundle_paths": [
                 "assets/manifest.json",
                 "assets/manifest-origin.json",

@@ -4980,6 +4980,8 @@ fn update_status_response_from_paths(
         .as_ref()
         .and_then(|cache| cache.validation_error.clone());
     let last_error = parse_error.or_else(|| validation_error.clone());
+    let supply_chain =
+        supply_chain_evidence_from_paths(assets_dir, channel_url.clone(), channel_hash.clone());
 
     api::UpdateStatusResponse {
         checked_at,
@@ -5027,6 +5029,91 @@ fn update_status_response_from_paths(
                 )
             })
             .unwrap_or_else(not_published_update_track),
+        supply_chain,
+    }
+}
+
+fn supply_chain_evidence_from_paths(
+    assets_dir: &StdPath,
+    channel_url: Option<String>,
+    channel_hash: Option<String>,
+) -> api::SupplyChainEvidence {
+    let manifest_path = assets_dir.join("manifest.json");
+    let origin_metadata = std::fs::read_to_string(assets_dir.join("manifest-origin.json"))
+        .ok()
+        .and_then(|body| serde_json::from_str::<serde_json::Value>(&body).ok());
+    let manifest_origin = origin_metadata
+        .as_ref()
+        .and_then(|value| value.get("origin"))
+        .and_then(|value| value.as_str())
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            if manifest_path.is_file() {
+                Some("installed".to_string())
+            } else {
+                None
+            }
+        });
+    let manifest_source = origin_metadata
+        .as_ref()
+        .and_then(|value| value.get("source"))
+        .and_then(|value| value.as_str())
+        .map(ToOwned::to_owned);
+    let manifest_hash = if manifest_path.is_file() {
+        capsem_core::asset_manager::hash_file(&manifest_path).ok()
+    } else {
+        None
+    };
+
+    api::SupplyChainEvidence {
+        manifest: api::SupplyChainManifestEvidence {
+            origin: manifest_origin,
+            source: manifest_source,
+            path: manifest_path.display().to_string(),
+            blake3: manifest_hash,
+        },
+        channel_index: api::SupplyChainChannelEvidence {
+            url: channel_url,
+            blake3: channel_hash,
+        },
+        host_sbom: api::SupplyChainReference {
+            name: "host_sbom".to_string(),
+            format: Some("spdx_json_2_3".to_string()),
+            scope: Some("host_binaries".to_string()),
+            generator: Some("cargo-sbom".to_string()),
+            release_artifact: Some("capsem-sbom.spdx.json".to_string()),
+            route: None,
+            workflow: Some(".github/workflows/release.yaml".to_string()),
+        },
+        vm_obom: api::SupplyChainReference {
+            name: "profile_obom".to_string(),
+            format: Some("cyclonedx-obom.v1".to_string()),
+            scope: Some("base_image".to_string()),
+            generator: Some("cdxgen".to_string()),
+            release_artifact: None,
+            route: Some("/profiles/{profile_id}/obom".to_string()),
+            workflow: Some(".github/workflows/release-assets.yaml".to_string()),
+        },
+        attestations: vec![
+            api::SupplyChainReference {
+                name: "github_attestations_host".to_string(),
+                format: None,
+                scope: Some("host_binaries".to_string()),
+                generator: Some("gh attestation".to_string()),
+                release_artifact: None,
+                route: None,
+                workflow: Some(".github/workflows/release.yaml".to_string()),
+            },
+            api::SupplyChainReference {
+                name: "github_attestations_vm_assets".to_string(),
+                format: None,
+                scope: Some("vm_assets".to_string()),
+                generator: Some("gh attestation".to_string()),
+                release_artifact: None,
+                route: None,
+                workflow: Some(".github/workflows/release-assets.yaml".to_string()),
+            },
+        ],
     }
 }
 

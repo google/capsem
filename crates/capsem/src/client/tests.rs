@@ -215,6 +215,48 @@ fn update_status_response_parses_service_contract() {
             "update_available": false,
             "state": "not_published",
             "compatibility": "not_applicable"
+        },
+        "supply_chain": {
+            "manifest": {
+                "origin": "update",
+                "source": "https://release.capsem.org/assets/stable/manifest.json",
+                "path": "/Users/example/.capsem/assets/manifest.json",
+                "blake3": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "channel_index": {
+                "url": "https://release.capsem.org/health.json",
+                "blake3": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+            },
+            "host_sbom": {
+                "name": "host_sbom",
+                "format": "spdx_json_2_3",
+                "scope": "host_binaries",
+                "generator": "cargo-sbom",
+                "release_artifact": "capsem-sbom.spdx.json",
+                "workflow": ".github/workflows/release.yaml"
+            },
+            "vm_obom": {
+                "name": "profile_obom",
+                "format": "cyclonedx-obom.v1",
+                "scope": "base_image",
+                "generator": "cdxgen",
+                "route": "/profiles/{profile_id}/obom",
+                "workflow": ".github/workflows/release-assets.yaml"
+            },
+            "attestations": [
+                {
+                    "name": "github_attestations_host",
+                    "scope": "host_binaries",
+                    "generator": "gh attestation",
+                    "workflow": ".github/workflows/release.yaml"
+                },
+                {
+                    "name": "github_attestations_vm_assets",
+                    "scope": "vm_assets",
+                    "generator": "gh attestation",
+                    "workflow": ".github/workflows/release-assets.yaml"
+                }
+            ]
         }
     }"#;
 
@@ -255,6 +297,27 @@ fn update_status_response_parses_service_contract() {
         status.images.compatibility,
         UpdateCompatibilityState::NotApplicable
     );
+    assert_eq!(
+        status.supply_chain.manifest.origin.as_deref(),
+        Some("update")
+    );
+    assert_eq!(
+        status.supply_chain.channel_index.blake3.as_deref(),
+        status.channel_hash.as_deref()
+    );
+    assert_eq!(
+        status.supply_chain.host_sbom.release_artifact.as_deref(),
+        Some("capsem-sbom.spdx.json")
+    );
+    assert_eq!(
+        status.supply_chain.vm_obom.route.as_deref(),
+        Some("/profiles/{profile_id}/obom")
+    );
+    assert!(status
+        .supply_chain
+        .attestations
+        .iter()
+        .any(|reference| reference.name == "github_attestations_host"));
 }
 
 #[test]

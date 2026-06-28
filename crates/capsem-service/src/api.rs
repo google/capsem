@@ -326,6 +326,52 @@ pub struct UpdateStatusResponse {
     pub assets: UpdateTrackStatus,
     pub profiles: UpdateTrackStatus,
     pub images: UpdateTrackStatus,
+    pub supply_chain: SupplyChainEvidence,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+pub struct SupplyChainEvidence {
+    pub manifest: SupplyChainManifestEvidence,
+    pub channel_index: SupplyChainChannelEvidence,
+    pub host_sbom: SupplyChainReference,
+    pub vm_obom: SupplyChainReference,
+    pub attestations: Vec<SupplyChainReference>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+pub struct SupplyChainManifestEvidence {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blake3: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+pub struct SupplyChainChannelEvidence {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blake3: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+pub struct SupplyChainReference {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub format: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generator: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub release_artifact: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub route: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]

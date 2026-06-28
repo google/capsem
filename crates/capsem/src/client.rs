@@ -306,6 +306,60 @@ pub struct UpdateStatusResponse {
     pub assets: UpdateTrackStatus,
     pub profiles: UpdateTrackStatus,
     pub images: UpdateTrackStatus,
+    #[serde(default)]
+    pub supply_chain: SupplyChainEvidence,
+}
+
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct SupplyChainEvidence {
+    #[serde(default)]
+    pub manifest: SupplyChainManifestEvidence,
+    #[serde(default)]
+    pub channel_index: SupplyChainChannelEvidence,
+    #[serde(default)]
+    pub host_sbom: SupplyChainReference,
+    #[serde(default)]
+    pub vm_obom: SupplyChainReference,
+    #[serde(default)]
+    pub attestations: Vec<SupplyChainReference>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct SupplyChainManifestEvidence {
+    #[serde(default)]
+    pub origin: Option<String>,
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub path: String,
+    #[serde(default)]
+    pub blake3: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct SupplyChainChannelEvidence {
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub blake3: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct SupplyChainReference {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub format: Option<String>,
+    #[serde(default)]
+    pub scope: Option<String>,
+    #[serde(default)]
+    pub generator: Option<String>,
+    #[serde(default)]
+    pub release_artifact: Option<String>,
+    #[serde(default)]
+    pub route: Option<String>,
+    #[serde(default)]
+    pub workflow: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
