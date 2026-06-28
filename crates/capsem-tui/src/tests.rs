@@ -1071,6 +1071,11 @@ fn tui_update_smoke_matrix_covers_release_states_and_actions() {
             "updates: assets",
         ),
         (
+            "mixed-binary-asset-update",
+            gateway_update_matrix_body(true, true, false, None),
+            "updates: binary, assets",
+        ),
+        (
             "channel-error",
             gateway_update_matrix_body(false, false, false, Some("release channel timed out")),
             "updates: unavailable",
