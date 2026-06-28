@@ -204,7 +204,10 @@ The release discipline is that binary releases and VM asset releases both call
 the channel workflow after updating their own part of the release-channel
 manifest. A tag-triggered binary release records package hashes, host SBOM, and
 attestation references, then mirrors the already-published VM blobs from
-`assets/releases/<asset-version>/` without rebuilding them. A manual VM asset
+`assets/releases/<asset-version>/` without rebuilding them. That generated
+channel output still includes the immutable profile catalog artifact under
+`profiles/releases/<revision>/catalog.json`, so profile metadata can move with
+the release channel independently from VM image rebuilds. A manual VM asset
 release produces the manifest, immutable blob paths, and OBOM/provenance
 evidence, then publishes an immutable GitHub Release tagged
 `assets-v<asset-version>` with arch-prefixed `vmlinuz`, `initrd.img`,

@@ -31,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   paths.
 
 ### Changed
+- Guarded binary release channel updates so profile catalog artifacts publish
+  without rebuilding VM assets.
 - Changed manual VM asset releases to publish GitHub build provenance
   attestations for kernel, initrd, rootfs, and OBOM artifacts.
 - Changed manual VM asset releases to publish immutable `assets-v...` GitHub

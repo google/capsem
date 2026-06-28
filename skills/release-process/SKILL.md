@@ -34,8 +34,9 @@ Do not add a separate release-channel source directory or hand-authored channel
 manifest. VM asset releases must deploy `release.capsem.org` after producing the
 asset manifest/evidence. Binary releases remain tag-triggered, update only the
 binary release metadata/SBOM/attestation entries in the channel manifest, mirror
-already-published VM blobs into the generated dist, and deploy the channel
-without rebuilding VM assets.
+already-published VM blobs into the generated dist, include the immutable
+profile catalog artifact under `profiles/releases/<revision>/catalog.json`, and
+deploy the channel without rebuilding VM assets.
 
 The manual VM asset release entrypoint is `.github/workflows/release-assets.yaml`.
 It builds assets, generates `assets/manifest.json`, builds

@@ -468,7 +468,7 @@ def test_binary_release_index_records_host_artifacts_without_changing_assets(
     assert files[sbom.name]["sha256"] == hashlib.sha256(sbom.read_bytes()).hexdigest()
 
 
-def test_binary_release_index_builds_release_site_without_rebuilding_vm_assets(
+def test_binary_release_profile_catalog_index_builds_release_site_without_rebuilding_vm_assets(
     tmp_path: Path,
 ) -> None:
     manifest_path = _write_release_manifest(tmp_path)
@@ -510,6 +510,24 @@ def test_binary_release_index_builds_release_site_without_rebuilding_vm_assets(
     assert health["evidence"]["host_binary_files"]
     assert health["evidence"]["host_sboms"]
     assert health["evidence"]["attestations"]
+    catalog_url = "/profiles/releases/profiles-2030.0101.1/catalog.json"
+    assert health["profiles"]["source"] == catalog_url
+    assert health["updates"]["profiles"]["source"] == catalog_url
+    assert health["profiles"]["hash"] == health["updates"]["profiles"]["hash"]
+    catalog_path = dist / catalog_url.removeprefix("/")
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    assert catalog["schema"] == "capsem.profile_catalog.v1"
+    assert catalog["revision"] == "profiles-2030.0101.1"
+    assert catalog["compatibility"] == {
+        "binary": "1.4.1234567890",
+        "assets": "2030.0101.1",
+        "min_binary": "1.4.0",
+        "min_assets": "2030.0101.1",
+        "requires_newer_binary": False,
+        "requires_newer_assets": False,
+    }
+    assert "file://" not in catalog_path.read_text(encoding="utf-8")
+    assert str(tmp_path) not in catalog_path.read_text(encoding="utf-8")
     assert (
         dist / "assets" / "releases" / "2030.0101.1" / "arm64-rootfs.erofs"
     ).read_bytes() == b"rootfs-arm64"
