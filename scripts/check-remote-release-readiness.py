@@ -261,6 +261,7 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
     manifest_data = manifest.data if isinstance(manifest.data, dict) else {}
     health_urls = require_object(health_data, "urls", "health urls", failures)
     health_current = require_object(health_data, "current", "health current", failures)
+    health_assets = require_object(health_data, "assets", "health assets", failures)
     health_profiles = require_object(health_data, "profiles", "health profiles", failures)
     manifest_assets = require_object(manifest_data, "assets", "manifest assets", failures)
     manifest_binaries = require_object(manifest_data, "binaries", "manifest binaries", failures)
@@ -278,6 +279,9 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
     current_assets = health_current.get("assets")
     profile_source = health_profiles.get("source")
     health_updates = health_data.get("updates")
+    health_update_assets = (
+        health_updates.get("assets") if isinstance(health_updates, dict) else None
+    )
     health_update_profiles = (
         health_updates.get("profiles") if isinstance(health_updates, dict) else None
     )
@@ -297,6 +301,25 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
             failures.append("health profile update compatibility mismatch")
         if health_update_profiles.get("requires_newer") != health_profiles.get("requires_newer"):
             failures.append("health profile update requirement mismatch")
+    if not isinstance(health_update_assets, dict):
+        failures.append("health asset update metadata missing")
+    else:
+        if health_update_assets.get("latest") != current_assets:
+            failures.append("health asset update latest mismatch")
+        if health_update_assets.get("current") != current_assets:
+            failures.append("health asset update current mismatch")
+        if health_update_assets.get("state") != health_assets.get("state"):
+            failures.append("health asset update state mismatch")
+        if health_update_assets.get("source") != "manifest.assets.current":
+            failures.append("health asset update source mismatch")
+        if health_update_assets.get("manifest") != manifest_path:
+            failures.append("health asset update manifest mismatch")
+        if health_update_assets.get("asset_base") != "/assets/releases":
+            failures.append("health asset update base mismatch")
+        if health_update_assets.get("compatibility") != health_assets.get("compatibility"):
+            failures.append("health asset update compatibility mismatch")
+        if health_update_assets.get("requires_newer") != health_assets.get("requires_newer"):
+            failures.append("health asset update requirement mismatch")
     if manifest_assets.get("current") != current_assets:
         failures.append("current asset mismatch between health and manifest")
     if manifest_binaries.get("current") != current_binary:

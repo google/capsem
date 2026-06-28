@@ -85,6 +85,8 @@ passes. That smoke must reject stale public HTML: the fetched index page must
 show the same current binary, current VM asset version, asset release date,
 generated timestamp, profile revision, profile catalog URL, profile update source,
 and channel manifest path as the fetched health JSON and manifest. It must also
+verify that the VM asset update target, manifest, base URL, compatibility, and
+newer-version requirements match the canonical asset metadata. It must also
 verify that the profile update hash, compatibility, and newer-version
 requirements match the canonical profile catalog metadata. It must also
 resolve published host SBOM and VM OBOM evidence artifacts from `health.json`, verify their advertised

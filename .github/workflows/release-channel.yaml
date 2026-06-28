@@ -191,6 +191,25 @@ jobs:
           if health.get("urls", {}).get("profile_catalog") != health.get("profiles", {}).get("source"):
               failures.append("health profile catalog URL mismatch")
           updates = health.get("updates", {})
+          if not isinstance(updates.get("assets"), dict):
+              failures.append("health asset update metadata missing")
+          else:
+              if updates.get("assets", {}).get("latest") != current_assets:
+                  failures.append("health asset update latest mismatch")
+              if updates.get("assets", {}).get("current") != current_assets:
+                  failures.append("health asset update current mismatch")
+              if updates.get("assets", {}).get("state") != health.get("assets", {}).get("state"):
+                  failures.append("health asset update state mismatch")
+              if updates.get("assets", {}).get("source") != "manifest.assets.current":
+                  failures.append("health asset update source mismatch")
+              if updates.get("assets", {}).get("manifest") != expected_manifest:
+                  failures.append("health asset update manifest mismatch")
+              if updates.get("assets", {}).get("asset_base") != "/assets/releases":
+                  failures.append("health asset update base mismatch")
+              if updates.get("assets", {}).get("compatibility") != health.get("assets", {}).get("compatibility"):
+                  failures.append("health asset update compatibility mismatch")
+              if updates.get("assets", {}).get("requires_newer") != health.get("assets", {}).get("requires_newer"):
+                  failures.append("health asset update requirement mismatch")
           if updates.get("profiles", {}).get("source") != health.get("profiles", {}).get("source"):
               failures.append("health profile update source mismatch")
           if not isinstance(updates.get("profiles"), dict):
