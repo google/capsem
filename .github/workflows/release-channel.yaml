@@ -243,6 +243,17 @@ jobs:
                   failures.append(f"health updates.{key}.latest missing")
               if not isinstance(track.get("state"), str):
                   failures.append(f"health updates.{key}.state missing or not a string")
+          if not isinstance(updates.get("images"), dict):
+              failures.append("health image update metadata missing")
+          else:
+              if updates.get("images", {}).get("latest") is not None:
+                  failures.append("health image update latest must be null while unpublished")
+              if updates.get("images", {}).get("current") is not None:
+                  failures.append("health image update current must be null while unpublished")
+              if updates.get("images", {}).get("state") != "not_published":
+                  failures.append("health image update state mismatch")
+              if updates.get("images", {}).get("source") != "not_in_asset_channel":
+                  failures.append("health image update source mismatch")
           evidence = health.get("evidence", {})
           for key in ("vm_oboms", "host_sboms", "host_binary_files", "attestations"):
               if not isinstance(evidence.get(key), list):

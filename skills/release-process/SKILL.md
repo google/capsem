@@ -91,6 +91,8 @@ verify that the VM asset update target, manifest, base URL, compatibility, and
 newer-version requirements match the canonical asset metadata. It must also
 verify that the profile update hash, compatibility, and newer-version
 requirements match the canonical profile catalog metadata. It must also
+verify that image freshness remains explicitly unpublished until image release
+metadata is added to the asset channel. It must also
 resolve published host SBOM and VM OBOM evidence artifacts from `health.json`, verify their advertised
 hashes and sizes, and validate attestation subjects and predicate URLs
 against the published evidence lists. Host SBOM evidence is incomplete unless

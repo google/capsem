@@ -157,6 +157,8 @@ URL, compatibility, and newer-version requirements match the canonical asset
 metadata.
 The deploy smoke also verifies that the profile update hash, compatibility, and
 newer-version requirements match the canonical profile catalog metadata.
+The deploy smoke also verifies that image freshness remains explicitly
+unpublished until image release metadata is added to the asset channel.
 The deploy smoke must also verify public `Cache-Control` headers: mutable
 release-channel pointers (`/`, `/health.json`, and
 `/assets/<channel>/manifest.json`) stay `no-cache, must-revalidate`, while

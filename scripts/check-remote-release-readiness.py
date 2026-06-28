@@ -289,6 +289,9 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
     health_update_profiles = (
         health_updates.get("profiles") if isinstance(health_updates, dict) else None
     )
+    health_update_images = (
+        health_updates.get("images") if isinstance(health_updates, dict) else None
+    )
     profile_update_source = (
         health_update_profiles.get("source") if isinstance(health_update_profiles, dict) else None
     )
@@ -337,6 +340,17 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
             failures.append("health asset update compatibility mismatch")
         if health_update_assets.get("requires_newer") != health_assets.get("requires_newer"):
             failures.append("health asset update requirement mismatch")
+    if not isinstance(health_update_images, dict):
+        failures.append("health image update metadata missing")
+    else:
+        if health_update_images.get("latest") is not None:
+            failures.append("health image update latest must be null while unpublished")
+        if health_update_images.get("current") is not None:
+            failures.append("health image update current must be null while unpublished")
+        if health_update_images.get("state") != "not_published":
+            failures.append("health image update state mismatch")
+        if health_update_images.get("source") != "not_in_asset_channel":
+            failures.append("health image update source mismatch")
     if manifest_assets.get("current") != current_assets:
         failures.append("current asset mismatch between health and manifest")
     if manifest_binaries.get("current") != current_binary:

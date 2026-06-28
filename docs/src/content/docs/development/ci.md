@@ -84,7 +84,8 @@ package file metadata match the canonical binary metadata; that the VM asset
 update target, manifest, base URL, compatibility, and newer-version
 requirements match the canonical asset metadata; and that the profile update
 hash, compatibility, and newer-version requirements match the canonical profile
-catalog metadata.
+catalog metadata. Image freshness must remain explicitly unpublished until an
+image release rail is added to the asset channel.
 It also resolves published host SBOM and VM OBOM evidence artifacts, verifies
 their advertised hashes and sizes, and validates attestation subjects and
 predicate URLs against the published evidence lists. It verifies live
@@ -335,8 +336,9 @@ state, source, and package file metadata match the canonical binary metadata;
 that VM asset update target, manifest, base URL, compatibility, and
 newer-version requirements match the canonical asset metadata; and that profile
 update hash, compatibility, and newer-version requirements match the canonical
-profile catalog metadata. It resolves published host SBOM and VM OBOM evidence
-artifacts from `health.json`, verifies their advertised hashes and sizes, and validates
+profile catalog metadata. Image freshness must remain explicitly unpublished
+until an image release rail is added to the asset channel. It resolves published
+host SBOM and VM OBOM evidence artifacts from `health.json`, verifies their advertised hashes and sizes, and validates
 attestation subjects and predicate URLs against the published evidence lists.
 It also verifies public `Cache-Control` headers: mutable release-channel
 pointers (`/`, `/health.json`, and `/assets/<channel>/manifest.json`) must stay
