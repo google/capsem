@@ -83,6 +83,8 @@ jobs:
     needs: build-assets
     runs-on: ubuntu-latest
     name: Assemble asset channel
+    outputs:
+      asset_changed: ${{ steps.asset-delta.outputs.changed }}
     env:
       CHANNEL: ${{ inputs.channel }}
       BINARY_VERSION: ${{ inputs.binary_version }}
@@ -114,7 +116,15 @@ jobs:
             cargo run -p capsem-admin -- manifest generate assets
           fi
 
+      - name: Check asset release delta
+        id: asset-delta
+        run: |
+          scripts/check-asset-release-delta.py \
+            --new-manifest assets/manifest.json \
+            --previous-manifest-url "https://release.capsem.org/assets/$CHANNEL/manifest.json"
+
       - name: Build asset channel preview
+        if: ${{ steps.asset-delta.outputs.changed == 'true' }}
         run: |
           cargo run -p capsem-admin -- assets channel build \
             --manifest "file://$PWD/assets/manifest.json" \
@@ -122,6 +132,7 @@ jobs:
             --out-dir target/release-channel
 
       - name: Check asset channel preview
+        if: ${{ steps.asset-delta.outputs.changed == 'true' }}
         run: |
           cargo run -p capsem-admin -- assets channel check \
             --channel "$CHANNEL" \
@@ -133,13 +144,14 @@ jobs:
           path: assets/manifest.json
 
       - uses: actions/upload-artifact@v7
+        if: ${{ steps.asset-delta.outputs.changed == 'true' }}
         with:
           name: asset-channel-preview
           path: target/release-channel/
 
   deploy-channel:
     needs: assemble-channel
-    if: ${{ inputs.dry_run == false }}
+    if: ${{ inputs.dry_run == false && needs.assemble-channel.outputs.asset_changed == 'true' }}
     uses: ./.github/workflows/release-channel.yaml
     with:
       channel: ${{ inputs.channel }}
