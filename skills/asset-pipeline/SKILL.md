@@ -127,7 +127,9 @@ after the asset manifest, blobs, and channel checks have been generated.
 Before the asset delta check and channel build, the workflow preserves the live
 channel's `binaries` metadata in the generated asset manifest so VM asset
 releases do not erase package hashes, host SBOM evidence, or binary attestation
-state from `release.capsem.org`.
+state from `release.capsem.org`. Manual VM asset releases do not accept or
+publish a binary-version override; binary release metadata is owned by the
+tag-triggered binary rail.
 The delta emits both `asset_changed` and `asset_blobs_changed`: metadata-only
 asset release changes, such as deprecating an older VM asset release, still
 deploy the release channel without republishing immutable VM blobs. The

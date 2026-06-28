@@ -11,10 +11,6 @@ on:
         description: Profile id that owns the VM image build.
         required: true
         default: code
-      binary_version:
-        description: Optional binary version recorded for compatibility. Empty uses project version.
-        required: false
-        default: ''
       dry_run:
         description: Build and validate without deploying release.capsem.org.
         required: true
@@ -93,7 +89,6 @@ jobs:
       asset_blobs_changed: ${{ steps.asset-delta.outputs.asset_blobs_changed }}
     env:
       CHANNEL: ${{ inputs.channel }}
-      BINARY_VERSION: ${{ inputs.binary_version }}
     steps:
       - uses: actions/checkout@v5
 
@@ -116,11 +111,7 @@ jobs:
 
       - name: Generate asset manifest
         run: |
-          if [ -n "$BINARY_VERSION" ]; then
-            cargo run -p capsem-admin -- manifest generate assets --version "$BINARY_VERSION"
-          else
-            cargo run -p capsem-admin -- manifest generate assets
-          fi
+          cargo run -p capsem-admin -- manifest generate assets
 
       - name: Preserve binary channel metadata
         run: |

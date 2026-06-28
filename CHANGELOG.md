@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   URL points outside the published VM OBOM evidence list.
 
 ### Changed
+- Removed the manual VM asset release `binary_version` override so asset
+  releases preserve, but do not author, binary release metadata.
 - Clarified VM asset no-op guidance so manifest policy changes such as
   `refresh_policy` deploy `release.capsem.org` without VM blob publication.
 - Clarified VM asset release guidance so metadata-only asset channel changes

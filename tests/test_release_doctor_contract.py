@@ -227,6 +227,9 @@ def test_vm_asset_release_is_manual_and_deploys_asset_channel() -> None:
     assert "just build-kernel" in workflow
     assert "just build-rootfs" in workflow
     assert "cargo run -p capsem-admin -- manifest generate assets" in workflow
+    assert "binary_version:" not in workflow
+    assert "BINARY_VERSION" not in workflow
+    assert '--version "$BINARY_VERSION"' not in workflow
     assert "cargo run -p capsem-admin -- assets channel build" in workflow
     assert '--manifest "file://$PWD/assets/manifest.json"' in workflow
     assert "cargo run -p capsem-admin -- assets channel check" in workflow

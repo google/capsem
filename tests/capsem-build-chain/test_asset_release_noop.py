@@ -391,6 +391,9 @@ def test_asset_release_noop_gate_controls_preview_and_deploy_workflow() -> None:
     )[0]
 
     assert "scripts/check-asset-release-delta.py" in workflow
+    assert "binary_version:" not in workflow
+    assert "BINARY_VERSION" not in workflow
+    assert '--version "$BINARY_VERSION"' not in workflow
     assert "scripts/preserve-binary-channel-metadata.py" in workflow
     assert assemble_channel.index("scripts/preserve-binary-channel-metadata.py") < (
         assemble_channel.index("scripts/check-asset-release-delta.py")
