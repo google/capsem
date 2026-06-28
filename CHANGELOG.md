@@ -51,6 +51,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   paths.
 
 ### Changed
+- Changed `capsem update` and `capsem update --check` output to report VM
+  image track state separately and distinguish unknown installed VM assets from
+  available VM asset updates.
 - Guarded startup asset cleanup so deprecated VM asset releases cannot remove
   persistent VM boot asset pins while still allowing unpinned deprecated blobs
   to be cleaned up.

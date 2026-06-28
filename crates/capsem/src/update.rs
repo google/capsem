@@ -36,6 +36,9 @@ pub struct UpdateCheck {
     /// Latest VM asset set advertised by the release channel.
     #[serde(default)]
     pub latest_assets: Option<String>,
+    /// Installed VM asset set derived from the local manifest, when known.
+    #[serde(default)]
+    pub current_assets: Option<String>,
     /// Whether the advertised asset set differs from the installed manifest.
     #[serde(default)]
     pub assets_update_available: bool,
@@ -350,6 +353,7 @@ fn failed_update_check_from_previous(
         update_available: false,
         binary_installer: None,
         latest_assets: None,
+        current_assets: None,
         assets_update_available: false,
         latest_profiles: None,
         current_profiles: None,
@@ -690,6 +694,7 @@ fn update_check_from_release_health(
         update_available,
         binary_installer,
         latest_assets,
+        current_assets: current_assets.map(ToOwned::to_owned),
         assets_update_available,
         latest_profiles,
         current_profiles: current_profiles.map(ToOwned::to_owned),
@@ -1049,8 +1054,12 @@ pub async fn run_update(
     if check.update_available || check.assets_update_available {
         println!("Run `capsem update --assets` separately to refresh VM assets.");
     }
+    print_image_update_status(&check);
 
-    if !check.update_available && !check.profiles_update_available && !check.assets_update_available
+    if !check.update_available
+        && !check.profiles_update_available
+        && !check.assets_update_available
+        && !check.images_update_available
     {
         println!("Capsem is current ({current}).");
     } else if !did_update && !check.update_available && !check.assets_update_available {
@@ -1092,14 +1101,39 @@ fn print_update_check_summary(check: &UpdateCheck, current: &str, layout: &Insta
         println!("Profile catalog update available: {current_profiles} -> {latest_profiles}");
     }
 
-    if check.assets_update_available {
-        let latest_assets = check.latest_assets.as_deref().unwrap_or("unknown");
-        println!("VM asset update available: {latest_assets}.");
-    }
+    print_asset_update_status(check);
+    print_image_update_status(check);
 
-    if !check.update_available && !check.profiles_update_available && !check.assets_update_available
+    if !check.update_available
+        && !check.profiles_update_available
+        && !check.assets_update_available
+        && !check.images_update_available
     {
         println!("Capsem is current ({current}).");
+    }
+}
+
+fn print_asset_update_status(check: &UpdateCheck) {
+    if check.assets_update_available {
+        let current_assets = check.current_assets.as_deref().unwrap_or("unknown");
+        let latest_assets = check.latest_assets.as_deref().unwrap_or("unknown");
+        println!("VM asset update available: {current_assets} -> {latest_assets}.");
+    } else if check.latest_assets.is_some() && check.current_assets.is_none() {
+        let latest_assets = check.latest_assets.as_deref().unwrap_or("unknown");
+        println!(
+            "VM asset state unknown: installed manifest not found; latest release is {latest_assets}."
+        );
+    }
+}
+
+fn print_image_update_status(check: &UpdateCheck) {
+    if check.images_update_available {
+        let latest_images = check.latest_images.as_deref().unwrap_or("unknown");
+        println!("VM image update available: {latest_images}.");
+    } else if check.images_state.as_deref() == Some("not_published") {
+        println!("VM image update track not published.");
+    } else if let Some(latest_images) = check.latest_images.as_deref() {
+        println!("VM image track latest: {latest_images}.");
     }
 }
 
@@ -1595,6 +1629,7 @@ mod tests {
                 install_layout: "macos_pkg".into(),
             }),
             latest_assets: Some("2030.0101.1".into()),
+            current_assets: Some("2030.0101.0".into()),
             assets_update_available: true,
             latest_profiles: Some("profiles-2030.0101.1".into()),
             current_profiles: Some("profiles-2030.0101.0".into()),
@@ -1624,6 +1659,7 @@ mod tests {
             Some("Capsem-0.17.0.pkg")
         );
         assert_eq!(rt.latest_assets, Some("2030.0101.1".into()));
+        assert_eq!(rt.current_assets, Some("2030.0101.0".into()));
         assert!(rt.assets_update_available);
         assert_eq!(rt.latest_profiles, Some("profiles-2030.0101.1".into()));
         assert_eq!(rt.current_profiles, Some("profiles-2030.0101.0".into()));
@@ -1661,6 +1697,7 @@ mod tests {
         assert!(rt.update_available);
         assert_eq!(rt.binary_installer, None);
         assert_eq!(rt.latest_assets, None);
+        assert_eq!(rt.current_assets, None);
         assert!(!rt.assets_update_available);
         assert_eq!(rt.latest_profiles, None);
         assert_eq!(rt.current_profiles, None);
@@ -1686,6 +1723,7 @@ mod tests {
             update_available: true,
             binary_installer: None,
             latest_assets: Some("2030.0101.1".into()),
+            current_assets: Some("2030.0101.0".into()),
             assets_update_available: true,
             latest_profiles: None,
             current_profiles: None,
@@ -1714,6 +1752,7 @@ mod tests {
         assert_eq!(check.checked_at, 1200);
         assert_eq!(check.latest_version, Some("99.99.99".into()));
         assert_eq!(check.latest_assets, Some("2030.0101.1".into()));
+        assert_eq!(check.current_assets, Some("2030.0101.0".into()));
         assert_eq!(check.channel_hash, Some("f".repeat(64)));
         assert_eq!(check.validation_status, Some("fetch_error".into()));
         assert_eq!(check.validation_error, Some("connection refused".into()));

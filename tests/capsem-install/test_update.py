@@ -351,6 +351,7 @@ def test_update_fetches_release_health_and_writes_channel_cache(
     )
     assert "Binary update available" in result.stdout
     assert "Run `capsem update --assets` separately" in result.stdout
+    assert "VM image update track not published." in result.stdout
 
     cache = json.loads((capsem_home / "update-check.json").read_text(encoding="utf-8"))
     assert cache["source"] == health_url
@@ -360,9 +361,75 @@ def test_update_fetches_release_health_and_writes_channel_cache(
     assert cache["latest_version"] == "99.99.99"
     assert cache["update_available"] is True
     assert cache["latest_assets"] == "2030.0101.1"
+    assert cache.get("current_assets") is None
     assert cache["latest_profiles"] == "profiles-2030.0101.1"
     assert cache["profiles_state"] == "published"
     assert cache["images_state"] == "not_published"
+
+
+def test_update_check_reports_binary_profile_asset_and_image_tracks(
+    tmp_path: Path,
+    installed_layout,
+) -> None:
+    capsem_home = tmp_path / ".capsem"
+    fresh_capsem = _fresh_capsem_binary()
+    source_capsem = fresh_capsem if fresh_capsem is not None else installed_layout / "capsem"
+    capsem = _copy_user_dir_capsem(source_capsem, capsem_home)
+    health = {
+        "schema": "capsem.assets_channel.health.v1",
+        "updates": {
+            "binary": {
+                "latest": "99.99.99",
+                "current": "99.99.98",
+                "files": [],
+            },
+            "assets": {
+                "latest": "2030.0101.1",
+                "current": "2030.0101.0",
+            },
+            "profiles": {
+                "latest": "profiles-2030.0101.1",
+                "state": "published",
+                "requires_newer": {"binary": True, "assets": False},
+                "compatibility": {
+                    "min_binary": "99.99.99",
+                    "min_assets": "2030.0101.0",
+                },
+            },
+            "images": {
+                "latest": None,
+                "state": "not_published",
+            },
+        },
+    }
+    body = json.dumps(health, sort_keys=True, separators=(",", ":")).encode()
+
+    with _serve_health(body) as health_url:
+        result = subprocess.run(
+            [str(capsem), "update", "--check"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env={
+                **os.environ,
+                "CAPSEM_HOME": str(capsem_home),
+                "CAPSEM_RUN_DIR": str(capsem_home / "run"),
+                "CAPSEM_RELEASE_HEALTH_URL": health_url,
+            },
+        )
+
+    assert result.returncode == 0, (
+        f"capsem update --check failed\nstdout={result.stdout}\nstderr={result.stderr}"
+    )
+    assert "Binary update available" in result.stdout
+    assert "Profile catalog update blocked: requires binary 99.99.99 or newer." in result.stdout
+    assert (
+        "VM asset state unknown: installed manifest not found; latest release is 2030.0101.1."
+        in result.stdout
+    )
+    assert "VM image update track not published." in result.stdout
+    assert "Profile catalog update applied" not in result.stdout
+    assert not (capsem_home / "profiles" / "catalog-origin.json").exists()
 
 
 def test_update_applies_compatible_profile_catalog_from_release_channel(
