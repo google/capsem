@@ -1046,9 +1046,13 @@ pub async fn run_update(
         let current_profiles = check.current_profiles.as_deref().unwrap_or("unknown");
         let latest_profiles = check.latest_profiles.as_deref().unwrap_or("unknown");
         println!("Profile catalog update available: {current_profiles} -> {latest_profiles}");
-        apply_profile_catalog_update(&check).await?;
-        println!("Profile catalog update applied. New sessions will use {latest_profiles}.");
-        did_update = true;
+        if yes {
+            apply_profile_catalog_update(&check).await?;
+            println!("Profile catalog update applied. New sessions will use {latest_profiles}.");
+            did_update = true;
+        } else {
+            println!("Re-run with --yes to apply the profile catalog update.");
+        }
     }
 
     if check.update_available || check.assets_update_available {

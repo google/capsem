@@ -432,7 +432,7 @@ def test_update_check_reports_binary_profile_asset_and_image_tracks(
     assert not (capsem_home / "profiles" / "catalog-origin.json").exists()
 
 
-def test_update_applies_compatible_profile_catalog_from_release_channel(
+def test_update_reports_profile_catalog_without_applying_by_default(
     tmp_path: Path,
     installed_layout,
 ) -> None:
@@ -464,6 +464,49 @@ def test_update_applies_compatible_profile_catalog_from_release_channel(
 
     assert result.returncode == 0, (
         f"capsem update failed\nstdout={result.stdout}\nstderr={result.stderr}"
+    )
+    assert "Profile catalog update available" in result.stdout
+    assert "Re-run with --yes to apply the profile catalog update." in result.stdout
+    assert "Profile catalog update applied" not in result.stdout
+    profile_toml = (capsem_home / "profiles" / "code" / "profile.toml").read_text(
+        encoding="utf-8"
+    )
+    assert 'revision = "profiles-2030.0101.0"' in profile_toml
+    assert not (capsem_home / "profiles" / "catalog-origin.json").exists()
+
+
+def test_update_yes_applies_compatible_profile_catalog_from_release_channel(
+    tmp_path: Path,
+    installed_layout,
+) -> None:
+    capsem_home = tmp_path / ".capsem"
+    _write_installed_profile_catalog(capsem_home / "profiles", "profiles-2030.0101.0")
+    fresh_capsem = _fresh_capsem_binary()
+    source_capsem = fresh_capsem if fresh_capsem is not None else installed_layout / "capsem"
+    capsem = _copy_user_dir_capsem(source_capsem, capsem_home)
+    revision = "profiles-2030.0101.1"
+    catalog_path = _profile_catalog_path(revision)
+    catalog_bytes = _profile_catalog_bytes(revision)
+
+    with _serve_release(
+        _profile_update_health(catalog_path, catalog_bytes, revision),
+        {catalog_path: catalog_bytes},
+    ) as (_, health_url):
+        result = subprocess.run(
+            [str(capsem), "update", "--yes"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env={
+                **os.environ,
+                "CAPSEM_HOME": str(capsem_home),
+                "CAPSEM_RUN_DIR": str(capsem_home / "run"),
+                "CAPSEM_RELEASE_HEALTH_URL": health_url,
+            },
+        )
+
+    assert result.returncode == 0, (
+        f"capsem update --yes failed\nstdout={result.stdout}\nstderr={result.stderr}"
     )
     assert "Profile catalog update available" in result.stdout
     assert "Profile catalog update applied" in result.stdout
@@ -513,7 +556,7 @@ def test_update_preserves_profile_catalog_when_release_catalog_is_invalid(
         {catalog_path: invalid_catalog},
     ) as (_, health_url):
         result = subprocess.run(
-            [str(capsem), "update"],
+            [str(capsem), "update", "--yes"],
             capture_output=True,
             text=True,
             timeout=30,
@@ -526,7 +569,7 @@ def test_update_preserves_profile_catalog_when_release_catalog_is_invalid(
         )
 
     assert result.returncode != 0, (
-        f"invalid profile catalog should fail\nstdout={result.stdout}\nstderr={result.stderr}"
+        f"invalid profile catalog apply should fail\nstdout={result.stdout}\nstderr={result.stderr}"
     )
     assert "validate profile code" in result.stderr
     profile_toml = (capsem_home / "profiles" / "code" / "profile.toml").read_text(

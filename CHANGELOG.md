@@ -51,6 +51,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   paths.
 
 ### Changed
+- Changed profile catalog updates so `capsem update` reports available
+  catalogs without applying them, while `capsem update --yes` performs the
+  validated apply.
 - Changed `capsem update` and `capsem update --check` output to report VM
   image track state separately and distinguish unknown installed VM assets from
   available VM asset updates.
