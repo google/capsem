@@ -72,7 +72,7 @@ class MockServiceHandler(BaseHTTPRequestHandler):
         """Strip http://localhost prefix that hyper sends over UDS."""
         p = self.path
         if p.startswith("http://localhost"):
-            p = p[len("http://localhost"):]
+            p = p[len("http://localhost") :]
         return p
 
     def _read_body(self):
@@ -95,16 +95,18 @@ class MockServiceHandler(BaseHTTPRequestHandler):
         if path_only == "/vms/list":
             sandboxes = []
             for vm in MOCK_VMS.values():
-                sandboxes.append({
-                    "id": vm["id"],
-                    "pid": vm["pid"],
-                    "profile_id": CODE_PROFILE_ID,
-                    "status": vm["status"],
-                    "persistent": vm["persistent"],
-                    "ram_mb": vm["ram_mb"],
-                    "cpus": vm["cpus"],
-                    "available_actions": ["pause", "stop", "fork", "delete"],
-                })
+                sandboxes.append(
+                    {
+                        "id": vm["id"],
+                        "pid": vm["pid"],
+                        "profile_id": CODE_PROFILE_ID,
+                        "status": vm["status"],
+                        "persistent": vm["persistent"],
+                        "ram_mb": vm["ram_mb"],
+                        "cpus": vm["cpus"],
+                        "available_actions": ["pause", "stop", "fork", "delete"],
+                    }
+                )
             self._send_json({"sandboxes": sandboxes})
         elif path_only.startswith("/vms/") and path_only.endswith("/info"):
             vm_id = path_only.split("/vms/", 1)[1].rsplit("/info", 1)[0]
@@ -115,50 +117,56 @@ class MockServiceHandler(BaseHTTPRequestHandler):
         elif path_only.startswith("/vms/") and path_only.endswith("/snapshots/status"):
             vm_id = path_only.split("/vms/", 1)[1].rsplit("/snapshots/status", 1)[0]
             if vm_id in MOCK_VMS:
-                self._send_json({
-                    "total": 1,
-                    "auto_count": 1,
-                    "manual_count": 0,
-                    "manual_available": 12,
-                    "snapshots": [
-                        {
-                            "checkpoint": "checkpoint-0",
-                            "slot": 0,
-                            "origin": "auto",
-                            "timestamp": "unix:1700000000",
-                        }
-                    ],
-                })
+                self._send_json(
+                    {
+                        "total": 1,
+                        "auto_count": 1,
+                        "manual_count": 0,
+                        "manual_available": 12,
+                        "snapshots": [
+                            {
+                                "checkpoint": "checkpoint-0",
+                                "slot": 0,
+                                "origin": "auto",
+                                "timestamp": "unix:1700000000",
+                            }
+                        ],
+                    }
+                )
             else:
                 self._send_error(404, f"sandbox {vm_id} not found")
         elif path_only.startswith("/vms/") and path_only.endswith("/snapshots/list"):
             vm_id = path_only.split("/vms/", 1)[1].rsplit("/snapshots/list", 1)[0]
             if vm_id in MOCK_VMS:
-                self._send_json({
-                    "total": 1,
-                    "snapshots": [
-                        {
-                            "checkpoint": "checkpoint-0",
-                            "slot": 0,
-                            "origin": "auto",
-                            "timestamp": "unix:1700000000",
-                        }
-                    ],
-                })
+                self._send_json(
+                    {
+                        "total": 1,
+                        "snapshots": [
+                            {
+                                "checkpoint": "checkpoint-0",
+                                "slot": 0,
+                                "origin": "auto",
+                                "timestamp": "unix:1700000000",
+                            }
+                        ],
+                    }
+                )
             else:
                 self._send_error(404, f"sandbox {vm_id} not found")
         elif path_only.startswith("/vms/") and path_only.endswith("/status"):
             vm_id = path_only.split("/vms/", 1)[1].rsplit("/status", 1)[0]
             if vm_id in MOCK_VMS:
                 vm = MOCK_VMS[vm_id]
-                self._send_json({
-                    "id": vm["id"],
-                    "profile_id": CODE_PROFILE_ID,
-                    "status": vm["status"],
-                    "pid": vm["pid"],
-                    "persistent": vm["persistent"],
-                    "available_actions": ["pause", "stop", "fork", "delete"],
-                })
+                self._send_json(
+                    {
+                        "id": vm["id"],
+                        "profile_id": CODE_PROFILE_ID,
+                        "status": vm["status"],
+                        "pid": vm["pid"],
+                        "persistent": vm["persistent"],
+                        "available_actions": ["pause", "stop", "fork", "delete"],
+                    }
+                )
             else:
                 self._send_error(404, f"sandbox {vm_id} not found")
         elif path_only.startswith("/vms/") and path_only.endswith("/logs"):
@@ -172,50 +180,89 @@ class MockServiceHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
-        elif path_only == "/profiles/status":
-            self._send_json({
-                "source": "directory",
-                "profile_count": 2,
-                "ready_count": 1,
-                "asset_manifest": {
-                    "origin": "package",
-                    "path": "/Users/test/.capsem/assets/manifest.json",
-                    "origin_path": "/Users/test/.capsem/assets/manifest-origin.json",
-                    "origin_source": "file:///tmp/corp/manifest.json",
-                    "packaged_at": "2026-06-13T00:00:00Z",
-                    "blake3": "0123456789abcdef",
+        elif path_only == "/update/status":
+            self._send_json(
+                {
+                    "checked_at": 1718444400,
+                    "channel_url": "https://release.capsem.org/health.json",
+                    "channel_hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
                     "validation_status": "valid",
-                    "refresh_policy": "24h",
-                    "assets_current": "2026.0613.1",
-                    "binaries_current": "1.3.0",
-                },
-                "profiles": [
-                    {
-                        "id": CODE_PROFILE_ID,
-                        "name": "Code",
-                        "description": "Optimized for coding and long-running agents.",
-                        "ready": True,
-                        "current_arch": "arm64",
-                        "missing_assets": [],
-                        "invalid_assets": [],
-                        "invalid_files": [],
-                        "errors": [],
-                        "asset_count": 3,
+                    "stale": False,
+                    "binary": {
+                        "current": "1.3.1782582155",
+                        "latest": "1.3.1782600000",
+                        "update_available": True,
+                        "state": "update_available",
+                        "compatibility": "compatible",
                     },
-                    {
-                        "id": "co-work",
-                        "name": "Co-work",
-                        "description": "Shared profile for collaborative agent sessions.",
-                        "ready": False,
-                        "current_arch": "arm64",
-                        "missing_assets": [{"kind": "rootfs", "path": "/missing/rootfs.erofs", "valid": False}],
-                        "invalid_assets": [],
-                        "invalid_files": [],
-                        "errors": ["missing rootfs"],
-                        "asset_count": 3,
+                    "assets": {
+                        "current": "2026.0627.1",
+                        "latest": "2026.0628.1",
+                        "update_available": True,
+                        "state": "update_available",
+                        "compatibility": "compatible",
                     },
-                ],
-            })
+                    "profiles": {
+                        "latest": "profiles-2030.0101.1",
+                        "update_available": False,
+                        "state": "current",
+                        "compatibility": "compatible",
+                    },
+                    "images": {
+                        "update_available": False,
+                        "state": "not_published",
+                        "compatibility": "not_applicable",
+                    },
+                }
+            )
+        elif path_only == "/profiles/status":
+            self._send_json(
+                {
+                    "source": "directory",
+                    "profile_count": 2,
+                    "ready_count": 1,
+                    "asset_manifest": {
+                        "origin": "package",
+                        "path": "/Users/test/.capsem/assets/manifest.json",
+                        "origin_path": "/Users/test/.capsem/assets/manifest-origin.json",
+                        "origin_source": "file:///tmp/corp/manifest.json",
+                        "packaged_at": "2026-06-13T00:00:00Z",
+                        "blake3": "0123456789abcdef",
+                        "validation_status": "valid",
+                        "refresh_policy": "24h",
+                        "assets_current": "2026.0613.1",
+                        "binaries_current": "1.3.0",
+                    },
+                    "profiles": [
+                        {
+                            "id": CODE_PROFILE_ID,
+                            "name": "Code",
+                            "description": "Optimized for coding and long-running agents.",
+                            "ready": True,
+                            "current_arch": "arm64",
+                            "missing_assets": [],
+                            "invalid_assets": [],
+                            "invalid_files": [],
+                            "errors": [],
+                            "asset_count": 3,
+                        },
+                        {
+                            "id": "co-work",
+                            "name": "Co-work",
+                            "description": "Shared profile for collaborative agent sessions.",
+                            "ready": False,
+                            "current_arch": "arm64",
+                            "missing_assets": [
+                                {"kind": "rootfs", "path": "/missing/rootfs.erofs", "valid": False}
+                            ],
+                            "invalid_assets": [],
+                            "invalid_files": [],
+                            "errors": ["missing rootfs"],
+                            "asset_count": 3,
+                        },
+                    ],
+                }
+            )
         else:
             self._send_error(404, f"unknown endpoint: {self.clean_path}")
 
@@ -337,11 +384,11 @@ def frontend_dir():
     """Create a temp dir with mock frontend build artifacts."""
     d = Path(tempfile.mkdtemp(prefix="capsem-frontend-test-"))
     (d / "index.html").write_text(
-        '<!DOCTYPE html><html><head>'
+        "<!DOCTYPE html><html><head>"
         '<link rel="stylesheet" href="/app/_astro/style.abc.css">'
-        '</head><body>'
+        "</head><body>"
         '<script type="module" src="/app/_astro/app.xyz.js"></script>'
-        '</body></html>'
+        "</body></html>"
     )
     astro = d / "_astro"
     astro.mkdir()
@@ -356,6 +403,7 @@ def frontend_dir():
     (vm / "index.html").write_text("<html><body>terminal</body></html>")
     yield d
     import shutil
+
     shutil.rmtree(d, ignore_errors=True)
 
 
@@ -374,5 +422,4 @@ def frontend_gateway_env(mock_service, frontend_dir):
 @pytest.fixture
 def fe_client(frontend_gateway_env):
     """TcpHttpClient for the frontend-enabled gateway."""
-    return TcpHttpClient(frontend_gateway_env.base_url,
-                         frontend_gateway_env.token)
+    return TcpHttpClient(frontend_gateway_env.base_url, frontend_gateway_env.token)

@@ -15,13 +15,36 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 GATEWAY_BINARY = PROJECT_ROOT / "target/debug/capsem-gateway"
+GATEWAY_SOURCE_PATHS = [
+    PROJECT_ROOT / "crates" / "capsem-gateway" / "src" / "main.rs",
+    PROJECT_ROOT / "crates" / "capsem-gateway" / "src" / "proxy.rs",
+    PROJECT_ROOT / "crates" / "capsem-gateway" / "src" / "status.rs",
+]
+
+
+def _ensure_gateway_binary_current() -> None:
+    if GATEWAY_BINARY.exists() and all(
+        GATEWAY_BINARY.stat().st_mtime >= path.stat().st_mtime for path in GATEWAY_SOURCE_PATHS
+    ):
+        return
+    result = subprocess.run(
+        ["cargo", "build", "-p", "capsem-gateway"],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            "cargo build -p capsem-gateway failed\n"
+            f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        )
 
 
 class GatewayInstance:
     """A running capsem-gateway on an isolated temp dir."""
 
-    def __init__(self, uds_path: str | Path, port: int = 0,
-                 frontend_dir: str | Path | None = None):
+    def __init__(self, uds_path: str | Path, port: int = 0, frontend_dir: str | Path | None = None):
         self.tmp_dir = Path(tempfile.mkdtemp(prefix="capsem-gw-test-"))
         self.uds_path = str(uds_path)
         self._port = port
@@ -34,6 +57,7 @@ class GatewayInstance:
         self.port = None
 
     def start(self):
+        _ensure_gateway_binary_current()
         if not GATEWAY_BINARY.exists():
             raise FileNotFoundError(
                 f"Gateway binary not found: {GATEWAY_BINARY}. Run 'cargo build -p capsem-gateway'."
@@ -42,6 +66,7 @@ class GatewayInstance:
         # Pick a free port if not specified
         if self._port == 0:
             import socket
+
             with socket.socket() as s:
                 s.bind(("127.0.0.1", 0))
                 self._port = s.getsockname()[1]
@@ -67,10 +92,14 @@ class GatewayInstance:
         # parallel workers from each other's singleton lock.
         cmd = [
             str(GATEWAY_BINARY),
-            "--port", str(self._port),
-            "--uds-path", self.uds_path,
-            "--run-dir", str(run_dir),
-            "--parent-pid", str(os.getpid()),
+            "--port",
+            str(self._port),
+            "--uds-path",
+            self.uds_path,
+            "--run-dir",
+            str(run_dir),
+            "--parent-pid",
+            str(os.getpid()),
         ]
         if self.frontend_dir:
             cmd += ["--frontend-dir", self.frontend_dir]
@@ -93,9 +122,10 @@ class GatewayInstance:
                 # Verify HTTP health check responds
                 try:
                     result = subprocess.run(
-                        ["curl", "-s", "--max-time", "2",
-                         f"http://127.0.0.1:{self.port}/health"],
-                        capture_output=True, text=True, timeout=5,
+                        ["curl", "-s", "--max-time", "2", f"http://127.0.0.1:{self.port}/health"],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
                     )
                     if result.returncode == 0 and "ok" in result.stdout.lower():
                         return
@@ -157,10 +187,15 @@ class TcpHttpClient:
 
     def _curl(self, method, path, body=None, timeout=30, use_auth=True):
         cmd = [
-            "curl", "-s", "-S",
-            "-X", method,
-            "-H", "Content-Type: application/json",
-            "--max-time", str(timeout),
+            "curl",
+            "-s",
+            "-S",
+            "-X",
+            method,
+            "-H",
+            "Content-Type: application/json",
+            "--max-time",
+            str(timeout),
         ]
         if use_auth:
             cmd += ["-H", f"Authorization: Bearer {self.token}"]
@@ -189,10 +224,15 @@ class TcpHttpClient:
     def get_raw(self, path, timeout=30, use_auth=True):
         """Return raw curl output (status code + body) for status assertions."""
         cmd = [
-            "curl", "-s", "-S",
-            "-o", "/dev/null",
-            "-w", "%{http_code}",
-            "--max-time", str(timeout),
+            "curl",
+            "-s",
+            "-S",
+            "-o",
+            "/dev/null",
+            "-w",
+            "%{http_code}",
+            "--max-time",
+            str(timeout),
         ]
         if use_auth:
             cmd += ["-H", f"Authorization: Bearer {self.token}"]
@@ -200,13 +240,16 @@ class TcpHttpClient:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 5)
         return int(result.stdout.strip()) if result.stdout.strip() else 0
 
-    def get_status_and_body(self, path, timeout=30, use_auth=True,
-                            extra_headers=None):
+    def get_status_and_body(self, path, timeout=30, use_auth=True, extra_headers=None):
         """Return (status_code, body_text) tuple."""
         cmd = [
-            "curl", "-s", "-S",
-            "-w", "\n%{http_code}",
-            "--max-time", str(timeout),
+            "curl",
+            "-s",
+            "-S",
+            "-w",
+            "\n%{http_code}",
+            "--max-time",
+            str(timeout),
         ]
         if use_auth:
             cmd += ["-H", f"Authorization: Bearer {self.token}"]
@@ -222,14 +265,23 @@ class TcpHttpClient:
     def ws_upgrade_status(self, path, timeout=5):
         """Send a WebSocket upgrade request, return the HTTP status code."""
         cmd = [
-            "curl", "-s", "-S",
-            "-o", "/dev/null",
-            "-w", "%{http_code}",
-            "--max-time", str(timeout),
-            "-H", "Connection: Upgrade",
-            "-H", "Upgrade: websocket",
-            "-H", "Sec-WebSocket-Version: 13",
-            "-H", "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+            "curl",
+            "-s",
+            "-S",
+            "-o",
+            "/dev/null",
+            "-w",
+            "%{http_code}",
+            "--max-time",
+            str(timeout),
+            "-H",
+            "Connection: Upgrade",
+            "-H",
+            "Upgrade: websocket",
+            "-H",
+            "Sec-WebSocket-Version: 13",
+            "-H",
+            "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
             f"{self.base_url}{path}",
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 5)

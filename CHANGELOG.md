@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   SHA-256, and package release version in installed manifest-origin metadata.
 - Added install-side verification that `capsem update` fetches the release
   channel health index and writes validated channel cache provenance.
+- Proxied update status through the gateway so UI, tray, and TUI surfaces can
+  read release-channel freshness state.
 
 ## [1.3.1782582155] - 2026-06-27
 

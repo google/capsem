@@ -214,6 +214,7 @@ fn gateway_run_dir(args: &Args) -> PathBuf {
 fn service_proxy_routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/version", get(proxy::handle_proxy))
+        .route("/update/status", get(proxy::handle_proxy))
         .route("/vms/create", post(proxy::handle_proxy))
         .route("/vms/list", get(proxy::handle_proxy))
         .route("/vms/{id}/info", get(proxy::handle_proxy))
@@ -612,6 +613,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn gateway_update_status_route_is_get_only() {
+        let app = service_proxy_app("/tmp/capsem-gateway-missing-service.sock");
+        let get_resp = app
+            .clone()
+            .oneshot(
+                http::Request::builder()
+                    .method("GET")
+                    .uri("/update/status")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(get_resp.status(), http::StatusCode::BAD_GATEWAY);
+
+        let post_resp = app
+            .oneshot(
+                http::Request::builder()
+                    .method("POST")
+                    .uri("/update/status")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(post_resp.status(), http::StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    #[tokio::test]
     async fn gateway_fake_vm_mutation_routes_are_not_forwarded() {
         let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
         for (method, uri) in [
@@ -651,6 +681,7 @@ mod tests {
             ("GET", "/detection/status"),
             ("GET", "/profiles/list"),
             ("GET", "/profiles/status"),
+            ("GET", "/update/status"),
             ("POST", "/profiles/reload"),
             ("GET", "/profiles/code/info"),
             ("GET", "/profiles/code/obom"),
