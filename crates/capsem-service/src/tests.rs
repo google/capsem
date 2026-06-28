@@ -727,6 +727,58 @@ async fn update_route_apply_requires_confirmation_for_live_commands() {
     }
 }
 
+#[tokio::test]
+async fn update_route_apply_confirmed_dispatches_binary_profiles_and_assets() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let cli = dir.path().join("capsem");
+    let log = dir.path().join("args.log");
+    std::fs::write(
+        &cli,
+        format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\n", log.display()),
+    )
+    .unwrap();
+    let mut permissions = std::fs::metadata(&cli).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+    std::fs::set_permissions(&cli, permissions).unwrap();
+    let previous = std::env::var_os("CAPSEM_CLI");
+    std::env::set_var("CAPSEM_CLI", &cli);
+
+    let app = build_service_router(make_test_state());
+    let (binary_status, binary_body) = route_request(
+        app.clone(),
+        axum::http::Method::POST,
+        "/update/apply",
+        Some(json!({ "action": "binary_profiles", "confirmed": true })),
+    )
+    .await;
+    let (assets_status, assets_body) = route_request(
+        app,
+        axum::http::Method::POST,
+        "/update/apply",
+        Some(json!({ "action": "assets", "confirmed": true })),
+    )
+    .await;
+    match previous {
+        Some(value) => std::env::set_var("CAPSEM_CLI", value),
+        None => std::env::remove_var("CAPSEM_CLI"),
+    }
+
+    assert_eq!(binary_status, StatusCode::OK);
+    assert_eq!(binary_body["status"], "succeeded");
+    assert_eq!(binary_body["command"]["args"], json!(["update", "--yes"]));
+    assert_eq!(assets_status, StatusCode::OK);
+    assert_eq!(assets_body["status"], "succeeded");
+    assert_eq!(
+        assets_body["command"]["args"],
+        json!(["update", "--assets"])
+    );
+    assert_eq!(
+        std::fs::read_to_string(log).unwrap(),
+        "update --yes\nupdate --assets\n"
+    );
+}
+
 async fn decode_response_json<T: serde::de::DeserializeOwned>(
     response: axum::response::Response,
 ) -> T {
