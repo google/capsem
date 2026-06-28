@@ -76,10 +76,13 @@ WORK_DIR=$(mktemp -d)
 trap 'rm -rf "$WORK_DIR"' EXIT
 
 write_manifest_origin() {
-    local manifest_source="${1:?write_manifest_origin <manifest_source> <dst>}"
-    local dst="${2:?write_manifest_origin <manifest_source> <dst>}"
-    python3 - "$manifest_source" "$dst" <<'PY'
+    local manifest_source="${1:?write_manifest_origin <manifest_source> <manifest_path> <package_version> <dst>}"
+    local manifest_path="${2:?write_manifest_origin <manifest_source> <manifest_path> <package_version> <dst>}"
+    local package_version="${3:?write_manifest_origin <manifest_source> <manifest_path> <package_version> <dst>}"
+    local dst="${4:?write_manifest_origin <manifest_source> <manifest_path> <package_version> <dst>}"
+    python3 - "$manifest_source" "$manifest_path" "$package_version" "$dst" <<'PY'
 import datetime
+import hashlib
 import json
 import pathlib
 import sys
@@ -87,15 +90,22 @@ import urllib.parse
 import urllib.request
 
 raw_source = sys.argv[1]
-dst = pathlib.Path(sys.argv[2])
+manifest_path = pathlib.Path(sys.argv[2])
+package_version = sys.argv[3]
+dst = pathlib.Path(sys.argv[4])
 parsed = urllib.parse.urlparse(raw_source)
 if parsed.scheme not in ("http", "https", "file"):
     raise SystemExit(f"manifest source must be a URL: {raw_source}")
+manifest_bytes = manifest_path.read_bytes()
+fetched_at = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 dst.write_text(json.dumps({
     "schema": "capsem.manifest_origin.v1",
     "origin": "package",
     "source": raw_source,
-    "packaged_at": datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+    "fetched_at": fetched_at,
+    "packaged_at": fetched_at,
+    "package_version": package_version,
+    "snapshot_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
 }, sort_keys=True) + "\n")
 PY
 }
@@ -179,7 +189,8 @@ if [ -z "$ASSETS_VIEW" ] || [ ! -f "$ASSETS_VIEW/manifest.json" ]; then
 fi
 mkdir -p "$WORK_DIR/deb/usr/share/capsem/assets"
 cp "$ASSETS_VIEW/manifest.json" "$WORK_DIR/deb/usr/share/capsem/assets/manifest.json"
-write_manifest_origin "$SELECTED_MANIFEST_SOURCE" "$WORK_DIR/deb/usr/share/capsem/assets/manifest-origin.json"
+PACKAGE_VERSION="$(dpkg-deb -f "$INPUT_DEB" Version)"
+write_manifest_origin "$SELECTED_MANIFEST_SOURCE" "$WORK_DIR/deb/usr/share/capsem/assets/manifest.json" "$PACKAGE_VERSION" "$WORK_DIR/deb/usr/share/capsem/assets/manifest-origin.json"
 
 echo "=== Repacking .deb ==="
 dpkg-deb -b "$WORK_DIR/deb" "$OUTPUT_DEB"

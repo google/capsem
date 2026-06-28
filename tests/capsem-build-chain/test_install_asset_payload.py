@@ -29,7 +29,10 @@ def test_just_install_does_not_sync_assets_after_installer() -> None:
     assert "bash scripts/repack-deb.sh --manifest" in install_body
     assert '--manifest "file://$PWD/{{assets_dir}}/manifest.json"' in install_body
     assert '"target/config"' in install_body
-    assert "install: _pnpm-install _stamp-version _check-assets _pack-initrd _materialize-config" in install_body
+    assert (
+        "install: _pnpm-install _stamp-version _check-assets _pack-initrd _materialize-config"
+        in install_body
+    )
     assert "pkill -9 -x capsem-app" in install_body
 
 
@@ -122,9 +125,15 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert '--version "$VERSION"' in build_pkg
     assert "PKG_VERSION" not in build_pkg
     assert 'materialize_manifest_input "$MANIFEST_PATH" "$ASSETS_VIEW/manifest.json"' in build_pkg
-    assert 'install -m 0644 "$ASSETS_VIEW/manifest.json" "$SHARE_DIR/assets/manifest.json"' in build_pkg
+    assert (
+        'install -m 0644 "$ASSETS_VIEW/manifest.json" "$SHARE_DIR/assets/manifest.json"'
+        in build_pkg
+    )
     assert 'SELECTED_MANIFEST_SOURCE="$MANIFEST_PATH"' in build_pkg
-    assert 'write_manifest_origin "$SELECTED_MANIFEST_SOURCE" "$SHARE_DIR/assets/manifest-origin.json"' in build_pkg
+    assert (
+        'write_manifest_origin "$SELECTED_MANIFEST_SOURCE" "$SHARE_DIR/assets/manifest.json" "$VERSION" "$SHARE_DIR/assets/manifest-origin.json"'
+        in build_pkg
+    )
     assert "materialize_manifest_assets" not in build_pkg
     assert "Added asset:" not in build_pkg
     assert "rootfs-" not in build_pkg
@@ -152,8 +161,8 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert "event=stop_existing_service" not in pkg_preinstall
     assert 'INSTALL_LOG="$CAPSEM_DIR/logs/install.log"' in pkg_preinstall
     assert 'INSTALL_RUN_LOG="$CAPSEM_DIR/logs/install-$INSTALL_RUN_ID.log"' in pkg_preinstall
-    assert 'install-current-run' in pkg_preinstall
-    assert 'install-latest.log' in pkg_preinstall
+    assert "install-current-run" in pkg_preinstall
+    assert "install-latest.log" in pkg_preinstall
     assert 'exec > >(tee -a "$INSTALL_LOG" "$INSTALL_RUN_LOG") 2>&1' in pkg_preinstall
 
     assert "CAPSEM_DEB_ASSET_MODE" not in repack_deb
@@ -169,29 +178,50 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert "pathlib.Path(source).read_bytes()" not in repack_deb
     assert "BUILD_TS=" not in repack_deb
     assert 'materialize_manifest_input "$MANIFEST_PATH" "$ASSETS_VIEW/manifest.json"' in repack_deb
-    assert 'cp "$ASSETS_VIEW/manifest.json" "$WORK_DIR/deb/usr/share/capsem/assets/manifest.json"' in repack_deb
+    assert (
+        'cp "$ASSETS_VIEW/manifest.json" "$WORK_DIR/deb/usr/share/capsem/assets/manifest.json"'
+        in repack_deb
+    )
     assert 'SELECTED_MANIFEST_SOURCE="$MANIFEST_PATH"' in repack_deb
-    assert 'write_manifest_origin "$SELECTED_MANIFEST_SOURCE" "$WORK_DIR/deb/usr/share/capsem/assets/manifest-origin.json"' in repack_deb
+    assert 'PACKAGE_VERSION="$(dpkg-deb -f "$INPUT_DEB" Version)"' in repack_deb
+    assert (
+        'write_manifest_origin "$SELECTED_MANIFEST_SOURCE" "$WORK_DIR/deb/usr/share/capsem/assets/manifest.json" "$PACKAGE_VERSION" "$WORK_DIR/deb/usr/share/capsem/assets/manifest-origin.json"'
+        in repack_deb
+    )
     assert "materialize_manifest_assets" not in repack_deb
     assert "Added asset:" not in repack_deb
     assert "rootfs-" not in repack_deb
     assert "initrd-" not in repack_deb
     assert "vmlinuz-" not in repack_deb
     assert "obom-" not in repack_deb
-    assert 'cp -R "$CONFIG_ROOT/profiles/." "$WORK_DIR/deb/usr/share/capsem/profiles/"' in repack_deb
+    assert (
+        'cp -R "$CONFIG_ROOT/profiles/." "$WORK_DIR/deb/usr/share/capsem/profiles/"' in repack_deb
+    )
     assert "sync-dev-assets.sh" not in repack_deb
     assert "capsem-admin" in repack_deb
     assert "capsem-tui" in repack_deb
     assert "/usr/share/capsem/assets" in deb_postinst
     assert "/usr/share/capsem/profiles" in deb_postinst
-    assert 'install -m 0644 /usr/share/capsem/assets/manifest.json "$CAPSEM_DIR/assets/manifest.json"' in deb_postinst
-    assert 'install -m 0644 /usr/share/capsem/assets/manifest-origin.json "$CAPSEM_DIR/assets/manifest-origin.json"' in deb_postinst
+    assert (
+        'install -m 0644 /usr/share/capsem/assets/manifest.json "$CAPSEM_DIR/assets/manifest.json"'
+        in deb_postinst
+    )
+    assert (
+        'install -m 0644 /usr/share/capsem/assets/manifest-origin.json "$CAPSEM_DIR/assets/manifest-origin.json"'
+        in deb_postinst
+    )
     assert "event=manifest_copied" in deb_postinst
-    assert 'MANIFEST_REPORT=$(/usr/bin/capsem-admin manifest check --json "$CAPSEM_DIR/assets/manifest.json" | tr' in deb_postinst
+    assert (
+        'MANIFEST_REPORT=$(/usr/bin/capsem-admin manifest check --json "$CAPSEM_DIR/assets/manifest.json" | tr'
+        in deb_postinst
+    )
     assert "event=manifest_report" in deb_postinst
-    assert 'MANIFEST_ORIGIN=$(tr' in deb_postinst
+    assert "MANIFEST_ORIGIN=$(tr" in deb_postinst
     assert "event=manifest_origin" in deb_postinst
-    assert 'CAPSEM_HOME=\\"$CAPSEM_DIR\\" CAPSEM_RUN_DIR=\\"$CAPSEM_DIR/run\\" \\"$CAPSEM_DIR/bin/capsem\\" update --assets' in deb_postinst
+    assert (
+        'CAPSEM_HOME=\\"$CAPSEM_DIR\\" CAPSEM_RUN_DIR=\\"$CAPSEM_DIR/run\\" \\"$CAPSEM_DIR/bin/capsem\\" update --assets'
+        in deb_postinst
+    )
     assert "event=assets_hydrated" in deb_postinst
     assert "event=asset_hydration_failed" in deb_postinst
     assert "event=assets_copied" not in deb_postinst
@@ -199,20 +229,32 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert "event=binary_missing bin=$bin" in deb_postinst
     assert 'INSTALL_LOG="$CAPSEM_DIR/logs/install.log"' in deb_postinst
     assert 'INSTALL_RUN_LOG="$CAPSEM_DIR/logs/install-$INSTALL_RUN_ID.log"' in deb_postinst
-    assert 'install-current-run' in deb_postinst
-    assert 'install-latest.log' in deb_postinst
+    assert "install-current-run" in deb_postinst
+    assert "install-latest.log" in deb_postinst
     assert 'exec > >(tee -a "$INSTALL_LOG" "$INSTALL_RUN_LOG") 2>&1' in deb_postinst
     assert "capsem-admin" in deb_postinst
     assert "capsem-tui" in deb_postinst
 
-    assert 'install -m 0644 "$PKG_SHARE/assets/manifest.json" "$CAPSEM_DIR/assets/manifest.json"' in pkg_postinstall
-    assert 'install -m 0644 "$PKG_SHARE/assets/manifest-origin.json" "$CAPSEM_DIR/assets/manifest-origin.json"' in pkg_postinstall
+    assert (
+        'install -m 0644 "$PKG_SHARE/assets/manifest.json" "$CAPSEM_DIR/assets/manifest.json"'
+        in pkg_postinstall
+    )
+    assert (
+        'install -m 0644 "$PKG_SHARE/assets/manifest-origin.json" "$CAPSEM_DIR/assets/manifest-origin.json"'
+        in pkg_postinstall
+    )
     assert "event=manifest_copied" in pkg_postinstall
-    assert 'MANIFEST_REPORT=$("$CAPSEM_DIR/bin/capsem-admin" manifest check --json "$CAPSEM_DIR/assets/manifest.json" | tr' in pkg_postinstall
+    assert (
+        'MANIFEST_REPORT=$("$CAPSEM_DIR/bin/capsem-admin" manifest check --json "$CAPSEM_DIR/assets/manifest.json" | tr'
+        in pkg_postinstall
+    )
     assert "event=manifest_report" in pkg_postinstall
-    assert 'MANIFEST_ORIGIN=$(tr' in pkg_postinstall
+    assert "MANIFEST_ORIGIN=$(tr" in pkg_postinstall
     assert "event=manifest_origin" in pkg_postinstall
-    assert 'CAPSEM_HOME=\\"$CAPSEM_DIR\\" CAPSEM_RUN_DIR=\\"$CAPSEM_DIR/run\\" \\"$CAPSEM_DIR/bin/capsem\\" update --assets' in pkg_postinstall
+    assert (
+        'CAPSEM_HOME=\\"$CAPSEM_DIR\\" CAPSEM_RUN_DIR=\\"$CAPSEM_DIR/run\\" \\"$CAPSEM_DIR/bin/capsem\\" update --assets'
+        in pkg_postinstall
+    )
     assert "event=assets_hydrated" in pkg_postinstall
     assert "event=asset_hydration_failed" in pkg_postinstall
     assert "event=assets_copied" not in pkg_postinstall
@@ -233,7 +275,7 @@ def test_macos_postinstall_adds_capsem_bin_to_fish_path() -> None:
     assert 'INSTALL_LOG="$CAPSEM_DIR/logs/install.log"' in postinstall
     assert 'INSTALL_RUN_ID=$(cat "$INSTALL_RUN_FILE" 2>/dev/null || date' in postinstall
     assert 'INSTALL_RUN_LOG="$CAPSEM_DIR/logs/install-$INSTALL_RUN_ID.log"' in postinstall
-    assert 'install-latest.log' in postinstall
+    assert "install-latest.log" in postinstall
     assert 'exec > >(tee -a "$INSTALL_LOG" "$INSTALL_RUN_LOG") 2>&1' in postinstall
     assert "event=readiness_poll" in postinstall
     assert "attempt=$attempt" in postinstall
@@ -256,12 +298,8 @@ def test_release_workflow_decouples_vm_assets_and_keeps_full_host_binary_set() -
 
 def test_release_workflow_retries_app_cargo_tool_installs() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "release.yaml").read_text()
-    build_app_macos = workflow.split("  build-app-macos:", 1)[1].split(
-        "\n  build-app-linux:", 1
-    )[0]
-    build_app_linux = workflow.split("  build-app-linux:", 1)[1].split(
-        "\n  create-release:", 1
-    )[0]
+    build_app_macos = workflow.split("  build-app-macos:", 1)[1].split("\n  build-app-linux:", 1)[0]
+    build_app_linux = workflow.split("  build-app-linux:", 1)[1].split("\n  create-release:", 1)[0]
 
     assert "cargo install tauri-cli cargo-auditable cargo-sbom --locked" not in workflow
     assert "cargo install tauri-cli cargo-auditable --locked" not in workflow

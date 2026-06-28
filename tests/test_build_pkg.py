@@ -2,6 +2,7 @@
 
 import contextlib
 import functools
+import hashlib
 import http.server
 import json
 import plistlib
@@ -67,7 +68,7 @@ def _seed_binaries(bin_dir: Path) -> None:
 def _seed_config(config_dir: Path) -> None:
     profile = config_dir / "profiles" / "code"
     profile.mkdir(parents=True)
-    (profile / "profile.toml").write_text("id = \"code\"\n")
+    (profile / "profile.toml").write_text('id = "code"\n')
     (profile / "enforcement.toml").write_text("# enforcement\n")
 
 
@@ -184,7 +185,10 @@ def test_macos_pkg_payload_is_closed_and_manifest_only_for_assets(tmp_path: Path
         assert origin["schema"] == "capsem.manifest_origin.v1"
         assert origin["origin"] == "package"
         assert origin["source"] == manifest.resolve().as_uri()
+        assert "fetched_at" in origin
         assert "packaged_at" in origin
+        assert origin["package_version"] == version
+        assert origin["snapshot_sha256"] == hashlib.sha256(manifest.read_bytes()).hexdigest()
 
         for name in REQUIRED_BINARIES:
             assert (share / "bin" / name).is_file()
@@ -360,6 +364,9 @@ def test_macos_pkg_remote_manifest_override_records_source_and_payload(tmp_path:
         assert origin["schema"] == "capsem.manifest_origin.v1"
         assert origin["origin"] == "package"
         assert origin["source"] == manifest_url
+        assert "fetched_at" in origin
         assert "packaged_at" in origin
+        assert origin["package_version"] == version
+        assert origin["snapshot_sha256"] == hashlib.sha256(manifest.read_bytes()).hexdigest()
     finally:
         output_pkg.unlink(missing_ok=True)

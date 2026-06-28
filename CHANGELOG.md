@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Stored release-channel cache provenance for update checks, including the
   fetched channel hash, validation status, and validation errors exposed through
   the update status API.
+- Recorded package manifest snapshot provenance with fetched time, snapshot
+  SHA-256, and package release version in installed manifest-origin metadata.
 
 ## [1.3.1782582155] - 2026-06-27
 

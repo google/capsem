@@ -15,6 +15,7 @@ executed in Linux CI and inside the capsem-install-test container.
 
 import contextlib
 import functools
+import hashlib
 import http.server
 import json
 import shutil
@@ -64,7 +65,8 @@ def _build_fixture_deb(workdir: Path, name: str = "capsem-fixture", version: str
     deb_path = workdir / f"{name}_{version}_all.deb"
     subprocess.run(
         ["dpkg-deb", "-b", str(root), str(deb_path)],
-        check=True, capture_output=True,
+        check=True,
+        capture_output=True,
     )
     return deb_path
 
@@ -86,7 +88,7 @@ def _seed_config(config_dir: Path):
     """Drop a minimal materialized profile catalog."""
     profiles = config_dir / "profiles"
     (profiles / "code").mkdir(parents=True, exist_ok=True)
-    (profiles / "code" / "profile.toml").write_text("id = \"code\"\n")
+    (profiles / "code" / "profile.toml").write_text('id = "code"\n')
     (profiles / "code" / "enforcement.toml").write_text("# enforcement\n")
 
 
@@ -150,7 +152,8 @@ def _deb_contents(deb: Path, dest: Path) -> Path:
     """Extract a .deb to dest/ and return dest."""
     subprocess.run(
         ["dpkg-deb", "-R", str(deb), str(dest)],
-        check=True, capture_output=True,
+        check=True,
+        capture_output=True,
     )
     return dest
 
@@ -184,9 +187,7 @@ def test_happy_path_adds_every_companion_binary(tmp_path):
     output = tmp_path / "out.deb"
 
     res = _run_repack(fixture, bin_dir, config_dir, output)
-    assert res.returncode == 0, (
-        f"repack-deb.sh failed: stdout={res.stdout!r} stderr={res.stderr!r}"
-    )
+    assert res.returncode == 0, f"repack-deb.sh failed: stdout={res.stdout!r} stderr={res.stderr!r}"
     assert output.exists(), "output .deb was not created"
 
     extracted = _deb_contents(output, tmp_path / "extracted")
@@ -196,9 +197,7 @@ def test_happy_path_adds_every_companion_binary(tmp_path):
         assert binary.stat().st_mode & 0o777 == 0o755, (
             f"{name} installed with mode {oct(binary.stat().st_mode & 0o777)}, expected 0o755"
         )
-    assert (
-        extracted / "usr" / "share" / "capsem" / "profiles" / "code" / "profile.toml"
-    ).exists()
+    assert (extracted / "usr" / "share" / "capsem" / "profiles" / "code" / "profile.toml").exists()
 
 
 def test_postinst_script_is_included(tmp_path):
@@ -245,9 +244,7 @@ def test_missing_companion_binary_fails_loudly(tmp_path):
         f"stdout={res.stdout!r} stderr={res.stderr!r}"
     )
     combined = res.stdout + res.stderr
-    assert "capsem-tray" in combined, (
-        f"error message should mention capsem-tray, got: {combined!r}"
-    )
+    assert "capsem-tray" in combined, f"error message should mention capsem-tray, got: {combined!r}"
 
 
 def test_path_with_embedded_newline_fails(tmp_path):
@@ -269,7 +266,9 @@ def test_path_with_embedded_newline_fails(tmp_path):
     mangled = f"{fixture}\n{fixture}"
     res = subprocess.run(
         [str(SCRIPT), mangled, str(bin_dir), str(config_dir)],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     assert res.returncode != 0, (
         "repack should have failed on a newline-containing input path; "
@@ -336,9 +335,7 @@ def test_explicit_manifest_is_packaged_without_current_arch_assets(tmp_path):
         text=True,
         timeout=30,
     )
-    assert res.returncode == 0, (
-        f"repack-deb.sh failed: stdout={res.stdout!r} stderr={res.stderr!r}"
-    )
+    assert res.returncode == 0, f"repack-deb.sh failed: stdout={res.stdout!r} stderr={res.stderr!r}"
 
     extracted = _deb_contents(output, tmp_path / "extracted")
     assets_dir = extracted / "usr" / "share" / "capsem" / "assets"
@@ -349,7 +346,10 @@ def test_explicit_manifest_is_packaged_without_current_arch_assets(tmp_path):
     assert origin["schema"] == "capsem.manifest_origin.v1"
     assert origin["origin"] == "package"
     assert origin["source"] == manifest.resolve().as_uri()
+    assert "fetched_at" in origin
     assert "packaged_at" in origin
+    assert origin["package_version"] == "0.0.1"
+    assert origin["snapshot_sha256"] == hashlib.sha256(manifest.read_bytes()).hexdigest()
     assert sorted(path.name for path in assets_dir.iterdir()) == [
         "manifest-origin.json",
         "manifest.json",
@@ -397,9 +397,7 @@ def test_explicit_remote_manifest_is_packaged_with_origin_provenance(tmp_path):
             text=True,
             timeout=30,
         )
-    assert res.returncode == 0, (
-        f"repack-deb.sh failed: stdout={res.stdout!r} stderr={res.stderr!r}"
-    )
+    assert res.returncode == 0, f"repack-deb.sh failed: stdout={res.stdout!r} stderr={res.stderr!r}"
 
     extracted = _deb_contents(output, tmp_path / "extracted-remote")
     assets_dir = extracted / "usr" / "share" / "capsem" / "assets"
@@ -412,7 +410,10 @@ def test_explicit_remote_manifest_is_packaged_with_origin_provenance(tmp_path):
     assert origin["schema"] == "capsem.manifest_origin.v1"
     assert origin["origin"] == "package"
     assert origin["source"] == manifest_url
+    assert "fetched_at" in origin
     assert "packaged_at" in origin
+    assert origin["package_version"] == "0.0.1"
+    assert origin["snapshot_sha256"] == hashlib.sha256(manifest.read_bytes()).hexdigest()
 
 
 def test_repacked_deb_payload_is_closed_and_manifest_only_for_assets(tmp_path):
@@ -442,9 +443,7 @@ def test_repacked_deb_payload_is_closed_and_manifest_only_for_assets(tmp_path):
         text=True,
         timeout=30,
     )
-    assert res.returncode == 0, (
-        f"repack-deb.sh failed: stdout={res.stdout!r} stderr={res.stderr!r}"
-    )
+    assert res.returncode == 0, f"repack-deb.sh failed: stdout={res.stdout!r} stderr={res.stderr!r}"
 
     extracted = _deb_contents(output, tmp_path / "extracted")
     assets_dir = extracted / "usr" / "share" / "capsem" / "assets"
