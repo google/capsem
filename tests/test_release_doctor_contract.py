@@ -264,7 +264,13 @@ def test_docs_and_marketing_sites_build_on_pr_and_deploy_on_main_only() -> None:
 
 def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> None:
     workflow = _workflow_text("release.yaml")
+    trigger = workflow.split("\npermissions:", maxsplit=1)[0]
 
+    assert "push:" in trigger
+    assert "tags: ['v*']" in trigger
+    assert "workflow_dispatch:" not in trigger
+    assert "pull_request:" not in trigger
+    assert "branches:" not in trigger
     assert "ASSET_MANIFEST_URL: https://release.capsem.org/assets/stable/manifest.json" in workflow
     assert "  build-assets:" not in workflow
     assert "vm-assets-" not in workflow
