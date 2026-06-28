@@ -183,6 +183,7 @@ graph TD
 | `format` | integer | Manifest format; current format is `2` |
 | `assets.current` | string | Current VM asset release id |
 | `assets.releases.*.arches` | map | Arch -> logical asset names |
+| `assets.releases.*.deprecated` | boolean | Release-history flag; deprecated VM asset releases remain auditable but are not selected for new sessions or downloads |
 | `vmlinuz`, `initrd.img`, `rootfs.erofs`, `obom.cdx.json` | object | Bare logical filename with BLAKE3 hash and byte size |
 | `binaries.current` | string | Current binary release id |
 | `binaries.releases.*.files` | list | Published package filenames with SHA-256 metadata |

@@ -117,6 +117,10 @@ Key points:
 - **Compatibility is explicit.** `min_binary` on an asset release and `min_assets` on a binary release define the allowed pairings for upgrades and downloads.
   The runtime selector enforces both directions: an older binary will not hydrate
   asset bytes whose release declares a newer `min_binary`.
+- **Deprecated releases are history, not candidates.** Deprecated VM asset
+  releases remain in the channel manifest and release-site history for audit and
+  pinned-VM compatibility, but new sessions and asset hydration skip them when
+  selecting a compatible release.
 
 ### Manifest producer
 
@@ -229,6 +233,11 @@ If rootfs is not found locally, `create_asset_manager()` loads the manifest and 
 2. Downloads the URL when the hash-prefixed local asset is missing
 3. Verifies BLAKE3 hash and size after download, deletes on mismatch
 4. Atomically renames temp file to final path
+
+The compatible asset selector ignores releases marked `deprecated: true` for
+new downloads. Existing VM pins and cleanup preserve already-pinned asset bytes
+through the VM lifecycle rail; deprecation prevents new selection rather than
+rewriting running VMs.
 
 Release installers are intentionally thin. They install host binaries and the
 selected `manifest.json`; kernel/initrd/rootfs bytes are downloaded from the

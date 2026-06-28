@@ -15,7 +15,8 @@ Binary and asset versions are **independent**:
 
 The manifest tracks both with compatibility ranges (`min_binary`, `min_assets`).
 Runtime asset selection enforces both directions: older binaries do not hydrate
-asset releases whose `min_binary` requires a newer binary.
+asset releases whose `min_binary` requires a newer binary, and new
+session/download selection skips releases marked `deprecated: true`.
 
 ## Key Commands
 
@@ -106,6 +107,9 @@ references, host SBOM references, binary file metadata when present, an explicit
 profile catalog block with revision, published catalog artifact path, BLAKE3 digest,
 compatibility minimums, and whether the advertised profile catalog requires a
 newer binary or VM asset set, plus host and VM asset attestation references.
+It also carries asset release history, including deprecated VM asset releases;
+deprecated releases remain auditable but are not candidates for new
+session/download selection.
 
 The manual asset workflow is `.github/workflows/release-assets.yaml`. It should
 remain explicit/manual, build VM assets, publish changed blobs to an immutable
@@ -150,6 +154,8 @@ Hash-based naming: `{stem}-{hash[..16]}{ext}`. Same hash = same file across vers
 ## Cleanup
 
 `cleanup_unused_assets(base_dir, manifest)` removes hash-named files not referenced by any non-deprecated asset release. Also removes legacy `v*/` directories.
+Existing VM pins are preserved by the VM pinning rail; deprecation blocks new
+selection rather than rewriting running VMs.
 
 ## Common Issues
 

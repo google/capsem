@@ -221,10 +221,16 @@ The generated `health.json` is the compact machine-readable release-site index.
 It carries schema `capsem.assets_channel.health.v1`, the active manifest URL,
 the immutable asset base URL, current binary and asset versions, current asset
 file download URLs, VM OBOM references, host SBOM references, binary file
-metadata when present, and host plus VM asset attestation references. It also carries an explicit `updates` block with
+metadata when present, `asset_releases` history including deprecated VM asset
+releases, and host plus VM asset attestation references. It also carries an explicit `updates` block with
 `latest` targets for binary/assets/profile/image freshness checks so clients do
 not reverse-engineer status from unrelated fields. Use it for status/provenance checks; use
 `assets/<channel>/manifest.json` as the compatibility and hash authority.
+
+Deprecated VM asset releases stay visible in `health.json` and the human index
+for auditability, but runtime resolution and `capsem update --assets` skip them
+for new sessions/downloads. Existing VM pins are preserved by the VM asset-pin
+rail rather than by selecting deprecated releases again.
 
 ## Running CI checks locally
 
