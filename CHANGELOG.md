@@ -32,6 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added release-channel Cloudflare prerequisites for the `capsem-release` Pages
   project, `release.capsem.org` custom domain, and required deploy secrets
   across release and asset-pipeline guidance.
+- Added asset-pipeline skill guidance that corporate VM asset channels use the
+  same URL-only `--manifest` update contract as the public release channel.
 - Added service-route regression coverage proving confirmed binary/profile
   updates and VM asset refreshes dispatch separate CLI commands.
 - Added service and gateway update action routes that expose dry-run command

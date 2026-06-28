@@ -86,7 +86,12 @@ rerun the failing recipe.
 
 The public producer is `capsem-admin manifest generate <assets_dir>`. Full
 asset builds and initrd repacks feed that same profile-derived build rail so local, CI, and
-corporate manifests use one contract.
+corporate manifests use one contract. Corporate VM asset channels use
+`capsem update --assets --manifest <URL>`; `--manifest` is URL-shaped, so local
+custom manifests use `file:///absolute/path/to/manifest.json`, while hosted corp
+channels use `https://...` or `http://...`. Do not use `capsem update --corp`
+for asset channels: `--corp` provisions corporate policy config, while
+corporate VM asset channels stay on the shared manifest/update path.
 
 The public asset channel is generated from that manifest with
 `capsem-admin assets channel build`. Do not invent a separate release-channel

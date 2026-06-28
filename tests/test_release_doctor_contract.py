@@ -755,6 +755,16 @@ def test_docs_do_not_teach_bare_manifest_paths_for_package_inputs() -> None:
         assert "--manifest file:///path/to/assets/manifest.json" in text, path
 
 
+def test_asset_skill_documents_custom_manifest_url_contract() -> None:
+    skill = (PROJECT_ROOT / "skills/asset-pipeline/SKILL.md").read_text()
+
+    assert "capsem update --assets --manifest <URL>" in skill
+    assert "`--manifest` is URL-shaped" in skill
+    assert "`file:///absolute/path/to/manifest.json`" in skill
+    assert "`https://...` or `http://...`" in skill
+    assert "`--corp` provisions corporate policy config" in skill
+
+
 def test_ci_docs_describes_three_independent_publication_rails() -> None:
     docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
 
