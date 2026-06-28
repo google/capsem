@@ -8,6 +8,23 @@ CONFIG_ROOT="${CAPSEM_CONFIG_ROOT:-$ROOT/config}"
 MANIFEST="${CAPSEM_ASSET_MANIFEST:-$ROOT/$ASSETS_DIR/manifest.json}"
 ASSETS_PATH="${CAPSEM_ASSETS_PATH:-$ROOT/$ASSETS_DIR}"
 
+manifest_url() {
+    python3 - "$MANIFEST" <<'PY'
+from pathlib import Path
+import sys
+from urllib.parse import urlparse
+
+source = sys.argv[1]
+parsed = urlparse(source)
+if parsed.scheme in {"file", "http", "https"}:
+    print(source)
+elif parsed.scheme:
+    raise SystemExit(f"unsupported manifest URL scheme: {parsed.scheme}")
+else:
+    print(Path(source).resolve().as_uri())
+PY
+}
+
 normalize_arch() {
     local arch="$1"
     case "$arch" in
@@ -29,8 +46,20 @@ manifest_arches="$(
 import json
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
+from urllib.request import url2pathname, urlopen
 
-manifest = json.loads(Path(sys.argv[1]).read_text())
+source = sys.argv[1]
+parsed = urlparse(source)
+if parsed.scheme in {"http", "https"}:
+    content = urlopen(source, timeout=60).read().decode("utf-8")
+elif parsed.scheme == "file":
+    content = Path(url2pathname(parsed.path)).read_text()
+elif parsed.scheme:
+    raise SystemExit(f"unsupported manifest URL scheme: {parsed.scheme}")
+else:
+    content = Path(source).read_text()
+manifest = json.loads(content)
 current = manifest["assets"]["current"]
 arches = manifest["assets"]["releases"][current]["arches"]
 for arch in sorted(arches):
@@ -78,7 +107,7 @@ for profile_path in "${profile_paths[@]}"; do
     cargo run -p capsem-admin -- profile materialize \
         --profile "$profile_path" \
         --config-root "$CONFIG_ROOT" \
-        --manifest "$MANIFEST" \
+        --manifest "$(manifest_url)" \
         --assets-dir "$ASSETS_PATH" \
         --output-root "$OUTPUT_ROOT" \
         --arch "$arch"

@@ -910,7 +910,7 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd _materialize-co
         eval cargo tauri build --bundles app $TAURI_FLAGS
         echo "=== Assembling .pkg (v$VERSION) ==="
         bash scripts/build-pkg.sh \
-            --manifest "{{assets_dir}}/manifest.json" \
+            --manifest "file://$PWD/{{assets_dir}}/manifest.json" \
             "target/release/bundle/macos/Capsem.app" \
             "target/release" \
             "{{assets_dir}}" \
@@ -927,7 +927,7 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd _materialize-co
         echo "=== Building .deb ==="
         eval cargo tauri build --bundles deb $TAURI_FLAGS
         DEB=$(ls target/release/bundle/deb/*.deb)
-        bash scripts/repack-deb.sh --manifest "{{assets_dir}}/manifest.json" "$DEB" "target/release" "target/config" "{{assets_dir}}"
+        bash scripts/repack-deb.sh --manifest "file://$PWD/{{assets_dir}}/manifest.json" "$DEB" "target/release" "target/config" "{{assets_dir}}"
         echo "=== Installing .deb ==="
         sudo dpkg -i "$DEB" 2>&1 || sudo apt-get install -f -y
     fi
@@ -1064,7 +1064,7 @@ test-install:
         "cd /src && bash scripts/materialize-config.sh"
     echo "Repacking .deb with companion binaries..."
     docker exec -u capsem "$CONTAINER" bash -c \
-        'cd /src && DEB=$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && bash scripts/repack-deb.sh --manifest assets/manifest.json "$DEB" /cargo-target/debug target/config assets'
+        'cd /src && DEB=$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && bash scripts/repack-deb.sh --manifest "file://$PWD/assets/manifest.json" "$DEB" /cargo-target/debug target/config assets'
     echo "Installing .deb via dpkg..."
     docker exec "$CONTAINER" bash -c \
         "dpkg -i /cargo-target/debug/bundle/deb/*.deb 2>&1 || apt-get install -f -y"

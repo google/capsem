@@ -1,7 +1,7 @@
 #!/bin/bash
 # build-pkg.sh -- Build a macOS .pkg installer from Tauri output + companion binaries.
 #
-# Usage: build-pkg.sh [--manifest manifest.json|file://...|http://...|https://...] <app_path> <bin_dir> <assets_dir> <config_root> <version> [signing_identity]
+# Usage: build-pkg.sh [--manifest file://...|http://...|https://...] <app_path> <bin_dir> <assets_dir> <config_root> <version> [signing_identity]
 #
 # Arguments:
 #   app_path          Path to signed Capsem.app (from Tauri build)
@@ -10,7 +10,7 @@
 #   config_root       Materialized runtime config root (usually target/config)
 #   version           Version string (e.g. "0.16.1")
 #   signing_identity  Optional: Developer ID Installer identity for productsign
-#   --manifest        Optional local/remote manifest to package instead of <assets_dir>/manifest.json.
+#   --manifest        Optional manifest URL to package instead of <assets_dir>/manifest.json.
 #
 # Output: Capsem-<version>.pkg in the current directory
 #
@@ -27,7 +27,7 @@ set -euo pipefail
 export COPYFILE_DISABLE=1
 
 usage() {
-    echo "usage: build-pkg.sh [--manifest manifest.json|file://...|http://...|https://...] <app_path> <bin_dir> <assets_dir> <config_root> <version> [signing_identity]" >&2
+    echo "usage: build-pkg.sh [--manifest file://...|http://...|https://...] <app_path> <bin_dir> <assets_dir> <config_root> <version> [signing_identity]" >&2
 }
 
 MANIFEST_PATH=""
@@ -36,7 +36,7 @@ POSITIONAL=()
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --manifest)
-            MANIFEST_PATH="${2:?--manifest requires a path}"
+            MANIFEST_PATH="${2:?--manifest requires a URL}"
             shift 2
             ;;
         --signing-identity)
@@ -109,18 +109,24 @@ import urllib.request
 raw_source = sys.argv[1]
 dst = pathlib.Path(sys.argv[2])
 parsed = urllib.parse.urlparse(raw_source)
-if parsed.scheme in ("http", "https"):
-    source = raw_source
-elif parsed.scheme == "file":
-    source = str(pathlib.Path(urllib.request.url2pathname(parsed.path)).resolve())
-else:
-    source = str(pathlib.Path(raw_source).resolve())
+if parsed.scheme not in ("http", "https", "file"):
+    raise SystemExit(f"manifest source must be a URL: {raw_source}")
 dst.write_text(json.dumps({
     "schema": "capsem.manifest_origin.v1",
     "origin": "package",
-    "source": source,
+    "source": raw_source,
     "packaged_at": datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
 }, sort_keys=True) + "\n")
+PY
+}
+
+file_url() {
+    local path="${1:?file_url <path>}"
+    python3 - "$path" <<'PY'
+import pathlib
+import sys
+
+print(pathlib.Path(sys.argv[1]).resolve().as_uri())
 PY
 }
 
@@ -162,7 +168,7 @@ elif parsed.scheme == "file":
 elif parsed.scheme:
     raise SystemExit(f"unsupported manifest URL scheme: {parsed.scheme}")
 else:
-    dst.write_bytes(pathlib.Path(source).read_bytes())
+    raise SystemExit(f"manifest must be a URL: use https://..., http://..., or file:///absolute/path, got {source}")
 PY
 }
 
@@ -198,7 +204,7 @@ fi
 # corp/release assets.
 mkdir -p "$SHARE_DIR/assets"
 ASSETS_VIEW="$ASSETS_DIR"
-SELECTED_MANIFEST_SOURCE="$ASSETS_DIR/manifest.json"
+SELECTED_MANIFEST_SOURCE="$(file_url "$ASSETS_DIR/manifest.json")"
 if [ -n "$MANIFEST_PATH" ]; then
     SELECTED_MANIFEST_SOURCE="$MANIFEST_PATH"
     ASSETS_VIEW="$WORK_DIR/assets-view"

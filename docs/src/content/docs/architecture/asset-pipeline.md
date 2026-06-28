@@ -54,6 +54,7 @@ assets/
 | `just shell` / `just exec "CMD"` | Repack initrd, materialize runtime config, sign, boot |
 | `capsem-admin manifest generate assets` | Generate `assets/manifest.json` from an asset directory |
 | `capsem-admin profile materialize` | Generate `target/config` from source `config/` plus `assets/manifest.json` |
+| `capsem-admin assets channel build` | Generate `target/release-channel` with `assets/<channel>/manifest.json` for release.capsem.org |
 | `capsem-admin image build --profile config/profiles/code/profile.toml --config-root config --arch arm64 --template rootfs` | Build one template for one arch through the profile rail |
 
 `config/` is checked-in source material: profile, corp, settings, rule files,
@@ -100,6 +101,11 @@ The manifest (`assets/manifest.json`, format 2) is a single top-level file cover
 }
 ```
 
+The public asset channel is a deployed view of that same manifest. The generated
+Cloudflare Pages root is `target/release-channel/`, with the machine manifest at
+`target/release-channel/assets/stable/manifest.json`. After deployment the URL
+is `https://release.capsem.org/assets/stable/manifest.json`.
+
 Key points:
 - **Single file, not per-arch.** Arches are nested under `assets.releases.<ver>.arches.<arch>`.
 - **Filenames are bare** (`"vmlinuz"`, not `"arm64/vmlinuz"`) -- the arch map provides the context.
@@ -109,6 +115,8 @@ Key points:
   filenames because the arch map already names the architecture.
 - **Hashes are BLAKE3**, 64 lowercase hex characters. Format is validated by `asset_manager.rs`; non-format-2 manifests are rejected.
 - **Compatibility is explicit.** `min_binary` on an asset release and `min_assets` on a binary release define the allowed pairings for upgrades and downloads.
+  The runtime selector enforces both directions: an older binary will not hydrate
+  asset bytes whose release declares a newer `min_binary`.
 
 ### Manifest producer
 
@@ -151,7 +159,7 @@ Corporate/custom asset builds use the same sequence as release:
 capsem-admin manifest generate /path/to/assets --version 1.3.corp.1 --json
 capsem-admin manifest check /path/to/assets/manifest.json --json
 bash scripts/build-pkg.sh \
-  --manifest /path/to/assets/manifest.json \
+  --manifest file:///path/to/assets/manifest.json \
   target/release/bundle/macos/Capsem.app \
   target/release \
   /path/to/assets \
@@ -162,7 +170,9 @@ bash scripts/build-pkg.sh \
 The package copies that selected manifest into its payload and writes
 `manifest-origin.json`. Installed service status exposes the manifest path,
 BLAKE3 hash, origin, and source so corp can debug exactly which manifest a
-machine is using.
+machine is using. `--manifest` is always URL-shaped: local custom manifests use
+`file:///absolute/path/to/manifest.json`, while hosted corp channels use
+`https://...` or `http://...`.
 
 ## Runtime Hash Verification
 

@@ -102,7 +102,7 @@ def _materialize_code_profile(tmp_path: Path, source_assets: Path, manifest: Pat
             "--config-root",
             str(PROJECT_ROOT / "config"),
             "--manifest",
-            str(manifest),
+            manifest.resolve().as_uri(),
             "--assets-dir",
             str(source_assets),
             "--output-root",

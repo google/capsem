@@ -27,7 +27,7 @@ def test_just_install_does_not_sync_assets_after_installer() -> None:
     assert "CAPSEM_DEB_ASSET_MODE=current-arch bash scripts/repack-deb.sh" not in install_body
     assert "bash scripts/build-pkg.sh" in install_body
     assert "bash scripts/repack-deb.sh --manifest" in install_body
-    assert '--manifest "{{assets_dir}}/manifest.json"' in install_body
+    assert '--manifest "file://$PWD/{{assets_dir}}/manifest.json"' in install_body
     assert '"target/config"' in install_body
     assert "install: _pnpm-install _stamp-version _check-assets _pack-initrd _materialize-config" in install_body
     assert "pkill -9 -x capsem-app" in install_body
@@ -112,11 +112,13 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert "ASSET_MODE=" not in build_pkg
     assert "export COPYFILE_DISABLE=1" in build_pkg
     assert "--manifest" in build_pkg
-    assert 'MANIFEST_PATH="${2:?--manifest requires a path}"' in build_pkg
+    assert 'MANIFEST_PATH="${2:?--manifest requires a URL}"' in build_pkg
     assert "materialize_manifest_input" in build_pkg
     assert 'parsed.scheme in ("http", "https")' in build_pkg
     assert "urllib.request.urlopen(source, timeout=60)" in build_pkg
     assert "unsupported manifest URL scheme" in build_pkg
+    assert "manifest must be a URL" in build_pkg
+    assert "pathlib.Path(source).read_bytes()" not in build_pkg
     assert '--version "$VERSION"' in build_pkg
     assert "PKG_VERSION" not in build_pkg
     assert 'materialize_manifest_input "$MANIFEST_PATH" "$ASSETS_VIEW/manifest.json"' in build_pkg
@@ -163,6 +165,8 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert 'parsed.scheme in ("http", "https")' in repack_deb
     assert "urllib.request.urlopen(source, timeout=60)" in repack_deb
     assert "unsupported manifest URL scheme" in repack_deb
+    assert "manifest must be a URL" in repack_deb
+    assert "pathlib.Path(source).read_bytes()" not in repack_deb
     assert "BUILD_TS=" not in repack_deb
     assert 'materialize_manifest_input "$MANIFEST_PATH" "$ASSETS_VIEW/manifest.json"' in repack_deb
     assert 'cp "$ASSETS_VIEW/manifest.json" "$WORK_DIR/deb/usr/share/capsem/assets/manifest.json"' in repack_deb

@@ -230,11 +230,13 @@ directory before packaging:
 ```bash
 capsem-admin manifest generate /path/to/assets --version 1.3.corp.1 --json
 capsem-admin manifest check /path/to/assets/manifest.json --json
-bash scripts/build-pkg.sh --manifest /path/to/assets/manifest.json ...
+bash scripts/build-pkg.sh --manifest file:///path/to/assets/manifest.json ...
 ```
 
 The installer moves that manifest into the installed service asset directory,
 and status reports the installed manifest hash plus package provenance.
+`--manifest` is URL-only so custom local manifests use `file://` and hosted
+corporate channels use `https://` or `http://`.
 
 ## Supply chain controls
 

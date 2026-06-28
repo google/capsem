@@ -15,6 +15,7 @@ use capsem_core::net::policy_config::{
 };
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
+use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 #[derive(Debug, Parser)]
 #[command(name = "capsem-admin")]
@@ -31,6 +32,7 @@ enum Commands {
     Enforcement(RuleFileCommand),
     Detection(RuleFileCommand),
     Manifest(ManifestCommand),
+    Assets(AssetsCommand),
     Image(ImageCommand),
 }
 
@@ -82,6 +84,29 @@ enum ManifestSubcommand {
 }
 
 #[derive(Debug, Parser)]
+struct AssetsCommand {
+    #[command(subcommand)]
+    command: AssetsSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum AssetsSubcommand {
+    Channel(AssetsChannelCommand),
+}
+
+#[derive(Debug, Parser)]
+struct AssetsChannelCommand {
+    #[command(subcommand)]
+    command: AssetsChannelSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum AssetsChannelSubcommand {
+    Build(AssetsChannelBuildArgs),
+    Check(AssetsChannelCheckArgs),
+}
+
+#[derive(Debug, Parser)]
 struct ImageCommand {
     #[command(subcommand)]
     command: ImageSubcommand,
@@ -127,9 +152,9 @@ struct ProfileMaterializeArgs {
     /// Source config root containing settings, corp, profiles, and rule files.
     #[arg(long, default_value = "config")]
     config_root: PathBuf,
-    /// Generated asset manifest to use for current build hashes.
-    #[arg(long, default_value = "assets/manifest.json")]
-    manifest: PathBuf,
+    /// Generated asset manifest URL to use for current build hashes.
+    #[arg(long)]
+    manifest: String,
     /// Built asset root containing per-arch logical asset files.
     #[arg(long, default_value = "assets")]
     assets_dir: PathBuf,
@@ -186,6 +211,41 @@ struct ManifestGenerateArgs {
     #[arg(long)]
     version: Option<String>,
     /// Emit the generated manifest after writing it.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Parser)]
+struct AssetsChannelBuildArgs {
+    /// Source asset manifest URL to publish into the channel.
+    #[arg(long)]
+    manifest: String,
+    /// Built asset root containing per-arch logical asset files.
+    #[arg(long, default_value = "assets")]
+    assets_dir: PathBuf,
+    /// Channel name to publish under assets/<channel>/manifest.json.
+    #[arg(long, default_value = "stable")]
+    channel: String,
+    /// Static output directory for Cloudflare Pages.
+    #[arg(long, default_value = "target/release-channel")]
+    out_dir: PathBuf,
+    /// Channel generation timestamp. Defaults to current UTC time.
+    #[arg(long)]
+    generated_at: Option<String>,
+    /// Emit a machine-readable build report.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Parser)]
+struct AssetsChannelCheckArgs {
+    /// Static output directory to validate.
+    #[arg(long, default_value = "target/release-channel")]
+    dist: PathBuf,
+    /// Channel name expected under assets/<channel>/manifest.json.
+    #[arg(long, default_value = "stable")]
+    channel: String,
+    /// Emit a machine-readable validation report.
     #[arg(long)]
     json: bool,
 }
@@ -517,6 +577,72 @@ struct CommandReport {
     argv: Vec<String>,
 }
 
+#[derive(Debug, Serialize)]
+struct AssetsChannelIndex {
+    schema_version: u64,
+    channel: String,
+    state: String,
+    generated_at: String,
+    release_site: String,
+    summary: String,
+    manifest: String,
+    asset_base: String,
+    manifest_blake3: String,
+    current_binary: String,
+    current_assets: String,
+    current_asset_state: String,
+    current_binary_state: String,
+    asset_releases: usize,
+    binary_releases: usize,
+    arches: Vec<String>,
+    current_asset_files: Vec<AssetsChannelAssetFile>,
+    current_binary_files: Vec<AssetsChannelBinaryFile>,
+    host_sboms: Vec<AssetsChannelBinaryFile>,
+    vm_oboms: Vec<AssetsChannelAssetFile>,
+    profile_update_state: String,
+    image_update_state: String,
+    notes: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct AssetsChannelAssetFile {
+    arch: String,
+    logical_name: String,
+    url: String,
+    hash: String,
+    size: u64,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct AssetsChannelBinaryFile {
+    name: String,
+    url: String,
+    sha256: String,
+    size: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct AssetsChannelBuildReport {
+    schema: &'static str,
+    channel: String,
+    generated_at: String,
+    out_dir: String,
+    index_html: String,
+    manifest: String,
+    health_json: String,
+    copied_assets: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct AssetsChannelCheckReport {
+    schema: &'static str,
+    ok: bool,
+    channel: String,
+    state: String,
+    dist: String,
+    manifest: String,
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
@@ -537,6 +663,12 @@ fn main() -> Result<()> {
         Commands::Manifest(command) => match command.command {
             ManifestSubcommand::Check(args) => manifest_check_command(args),
             ManifestSubcommand::Generate(args) => manifest_generate_command(args),
+        },
+        Commands::Assets(command) => match command.command {
+            AssetsSubcommand::Channel(command) => match command.command {
+                AssetsChannelSubcommand::Build(args) => assets_channel_build_command(args),
+                AssetsChannelSubcommand::Check(args) => assets_channel_check_command(args),
+            },
         },
         Commands::Image(command) => match command.command {
             ImageSubcommand::Build(args) => image_build_command(args),
@@ -715,6 +847,1030 @@ fn manifest_generate_command(args: ManifestGenerateArgs) -> Result<()> {
         );
     }
     Ok(())
+}
+
+fn assets_channel_build_command(args: AssetsChannelBuildArgs) -> Result<()> {
+    let generated_at = args.generated_at.unwrap_or(current_utc_rfc3339()?);
+    let report = build_assets_channel(
+        &args.manifest,
+        &args.assets_dir,
+        &args.channel,
+        &args.out_dir,
+        &generated_at,
+    )?;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!(
+            "generated assets channel {} at {}",
+            report.channel, report.out_dir
+        );
+    }
+    Ok(())
+}
+
+fn assets_channel_check_command(args: AssetsChannelCheckArgs) -> Result<()> {
+    let report = check_assets_channel(&args.dist, &args.channel)?;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!(
+            "valid: assets channel {} ({})",
+            report.channel,
+            args.dist.display()
+        );
+    }
+    Ok(())
+}
+
+fn build_assets_channel(
+    manifest_url: &str,
+    assets_dir: &Path,
+    channel: &str,
+    out_dir: &Path,
+    generated_at: &str,
+) -> Result<AssetsChannelBuildReport> {
+    validate_channel_name(channel)?;
+    let manifest_bytes = read_manifest_url(manifest_url)?;
+    let manifest_content = std::str::from_utf8(&manifest_bytes)
+        .with_context(|| format!("manifest URL did not return UTF-8 JSON: {manifest_url}"))?;
+    let manifest = ManifestV2::from_json(manifest_content)
+        .with_context(|| format!("parse manifest from {manifest_url}"))?;
+    let manifest_blake3 = blake3::hash(&manifest_bytes).to_hex().to_string();
+    let index = assets_channel_index(&manifest, channel, generated_at, &manifest_blake3);
+    let current_release = manifest
+        .assets
+        .releases
+        .get(&manifest.assets.current)
+        .ok_or_else(|| anyhow!("manifest current asset release is missing"))?;
+    let channel_dir = out_dir.join("assets").join(channel);
+    let release_dir = out_dir
+        .join("assets")
+        .join("releases")
+        .join(&manifest.assets.current);
+    if out_dir.exists() {
+        fs::remove_dir_all(out_dir).with_context(|| format!("remove {}", out_dir.display()))?;
+    }
+    fs::create_dir_all(&channel_dir)
+        .with_context(|| format!("create {}", channel_dir.display()))?;
+    fs::create_dir_all(&release_dir)
+        .with_context(|| format!("create {}", release_dir.display()))?;
+    let channel_manifest = channel_dir.join("manifest.json");
+    fs::write(&channel_manifest, &manifest_bytes)
+        .with_context(|| format!("write {}", channel_manifest.display()))?;
+    let copied_assets =
+        copy_assets_channel_release_assets(assets_dir, &release_dir, current_release)?;
+    fs::write(
+        out_dir.join("index.html"),
+        render_assets_channel_index(&index)?,
+    )
+    .with_context(|| format!("write {}", out_dir.join("index.html").display()))?;
+    fs::write(
+        out_dir.join("health.json"),
+        render_assets_channel_health(&index)?,
+    )
+    .with_context(|| format!("write {}", out_dir.join("health.json").display()))?;
+    fs::write(out_dir.join("_headers"), render_assets_channel_headers())
+        .with_context(|| format!("write {}", out_dir.join("_headers").display()))?;
+    fs::write(out_dir.join("robots.txt"), "User-agent: *\nDisallow:\n")
+        .with_context(|| format!("write {}", out_dir.join("robots.txt").display()))?;
+    Ok(AssetsChannelBuildReport {
+        schema: "capsem.admin.assets_channel_build.v1",
+        channel: channel.to_string(),
+        generated_at: generated_at.to_string(),
+        out_dir: out_dir.display().to_string(),
+        index_html: out_dir.join("index.html").display().to_string(),
+        manifest: channel_manifest.display().to_string(),
+        health_json: out_dir.join("health.json").display().to_string(),
+        copied_assets,
+    })
+}
+
+fn copy_assets_channel_release_assets(
+    assets_dir: &Path,
+    release_dir: &Path,
+    release: &capsem_core::asset_manager::AssetRelease,
+) -> Result<usize> {
+    let mut copied = 0;
+    for (arch, assets) in &release.arches {
+        for (logical_name, entry) in assets {
+            let check = check_local_asset(assets_dir, arch, logical_name, &entry.hash, entry.size)?;
+            fail_if_local_asset_checks_failed("asset channel release asset check", &[check])?;
+            let src = assets_dir.join(arch).join(logical_name);
+            let dst = release_dir.join(format!("{arch}-{logical_name}"));
+            fs::copy(&src, &dst)
+                .with_context(|| format!("copy {} -> {}", src.display(), dst.display()))?;
+            copied += 1;
+        }
+    }
+    Ok(copied)
+}
+
+fn check_assets_channel(dist: &Path, channel: &str) -> Result<AssetsChannelCheckReport> {
+    validate_channel_name(channel)?;
+    let index_path = dist.join("index.html");
+    let manifest_path = dist.join("assets").join(channel).join("manifest.json");
+    let health_path = dist.join("health.json");
+    let headers_path = dist.join("_headers");
+
+    let index_html = fs::read_to_string(&index_path)
+        .with_context(|| format!("read {}", index_path.display()))?;
+    if !index_html.contains("Capsem Asset Channel") {
+        return Err(anyhow!(
+            "{} is not a Capsem asset channel page",
+            index_path.display()
+        ));
+    }
+    validate_assets_channel_index_html(&index_html, channel)?;
+    let manifest = load_manifest(&manifest_path)?;
+    let health_content = fs::read_to_string(&health_path)
+        .with_context(|| format!("read {}", health_path.display()))?;
+    let health: serde_json::Value =
+        serde_json::from_str(&health_content).context("parse asset channel health.json")?;
+    validate_assets_channel_health(dist, channel, &manifest, &health)?;
+    let headers = fs::read_to_string(&headers_path)
+        .with_context(|| format!("read {}", headers_path.display()))?;
+    if !headers.contains("/assets/*") || !headers.contains("no-cache") {
+        return Err(anyhow!("_headers must keep asset channel manifests fresh"));
+    }
+    Ok(AssetsChannelCheckReport {
+        schema: "capsem.admin.assets_channel_check.v1",
+        ok: true,
+        channel: channel.to_string(),
+        state: "published".to_string(),
+        dist: dist.display().to_string(),
+        manifest: manifest_path.display().to_string(),
+    })
+}
+
+fn validate_assets_channel_index_html(index_html: &str, channel: &str) -> Result<()> {
+    let expected = [
+        "Current State",
+        "Manifest",
+        "Current Asset Files",
+        "VM OBOM Evidence",
+        "Host SBOM Evidence",
+        "Binary Files",
+        "Realm Discipline",
+        "Update Contract",
+        "/health.json",
+        "/assets/releases",
+    ];
+    for needle in expected {
+        if !index_html.contains(needle) {
+            return Err(anyhow!("asset channel index missing {needle}"));
+        }
+    }
+    let channel_manifest = format!("/assets/{channel}/manifest.json");
+    if !index_html.contains(&channel_manifest) {
+        return Err(anyhow!("asset channel index missing {channel_manifest}"));
+    }
+    Ok(())
+}
+
+fn validate_assets_channel_health(
+    dist: &Path,
+    channel: &str,
+    manifest: &ManifestV2,
+    health: &serde_json::Value,
+) -> Result<()> {
+    require_json_str(
+        health,
+        &["schema"],
+        "capsem.assets_channel.health.v1",
+        "health.json schema mismatch",
+    )?;
+    require_json_bool(health, &["ok"], true, "health.json ok mismatch")?;
+    require_json_str(
+        health,
+        &["channel"],
+        channel,
+        "health.json channel mismatch",
+    )?;
+    require_json_str(
+        health,
+        &["state"],
+        "published",
+        "health.json state mismatch",
+    )?;
+    require_json_str(
+        health,
+        &["urls", "manifest"],
+        &format!("/assets/{channel}/manifest.json"),
+        "health.json manifest URL does not match channel",
+    )?;
+    require_json_str(
+        health,
+        &["urls", "asset_base"],
+        "/assets/releases",
+        "health.json asset base mismatch",
+    )?;
+    require_json_str(
+        health,
+        &["current", "assets"],
+        &manifest.assets.current,
+        "health.json current assets value does not match channel manifest",
+    )?;
+    require_json_str(
+        health,
+        &["assets", "version"],
+        &manifest.assets.current,
+        "health.json assets value does not match channel manifest",
+    )?;
+    require_json_str(
+        health,
+        &["current", "binary"],
+        &manifest.binaries.current,
+        "health.json current binary value does not match channel manifest",
+    )?;
+    require_json_str(
+        health,
+        &["binary", "version"],
+        &manifest.binaries.current,
+        "health.json binary value does not match channel manifest",
+    )?;
+    require_json_str(
+        health,
+        &["updates", "binary", "latest"],
+        &manifest.binaries.current,
+        "health.json binary update latest target does not match channel manifest",
+    )?;
+    require_json_str(
+        health,
+        &["updates", "binary", "current"],
+        &manifest.binaries.current,
+        "health.json binary update target does not match channel manifest",
+    )?;
+    require_json_str(
+        health,
+        &["updates", "binary", "state"],
+        health
+            .get("binary")
+            .and_then(|binary| binary.get("state"))
+            .and_then(|state| state.as_str())
+            .unwrap_or(""),
+        "health.json binary update state mismatch",
+    )?;
+    require_json_str(
+        health,
+        &["updates", "binary", "source"],
+        "manifest.binaries.current",
+        "health.json binary update source mismatch",
+    )?;
+    require_json_str(
+        health,
+        &["updates", "assets", "latest"],
+        &manifest.assets.current,
+        "health.json asset update latest target does not match channel manifest",
+    )?;
+    require_json_str(
+        health,
+        &["updates", "assets", "current"],
+        &manifest.assets.current,
+        "health.json asset update target does not match channel manifest",
+    )?;
+    require_json_str(
+        health,
+        &["updates", "assets", "state"],
+        health
+            .get("assets")
+            .and_then(|assets| assets.get("state"))
+            .and_then(|state| state.as_str())
+            .unwrap_or(""),
+        "health.json asset update state mismatch",
+    )?;
+    require_json_str(
+        health,
+        &["updates", "assets", "source"],
+        "manifest.assets.current",
+        "health.json asset update source mismatch",
+    )?;
+    require_json_str(
+        health,
+        &["updates", "assets", "manifest"],
+        &format!("/assets/{channel}/manifest.json"),
+        "health.json asset update manifest mismatch",
+    )?;
+    require_json_str(
+        health,
+        &["updates", "assets", "asset_base"],
+        "/assets/releases",
+        "health.json asset update base mismatch",
+    )?;
+    require_json_str(
+        health,
+        &["updates", "profiles", "state"],
+        "not_published",
+        "health.json profile update state mismatch",
+    )?;
+    require_json_null(
+        health,
+        &["updates", "profiles", "latest"],
+        "health.json profile update latest should be null while unpublished",
+    )?;
+    require_json_str(
+        health,
+        &["updates", "profiles", "source"],
+        "not_in_asset_channel",
+        "health.json profile update source mismatch",
+    )?;
+    require_json_str(
+        health,
+        &["updates", "images", "state"],
+        "not_published",
+        "health.json image update state mismatch",
+    )?;
+    require_json_null(
+        health,
+        &["updates", "images", "latest"],
+        "health.json image update latest should be null while unpublished",
+    )?;
+    require_json_str(
+        health,
+        &["updates", "images", "source"],
+        "not_in_asset_channel",
+        "health.json image update source mismatch",
+    )?;
+
+    let current_release = manifest
+        .assets
+        .releases
+        .get(&manifest.assets.current)
+        .ok_or_else(|| anyhow!("channel manifest current asset release is missing"))?;
+    let asset_files = require_json_array(health, &["assets", "files"])?;
+    let vm_oboms = require_json_array(health, &["evidence", "vm_oboms"])?;
+    let host_sboms = require_json_array(health, &["evidence", "host_sboms"])?;
+    let host_binary_files = require_json_array(health, &["evidence", "host_binary_files"])?;
+    for sbom in host_sboms {
+        let sbom_url = sbom
+            .get("url")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| anyhow!("health.json host SBOM evidence missing url"))?;
+        if !host_binary_files
+            .iter()
+            .any(|item| item.get("url").and_then(|value| value.as_str()) == Some(sbom_url))
+        {
+            return Err(anyhow!(
+                "health.json host SBOM evidence {sbom_url} missing from host binary files"
+            ));
+        }
+    }
+    let mut saw_obom = false;
+    for (arch, assets) in &current_release.arches {
+        for (logical_name, entry) in assets {
+            let url = format!(
+                "/assets/releases/{}/{arch}-{logical_name}",
+                manifest.assets.current
+            );
+            let public_file = asset_files.iter().find(|item| {
+                item.get("url").and_then(|value| value.as_str()) == Some(url.as_str())
+            });
+            let Some(public_file) = public_file else {
+                return Err(anyhow!("health.json missing asset file {url}"));
+            };
+            if public_file.get("hash").and_then(|value| value.as_str()) != Some(entry.hash.as_str())
+            {
+                return Err(anyhow!("health.json asset hash mismatch for {url}"));
+            }
+            if public_file.get("size").and_then(|value| value.as_u64()) != Some(entry.size) {
+                return Err(anyhow!("health.json asset size mismatch for {url}"));
+            }
+            let local_path = dist.join(url.trim_start_matches('/'));
+            let bytes = fs::read(&local_path)
+                .with_context(|| format!("read asset channel blob {}", local_path.display()))?;
+            if bytes.len() as u64 != entry.size {
+                return Err(anyhow!(
+                    "asset channel blob {} size mismatch",
+                    local_path.display()
+                ));
+            }
+            if blake3::hash(&bytes).to_hex().as_str() != entry.hash {
+                return Err(anyhow!(
+                    "asset channel blob {} hash mismatch",
+                    local_path.display()
+                ));
+            }
+            if logical_name == "obom.cdx.json" {
+                saw_obom = true;
+                if !vm_oboms.iter().any(|item| {
+                    item.get("url").and_then(|value| value.as_str()) == Some(url.as_str())
+                }) {
+                    return Err(anyhow!("health.json missing VM OBOM evidence {url}"));
+                }
+            }
+        }
+    }
+    if !saw_obom {
+        return Err(anyhow!(
+            "channel manifest current asset release has no VM OBOM evidence"
+        ));
+    }
+    Ok(())
+}
+
+fn require_json_str(
+    root: &serde_json::Value,
+    path: &[&str],
+    expected: &str,
+    message: &str,
+) -> Result<()> {
+    if json_path(root, path).and_then(|value| value.as_str()) != Some(expected) {
+        return Err(anyhow!("{message}"));
+    }
+    Ok(())
+}
+
+fn require_json_bool(
+    root: &serde_json::Value,
+    path: &[&str],
+    expected: bool,
+    message: &str,
+) -> Result<()> {
+    if json_path(root, path).and_then(|value| value.as_bool()) != Some(expected) {
+        return Err(anyhow!("{message}"));
+    }
+    Ok(())
+}
+
+fn require_json_null(value: &serde_json::Value, path: &[&str], message: &str) -> Result<()> {
+    let actual = value
+        .pointer(&format!("/{}", path.join("/")))
+        .ok_or_else(|| anyhow!("health.json missing {}", path.join(".")))?;
+    if !actual.is_null() {
+        return Err(anyhow!("{message}: got {actual}"));
+    }
+    Ok(())
+}
+
+fn require_json_array<'a>(
+    root: &'a serde_json::Value,
+    path: &[&str],
+) -> Result<&'a Vec<serde_json::Value>> {
+    json_path(root, path)
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| anyhow!("health.json missing {}", path.join(".")))
+}
+
+fn json_path<'a>(root: &'a serde_json::Value, path: &[&str]) -> Option<&'a serde_json::Value> {
+    let mut value = root;
+    for key in path {
+        value = value.get(*key)?;
+    }
+    Some(value)
+}
+
+fn assets_channel_index(
+    manifest: &ManifestV2,
+    channel: &str,
+    generated_at: &str,
+    manifest_blake3: &str,
+) -> AssetsChannelIndex {
+    let mut arches = BTreeSet::new();
+    for release in manifest.assets.releases.values() {
+        arches.extend(release.arches.keys().cloned());
+    }
+    let asset_base = "/assets/releases".to_string();
+    let current_release = manifest.assets.releases.get(&manifest.assets.current);
+    let current_binary_release = manifest.binaries.releases.get(&manifest.binaries.current);
+    let current_asset_files = current_release
+        .map(|release| current_asset_file_refs(&manifest.assets.current, release))
+        .unwrap_or_default();
+    let vm_oboms = current_asset_files
+        .iter()
+        .filter(|file| file.logical_name == "obom.cdx.json")
+        .cloned()
+        .collect();
+    let current_binary_files = current_binary_release
+        .map(|release| current_binary_file_refs(&manifest.binaries.current, release))
+        .unwrap_or_default();
+    let host_sboms = current_binary_files
+        .iter()
+        .filter(|file| file.name.ends_with(".spdx.json") || file.name.contains("sbom"))
+        .cloned()
+        .collect();
+    AssetsChannelIndex {
+        schema_version: 1,
+        channel: channel.to_string(),
+        state: "published".to_string(),
+        generated_at: generated_at.to_string(),
+        release_site: "https://release.capsem.org/".to_string(),
+        summary: "Capsem asset channel generated from assets/manifest.json.".to_string(),
+        manifest: format!("/assets/{channel}/manifest.json"),
+        asset_base,
+        manifest_blake3: manifest_blake3.to_string(),
+        current_binary: manifest.binaries.current.clone(),
+        current_assets: manifest.assets.current.clone(),
+        current_asset_state: current_release
+            .map(release_state)
+            .unwrap_or("missing")
+            .to_string(),
+        current_binary_state: current_binary_release
+            .map(release_state)
+            .unwrap_or("missing")
+            .to_string(),
+        asset_releases: manifest.assets.releases.len(),
+        binary_releases: manifest.binaries.releases.len(),
+        arches: arches.into_iter().collect(),
+        current_asset_files,
+        current_binary_files,
+        host_sboms,
+        vm_oboms,
+        profile_update_state: "not_published".to_string(),
+        image_update_state: "not_published".to_string(),
+        notes: vec![
+            "PRs remain the full quality gate before merge.".to_string(),
+            "Docs and marketing deploy from main independently.".to_string(),
+            "Binary releases are triggered by immutable vX.Y.Z tags.".to_string(),
+            "VM asset releases are explicit and must deploy this asset channel.".to_string(),
+        ],
+    }
+}
+
+fn release_state<T: ReleaseDeprecated>(release: &T) -> &'static str {
+    if release.is_deprecated() {
+        "deprecated"
+    } else {
+        "current"
+    }
+}
+
+trait ReleaseDeprecated {
+    fn is_deprecated(&self) -> bool;
+}
+
+impl ReleaseDeprecated for capsem_core::asset_manager::AssetRelease {
+    fn is_deprecated(&self) -> bool {
+        self.deprecated
+    }
+}
+
+impl ReleaseDeprecated for capsem_core::asset_manager::BinaryRelease {
+    fn is_deprecated(&self) -> bool {
+        self.deprecated
+    }
+}
+
+fn current_asset_file_refs(
+    asset_version: &str,
+    release: &capsem_core::asset_manager::AssetRelease,
+) -> Vec<AssetsChannelAssetFile> {
+    let mut files = Vec::new();
+    for (arch, assets) in &release.arches {
+        for (logical_name, entry) in assets {
+            files.push(AssetsChannelAssetFile {
+                arch: arch.clone(),
+                logical_name: logical_name.clone(),
+                url: format!("/assets/releases/{asset_version}/{arch}-{logical_name}"),
+                hash: entry.hash.clone(),
+                size: entry.size,
+            });
+        }
+    }
+    files.sort_by(|left, right| {
+        left.arch
+            .cmp(&right.arch)
+            .then_with(|| left.logical_name.cmp(&right.logical_name))
+    });
+    files
+}
+
+fn current_binary_file_refs(
+    binary_version: &str,
+    release: &capsem_core::asset_manager::BinaryRelease,
+) -> Vec<AssetsChannelBinaryFile> {
+    let base = capsem_core::asset_manager::release_url(binary_version);
+    let mut files = release
+        .files
+        .iter()
+        .map(|file| AssetsChannelBinaryFile {
+            name: file.name.clone(),
+            url: format!("{}/{}", base.trim_end_matches('/'), file.name),
+            sha256: file.sha256.clone(),
+            size: file.size,
+        })
+        .collect::<Vec<_>>();
+    files.sort_by(|left, right| left.name.cmp(&right.name));
+    files
+}
+
+fn render_assets_channel_health(index: &AssetsChannelIndex) -> Result<String> {
+    Ok(format!(
+        "{}\n",
+        serde_json::to_string_pretty(&serde_json::json!({
+            "schema": "capsem.assets_channel.health.v1",
+            "ok": true,
+            "channel": index.channel,
+            "state": index.state,
+            "generated_at": index.generated_at,
+            "release_site": index.release_site,
+            "urls": {
+                "manifest": index.manifest,
+                "asset_base": index.asset_base,
+            },
+            "current": {
+                "binary": index.current_binary,
+                "assets": index.current_assets,
+            },
+            "binary": {
+                "version": index.current_binary,
+                "state": index.current_binary_state,
+                "files": index.current_binary_files,
+            },
+            "assets": {
+                "version": index.current_assets,
+                "state": index.current_asset_state,
+                "files": index.current_asset_files,
+            },
+            "updates": {
+                "binary": {
+                    "latest": index.current_binary,
+                    "current": index.current_binary,
+                    "state": index.current_binary_state,
+                    "source": "manifest.binaries.current",
+                    "files": index.current_binary_files,
+                },
+                "assets": {
+                    "latest": index.current_assets,
+                    "current": index.current_assets,
+                    "state": index.current_asset_state,
+                    "source": "manifest.assets.current",
+                    "manifest": index.manifest,
+                    "asset_base": index.asset_base,
+                    "files": index.current_asset_files,
+                },
+                "profiles": {
+                    "latest": serde_json::Value::Null,
+                    "current": serde_json::Value::Null,
+                    "state": index.profile_update_state,
+                    "source": "not_in_asset_channel",
+                },
+                "images": {
+                    "latest": serde_json::Value::Null,
+                    "current": serde_json::Value::Null,
+                    "state": index.image_update_state,
+                    "source": "not_in_asset_channel",
+                },
+            },
+            "evidence": {
+                "vm_oboms": index.vm_oboms,
+                "host_sboms": index.host_sboms,
+                "host_binary_files": index.current_binary_files,
+                "attestations": [],
+            },
+            "manifest": index.manifest,
+        }))?
+    ))
+}
+
+fn render_assets_channel_headers() -> String {
+    [
+        "/",
+        "  Cache-Control: no-cache, must-revalidate",
+        "/index.html",
+        "  Cache-Control: no-cache, must-revalidate",
+        "/health.json",
+        "  Cache-Control: no-cache, must-revalidate",
+        "/assets/*",
+        "  Cache-Control: no-cache, must-revalidate",
+        "/robots.txt",
+        "  Cache-Control: public, max-age=3600",
+        "",
+    ]
+    .join("\n")
+}
+
+fn render_assets_channel_index(index: &AssetsChannelIndex) -> Result<String> {
+    let arches = if index.arches.is_empty() {
+        "pending".to_string()
+    } else {
+        index.arches.join(", ")
+    };
+    let current_asset_rows = render_asset_file_rows(&index.current_asset_files);
+    let vm_obom_rows = render_asset_file_rows(&index.vm_oboms);
+    let host_sbom_rows = render_binary_file_rows(
+        &index.host_sboms,
+        "No host SBOM metadata is published in this asset manifest.",
+    );
+    let binary_file_rows = render_binary_file_rows(
+        &index.current_binary_files,
+        "No binary package metadata is published in this asset manifest.",
+    );
+    let update_contract_rows = render_update_contract_rows(index);
+    let notes = index
+        .notes
+        .iter()
+        .map(|note| format!("        <li>{}</li>", escape_html(note)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    Ok(format!(
+        r#"<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Capsem Asset Channel</title>
+  <style>
+    :root {{
+      color-scheme: light dark;
+      --bg: #f7f5ef;
+      --fg: #1d2528;
+      --muted: #5b6468;
+      --line: #c9d0cd;
+      --panel: #ffffff;
+      --accent: #0d6b5f;
+      --accent-soft: #d9eee7;
+    }}
+    @media (prefers-color-scheme: dark) {{
+      :root {{
+        --bg: #101513;
+        --fg: #ecf0eb;
+        --muted: #a9b4ae;
+        --line: #35403b;
+        --panel: #18201d;
+        --accent: #72d2bd;
+        --accent-soft: #18362f;
+      }}
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.5;
+    }}
+    main {{
+      width: min(1080px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 40px 0 56px;
+    }}
+    header {{
+      display: grid;
+      gap: 10px;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 22px;
+      margin-bottom: 24px;
+    }}
+    h1 {{
+      margin: 0;
+      font-size: clamp(2rem, 4vw, 3.4rem);
+      line-height: 1.05;
+      letter-spacing: 0;
+    }}
+    h2 {{
+      margin: 0 0 12px;
+      font-size: 1.05rem;
+      letter-spacing: 0;
+    }}
+    p {{ margin: 0; color: var(--muted); }}
+    a {{ color: var(--accent); overflow-wrap: anywhere; }}
+    section {{
+      margin-top: 20px;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }}
+    dl {{
+      display: grid;
+      grid-template-columns: minmax(150px, 0.28fr) 1fr;
+      gap: 10px 18px;
+      margin: 0;
+    }}
+    dt {{ color: var(--muted); }}
+    dd {{ margin: 0; overflow-wrap: anywhere; }}
+    table {{
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }}
+    th, td {{
+      padding: 9px 8px;
+      border-top: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+      overflow-wrap: anywhere;
+    }}
+    th {{
+      color: var(--muted);
+      font-weight: 600;
+    }}
+    code {{
+      color: var(--fg);
+      background: var(--accent-soft);
+      border-radius: 4px;
+      padding: 2px 5px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }}
+    @media (max-width: 720px) {{
+      dl {{ grid-template-columns: 1fr; gap: 4px; }}
+      dd {{ margin-bottom: 10px; }}
+    }}
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Capsem Asset Channel</h1>
+      <p>{summary}</p>
+    </header>
+
+    <section>
+      <h2>Current State</h2>
+      <dl>
+        <dt>Channel</dt><dd>{channel}</dd>
+        <dt>Generated</dt><dd>{generated_at}</dd>
+        <dt>Current assets</dt><dd>{current_assets} ({current_asset_state})</dd>
+        <dt>Current binary</dt><dd>{current_binary} ({current_binary_state})</dd>
+        <dt>Architectures</dt><dd>{arches}</dd>
+        <dt>Asset releases</dt><dd>{asset_releases}</dd>
+        <dt>Binary releases</dt><dd>{binary_releases}</dd>
+      </dl>
+    </section>
+
+    <section>
+      <h2>Manifest</h2>
+      <dl>
+        <dt>Path</dt><dd><a href="{manifest}">{manifest}</a></dd>
+        <dt>Health index</dt><dd><a href="/health.json">/health.json</a></dd>
+        <dt>Asset base</dt><dd><a href="{asset_base}">{asset_base}</a></dd>
+        <dt>BLAKE3</dt><dd><code>{manifest_blake3}</code></dd>
+      </dl>
+    </section>
+
+    <section>
+      <h2>Current Asset Files</h2>
+{current_asset_rows}
+    </section>
+
+    <section>
+      <h2>VM OBOM Evidence</h2>
+{vm_obom_rows}
+    </section>
+
+    <section>
+      <h2>Host SBOM Evidence</h2>
+{host_sbom_rows}
+    </section>
+
+    <section>
+      <h2>Binary Files</h2>
+{binary_file_rows}
+    </section>
+
+    <section>
+      <h2>Update Contract</h2>
+{update_contract_rows}
+    </section>
+
+    <section>
+      <h2>Realm Discipline</h2>
+      <ul>
+{notes}
+      </ul>
+    </section>
+  </main>
+</body>
+</html>
+"#,
+        summary = escape_html(&index.summary),
+        channel = escape_html(&index.channel),
+        generated_at = escape_html(&index.generated_at),
+        current_assets = escape_html(&index.current_assets),
+        current_binary = escape_html(&index.current_binary),
+        current_asset_state = escape_html(&index.current_asset_state),
+        current_binary_state = escape_html(&index.current_binary_state),
+        arches = escape_html(&arches),
+        asset_releases = index.asset_releases,
+        binary_releases = index.binary_releases,
+        manifest = escape_html(&index.manifest),
+        asset_base = escape_html(&index.asset_base),
+        manifest_blake3 = escape_html(&index.manifest_blake3),
+        current_asset_rows = current_asset_rows,
+        vm_obom_rows = vm_obom_rows,
+        host_sbom_rows = host_sbom_rows,
+        binary_file_rows = binary_file_rows,
+        update_contract_rows = update_contract_rows,
+        notes = notes,
+    ))
+}
+
+fn render_update_contract_rows(index: &AssetsChannelIndex) -> String {
+    let rows = [
+        (
+            "Binary",
+            index.current_binary.as_str(),
+            index.current_binary_state.as_str(),
+            "manifest.binaries.current",
+        ),
+        (
+            "Assets",
+            index.current_assets.as_str(),
+            index.current_asset_state.as_str(),
+            "manifest.assets.current",
+        ),
+        (
+            "Profiles",
+            "",
+            index.profile_update_state.as_str(),
+            "not_in_asset_channel",
+        ),
+        (
+            "Images",
+            "",
+            index.image_update_state.as_str(),
+            "not_in_asset_channel",
+        ),
+    ]
+    .into_iter()
+    .map(|(kind, current, state, source)| {
+        let current = if current.is_empty() { "none" } else { current };
+        format!(
+            "        <tr><td>{}</td><td><code>{}</code></td><td>{}</td><td>{}</td></tr>",
+            escape_html(kind),
+            escape_html(current),
+            escape_html(state),
+            escape_html(source)
+        )
+    })
+    .collect::<Vec<_>>()
+    .join("\n");
+    format!(
+        "      <table><thead><tr><th>Target</th><th>Current</th><th>State</th><th>Source</th></tr></thead><tbody>\n{rows}\n      </tbody></table>"
+    )
+}
+
+fn render_asset_file_rows(files: &[AssetsChannelAssetFile]) -> String {
+    if files.is_empty() {
+        return "      <p>None published for the current asset release.</p>".to_string();
+    }
+    let rows = files
+        .iter()
+        .map(|file| {
+            format!(
+                "        <tr><td>{arch}</td><td>{name}</td><td><a href=\"{url}\">{url}</a></td><td>{size}</td><td><code>{hash}</code></td></tr>",
+                arch = escape_html(&file.arch),
+                name = escape_html(&file.logical_name),
+                url = escape_html(&file.url),
+                size = file.size,
+                hash = escape_html(&file.hash),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "      <table><thead><tr><th>Arch</th><th>Name</th><th>URL</th><th>Bytes</th><th>BLAKE3</th></tr></thead><tbody>\n{rows}\n      </tbody></table>"
+    )
+}
+
+fn render_binary_file_rows(files: &[AssetsChannelBinaryFile], empty_message: &str) -> String {
+    if files.is_empty() {
+        return format!("      <p>{}</p>", escape_html(empty_message));
+    }
+    let rows = files
+        .iter()
+        .map(|file| {
+            format!(
+                "        <tr><td>{name}</td><td><a href=\"{url}\">{url}</a></td><td>{size}</td><td><code>{sha256}</code></td></tr>",
+                name = escape_html(&file.name),
+                url = escape_html(&file.url),
+                size = file.size,
+                sha256 = escape_html(&file.sha256),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "      <table><thead><tr><th>Name</th><th>URL</th><th>Bytes</th><th>SHA-256</th></tr></thead><tbody>\n{rows}\n      </tbody></table>"
+    )
+}
+
+fn validate_channel_name(channel: &str) -> Result<()> {
+    let valid = !channel.is_empty()
+        && channel
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_');
+    if !valid {
+        return Err(anyhow!("invalid asset channel name: {channel}"));
+    }
+    Ok(())
+}
+
+fn current_utc_rfc3339() -> Result<String> {
+    OffsetDateTime::now_utc()
+        .replace_microsecond(0)
+        .context("truncate current timestamp")?
+        .format(&Rfc3339)
+        .context("format current timestamp")
+}
+
+fn escape_html(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
 }
 
 fn image_build_command(args: ImageBuildArgs) -> Result<()> {
@@ -1138,7 +2294,11 @@ fn materialize_profile_config(args: &ProfileMaterializeArgs) -> Result<ProfileMa
         copy_dir_recursive(&args.config_root, &args.output_root)?;
     }
 
-    let manifest = load_manifest(&args.manifest)?;
+    let manifest_bytes = read_manifest_url(&args.manifest)?;
+    let manifest_content = std::str::from_utf8(&manifest_bytes)
+        .with_context(|| format!("manifest URL did not return UTF-8 JSON: {}", args.manifest))?;
+    let manifest = ManifestV2::from_json(manifest_content)
+        .with_context(|| format!("parse manifest from {}", args.manifest))?;
     let current_release = manifest
         .assets
         .releases
@@ -1146,7 +2306,7 @@ fn materialize_profile_config(args: &ProfileMaterializeArgs) -> Result<ProfileMa
         .ok_or_else(|| {
             anyhow!(
                 "manifest {} current asset release {} is missing",
-                args.manifest.display(),
+                args.manifest,
                 manifest.assets.current
             )
         })?;
@@ -1172,7 +2332,7 @@ fn materialize_profile_config(args: &ProfileMaterializeArgs) -> Result<ProfileMa
         let manifest_assets = current_release.arches.get(&arch).ok_or_else(|| {
             anyhow!(
                 "manifest {} current release {} does not contain profile arch {arch}",
-                args.manifest.display(),
+                args.manifest,
                 manifest.assets.current
             )
         })?;
@@ -1184,6 +2344,8 @@ fn materialize_profile_config(args: &ProfileMaterializeArgs) -> Result<ProfileMa
                 .expect("arch came from selected_profile_arches");
             materialize_profile_asset_descriptor(
                 &args.assets_dir,
+                &args.manifest,
+                &manifest.assets.current,
                 &arch,
                 &mut profile_assets.kernel,
                 manifest_assets,
@@ -1191,6 +2353,8 @@ fn materialize_profile_config(args: &ProfileMaterializeArgs) -> Result<ProfileMa
             )?;
             materialize_profile_asset_descriptor(
                 &args.assets_dir,
+                &args.manifest,
+                &manifest.assets.current,
                 &arch,
                 &mut profile_assets.initrd,
                 manifest_assets,
@@ -1198,6 +2362,8 @@ fn materialize_profile_config(args: &ProfileMaterializeArgs) -> Result<ProfileMa
             )?;
             materialize_profile_asset_descriptor(
                 &args.assets_dir,
+                &args.manifest,
+                &manifest.assets.current,
                 &arch,
                 &mut profile_assets.rootfs,
                 manifest_assets,
@@ -1211,6 +2377,8 @@ fn materialize_profile_config(args: &ProfileMaterializeArgs) -> Result<ProfileMa
         };
         materialize_profile_obom_descriptor(
             &args.assets_dir,
+            &args.manifest,
+            &manifest.assets.current,
             &arch,
             manifest_assets,
             rootfs_hash,
@@ -1243,13 +2411,8 @@ fn materialize_profile_config(args: &ProfileMaterializeArgs) -> Result<ProfileMa
             .ok_or_else(|| anyhow!("materialized manifest path has no parent"))?,
     )
     .with_context(|| format!("create parent for {}", manifest_output.display()))?;
-    fs::copy(&args.manifest, &manifest_output).with_context(|| {
-        format!(
-            "copy manifest {} to {}",
-            args.manifest.display(),
-            manifest_output.display()
-        )
-    })?;
+    fs::write(&manifest_output, &manifest_bytes)
+        .with_context(|| format!("write {}", manifest_output.display()))?;
 
     let copied_validation =
         validate_materialized_profile(&output_profile_path, Some(&args.output_root))?;
@@ -1278,6 +2441,8 @@ fn materialize_profile_config(args: &ProfileMaterializeArgs) -> Result<ProfileMa
 
 fn materialize_profile_asset_descriptor(
     assets_dir: &Path,
+    manifest_url: &str,
+    asset_version: &str,
     arch: &str,
     descriptor: &mut capsem_core::net::policy_config::ProfileAssetDescriptor,
     manifest_assets: &std::collections::HashMap<String, capsem_core::asset_manager::AssetEntry>,
@@ -1289,13 +2454,15 @@ fn materialize_profile_asset_descriptor(
             descriptor.name
         )
     })?;
-    let check = check_local_asset(assets_dir, arch, &descriptor.name, &entry.hash, entry.size)?;
-    fail_if_local_asset_checks_failed("profile materialize asset check", &[check])?;
-    let asset_path = assets_dir.join(arch).join(&descriptor.name);
-    let asset_path = asset_path
-        .canonicalize()
-        .with_context(|| format!("canonicalize {}", asset_path.display()))?;
-    descriptor.url = format!("file://{}", asset_path.display());
+    descriptor.url = materialized_asset_url(
+        assets_dir,
+        manifest_url,
+        asset_version,
+        arch,
+        &descriptor.name,
+        &entry.hash,
+        entry.size,
+    )?;
     descriptor.hash = Some(format!("blake3:{}", entry.hash));
     descriptor.size = Some(entry.size);
     reports.push(ProfileMaterializedAssetReport {
@@ -1355,6 +2522,8 @@ fn materialize_profile_file_descriptors(
 
 fn materialize_profile_obom_descriptor(
     assets_dir: &Path,
+    manifest_url: &str,
+    asset_version: &str,
     arch: &str,
     manifest_assets: &std::collections::HashMap<String, capsem_core::asset_manager::AssetEntry>,
     rootfs_hash: String,
@@ -1364,16 +2533,27 @@ fn materialize_profile_obom_descriptor(
     let Some(entry) = manifest_assets.get("obom.cdx.json") else {
         return Ok(());
     };
-    let check = check_local_asset(assets_dir, arch, "obom.cdx.json", &entry.hash, entry.size)?;
-    fail_if_local_asset_checks_failed("profile materialize OBOM check", &[check])?;
-    let obom_path = assets_dir.join(arch).join("obom.cdx.json");
-    let obom_path = obom_path
-        .canonicalize()
-        .with_context(|| format!("canonicalize {}", obom_path.display()))?;
-    let (generator, generator_version) = read_obom_generator(&obom_path)?;
+    let obom_url = materialized_asset_url(
+        assets_dir,
+        manifest_url,
+        asset_version,
+        arch,
+        "obom.cdx.json",
+        &entry.hash,
+        entry.size,
+    )?;
+    let (generator, generator_version) = if obom_url.starts_with("file://") {
+        let obom_path = assets_dir.join(arch).join("obom.cdx.json");
+        let obom_path = obom_path
+            .canonicalize()
+            .with_context(|| format!("canonicalize {}", obom_path.display()))?;
+        read_obom_generator(&obom_path)?
+    } else {
+        ("remote".to_string(), "unknown".to_string())
+    };
     let descriptor = ProfileObomDescriptor {
         name: "obom.cdx.json".to_string(),
-        url: format!("file://{}", obom_path.display()),
+        url: obom_url,
         hash: format!("blake3:{}", entry.hash),
         size: entry.size,
         generator: generator.clone(),
@@ -1398,6 +2578,35 @@ fn materialize_profile_obom_descriptor(
         scope: "base_image",
     });
     Ok(())
+}
+
+fn materialized_asset_url(
+    assets_dir: &Path,
+    manifest_url: &str,
+    asset_version: &str,
+    arch: &str,
+    logical_name: &str,
+    hash: &str,
+    size: u64,
+) -> Result<String> {
+    if let Some(asset_base_url) =
+        capsem_core::asset_manager::asset_release_base_url_from_manifest_url(manifest_url)
+    {
+        return Ok(capsem_core::asset_manager::asset_download_url_with_base(
+            &asset_base_url,
+            asset_version,
+            arch,
+            logical_name,
+        ));
+    }
+
+    let check = check_local_asset(assets_dir, arch, logical_name, hash, size)?;
+    fail_if_local_asset_checks_failed("profile materialize asset check", &[check])?;
+    let asset_path = assets_dir.join(arch).join(logical_name);
+    let asset_path = asset_path
+        .canonicalize()
+        .with_context(|| format!("canonicalize {}", asset_path.display()))?;
+    Ok(format!("file://{}", asset_path.display()))
 }
 
 fn read_obom_generator(path: &Path) -> Result<(String, String)> {
@@ -2416,6 +3625,42 @@ fn load_manifest(path: &Path) -> Result<ManifestV2> {
     let content =
         fs::read_to_string(path).with_context(|| format!("read manifest {}", path.display()))?;
     ManifestV2::from_json(&content).with_context(|| format!("parse manifest {}", path.display()))
+}
+
+fn read_manifest_url(source: &str) -> Result<Vec<u8>> {
+    let url = reqwest::Url::parse(source).with_context(|| {
+        format!(
+            "manifest must be a URL: use https://..., http://..., or file:///absolute/path, got {source}"
+        )
+    })?;
+    match url.scheme() {
+        "http" | "https" => {
+            let response = reqwest::blocking::Client::builder()
+                .user_agent("capsem-admin")
+                .build()
+                .context("build manifest HTTP client")?
+                .get(url)
+                .send()
+                .with_context(|| format!("fetch manifest {source}"))?;
+            let status = response.status();
+            if !status.is_success() {
+                return Err(anyhow!("manifest fetch failed: HTTP {status} for {source}"));
+            }
+            Ok(response
+                .bytes()
+                .context("read manifest response body")?
+                .to_vec())
+        }
+        "file" => {
+            let path = url
+                .to_file_path()
+                .map_err(|_| anyhow!("manifest file URL must be absolute: {source}"))?;
+            fs::read(&path).with_context(|| format!("read manifest {}", path.display()))
+        }
+        scheme => Err(anyhow!(
+            "unsupported manifest URL scheme {scheme}: use https://, http://, or file://"
+        )),
+    }
 }
 
 fn manifest_report(
@@ -3748,7 +4993,7 @@ decision = "block"
         let report = materialize_profile_config(&ProfileMaterializeArgs {
             profile: source_profile.clone(),
             config_root: repo_root.join("config"),
-            manifest: manifest_path,
+            manifest: file_url(&manifest_path),
             assets_dir: assets_dir.clone(),
             output_root: output_root.clone(),
             arch: Some("arm64".to_string()),
@@ -3813,6 +5058,65 @@ decision = "block"
     }
 
     #[test]
+    fn profile_materialize_remote_manifest_derives_release_site_asset_urls() {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let repo_root = manifest_dir
+            .parent()
+            .and_then(Path::parent)
+            .expect("repo root");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
+        let manifest_json = fs::read_to_string(&manifest_path).expect("manifest");
+        let manifest_url = serve_manifest_once(manifest_json);
+        let output_root = temp.path().join("target/config");
+
+        materialize_profile_config(&ProfileMaterializeArgs {
+            profile: repo_root.join("config/profiles/code/profile.toml"),
+            config_root: repo_root.join("config"),
+            manifest: manifest_url.clone(),
+            assets_dir: temp.path().join("no-local-assets"),
+            output_root: output_root.clone(),
+            arch: Some("arm64".to_string()),
+            clean: true,
+            json: true,
+        })
+        .expect("remote manifest materializes without local asset blobs");
+
+        let generated_profile_path = output_root.join("profiles/code/profile.toml");
+        let generated: ProfileConfigFile =
+            toml::from_str(&fs::read_to_string(&generated_profile_path).expect("read generated"))
+                .expect("parse generated profile");
+        let arm64 = generated.assets.arch.get("arm64").expect("arm64 assets");
+        let expected_base = manifest_url.replace(
+            "/assets/stable/manifest.json",
+            "/assets/releases/2030.0101.1",
+        );
+        assert_eq!(arm64.kernel.url, format!("{expected_base}/arm64-vmlinuz"));
+        assert_eq!(
+            arm64.initrd.url,
+            format!("{expected_base}/arm64-initrd.img")
+        );
+        assert_eq!(
+            arm64.rootfs.url,
+            format!("{expected_base}/arm64-rootfs.erofs")
+        );
+        assert_eq!(
+            arm64.kernel.hash,
+            Some(format!("blake3:{}", blake3::hash(b"kernel-arm64").to_hex()))
+        );
+        let obom = generated
+            .obom
+            .as_ref()
+            .expect("remote OBOM descriptor")
+            .arch
+            .get("arm64")
+            .expect("arm64 OBOM");
+        assert_eq!(obom.url, format!("{expected_base}/arm64-obom.cdx.json"));
+        assert_eq!(obom.generator, "remote");
+        assert_eq!(obom.generator_version, "unknown");
+    }
+
+    #[test]
     fn profile_materialize_preserves_previous_profiles_in_same_output_catalog() {
         let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let repo_root = manifest_dir
@@ -3828,7 +5132,7 @@ decision = "block"
         materialize_profile_config(&ProfileMaterializeArgs {
             profile: config_root.join("profiles/co-work/profile.toml"),
             config_root: config_root.clone(),
-            manifest: manifest_path.clone(),
+            manifest: file_url(&manifest_path),
             assets_dir: assets_dir.clone(),
             output_root: output_root.clone(),
             arch: Some("arm64".to_string()),
@@ -3840,7 +5144,7 @@ decision = "block"
         materialize_profile_config(&ProfileMaterializeArgs {
             profile: config_root.join("profiles/code/profile.toml"),
             config_root,
-            manifest: manifest_path,
+            manifest: file_url(&manifest_path),
             assets_dir,
             output_root: output_root.clone(),
             arch: Some("arm64".to_string()),
@@ -3893,7 +5197,7 @@ decision = "block"
         let error = materialize_profile_config(&ProfileMaterializeArgs {
             profile: repo_root.join("config/profiles/code/profile.toml"),
             config_root: repo_root.join("config"),
-            manifest: manifest_path,
+            manifest: file_url(&manifest_path),
             assets_dir: temp.path().join("assets"),
             output_root: temp.path().join("target/config"),
             arch: Some("x86_64".to_string()),
@@ -3906,6 +5210,294 @@ decision = "block"
             format!("{error:#}").contains("does not contain profile arch x86_64"),
             "{error:#}"
         );
+    }
+
+    #[test]
+    fn profile_materialize_manifest_source_must_be_url() {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let repo_root = manifest_dir
+            .parent()
+            .and_then(Path::parent)
+            .expect("repo root");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
+
+        let error = materialize_profile_config(&ProfileMaterializeArgs {
+            profile: repo_root.join("config/profiles/code/profile.toml"),
+            config_root: repo_root.join("config"),
+            manifest: manifest_path.display().to_string(),
+            assets_dir: temp.path().join("assets"),
+            output_root: temp.path().join("target/config"),
+            arch: Some("arm64".to_string()),
+            clean: true,
+            json: false,
+        })
+        .expect_err("bare manifest path rejected");
+
+        assert!(
+            format!("{error:#}").contains("manifest must be a URL"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn assets_channel_build_writes_manifest_under_channel_assets_dir() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
+        let manifest_url = file_url(&manifest_path);
+        let assets_dir = temp.path().join("assets");
+        let out_dir = temp.path().join("target/release-channel");
+
+        let report = build_assets_channel(
+            &manifest_url,
+            &assets_dir,
+            "stable",
+            &out_dir,
+            "2030-01-01T00:00:00Z",
+        )
+        .expect("asset channel builds");
+
+        let channel_manifest = out_dir.join("assets/stable/manifest.json");
+        let release_dir = out_dir.join("assets/releases/2030.0101.1");
+        assert_eq!(report.manifest, channel_manifest.display().to_string());
+        assert_eq!(report.copied_assets, 4);
+        assert!(out_dir.join("index.html").is_file());
+        assert!(out_dir.join("health.json").is_file());
+        assert!(channel_manifest.is_file());
+        assert_eq!(
+            fs::read(release_dir.join("arm64-vmlinuz")).expect("published kernel"),
+            b"kernel-arm64"
+        );
+        assert!(release_dir.join("arm64-initrd.img").is_file());
+        assert!(release_dir.join("arm64-rootfs.erofs").is_file());
+        assert!(release_dir.join("arm64-obom.cdx.json").is_file());
+        assert_eq!(
+            fs::read_to_string(&channel_manifest).expect("channel manifest"),
+            fs::read_to_string(&manifest_path).expect("source manifest")
+        );
+        let index_html = fs::read_to_string(out_dir.join("index.html")).expect("index page");
+        assert!(index_html.contains("Current Asset Files"));
+        assert!(index_html.contains("Host SBOM Evidence"));
+        assert!(index_html.contains("Update Contract"));
+        assert!(index_html.contains("/health.json"));
+        assert!(index_html.contains("/assets/releases/2030.0101.1/arm64-rootfs.erofs"));
+        assert!(index_html.contains("/assets/releases/2030.0101.1/arm64-obom.cdx.json"));
+        assert!(index_html.contains("capsem-sbom.spdx.json"));
+        assert!(index_html.contains(&blake3::hash(b"rootfs-arm64").to_hex().to_string()));
+        let health: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(out_dir.join("health.json")).unwrap())
+                .expect("health json parses");
+        assert_eq!(
+            health["schema"].as_str(),
+            Some("capsem.assets_channel.health.v1")
+        );
+        assert_eq!(health["current"]["assets"].as_str(), Some("2030.0101.1"));
+        assert_eq!(
+            health["urls"]["manifest"].as_str(),
+            Some("/assets/stable/manifest.json")
+        );
+        assert_eq!(
+            health["urls"]["asset_base"].as_str(),
+            Some("/assets/releases")
+        );
+        assert_eq!(
+            health["assets"]["files"][0]["url"].as_str(),
+            Some("/assets/releases/2030.0101.1/arm64-initrd.img")
+        );
+        assert_eq!(
+            health["evidence"]["vm_oboms"][0]["url"].as_str(),
+            Some("/assets/releases/2030.0101.1/arm64-obom.cdx.json")
+        );
+        assert_eq!(
+            health["evidence"]["host_sboms"][0]["name"].as_str(),
+            Some("capsem-sbom.spdx.json")
+        );
+        assert_eq!(
+            health["evidence"]["host_binary_files"][1]["name"].as_str(),
+            Some("capsem-sbom.spdx.json")
+        );
+        assert_eq!(
+            health["updates"]["binary"]["latest"].as_str(),
+            health["current"]["binary"].as_str()
+        );
+        assert_eq!(
+            health["updates"]["binary"]["current"].as_str(),
+            health["current"]["binary"].as_str()
+        );
+        assert_eq!(
+            health["updates"]["binary"]["source"].as_str(),
+            Some("manifest.binaries.current")
+        );
+        assert_eq!(
+            health["updates"]["assets"]["latest"].as_str(),
+            Some("2030.0101.1")
+        );
+        assert_eq!(
+            health["updates"]["assets"]["current"].as_str(),
+            Some("2030.0101.1")
+        );
+        assert_eq!(
+            health["updates"]["assets"]["manifest"].as_str(),
+            Some("/assets/stable/manifest.json")
+        );
+        assert_eq!(
+            health["updates"]["assets"]["asset_base"].as_str(),
+            Some("/assets/releases")
+        );
+        assert_eq!(health["updates"]["profiles"]["latest"].as_str(), None);
+        assert!(
+            health["updates"]["profiles"]["latest"].is_null(),
+            "unpublished profile latest should be explicit null"
+        );
+        assert_eq!(
+            health["updates"]["profiles"]["state"].as_str(),
+            Some("not_published")
+        );
+        assert_eq!(
+            health["updates"]["profiles"]["source"].as_str(),
+            Some("not_in_asset_channel")
+        );
+        assert_eq!(health["updates"]["images"]["latest"].as_str(), None);
+        assert!(
+            health["updates"]["images"]["latest"].is_null(),
+            "unpublished image latest should be explicit null"
+        );
+        assert_eq!(
+            health["updates"]["images"]["state"].as_str(),
+            Some("not_published")
+        );
+        assert_eq!(
+            health["updates"]["images"]["source"].as_str(),
+            Some("not_in_asset_channel")
+        );
+
+        let check = check_assets_channel(&out_dir, "stable").expect("asset channel checks");
+        assert_eq!(check.channel, "stable");
+        assert_eq!(check.manifest, channel_manifest.display().to_string());
+    }
+
+    #[test]
+    fn assets_channel_check_rejects_bad_health_schema() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
+        let assets_dir = temp.path().join("assets");
+        let out_dir = temp.path().join("target/release-channel");
+        build_assets_channel(
+            &file_url(&manifest_path),
+            &assets_dir,
+            "stable",
+            &out_dir,
+            "2030-01-01T00:00:00Z",
+        )
+        .expect("asset channel builds");
+
+        let health_path = out_dir.join("health.json");
+        let mut health: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&health_path).expect("health"))
+                .expect("health json");
+        health["schema"] = serde_json::Value::String("capsem.bad_schema".to_string());
+        fs::write(&health_path, serde_json::to_string_pretty(&health).unwrap())
+            .expect("write bad health");
+
+        let error =
+            check_assets_channel(&out_dir, "stable").expect_err("bad health schema rejected");
+
+        assert!(
+            format!("{error:#}").contains("health.json schema mismatch"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn assets_channel_check_rejects_missing_current_asset_blob() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
+        let assets_dir = temp.path().join("assets");
+        let out_dir = temp.path().join("target/release-channel");
+        build_assets_channel(
+            &file_url(&manifest_path),
+            &assets_dir,
+            "stable",
+            &out_dir,
+            "2030-01-01T00:00:00Z",
+        )
+        .expect("asset channel builds");
+        fs::remove_file(out_dir.join("assets/releases/2030.0101.1/arm64-rootfs.erofs"))
+            .expect("remove published rootfs");
+
+        let error =
+            check_assets_channel(&out_dir, "stable").expect_err("missing asset blob rejected");
+
+        assert!(
+            format!("{error:#}").contains("arm64-rootfs.erofs"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn assets_channel_rejects_unsafe_channel_names() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
+        let manifest_url = file_url(&manifest_path);
+        let assets_dir = temp.path().join("assets");
+        for channel in ["../stable", "stable.v1", "stable channel", "<stable>"] {
+            let error = build_assets_channel(
+                &manifest_url,
+                &assets_dir,
+                channel,
+                &temp.path().join("target/release-channel"),
+                "2030-01-01T00:00:00Z",
+            )
+            .expect_err("unsafe channel rejected");
+
+            assert!(error.to_string().contains("invalid asset channel name"));
+        }
+    }
+
+    #[test]
+    fn assets_channel_manifest_source_must_be_url() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
+        let error = build_assets_channel(
+            &manifest_path.display().to_string(),
+            &temp.path().join("assets"),
+            "stable",
+            &temp.path().join("target/release-channel"),
+            "2030-01-01T00:00:00Z",
+        )
+        .expect_err("bare manifest path rejected");
+
+        assert!(
+            format!("{error:#}").contains("manifest must be a URL"),
+            "{error:#}"
+        );
+    }
+
+    fn file_url(path: &Path) -> String {
+        let path = path.canonicalize().expect("canonical test path");
+        format!("file://{}", path.display())
+    }
+
+    fn serve_manifest_once(body: String) -> String {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test manifest server");
+        let addr = listener.local_addr().expect("manifest server addr");
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept manifest request");
+            let mut buffer = [0_u8; 4096];
+            let _ = stream.read(&mut buffer);
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream
+                .write_all(response.as_bytes())
+                .expect("write manifest response");
+        });
+        format!("http://{addr}/assets/stable/manifest.json")
     }
 
     fn minimal_manifest_json(hash: Option<&str>, include_refresh_policy: bool) -> String {
@@ -3955,6 +5547,8 @@ decision = "block"
         let initrd = format!("initrd-{arch}");
         let rootfs = format!("rootfs-{arch}");
         let obom = test_obom_json();
+        let pkg_sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let sbom_sha256 = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
         fs::write(assets_dir.join("vmlinuz"), kernel.as_bytes()).expect("kernel");
         fs::write(assets_dir.join("initrd.img"), initrd.as_bytes()).expect("initrd");
         fs::write(assets_dir.join("rootfs.erofs"), rootfs.as_bytes()).expect("rootfs");
@@ -3986,7 +5580,17 @@ decision = "block"
   }},
   "binaries": {{
     "current": "1.0.0",
-    "releases": {{"1.0.0": {{"date": "2030-01-01", "deprecated": false, "min_assets": "2030.0101.1"}}}}
+    "releases": {{
+      "1.0.0": {{
+        "date": "2030-01-01",
+        "deprecated": false,
+        "min_assets": "2030.0101.1",
+        "files": [
+          {{"name": "capsem-1.0.0.pkg", "size": 123, "sha256": "{pkg_sha256}"}},
+          {{"name": "capsem-sbom.spdx.json", "size": 456, "sha256": "{sbom_sha256}"}}
+        ]
+      }}
+    }}
   }}
 }}"#,
                 arch = arch,
@@ -3998,6 +5602,8 @@ decision = "block"
                 rootfs_size = rootfs.len(),
                 obom_hash = blake3::hash(obom.as_bytes()).to_hex(),
                 obom_size = obom.len(),
+                pkg_sha256 = pkg_sha256,
+                sbom_sha256 = sbom_sha256,
             ),
         )
         .expect("manifest");

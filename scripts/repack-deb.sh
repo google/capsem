@@ -1,7 +1,7 @@
 #!/bin/bash
 # repack-deb.sh -- Repack a Tauri .deb to include companion binaries and a postinst script.
 #
-# Usage: repack-deb.sh [--manifest manifest.json|file://...|http://...|https://...] <input.deb> <bin_dir> <config_root> [assets_dir] [output.deb]
+# Usage: repack-deb.sh [--manifest file://...|http://...|https://...] <input.deb> <bin_dir> <config_root> [assets_dir] [output.deb]
 #
 # Arguments:
 #   input.deb   Path to the Tauri-built .deb package
@@ -9,7 +9,7 @@
 #   config_root Materialized runtime config root (usually target/config)
 #   assets_dir  Optional assets dir containing manifest.json when --manifest is omitted.
 #   output.deb  Optional output path (defaults to overwriting input)
-#   --manifest  Optional local/remote manifest to package instead of <assets_dir>/manifest.json.
+#   --manifest  Optional manifest URL to package instead of <assets_dir>/manifest.json.
 #
 # Adds to the .deb:
 #   /usr/bin/capsem
@@ -26,7 +26,7 @@ set -euo pipefail
 export COPYFILE_DISABLE=1
 
 usage() {
-    echo "usage: repack-deb.sh [--manifest manifest.json|file://...|http://...|https://...] <input.deb> <bin_dir> <config_root> [assets_dir] [output.deb]" >&2
+    echo "usage: repack-deb.sh [--manifest file://...|http://...|https://...] <input.deb> <bin_dir> <config_root> [assets_dir] [output.deb]" >&2
 }
 
 MANIFEST_PATH=""
@@ -34,7 +34,7 @@ POSITIONAL=()
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --manifest)
-            MANIFEST_PATH="${2:?--manifest requires a path}"
+            MANIFEST_PATH="${2:?--manifest requires a URL}"
             shift 2
             ;;
         -h|--help)
@@ -89,18 +89,24 @@ import urllib.request
 raw_source = sys.argv[1]
 dst = pathlib.Path(sys.argv[2])
 parsed = urllib.parse.urlparse(raw_source)
-if parsed.scheme in ("http", "https"):
-    source = raw_source
-elif parsed.scheme == "file":
-    source = str(pathlib.Path(urllib.request.url2pathname(parsed.path)).resolve())
-else:
-    source = str(pathlib.Path(raw_source).resolve())
+if parsed.scheme not in ("http", "https", "file"):
+    raise SystemExit(f"manifest source must be a URL: {raw_source}")
 dst.write_text(json.dumps({
     "schema": "capsem.manifest_origin.v1",
     "origin": "package",
-    "source": source,
+    "source": raw_source,
     "packaged_at": datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
 }, sort_keys=True) + "\n")
+PY
+}
+
+file_url() {
+    local path="${1:?file_url <path>}"
+    python3 - "$path" <<'PY'
+import pathlib
+import sys
+
+print(pathlib.Path(sys.argv[1]).resolve().as_uri())
 PY
 }
 
@@ -125,7 +131,7 @@ elif parsed.scheme == "file":
 elif parsed.scheme:
     raise SystemExit(f"unsupported manifest URL scheme: {parsed.scheme}")
 else:
-    dst.write_bytes(pathlib.Path(source).read_bytes())
+    raise SystemExit(f"manifest must be a URL: use https://..., http://..., or file:///absolute/path, got {source}")
 PY
 }
 
@@ -160,7 +166,7 @@ mkdir -p "$WORK_DIR/deb/usr/share/capsem/profiles"
 cp -R "$CONFIG_ROOT/profiles/." "$WORK_DIR/deb/usr/share/capsem/profiles/"
 
 ASSETS_VIEW="$ASSETS_DIR"
-SELECTED_MANIFEST_SOURCE="$ASSETS_DIR/manifest.json"
+SELECTED_MANIFEST_SOURCE="$(file_url "$ASSETS_DIR/manifest.json")"
 if [ -n "$MANIFEST_PATH" ]; then
     SELECTED_MANIFEST_SOURCE="$MANIFEST_PATH"
     ASSETS_VIEW="$WORK_DIR/assets-view"

@@ -14,6 +14,8 @@ Binary and asset versions are **independent**:
 - **Assets**: `YYYY.MMDD.patch` -- changes only on kernel/rootfs/initrd rebuilds
 
 The manifest tracks both with compatibility ranges (`min_binary`, `min_assets`).
+Runtime asset selection enforces both directions: older binaries do not hydrate
+asset releases whose `min_binary` requires a newer binary.
 
 ## Key Commands
 
@@ -39,6 +41,8 @@ rerun the failing recipe.
 | Built assets (dev) | `assets/{arch}/vmlinuz, initrd.img, rootfs.erofs` |
 | Installed assets | `~/.capsem/assets/{name}-{hash16}.{ext}` (flat, hash-based) |
 | Manifest | `assets/manifest.json` |
+| Asset channel deploy root | `target/release-channel/` |
+| Asset channel manifest | `target/release-channel/assets/<channel>/manifest.json` |
 | Checksums | `assets/B3SUMS` |
 | Manifest generator | `capsem-admin manifest generate <assets_dir>` |
 | Asset types + cleanup | `crates/capsem-core/src/asset_manager.rs` |
@@ -83,7 +87,31 @@ The public producer is `capsem-admin manifest generate <assets_dir>`. Full
 asset builds and initrd repacks feed that same profile-derived build rail so local, CI, and
 corporate manifests use one contract.
 
-GitHub release assets are arch-prefixed (`arm64-vmlinuz`,
+The public asset channel is generated from that manifest with
+`capsem-admin assets channel build`. Do not invent a separate release-channel
+source tree or alternate manifest format. The generated deploy root is
+`target/release-channel/`; the machine artifact is
+`assets/<channel>/manifest.json` under that root, so the stable public URL is
+`https://release.capsem.org/assets/stable/manifest.json`.
+Immutable VM blobs for that manifest live under
+`assets/releases/<asset-version>/<arch>-<logical_name>` in the same deploy root.
+For example, a stable manifest whose current asset release is `2026.0627.1`
+hydrates `arm64-vmlinuz` from
+`https://release.capsem.org/assets/releases/2026.0627.1/arm64-vmlinuz`.
+The generated `health.json` is the compact machine-readable release-site index:
+schema `capsem.assets_channel.health.v1`, active manifest URL, immutable asset
+base URL, current binary/assets versions, current asset file URLs, VM OBOM
+references, host SBOM references, binary file metadata when present, an explicit `updates` block with
+`latest` targets for binary/assets/profile/image freshness checks,
+and an attestations slot.
+
+The manual asset workflow is `.github/workflows/release-assets.yaml`. It should
+remain explicit/manual, build VM assets, upload `target/release-channel/` as the
+`asset-channel-preview` artifact, and call `.github/workflows/release-channel.yaml`
+to deploy `release.capsem.org` only after the asset manifest, blobs, and channel
+checks have been generated.
+
+Asset-channel blobs are arch-prefixed (`arm64-vmlinuz`,
 `arm64-initrd.img`, `arm64-rootfs.erofs`, `arm64-obom.cdx.json`, and x86_64
 equivalents). The v2 manifest keeps bare logical filenames inside each arch map.
 

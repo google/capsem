@@ -146,7 +146,7 @@ def test_macos_pkg_payload_is_closed_and_manifest_only_for_assets(tmp_path: Path
             [
                 str(SCRIPT),
                 "--manifest",
-                str(manifest),
+                manifest.resolve().as_uri(),
                 str(app),
                 str(bin_dir),
                 str(assets_dir),
@@ -183,7 +183,7 @@ def test_macos_pkg_payload_is_closed_and_manifest_only_for_assets(tmp_path: Path
         origin = json.loads((assets / "manifest-origin.json").read_text())
         assert origin["schema"] == "capsem.manifest_origin.v1"
         assert origin["origin"] == "package"
-        assert origin["source"] == str(manifest.resolve())
+        assert origin["source"] == manifest.resolve().as_uri()
         assert "packaged_at" in origin
 
         for name in REQUIRED_BINARIES:
@@ -235,7 +235,7 @@ def test_macos_pkg_rejects_retired_keychain_payload_binaries(tmp_path: Path) -> 
             [
                 str(SCRIPT),
                 "--manifest",
-                str(manifest),
+                manifest.resolve().as_uri(),
                 str(app),
                 str(bin_dir),
                 str(assets_dir),
@@ -255,6 +255,39 @@ def test_macos_pkg_rejects_retired_keychain_payload_binaries(tmp_path: Path) -> 
         assert not output_pkg.exists()
     finally:
         output_pkg.unlink(missing_ok=True)
+
+
+def test_macos_pkg_rejects_bare_manifest_path(tmp_path: Path) -> None:
+    app = tmp_path / "Capsem.app"
+    bin_dir = tmp_path / "bin"
+    assets_dir = tmp_path / "assets"
+    config_dir = tmp_path / "target-config"
+    manifest = tmp_path / "manifest.json"
+
+    _seed_app(app)
+    _seed_binaries(bin_dir)
+    _seed_config(config_dir)
+    _seed_manifest_and_local_assets(manifest, assets_dir)
+
+    res = subprocess.run(
+        [
+            str(SCRIPT),
+            "--manifest",
+            str(manifest),
+            str(app),
+            str(bin_dir),
+            str(assets_dir),
+            str(config_dir),
+            "9.9.12-bare-path-test",
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert res.returncode != 0
+    assert "manifest must be a URL" in (res.stdout + res.stderr)
 
 
 def test_macos_pkg_remote_manifest_override_records_source_and_payload(tmp_path: Path) -> None:

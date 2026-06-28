@@ -1687,8 +1687,13 @@ impl ProfileObomDescriptor {
     fn validate(&self, field: &str) -> Result<(), String> {
         validate_non_empty(&format!("{field}.name"), &self.name)?;
         validate_non_empty(&format!("{field}.url"), &self.url)?;
-        if !(self.url.starts_with("https://") || self.url.starts_with("file://")) {
-            return Err(format!("{field}.url must use https:// or file://"));
+        if !(self.url.starts_with("https://")
+            || self.url.starts_with("http://")
+            || self.url.starts_with("file://"))
+        {
+            return Err(format!(
+                "{field}.url must use https://, http://, or file://"
+            ));
         }
         if self.url.contains("..") || self.url.contains('\\') {
             return Err(format!("{field}.url must not contain path traversal"));
@@ -1789,8 +1794,13 @@ impl ProfileAssetDescriptor {
     fn validate(&self, field: &str) -> Result<(), String> {
         validate_non_empty(&format!("{field}.name"), &self.name)?;
         validate_non_empty(&format!("{field}.url"), &self.url)?;
-        if !(self.url.starts_with("https://") || self.url.starts_with("file://")) {
-            return Err(format!("{field}.url must use https:// or file://"));
+        if !(self.url.starts_with("https://")
+            || self.url.starts_with("http://")
+            || self.url.starts_with("file://"))
+        {
+            return Err(format!(
+                "{field}.url must use https://, http://, or file://"
+            ));
         }
         if self.url.contains("..") || self.url.contains('\\') {
             return Err(format!("{field}.url must not contain path traversal"));

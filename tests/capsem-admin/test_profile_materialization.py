@@ -44,7 +44,7 @@ def test_profile_materialize_generates_pins_without_mutating_source(tmp_path: Pa
             "--config-root",
             "config",
             "--manifest",
-            "assets/manifest.json",
+            (PROJECT_ROOT / "assets/manifest.json").resolve().as_uri(),
             "--assets-dir",
             "assets",
             "--output-root",
@@ -119,6 +119,41 @@ def test_profile_materialize_generates_pins_without_mutating_source(tmp_path: Pa
     ).read_bytes()
     assert not (output_root / "admin").exists()
     assert not (output_root / "skills").exists()
+
+
+def test_profile_materialize_rejects_bare_manifest_path(tmp_path: Path) -> None:
+    _ensure_admin_binary()
+    output_root = tmp_path / "target-config"
+    manifest_path = (PROJECT_ROOT / "assets/manifest.json").resolve()
+
+    result = subprocess.run(
+        [
+            str(ADMIN),
+            "profile",
+            "materialize",
+            "--profile",
+            str(SOURCE_PROFILE),
+            "--config-root",
+            "config",
+            "--manifest",
+            str(manifest_path),
+            "--assets-dir",
+            "assets",
+            "--output-root",
+            str(output_root),
+            "--arch",
+            "arm64",
+        ],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode != 0
+    err = result.stdout + result.stderr
+    assert "manifest must be a URL" in err, err
+    assert "file:///absolute/path" in err, err
 
 
 def test_checked_in_source_profiles_keep_generation_hashes_out_of_profile_toml() -> None:

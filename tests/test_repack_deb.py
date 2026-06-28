@@ -135,7 +135,7 @@ def _run_repack(
     args = [
         str(SCRIPT),
         "--manifest",
-        str(manifest),
+        manifest.resolve().as_uri(),
         str(input_deb),
         str(bin_dir),
         str(config_dir),
@@ -325,7 +325,7 @@ def test_explicit_manifest_is_packaged_without_current_arch_assets(tmp_path):
         [
             str(SCRIPT),
             "--manifest",
-            str(manifest),
+            manifest.resolve().as_uri(),
             str(fixture),
             str(bin_dir),
             str(config_dir),
@@ -348,7 +348,7 @@ def test_explicit_manifest_is_packaged_without_current_arch_assets(tmp_path):
     origin = json.loads((assets_dir / "manifest-origin.json").read_text())
     assert origin["schema"] == "capsem.manifest_origin.v1"
     assert origin["origin"] == "package"
-    assert origin["source"] == str(manifest.resolve())
+    assert origin["source"] == manifest.resolve().as_uri()
     assert "packaged_at" in origin
     assert sorted(path.name for path in assets_dir.iterdir()) == [
         "manifest-origin.json",
@@ -431,7 +431,7 @@ def test_repacked_deb_payload_is_closed_and_manifest_only_for_assets(tmp_path):
         [
             str(SCRIPT),
             "--manifest",
-            str(manifest),
+            manifest.resolve().as_uri(),
             str(fixture),
             str(bin_dir),
             str(config_dir),
@@ -474,6 +474,36 @@ def test_repacked_deb_payload_is_closed_and_manifest_only_for_assets(tmp_path):
         unexpected.append(rel)
 
     assert unexpected == []
+
+
+def test_repack_deb_rejects_bare_manifest_path(tmp_path):
+    fixture = _build_fixture_deb(tmp_path)
+    bin_dir = tmp_path / "bin"
+    config_dir = tmp_path / "target-config"
+    assets_dir = tmp_path / "assets"
+    manifest = tmp_path / "manifest.json"
+    _seed_binaries(bin_dir)
+    _seed_config(config_dir)
+    _seed_manifest_and_local_assets(manifest, assets_dir)
+
+    res = subprocess.run(
+        [
+            str(SCRIPT),
+            "--manifest",
+            str(manifest),
+            str(fixture),
+            str(bin_dir),
+            str(config_dir),
+            str(assets_dir),
+            str(tmp_path / "out.deb"),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert res.returncode != 0
+    assert "manifest must be a URL" in (res.stdout + res.stderr)
 
 
 def test_output_defaults_to_overwriting_input(tmp_path):

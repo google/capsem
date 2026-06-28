@@ -19,6 +19,8 @@ anyhow.workspace = true
 clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+reqwest = { workspace = true, features = ["blocking"] }
+time = { workspace = true, features = ["formatting"] }
 toml.workspace = true
 blake3 = "1"
 
