@@ -758,8 +758,8 @@ jobs:
           curl -fsSL "$ASSET_MANIFEST_URL" -o /tmp/verify/manifest.json
           BASE="${ASSET_MANIFEST_URL%/stable/manifest.json}/releases"
           fail=0
-          # Iterate every (arch, logical_name) the current asset release declares.
-          while IFS=$'\t' read -r asset_version arch name; do
+          # Iterate every (arch, logical_name, hash) the current asset release declares.
+          while IFS=$'\t' read -r asset_version arch name hash; do
             url="$BASE/$asset_version/$arch-$name"
             code=$(curl -sIL -o /dev/null -w "%{http_code}" "$url")
             if [ "$code" != "200" ]; then
@@ -768,15 +768,38 @@ jobs:
             else
               echo "ok  $url"
             fi
+            blob="/tmp/verify/$asset_version-$arch-$name"
+            if ! curl -fsSL "$url" -o "$blob"; then
+              echo "::error::$url download failed"
+              fail=1
+              continue
+            fi
+            expected_hash="${hash#blake3:}"
+            if ! uv run python3 - "$blob" "$expected_hash" <<'PY'
+          import pathlib
+          import sys
+
+          import blake3
+
+          path = pathlib.Path(sys.argv[1])
+          expected = sys.argv[2]
+          actual = blake3.blake3(path.read_bytes()).hexdigest()
+          if actual != expected:
+              raise SystemExit(1)
+          PY
+            then
+              echo "::error::$url blake3 mismatch"
+              fail=1
+            fi
           done < <(python3 -c "
           import json
           m = json.load(open('/tmp/verify/manifest.json'))
           cur = m['assets']['current']
           for arch, files in m['assets']['releases'][cur]['arches'].items():
-              for name in files:
-                  print(f'{cur}\t{arch}\t{name}')
+              for name, meta in files.items():
+                  print(f'{cur}\t{arch}\t{name}\t{meta[\"hash\"]}')
           ")
-          [ "$fail" = 0 ] || { echo '::error::one or more asset URLs are unreachable'; exit 1; }
+          [ "$fail" = 0 ] || { echo '::error::one or more asset URLs are unreachable or hash-mismatched'; exit 1; }
 
       - name: Verify capsem update --assets succeeds against release.capsem.org
         env:

@@ -667,6 +667,12 @@ def test_binary_release_verifies_packages_hydrate_vm_assets_from_public_channel(
     assert 'curl -fsSL "$ASSET_MANIFEST_URL" -o /tmp/verify/manifest.json' in verify_downloads
     assert 'BASE="${ASSET_MANIFEST_URL%/stable/manifest.json}/releases"' in verify_downloads
     assert 'url="$BASE/$asset_version/$arch-$name"' in verify_downloads
+    assert 'expected_hash="${hash#blake3:}"' in verify_downloads
+    assert 'curl -fsSL "$url" -o "$blob"' in verify_downloads
+    assert "import blake3" in verify_downloads
+    assert "actual = blake3.blake3(path.read_bytes()).hexdigest()" in verify_downloads
+    assert "::error::$url blake3 mismatch" in verify_downloads
+    assert "asset URLs are unreachable or hash-mismatched" in verify_downloads
     assert 'code=$(curl -sIL -o /dev/null -w "%{http_code}" "$url")' in verify_downloads
     assert 'gh release download "${{ github.ref_name }}"' in verify_downloads
     assert '--pattern "Capsem_*_${deb_arch}.deb" -D /tmp/deb' in verify_downloads
