@@ -820,6 +820,8 @@ def test_remote_release_readiness_checker_is_read_only_and_covers_live_gates() -
     assert "/assets/{channel}/manifest.json" in script
     assert "capsem.assets_channel.health.v1" in script
     assert "pr-gate" in script
+    assert "REQUIRED_PR_GATE_JOBS" in script
+    assert '"docs-build", "site-build"' in script
     assert "current asset release date" in script
     for forbidden in [
         "git push",
@@ -836,8 +838,62 @@ def test_remote_release_readiness_checker_is_read_only_and_covers_live_gates() -
     assert "scripts/check-remote-release-readiness.py" in docs
     assert "read-only" in docs
     assert "remote `ci.yaml` exposes `pr-gate`" in docs_text
+    assert "aggregates `test-linux`, `test`, `test-install`, `docs-build`, and `site-build`" in (
+        docs_text
+    )
     assert "branch protection or active branch rulesets require `pr-gate`" in docs_text
     assert "`release.capsem.org` resolves and serves the asset channel" in docs_text
+
+
+def test_remote_release_readiness_requires_expanded_pr_gate() -> None:
+    module = _readiness_checker_module()
+
+    inline = """
+jobs:
+  test-linux:
+    runs-on: ubuntu-latest
+  test:
+    runs-on: ubuntu-latest
+  test-install:
+    runs-on: ubuntu-latest
+  docs-build:
+    runs-on: ubuntu-latest
+  site-build:
+    runs-on: ubuntu-latest
+  pr-gate:
+    needs: [test-linux, test, test-install, docs-build, site-build]
+""".strip()
+    multiline = """
+jobs:
+  pr-gate:
+    needs:
+      - test-linux
+      - test
+      - test-install
+      - docs-build
+      - site-build
+    if: ${{ always() }}
+""".strip()
+    stale = inline.replace(", docs-build, site-build", "")
+
+    assert module.workflow_job_needs(module.workflow_job_block(inline, "pr-gate")) == {
+        "test-linux",
+        "test",
+        "test-install",
+        "docs-build",
+        "site-build",
+    }
+    assert module.workflow_job_needs(module.workflow_job_block(multiline, "pr-gate")) == {
+        "test-linux",
+        "test",
+        "test-install",
+        "docs-build",
+        "site-build",
+    }
+    assert not {
+        "docs-build",
+        "site-build",
+    }.issubset(module.workflow_job_needs(module.workflow_job_block(stale, "pr-gate")))
 
 
 def test_remote_release_readiness_checker_reports_unpublished_local_commits() -> None:

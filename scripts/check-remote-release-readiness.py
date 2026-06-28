@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import socket
 import subprocess
 import sys
@@ -22,6 +23,9 @@ except ModuleNotFoundError as error:
     BLAKE3_IMPORT_ERROR = error
 else:
     BLAKE3_IMPORT_ERROR = None
+
+
+REQUIRED_PR_GATE_JOBS = ("test-linux", "test", "test-install", "docs-build", "site-build")
 
 
 @dataclass
@@ -116,13 +120,46 @@ def check_remote_pr_gate(repo: str) -> CheckResult:
     text = workflow.stdout
     if "pr-gate:" not in text:
         return CheckResult("remote ci.yaml pr-gate", False, "remote ci.yaml lacks pr-gate")
-    if "needs: [test-linux, test, test-install]" not in text:
+    pr_gate = workflow_job_block(text, "pr-gate")
+    missing = sorted(set(REQUIRED_PR_GATE_JOBS) - workflow_job_needs(pr_gate))
+    if missing:
         return CheckResult(
             "remote ci.yaml pr-gate",
             False,
-            "remote pr-gate does not aggregate test-linux, test, and test-install",
+            "remote pr-gate does not aggregate required jobs: " + ", ".join(missing),
         )
     return CheckResult("remote ci.yaml pr-gate", True, "pr-gate aggregates required jobs")
+
+
+def workflow_job_block(workflow: str, name: str) -> str:
+    lines = workflow.splitlines()
+    start = next((i for i, line in enumerate(lines) if line == f"  {name}:"), None)
+    if start is None:
+        return ""
+    end = len(lines)
+    for i in range(start + 1, len(lines)):
+        line = lines[i]
+        if line.startswith("  ") and not line.startswith("    ") and line.endswith(":"):
+            end = i
+            break
+    return "\n".join(lines[start:end])
+
+
+def workflow_job_needs(job_block: str) -> set[str]:
+    inline = re.search(r"(?m)^\s+needs:\s*\[([^\]]+)\]\s*$", job_block)
+    if inline:
+        return {part.strip() for part in inline.group(1).split(",") if part.strip()}
+
+    needs: set[str] = set()
+    lines = job_block.splitlines()
+    for i, line in enumerate(lines):
+        if re.match(r"^\s+needs:\s*$", line):
+            for item in lines[i + 1 :]:
+                if not item.startswith("      - "):
+                    break
+                needs.add(item.removeprefix("      - ").strip())
+            break
+    return needs
 
 
 def check_remote_branch_protection(repo: str, branch: str) -> CheckResult:

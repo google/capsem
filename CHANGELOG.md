@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Updated the remote release readiness checker to require the expanded
+  `pr-gate` contract that includes docs and marketing builds.
 - Moved docs and marketing PR build enforcement under the required `pr-gate`
   status while keeping the docs and marketing Cloudflare workflows as
   push-to-main deploy rails.

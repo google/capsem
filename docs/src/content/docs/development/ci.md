@@ -72,10 +72,11 @@ uv run python scripts/check-remote-release-readiness.py
 ```
 
 It verifies that the local checkout has no unpublished commits relative to
-`origin/main`; remote `ci.yaml` exposes `pr-gate`; branch protection or active
-branch rulesets require `pr-gate`; `release.capsem.org` resolves and serves the
-asset channel; and the public index, `health.json`, and manifest agree on
-current binary, VM asset, and asset release date state. It also resolves
+`origin/main`; remote `ci.yaml` exposes `pr-gate` and aggregates `test-linux`,
+`test`, `test-install`, `docs-build`, and `site-build`; branch protection or
+active branch rulesets require `pr-gate`; `release.capsem.org` resolves and
+serves the asset channel; and the public index, `health.json`, and manifest
+agree on current binary, VM asset, and asset release date state. It also resolves
 published host SBOM and VM OBOM evidence artifacts, verifies their advertised
 hashes and sizes, and
 validates attestation subjects and predicate URLs against the published evidence
