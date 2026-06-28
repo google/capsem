@@ -14,6 +14,13 @@ cd docs && pnpm run dev     # localhost:4321
 cd docs && pnpm run build   # Production build
 ```
 
+## CI and deploy rail
+
+`docs.yaml` keeps pull-request builds path-filtered to `docs/**` and the docs
+workflow, but every push to `main` deploys and smokes `https://docs.capsem.org/`
+plus `/getting-started/`. This deploy rail is independent from binary releases,
+manual VM asset releases, and the `release.capsem.org` asset-channel workflow.
+
 ## Writing style
 
 Tight and to the point, like a manual. One topic per page. No filler, no marketing language. Tables over prose when listing configs or test cases. Code examples only when they clarify usage. Diagrams in mermaid.

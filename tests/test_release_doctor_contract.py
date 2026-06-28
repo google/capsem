@@ -589,6 +589,26 @@ def test_release_skill_keeps_binary_and_asset_verification_decoupled() -> None:
     assert "must not depend on release tags or VM asset publication" in release_skill
 
 
+def test_site_skills_preserve_every_main_merge_deploy_rail() -> None:
+    site_infra_skill = (PROJECT_ROOT / "skills/site-infra/SKILL.md").read_text()
+    site_marketing_skill = (PROJECT_ROOT / "skills/site-marketing/SKILL.md").read_text()
+
+    assert "`docs.yaml` keeps pull-request builds path-filtered" in site_infra_skill
+    assert "every push to `main` deploys and smokes `https://docs.capsem.org/`" in (
+        site_infra_skill
+    )
+    assert "plus `/getting-started/`" in site_infra_skill
+    assert "`site.yaml` keeps pull-request builds path-filtered" in site_marketing_skill
+    assert "every push to `main` deploys and smokes `https://capsem.org/`" in (
+        site_marketing_skill
+    )
+
+    for skill in (site_infra_skill, site_marketing_skill):
+        assert "independent from binary releases" in skill
+        assert "manual VM asset releases" in skill
+        assert "`release.capsem.org` asset-channel workflow" in skill
+
+
 def test_capsem_update_checks_release_channel_health_not_github_latest() -> None:
     update_rs = (PROJECT_ROOT / "crates/capsem/src/update.rs").read_text()
 

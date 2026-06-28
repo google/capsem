@@ -104,6 +104,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   smokes the public sites while pull-request builds remain path-filtered.
 - Changed release-process skill guidance to match the docs and marketing
   every-main-merge deploy rail.
+- Changed docs and marketing site skills to preserve the every-main-merge
+  deploy rail independently from binary and VM asset releases.
 - Changed update status reporting so VM asset and image tracks can surface
   blocked release-channel candidates, including asset releases that require a
   newer Capsem binary.
