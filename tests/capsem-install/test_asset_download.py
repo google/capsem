@@ -108,6 +108,29 @@ def _hashed_asset_name(logical_name: str, blob: bytes) -> str:
     return f"{logical_name}-{prefix}"
 
 
+def _write_installed_manifest_and_assets(
+    assets_dir: Path,
+    arch: str,
+    files: dict[str, bytes],
+    *,
+    asset_version: str,
+    origin: dict,
+) -> dict:
+    arch_assets = assets_dir / arch
+    arch_assets.mkdir(parents=True)
+    manifest = _make_manifest(arch, files, asset_version)
+    (assets_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (assets_dir / "manifest-origin.json").write_text(
+        json.dumps(origin, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    for name, blob in files.items():
+        target = arch_assets / _hashed_asset_name(name, blob)
+        target.write_bytes(blob)
+        target.chmod(0o444)
+    return manifest
+
+
 @pytest.fixture
 def http_fixture(tmp_path: Path):
     """Spin an http.server in the background; yield (base_url, serve_dir)."""
@@ -315,23 +338,19 @@ def test_update_assets_failed_remote_refresh_keeps_previous_manifest_and_assets(
     capsem_home = tmp_path / ".capsem"
     assets = capsem_home / "assets"
     arch_assets = assets / arch
-    arch_assets.mkdir(parents=True)
-    old_manifest = _make_manifest(arch, old_files, ASSET_VERSION)
-    (assets / "manifest.json").write_text(json.dumps(old_manifest), encoding="utf-8")
     old_origin = {
         "schema": "capsem.manifest_origin.v1",
         "origin": "package",
         "source": channel_manifest_url,
         "packaged_at": "2026-06-16T00:00:00Z",
     }
-    (assets / "manifest-origin.json").write_text(
-        json.dumps(old_origin, sort_keys=True) + "\n",
-        encoding="utf-8",
+    old_manifest = _write_installed_manifest_and_assets(
+        assets,
+        arch,
+        old_files,
+        asset_version=ASSET_VERSION,
+        origin=old_origin,
     )
-    for name, blob in old_files.items():
-        target = arch_assets / _hashed_asset_name(name, blob)
-        target.write_bytes(blob)
-        target.chmod(0o444)
 
     result = _run({"CAPSEM_HOME": str(capsem_home)}, "update", "--assets")
 
@@ -354,6 +373,68 @@ def test_update_assets_failed_remote_refresh_keeps_previous_manifest_and_assets(
     )
     assert not corrupt_target.exists(), "corrupt candidate must not replace old kernel"
     assert list(arch_assets.glob("*.tmp")) == []
+
+
+def test_update_assets_rejects_incomplete_remote_manifest_without_clobbering_old_assets(
+    tmp_path: Path,
+    http_fixture,
+    installed_layout,
+):
+    base_url, serve_dir, _requested_paths = http_fixture
+    arch = _arch()
+
+    old_files = {
+        "vmlinuz": b"old-complete-kernel",
+        "initrd.img": b"old-complete-initrd",
+        "rootfs.erofs": b"old-complete-rootfs",
+    }
+    new_files = {
+        "vmlinuz": b"new-incomplete-kernel",
+        "initrd.img": b"new-incomplete-initrd",
+        "rootfs.erofs": b"new-incomplete-rootfs",
+    }
+
+    channel_manifest_url = f"{base_url}/assets/stable/manifest.json"
+    channel_manifest = _make_manifest(arch, new_files, NEW_ASSET_VERSION)
+    del channel_manifest["assets"]["releases"][NEW_ASSET_VERSION]["arches"][arch]["rootfs.erofs"]
+    channel_manifest_path = serve_dir / "assets" / "stable" / "manifest.json"
+    channel_manifest_path.parent.mkdir(parents=True)
+    channel_manifest_path.write_text(json.dumps(channel_manifest), encoding="utf-8")
+
+    release_dir = serve_dir / "assets" / "releases" / NEW_ASSET_VERSION
+    release_dir.mkdir(parents=True)
+    for name, blob in new_files.items():
+        if name != "rootfs.erofs":
+            (release_dir / f"{arch}-{name}").write_bytes(blob)
+
+    capsem_home = tmp_path / ".capsem"
+    assets = capsem_home / "assets"
+    old_origin = {
+        "schema": "capsem.manifest_origin.v1",
+        "origin": "package",
+        "source": channel_manifest_url,
+        "packaged_at": "2026-06-16T00:00:00Z",
+    }
+    old_manifest = _write_installed_manifest_and_assets(
+        assets,
+        arch,
+        old_files,
+        asset_version=ASSET_VERSION,
+        origin=old_origin,
+    )
+
+    result = _run({"CAPSEM_HOME": str(capsem_home)}, "update", "--assets")
+
+    assert result.returncode != 0, "manifest without rootfs must not hydrate successfully"
+    err = (result.stdout + result.stderr).lower()
+    assert "rootfs not found" in err, err
+    assert "restored previous installed manifest" in err, err
+    assert json.loads((assets / "manifest.json").read_text()) == old_manifest
+    assert json.loads((assets / "manifest-origin.json").read_text()) == old_origin
+    for name, blob in old_files.items():
+        target = assets / arch / _hashed_asset_name(name, blob)
+        assert target.exists(), f"previous working asset was removed: {target}"
+        assert target.read_bytes() == blob
 
 
 def test_update_assets_rejects_bare_asset_base_path(tmp_path: Path, installed_layout):

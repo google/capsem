@@ -633,8 +633,12 @@ where
     use futures::StreamExt;
     use tokio::io::AsyncWriteExt;
 
-    // Pick the same asset release the service's resolver will pick.
-    let asset_version = pick_asset_version(manifest, binary_version)?;
+    // Pick and validate the same bootable asset release the service resolver
+    // will use. This rejects channel manifests missing kernel/initrd/rootfs
+    // before they can become the installed manifest.
+    let asset_version = manifest
+        .resolve(binary_version, arch, base_dir)?
+        .asset_version;
     let release = manifest
         .assets
         .releases
@@ -797,7 +801,9 @@ pub fn copy_missing_local_assets<F>(
 where
     F: Fn(DownloadProgress),
 {
-    let asset_version = pick_asset_version(manifest, binary_version)?;
+    let asset_version = manifest
+        .resolve(binary_version, arch, base_dir)?
+        .asset_version;
     let release = manifest
         .assets
         .releases
@@ -1426,37 +1432,45 @@ mod tests {
         let install = dir.path().join("install");
         std::fs::create_dir_all(source.join("arm64")).unwrap();
         std::fs::write(source.join("arm64").join("vmlinuz"), b"wrong").unwrap();
+        std::fs::write(source.join("arm64").join("initrd.img"), b"initrd").unwrap();
+        std::fs::write(source.join("arm64").join("rootfs.erofs"), b"rootfs").unwrap();
+        let initrd_hash = blake3::hash(b"initrd").to_hex().to_string();
+        let rootfs_hash = blake3::hash(b"rootfs").to_hex().to_string();
 
         let manifest = ManifestV2::from_json(
-            r#"{
+            &format!(
+                r#"{{
                 "format": 2,
                 "refresh_policy": "24h",
-                "assets": {
+                "assets": {{
                     "current": "2030.0101.1",
-                    "releases": {
-                        "2030.0101.1": {
+                    "releases": {{
+                        "2030.0101.1": {{
                             "date": "2030-01-01",
                             "deprecated": false,
                             "min_binary": "1.0.0",
-                            "arches": {
-                                "arm64": {
-                                    "vmlinuz": { "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "size": 5 }
-                                }
-                            }
-                        }
-                    }
-                },
-                "binaries": {
+                            "arches": {{
+                                "arm64": {{
+                                    "vmlinuz": {{ "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "size": 5 }},
+                                    "initrd.img": {{ "hash": "{initrd_hash}", "size": 6 }},
+                                    "rootfs.erofs": {{ "hash": "{rootfs_hash}", "size": 6 }}
+                                }}
+                            }}
+                        }}
+                    }}
+                }},
+                "binaries": {{
                     "current": "9.9.9",
-                    "releases": {
-                        "9.9.9": {
+                    "releases": {{
+                        "9.9.9": {{
                             "date": "2030-01-01",
                             "deprecated": false,
                             "min_assets": "2030.0101.1"
-                        }
-                    }
-                }
-            }"#,
+                        }}
+                    }}
+                }}
+            }}"#,
+            ),
         )
         .unwrap();
 
