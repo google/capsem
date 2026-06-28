@@ -24,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   release URLs so public profile metadata no longer exposes build-machine
   paths.
 
+### Changed
+- Documented the PR `pr-gate` contract against `just test`, including the
+  hosted-runner substitutions that must not be mistaken for full local release
+  validation.
+
 ## [1.3.1782582155] - 2026-06-27
 
 ### Fixed

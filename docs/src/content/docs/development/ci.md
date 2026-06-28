@@ -11,7 +11,7 @@ Capsem uses GitHub Actions for continuous integration and release automation.
 
 | Workflow | Trigger | What it does |
 |----------|---------|-------------|
-| `ci.yaml` | Pull requests | Full test suite: Rust unit/integration, frontend, Python, coverage |
+| `ci.yaml` | Pull requests and push to main | PR quality gate: Rust unit/integration, frontend, Python contracts, install checks, and explicit runner substitutions |
 | `release.yaml` | Tag push (`v*`) | Build apps (macOS + Linux), package with the current public asset manifest, create GitHub release |
 | `release-assets.yaml` | Manual | Build VM assets, generate `assets/manifest.json`, and optionally deploy the asset channel |
 | `docs.yaml` | Pull requests and push to main (docs changes) | Build docs on PRs; deploy docs.capsem.org on main, then smoke the live docs site |
@@ -20,7 +20,8 @@ Capsem uses GitHub Actions for continuous integration and release automation.
 
 ## CI workflow (`ci.yaml`)
 
-Runs on every pull request. Two parallel jobs:
+Runs on every pull request and push to `main`. Pull requests should require the
+stable `pr-gate` status before merge.
 
 ### test-linux (ubuntu-24.04-arm)
 
@@ -33,7 +34,7 @@ Tests the KVM backend, which only compiles on Linux:
 
 ### test (macos-14)
 
-Full test suite on macOS (Apple VZ backend):
+Hosted-runner quality suite on macOS:
 
 1. **Dependency audit** -- `cargo audit` + `pnpm audit`
 2. **Rust unit tests with coverage** -- every workspace crate, including macOS-only app/tray crates
@@ -55,6 +56,29 @@ path stay valid before a PR can merge.
 This is the stable branch-protection status for code PRs. It depends on
 `test-linux`, `test`, and `test-install`, runs even when one dependency fails,
 and fails unless all three dependency jobs report `success`.
+
+`pr-gate` is the only status that should be required by branch protection for
+the product CI workflow. Individual dependency job names may change as CI is
+reshaped; `pr-gate` keeps branch protection stable while still failing closed
+when any required lane fails.
+
+## PR gate compared with `just test`
+
+`just test` is still the full local/release validation command. GitHub-hosted PR
+CI splits that contract across jobs and names every runner substitution instead
+of pretending the hosted lane is identical.
+
+| `just test` stage | PR CI proof | Difference |
+|-------------------|-------------|------------|
+| Audits, lint, frontend check/test/build | `test` job: dependency audit, Python lint/type/skills, frontend check/vitest/build | Same signal, split for GitHub summaries |
+| Cross-compile agent (both arches) | `test` job: musl target check for `capsem-agent`; `test-linux` covers Linux host crates | Hosted PR substitution for Docker release cross-compile |
+| Rust workspace coverage | `test` and `test-linux` jobs run `cargo llvm-cov nextest` on macOS and Linux crate sets | Same coverage rail with runner-specific package sets |
+| Host binary signing prerequisites | `test` job builds and ad-hoc signs host binaries before non-VM integration suites | Same PR prerequisite for artifact-dependent Python suites |
+| Python schema and no-VM integration suites | `test` job runs schema coverage plus bootstrap, codesign, and rootfs artifact suites | Same no-VM suites, scoped to generated artifacts available in CI |
+| VM-heavy Python suites (`pytest tests/ -n 4`) | Import collection only on hosted PR runners | Runner substitution: full execution remains a local/release gate until PR runners can host Apple VZ reliably |
+| Serial timing, build-chain, and route-health suites | Import collection only on hosted PR runners | Runner substitution: local `just test` and release gates remain authoritative |
+| Legacy injection/integration scripts and benchmark recording | Not run in hosted PR CI | Runner substitution: still required by local `just test` before release work is claimed |
+| Docker cross-compile and install e2e | `test-install` runs install e2e in Docker; release workflow owns full package matrix | Split by runner capability |
 
 ## Site deploy workflows
 

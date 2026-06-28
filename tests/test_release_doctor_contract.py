@@ -16,9 +16,7 @@ OLD_DEBUG_CRATE = "capsem-debug" + "-upstream"
 
 def _recipe_block(name: str) -> str:
     lines = (PROJECT_ROOT / "justfile").read_text().splitlines()
-    start = next(
-        i for i, line in enumerate(lines) if line == name or line.startswith(f"{name} ")
-    )
+    start = next(i for i, line in enumerate(lines) if line == name or line.startswith(f"{name} "))
     end = len(lines)
     for i in range(start + 1, len(lines)):
         line = lines[i]
@@ -144,7 +142,7 @@ def test_install_e2e_generates_manifest_through_admin_rail() -> None:
     script = (PROJECT_ROOT / "scripts" / "prepare-install-test-assets.sh").read_text()
 
     assert "cargo run -p capsem-admin -- manifest generate" in script
-    assert 'arm64|aarch64)' in script
+    assert "arm64|aarch64)" in script
     assert 'write_if_missing "$ASSETS_DIR/$arch/vmlinuz"' in script
     assert 'create_minimal_initrd_if_missing "$ASSETS_DIR/$arch/initrd.img"' in script
     assert 'write_if_missing "$ASSETS_DIR/$arch/initrd.img"' not in script
@@ -169,7 +167,10 @@ def test_vm_asset_release_is_manual_and_deploys_asset_channel() -> None:
     assert "cargo run -p capsem-admin -- assets channel check" in workflow
     assert "uses: ./.github/workflows/release-channel.yaml" in workflow
     assert "dist_artifact: asset-channel-preview" in workflow
-    assert "if: ${{ inputs.dry_run == false }}" in workflow
+    assert (
+        "if: ${{ inputs.dry_run == false && needs.assemble-channel.outputs.asset_changed == 'true' }}"
+        in workflow
+    )
 
 
 def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
@@ -197,10 +198,7 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
     assert "Smoke public asset channel" in workflow
     assert "RELEASE_SITE_URL: https://release.capsem.org" in workflow
     assert 'curl -fsSL "$RELEASE_SITE_URL/" -o /tmp/release-index.html' in workflow
-    assert (
-        'curl -fsSL "$RELEASE_SITE_URL/health.json" -o /tmp/release-health.json'
-        in workflow
-    )
+    assert 'curl -fsSL "$RELEASE_SITE_URL/health.json" -o /tmp/release-health.json' in workflow
     assert (
         'curl -fsSL "$RELEASE_SITE_URL/assets/$CHANNEL/manifest.json" -o /tmp/release-manifest.json'
         in workflow
@@ -214,7 +212,7 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
     assert "health updates.{key}.latest missing" in workflow
     assert "health updates.{key}.state missing or not a string" in workflow
     assert 'for key in ("vm_oboms", "host_sboms", "host_binary_files", "attestations")' in workflow
-    assert 'health evidence.{key} missing or not a list' in workflow
+    assert "health evidence.{key} missing or not a list" in workflow
     assert 'manifest.get("format") != 2' in workflow
     assert "release.capsem.org smoke failed after deploy." in workflow
 
@@ -250,16 +248,12 @@ def test_docs_and_marketing_sites_build_on_pr_and_deploy_on_main_only() -> None:
         assert f"cd {directory} && pnpm install --frozen-lockfile" in workflow
         assert f"cd {directory} && pnpm run build" in workflow
         assert (
-            "if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}"
-            in workflow
+            "if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}" in workflow
         )
-        assert (
-            f"pages deploy {directory}/dist/ --project-name={project_name}"
-            in workflow
-        )
+        assert f"pages deploy {directory}/dist/ --project-name={project_name}" in workflow
         assert smoke_name in workflow
         assert f"SITE_URL: {site_url}" in workflow
-        assert "curl -fsSLI \"$SITE_URL/\" -o" in workflow
+        assert 'curl -fsSLI "$SITE_URL/" -o' in workflow
         assert "grep -qi '^content-type: text/html'" in workflow
         assert 'grep -q "The fastest way to ship with AI securely."' in workflow
         assert failure in workflow
@@ -280,7 +274,7 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     assert "just build-kernel" not in workflow
     assert "just build-rootfs" not in workflow
     assert "generate_checksums(Path('unified-assets')" not in workflow
-    assert "gh release upload ${{ github.ref_name }} \"release-artifacts/$arch" not in workflow
+    assert 'gh release upload ${{ github.ref_name }} "release-artifacts/$arch' not in workflow
     assert "release-artifacts/manifest.json" not in workflow
     assert '--manifest "$ASSET_MANIFEST_URL"' in workflow
     assert "release.capsem.org" in workflow
@@ -306,9 +300,7 @@ def test_manifest_source_inputs_are_url_only() -> None:
 
     for workflow in (release, release_assets, release_channel):
         source_lines = [
-            line.strip()
-            for line in workflow.splitlines()
-            if line.strip().startswith("--manifest ")
+            line.strip() for line in workflow.splitlines() if line.strip().startswith("--manifest ")
         ]
         for line in source_lines:
             if "profile materialize" in line:
@@ -353,10 +345,7 @@ def test_release_skill_keeps_binary_and_asset_verification_decoupled() -> None:
     assert "smoke-check `https://release.capsem.org/`, `/health.json`, and" in release_skill
     assert "`/assets/<channel>/manifest.json`" in release_skill
     assert "curl -fsSL https://release.capsem.org/health.json" in release_skill
-    assert (
-        "curl -fsSL https://release.capsem.org/assets/stable/manifest.json"
-        in release_skill
-    )
+    assert "curl -fsSL https://release.capsem.org/assets/stable/manifest.json" in release_skill
     assert "gh release download vX.Y.Z --pattern manifest.json" not in release_skill
     assert "VM asset manifests" in release_skill
     assert "channel health live on `release.capsem.org`" in release_skill
@@ -424,6 +413,43 @@ def test_ci_docs_describes_three_independent_publication_rails() -> None:
     assert "`https://capsem.org/`, content type `text/html`" in docs
 
 
+def test_ci_docs_compare_pr_gate_to_just_test_with_named_substitutions() -> None:
+    docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
+    workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
+    just_test = _recipe_block("test:")
+
+    for stage in [
+        "Audits + lint + frontend",
+        "Cross-compile agent (both arches)",
+        "Rust: test suite with coverage",
+        "Python: non-serial tests (n=4 parallel)",
+        "Python: serial timing and benchmark tests",
+        "Python: Build chain tests (serial)",
+        "Injection test",
+        "Integration test",
+        "Benchmarks",
+        "Cross-compile Linux release (Docker)",
+        "Install e2e tests (Docker + systemd)",
+    ]:
+        assert stage in just_test
+
+    assert "## PR gate compared with `just test`" in docs
+    assert (
+        "| Audits, lint, frontend check/test/build | `test` job: dependency audit, Python lint/type/skills, frontend check/vitest/build | Same signal, split for GitHub summaries |"
+        in docs
+    )
+    assert (
+        "| VM-heavy Python suites (`pytest tests/ -n 4`) | Import collection only on hosted PR runners | Runner substitution: full execution remains a local/release gate until PR runners can host Apple VZ reliably |"
+        in docs
+    )
+    assert (
+        "| Legacy injection/integration scripts and benchmark recording | Not run in hosted PR CI | Runner substitution: still required by local `just test` before release work is claimed |"
+        in docs
+    )
+    assert "`pr-gate` is the only status that should be required by branch protection" in docs
+    assert "needs: [test-linux, test, test-install]" in workflow
+
+
 def test_ci_installs_b3sum_before_bootstrap_asset_hash_checks() -> None:
     workflow = _workflow_job_block("test")
 
@@ -441,9 +467,7 @@ def test_ci_provides_sha256sum_before_codecov_uploads_on_macos() -> None:
     workflow = _workflow_job_block("test")
 
     install_tools_pos = workflow.find("- name: Install tools")
-    sha256sum_pos = workflow.find(
-        'printf \'%s\\n\' \'#!/bin/sh\' \'exec shasum -a 256 "$@"\''
-    )
+    sha256sum_pos = workflow.find("printf '%s\\n' '#!/bin/sh' 'exec shasum -a 256 \"$@\"'")
     codecov_pos = workflow.find("Upload Rust unit test coverage")
 
     assert install_tools_pos != -1
@@ -505,7 +529,7 @@ def test_doctor_session_validation_starts_mock_server() -> None:
 
     assert "from mock_server import start_mock_server, stop_process" in source
     assert "CAPSEM_MOCK_SERVER_BASE_URL" in source
-    assert "[binary, \"run\", \"capsem-doctor\"]" in source
+    assert '[binary, "run", "capsem-doctor"]' in source
 
 
 def test_release_scripts_use_shared_mock_server_helper() -> None:
@@ -586,9 +610,7 @@ def test_ci_builds_frontend_before_compiling_tauri_app_tests() -> None:
 
 def test_frontend_generated_settings_use_one_shared_rail() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
-    release_workflow = (
-        PROJECT_ROOT / ".github" / "workflows" / "release.yaml"
-    ).read_text()
+    release_workflow = (PROJECT_ROOT / ".github" / "workflows" / "release.yaml").read_text()
     just = (PROJECT_ROOT / "justfile").read_text()
 
     generate_pos = workflow.find("bash scripts/generate-settings.sh")
@@ -679,7 +701,7 @@ def test_installer_codesigns_helpers_with_stable_identifiers() -> None:
 
     for script in [postinstall, simulate_install]:
         assert "codesign_identifier_for_bin()" in script
-        assert "codesign --sign - --identifier \"$identifier\"" in script
+        assert 'codesign --sign - --identifier "$identifier"' in script
         for identifier in expected:
             assert identifier in script
 
@@ -718,17 +740,13 @@ def test_rust_http_stack_uses_webpki_roots_not_platform_keychain_verifier() -> N
     """Runtime HTTP clients must not pull macOS platform trust/keychain APIs."""
 
     manifest = (PROJECT_ROOT / "Cargo.toml").read_text()
-    reqwest_line = next(
-        line for line in manifest.splitlines() if line.startswith("reqwest = ")
-    )
+    reqwest_line = next(line for line in manifest.splitlines() if line.startswith("reqwest = "))
     assert 'version = "0.12"' in reqwest_line
     assert "rustls-tls-webpki-roots" in reqwest_line
     assert '"rustls"' not in reqwest_line
 
     service_manifest = (PROJECT_ROOT / "crates" / "capsem-service" / "Cargo.toml").read_text()
-    ort_line = next(
-        line for line in service_manifest.splitlines() if line.startswith("ort = ")
-    )
+    ort_line = next(line for line in service_manifest.splitlines() if line.startswith("ort = "))
     assert "default-features = false" in ort_line
     assert '"tls-rustls"' in ort_line
     assert '"tls-native"' not in ort_line
@@ -759,7 +777,7 @@ def test_stop_command_stays_before_status_and_credential_hydration() -> None:
     body = stop_arm.group("body")
 
     assert "service_install::stop_service().await?" in body
-    assert "println!(\"Service stopped.\");" in body
+    assert 'println!("Service stopped.");' in body
     assert "return Ok(());" in body
 
     forbidden = [
@@ -786,12 +804,7 @@ def test_stop_command_stays_before_status_and_credential_hydration() -> None:
 
 def test_changelog_does_not_advertise_keychain_credential_storage_for_1_3() -> None:
     changelog = (PROJECT_ROOT / "CHANGELOG.md").read_text()
-    unreleased = changelog.split("## [Unreleased]", maxsplit=1)[1].split(
-        "\n## [", maxsplit=1
-    )[0]
-    section = unreleased
-    if not section.strip():
-        section = changelog.split("\n## [", maxsplit=2)[2]
+    section = changelog.split("## [1.3.1782571508]", maxsplit=1)[1].split("\n## [", maxsplit=1)[0]
 
     assert "Disabled the macOS Keychain-backed credential broker store" in section
     assert "file-backed durable storage" in section
@@ -802,22 +815,10 @@ def test_changelog_does_not_advertise_keychain_credential_storage_for_1_3() -> N
 
 def test_release_docs_identify_body_blobs_as_forensic_truth() -> None:
     telemetry = (
-        PROJECT_ROOT
-        / "docs"
-        / "src"
-        / "content"
-        / "docs"
-        / "architecture"
-        / "session-telemetry.md"
+        PROJECT_ROOT / "docs" / "src" / "content" / "docs" / "architecture" / "session-telemetry.md"
     ).read_text()
     network = (
-        PROJECT_ROOT
-        / "docs"
-        / "src"
-        / "content"
-        / "docs"
-        / "security"
-        / "network-isolation.md"
+        PROJECT_ROOT / "docs" / "src" / "content" / "docs" / "security" / "network-isolation.md"
     ).read_text()
     debug_skill = (PROJECT_ROOT / "skills" / "dev-session-debug" / "SKILL.md").read_text()
     mcp_skill = (PROJECT_ROOT / "skills" / "dev-mcp" / "SKILL.md").read_text()
@@ -882,7 +883,13 @@ def test_release_docs_reject_old_service_routes_and_manifest_signing() -> None:
 def test_release_docs_name_tool_calls_as_canonical_tool_ledger() -> None:
     docs = [
         PROJECT_ROOT / "docs" / "src" / "content" / "docs" / "architecture" / "mcp-gateway.md",
-        PROJECT_ROOT / "docs" / "src" / "content" / "docs" / "architecture" / "session-telemetry.md",
+        PROJECT_ROOT
+        / "docs"
+        / "src"
+        / "content"
+        / "docs"
+        / "architecture"
+        / "session-telemetry.md",
         PROJECT_ROOT / "skills" / "dev-mcp" / "SKILL.md",
         PROJECT_ROOT / "skills" / "dev-session-debug" / "SKILL.md",
     ]
@@ -923,9 +930,9 @@ def test_linux_ci_coverage_cannot_hang_without_a_named_failure() -> None:
     workflow = _workflow_job_block("test-linux")
     nextest = tomllib.loads((PROJECT_ROOT / ".config" / "nextest.toml").read_text())
 
-    coverage_step = workflow.split(
-        "- name: Unit tests (KVM backend) with coverage", maxsplit=1
-    )[1].split("- name: Upload Linux coverage", maxsplit=1)[0]
+    coverage_step = workflow.split("- name: Unit tests (KVM backend) with coverage", maxsplit=1)[
+        1
+    ].split("- name: Upload Linux coverage", maxsplit=1)[0]
     slow_timeout = nextest["profile"]["ci"]["slow-timeout"]
 
     assert "timeout-minutes:" in coverage_step
@@ -941,7 +948,9 @@ def test_linux_ci_coverage_cannot_hang_without_a_named_failure() -> None:
 
 def test_pr_ci_python_coverage_is_not_a_monolithic_vm_tree_rerun() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
-    coverage_step = workflow.split("- name: Python schema tests with coverage", maxsplit=1)[1].split(
+    coverage_step = workflow.split("- name: Python schema tests with coverage", maxsplit=1)[
+        1
+    ].split(
         "# Python integration tests that need no VM",
         maxsplit=1,
     )[0]
@@ -990,9 +999,9 @@ def test_live_provider_dotenv_files_are_gitignored() -> None:
 
 def test_pr_ci_non_vm_python_tests_prepare_assets_and_signed_binaries() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
-    block = workflow.split("- name: Python integration tests (non-VM suites)", maxsplit=1)[
-        1
-    ].split("# Verify all integration test suites", maxsplit=1)[0]
+    block = workflow.split("- name: Python integration tests (non-VM suites)", maxsplit=1)[1].split(
+        "# Verify all integration test suites", maxsplit=1
+    )[0]
 
     asset_pos = block.find("bash scripts/prepare-install-test-assets.sh")
     build_pos = block.find(
@@ -1011,7 +1020,9 @@ def test_pr_ci_non_vm_python_tests_prepare_assets_and_signed_binaries() -> None:
 
 
 def test_kvm_checkpoint_x86_state_tests_are_arch_gated() -> None:
-    source = (PROJECT_ROOT / "crates" / "capsem-core" / "src" / "hypervisor" / "kvm" / "checkpoint.rs").read_text()
+    source = (
+        PROJECT_ROOT / "crates" / "capsem-core" / "src" / "hypervisor" / "kvm" / "checkpoint.rs"
+    ).read_text()
     tests = source.split("#[cfg(test)]\nmod tests", maxsplit=1)[1]
 
     assert "fn test_header() -> CheckpointHeader" in tests
@@ -1081,7 +1092,7 @@ def test_benchmark_release_path_wires_mock_server_and_forbids_http_skip() -> Non
     assert "validate_capsem_bench_result(data)" in baseline
     assert "capsem-bench all" in baseline
     assert "skipped" in baseline
-    assert "benchmarks\" / \"capsem-bench\"" in baseline
+    assert 'benchmarks" / "capsem-bench"' in baseline
 
 
 def test_integration_script_has_no_live_ai_provider_escape_hatch() -> None:
@@ -1132,9 +1143,7 @@ def test_builder_has_no_legacy_ai_provider_authoring_rail() -> None:
                     offenders.append(f"{rel}: contains {marker!r}")
                     break
 
-    assert offenders == [], "legacy AI-provider builder rail still exists:\n" + "\n".join(
-        offenders
-    )
+    assert offenders == [], "legacy AI-provider builder rail still exists:\n" + "\n".join(offenders)
 
 
 def test_gateway_docs_describe_explicit_routes_not_generic_forwarding() -> None:
@@ -1197,9 +1206,7 @@ def test_config_contract_has_no_admin_or_registry_authority() -> None:
                 if marker in text:
                     offenders.append(f"{rel}: contains {marker!r}")
                     break
-    assert offenders == [], "admin/registry config authority still exists:\n" + "\n".join(
-        offenders
-    )
+    assert offenders == [], "admin/registry config authority still exists:\n" + "\n".join(offenders)
 
 
 def test_builder_has_no_guest_scaffold_authoring_rail() -> None:
@@ -1273,7 +1280,7 @@ def test_guest_init_repairs_overlay_root_traversal_for_unprivileged_tools() -> N
 
     chmod_pos = init.find("chmod 755 /newroot")
     chroot_chmod_pos = init.find("chroot /newroot /bin/chmod 755 /")
-    launch_pos = init.find("chroot /newroot \"$AGENT_PATH\"")
+    launch_pos = init.find('chroot /newroot "$AGENT_PATH"')
 
     assert chmod_pos != -1, "init must make / traversable for _apt and tool users"
     assert chroot_chmod_pos != -1, "init must repair root mode as seen inside chroot"
@@ -1309,9 +1316,7 @@ def test_guest_init_publishes_rootfs_binaries_into_run_contract() -> None:
 
 
 def test_guest_runtime_doctor_package_probes_are_hermetic() -> None:
-    source = (
-        PROJECT_ROOT / "guest" / "artifacts" / "diagnostics" / "test_runtimes.py"
-    ).read_text()
+    source = (PROJECT_ROOT / "guest" / "artifacts" / "diagnostics" / "test_runtimes.py").read_text()
 
     forbidden_fragments = [
         "pip install six",
@@ -1332,9 +1337,7 @@ def test_guest_runtime_doctor_package_probes_are_hermetic() -> None:
 
 def test_guest_runtime_doctor_remote_apt_https_probe_is_release_gate() -> None:
     """Doctor must catch runtime apt HTTPS/CA breakage, not just local .deb installs."""
-    source = (
-        PROJECT_ROOT / "guest" / "artifacts" / "diagnostics" / "test_runtimes.py"
-    ).read_text()
+    source = (PROJECT_ROOT / "guest" / "artifacts" / "diagnostics" / "test_runtimes.py").read_text()
 
     assert "def test_remote_apt_https_install_works" in source
     assert "apt-get " in source
@@ -1351,8 +1354,8 @@ def test_capsem_init_recreates_user_local_ai_cli_shims() -> None:
     init = (PROJECT_ROOT / "guest" / "artifacts" / "capsem-init").read_text()
 
     assert "for cli in claude agy; do" in init
-    assert "ln -sf \"/usr/local/bin/$cli\" \"/newroot/root/.local/bin/$cli\"" in init
-    assert "chroot /newroot /bin/chmod 555 \"/root/.local/bin/$cli\"" in init
+    assert 'ln -sf "/usr/local/bin/$cli" "/newroot/root/.local/bin/$cli"' in init
+    assert 'chroot /newroot /bin/chmod 555 "/root/.local/bin/$cli"' in init
 
 
 def test_capsem_init_keeps_etc_traversable_for_apt_sandbox() -> None:
@@ -1361,7 +1364,7 @@ def test_capsem_init_keeps_etc_traversable_for_apt_sandbox() -> None:
 
     profile_seed_pos = init.find("projecting profile root seed")
     final_etc_chmod_pos = init.rfind("chmod 755 /newroot/etc")
-    launch_pos = init.find("chroot /newroot \"$AGENT_PATH\"")
+    launch_pos = init.find('chroot /newroot "$AGENT_PATH"')
 
     assert "chmod 755 /newroot" in init
     assert profile_seed_pos != -1
@@ -1394,9 +1397,7 @@ def test_profile_roots_do_not_force_local_or_mock_model_providers() -> None:
         assert "local_ollama" not in providers, (
             f"{config_path} must not declare a hidden local_ollama provider"
         )
-        assert "ollama" not in providers, (
-            f"{config_path} must not declare a hidden ollama provider"
-        )
+        assert "ollama" not in providers, f"{config_path} must not declare a hidden ollama provider"
         root_dir = profile_dir / "root"
         for payload in sorted(root_dir.rglob("*")):
             if not payload.is_file():
@@ -1407,9 +1408,7 @@ def test_profile_roots_do_not_force_local_or_mock_model_providers() -> None:
 
 
 def test_guest_virtiofs_pip_probe_is_hermetic() -> None:
-    source = (
-        PROJECT_ROOT / "guest" / "artifacts" / "diagnostics" / "test_virtiofs.py"
-    ).read_text()
+    source = (PROJECT_ROOT / "guest" / "artifacts" / "diagnostics" / "test_virtiofs.py").read_text()
 
     assert "pip install --quiet cowsay" not in source
     assert "import cowsay" not in source
