@@ -163,7 +163,9 @@ The deploy smoke also verifies that the VM asset update target, manifest, base
 URL, compatibility, and newer-version requirements match the canonical asset
 metadata.
 The deploy smoke also verifies that the profile update hash, compatibility, and
-newer-version requirements match the canonical profile catalog metadata.
+newer-version requirements match the canonical profile catalog metadata, and
+that the profile catalog's current binary/assets compatibility, minimum
+binary/assets, and requires-newer flags match the fetched channel manifest.
 The deploy smoke also verifies that image freshness remains explicitly
 unpublished until image release metadata is added to the asset channel.
 The deploy smoke must also verify public `Cache-Control` headers: mutable

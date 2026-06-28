@@ -204,6 +204,26 @@ jobs:
               failures.append("health binary version mismatch")
           if health.get("assets", {}).get("version") != current_assets:
               failures.append("health asset version mismatch")
+          current_manifest_asset_release = manifest.get("assets", {}).get("releases", {}).get(current_assets)
+          current_manifest_binary_release = manifest.get("binaries", {}).get("releases", {}).get(current_binary)
+          if health.get("profiles", {}).get("state") != "current":
+              failures.append("health profile state mismatch")
+          expected_profile_compatibility = {
+              "binary": current_binary,
+              "assets": current_assets,
+              "min_binary": current_manifest_asset_release.get("min_binary") if isinstance(current_manifest_asset_release, dict) else None,
+              "min_assets": current_manifest_binary_release.get("min_assets") if isinstance(current_manifest_binary_release, dict) else None,
+          }
+          actual_profile_compatibility = health.get("profiles", {}).get("compatibility")
+          for field, expected in expected_profile_compatibility.items():
+              actual = actual_profile_compatibility.get(field) if isinstance(actual_profile_compatibility, dict) else None
+              if actual != expected:
+                  failures.append(f"health profile compatibility {field} mismatch")
+          actual_profile_requires_newer = health.get("profiles", {}).get("requires_newer")
+          for field, expected in (("binary", False), ("assets", False)):
+              actual = actual_profile_requires_newer.get(field) if isinstance(actual_profile_requires_newer, dict) else None
+              if actual != expected:
+                  failures.append(f"health profile requirement {field} mismatch")
           updates = health.get("updates", {})
           if not isinstance(updates.get("binary"), dict):
               failures.append("health binary update metadata missing")

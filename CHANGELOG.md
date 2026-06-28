@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Fixed live release-site smoke/readiness validation so profile catalog
+  compatibility minima and newer-version flags cannot drift from the channel
+  manifest.
 - Fixed live release-site smoke/readiness validation so asset release history,
   deprecation state, deprecation dates, and minimum binary compatibility cannot
   drift from the channel manifest.

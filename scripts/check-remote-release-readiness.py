@@ -269,6 +269,9 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
     manifest_asset_releases = require_object(
         manifest_assets, "releases", "manifest asset releases", failures
     )
+    manifest_binary_releases = require_object(
+        manifest_binaries, "releases", "manifest binary releases", failures
+    )
 
     if health_data.get("schema") != "capsem.assets_channel.health.v1":
         failures.append("health schema mismatch")
@@ -292,6 +295,16 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
     current_binary = health_current.get("binary")
     current_assets = health_current.get("assets")
     profile_source = health_profiles.get("source")
+    current_manifest_asset_release = (
+        manifest_asset_releases.get(current_assets)
+        if isinstance(manifest_asset_releases, dict)
+        else None
+    )
+    current_manifest_binary_release = (
+        manifest_binary_releases.get(current_binary)
+        if isinstance(manifest_binary_releases, dict)
+        else None
+    )
     health_updates = health_data.get("updates")
     health_update_binary = (
         health_updates.get("binary") if isinstance(health_updates, dict) else None
@@ -316,6 +329,36 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
         failures.append("health binary version mismatch")
     if health_assets.get("version") != current_assets:
         failures.append("health asset version mismatch")
+    if health_profiles.get("state") != "current":
+        failures.append("health profile state mismatch")
+    expected_profile_compatibility = {
+        "binary": current_binary,
+        "assets": current_assets,
+        "min_binary": current_manifest_asset_release.get("min_binary")
+        if isinstance(current_manifest_asset_release, dict)
+        else None,
+        "min_assets": current_manifest_binary_release.get("min_assets")
+        if isinstance(current_manifest_binary_release, dict)
+        else None,
+    }
+    actual_profile_compatibility = health_profiles.get("compatibility")
+    for field, expected in expected_profile_compatibility.items():
+        actual = (
+            actual_profile_compatibility.get(field)
+            if isinstance(actual_profile_compatibility, dict)
+            else None
+        )
+        if actual != expected:
+            failures.append(f"health profile compatibility {field} mismatch")
+    actual_profile_requires_newer = health_profiles.get("requires_newer")
+    for field, expected in (("binary", False), ("assets", False)):
+        actual = (
+            actual_profile_requires_newer.get(field)
+            if isinstance(actual_profile_requires_newer, dict)
+            else None
+        )
+        if actual != expected:
+            failures.append(f"health profile requirement {field} mismatch")
     if not isinstance(health_update_binary, dict):
         failures.append("health binary update metadata missing")
     else:
