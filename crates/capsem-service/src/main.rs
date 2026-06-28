@@ -5152,10 +5152,39 @@ fn current_asset_version_from_manifest(assets_dir: &StdPath) -> Option<String> {
 fn manifest_channel_source(assets_dir: &StdPath) -> Option<String> {
     let content = std::fs::read_to_string(assets_dir.join("manifest-origin.json")).ok()?;
     let value: serde_json::Value = serde_json::from_str(&content).ok()?;
-    value
+    let source = value
         .get("source")
         .and_then(|source| source.as_str())
-        .map(ToOwned::to_owned)
+        .map(ToOwned::to_owned)?;
+    release_health_url_from_manifest_url(&source).or(Some(source))
+}
+
+fn release_health_url_from_manifest_url(manifest_url: &str) -> Option<String> {
+    let mut url = reqwest::Url::parse(manifest_url).ok()?;
+    if !matches!(url.scheme(), "https" | "http") {
+        return None;
+    }
+    let segments = url.path_segments().map(|segments| {
+        segments
+            .map(std::string::ToString::to_string)
+            .collect::<Vec<_>>()
+    })?;
+    let assets_pos = segments.iter().position(|segment| *segment == "assets")?;
+    if segments.last().map(String::as_str) != Some("manifest.json")
+        || segments.len() < assets_pos + 3
+    {
+        return None;
+    }
+    let root_segments = segments[..assets_pos].to_vec();
+    {
+        let mut out = url.path_segments_mut().ok()?;
+        out.clear();
+        for segment in root_segments {
+            out.push(&segment);
+        }
+        out.push("health.json");
+    }
+    Some(url.to_string())
 }
 
 fn update_track(

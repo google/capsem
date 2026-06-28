@@ -308,6 +308,14 @@ fn update_status_reports_unknown_when_cache_is_missing_and_keeps_manifest_channe
     assert!(status.stale);
     assert_eq!(
         status.channel_url.as_deref(),
+        Some("https://corp.example/capsem/health.json")
+    );
+    assert_eq!(
+        status.supply_chain.channel_index.url.as_deref(),
+        Some("https://corp.example/capsem/health.json")
+    );
+    assert_eq!(
+        status.supply_chain.manifest.source.as_deref(),
         Some("https://corp.example/capsem/assets/internal/manifest.json")
     );
     assert_eq!(status.last_error, None);
@@ -316,6 +324,43 @@ fn update_status_reports_unknown_when_cache_is_missing_and_keeps_manifest_channe
     assert_eq!(status.binary.state, api::UpdateTrackState::Current);
     assert_eq!(status.assets.current, None);
     assert_eq!(status.assets.state, api::UpdateTrackState::Unknown);
+}
+
+#[test]
+fn update_status_derives_health_url_from_manifest_origin_when_cache_is_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let assets_dir = dir.path().join("assets");
+    std::fs::create_dir_all(&assets_dir).unwrap();
+    std::fs::write(
+        assets_dir.join("manifest-origin.json"),
+        serde_json::json!({
+            "schema": "capsem.manifest_origin.v1",
+            "origin": "package",
+            "source": "https://updates.corp.example/releases/assets/stable/manifest.json"
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let status = update_status_response_from_paths(
+        "1.3.1782582155",
+        &assets_dir,
+        &dir.path().join("missing-update-check.json"),
+        1200,
+    );
+
+    assert_eq!(
+        status.channel_url.as_deref(),
+        Some("https://updates.corp.example/releases/health.json")
+    );
+    assert_eq!(
+        status.supply_chain.channel_index.url.as_deref(),
+        Some("https://updates.corp.example/releases/health.json")
+    );
+    assert_eq!(
+        status.supply_chain.manifest.source.as_deref(),
+        Some("https://updates.corp.example/releases/assets/stable/manifest.json")
+    );
 }
 
 #[test]
