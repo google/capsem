@@ -1865,17 +1865,18 @@ fn validate_assets_channel_health(
             }
         }
         if attestation_name == "github_attestations_vm_assets" {
-            if let Some(predicate_url) = attestation
+            let predicate_url = attestation
                 .get("predicate_url")
                 .and_then(|value| value.as_str())
-            {
-                if !vm_oboms.iter().any(|item| {
+                .ok_or_else(|| anyhow!("health.json VM asset attestation predicate_url missing"))?;
+            if !vm_oboms.is_empty()
+                && !vm_oboms.iter().any(|item| {
                     item.get("url").and_then(|value| value.as_str()) == Some(predicate_url)
-                }) {
-                    return Err(anyhow!(
-                        "health.json VM asset attestation predicate {predicate_url} missing from VM OBOM evidence"
-                    ));
-                }
+                })
+            {
+                return Err(anyhow!(
+                    "health.json VM asset attestation predicate {predicate_url} missing from VM OBOM evidence"
+                ));
             }
         }
         let subjects = attestation
@@ -2584,12 +2585,16 @@ fn current_asset_attestations(files: &[AssetsChannelAssetFile]) -> Vec<AssetsCha
         .iter()
         .map(|file| file.url.clone())
         .collect::<Vec<_>>();
+    let predicate_url = files
+        .iter()
+        .find(|file| file.logical_name == "obom.cdx.json")
+        .map(|file| file.url.clone());
     vec![AssetsChannelAttestation {
         name: "github_attestations_vm_assets".to_string(),
         scope: "vm_assets".to_string(),
         workflow: ".github/workflows/release-assets.yaml".to_string(),
         predicate_type: "https://slsa.dev/provenance/v1".to_string(),
-        predicate_url: None,
+        predicate_url,
         verify_command: "gh attestation verify <subject-url> --owner google".to_string(),
         subjects,
     }]
@@ -6785,6 +6790,10 @@ decision = "block"
             Some("github_attestations_vm_assets")
         );
         assert_eq!(
+            health["evidence"]["attestations"][2]["predicate_url"].as_str(),
+            Some("/assets/releases/2030.0101.1/arm64-obom.cdx.json")
+        );
+        assert_eq!(
             health["evidence"]["attestations"][2]["subjects"][0].as_str(),
             Some("/assets/releases/2030.0101.1/arm64-initrd.img")
         );
@@ -7348,6 +7357,52 @@ decision = "block"
 
         assert!(
             format!("{error:#}").contains("health.json VM asset attestation evidence missing"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn assets_channel_check_rejects_missing_vm_attestation_predicate() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
+        let out_dir = temp.path().join("target/release-channel");
+        build_assets_channel(
+            &file_url(&manifest_path),
+            &temp.path().join("assets"),
+            &repo_config_profiles_dir(),
+            "stable",
+            &out_dir,
+            "2030-01-01T00:00:00Z",
+            None,
+        )
+        .expect("asset channel builds");
+
+        let health_path = out_dir.join("health.json");
+        let mut health: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&health_path).expect("health"))
+                .expect("health json");
+        let attestations = health["evidence"]["attestations"]
+            .as_array_mut()
+            .expect("attestations");
+        let vm_attestation = attestations
+            .iter_mut()
+            .find(|attestation| {
+                attestation.get("name").and_then(|name| name.as_str())
+                    == Some("github_attestations_vm_assets")
+            })
+            .expect("VM asset attestation");
+        vm_attestation
+            .as_object_mut()
+            .expect("attestation object")
+            .remove("predicate_url");
+        fs::write(&health_path, serde_json::to_string_pretty(&health).unwrap())
+            .expect("write health without VM predicate");
+
+        let error = check_assets_channel(&out_dir, "stable")
+            .expect_err("missing VM attestation predicate rejected");
+
+        assert!(
+            format!("{error:#}").contains("health.json VM asset attestation predicate_url missing"),
             "{error:#}"
         );
     }

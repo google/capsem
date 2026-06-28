@@ -3299,7 +3299,7 @@ def test_remote_release_readiness_checker_verifies_public_evidence_artifacts() -
                     "scope": "vm_assets",
                     "workflow": ".github/workflows/release-assets.yaml",
                     "predicate_type": "https://slsa.dev/provenance/v1",
-                    "predicate_url": None,
+                    "predicate_url": obom_path,
                     "verify_command": "gh attestation verify <subject-url> --owner google",
                     "subjects": [obom_path],
                 },
@@ -3587,13 +3587,21 @@ def test_release_channel_smoke_and_remote_readiness_validate_matching_attestatio
         "missing from VM OBOM evidence"
     ) in module.check_release_evidence("https://release.capsem.test", corrupted)
 
+    missing_predicate = json.loads(json.dumps(health))
+    del missing_predicate["evidence"]["attestations"][0]["predicate_url"]
+    assert "health evidence VM asset attestation predicate_url missing" in (
+        module.check_release_evidence("https://release.capsem.test", missing_predicate)
+    )
+
     assert "attestation_predicate_evidence_urls" in script
     assert '"VM OBOM evidence"' in script
     assert '"host SBOM evidence"' in script
+    assert "VM asset attestation predicate_url missing" in script
     assert "missing from {predicate_label}" in script
     assert "attestation_predicate_evidence_urls" in workflow
     assert '"VM OBOM evidence"' in workflow
     assert '"host SBOM evidence"' in workflow
+    assert "VM asset attestation predicate_url missing" in workflow
     assert "missing from {predicate_label}" in workflow
 
 

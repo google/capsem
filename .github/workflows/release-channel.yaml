@@ -654,6 +654,12 @@ jobs:
                   failures.append(
                       "health evidence host SBOM attestation predicate_url missing"
                   )
+              if attestation_name == "github_attestations_vm_assets" and not isinstance(
+                  predicate_url, str
+              ):
+                  failures.append(
+                      "health evidence VM asset attestation predicate_url missing"
+                  )
               predicate_urls, predicate_label = attestation_predicate_evidence_urls(
                   attestation,
                   subjects,

@@ -284,6 +284,9 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
     )
     assert vm_asset_attestation["scope"] == "vm_assets"
     assert vm_asset_attestation["workflow"] == ".github/workflows/release-assets.yaml"
+    assert vm_asset_attestation["predicate_url"] == (
+        "/assets/releases/2030.0101.1/arm64-obom.cdx.json"
+    )
     assert "/assets/releases/2030.0101.1/arm64-rootfs.erofs" in vm_asset_attestation["subjects"]
 
     release_dir = dist / "assets" / "releases" / "2030.0101.1"
@@ -889,6 +892,50 @@ def test_release_index_check_rejects_mismatched_vm_attestation_predicate_evidenc
         "health.json VM asset attestation predicate /assets/releases/2030.0101.1/"
         "missing-obom.cdx.json missing from VM OBOM evidence"
     ) in result.stderr
+
+
+def test_release_index_check_rejects_missing_vm_attestation_predicate_evidence(
+    tmp_path: Path,
+) -> None:
+    manifest_path = _write_release_manifest(tmp_path)
+    dist = tmp_path / "target" / "release-channel"
+    _run_admin(
+        "assets",
+        "channel",
+        "build",
+        "--manifest",
+        f"file://{manifest_path}",
+        "--assets-dir",
+        str(manifest_path.parent),
+        "--channel",
+        "stable",
+        "--out-dir",
+        str(dist),
+    )
+
+    health_path = dist / "health.json"
+    health = json.loads(health_path.read_text(encoding="utf-8"))
+    vm_attestation = next(
+        item
+        for item in health["evidence"]["attestations"]
+        if item["name"] == "github_attestations_vm_assets"
+    )
+    del vm_attestation["predicate_url"]
+    health_path.write_text(json.dumps(health, indent=2) + "\n", encoding="utf-8")
+
+    result = _run_admin(
+        "assets",
+        "channel",
+        "check",
+        "--channel",
+        "stable",
+        "--dist",
+        str(dist),
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "health.json VM asset attestation predicate_url missing" in result.stderr
 
 
 def test_release_index_check_rejects_attestation_rail_drift(tmp_path: Path) -> None:
