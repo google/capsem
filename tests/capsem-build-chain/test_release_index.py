@@ -172,6 +172,7 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
     headers = (dist / "_headers").read_text(encoding="utf-8")
     assert "/health.json\n  Cache-Control: no-cache, must-revalidate" in headers
     assert "/assets/*\n  Cache-Control: no-cache, must-revalidate" in headers
+    assert "/profiles/*\n  Cache-Control: no-cache, must-revalidate" in headers
 
     health = json.loads((dist / "health.json").read_text(encoding="utf-8"))
     assert health["schema"] == "capsem.assets_channel.health.v1"
@@ -183,8 +184,9 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
     }
     assert health["updates"]["binary"]["latest"] == "1.4.1234567890"
     assert health["updates"]["assets"]["manifest"] == "/assets/stable/manifest.json"
+    catalog_url = "/profiles/releases/profiles-2030.0101.1/catalog.json"
     assert health["profiles"]["revision"] == "profiles-2030.0101.1"
-    assert health["profiles"]["source"] == str(profiles_dir)
+    assert health["profiles"]["source"] == catalog_url
     assert len(health["profiles"]["hash"]) == 64
     assert health["profiles"]["compatibility"] == {
         "binary": "1.4.1234567890",
@@ -199,10 +201,19 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
     assert health["updates"]["profiles"]["latest"] == "profiles-2030.0101.1"
     assert health["updates"]["profiles"]["current"] == "profiles-2030.0101.1"
     assert health["updates"]["profiles"]["state"] == "current"
-    assert health["updates"]["profiles"]["source"] == str(profiles_dir)
+    assert health["updates"]["profiles"]["source"] == catalog_url
     assert health["updates"]["profiles"]["hash"] == health["profiles"]["hash"]
     assert health["updates"]["profiles"]["compatibility"] == health["profiles"]["compatibility"]
     assert health["updates"]["profiles"]["requires_newer"] == health["profiles"]["requires_newer"]
+    catalog_path = dist / catalog_url.removeprefix("/")
+    catalog_bytes = catalog_path.read_bytes()
+    catalog_text = catalog_bytes.decode()
+    assert health["profiles"]["hash"] == blake3(catalog_bytes).hexdigest()
+    assert "file://" not in catalog_text
+    assert str(tmp_path) not in catalog_text
+    assert "https://release.capsem.org/assets/releases/2030.0101.1/arm64-rootfs.erofs" in (
+        catalog_text
+    )
     assert health["updates"]["images"]["latest"] is None
     assert health["evidence"]["vm_oboms"][0]["url"] == (
         "/assets/releases/2030.0101.1/arm64-obom.cdx.json"

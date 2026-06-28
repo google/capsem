@@ -623,6 +623,33 @@ struct AssetsChannelProfileCatalog {
     requires_newer_assets: bool,
 }
 
+struct PublishableProfileCatalog {
+    metadata: AssetsChannelProfileCatalog,
+    path: String,
+    bytes: Vec<u8>,
+}
+
+#[derive(Debug, Serialize)]
+struct PublishableProfileCatalogDocument {
+    schema: &'static str,
+    revision: String,
+    state: String,
+    current_binary: String,
+    current_assets: String,
+    compatibility: PublishableProfileCatalogCompatibility,
+    profiles: Vec<ProfileConfigFile>,
+}
+
+#[derive(Debug, Serialize)]
+struct PublishableProfileCatalogCompatibility {
+    binary: String,
+    assets: String,
+    min_binary: String,
+    min_assets: String,
+    requires_newer_binary: bool,
+    requires_newer_assets: bool,
+}
+
 #[derive(Debug, Serialize, Clone)]
 struct AssetsChannelAssetFile {
     arch: String,
@@ -918,13 +945,14 @@ fn build_assets_channel(
     let manifest = ManifestV2::from_json(manifest_content)
         .with_context(|| format!("parse manifest from {manifest_url}"))?;
     let manifest_blake3 = blake3::hash(&manifest_bytes).to_hex().to_string();
+    let profile_catalog = publishable_profile_catalog(&manifest, profiles_dir)?;
     let index = assets_channel_index(
         &manifest,
-        profiles_dir,
         channel,
         generated_at,
         &manifest_blake3,
-    )?;
+        profile_catalog.metadata.clone(),
+    );
     let current_release = manifest
         .assets
         .releases
@@ -947,6 +975,15 @@ fn build_assets_channel(
         .with_context(|| format!("write {}", channel_manifest.display()))?;
     let copied_assets =
         copy_assets_channel_release_assets(assets_dir, &release_dir, current_release)?;
+    let profile_catalog_path = out_dir.join(profile_catalog.path.trim_start_matches('/'));
+    fs::create_dir_all(
+        profile_catalog_path
+            .parent()
+            .ok_or_else(|| anyhow!("profile catalog artifact path has no parent"))?,
+    )
+    .with_context(|| format!("create parent for {}", profile_catalog_path.display()))?;
+    fs::write(&profile_catalog_path, &profile_catalog.bytes)
+        .with_context(|| format!("write {}", profile_catalog_path.display()))?;
     fs::write(
         out_dir.join("index.html"),
         render_assets_channel_index(&index)?,
@@ -1019,6 +1056,11 @@ fn check_assets_channel(dist: &Path, channel: &str) -> Result<AssetsChannelCheck
         .with_context(|| format!("read {}", headers_path.display()))?;
     if !headers.contains("/assets/*") || !headers.contains("no-cache") {
         return Err(anyhow!("_headers must keep asset channel manifests fresh"));
+    }
+    if !headers.contains("/profiles/*") || !headers.contains("no-cache") {
+        return Err(anyhow!(
+            "_headers must keep profile catalog artifacts fresh"
+        ));
     }
     Ok(AssetsChannelCheckReport {
         schema: "capsem.admin.assets_channel_check.v1",
@@ -1188,6 +1230,12 @@ fn validate_assets_channel_health(
     let expected_profile_revision = require_json_string(health, &["profiles", "revision"])?;
     let expected_profile_source = require_json_string(health, &["profiles", "source"])?;
     let expected_profile_hash = require_json_string(health, &["profiles", "hash"])?;
+    validate_profile_catalog_artifact(
+        dist,
+        &expected_profile_source,
+        &expected_profile_hash,
+        &expected_profile_revision,
+    )?;
     require_json_str(
         health,
         &["profiles", "state"],
@@ -1479,6 +1527,50 @@ fn require_json_string(root: &serde_json::Value, path: &[&str]) -> Result<String
         .ok_or_else(|| anyhow!("health.json missing {}", path.join(".")))
 }
 
+fn validate_profile_catalog_artifact(
+    dist: &Path,
+    source: &str,
+    expected_hash: &str,
+    expected_revision: &str,
+) -> Result<()> {
+    if !source.starts_with("/profiles/releases/") || !source.ends_with("/catalog.json") {
+        return Err(anyhow!(
+            "health.json profile catalog source must be a release-channel artifact path"
+        ));
+    }
+    let relative = source.trim_start_matches('/');
+    validate_relative_manifest_path("profile catalog source", relative)?;
+    let path = dist.join(relative);
+    let bytes =
+        fs::read(&path).with_context(|| format!("read profile catalog {}", path.display()))?;
+    let actual_hash = blake3::hash(&bytes).to_hex().to_string();
+    if actual_hash != expected_hash {
+        return Err(anyhow!("health.json profile catalog hash mismatch"));
+    }
+    let text = std::str::from_utf8(&bytes)
+        .with_context(|| format!("profile catalog {} is not UTF-8", path.display()))?;
+    if text.contains("file://") {
+        return Err(anyhow!(
+            "profile catalog artifact must not contain file:// URLs"
+        ));
+    }
+    let catalog: serde_json::Value = serde_json::from_str(text)
+        .with_context(|| format!("parse profile catalog {}", path.display()))?;
+    require_json_str(
+        &catalog,
+        &["schema"],
+        "capsem.profile_catalog.v1",
+        "profile catalog schema mismatch",
+    )?;
+    require_json_str(
+        &catalog,
+        &["revision"],
+        expected_revision,
+        "profile catalog revision mismatch",
+    )?;
+    Ok(())
+}
+
 fn require_json_null(value: &serde_json::Value, path: &[&str], message: &str) -> Result<()> {
     let actual = value
         .pointer(&format!("/{}", path.join("/")))
@@ -1508,11 +1600,11 @@ fn json_path<'a>(root: &'a serde_json::Value, path: &[&str]) -> Option<&'a serde
 
 fn assets_channel_index(
     manifest: &ManifestV2,
-    profiles_dir: &Path,
     channel: &str,
     generated_at: &str,
     manifest_blake3: &str,
-) -> Result<AssetsChannelIndex> {
+    profile_catalog: AssetsChannelProfileCatalog,
+) -> AssetsChannelIndex {
     let mut arches = BTreeSet::new();
     for release in manifest.assets.releases.values() {
         arches.extend(release.arches.keys().cloned());
@@ -1536,13 +1628,7 @@ fn assets_channel_index(
         .filter(|file| file.name.ends_with(".spdx.json") || file.name.contains("sbom"))
         .cloned()
         .collect();
-    let profile_catalog = assets_channel_profile_catalog(
-        manifest,
-        profiles_dir,
-        current_release,
-        current_binary_release,
-    )?;
-    Ok(AssetsChannelIndex {
+    AssetsChannelIndex {
         schema_version: 1,
         channel: channel.to_string(),
         state: "published".to_string(),
@@ -1577,48 +1663,200 @@ fn assets_channel_index(
             "Binary releases are triggered by immutable vX.Y.Z tags.".to_string(),
             "VM asset releases are explicit and must deploy this asset channel.".to_string(),
         ],
-    })
+    }
 }
 
-fn assets_channel_profile_catalog(
+fn publishable_profile_catalog(
     manifest: &ManifestV2,
     profiles_dir: &Path,
-    current_release: Option<&capsem_core::asset_manager::AssetRelease>,
-    current_binary_release: Option<&capsem_core::asset_manager::BinaryRelease>,
-) -> Result<AssetsChannelProfileCatalog> {
+) -> Result<PublishableProfileCatalog> {
+    let current_release = manifest
+        .assets
+        .releases
+        .get(&manifest.assets.current)
+        .ok_or_else(|| anyhow!("manifest current asset release is missing"))?;
+    let current_binary_release = manifest.binaries.releases.get(&manifest.binaries.current);
     let catalog = ProfileCatalog::load_from_dir(profiles_dir)
         .map_err(|error| anyhow!("load profile catalog {}: {error}", profiles_dir.display()))?;
-    let profiles = catalog.profiles().collect::<Vec<_>>();
+    let config_root = profiles_dir.parent().ok_or_else(|| {
+        anyhow!(
+            "profile catalog {} has no config root",
+            profiles_dir.display()
+        )
+    })?;
+    let mut profiles = catalog
+        .profiles()
+        .cloned()
+        .map(|profile| publishable_profile_config(profile, config_root, manifest, current_release))
+        .collect::<Result<Vec<_>>>()?;
+    profiles.sort_by(|left, right| left.id.cmp(&right.id));
     let profile_ids = profiles
         .iter()
         .map(|profile| profile.id.clone())
         .collect::<Vec<_>>();
     let revision = profile_catalog_revision(&profiles)?;
+    validate_profile_catalog_revision_path(&revision)?;
     let refresh_policy = profile_catalog_refresh_policy(&profiles);
-    let hash = profile_catalog_hash(&profiles)?;
-    let min_binary = current_release
-        .map(|release| release.min_binary.clone())
-        .unwrap_or_default();
+    let min_binary = current_release.min_binary.clone();
     let min_assets = current_binary_release
         .map(|release| release.min_assets.clone())
         .unwrap_or_default();
-    Ok(AssetsChannelProfileCatalog {
-        revision,
-        source: profiles_dir.display().to_string(),
-        hash,
-        profile_count: profiles.len(),
-        profile_ids,
-        refresh_policy,
+    let compatibility = PublishableProfileCatalogCompatibility {
         binary: manifest.binaries.current.clone(),
         assets: manifest.assets.current.clone(),
-        min_binary,
-        min_assets,
+        min_binary: min_binary.clone(),
+        min_assets: min_assets.clone(),
         requires_newer_binary: false,
         requires_newer_assets: false,
+    };
+    let document = PublishableProfileCatalogDocument {
+        schema: "capsem.profile_catalog.v1",
+        revision: revision.clone(),
+        state: "current".to_string(),
+        current_binary: manifest.binaries.current.clone(),
+        current_assets: manifest.assets.current.clone(),
+        compatibility,
+        profiles,
+    };
+    let mut bytes =
+        serde_json::to_vec_pretty(&document).context("serialize publishable profile catalog")?;
+    bytes.push(b'\n');
+    let hash = blake3::hash(&bytes).to_hex().to_string();
+    let path = format!("/profiles/releases/{revision}/catalog.json");
+    Ok(PublishableProfileCatalog {
+        metadata: AssetsChannelProfileCatalog {
+            revision,
+            source: path.clone(),
+            hash,
+            profile_count: document.profiles.len(),
+            profile_ids,
+            refresh_policy,
+            binary: manifest.binaries.current.clone(),
+            assets: manifest.assets.current.clone(),
+            min_binary,
+            min_assets,
+            requires_newer_binary: false,
+            requires_newer_assets: false,
+        },
+        path,
+        bytes,
     })
 }
 
-fn profile_catalog_revision(profiles: &[&ProfileConfigFile]) -> Result<String> {
+fn publishable_profile_config(
+    mut profile: ProfileConfigFile,
+    config_root: &Path,
+    manifest: &ManifestV2,
+    current_release: &capsem_core::asset_manager::AssetRelease,
+) -> Result<ProfileConfigFile> {
+    materialize_profile_file_descriptors(&mut profile, config_root)?;
+    profile
+        .assets
+        .arch
+        .retain(|arch, _| current_release.arches.contains_key(arch));
+    if profile.assets.arch.is_empty() {
+        return Err(anyhow!(
+            "manifest current release {} does not contain any arches for profile {}",
+            manifest.assets.current,
+            profile.id
+        ));
+    }
+    for (arch, arch_assets) in profile.assets.arch.iter_mut() {
+        let manifest_assets = current_release.arches.get(arch).ok_or_else(|| {
+            anyhow!(
+                "manifest current release {} does not contain profile arch {arch}",
+                manifest.assets.current
+            )
+        })?;
+        rewrite_publishable_asset_descriptor(
+            &manifest.assets.current,
+            arch,
+            &mut arch_assets.kernel,
+            manifest_assets,
+        )?;
+        rewrite_publishable_asset_descriptor(
+            &manifest.assets.current,
+            arch,
+            &mut arch_assets.initrd,
+            manifest_assets,
+        )?;
+        rewrite_publishable_asset_descriptor(
+            &manifest.assets.current,
+            arch,
+            &mut arch_assets.rootfs,
+            manifest_assets,
+        )?;
+        if let Some(entry) = manifest_assets.get("obom.cdx.json") {
+            profile
+                .obom
+                .get_or_insert_with(|| ProfileObomConfig {
+                    format: "cyclonedx-obom.v1".to_string(),
+                    arch: BTreeMap::new(),
+                })
+                .arch
+                .insert(
+                    arch.clone(),
+                    ProfileObomDescriptor {
+                        name: "obom.cdx.json".to_string(),
+                        url: profile_catalog_asset_url(
+                            &manifest.assets.current,
+                            arch,
+                            "obom.cdx.json",
+                        ),
+                        hash: format!("blake3:{}", entry.hash),
+                        size: entry.size,
+                        generator: "remote".to_string(),
+                        generator_version: "unknown".to_string(),
+                    },
+                );
+        }
+    }
+    profile
+        .validate()
+        .map_err(|error| anyhow!("validate publishable profile {}: {error}", profile.id))?;
+    Ok(profile)
+}
+
+fn rewrite_publishable_asset_descriptor(
+    asset_version: &str,
+    arch: &str,
+    descriptor: &mut capsem_core::net::policy_config::ProfileAssetDescriptor,
+    manifest_assets: &std::collections::HashMap<String, capsem_core::asset_manager::AssetEntry>,
+) -> Result<()> {
+    let entry = manifest_assets.get(&descriptor.name).ok_or_else(|| {
+        anyhow!(
+            "manifest current release arch {arch} is missing {}",
+            descriptor.name
+        )
+    })?;
+    descriptor.url = profile_catalog_asset_url(asset_version, arch, &descriptor.name);
+    descriptor.hash = Some(format!("blake3:{}", entry.hash));
+    descriptor.size = Some(entry.size);
+    Ok(())
+}
+
+fn channel_asset_url(asset_version: &str, arch: &str, logical_name: &str) -> String {
+    format!("/assets/releases/{asset_version}/{arch}-{logical_name}")
+}
+
+fn profile_catalog_asset_url(asset_version: &str, arch: &str, logical_name: &str) -> String {
+    format!("https://release.capsem.org/assets/releases/{asset_version}/{arch}-{logical_name}")
+}
+
+fn validate_profile_catalog_revision_path(revision: &str) -> Result<()> {
+    if revision.is_empty()
+        || !revision
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'))
+    {
+        return Err(anyhow!(
+            "profile catalog revision must be URL-path safe: {revision}"
+        ));
+    }
+    Ok(())
+}
+
+fn profile_catalog_revision(profiles: &[ProfileConfigFile]) -> Result<String> {
     let mut revisions = profiles
         .iter()
         .map(|profile| profile.revision.as_str())
@@ -1633,7 +1871,7 @@ fn profile_catalog_revision(profiles: &[&ProfileConfigFile]) -> Result<String> {
     Ok(format!("catalog-{}", &hash[..16]))
 }
 
-fn profile_catalog_refresh_policy(profiles: &[&ProfileConfigFile]) -> String {
+fn profile_catalog_refresh_policy(profiles: &[ProfileConfigFile]) -> String {
     let policies = profiles
         .iter()
         .map(|profile| profile.refresh_policy.as_str())
@@ -1645,7 +1883,7 @@ fn profile_catalog_refresh_policy(profiles: &[&ProfileConfigFile]) -> String {
     }
 }
 
-fn profile_catalog_hash(profiles: &[&ProfileConfigFile]) -> Result<String> {
+fn profile_catalog_hash(profiles: &[ProfileConfigFile]) -> Result<String> {
     let bytes = serde_json::to_vec(profiles).context("serialize profile catalog for hashing")?;
     Ok(blake3::hash(&bytes).to_hex().to_string())
 }
@@ -1684,7 +1922,7 @@ fn current_asset_file_refs(
             files.push(AssetsChannelAssetFile {
                 arch: arch.clone(),
                 logical_name: logical_name.clone(),
-                url: format!("/assets/releases/{asset_version}/{arch}-{logical_name}"),
+                url: channel_asset_url(asset_version, arch, logical_name),
                 hash: entry.hash.clone(),
                 size: entry.size,
             });
@@ -1826,6 +2064,8 @@ fn render_assets_channel_headers() -> String {
         "/index.html",
         "  Cache-Control: no-cache, must-revalidate",
         "/health.json",
+        "  Cache-Control: no-cache, must-revalidate",
+        "/profiles/*",
         "  Cache-Control: no-cache, must-revalidate",
         "/assets/*",
         "  Cache-Control: no-cache, must-revalidate",
@@ -5726,10 +5966,19 @@ decision = "block"
             health["updates"]["profiles"]["state"].as_str(),
             Some("current")
         );
-        let profile_source = profiles_dir.display().to_string();
+        let profile_source = "/profiles/releases/2026.06.08.7/catalog.json";
         assert_eq!(
             health["updates"]["profiles"]["source"].as_str(),
-            Some(profile_source.as_str())
+            Some(profile_source)
+        );
+        let profile_catalog_path = out_dir.join(profile_source.trim_start_matches('/'));
+        assert!(profile_catalog_path.is_file());
+        let profile_catalog_bytes =
+            fs::read(&profile_catalog_path).expect("published profile catalog");
+        let profile_catalog_hash = blake3::hash(&profile_catalog_bytes).to_hex().to_string();
+        assert_eq!(
+            health["profiles"]["hash"].as_str(),
+            Some(profile_catalog_hash.as_str())
         );
         assert_eq!(health["updates"]["images"]["latest"].as_str(), None);
         assert!(

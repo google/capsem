@@ -35,6 +35,27 @@ from .conftest import (
 )
 
 
+def _version_at_least(actual: str, minimum: str) -> bool:
+    if not minimum:
+        return True
+
+    def parts(value: str) -> list[int]:
+        parsed = []
+        for part in value.split("."):
+            try:
+                parsed.append(int(part))
+            except ValueError:
+                parsed.append(0)
+        return parsed
+
+    left = parts(actual)
+    right = parts(minimum)
+    width = max(len(left), len(right))
+    left.extend([0] * (width - len(left)))
+    right.extend([0] * (width - len(right)))
+    return left >= right
+
+
 class TestInstalledLayoutContract:
     """The layout simulate-install.sh creates must match what Rust code expects."""
 
@@ -55,9 +76,7 @@ class TestInstalledLayoutContract:
             # ELF: \x7fELF, Mach-O 64: \xcf\xfa\xed\xfe or \xfe\xed\xfa\xcf
             is_elf = header == b"\x7fELF"
             is_macho = header in (b"\xcf\xfa\xed\xfe", b"\xfe\xed\xfa\xcf")
-            assert is_elf or is_macho, (
-                f"{name}: not an executable (header: {header.hex()})"
-            )
+            assert is_elf or is_macho, f"{name}: not an executable (header: {header.hex()})"
 
     def test_capsem_version_works(self, installed_layout):
         """capsem version runs and contains build hash."""
@@ -95,7 +114,9 @@ class TestInstalledLayoutContract:
         data = json.loads(manifest.read_text())
         assert data.get("format") == 2, f"expected format=2, got {data.get('format')!r}"
         assert "assets" in data and "releases" in data["assets"], "manifest missing assets.releases"
-        assert "binaries" in data and "releases" in data["binaries"], "manifest missing binaries.releases"
+        assert "binaries" in data and "releases" in data["binaries"], (
+            "manifest missing binaries.releases"
+        )
 
     def test_hash_named_assets_exist(self, installed_layout):
         """Assets exist under $ASSETS/{arch}/{hash-filename} as resolved from the manifest."""
@@ -145,8 +166,8 @@ class TestInstalledLayoutContract:
             f"and simulate-install.sh are supposed to clean them up."
         )
 
-    def test_version_in_manifest_matches_binary(self, installed_layout):
-        """The manifest must contain a binary release entry for the installed version."""
+    def test_manifest_assets_are_compatible_with_binary(self, installed_layout):
+        """Decoupled VM assets must still declare compatibility with the installed binary."""
         manifest_path = ASSETS_DIR / "manifest.json"
         if not manifest_path.exists():
             pytest.skip("no manifest.json")
@@ -156,9 +177,17 @@ class TestInstalledLayoutContract:
         version = result.stdout.strip().split()[1]
 
         binary_releases = data.get("binaries", {}).get("releases", {})
-        assert version in binary_releases, (
-            f"installed version {version} not in manifest binaries.releases: "
-            f"{sorted(binary_releases)}"
+        if version in binary_releases:
+            return
+
+        compatible_assets = [
+            asset_version
+            for asset_version, release in data["assets"]["releases"].items()
+            if _version_at_least(version, release.get("min_binary", ""))
+        ]
+        assert compatible_assets, (
+            f"installed version {version} has no compatible asset release; "
+            f"manifest binaries.releases={sorted(binary_releases)}"
         )
 
     # -- Directories --

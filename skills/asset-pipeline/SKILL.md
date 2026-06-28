@@ -103,7 +103,7 @@ schema `capsem.assets_channel.health.v1`, active manifest URL, immutable asset
 base URL, current binary/assets versions, current asset file URLs, VM OBOM
 references, host SBOM references, binary file metadata when present, an explicit `updates` block with
 `latest` targets for binary/assets/profile/image freshness checks, and a
-profile catalog block with revision, source directory, BLAKE3 digest,
+profile catalog block with revision, published catalog artifact path, BLAKE3 digest,
 compatibility minimums, and whether the advertised profile catalog requires a
 newer binary or VM asset set, plus an attestations slot.
 

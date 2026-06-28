@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   channel health index and writes validated channel cache provenance.
 - Proxied update status through the gateway so UI, tray, and TUI surfaces can
   read release-channel freshness state.
+- Published profile catalog artifacts under the asset channel with portable
+  release URLs so public profile metadata no longer exposes build-machine
+  paths.
 
 ## [1.3.1782582155] - 2026-06-27
 

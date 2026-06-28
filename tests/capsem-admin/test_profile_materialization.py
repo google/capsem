@@ -8,6 +8,8 @@ import subprocess
 import tomllib
 from pathlib import Path
 
+from blake3 import blake3
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ADMIN = PROJECT_ROOT / "target" / "debug" / "capsem-admin"
 SOURCE_PROFILE = PROJECT_ROOT / "config" / "profiles" / "code" / "profile.toml"
@@ -15,7 +17,8 @@ SOURCE_PROFILE_DIR = SOURCE_PROFILE.parent
 
 
 def _ensure_admin_binary() -> None:
-    if ADMIN.exists():
+    admin_source = PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "main.rs"
+    if ADMIN.exists() and ADMIN.stat().st_mtime >= admin_source.stat().st_mtime:
         return
     subprocess.run(
         ["cargo", "build", "-p", "capsem-admin"],
@@ -29,6 +32,88 @@ def _ensure_admin_binary() -> None:
 
 def _load_toml(path: Path) -> dict:
     return tomllib.loads(path.read_text())
+
+
+def _write_asset(path: Path, data: bytes) -> dict[str, object]:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    return {"hash": blake3(data).hexdigest(), "size": len(data)}
+
+
+def _write_publishable_manifest(root: Path) -> Path:
+    assets = root / "assets"
+    arm64 = assets / "arm64"
+    files = {
+        "vmlinuz": _write_asset(arm64 / "vmlinuz", b"kernel-arm64"),
+        "initrd.img": _write_asset(arm64 / "initrd.img", b"initrd-arm64"),
+        "rootfs.erofs": _write_asset(arm64 / "rootfs.erofs", b"rootfs-arm64"),
+        "obom.cdx.json": _write_asset(
+            arm64 / "obom.cdx.json",
+            b'{"bomFormat":"CycloneDX","metadata":{"tools":[{"name":"cdxgen"}]}}',
+        ),
+    }
+    manifest = {
+        "format": 2,
+        "refresh_policy": "24h",
+        "assets": {
+            "current": "2030.0101.1",
+            "releases": {
+                "2030.0101.1": {
+                    "date": "2030-01-01",
+                    "deprecated": False,
+                    "min_binary": "1.4.0",
+                    "arches": {"arm64": files},
+                }
+            },
+        },
+        "binaries": {
+            "current": "1.4.1234567890",
+            "releases": {
+                "1.4.1234567890": {
+                    "date": "2030-01-01",
+                    "deprecated": False,
+                    "min_assets": "2030.0101.1",
+                }
+            },
+        },
+    }
+    manifest_path = assets / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    return manifest_path
+
+
+def _write_local_url_profile_catalog(root: Path) -> Path:
+    profiles_dir = root / "config" / "profiles"
+    profile_dir = profiles_dir / "code"
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    (profile_dir / "profile.toml").write_text(
+        f"""
+id = "code"
+name = "Code"
+description = "Profile catalog fixture with local source URLs."
+revision = "profiles-2030.0101.1"
+refresh_policy = "24h"
+
+[assets]
+format = "profile-assets.v1"
+refresh_policy = "on_profile_refresh"
+
+[assets.arch.arm64.kernel]
+name = "vmlinuz"
+url = "{(root / "assets" / "arm64" / "vmlinuz").resolve().as_uri()}"
+
+[assets.arch.arm64.initrd]
+name = "initrd.img"
+url = "{(root / "assets" / "arm64" / "initrd.img").resolve().as_uri()}"
+
+[assets.arch.arm64.rootfs]
+name = "rootfs.erofs"
+url = "{(root / "assets" / "arm64" / "rootfs.erofs").resolve().as_uri()}"
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    return profiles_dir
 
 
 def test_profile_materialize_generates_pins_without_mutating_source(tmp_path: Path) -> None:
@@ -119,6 +204,66 @@ def test_profile_materialize_generates_pins_without_mutating_source(tmp_path: Pa
     ).read_bytes()
     assert not (output_root / "admin").exists()
     assert not (output_root / "skills").exists()
+
+
+def test_assets_channel_profile_catalog_is_publishable_not_local(tmp_path: Path) -> None:
+    _ensure_admin_binary()
+    manifest_path = _write_publishable_manifest(tmp_path)
+    profiles_dir = _write_local_url_profile_catalog(tmp_path)
+    dist = tmp_path / "target" / "release-channel"
+
+    result = subprocess.run(
+        [
+            str(ADMIN),
+            "assets",
+            "channel",
+            "build",
+            "--manifest",
+            manifest_path.resolve().as_uri(),
+            "--assets-dir",
+            str(manifest_path.parent),
+            "--profiles-dir",
+            str(profiles_dir),
+            "--channel",
+            "stable",
+            "--out-dir",
+            str(dist),
+            "--json",
+        ],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, (
+        f"capsem-admin assets channel build failed:\nstdout={result.stdout}\nstderr={result.stderr}"
+    )
+    health = json.loads((dist / "health.json").read_text(encoding="utf-8"))
+    catalog_url = "/profiles/releases/profiles-2030.0101.1/catalog.json"
+    assert health["profiles"]["source"] == catalog_url
+    assert health["updates"]["profiles"]["source"] == catalog_url
+
+    catalog_path = dist / catalog_url.removeprefix("/")
+    catalog_bytes = catalog_path.read_bytes()
+    catalog_text = catalog_bytes.decode()
+    assert "file://" not in catalog_text
+    assert str(tmp_path) not in catalog_text
+    assert "https://release.capsem.org/assets/releases/2030.0101.1/arm64-vmlinuz" in catalog_text
+    assert (
+        "https://release.capsem.org/assets/releases/2030.0101.1/arm64-obom.cdx.json" in catalog_text
+    )
+    assert health["profiles"]["hash"] == blake3(catalog_bytes).hexdigest()
+
+    catalog = json.loads(catalog_text)
+    assert catalog["schema"] == "capsem.profile_catalog.v1"
+    profile = catalog["profiles"][0]
+    arm64 = profile["assets"]["arch"]["arm64"]
+    assert arm64["kernel"]["hash"].startswith("blake3:")
+    assert arm64["kernel"]["size"] > 0
+    assert profile["obom"]["arch"]["arm64"]["url"] == (
+        "https://release.capsem.org/assets/releases/2030.0101.1/arm64-obom.cdx.json"
+    )
 
 
 def test_profile_materialize_rejects_bare_manifest_path(tmp_path: Path) -> None:
