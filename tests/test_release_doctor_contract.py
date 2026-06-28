@@ -1824,7 +1824,9 @@ def test_installer_codesigns_helpers_with_stable_identifiers() -> None:
 def test_binary_update_installer_scripts_replace_and_restart_full_helper_cohort() -> None:
     preinstall = (PROJECT_ROOT / "scripts" / "pkg-scripts" / "preinstall").read_text()
     postinstall = (PROJECT_ROOT / "scripts" / "pkg-scripts" / "postinstall").read_text()
+    deb_preinst = (PROJECT_ROOT / "scripts" / "deb-preinst.sh").read_text()
     deb_postinst = (PROJECT_ROOT / "scripts" / "deb-postinst.sh").read_text()
+    repack_deb = (PROJECT_ROOT / "scripts" / "repack-deb.sh").read_text()
     required_bins = [
         "capsem",
         "capsem-service",
@@ -1851,7 +1853,14 @@ def test_binary_update_installer_scripts_replace_and_restart_full_helper_cohort(
     for name in stale_companions:
         assert name in preinstall
         assert 'pkill -9 -f "$CAPSEM_DIR/bin/$name"' in preinstall
+        assert name in deb_preinst
+        assert 'pkill -9 -f "$CAPSEM_DIR/bin/$name"' in deb_preinst
     assert "pkill -9 -x capsem-app" in preinstall
+    assert "systemctl --user stop capsem.service" in deb_preinst
+    assert "event=stop_systemd_user_service" in deb_preinst
+    assert "event=kill_process" in deb_preinst
+    assert 'cp "$SCRIPT_DIR/deb-preinst.sh" "$WORK_DIR/deb/DEBIAN/preinst"' in repack_deb
+    assert 'chmod 755 "$WORK_DIR/deb/DEBIAN/preinst"' in repack_deb
     assert 'rm -rf "$USER_HOME/Applications/Capsem.app"' in preinstall
     assert "rm -rf /Applications/Capsem.app" in preinstall
     assert "rm -rf /usr/local/share/capsem" in preinstall

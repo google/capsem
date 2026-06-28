@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Fixed Linux package self-updates so the repacked `.deb` carries a pre-install
+  shutdown script for stale service, gateway, tray, and helper processes before
+  binary replacement.
 - Fixed the installation skill so it documents the full packaged host binary
   cohort and version-surface check used by installed update smokes.
 - Fixed the remaining packaged admin and MCP helper binaries so they expose a

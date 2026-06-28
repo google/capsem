@@ -162,7 +162,9 @@ for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-mcp
     fi
 done
 
-echo "=== Adding postinst script ==="
+echo "=== Adding maintainer scripts ==="
+cp "$SCRIPT_DIR/deb-preinst.sh" "$WORK_DIR/deb/DEBIAN/preinst"
+chmod 755 "$WORK_DIR/deb/DEBIAN/preinst"
 cp "$SCRIPT_DIR/deb-postinst.sh" "$WORK_DIR/deb/DEBIAN/postinst"
 chmod 755 "$WORK_DIR/deb/DEBIAN/postinst"
 

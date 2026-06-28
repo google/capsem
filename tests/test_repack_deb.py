@@ -28,6 +28,7 @@ import pytest
 REPO_ROOT = Path(__file__).parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "repack-deb.sh"
 POSTINST = REPO_ROOT / "scripts" / "deb-postinst.sh"
+PREINST = REPO_ROOT / "scripts" / "deb-preinst.sh"
 
 REQUIRED_BINARIES = [
     "capsem",
@@ -223,6 +224,30 @@ def test_postinst_script_is_included(tmp_path):
     expected_head = POSTINST.read_text().splitlines()[0]
     assert postinst.read_text().startswith(expected_head), (
         "postinst doesn't look like scripts/deb-postinst.sh"
+    )
+
+
+def test_preinst_script_is_included(tmp_path):
+    """DEBIAN/preinst stops stale helpers before dpkg replaces binaries."""
+    fixture = _build_fixture_deb(tmp_path)
+    bin_dir = tmp_path / "bin"
+    config_dir = tmp_path / "target-config"
+    _seed_binaries(bin_dir)
+    _seed_config(config_dir)
+    output = tmp_path / "out.deb"
+
+    res = _run_repack(fixture, bin_dir, config_dir, output)
+    assert res.returncode == 0
+
+    extracted = _deb_contents(output, tmp_path / "extracted")
+    preinst = extracted / "DEBIAN" / "preinst"
+    assert preinst.exists(), "DEBIAN/preinst not written"
+    assert preinst.stat().st_mode & 0o777 == 0o755, (
+        f"preinst mode {oct(preinst.stat().st_mode & 0o777)}, expected 0o755"
+    )
+    expected_head = PREINST.read_text().splitlines()[0]
+    assert preinst.read_text().startswith(expected_head), (
+        "preinst doesn't look like scripts/deb-preinst.sh"
     )
 
 
