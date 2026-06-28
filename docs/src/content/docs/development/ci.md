@@ -235,7 +235,9 @@ state. After Cloudflare deploys, `release-channel.yaml` smoke checks the public
 `/assets/<channel>/manifest.json` before the workflow can pass. The smoke also
 rejects stale public HTML: the human index must show the same current binary,
 current VM asset version, and asset release date as the fetched health JSON and
-manifest.
+manifest. It resolves published host SBOM and VM OBOM evidence artifacts from
+`health.json`, verifies their advertised hashes and sizes, and validates
+attestation subjects and predicate URLs against the published evidence lists.
 
 The generated `health.json` is the compact machine-readable release-site index.
 It carries schema `capsem.assets_channel.health.v1`, the active manifest URL,

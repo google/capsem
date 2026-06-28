@@ -32,6 +32,8 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - uses: astral-sh/setup-uv@v5
+
       - name: Download generated asset channel
         uses: actions/download-artifact@v8
         with:
@@ -79,15 +81,63 @@ jobs:
             if curl -fsSL "$RELEASE_SITE_URL/" -o /tmp/release-index.html \
               && curl -fsSL "$RELEASE_SITE_URL/health.json" -o /tmp/release-health.json \
               && curl -fsSL "$RELEASE_SITE_URL/assets/$CHANNEL/manifest.json" -o /tmp/release-manifest.json \
-              && python3 - <<'PY'
+              && uv run python3 - <<'PY'
+          import hashlib
           import json
           import os
           import sys
+          import urllib.parse
+          import urllib.request
+
+          import blake3
 
           channel = os.environ["CHANNEL"]
+          release_site_url = os.environ["RELEASE_SITE_URL"].rstrip("/")
           health = json.load(open("/tmp/release-health.json", encoding="utf-8"))
           manifest = json.load(open("/tmp/release-manifest.json", encoding="utf-8"))
           index = open("/tmp/release-index.html", encoding="utf-8").read()
+
+          def fetch_bytes(url):
+              with urllib.request.urlopen(url, timeout=20) as response:
+                  return response.read()
+
+          def resolve_release_url(url):
+              parsed = urllib.parse.urlparse(url)
+              if parsed.scheme in ("http", "https"):
+                  return url
+              if url.startswith("/"):
+                  return f"{release_site_url}{url}"
+              raise ValueError(f"evidence URL must be absolute or release-site relative: {url}")
+
+          def check_evidence_artifact(item, hash_key, algorithm, label):
+              url = item.get("url")
+              expected_hash = item.get(hash_key)
+              expected_size = item.get("size")
+              if not isinstance(url, str):
+                  failures.append(f"{label} missing url")
+                  return
+              if not isinstance(expected_hash, str):
+                  failures.append(f"{label} {url} missing {hash_key}")
+                  return
+              if not isinstance(expected_size, int):
+                  failures.append(f"{label} {url} missing size")
+                  return
+              try:
+                  data = fetch_bytes(resolve_release_url(url))
+              except Exception as error:
+                  failures.append(f"{label} {url} fetch failed: {error}")
+                  return
+              if len(data) != expected_size:
+                  failures.append(f"{label} {url} size mismatch")
+              if algorithm == "sha256":
+                  actual_hash = hashlib.sha256(data).hexdigest()
+              elif algorithm == "blake3":
+                  actual_hash = blake3.blake3(data).hexdigest()
+              else:
+                  failures.append(f"{label} {url} unsupported hash algorithm {algorithm}")
+                  return
+              if actual_hash != expected_hash:
+                  failures.append(f"{label} {url} {algorithm} mismatch")
 
           expected_manifest = f"/assets/{channel}/manifest.json"
           failures = []
@@ -111,6 +161,82 @@ jobs:
           for key in ("vm_oboms", "host_sboms", "host_binary_files", "attestations"):
               if not isinstance(evidence.get(key), list):
                   failures.append(f"health evidence.{key} missing or not a list")
+          asset_files = health.get("assets", {}).get("files", [])
+          vm_oboms = evidence.get("vm_oboms", [])
+          host_sboms = evidence.get("host_sboms", [])
+          host_binary_files = evidence.get("host_binary_files", [])
+          attestations = evidence.get("attestations", [])
+          host_binary_by_url = {
+              item.get("url"): item
+              for item in host_binary_files
+              if isinstance(item, dict) and isinstance(item.get("url"), str)
+          }
+          asset_by_url = {
+              item.get("url"): item
+              for item in asset_files
+              if isinstance(item, dict) and isinstance(item.get("url"), str)
+          }
+          host_sbom_urls = {
+              item.get("url")
+              for item in host_sboms
+              if isinstance(item, dict) and isinstance(item.get("url"), str)
+          }
+          if host_binary_files and not host_sboms:
+              failures.append("health evidence host_sboms missing for published binary files")
+          if asset_files and not vm_oboms:
+              failures.append("health evidence vm_oboms missing for published VM assets")
+          if (host_binary_files or asset_files) and not attestations:
+              failures.append("health evidence attestations missing for published artifacts")
+          for sbom in host_sboms:
+              if not isinstance(sbom, dict):
+                  failures.append("health evidence host_sboms entry is not an object")
+                  continue
+              url = sbom.get("url")
+              if url not in host_binary_by_url:
+                  failures.append(f"host SBOM evidence {url} missing from host binary files")
+                  continue
+              check_evidence_artifact(sbom, "sha256", "sha256", "host SBOM evidence")
+          for obom in vm_oboms:
+              if not isinstance(obom, dict):
+                  failures.append("health evidence vm_oboms entry is not an object")
+                  continue
+              url = obom.get("url")
+              if url not in asset_by_url:
+                  failures.append(f"VM OBOM evidence {url} missing from asset files")
+                  continue
+              check_evidence_artifact(obom, "hash", "blake3", "VM OBOM evidence")
+          for attestation in attestations:
+              if not isinstance(attestation, dict):
+                  failures.append("health evidence attestations entry is not an object")
+                  continue
+              predicate_type = attestation.get("predicate_type")
+              if not isinstance(predicate_type, str) or not predicate_type:
+                  failures.append("health evidence attestation predicate_type missing")
+              verify_command = attestation.get("verify_command")
+              if (
+                  not isinstance(verify_command, str)
+                  or "gh attestation verify" not in verify_command
+              ):
+                  failures.append(
+                      "health evidence attestation verify_command must use gh attestation verify"
+                  )
+              predicate_url = attestation.get("predicate_url")
+              if predicate_url is not None and predicate_url not in host_sbom_urls:
+                  failures.append(
+                      f"attestation predicate_url {predicate_url} missing from host SBOM evidence"
+                  )
+              subjects = attestation.get("subjects")
+              if not isinstance(subjects, list) or not subjects:
+                  failures.append("health evidence attestation subjects missing")
+                  continue
+              for subject in subjects:
+                  if not isinstance(subject, str):
+                      failures.append("health evidence attestation subject is not a string")
+                      continue
+                  if subject not in host_binary_by_url and subject not in asset_by_url:
+                      failures.append(
+                          f"attestation subject {subject} missing from published file lists"
+                      )
           if manifest.get("format") != 2:
               failures.append("manifest format mismatch")
           current = health.get("current", {})

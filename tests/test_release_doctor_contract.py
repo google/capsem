@@ -240,6 +240,29 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
     assert "release.capsem.org smoke failed after deploy." in workflow
 
 
+def test_asset_channel_deploy_smoke_verifies_public_evidence_artifacts() -> None:
+    workflow = _workflow_text("release-channel.yaml")
+    docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
+    docs_text = " ".join(docs.split())
+
+    assert "astral-sh/setup-uv@v5" in workflow
+    assert "uv run python3 - <<'PY'" in workflow
+    assert "import hashlib" in workflow
+    assert "import blake3" in workflow
+    assert "def check_evidence_artifact" in workflow
+    assert 'check_evidence_artifact(sbom, "sha256", "sha256", "host SBOM evidence")' in workflow
+    assert 'check_evidence_artifact(obom, "hash", "blake3", "VM OBOM evidence")' in workflow
+    assert 'data = fetch_bytes(resolve_release_url(url))' in workflow
+    assert "health evidence host_sboms missing for published binary files" in workflow
+    assert "health evidence vm_oboms missing for published VM assets" in workflow
+    assert "health evidence attestations missing for published artifacts" in workflow
+    assert "attestation predicate_url {predicate_url} missing from host SBOM evidence" in workflow
+    assert "attestation subject {subject} missing from published file lists" in workflow
+    assert "resolves published host SBOM and VM OBOM evidence artifacts from `health.json`" in docs_text
+    assert "verifies their advertised hashes and sizes" in docs_text
+    assert "validates attestation subjects and predicate URLs" in docs_text
+
+
 def test_docs_and_marketing_sites_build_on_pr_and_deploy_on_main_only() -> None:
     expectations = [
         (
@@ -427,6 +450,10 @@ def test_release_skill_keeps_binary_and_asset_verification_decoupled() -> None:
     assert "`/assets/<channel>/manifest.json`" in release_skill
     assert "reject stale public HTML" in release_skill
     assert "current binary, current VM asset version, and asset release date" in release_skill
+    assert "resolve published host" in release_skill
+    assert "SBOM and VM OBOM evidence artifacts from `health.json`" in release_skill
+    assert "verify their advertised" in release_skill
+    assert "attestation subjects and predicate URLs" in release_skill
     assert "curl -fsSL https://release.capsem.org/health.json" in release_skill
     assert "curl -fsSL https://release.capsem.org/assets/stable/manifest.json" in release_skill
     assert "gh release download vX.Y.Z --pattern manifest.json" not in release_skill
