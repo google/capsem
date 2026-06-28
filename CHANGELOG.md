@@ -137,6 +137,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   releases can move independently of installed binaries.
 
 ### Fixed
+- Fixed the remote release-readiness checker to report missing Python
+  dependencies with an actionable `uv run` setup hint instead of a traceback.
 - Fixed background release-channel refreshes so they honor the
   `app.auto_update` setting instead of checking daily after users disable
   automatic update checks.

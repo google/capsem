@@ -15,7 +15,13 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
 
-import blake3
+try:
+    import blake3
+except ModuleNotFoundError as error:
+    blake3 = None
+    BLAKE3_IMPORT_ERROR = error
+else:
+    BLAKE3_IMPORT_ERROR = None
 
 
 @dataclass
@@ -42,6 +48,14 @@ def main() -> int:
         help="Public asset-channel site root",
     )
     args = parser.parse_args()
+
+    if BLAKE3_IMPORT_ERROR is not None:
+        print(
+            "missing Python dependency: blake3. Run `uv sync` once, then "
+            "`uv run python scripts/check-remote-release-readiness.py`.",
+            file=sys.stderr,
+        )
+        return 2
 
     checks = [
         check_local_branch_publication(args.remote, args.branch),
@@ -357,6 +371,8 @@ def fetch_and_verify_evidence_artifact(
     if algorithm == "sha256":
         actual_hash = hashlib.sha256(artifact.data).hexdigest()
     elif algorithm == "blake3":
+        if blake3 is None:
+            return [f"{label} {url} cannot verify blake3 without Python dependency blake3"]
         actual_hash = blake3.blake3(artifact.data).hexdigest()
     else:
         return [f"{label} {url} unsupported hash algorithm {algorithm}"]

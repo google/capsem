@@ -616,6 +616,32 @@ def test_remote_release_readiness_checker_reports_unpublished_local_commits() ->
     assert "publish or merge those commits before changing remote protection" in docs_text
 
 
+def test_remote_release_readiness_missing_dependency_reports_setup_hint(tmp_path: Path) -> None:
+    shadow = tmp_path / "shadow"
+    shadow.mkdir()
+    (shadow / "blake3.py").write_text(
+        "raise ModuleNotFoundError(\"No module named 'blake3'\")\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(PROJECT_ROOT / "scripts/check-remote-release-readiness.py"),
+        ],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env={"PYTHONPATH": str(shadow)},
+    )
+
+    assert result.returncode == 2
+    assert "missing Python dependency: blake3" in result.stderr
+    assert "uv run python scripts/check-remote-release-readiness.py" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
 def test_remote_release_readiness_requires_active_pr_gate_rule() -> None:
     module = _readiness_checker_module()
     script = (PROJECT_ROOT / "scripts/check-remote-release-readiness.py").read_text()
