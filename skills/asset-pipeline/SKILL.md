@@ -114,7 +114,8 @@ compatibility minimums, and whether the advertised profile catalog requires a
 newer binary or VM asset set, plus host and VM asset attestation references
 with predicate type and `gh attestation verify` command hints.
 Host SBOM evidence is incomplete unless `github_attestations_host_sbom` is
-present and points at the published `capsem-sbom.spdx.json` evidence.
+present, points at the published `capsem-sbom.spdx.json` evidence, and covers
+every published host package subject.
 It also carries dated asset release history, including deprecated VM asset releases;
 deprecated releases remain auditable but are not candidates for new
 session/download selection.

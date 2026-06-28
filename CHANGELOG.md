@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Fixed release-channel validation so host SBOM attestations must cover every
+  published host package subject.
 - Fixed release-channel validation so host SBOM evidence must include matching
   host SBOM attestation metadata, not just package provenance.
 - Fixed the tag-triggered binary release summary so it reports host SBOM

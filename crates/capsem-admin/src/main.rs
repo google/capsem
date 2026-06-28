@@ -1675,6 +1675,11 @@ fn validate_assets_channel_health(
         .get(&manifest.binaries.current)
         .map(|release| current_binary_file_refs(&manifest.binaries.current, release))
         .unwrap_or_default();
+    let current_host_package_subjects = current_binary_files
+        .iter()
+        .filter(|file| !is_host_sbom_file(&file.name))
+        .map(|file| file.url.clone())
+        .collect::<BTreeSet<_>>();
     if !current_binary_files.is_empty() {
         if host_binary_files.is_empty() {
             return Err(anyhow!("health.json host binary files missing"));
@@ -1741,6 +1746,7 @@ fn validate_assets_channel_health(
     }
     let mut saw_host_sbom_attestation = false;
     let mut saw_vm_asset_attestation = false;
+    let mut host_sbom_attestation_subjects = BTreeSet::new();
     for attestation in attestations {
         let attestation_name = attestation
             .get("name")
@@ -1804,6 +1810,9 @@ fn validate_assets_channel_health(
             let subject_url = subject
                 .as_str()
                 .ok_or_else(|| anyhow!("health.json attestation subject is not a string"))?;
+            if attestation_name == "github_attestations_host_sbom" {
+                host_sbom_attestation_subjects.insert(subject_url.to_string());
+            }
             let is_host_binary_subject = host_binary_files
                 .iter()
                 .any(|item| item.get("url").and_then(|value| value.as_str()) == Some(subject_url));
@@ -1822,6 +1831,13 @@ fn validate_assets_channel_health(
         return Err(anyhow!(
             "health.json host SBOM attestation evidence missing"
         ));
+    }
+    for subject in &current_host_package_subjects {
+        if !host_sbom_attestation_subjects.contains(subject) {
+            return Err(anyhow!(
+                "health.json host SBOM attestation subjects missing {subject}"
+            ));
+        }
     }
     if !current_asset_subjects.is_empty() && !saw_vm_asset_attestation {
         return Err(anyhow!("health.json VM asset attestation evidence missing"));
@@ -7186,6 +7202,72 @@ decision = "block"
 
         assert!(
             format!("{error:#}").contains("health.json host SBOM attestation evidence missing"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn assets_channel_check_rejects_host_sbom_attestation_missing_package_subject() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
+        let mut manifest: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&manifest_path).expect("manifest"))
+                .expect("manifest json");
+        manifest["binaries"]["releases"]["1.0.0"]["files"]
+            .as_array_mut()
+            .expect("binary files")
+            .push(serde_json::json!({
+                "name": "Capsem_1.0.0_arm64.deb",
+                "size": 789,
+                "sha256": "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+            }));
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&manifest).expect("manifest json"),
+        )
+        .expect("write manifest with deb");
+        let out_dir = temp.path().join("target/release-channel");
+        build_assets_channel(
+            &file_url(&manifest_path),
+            &temp.path().join("assets"),
+            &repo_config_profiles_dir(),
+            "stable",
+            &out_dir,
+            "2030-01-01T00:00:00Z",
+            None,
+        )
+        .expect("asset channel builds");
+
+        let health_path = out_dir.join("health.json");
+        let mut health: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&health_path).expect("health"))
+                .expect("health json");
+        let sbom_attestation = health["evidence"]["attestations"]
+            .as_array_mut()
+            .expect("attestations")
+            .iter_mut()
+            .find(|attestation| {
+                attestation.get("name").and_then(|name| name.as_str())
+                    == Some("github_attestations_host_sbom")
+            })
+            .expect("host SBOM attestation");
+        let subjects = sbom_attestation["subjects"]
+            .as_array_mut()
+            .expect("host SBOM subjects");
+        subjects.retain(|subject| {
+            !subject
+                .as_str()
+                .expect("subject string")
+                .ends_with("Capsem_1.0.0_arm64.deb")
+        });
+        fs::write(&health_path, serde_json::to_string_pretty(&health).unwrap())
+            .expect("write health without deb SBOM subject");
+
+        let error = check_assets_channel(&out_dir, "stable")
+            .expect_err("missing host package SBOM subject rejected");
+
+        assert!(
+            format!("{error:#}").contains("health.json host SBOM attestation subjects missing"),
             "{error:#}"
         );
     }

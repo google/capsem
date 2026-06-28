@@ -88,7 +88,8 @@ SBOM and VM OBOM evidence artifacts from `health.json`, verify their advertised
 hashes and sizes, and validate attestation subjects and predicate URLs against
 the published evidence lists. Host SBOM evidence is incomplete unless
 `github_attestations_host_sbom` is present and points at the published
-`capsem-sbom.spdx.json` evidence. It must also verify public `Cache-Control`
+`capsem-sbom.spdx.json` evidence and covers every published host package
+subject. It must also verify public `Cache-Control`
 headers: mutable pointers (`/`, `/health.json`, and
 `/assets/<channel>/manifest.json`) stay `no-cache, must-revalidate`, while
 immutable asset and profile release artifacts stay
