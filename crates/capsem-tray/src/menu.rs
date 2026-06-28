@@ -642,6 +642,21 @@ mod tests {
     }
 
     #[test]
+    fn spec_mixed_binary_and_asset_updates_share_indicator() {
+        let mut updates = update_status();
+        updates.binary = available_track("1.4.0", "1.4.1");
+        updates.assets = available_track("2026.0627.1", "2030.0101.1");
+
+        let spec = menu_spec(&with_updates(make_status(vec![]), updates));
+
+        assert!(spec.iter().any(|entry| matches!(
+            entry,
+            MenuEntry::Item { id, label, enabled: false }
+                if id == "updates" && label == "Updates: Binary, VM assets"
+        )));
+    }
+
+    #[test]
     fn spec_blocked_profile_update_shows_blocked_indicator() {
         let mut updates = update_status();
         updates.profiles = blocked_track(
