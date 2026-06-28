@@ -1006,6 +1006,27 @@ fn gateway_blocked_update_status_maps_to_tui_notice() {
 }
 
 #[test]
+fn gateway_binary_update_with_blocked_profile_keeps_both_tui_labels() {
+    let state = state_from_status_and_update_json_for_test(
+        gateway_empty_status_body(),
+        gateway_update_binary_with_blocked_profile_status_body(),
+        std::time::Duration::from_millis(11),
+    )
+    .expect("parse mixed update status");
+
+    let notice = state.update_notice.as_ref().expect("mixed update notice");
+    assert_eq!(
+        notice.kind,
+        UpdateNoticeKind::AvailableWithBlocked {
+            available: vec![UpdateTrack::Binary],
+            blocked: vec![UpdateTrack::Profiles],
+        }
+    );
+    let snapshot = render_snapshot(&state, 120, 24).expect("render mixed update notice");
+    assert!(snapshot.contains("updates: binary; blocked: profiles"));
+}
+
+#[test]
 fn tui_update_smoke_matrix_covers_release_states_and_actions() {
     let cases = [
         (
@@ -1943,6 +1964,41 @@ fn gateway_update_blocked_profile_status_body() -> &'static str {
             "latest": "1.4.0",
             "update_available": false,
             "state": "current",
+            "compatibility": "compatible"
+        },
+        "assets": {
+            "current": "assets-1",
+            "latest": "assets-1",
+            "update_available": false,
+            "state": "current",
+            "compatibility": "compatible"
+        },
+        "profiles": {
+            "current": "profiles-2030.0101.0",
+            "latest": "profiles-2030.0101.1",
+            "update_available": false,
+            "state": "current",
+            "compatibility": "compatible",
+            "blocked_reason": "requires binary 1.4.1 or newer"
+        },
+        "images": {
+            "update_available": false,
+            "state": "not_published",
+            "compatibility": "not_applicable"
+        }
+    }"#
+}
+
+fn gateway_update_binary_with_blocked_profile_status_body() -> &'static str {
+    r#"{
+        "checked_at": 1718444400,
+        "channel_url": "https://release.capsem.org/health.json",
+        "stale": false,
+        "binary": {
+            "current": "1.4.0",
+            "latest": "1.4.1",
+            "update_available": true,
+            "state": "update_available",
             "compatibility": "compatible"
         },
         "assets": {

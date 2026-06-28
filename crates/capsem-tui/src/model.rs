@@ -34,6 +34,10 @@ pub struct UpdateNotice {
 pub enum UpdateNoticeKind {
     Current,
     Available(Vec<UpdateTrack>),
+    AvailableWithBlocked {
+        available: Vec<UpdateTrack>,
+        blocked: Vec<UpdateTrack>,
+    },
     Blocked(Vec<UpdateTrack>),
     Stale,
     Unavailable,

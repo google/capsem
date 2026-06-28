@@ -188,8 +188,32 @@ fn update_status_label(updates: &UpdateStatusResponse) -> Option<String> {
         labels.push("Images");
     }
 
+    let mut blocked = Vec::new();
+    if updates.binary.blocked_reason.is_some() {
+        blocked.push("Binary");
+    }
+    if updates.assets.blocked_reason.is_some() {
+        blocked.push("VM assets");
+    }
+    if updates.profiles.blocked_reason.is_some() {
+        blocked.push("Profiles");
+    }
+    if updates.images.blocked_reason.is_some() {
+        blocked.push("Images");
+    }
+
+    if !labels.is_empty() && !blocked.is_empty() {
+        return Some(format!(
+            "Updates: {}; blocked: {}",
+            labels.join(", "),
+            blocked.join(", ")
+        ));
+    }
     if !labels.is_empty() {
         return Some(format!("Updates: {}", labels.join(", ")));
+    }
+    if !blocked.is_empty() {
+        return Some(format!("Updates blocked: {}", blocked.join(", ")));
     }
     if updates.last_error.is_some() {
         return Some("Updates: unavailable".into());
@@ -340,6 +364,7 @@ mod tests {
         UpdateTrackStatus {
             current: Some("1.4.0".into()),
             latest: Some("1.4.0".into()),
+            blocked_reason: None,
             update_available: false,
             state: UpdateTrackState::Current,
             compatibility: UpdateCompatibilityState::Compatible,
@@ -350,9 +375,21 @@ mod tests {
         UpdateTrackStatus {
             current: Some(current.into()),
             latest: Some(latest.into()),
+            blocked_reason: None,
             update_available: true,
             state: UpdateTrackState::UpdateAvailable,
             compatibility: UpdateCompatibilityState::Compatible,
+        }
+    }
+
+    fn blocked_track(current: &str, latest: &str, reason: &str) -> UpdateTrackStatus {
+        UpdateTrackStatus {
+            current: Some(current.into()),
+            latest: Some(latest.into()),
+            blocked_reason: Some(reason.into()),
+            update_available: false,
+            state: UpdateTrackState::Current,
+            compatibility: UpdateCompatibilityState::Unknown,
         }
     }
 
@@ -601,6 +638,43 @@ mod tests {
             entry,
             MenuEntry::Item { id, label, enabled: false }
                 if id == "updates" && label == "Updates: VM assets, Profiles, Images"
+        )));
+    }
+
+    #[test]
+    fn spec_blocked_profile_update_shows_blocked_indicator() {
+        let mut updates = update_status();
+        updates.profiles = blocked_track(
+            "profiles-2030.0101.0",
+            "profiles-2030.0101.1",
+            "requires binary 1.4.1 or newer",
+        );
+
+        let spec = menu_spec(&with_updates(make_status(vec![]), updates));
+
+        assert!(spec.iter().any(|entry| matches!(
+            entry,
+            MenuEntry::Item { id, label, enabled: false }
+                if id == "updates" && label == "Updates blocked: Profiles"
+        )));
+    }
+
+    #[test]
+    fn spec_binary_update_keeps_blocked_profile_visible() {
+        let mut updates = update_status();
+        updates.binary = available_track("1.4.0", "1.4.1");
+        updates.profiles = blocked_track(
+            "profiles-2030.0101.0",
+            "profiles-2030.0101.1",
+            "requires binary 1.4.1 or newer",
+        );
+
+        let spec = menu_spec(&with_updates(make_status(vec![]), updates));
+
+        assert!(spec.iter().any(|entry| matches!(
+            entry,
+            MenuEntry::Item { id, label, enabled: false }
+                if id == "updates" && label == "Updates: Binary; blocked: Profiles"
         )));
     }
 

@@ -52,6 +52,8 @@ pub struct UpdateTrackStatus {
     pub current: Option<String>,
     #[serde(default)]
     pub latest: Option<String>,
+    #[serde(default)]
+    pub blocked_reason: Option<String>,
     pub update_available: bool,
     pub state: UpdateTrackState,
     pub compatibility: UpdateCompatibilityState,
@@ -526,9 +528,12 @@ mod tests {
                 "compatibility": "compatible"
             },
             "profiles": {
+                "current": "profiles-2030.0101.0",
+                "latest": "profiles-2030.0101.1",
                 "update_available": false,
-                "state": "not_published",
-                "compatibility": "not_applicable"
+                "state": "current",
+                "blocked_reason": "requires binary 1.4.1 or newer",
+                "compatibility": "unknown"
             },
             "images": {
                 "update_available": false,
@@ -549,6 +554,10 @@ mod tests {
         let updates = status.updates.expect("update status should be attached");
         assert!(updates.binary.update_available);
         assert_eq!(updates.binary.latest.as_deref(), Some("1.4.1"));
+        assert_eq!(
+            updates.profiles.blocked_reason.as_deref(),
+            Some("requires binary 1.4.1 or newer")
+        );
         assert_eq!(status.update_error, None);
 
         let captures = captures.lock().unwrap();

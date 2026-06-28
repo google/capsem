@@ -3,6 +3,7 @@ import {
   profileDashboardUpdateRows,
   profileDashboardUpdateSummary,
   updateAvailableTracks,
+  updateBlockedTracks,
   updateEvidenceLinks,
   updateSummary,
   updateTrackDetail,
@@ -149,6 +150,55 @@ describe('update status model', () => {
     expect(profiles.stateLabel).toBe('Blocked');
     expect(profiles.tone).toBe('blocked');
     expect(profiles.detail).toBe('requires binary 1.4.1 or newer');
+  });
+
+  it('keeps blocked tracks visible when another update is available', () => {
+    const status = updateStatus({
+      binary: {
+        current: '1.4.0',
+        latest: '1.4.1',
+        update_available: true,
+        state: 'update_available',
+        compatibility: 'compatible',
+      },
+      profiles: {
+        current: 'profiles-2030.0101.0',
+        latest: 'profiles-2030.0101.1',
+        update_available: false,
+        state: 'current',
+        compatibility: 'compatible',
+        blocked_reason: 'requires binary 1.4.1 or newer',
+      },
+    });
+
+    expect(updateAvailableTracks(status)).toEqual(['binary']);
+    expect(updateBlockedTracks(status)).toEqual(['profiles']);
+    expect(updateSummary(status)).toBe('Binary available; Profiles blocked');
+    expect(profileDashboardUpdateSummary(status)).toBe('Profiles blocked');
+  });
+
+  it('keeps blocked profile dashboard tracks visible beside available asset tracks', () => {
+    const status = updateStatus({
+      assets: {
+        current: 'assets-1',
+        latest: 'assets-2',
+        update_available: true,
+        state: 'update_available',
+        compatibility: 'compatible',
+      },
+      profiles: {
+        current: 'profiles-2030.0101.0',
+        latest: 'profiles-2030.0101.1',
+        update_available: false,
+        state: 'current',
+        compatibility: 'compatible',
+        blocked_reason: 'requires binary 1.4.1 or newer',
+      },
+    });
+
+    expect(profileDashboardUpdateSummary(status)).toBe(
+      'VM assets available for future sessions; Profiles blocked',
+    );
   });
 
   it('distinguishes current, stale, unavailable, and not-published states', () => {

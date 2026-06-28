@@ -41,10 +41,26 @@ export function updateAvailableTracks(status: UpdateStatusResponse): UpdateTrack
   return tracks;
 }
 
+export function updateBlockedTracks(status: UpdateStatusResponse): UpdateTrackKey[] {
+  const tracks: UpdateTrackKey[] = [];
+  if (status.binary.blocked_reason) tracks.push('binary');
+  if (status.assets.blocked_reason) tracks.push('assets');
+  if (status.profiles.blocked_reason) tracks.push('profiles');
+  if (status.images.blocked_reason) tracks.push('images');
+  return tracks;
+}
+
 export function updateSummary(status: UpdateStatusResponse): string {
   const tracks = updateAvailableTracks(status);
+  const blocked = updateBlockedTracks(status);
+  if (tracks.length > 0 && blocked.length > 0) {
+    return `${tracks.map(track => UPDATE_TRACK_LABELS[track]).join(', ')} available; ${blocked.map(track => UPDATE_TRACK_LABELS[track]).join(', ')} blocked`;
+  }
   if (tracks.length > 0) {
     return `${tracks.map(track => UPDATE_TRACK_LABELS[track]).join(', ')} available`;
+  }
+  if (blocked.length > 0) {
+    return `${blocked.map(track => UPDATE_TRACK_LABELS[track]).join(', ')} blocked`;
   }
   if (status.last_error) return 'Update status unavailable';
   if (status.stale) return 'Update check stale';
@@ -102,10 +118,13 @@ export function profileDashboardUpdateSummary(status: UpdateStatusResponse | nul
   if (status.last_error) return 'Profile and image update state unavailable';
   const rows = profileDashboardUpdateRows(status);
   const available = rows.filter(row => row.tone === 'available');
+  const blocked = rows.filter(row => row.tone === 'blocked');
+  if (available.length > 0 && blocked.length > 0) {
+    return `${available.map(row => row.label).join(', ')} available for future sessions; ${blocked.map(row => row.label).join(', ')} blocked`;
+  }
   if (available.length > 0) {
     return `${available.map(row => row.label).join(', ')} available for future sessions`;
   }
-  const blocked = rows.filter(row => row.tone === 'blocked');
   if (blocked.length > 0) {
     return `${blocked.map(row => row.label).join(', ')} blocked`;
   }

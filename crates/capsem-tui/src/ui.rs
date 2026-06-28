@@ -227,6 +227,19 @@ fn update_notice_label(notice: &UpdateNotice) -> String {
                 .join(", ");
             format!("updates: {labels}")
         }
+        UpdateNoticeKind::AvailableWithBlocked { available, blocked } => {
+            let available = available
+                .iter()
+                .map(|track| track.label())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let blocked = blocked
+                .iter()
+                .map(|track| track.label())
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("updates: {available}; blocked: {blocked}")
+        }
         UpdateNoticeKind::Blocked(tracks) => {
             let labels = tracks
                 .iter()
@@ -246,7 +259,9 @@ fn update_notice_style(notice: &UpdateNotice) -> Style {
         UpdateNoticeKind::Available(_) | UpdateNoticeKind::Stale => {
             status_base_style().fg(ATTENTION)
         }
-        UpdateNoticeKind::Blocked(_) | UpdateNoticeKind::Unavailable => status_base_style().fg(BAD),
+        UpdateNoticeKind::AvailableWithBlocked { .. }
+        | UpdateNoticeKind::Blocked(_)
+        | UpdateNoticeKind::Unavailable => status_base_style().fg(BAD),
     }
 }
 

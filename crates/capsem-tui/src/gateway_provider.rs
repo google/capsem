@@ -285,7 +285,12 @@ fn update_response_to_notice(status: UpdateStatusResponse) -> Option<UpdateNotic
         blocked.push(UpdateTrack::Images);
     }
 
-    let kind = if !tracks.is_empty() {
+    let kind = if !tracks.is_empty() && !blocked.is_empty() {
+        UpdateNoticeKind::AvailableWithBlocked {
+            available: tracks,
+            blocked,
+        }
+    } else if !tracks.is_empty() {
         UpdateNoticeKind::Available(tracks)
     } else if !blocked.is_empty() {
         UpdateNoticeKind::Blocked(blocked)
