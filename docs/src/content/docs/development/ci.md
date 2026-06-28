@@ -189,7 +189,8 @@ Installers carry host binaries and the selected manifest, plus materialized
 profiles and `manifest-origin.json` provenance. Heavy VM assets are downloaded
 from `release.capsem.org/assets/releases/<asset-version>/` on first use through
 `capsem update --assets` and verified against the manifest before boot. Tag
-releases do not rebuild or upload VM assets.
+releases do not rebuild or upload VM assets, and they do not publish
+`latest.json`; binary freshness comes from the release-channel health index.
 
 Release packaging materializes runtime profiles through the same profile-derived build rail as
 local development: `capsem-admin profile materialize` copies checked-in config

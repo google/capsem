@@ -481,6 +481,20 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     )
 
 
+def test_binary_release_does_not_publish_latest_json_updater_metadata() -> None:
+    workflow = _workflow_text("release.yaml")
+    docs = _source_text("docs/src/content/docs/development/ci.md")
+    release_skill = _source_text("skills/release-process/SKILL.md")
+
+    assert "latest.json" not in workflow
+    assert "api.github.com/repos/google/capsem/releases/latest" not in workflow
+    assert "binary freshness comes from the release-channel health index" in docs
+    assert "releases do not rebuild or upload VM assets, and they do not publish" in docs
+    assert "`latest.json`; binary freshness comes from the release-channel health index" in docs
+    assert "`latest.json` is absent in the current release rail" in release_skill
+    assert "Do not make release creation depend on `latest.json`" in release_skill
+
+
 def test_binary_release_verifies_packages_hydrate_vm_assets_from_public_channel() -> None:
     verify_downloads = _workflow_job_block("verify-release-downloads", "release.yaml")
 

@@ -91,6 +91,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   flags share the same URL-only validation contract.
 - Added release-channel cache-header documentation coverage so CI docs,
   architecture docs, and agent skills stay aligned with the deploy smoke.
+- Added release-doctor coverage that binary releases do not publish
+  `latest.json` updater metadata and rely on release-channel health instead.
 - Fixed the CI docs thin-package contract to state that installers carry host
   binaries and the selected manifest while VM assets stay remote.
 - Proxied update status through the gateway so UI, tray, and TUI surfaces can
