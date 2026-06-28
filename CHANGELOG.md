@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Aligned self-update docs and skills with the implemented `capsem update --yes`
+  behavior: verified `.pkg` and `.deb` installers are applied through the
+  platform package manager rather than only printed.
+
 ### Added
 - Added service-route regression coverage proving confirmed binary/profile
   updates and VM asset refreshes dispatch separate CLI commands.

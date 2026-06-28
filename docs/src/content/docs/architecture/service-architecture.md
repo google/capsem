@@ -288,9 +288,9 @@ authority path.
 `release.capsem.org/health.json` for binary freshness and selects the matching
 `.pkg` or `.deb` installer metadata for the current install layout. With
 `--yes`, it downloads the selected installer into
-`~/.capsem/updates/installers/`, verifies size plus SHA-256, and prints the
-tested package-manager apply command for the verified package. VM asset refresh
-is separate:
+`~/.capsem/updates/installers/`, verifies size plus SHA-256, prints the tested
+package-manager apply command for audit, and executes that command through
+`sudo`. VM asset refresh is separate:
 `capsem update --assets` hydrates missing
 kernel/initrd/rootfs bytes from the installed or overridden manifest, verifies
 BLAKE3 hashes, and keeps hash-named files deduplicated.

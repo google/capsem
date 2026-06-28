@@ -495,6 +495,32 @@ def test_binary_release_does_not_publish_latest_json_updater_metadata() -> None:
     assert "Do not make release creation depend on `latest.json`" in release_skill
 
 
+def test_self_update_docs_match_verified_package_execution() -> None:
+    update_rs = _source_text("crates/capsem/src/update.rs")
+    install_tests = _source_text("tests/capsem-install/test_update.py")
+    install_skill = _source_text("skills/dev-installation/SKILL.md")
+    architecture_skill = _source_text("skills/site-architecture/SKILL.md")
+    service_docs = _source_text("docs/src/content/docs/architecture/service-architecture.md")
+
+    assert "apply_binary_installer_plan(&plan).await?" in update_rs
+    assert "Binary update applied. Restart Capsem" in update_rs
+    assert "test_macos_update_yes_applies_verified_pkg_with_package_manager" in install_tests
+    assert "test_linux_update_yes_applies_verified_deb_with_package_manager" in install_tests
+    assert "/usr/sbin/installer -pkg {cached} -target /" in install_tests
+    assert "apt-get install --yes {cached}" in install_tests
+    assert "and print the tested package-manager apply command (`sudo" not in install_skill
+    assert "downloads verified binary installers, prints the package-manager apply command," not in (
+        architecture_skill
+    )
+    assert "prints the\ntested package-manager apply command for the verified package" not in (
+        service_docs
+    )
+    assert "prints the tested package-manager apply command for audit" in install_skill
+    assert "executes it through `sudo`" in install_skill
+    assert "executes it with `--yes`" in architecture_skill
+    assert "executes that command through\n`sudo`" in service_docs
+
+
 def test_binary_release_verifies_packages_hydrate_vm_assets_from_public_channel() -> None:
     verify_downloads = _workflow_job_block("verify-release-downloads", "release.yaml")
 

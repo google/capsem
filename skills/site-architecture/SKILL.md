@@ -294,11 +294,11 @@ content; credentials are brokered at runtime.
 **Auto-launch cascade**: capsem-service starts -> spawns capsem-gateway (port 19222) + capsem-tray. All three are separate processes.
 
 **Self-update**: `capsem update` checks the release-channel health index,
-downloads verified binary installers, prints the package-manager apply command,
-materializes VM assets from URL-shaped manifest sources, and reports manifest
-origin/hash plus update availability through service status. Background
-update-check cache (`update-check.json`, 24h TTL) refreshes on ordinary CLI
-commands.
+downloads verified binary installers, prints the package-manager apply command
+for audit, executes it with `--yes`, materializes VM assets from URL-shaped
+manifest sources, and reports manifest origin/hash plus update availability
+through service status. Background update-check cache (`update-check.json`, 24h
+TTL) refreshes on ordinary CLI commands.
 
 Key source files: `crates/capsem/src/paths.rs`,
 `crates/capsem/src/service_install.rs`, `crates/capsem/src/update.rs`, and
