@@ -1959,8 +1959,8 @@ mod tests {
                 "ssh://updates.example/assets/stable/manifest.json",
                 "https:release.capsem.org/assets/stable/manifest.json",
             ] {
-                let err = validate_source_url_arg(flag, source)
-                    .expect_err("source should be rejected");
+                let err =
+                    validate_source_url_arg(flag, source).expect_err("source should be rejected");
                 assert!(
                     err.contains(flag),
                     "error for {source} should mention {flag}: {err}"
