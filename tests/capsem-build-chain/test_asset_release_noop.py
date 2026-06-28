@@ -143,3 +143,37 @@ def test_asset_release_noop_gate_controls_preview_and_deploy_workflow() -> None:
         "if: ${{ inputs.dry_run == false && needs.assemble-channel.outputs.asset_changed == 'true' }}"
         in workflow
     )
+
+
+def test_asset_release_upload_publishes_arch_prefixed_immutable_release_only_when_live() -> None:
+    workflow = (PROJECT_ROOT / ".github" / "workflows" / "release-assets.yaml").read_text()
+    docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
+    release_skill = (PROJECT_ROOT / "skills/release-process/SKILL.md").read_text()
+    upload_step = workflow.split("- name: Publish immutable GitHub asset release", maxsplit=1)[
+        1
+    ].split("\n      - uses: actions/upload-artifact@v7", maxsplit=1)[0]
+
+    assert "contents: write" in workflow
+    assert "if: ${{ steps.asset-delta.outputs.changed == 'true' }}" in upload_step
+    assert "DRY_RUN: ${{ inputs.dry_run }}" in upload_step
+    assert "GH_TOKEN: ${{ github.token }}" in upload_step
+    assert "ASSET_VERSION=$(python - <<" in upload_step
+    assert 'json.load(handle)["assets"]["current"]' in upload_step
+    assert 'TAG="assets-v$ASSET_VERSION"' in upload_step
+    for logical_name in ("vmlinuz", "initrd.img", "rootfs.erofs", "obom.cdx.json"):
+        assert logical_name in upload_step
+    assert 'cp "$src" "$RELEASE_DIR/$arch-$logical_name"' in upload_step
+    assert "gh release view %q" in upload_step
+    assert "gh release upload %q" in upload_step
+    assert "--clobber" in upload_step
+    assert "gh release create %q" in upload_step
+    assert "--target %q" in upload_step
+    assert 'if [[ "$DRY_RUN" == "true" ]]; then' in upload_step
+    assert "DRY-RUN:" in upload_step
+    assert '"$UPLOAD_SCRIPT"' in upload_step
+
+    for text in (docs, release_skill):
+        assert "assets-v<asset-version>" in text
+        assert "arch-prefixed" in text
+        for logical_name in ("`vmlinuz`", "`initrd.img`", "`rootfs.erofs`", "`obom.cdx.json`"):
+            assert logical_name in text

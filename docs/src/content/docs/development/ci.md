@@ -206,9 +206,12 @@ manifest. A tag-triggered binary release records package hashes, host SBOM, and
 attestation references, then mirrors the already-published VM blobs from
 `assets/releases/<asset-version>/` without rebuilding them. A manual VM asset
 release produces the manifest, immutable blob paths, and OBOM/provenance
-evidence. Neither rail is complete until `release.capsem.org` reflects the new
-channel state. After Cloudflare deploys, `release-channel.yaml` smoke checks the
-public `https://release.capsem.org/` index, `/health.json`, and
+evidence, then publishes an immutable GitHub Release tagged
+`assets-v<asset-version>` with arch-prefixed `vmlinuz`, `initrd.img`,
+`rootfs.erofs`, and `obom.cdx.json` artifacts before deploying the channel.
+Neither rail is complete until `release.capsem.org` reflects the new channel
+state. After Cloudflare deploys, `release-channel.yaml` smoke checks the public
+`https://release.capsem.org/` index, `/health.json`, and
 `/assets/<channel>/manifest.json` before the workflow can pass.
 
 The generated `health.json` is the compact machine-readable release-site index.

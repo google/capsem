@@ -39,10 +39,14 @@ without rebuilding VM assets.
 
 The manual VM asset release entrypoint is `.github/workflows/release-assets.yaml`.
 It builds assets, generates `assets/manifest.json`, builds
-`target/release-channel/`, uploads the full generated site as the
-`asset-channel-preview` artifact, and calls `.github/workflows/release-channel.yaml`
-to deploy that generated site when not running in dry-run mode. The manifest
-artifact is diagnostic/source evidence only; release-channel deploys consume the
+`target/release-channel/`, publishes changed VM blobs to an immutable GitHub
+Release tagged `assets-v<asset-version>` with arch-prefixed `vmlinuz`,
+`initrd.img`, `rootfs.erofs`, and `obom.cdx.json` artifacts, uploads the full
+generated site as the `asset-channel-preview` artifact, and calls
+`.github/workflows/release-channel.yaml` to deploy that generated site when not
+running in dry-run mode. In dry-run mode the workflow must print the exact
+`gh release` commands it would execute without publishing. The manifest artifact
+is diagnostic/source evidence only; release-channel deploys consume the
 generated dist artifact so the manifest, blobs, index page, health JSON, and
 headers stay in lock-step. After Cloudflare deploys, the channel workflow must
 smoke-check `https://release.capsem.org/`, `/health.json`, and

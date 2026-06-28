@@ -21,6 +21,9 @@ on:
         type: boolean
         default: true
 
+permissions:
+  contents: write
+
 jobs:
   build-assets:
     strategy:
@@ -137,6 +140,77 @@ jobs:
           cargo run -p capsem-admin -- assets channel check \
             --channel "$CHANNEL" \
             --dist target/release-channel
+
+      - name: Publish immutable GitHub asset release
+        if: ${{ steps.asset-delta.outputs.changed == 'true' }}
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ASSET_VERSION=$(python - <<'PY'
+          import json
+
+          with open("assets/manifest.json", encoding="utf-8") as handle:
+              print(json.load(handle)["assets"]["current"])
+          PY
+          )
+          TAG="assets-v$ASSET_VERSION"
+          RELEASE_DIR="target/asset-release/$TAG"
+          UPLOAD_SCRIPT="target/asset-release/upload-assets.sh"
+          mkdir -p "$RELEASE_DIR"
+
+          for arch_dir in assets/*; do
+            [ -d "$arch_dir" ] || continue
+            arch="$(basename "$arch_dir")"
+            for logical_name in vmlinuz initrd.img rootfs.erofs obom.cdx.json; do
+              src="$arch_dir/$logical_name"
+              test -f "$src"
+              cp "$src" "$RELEASE_DIR/$arch-$logical_name"
+            done
+          done
+
+          files=("$RELEASE_DIR"/*)
+          test "${#files[@]}" -gt 0
+          mkdir -p "$(dirname "$UPLOAD_SCRIPT")"
+          {
+            echo '#!/usr/bin/env bash'
+            echo 'set -euo pipefail'
+            printf 'if gh release view %q >/dev/null 2>&1; then\n' "$TAG"
+            printf '  gh release upload %q' "$TAG"
+            printf ' %q' "${files[@]}"
+            printf ' --clobber\n'
+            printf 'else\n'
+            printf '  gh release create %q' "$TAG"
+            printf ' %q' "${files[@]}"
+            printf ' --title %q --notes %q --target %q\n' \
+              "Capsem VM assets $ASSET_VERSION" \
+              "Immutable Capsem VM asset release for $CHANNEL/$ASSET_VERSION." \
+              "$GITHUB_SHA"
+            printf 'fi\n'
+          } > "$UPLOAD_SCRIPT"
+          chmod +x "$UPLOAD_SCRIPT"
+
+          {
+            echo "asset_version=$ASSET_VERSION"
+            echo "asset_release_tag=$TAG"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## Immutable VM asset release"
+            echo
+            echo "- Tag: \`$TAG\`"
+            echo "- Dry run: \`$DRY_RUN\`"
+            echo "- Files:"
+            printf '  - `%s`\n' "${files[@]}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "$DRY_RUN" == "true" ]]; then
+            echo "Dry run: would publish immutable VM asset release $TAG"
+            sed 's/^/DRY-RUN: /' "$UPLOAD_SCRIPT"
+          else
+            "$UPLOAD_SCRIPT"
+          fi
 
       - uses: actions/upload-artifact@v7
         with:
