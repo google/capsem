@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Fixed VM asset release delta checks so manifest policy changes such as
+  `refresh_policy` deploy the release channel without republishing VM blobs.
 - Fixed current VM asset release metadata comparisons so compatibility/date
   updates deploy the release channel without republishing unchanged VM blobs.
 - Fixed the manual VM asset release delta so asset release metadata changes

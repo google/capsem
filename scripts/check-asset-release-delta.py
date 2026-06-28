@@ -83,6 +83,10 @@ def _asset_release_metadata(manifest: dict[str, Any]) -> dict[str, Any]:
             raise SystemExit(f"manifest assets.releases[{version!r}] must be an object")
         historical[version] = _release_metadata(release)
     return {
+        "manifest": {
+            "format": manifest.get("format"),
+            "refresh_policy": manifest.get("refresh_policy"),
+        },
         "current": _release_metadata(current_release),
         "historical": historical,
     }
