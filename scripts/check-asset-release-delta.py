@@ -52,30 +52,40 @@ def _current_asset_fingerprint(manifest: dict[str, Any]) -> dict[str, Any]:
     return {"version": current, "files": files}
 
 
-def _historical_release_metadata(manifest: dict[str, Any]) -> dict[str, Any]:
+def _release_metadata(release: dict[str, Any]) -> dict[str, Any]:
+    arches = release.get("arches", {})
+    arch_names = sorted(arches.keys()) if isinstance(arches, dict) else []
+    return {
+        "date": release.get("date"),
+        "deprecated": release.get("deprecated", False),
+        "deprecated_date": release.get("deprecated_date"),
+        "min_binary": release.get("min_binary"),
+        "arches": arch_names,
+    }
+
+
+def _asset_release_metadata(manifest: dict[str, Any]) -> dict[str, Any]:
     current = manifest.get("assets", {}).get("current")
     releases = manifest.get("assets", {}).get("releases", {})
     if not isinstance(current, str) or not current:
         raise SystemExit("manifest missing assets.current")
     if not isinstance(releases, dict):
         raise SystemExit("manifest assets.releases must be an object")
+    current_release = releases.get(current)
+    if not isinstance(current_release, dict):
+        raise SystemExit(f"manifest missing assets.releases[{current!r}]")
 
-    metadata: dict[str, Any] = {}
+    historical: dict[str, Any] = {}
     for version, release in sorted(releases.items()):
         if version == current:
             continue
         if not isinstance(release, dict):
             raise SystemExit(f"manifest assets.releases[{version!r}] must be an object")
-        arches = release.get("arches", {})
-        arch_names = sorted(arches.keys()) if isinstance(arches, dict) else []
-        metadata[version] = {
-            "date": release.get("date"),
-            "deprecated": release.get("deprecated", False),
-            "deprecated_date": release.get("deprecated_date"),
-            "min_binary": release.get("min_binary"),
-            "arches": arch_names,
-        }
-    return metadata
+        historical[version] = _release_metadata(release)
+    return {
+        "current": _release_metadata(current_release),
+        "historical": historical,
+    }
 
 
 def _write_github_output(path: str | None, values: dict[str, str]) -> None:
@@ -120,7 +130,7 @@ def compare_manifests(
     new_manifest: dict[str, Any], previous_manifest: dict[str, Any] | None
 ) -> dict[str, Any]:
     new = _current_asset_fingerprint(new_manifest)
-    new_metadata = _historical_release_metadata(new_manifest)
+    new_metadata = _asset_release_metadata(new_manifest)
     if previous_manifest is None:
         return {
             "changed": True,
@@ -129,7 +139,7 @@ def compare_manifests(
             "new_assets": new["version"],
         }
     previous = _current_asset_fingerprint(previous_manifest)
-    previous_metadata = _historical_release_metadata(previous_manifest)
+    previous_metadata = _asset_release_metadata(previous_manifest)
     if new["files"] != previous["files"]:
         return {
             "changed": True,

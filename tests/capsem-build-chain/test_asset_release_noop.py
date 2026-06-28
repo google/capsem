@@ -62,6 +62,13 @@ def _add_historical_release(
     manifest_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
+def _update_current_release_metadata(manifest_path: Path, **updates: object) -> None:
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    current = data["assets"]["current"]
+    data["assets"]["releases"][current].update(updates)
+    manifest_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
 def _run_delta(
     new_manifest: Path,
     previous_manifest: Path,
@@ -141,6 +148,29 @@ def test_asset_release_delta_deploys_deprecation_without_republishing_blobs(
     assert "immutable VM blobs will not be republished" in summary.read_text(
         encoding="utf-8"
     )
+
+
+def test_asset_release_delta_deploys_current_metadata_without_republishing_blobs(
+    tmp_path: Path,
+) -> None:
+    previous = _manifest(tmp_path / "previous" / "manifest.json", version="2030.0102.1")
+    new = _manifest(tmp_path / "new" / "manifest.json", version="2030.0102.1")
+    _update_current_release_metadata(new, min_binary="1.4.2")
+    output = tmp_path / "github-output"
+    summary = tmp_path / "summary.md"
+
+    result = _run_delta(new, previous, output, summary)
+
+    assert result == {
+        "changed": True,
+        "asset_blobs_changed": False,
+        "reason": "asset_release_metadata_changed",
+        "previous_assets": "2030.0102.1",
+        "new_assets": "2030.0102.1",
+    }
+    assert "changed=true" in output.read_text(encoding="utf-8")
+    assert "asset_blobs_changed=false" in output.read_text(encoding="utf-8")
+    assert "Release-channel metadata changed" in summary.read_text(encoding="utf-8")
 
 
 def test_asset_release_delta_writes_reviewable_json_output(tmp_path: Path) -> None:
