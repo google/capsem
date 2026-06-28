@@ -70,6 +70,7 @@
   let diagnostics = $state<Record<string, any> | null>(null);
   let diagnosticsError = $state<string | null>(null);
   let diagnosticsCopied = $state(false);
+  let updateCheckPending = $state(false);
   let updateStatus = $derived.by(() => {
     const value = diagnostics?.update_status;
     return isUpdateStatus(value) ? value : null;
@@ -123,6 +124,19 @@
       diagnostics = await api.debugSnapshot() as Record<string, any>;
     } catch (err) {
       diagnosticsError = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  async function checkReleaseChannel() {
+    updateCheckPending = true;
+    diagnosticsError = null;
+    try {
+      await api.checkForUpdates();
+      await refreshDiagnostics();
+    } catch (err) {
+      diagnosticsError = err instanceof Error ? err.message : String(err);
+    } finally {
+      updateCheckPending = false;
     }
   }
 
@@ -423,10 +437,11 @@
               {/if}
               <button
                 type="button"
-                class="py-2 px-4 inline-flex items-center gap-x-2 text-sm font-medium rounded-lg border border-line-2 bg-layer text-foreground hover:bg-layer-hover transition-colors"
-                onclick={refreshDiagnostics}
+                class="py-2 px-4 inline-flex items-center gap-x-2 text-sm font-medium rounded-lg border border-line-2 bg-layer text-foreground hover:bg-layer-hover transition-colors disabled:opacity-60"
+                disabled={updateCheckPending}
+                onclick={checkReleaseChannel}
               >
-                Refresh
+                {updateCheckPending ? 'Checking' : 'Refresh'}
               </button>
             </div>
           </div>

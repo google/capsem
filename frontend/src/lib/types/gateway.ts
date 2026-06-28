@@ -38,6 +38,33 @@ export interface UpdateStatusResponse {
   supply_chain?: SupplyChainEvidence;
 }
 
+export interface UpdateCheckRequest {
+  dry_run?: boolean;
+}
+
+export type UpdateApplyAction =
+  | 'binary_profiles'
+  | 'assets';
+
+export interface UpdateApplyRequest {
+  action: UpdateApplyAction;
+  dry_run?: boolean;
+  confirmed?: boolean;
+}
+
+export interface UpdateCommandPlan {
+  program: string;
+  args: string[];
+}
+
+export interface UpdateActionResponse {
+  status: string;
+  command: UpdateCommandPlan;
+  exit_code?: number | null;
+  stdout?: string | null;
+  stderr?: string | null;
+}
+
 export interface UpdateTrackStatus {
   current?: string | null;
   latest?: string | null;

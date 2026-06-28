@@ -1220,7 +1220,7 @@ describe('api', () => {
 
   // ---- App actions ----
 
-  describe('checkForAppUpdate', () => {
+  describe('update actions', () => {
     beforeEach(async () => {
       mockFetch
         .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
@@ -1229,16 +1229,51 @@ describe('api', () => {
       await api.init();
     });
 
-    it('returns update info when available', async () => {
-      mockFetch.mockReturnValueOnce(jsonResponse({ version: '2.0.0', current_version: '1.0.0' }));
-      const result = await api.checkForAppUpdate();
-      expect(result).toEqual({ version: '2.0.0', current_version: '1.0.0' });
+    it('checks for updates through the service-owned POST route', async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({
+        status: 'succeeded',
+        command: { program: 'capsem', args: ['update', '--check'] },
+        exit_code: 0,
+      }));
+
+      const result = await api.checkForUpdates();
+
+      expect(result.command.args).toEqual(['update', '--check']);
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/update/check');
+      expect(call[1].method).toBe('POST');
+      expect(call[1].headers.Authorization).toBe('Bearer tok');
+      expect(JSON.parse(String(call[1].body))).toEqual({});
     });
 
-    it('returns null on error', async () => {
-      mockFetch.mockRejectedValueOnce(new Error('fail'));
-      const result = await api.checkForAppUpdate();
-      expect(result).toBeNull();
+    it('applies binary/profile and asset update actions through typed bodies', async () => {
+      mockFetch
+        .mockReturnValueOnce(jsonResponse({
+          status: 'planned',
+          command: { program: 'capsem', args: ['update', '--yes'] },
+        }))
+        .mockReturnValueOnce(jsonResponse({
+          status: 'planned',
+          command: { program: 'capsem', args: ['update', '--assets'] },
+        }));
+
+      await api.applyUpdateAction('binary_profiles', { dry_run: true });
+      await api.applyUpdateAction('assets', { confirmed: true });
+
+      const binaryCall = mockFetch.mock.calls[mockFetch.mock.calls.length - 2];
+      const assetsCall = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(binaryCall[0]).toContain('/update/apply');
+      expect(binaryCall[1].method).toBe('POST');
+      expect(JSON.parse(String(binaryCall[1].body))).toEqual({
+        action: 'binary_profiles',
+        dry_run: true,
+      });
+      expect(assetsCall[0]).toContain('/update/apply');
+      expect(assetsCall[1].method).toBe('POST');
+      expect(JSON.parse(String(assetsCall[1].body))).toEqual({
+        action: 'assets',
+        confirmed: true,
+      });
     });
   });
 

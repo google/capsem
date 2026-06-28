@@ -4,6 +4,7 @@
   import { settingsStore } from '../../stores/settings.svelte.ts';
   import { themeStore } from '../../stores/theme.svelte.ts';
   import { Widget, SideEffect, ActionKind } from '../../models/settings-enums';
+  import { checkForUpdates } from '../../api';
   import Self from './SettingsSection.svelte';
   import ToggleControl from './widgets/ToggleControl.svelte';
   import TextControl from './widgets/TextControl.svelte';
@@ -19,6 +20,7 @@
 
   // Track collapsed state for toggle-gated groups.
   let expandedGroups = $state<Set<string>>(new Set());
+  let updateCheckState = $state<'idle' | 'checking' | 'checked' | 'failed'>('idle');
 
   function toggleGroup(key: string) {
     const next = new Set(expandedGroups);
@@ -51,6 +53,16 @@
       await settingsStore.updateImmediate(id, value as SettingValue);
     } else {
       settingsStore.stage(id, value as SettingValue);
+    }
+  }
+
+  async function handleCheckUpdate() {
+    updateCheckState = 'checking';
+    try {
+      await checkForUpdates();
+      updateCheckState = 'checked';
+    } catch {
+      updateCheckState = 'failed';
     }
   }
 
@@ -114,12 +126,19 @@
           <p class="text-xs text-muted-foreground-1 mt-0.5">{a.description}</p>
         {/if}
       </div>
-      <button
-        type="button"
-        class="py-2 px-4 text-sm font-medium rounded-lg border border-line-2 bg-layer text-foreground hover:bg-layer-hover transition-colors"
-      >
-        Check now
-      </button>
+      <div class="flex flex-col items-end">
+        <button
+          type="button"
+          class="py-2 px-4 text-sm font-medium rounded-lg border border-line-2 bg-layer text-foreground hover:bg-layer-hover transition-colors disabled:opacity-60"
+          disabled={updateCheckState === 'checking'}
+          onclick={handleCheckUpdate}
+        >
+          {updateCheckState === 'checking' ? 'Checking' : updateCheckState === 'checked' ? 'Checked' : 'Check now'}
+        </button>
+        {#if updateCheckState === 'failed'}
+          <p class="text-xs text-destructive mt-1">Check failed</p>
+        {/if}
+      </div>
     </div>
   {/if}
 {/snippet}

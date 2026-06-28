@@ -13,6 +13,9 @@ import type {
   ForkResponse,
   StatsResponse,
   UpdateStatusResponse,
+  UpdateActionResponse,
+  UpdateApplyAction,
+  UpdateCheckRequest,
 } from './types/gateway';
 import type {
   SettingsResponse,
@@ -1278,6 +1281,19 @@ export async function getUpdateStatus(): Promise<UpdateStatusResponse> {
   return await resp.json();
 }
 
+export async function checkForUpdates(request: UpdateCheckRequest = {}): Promise<UpdateActionResponse> {
+  const resp = await _post('/update/check', request);
+  return await resp.json();
+}
+
+export async function applyUpdateAction(
+  action: UpdateApplyAction,
+  opts: { dry_run?: boolean; confirmed?: boolean } = {},
+): Promise<UpdateActionResponse> {
+  const resp = await _post('/update/apply', { action, ...opts });
+  return await resp.json();
+}
+
 // -- App actions --
 
 /** Open a URL in the system default browser. Routes through the Tauri IPC
@@ -1290,16 +1306,6 @@ export async function openUrl(url: string): Promise<void> {
     return;
   }
   window.open(url, '_blank', 'noopener,noreferrer');
-}
-
-/** Check for app updates. Returns null if no update available. */
-export async function checkForAppUpdate(): Promise<{ version: string; current_version: string } | null> {
-  try {
-    const resp = await _get('/update/check');
-    return await resp.json();
-  } catch {
-    return null;
-  }
 }
 
 // -- Files API (host-side VirtioFS) --
