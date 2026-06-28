@@ -24,6 +24,10 @@ Three phases. Default answer at every prompt is **Yes** — press Enter to insta
 2. **Dependencies**: `uv` (astral.sh), `uv sync`, `flock` (brew on macOS), container runtime on macOS (`colima` + `docker` + `docker-buildx` via brew, then `colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8`), `pnpm install` for the frontend.
 3. **Doctor `--fix`** (`scripts/doctor-common.sh --fix`): installs Rust targets, `cargo-llvm-cov`, `cargo-audit`, `b3sum`, `cargo-tauri` (= `tauri-cli` crate), `cargo-sbom`; builds VM assets and packs the initrd.
 
+Release-only local preflight also needs `cdxgen`. Install it with
+`npm install -g @cyclonedx/cdxgen` before running
+`bash scripts/check-release-workflow.sh` or local VM asset release dry runs.
+
 `--yes` flag and non-tty input both auto-accept every prompt.
 
 ## After bootstrap

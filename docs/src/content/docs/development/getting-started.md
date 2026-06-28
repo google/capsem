@@ -50,6 +50,12 @@ git clone https://github.com/google/capsem.git && cd capsem
 | 2 | Frontend deps | `pnpm install --frozen-lockfile` (in `frontend/`) | Tauri UI dependencies |
 | 3 | Doctor `--fix` | `scripts/doctor-common.sh --fix` | Installs Rust targets, `cargo-llvm-cov`, `cargo-audit`, `b3sum`, `cargo-tauri` (= `tauri-cli` crate), `cargo-sbom`, builds VM assets, packs initrd |
 
+Release-only tools are checked but not all installed by `doctor --fix`. Before
+running `bash scripts/check-release-workflow.sh` or cutting VM asset releases
+locally, install the OBOM generator with
+`npm install -g @cyclonedx/cdxgen`; the manual asset workflow installs the same
+tool in CI.
+
 Pressing **Enter** at any prompt accepts the install (Y is the default). Type `n` to skip — bootstrap continues and surfaces the missing tool in the doctor report at the end.
 
 ## Build VM assets

@@ -148,6 +148,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Cloudflare publishes the generated site.
 
 ### Fixed
+- Fixed developer setup docs and skills to call out `cdxgen` as a
+  release-only prerequisite for local release workflow preflight.
 - Fixed the release-channel deploy preflight to require generated Cloudflare
   cache headers before publishing `release.capsem.org`.
 - Fixed the release-channel deploy preflight to require both the human index

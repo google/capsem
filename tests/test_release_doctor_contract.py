@@ -304,6 +304,31 @@ def test_release_channel_cache_header_documentation_matches_deploy_smoke() -> No
         assert "release-channel" in normalized
 
 
+def test_cdxgen_release_tool_prerequisite_is_documented() -> None:
+    release_preflight = _source_text("scripts/check-release-workflow.sh")
+    doctor = _source_text("scripts/doctor-common.sh")
+    asset_workflow = _workflow_text("release-assets.yaml")
+    docs_and_skills = [
+        _source_text("docs/src/content/docs/development/getting-started.md"),
+        _source_text("docs/src/content/docs/development/ci.md"),
+        _source_text("skills/dev-start/SKILL.md"),
+        _source_text("skills/dev-setup/SKILL.md"),
+    ]
+
+    assert "cdxgen not found (npm install -g @cyclonedx/cdxgen)" in release_preflight
+    assert "for tool in gh openssl cargo-sbom cdxgen" in doctor
+    assert 'skip "$tool (only needed for releases)"' in doctor
+    assert "npm install -g @cyclonedx/cdxgen@latest" in asset_workflow
+    assert "CAPSEM_CDXGEN_CMD: cdxgen" in asset_workflow
+
+    for source in docs_and_skills:
+        normalized = " ".join(source.split())
+        assert "cdxgen" in source
+        assert "release-only" in normalized.lower()
+        assert "npm install -g @cyclonedx/cdxgen" in source
+        assert "check-release-workflow.sh" in source
+
+
 def test_cross_surface_update_smoke_prerequisites_are_covered_locally() -> None:
     cli = _source_text("crates/capsem/src/update.rs")
     service = _source_text("crates/capsem-service/src/tests.rs")

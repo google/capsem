@@ -132,6 +132,10 @@ Three phases. Default at every prompt is **Yes** (Enter accepts; type `n` to dec
 | 2 | Frontend deps | `pnpm install --frozen-lockfile` |
 | 3 | Doctor `--fix` | `scripts/doctor-common.sh --fix` -- Rust targets, `cargo-llvm-cov`, `cargo-audit`, `b3sum`, `cargo-tauri` (= `tauri-cli` crate), `cargo-sbom`, build VM assets, pack initrd |
 
+Release-only local preflight also needs `cdxgen`. Install it with
+`npm install -g @cyclonedx/cdxgen` before running
+`bash scripts/check-release-workflow.sh` or local VM asset release dry runs.
+
 ### Kernel version
 
 Kernel selection is part of the profile-derived image build, not a standalone

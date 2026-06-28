@@ -204,6 +204,13 @@ profile-owned VM assets for both supported architectures, generates the same
 a channel preview. By default it runs as a dry run; live publication calls
 `release-channel.yaml`.
 
+Local release preflight has one extra release-only OBOM prerequisite beyond the
+normal developer bootstrap path: `bash scripts/check-release-workflow.sh`
+expects `cdxgen` in `PATH`. Install it with
+`npm install -g @cyclonedx/cdxgen` before local VM asset release dry runs; the
+manual asset workflow installs `@cyclonedx/cdxgen@latest` in CI before invoking
+the build with `CAPSEM_CDXGEN_CMD=cdxgen`.
+
 `release.capsem.org` is the asset channel publication surface. It is generated
 from the manifest and VM blobs produced by the asset workflow. The generated
 deploy root is `target/release-channel/`; the machine manifest lives at:
