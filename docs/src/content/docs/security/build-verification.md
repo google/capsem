@@ -111,12 +111,14 @@ Release artifacts receive [SLSA build provenance](https://slsa.dev/) attestation
 |----------|-------------|
 | `.pkg` (macOS installer) | Build provenance |
 | `.deb` (Linux package) | Build provenance |
-| `rootfs.erofs` (arm64) | Build provenance |
-| `rootfs.erofs` (x86_64) | Build provenance |
+| `vmlinuz`, `initrd.img`, `rootfs.erofs`, `obom.cdx.json` (arm64) | VM asset build provenance |
+| `vmlinuz`, `initrd.img`, `rootfs.erofs`, `obom.cdx.json` (x86_64) | VM asset build provenance |
 | `.pkg` | SBOM (SPDX 2.3) |
 | `<arch>-obom.cdx.json` | OBOM document, hash-pinned in `manifest.json` |
 
 Attestations are published to the GitHub Attestations API and can be verified with `gh attestation verify`.
+The VM `build-ledger.log` and `B3SUMS` outputs remain debug evidence unless a
+future release intentionally publishes them as separate evidence artifacts.
 
 ## Asset integrity
 

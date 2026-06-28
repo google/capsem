@@ -108,10 +108,14 @@ compatibility minimums, and whether the advertised profile catalog requires a
 newer binary or VM asset set, plus an attestations slot.
 
 The manual asset workflow is `.github/workflows/release-assets.yaml`. It should
-remain explicit/manual, build VM assets, upload `target/release-channel/` as the
-`asset-channel-preview` artifact, and call `.github/workflows/release-channel.yaml`
-to deploy `release.capsem.org` only after the asset manifest, blobs, and channel
-checks have been generated.
+remain explicit/manual, build VM assets, publish changed blobs to an immutable
+`assets-v<asset-version>` GitHub Release, attest the arch-prefixed `vmlinuz`,
+`initrd.img`, `rootfs.erofs`, and `obom.cdx.json` subjects, upload
+`target/release-channel/` as the `asset-channel-preview` artifact, and call
+`.github/workflows/release-channel.yaml` to deploy `release.capsem.org` only
+after the asset manifest, blobs, and channel checks have been generated.
+`build-ledger.log` and `B3SUMS` are debug evidence unless deliberately promoted
+to separate published evidence.
 
 Asset-channel blobs are arch-prefixed (`arm64-vmlinuz`,
 `arm64-initrd.img`, `arm64-rootfs.erofs`, `arm64-obom.cdx.json`, and x86_64

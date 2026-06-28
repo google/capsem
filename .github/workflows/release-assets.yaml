@@ -22,7 +22,9 @@ on:
         default: true
 
 permissions:
+  attestations: write
   contents: write
+  id-token: write
 
 jobs:
   build-assets:
@@ -211,6 +213,16 @@ jobs:
           else
             "$UPLOAD_SCRIPT"
           fi
+
+      - name: Attest VM asset provenance
+        if: ${{ inputs.dry_run == false && steps.asset-delta.outputs.changed == 'true' }}
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            target/asset-release/assets-v*/*-vmlinuz
+            target/asset-release/assets-v*/*-initrd.img
+            target/asset-release/assets-v*/*-rootfs.erofs
+            target/asset-release/assets-v*/*-obom.cdx.json
 
       - uses: actions/upload-artifact@v7
         with:

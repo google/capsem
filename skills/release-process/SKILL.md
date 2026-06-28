@@ -44,9 +44,12 @@ Release tagged `assets-v<asset-version>` with arch-prefixed `vmlinuz`,
 `initrd.img`, `rootfs.erofs`, and `obom.cdx.json` artifacts, uploads the full
 generated site as the `asset-channel-preview` artifact, and calls
 `.github/workflows/release-channel.yaml` to deploy that generated site when not
-running in dry-run mode. In dry-run mode the workflow must print the exact
-`gh release` commands it would execute without publishing. The manifest artifact
-is diagnostic/source evidence only; release-channel deploys consume the
+running in dry-run mode. Live asset releases must publish GitHub build
+provenance attestations for those four arch-prefixed VM asset subjects. In
+dry-run mode the workflow must print the exact `gh release` commands it would
+execute without publishing or attesting. `build-ledger.log` and `B3SUMS` remain
+debug evidence unless deliberately published as separate evidence artifacts.
+The manifest artifact is diagnostic/source evidence only; release-channel deploys consume the
 generated dist artifact so the manifest, blobs, index page, health JSON, and
 headers stay in lock-step. After Cloudflare deploys, the channel workflow must
 smoke-check `https://release.capsem.org/`, `/health.json`, and

@@ -18,6 +18,8 @@ def test_release_workflows_generate_binary_sbom_and_asset_obom() -> None:
     channel_workflow = _read(".github/workflows/release-channel.yaml")
 
     assert "npm install -g @cyclonedx/cdxgen@latest" in asset_workflow
+    assert "attestations: write" in asset_workflow
+    assert "id-token: write" in asset_workflow
     assert "CAPSEM_CDXGEN_CMD: cdxgen" in asset_workflow
     assert asset_workflow.index("Install OBOM generator") < asset_workflow.index(
         "- name: Build VM assets"
@@ -26,7 +28,24 @@ def test_release_workflows_generate_binary_sbom_and_asset_obom() -> None:
         "just build-rootfs"
     )
     assert "asset-channel-preview" in asset_workflow
-    assert 'for key in ("vm_oboms", "host_sboms", "host_binary_files", "attestations")' in channel_workflow
+    assert "Publish immutable GitHub asset release" in asset_workflow
+    assert "Attest VM asset provenance" in asset_workflow
+    assert "actions/attest-build-provenance@v4" in asset_workflow
+    assert (
+        "if: ${{ inputs.dry_run == false && steps.asset-delta.outputs.changed == 'true' }}"
+        in asset_workflow
+    )
+    assert "target/asset-release/assets-v*/*-vmlinuz" in asset_workflow
+    assert "target/asset-release/assets-v*/*-initrd.img" in asset_workflow
+    assert "target/asset-release/assets-v*/*-rootfs.erofs" in asset_workflow
+    assert "target/asset-release/assets-v*/*-obom.cdx.json" in asset_workflow
+    assert asset_workflow.index("Publish immutable GitHub asset release") < asset_workflow.index(
+        "Attest VM asset provenance"
+    )
+    assert (
+        'for key in ("vm_oboms", "host_sboms", "host_binary_files", "attestations")'
+        in channel_workflow
+    )
 
     assert "Generate SBOM" in binary_workflow
     assert "cargo sbom --output-format spdx_json_2_3 > capsem-sbom.spdx.json" in binary_workflow
@@ -62,7 +81,7 @@ def test_admin_materialization_and_service_routes_expose_verified_obom_evidence(
     assert "check_local_asset(assets_dir, arch, logical_name, hash, size)" in admin
     assert "read_obom_generator" in admin
     assert "ProfileMaterializedObomReport" in admin
-    assert "scope: \"base_image\"" in admin
+    assert 'scope: "base_image"' in admin
     assert "source profile {location} must not contain generated obom pins" in admin
 
     assert 'route("/profiles/{profile_id}/obom", get(handle_profile_obom))' in service

@@ -10,11 +10,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 def _recipe_block(name: str) -> str:
     lines = (PROJECT_ROOT / "justfile").read_text().splitlines()
-    start = next(
-        i
-        for i, line in enumerate(lines)
-        if line == name or line.startswith(f"{name} ")
-    )
+    start = next(i for i, line in enumerate(lines) if line == name or line.startswith(f"{name} "))
     end = len(lines)
     for i in range(start + 1, len(lines)):
         line = lines[i]
@@ -39,7 +35,7 @@ def test_build_assets_requires_profile_and_uses_capsem_admin() -> None:
 def test_check_assets_recovers_by_iterating_checked_in_profiles() -> None:
     block = _recipe_block("_check-assets:")
 
-    assert 'for profile in config/profiles/*/profile.toml; do' in block
+    assert "for profile in config/profiles/*/profile.toml; do" in block
     assert 'just build-assets "$(basename "$(dirname "$profile")")" "$arch"' in block
     assert "just build-assets code" not in block
 
@@ -61,7 +57,7 @@ def test_materialize_config_uses_admin_profile_command() -> None:
     assert "cargo run -p capsem-admin -- profile materialize" in script
     assert "normalize_arch()" in script
     assert 'case "$arch" in' in script
-    assert 'arm64|aarch64)' in script
+    assert "arm64|aarch64)" in script
     assert "--config-root" in script
     assert "--manifest" in script
     assert "--output-root" in script
@@ -106,7 +102,7 @@ def test_isolated_test_recipes_trap_test_home_service_cleanup() -> None:
         assert "trap cleanup_test_capsem_home_service EXIT" in block
         assert 'PIDFILE="$CAPSEM_RUN_DIR/service.pid"' in block
         assert 'kill "$OLD_PID"' in block
-        assert 'pkill -f' not in block
+        assert "pkill -f" not in block
 
 
 def test_release_workflow_uses_same_config_materializer() -> None:
@@ -123,6 +119,19 @@ def test_asset_workflow_publishes_obom_not_debug_build_ledger() -> None:
 
     assert "npm install -g @cyclonedx/cdxgen@latest" in workflow
     assert "CAPSEM_CDXGEN_CMD: cdxgen" in workflow
+    upload_step = workflow.split("- name: Publish immutable GitHub asset release", maxsplit=1)[
+        1
+    ].split("\n      - name: Attest VM asset provenance", maxsplit=1)[0]
+    attest_step = workflow.split("- name: Attest VM asset provenance", maxsplit=1)[1].split(
+        "\n      - uses: actions/upload-artifact@v7", maxsplit=1
+    )[0]
+    for logical_name in ("vmlinuz", "initrd.img", "rootfs.erofs", "obom.cdx.json"):
+        assert logical_name in upload_step
+        assert logical_name in attest_step
     assert "vm-build-ledger-" not in workflow
+    assert "build-ledger.log" not in upload_step
+    assert "build-ledger.log" not in attest_step
+    assert "B3SUMS" not in upload_step
+    assert "B3SUMS" not in attest_step
     assert "obom.cdx.json" not in release
     assert "Skipping debug-only $arch/$base from release upload" not in release
