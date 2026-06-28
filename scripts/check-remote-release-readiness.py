@@ -261,6 +261,7 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
     manifest_data = manifest.data if isinstance(manifest.data, dict) else {}
     health_urls = require_object(health_data, "urls", "health urls", failures)
     health_current = require_object(health_data, "current", "health current", failures)
+    health_profiles = require_object(health_data, "profiles", "health profiles", failures)
     manifest_assets = require_object(manifest_data, "assets", "manifest assets", failures)
     manifest_binaries = require_object(manifest_data, "binaries", "manifest binaries", failures)
 
@@ -275,6 +276,9 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
 
     current_binary = health_current.get("binary")
     current_assets = health_current.get("assets")
+    profile_source = health_profiles.get("source")
+    if health_urls.get("profile_catalog") != profile_source:
+        failures.append("health profile catalog URL mismatch")
     if manifest_assets.get("current") != current_assets:
         failures.append("current asset mismatch between health and manifest")
     if manifest_binaries.get("current") != current_binary:
@@ -282,6 +286,10 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
     for label, value in (
         ("current binary", current_binary),
         ("current assets", current_assets),
+        ("generated timestamp", health_data.get("generated_at")),
+        ("profile revision", health_profiles.get("revision")),
+        ("profile catalog", profile_source),
+        ("channel manifest", manifest_path),
     ):
         if not isinstance(value, str):
             failures.append(f"health {label} missing")

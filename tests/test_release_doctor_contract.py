@@ -332,6 +332,10 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
     assert 'manifest.get("binaries", {}).get("current") != current_binary' in workflow
     assert '("current binary", current_binary)' in workflow
     assert '("current assets", current_assets)' in workflow
+    assert '("generated timestamp", health.get("generated_at"))' in workflow
+    assert '("profile revision", health.get("profiles", {}).get("revision"))' in workflow
+    assert '("profile catalog", health.get("profiles", {}).get("source"))' in workflow
+    assert '("channel manifest", expected_manifest)' in workflow
     assert "index page missing {label} {value}" in workflow
     assert 'health.get("asset_releases", [])' in workflow
     assert 'release.get("version") == current_assets' in workflow
@@ -753,6 +757,69 @@ def test_remote_readiness_helper_edge_cases_reject_malformed_release_contract() 
     assert "health current missing or not an object" in result.detail
 
 
+def test_remote_readiness_rejects_stale_index_profile_metadata() -> None:
+    checker = _readiness_checker_module()
+
+    checker.fetch_text = lambda _url: checker.FetchText(
+        text="1.4.0 2030.0101.1 2030-01-01"
+    )
+    checker.fetch_json = lambda url: checker.FetchJson(
+        data={
+            "schema": "capsem.assets_channel.health.v1",
+            "generated_at": "2030-01-01T00:00:00Z",
+            "urls": {
+                "manifest": "/assets/stable/manifest.json",
+                "asset_base": "/assets/releases",
+                "profile_catalog": "/profiles/releases/profiles-2030.0101.1/catalog.json",
+            },
+            "current": {"binary": "1.4.0", "assets": "2030.0101.1"},
+            "asset_releases": [
+                {"version": "2030.0101.1", "date": "2030-01-01"}
+            ],
+            "assets": {"files": []},
+            "profiles": {
+                "revision": "profiles-2030.0101.1",
+                "source": "/profiles/releases/profiles-2030.0101.1/catalog.json",
+            },
+            "updates": {
+                "profiles": {
+                    "source": "/profiles/releases/profiles-2030.0101.1/catalog.json"
+                }
+            },
+            "evidence": {
+                "vm_oboms": [],
+                "host_sboms": [],
+                "host_binary_files": [],
+                "attestations": [],
+            },
+        }
+        if url.endswith("/health.json")
+        else {
+            "format": 2,
+            "assets": {"current": "2030.0101.1"},
+            "binaries": {"current": "1.4.0"},
+        }
+    )
+    checker.fetch_headers = lambda url: checker.FetchHeaders(
+        headers={
+            "cache-control": "public, max-age=31536000, immutable"
+            if "/profiles/releases/" in url
+            else "no-cache, must-revalidate"
+        }
+    )
+
+    result = checker.check_release_site_contract("https://release.capsem.org", "stable")
+
+    assert not result.ok
+    assert "index missing generated timestamp 2030-01-01T00:00:00Z" in result.detail
+    assert "index missing profile revision profiles-2030.0101.1" in result.detail
+    assert (
+        "index missing profile catalog /profiles/releases/profiles-2030.0101.1/catalog.json"
+        in result.detail
+    )
+    assert "index missing channel manifest /assets/stable/manifest.json" in result.detail
+
+
 def test_binary_release_verifies_packages_hydrate_vm_assets_from_public_channel() -> None:
     verify_downloads = _workflow_job_block("verify-release-downloads", "release.yaml")
 
@@ -856,7 +923,9 @@ def test_release_skill_keeps_binary_and_asset_verification_decoupled() -> None:
     assert "smoke-check `https://release.capsem.org/`, `/health.json`, and" in release_skill
     assert "`/assets/<channel>/manifest.json`" in release_skill
     assert "reject stale public HTML" in release_skill
-    assert "current binary, current VM asset version, and asset release date" in release_skill
+    assert "current binary, current VM asset version, asset release date" in release_skill
+    assert "generated timestamp, profile revision, profile catalog URL" in release_skill
+    assert "channel manifest path" in release_skill
     assert "resolve published host" in release_skill
     assert "SBOM and VM OBOM evidence artifacts from `health.json`" in release_skill
     assert "verify their advertised" in release_skill

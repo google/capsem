@@ -77,9 +77,10 @@ It verifies that the local checkout has no unpublished commits relative to
 `if: ${{ always() }}` and asserts every dependency result; branch protection or
 active branch rulesets require `pr-gate`; `release.capsem.org` resolves and
 serves the asset channel; and the public index, `health.json`, and manifest
-agree on current binary, VM asset, and asset release date state. It also resolves
-published host SBOM and VM OBOM evidence artifacts, verifies their advertised
-hashes and sizes, and
+agree on current binary, VM asset, asset release date, generated timestamp,
+profile revision, profile catalog URL, and channel manifest path. It also
+resolves published host SBOM and VM OBOM evidence artifacts, verifies their
+advertised hashes and sizes, and
 validates attestation subjects and predicate URLs against the published evidence
 lists. It verifies live `Cache-Control` headers too: mutable release-channel
 pointers must stay fresh, while immutable asset and profile artifacts must keep
@@ -321,8 +322,9 @@ state. After Cloudflare deploys, `release-channel.yaml` smoke checks the public
 `https://release.capsem.org/` index, `/health.json`, and
 `/assets/<channel>/manifest.json` before the workflow can pass. The smoke also
 rejects stale public HTML: the human index must show the same current binary,
-current VM asset version, and asset release date as the fetched health JSON and
-manifest. It resolves published host SBOM and VM OBOM evidence artifacts from
+current VM asset version, asset release date, generated timestamp, profile
+revision, profile catalog URL, and channel manifest path as the fetched health
+JSON and manifest. It resolves published host SBOM and VM OBOM evidence artifacts from
 `health.json`, verifies their advertised hashes and sizes, and validates
 attestation subjects and predicate URLs against the published evidence lists.
 It also verifies public `Cache-Control` headers: mutable release-channel

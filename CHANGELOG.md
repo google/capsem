@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Fixed live release-site smoke/readiness validation so stale public index pages
+  are rejected when profile catalog, generated timestamp, or channel manifest
+  metadata drift from `health.json`.
 - Fixed release-channel validation so a stale human `index.html` cannot pass
   while `/health.json` and the channel manifest advertise newer release state.
 - Fixed the release-readiness docs and skills so the live activation order names

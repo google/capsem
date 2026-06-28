@@ -146,6 +146,10 @@ Later publications still compare
 against the live previous manifest and skip deployment only when current VM blob hashes, asset release metadata, and manifest policy are all unchanged. Manifest policy includes channel-visible fields such as `refresh_policy`.
 `build-ledger.log` and `B3SUMS` are debug evidence unless deliberately promoted
 to separate published evidence.
+The deploy smoke rejects stale public HTML: the fetched index page must show the
+same current binary, current VM asset version, asset release date, generated
+timestamp, profile revision, profile catalog URL, and channel manifest path as
+the fetched health JSON and manifest.
 The deploy smoke must also verify public `Cache-Control` headers: mutable
 release-channel pointers (`/`, `/health.json`, and
 `/assets/<channel>/manifest.json`) stay `no-cache, must-revalidate`, while

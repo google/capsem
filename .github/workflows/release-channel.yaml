@@ -188,6 +188,8 @@ jobs:
               failures.append("health manifest URL mismatch")
           if health.get("urls", {}).get("asset_base") != "/assets/releases":
               failures.append("health asset base mismatch")
+          if health.get("urls", {}).get("profile_catalog") != health.get("profiles", {}).get("source"):
+              failures.append("health profile catalog URL mismatch")
           updates = health.get("updates", {})
           for key in ("binary", "assets"):
               if not isinstance(updates.get(key, {}).get("latest"), str):
@@ -319,6 +321,10 @@ jobs:
           for label, value in (
               ("current binary", current_binary),
               ("current assets", current_assets),
+              ("generated timestamp", health.get("generated_at")),
+              ("profile revision", health.get("profiles", {}).get("revision")),
+              ("profile catalog", health.get("profiles", {}).get("source")),
+              ("channel manifest", expected_manifest),
           ):
               if not isinstance(value, str):
                   failures.append(f"health {label} missing or not a string")

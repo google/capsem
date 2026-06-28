@@ -82,7 +82,8 @@ Cloudflare deploys, the channel workflow must
 smoke-check `https://release.capsem.org/`, `/health.json`, and
 `/assets/<channel>/manifest.json` through the public custom domain before it
 passes. That smoke must reject stale public HTML: the fetched index page must
-show the same current binary, current VM asset version, and asset release date
+show the same current binary, current VM asset version, asset release date,
+generated timestamp, profile revision, profile catalog URL, and channel manifest path
 as the fetched health JSON and manifest. It must also resolve published host
 SBOM and VM OBOM evidence artifacts from `health.json`, verify their advertised
 hashes and sizes, and validate attestation subjects and predicate URLs against
