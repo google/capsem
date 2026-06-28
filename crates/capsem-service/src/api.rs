@@ -313,6 +313,12 @@ pub struct UpdateStatusResponse {
     pub checked_at: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub channel_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub channel_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub validation_status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub validation_error: Option<String>,
     pub stale: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,

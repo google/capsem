@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Stored release-channel cache provenance for update checks, including the
+  fetched channel hash, validation status, and validation errors exposed through
+  the update status API.
+
 ## [1.3.1782582155] - 2026-06-27
 
 ### Fixed

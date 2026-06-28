@@ -47,7 +47,9 @@ fn update_status_reports_binary_and_asset_tracks_from_cache_and_manifest() {
             "update_available": true,
             "latest_assets": "2026.0628.1",
             "assets_update_available": true,
-            "source": "https://release.capsem.org/health.json"
+            "source": "https://release.capsem.org/health.json",
+            "channel_hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "validation_status": "valid"
         })
         .to_string(),
     )
@@ -62,6 +64,12 @@ fn update_status_reports_binary_and_asset_tracks_from_cache_and_manifest() {
         status.channel_url.as_deref(),
         Some("https://release.capsem.org/health.json")
     );
+    assert_eq!(
+        status.channel_hash.as_deref(),
+        Some("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+    );
+    assert_eq!(status.validation_status.as_deref(), Some("valid"));
+    assert_eq!(status.validation_error, None);
     assert_eq!(status.last_error, None);
     assert_eq!(status.binary.current.as_deref(), Some("1.3.1782582155"));
     assert_eq!(status.binary.latest.as_deref(), Some("1.3.1782600000"));
@@ -172,6 +180,40 @@ fn update_status_reports_cache_parse_errors_without_panicking() {
         .last_error
         .as_deref()
         .is_some_and(|error| error.contains("parse")));
+}
+
+#[test]
+fn update_status_reports_cached_channel_validation_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    let cache_path = dir.path().join("update-check.json");
+    std::fs::write(
+        &cache_path,
+        serde_json::json!({
+            "checked_at": 1000,
+            "source": "https://release.capsem.org/health.json",
+            "channel_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "validation_status": "fetch_error",
+            "validation_error": "GET https://release.capsem.org/health.json timed out"
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let status = update_status_response_from_paths("1.3.1782582155", dir.path(), &cache_path, 1200);
+
+    assert_eq!(
+        status.channel_hash.as_deref(),
+        Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+    );
+    assert_eq!(status.validation_status.as_deref(), Some("fetch_error"));
+    assert_eq!(
+        status.validation_error.as_deref(),
+        Some("GET https://release.capsem.org/health.json timed out")
+    );
+    assert_eq!(
+        status.last_error.as_deref(),
+        Some("GET https://release.capsem.org/health.json timed out")
+    );
 }
 
 #[test]

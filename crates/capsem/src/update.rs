@@ -56,6 +56,15 @@ pub struct UpdateCheck {
     /// Machine-readable release channel index used for this check.
     #[serde(default)]
     pub source: Option<String>,
+    /// SHA-256 of the last valid release-channel health payload.
+    #[serde(default)]
+    pub channel_hash: Option<String>,
+    /// Validation state for the last release-channel refresh attempt.
+    #[serde(default)]
+    pub validation_status: Option<String>,
+    /// Validation or fetch error for the last release-channel refresh attempt.
+    #[serde(default)]
+    pub validation_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -249,6 +258,50 @@ fn write_cache(check: &UpdateCheck) -> Result<()> {
     Ok(())
 }
 
+fn read_cache_file(path: &Path) -> Result<UpdateCheck> {
+    let content =
+        std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    serde_json::from_str(&content).with_context(|| format!("parse {}", path.display()))
+}
+
+fn channel_payload_hash(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
+}
+
+fn failed_update_check_from_previous(
+    previous: Option<UpdateCheck>,
+    checked_at: u64,
+    source: &str,
+    validation_status: &str,
+    validation_error: String,
+) -> UpdateCheck {
+    let mut check = previous.unwrap_or(UpdateCheck {
+        checked_at,
+        latest_version: None,
+        update_available: false,
+        binary_installer: None,
+        latest_assets: None,
+        assets_update_available: false,
+        latest_profiles: None,
+        profiles_update_available: false,
+        profiles_state: None,
+        latest_images: None,
+        images_update_available: false,
+        images_state: None,
+        source: Some(source.to_string()),
+        channel_hash: None,
+        validation_status: None,
+        validation_error: None,
+    });
+    check.checked_at = checked_at;
+    check.source = Some(source.to_string());
+    check.validation_status = Some(validation_status.to_string());
+    check.validation_error = Some(validation_error);
+    check
+}
+
 /// Background refresh: check the release channel for updates if cache is stale.
 /// Fire-and-forget via tokio::spawn.
 pub async fn refresh_update_cache_if_stale() {
@@ -257,13 +310,12 @@ pub async fn refresh_update_cache_if_stale() {
         None => return,
     };
 
-    // Check if cache exists and is fresh
-    if let Ok(content) = std::fs::read_to_string(&path) {
-        if let Ok(check) = serde_json::from_str::<UpdateCheck>(&content) {
-            let age = now_secs().saturating_sub(check.checked_at);
-            if age < CACHE_TTL_SECS {
-                return; // Still fresh
-            }
+    // Check if cache exists and is fresh.
+    let previous_check = read_cache_file(&path).ok();
+    if let Some(check) = previous_check.as_ref() {
+        let age = now_secs().saturating_sub(check.checked_at);
+        if age < CACHE_TTL_SECS {
+            return; // Still fresh
         }
     }
 
@@ -292,30 +344,46 @@ pub async fn refresh_update_cache_if_stale() {
         }
         Err(e) => {
             warn!(error = %e, "update check failed");
-            let check = UpdateCheck {
-                checked_at: now_secs(),
-                latest_version: None,
-                update_available: false,
-                binary_installer: None,
-                latest_assets: None,
-                assets_update_available: false,
-                latest_profiles: None,
-                profiles_update_available: false,
-                profiles_state: None,
-                latest_images: None,
-                images_update_available: false,
-                images_state: None,
-                source: Some(health_url),
-            };
+            let check = failed_update_check_from_previous(
+                previous_check,
+                now_secs(),
+                &health_url,
+                "fetch_error",
+                e.to_string(),
+            );
             let _ = write_cache(&check);
             return;
         }
     };
 
-    let body: ReleaseChannelHealth = match resp.json().await {
+    let bytes = match resp.bytes().await {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            warn!(error = %e, url = %health_url, "update check: failed to read release channel body");
+            let check = failed_update_check_from_previous(
+                previous_check,
+                now_secs(),
+                &health_url,
+                "fetch_error",
+                e.to_string(),
+            );
+            let _ = write_cache(&check);
+            return;
+        }
+    };
+    let channel_hash = channel_payload_hash(&bytes);
+    let body: ReleaseChannelHealth = match serde_json::from_slice(&bytes) {
         Ok(v) => v,
         Err(e) => {
             warn!(error = %e, url = %health_url, "update check: invalid release channel JSON");
+            let check = failed_update_check_from_previous(
+                previous_check,
+                now_secs(),
+                &health_url,
+                "invalid_json",
+                e.to_string(),
+            );
+            let _ = write_cache(&check);
             return;
         }
     };
@@ -327,10 +395,19 @@ pub async fn refresh_update_cache_if_stale() {
         local_current_asset_version().as_deref(),
         &platform::detect_install_layout(),
         &health_url,
+        Some(channel_hash),
     ) {
         Ok(check) => check,
         Err(e) => {
             warn!(error = %e, url = %health_url, "update check: invalid release channel contract");
+            let check = failed_update_check_from_previous(
+                previous_check,
+                now_secs(),
+                &health_url,
+                "invalid_contract",
+                e.to_string(),
+            );
+            let _ = write_cache(&check);
             return;
         }
     };
@@ -417,6 +494,7 @@ fn update_check_from_release_health(
     current_assets: Option<&str>,
     install_layout: &InstallLayout,
     source: &str,
+    channel_hash: Option<String>,
 ) -> Result<UpdateCheck> {
     if health.schema != "capsem.assets_channel.health.v1" {
         anyhow::bail!("release channel health schema mismatch");
@@ -469,6 +547,9 @@ fn update_check_from_release_health(
         images_update_available: false,
         images_state,
         source: Some(source.to_string()),
+        channel_hash,
+        validation_status: Some("valid".to_string()),
+        validation_error: None,
     })
 }
 
@@ -528,9 +609,12 @@ async fn fetch_release_update_check(layout: &InstallLayout) -> Result<UpdateChec
     if !resp.status().is_success() {
         anyhow::bail!("GET {} returned {}", health_url, resp.status());
     }
-    let body: ReleaseChannelHealth = resp
-        .json()
+    let body = resp
+        .bytes()
         .await
+        .with_context(|| format!("read release channel health from {health_url}"))?;
+    let channel_hash = channel_payload_hash(&body);
+    let body: ReleaseChannelHealth = serde_json::from_slice(&body)
         .with_context(|| format!("parse release channel health from {health_url}"))?;
     update_check_from_release_health(
         &body,
@@ -539,6 +623,7 @@ async fn fetch_release_update_check(layout: &InstallLayout) -> Result<UpdateChec
         local_current_asset_version().as_deref(),
         layout,
         &health_url,
+        Some(channel_hash),
     )
 }
 
@@ -1028,6 +1113,9 @@ mod tests {
             images_update_available: false,
             images_state: Some("not_published".into()),
             source: Some("https://release.capsem.org/health.json".into()),
+            channel_hash: Some("a".repeat(64)),
+            validation_status: Some("valid".into()),
+            validation_error: None,
         };
         let json = serde_json::to_string(&check).unwrap();
         let rt: UpdateCheck = serde_json::from_str(&json).unwrap();
@@ -1051,6 +1139,9 @@ mod tests {
             rt.source,
             Some("https://release.capsem.org/health.json".into())
         );
+        assert_eq!(rt.channel_hash, Some("a".repeat(64)));
+        assert_eq!(rt.validation_status, Some("valid".into()));
+        assert_eq!(rt.validation_error, None);
     }
 
     #[test]
@@ -1072,6 +1163,46 @@ mod tests {
         assert!(!rt.images_update_available);
         assert_eq!(rt.images_state, None);
         assert_eq!(rt.source, None);
+        assert_eq!(rt.channel_hash, None);
+        assert_eq!(rt.validation_status, None);
+        assert_eq!(rt.validation_error, None);
+    }
+
+    #[test]
+    fn update_channel_provenance_preserves_previous_cache_on_failure() {
+        let previous = UpdateCheck {
+            checked_at: 1000,
+            latest_version: Some("99.99.99".into()),
+            update_available: true,
+            binary_installer: None,
+            latest_assets: Some("2030.0101.1".into()),
+            assets_update_available: true,
+            latest_profiles: None,
+            profiles_update_available: false,
+            profiles_state: None,
+            latest_images: None,
+            images_update_available: false,
+            images_state: None,
+            source: Some("https://release.capsem.org/health.json".into()),
+            channel_hash: Some("f".repeat(64)),
+            validation_status: Some("valid".into()),
+            validation_error: None,
+        };
+
+        let check = failed_update_check_from_previous(
+            Some(previous),
+            1200,
+            "https://release.capsem.org/health.json",
+            "fetch_error",
+            "connection refused".to_string(),
+        );
+
+        assert_eq!(check.checked_at, 1200);
+        assert_eq!(check.latest_version, Some("99.99.99".into()));
+        assert_eq!(check.latest_assets, Some("2030.0101.1".into()));
+        assert_eq!(check.channel_hash, Some("f".repeat(64)));
+        assert_eq!(check.validation_status, Some("fetch_error".into()));
+        assert_eq!(check.validation_error, Some("connection refused".into()));
     }
 
     #[test]
@@ -1147,6 +1278,7 @@ mod tests {
             Some("2026.0627.1"),
             &InstallLayout::MacosPkg,
             "https://release.capsem.org/health.json",
+            Some("f".repeat(64)),
         )
         .unwrap();
 
@@ -1172,6 +1304,9 @@ mod tests {
             check.source,
             Some("https://release.capsem.org/health.json".to_string())
         );
+        assert_eq!(check.channel_hash, Some("f".repeat(64)));
+        assert_eq!(check.validation_status, Some("valid".to_string()));
+        assert_eq!(check.validation_error, None);
     }
 
     #[test]
@@ -1192,6 +1327,7 @@ mod tests {
             Some("2026.0627.1"),
             &InstallLayout::MacosPkg,
             "https://release.capsem.org/health.json",
+            None,
         )
         .unwrap();
 
@@ -1503,6 +1639,7 @@ mod tests {
             Some("2026.0627.1"),
             &InstallLayout::MacosPkg,
             "https://release.capsem.org/health.json",
+            None,
         )
         .unwrap_err();
 

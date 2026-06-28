@@ -293,6 +293,12 @@ pub struct UpdateStatusResponse {
     pub checked_at: Option<u64>,
     #[serde(default)]
     pub channel_url: Option<String>,
+    #[serde(default)]
+    pub channel_hash: Option<String>,
+    #[serde(default)]
+    pub validation_status: Option<String>,
+    #[serde(default)]
+    pub validation_error: Option<String>,
     pub stale: bool,
     #[serde(default)]
     pub last_error: Option<String>,

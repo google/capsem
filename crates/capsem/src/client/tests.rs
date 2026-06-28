@@ -186,6 +186,8 @@ fn update_status_response_parses_service_contract() {
     let json = r#"{
         "checked_at": 1718444400,
         "channel_url": "https://release.capsem.org/health.json",
+        "channel_hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "validation_status": "valid",
         "stale": false,
         "binary": {
             "current": "1.3.1782582155",
@@ -220,6 +222,12 @@ fn update_status_response_parses_service_contract() {
         status.channel_url.as_deref(),
         Some("https://release.capsem.org/health.json")
     );
+    assert_eq!(
+        status.channel_hash.as_deref(),
+        Some("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+    );
+    assert_eq!(status.validation_status.as_deref(), Some("valid"));
+    assert_eq!(status.validation_error, None);
     assert!(!status.stale);
     assert_eq!(status.binary.state, UpdateTrackState::UpdateAvailable);
     assert_eq!(

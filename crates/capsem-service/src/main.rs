@@ -4909,6 +4909,12 @@ struct UpdateCheckCache {
     images_state: Option<String>,
     #[serde(default)]
     source: Option<String>,
+    #[serde(default)]
+    channel_hash: Option<String>,
+    #[serde(default)]
+    validation_status: Option<String>,
+    #[serde(default)]
+    validation_error: Option<String>,
 }
 
 fn update_status_response(state: &ServiceState) -> api::UpdateStatusResponse {
@@ -4937,7 +4943,7 @@ fn update_status_response_from_paths(
     let current_assets = current_asset_version_from_manifest(assets_dir);
     let manifest_channel = manifest_channel_source(assets_dir);
     let cache_result = read_update_check_cache(cache_path);
-    let (cache, last_error) = match cache_result {
+    let (cache, parse_error) = match cache_result {
         Ok(cache) => (cache, None),
         Err(error) => (None, Some(error)),
     };
@@ -4949,10 +4955,21 @@ fn update_status_response_from_paths(
         .as_ref()
         .and_then(|cache| cache.source.clone())
         .or(manifest_channel);
+    let channel_hash = cache.as_ref().and_then(|cache| cache.channel_hash.clone());
+    let validation_status = cache
+        .as_ref()
+        .and_then(|cache| cache.validation_status.clone());
+    let validation_error = cache
+        .as_ref()
+        .and_then(|cache| cache.validation_error.clone());
+    let last_error = parse_error.or_else(|| validation_error.clone());
 
     api::UpdateStatusResponse {
         checked_at,
         channel_url,
+        channel_hash,
+        validation_status,
+        validation_error,
         stale,
         last_error,
         binary: update_track(
