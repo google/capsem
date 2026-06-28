@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  profileDashboardUpdateRows,
+  profileDashboardUpdateSummary,
   updateAvailableTracks,
   updateEvidenceLinks,
   updateSummary,
@@ -90,6 +92,63 @@ describe('update status model', () => {
     );
     expect(updateTrackStateLabel(status.profiles)).toBe('Update available');
     expect(updateTrackTone(status.profiles)).toBe('available');
+  });
+
+  it('builds profile dashboard rows without treating binary updates as profile state', () => {
+    const status = updateStatus({
+      binary: {
+        current: '1.4.0',
+        latest: '1.4.1',
+        update_available: true,
+        state: 'update_available',
+        compatibility: 'compatible',
+      },
+      profiles: {
+        current: 'profiles-2030.0101.0',
+        latest: 'profiles-2030.0101.1',
+        update_available: true,
+        state: 'update_available',
+        compatibility: 'compatible',
+      },
+      assets: {
+        current: '2030.0101.0',
+        latest: '2030.0101.1',
+        update_available: true,
+        state: 'update_available',
+        compatibility: 'compatible',
+      },
+    });
+
+    expect(profileDashboardUpdateSummary(status)).toBe(
+      'Profiles, VM assets available for future sessions',
+    );
+    expect(profileDashboardUpdateRows(status).map(row => row.key)).toEqual([
+      'profiles',
+      'assets',
+      'images',
+    ]);
+    expect(profileDashboardUpdateRows(status).map(row => row.label)).not.toContain('Binary');
+    expect(profileDashboardUpdateRows(status)[0].detail).toContain('existing sessions stay pinned');
+    expect(profileDashboardUpdateRows(status)[1].detail).toContain('capsem update --assets');
+  });
+
+  it('surfaces blocked profile state on the profile dashboard', () => {
+    const status = updateStatus({
+      profiles: {
+        current: 'profiles-2030.0101.0',
+        latest: 'profiles-2030.0101.1',
+        update_available: false,
+        state: 'current',
+        compatibility: 'compatible',
+        blocked_reason: 'requires binary 1.4.1 or newer',
+      },
+    });
+
+    expect(profileDashboardUpdateSummary(status)).toBe('Profiles blocked');
+    const [profiles] = profileDashboardUpdateRows(status);
+    expect(profiles.stateLabel).toBe('Blocked');
+    expect(profiles.tone).toBe('blocked');
+    expect(profiles.detail).toBe('requires binary 1.4.1 or newer');
   });
 
   it('distinguishes current, stale, unavailable, and not-published states', () => {

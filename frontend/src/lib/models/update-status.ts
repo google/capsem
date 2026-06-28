@@ -1,7 +1,17 @@
 import type { SupplyChainReference, UpdateStatusResponse, UpdateTrackStatus } from '../types/gateway';
 
 export type UpdateTrackKey = 'binary' | 'assets' | 'profiles' | 'images';
+export type ProfileDashboardUpdateTrackKey = Exclude<UpdateTrackKey, 'binary'>;
 export type UpdateTrackTone = 'available' | 'blocked' | 'muted';
+
+export interface ProfileDashboardUpdateRow {
+  key: ProfileDashboardUpdateTrackKey;
+  label: string;
+  version: string;
+  stateLabel: string;
+  detail: string | null;
+  tone: UpdateTrackTone;
+}
 
 export interface UpdateEvidenceLink {
   label: string;
@@ -15,6 +25,12 @@ export const UPDATE_TRACK_LABELS: Record<UpdateTrackKey, string> = {
   profiles: 'Profiles',
   images: 'VM images',
 };
+
+const PROFILE_DASHBOARD_TRACKS: ProfileDashboardUpdateTrackKey[] = [
+  'profiles',
+  'assets',
+  'images',
+];
 
 export function updateAvailableTracks(status: UpdateStatusResponse): UpdateTrackKey[] {
   const tracks: UpdateTrackKey[] = [];
@@ -62,6 +78,63 @@ export function updateTrackTone(track: UpdateTrackStatus): UpdateTrackTone {
   if (track.blocked_reason) return 'blocked';
   if (track.update_available) return 'available';
   return 'muted';
+}
+
+export function profileDashboardUpdateRows(
+  status: UpdateStatusResponse | null,
+): ProfileDashboardUpdateRow[] {
+  if (!status) return [];
+  return PROFILE_DASHBOARD_TRACKS.map(key => {
+    const track = status[key];
+    return {
+      key,
+      label: UPDATE_TRACK_LABELS[key],
+      version: updateTrackVersion(track),
+      stateLabel: updateTrackStateLabel(track),
+      detail: dashboardTrackDetail(key, track),
+      tone: updateTrackTone(track),
+    };
+  });
+}
+
+export function profileDashboardUpdateSummary(status: UpdateStatusResponse | null): string {
+  if (!status) return 'Profile and image update state unavailable';
+  if (status.last_error) return 'Profile and image update state unavailable';
+  const rows = profileDashboardUpdateRows(status);
+  const available = rows.filter(row => row.tone === 'available');
+  if (available.length > 0) {
+    return `${available.map(row => row.label).join(', ')} available for future sessions`;
+  }
+  const blocked = rows.filter(row => row.tone === 'blocked');
+  if (blocked.length > 0) {
+    return `${blocked.map(row => row.label).join(', ')} blocked`;
+  }
+  return 'Profiles and VM assets current for new sessions';
+}
+
+function dashboardTrackDetail(
+  key: ProfileDashboardUpdateTrackKey,
+  track: UpdateTrackStatus,
+): string | null {
+  if (track.blocked_reason) return track.blocked_reason;
+  if (track.compatibility === 'unknown') return 'Compatibility unknown';
+  if (key === 'profiles' && track.update_available) {
+    return 'Run capsem update to refresh the local profile catalog; existing sessions stay pinned.';
+  }
+  if (key === 'assets' && track.update_available) {
+    return 'Run capsem update --assets before creating or recreating sessions that need the new VM assets.';
+  }
+  if (key === 'images' && track.update_available) {
+    return 'Create or recreate sessions explicitly to use the newer image state.';
+  }
+  if (key === 'profiles' && track.state === 'current') {
+    return 'New sessions use the installed profile catalog.';
+  }
+  if (key === 'assets' && track.state === 'current') {
+    return 'New sessions use the installed VM asset set.';
+  }
+  if (track.state === 'not_published') return null;
+  return null;
 }
 
 export function updateEvidenceLinks(status: UpdateStatusResponse): UpdateEvidenceLink[] {

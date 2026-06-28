@@ -51,6 +51,14 @@ describe('user-facing session language contract', () => {
     expect(dashboard).not.toContain('vmStore.showCreateModal = true');
   });
 
+  it('shows profile and image update state separately from session creation', () => {
+    expect(dashboard).toContain('getUpdateStatus');
+    expect(dashboard).toContain('profileDashboardUpdateRows');
+    expect(dashboard).toContain('Profile and image state');
+    expect(dashboard).toContain('Existing sessions stay pinned');
+    expect(dashboard).toContain('start from the current profile and VM assets');
+  });
+
   it('does not duplicate profile actions in the card header and footer', () => {
     expect(dashboard).toContain("title={ready ? `New ${launcher.profile.name} session` : profileAssetText(launcher.assets)}");
     expect(dashboard).not.toContain('aria-label={profileAssetText(launcher.assets)}');

@@ -5,10 +5,15 @@
   import * as api from '../../api';
   import type { ProfileSummary } from '../../api';
   import type { AssetStatusResponse } from '../../types/assets';
-  import type { VmSummary } from '../../types/gateway';
+  import type { UpdateStatusResponse, VmSummary } from '../../types/gateway';
   import type { GlobalStats } from '../../types/gateway';
   import { formatUptime, formatTokens, formatCost } from '../../format';
   import { canOpenSession, hasVmAction, startAction, startLabel } from '../../vm-actions';
+  import {
+    profileDashboardUpdateRows,
+    profileDashboardUpdateSummary,
+    type ProfileDashboardUpdateRow,
+  } from '../../models/update-status';
   import Modal from './Modal.svelte';
   import Pause from 'phosphor-svelte/lib/Pause';
   import Trash from 'phosphor-svelte/lib/Trash';
@@ -43,9 +48,15 @@
   let profileLaunchers = $state<ProfileLauncher[]>([]);
   let profilesLoading = $state(true);
   let profilesError = $state<string | null>(null);
+  let updateStatus = $state<UpdateStatusResponse | null>(null);
+  let updateStatusError = $state<string | null>(null);
+  let updateStatusLoading = $state(true);
+  let profileUpdateRows = $derived(profileDashboardUpdateRows(updateStatus));
+  let profileUpdateSummary = $derived(profileDashboardUpdateSummary(updateStatus));
 
   onMount(async () => {
     void loadProfileLaunchers();
+    void loadUpdateStatus();
     try {
       const stats = await api.getStats();
       globalStats = stats.global;
@@ -180,6 +191,12 @@
     return launcher.assets?.assets.slice(0, 4) ?? [];
   }
 
+  function dashboardUpdateTone(row: ProfileDashboardUpdateRow): string {
+    if (row.tone === 'available') return 'text-primary';
+    if (row.tone === 'blocked') return 'text-destructive';
+    return 'text-muted-foreground-1';
+  }
+
   function updateProfileLauncher(profileId: string, patch: Partial<ProfileLauncher>) {
     profileLaunchers = profileLaunchers.map(launcher =>
       launcher.profile.id === profileId ? { ...launcher, ...patch } : launcher
@@ -234,11 +251,25 @@
     }
   }
 
+  async function loadUpdateStatus() {
+    updateStatusLoading = true;
+    updateStatusError = null;
+    try {
+      updateStatus = await api.getUpdateStatus();
+    } catch (err) {
+      updateStatus = null;
+      updateStatusError = parseApiError(err);
+    } finally {
+      updateStatusLoading = false;
+    }
+  }
+
   async function refreshDashboard() {
     statsLoading = true;
     await Promise.all([
       vmStore.refresh(),
       loadProfileLaunchers(),
+      loadUpdateStatus(),
       api.getStats()
         .then(stats => { globalStats = stats.global; })
         .catch(() => { globalStats = null; }),
@@ -447,6 +478,44 @@
       <p class="text-muted-foreground-1 text-sm">No web-available profiles</p>
     </div>
   {:else}
+    <div class="bg-card border border-card-line rounded-xl divide-y divide-card-divider mb-3">
+      <div class="flex items-center justify-between gap-x-4 p-4">
+        <div>
+          <p class="text-sm font-medium text-foreground">Profile and image state</p>
+          <p class="text-xs text-muted-foreground-1 mt-0.5">
+            {#if updateStatusLoading}
+              Checking release channel.
+            {:else if updateStatusError}
+              {updateStatusError}
+            {:else}
+              {profileUpdateSummary}
+            {/if}
+          </p>
+          {#if updateStatus?.last_error}
+            <p class="text-xs text-destructive mt-1">{updateStatus.last_error}</p>
+          {/if}
+        </div>
+        <p class="text-xs text-muted-foreground-1 text-end max-w-72">
+          Existing sessions stay pinned. Use New or Customize after updating to start from the current profile and VM assets.
+        </p>
+      </div>
+      {#if profileUpdateRows.length > 0}
+        <div class="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-card-divider">
+          {#each profileUpdateRows as row (row.key)}
+            <div class="p-4">
+              <div class="flex items-center justify-between gap-x-3">
+                <p class="text-sm text-foreground">{row.label}</p>
+                <p class="text-xs {dashboardUpdateTone(row)}">{row.stateLabel}</p>
+              </div>
+              <p class="text-xs text-muted-foreground-1 mt-1">{row.version}</p>
+              {#if row.detail}
+                <p class="text-[11px] text-muted-foreground-1 mt-2 leading-4">{row.detail}</p>
+              {/if}
+            </div>
+          {/each}
+        </div>
+      {/if}
+    </div>
     <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
       {#each profileLaunchers as launcher (launcher.profile.id)}
         {@const ready = launcher.assets?.ready === true}
