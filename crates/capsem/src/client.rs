@@ -341,7 +341,7 @@ pub struct SupplyChainChannelEvidence {
     #[serde(default)]
     pub url: Option<String>,
     #[serde(default)]
-    pub blake3: Option<String>,
+    pub sha256: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Default)]

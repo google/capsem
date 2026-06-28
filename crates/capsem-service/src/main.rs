@@ -5086,7 +5086,7 @@ fn supply_chain_evidence_from_paths(
         },
         channel_index: api::SupplyChainChannelEvidence {
             url: channel_url,
-            blake3: channel_hash,
+            sha256: channel_hash,
         },
         host_sbom: api::SupplyChainReference {
             name: "host_sbom".to_string(),

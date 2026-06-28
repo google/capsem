@@ -298,7 +298,7 @@ describe('update status model', () => {
         },
         channel_index: {
           url: 'https://release.capsem.org/health.json',
-          blake3: 'channel-hash',
+          sha256: 'channel-hash',
         },
         host_sbom: {
           name: 'host-sbom',

@@ -91,7 +91,7 @@ export interface SupplyChainManifestEvidence {
 
 export interface SupplyChainChannelEvidence {
   url?: string | null;
-  blake3?: string | null;
+  sha256?: string | null;
 }
 
 export interface SupplyChainReference {

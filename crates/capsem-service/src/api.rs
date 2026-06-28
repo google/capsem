@@ -394,7 +394,7 @@ pub struct SupplyChainChannelEvidence {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub blake3: Option<String>,
+    pub sha256: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]

@@ -91,7 +91,7 @@ fn update_status_reports_binary_and_asset_tracks_from_cache_and_manifest() {
         Some("https://release.capsem.org/health.json")
     );
     assert_eq!(
-        status.supply_chain.channel_index.blake3.as_deref(),
+        status.supply_chain.channel_index.sha256.as_deref(),
         Some("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
     );
     assert_eq!(status.supply_chain.host_sbom.name, "host_sbom");

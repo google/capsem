@@ -225,7 +225,7 @@ fn update_status_response_parses_service_contract() {
             },
             "channel_index": {
                 "url": "https://release.capsem.org/health.json",
-                "blake3": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
             },
             "host_sbom": {
                 "name": "host_sbom",
@@ -302,7 +302,7 @@ fn update_status_response_parses_service_contract() {
         Some("update")
     );
     assert_eq!(
-        status.supply_chain.channel_index.blake3.as_deref(),
+        status.supply_chain.channel_index.sha256.as_deref(),
         status.channel_hash.as_deref()
     );
     assert_eq!(
