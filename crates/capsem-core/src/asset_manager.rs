@@ -78,8 +78,8 @@ pub struct AssetRelease {
     pub deprecated: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deprecated_date: Option<String>,
-    /// Oldest binary version compatible with these assets. Optional --
-    /// not consulted at runtime (kept for tooling).
+    /// Oldest binary version compatible with these assets. Optional; when set,
+    /// runtime asset selection refuses this release for older binaries.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub min_binary: String,
     /// Per-arch asset maps: arch -> { logical_name -> AssetEntry }.
@@ -277,7 +277,7 @@ impl ManifestV2 {
         arch: &str,
         base_dir: &Path,
     ) -> Result<ResolvedAssets> {
-        let asset_version = pick_asset_version(self, binary_version);
+        let asset_version = pick_asset_version(self, binary_version)?;
 
         let release =
             self.assets.releases.get(&asset_version).with_context(|| {
@@ -398,12 +398,11 @@ pub fn default_assets_dir() -> Option<PathBuf> {
 }
 
 /// Build the GitHub Releases download base URL for the given **binary**
-/// version. Releases are tagged `v{binary_version}` (e.g. `v1.0.1777065213`);
-/// asset version lives only inside the manifest and is *not* a tag.
+/// version.
 ///
-/// Honors the `CAPSEM_RELEASE_URL` env override (used by integration tests that
-/// point at a local HTTP fixture). The trailing path `/v{version}` is still
-/// appended so local fixtures can mirror the release directory structure.
+/// This is retained for binary update/download metadata. VM assets use
+/// [`asset_release_base_url`] so the asset track can move independently of tag
+/// releases.
 pub fn release_url(binary_version: &str) -> String {
     let base = std::env::var("CAPSEM_RELEASE_URL")
         .ok()
@@ -412,13 +411,104 @@ pub fn release_url(binary_version: &str) -> String {
     format!("{}/v{binary_version}", base.trim_end_matches('/'))
 }
 
-/// Full per-asset download URL: `{release_url}/{arch}-{logical_name}`.
+/// Default immutable VM asset blob base.
+///
+/// The stable channel manifest lives at
+/// `https://release.capsem.org/assets/stable/manifest.json`, while blobs live
+/// under `assets/releases/<asset-version>/...` so older manifests continue to
+/// hydrate even after `stable` advances.
+pub fn asset_release_base_url() -> String {
+    std::env::var("CAPSEM_ASSET_BASE_URL")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "https://release.capsem.org/assets/releases".into())
+        .trim_end_matches('/')
+        .to_string()
+}
+
+/// Derive the immutable asset blob base from a manifest URL.
+///
+/// Canonical channel manifests use `<prefix>/assets/<channel>/manifest.json`
+/// and resolve blobs from `<prefix>/assets/releases/<asset-version>/...`.
+pub fn asset_release_base_url_from_manifest_url(manifest_url: &str) -> Option<String> {
+    let url = reqwest::Url::parse(manifest_url).ok()?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return None;
+    }
+    let mut segments: Vec<String> = url
+        .path_segments()
+        .map(|segments| segments.map(ToOwned::to_owned).collect())
+        .unwrap_or_default();
+    if segments.len() < 3 || segments.last().map(String::as_str) != Some("manifest.json") {
+        return None;
+    }
+    let channel_index = segments.len() - 2;
+    if channel_index == 0 || segments[channel_index - 1] != "assets" {
+        return None;
+    }
+    segments.truncate(channel_index);
+    segments.push("releases".to_string());
+    let mut out = url;
+    out.set_path(&segments.join("/"));
+    Some(out.as_str().trim_end_matches('/').to_string())
+}
+
+/// Derive a remote asset blob base from `manifest-origin.json`, when present.
+pub fn asset_release_base_url_from_manifest_origin(assets_dir: &Path) -> Result<Option<String>> {
+    let origin_path = assets_dir.join("manifest-origin.json");
+    if !origin_path.exists() {
+        return Ok(None);
+    }
+    let content = std::fs::read_to_string(&origin_path)
+        .with_context(|| format!("read {}", origin_path.display()))?;
+    let value: serde_json::Value = serde_json::from_str(&content)
+        .with_context(|| format!("parse {}", origin_path.display()))?;
+    let Some(source) = value.get("source").and_then(|v| v.as_str()) else {
+        return Ok(None);
+    };
+    Ok(asset_release_base_url_from_manifest_url(source))
+}
+
+fn remote_asset_release_base_url(assets_dir: &Path) -> Result<String> {
+    let asset_base_url = asset_release_base_url_from_manifest_origin(assets_dir)?
+        .unwrap_or_else(asset_release_base_url);
+    let parsed = reqwest::Url::parse(&asset_base_url).map_err(|_| {
+        anyhow::anyhow!(
+            "asset base URL must be a URL: use https://... or http://..., got {asset_base_url}"
+        )
+    })?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        anyhow::bail!(
+            "unsupported asset base URL scheme {}: use https:// or http://",
+            parsed.scheme()
+        );
+    }
+    Ok(parsed.as_str().trim_end_matches('/').to_string())
+}
+
+/// Full per-asset download URL:
+/// `{asset_release_base_url}/{asset_version}/{arch}-{logical_name}`.
 ///
 /// Single source of truth for the URL `download_missing_assets` constructs.
 /// Pinned by unit tests so the layout the binary fetches stays in lock-step
-/// with the layout `release.yaml` uploads (`gh release upload "$f#${arch}-${base}"`).
-pub fn asset_download_url(binary_version: &str, arch: &str, logical_name: &str) -> String {
-    format!("{}/{}-{}", release_url(binary_version), arch, logical_name)
+/// with the layout `release-assets.yaml` deploys.
+pub fn asset_download_url(asset_version: &str, arch: &str, logical_name: &str) -> String {
+    asset_download_url_with_base(&asset_release_base_url(), asset_version, arch, logical_name)
+}
+
+pub fn asset_download_url_with_base(
+    asset_base_url: &str,
+    asset_version: &str,
+    arch: &str,
+    logical_name: &str,
+) -> String {
+    format!(
+        "{}/{}/{}-{}",
+        asset_base_url.trim_end_matches('/'),
+        asset_version,
+        arch,
+        logical_name
+    )
 }
 
 fn asset_storage_dir(base_dir: &Path, arch: &str) -> PathBuf {
@@ -521,8 +611,8 @@ pub struct DownloadProgress {
 }
 
 /// Resolve the compatible asset release for `binary_version`, then download
-/// any missing or hash-mismatched files from the GitHub Release (or the URL
-/// in `CAPSEM_RELEASE_URL`) into `base_dir/{arch}/{hash_filename}`.
+/// any missing or hash-mismatched files from the asset channel into
+/// `base_dir/{arch}/{hash_filename}`.
 ///
 /// Per-arch upload convention (see commit aef5269): remote filenames are
 /// `{arch}-{logical_name}` (e.g. `arm64-rootfs.erofs`). The downloaded
@@ -544,7 +634,7 @@ where
     use tokio::io::AsyncWriteExt;
 
     // Pick the same asset release the service's resolver will pick.
-    let asset_version = pick_asset_version(manifest, binary_version);
+    let asset_version = pick_asset_version(manifest, binary_version)?;
     let release = manifest
         .assets
         .releases
@@ -555,6 +645,7 @@ where
         .get(arch)
         .with_context(|| format!("arch {arch} not found in asset release {asset_version}"))?;
 
+    let asset_base_url = remote_asset_release_base_url(base_dir)?;
     let arch_dir = asset_storage_dir(base_dir, arch);
     std::fs::create_dir_all(&arch_dir)
         .with_context(|| format!("cannot create {}", arch_dir.display()))?;
@@ -602,7 +693,7 @@ where
             continue;
         }
 
-        let url = asset_download_url(binary_version, arch, name);
+        let url = asset_download_url_with_base(&asset_base_url, &asset_version, arch, name);
         info!(name = %name, url = %url, "downloading asset");
 
         let resp = client
@@ -706,7 +797,7 @@ pub fn copy_missing_local_assets<F>(
 where
     F: Fn(DownloadProgress),
 {
-    let asset_version = pick_asset_version(manifest, binary_version);
+    let asset_version = pick_asset_version(manifest, binary_version)?;
     let release = manifest
         .assets
         .releases
@@ -815,25 +906,76 @@ where
 /// Pick the asset version that [`ManifestV2::resolve`] would pick for a
 /// given binary version. Extracted so `download_missing_assets` and the
 /// resolver stay in lock-step.
-fn pick_asset_version(manifest: &ManifestV2, binary_version: &str) -> String {
-    // Empty min_assets means "no compatibility constraint declared" -- pick
-    // assets.current. Same fallback as binary_version not being in manifest.
-    if let Some(bin_rel) = manifest.binaries.releases.get(binary_version) {
-        let min = &bin_rel.min_assets;
-        if min.is_empty() || manifest.assets.current >= *min {
-            return manifest.assets.current.clone();
+fn pick_asset_version(manifest: &ManifestV2, binary_version: &str) -> Result<String> {
+    // Empty min_assets means "no compatibility constraint declared".
+    let min_assets = manifest
+        .binaries
+        .releases
+        .get(binary_version)
+        .map(|release| release.min_assets.as_str())
+        .unwrap_or("");
+
+    let mut best: Option<&str> = None;
+    for (asset_version, release) in &manifest.assets.releases {
+        if !version_at_least(asset_version, min_assets) {
+            continue;
         }
-        let mut best: Option<&str> = None;
-        for v in manifest.assets.releases.keys() {
-            if v.as_str() >= min.as_str() && (best.is_none() || v.as_str() > best.unwrap()) {
-                best = Some(v.as_str());
-            }
+        if !release.min_binary.is_empty() && !version_at_least(binary_version, &release.min_binary)
+        {
+            continue;
         }
-        return best
-            .map(String::from)
-            .unwrap_or_else(|| manifest.assets.current.clone());
+        if best.is_none_or(|current| version_at_least(asset_version, current)) {
+            best = Some(asset_version.as_str());
+        }
     }
-    manifest.assets.current.clone()
+
+    best.map(ToOwned::to_owned).ok_or_else(|| {
+        anyhow::anyhow!(
+            "no compatible asset release for binary {binary_version} (min_assets: {})",
+            if min_assets.is_empty() {
+                "unspecified"
+            } else {
+                min_assets
+            }
+        )
+    })
+}
+
+fn version_at_least(actual: &str, minimum: &str) -> bool {
+    if minimum.is_empty() {
+        return true;
+    }
+    match (
+        numeric_version_parts(actual),
+        numeric_version_parts(minimum),
+    ) {
+        (Some(actual), Some(minimum)) => compare_numeric_versions(&actual, &minimum).is_ge(),
+        _ => actual >= minimum,
+    }
+}
+
+fn numeric_version_parts(version: &str) -> Option<Vec<u64>> {
+    let mut parts = Vec::new();
+    for part in version.split('.') {
+        if part.is_empty() || !part.chars().all(|ch| ch.is_ascii_digit()) {
+            return None;
+        }
+        parts.push(part.parse().ok()?);
+    }
+    Some(parts)
+}
+
+fn compare_numeric_versions(left: &[u64], right: &[u64]) -> std::cmp::Ordering {
+    let width = left.len().max(right.len());
+    for index in 0..width {
+        let left = left.get(index).copied().unwrap_or_default();
+        let right = right.get(index).copied().unwrap_or_default();
+        match left.cmp(&right) {
+            std::cmp::Ordering::Equal => {}
+            ordering => return ordering,
+        }
+    }
+    std::cmp::Ordering::Equal
 }
 
 // ---------------------------------------------------------------------------
@@ -933,6 +1075,49 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let resolved = m.resolve("1.0.9999999999", "arm64", dir.path()).unwrap();
         assert_eq!(resolved.asset_version, "2026.0415.1");
+    }
+
+    #[test]
+    fn manifest_resolve_rejects_current_assets_that_require_newer_binary() {
+        let mut m = ManifestV2::from_json(SAMPLE_V2_MANIFEST).unwrap();
+        let future_version = "2030.0101.1".to_string();
+        let mut future_release = m.assets.releases["2026.0415.1"].clone();
+        future_release.min_binary = "2.0.0".to_string();
+        m.assets
+            .releases
+            .insert(future_version.clone(), future_release);
+        m.assets.current = future_version;
+
+        let dir = tempfile::tempdir().unwrap();
+        let resolved = m.resolve("1.0.1776269479", "arm64", dir.path()).unwrap();
+
+        assert_eq!(
+            resolved.asset_version, "2026.0415.1",
+            "older binaries must keep using the newest asset release whose min_binary allows them"
+        );
+    }
+
+    #[test]
+    fn manifest_resolve_fails_when_no_asset_release_supports_binary() {
+        let mut m = ManifestV2::from_json(SAMPLE_V2_MANIFEST).unwrap();
+        m.assets.releases.get_mut("2026.0415.1").unwrap().min_binary = "2.0.0".to_string();
+
+        let dir = tempfile::tempdir().unwrap();
+        let err = m
+            .resolve("1.0.1776269479", "arm64", dir.path())
+            .unwrap_err();
+
+        assert!(
+            format!("{err:#}").contains("no compatible asset release for binary 1.0.1776269479"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn numeric_version_comparison_handles_multi_digit_components() {
+        assert!(version_at_least("10.0.0", "9.9.9"));
+        assert!(version_at_least("2026.1001.1", "2026.0630.9"));
+        assert!(!version_at_least("1.9.9", "1.10.0"));
     }
 
     #[test]
@@ -1308,28 +1493,45 @@ mod tests {
         );
     }
 
-    /// Pin the exact URL `download_missing_assets` constructs. Releases are
-    /// tagged by binary version and assets are arch-prefixed -- this matches
-    /// the upload step in `release.yaml`:
-    ///   gh release upload "v$BINARY" "$f#${arch}-${base}"
-    /// If either side drifts, the binary 404s on every fresh install. Caught
-    /// in the wild by v1.0.1777065213 (asset-version was used as the tag).
+    /// Pin the exact URL `download_missing_assets` constructs. Assets are
+    /// deployed by asset version under release.capsem.org; the channel manifest
+    /// can move without breaking older installed manifests.
     #[test]
-    fn asset_download_url_uses_binary_version_and_arch_prefix() {
+    fn asset_download_url_uses_asset_version_channel_base_and_arch_prefix() {
         assert_eq!(
-            asset_download_url("1.0.1777065213", "arm64", "vmlinuz"),
-            "https://github.com/google/capsem/releases/download/v1.0.1777065213/arm64-vmlinuz",
+            asset_download_url("2026.0627.1", "arm64", "vmlinuz"),
+            "https://release.capsem.org/assets/releases/2026.0627.1/arm64-vmlinuz",
         );
         assert_eq!(
-            asset_download_url("1.0.1777065213", "x86_64", "rootfs.erofs"),
-            "https://github.com/google/capsem/releases/download/v1.0.1777065213/x86_64-rootfs.erofs",
+            asset_download_url("2026.0627.1", "x86_64", "rootfs.erofs"),
+            "https://release.capsem.org/assets/releases/2026.0627.1/x86_64-rootfs.erofs",
         );
-        // Asset version (YYYY.MMDD.N) must NEVER appear in the URL -- it is
-        // not a release tag.
-        let url = asset_download_url("1.0.1777065213", "arm64", "initrd.img");
+        let url = asset_download_url("2026.0627.1", "arm64", "initrd.img");
         assert!(
-            !url.contains("2026."),
-            "asset version leaked into URL: {url}"
+            !url.contains("1.0."),
+            "binary version leaked into asset URL: {url}"
+        );
+    }
+
+    #[test]
+    fn asset_release_base_derives_from_channel_manifest_url() {
+        assert_eq!(
+            asset_release_base_url_from_manifest_url(
+                "https://release.capsem.org/assets/stable/manifest.json"
+            )
+            .as_deref(),
+            Some("https://release.capsem.org/assets/releases")
+        );
+        assert_eq!(
+            asset_release_base_url_from_manifest_url(
+                "https://corp.example/capsem/assets/internal/manifest.json"
+            )
+            .as_deref(),
+            Some("https://corp.example/capsem/assets/releases")
+        );
+        assert_eq!(
+            asset_release_base_url_from_manifest_url("file:///tmp/assets/stable/manifest.json"),
+            None
         );
     }
 
@@ -1405,7 +1607,7 @@ mod tests {
         assert!(downloaded.is_empty());
     }
 
-    // CAPSEM_RELEASE_URL override is exercised end-to-end by the Python
+    // CAPSEM_ASSET_BASE_URL override is exercised end-to-end by the Python
     // integration test in tests/capsem-install/test_asset_download.py against
     // a real local HTTP server. We deliberately don't unit-test it here:
     // env mutation is process-wide and races with other tests in this binary.
