@@ -146,6 +146,8 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
         "stable",
         "--out-dir",
         str(dist),
+        "--generated-at",
+        "2030-01-01T00:00:00Z",
         "--json",
     )
 
@@ -164,6 +166,9 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
     assert "Profile Catalog" in index_html
     assert "profiles-2030.0101.1" in index_html
     assert "Realm Discipline" in index_html
+    assert '<a href="/index.html">/index.html</a>' in index_html
+    assert '<a href="/health.json">/health.json</a>' in index_html
+    assert '<a href="/profiles/releases/profiles-2030.0101.1/catalog.json">' in index_html
     assert "/assets/releases/2030.0101.1/arm64-rootfs.erofs" in index_html
     assert "/assets/releases/2030.0101.1/arm64-obom.cdx.json" in index_html
     assert "capsem-sbom.spdx.json" in index_html
@@ -176,6 +181,9 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
 
     health = json.loads((dist / "health.json").read_text(encoding="utf-8"))
     assert health["schema"] == "capsem.assets_channel.health.v1"
+    assert health["generated_at"] == "2030-01-01T00:00:00Z"
+    assert health["urls"]["index"] == "/index.html"
+    assert health["urls"]["health"] == "/health.json"
     assert health["urls"]["manifest"] == "/assets/stable/manifest.json"
     assert health["urls"]["asset_base"] == "/assets/releases"
     assert health["current"] == {
@@ -187,6 +195,7 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
     catalog_url = "/profiles/releases/profiles-2030.0101.1/catalog.json"
     assert health["profiles"]["revision"] == "profiles-2030.0101.1"
     assert health["profiles"]["source"] == catalog_url
+    assert health["urls"]["profile_catalog"] == catalog_url
     assert len(health["profiles"]["hash"]) == 64
     assert health["profiles"]["compatibility"] == {
         "binary": "1.4.1234567890",
@@ -276,6 +285,46 @@ def test_release_index_check_rejects_profile_catalog_index_drift(tmp_path: Path)
 
     assert result.returncode != 0
     assert "health.json profile update latest target does not match catalog" in result.stderr
+
+
+def test_release_index_check_rejects_profile_catalog_url_drift(tmp_path: Path) -> None:
+    manifest_path = _write_release_manifest(tmp_path)
+    profiles_dir = _write_profile_catalog(tmp_path)
+    dist = tmp_path / "target" / "release-channel"
+    _run_admin(
+        "assets",
+        "channel",
+        "build",
+        "--manifest",
+        f"file://{manifest_path}",
+        "--assets-dir",
+        str(manifest_path.parent),
+        "--profiles-dir",
+        str(profiles_dir),
+        "--channel",
+        "stable",
+        "--out-dir",
+        str(dist),
+    )
+
+    health_path = dist / "health.json"
+    health = json.loads(health_path.read_text(encoding="utf-8"))
+    health["urls"]["profile_catalog"] = "/profiles/releases/stale/catalog.json"
+    health_path.write_text(json.dumps(health, indent=2) + "\n", encoding="utf-8")
+
+    result = _run_admin(
+        "assets",
+        "channel",
+        "check",
+        "--channel",
+        "stable",
+        "--dist",
+        str(dist),
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "health.json profile catalog URL mismatch" in result.stderr
 
 
 def test_release_index_check_rejects_health_manifest_drift(tmp_path: Path) -> None:

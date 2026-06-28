@@ -1324,6 +1324,18 @@ fn validate_assets_channel_health(
     )?;
     require_json_str(
         health,
+        &["urls", "index"],
+        "/index.html",
+        "health.json index URL mismatch",
+    )?;
+    require_json_str(
+        health,
+        &["urls", "health"],
+        "/health.json",
+        "health.json health URL mismatch",
+    )?;
+    require_json_str(
+        health,
         &["urls", "manifest"],
         &format!("/assets/{channel}/manifest.json"),
         "health.json manifest URL does not match channel",
@@ -1429,6 +1441,12 @@ fn validate_assets_channel_health(
     let expected_profile_revision = require_json_string(health, &["profiles", "revision"])?;
     let expected_profile_source = require_json_string(health, &["profiles", "source"])?;
     let expected_profile_hash = require_json_string(health, &["profiles", "hash"])?;
+    require_json_str(
+        health,
+        &["urls", "profile_catalog"],
+        &expected_profile_source,
+        "health.json profile catalog URL mismatch",
+    )?;
     validate_profile_catalog_artifact(
         dist,
         &expected_profile_source,
@@ -2257,7 +2275,10 @@ fn render_assets_channel_health(index: &AssetsChannelIndex) -> Result<String> {
             "generated_at": index.generated_at,
             "release_site": index.release_site,
             "urls": {
+                "index": "/index.html",
+                "health": "/health.json",
                 "manifest": index.manifest,
+                "profile_catalog": index.profile_catalog.source,
                 "asset_base": index.asset_base,
             },
             "current": {
@@ -2522,8 +2543,10 @@ fn render_assets_channel_index(index: &AssetsChannelIndex) -> Result<String> {
     <section>
       <h2>Manifest</h2>
       <dl>
-        <dt>Path</dt><dd><a href="{manifest}">{manifest}</a></dd>
+        <dt>Index page</dt><dd><a href="/index.html">/index.html</a></dd>
         <dt>Health index</dt><dd><a href="/health.json">/health.json</a></dd>
+        <dt>Path</dt><dd><a href="{manifest}">{manifest}</a></dd>
+        <dt>Profile catalog</dt><dd><a href="{profile_source}">{profile_source}</a></dd>
         <dt>Asset base</dt><dd><a href="{asset_base}">{asset_base}</a></dd>
         <dt>BLAKE3</dt><dd><code>{manifest_blake3}</code></dd>
       </dl>
@@ -2586,6 +2609,7 @@ fn render_assets_channel_index(index: &AssetsChannelIndex) -> Result<String> {
         asset_releases = index.asset_releases,
         binary_releases = index.binary_releases,
         manifest = escape_html(&index.manifest),
+        profile_source = escape_html(&index.profile_catalog.source),
         asset_base = escape_html(&index.asset_base),
         manifest_blake3 = escape_html(&index.manifest_blake3),
         current_asset_rows = current_asset_rows,
