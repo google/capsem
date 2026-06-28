@@ -280,11 +280,66 @@ def _write_installed_asset_manifest(capsem_home: Path, current_assets: str) -> N
     manifest = json.loads((REPO_ROOT / "assets" / "manifest.json").read_text())
     manifest["assets"]["current"] = current_assets
     assets_dir = capsem_home / "assets"
-    assets_dir.mkdir(parents=True)
+    assets_dir.mkdir(parents=True, exist_ok=True)
     (assets_dir / "manifest.json").write_text(
         json.dumps(manifest, sort_keys=True, separators=(",", ":")),
         encoding="utf-8",
     )
+
+
+def _write_persistent_vm_pin_registry(capsem_home: Path) -> Path:
+    assets_dir = capsem_home / "assets"
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    registry_path = assets_dir / "persistent_registry.json"
+    profile_hash = f"blake3:{'a' * 64}"
+    kernel_hash = f"blake3:{'1' * 64}"
+    initrd_hash = f"blake3:{'2' * 64}"
+    rootfs_hash = f"blake3:{'3' * 64}"
+    registry = {
+        "vms": {
+            "pinned-session": {
+                "id": "pinned-session-id",
+                "name": "pinned-session",
+                "profile_id": "code",
+                "profile_revision": "profiles-2030.0101.0",
+                "profile_payload_hash": profile_hash,
+                "asset_pins": {
+                    "kernel": {
+                        "name": "vmlinuz",
+                        "hash": kernel_hash,
+                        "size": 11,
+                    },
+                    "initrd": {
+                        "name": "initrd.img",
+                        "hash": initrd_hash,
+                        "size": 22,
+                    },
+                    "rootfs": {
+                        "name": "rootfs.erofs",
+                        "hash": rootfs_hash,
+                        "size": 33,
+                    },
+                },
+                "ram_mb": 2048,
+                "cpus": 2,
+                "base_version": "1.4.0",
+                "created_at": "2030-01-01T00:00:00Z",
+                "session_dir": str(capsem_home / "persistent" / "pinned-session"),
+                "forked_from": None,
+                "description": None,
+                "suspended": True,
+                "defunct": False,
+                "last_error": None,
+                "checkpoint_path": None,
+                "env": None,
+            }
+        }
+    }
+    registry_path.write_text(
+        json.dumps(registry, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return registry_path
 
 
 def _fresh_capsem_binary() -> Path | None:
@@ -911,6 +966,53 @@ def test_update_yes_applies_compatible_profile_catalog_from_release_channel(
     cache = json.loads((capsem_home / "update-check.json").read_text(encoding="utf-8"))
     assert cache["profile_catalog_source"] == catalog_path
     assert cache["profile_catalog_hash"] == blake3(catalog_bytes).hexdigest()
+
+
+def test_profile_catalog_preserves_existing_vm_pins_on_update(
+    tmp_path: Path,
+    installed_layout,
+) -> None:
+    capsem_home = tmp_path / ".capsem"
+    _write_installed_asset_manifest(capsem_home, "2030.0101.1")
+    _write_installed_profile_catalog(capsem_home / "profiles", "profiles-2030.0101.0")
+    registry_path = _write_persistent_vm_pin_registry(capsem_home)
+    manifest_path = capsem_home / "assets" / "manifest.json"
+    before_registry = registry_path.read_bytes()
+    before_manifest = manifest_path.read_bytes()
+    fresh_capsem = _fresh_capsem_binary()
+    source_capsem = fresh_capsem if fresh_capsem is not None else installed_layout / "capsem"
+    capsem = _copy_user_dir_capsem(source_capsem, capsem_home)
+    revision = "profiles-2030.0101.1"
+    catalog_path = _profile_catalog_path(revision)
+    catalog_bytes = _profile_catalog_bytes(revision)
+
+    with _serve_release(
+        _profile_update_health(catalog_path, catalog_bytes, revision),
+        {catalog_path: catalog_bytes},
+    ) as (_, health_url):
+        result = subprocess.run(
+            [str(capsem), "update", "--yes"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env={
+                **os.environ,
+                "CAPSEM_HOME": str(capsem_home),
+                "CAPSEM_RUN_DIR": str(capsem_home / "run"),
+                "CAPSEM_RELEASE_HEALTH_URL": health_url,
+            },
+        )
+
+    assert result.returncode == 0, (
+        f"capsem update --yes failed\nstdout={result.stdout}\nstderr={result.stderr}"
+    )
+    assert "Profile catalog update applied" in result.stdout
+    profile_toml = (capsem_home / "profiles" / "code" / "profile.toml").read_text(
+        encoding="utf-8"
+    )
+    assert 'revision = "profiles-2030.0101.1"' in profile_toml
+    assert registry_path.read_bytes() == before_registry
+    assert manifest_path.read_bytes() == before_manifest
 
 
 def test_update_preserves_profile_catalog_when_release_catalog_is_invalid(
