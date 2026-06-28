@@ -62,6 +62,18 @@ the product CI workflow. Individual dependency job names may change as CI is
 reshaped; `pr-gate` keeps branch protection stable while still failing closed
 when any required lane fails.
 
+Before claiming release readiness, run the read-only live gate checker:
+
+```bash
+uv run python scripts/check-remote-release-readiness.py
+```
+
+It verifies that remote `ci.yaml` exposes `pr-gate`; branch protection or rulesets require `pr-gate`;
+`release.capsem.org` resolves and serves the asset channel; and the public
+index, `health.json`, and manifest agree on current binary, VM asset, and asset
+release date state. It does not push, deploy, create tags, edit rulesets, or
+mutate Cloudflare.
+
 ## PR gate compared with `just test`
 
 `just test` is still the full local/release validation command. GitHub-hosted PR

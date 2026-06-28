@@ -520,6 +520,40 @@ def test_ci_docs_compare_pr_gate_to_just_test_with_named_substitutions() -> None
     assert "needs: [test-linux, test, test-install]" in workflow
 
 
+def test_remote_release_readiness_checker_is_read_only_and_covers_live_gates() -> None:
+    script = (PROJECT_ROOT / "scripts/check-remote-release-readiness.py").read_text()
+    docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
+
+    assert "Read-only remote release readiness checks" in script
+    assert "gh\", \"workflow\", \"view\", \"ci.yaml\"" in script
+    assert "branches/{branch}/protection" in script
+    assert "repos/{repo}/rulesets" in script
+    assert "socket.getaddrinfo" in script
+    assert "urllib.request.urlopen" in script
+    assert "https://release.capsem.org" in script
+    assert "/assets/{channel}/manifest.json" in script
+    assert "capsem.assets_channel.health.v1" in script
+    assert "pr-gate" in script
+    assert "current asset release date" in script
+    for forbidden in [
+        "git push",
+        "gh release create",
+        "gh release upload",
+        "wrangler",
+        "pages deploy",
+        "--method PATCH",
+        "--method PUT",
+        "--method DELETE",
+    ]:
+        assert forbidden not in script
+
+    assert "scripts/check-remote-release-readiness.py" in docs
+    assert "read-only" in docs
+    assert "remote `ci.yaml` exposes `pr-gate`" in docs
+    assert "branch protection or rulesets require `pr-gate`" in docs
+    assert "`release.capsem.org` resolves and serves the asset channel" in docs
+
+
 def test_ci_installs_b3sum_before_bootstrap_asset_hash_checks() -> None:
     workflow = _workflow_job_block("test")
 
@@ -805,7 +839,7 @@ def test_binary_update_installer_scripts_replace_and_restart_full_helper_cohort(
     assert "launchctl unload" in preinstall
     for name in stale_companions:
         assert name in preinstall
-        assert f'pkill -9 -f "$CAPSEM_DIR/bin/$name"' in preinstall
+        assert 'pkill -9 -f "$CAPSEM_DIR/bin/$name"' in preinstall
     assert "pkill -9 -x capsem-app" in preinstall
     assert 'rm -rf "$USER_HOME/Applications/Capsem.app"' in preinstall
     assert "rm -rf /Applications/Capsem.app" in preinstall
