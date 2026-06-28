@@ -104,6 +104,11 @@ jobs:
               with urllib.request.urlopen(url, timeout=20) as response:
                   return response.read()
 
+          def fetch_headers(url):
+              request = urllib.request.Request(url, method="HEAD")
+              with urllib.request.urlopen(request, timeout=20) as response:
+                  return {key.lower(): value for key, value in response.headers.items()}
+
           def resolve_release_url(url):
               parsed = urllib.parse.urlparse(url)
               if parsed.scheme in ("http", "https"):
@@ -111,6 +116,23 @@ jobs:
               if url.startswith("/"):
                   return f"{release_site_url}{url}"
               raise ValueError(f"evidence URL must be absolute or release-site relative: {url}")
+
+          def release_url_path(url):
+              parsed = urllib.parse.urlparse(url)
+              if parsed.scheme in ("http", "https"):
+                  return parsed.path
+              return url
+
+          def check_cache_header(label, url, directives):
+              try:
+                  headers = fetch_headers(url)
+              except Exception as error:
+                  failures.append(f"{label} {url} header fetch failed: {error}")
+                  return
+              cache_control = headers.get("cache-control", "").lower()
+              for directive in directives:
+                  if directive not in cache_control:
+                      failures.append(f"{label} {url} Cache-Control must contain {directive}")
 
           def check_evidence_artifact(item, hash_key, algorithm, label):
               url = item.get("url")
@@ -270,6 +292,33 @@ jobs:
               failures.append("health current asset release date missing")
           elif current_asset_date not in index:
               failures.append("index page missing current asset release date")
+          check_cache_header("release index", f"{release_site_url}/", ("no-cache", "must-revalidate"))
+          check_cache_header("health JSON", f"{release_site_url}/health.json", ("no-cache", "must-revalidate"))
+          check_cache_header(
+              "channel manifest",
+              f"{release_site_url}/assets/{channel}/manifest.json",
+              ("no-cache", "must-revalidate"),
+          )
+          for item in asset_files:
+              if not isinstance(item, dict):
+                  continue
+              url = item.get("url")
+              if isinstance(url, str) and release_url_path(url).startswith("/assets/releases/"):
+                  check_cache_header(
+                      "immutable asset",
+                      resolve_release_url(url),
+                      ("public", "max-age=31536000", "immutable"),
+                  )
+          profile_source = updates.get("profiles", {}).get("source")
+          if (
+              isinstance(profile_source, str)
+              and release_url_path(profile_source).startswith("/profiles/releases/")
+          ):
+              check_cache_header(
+                  "immutable profile catalog",
+                  resolve_release_url(profile_source),
+                  ("public", "max-age=31536000", "immutable"),
+              )
           if "Current Asset Files" not in index or "/health.json" not in index:
               failures.append("index page missing release status content")
           if failures:

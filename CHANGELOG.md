@@ -138,6 +138,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Changed the remote release-readiness checker to verify live
   `release.capsem.org` cache headers for mutable channel pointers and immutable
   asset/profile release artifacts.
+- Changed the release-channel deploy smoke to verify public cache headers after
+  Cloudflare publishes the generated site.
 
 ### Fixed
 - Fixed the release-channel deploy preflight to require generated Cloudflare

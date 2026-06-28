@@ -246,6 +246,12 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
     assert 'release.get("version") == current_assets' in workflow
     assert "health current asset release date missing" in workflow
     assert "index page missing current asset release date" in workflow
+    assert "def fetch_headers" in workflow
+    assert 'urllib.request.Request(url, method="HEAD")' in workflow
+    assert "def check_cache_header" in workflow
+    assert 'check_cache_header("release index", f"{release_site_url}/", ("no-cache", "must-revalidate"))' in workflow
+    assert "Cache-Control must contain {directive}" in workflow
+    assert '("public", "max-age=31536000", "immutable")' in workflow
     assert "release.capsem.org smoke failed after deploy." in workflow
 
 
