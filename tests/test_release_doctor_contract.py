@@ -317,6 +317,31 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     )
 
 
+def test_binary_release_verifies_packages_hydrate_vm_assets_from_public_channel() -> None:
+    verify_downloads = _workflow_job_block("verify-release-downloads", "release.yaml")
+
+    assert "needs: [deploy-release-channel]" in verify_downloads
+    assert 'curl -fsSL "$ASSET_MANIFEST_URL" -o /tmp/verify/manifest.json' in verify_downloads
+    assert 'BASE="${ASSET_MANIFEST_URL%/stable/manifest.json}/releases"' in verify_downloads
+    assert 'url="$BASE/$asset_version/$arch-$name"' in verify_downloads
+    assert 'code=$(curl -sIL -o /dev/null -w "%{http_code}" "$url")' in verify_downloads
+    assert 'gh release download "${{ github.ref_name }}"' in verify_downloads
+    assert '--pattern "Capsem_*_${deb_arch}.deb" -D /tmp/deb' in verify_downloads
+    assert 'ar x "$deb"' in verify_downloads
+    assert "CAPSEM_HOME=/tmp/capsem-home" in verify_downloads
+    assert (
+        'cp ./usr/share/capsem/assets/manifest.json "$CAPSEM_HOME/assets/manifest.json"'
+        in verify_downloads
+    )
+    assert (
+        'cp ./usr/share/capsem/assets/manifest-origin.json "$CAPSEM_HOME/assets/manifest-origin.json"'
+        in verify_downloads
+    )
+    assert '"$CAPSEM_BIN" update --assets' in verify_downloads
+    assert 'find "$CAPSEM_HOME/assets/$host_arch" -name "${f%.*}-*"' in verify_downloads
+    assert "End-to-end download verified against release.capsem.org." in verify_downloads
+
+
 def test_manifest_source_inputs_are_url_only() -> None:
     build_pkg = (PROJECT_ROOT / "scripts" / "build-pkg.sh").read_text()
     repack_deb = (PROJECT_ROOT / "scripts" / "repack-deb.sh").read_text()
