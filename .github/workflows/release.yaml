@@ -769,8 +769,8 @@ jobs:
           mkdir -p /tmp/deb
           if ! gh release download "${{ github.ref_name }}" \
                --pattern "Capsem_*_${deb_arch}.deb" -D /tmp/deb; then
-            echo "::warning::no .deb for ${deb_arch} on this release -- skipping binary e2e"
-            exit 0
+            echo "::error::no .deb for ${deb_arch} on this release"
+            exit 1
           fi
           deb=$(ls /tmp/deb/Capsem_*_${deb_arch}.deb | head -1)
           # Extract the bundled capsem binary; we don't need to dpkg -i for this.
@@ -783,8 +783,8 @@ jobs:
           # bundled separately under /usr/share/capsem/bin or similar. Find it.
           CAPSEM_BIN=$(find . -type f -name capsem -perm -u+x | head -1)
           if [ -z "$CAPSEM_BIN" ]; then
-            echo "::warning::no 'capsem' CLI inside .deb -- skipping binary e2e"
-            exit 0
+            echo "::error::no 'capsem' CLI inside .deb"
+            exit 1
           fi
           echo "Using $CAPSEM_BIN ($("$CAPSEM_BIN" --version 2>&1 | head -1))"
 

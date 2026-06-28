@@ -77,6 +77,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   metadata without rebuilding or publishing VM asset payloads.
 - Added release-doctor coverage that package update scripts replace and restart
   the full app/service/gateway/tray helper cohort together.
+- Added release-doctor coverage that prevents the binary release package
+  hydration smoke from silently skipping missing `.deb` packages or bundled CLI
+  binaries.
 - Added release-doctor coverage that keeps staged cross-surface update smoke
   prerequisites visible across CLI, service, tray, frontend UI, and TUI tests.
 - Added an installed CLI staged update-state matrix covering binary-only,

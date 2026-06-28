@@ -485,7 +485,12 @@ def test_binary_release_verifies_packages_hydrate_vm_assets_from_public_channel(
     assert 'code=$(curl -sIL -o /dev/null -w "%{http_code}" "$url")' in verify_downloads
     assert 'gh release download "${{ github.ref_name }}"' in verify_downloads
     assert '--pattern "Capsem_*_${deb_arch}.deb" -D /tmp/deb' in verify_downloads
+    assert "skipping binary e2e" not in verify_downloads
+    assert "::warning::no .deb" not in verify_downloads
+    assert "::warning::no 'capsem' CLI" not in verify_downloads
     assert 'ar x "$deb"' in verify_downloads
+    assert "::error::no .deb for ${deb_arch} on this release" in verify_downloads
+    assert "::error::no 'capsem' CLI inside .deb" in verify_downloads
     assert "CAPSEM_HOME=/tmp/capsem-home" in verify_downloads
     assert (
         'cp ./usr/share/capsem/assets/manifest.json "$CAPSEM_HOME/assets/manifest.json"'
