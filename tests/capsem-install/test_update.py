@@ -562,6 +562,111 @@ def test_asset_update_state_does_not_claim_binary_update(
     assert cache["current_assets"] == "2026.0627.8"
 
 
+def test_profile_update_state_does_not_claim_binary_or_asset_update(
+    tmp_path: Path,
+    installed_layout,
+) -> None:
+    capsem_home = tmp_path / ".capsem"
+    _write_installed_asset_manifest(capsem_home, "2030.0101.1")
+    _write_installed_profile_catalog(capsem_home / "profiles", "profiles-2030.0101.0")
+    fresh_capsem = _fresh_capsem_binary()
+    source_capsem = fresh_capsem if fresh_capsem is not None else installed_layout / "capsem"
+    capsem = _copy_user_dir_capsem(source_capsem, capsem_home)
+    revision = "profiles-2030.0101.1"
+    catalog_path = _profile_catalog_path(revision)
+    catalog_bytes = _profile_catalog_bytes(revision)
+
+    with _serve_release(
+        _profile_update_health(catalog_path, catalog_bytes, revision),
+        {catalog_path: catalog_bytes},
+    ) as (_, health_url):
+        result = subprocess.run(
+            [str(capsem), "update", "--check"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env={
+                **os.environ,
+                "CAPSEM_HOME": str(capsem_home),
+                "CAPSEM_RUN_DIR": str(capsem_home / "run"),
+                "CAPSEM_RELEASE_HEALTH_URL": health_url,
+            },
+        )
+
+    assert result.returncode == 0, (
+        f"capsem update --check failed\nstdout={result.stdout}\nstderr={result.stderr}"
+    )
+    assert (
+        "Profile catalog update available: profiles-2030.0101.0 -> profiles-2030.0101.1"
+        in result.stdout
+    )
+    assert "Binary update available" not in result.stdout
+    assert "VM asset update available" not in result.stdout
+
+    cache = json.loads((capsem_home / "update-check.json").read_text(encoding="utf-8"))
+    assert cache["update_available"] is False
+    assert cache["assets_update_available"] is False
+    assert cache["profiles_update_available"] is True
+    assert cache["current_profiles"] == "profiles-2030.0101.0"
+    assert cache["latest_profiles"] == "profiles-2030.0101.1"
+
+
+def test_mixed_binary_and_asset_update_state_reports_both_tracks(
+    tmp_path: Path,
+    installed_layout,
+) -> None:
+    capsem_home = tmp_path / ".capsem"
+    _write_installed_asset_manifest(capsem_home, "2026.0627.8")
+    fresh_capsem = _fresh_capsem_binary()
+    source_capsem = fresh_capsem if fresh_capsem is not None else installed_layout / "capsem"
+    capsem = _copy_user_dir_capsem(source_capsem, capsem_home)
+    health = {
+        "schema": "capsem.assets_channel.health.v1",
+        "updates": {
+            "binary": {
+                "latest": "99.99.99",
+                "current": "99.99.98",
+                "files": [],
+            },
+            "assets": {
+                "latest": "2030.0101.1",
+                "current": "2026.0627.8",
+            },
+            "images": {
+                "latest": None,
+                "state": "not_published",
+            },
+        },
+    }
+    body = json.dumps(health, sort_keys=True, separators=(",", ":")).encode()
+
+    with _serve_health(body) as health_url:
+        result = subprocess.run(
+            [str(capsem), "update", "--check"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env={
+                **os.environ,
+                "CAPSEM_HOME": str(capsem_home),
+                "CAPSEM_RUN_DIR": str(capsem_home / "run"),
+                "CAPSEM_RELEASE_HEALTH_URL": health_url,
+            },
+        )
+
+    assert result.returncode == 0, (
+        f"capsem update --check failed\nstdout={result.stdout}\nstderr={result.stderr}"
+    )
+    assert "Binary update available" in result.stdout
+    assert "VM asset update available: 2026.0627.8 -> 2030.0101.1." in result.stdout
+
+    cache = json.loads((capsem_home / "update-check.json").read_text(encoding="utf-8"))
+    assert cache["update_available"] is True
+    assert cache["assets_update_available"] is True
+    assert cache["latest_assets"] == "2030.0101.1"
+    assert cache["current_assets"] == "2026.0627.8"
+
+
 def test_update_reports_profile_catalog_without_applying_by_default(
     tmp_path: Path,
     installed_layout,
