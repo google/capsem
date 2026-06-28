@@ -107,11 +107,16 @@ def http_fixture(tmp_path: Path):
     serve_dir.mkdir()
 
     serve_str = str(serve_dir)
+    requested_paths: list[str] = []
 
     class Handler(SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
             kwargs["directory"] = serve_str
             super().__init__(*args, **kwargs)
+
+        def do_GET(self):
+            requested_paths.append(self.path.split("?", maxsplit=1)[0])
+            super().do_GET()
 
         def log_message(self, format, *args):
             return
@@ -121,7 +126,7 @@ def http_fixture(tmp_path: Path):
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        yield (f"http://{host}:{port}", serve_dir)
+        yield (f"http://{host}:{port}", serve_dir, requested_paths)
     finally:
         server.shutdown()
         server.server_close()
@@ -141,7 +146,7 @@ def _run(env: dict, *args: str) -> subprocess.CompletedProcess:
 
 
 def test_update_assets_downloads_missing(tmp_path: Path, http_fixture, installed_layout):
-    base_url, serve_dir = http_fixture
+    base_url, serve_dir, _requested_paths = http_fixture
     arch = _arch()
 
     # Fixture bytes: small so hashing is cheap but non-empty.
@@ -192,7 +197,7 @@ def test_update_assets_refreshes_remote_channel_manifest_before_download(
     http_fixture,
     installed_layout,
 ):
-    base_url, serve_dir = http_fixture
+    base_url, serve_dir, requested_paths = http_fixture
     arch = _arch()
 
     old_files = {
@@ -242,6 +247,14 @@ def test_update_assets_refreshes_remote_channel_manifest_before_download(
 
     assert result.returncode == 0, f"stdout={result.stdout}\nstderr={result.stderr}"
     assert f"Installed asset manifest from {channel_manifest_url}" in result.stdout
+    assert "/assets/stable/manifest.json" in requested_paths
+    expected_blob_paths = {
+        f"/assets/releases/{NEW_ASSET_VERSION}/{arch}-{name}"
+        for name in new_files
+    }
+    assert expected_blob_paths.issubset(set(requested_paths))
+    legacy_blob_paths = {f"/{NEW_ASSET_VERSION}/{arch}-{name}" for name in new_files}
+    assert set(requested_paths).isdisjoint(legacy_blob_paths), requested_paths
     installed_manifest = json.loads((assets / "manifest.json").read_text())
     assert installed_manifest["assets"]["current"] == NEW_ASSET_VERSION
     origin = json.loads((assets / "manifest-origin.json").read_text())
@@ -312,7 +325,7 @@ def test_update_assets_rejects_manifest_assets_requiring_newer_binary(
 
 
 def test_update_assets_idempotent_when_hashes_match(tmp_path: Path, http_fixture, installed_layout):
-    base_url, serve_dir = http_fixture
+    base_url, serve_dir, _requested_paths = http_fixture
     arch = _arch()
 
     files = {
@@ -344,7 +357,7 @@ def test_update_assets_idempotent_when_hashes_match(tmp_path: Path, http_fixture
 
 
 def test_update_assets_hash_mismatch_fails(tmp_path: Path, http_fixture, installed_layout):
-    base_url, serve_dir = http_fixture
+    base_url, serve_dir, _requested_paths = http_fixture
     arch = _arch()
 
     declared = {"vmlinuz": b"the-right-bytes"}
@@ -379,7 +392,7 @@ def test_update_assets_hash_mismatch_fails(tmp_path: Path, http_fixture, install
 
 
 def test_update_assets_404_fails(tmp_path: Path, http_fixture, installed_layout):
-    base_url, serve_dir = http_fixture
+    base_url, serve_dir, _requested_paths = http_fixture
     arch = _arch()
 
     files = {
