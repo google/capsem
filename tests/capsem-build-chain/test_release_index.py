@@ -444,6 +444,22 @@ def test_asset_release_index_workflow_deploys_generated_preview_only_after_asset
     assert "dist_artifact: asset-channel-preview" in deploy_channel
 
 
+def test_release_assets_workflow_allows_first_channel_bootstrap() -> None:
+    workflow = (PROJECT_ROOT / ".github/workflows/release-assets.yaml").read_text(
+        encoding="utf-8"
+    )
+    assemble_channel = workflow.split("  assemble-channel:", maxsplit=1)[1].split(
+        "  deploy-channel:", maxsplit=1
+    )[0]
+
+    assert "scripts/check-asset-release-delta.py" in assemble_channel
+    assert (
+        '--previous-manifest-url "https://release.capsem.org/assets/$CHANNEL/manifest.json"'
+        in assemble_channel
+    )
+    assert "--allow-missing-previous" in assemble_channel
+
+
 def test_release_index_check_rejects_profile_catalog_index_drift(tmp_path: Path) -> None:
     manifest_path = _write_release_manifest(tmp_path)
     profiles_dir = _write_profile_catalog(tmp_path)

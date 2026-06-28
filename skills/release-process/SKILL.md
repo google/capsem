@@ -56,7 +56,12 @@ execute without publishing or attesting. `build-ledger.log` and `B3SUMS` remain
 debug evidence unless deliberately published as separate evidence artifacts.
 The manifest artifact is diagnostic/source evidence only; release-channel deploys consume the
 generated dist artifact so the manifest, blobs, index page, health JSON, and
-headers stay in lock-step. After Cloudflare deploys, the channel workflow must
+headers stay in lock-step. The first channel publication may continue when the
+previous `release.capsem.org/assets/<channel>/manifest.json` is unavailable;
+the asset delta gate records `previous_manifest_unavailable` as changed so the
+initial site can bootstrap. Later publications still compare against the live
+previous manifest and skip deployment when asset hashes are unchanged. After
+Cloudflare deploys, the channel workflow must
 smoke-check `https://release.capsem.org/`, `/health.json`, and
 `/assets/<channel>/manifest.json` through the public custom domain before it
 passes. That smoke must reject stale public HTML: the fetched index page must

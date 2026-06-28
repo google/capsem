@@ -126,7 +126,8 @@ jobs:
         run: |
           scripts/check-asset-release-delta.py \
             --new-manifest assets/manifest.json \
-            --previous-manifest-url "https://release.capsem.org/assets/$CHANNEL/manifest.json"
+            --previous-manifest-url "https://release.capsem.org/assets/$CHANNEL/manifest.json" \
+            --allow-missing-previous
 
       - name: Build asset channel preview
         if: ${{ steps.asset-delta.outputs.changed == 'true' }}

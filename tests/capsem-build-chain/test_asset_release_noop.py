@@ -127,6 +127,45 @@ def test_asset_release_noop_rejects_missing_previous_manifest_by_default(tmp_pat
     assert "could not read previous manifest" in result.stderr
 
 
+def test_asset_workflow_allows_missing_previous_manifest_for_first_channel_publish(
+    tmp_path: Path,
+) -> None:
+    new = _manifest(tmp_path / "new" / "manifest.json", version="2030.0101.2")
+    output = tmp_path / "github-output"
+    summary = tmp_path / "summary.md"
+    env = os.environ.copy()
+    env["GITHUB_OUTPUT"] = str(output)
+
+    result = subprocess.run(
+        [
+            str(SCRIPT),
+            "--new-manifest",
+            str(new),
+            "--previous-manifest-url",
+            f"file://{tmp_path / 'missing' / 'manifest.json'}",
+            "--allow-missing-previous",
+            "--summary",
+            str(summary),
+        ],
+        cwd=PROJECT_ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=env,
+        check=True,
+    )
+
+    assert json.loads(result.stdout) == {
+        "changed": True,
+        "reason": "previous_manifest_unavailable",
+        "new_assets": "2030.0101.2",
+    }
+    assert "warning: could not read previous manifest" in result.stderr
+    assert "changed=true" in output.read_text(encoding="utf-8")
+    assert "reason=previous_manifest_unavailable" in output.read_text(encoding="utf-8")
+    assert "Asset publication should continue" in summary.read_text(encoding="utf-8")
+
+
 def test_asset_release_noop_gate_controls_preview_and_deploy_workflow() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "release-assets.yaml").read_text()
 
@@ -135,6 +174,7 @@ def test_asset_release_noop_gate_controls_preview_and_deploy_workflow() -> None:
         '--previous-manifest-url "https://release.capsem.org/assets/$CHANNEL/manifest.json"'
         in workflow
     )
+    assert "--allow-missing-previous" in workflow
     assert "outputs:" in workflow
     assert "asset_changed: ${{ steps.asset-delta.outputs.changed }}" in workflow
     assert "if: ${{ steps.asset-delta.outputs.changed == 'true' }}" in workflow
