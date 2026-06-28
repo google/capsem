@@ -1753,6 +1753,20 @@ fn validate_assets_channel_health(
                 ));
             }
         }
+        if attestation_name == "github_attestations_vm_assets" {
+            if let Some(predicate_url) = attestation
+                .get("predicate_url")
+                .and_then(|value| value.as_str())
+            {
+                if !vm_oboms.iter().any(|item| {
+                    item.get("url").and_then(|value| value.as_str()) == Some(predicate_url)
+                }) {
+                    return Err(anyhow!(
+                        "health.json VM asset attestation predicate {predicate_url} missing from VM OBOM evidence"
+                    ));
+                }
+            }
+        }
         let subjects = attestation
             .get("subjects")
             .and_then(|value| value.as_array())

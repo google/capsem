@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Matched attestation predicate URL validation to the correct evidence rail so
   VM asset provenance can point at VM OBOM evidence while host package
   attestations continue to point at host SBOM evidence.
+- Rejected release-channel health indexes whose VM asset attestation predicate
+  URL points outside the published VM OBOM evidence list.
 
 ### Changed
 - Updated the remote release readiness checker to require the expanded
