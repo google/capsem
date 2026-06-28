@@ -116,40 +116,31 @@ def check_remote_branch_protection(repo: str, branch: str) -> CheckResult:
     classic_required = False
     classic_detail = ""
     if classic.returncode == 0 and classic.data is not None:
-        classic_required = required_status_checks_include_pr_gate(classic.data)
+        classic_required = classic_protection_requires_pr_gate(classic.data)
         classic_detail = "classic branch protection"
 
-    ruleset_required = False
-    ruleset_details: list[str] = []
-    rulesets = run_json(["gh", "api", f"repos/{repo}/rulesets"])
-    if rulesets.returncode == 0 and isinstance(rulesets.data, list):
-        for summary in rulesets.data:
-            ruleset_id = summary.get("id") if isinstance(summary, dict) else None
-            if ruleset_id is None:
-                continue
-            detail = run_json(["gh", "api", f"repos/{repo}/rulesets/{ruleset_id}"])
-            if detail.returncode != 0 or detail.data is None:
-                continue
-            if required_status_checks_include_pr_gate(detail.data):
-                ruleset_required = True
-                ruleset_details.append(str(summary.get("name") or ruleset_id))
+    active_rules = run_json(["gh", "api", f"repos/{repo}/rules/branches/{branch}"])
+    active_rules_required = False
+    if active_rules.returncode == 0 and active_rules.data is not None:
+        active_rules_required = active_branch_rules_require_pr_gate(active_rules.data)
 
-    if classic_required or ruleset_required:
+    if classic_required or active_rules_required:
         sources = []
         if classic_required:
             sources.append(classic_detail)
-        sources.extend(f"ruleset {name}" for name in ruleset_details)
+        if active_rules_required:
+            sources.append("active branch rules")
         return CheckResult(
             "remote branch protection requires pr-gate",
             True,
             ", ".join(sources),
         )
 
-    detail = "pr-gate is not required by classic branch protection or active rulesets"
+    detail = "pr-gate is not required by classic branch protection or active branch rules"
     if classic.returncode != 0:
         detail += f"; classic protection probe: {classic.stderr.strip()}"
-    if rulesets.returncode != 0:
-        detail += f"; ruleset probe: {rulesets.stderr.strip()}"
+    if active_rules.returncode != 0:
+        detail += f"; active branch rules probe: {active_rules.stderr.strip()}"
     return CheckResult("remote branch protection requires pr-gate", False, detail)
 
 
@@ -383,21 +374,46 @@ def resolve_release_url(site: str, url: str) -> str:
     raise ValueError("evidence URL must be absolute or release-site relative")
 
 
-def required_status_checks_include_pr_gate(data: Any) -> bool:
-    if isinstance(data, dict):
-        for key, value in data.items():
-            if key in {"context", "name"} and value == "pr-gate":
-                return True
-            if key == "required_status_checks" and required_status_checks_include_pr_gate(value):
-                return True
-            if key == "required_checks" and required_status_checks_include_pr_gate(value):
-                return True
-            if required_status_checks_include_pr_gate(value):
-                return True
-    elif isinstance(data, list):
-        return any(required_status_checks_include_pr_gate(item) for item in data)
-    elif isinstance(data, str):
-        return data == "pr-gate"
+def classic_protection_requires_pr_gate(data: Any) -> bool:
+    if not isinstance(data, dict):
+        return False
+    required = data.get("required_status_checks")
+    if not isinstance(required, dict):
+        return False
+    return required_checks_include_pr_gate(required.get("contexts")) or required_checks_include_pr_gate(
+        required.get("checks")
+    )
+
+
+def active_branch_rules_require_pr_gate(data: Any) -> bool:
+    if isinstance(data, dict) and data.get("enforcement") in {"evaluate", "disabled"}:
+        return False
+    rules = data.get("rules") if isinstance(data, dict) else data
+    if not isinstance(rules, list):
+        return False
+    for rule in rules:
+        if not isinstance(rule, dict):
+            continue
+        if rule.get("type") != "required_status_checks":
+            continue
+        parameters = rule.get("parameters")
+        if not isinstance(parameters, dict):
+            continue
+        if required_checks_include_pr_gate(parameters.get("required_status_checks")):
+            return True
+        if required_checks_include_pr_gate(parameters.get("required_checks")):
+            return True
+    return False
+
+
+def required_checks_include_pr_gate(checks: Any) -> bool:
+    if not isinstance(checks, list):
+        return False
+    for check in checks:
+        if check == "pr-gate":
+            return True
+        if isinstance(check, dict) and check.get("context") == "pr-gate":
+            return True
     return False
 
 

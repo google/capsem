@@ -570,7 +570,7 @@ def test_remote_release_readiness_checker_is_read_only_and_covers_live_gates() -
     assert "git\", \"rev-list\", \"--left-right\", \"--count\"" in script
     assert "gh\", \"workflow\", \"view\", \"ci.yaml\"" in script
     assert "branches/{branch}/protection" in script
-    assert "repos/{repo}/rulesets" in script
+    assert "repos/{repo}/rules/branches/{branch}" in script
     assert "socket.getaddrinfo" in script
     assert "urllib.request.urlopen" in script
     assert "https://release.capsem.org" in script
@@ -593,7 +593,7 @@ def test_remote_release_readiness_checker_is_read_only_and_covers_live_gates() -
     assert "scripts/check-remote-release-readiness.py" in docs
     assert "read-only" in docs
     assert "remote `ci.yaml` exposes `pr-gate`" in docs_text
-    assert "branch protection or rulesets require `pr-gate`" in docs_text
+    assert "branch protection or active branch rulesets require `pr-gate`" in docs_text
     assert "`release.capsem.org` resolves and serves the asset channel" in docs_text
 
 
@@ -608,6 +608,51 @@ def test_remote_release_readiness_checker_reports_unpublished_local_commits() ->
     assert "publish or merge release-rail commits before claiming remote readiness" in script
     assert "local checkout has unpublished commits" in docs_text
     assert "publish or merge those commits before changing remote protection" in docs_text
+
+
+def test_remote_release_readiness_requires_active_pr_gate_rule() -> None:
+    module = _readiness_checker_module()
+    script = (PROJECT_ROOT / "scripts/check-remote-release-readiness.py").read_text()
+    docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
+    docs_text = " ".join(docs.split())
+
+    assert module.classic_protection_requires_pr_gate(
+        {"required_status_checks": {"contexts": ["pr-gate"]}}
+    )
+    assert module.classic_protection_requires_pr_gate(
+        {"required_status_checks": {"checks": [{"context": "pr-gate"}]}}
+    )
+    assert module.active_branch_rules_require_pr_gate(
+        [
+            {
+                "type": "required_status_checks",
+                "parameters": {
+                    "required_status_checks": [
+                        {"context": "test-linux"},
+                        {"context": "pr-gate"},
+                    ]
+                },
+            }
+        ]
+    )
+    assert not module.active_branch_rules_require_pr_gate(
+        {
+            "enforcement": "evaluate",
+            "rules": [
+                {
+                    "type": "required_status_checks",
+                    "parameters": {"required_status_checks": [{"context": "pr-gate"}]},
+                }
+            ],
+        }
+    )
+    assert not module.active_branch_rules_require_pr_gate(
+        [{"type": "pull_request", "parameters": {"message": "mention pr-gate only"}}]
+    )
+    assert 'repos/{repo}/rules/branches/{branch}' in script
+    assert 'repos/{repo}/rulesets/{ruleset_id}' not in script
+    assert "active branch rules" in script
+    assert "branch protection or active branch rulesets require `pr-gate`" in docs_text
 
 
 def test_remote_release_readiness_checker_verifies_public_evidence_artifacts() -> None:
