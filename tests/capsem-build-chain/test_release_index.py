@@ -546,6 +546,48 @@ def test_release_index_check_rejects_profile_catalog_index_drift(tmp_path: Path)
     assert "health.json profile update latest target does not match catalog" in result.stderr
 
 
+def test_release_index_check_rejects_stale_human_index_state(tmp_path: Path) -> None:
+    manifest_path = _write_release_manifest(tmp_path)
+    profiles_dir = _write_profile_catalog(tmp_path)
+    dist = tmp_path / "target" / "release-channel"
+    _run_admin(
+        "assets",
+        "channel",
+        "build",
+        "--manifest",
+        f"file://{manifest_path}",
+        "--assets-dir",
+        str(manifest_path.parent),
+        "--profiles-dir",
+        str(profiles_dir),
+        "--channel",
+        "stable",
+        "--out-dir",
+        str(dist),
+        "--generated-at",
+        "2030-01-01T00:00:00Z",
+    )
+
+    index_path = dist / "index.html"
+    index_html = index_path.read_text(encoding="utf-8")
+    index_html = index_html.replace("1.4.1234567890", "1.4.0000000000")
+    index_path.write_text(index_html, encoding="utf-8")
+
+    result = _run_admin(
+        "assets",
+        "channel",
+        "check",
+        "--channel",
+        "stable",
+        "--dist",
+        str(dist),
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "asset channel index missing current binary 1.4.1234567890" in result.stderr
+
+
 def test_release_index_check_rejects_profile_catalog_url_drift(tmp_path: Path) -> None:
     manifest_path = _write_release_manifest(tmp_path)
     profiles_dir = _write_profile_catalog(tmp_path)

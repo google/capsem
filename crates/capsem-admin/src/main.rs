@@ -1295,6 +1295,7 @@ fn check_assets_channel(dist: &Path, channel: &str) -> Result<AssetsChannelCheck
     let health: serde_json::Value =
         serde_json::from_str(&health_content).context("parse asset channel health.json")?;
     validate_assets_channel_health(dist, channel, &manifest, &health)?;
+    validate_assets_channel_index_state(&index_html, channel, &manifest, &health)?;
     let headers = fs::read_to_string(&headers_path)
         .with_context(|| format!("read {}", headers_path.display()))?;
     let channel_manifest_header =
@@ -1348,6 +1349,38 @@ fn validate_assets_channel_index_html(index_html: &str, channel: &str) -> Result
     let channel_manifest = format!("/assets/{channel}/manifest.json");
     if !index_html.contains(&channel_manifest) {
         return Err(anyhow!("asset channel index missing {channel_manifest}"));
+    }
+    Ok(())
+}
+
+fn validate_assets_channel_index_state(
+    index_html: &str,
+    channel: &str,
+    manifest: &ManifestV2,
+    health: &serde_json::Value,
+) -> Result<()> {
+    let current_release = manifest
+        .assets
+        .releases
+        .get(&manifest.assets.current)
+        .ok_or_else(|| anyhow!("channel manifest current asset release is missing"))?;
+    let generated_at = require_json_string(health, &["generated_at"])?;
+    let profile_revision = require_json_string(health, &["profiles", "revision"])?;
+    let profile_source = require_json_string(health, &["profiles", "source"])?;
+    let channel_manifest = format!("/assets/{channel}/manifest.json");
+    let expected = [
+        ("current binary", manifest.binaries.current.as_str()),
+        ("current assets", manifest.assets.current.as_str()),
+        ("generated timestamp", generated_at.as_str()),
+        ("current asset release date", current_release.date.as_str()),
+        ("profile revision", profile_revision.as_str()),
+        ("profile catalog", profile_source.as_str()),
+        ("channel manifest", channel_manifest.as_str()),
+    ];
+    for (label, value) in expected {
+        if !index_html.contains(&escape_html(value)) {
+            return Err(anyhow!("asset channel index missing {label} {value}"));
+        }
     }
     Ok(())
 }

@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Fixed release-channel validation so a stale human `index.html` cannot pass
+  while `/health.json` and the channel manifest advertise newer release state.
 - Fixed the release-readiness docs and skills so the live activation order names
   the fail-closed remote `pr-gate` shape required before branch protection.
 - Fixed the remote release readiness checker so it rejects `pr-gate` workflows
