@@ -8,8 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
-- Fixed the install-layout test harness so it verifies service, gateway, and
-  tray helper binaries report the installed Capsem package version.
+- Fixed the remaining packaged admin and MCP helper binaries so they expose a
+  package-version surface for installed update cohort verification.
+- Fixed the install-layout test harness so it verifies every packaged host
+  binary reports the installed Capsem package version.
 - Fixed the gateway and tray helper binaries so they expose `--version` for
   installed update cohort verification.
 - Fixed the service update routes so ambiguous JSON bodies with extra fields are

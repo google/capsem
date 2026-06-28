@@ -20,6 +20,7 @@ use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 #[derive(Debug, Parser)]
 #[command(name = "capsem-admin")]
+#[command(version)]
 #[command(about = "Capsem profile and asset administration")]
 struct Cli {
     #[command(subcommand)]

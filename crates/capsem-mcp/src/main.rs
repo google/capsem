@@ -1046,6 +1046,14 @@ impl CapsemHandler {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    if std::env::args()
+        .skip(1)
+        .any(|arg| arg == "--version" || arg == "-V")
+    {
+        println!("capsem-mcp {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
     let home = std::env::var("HOME")?;
     let run_dir = resolve_run_dir(&home, std::env::var("CAPSEM_RUN_DIR").ok().as_deref());
 

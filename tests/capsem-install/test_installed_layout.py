@@ -84,23 +84,26 @@ class TestInstalledLayoutContract:
         assert result.returncode == 0
         assert "build" in result.stdout, f"no build hash: {result.stdout}"
 
-    def test_helper_versions_match_capsem(self, installed_layout):
-        """Companion helpers report the same package version as capsem."""
+    def test_all_installed_binaries_report_capsem_version(self, installed_layout):
+        """Every packaged host binary reports the installed package version."""
         result = run_capsem("version", timeout=5)
         assert result.returncode == 0, result.stderr
         expected_version = result.stdout.strip().split()[1]
 
-        for name in ["capsem-service", "capsem-gateway", "capsem-tray"]:
+        for name in BINARIES:
             helper = subprocess.run(
-                [str(INSTALL_DIR / name), "--version"],
+                [str(INSTALL_DIR / name), "--version"]
+                if name != "capsem"
+                else [str(INSTALL_DIR / name), "version"],
                 capture_output=True,
                 text=True,
                 timeout=5,
             )
+            output = helper.stdout.strip()
             assert helper.returncode == 0, (
                 f"{name} --version failed\nstdout={helper.stdout}\nstderr={helper.stderr}"
             )
-            assert helper.stdout.strip() == f"{name} {expected_version}"
+            assert expected_version in output, f"{name} version mismatch: {output}"
 
     def test_capsem_admin_help_works(self, installed_layout):
         """capsem-admin is installed and runnable without a service."""

@@ -424,6 +424,14 @@ fn extract_text(resp: JsonRpcResponse) -> Result<String, String> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    if std::env::args()
+        .skip(1)
+        .any(|arg| arg == "--version" || arg == "-V")
+    {
+        println!("capsem-mcp-builtin {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
     let _telemetry_guard = capsem_core::telemetry::init(capsem_core::telemetry::TelemetryConfig {
         service: "capsem-mcp-builtin",
         sink: capsem_core::telemetry::LogSink::Stderr,

@@ -32,7 +32,11 @@ use capsem_core::mcp::server_manager::McpServerManager;
 use capsem_core::mcp::types::McpServerDef;
 
 #[derive(Parser, Debug)]
-#[command(name = "capsem-mcp-aggregator", about = "MCP aggregator subprocess")]
+#[command(
+    name = "capsem-mcp-aggregator",
+    version,
+    about = "MCP aggregator subprocess"
+)]
 struct Args {
     /// PID of the parent process
     #[arg(long)]

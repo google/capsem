@@ -60,10 +60,10 @@ def _source_text(path: str) -> str:
     return (PROJECT_ROOT / path).read_text()
 
 
-def _command_attribute_block(source: str) -> str:
-    match = re.search(r"#\[command\((.*?)\)\]\nstruct Args", source, re.S)
-    assert match is not None
-    return match.group(1)
+def _command_attribute_prefix(source: str, struct_name: str = "Args") -> str:
+    marker = f"struct {struct_name}"
+    assert marker in source
+    return source[: source.index(marker)]
 
 
 def test_smoke_runs_full_doctor_without_fast_escape_hatch() -> None:
@@ -1867,12 +1867,22 @@ def test_binary_update_installer_scripts_replace_and_restart_full_helper_cohort(
 def test_helper_version_surfaces_support_installed_update_smoke() -> None:
     """Helper binaries must expose --version so update smokes can prove cohort drift."""
 
-    for path in [
-        "crates/capsem-gateway/src/main.rs",
-        "crates/capsem-tray/src/main.rs",
+    for path, struct_name in [
+        ("crates/capsem-admin/src/main.rs", "Cli"),
+        ("crates/capsem-mcp-aggregator/src/main.rs", "Args"),
+        ("crates/capsem-gateway/src/main.rs", "Args"),
+        ("crates/capsem-tray/src/main.rs", "Args"),
     ]:
-        command = _command_attribute_block(_source_text(path))
-        assert "version" in command, path
+        command = _command_attribute_prefix(_source_text(path), struct_name)
+        assert "#[command" in command and "version" in command, path
+
+    for path, binary in [
+        ("crates/capsem-mcp/src/main.rs", "capsem-mcp"),
+        ("crates/capsem-mcp-builtin/src/main.rs", "capsem-mcp-builtin"),
+    ]:
+        source = _source_text(path)
+        assert 'arg == "--version" || arg == "-V"' in source, path
+        assert f'println!("{binary} {{}}", env!("CARGO_PKG_VERSION"))' in source, path
 
 
 def test_desktop_shell_does_not_run_native_updater_or_background_https_check() -> None:
