@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Fixed live release-site smoke/readiness validation so stale `health.json`
+  summary state cannot advertise the wrong channel, publication state, release
+  URLs, or top-level binary/assets versions.
 - Fixed live release-site smoke/readiness validation so image freshness remains
   explicitly unpublished until image release metadata is actually added to the
   asset channel.

@@ -269,6 +269,16 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
 
     if health_data.get("schema") != "capsem.assets_channel.health.v1":
         failures.append("health schema mismatch")
+    if health_data.get("ok") is not True:
+        failures.append("health ok mismatch")
+    if health_data.get("channel") != channel:
+        failures.append("health channel mismatch")
+    if health_data.get("state") != "published":
+        failures.append("health state mismatch")
+    if health_urls.get("index") != "/index.html":
+        failures.append("health index URL mismatch")
+    if health_urls.get("health") != "/health.json":
+        failures.append("health health URL mismatch")
     if health_urls.get("manifest") != manifest_path:
         failures.append("health manifest URL mismatch")
     if health_urls.get("asset_base") != "/assets/releases":
@@ -299,6 +309,10 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
         failures.append("health profile catalog URL mismatch")
     if profile_update_source != profile_source:
         failures.append("health profile update source mismatch")
+    if health_binary.get("version") != current_binary:
+        failures.append("health binary version mismatch")
+    if health_assets.get("version") != current_assets:
+        failures.append("health asset version mismatch")
     if not isinstance(health_update_binary, dict):
         failures.append("health binary update metadata missing")
     else:

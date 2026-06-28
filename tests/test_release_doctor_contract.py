@@ -318,8 +318,15 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
         in workflow
     )
     assert 'health.get("schema") != "capsem.assets_channel.health.v1"' in workflow
+    assert "health ok mismatch" in workflow
+    assert "health channel mismatch" in workflow
+    assert "health state mismatch" in workflow
+    assert "health index URL mismatch" in workflow
+    assert "health health URL mismatch" in workflow
     assert 'health.get("urls", {}).get("manifest") != expected_manifest' in workflow
     assert 'health.get("urls", {}).get("asset_base") != "/assets/releases"' in workflow
+    assert "health binary version mismatch" in workflow
+    assert "health asset version mismatch" in workflow
     assert 'for key in ("binary", "assets")' in workflow
     assert "health binary update latest mismatch" in workflow
     assert "health binary update current mismatch" in workflow
@@ -904,6 +911,132 @@ def test_remote_readiness_rejects_profile_update_source_drift() -> None:
 
     assert not result.ok
     assert "health profile update source mismatch" in result.detail
+
+
+def test_remote_readiness_rejects_health_summary_drift() -> None:
+    checker = _readiness_checker_module()
+    catalog_url = "/profiles/releases/profiles-2030.0101.1/catalog.json"
+
+    checker.fetch_text = lambda _url: checker.FetchText(
+        text=(
+            "1.4.0 2030.0101.1 2030-01-01 "
+            f"2030-01-01T00:00:00Z profiles-2030.0101.1 {catalog_url} "
+            "/assets/stable/manifest.json"
+        )
+    )
+    checker.fetch_json = lambda url: checker.FetchJson(
+        data={
+            "schema": "capsem.assets_channel.health.v1",
+            "ok": False,
+            "channel": "beta",
+            "state": "draft",
+            "generated_at": "2030-01-01T00:00:00Z",
+            "urls": {
+                "index": "/stale.html",
+                "health": "/stale-health.json",
+                "manifest": "/assets/stable/manifest.json",
+                "asset_base": "/assets/releases",
+                "profile_catalog": catalog_url,
+            },
+            "current": {"binary": "1.4.0", "assets": "2030.0101.1"},
+            "asset_releases": [
+                {"version": "2030.0101.1", "date": "2030-01-01"}
+            ],
+            "binary": {
+                "version": "1.3.0",
+                "state": "current",
+                "files": [],
+            },
+            "assets": {
+                "version": "2030.0101.0",
+                "state": "current",
+                "compatibility": {"binary": "1.4.0", "min_binary": "1.4.0"},
+                "requires_newer": {"binary": False},
+                "files": [],
+            },
+            "profiles": {
+                "revision": "profiles-2030.0101.1",
+                "source": catalog_url,
+                "hash": "1" * 64,
+                "compatibility": {
+                    "binary": "current",
+                    "assets": "current",
+                    "min_binary": "1.4.0",
+                    "min_assets": "2030.0101.1",
+                },
+                "requires_newer": {"binary": False, "assets": False},
+            },
+            "updates": {
+                "binary": {
+                    "latest": "1.4.0",
+                    "current": "1.4.0",
+                    "state": "current",
+                    "source": "manifest.binaries.current",
+                    "files": [],
+                },
+                "assets": {
+                    "latest": "2030.0101.1",
+                    "current": "2030.0101.1",
+                    "state": "current",
+                    "source": "manifest.assets.current",
+                    "manifest": "/assets/stable/manifest.json",
+                    "asset_base": "/assets/releases",
+                    "compatibility": {"binary": "1.4.0", "min_binary": "1.4.0"},
+                    "requires_newer": {"binary": False},
+                },
+                "profiles": {
+                    "latest": "profiles-2030.0101.1",
+                    "current": "profiles-2030.0101.1",
+                    "state": "current",
+                    "source": catalog_url,
+                    "hash": "1" * 64,
+                    "compatibility": {
+                        "binary": "current",
+                        "assets": "current",
+                        "min_binary": "1.4.0",
+                        "min_assets": "2030.0101.1",
+                    },
+                    "requires_newer": {"binary": False, "assets": False},
+                },
+                "images": {
+                    "latest": None,
+                    "current": None,
+                    "state": "not_published",
+                    "source": "not_in_asset_channel",
+                },
+            },
+            "evidence": {
+                "vm_oboms": [],
+                "host_sboms": [],
+                "host_binary_files": [],
+                "attestations": [],
+            },
+        }
+        if url.endswith("/health.json")
+        else {
+            "format": 2,
+            "assets": {"current": "2030.0101.1"},
+            "binaries": {"current": "1.4.0"},
+        }
+    )
+    checker.fetch_headers = lambda url: checker.FetchHeaders(
+        headers={
+            "cache-control": "public, max-age=31536000, immutable"
+            if "/profiles/releases/" in url
+            else "no-cache, must-revalidate"
+        }
+    )
+
+    result = checker.check_release_site_contract("https://release.capsem.org", "stable")
+
+    assert not result.ok
+    assert "health ok mismatch" in result.detail
+    assert "health channel mismatch" in result.detail
+    assert "health state mismatch" in result.detail
+    assert "health index URL mismatch" in result.detail
+    assert "health health URL mismatch" in result.detail
+    assert "health binary version mismatch" in result.detail
+    assert "health asset version mismatch" in result.detail
 
 
 def test_remote_readiness_rejects_profile_update_metadata_drift() -> None:
