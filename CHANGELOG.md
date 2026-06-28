@@ -57,6 +57,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   against public release.capsem.org asset URLs.
 - Added release-doctor coverage that binary tag releases update release-channel
   metadata without rebuilding or publishing VM asset payloads.
+- Added release-doctor coverage that package update scripts replace and restart
+  the full app/service/gateway/tray helper cohort together.
 - Proxied update status through the gateway so UI, tray, and TUI surfaces can
   read release-channel freshness state.
 - Published profile catalog artifacts under the asset channel with portable

@@ -764,6 +764,64 @@ def test_installer_codesigns_helpers_with_stable_identifiers() -> None:
             assert identifier in script
 
 
+def test_binary_update_installer_scripts_replace_and_restart_full_helper_cohort() -> None:
+    preinstall = (PROJECT_ROOT / "scripts" / "pkg-scripts" / "preinstall").read_text()
+    postinstall = (PROJECT_ROOT / "scripts" / "pkg-scripts" / "postinstall").read_text()
+    deb_postinst = (PROJECT_ROOT / "scripts" / "deb-postinst.sh").read_text()
+    required_bins = [
+        "capsem",
+        "capsem-service",
+        "capsem-process",
+        "capsem-tui",
+        "capsem-mcp",
+        "capsem-mcp-aggregator",
+        "capsem-mcp-builtin",
+        "capsem-gateway",
+        "capsem-tray",
+        "capsem-admin",
+    ]
+    stale_companions = [
+        "capsem-service",
+        "capsem-gateway",
+        "capsem-tray",
+        "capsem-process",
+        "capsem-mcp-aggregator",
+        "capsem-mcp-builtin",
+    ]
+
+    assert 'launchctl bootout "gui/$(id -u "$USER")" "$PLIST"' in preinstall
+    assert "launchctl unload" in preinstall
+    for name in stale_companions:
+        assert name in preinstall
+        assert f'pkill -9 -f "$CAPSEM_DIR/bin/$name"' in preinstall
+    assert "pkill -9 -x capsem-app" in preinstall
+    assert 'rm -rf "$USER_HOME/Applications/Capsem.app"' in preinstall
+    assert "rm -rf /Applications/Capsem.app" in preinstall
+    assert "rm -rf /usr/local/share/capsem" in preinstall
+
+    for script in (postinstall, deb_postinst):
+        for name in required_bins:
+            assert name in script
+        assert "update --assets" in script
+        assert "event=assets_hydrated" in script
+
+    assert 'src="$PKG_SHARE/bin/$bin"' in postinstall
+    assert 'cp "$src" "$CAPSEM_DIR/bin/$bin"' in postinstall
+    assert 'su "$USER" -c "$CAPSEM_DIR/bin/capsem install"' in postinstall
+    assert "event=service_registered" in postinstall
+    assert 'grep -q "Service:   ok"' in postinstall
+    assert 'grep -q "Gateway:   ok"' in postinstall
+    assert 'su "$USER" -c "open /Applications/Capsem.app"' in postinstall
+    assert "capsem-tray &" not in postinstall
+    assert "event=service_not_ready" in postinstall
+
+    assert 'ln -sf "/usr/bin/$bin" "$CAPSEM_DIR/bin/$bin"' in deb_postinst
+    assert 'su "$TARGET_USER" -c "XDG_RUNTIME_DIR=$XDG_DIR $CAPSEM_DIR/bin/capsem install"' in (
+        deb_postinst
+    )
+    assert "event=service_install_invoked" in deb_postinst
+
+
 def test_desktop_shell_does_not_run_native_updater_or_background_https_check() -> None:
     """The GUI must not perform hidden native updater HTTPS work on startup.
 
