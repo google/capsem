@@ -1739,6 +1739,7 @@ fn validate_assets_channel_health(
             ));
         }
     }
+    let mut saw_host_sbom_attestation = false;
     let mut saw_vm_asset_attestation = false;
     for attestation in attestations {
         let attestation_name = attestation
@@ -1762,6 +1763,7 @@ fn validate_assets_channel_health(
             ));
         }
         if attestation_name == "github_attestations_host_sbom" {
+            saw_host_sbom_attestation = true;
             let predicate_url = attestation
                 .get("predicate_url")
                 .and_then(|value| value.as_str())
@@ -1815,6 +1817,11 @@ fn validate_assets_channel_health(
                 ));
             }
         }
+    }
+    if !host_sboms.is_empty() && !saw_host_sbom_attestation {
+        return Err(anyhow!(
+            "health.json host SBOM attestation evidence missing"
+        ));
     }
     if !current_asset_subjects.is_empty() && !saw_vm_asset_attestation {
         return Err(anyhow!("health.json VM asset attestation evidence missing"));
@@ -7136,6 +7143,49 @@ decision = "block"
 
         assert!(
             format!("{error:#}").contains("health.json VM asset attestation evidence missing"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn assets_channel_check_rejects_missing_host_sbom_attestation() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
+        let out_dir = temp.path().join("target/release-channel");
+        build_assets_channel(
+            &file_url(&manifest_path),
+            &temp.path().join("assets"),
+            &repo_config_profiles_dir(),
+            "stable",
+            &out_dir,
+            "2030-01-01T00:00:00Z",
+            None,
+        )
+        .expect("asset channel builds");
+
+        let health_path = out_dir.join("health.json");
+        let mut health: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&health_path).expect("health"))
+                .expect("health json");
+        let attestations = health["evidence"]["attestations"]
+            .as_array()
+            .expect("attestations")
+            .iter()
+            .filter(|attestation| {
+                attestation.get("name").and_then(|name| name.as_str())
+                    != Some("github_attestations_host_sbom")
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        health["evidence"]["attestations"] = serde_json::Value::Array(attestations);
+        fs::write(&health_path, serde_json::to_string_pretty(&health).unwrap())
+            .expect("write health without host SBOM attestation");
+
+        let error = check_assets_channel(&out_dir, "stable")
+            .expect_err("missing host SBOM attestation rejected");
+
+        assert!(
+            format!("{error:#}").contains("health.json host SBOM attestation evidence missing"),
             "{error:#}"
         );
     }
