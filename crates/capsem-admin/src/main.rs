@@ -1139,6 +1139,14 @@ fn record_binary_release_metadata(
             "binary release metadata must include a .pkg or .deb artifact"
         ));
     }
+    if let Some(file) = files.iter().find(|file| {
+        is_host_package_file(&file.name) && !host_package_name_matches_version(&file.name, version)
+    }) {
+        return Err(anyhow!(
+            "binary release package artifact name must match version {version}: {}",
+            file.name
+        ));
+    }
     manifest.binaries.current = version.to_string();
     manifest.binaries.releases.insert(
         version.to_string(),
@@ -3008,6 +3016,11 @@ fn is_host_sbom_file(name: &str) -> bool {
 
 fn is_host_package_file(name: &str) -> bool {
     name.ends_with(".pkg") || name.ends_with(".deb")
+}
+
+fn host_package_name_matches_version(name: &str, version: &str) -> bool {
+    name == format!("Capsem-{version}.pkg")
+        || (name.starts_with(&format!("Capsem_{version}_")) && name.ends_with(".deb"))
 }
 
 fn escape_html(value: &str) -> String {
@@ -6842,6 +6855,33 @@ decision = "block"
 
         assert!(
             format!("{error:#}").contains("binary release artifact is empty"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn assets_channel_record_binary_rejects_package_version_mismatch() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
+        let artifacts_dir = temp.path().join("release-artifacts");
+        fs::create_dir_all(&artifacts_dir).expect("artifacts dir");
+        let pkg_path = artifacts_dir.join("Capsem-1.4.0000000000.pkg");
+        let sbom_path = artifacts_dir.join("capsem-sbom.spdx.json");
+        fs::write(&pkg_path, b"pkg bytes").expect("pkg");
+        fs::write(&sbom_path, br#"{"spdxVersion":"SPDX-2.3"}"#).expect("sbom");
+
+        let error = record_binary_release_metadata(
+            &manifest_path,
+            "1.4.1234567890",
+            None,
+            &[pkg_path, sbom_path],
+            "2030-02-03",
+        )
+        .expect_err("mismatched package version rejected");
+
+        assert!(
+            format!("{error:#}")
+                .contains("binary release package artifact name must match version"),
             "{error:#}"
         );
     }
