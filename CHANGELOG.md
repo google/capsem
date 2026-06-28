@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Fixed the installation skill so it documents the Linux `.deb` pre-install
+  restart rail that stops stale helpers before package replacement.
 - Fixed Linux package self-updates so the repacked `.deb` carries a pre-install
   shutdown script for stale service, gateway, tray, and helper processes before
   binary replacement.

@@ -73,6 +73,20 @@ records manifest origin/hash in service status, installs/restarts service
 files, and writes timestamped install logs. It does not run an AI-provider setup
 wizard and it does not create a user policy file.
 
+## Package maintainer scripts
+
+- macOS `.pkg`: `scripts/pkg-scripts/preinstall` unloads the LaunchAgent, kills
+  stale package-owned helpers, removes old app/share payloads, then
+  `scripts/pkg-scripts/postinstall` copies binaries, hydrates assets, registers
+  the service, waits for service/gateway readiness, and opens the app.
+- Linux `.deb`: `scripts/deb-preinst.sh` is packaged as `DEBIAN/preinst`. It
+  runs `systemctl --user stop capsem.service` when a user systemd session is
+  available, then kills the stale helper cohort before package replacement so
+  old service/gateway/tray/process binaries cannot survive from old inodes.
+  `scripts/deb-postinst.sh` symlinks the packaged binaries into
+  `~/.capsem/bin`, hydrates assets, and invokes `capsem install` to register or
+  restart the user service.
+
 ## Self-update (update.rs)
 
 - `read_cached_update_notice()` -> sync file read on every command
