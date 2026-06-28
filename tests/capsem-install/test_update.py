@@ -276,6 +276,17 @@ url = "https://release.capsem.org/assets/releases/2030.0101.1/x86_64-rootfs.erof
     )
 
 
+def _write_installed_asset_manifest(capsem_home: Path, current_assets: str) -> None:
+    manifest = json.loads((REPO_ROOT / "assets" / "manifest.json").read_text())
+    manifest["assets"]["current"] = current_assets
+    assets_dir = capsem_home / "assets"
+    assets_dir.mkdir(parents=True)
+    (assets_dir / "manifest.json").write_text(
+        json.dumps(manifest, sort_keys=True, separators=(",", ":")),
+        encoding="utf-8",
+    )
+
+
 def _fresh_capsem_binary() -> Path | None:
     bin_src = Path(os.environ.get("CAPSEM_BIN_SRC", REPO_ROOT / "target" / "debug"))
     binary = bin_src / "capsem"
@@ -435,6 +446,120 @@ def test_update_check_reports_binary_profile_asset_and_image_tracks(
     assert "VM image update track not published." in result.stdout
     assert "Profile catalog update applied" not in result.stdout
     assert not (capsem_home / "profiles" / "catalog-origin.json").exists()
+
+
+def test_binary_update_state_does_not_claim_asset_update(
+    tmp_path: Path,
+    installed_layout,
+) -> None:
+    capsem_home = tmp_path / ".capsem"
+    _write_installed_asset_manifest(capsem_home, "2026.0627.8")
+    fresh_capsem = _fresh_capsem_binary()
+    source_capsem = fresh_capsem if fresh_capsem is not None else installed_layout / "capsem"
+    capsem = _copy_user_dir_capsem(source_capsem, capsem_home)
+    health = {
+        "schema": "capsem.assets_channel.health.v1",
+        "updates": {
+            "binary": {
+                "latest": "99.99.99",
+                "current": "99.99.98",
+                "files": [],
+            },
+            "assets": {
+                "latest": "2026.0627.8",
+                "current": "2026.0627.8",
+            },
+            "images": {
+                "latest": None,
+                "state": "not_published",
+            },
+        },
+    }
+    body = json.dumps(health, sort_keys=True, separators=(",", ":")).encode()
+
+    with _serve_health(body) as health_url:
+        result = subprocess.run(
+            [str(capsem), "update", "--check"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env={
+                **os.environ,
+                "CAPSEM_HOME": str(capsem_home),
+                "CAPSEM_RUN_DIR": str(capsem_home / "run"),
+                "CAPSEM_RELEASE_HEALTH_URL": health_url,
+            },
+        )
+
+    assert result.returncode == 0, (
+        f"capsem update --check failed\nstdout={result.stdout}\nstderr={result.stderr}"
+    )
+    assert "Binary update available" in result.stdout
+    assert "VM asset update available" not in result.stdout
+    assert "VM asset state unknown" not in result.stdout
+
+    cache = json.loads((capsem_home / "update-check.json").read_text(encoding="utf-8"))
+    assert cache["update_available"] is True
+    assert cache["assets_update_available"] is False
+    assert cache["latest_assets"] == "2026.0627.8"
+    assert cache["current_assets"] == "2026.0627.8"
+
+
+def test_asset_update_state_does_not_claim_binary_update(
+    tmp_path: Path,
+    installed_layout,
+) -> None:
+    capsem_home = tmp_path / ".capsem"
+    _write_installed_asset_manifest(capsem_home, "2026.0627.8")
+    fresh_capsem = _fresh_capsem_binary()
+    source_capsem = fresh_capsem if fresh_capsem is not None else installed_layout / "capsem"
+    capsem = _copy_user_dir_capsem(source_capsem, capsem_home)
+    health = {
+        "schema": "capsem.assets_channel.health.v1",
+        "updates": {
+            "binary": {
+                "latest": "0.0.0",
+                "current": "0.0.0",
+                "files": [],
+            },
+            "assets": {
+                "latest": "2030.0101.1",
+                "current": "2026.0627.8",
+            },
+            "images": {
+                "latest": None,
+                "state": "not_published",
+            },
+        },
+    }
+    body = json.dumps(health, sort_keys=True, separators=(",", ":")).encode()
+
+    with _serve_health(body) as health_url:
+        result = subprocess.run(
+            [str(capsem), "update", "--check"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env={
+                **os.environ,
+                "CAPSEM_HOME": str(capsem_home),
+                "CAPSEM_RUN_DIR": str(capsem_home / "run"),
+                "CAPSEM_RELEASE_HEALTH_URL": health_url,
+            },
+        )
+
+    assert result.returncode == 0, (
+        f"capsem update --check failed\nstdout={result.stdout}\nstderr={result.stderr}"
+    )
+    assert "Capsem binary is current" in result.stdout
+    assert "Binary update available" not in result.stdout
+    assert "VM asset update available: 2026.0627.8 -> 2030.0101.1." in result.stdout
+
+    cache = json.loads((capsem_home / "update-check.json").read_text(encoding="utf-8"))
+    assert cache["update_available"] is False
+    assert cache["assets_update_available"] is True
+    assert cache["latest_assets"] == "2030.0101.1"
+    assert cache["current_assets"] == "2026.0627.8"
 
 
 def test_update_reports_profile_catalog_without_applying_by_default(
