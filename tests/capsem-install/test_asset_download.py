@@ -20,7 +20,8 @@ import os
 import platform
 import subprocess
 import threading
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -174,6 +175,55 @@ def _run(env: dict, *args: str) -> subprocess.CompletedProcess:
         timeout=30,
         env={**os.environ, **env},
     )
+
+
+@contextmanager
+def _serve_interrupted_asset_channel(
+    manifest: dict,
+    blobs: dict[str, bytes],
+    interrupted_path: str,
+):
+    payloads = {
+        "/assets/stable/manifest.json": json.dumps(manifest).encode("utf-8"),
+        **blobs,
+    }
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            path = self.path.split("?", maxsplit=1)[0]
+            payload = payloads.get(path)
+            if payload is None:
+                self.send_error(404)
+                return
+            content_type = (
+                "application/json" if path.endswith(".json") else "application/octet-stream"
+            )
+            if path == interrupted_path:
+                self.send_response(200)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(payload) + 32))
+                self.end_headers()
+                self.wfile.write(payload[: max(1, len(payload) // 2)])
+                self.wfile.flush()
+                self.close_connection = True
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, format, *args):
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}"
+    finally:
+        server.shutdown()
+        server.server_close()
 
 
 def test_update_assets_downloads_missing(tmp_path: Path, http_fixture, installed_layout):
@@ -435,6 +485,64 @@ def test_update_assets_rejects_incomplete_remote_manifest_without_clobbering_old
         target = assets / arch / _hashed_asset_name(name, blob)
         assert target.exists(), f"previous working asset was removed: {target}"
         assert target.read_bytes() == blob
+
+
+def test_update_assets_interrupted_remote_blob_keeps_previous_manifest_and_cleans_tmp(
+    tmp_path: Path,
+    installed_layout,
+):
+    arch = _arch()
+    old_files = {
+        "vmlinuz": b"old-stream-kernel",
+        "initrd.img": b"old-stream-initrd",
+        "rootfs.erofs": b"old-stream-rootfs",
+    }
+    new_files = {
+        "vmlinuz": b"new-stream-kernel" * 1024,
+        "initrd.img": b"new-stream-initrd" * 1024,
+        "rootfs.erofs": b"new-stream-rootfs" * 1024,
+    }
+    channel_manifest = _make_manifest(arch, new_files, NEW_ASSET_VERSION)
+    interrupted_path = f"/assets/releases/{NEW_ASSET_VERSION}/{arch}-rootfs.erofs"
+    blobs = {
+        f"/assets/releases/{NEW_ASSET_VERSION}/{arch}-{name}": blob
+        for name, blob in new_files.items()
+    }
+
+    capsem_home = tmp_path / ".capsem"
+    assets = capsem_home / "assets"
+
+    with _serve_interrupted_asset_channel(channel_manifest, blobs, interrupted_path) as base_url:
+        channel_manifest_url = f"{base_url}/assets/stable/manifest.json"
+        old_origin = {
+            "schema": "capsem.manifest_origin.v1",
+            "origin": "package",
+            "source": channel_manifest_url,
+            "packaged_at": "2026-06-16T00:00:00Z",
+        }
+        old_manifest = _write_installed_manifest_and_assets(
+            assets,
+            arch,
+            old_files,
+            asset_version=ASSET_VERSION,
+            origin=old_origin,
+        )
+
+        result = _run({"CAPSEM_HOME": str(capsem_home)}, "update", "--assets")
+
+    assert result.returncode != 0, "interrupted asset stream must fail the update"
+    err = (result.stdout + result.stderr).lower()
+    assert "asset refresh failed" in err, err
+    assert "restored previous installed manifest" in err, err
+    assert json.loads((assets / "manifest.json").read_text()) == old_manifest
+    assert json.loads((assets / "manifest-origin.json").read_text()) == old_origin
+
+    arch_assets = assets / arch
+    for name, blob in old_files.items():
+        target = arch_assets / _hashed_asset_name(name, blob)
+        assert target.exists(), f"previous working asset was removed: {target}"
+        assert target.read_bytes() == blob
+    assert list(arch_assets.glob("*.tmp")) == []
 
 
 def test_update_assets_rejects_bare_asset_base_path(tmp_path: Path, installed_layout):
