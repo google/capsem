@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   evidence instead of passing with an omitted predicate URL.
 - Fixed the release-process and asset-pipeline skills so they preserve the VM
   asset attestation predicate URL requirement for published VM OBOM evidence.
+- Fixed the CI/release documentation so it preserves the VM asset attestation
+  predicate URL requirement for published VM OBOM evidence.
 - Fixed release-channel validation, live smoke, and remote readiness so host
   SBOM evidence must stay on the canonical `capsem-sbom.spdx.json` row and the
   host SBOM attestation must point at that evidence.

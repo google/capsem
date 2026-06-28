@@ -95,7 +95,9 @@ policy.
 It also resolves published host SBOM and VM OBOM evidence artifacts, verifies
 their advertised hashes and sizes, validates their SPDX 2.3 or CycloneDX
 document shape, and validates attestation subjects and predicate URLs against
-the published evidence lists. It verifies live
+the published evidence lists. VM asset attestations are incomplete unless
+`github_attestations_vm_assets` is present and its `predicate_url` points at the
+published VM OBOM evidence for the current asset release. It verifies live
 `Cache-Control` headers too: mutable release-channel
 pointers must stay fresh, while immutable asset and profile artifacts must keep
 long-lived immutable caching. If the local checkout has unpublished commits,
@@ -348,7 +350,9 @@ until an image release rail is added to the asset channel. It resolves published
 host SBOM and VM OBOM evidence artifacts from `health.json`, verifies their
 advertised hashes and sizes, validates their SPDX 2.3 or CycloneDX document
 shape, and validates attestation subjects and predicate URLs against the
-published evidence lists.
+published evidence lists. VM asset attestations are incomplete unless
+`github_attestations_vm_assets` is present and its `predicate_url` points at the
+published VM OBOM evidence for the current asset release.
 It also verifies public `Cache-Control` headers: mutable release-channel
 pointers (`/`, `/health.json`, and `/assets/<channel>/manifest.json`) must stay
 `no-cache, must-revalidate`, while immutable asset and profile release

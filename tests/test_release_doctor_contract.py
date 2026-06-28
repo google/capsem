@@ -472,6 +472,17 @@ def test_asset_channel_deploy_smoke_verifies_public_evidence_artifacts() -> None
     assert "verifies their advertised hashes and sizes" in docs_text
     assert "validates their SPDX 2.3 or CycloneDX document shape" in docs_text
     assert "validates attestation subjects and predicate URLs" in docs_text
+    assert "VM asset attestations are incomplete unless" in docs_text
+    assert "`github_attestations_vm_assets`" in docs_text
+    assert "`predicate_url` points at the published VM OBOM evidence" in docs_text
+
+
+def test_docs_preserve_vm_obom_attestation_predicate_contract() -> None:
+    docs_text = " ".join(_source_text("docs/src/content/docs/development/ci.md").split())
+
+    assert "VM asset attestations are incomplete unless" in docs_text
+    assert "`github_attestations_vm_assets`" in docs_text
+    assert "`predicate_url` points at the published VM OBOM evidence" in docs_text
 
 
 def test_release_channel_cache_header_documentation_matches_deploy_smoke() -> None:
