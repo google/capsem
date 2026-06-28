@@ -1659,6 +1659,7 @@ def test_remote_readiness_rejects_asset_file_metadata_drift() -> None:
                     {
                         "name": "github_attestations_vm_assets",
                         "scope": "vm_assets",
+                        "workflow": ".github/workflows/release-assets.yaml",
                         "predicate_type": "https://slsa.dev/provenance/v1",
                         "predicate_url": obom_path,
                         "verify_command": "gh attestation verify <subject-url> --owner google",
@@ -1883,7 +1884,8 @@ def test_remote_readiness_rejects_host_binary_file_metadata_drift() -> None:
                 "attestations": [
                     {
                         "name": "github_attestations_host_sbom",
-                        "scope": "host_binaries",
+                        "scope": "host_sbom",
+                        "workflow": ".github/workflows/release.yaml",
                         "predicate_type": "https://spdx.dev/Document/v2.3",
                         "predicate_url": sbom_url,
                         "verify_command": "gh attestation verify <subject-url> --owner google",
@@ -3287,6 +3289,8 @@ def test_remote_release_readiness_checker_verifies_public_evidence_artifacts() -
             "attestations": [
                 {
                     "name": "github_attestations_vm_assets",
+                    "scope": "vm_assets",
+                    "workflow": ".github/workflows/release-assets.yaml",
                     "predicate_type": "https://slsa.dev/provenance/v1",
                     "predicate_url": None,
                     "verify_command": "gh attestation verify <subject-url> --owner google",
@@ -3294,6 +3298,8 @@ def test_remote_release_readiness_checker_verifies_public_evidence_artifacts() -
                 },
                 {
                     "name": "github_attestations_host_sbom",
+                    "scope": "host_sbom",
+                    "workflow": ".github/workflows/release.yaml",
                     "predicate_type": "https://spdx.dev/Document/v2.3",
                     "predicate_url": sbom_url,
                     "verify_command": "gh attestation verify <subject-url> --owner google",
@@ -3363,6 +3369,7 @@ def test_remote_readiness_allows_first_channel_bootstrap_without_host_evidence()
                 {
                     "name": "github_attestations_vm_assets",
                     "scope": "vm_assets",
+                    "workflow": ".github/workflows/release-assets.yaml",
                     "predicate_type": "https://slsa.dev/provenance/v1",
                     "predicate_url": obom_path,
                     "verify_command": "gh attestation verify <subject-url> --owner google",
@@ -3452,6 +3459,7 @@ def test_release_channel_smoke_and_remote_readiness_validate_matching_attestatio
                 {
                     "name": "github_attestations_vm_assets",
                     "scope": "vm_assets",
+                    "workflow": ".github/workflows/release-assets.yaml",
                     "predicate_type": "https://slsa.dev/provenance/v1",
                     "predicate_url": obom_path,
                     "verify_command": "gh attestation verify <subject-url> --owner google",
@@ -3459,7 +3467,8 @@ def test_release_channel_smoke_and_remote_readiness_validate_matching_attestatio
                 },
                 {
                     "name": "github_attestations_host_sbom",
-                    "scope": "host_binaries",
+                    "scope": "host_sbom",
+                    "workflow": ".github/workflows/release.yaml",
                     "predicate_type": "https://spdx.dev/Document/v2.3",
                     "predicate_url": sbom_url,
                     "verify_command": "gh attestation verify <subject-url> --owner google",
@@ -3488,6 +3497,62 @@ def test_release_channel_smoke_and_remote_readiness_validate_matching_attestatio
     assert '"VM OBOM evidence"' in workflow
     assert '"host SBOM evidence"' in workflow
     assert "missing from {predicate_label}" in workflow
+
+
+def test_remote_readiness_rejects_attestation_rail_drift() -> None:
+    module = _readiness_checker_module()
+    workflow = _workflow_text("release-channel.yaml")
+    obom_bytes = b'{"bomFormat":"CycloneDX"}'
+    obom_path = "/assets/releases/2030.0101.1/arm64-obom.cdx.json"
+    obom_url = f"https://release.capsem.test{obom_path}"
+    module.fetch_bytes = lambda url: module.FetchBytes(
+        obom_bytes if url == obom_url else b"",
+        None if url == obom_url else f"unexpected fetch {url}",
+    )
+    health = {
+        "assets": {
+            "files": [
+                {
+                    "arch": "arm64",
+                    "logical_name": "obom.cdx.json",
+                    "url": obom_path,
+                    "hash": module.blake3.blake3(obom_bytes).hexdigest(),
+                    "size": len(obom_bytes),
+                }
+            ]
+        },
+        "evidence": {
+            "vm_oboms": [
+                {
+                    "arch": "arm64",
+                    "logical_name": "obom.cdx.json",
+                    "url": obom_path,
+                    "hash": module.blake3.blake3(obom_bytes).hexdigest(),
+                    "size": len(obom_bytes),
+                }
+            ],
+            "host_sboms": [],
+            "host_binary_files": [],
+            "attestations": [
+                {
+                    "name": "github_attestations_vm_assets",
+                    "scope": "host_binaries",
+                    "workflow": ".github/workflows/release.yaml",
+                    "predicate_type": "https://slsa.dev/provenance/v1",
+                    "verify_command": "gh attestation verify <subject-url> --owner google",
+                    "subjects": [obom_path],
+                }
+            ],
+        },
+    }
+
+    failures = module.check_release_evidence("https://release.capsem.test", health)
+
+    assert "health evidence github_attestations_vm_assets scope mismatch" in failures
+    assert "health evidence github_attestations_vm_assets workflow mismatch" in failures
+    assert "attestation_expected_rails" in workflow
+    assert "health evidence {attestation_name} scope mismatch" in workflow
+    assert "health evidence {attestation_name} workflow mismatch" in workflow
 
 
 def test_remote_readiness_rejects_host_sbom_attestation_subjects_missing_package() -> None:
@@ -3532,7 +3597,8 @@ def test_remote_readiness_rejects_host_sbom_attestation_subjects_missing_package
             "attestations": [
                 {
                     "name": "github_attestations_host_sbom",
-                    "scope": "host_binaries",
+                    "scope": "host_sbom",
+                    "workflow": ".github/workflows/release.yaml",
                     "predicate_type": "https://spdx.dev/Document/v2.3",
                     "predicate_url": sbom_url,
                     "verify_command": "gh attestation verify <subject-url> --owner google",

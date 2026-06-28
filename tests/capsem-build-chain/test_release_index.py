@@ -851,6 +851,49 @@ def test_release_index_check_rejects_mismatched_vm_attestation_predicate_evidenc
     ) in result.stderr
 
 
+def test_release_index_check_rejects_attestation_rail_drift(tmp_path: Path) -> None:
+    manifest_path = _write_release_manifest(tmp_path)
+    dist = tmp_path / "target" / "release-channel"
+    _run_admin(
+        "assets",
+        "channel",
+        "build",
+        "--manifest",
+        f"file://{manifest_path}",
+        "--assets-dir",
+        str(manifest_path.parent),
+        "--channel",
+        "stable",
+        "--out-dir",
+        str(dist),
+    )
+
+    health_path = dist / "health.json"
+    health = json.loads(health_path.read_text(encoding="utf-8"))
+    vm_attestation = next(
+        item
+        for item in health["evidence"]["attestations"]
+        if item["name"] == "github_attestations_vm_assets"
+    )
+    vm_attestation["scope"] = "host_binaries"
+    vm_attestation["workflow"] = ".github/workflows/release.yaml"
+    health_path.write_text(json.dumps(health, indent=2) + "\n", encoding="utf-8")
+
+    result = _run_admin(
+        "assets",
+        "channel",
+        "check",
+        "--channel",
+        "stable",
+        "--dist",
+        str(dist),
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "health.json VM asset attestation scope mismatch" in result.stderr
+
+
 def test_release_index_check_rejects_missing_host_sbom_evidence(tmp_path: Path) -> None:
     manifest_path = _write_release_manifest(tmp_path)
     dist = tmp_path / "target" / "release-channel"

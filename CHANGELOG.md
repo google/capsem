@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Fixed release-channel validation, live smoke, and remote readiness so
+  attestation evidence scope and workflow metadata cannot drift from the
+  canonical host binary, host SBOM, or VM asset release rails.
 - Fixed live release-site smoke/readiness validation so the immutable profile
   catalog artifact's state, current binary/assets targets, and compatibility
   fields cannot drift from `health.json` and the active channel manifest.

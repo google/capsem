@@ -623,6 +623,14 @@ def check_release_evidence(site: str, health: dict[str, Any]) -> list[str]:
             failures.append("health evidence attestations entry is not an object")
             continue
         attestation_name = attestation.get("name")
+        expected_rail = attestation_expected_rails().get(attestation_name)
+        if expected_rail is not None:
+            scope = attestation.get("scope")
+            if scope != expected_rail["scope"]:
+                failures.append(f"health evidence {attestation_name} scope mismatch")
+            workflow = attestation.get("workflow")
+            if workflow != expected_rail["workflow"]:
+                failures.append(f"health evidence {attestation_name} workflow mismatch")
         if attestation_name == "github_attestations_host_sbom":
             saw_host_sbom_attestation = True
         predicate_type = attestation.get("predicate_type")
@@ -660,6 +668,23 @@ def check_release_evidence(site: str, health: dict[str, Any]) -> list[str]:
         failures.append(f"health evidence host SBOM attestation subjects missing {subject}")
 
     return failures
+
+
+def attestation_expected_rails() -> dict[str, dict[str, str]]:
+    return {
+        "github_attestations_host": {
+            "scope": "host_binaries",
+            "workflow": ".github/workflows/release.yaml",
+        },
+        "github_attestations_host_sbom": {
+            "scope": "host_sbom",
+            "workflow": ".github/workflows/release.yaml",
+        },
+        "github_attestations_vm_assets": {
+            "scope": "vm_assets",
+            "workflow": ".github/workflows/release-assets.yaml",
+        },
+    }
 
 
 def attestation_predicate_evidence_urls(

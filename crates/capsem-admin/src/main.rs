@@ -1792,6 +1792,30 @@ fn validate_assets_channel_health(
             .get("name")
             .and_then(|value| value.as_str())
             .ok_or_else(|| anyhow!("health.json attestation name missing"))?;
+        if let Some((expected_scope, expected_workflow)) =
+            expected_attestation_rail(attestation_name)
+        {
+            let scope = attestation
+                .get("scope")
+                .and_then(|value| value.as_str())
+                .ok_or_else(|| anyhow!("health.json attestation scope missing"))?;
+            if scope != expected_scope {
+                return Err(anyhow!(
+                    "health.json {} scope mismatch",
+                    attestation_rail_label(attestation_name)
+                ));
+            }
+            let workflow = attestation
+                .get("workflow")
+                .and_then(|value| value.as_str())
+                .ok_or_else(|| anyhow!("health.json attestation workflow missing"))?;
+            if workflow != expected_workflow {
+                return Err(anyhow!(
+                    "health.json {} workflow mismatch",
+                    attestation_rail_label(attestation_name)
+                ));
+            }
+        }
         let predicate_type = attestation
             .get("predicate_type")
             .and_then(|value| value.as_str())
@@ -1933,6 +1957,26 @@ fn validate_assets_channel_health(
         ));
     }
     Ok(())
+}
+
+fn expected_attestation_rail(name: &str) -> Option<(&'static str, &'static str)> {
+    match name {
+        "github_attestations_host" => Some(("host_binaries", ".github/workflows/release.yaml")),
+        "github_attestations_host_sbom" => Some(("host_sbom", ".github/workflows/release.yaml")),
+        "github_attestations_vm_assets" => {
+            Some(("vm_assets", ".github/workflows/release-assets.yaml"))
+        }
+        _ => None,
+    }
+}
+
+fn attestation_rail_label(name: &str) -> &'static str {
+    match name {
+        "github_attestations_host" => "host attestation",
+        "github_attestations_host_sbom" => "host SBOM attestation",
+        "github_attestations_vm_assets" => "VM asset attestation",
+        _ => "attestation",
+    }
 }
 
 fn require_json_str(

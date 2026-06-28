@@ -115,8 +115,9 @@ absence of `file://` URLs. It must also
 verify that image freshness remains explicitly unpublished until image release
 metadata is added to the asset channel. It must also
 resolve published host SBOM and VM OBOM evidence artifacts from `health.json`, verify their advertised
-hashes and sizes, and validate attestation subjects and predicate URLs
-against the published evidence lists. Host SBOM evidence is incomplete unless
+hashes and sizes, and validate attestation scope/workflow metadata plus
+attestation subjects and predicate URLs against the published evidence lists.
+Host SBOM evidence is incomplete unless
 `github_attestations_host_sbom` is present and points at the published
 `capsem-sbom.spdx.json` evidence and covers every published host package
 subject. It must also verify public `Cache-Control`
