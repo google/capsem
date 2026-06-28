@@ -113,6 +113,34 @@ jobs:
                   failures.append(f"health evidence.{key} missing or not a list")
           if manifest.get("format") != 2:
               failures.append("manifest format mismatch")
+          current = health.get("current", {})
+          current_binary = current.get("binary")
+          current_assets = current.get("assets")
+          if manifest.get("assets", {}).get("current") != current_assets:
+              failures.append("health current assets mismatch manifest")
+          if manifest.get("binaries", {}).get("current") != current_binary:
+              failures.append("health current binary mismatch manifest")
+          for label, value in (
+              ("current binary", current_binary),
+              ("current assets", current_assets),
+          ):
+              if not isinstance(value, str):
+                  failures.append(f"health {label} missing or not a string")
+              elif value not in index:
+                  failures.append(f"index page missing {label} {value}")
+          current_asset_release = next(
+              (
+                  release
+                  for release in health.get("asset_releases", [])
+                  if release.get("version") == current_assets
+              ),
+              {},
+          )
+          current_asset_date = current_asset_release.get("date")
+          if not isinstance(current_asset_date, str):
+              failures.append("health current asset release date missing")
+          elif current_asset_date not in index:
+              failures.append("index page missing current asset release date")
           if "Current Asset Files" not in index or "/health.json" not in index:
               failures.append("index page missing release status content")
           if failures:

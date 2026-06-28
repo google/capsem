@@ -214,6 +214,15 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
     assert 'for key in ("vm_oboms", "host_sboms", "host_binary_files", "attestations")' in workflow
     assert "health evidence.{key} missing or not a list" in workflow
     assert 'manifest.get("format") != 2' in workflow
+    assert 'manifest.get("assets", {}).get("current") != current_assets' in workflow
+    assert 'manifest.get("binaries", {}).get("current") != current_binary' in workflow
+    assert '("current binary", current_binary)' in workflow
+    assert '("current assets", current_assets)' in workflow
+    assert "index page missing {label} {value}" in workflow
+    assert 'health.get("asset_releases", [])' in workflow
+    assert 'release.get("version") == current_assets' in workflow
+    assert "health current asset release date missing" in workflow
+    assert "index page missing current asset release date" in workflow
     assert "release.capsem.org smoke failed after deploy." in workflow
 
 

@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   release-channel page and machine health index.
 - Added asset release dates to the generated release-channel index and health
   JSON so `release.capsem.org` shows when each VM asset release was cut.
+- Added release-channel deploy smoke coverage that rejects a public
+  `release.capsem.org` index whose binary, VM asset, or asset date state is
+  stale relative to the live health JSON and manifest.
 - Added binary self-update package execution for verified macOS `.pkg` and
   Linux `.deb` installers when `capsem update --yes` finds a newer release.
 - Added frontend release-channel evidence links for host SBOM, VM OBOM, and
