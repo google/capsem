@@ -150,6 +150,8 @@ The deploy smoke rejects stale public HTML: the fetched index page must show the
 same current binary, current VM asset version, asset release date, generated
 timestamp, profile revision, profile catalog URL, profile update source, and
 channel manifest path as the fetched health JSON and manifest.
+The deploy smoke also verifies that the binary update target, state, source, and
+package file metadata match the canonical binary metadata.
 The deploy smoke also verifies that the VM asset update target, manifest, base
 URL, compatibility, and newer-version requirements match the canonical asset
 metadata.

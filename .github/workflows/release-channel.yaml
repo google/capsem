@@ -191,6 +191,19 @@ jobs:
           if health.get("urls", {}).get("profile_catalog") != health.get("profiles", {}).get("source"):
               failures.append("health profile catalog URL mismatch")
           updates = health.get("updates", {})
+          if not isinstance(updates.get("binary"), dict):
+              failures.append("health binary update metadata missing")
+          else:
+              if updates.get("binary", {}).get("latest") != current_binary:
+                  failures.append("health binary update latest mismatch")
+              if updates.get("binary", {}).get("current") != current_binary:
+                  failures.append("health binary update current mismatch")
+              if updates.get("binary", {}).get("state") != health.get("binary", {}).get("state"):
+                  failures.append("health binary update state mismatch")
+              if updates.get("binary", {}).get("source") != "manifest.binaries.current":
+                  failures.append("health binary update source mismatch")
+              if updates.get("binary", {}).get("files") != health.get("binary", {}).get("files"):
+                  failures.append("health binary update files mismatch")
           if not isinstance(updates.get("assets"), dict):
               failures.append("health asset update metadata missing")
           else:

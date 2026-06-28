@@ -261,6 +261,7 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
     manifest_data = manifest.data if isinstance(manifest.data, dict) else {}
     health_urls = require_object(health_data, "urls", "health urls", failures)
     health_current = require_object(health_data, "current", "health current", failures)
+    health_binary = require_object(health_data, "binary", "health binary", failures)
     health_assets = require_object(health_data, "assets", "health assets", failures)
     health_profiles = require_object(health_data, "profiles", "health profiles", failures)
     manifest_assets = require_object(manifest_data, "assets", "manifest assets", failures)
@@ -279,6 +280,9 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
     current_assets = health_current.get("assets")
     profile_source = health_profiles.get("source")
     health_updates = health_data.get("updates")
+    health_update_binary = (
+        health_updates.get("binary") if isinstance(health_updates, dict) else None
+    )
     health_update_assets = (
         health_updates.get("assets") if isinstance(health_updates, dict) else None
     )
@@ -292,6 +296,19 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
         failures.append("health profile catalog URL mismatch")
     if profile_update_source != profile_source:
         failures.append("health profile update source mismatch")
+    if not isinstance(health_update_binary, dict):
+        failures.append("health binary update metadata missing")
+    else:
+        if health_update_binary.get("latest") != current_binary:
+            failures.append("health binary update latest mismatch")
+        if health_update_binary.get("current") != current_binary:
+            failures.append("health binary update current mismatch")
+        if health_update_binary.get("state") != health_binary.get("state"):
+            failures.append("health binary update state mismatch")
+        if health_update_binary.get("source") != "manifest.binaries.current":
+            failures.append("health binary update source mismatch")
+        if health_update_binary.get("files") != health_binary.get("files"):
+            failures.append("health binary update files mismatch")
     if not isinstance(health_update_profiles, dict):
         failures.append("health profile update metadata missing")
     else:
