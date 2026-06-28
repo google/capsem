@@ -15,7 +15,7 @@ use crate::icons::TrayState;
 use crate::menu::Action;
 
 #[derive(Parser)]
-#[command(about = "Capsem system tray")]
+#[command(version, about = "Capsem system tray")]
 struct Args {
     /// Gateway port (overrides discovery from gateway.port file)
     #[arg(long)]

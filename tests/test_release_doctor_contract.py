@@ -60,6 +60,12 @@ def _source_text(path: str) -> str:
     return (PROJECT_ROOT / path).read_text()
 
 
+def _command_attribute_block(source: str) -> str:
+    match = re.search(r"#\[command\((.*?)\)\]\nstruct Args", source, re.S)
+    assert match is not None
+    return match.group(1)
+
+
 def test_smoke_runs_full_doctor_without_fast_escape_hatch() -> None:
     block = _recipe_block("smoke:")
 
@@ -1856,6 +1862,17 @@ def test_binary_update_installer_scripts_replace_and_restart_full_helper_cohort(
         deb_postinst
     )
     assert "event=service_install_invoked" in deb_postinst
+
+
+def test_helper_version_surfaces_support_installed_update_smoke() -> None:
+    """Helper binaries must expose --version so update smokes can prove cohort drift."""
+
+    for path in [
+        "crates/capsem-gateway/src/main.rs",
+        "crates/capsem-tray/src/main.rs",
+    ]:
+        command = _command_attribute_block(_source_text(path))
+        assert "version" in command, path
 
 
 def test_desktop_shell_does_not_run_native_updater_or_background_https_check() -> None:

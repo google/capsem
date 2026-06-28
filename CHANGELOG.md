@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Fixed the gateway and tray helper binaries so they expose `--version` for
+  installed update cohort verification.
 - Fixed the service update routes so ambiguous JSON bodies with extra fields are
   rejected instead of silently checking or applying binary/profile or VM asset
   updates.

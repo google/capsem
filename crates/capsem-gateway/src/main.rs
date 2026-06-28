@@ -25,6 +25,7 @@ use crate::status::StatusCache;
 #[derive(Parser, Debug)]
 #[command(
     name = "capsem-gateway",
+    version,
     about = "TCP-to-UDS gateway for capsem-service"
 )]
 struct Args {
