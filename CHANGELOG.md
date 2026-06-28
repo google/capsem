@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added profile-dashboard release-state rows for profile catalog, VM asset, and
   VM image freshness so new-session actions stay distinct from binary app
   updates.
+- Added TUI update status and confirmed update actions for binary/profile
+  updates and VM asset refreshes.
 - Added compatible profile catalog application from the release channel so
   `capsem update` can refresh `~/.capsem/profiles` independently of binary and
   VM asset releases.

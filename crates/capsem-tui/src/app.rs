@@ -25,6 +25,9 @@ pub enum AppOverlay {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ControlAction {
     StartService,
+    Update {
+        assets: bool,
+    },
     CreateSession {
         name: Option<String>,
         profile_id: String,
@@ -57,6 +60,8 @@ impl ControlAction {
     pub const fn label(&self) -> &'static str {
         match self {
             Self::StartService => "start service",
+            Self::Update { assets: false } => "update",
+            Self::Update { assets: true } => "update assets",
             Self::CreateSession { .. } => "create",
             Self::Fork { .. } => "fork",
             Self::Resume { .. } => "resume",
@@ -71,6 +76,8 @@ impl ControlAction {
     pub const fn progress_label(&self) -> &'static str {
         match self {
             Self::StartService => "starting service",
+            Self::Update { assets: false } => "updating",
+            Self::Update { assets: true } => "updating assets",
             Self::CreateSession { .. } => "creating",
             Self::Fork { .. } => "forking",
             Self::Resume { .. } => "resuming",
@@ -85,6 +92,8 @@ impl ControlAction {
     pub fn target(&self) -> &str {
         match self {
             Self::StartService => "Capsem service",
+            Self::Update { assets: false } => "binary and profile catalog",
+            Self::Update { assets: true } => "VM assets for future sessions",
             Self::CreateSession {
                 name: Some(name), ..
             } => name,
@@ -434,6 +443,8 @@ impl App {
             KeyCode::Char('t' | 'T') => self.active_id().map(|id| ControlAction::Stop { id }),
             KeyCode::Char('d' | 'D') => self.active_id().map(|id| ControlAction::Delete { id }),
             KeyCode::Char('p' | 'P') => Some(ControlAction::Purge { all: false }),
+            KeyCode::Char('u' | 'U') => Some(ControlAction::Update { assets: false }),
+            KeyCode::Char('a' | 'A') => Some(ControlAction::Update { assets: true }),
             _ => None,
         }
     }

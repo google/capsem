@@ -119,6 +119,9 @@ impl GatewayProvider {
         if matches!(action, ControlAction::StartService) {
             return start_service().await;
         }
+        if let ControlAction::Update { assets } = action {
+            return update_with_binary(&capsem_binary(), *assets).await;
+        }
         let token = self.token().await?;
         invoke_action(&self.client, &self.base_url, &token, action).await
     }
@@ -268,15 +271,30 @@ fn update_response_to_notice(status: UpdateStatusResponse) -> Option<UpdateNotic
     if status.images.update_available {
         tracks.push(UpdateTrack::Images);
     }
+    let mut blocked = Vec::new();
+    if status.binary.blocked_reason.is_some() {
+        blocked.push(UpdateTrack::Binary);
+    }
+    if status.assets.blocked_reason.is_some() {
+        blocked.push(UpdateTrack::VmAssets);
+    }
+    if status.profiles.blocked_reason.is_some() {
+        blocked.push(UpdateTrack::Profiles);
+    }
+    if status.images.blocked_reason.is_some() {
+        blocked.push(UpdateTrack::Images);
+    }
 
     let kind = if !tracks.is_empty() {
         UpdateNoticeKind::Available(tracks)
+    } else if !blocked.is_empty() {
+        UpdateNoticeKind::Blocked(blocked)
     } else if status.last_error.is_some() {
         UpdateNoticeKind::Unavailable
     } else if status.stale {
         UpdateNoticeKind::Stale
     } else {
-        return None;
+        UpdateNoticeKind::Current
     };
 
     Some(UpdateNotice {
@@ -387,6 +405,7 @@ async fn invoke_action(
 ) -> Result<ActionOutcome> {
     match action {
         ControlAction::StartService => start_service().await,
+        ControlAction::Update { assets } => update_with_binary(&capsem_binary(), *assets).await,
         ControlAction::CreateSession { name, profile_id } => {
             let mut body = serde_json::json!({
                 "persistent": true,
@@ -520,6 +539,56 @@ pub(crate) async fn start_service_with_binary(binary: &Path) -> Result<ActionOut
     })
 }
 
+pub(crate) async fn update_with_binary(binary: &Path, assets: bool) -> Result<ActionOutcome> {
+    let mut command = tokio::process::Command::new(binary);
+    command.arg("update");
+    if assets {
+        command.arg("--assets");
+    } else {
+        command.arg("--yes");
+    }
+    let output = command
+        .output()
+        .await
+        .with_context(|| format!("run {} update", binary.display()))?;
+    if !output.status.success() {
+        let detail = command_detail(&output);
+        anyhow::bail!("capsem update failed: {detail}");
+    }
+    let fallback = if assets {
+        "VM asset update finished"
+    } else {
+        "Capsem update finished"
+    };
+    Ok(ActionOutcome {
+        message: command_summary(&output).unwrap_or_else(|| fallback.to_string()),
+        focus_session: None,
+    })
+}
+
+fn command_detail(output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !stderr.is_empty() {
+        return stderr;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if stdout.is_empty() {
+        format!("exit status {}", output.status)
+    } else {
+        stdout
+    }
+}
+
+fn command_summary(output: &std::process::Output) -> Option<String> {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(ToOwned::to_owned)
+}
+
 fn capsem_binary() -> PathBuf {
     if let Ok(path) = std::env::var("CAPSEM_TUI_CAPSEM_BINARY") {
         return PathBuf::from(path);
@@ -609,6 +678,8 @@ struct UpdateStatusResponse {
 #[derive(Debug, Deserialize)]
 struct UpdateTrackStatusResponse {
     update_available: bool,
+    #[serde(default)]
+    blocked_reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

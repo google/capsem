@@ -6,7 +6,7 @@ use crate::app::{App, AppAction, AppOverlay, ControlAction};
 use crate::fixture::{fixture_state, offline_state};
 use crate::gateway_provider::{
     start_service_with_binary, state_from_status_and_update_json_for_test,
-    state_from_status_json_for_test, GatewayProvider,
+    state_from_status_json_for_test, update_with_binary, GatewayProvider,
 };
 use crate::model::{Attention, ServiceStatus, SessionLifecycle, UpdateNoticeKind, UpdateTrack};
 use crate::ui::{render_app_snapshot, render_app_test_buffer, render_snapshot, render_test_buffer};
@@ -71,6 +71,20 @@ fn status_bar_shows_update_notice_without_hiding_session_stats() {
     let snapshot = render_snapshot(&state, 120, 24).expect("render update snapshot");
 
     assert!(snapshot.contains("updates: binary, assets"));
+    assert!(snapshot.contains("help: alt+?"));
+}
+
+#[test]
+fn status_bar_shows_current_update_state() {
+    let mut state = fixture_state();
+    state.update_notice = Some(crate::model::UpdateNotice {
+        kind: UpdateNoticeKind::Current,
+        channel_url: Some("https://release.capsem.org/health.json".to_string()),
+    });
+
+    let snapshot = render_snapshot(&state, 120, 24).expect("render current update snapshot");
+
+    assert!(snapshot.contains("updates: current"));
     assert!(snapshot.contains("help: alt+?"));
 }
 
@@ -152,6 +166,38 @@ async fn start_service_action_uses_local_capsem_binary_without_gateway_token() {
 
     assert_eq!(outcome.message, "service start requested");
     assert_eq!(outcome.focus_session, None);
+}
+
+#[tokio::test]
+async fn update_action_runs_binary_profile_update_with_yes() {
+    let (script, log) = fake_capsem_script("binary-profile");
+
+    let outcome = update_with_binary(&script, false)
+        .await
+        .expect("run capsem update");
+
+    assert_eq!(outcome.message, "Capsem update finished");
+    assert_eq!(outcome.focus_session, None);
+    assert_eq!(
+        std::fs::read_to_string(log).expect("read args"),
+        "update --yes\n"
+    );
+}
+
+#[tokio::test]
+async fn asset_update_action_runs_asset_only_update() {
+    let (script, log) = fake_capsem_script("assets");
+
+    let outcome = update_with_binary(&script, true)
+        .await
+        .expect("run capsem update --assets");
+
+    assert_eq!(outcome.message, "Capsem update finished");
+    assert_eq!(outcome.focus_session, None);
+    assert_eq!(
+        std::fs::read_to_string(log).expect("read args"),
+        "update --assets\n"
+    );
 }
 
 #[test]
@@ -415,6 +461,38 @@ fn shell_commands_are_alt_owned() {
 }
 
 #[test]
+fn update_actions_are_alt_owned_and_confirmed() {
+    let mut app = App::new(fixture_state());
+
+    assert_eq!(
+        app.handle_key(key(KeyCode::Char('u'), KeyModifiers::ALT)),
+        AppAction::Consumed
+    );
+    assert_eq!(app.overlay(), AppOverlay::Confirm);
+    assert_eq!(
+        app.pending_action(),
+        Some(&ControlAction::Update { assets: false })
+    );
+    let snapshot = render_app_snapshot(&app, 100, 24).expect("render update confirmation");
+    assert!(snapshot.contains("binary and profile catalog"));
+    assert_eq!(
+        app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
+        AppAction::Invoke(ControlAction::Update { assets: false })
+    );
+
+    assert_eq!(
+        app.handle_key(key(KeyCode::Char('a'), KeyModifiers::ALT)),
+        AppAction::Consumed
+    );
+    assert_eq!(
+        app.pending_action(),
+        Some(&ControlAction::Update { assets: true })
+    );
+    let snapshot = render_app_snapshot(&app, 100, 24).expect("render assets confirmation");
+    assert!(snapshot.contains("VM assets for future sessions"));
+}
+
+#[test]
 fn create_overlay_selects_profile_and_edits_prefilled_name() {
     let mut app = App::new(fixture_state());
 
@@ -503,6 +581,10 @@ fn help_lists_save_sessions_status_and_fork_shortcuts() {
     assert!(snapshot.contains("Alt+f fork"));
     assert!(snapshot.contains("Alt+p"));
     assert!(snapshot.contains("purge"));
+    assert!(snapshot.contains("Alt+u"));
+    assert!(snapshot.contains("apply binary/profile updates"));
+    assert!(snapshot.contains("Alt+a"));
+    assert!(snapshot.contains("refresh VM assets"));
 }
 
 #[test]
@@ -889,6 +971,100 @@ fn gateway_update_status_json_maps_to_tui_notice() {
     assert_eq!(
         notice.channel_url.as_deref(),
         Some("https://release.capsem.org/health.json")
+    );
+}
+
+#[test]
+fn gateway_current_update_status_maps_to_tui_notice() {
+    let state = state_from_status_and_update_json_for_test(
+        gateway_empty_status_body(),
+        gateway_update_current_status_body(),
+        std::time::Duration::from_millis(11),
+    )
+    .expect("parse current update status");
+
+    let notice = state.update_notice.expect("current update notice");
+    assert_eq!(notice.kind, UpdateNoticeKind::Current);
+}
+
+#[test]
+fn gateway_blocked_update_status_maps_to_tui_notice() {
+    let state = state_from_status_and_update_json_for_test(
+        gateway_empty_status_body(),
+        gateway_update_blocked_profile_status_body(),
+        std::time::Duration::from_millis(11),
+    )
+    .expect("parse blocked update status");
+
+    let notice = state.update_notice.as_ref().expect("blocked update notice");
+    assert_eq!(
+        notice.kind,
+        UpdateNoticeKind::Blocked(vec![UpdateTrack::Profiles])
+    );
+    let snapshot = render_snapshot(&state, 120, 24).expect("render blocked update notice");
+    assert!(snapshot.contains("updates blocked: profiles"));
+}
+
+#[test]
+fn tui_update_smoke_matrix_covers_release_states_and_actions() {
+    let cases = [
+        (
+            "no-update",
+            gateway_update_current_status_body().to_string(),
+            "updates: current",
+        ),
+        (
+            "binary-update",
+            gateway_update_matrix_body(true, false, false, None),
+            "updates: binary",
+        ),
+        (
+            "profile-update",
+            gateway_update_matrix_body(false, false, true, None),
+            "updates: profiles",
+        ),
+        (
+            "asset-update",
+            gateway_update_matrix_body(false, true, false, None),
+            "updates: assets",
+        ),
+        (
+            "channel-error",
+            gateway_update_matrix_body(false, false, false, Some("release channel timed out")),
+            "updates: unavailable",
+        ),
+    ];
+
+    for (name, update_body, expected) in cases {
+        let state = state_from_status_and_update_json_for_test(
+            gateway_status_body(),
+            &update_body,
+            std::time::Duration::from_millis(11),
+        )
+        .unwrap_or_else(|error| panic!("{name} update status should parse: {error}"));
+        let snapshot = render_snapshot(&state, 120, 24)
+            .unwrap_or_else(|error| panic!("{name} TUI snapshot should render: {error}"));
+        assert!(snapshot.contains(expected), "{name} missing {expected}");
+        assert!(snapshot.contains("help: alt+?"), "{name} lost help hint");
+    }
+
+    let mut app = App::new(fixture_state());
+    assert_eq!(
+        app.handle_key(key(KeyCode::Char('u'), KeyModifiers::ALT)),
+        AppAction::Consumed
+    );
+    assert_eq!(
+        app.pending_action(),
+        Some(&ControlAction::Update { assets: false })
+    );
+    app.handle_key(key(KeyCode::Esc, KeyModifiers::NONE));
+    assert_eq!(
+        app.handle_key(key(KeyCode::Char('a'), KeyModifiers::ALT)),
+        AppAction::Consumed
+    );
+    assert_eq!(
+        app.pending_action(),
+        Some(&ControlAction::Update { assets: true })
     );
 }
 
@@ -1562,6 +1738,33 @@ fn selected_bg() -> Color {
     Color::Rgb(49, 50, 68)
 }
 
+fn fake_capsem_script(label: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system time")
+        .as_nanos();
+    let dir =
+        std::env::temp_dir().join(format!("capsem-tui-{label}-{}-{nonce}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("create fake capsem dir");
+    let script = dir.join("capsem");
+    let log = dir.join("args.txt");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" > '{}'\nprintf '%s\\n' 'Capsem update finished'\n",
+            log.display()
+        ),
+    )
+    .expect("write fake capsem");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod fake capsem");
+    }
+    (script, log)
+}
+
 async fn read_http_request(stream: &mut tokio::net::TcpStream) -> String {
     let mut request = Vec::new();
     let mut buffer = [0_u8; 256];
@@ -1728,6 +1931,92 @@ fn gateway_update_current_status_body() -> &'static str {
             "compatibility": "not_applicable"
         }
     }"#
+}
+
+fn gateway_update_blocked_profile_status_body() -> &'static str {
+    r#"{
+        "checked_at": 1718444400,
+        "channel_url": "https://release.capsem.org/health.json",
+        "stale": false,
+        "binary": {
+            "current": "1.4.0",
+            "latest": "1.4.0",
+            "update_available": false,
+            "state": "current",
+            "compatibility": "compatible"
+        },
+        "assets": {
+            "current": "assets-1",
+            "latest": "assets-1",
+            "update_available": false,
+            "state": "current",
+            "compatibility": "compatible"
+        },
+        "profiles": {
+            "current": "profiles-2030.0101.0",
+            "latest": "profiles-2030.0101.1",
+            "update_available": false,
+            "state": "current",
+            "compatibility": "compatible",
+            "blocked_reason": "requires binary 1.4.1 or newer"
+        },
+        "images": {
+            "update_available": false,
+            "state": "not_published",
+            "compatibility": "not_applicable"
+        }
+    }"#
+}
+
+fn gateway_update_matrix_body(
+    binary_update: bool,
+    asset_update: bool,
+    profile_update: bool,
+    last_error: Option<&str>,
+) -> String {
+    let binary_latest = if binary_update { "1.4.1" } else { "1.4.0" };
+    let asset_latest = if asset_update { "assets-2" } else { "assets-1" };
+    let profile_latest = if profile_update {
+        "profiles-2030.0101.1"
+    } else {
+        "profiles-2030.0101.0"
+    };
+    let error_field = last_error
+        .map(|error| format!(r#","last_error":"{error}""#))
+        .unwrap_or_default();
+    format!(
+        r#"{{
+        "checked_at": 1718444400,
+        "channel_url": "https://release.capsem.org/health.json",
+        "stale": false{error_field},
+        "binary": {{
+            "current": "1.4.0",
+            "latest": "{binary_latest}",
+            "update_available": {binary_update},
+            "state": "current",
+            "compatibility": "compatible"
+        }},
+        "assets": {{
+            "current": "assets-1",
+            "latest": "{asset_latest}",
+            "update_available": {asset_update},
+            "state": "current",
+            "compatibility": "compatible"
+        }},
+        "profiles": {{
+            "current": "profiles-2030.0101.0",
+            "latest": "{profile_latest}",
+            "update_available": {profile_update},
+            "state": "current",
+            "compatibility": "compatible"
+        }},
+        "images": {{
+            "update_available": false,
+            "state": "not_published",
+            "compatibility": "not_applicable"
+        }}
+    }}"#
+    )
 }
 
 fn gateway_profiles_body() -> &'static str {

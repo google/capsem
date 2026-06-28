@@ -32,7 +32,9 @@ pub struct UpdateNotice {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum UpdateNoticeKind {
+    Current,
     Available(Vec<UpdateTrack>),
+    Blocked(Vec<UpdateTrack>),
     Stale,
     Unavailable,
 }

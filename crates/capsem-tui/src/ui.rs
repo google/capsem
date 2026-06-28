@@ -218,6 +218,7 @@ fn render_status_bar(frame: &mut Frame<'_>, state: &AppState, area: Rect) {
 
 fn update_notice_label(notice: &UpdateNotice) -> String {
     match &notice.kind {
+        UpdateNoticeKind::Current => "updates: current".to_string(),
         UpdateNoticeKind::Available(tracks) => {
             let labels = tracks
                 .iter()
@@ -226,6 +227,14 @@ fn update_notice_label(notice: &UpdateNotice) -> String {
                 .join(", ");
             format!("updates: {labels}")
         }
+        UpdateNoticeKind::Blocked(tracks) => {
+            let labels = tracks
+                .iter()
+                .map(|track| track.label())
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("updates blocked: {labels}")
+        }
         UpdateNoticeKind::Stale => "updates: stale".to_string(),
         UpdateNoticeKind::Unavailable => "updates: unavailable".to_string(),
     }
@@ -233,10 +242,11 @@ fn update_notice_label(notice: &UpdateNotice) -> String {
 
 fn update_notice_style(notice: &UpdateNotice) -> Style {
     match notice.kind {
+        UpdateNoticeKind::Current => status_base_style().fg(MUTED),
         UpdateNoticeKind::Available(_) | UpdateNoticeKind::Stale => {
             status_base_style().fg(ATTENTION)
         }
-        UpdateNoticeKind::Unavailable => status_base_style().fg(BAD),
+        UpdateNoticeKind::Blocked(_) | UpdateNoticeKind::Unavailable => status_base_style().fg(BAD),
     }
 }
 
@@ -502,7 +512,7 @@ fn centered_rect(area: Rect, width_percent: u16, height: u16) -> Rect {
 
 fn overlay_height(state: &AppState, overlay: AppOverlay) -> u16 {
     match overlay {
-        AppOverlay::Help => 19,
+        AppOverlay::Help => 21,
         AppOverlay::Stats => 12,
         AppOverlay::Home => (state.sessions.len() as u16).saturating_add(5).clamp(7, 16),
         AppOverlay::Create => (state.profiles.len() as u16)
@@ -537,6 +547,8 @@ fn help_lines() -> Vec<Line<'static>> {
             "global",
             "purge temporary/broken sessions",
         ),
+        help_row("Alt+u", "update", "global", "apply binary/profile updates"),
+        help_row("Alt+a", "assets", "global", "refresh VM assets"),
         help_row("Alt+q", "quit", "app", "plain q passes through"),
     ]
 }
