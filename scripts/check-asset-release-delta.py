@@ -52,6 +52,32 @@ def _current_asset_fingerprint(manifest: dict[str, Any]) -> dict[str, Any]:
     return {"version": current, "files": files}
 
 
+def _historical_release_metadata(manifest: dict[str, Any]) -> dict[str, Any]:
+    current = manifest.get("assets", {}).get("current")
+    releases = manifest.get("assets", {}).get("releases", {})
+    if not isinstance(current, str) or not current:
+        raise SystemExit("manifest missing assets.current")
+    if not isinstance(releases, dict):
+        raise SystemExit("manifest assets.releases must be an object")
+
+    metadata: dict[str, Any] = {}
+    for version, release in sorted(releases.items()):
+        if version == current:
+            continue
+        if not isinstance(release, dict):
+            raise SystemExit(f"manifest assets.releases[{version!r}] must be an object")
+        arches = release.get("arches", {})
+        arch_names = sorted(arches.keys()) if isinstance(arches, dict) else []
+        metadata[version] = {
+            "date": release.get("date"),
+            "deprecated": release.get("deprecated", False),
+            "deprecated_date": release.get("deprecated_date"),
+            "min_binary": release.get("min_binary"),
+            "arches": arch_names,
+        }
+    return metadata
+
+
 def _write_github_output(path: str | None, values: dict[str, str]) -> None:
     if not path:
         return
@@ -68,7 +94,13 @@ def _write_summary(path: str | None, result: dict[str, Any]) -> None:
     with open(path, "a", encoding="utf-8") as handle:
         handle.write("## VM Asset Release Delta\n\n")
         if changed:
-            handle.write(f"Asset publication should continue: `{reason}`.\n\n")
+            if result.get("asset_blobs_changed"):
+                handle.write(f"Asset publication should continue: `{reason}`.\n\n")
+            else:
+                handle.write(
+                    f"Release-channel metadata changed: `{reason}`. The site deploy "
+                    "should continue, but immutable VM blobs will not be republished.\n\n"
+                )
         else:
             handle.write(
                 "No VM asset changes detected; release-channel deploy will be skipped.\n\n"
@@ -88,26 +120,41 @@ def compare_manifests(
     new_manifest: dict[str, Any], previous_manifest: dict[str, Any] | None
 ) -> dict[str, Any]:
     new = _current_asset_fingerprint(new_manifest)
+    new_metadata = _historical_release_metadata(new_manifest)
     if previous_manifest is None:
         return {
             "changed": True,
+            "asset_blobs_changed": True,
             "reason": "previous_manifest_unavailable",
             "new_assets": new["version"],
         }
     previous = _current_asset_fingerprint(previous_manifest)
+    previous_metadata = _historical_release_metadata(previous_manifest)
+    if new["files"] != previous["files"]:
+        return {
+            "changed": True,
+            "asset_blobs_changed": True,
+            "reason": "asset_hashes_changed",
+            "previous_assets": previous["version"],
+            "new_assets": new["version"],
+        }
+    if new_metadata != previous_metadata:
+        return {
+            "changed": True,
+            "asset_blobs_changed": False,
+            "reason": "asset_release_metadata_changed",
+            "previous_assets": previous["version"],
+            "new_assets": new["version"],
+        }
     if new["files"] == previous["files"]:
         return {
             "changed": False,
+            "asset_blobs_changed": False,
             "reason": "asset_hashes_unchanged",
             "previous_assets": previous["version"],
             "new_assets": new["version"],
         }
-    return {
-        "changed": True,
-        "reason": "asset_hashes_changed",
-        "previous_assets": previous["version"],
-        "new_assets": new["version"],
-    }
+    raise AssertionError("unreachable asset release delta state")
 
 
 def main() -> int:
@@ -134,6 +181,7 @@ def main() -> int:
         os.environ.get("GITHUB_OUTPUT"),
         {
             "changed": "true" if result["changed"] else "false",
+            "asset_blobs_changed": "true" if result["asset_blobs_changed"] else "false",
             "reason": result["reason"],
             "new_assets": result["new_assets"],
             "previous_assets": result.get("previous_assets", ""),

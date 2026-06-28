@@ -90,6 +90,7 @@ jobs:
     name: Assemble asset channel
     outputs:
       asset_changed: ${{ steps.asset-delta.outputs.changed }}
+      asset_blobs_changed: ${{ steps.asset-delta.outputs.asset_blobs_changed }}
     env:
       CHANNEL: ${{ inputs.channel }}
       BINARY_VERSION: ${{ inputs.binary_version }}
@@ -146,7 +147,7 @@ jobs:
             --dist target/release-channel
 
       - name: Publish immutable GitHub asset release
-        if: ${{ steps.asset-delta.outputs.changed == 'true' }}
+        if: ${{ steps.asset-delta.outputs.asset_blobs_changed == 'true' }}
         env:
           DRY_RUN: ${{ inputs.dry_run }}
           GH_TOKEN: ${{ github.token }}
@@ -217,7 +218,7 @@ jobs:
           fi
 
       - name: Attest VM asset provenance
-        if: ${{ inputs.dry_run == false && steps.asset-delta.outputs.changed == 'true' }}
+        if: ${{ inputs.dry_run == false && steps.asset-delta.outputs.asset_blobs_changed == 'true' }}
         uses: actions/attest-build-provenance@v4
         with:
           subject-path: |
@@ -237,7 +238,7 @@ jobs:
           path: target/asset-release-delta/
 
       - uses: actions/upload-artifact@v7
-        if: ${{ inputs.dry_run == true && steps.asset-delta.outputs.changed == 'true' }}
+        if: ${{ inputs.dry_run == true && steps.asset-delta.outputs.asset_blobs_changed == 'true' }}
         with:
           name: asset-release-plan
           path: target/asset-release/

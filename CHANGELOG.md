@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Fixed the manual VM asset release delta so asset release metadata changes
+  deploy the release channel without republishing unchanged immutable VM blobs.
 - Matched attestation predicate URL validation to the correct evidence rail so
   VM asset provenance can point at VM OBOM evidence while host package
   attestations continue to point at host SBOM evidence.

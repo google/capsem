@@ -41,6 +41,27 @@ def _manifest(path: Path, *, version: str, rootfs_hash: str = "a" * 64) -> Path:
     return path
 
 
+def _add_historical_release(
+    manifest_path: Path,
+    *,
+    version: str = "2030.0100.1",
+    deprecated: bool = False,
+    deprecated_date: str | None = None,
+) -> None:
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    release = json.loads(
+        json.dumps(data["assets"]["releases"][data["assets"]["current"]])
+    )
+    release["date"] = "2030-01-01"
+    release["deprecated"] = deprecated
+    if deprecated_date is None:
+        release.pop("deprecated_date", None)
+    else:
+        release["deprecated_date"] = deprecated_date
+    data["assets"]["releases"][version] = release
+    manifest_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
 def _run_delta(
     new_manifest: Path,
     previous_manifest: Path,
@@ -83,13 +104,43 @@ def test_asset_release_noop_detects_unchanged_hashes_and_sets_outputs(tmp_path: 
 
     assert result == {
         "changed": False,
+        "asset_blobs_changed": False,
         "reason": "asset_hashes_unchanged",
         "previous_assets": "2030.0101.1",
         "new_assets": "2030.0101.2",
     }
     assert "changed=false" in output.read_text(encoding="utf-8")
+    assert "asset_blobs_changed=false" in output.read_text(encoding="utf-8")
     assert "reason=asset_hashes_unchanged" in output.read_text(encoding="utf-8")
     assert "release-channel deploy will be skipped" in summary.read_text(encoding="utf-8")
+
+
+def test_asset_release_delta_deploys_deprecation_without_republishing_blobs(
+    tmp_path: Path,
+) -> None:
+    previous = _manifest(tmp_path / "previous" / "manifest.json", version="2030.0102.1")
+    new = _manifest(tmp_path / "new" / "manifest.json", version="2030.0102.1")
+    _add_historical_release(previous, deprecated=False)
+    _add_historical_release(new, deprecated=True, deprecated_date="2030-01-03")
+    output = tmp_path / "github-output"
+    summary = tmp_path / "summary.md"
+
+    result = _run_delta(new, previous, output, summary)
+
+    assert result == {
+        "changed": True,
+        "asset_blobs_changed": False,
+        "reason": "asset_release_metadata_changed",
+        "previous_assets": "2030.0102.1",
+        "new_assets": "2030.0102.1",
+    }
+    assert "changed=true" in output.read_text(encoding="utf-8")
+    assert "asset_blobs_changed=false" in output.read_text(encoding="utf-8")
+    assert "reason=asset_release_metadata_changed" in output.read_text(encoding="utf-8")
+    assert "Release-channel metadata changed" in summary.read_text(encoding="utf-8")
+    assert "immutable VM blobs will not be republished" in summary.read_text(
+        encoding="utf-8"
+    )
 
 
 def test_asset_release_delta_writes_reviewable_json_output(tmp_path: Path) -> None:
@@ -118,6 +169,7 @@ def test_asset_release_noop_allows_changed_hashes_to_publish(tmp_path: Path) -> 
     result = _run_delta(new, previous, output, summary)
 
     assert result["changed"] is True
+    assert result["asset_blobs_changed"] is True
     assert result["reason"] == "asset_hashes_changed"
     assert result["previous_assets"] == "2030.0101.1"
     assert result["new_assets"] == "2030.0101.2"
@@ -177,6 +229,7 @@ def test_asset_workflow_allows_missing_previous_manifest_for_first_channel_publi
 
     assert json.loads(result.stdout) == {
         "changed": True,
+        "asset_blobs_changed": True,
         "reason": "previous_manifest_unavailable",
         "new_assets": "2030.0101.2",
     }
@@ -197,9 +250,13 @@ def test_asset_release_noop_gate_controls_preview_and_deploy_workflow() -> None:
     assert "--allow-missing-previous" in workflow
     assert "outputs:" in workflow
     assert "asset_changed: ${{ steps.asset-delta.outputs.changed }}" in workflow
+    assert "asset_blobs_changed: ${{ steps.asset-delta.outputs.asset_blobs_changed }}" in workflow
     assert "if: ${{ steps.asset-delta.outputs.changed == 'true' }}" in workflow
     assert "name: asset-release-plan" in workflow
-    assert "if: ${{ inputs.dry_run == true && steps.asset-delta.outputs.changed == 'true' }}" in workflow
+    assert (
+        "if: ${{ inputs.dry_run == true && steps.asset-delta.outputs.asset_blobs_changed == 'true' }}"
+        in workflow
+    )
     assert "path: target/asset-release/" in workflow
     assert "--json-output target/asset-release-delta/delta.json" in workflow
     assert "name: asset-release-delta" in workflow
@@ -220,7 +277,7 @@ def test_asset_release_upload_publishes_arch_prefixed_immutable_release_only_whe
     ].split("\n      - uses: actions/upload-artifact@v7", maxsplit=1)[0]
 
     assert "contents: write" in workflow
-    assert "if: ${{ steps.asset-delta.outputs.changed == 'true' }}" in upload_step
+    assert "if: ${{ steps.asset-delta.outputs.asset_blobs_changed == 'true' }}" in upload_step
     assert "DRY_RUN: ${{ inputs.dry_run }}" in upload_step
     assert "GH_TOKEN: ${{ github.token }}" in upload_step
     assert "ASSET_VERSION=$(python - <<" in upload_step
