@@ -181,6 +181,9 @@ def test_vm_asset_release_is_manual_and_deploys_asset_channel() -> None:
     assert "cargo run -p capsem-admin -- assets channel check" in workflow
     assert "name: asset-release-plan" in workflow
     assert "path: target/asset-release/" in workflow
+    assert "--json-output target/asset-release-delta/delta.json" in workflow
+    assert "name: asset-release-delta" in workflow
+    assert "path: target/asset-release-delta/" in workflow
     assert "inputs.dry_run == true" in workflow
     assert "uses: ./.github/workflows/release-channel.yaml" in workflow
     assert "dist_artifact: asset-channel-preview" in workflow

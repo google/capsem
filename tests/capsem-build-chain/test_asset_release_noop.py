@@ -42,20 +42,27 @@ def _manifest(path: Path, *, version: str, rootfs_hash: str = "a" * 64) -> Path:
 
 
 def _run_delta(
-    new_manifest: Path, previous_manifest: Path, output_path: Path, summary_path: Path
+    new_manifest: Path,
+    previous_manifest: Path,
+    output_path: Path,
+    summary_path: Path,
+    json_output_path: Path | None = None,
 ) -> dict:
     env = os.environ.copy()
     env["GITHUB_OUTPUT"] = str(output_path)
+    command = [
+        str(SCRIPT),
+        "--new-manifest",
+        str(new_manifest),
+        "--previous-manifest-url",
+        f"file://{previous_manifest}",
+        "--summary",
+        str(summary_path),
+    ]
+    if json_output_path is not None:
+        command.extend(["--json-output", str(json_output_path)])
     result = subprocess.run(
-        [
-            str(SCRIPT),
-            "--new-manifest",
-            str(new_manifest),
-            "--previous-manifest-url",
-            f"file://{previous_manifest}",
-            "--summary",
-            str(summary_path),
-        ],
+        command,
         cwd=PROJECT_ROOT,
         text=True,
         stdout=subprocess.PIPE,
@@ -83,6 +90,19 @@ def test_asset_release_noop_detects_unchanged_hashes_and_sets_outputs(tmp_path: 
     assert "changed=false" in output.read_text(encoding="utf-8")
     assert "reason=asset_hashes_unchanged" in output.read_text(encoding="utf-8")
     assert "release-channel deploy will be skipped" in summary.read_text(encoding="utf-8")
+
+
+def test_asset_release_delta_writes_reviewable_json_output(tmp_path: Path) -> None:
+    previous = _manifest(tmp_path / "previous" / "manifest.json", version="2030.0101.1")
+    new = _manifest(tmp_path / "new" / "manifest.json", version="2030.0101.2")
+    output = tmp_path / "github-output"
+    summary = tmp_path / "summary.md"
+    json_output = tmp_path / "artifact" / "delta.json"
+
+    result = _run_delta(new, previous, output, summary, json_output)
+
+    assert json.loads(json_output.read_text(encoding="utf-8")) == result
+    assert json_output.read_text(encoding="utf-8").endswith("\n")
 
 
 def test_asset_release_noop_allows_changed_hashes_to_publish(tmp_path: Path) -> None:
@@ -181,6 +201,9 @@ def test_asset_release_noop_gate_controls_preview_and_deploy_workflow() -> None:
     assert "name: asset-release-plan" in workflow
     assert "if: ${{ inputs.dry_run == true && steps.asset-delta.outputs.changed == 'true' }}" in workflow
     assert "path: target/asset-release/" in workflow
+    assert "--json-output target/asset-release-delta/delta.json" in workflow
+    assert "name: asset-release-delta" in workflow
+    assert "path: target/asset-release-delta/" in workflow
     assert "name: asset-channel-preview" in workflow
     assert (
         "if: ${{ inputs.dry_run == false && needs.assemble-channel.outputs.asset_changed == 'true' }}"
@@ -220,5 +243,6 @@ def test_asset_release_upload_publishes_arch_prefixed_immutable_release_only_whe
         assert "assets-v<asset-version>" in text
         assert "arch-prefixed" in text
         assert "asset-release-plan" in text
+        assert "asset-release-delta" in text
         for logical_name in ("`vmlinuz`", "`initrd.img`", "`rootfs.erofs`", "`obom.cdx.json`"):
             assert logical_name in text

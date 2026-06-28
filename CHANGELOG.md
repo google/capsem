@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stale relative to the live health JSON and manifest.
 - Added a dry-run `asset-release-plan` artifact for manual VM asset releases so
   reviewers can inspect the generated immutable GitHub Release upload commands.
+- Added an `asset-release-delta` artifact for manual VM asset releases so
+  changed and no-op dry runs preserve the manifest comparison decision.
 - Added CI docs plus release-process and asset-pipeline skill guidance for
   dated asset release history and stale public index rejection.
 - Added a read-only remote release readiness checker for `pr-gate`, branch

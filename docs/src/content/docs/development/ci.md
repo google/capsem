@@ -232,6 +232,8 @@ evidence, then publishes an immutable GitHub Release tagged
 `rootfs.erofs`, and `obom.cdx.json` artifacts before deploying the channel.
 Dry runs upload `asset-release-plan` with the generated upload script so the
 planned `gh release` commands can be reviewed without scraping workflow logs.
+Every asset release run also uploads `asset-release-delta` with the manifest
+comparison result that decided whether the channel should publish.
 The first channel publication may continue when the previous
 `release.capsem.org/assets/<channel>/manifest.json` is unavailable; the delta
 gate records `previous_manifest_unavailable` as a changed asset release so the

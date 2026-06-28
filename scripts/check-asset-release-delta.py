@@ -77,6 +77,13 @@ def _write_summary(path: str | None, result: dict[str, Any]) -> None:
         handle.write(f"- New assets: `{result['new_assets']}`\n")
 
 
+def _write_json_output(path: Path | None, result: dict[str, Any]) -> None:
+    if path is None:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
 def compare_manifests(
     new_manifest: dict[str, Any], previous_manifest: dict[str, Any] | None
 ) -> dict[str, Any]:
@@ -109,6 +116,7 @@ def main() -> int:
     parser.add_argument("--previous-manifest-url", required=True)
     parser.add_argument("--allow-missing-previous", action="store_true")
     parser.add_argument("--summary", default=os.environ.get("GITHUB_STEP_SUMMARY"))
+    parser.add_argument("--json-output", type=Path)
     args = parser.parse_args()
 
     new_manifest = json.loads(args.new_manifest.read_text())
@@ -132,6 +140,7 @@ def main() -> int:
         },
     )
     _write_summary(args.summary, result)
+    _write_json_output(args.json_output, result)
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 
