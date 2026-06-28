@@ -582,8 +582,8 @@ def test_release_skill_keeps_binary_and_asset_verification_decoupled() -> None:
     assert "gh release download vX.Y.Z --pattern manifest.json" not in release_skill
     assert "VM asset manifests" in release_skill
     assert "channel health live on `release.capsem.org`" in release_skill
-    assert "`docs.yaml` and `site.yaml` build on pull requests" in release_skill
-    assert "deploy only on pushes to `main`" in release_skill
+    assert "`docs.yaml` and `site.yaml` keep pull-request builds" in release_skill
+    assert "path-filtered, but every push to `main` deploys and smokes" in release_skill
     assert "`https://docs.capsem.org/` plus `/getting-started/`" in release_skill
     assert "`https://capsem.org/` for marketing" in release_skill
     assert "must not depend on release tags or VM asset publication" in release_skill

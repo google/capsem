@@ -78,10 +78,11 @@ immutable asset and profile release artifacts stay
 `public, max-age=31536000, immutable`.
 
 Docs and marketing deploy independently from binary, VM asset, and asset-channel
-release rails. `docs.yaml` and `site.yaml` build on pull requests and deploy only on pushes to `main`; they must smoke-check their public Cloudflare custom domains
-after deploy: `https://docs.capsem.org/` plus `/getting-started/` for docs, and
-`https://capsem.org/` for marketing. Those smokes are deploy checks only; they
-must not depend on release tags or VM asset publication.
+release rails. `docs.yaml` and `site.yaml` keep pull-request builds
+path-filtered, but every push to `main` deploys and smokes the public
+Cloudflare custom domains: `https://docs.capsem.org/` plus `/getting-started/`
+for docs, and `https://capsem.org/` for marketing. Those smokes are deploy
+checks only; they must not depend on release tags or VM asset publication.
 
 ## Cutting a release
 
