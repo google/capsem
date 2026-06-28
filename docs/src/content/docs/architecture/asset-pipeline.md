@@ -116,6 +116,12 @@ so the release health index cannot drift away from the canonical manifest.
 For host packages, the smoke verifies that `health.binary.files` and
 `evidence.host_binary_files` match the fetched manifest's current binary
 release for each package/SBOM URL, SHA-256 hash, and size.
+It also validates SBOM and VM OBOM evidence from `health.json`: host SBOM
+documents must be SPDX 2.3, VM OBOM documents must be CycloneDX, and
+attestation subjects and predicate URLs must resolve against the published
+evidence lists. VM asset attestations are incomplete unless
+`github_attestations_vm_assets` is present and its `predicate_url` points at the
+published VM OBOM evidence for the current asset release.
 The immutable profile catalog artifact is fetched too; its BLAKE3 hash, schema,
 revision, and URL policy must match `health.json`.
 
