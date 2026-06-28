@@ -3432,13 +3432,33 @@ fn fail_if_local_asset_checks_failed(
     context: &str,
     assets: &[LocalAssetCheckReport],
 ) -> Result<()> {
-    let failed = assets.iter().any(|asset| {
-        !asset.present
-            || asset.size_ok.is_some_and(|ok| !ok)
-            || asset.blake3_ok.is_some_and(|ok| !ok)
-    });
-    if failed {
-        return Err(anyhow!("{context} failed"));
+    let failures = assets
+        .iter()
+        .filter(|asset| {
+            !asset.present
+                || asset.size_ok.is_some_and(|ok| !ok)
+                || asset.blake3_ok.is_some_and(|ok| !ok)
+        })
+        .map(|asset| {
+            format!(
+                "{}:{} present={} size_ok={} blake3_ok={} path={}",
+                asset.arch,
+                asset.logical_name,
+                asset.present,
+                asset
+                    .size_ok
+                    .map(|ok| ok.to_string())
+                    .unwrap_or_else(|| "n/a".to_string()),
+                asset
+                    .blake3_ok
+                    .map(|ok| ok.to_string())
+                    .unwrap_or_else(|| "n/a".to_string()),
+                asset.path.as_deref().unwrap_or("n/a"),
+            )
+        })
+        .collect::<Vec<_>>();
+    if !failures.is_empty() {
+        return Err(anyhow!("{context} failed: {}", failures.join("; ")));
     }
     Ok(())
 }
