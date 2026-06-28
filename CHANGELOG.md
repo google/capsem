@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Fixed binary release metadata recording so zero-byte host package or SBOM
+  artifacts are rejected before their hashes can be published to the release
+  channel.
 - Fixed binary release metadata recording so arbitrary non-SBOM files cannot
   satisfy the installable host package requirement; only `.pkg` and `.deb`
   artifacts count as host packages.

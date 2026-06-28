@@ -1176,6 +1176,12 @@ fn binary_files_from_artifacts(artifacts: &[PathBuf]) -> Result<Vec<BinaryFile>>
                 path.display()
             ));
         }
+        if metadata.len() == 0 {
+            return Err(anyhow!(
+                "binary release artifact is empty: {}",
+                path.display()
+            ));
+        }
         let name = path
             .file_name()
             .and_then(|name| name.to_str())
@@ -6810,6 +6816,32 @@ decision = "block"
         assert!(
             format!("{error:#}")
                 .contains("binary release metadata must include a .pkg or .deb artifact"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn assets_channel_record_binary_rejects_empty_artifact() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
+        let artifacts_dir = temp.path().join("release-artifacts");
+        fs::create_dir_all(&artifacts_dir).expect("artifacts dir");
+        let pkg_path = artifacts_dir.join("Capsem-1.4.1234567890.pkg");
+        let sbom_path = artifacts_dir.join("capsem-sbom.spdx.json");
+        fs::write(&pkg_path, []).expect("empty pkg");
+        fs::write(&sbom_path, br#"{"spdxVersion":"SPDX-2.3"}"#).expect("sbom");
+
+        let error = record_binary_release_metadata(
+            &manifest_path,
+            "1.4.1234567890",
+            None,
+            &[pkg_path, sbom_path],
+            "2030-02-03",
+        )
+        .expect_err("empty binary artifact rejected");
+
+        assert!(
+            format!("{error:#}").contains("binary release artifact is empty"),
             "{error:#}"
         );
     }
