@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added release-channel deploy smoke coverage that rejects a public
   `release.capsem.org` index whose binary, VM asset, or asset date state is
   stale relative to the live health JSON and manifest.
+- Added CI docs plus release-process and asset-pipeline skill guidance for
+  dated asset release history and stale public index rejection.
 - Added binary self-update package execution for verified macOS `.pkg` and
   Linux `.deb` installers when `capsem update --yes` finds a newer release.
 - Added frontend release-channel evidence links for host SBOM, VM OBOM, and

@@ -31,7 +31,7 @@ profile catalog block with revision, published catalog artifact path, BLAKE3 dig
 compatibility minimums, and whether the advertised profile catalog requires a
 newer binary or VM asset set, plus host and VM asset attestation references
 with predicate type and `gh attestation verify` command hints.
-It also lists asset release history, including deprecated VM asset releases.
+It also lists dated asset release history, including deprecated VM asset releases.
 Deprecated asset releases stay auditable in the channel but runtime resolution
 and `capsem update --assets` skip them for new sessions/downloads.
 Do not add a separate release-channel source directory or hand-authored channel
@@ -59,7 +59,9 @@ generated dist artifact so the manifest, blobs, index page, health JSON, and
 headers stay in lock-step. After Cloudflare deploys, the channel workflow must
 smoke-check `https://release.capsem.org/`, `/health.json`, and
 `/assets/<channel>/manifest.json` through the public custom domain before it
-passes.
+passes. That smoke must reject stale public HTML: the fetched index page must
+show the same current binary, current VM asset version, and asset release date
+as the fetched health JSON and manifest.
 
 Docs and marketing deploy independently from binary, VM asset, and asset-channel
 release rails. `docs.yaml` and `site.yaml` build on pull requests and deploy only on pushes to `main`; they must smoke-check their public Cloudflare custom domains

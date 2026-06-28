@@ -400,6 +400,7 @@ def test_asset_channel_documented_as_assets_manifest_url_not_release_index_json(
         assert "explicit `updates` block" in text
         assert "`latest` targets" in text
         assert "binary/assets/profile/image freshness checks" in text
+        assert "dated asset release history" in text
         assert "channels/stable/index.json" not in text
 
 
@@ -410,6 +411,8 @@ def test_release_skill_keeps_binary_and_asset_verification_decoupled() -> None:
     assert "generated dist artifact" in release_skill
     assert "smoke-check `https://release.capsem.org/`, `/health.json`, and" in release_skill
     assert "`/assets/<channel>/manifest.json`" in release_skill
+    assert "reject stale public HTML" in release_skill
+    assert "current binary, current VM asset version, and asset release date" in release_skill
     assert "curl -fsSL https://release.capsem.org/health.json" in release_skill
     assert "curl -fsSL https://release.capsem.org/assets/stable/manifest.json" in release_skill
     assert "gh release download vX.Y.Z --pattern manifest.json" not in release_skill

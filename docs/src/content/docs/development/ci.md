@@ -215,17 +215,22 @@ evidence, then publishes an immutable GitHub Release tagged
 Neither rail is complete until `release.capsem.org` reflects the new channel
 state. After Cloudflare deploys, `release-channel.yaml` smoke checks the public
 `https://release.capsem.org/` index, `/health.json`, and
-`/assets/<channel>/manifest.json` before the workflow can pass.
+`/assets/<channel>/manifest.json` before the workflow can pass. The smoke also
+rejects stale public HTML: the human index must show the same current binary,
+current VM asset version, and asset release date as the fetched health JSON and
+manifest.
 
 The generated `health.json` is the compact machine-readable release-site index.
 It carries schema `capsem.assets_channel.health.v1`, the active manifest URL,
 the immutable asset base URL, current binary and asset versions, current asset
 file download URLs, VM OBOM references, host SBOM references, binary file
-metadata when present, `asset_releases` history including deprecated VM asset
-releases, and host plus VM asset attestation references. It also carries an explicit `updates` block with
+metadata when present, dated asset release history in `asset_releases`
+including deprecated VM asset releases, and host plus VM asset attestation
+references. It also carries an explicit `updates` block with
 `latest` targets for binary/assets/profile/image freshness checks so clients do
-not reverse-engineer status from unrelated fields. Use it for status/provenance checks; use
-`assets/<channel>/manifest.json` as the compatibility and hash authority.
+not reverse-engineer status from unrelated fields. Use it for status/provenance
+checks; use `assets/<channel>/manifest.json` as the compatibility and hash
+authority.
 
 Deprecated VM asset releases stay visible in `health.json` and the human index
 for auditability, but runtime resolution and `capsem update --assets` skip them
