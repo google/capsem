@@ -56,6 +56,10 @@ def _workflow_text(name: str) -> str:
     return (PROJECT_ROOT / ".github" / "workflows" / name).read_text()
 
 
+def _source_text(path: str) -> str:
+    return (PROJECT_ROOT / path).read_text()
+
+
 def test_smoke_runs_full_doctor_without_fast_escape_hatch() -> None:
     block = _recipe_block("smoke:")
 
@@ -276,6 +280,52 @@ def test_asset_channel_deploy_smoke_verifies_public_evidence_artifacts() -> None
     assert "resolves published host SBOM and VM OBOM evidence artifacts from `health.json`" in docs_text
     assert "verifies their advertised hashes and sizes" in docs_text
     assert "validates attestation subjects and predicate URLs" in docs_text
+
+
+def test_cross_surface_update_smoke_prerequisites_are_covered_locally() -> None:
+    cli = _source_text("crates/capsem/src/update.rs")
+    service = _source_text("crates/capsem-service/src/tests.rs")
+    tray = _source_text("crates/capsem-tray/src/menu.rs")
+    tui = _source_text("crates/capsem-tui/src/tests.rs")
+    frontend = _source_text("frontend/src/lib/__tests__/update-status.test.ts")
+    frontend_api = _source_text("frontend/src/lib/__tests__/api.test.ts")
+
+    assert "Profile catalog update available" in cli
+    assert "Run `capsem update --assets` separately to refresh VM assets." in cli
+    assert "--assets cannot be combined with --corp" in cli
+
+    assert "update_route_apply_dry_run_plans_binary_profiles_and_assets" in service
+    assert "update_route_apply_confirmed_dispatches_binary_profiles_and_assets" in service
+    assert 'json!(["update", "--yes"])' in service
+    assert 'json!(["update", "--assets"])' in service
+
+    assert "spec_mixed_binary_and_asset_updates_share_indicator" in tray
+    assert "spec_blocked_profile_update_shows_blocked_indicator" in tray
+    assert "spec_blocked_asset_update_shows_blocked_indicator" in tray
+    assert "Updates: Binary, VM assets" in tray
+    assert "Updates: Binary; blocked: Profiles" in tray
+
+    assert "tui_update_smoke_matrix_covers_release_states_and_actions" in tui
+    for case in [
+        "binary-update",
+        "profile-update",
+        "asset-update",
+        "mixed-binary-asset-update",
+    ]:
+        assert case in tui
+    assert "ControlAction::Update { assets: false }" in tui
+    assert "ControlAction::Update { assets: true }" in tui
+
+    assert "summarizes mixed binary and VM asset updates without profile noise" in frontend
+    assert "treats profile catalog updates as a first-class available track" in frontend
+    assert "keeps blocked profile dashboard tracks visible beside available asset tracks" in frontend
+    assert "Binary, VM assets available" in frontend
+    assert "VM assets available for future sessions" in frontend
+
+    assert "applies binary/profile and asset update actions through typed confirmed bodies" in frontend_api
+    assert "plans update actions without confirmation only through dry runs" in frontend_api
+    assert "applyUpdateAction('binary_profiles'" in frontend_api
+    assert "applyUpdateAction('assets'" in frontend_api
 
 
 def test_docs_and_marketing_sites_build_on_pr_and_deploy_on_main_only() -> None:

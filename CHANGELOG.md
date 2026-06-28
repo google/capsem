@@ -77,6 +77,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   metadata without rebuilding or publishing VM asset payloads.
 - Added release-doctor coverage that package update scripts replace and restart
   the full app/service/gateway/tray helper cohort together.
+- Added release-doctor coverage that keeps staged cross-surface update smoke
+  prerequisites visible across CLI, service, tray, frontend UI, and TUI tests.
 - Proxied update status through the gateway so UI, tray, and TUI surfaces can
   read release-channel freshness state.
 - Published profile catalog artifacts under the asset channel with portable
