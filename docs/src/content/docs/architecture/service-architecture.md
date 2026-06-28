@@ -284,10 +284,16 @@ authority path.
 
 ### Self-update
 
-`capsem update` checks GitHub for new asset versions, downloads missing
-kernel/initrd/rootfs bytes in the background, verifies BLAKE3 hashes, and
-cleans up old hash-named files. Binary swap is handled by the platform package
-manager (`.pkg` on macOS, `.deb` on Linux).
+`capsem update` checks the release-channel health index at
+`release.capsem.org/health.json` for binary freshness and selects the matching
+`.pkg` or `.deb` installer metadata for the current install layout. With
+`--yes`, it downloads the selected installer into
+`~/.capsem/updates/installers/`, verifies size plus SHA-256, and prints the
+tested package-manager apply command for the verified package. VM asset refresh
+is separate:
+`capsem update --assets` hydrates missing
+kernel/initrd/rootfs bytes from the installed or overridden manifest, verifies
+BLAKE3 hashes, and keeps hash-named files deduplicated.
 
 ## Rust crate architecture
 

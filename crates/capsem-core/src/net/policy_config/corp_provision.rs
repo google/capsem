@@ -1,4 +1,4 @@
-//! Corp config provisioning from URL or local file path.
+//! Corp config provisioning from URL sources.
 //!
 //! Enterprise users installing via CLI can provision corp config without
 //! requiring root access to /etc/capsem/. Config is installed to
@@ -26,9 +26,9 @@ fn now_secs() -> u64 {
 /// Corp source metadata stored in ~/.capsem/corp-source.json.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CorpSource {
-    /// URL the config was fetched from (None if provisioned from local file).
+    /// URL the config was fetched from (None if provisioned from inline TOML).
     pub url: Option<String>,
-    /// Local file path the config was copied from (None if provisioned from URL).
+    /// Deprecated legacy field. Local config sources must use file:// URLs.
     pub file_path: Option<String>,
     /// Unix timestamp (seconds) of when the config was fetched/installed.
     pub fetched_at: u64,
@@ -45,10 +45,38 @@ pub async fn fetch_corp_config(
     client: &reqwest::Client,
     url: &str,
 ) -> Result<(String, Option<String>)> {
+    let parsed = reqwest::Url::parse(url).with_context(|| {
+        format!(
+            "corp config source must be a URL: use https://..., http://..., or file:///absolute/path, got {url}"
+        )
+    })?;
     info!(url = %url, "fetching corp config");
 
+    if parsed.scheme() == "file" {
+        if !has_scheme_authority_prefix(url, "file") {
+            anyhow::bail!("corp config file URL must start with file://: {url}");
+        }
+        let path = parsed
+            .to_file_path()
+            .map_err(|_| anyhow::anyhow!("corp config file URL must be absolute: {url}"))?;
+        let body = std::fs::read_to_string(&path)
+            .with_context(|| format!("read corp config {}", path.display()))?;
+        validate_corp_toml(&body)?;
+        return Ok((body, None));
+    }
+
+    if !matches!(parsed.scheme(), "http" | "https") {
+        anyhow::bail!(
+            "unsupported corp config URL scheme {}: use https://, http://, or file://",
+            parsed.scheme()
+        );
+    }
+    if !has_scheme_authority_prefix(url, parsed.scheme()) {
+        anyhow::bail!("corp config source must use https://, http://, or file:// URLs, got {url}");
+    }
+
     let resp = client
-        .get(url)
+        .get(parsed)
         .header("User-Agent", "capsem")
         .send()
         .await
@@ -75,6 +103,13 @@ pub async fn fetch_corp_config(
     validate_corp_toml(&body)?;
 
     Ok((body, etag))
+}
+
+fn has_scheme_authority_prefix(value: &str, scheme: &str) -> bool {
+    let prefix = format!("{scheme}://");
+    value
+        .get(..prefix.len())
+        .is_some_and(|candidate| candidate.eq_ignore_ascii_case(&prefix))
 }
 
 /// Validate that a string is valid corp TOML (parseable as SettingsFile).
@@ -149,6 +184,29 @@ pub async fn refresh_corp_config_if_stale(capsem_dir: PathBuf) {
     info!(url = %url, age_hours, "corp config stale, refreshing");
 
     let client = reqwest::Client::new();
+    if url.starts_with("file://") {
+        match fetch_corp_config(&client, &url).await {
+            Ok((body, _)) => {
+                let content_hash = blake3::hash(body.as_bytes()).to_hex().to_string();
+                let new_source = CorpSource {
+                    url: Some(url),
+                    file_path: None,
+                    fetched_at: now_secs(),
+                    etag: None,
+                    content_hash,
+                    refresh_interval_hours: parse_refresh_interval(&body),
+                };
+                if let Err(e) = install_corp_config(&capsem_dir, &body, &new_source) {
+                    warn!(error = %e, "failed to install refreshed corp config");
+                } else {
+                    info!("corp config refreshed successfully");
+                }
+            }
+            Err(e) => warn!(error = %e, "corp config refresh failed"),
+        }
+        return;
+    }
+
     let mut req = client.get(&url).header("User-Agent", "capsem");
     if let Some(etag) = &source.etag {
         req = req.header("If-None-Match", etag);
@@ -366,6 +424,53 @@ mod tests {
             content_hash: "h".repeat(64),
             refresh_interval_hours: 6,
         }
+    }
+
+    #[tokio::test]
+    async fn fetch_corp_config_rejects_bare_file_path_source() {
+        let dir = tmp_dir();
+        let corp_path = dir.path().join("corp.toml");
+        std::fs::write(&corp_path, "refresh_policy = \"6h\"\n").unwrap();
+        let client = reqwest::Client::new();
+
+        let error = fetch_corp_config(&client, &corp_path.display().to_string())
+            .await
+            .unwrap_err();
+
+        assert!(
+            format!("{error:#}").contains("corp config source must be a URL"),
+            "{error:#}"
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_corp_config_rejects_file_url_shorthand_path_source() {
+        let client = reqwest::Client::new();
+
+        let error = fetch_corp_config(&client, "file:corp.toml")
+            .await
+            .unwrap_err();
+
+        assert!(
+            format!("{error:#}").contains("corp config file URL must start with file://"),
+            "{error:#}"
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_corp_config_accepts_file_url_source() {
+        let dir = tmp_dir();
+        let corp_path = dir.path().join("corp.toml");
+        std::fs::write(&corp_path, "refresh_policy = \"6h\"\n").unwrap();
+        let client = reqwest::Client::new();
+        let source = format!("file://{}", corp_path.display());
+
+        let (body, etag) = fetch_corp_config(&client, &source)
+            .await
+            .expect("file URL corp config fetches");
+
+        assert_eq!(body, "refresh_policy = \"6h\"\n");
+        assert!(etag.is_none());
     }
 
     #[test]

@@ -24,7 +24,7 @@ These commands dispatch before UdsClient creation -- they work without the servi
 | Command | Module | What |
 |---------|--------|------|
 | `capsem version` | main.rs | Print version + build hash |
-| `capsem update` | update.rs | Self-update from GitHub |
+| `capsem update` | update.rs | Check release-channel health and report the matching binary installer |
 | `capsem service install\|uninstall\|status` | service_install.rs | Service registration |
 | `capsem completions bash\|zsh\|fish` | completions.rs | Shell completions |
 | `capsem uninstall --yes` | uninstall.rs | Full removal |
@@ -71,9 +71,11 @@ wizard and it does not create a user policy file.
 ## Self-update (update.rs)
 
 - `read_cached_update_notice()` -> sync file read on every command
-- `refresh_update_cache_if_stale()` -> background 24h-cached GitHub check
-- `run_update()` -> fetch manifest, download assets, cleanup old versions
-- Layout detection: MacosPkg, UserDir, Development (bails with "build from source")
+- `refresh_update_cache_if_stale()` -> background 24h-cached release-channel health check
+- `run_update()` -> check `release.capsem.org/health.json`, choose the matching `.pkg`/`.deb` installer metadata, and keep VM asset refresh on `capsem update --assets`
+- `capsem update --yes` -> download the selected installer into `~/.capsem/updates/installers/`, verify size + SHA-256, and print the tested package-manager apply command (`sudo /usr/sbin/installer -pkg ... -target /` or `sudo apt-get install --yes ...`)
+- `capsem update --assets` -> hydrate the locally installed manifest or an explicit `--manifest` URL
+- Layout detection: MacosPkg, LinuxDeb, UserDir, Development (development bails with "build from source")
 
 ## Corp config provisioning (capsem-core: corp_provision.rs)
 
@@ -84,11 +86,11 @@ wizard and it does not create a user policy file.
 
 Loader changes: `corp_config_paths()` returns [/etc, ~/.capsem/] with first-wins merge.
 
-## Remote manifest + background download (capsem-core: asset_manager.rs)
+## Remote manifest + asset download (capsem-core: asset_manager.rs)
 
-- `fetch_remote_manifest(client, version)` -> GET release manifest.json
-- `fetch_latest_manifest(client)` -> GitHub API latest release -> manifest
-- `start_background_download(manifest, version, dir, arch)` -> tokio task + mpsc progress
+- `download_missing_assets(manifest, binary_version, arch, dir, progress)` -> hydrate missing or corrupt assets from the manifest's release-channel URLs
+- `copy_missing_local_assets(...)` -> same contract for `file://` corporate/local manifests
+- `cleanup_unused_assets(base_dir, manifest)` -> remove hash-named files no longer referenced by non-deprecated releases
 
 ## Test harness
 

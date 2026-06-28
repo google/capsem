@@ -32,7 +32,7 @@ use client::{
     ApiResponse, AssetStatusResponse, ExecRequest, ExecResponse, ForkRequest, ForkResponse,
     HistoryResponse, ListResponse, LogsResponse, PersistRequest, ProvisionRequest,
     ProvisionResponse, PurgeRequest, PurgeResponse, RunRequest, SessionInfo, UdsClient,
-    VmLifecycleState,
+    UpdateStatusResponse, UpdateTrackState, VmLifecycleState,
 };
 
 const DEFAULT_PROFILE_ID: &str = "code";
@@ -469,6 +469,12 @@ enum MiscCommands {
         /// Useful when an asset-only release ships independently of binaries.
         #[arg(long)]
         assets: bool,
+        /// Override the asset manifest endpoint for this update.
+        #[arg(long, value_name = "URL", value_parser = validate_update_manifest_url)]
+        manifest: Option<String>,
+        /// Fetch and install corporate policy config from this URL.
+        #[arg(long, value_name = "URL", value_parser = validate_update_corp_url)]
+        corp: Option<String>,
     },
     /// Run diagnostic tests in a fresh session
     ///
@@ -534,6 +540,14 @@ enum MiscCommands {
     Start,
     /// Stop the background service
     Stop,
+}
+
+fn validate_update_manifest_url(value: &str) -> std::result::Result<String, String> {
+    update::validate_source_url_arg("--manifest", value)
+}
+
+fn validate_update_corp_url(value: &str) -> std::result::Result<String, String> {
+    update::validate_source_url_arg("--corp", value)
 }
 
 fn format_uptime(secs: Option<u64>) -> String {
@@ -1101,6 +1115,38 @@ fn print_corp_status(info: &serde_json::Value) {
     }
 }
 
+fn print_update_status(status: &UpdateStatusResponse) {
+    let mut updates = Vec::new();
+    if status.binary.update_available {
+        let current = status.binary.current.as_deref().unwrap_or("unknown");
+        let latest = status.binary.latest.as_deref().unwrap_or("unknown");
+        updates.push(format!("binary {current} -> {latest}"));
+    }
+    if status.assets.update_available {
+        let current = status.assets.current.as_deref().unwrap_or("unknown");
+        let latest = status.assets.latest.as_deref().unwrap_or("unknown");
+        updates.push(format!("assets {current} -> {latest}"));
+    }
+
+    if updates.is_empty() {
+        let asset_state = match status.assets.state {
+            UpdateTrackState::Unknown => "assets unknown",
+            UpdateTrackState::NotPublished => "assets not published",
+            _ => "assets current",
+        };
+        let freshness = if status.stale { "stale" } else { "fresh" };
+        println!("Updates:   current ({asset_state}, cache {freshness})");
+    } else {
+        println!("Updates:   available ({})", updates.join("; "));
+    }
+    if let Some(channel) = &status.channel_url {
+        println!("Channel:   {channel}");
+    }
+    if let Some(error) = &status.last_error {
+        println!("Update err:{error}");
+    }
+}
+
 fn should_refresh_update_cache_for_command(command: &Commands) -> bool {
     !matches!(
         command,
@@ -1326,6 +1372,10 @@ async fn main() -> Result<()> {
                     Some(corp_info) => print_corp_status(&corp_info),
                     None => println!("Corp:      unavailable"),
                 }
+                match status_client.get_update_status().await {
+                    Ok(update_status) => print_update_status(&update_status),
+                    Err(_) => println!("Updates:   unavailable"),
+                }
             }
 
             // Surface defunct sandboxes prominently -- a boot failure
@@ -1389,8 +1439,13 @@ async fn main() -> Result<()> {
             uninstall::run_uninstall(*yes).await?;
             return Ok(());
         }
-        Commands::Misc(MiscCommands::Update { yes, assets }) => {
-            update::run_update(*yes, *assets).await?;
+        Commands::Misc(MiscCommands::Update {
+            yes,
+            assets,
+            manifest,
+            corp,
+        }) => {
+            update::run_update(*yes, *assets, manifest.as_deref(), corp.as_deref()).await?;
             return Ok(());
         }
         _ => {}
@@ -3011,9 +3066,16 @@ mod tests {
     fn parse_update() {
         let cli = Cli::parse_from(["capsem", "update"]);
         match cli.command.unwrap() {
-            Commands::Misc(MiscCommands::Update { yes, assets }) => {
+            Commands::Misc(MiscCommands::Update {
+                yes,
+                assets,
+                manifest,
+                corp,
+            }) => {
                 assert!(!yes);
                 assert!(!assets);
+                assert_eq!(manifest, None);
+                assert_eq!(corp, None);
             }
             _ => panic!("expected Update"),
         }
@@ -3023,9 +3085,16 @@ mod tests {
     fn parse_update_yes() {
         let cli = Cli::parse_from(["capsem", "update", "--yes"]);
         match cli.command.unwrap() {
-            Commands::Misc(MiscCommands::Update { yes, assets }) => {
+            Commands::Misc(MiscCommands::Update {
+                yes,
+                assets,
+                manifest,
+                corp,
+            }) => {
                 assert!(yes);
                 assert!(!assets);
+                assert_eq!(manifest, None);
+                assert_eq!(corp, None);
             }
             _ => panic!("expected Update"),
         }
@@ -3035,11 +3104,63 @@ mod tests {
     fn parse_update_assets() {
         let cli = Cli::parse_from(["capsem", "update", "--assets"]);
         match cli.command.unwrap() {
-            Commands::Misc(MiscCommands::Update { yes, assets }) => {
+            Commands::Misc(MiscCommands::Update {
+                yes,
+                assets,
+                manifest,
+                corp,
+            }) => {
                 assert!(!yes);
                 assert!(assets);
+                assert_eq!(manifest, None);
+                assert_eq!(corp, None);
             }
             _ => panic!("expected Update"),
+        }
+    }
+
+    #[test]
+    fn parse_update_url_overrides_reject_bare_paths() {
+        for flag in ["--manifest", "--corp"] {
+            for source in ["/tmp/capsem/manifest.json", "assets/stable/manifest.json"] {
+                let err = match Cli::try_parse_from(["capsem", "update", "--assets", flag, source])
+                {
+                    Ok(_) => panic!("update source overrides must reject bare filesystem paths"),
+                    Err(err) => err,
+                };
+                let message = err.to_string();
+                assert!(
+                    message.contains(&format!("{flag} must be a URL")),
+                    "{message}"
+                );
+                assert!(message.contains("https://..."), "{message}");
+                assert!(message.contains("http://..."), "{message}");
+                assert!(message.contains("file:///absolute/path"), "{message}");
+            }
+        }
+    }
+
+    #[test]
+    fn parse_update_url_overrides_reject_url_shorthand_paths() {
+        for flag in ["--manifest", "--corp"] {
+            for (source, expected) in [
+                (
+                    "file:assets/stable/manifest.json",
+                    "file URL must start with file://",
+                ),
+                (
+                    "https:release.capsem.org/assets/stable/manifest.json",
+                    "must use https://, http://, or file:// URLs",
+                ),
+            ] {
+                let err = match Cli::try_parse_from(["capsem", "update", "--assets", flag, source])
+                {
+                    Ok(_) => panic!("update source overrides must reject URL shorthand paths"),
+                    Err(err) => err,
+                };
+                let message = err.to_string();
+                assert!(message.contains(expected), "{message}");
+            }
         }
     }
 

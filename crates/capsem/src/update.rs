@@ -1,13 +1,15 @@
-//! Self-update: check GitHub for new versions, prompt to update.
+//! Self-update: check the release channel for binary and VM asset versions.
 //!
-//! Asset download and binary swap are implemented in the orthogonal CI sprint
-//! (see sprints/orthogonal-ci/plan.md). Until then, development builds use
-//! `git pull && just install`.
+//! `release.capsem.org/health.json` is the source of truth for freshness. The
+//! binary path selects a platform installer from that health index; the
+//! privileged installer apply step is intentionally separate from VM asset
+//! hydration.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tracing::{info, warn};
 
 use crate::platform::{self, InstallLayout};
@@ -18,12 +20,128 @@ pub struct UpdateCheck {
     /// Unix timestamp of when we last checked.
     pub checked_at: u64,
     /// Latest version available (None if check failed).
+    #[serde(default)]
     pub latest_version: Option<String>,
     /// Whether an update is available.
+    #[serde(default)]
     pub update_available: bool,
+    /// Platform installer selected from the release channel, when one matches
+    /// this installation layout.
+    #[serde(default)]
+    pub binary_installer: Option<BinaryInstaller>,
+    /// Latest VM asset set advertised by the release channel.
+    #[serde(default)]
+    pub latest_assets: Option<String>,
+    /// Whether the advertised asset set differs from the installed manifest.
+    #[serde(default)]
+    pub assets_update_available: bool,
+    /// Latest profile catalog advertised by the release channel, when published.
+    #[serde(default)]
+    pub latest_profiles: Option<String>,
+    /// Whether the advertised profile catalog differs from the installed one.
+    #[serde(default)]
+    pub profiles_update_available: bool,
+    /// Release-channel state for profile updates.
+    #[serde(default)]
+    pub profiles_state: Option<String>,
+    /// Latest VM image catalog advertised by the release channel, when published.
+    #[serde(default)]
+    pub latest_images: Option<String>,
+    /// Whether the advertised image catalog differs from the installed one.
+    #[serde(default)]
+    pub images_update_available: bool,
+    /// Release-channel state for image updates.
+    #[serde(default)]
+    pub images_state: Option<String>,
+    /// Machine-readable release channel index used for this check.
+    #[serde(default)]
+    pub source: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BinaryInstaller {
+    pub name: String,
+    pub url: String,
+    pub sha256: String,
+    pub size: u64,
+    pub install_layout: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BinaryInstallerApplyPlan {
+    commands: Vec<BinaryInstallerApplyCommand>,
+}
+
+impl BinaryInstallerApplyPlan {
+    fn command_lines(&self) -> Vec<String> {
+        self.commands
+            .iter()
+            .map(BinaryInstallerApplyCommand::command_line)
+            .collect()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BinaryInstallerApplyCommand {
+    program: String,
+    args: Vec<String>,
+}
+
+impl BinaryInstallerApplyCommand {
+    fn command_line(&self) -> String {
+        std::iter::once(self.program.as_str())
+            .chain(self.args.iter().map(String::as_str))
+            .map(shell_quote)
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
 }
 
 const CACHE_TTL_SECS: u64 = 24 * 3600; // 24 hours
+const DEFAULT_RELEASE_HEALTH_URL: &str = "https://release.capsem.org/health.json";
+const RELEASE_HEALTH_URL_ENV: &str = "CAPSEM_RELEASE_HEALTH_URL";
+
+#[derive(Debug, Clone, Deserialize)]
+struct ReleaseChannelHealth {
+    schema: String,
+    updates: ReleaseChannelUpdates,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ReleaseChannelUpdates {
+    binary: ReleaseChannelUpdateTarget,
+    assets: ReleaseChannelUpdateTarget,
+    #[serde(default)]
+    profiles: Option<ReleaseChannelUpdateTarget>,
+    #[serde(default)]
+    images: Option<ReleaseChannelUpdateTarget>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ReleaseChannelUpdateTarget {
+    #[serde(default)]
+    latest: Option<String>,
+    #[serde(default)]
+    current: Option<String>,
+    #[serde(default)]
+    state: Option<String>,
+    #[serde(default)]
+    files: Vec<ReleaseChannelBinaryFile>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ReleaseChannelBinaryFile {
+    name: String,
+    url: String,
+    sha256: String,
+    size: u64,
+}
+
+impl ReleaseChannelUpdateTarget {
+    fn latest_version(&self) -> Option<String> {
+        self.latest.clone().or_else(|| self.current.clone())
+    }
+}
 
 fn now_secs() -> u64 {
     std::time::SystemTime::now()
@@ -36,6 +154,48 @@ fn cache_path() -> Option<PathBuf> {
     crate::paths::capsem_home()
         .ok()
         .map(|d| d.join("update-check.json"))
+}
+
+/// Validate user-provided update source flags.
+///
+/// The CLI intentionally accepts URL strings only. Local files must be written
+/// as `file://` so normal release channels and corporate channels share one
+/// update/provenance mechanism.
+pub fn validate_source_url_arg(flag: &str, value: &str) -> std::result::Result<String, String> {
+    let parsed = reqwest::Url::parse(value).map_err(|_| {
+        format!(
+            "{flag} must be a URL: use https://..., http://..., or file:///absolute/path, got {value}"
+        )
+    })?;
+    match parsed.scheme() {
+        "https" | "http" => {
+            if !has_scheme_authority_prefix(value, parsed.scheme()) {
+                return Err(format!(
+                    "{flag} must use https://, http://, or file:// URLs, got {value}"
+                ));
+            }
+            Ok(value.to_string())
+        }
+        "file" => {
+            if !has_scheme_authority_prefix(value, "file") {
+                return Err(format!("{flag} file URL must start with file://: {value}"));
+            }
+            parsed
+                .to_file_path()
+                .map(|_| value.to_string())
+                .map_err(|_| format!("{flag} file URL must be absolute: {value}"))
+        }
+        scheme => Err(format!(
+            "unsupported {flag} URL scheme {scheme}: use https://, http://, or file://"
+        )),
+    }
+}
+
+fn has_scheme_authority_prefix(value: &str, scheme: &str) -> bool {
+    let prefix = format!("{scheme}://");
+    value
+        .get(..prefix.len())
+        .is_some_and(|candidate| candidate.eq_ignore_ascii_case(&prefix))
 }
 
 /// Read cached update notice. Sync file read, no latency.
@@ -56,16 +216,24 @@ pub fn read_cached_update_notice() -> Option<String> {
     }
 
     let current = env!("CARGO_PKG_VERSION");
-    check.latest_version.and_then(|latest| {
+    if let Some(latest) = check.latest_version {
         if is_newer(&latest, current) {
-            Some(format!(
-                "Update available: {} -> {}. Run `capsem update` to upgrade.",
+            return Some(format!(
+                "Update available: {} -> {}. Run `capsem update` to inspect.",
                 current, latest
-            ))
-        } else {
-            None
+            ));
         }
-    })
+    }
+
+    if check.assets_update_available {
+        if let Some(latest_assets) = check.latest_assets {
+            return Some(format!(
+                "VM asset update available: {latest_assets}. Run `capsem update --assets` to refresh."
+            ));
+        }
+    }
+
+    None
 }
 
 /// Write update check cache atomically (write tmp + rename).
@@ -81,7 +249,7 @@ fn write_cache(check: &UpdateCheck) -> Result<()> {
     Ok(())
 }
 
-/// Background refresh: check GitHub for updates if cache is stale.
+/// Background refresh: check the release channel for updates if cache is stale.
 /// Fire-and-forget via tokio::spawn.
 pub async fn refresh_update_cache_if_stale() {
     let path = match cache_path() {
@@ -101,18 +269,25 @@ pub async fn refresh_update_cache_if_stale() {
 
     info!("update cache stale, checking for updates");
 
-    // Fetch latest release tag from GitHub API
+    let health_url = match release_health_url() {
+        Ok(url) => url,
+        Err(e) => {
+            warn!(error = %e, "update check: invalid release channel URL");
+            return;
+        }
+    };
+
     let client = reqwest::Client::new();
     let resp = match client
-        .get("https://api.github.com/repos/google/capsem/releases/latest")
-        .header("Accept", "application/vnd.github+json")
+        .get(&health_url)
+        .header("Accept", "application/json")
         .header("User-Agent", "capsem")
         .send()
         .await
     {
         Ok(r) if r.status().is_success() => r,
         Ok(r) => {
-            warn!(status = %r.status(), "update check: GitHub API error");
+            warn!(status = %r.status(), url = %health_url, "update check: release channel error");
             return;
         }
         Err(e) => {
@@ -121,30 +296,404 @@ pub async fn refresh_update_cache_if_stale() {
                 checked_at: now_secs(),
                 latest_version: None,
                 update_available: false,
+                binary_installer: None,
+                latest_assets: None,
+                assets_update_available: false,
+                latest_profiles: None,
+                profiles_update_available: false,
+                profiles_state: None,
+                latest_images: None,
+                images_update_available: false,
+                images_state: None,
+                source: Some(health_url),
             };
             let _ = write_cache(&check);
             return;
         }
     };
 
-    let body: serde_json::Value = match resp.json().await {
+    let body: ReleaseChannelHealth = match resp.json().await {
         Ok(v) => v,
-        Err(_) => return,
+        Err(e) => {
+            warn!(error = %e, url = %health_url, "update check: invalid release channel JSON");
+            return;
+        }
     };
 
-    let tag = match body.get("tag_name").and_then(|v| v.as_str()) {
-        Some(t) => t.strip_prefix('v').unwrap_or(t).to_string(),
-        None => return,
-    };
-
-    let current = env!("CARGO_PKG_VERSION");
-    let update_available = is_newer(&tag, current);
-    let check = UpdateCheck {
-        checked_at: now_secs(),
-        latest_version: Some(tag),
-        update_available,
+    let check = match update_check_from_release_health(
+        &body,
+        now_secs(),
+        env!("CARGO_PKG_VERSION"),
+        local_current_asset_version().as_deref(),
+        &platform::detect_install_layout(),
+        &health_url,
+    ) {
+        Ok(check) => check,
+        Err(e) => {
+            warn!(error = %e, url = %health_url, "update check: invalid release channel contract");
+            return;
+        }
     };
     let _ = write_cache(&check);
+}
+
+fn release_health_url() -> Result<String> {
+    if let Ok(value) = std::env::var(RELEASE_HEALTH_URL_ENV) {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return validate_release_health_url(trimmed);
+        }
+    }
+
+    if let Some(url) = release_health_url_from_manifest_origin() {
+        return Ok(url);
+    }
+
+    Ok(DEFAULT_RELEASE_HEALTH_URL.to_string())
+}
+
+fn validate_release_health_url(url: &str) -> Result<String> {
+    let parsed = reqwest::Url::parse(url).with_context(|| {
+        format!("{RELEASE_HEALTH_URL_ENV} must be a URL: use https://... or http://..., got {url}")
+    })?;
+    if !matches!(parsed.scheme(), "https" | "http") {
+        anyhow::bail!(
+            "unsupported {RELEASE_HEALTH_URL_ENV} scheme {}: use https:// or http://",
+            parsed.scheme()
+        );
+    }
+    Ok(parsed.as_str().trim_end_matches('/').to_string())
+}
+
+fn release_health_url_from_manifest_origin() -> Option<String> {
+    let assets_dir = capsem_core::asset_manager::default_assets_dir()?;
+    let origin_path = assets_dir.join("manifest-origin.json");
+    let content = std::fs::read_to_string(origin_path).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&content).ok()?;
+    let source = value.get("source").and_then(|v| v.as_str())?;
+    release_health_url_from_manifest_url(source)
+}
+
+fn release_health_url_from_manifest_url(manifest_url: &str) -> Option<String> {
+    let mut url = reqwest::Url::parse(manifest_url).ok()?;
+    if !matches!(url.scheme(), "https" | "http") {
+        return None;
+    }
+    let segments = url.path_segments().map(|segments| {
+        segments
+            .map(std::string::ToString::to_string)
+            .collect::<Vec<_>>()
+    })?;
+    let assets_pos = segments.iter().position(|segment| *segment == "assets")?;
+    if segments.last().map(String::as_str) != Some("manifest.json")
+        || segments.len() < assets_pos + 3
+    {
+        return None;
+    }
+    let root_segments = segments[..assets_pos].to_vec();
+    {
+        let mut out = url.path_segments_mut().ok()?;
+        out.clear();
+        for segment in root_segments {
+            out.push(&segment);
+        }
+        out.push("health.json");
+    }
+    Some(url.to_string())
+}
+
+fn local_current_asset_version() -> Option<String> {
+    let assets_dir = capsem_core::asset_manager::default_assets_dir()?;
+    let manifest_path = assets_dir.join("manifest.json");
+    let manifest_bytes = std::fs::read_to_string(manifest_path).ok()?;
+    let manifest = capsem_core::asset_manager::ManifestV2::from_json(&manifest_bytes).ok()?;
+    Some(manifest.assets.current)
+}
+
+fn update_check_from_release_health(
+    health: &ReleaseChannelHealth,
+    checked_at: u64,
+    current_binary: &str,
+    current_assets: Option<&str>,
+    install_layout: &InstallLayout,
+    source: &str,
+) -> Result<UpdateCheck> {
+    if health.schema != "capsem.assets_channel.health.v1" {
+        anyhow::bail!("release channel health schema mismatch");
+    }
+    let latest_version = health.updates.binary.latest_version();
+    let latest_assets = health.updates.assets.latest_version();
+    let latest_profiles = health
+        .updates
+        .profiles
+        .as_ref()
+        .and_then(ReleaseChannelUpdateTarget::latest_version);
+    let profiles_state = health
+        .updates
+        .profiles
+        .as_ref()
+        .and_then(|target| target.state.clone());
+    let latest_images = health
+        .updates
+        .images
+        .as_ref()
+        .and_then(ReleaseChannelUpdateTarget::latest_version);
+    let images_state = health
+        .updates
+        .images
+        .as_ref()
+        .and_then(|target| target.state.clone());
+    let update_available = latest_version
+        .as_deref()
+        .is_some_and(|latest| is_newer(latest, current_binary));
+    let binary_installer = if update_available {
+        binary_installer_for_layout(&health.updates.binary.files, install_layout)
+    } else {
+        None
+    };
+    let assets_update_available = match (latest_assets.as_deref(), current_assets) {
+        (Some(latest), Some(current)) => latest != current,
+        _ => false,
+    };
+    Ok(UpdateCheck {
+        checked_at,
+        latest_version,
+        update_available,
+        binary_installer,
+        latest_assets,
+        assets_update_available,
+        latest_profiles,
+        profiles_update_available: false,
+        profiles_state,
+        latest_images,
+        images_update_available: false,
+        images_state,
+        source: Some(source.to_string()),
+    })
+}
+
+fn binary_installer_for_layout(
+    files: &[ReleaseChannelBinaryFile],
+    install_layout: &InstallLayout,
+) -> Option<BinaryInstaller> {
+    let (layout_name, matches_layout): (&str, Box<dyn Fn(&str) -> bool>) = match install_layout {
+        InstallLayout::MacosPkg => ("macos_pkg", Box::new(|name| name.ends_with(".pkg"))),
+        InstallLayout::LinuxDeb => {
+            let suffix = format!("_{}.deb", deb_arch());
+            ("linux_deb", Box::new(move |name| name.ends_with(&suffix)))
+        }
+        InstallLayout::UserDir | InstallLayout::Development => return None,
+    };
+
+    files
+        .iter()
+        .filter(|file| matches_layout(&file.name))
+        .filter(|file| {
+            let installer = BinaryInstaller {
+                name: file.name.clone(),
+                url: file.url.clone(),
+                sha256: file.sha256.clone(),
+                size: file.size,
+                install_layout: layout_name.to_string(),
+            };
+            validate_binary_installer_metadata(&installer).is_ok()
+        })
+        .min_by(|left, right| left.name.cmp(&right.name))
+        .map(|file| BinaryInstaller {
+            name: file.name.clone(),
+            url: file.url.clone(),
+            sha256: file.sha256.clone(),
+            size: file.size,
+            install_layout: layout_name.to_string(),
+        })
+}
+
+fn deb_arch() -> &'static str {
+    if cfg!(target_arch = "aarch64") {
+        "arm64"
+    } else {
+        "amd64"
+    }
+}
+
+async fn fetch_release_update_check(layout: &InstallLayout) -> Result<UpdateCheck> {
+    let health_url = release_health_url()?;
+    let resp = reqwest::Client::new()
+        .get(&health_url)
+        .header("Accept", "application/json")
+        .header("User-Agent", "capsem")
+        .send()
+        .await
+        .with_context(|| format!("GET {health_url}"))?;
+    if !resp.status().is_success() {
+        anyhow::bail!("GET {} returned {}", health_url, resp.status());
+    }
+    let body: ReleaseChannelHealth = resp
+        .json()
+        .await
+        .with_context(|| format!("parse release channel health from {health_url}"))?;
+    update_check_from_release_health(
+        &body,
+        now_secs(),
+        env!("CARGO_PKG_VERSION"),
+        local_current_asset_version().as_deref(),
+        layout,
+        &health_url,
+    )
+}
+
+async fn download_binary_installer(installer: &BinaryInstaller) -> Result<PathBuf> {
+    validate_binary_installer_metadata(installer)?;
+    let target = binary_installer_cache_path(installer)?;
+    if target.exists() {
+        verify_binary_installer_file(&target, installer)?;
+        return Ok(target);
+    }
+
+    let resp = reqwest::Client::new()
+        .get(&installer.url)
+        .header("User-Agent", "capsem")
+        .send()
+        .await
+        .with_context(|| format!("GET {}", installer.url))?;
+    if !resp.status().is_success() {
+        anyhow::bail!("GET {} returned {}", installer.url, resp.status());
+    }
+    let bytes = resp
+        .bytes()
+        .await
+        .with_context(|| format!("read installer body from {}", installer.url))?;
+    verify_binary_installer_bytes(&bytes, installer)?;
+
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create installer cache {}", parent.display()))?;
+    }
+    let tmp = target.with_extension("download.tmp");
+    std::fs::write(&tmp, &bytes).with_context(|| format!("write {}", tmp.display()))?;
+    std::fs::rename(&tmp, &target).with_context(|| format!("replace {}", target.display()))?;
+    Ok(target)
+}
+
+fn binary_installer_cache_path(installer: &BinaryInstaller) -> Result<PathBuf> {
+    validate_binary_installer_metadata(installer)?;
+    Ok(crate::paths::capsem_home()?
+        .join("updates")
+        .join("installers")
+        .join(&installer.name))
+}
+
+fn binary_installer_apply_plan(
+    installer: &BinaryInstaller,
+    path: &Path,
+) -> Result<BinaryInstallerApplyPlan> {
+    validate_binary_installer_metadata(installer)?;
+    if !path.is_file() {
+        anyhow::bail!("verified installer package is missing: {}", path.display());
+    }
+    let package_path = path.display().to_string();
+    let commands = match installer.install_layout.as_str() {
+        "macos_pkg" => {
+            if !installer.name.ends_with(".pkg") {
+                anyhow::bail!("macOS installer must be a .pkg file");
+            }
+            vec![BinaryInstallerApplyCommand {
+                program: "sudo".to_string(),
+                args: vec![
+                    "/usr/sbin/installer".to_string(),
+                    "-pkg".to_string(),
+                    package_path,
+                    "-target".to_string(),
+                    "/".to_string(),
+                ],
+            }]
+        }
+        "linux_deb" => {
+            if !installer.name.ends_with(".deb") {
+                anyhow::bail!("Linux installer must be a .deb file");
+            }
+            vec![BinaryInstallerApplyCommand {
+                program: "sudo".to_string(),
+                args: vec![
+                    "apt-get".to_string(),
+                    "install".to_string(),
+                    "--yes".to_string(),
+                    package_path,
+                ],
+            }]
+        }
+        other => anyhow::bail!("unsupported binary installer layout {other}"),
+    };
+    Ok(BinaryInstallerApplyPlan { commands })
+}
+
+fn validate_binary_installer_metadata(installer: &BinaryInstaller) -> Result<()> {
+    let parsed = reqwest::Url::parse(&installer.url)
+        .with_context(|| format!("binary installer URL must be valid: {}", installer.url))?;
+    if !matches!(parsed.scheme(), "https" | "http") {
+        anyhow::bail!(
+            "unsupported binary installer URL scheme {}: use https:// or http://",
+            parsed.scheme()
+        );
+    }
+    if !is_safe_installer_name(&installer.name) {
+        anyhow::bail!("binary installer name must be a plain filename");
+    }
+    if installer.sha256.len() != 64 || !installer.sha256.chars().all(|c| c.is_ascii_hexdigit()) {
+        anyhow::bail!("binary installer sha256 must be 64 hex characters");
+    }
+    Ok(())
+}
+
+fn is_safe_installer_name(name: &str) -> bool {
+    !name.is_empty()
+        && Path::new(name)
+            .file_name()
+            .and_then(|file_name| file_name.to_str())
+            == Some(name)
+        && !name.contains('\\')
+}
+
+fn verify_binary_installer_file(path: &Path, installer: &BinaryInstaller) -> Result<()> {
+    let bytes = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    verify_binary_installer_bytes(&bytes, installer)
+}
+
+fn verify_binary_installer_bytes(bytes: &[u8], installer: &BinaryInstaller) -> Result<()> {
+    validate_binary_installer_metadata(installer)?;
+    if bytes.len() as u64 != installer.size {
+        anyhow::bail!(
+            "binary installer size mismatch for {}: expected {}, got {}",
+            installer.name,
+            installer.size,
+            bytes.len()
+        );
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    let actual = format!("{:x}", hasher.finalize());
+    if !actual.eq_ignore_ascii_case(&installer.sha256) {
+        anyhow::bail!(
+            "binary installer sha256 mismatch for {}: expected {}, got {}",
+            installer.name,
+            installer.sha256,
+            actual
+        );
+    }
+    Ok(())
+}
+
+fn shell_quote(value: &str) -> String {
+    if value.is_empty() {
+        return "''".to_string();
+    }
+    if value
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'.' | b'_' | b'-' | b'+' | b':'))
+    {
+        return value.to_string();
+    }
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 /// Compare versions: is `latest` newer than `current`?
@@ -164,11 +713,27 @@ fn is_newer(latest: &str, current: &str) -> bool {
 /// With `assets = true`, refresh only the VM asset files referenced by the
 /// locally-installed manifest. Binary swap is still scoped to the orthogonal
 /// CI sprint and remains a "rebuild from source" step for dev builds.
-pub async fn run_update(_yes: bool, assets: bool) -> Result<()> {
+pub async fn run_update(
+    yes: bool,
+    assets: bool,
+    manifest_source: Option<&str>,
+    corp_source: Option<&str>,
+) -> Result<()> {
     let layout = platform::detect_install_layout();
 
-    if assets {
-        return refresh_assets().await;
+    let mut did_work = false;
+    if let Some(source) = corp_source {
+        provision_corp_config(source).await?;
+        did_work = true;
+    }
+
+    if assets || manifest_source.is_some() {
+        refresh_assets(manifest_source).await?;
+        return Ok(());
+    }
+
+    if did_work {
+        return Ok(());
     }
 
     if layout == InstallLayout::Development {
@@ -176,16 +741,60 @@ pub async fn run_update(_yes: bool, assets: bool) -> Result<()> {
         return Ok(());
     }
 
-    println!("Binary self-update is not yet wired up.");
-    println!("Run `capsem update --assets` to refresh VM assets, or");
-    println!("rebuild from source: `git pull && just install`.");
+    let check = match fetch_release_update_check(&layout).await {
+        Ok(check) => check,
+        Err(error) => {
+            println!("Binary update check failed: {error:#}");
+            println!("Run `capsem update --assets` to refresh VM assets, or retry later.");
+            return Ok(());
+        }
+    };
+    let _ = write_cache(&check);
+
+    let current = env!("CARGO_PKG_VERSION");
+    let Some(latest) = check.latest_version.as_deref() else {
+        println!("Release channel did not advertise a binary version.");
+        return Ok(());
+    };
+    if !check.update_available {
+        println!("Capsem is current ({current}).");
+        return Ok(());
+    }
+
+    println!("Binary update available: {current} -> {latest}");
+    if let Some(installer) = check.binary_installer.as_ref() {
+        let mb = installer.size as f64 / 1_048_576.0;
+        println!("Installer: {}", installer.url);
+        println!("Package:   {} ({mb:.1} MB)", installer.name);
+        println!("SHA-256:   {}", installer.sha256);
+        if yes {
+            let path = download_binary_installer(installer).await?;
+            println!("Verified installer: {}", path.display());
+            let plan = binary_installer_apply_plan(installer, &path)?;
+            println!("Apply command:");
+            for command in plan.command_lines() {
+                println!("  {command}");
+            }
+            println!("Automatic package-manager execution is not yet enabled; run the command above to apply this verified binary update.");
+        } else {
+            println!("Re-run with --yes to download and verify the installer package.");
+        }
+    } else {
+        println!(
+            "No installer package in release health matches this install layout ({layout:?})."
+        );
+    }
+    println!("Run `capsem update --assets` separately to refresh VM assets.");
     Ok(())
 }
 
 /// Pull any missing / hash-mismatched VM assets from the release URL.
-async fn refresh_assets() -> Result<()> {
+async fn refresh_assets(manifest_source: Option<&str>) -> Result<()> {
     let assets_dir = capsem_core::asset_manager::default_assets_dir()
         .context("cannot resolve CAPSEM_HOME -- set $HOME or $CAPSEM_HOME")?;
+    if let Some(source) = manifest_source {
+        install_manifest_source(&assets_dir, source).await?;
+    }
     let manifest_path = assets_dir.join("manifest.json");
     let manifest_bytes = std::fs::read_to_string(&manifest_path)
         .with_context(|| format!("read {}", manifest_path.display()))?;
@@ -248,6 +857,86 @@ async fn refresh_assets() -> Result<()> {
     Ok(())
 }
 
+async fn provision_corp_config(source: &str) -> Result<()> {
+    let capsem_dir = crate::paths::capsem_home()?;
+    capsem_core::net::policy_config::corp_provision::provision_from_source(&capsem_dir, source)
+        .await
+        .with_context(|| format!("provision corp config from {source}"))?;
+    println!("Corp config updated from {source}.");
+    Ok(())
+}
+
+async fn install_manifest_source(assets_dir: &std::path::Path, source: &str) -> Result<()> {
+    let bytes = read_manifest_source(source).await?;
+    let body = std::str::from_utf8(&bytes)
+        .with_context(|| format!("manifest URL did not return UTF-8 JSON: {source}"))?;
+    capsem_core::asset_manager::ManifestV2::from_json(body)
+        .with_context(|| format!("parse manifest from {source}"))?;
+
+    std::fs::create_dir_all(assets_dir)
+        .with_context(|| format!("cannot create {}", assets_dir.display()))?;
+    atomic_write(&assets_dir.join("manifest.json"), &bytes)?;
+
+    let origin = serde_json::json!({
+        "schema": "capsem.manifest_origin.v1",
+        "origin": "update",
+        "source": source
+    });
+    let origin_bytes = serde_json::to_vec_pretty(&origin)?;
+    atomic_write(&assets_dir.join("manifest-origin.json"), &origin_bytes)?;
+    println!("Installed asset manifest from {source}.");
+    Ok(())
+}
+
+async fn read_manifest_source(source: &str) -> Result<Vec<u8>> {
+    let url = reqwest::Url::parse(source).with_context(|| {
+        format!("--manifest must be a URL: use https://..., http://..., or file:///absolute/path, got {source}")
+    })?;
+    match url.scheme() {
+        "file" => {
+            if !has_scheme_authority_prefix(source, "file") {
+                anyhow::bail!("--manifest file URL must start with file://: {source}");
+            }
+            let path = url
+                .to_file_path()
+                .map_err(|_| anyhow::anyhow!("--manifest file URL must be absolute: {source}"))?;
+            std::fs::read(&path).with_context(|| format!("read manifest {}", path.display()))
+        }
+        "http" | "https" => {
+            if !has_scheme_authority_prefix(source, url.scheme()) {
+                anyhow::bail!(
+                    "--manifest must use https://, http://, or file:// URLs, got {source}"
+                );
+            }
+            let resp = reqwest::Client::new()
+                .get(url.clone())
+                .header("Accept", "application/json")
+                .header("User-Agent", "capsem")
+                .send()
+                .await
+                .with_context(|| format!("GET {source}"))?;
+            if !resp.status().is_success() {
+                anyhow::bail!("GET {} returned {}", source, resp.status());
+            }
+            Ok(resp
+                .bytes()
+                .await
+                .with_context(|| format!("read manifest body from {source}"))?
+                .to_vec())
+        }
+        scheme => anyhow::bail!(
+            "unsupported --manifest URL scheme {scheme}: use https://, http://, or file://"
+        ),
+    }
+}
+
+fn atomic_write(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, bytes).with_context(|| format!("write {}", tmp.display()))?;
+    std::fs::rename(&tmp, path).with_context(|| format!("replace {}", path.display()))?;
+    Ok(())
+}
+
 fn local_manifest_asset_source(assets_dir: &std::path::Path) -> Result<Option<PathBuf>> {
     let origin_path = assets_dir.join("manifest-origin.json");
     if !origin_path.exists() {
@@ -263,11 +952,23 @@ fn local_manifest_asset_source(assets_dir: &std::path::Path) -> Result<Option<Pa
     if source.starts_with("http://") || source.starts_with("https://") {
         return Ok(None);
     }
-    let path = if let Some(rest) = source.strip_prefix("file://") {
-        PathBuf::from(rest)
-    } else {
-        PathBuf::from(source)
-    };
+    let parsed = reqwest::Url::parse(source).with_context(|| {
+        format!(
+            "asset manifest origin source must be a URL: use https://..., http://..., or file:///absolute/path, got {source}"
+        )
+    })?;
+    if parsed.scheme() != "file" {
+        anyhow::bail!(
+            "unsupported asset manifest origin URL scheme {}: use https://, http://, or file://",
+            parsed.scheme()
+        );
+    }
+    if !has_scheme_authority_prefix(source, "file") {
+        anyhow::bail!("asset manifest origin file URL must start with file://: {source}");
+    }
+    let path = parsed.to_file_path().map_err(|_| {
+        anyhow::anyhow!("asset manifest origin file URL must be absolute: {source}")
+    })?;
     if !path.is_file() {
         return Ok(None);
     }
@@ -310,16 +1011,505 @@ mod tests {
             checked_at: 1718444400,
             latest_version: Some("0.17.0".into()),
             update_available: true,
+            binary_installer: Some(BinaryInstaller {
+                name: "Capsem-0.17.0.pkg".into(),
+                url: "https://github.com/google/capsem/releases/download/v0.17.0/Capsem-0.17.0.pkg"
+                    .into(),
+                sha256: "abc123".into(),
+                size: 123,
+                install_layout: "macos_pkg".into(),
+            }),
+            latest_assets: Some("2030.0101.1".into()),
+            assets_update_available: true,
+            latest_profiles: Some("profiles-2030.0101.1".into()),
+            profiles_update_available: false,
+            profiles_state: Some("published".into()),
+            latest_images: None,
+            images_update_available: false,
+            images_state: Some("not_published".into()),
+            source: Some("https://release.capsem.org/health.json".into()),
         };
         let json = serde_json::to_string(&check).unwrap();
         let rt: UpdateCheck = serde_json::from_str(&json).unwrap();
         assert_eq!(rt.latest_version, Some("0.17.0".into()));
         assert!(rt.update_available);
+        assert_eq!(
+            rt.binary_installer
+                .as_ref()
+                .map(|installer| installer.name.as_str()),
+            Some("Capsem-0.17.0.pkg")
+        );
+        assert_eq!(rt.latest_assets, Some("2030.0101.1".into()));
+        assert!(rt.assets_update_available);
+        assert_eq!(rt.latest_profiles, Some("profiles-2030.0101.1".into()));
+        assert!(!rt.profiles_update_available);
+        assert_eq!(rt.profiles_state, Some("published".into()));
+        assert_eq!(rt.latest_images, None);
+        assert!(!rt.images_update_available);
+        assert_eq!(rt.images_state, Some("not_published".into()));
+        assert_eq!(
+            rt.source,
+            Some("https://release.capsem.org/health.json".into())
+        );
+    }
+
+    #[test]
+    fn update_check_old_cache_shape_defaults_new_release_channel_fields() {
+        let rt: UpdateCheck = serde_json::from_str(
+            r#"{"checked_at":1718444400,"latest_version":"0.17.0","update_available":true}"#,
+        )
+        .unwrap();
+
+        assert_eq!(rt.latest_version, Some("0.17.0".into()));
+        assert!(rt.update_available);
+        assert_eq!(rt.binary_installer, None);
+        assert_eq!(rt.latest_assets, None);
+        assert!(!rt.assets_update_available);
+        assert_eq!(rt.latest_profiles, None);
+        assert!(!rt.profiles_update_available);
+        assert_eq!(rt.profiles_state, None);
+        assert_eq!(rt.latest_images, None);
+        assert!(!rt.images_update_available);
+        assert_eq!(rt.images_state, None);
+        assert_eq!(rt.source, None);
     }
 
     #[test]
     fn cache_ttl_constant() {
         assert_eq!(CACHE_TTL_SECS, 86400);
+    }
+
+    #[test]
+    fn release_health_url_derives_from_remote_manifest_url() {
+        assert_eq!(
+            release_health_url_from_manifest_url(
+                "https://release.capsem.org/assets/stable/manifest.json"
+            ),
+            Some("https://release.capsem.org/health.json".to_string())
+        );
+        assert_eq!(
+            release_health_url_from_manifest_url(
+                "https://corp.example/capsem/assets/internal/manifest.json"
+            ),
+            Some("https://corp.example/capsem/health.json".to_string())
+        );
+        assert_eq!(
+            release_health_url_from_manifest_url("file:///tmp/assets/stable/manifest.json"),
+            None
+        );
+    }
+
+    #[test]
+    fn release_health_url_env_rejects_bare_paths() {
+        let err = validate_release_health_url("/tmp/release/health.json").unwrap_err();
+        assert!(
+            format!("{err:#}").contains("CAPSEM_RELEASE_HEALTH_URL must be a URL"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn release_health_update_check_uses_updates_block() {
+        let pkg_sha = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let deb_sha = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+        let health: ReleaseChannelHealth = serde_json::from_value(serde_json::json!({
+            "schema": "capsem.assets_channel.health.v1",
+            "updates": {
+                "binary": {
+                    "latest": "99.99.99",
+                    "current": "99.99.98",
+                    "files": [
+                        {
+                            "name": "Capsem-99.99.99.pkg",
+                            "url": "https://github.com/google/capsem/releases/download/v99.99.99/Capsem-99.99.99.pkg",
+                            "sha256": pkg_sha,
+                            "size": 123
+                        },
+                        {
+                            "name": format!("Capsem_99.99.99_{}.deb", deb_arch()),
+                            "url": format!("https://github.com/google/capsem/releases/download/v99.99.99/Capsem_99.99.99_{}.deb", deb_arch()),
+                            "sha256": deb_sha,
+                            "size": 456
+                        }
+                    ]
+                },
+                "assets": {"latest": "2030.0101.1", "current": "2030.0101.0"},
+                "profiles": {"latest": "profiles-2030.0101.1", "state": "published"},
+                "images": {"latest": null, "state": "not_published"}
+            }
+        }))
+        .unwrap();
+
+        let check = update_check_from_release_health(
+            &health,
+            1718444400,
+            "1.3.1782582155",
+            Some("2026.0627.1"),
+            &InstallLayout::MacosPkg,
+            "https://release.capsem.org/health.json",
+        )
+        .unwrap();
+
+        assert_eq!(check.latest_version, Some("99.99.99".to_string()));
+        assert!(check.update_available);
+        let installer = check.binary_installer.as_ref().unwrap();
+        assert_eq!(installer.name, "Capsem-99.99.99.pkg");
+        assert_eq!(installer.sha256, pkg_sha);
+        assert_eq!(installer.size, 123);
+        assert_eq!(installer.install_layout, "macos_pkg");
+        assert_eq!(check.latest_assets, Some("2030.0101.1".to_string()));
+        assert!(check.assets_update_available);
+        assert_eq!(
+            check.latest_profiles,
+            Some("profiles-2030.0101.1".to_string())
+        );
+        assert!(!check.profiles_update_available);
+        assert_eq!(check.profiles_state, Some("published".to_string()));
+        assert_eq!(check.latest_images, None);
+        assert!(!check.images_update_available);
+        assert_eq!(check.images_state, Some("not_published".to_string()));
+        assert_eq!(
+            check.source,
+            Some("https://release.capsem.org/health.json".to_string())
+        );
+    }
+
+    #[test]
+    fn release_health_update_check_accepts_legacy_current_targets() {
+        let health: ReleaseChannelHealth = serde_json::from_value(serde_json::json!({
+            "schema": "capsem.assets_channel.health.v1",
+            "updates": {
+                "binary": {"current": "99.99.99"},
+                "assets": {"current": "2030.0101.1"}
+            }
+        }))
+        .unwrap();
+
+        let check = update_check_from_release_health(
+            &health,
+            1718444400,
+            "1.3.1782582155",
+            Some("2026.0627.1"),
+            &InstallLayout::MacosPkg,
+            "https://release.capsem.org/health.json",
+        )
+        .unwrap();
+
+        assert_eq!(check.latest_version, Some("99.99.99".to_string()));
+        assert_eq!(check.latest_assets, Some("2030.0101.1".to_string()));
+    }
+
+    #[test]
+    fn binary_installer_for_layout_selects_matching_deb_arch() {
+        let files = vec![
+            ReleaseChannelBinaryFile {
+                name: "Capsem_99.99.99_wrong.deb".to_string(),
+                url: "https://github.com/google/capsem/releases/download/v99.99.99/Capsem_99.99.99_wrong.deb".to_string(),
+                sha256: "1".repeat(64),
+                size: 10,
+            },
+            ReleaseChannelBinaryFile {
+                name: format!("Capsem_99.99.99_{}.deb", deb_arch()),
+                url: format!(
+                    "https://github.com/google/capsem/releases/download/v99.99.99/Capsem_99.99.99_{}.deb",
+                    deb_arch()
+                ),
+                sha256: "2".repeat(64),
+                size: 20,
+            },
+            ReleaseChannelBinaryFile {
+                name: "Capsem-99.99.99.pkg".to_string(),
+                url: "https://github.com/google/capsem/releases/download/v99.99.99/Capsem-99.99.99.pkg".to_string(),
+                sha256: "3".repeat(64),
+                size: 30,
+            },
+        ];
+
+        let installer = binary_installer_for_layout(&files, &InstallLayout::LinuxDeb).unwrap();
+
+        assert_eq!(
+            installer.name,
+            format!("Capsem_99.99.99_{}.deb", deb_arch())
+        );
+        assert_eq!(installer.sha256, "2".repeat(64));
+        assert_eq!(installer.size, 20);
+        assert_eq!(installer.install_layout, "linux_deb");
+    }
+
+    #[test]
+    fn binary_installer_for_layout_rejects_non_http_urls() {
+        let files = vec![ReleaseChannelBinaryFile {
+            name: "Capsem-99.99.99.pkg".to_string(),
+            url: "file:///tmp/Capsem-99.99.99.pkg".to_string(),
+            sha256: "local".to_string(),
+            size: 10,
+        }];
+
+        assert_eq!(
+            binary_installer_for_layout(&files, &InstallLayout::MacosPkg),
+            None
+        );
+    }
+
+    #[test]
+    fn verify_binary_installer_bytes_accepts_matching_sha256_and_size() {
+        let bytes = b"verified installer payload";
+        let installer = BinaryInstaller {
+            name: "Capsem-99.99.99.pkg".to_string(),
+            url: "https://github.com/google/capsem/releases/download/v99.99.99/Capsem-99.99.99.pkg"
+                .to_string(),
+            sha256: test_sha256(bytes),
+            size: bytes.len() as u64,
+            install_layout: "macos_pkg".to_string(),
+        };
+
+        verify_binary_installer_bytes(bytes, &installer).unwrap();
+    }
+
+    #[test]
+    fn verify_binary_installer_bytes_rejects_size_mismatch() {
+        let bytes = b"verified installer payload";
+        let installer = BinaryInstaller {
+            name: "Capsem-99.99.99.pkg".to_string(),
+            url: "https://github.com/google/capsem/releases/download/v99.99.99/Capsem-99.99.99.pkg"
+                .to_string(),
+            sha256: test_sha256(bytes),
+            size: bytes.len() as u64 + 1,
+            install_layout: "macos_pkg".to_string(),
+        };
+
+        let err = verify_binary_installer_bytes(bytes, &installer).unwrap_err();
+
+        assert!(
+            format!("{err:#}").contains("binary installer size mismatch"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn verify_binary_installer_bytes_rejects_sha256_mismatch() {
+        let bytes = b"verified installer payload";
+        let installer = BinaryInstaller {
+            name: "Capsem-99.99.99.pkg".to_string(),
+            url: "https://github.com/google/capsem/releases/download/v99.99.99/Capsem-99.99.99.pkg"
+                .to_string(),
+            sha256: "0".repeat(64),
+            size: bytes.len() as u64,
+            install_layout: "macos_pkg".to_string(),
+        };
+
+        let err = verify_binary_installer_bytes(bytes, &installer).unwrap_err();
+
+        assert!(
+            format!("{err:#}").contains("binary installer sha256 mismatch"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn binary_installer_metadata_rejects_path_names() {
+        let installer = BinaryInstaller {
+            name: "../Capsem-99.99.99.pkg".to_string(),
+            url: "https://github.com/google/capsem/releases/download/v99.99.99/Capsem-99.99.99.pkg"
+                .to_string(),
+            sha256: "0".repeat(64),
+            size: 10,
+            install_layout: "macos_pkg".to_string(),
+        };
+
+        let err = validate_binary_installer_metadata(&installer).unwrap_err();
+
+        assert!(
+            format!("{err:#}").contains("binary installer name must be a plain filename"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn binary_installer_apply_plan_uses_macos_pkg_installer() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Capsem 99.99.99.pkg");
+        std::fs::write(&path, b"pkg").unwrap();
+        let installer = BinaryInstaller {
+            name: "Capsem-99.99.99.pkg".to_string(),
+            url: "https://github.com/google/capsem/releases/download/v99.99.99/Capsem-99.99.99.pkg"
+                .to_string(),
+            sha256: "0".repeat(64),
+            size: 3,
+            install_layout: "macos_pkg".to_string(),
+        };
+
+        let plan = binary_installer_apply_plan(&installer, &path).unwrap();
+
+        assert_eq!(
+            plan.commands,
+            vec![BinaryInstallerApplyCommand {
+                program: "sudo".to_string(),
+                args: vec![
+                    "/usr/sbin/installer".to_string(),
+                    "-pkg".to_string(),
+                    path.display().to_string(),
+                    "-target".to_string(),
+                    "/".to_string(),
+                ],
+            }]
+        );
+        assert_eq!(
+            plan.command_lines(),
+            vec![format!(
+                "sudo /usr/sbin/installer -pkg '{}' -target /",
+                path.display()
+            )]
+        );
+    }
+
+    #[test]
+    fn binary_installer_apply_plan_uses_apt_for_linux_deb() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Capsem_99.99.99_arm64.deb");
+        std::fs::write(&path, b"deb").unwrap();
+        let installer = BinaryInstaller {
+            name: "Capsem_99.99.99_arm64.deb".to_string(),
+            url: "https://github.com/google/capsem/releases/download/v99.99.99/Capsem_99.99.99_arm64.deb"
+                .to_string(),
+            sha256: "0".repeat(64),
+            size: 3,
+            install_layout: "linux_deb".to_string(),
+        };
+
+        let plan = binary_installer_apply_plan(&installer, &path).unwrap();
+
+        assert_eq!(
+            plan.commands,
+            vec![BinaryInstallerApplyCommand {
+                program: "sudo".to_string(),
+                args: vec![
+                    "apt-get".to_string(),
+                    "install".to_string(),
+                    "--yes".to_string(),
+                    path.display().to_string(),
+                ],
+            }]
+        );
+        assert_eq!(
+            plan.command_lines(),
+            vec![format!("sudo apt-get install --yes {}", path.display())]
+        );
+    }
+
+    #[test]
+    fn binary_installer_apply_plan_rejects_unknown_layout() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Capsem-99.99.99.pkg");
+        std::fs::write(&path, b"pkg").unwrap();
+        let installer = BinaryInstaller {
+            name: "Capsem-99.99.99.pkg".to_string(),
+            url: "https://github.com/google/capsem/releases/download/v99.99.99/Capsem-99.99.99.pkg"
+                .to_string(),
+            sha256: "0".repeat(64),
+            size: 3,
+            install_layout: "portable_zip".to_string(),
+        };
+
+        let err = binary_installer_apply_plan(&installer, &path).unwrap_err();
+
+        assert!(
+            format!("{err:#}").contains("unsupported binary installer layout portable_zip"),
+            "{err:#}"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn download_binary_installer_fetches_verifies_and_caches() {
+        let _lock = crate::lock_test_env();
+        let home = tempfile::tempdir().unwrap();
+        let _home = EnvGuard::set("CAPSEM_HOME", home.path().to_str().unwrap());
+        let payload = b"downloaded installer payload".to_vec();
+        let response_payload = payload.clone();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 1024];
+            let _ = std::io::Read::read(&mut stream, &mut request);
+            let header = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n",
+                response_payload.len()
+            );
+            std::io::Write::write_all(&mut stream, header.as_bytes()).unwrap();
+            std::io::Write::write_all(&mut stream, &response_payload).unwrap();
+        });
+        let installer = BinaryInstaller {
+            name: "Capsem-99.99.99.pkg".to_string(),
+            url: format!("http://{addr}/Capsem-99.99.99.pkg"),
+            sha256: test_sha256(&payload),
+            size: payload.len() as u64,
+            install_layout: "macos_pkg".to_string(),
+        };
+
+        let path = download_binary_installer(&installer).await.unwrap();
+        server.join().unwrap();
+
+        assert_eq!(
+            path,
+            home.path().join("updates/installers/Capsem-99.99.99.pkg")
+        );
+        assert_eq!(std::fs::read(path).unwrap(), payload);
+    }
+
+    fn test_sha256(bytes: &[u8]) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(bytes);
+        format!("{:x}", hasher.finalize())
+    }
+
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
+    #[test]
+    fn release_health_update_check_rejects_wrong_schema() {
+        let health: ReleaseChannelHealth = serde_json::from_value(serde_json::json!({
+            "schema": "capsem.bad_health.v1",
+            "updates": {
+                "binary": {"current": "99.99.99"},
+                "assets": {"current": "2030.0101.1"}
+            }
+        }))
+        .unwrap();
+
+        let err = update_check_from_release_health(
+            &health,
+            1718444400,
+            "1.3.1782582155",
+            Some("2026.0627.1"),
+            &InstallLayout::MacosPkg,
+            "https://release.capsem.org/health.json",
+        )
+        .unwrap_err();
+
+        assert!(
+            format!("{err:#}").contains("release channel health schema mismatch"),
+            "{err:#}"
+        );
     }
 
     #[test]
@@ -336,7 +1526,7 @@ mod tests {
             serde_json::json!({
                 "schema": "capsem.manifest_origin.v1",
                 "origin": "package",
-                "source": manifest.display().to_string()
+                "source": format!("file://{}", manifest.display())
             })
             .to_string(),
         )
@@ -365,5 +1555,51 @@ mod tests {
         .unwrap();
 
         assert_eq!(local_manifest_asset_source(&assets_dir).unwrap(), None);
+    }
+
+    #[test]
+    fn local_manifest_asset_source_rejects_bare_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let assets_dir = dir.path().join("installed-assets");
+        std::fs::create_dir_all(&assets_dir).unwrap();
+        std::fs::write(
+            assets_dir.join("manifest-origin.json"),
+            serde_json::json!({
+                "schema": "capsem.manifest_origin.v1",
+                "origin": "package",
+                "source": "/tmp/corp/assets/stable/manifest.json"
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let err = local_manifest_asset_source(&assets_dir).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("asset manifest origin source must be a URL"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn local_manifest_asset_source_rejects_file_url_shorthand_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let assets_dir = dir.path().join("installed-assets");
+        std::fs::create_dir_all(&assets_dir).unwrap();
+        std::fs::write(
+            assets_dir.join("manifest-origin.json"),
+            serde_json::json!({
+                "schema": "capsem.manifest_origin.v1",
+                "origin": "package",
+                "source": "file:assets/stable/manifest.json"
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let err = local_manifest_asset_source(&assets_dir).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("asset manifest origin file URL must start with file://"),
+            "{err:#}"
+        );
     }
 }
