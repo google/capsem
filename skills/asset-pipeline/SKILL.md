@@ -148,8 +148,8 @@ against the live previous manifest and skip deployment only when current VM blob
 to separate published evidence.
 The deploy smoke rejects stale public HTML: the fetched index page must show the
 same current binary, current VM asset version, asset release date, generated
-timestamp, profile revision, profile catalog URL, and channel manifest path as
-the fetched health JSON and manifest.
+timestamp, profile revision, profile catalog URL, profile update source, and
+channel manifest path as the fetched health JSON and manifest.
 The deploy smoke must also verify public `Cache-Control` headers: mutable
 release-channel pointers (`/`, `/health.json`, and
 `/assets/<channel>/manifest.json`) stay `no-cache, must-revalidate`, while

@@ -191,6 +191,8 @@ jobs:
           if health.get("urls", {}).get("profile_catalog") != health.get("profiles", {}).get("source"):
               failures.append("health profile catalog URL mismatch")
           updates = health.get("updates", {})
+          if updates.get("profiles", {}).get("source") != health.get("profiles", {}).get("source"):
+              failures.append("health profile update source mismatch")
           for key in ("binary", "assets"):
               if not isinstance(updates.get(key, {}).get("latest"), str):
                   failures.append(f"health updates.{key}.latest missing or not a string")

@@ -83,11 +83,11 @@ smoke-check `https://release.capsem.org/`, `/health.json`, and
 `/assets/<channel>/manifest.json` through the public custom domain before it
 passes. That smoke must reject stale public HTML: the fetched index page must
 show the same current binary, current VM asset version, asset release date,
-generated timestamp, profile revision, profile catalog URL, and channel manifest path
-as the fetched health JSON and manifest. It must also resolve published host
-SBOM and VM OBOM evidence artifacts from `health.json`, verify their advertised
-hashes and sizes, and validate attestation subjects and predicate URLs against
-the published evidence lists. Host SBOM evidence is incomplete unless
+generated timestamp, profile revision, profile catalog URL, profile update source,
+and channel manifest path as the fetched health JSON and manifest. It must also
+resolve published host SBOM and VM OBOM evidence artifacts from `health.json`,
+verify their advertised hashes and sizes, and validate attestation subjects and predicate URLs
+against the published evidence lists. Host SBOM evidence is incomplete unless
 `github_attestations_host_sbom` is present and points at the published
 `capsem-sbom.spdx.json` evidence and covers every published host package
 subject. It must also verify public `Cache-Control`

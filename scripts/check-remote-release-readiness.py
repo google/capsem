@@ -277,8 +277,17 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
     current_binary = health_current.get("binary")
     current_assets = health_current.get("assets")
     profile_source = health_profiles.get("source")
+    health_updates = health_data.get("updates")
+    health_update_profiles = (
+        health_updates.get("profiles") if isinstance(health_updates, dict) else None
+    )
+    profile_update_source = (
+        health_update_profiles.get("source") if isinstance(health_update_profiles, dict) else None
+    )
     if health_urls.get("profile_catalog") != profile_source:
         failures.append("health profile catalog URL mismatch")
+    if profile_update_source != profile_source:
+        failures.append("health profile update source mismatch")
     if manifest_assets.get("current") != current_assets:
         failures.append("current asset mismatch between health and manifest")
     if manifest_binaries.get("current") != current_binary:
