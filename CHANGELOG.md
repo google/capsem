@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Fixed the service update-apply route so ambiguous JSON bodies with extra
+  fields are rejected instead of silently applying a binary/profile or VM asset
+  update.
 - Fixed CLI update-status formatting coverage so `capsem status` keeps
   available and blocked binary/profile/VM asset/image tracks separated.
 - Fixed the binary release post-deploy smoke so asset-channel URLs must match

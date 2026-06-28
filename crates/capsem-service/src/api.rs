@@ -343,6 +343,7 @@ pub enum UpdateApplyAction {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct UpdateApplyRequest {
     pub action: UpdateApplyAction,
     #[serde(default)]

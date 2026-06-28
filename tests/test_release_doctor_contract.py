@@ -459,6 +459,7 @@ def test_cross_surface_update_smoke_prerequisites_are_covered_locally() -> None:
 
     assert "update_route_apply_dry_run_plans_binary_profiles_and_assets" in service
     assert "update_route_apply_confirmed_dispatches_binary_profiles_and_assets" in service
+    assert "update_route_apply_rejects_ambiguous_action_body" in service
     assert 'json!(["update", "--yes"])' in service
     assert 'json!(["update", "--assets"])' in service
 

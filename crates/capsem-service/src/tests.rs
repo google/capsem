@@ -728,6 +728,32 @@ async fn update_route_apply_requires_confirmation_for_live_commands() {
 }
 
 #[tokio::test]
+async fn update_route_apply_rejects_ambiguous_action_body() {
+    let app = build_service_router(make_test_state());
+    let (status, body) = route_request(
+        app,
+        axum::http::Method::POST,
+        "/update/apply",
+        Some(json!({
+            "action": "binary_profiles",
+            "confirmed": true,
+            "assets": true,
+        })),
+    )
+    .await;
+
+    assert!(
+        status.is_client_error(),
+        "ambiguous update action body must be rejected, got {status}"
+    );
+    assert_ne!(status, StatusCode::OK);
+    assert!(
+        body.to_string().contains("unknown field") || body.to_string().contains("unknown variant"),
+        "unexpected rejection body: {body}"
+    );
+}
+
+#[tokio::test]
 async fn update_route_apply_confirmed_dispatches_binary_profiles_and_assets() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
