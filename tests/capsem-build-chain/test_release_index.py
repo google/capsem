@@ -347,6 +347,75 @@ def test_asset_release_updates_release_index_without_moving_binary_pointer(
     _run_admin("assets", "channel", "check", "--channel", "stable", "--dist", str(dist))
 
 
+def test_asset_channel_deprecate_release_reports_history_without_moving_current(
+    tmp_path: Path,
+) -> None:
+    manifest_path = _write_release_manifest(
+        tmp_path,
+        asset_version="2030.0102.1",
+        binary_version="1.4.1234567890",
+        date="2030-01-02",
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    current_release = manifest["assets"]["releases"]["2030.0102.1"]
+    deprecated_release = dict(current_release)
+    deprecated_release["date"] = "2030-01-01"
+    deprecated_release["deprecated"] = True
+    deprecated_release["deprecated_date"] = "2030-01-03"
+    manifest["assets"]["releases"]["2030.0101.1"] = deprecated_release
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    profiles_dir = _write_profile_catalog(tmp_path)
+    dist = tmp_path / "target" / "release-channel"
+
+    _run_admin(
+        "assets",
+        "channel",
+        "build",
+        "--manifest",
+        f"file://{manifest_path}",
+        "--assets-dir",
+        str(manifest_path.parent),
+        "--profiles-dir",
+        str(profiles_dir),
+        "--channel",
+        "stable",
+        "--out-dir",
+        str(dist),
+        "--generated-at",
+        "2030-01-03T00:00:00Z",
+    )
+
+    index_html = (dist / "index.html").read_text(encoding="utf-8")
+    assert "Asset Release History" in index_html
+    assert "2030.0101.1" in index_html
+    assert "deprecated" in index_html
+    assert "2030-01-03" in index_html
+    assert "2030.0102.1" in index_html
+
+    health = json.loads((dist / "health.json").read_text(encoding="utf-8"))
+    assert health["current"] == {
+        "binary": "1.4.1234567890",
+        "assets": "2030.0102.1",
+    }
+    releases = {release["version"]: release for release in health["asset_releases"]}
+    assert releases["2030.0102.1"]["state"] == "current"
+    assert releases["2030.0102.1"]["deprecated"] is False
+    assert releases["2030.0101.1"]["state"] == "deprecated"
+    assert releases["2030.0101.1"]["deprecated"] is True
+    assert releases["2030.0101.1"]["deprecated_date"] == "2030-01-03"
+    assert (
+        dist / "assets" / "releases" / "2030.0102.1" / "arm64-rootfs.erofs"
+    ).read_bytes() == b"rootfs-arm64"
+    assert not (dist / "assets" / "releases" / "2030.0101.1").exists()
+
+    channel_manifest = json.loads(
+        (dist / "assets" / "stable" / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert channel_manifest["assets"]["releases"]["2030.0101.1"]["deprecated"] is True
+
+    _run_admin("assets", "channel", "check", "--channel", "stable", "--dist", str(dist))
+
+
 def test_asset_release_index_workflow_deploys_generated_preview_only_after_asset_change() -> None:
     workflow = (PROJECT_ROOT / ".github/workflows/release-assets.yaml").read_text(
         encoding="utf-8"

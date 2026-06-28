@@ -917,6 +917,9 @@ fn pick_asset_version(manifest: &ManifestV2, binary_version: &str) -> Result<Str
 
     let mut best: Option<&str> = None;
     for (asset_version, release) in &manifest.assets.releases {
+        if release.deprecated {
+            continue;
+        }
         if !version_at_least(asset_version, min_assets) {
             continue;
         }
@@ -1094,6 +1097,43 @@ mod tests {
         assert_eq!(
             resolved.asset_version, "2026.0415.1",
             "older binaries must keep using the newest asset release whose min_binary allows them"
+        );
+    }
+
+    #[test]
+    fn manifest_resolve_avoids_deprecated_asset_releases() {
+        let mut m = ManifestV2::from_json(SAMPLE_V2_MANIFEST).unwrap();
+        let deprecated_version = "2026.0416.1".to_string();
+        let mut deprecated_release = m.assets.releases["2026.0415.1"].clone();
+        deprecated_release.deprecated = true;
+        deprecated_release.deprecated_date = Some("2026-04-17".to_string());
+        m.assets
+            .releases
+            .insert(deprecated_version.clone(), deprecated_release);
+        m.assets.current = deprecated_version;
+
+        let dir = tempfile::tempdir().unwrap();
+        let resolved = m.resolve("1.0.1776269479", "arm64", dir.path()).unwrap();
+
+        assert_eq!(
+            resolved.asset_version, "2026.0415.1",
+            "new sessions must avoid deprecated asset releases when a compatible release remains"
+        );
+    }
+
+    #[test]
+    fn manifest_resolve_fails_when_only_compatible_assets_are_deprecated() {
+        let mut m = ManifestV2::from_json(SAMPLE_V2_MANIFEST).unwrap();
+        m.assets.releases.get_mut("2026.0415.1").unwrap().deprecated = true;
+
+        let dir = tempfile::tempdir().unwrap();
+        let err = m
+            .resolve("1.0.1776269479", "arm64", dir.path())
+            .unwrap_err();
+
+        assert!(
+            format!("{err:#}").contains("no compatible asset release for binary 1.0.1776269479"),
+            "{err:#}"
         );
     }
 

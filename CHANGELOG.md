@@ -51,6 +51,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   paths.
 
 ### Changed
+- Changed VM asset selection to skip deprecated asset releases for new
+  sessions and asset hydration while showing deprecated releases in the
+  generated release-channel history.
 - Changed generated release-channel cache headers so mutable channel pointers
   remain no-cache while immutable asset and profile release artifacts are
   long-lived immutable.

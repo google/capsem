@@ -624,6 +624,7 @@ struct AssetsChannelIndex {
     current_asset_state: String,
     current_binary_state: String,
     asset_releases: usize,
+    asset_release_history: Vec<AssetsChannelAssetRelease>,
     binary_releases: usize,
     arches: Vec<String>,
     current_asset_files: Vec<AssetsChannelAssetFile>,
@@ -634,6 +635,16 @@ struct AssetsChannelIndex {
     profile_catalog: AssetsChannelProfileCatalog,
     image_update_state: String,
     notes: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct AssetsChannelAssetRelease {
+    version: String,
+    state: String,
+    deprecated: bool,
+    deprecated_date: Option<String>,
+    min_binary: String,
+    arches: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -1921,6 +1932,7 @@ fn assets_channel_index(
             .unwrap_or("missing")
             .to_string(),
         asset_releases: manifest.assets.releases.len(),
+        asset_release_history: summarize_asset_releases(manifest),
         binary_releases: manifest.binaries.releases.len(),
         arches: arches.into_iter().collect(),
         current_asset_files,
@@ -1937,6 +1949,24 @@ fn assets_channel_index(
             "VM asset releases are explicit and must deploy this asset channel.".to_string(),
         ],
     }
+}
+
+fn summarize_asset_releases(manifest: &ManifestV2) -> Vec<AssetsChannelAssetRelease> {
+    let mut releases = manifest
+        .assets
+        .releases
+        .iter()
+        .map(|(version, release)| AssetsChannelAssetRelease {
+            version: version.clone(),
+            state: release_state(release).to_string(),
+            deprecated: release.deprecated,
+            deprecated_date: release.deprecated_date.clone(),
+            min_binary: release.min_binary.clone(),
+            arches: release.arches.keys().cloned().collect(),
+        })
+        .collect::<Vec<_>>();
+    releases.sort_by(|left, right| right.version.cmp(&left.version));
+    releases
 }
 
 fn publishable_profile_catalog(
@@ -2309,6 +2339,7 @@ fn render_assets_channel_health(index: &AssetsChannelIndex) -> Result<String> {
                 "state": index.current_asset_state,
                 "files": index.current_asset_files,
             },
+            "asset_releases": index.asset_release_history,
             "profiles": {
                 "revision": index.profile_catalog.revision,
                 "state": "current",
@@ -2415,6 +2446,7 @@ fn render_assets_channel_index(index: &AssetsChannelIndex) -> Result<String> {
         index.arches.join(", ")
     };
     let current_asset_rows = render_asset_file_rows(&index.current_asset_files);
+    let asset_release_rows = render_asset_release_rows(&index.asset_release_history);
     let vm_obom_rows = render_asset_file_rows(&index.vm_oboms);
     let host_sbom_rows = render_binary_file_rows(
         &index.host_sboms,
@@ -2578,6 +2610,11 @@ fn render_assets_channel_index(index: &AssetsChannelIndex) -> Result<String> {
     </section>
 
     <section>
+      <h2>Asset Release History</h2>
+{asset_release_rows}
+    </section>
+
+    <section>
       <h2>VM OBOM Evidence</h2>
 {vm_obom_rows}
     </section>
@@ -2633,6 +2670,7 @@ fn render_assets_channel_index(index: &AssetsChannelIndex) -> Result<String> {
         asset_base = escape_html(&index.asset_base),
         manifest_blake3 = escape_html(&index.manifest_blake3),
         current_asset_rows = current_asset_rows,
+        asset_release_rows = asset_release_rows,
         vm_obom_rows = vm_obom_rows,
         host_sbom_rows = host_sbom_rows,
         attestation_rows = attestation_rows,
@@ -2641,6 +2679,36 @@ fn render_assets_channel_index(index: &AssetsChannelIndex) -> Result<String> {
         update_contract_rows = update_contract_rows,
         notes = notes,
     ))
+}
+
+fn render_asset_release_rows(releases: &[AssetsChannelAssetRelease]) -> String {
+    if releases.is_empty() {
+        return "      <p>No asset releases recorded.</p>".to_string();
+    }
+    let rows = releases
+        .iter()
+        .map(|release| {
+            let deprecated_date = release.deprecated_date.as_deref().unwrap_or("");
+            let arches = if release.arches.is_empty() {
+                "none".to_string()
+            } else {
+                release.arches.join(", ")
+            };
+            format!(
+                "        <tr><td><code>{version}</code></td><td>{state}</td><td>{deprecated}</td><td>{deprecated_date}</td><td>{min_binary}</td><td>{arches}</td></tr>",
+                version = escape_html(&release.version),
+                state = escape_html(&release.state),
+                deprecated = release.deprecated,
+                deprecated_date = escape_html(deprecated_date),
+                min_binary = escape_html(&release.min_binary),
+                arches = escape_html(&arches),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "      <table><thead><tr><th>Version</th><th>State</th><th>Deprecated</th><th>Deprecated date</th><th>Min binary</th><th>Architectures</th></tr></thead><tbody>\n{rows}\n      </tbody></table>"
+    )
 }
 
 fn render_profile_catalog(index: &AssetsChannelIndex) -> String {
