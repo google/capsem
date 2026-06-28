@@ -85,6 +85,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added an installed CLI staged update-state matrix covering binary-only,
   asset-only, profile-only, and mixed binary plus VM asset release-channel
   states.
+- Added CLI update unit coverage proving public and corporate update source
+  flags share the same URL-only validation contract.
 - Added release-channel cache-header documentation coverage so CI docs,
   architecture docs, and agent skills stay aligned with the deploy smoke.
 - Fixed the CI docs thin-package contract to state that installers carry host

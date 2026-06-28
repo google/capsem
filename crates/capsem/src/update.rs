@@ -1937,6 +1937,39 @@ mod tests {
     }
 
     #[test]
+    fn update_source_url_flags_are_url_only() {
+        for flag in ["--manifest", "--corp"] {
+            for source in [
+                "https://release.capsem.org/assets/stable/manifest.json",
+                "http://127.0.0.1:8080/assets/stable/manifest.json",
+                "file:///tmp/capsem/assets/stable/manifest.json",
+            ] {
+                assert_eq!(
+                    validate_source_url_arg(flag, source),
+                    Ok(source.to_string()),
+                    "{flag} should accept {source}"
+                );
+            }
+
+            for source in [
+                "/tmp/capsem/assets/stable/manifest.json",
+                "assets/stable/manifest.json",
+                "file:assets/stable/manifest.json",
+                "file://relative/manifest.json",
+                "ssh://updates.example/assets/stable/manifest.json",
+                "https:release.capsem.org/assets/stable/manifest.json",
+            ] {
+                let err = validate_source_url_arg(flag, source)
+                    .expect_err("source should be rejected");
+                assert!(
+                    err.contains(flag),
+                    "error for {source} should mention {flag}: {err}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn release_health_update_check_uses_updates_block() {
         let pkg_sha = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
         let deb_sha = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
