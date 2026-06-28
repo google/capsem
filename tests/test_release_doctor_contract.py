@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
+import importlib.util
 import json
 import re
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -12,6 +15,17 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 FAST_DOCTOR_FLAG = "doctor " + "--" + "fast"
 OLD_DEBUG_CRATE = "capsem-debug" + "-upstream"
+
+
+def _readiness_checker_module():
+    module_path = PROJECT_ROOT / "scripts/check-remote-release-readiness.py"
+    spec = importlib.util.spec_from_file_location("check_remote_release_readiness", module_path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def _recipe_block(name: str) -> str:
@@ -567,6 +581,104 @@ def test_remote_release_readiness_checker_reports_unpublished_local_commits() ->
     assert "publish or merge release-rail commits before claiming remote readiness" in script
     assert "local checkout has unpublished commits" in docs_text
     assert "publish or merge those commits before changing remote protection" in docs_text
+
+
+def test_remote_release_readiness_checker_verifies_public_evidence_artifacts() -> None:
+    module = _readiness_checker_module()
+    script = (PROJECT_ROOT / "scripts/check-remote-release-readiness.py").read_text()
+    docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
+    docs_text = " ".join(docs.split())
+    sbom_bytes = b'{"spdxVersion":"SPDX-2.3"}'
+    obom_bytes = b'{"bomFormat":"CycloneDX"}'
+    sbom_url = "https://github.com/google/capsem/releases/download/v1.0.0/capsem-sbom.spdx.json"
+    obom_path = "/assets/releases/2030.0101.1/arm64-obom.cdx.json"
+    obom_url = f"https://release.capsem.test{obom_path}"
+    payloads = {
+        sbom_url: sbom_bytes,
+        obom_url: obom_bytes,
+    }
+
+    def fake_fetch_bytes(url: str):
+        data = payloads.get(url)
+        if data is None:
+            return module.FetchBytes(b"", f"unexpected fetch {url}")
+        return module.FetchBytes(data)
+
+    module.fetch_bytes = fake_fetch_bytes
+    health = {
+        "assets": {
+            "files": [
+                {
+                    "arch": "arm64",
+                    "logical_name": "obom.cdx.json",
+                    "url": obom_path,
+                    "hash": module.blake3.blake3(obom_bytes).hexdigest(),
+                    "size": len(obom_bytes),
+                }
+            ]
+        },
+        "evidence": {
+            "vm_oboms": [
+                {
+                    "arch": "arm64",
+                    "logical_name": "obom.cdx.json",
+                    "url": obom_path,
+                    "hash": module.blake3.blake3(obom_bytes).hexdigest(),
+                    "size": len(obom_bytes),
+                }
+            ],
+            "host_sboms": [
+                {
+                    "name": "capsem-sbom.spdx.json",
+                    "url": sbom_url,
+                    "sha256": hashlib.sha256(sbom_bytes).hexdigest(),
+                    "size": len(sbom_bytes),
+                }
+            ],
+            "host_binary_files": [
+                {
+                    "name": "capsem-sbom.spdx.json",
+                    "url": sbom_url,
+                    "sha256": hashlib.sha256(sbom_bytes).hexdigest(),
+                    "size": len(sbom_bytes),
+                }
+            ],
+            "attestations": [
+                {
+                    "name": "github_attestations_vm_assets",
+                    "predicate_type": "https://slsa.dev/provenance/v1",
+                    "predicate_url": None,
+                    "verify_command": "gh attestation verify <subject-url> --owner google",
+                    "subjects": [obom_path],
+                },
+                {
+                    "name": "github_attestations_host_sbom",
+                    "predicate_type": "https://spdx.dev/Document/v2.3",
+                    "predicate_url": sbom_url,
+                    "verify_command": "gh attestation verify <subject-url> --owner google",
+                    "subjects": [sbom_url],
+                },
+            ],
+        },
+    }
+
+    assert module.check_release_evidence("https://release.capsem.test", health) == []
+
+    corrupted = json.loads(json.dumps(health))
+    corrupted["evidence"]["vm_oboms"][0]["hash"] = "0" * 64
+    failures = module.check_release_evidence("https://release.capsem.test", corrupted)
+    assert "VM OBOM evidence /assets/releases/2030.0101.1/arm64-obom.cdx.json blake3 mismatch" in failures
+
+    assert "def check_release_evidence" in script
+    assert "fetch_and_verify_evidence_artifact(site, sbom, \"sha256\", \"host SBOM evidence\")" in script
+    assert "fetch_and_verify_evidence_artifact(site, obom, \"blake3\", \"VM OBOM evidence\")" in script
+    assert "hashlib.sha256" in script
+    assert "blake3.blake3" in script
+    assert "attestation subject {subject} missing from published file lists" in script
+    assert "attestation predicate_url {predicate_url} missing from host SBOM evidence" in script
+    assert "resolves published host SBOM and VM OBOM evidence artifacts" in docs_text
+    assert "verifies their advertised hashes and sizes" in docs_text
+    assert "validates attestation subjects and predicate URLs" in docs_text
 
 
 def test_ci_installs_b3sum_before_bootstrap_asset_hash_checks() -> None:

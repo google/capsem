@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import socket
 import subprocess
@@ -13,6 +14,8 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
+
+import blake3
 
 
 @dataclass
@@ -220,13 +223,164 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
     elif current_asset_date not in index.text:
         failures.append("index missing current asset release date")
 
+    failures.extend(check_release_evidence(site, health_data))
+
     if failures:
         return CheckResult("release.capsem.org contract", False, "; ".join(failures))
     return CheckResult(
         "release.capsem.org contract",
         True,
-        "index, health.json, and manifest agree",
+        "index, health.json, manifest, and evidence artifacts agree",
     )
+
+
+def check_release_evidence(site: str, health: dict[str, Any]) -> list[str]:
+    evidence = health.get("evidence")
+    if not isinstance(evidence, dict):
+        return ["health evidence missing"]
+
+    failures: list[str] = []
+    vm_oboms = require_list(evidence, "vm_oboms", failures)
+    host_sboms = require_list(evidence, "host_sboms", failures)
+    host_binary_files = require_list(evidence, "host_binary_files", failures)
+    attestations = require_list(evidence, "attestations", failures)
+    asset_files = require_list(health.get("assets", {}), "files", failures)
+
+    host_binary_by_url = entries_by_url(host_binary_files, failures, "host binary file")
+    asset_by_url = entries_by_url(asset_files, failures, "asset file")
+    host_sbom_urls = {
+        item["url"]
+        for item in host_sboms
+        if isinstance(item, dict) and isinstance(item.get("url"), str)
+    }
+
+    if host_binary_files and not host_sboms:
+        failures.append("health evidence host_sboms missing for published binary files")
+    if asset_files and not vm_oboms:
+        failures.append("health evidence vm_oboms missing for published VM assets")
+    if (host_binary_files or asset_files) and not attestations:
+        failures.append("health evidence attestations missing for published artifacts")
+
+    for sbom in host_sboms:
+        if not isinstance(sbom, dict):
+            failures.append("health evidence host_sboms entry is not an object")
+            continue
+        url = sbom.get("url")
+        if not isinstance(url, str):
+            failures.append("health evidence host_sboms entry missing url")
+            continue
+        if url not in host_binary_by_url:
+            failures.append(f"host SBOM evidence {url} missing from host binary files")
+            continue
+        failures.extend(
+            fetch_and_verify_evidence_artifact(site, sbom, "sha256", "host SBOM evidence")
+        )
+
+    for obom in vm_oboms:
+        if not isinstance(obom, dict):
+            failures.append("health evidence vm_oboms entry is not an object")
+            continue
+        url = obom.get("url")
+        if not isinstance(url, str):
+            failures.append("health evidence vm_oboms entry missing url")
+            continue
+        if url not in asset_by_url:
+            failures.append(f"VM OBOM evidence {url} missing from asset files")
+            continue
+        failures.extend(fetch_and_verify_evidence_artifact(site, obom, "blake3", "VM OBOM evidence"))
+
+    for attestation in attestations:
+        if not isinstance(attestation, dict):
+            failures.append("health evidence attestations entry is not an object")
+            continue
+        predicate_type = attestation.get("predicate_type")
+        if not isinstance(predicate_type, str) or not predicate_type:
+            failures.append("health evidence attestation predicate_type missing")
+        verify_command = attestation.get("verify_command")
+        if not isinstance(verify_command, str) or "gh attestation verify" not in verify_command:
+            failures.append("health evidence attestation verify_command must use gh attestation verify")
+        predicate_url = attestation.get("predicate_url")
+        if predicate_url is not None and predicate_url not in host_sbom_urls:
+            failures.append(f"attestation predicate_url {predicate_url} missing from host SBOM evidence")
+        subjects = attestation.get("subjects")
+        if not isinstance(subjects, list) or not subjects:
+            failures.append("health evidence attestation subjects missing")
+            continue
+        for subject in subjects:
+            if not isinstance(subject, str):
+                failures.append("health evidence attestation subject is not a string")
+                continue
+            if subject not in host_binary_by_url and subject not in asset_by_url:
+                failures.append(f"attestation subject {subject} missing from published file lists")
+
+    return failures
+
+
+def require_list(root: Any, key: str, failures: list[str]) -> list[Any]:
+    if not isinstance(root, dict):
+        failures.append(f"health evidence {key} parent is not an object")
+        return []
+    value = root.get(key)
+    if not isinstance(value, list):
+        failures.append(f"health evidence {key} missing or not a list")
+        return []
+    return value
+
+
+def entries_by_url(entries: list[Any], failures: list[str], label: str) -> dict[str, dict[str, Any]]:
+    by_url: dict[str, dict[str, Any]] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            failures.append(f"health evidence {label} entry is not an object")
+            continue
+        url = entry.get("url")
+        if not isinstance(url, str):
+            failures.append(f"health evidence {label} entry missing url")
+            continue
+        by_url[url] = entry
+    return by_url
+
+
+def fetch_and_verify_evidence_artifact(
+    site: str, item: dict[str, Any], algorithm: str, label: str
+) -> list[str]:
+    url = item.get("url")
+    if not isinstance(url, str):
+        return [f"{label} missing url"]
+    hash_key = "sha256" if algorithm == "sha256" else "hash"
+    expected_hash = item.get(hash_key)
+    if not isinstance(expected_hash, str):
+        return [f"{label} {url} missing {hash_key}"]
+    expected_size = item.get("size")
+    if not isinstance(expected_size, int):
+        return [f"{label} {url} missing size"]
+    try:
+        resolved_url = resolve_release_url(site, url)
+    except ValueError as error:
+        return [f"{label} {url}: {error}"]
+    artifact = fetch_bytes(resolved_url)
+    if artifact.error:
+        return [artifact.error]
+    if len(artifact.data) != expected_size:
+        return [f"{label} {url} size mismatch"]
+    if algorithm == "sha256":
+        actual_hash = hashlib.sha256(artifact.data).hexdigest()
+    elif algorithm == "blake3":
+        actual_hash = blake3.blake3(artifact.data).hexdigest()
+    else:
+        return [f"{label} {url} unsupported hash algorithm {algorithm}"]
+    if actual_hash != expected_hash:
+        return [f"{label} {url} {algorithm} mismatch"]
+    return []
+
+
+def resolve_release_url(site: str, url: str) -> str:
+    parsed = urlparse(url)
+    if parsed.scheme in {"http", "https"}:
+        return url
+    if url.startswith("/"):
+        return f"{site.rstrip('/')}{url}"
+    raise ValueError("evidence URL must be absolute or release-site relative")
 
 
 def required_status_checks_include_pr_gate(data: Any) -> bool:
@@ -268,6 +422,12 @@ class FetchText:
 
 
 @dataclass
+class FetchBytes:
+    data: bytes
+    error: str | None = None
+
+
+@dataclass
 class FetchJson:
     data: Any | None
     error: str | None = None
@@ -289,11 +449,21 @@ def run_json(argv: list[str]) -> JsonResult:
 
 
 def fetch_text(url: str) -> FetchText:
+    data = fetch_bytes(url)
+    if data.error:
+        return FetchText("", data.error)
+    try:
+        return FetchText(data.data.decode("utf-8"))
+    except UnicodeDecodeError as error:
+        return FetchText("", f"fetch {url}: {error}")
+
+
+def fetch_bytes(url: str) -> FetchBytes:
     try:
         with urllib.request.urlopen(url, timeout=20) as response:
-            return FetchText(response.read().decode("utf-8"))
-    except (OSError, UnicodeDecodeError, urllib.error.URLError) as error:
-        return FetchText("", f"fetch {url}: {error}")
+            return FetchBytes(response.read())
+    except (OSError, urllib.error.URLError) as error:
+        return FetchBytes(b"", f"fetch {url}: {error}")
 
 
 def fetch_json(url: str) -> FetchJson:

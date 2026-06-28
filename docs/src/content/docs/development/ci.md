@@ -72,9 +72,12 @@ It verifies that the local checkout has no unpublished commits relative to
 `origin/main`; remote `ci.yaml` exposes `pr-gate`; branch protection or rulesets
 require `pr-gate`; `release.capsem.org` resolves and serves the asset channel;
 and the public index, `health.json`, and manifest agree on current binary, VM
-asset, and asset release date state. If the local checkout has unpublished
-commits, publish or merge those commits before changing remote protection. It
-does not push, deploy, create tags, edit rulesets, or mutate Cloudflare.
+asset, and asset release date state. It also resolves published host SBOM and
+VM OBOM evidence artifacts, verifies their advertised hashes and sizes, and
+validates attestation subjects and predicate URLs against the published evidence
+lists. If the local checkout has unpublished commits, publish or merge those
+commits before changing remote protection. It does not push, deploy, create
+tags, edit rulesets, or mutate Cloudflare.
 
 ## PR gate compared with `just test`
 
