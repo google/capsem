@@ -79,6 +79,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the full app/service/gateway/tray helper cohort together.
 - Added release-doctor coverage that keeps staged cross-surface update smoke
   prerequisites visible across CLI, service, tray, frontend UI, and TUI tests.
+- Added an installed CLI staged update-state matrix covering binary-only,
+  asset-only, profile-only, and mixed binary plus VM asset release-channel
+  states.
 - Added release-channel cache-header documentation coverage so CI docs,
   architecture docs, and agent skills stay aligned with the deploy smoke.
 - Fixed the CI docs thin-package contract to state that installers carry host

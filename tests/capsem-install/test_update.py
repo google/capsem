@@ -873,6 +873,165 @@ def test_mixed_binary_and_asset_update_state_reports_both_tracks(
     assert cache["current_assets"] == "2026.0627.8"
 
 
+@pytest.mark.parametrize(
+    "case",
+    [
+        {
+            "id": "binary-only",
+            "binary_latest": "99.99.99",
+            "assets_latest": "2026.0627.8",
+            "profiles_latest": None,
+            "expected": ["Binary update available"],
+            "forbidden": [
+                "VM asset update available",
+                "Profile catalog update available",
+            ],
+            "cache": {
+                "update_available": True,
+                "assets_update_available": False,
+                "profiles_update_available": False,
+            },
+        },
+        {
+            "id": "asset-only",
+            "binary_latest": "0.0.0",
+            "assets_latest": "2030.0101.1",
+            "profiles_latest": None,
+            "expected": [
+                "Capsem binary is current",
+                "VM asset update available: 2026.0627.8 -> 2030.0101.1.",
+            ],
+            "forbidden": [
+                "Binary update available",
+                "Profile catalog update available",
+            ],
+            "cache": {
+                "update_available": False,
+                "assets_update_available": True,
+                "profiles_update_available": False,
+            },
+        },
+        {
+            "id": "profile-only",
+            "binary_latest": "0.0.0",
+            "assets_latest": "2026.0627.8",
+            "profiles_latest": "profiles-2030.0101.1",
+            "expected": [
+                "Capsem binary is current",
+                "Profile catalog update available: profiles-2030.0101.0 -> profiles-2030.0101.1",
+            ],
+            "forbidden": ["Binary update available", "VM asset update available"],
+            "cache": {
+                "update_available": False,
+                "assets_update_available": False,
+                "profiles_update_available": True,
+            },
+        },
+        {
+            "id": "mixed-binary-asset",
+            "binary_latest": "99.99.99",
+            "assets_latest": "2030.0101.1",
+            "profiles_latest": None,
+            "expected": [
+                "Binary update available",
+                "VM asset update available: 2026.0627.8 -> 2030.0101.1.",
+            ],
+            "forbidden": ["Profile catalog update available"],
+            "cache": {
+                "update_available": True,
+                "assets_update_available": True,
+                "profiles_update_available": False,
+            },
+        },
+    ],
+    ids=lambda case: case["id"],
+)
+def test_staged_update_state_matrix_keeps_cli_tracks_separated(
+    tmp_path: Path,
+    installed_layout,
+    case: dict,
+) -> None:
+    capsem_home = tmp_path / ".capsem"
+    _write_installed_asset_manifest(capsem_home, "2026.0627.8")
+    files: dict[str, bytes] = {}
+    profiles_latest = case["profiles_latest"]
+    profiles_health = None
+    if profiles_latest is not None:
+        _write_installed_profile_catalog(capsem_home / "profiles", "profiles-2030.0101.0")
+        catalog_path = _profile_catalog_path(profiles_latest)
+        catalog_bytes = _profile_catalog_bytes(profiles_latest)
+        files[catalog_path] = catalog_bytes
+        profiles_health = {
+            "latest": profiles_latest,
+            "current": profiles_latest,
+            "state": "published",
+            "source": catalog_path,
+            "hash": blake3(catalog_bytes).hexdigest(),
+            "compatibility": {
+                "binary": "1.4.1234567890",
+                "assets": "2026.0627.8",
+                "min_binary": "1.0.0",
+                "min_assets": "2026.0627.8",
+            },
+            "requires_newer": {
+                "binary": False,
+                "assets": False,
+            },
+        }
+
+    health = {
+        "schema": "capsem.assets_channel.health.v1",
+        "updates": {
+            "binary": {
+                "latest": case["binary_latest"],
+                "current": "0.0.0",
+                "files": [],
+            },
+            "assets": {
+                "latest": case["assets_latest"],
+                "current": "2026.0627.8",
+            },
+            "images": {
+                "latest": None,
+                "state": "not_published",
+            },
+        },
+    }
+    if profiles_health is not None:
+        health["updates"]["profiles"] = profiles_health
+
+    fresh_capsem = _fresh_capsem_binary()
+    source_capsem = fresh_capsem if fresh_capsem is not None else installed_layout / "capsem"
+    capsem = _copy_user_dir_capsem(source_capsem, capsem_home)
+
+    with _serve_release(health, files) as (_, health_url):
+        result = subprocess.run(
+            [str(capsem), "update", "--check"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env={
+                **os.environ,
+                "CAPSEM_HOME": str(capsem_home),
+                "CAPSEM_RUN_DIR": str(capsem_home / "run"),
+                "CAPSEM_RELEASE_HEALTH_URL": health_url,
+            },
+        )
+
+    assert result.returncode == 0, (
+        f"capsem update --check failed\nstdout={result.stdout}\nstderr={result.stderr}"
+    )
+    for expected in case["expected"]:
+        assert expected in result.stdout
+    for forbidden in case["forbidden"]:
+        assert forbidden not in result.stdout
+    assert "VM image update track not published." in result.stdout
+
+    cache = json.loads((capsem_home / "update-check.json").read_text(encoding="utf-8"))
+    for key, value in case["cache"].items():
+        assert cache[key] is value
+
+
 def test_update_reports_profile_catalog_without_applying_by_default(
     tmp_path: Path,
     installed_layout,
