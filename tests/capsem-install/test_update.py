@@ -37,7 +37,7 @@ class _HealthHandler(http.server.BaseHTTPRequestHandler):
     files: dict[str, bytes] = {}
 
     def do_GET(self) -> None:
-        if self.path == "/health.json":
+        if self.path.endswith("/health.json"):
             body = self.body
         elif self.path in self.files:
             body = self.files[self.path]
@@ -378,6 +378,93 @@ def test_update_fetches_release_health_and_writes_channel_cache(
     assert cache["update_available"] is True
     assert cache["latest_assets"] == "2030.0101.1"
     assert cache.get("current_assets") is None
+    assert cache["latest_profiles"] == "profiles-2030.0101.1"
+    assert cache["profiles_state"] == "published"
+    assert cache["images_state"] == "not_published"
+
+
+def test_corporate_manifest_origin_derives_release_health_endpoint(
+    tmp_path: Path,
+    installed_layout,
+) -> None:
+    capsem_home = tmp_path / ".capsem"
+    fresh_capsem = _fresh_capsem_binary()
+    source_capsem = fresh_capsem if fresh_capsem is not None else installed_layout / "capsem"
+    capsem = _copy_user_dir_capsem(source_capsem, capsem_home)
+    _write_installed_asset_manifest(capsem_home, "2026.0627.8")
+
+    health = {
+        "schema": "capsem.assets_channel.health.v1",
+        "updates": {
+            "binary": {
+                "latest": "99.99.99",
+                "current": "99.99.98",
+                "files": [],
+            },
+            "assets": {
+                "latest": "2030.0101.1",
+                "current": "2030.0101.1",
+            },
+            "profiles": {
+                "latest": "profiles-2030.0101.1",
+                "state": "published",
+            },
+            "images": {
+                "latest": None,
+                "state": "not_published",
+            },
+        },
+    }
+    body = json.dumps(health, sort_keys=True, separators=(",", ":")).encode()
+
+    with _serve_release(health, {}) as (base_url, _health_url):
+        manifest_url = f"{base_url}/corp/assets/internal/manifest.json"
+        (capsem_home / "assets" / "manifest-origin.json").write_text(
+            json.dumps(
+                {
+                    "schema": "capsem.manifest_origin.v1",
+                    "origin": "package",
+                    "source": manifest_url,
+                    "packaged_at": "2026-06-28T00:00:00Z",
+                },
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        result = subprocess.run(
+            [str(capsem), "update", "--check"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env={
+                **{
+                    key: value
+                    for key, value in os.environ.items()
+                    if key != "CAPSEM_RELEASE_HEALTH_URL"
+                },
+                "CAPSEM_HOME": str(capsem_home),
+                "CAPSEM_RUN_DIR": str(capsem_home / "run"),
+            },
+        )
+
+    expected_health_url = f"{base_url}/corp/health.json"
+    assert result.returncode == 0, (
+        f"capsem update --check failed\nstdout={result.stdout}\nstderr={result.stderr}"
+    )
+    assert "Binary update available" in result.stdout
+    assert "VM asset update available: 2026.0627.8 -> 2030.0101.1." in result.stdout
+
+    cache = json.loads((capsem_home / "update-check.json").read_text(encoding="utf-8"))
+    assert cache["source"] == expected_health_url
+    assert cache["channel_hash"] == hashlib.sha256(body).hexdigest()
+    assert cache["validation_status"] == "valid"
+    assert cache.get("validation_error") is None
+    assert cache["latest_version"] == "99.99.99"
+    assert cache["update_available"] is True
+    assert cache["latest_assets"] == "2030.0101.1"
+    assert cache["current_assets"] == "2026.0627.8"
+    assert cache["assets_update_available"] is True
     assert cache["latest_profiles"] == "profiles-2030.0101.1"
     assert cache["profiles_state"] == "published"
     assert cache["images_state"] == "not_published"
