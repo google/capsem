@@ -75,6 +75,7 @@ wizard and it does not create a user policy file.
 - `run_update()` -> check `release.capsem.org/health.json`, choose the matching `.pkg`/`.deb` installer metadata, and keep VM asset refresh on `capsem update --assets`
 - `capsem update --yes` -> download the selected installer into `~/.capsem/updates/installers/`, verify size + SHA-256, and print the tested package-manager apply command (`sudo /usr/sbin/installer -pkg ... -target /` or `sudo apt-get install --yes ...`)
 - `capsem update --assets` -> hydrate the locally installed manifest or an explicit `--manifest` URL
+- Corporate VM asset channels use `capsem update --assets --manifest <URL>`; `--corp <URL>` provisions policy config and must not be combined with `--assets`
 - Layout detection: MacosPkg, LinuxDeb, UserDir, Development (development bails with "build from source")
 
 ## Corp config provisioning (capsem-core: corp_provision.rs)

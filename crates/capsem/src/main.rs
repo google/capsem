@@ -476,7 +476,7 @@ enum MiscCommands {
         #[arg(long, value_name = "URL", value_parser = validate_update_manifest_url)]
         manifest: Option<String>,
         /// Fetch and install corporate policy config from this URL.
-        #[arg(long, value_name = "URL", value_parser = validate_update_corp_url)]
+        #[arg(long, value_name = "URL", value_parser = validate_update_corp_url, conflicts_with = "assets")]
         corp: Option<String>,
     },
     /// Run diagnostic tests in a fresh session
@@ -3304,6 +3304,23 @@ mod tests {
             }
             _ => panic!("expected Update"),
         }
+    }
+
+    #[test]
+    fn parse_update_rejects_assets_with_corp_policy() {
+        let err = match Cli::try_parse_from([
+            "capsem",
+            "update",
+            "--assets",
+            "--corp",
+            "https://corp.example/capsem/corp.toml",
+        ]) {
+            Ok(_) => panic!("--corp provisions policy config and must not combine with --assets"),
+            Err(err) => err,
+        };
+        let message = err.to_string();
+        assert!(message.contains("cannot be used with"), "{message}");
+        assert!(message.contains("--assets"), "{message}");
     }
 
     #[test]

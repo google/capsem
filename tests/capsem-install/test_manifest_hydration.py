@@ -241,14 +241,13 @@ def test_update_url_overrides_reject_bare_paths_and_list_allowed_url_schemes(
         else "assets/stable/manifest.json"
     )
 
+    command = [str(INSTALL_DIR / "capsem"), "update"]
+    if flag == "--manifest":
+        command.append("--assets")
+    command.extend([flag, source])
+
     result = subprocess.run(
-        [
-            str(INSTALL_DIR / "capsem"),
-            "update",
-            "--assets",
-            flag,
-            source,
-        ],
+        command,
         capture_output=True,
         text=True,
         timeout=30,
@@ -290,14 +289,13 @@ def test_update_url_overrides_reject_url_shorthand_paths(
 ) -> None:
     capsem_home = tmp_path / ".capsem"
 
+    command = [str(INSTALL_DIR / "capsem"), "update"]
+    if flag == "--manifest":
+        command.append("--assets")
+    command.extend([flag, source])
+
     result = subprocess.run(
-        [
-            str(INSTALL_DIR / "capsem"),
-            "update",
-            "--assets",
-            flag,
-            source,
-        ],
+        command,
         capture_output=True,
         text=True,
         timeout=30,
@@ -322,14 +320,13 @@ def test_update_url_overrides_reject_unsupported_url_schemes(
     capsem_home = tmp_path / ".capsem"
     source = "ftp://example.invalid/capsem/manifest.json"
 
+    command = [str(INSTALL_DIR / "capsem"), "update"]
+    if flag == "--manifest":
+        command.append("--assets")
+    command.extend([flag, source])
+
     result = subprocess.run(
-        [
-            str(INSTALL_DIR / "capsem"),
-            "update",
-            "--assets",
-            flag,
-            source,
-        ],
+        command,
         capture_output=True,
         text=True,
         timeout=30,
@@ -346,3 +343,33 @@ def test_update_url_overrides_reject_unsupported_url_schemes(
     assert "https://" in err, err
     assert "http://" in err, err
     assert "file://" in err, err
+
+
+def test_update_assets_rejects_corp_policy_source(
+    tmp_path: Path,
+    installed_layout,
+) -> None:
+    capsem_home = tmp_path / ".capsem"
+
+    result = subprocess.run(
+        [
+            str(INSTALL_DIR / "capsem"),
+            "update",
+            "--assets",
+            "--corp",
+            "https://corp.example/capsem/corp.toml",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env={
+            **os.environ,
+            "CAPSEM_HOME": str(capsem_home),
+            "CAPSEM_RUN_DIR": str(capsem_home / "run"),
+        },
+    )
+
+    assert result.returncode != 0
+    err = result.stdout + result.stderr
+    assert "cannot be used with" in err, err
+    assert "--assets" in err, err

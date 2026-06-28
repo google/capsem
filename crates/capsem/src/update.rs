@@ -1017,6 +1017,11 @@ pub async fn run_update(
     if check_only && (yes || assets || manifest_source.is_some() || corp_source.is_some()) {
         anyhow::bail!("--check cannot be combined with mutating update options");
     }
+    if assets && corp_source.is_some() {
+        anyhow::bail!(
+            "--assets cannot be combined with --corp; use --manifest for corporate asset channels"
+        );
+    }
 
     let mut did_work = false;
     if let Some(source) = corp_source {
@@ -2468,6 +2473,28 @@ mod tests {
                 "{err:#}"
             );
         }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn update_assets_rejects_corp_policy_source_programmatically() {
+        let result = run_update(
+            false,
+            false,
+            true,
+            None,
+            Some("https://corp.example/capsem/corp.toml"),
+        )
+        .await;
+        let err = result.expect_err("--assets must not accept a corp policy source");
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("--assets cannot be combined with --corp"),
+            "{message}"
+        );
+        assert!(
+            message.contains("--manifest for corporate asset channels"),
+            "{message}"
+        );
     }
 
     fn test_sha256(bytes: &[u8]) -> String {

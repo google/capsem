@@ -267,6 +267,19 @@ class TestUpdate:
         assert f"invalid value '{value}' for '{flag} <URL>'" in stderr
         assert "must be a URL" in stderr
 
+    def test_update_rejects_assets_with_corp_policy_source(self):
+        """Corporate asset channels use --manifest; --corp provisions policy config."""
+        stdout, stderr, rc = run_cli(
+            "update",
+            "--assets",
+            "--corp",
+            "https://corp.example/capsem/corp.toml",
+        )
+        assert rc == 2
+        assert stdout == ""
+        assert "cannot be used with" in stderr
+        assert "--assets" in stderr
+
     @pytest.mark.parametrize(
         ("flag", "url", "handoff_error"),
         [
