@@ -46,6 +46,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   platform package manager rather than only printed.
 
 ### Added
+- Added remote-readiness coverage for the first asset-channel bootstrap without
+  host binary evidence while preserving the release-blocking host SBOM check
+  once binary files are published.
 - Added the live release activation order for publishing release-rail commits,
   enabling `pr-gate`, provisioning `release.capsem.org`, and sequencing binary,
   VM asset, and installed update smokes across release and asset-pipeline

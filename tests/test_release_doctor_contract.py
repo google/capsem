@@ -1200,6 +1200,72 @@ def test_remote_release_readiness_checker_verifies_public_evidence_artifacts() -
     assert "validates attestation subjects and predicate URLs" in docs_text
 
 
+def test_remote_readiness_allows_first_channel_bootstrap_without_host_evidence() -> None:
+    module = _readiness_checker_module()
+    obom_bytes = b'{"bomFormat":"CycloneDX"}'
+    obom_path = "/assets/releases/2030.0101.1/arm64-obom.cdx.json"
+    obom_url = f"https://release.capsem.test{obom_path}"
+
+    def fake_fetch_bytes(url: str):
+        if url == obom_url:
+            return module.FetchBytes(obom_bytes)
+        return module.FetchBytes(b"", f"unexpected fetch {url}")
+
+    module.fetch_bytes = fake_fetch_bytes
+    health = {
+        "assets": {
+            "files": [
+                {
+                    "arch": "arm64",
+                    "logical_name": "obom.cdx.json",
+                    "url": obom_path,
+                    "hash": module.blake3.blake3(obom_bytes).hexdigest(),
+                    "size": len(obom_bytes),
+                }
+            ]
+        },
+        "evidence": {
+            "vm_oboms": [
+                {
+                    "arch": "arm64",
+                    "logical_name": "obom.cdx.json",
+                    "url": obom_path,
+                    "hash": module.blake3.blake3(obom_bytes).hexdigest(),
+                    "size": len(obom_bytes),
+                }
+            ],
+            "host_sboms": [],
+            "host_binary_files": [],
+            "attestations": [
+                {
+                    "name": "github_attestations_vm_assets",
+                    "scope": "vm_assets",
+                    "predicate_type": "https://slsa.dev/provenance/v1",
+                    "predicate_url": obom_path,
+                    "verify_command": "gh attestation verify <subject-url> --owner google",
+                    "subjects": [obom_path],
+                }
+            ],
+        },
+    }
+
+    assert module.check_release_evidence("https://release.capsem.test", health) == []
+
+    with_binary_without_sbom = json.loads(json.dumps(health))
+    with_binary_without_sbom["evidence"]["host_binary_files"] = [
+        {
+            "name": "Capsem-1.4.1.pkg",
+            "url": "https://github.com/google/capsem/releases/download/v1.4.1/Capsem-1.4.1.pkg",
+            "sha256": "0" * 64,
+            "size": 123,
+        }
+    ]
+    failures = module.check_release_evidence(
+        "https://release.capsem.test", with_binary_without_sbom
+    )
+    assert "health evidence host_sboms missing for published binary files" in failures
+
+
 def test_release_channel_smoke_and_remote_readiness_validate_matching_attestation_predicate_evidence() -> None:
     module = _readiness_checker_module()
     script = (PROJECT_ROOT / "scripts/check-remote-release-readiness.py").read_text()
