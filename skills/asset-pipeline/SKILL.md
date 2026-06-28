@@ -121,6 +121,11 @@ remain explicit/manual, build VM assets, publish changed blobs to an immutable
 after the asset manifest, blobs, and channel checks have been generated.
 `build-ledger.log` and `B3SUMS` are debug evidence unless deliberately promoted
 to separate published evidence.
+The deploy smoke must also verify public `Cache-Control` headers: mutable
+release-channel pointers (`/`, `/health.json`, and
+`/assets/<channel>/manifest.json`) stay `no-cache, must-revalidate`, while
+immutable asset and profile release artifacts stay
+`public, max-age=31536000, immutable`.
 
 Asset-channel blobs are arch-prefixed (`arm64-vmlinuz`,
 `arm64-initrd.img`, `arm64-rootfs.erofs`, `arm64-obom.cdx.json`, and x86_64

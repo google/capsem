@@ -248,6 +248,10 @@ current VM asset version, and asset release date as the fetched health JSON and
 manifest. It resolves published host SBOM and VM OBOM evidence artifacts from
 `health.json`, verifies their advertised hashes and sizes, and validates
 attestation subjects and predicate URLs against the published evidence lists.
+It also verifies public `Cache-Control` headers: mutable release-channel
+pointers (`/`, `/health.json`, and `/assets/<channel>/manifest.json`) must stay
+`no-cache, must-revalidate`, while immutable asset and profile release
+artifacts must stay `public, max-age=31536000, immutable`.
 
 The generated `health.json` is the compact machine-readable release-site index.
 It carries schema `capsem.assets_channel.health.v1`, the active manifest URL,

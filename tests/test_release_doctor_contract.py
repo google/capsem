@@ -282,6 +282,28 @@ def test_asset_channel_deploy_smoke_verifies_public_evidence_artifacts() -> None
     assert "validates attestation subjects and predicate URLs" in docs_text
 
 
+def test_release_channel_cache_header_documentation_matches_deploy_smoke() -> None:
+    workflow = _workflow_text("release-channel.yaml")
+    ci_docs = _source_text("docs/src/content/docs/development/ci.md")
+    architecture_docs = _source_text("docs/src/content/docs/architecture/asset-pipeline.md")
+    release_skill = _source_text("skills/release-process/SKILL.md")
+    asset_skill = _source_text("skills/asset-pipeline/SKILL.md")
+
+    assert "def check_cache_header" in workflow
+    assert '("no-cache", "must-revalidate")' in workflow
+    assert '("public", "max-age=31536000", "immutable")' in workflow
+
+    for source in [ci_docs, architecture_docs, release_skill, asset_skill]:
+        normalized = " ".join(source.split())
+        assert "Cache-Control" in source
+        assert "no-cache" in source
+        assert "must-revalidate" in source
+        assert "public, max-age=31536000, immutable" in source
+        assert "mutable" in normalized
+        assert "immutable" in normalized
+        assert "release-channel" in normalized
+
+
 def test_cross_surface_update_smoke_prerequisites_are_covered_locally() -> None:
     cli = _source_text("crates/capsem/src/update.rs")
     service = _source_text("crates/capsem-service/src/tests.rs")

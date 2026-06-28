@@ -105,6 +105,11 @@ The public asset channel is a deployed view of that same manifest. The generated
 Cloudflare Pages root is `target/release-channel/`, with the machine manifest at
 `target/release-channel/assets/stable/manifest.json`. After deployment the URL
 is `https://release.capsem.org/assets/stable/manifest.json`.
+The release-channel deploy smoke verifies public `Cache-Control` headers after
+Cloudflare publishes the generated site: mutable pointers (`/`, `/health.json`,
+and `/assets/<channel>/manifest.json`) stay `no-cache, must-revalidate`, while
+immutable asset and profile release artifacts stay
+`public, max-age=31536000, immutable`.
 
 Key points:
 - **Single file, not per-arch.** Arches are nested under `assets.releases.<ver>.arches.<arch>`.

@@ -71,7 +71,11 @@ show the same current binary, current VM asset version, and asset release date
 as the fetched health JSON and manifest. It must also resolve published host
 SBOM and VM OBOM evidence artifacts from `health.json`, verify their advertised
 hashes and sizes, and validate attestation subjects and predicate URLs against
-the published evidence lists.
+the published evidence lists. It must also verify public `Cache-Control`
+headers: mutable pointers (`/`, `/health.json`, and
+`/assets/<channel>/manifest.json`) stay `no-cache, must-revalidate`, while
+immutable asset and profile release artifacts stay
+`public, max-age=31536000, immutable`.
 
 Docs and marketing deploy independently from binary, VM asset, and asset-channel
 release rails. `docs.yaml` and `site.yaml` build on pull requests and deploy only on pushes to `main`; they must smoke-check their public Cloudflare custom domains
