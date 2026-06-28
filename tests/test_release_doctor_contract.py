@@ -1391,6 +1391,80 @@ def test_release_channel_smoke_and_remote_readiness_validate_matching_attestatio
     assert "missing from {predicate_label}" in workflow
 
 
+def test_remote_readiness_rejects_host_sbom_attestation_subjects_missing_package() -> None:
+    module = _readiness_checker_module()
+    script = (PROJECT_ROOT / "scripts/check-remote-release-readiness.py").read_text()
+    sbom_bytes = b'{"spdxVersion":"SPDX-2.3"}'
+    sbom_url = "https://github.com/google/capsem/releases/download/v1.4.1/capsem-sbom.spdx.json"
+    pkg_url = "https://github.com/google/capsem/releases/download/v1.4.1/Capsem-1.4.1.pkg"
+
+    def fake_fetch_bytes(url: str):
+        if url == sbom_url:
+            return module.FetchBytes(sbom_bytes)
+        return module.FetchBytes(b"", f"unexpected fetch {url}")
+
+    module.fetch_bytes = fake_fetch_bytes
+    health = {
+        "assets": {"files": []},
+        "evidence": {
+            "vm_oboms": [],
+            "host_sboms": [
+                {
+                    "name": "capsem-sbom.spdx.json",
+                    "url": sbom_url,
+                    "sha256": hashlib.sha256(sbom_bytes).hexdigest(),
+                    "size": len(sbom_bytes),
+                }
+            ],
+            "host_binary_files": [
+                {
+                    "name": "Capsem-1.4.1.pkg",
+                    "url": pkg_url,
+                    "sha256": "1" * 64,
+                    "size": 123,
+                },
+                {
+                    "name": "capsem-sbom.spdx.json",
+                    "url": sbom_url,
+                    "sha256": hashlib.sha256(sbom_bytes).hexdigest(),
+                    "size": len(sbom_bytes),
+                },
+            ],
+            "attestations": [
+                {
+                    "name": "github_attestations_host_sbom",
+                    "scope": "host_binaries",
+                    "predicate_type": "https://spdx.dev/Document/v2.3",
+                    "predicate_url": sbom_url,
+                    "verify_command": "gh attestation verify <subject-url> --owner google",
+                    "subjects": [sbom_url],
+                }
+            ],
+        },
+    }
+
+    failures = module.check_release_evidence("https://release.capsem.test", health)
+    assert (
+        "health evidence host SBOM attestation subjects missing "
+        "https://github.com/google/capsem/releases/download/v1.4.1/Capsem-1.4.1.pkg"
+    ) in failures
+
+    health["evidence"]["attestations"][0]["subjects"].append(pkg_url)
+    assert module.check_release_evidence("https://release.capsem.test", health) == []
+
+    assert "host_sbom_attestation_subjects" in script
+    assert "github_attestations_host_sbom" in script
+    assert "host SBOM attestation subjects missing" in script
+
+
+def test_release_channel_smoke_host_sbom_attestation_subjects_cover_packages() -> None:
+    workflow = _workflow_text("release-channel.yaml")
+
+    assert "host_sbom_attestation_subjects" in workflow
+    assert "github_attestations_host_sbom" in workflow
+    assert "host SBOM attestation subjects missing" in workflow
+
+
 def test_remote_release_readiness_checker_verifies_live_cache_headers() -> None:
     module = _readiness_checker_module()
     script = (PROJECT_ROOT / "scripts/check-remote-release-readiness.py").read_text()

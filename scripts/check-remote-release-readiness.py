@@ -291,6 +291,11 @@ def check_release_evidence(site: str, health: dict[str, Any]) -> list[str]:
 
     host_binary_by_url = entries_by_url(host_binary_files, failures, "host binary file")
     asset_by_url = entries_by_url(asset_files, failures, "asset file")
+    host_package_subjects = {
+        url
+        for url, item in host_binary_by_url.items()
+        if item.get("name") != "capsem-sbom.spdx.json"
+    }
     host_sbom_urls = {
         item["url"]
         for item in host_sboms
@@ -337,10 +342,15 @@ def check_release_evidence(site: str, health: dict[str, Any]) -> list[str]:
             continue
         failures.extend(fetch_and_verify_evidence_artifact(site, obom, "blake3", "VM OBOM evidence"))
 
+    saw_host_sbom_attestation = False
+    host_sbom_attestation_subjects: set[str] = set()
     for attestation in attestations:
         if not isinstance(attestation, dict):
             failures.append("health evidence attestations entry is not an object")
             continue
+        attestation_name = attestation.get("name")
+        if attestation_name == "github_attestations_host_sbom":
+            saw_host_sbom_attestation = True
         predicate_type = attestation.get("predicate_type")
         if not isinstance(predicate_type, str) or not predicate_type:
             failures.append("health evidence attestation predicate_type missing")
@@ -366,8 +376,14 @@ def check_release_evidence(site: str, health: dict[str, Any]) -> list[str]:
             if not isinstance(subject, str):
                 failures.append("health evidence attestation subject is not a string")
                 continue
+            if attestation_name == "github_attestations_host_sbom":
+                host_sbom_attestation_subjects.add(subject)
             if subject not in host_binary_by_url and subject not in asset_by_url:
                 failures.append(f"attestation subject {subject} missing from published file lists")
+    if host_sboms and not saw_host_sbom_attestation:
+        failures.append("health evidence host SBOM attestation missing")
+    for subject in sorted(host_package_subjects - host_sbom_attestation_subjects):
+        failures.append(f"health evidence host SBOM attestation subjects missing {subject}")
 
     return failures
 

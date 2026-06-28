@@ -212,6 +212,11 @@ jobs:
               for item in host_binary_files
               if isinstance(item, dict) and isinstance(item.get("url"), str)
           }
+          host_package_subjects = {
+              url
+              for url, item in host_binary_by_url.items()
+              if item.get("name") != "capsem-sbom.spdx.json"
+          }
           asset_by_url = {
               item.get("url"): item
               for item in asset_files
@@ -251,10 +256,15 @@ jobs:
                   failures.append(f"VM OBOM evidence {url} missing from asset files")
                   continue
               check_evidence_artifact(obom, "hash", "blake3", "VM OBOM evidence")
+          saw_host_sbom_attestation = False
+          host_sbom_attestation_subjects = set()
           for attestation in attestations:
               if not isinstance(attestation, dict):
                   failures.append("health evidence attestations entry is not an object")
                   continue
+              attestation_name = attestation.get("name")
+              if attestation_name == "github_attestations_host_sbom":
+                  saw_host_sbom_attestation = True
               predicate_type = attestation.get("predicate_type")
               if not isinstance(predicate_type, str) or not predicate_type:
                   failures.append("health evidence attestation predicate_type missing")
@@ -287,10 +297,16 @@ jobs:
                   if not isinstance(subject, str):
                       failures.append("health evidence attestation subject is not a string")
                       continue
+                  if attestation_name == "github_attestations_host_sbom":
+                      host_sbom_attestation_subjects.add(subject)
                   if subject not in host_binary_by_url and subject not in asset_by_url:
                       failures.append(
                           f"attestation subject {subject} missing from published file lists"
                       )
+          if host_sboms and not saw_host_sbom_attestation:
+              failures.append("health evidence host SBOM attestation missing")
+          for subject in sorted(host_package_subjects - host_sbom_attestation_subjects):
+              failures.append(f"health evidence host SBOM attestation subjects missing {subject}")
           if manifest.get("format") != 2:
               failures.append("manifest format mismatch")
           current = health.get("current", {})
