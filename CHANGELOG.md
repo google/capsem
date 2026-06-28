@@ -51,6 +51,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   paths.
 
 ### Changed
+- Changed generated release-channel cache headers so mutable channel pointers
+  remain no-cache while immutable asset and profile release artifacts are
+  long-lived immutable.
 - Replaced the placeholder frontend update helper with typed update check and
   apply actions backed by the service-owned release update routes.
 - Changed update checks to use a non-mutating `capsem update --check` path so

@@ -1067,8 +1067,11 @@ fn build_assets_channel(
         render_assets_channel_health(&index)?,
     )
     .with_context(|| format!("write {}", out_dir.join("health.json").display()))?;
-    fs::write(out_dir.join("_headers"), render_assets_channel_headers())
-        .with_context(|| format!("write {}", out_dir.join("_headers").display()))?;
+    fs::write(
+        out_dir.join("_headers"),
+        render_assets_channel_headers(channel),
+    )
+    .with_context(|| format!("write {}", out_dir.join("_headers").display()))?;
     fs::write(out_dir.join("robots.txt"), "User-agent: *\nDisallow:\n")
         .with_context(|| format!("write {}", out_dir.join("robots.txt").display()))?;
     Ok(AssetsChannelBuildReport {
@@ -1253,13 +1256,24 @@ fn check_assets_channel(dist: &Path, channel: &str) -> Result<AssetsChannelCheck
     validate_assets_channel_health(dist, channel, &manifest, &health)?;
     let headers = fs::read_to_string(&headers_path)
         .with_context(|| format!("read {}", headers_path.display()))?;
-    if !headers.contains("/assets/*") || !headers.contains("no-cache") {
+    let channel_manifest_header =
+        format!("/assets/{channel}/*\n  Cache-Control: no-cache, must-revalidate");
+    if !headers.contains(&channel_manifest_header) {
         return Err(anyhow!("_headers must keep asset channel manifests fresh"));
     }
-    if !headers.contains("/profiles/*") || !headers.contains("no-cache") {
-        return Err(anyhow!(
-            "_headers must keep profile catalog artifacts fresh"
-        ));
+    let profile_channel_header =
+        format!("/profiles/{channel}/*\n  Cache-Control: no-cache, must-revalidate");
+    if !headers.contains(&profile_channel_header) {
+        return Err(anyhow!("_headers must keep profile channel pointers fresh"));
+    }
+    if !headers.contains("/assets/releases/*\n  Cache-Control: public, max-age=31536000, immutable")
+    {
+        return Err(anyhow!("_headers must cache immutable asset releases"));
+    }
+    if !headers
+        .contains("/profiles/releases/*\n  Cache-Control: public, max-age=31536000, immutable")
+    {
+        return Err(anyhow!("_headers must cache immutable profile releases"));
     }
     Ok(AssetsChannelCheckReport {
         schema: "capsem.admin.assets_channel_check.v1",
@@ -2369,7 +2383,7 @@ fn render_assets_channel_health(index: &AssetsChannelIndex) -> Result<String> {
     ))
 }
 
-fn render_assets_channel_headers() -> String {
+fn render_assets_channel_headers(channel: &str) -> String {
     [
         "/",
         "  Cache-Control: no-cache, must-revalidate",
@@ -2377,11 +2391,17 @@ fn render_assets_channel_headers() -> String {
         "  Cache-Control: no-cache, must-revalidate",
         "/health.json",
         "  Cache-Control: no-cache, must-revalidate",
-        "/profiles/*",
+        &format!("/assets/{channel}/*"),
         "  Cache-Control: no-cache, must-revalidate",
-        "/assets/*",
+        &format!("/profiles/{channel}/*"),
         "  Cache-Control: no-cache, must-revalidate",
+        "/assets/releases/*",
+        "  Cache-Control: public, max-age=31536000, immutable",
+        "/profiles/releases/*",
+        "  Cache-Control: public, max-age=31536000, immutable",
         "/robots.txt",
+        "  Cache-Control: public, max-age=3600",
+        "/*",
         "  Cache-Control: public, max-age=3600",
         "",
     ]
@@ -6398,6 +6418,24 @@ decision = "block"
         let check = check_assets_channel(&out_dir, "stable").expect("asset channel checks");
         assert_eq!(check.channel, "stable");
         assert_eq!(check.manifest, channel_manifest.display().to_string());
+    }
+
+    #[test]
+    fn assets_channel_headers_split_mutable_and_immutable_paths() {
+        let headers = render_assets_channel_headers("stable");
+
+        assert!(headers.contains("/\n  Cache-Control: no-cache, must-revalidate"));
+        assert!(headers.contains("/index.html\n  Cache-Control: no-cache, must-revalidate"));
+        assert!(headers.contains("/health.json\n  Cache-Control: no-cache, must-revalidate"));
+        assert!(headers.contains("/assets/stable/*\n  Cache-Control: no-cache, must-revalidate"));
+        assert!(headers.contains("/profiles/stable/*\n  Cache-Control: no-cache, must-revalidate"));
+        assert!(headers
+            .contains("/assets/releases/*\n  Cache-Control: public, max-age=31536000, immutable"));
+        assert!(headers.contains(
+            "/profiles/releases/*\n  Cache-Control: public, max-age=31536000, immutable"
+        ));
+        assert!(!headers.contains("/assets/*\n  Cache-Control: no-cache"));
+        assert!(!headers.contains("/profiles/*\n  Cache-Control: no-cache"));
     }
 
     #[test]

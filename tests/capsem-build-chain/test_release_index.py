@@ -133,6 +133,42 @@ url = "https://release.capsem.org/assets/releases/2030.0101.1/arm64-rootfs.erofs
     return profiles_dir
 
 
+def test_release_index_generator_writes_split_cache_headers(tmp_path: Path) -> None:
+    manifest_path = _write_release_manifest(tmp_path)
+    profiles_dir = _write_profile_catalog(tmp_path)
+    dist = tmp_path / "target" / "release-channel"
+
+    _run_admin(
+        "assets",
+        "channel",
+        "build",
+        "--manifest",
+        f"file://{manifest_path}",
+        "--assets-dir",
+        str(manifest_path.parent),
+        "--profiles-dir",
+        str(profiles_dir),
+        "--channel",
+        "stable",
+        "--out-dir",
+        str(dist),
+        "--generated-at",
+        "2030-01-01T00:00:00Z",
+        "--json",
+    )
+
+    headers = (dist / "_headers").read_text(encoding="utf-8")
+    assert "/\n  Cache-Control: no-cache, must-revalidate" in headers
+    assert "/index.html\n  Cache-Control: no-cache, must-revalidate" in headers
+    assert "/health.json\n  Cache-Control: no-cache, must-revalidate" in headers
+    assert "/assets/stable/*\n  Cache-Control: no-cache, must-revalidate" in headers
+    assert "/profiles/stable/*\n  Cache-Control: no-cache, must-revalidate" in headers
+    assert "/assets/releases/*\n  Cache-Control: public, max-age=31536000, immutable" in headers
+    assert "/profiles/releases/*\n  Cache-Control: public, max-age=31536000, immutable" in headers
+    assert "/assets/*\n  Cache-Control: no-cache" not in headers
+    assert "/profiles/*\n  Cache-Control: no-cache" not in headers
+
+
 def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path) -> None:
     manifest_path = _write_release_manifest(tmp_path)
     profiles_dir = _write_profile_catalog(tmp_path)
@@ -181,9 +217,14 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
     assert "The fastest way to ship with AI securely." not in index_html
 
     headers = (dist / "_headers").read_text(encoding="utf-8")
+    assert "/\n  Cache-Control: no-cache, must-revalidate" in headers
     assert "/health.json\n  Cache-Control: no-cache, must-revalidate" in headers
-    assert "/assets/*\n  Cache-Control: no-cache, must-revalidate" in headers
-    assert "/profiles/*\n  Cache-Control: no-cache, must-revalidate" in headers
+    assert "/assets/stable/*\n  Cache-Control: no-cache, must-revalidate" in headers
+    assert "/profiles/stable/*\n  Cache-Control: no-cache, must-revalidate" in headers
+    assert "/assets/releases/*\n  Cache-Control: public, max-age=31536000, immutable" in headers
+    assert "/profiles/releases/*\n  Cache-Control: public, max-age=31536000, immutable" in headers
+    assert "/assets/*\n  Cache-Control: no-cache" not in headers
+    assert "/profiles/*\n  Cache-Control: no-cache" not in headers
 
     health = json.loads((dist / "health.json").read_text(encoding="utf-8"))
     assert health["schema"] == "capsem.assets_channel.health.v1"
