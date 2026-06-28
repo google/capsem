@@ -971,6 +971,45 @@ def test_release_index_check_rejects_missing_host_sbom_evidence(tmp_path: Path) 
     assert "health.json host SBOM evidence missing" in result.stderr
 
 
+def test_release_index_check_rejects_noncanonical_host_sbom_evidence(
+    tmp_path: Path,
+) -> None:
+    manifest_path = _write_release_manifest(tmp_path)
+    dist = tmp_path / "target" / "release-channel"
+    _run_admin(
+        "assets",
+        "channel",
+        "build",
+        "--manifest",
+        f"file://{manifest_path}",
+        "--assets-dir",
+        str(manifest_path.parent),
+        "--channel",
+        "stable",
+        "--out-dir",
+        str(dist),
+    )
+
+    health_path = dist / "health.json"
+    health = json.loads(health_path.read_text(encoding="utf-8"))
+    health["evidence"]["host_sboms"][0]["name"] = "not-the-canonical-sbom.json"
+    health_path.write_text(json.dumps(health, indent=2) + "\n", encoding="utf-8")
+
+    result = _run_admin(
+        "assets",
+        "channel",
+        "check",
+        "--channel",
+        "stable",
+        "--dist",
+        str(dist),
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "health.json host SBOM evidence name mismatch" in result.stderr
+
+
 def test_release_index_check_rejects_host_binary_hash_drift(tmp_path: Path) -> None:
     manifest_path = _write_release_manifest(tmp_path)
     dist = tmp_path / "target" / "release-channel"

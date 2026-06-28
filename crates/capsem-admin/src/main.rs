@@ -1779,12 +1779,23 @@ fn validate_assets_channel_health(
             .get("url")
             .and_then(|value| value.as_str())
             .ok_or_else(|| anyhow!("health.json host SBOM evidence missing url"))?;
-        if !host_binary_files
+        if sbom.get("name").and_then(|value| value.as_str()) != Some("capsem-sbom.spdx.json") {
+            return Err(anyhow!(
+                "health.json host SBOM evidence name mismatch for {sbom_url}"
+            ));
+        }
+        let host_binary = host_binary_files
             .iter()
-            .any(|item| item.get("url").and_then(|value| value.as_str()) == Some(sbom_url))
-        {
+            .find(|item| item.get("url").and_then(|value| value.as_str()) == Some(sbom_url));
+        let Some(host_binary) = host_binary else {
             return Err(anyhow!(
                 "health.json host SBOM evidence {sbom_url} missing from host binary files"
+            ));
+        };
+        if host_binary.get("name").and_then(|value| value.as_str()) != Some("capsem-sbom.spdx.json")
+        {
+            return Err(anyhow!(
+                "health.json host SBOM evidence binary file name mismatch for {sbom_url}"
             ));
         }
     }

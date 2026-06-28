@@ -3720,6 +3720,66 @@ def test_remote_readiness_rejects_host_sbom_attestation_subjects_missing_package
     assert "host SBOM attestation subjects missing" in script
 
 
+def test_remote_readiness_rejects_noncanonical_host_sbom_evidence() -> None:
+    module = _readiness_checker_module()
+    workflow = _workflow_text("release-channel.yaml")
+    sbom_bytes = b'{"spdxVersion":"SPDX-2.3"}'
+    sbom_url = "https://github.com/google/capsem/releases/download/v1.4.1/capsem-sbom.spdx.json"
+    pkg_url = "https://github.com/google/capsem/releases/download/v1.4.1/Capsem-1.4.1.pkg"
+
+    def fake_fetch_bytes(url: str):
+        if url == sbom_url:
+            return module.FetchBytes(sbom_bytes)
+        return module.FetchBytes(b"", f"unexpected fetch {url}")
+
+    module.fetch_bytes = fake_fetch_bytes
+    health = {
+        "assets": {"files": []},
+        "evidence": {
+            "vm_oboms": [],
+            "host_sboms": [
+                {
+                    "name": "not-the-canonical-sbom.json",
+                    "url": sbom_url,
+                    "sha256": hashlib.sha256(sbom_bytes).hexdigest(),
+                    "size": len(sbom_bytes),
+                }
+            ],
+            "host_binary_files": [
+                {
+                    "name": "Capsem-1.4.1.pkg",
+                    "url": pkg_url,
+                    "sha256": "1" * 64,
+                    "size": 123,
+                },
+                {
+                    "name": "capsem-sbom.spdx.json",
+                    "url": sbom_url,
+                    "sha256": hashlib.sha256(sbom_bytes).hexdigest(),
+                    "size": len(sbom_bytes),
+                },
+            ],
+            "attestations": [
+                {
+                    "name": "github_attestations_host_sbom",
+                    "scope": "host_sbom",
+                    "workflow": ".github/workflows/release.yaml",
+                    "predicate_type": "https://spdx.dev/Document/v2.3",
+                    "verify_command": "gh attestation verify <subject-url> --owner google",
+                    "subjects": [pkg_url],
+                }
+            ],
+        },
+    }
+
+    failures = module.check_release_evidence("https://release.capsem.test", health)
+
+    assert f"host SBOM evidence {sbom_url} name mismatch" in failures
+    assert "health evidence host SBOM attestation predicate_url missing" in failures
+    assert "host SBOM evidence {url} name mismatch" in workflow
+    assert "host SBOM attestation predicate_url missing" in workflow
+
+
 def test_release_channel_smoke_host_sbom_attestation_subjects_cover_packages() -> None:
     workflow = _workflow_text("release-channel.yaml")
 

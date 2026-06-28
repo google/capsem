@@ -596,9 +596,14 @@ def check_release_evidence(site: str, health: dict[str, Any]) -> list[str]:
         if not isinstance(url, str):
             failures.append("health evidence host_sboms entry missing url")
             continue
-        if url not in host_binary_by_url:
+        if sbom.get("name") != "capsem-sbom.spdx.json":
+            failures.append(f"host SBOM evidence {url} name mismatch")
+        host_binary = host_binary_by_url.get(url)
+        if host_binary is None:
             failures.append(f"host SBOM evidence {url} missing from host binary files")
             continue
+        if host_binary.get("name") != "capsem-sbom.spdx.json":
+            failures.append(f"host SBOM evidence {url} binary file name mismatch")
         failures.extend(
             fetch_and_verify_evidence_artifact(
                 site, sbom, "sha256", "host SBOM evidence", "spdx"
@@ -650,6 +655,10 @@ def check_release_evidence(site: str, health: dict[str, Any]) -> list[str]:
         if not isinstance(subjects, list) or not subjects:
             failures.append("health evidence attestation subjects missing")
             continue
+        if attestation_name == "github_attestations_host_sbom" and not isinstance(
+            predicate_url, str
+        ):
+            failures.append("health evidence host SBOM attestation predicate_url missing")
         predicate_urls, predicate_label = attestation_predicate_evidence_urls(
             attestation,
             subjects,
