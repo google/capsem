@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Fixed live release-site smoke/readiness validation so current VM asset file
+  URLs, BLAKE3 hashes, and sizes in `health.json` cannot drift from the fetched
+  channel manifest.
 - Fixed live release-site smoke/readiness validation so VM asset compatibility
   and newer-version flags cannot drift from the channel manifest's current
   asset release.

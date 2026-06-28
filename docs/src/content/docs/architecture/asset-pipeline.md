@@ -110,6 +110,9 @@ Cloudflare publishes the generated site: mutable pointers (`/`, `/health.json`,
 and `/assets/<channel>/manifest.json`) stay `no-cache, must-revalidate`, while
 immutable asset and profile release artifacts stay
 `public, max-age=31536000, immutable`.
+It also verifies that `health.assets.files` matches the fetched channel
+manifest's current asset release for each VM asset URL, BLAKE3 hash, and size,
+so the release health index cannot drift away from the canonical manifest.
 
 Key points:
 - **Single file, not per-arch.** Arches are nested under `assets.releases.<ver>.arches.<arch>`.

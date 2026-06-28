@@ -180,8 +180,79 @@ jobs:
                   return host_sbom_urls, "host SBOM evidence"
               return host_sbom_urls | vm_obom_urls, "host SBOM or VM OBOM evidence"
 
+          def current_asset_file_refs(asset_version, release):
+              if not isinstance(asset_version, str):
+                  return []
+              if not isinstance(release, dict):
+                  failures.append("manifest current asset release missing or not an object")
+                  return []
+              arches = release.get("arches")
+              if not isinstance(arches, dict):
+                  failures.append("manifest current asset release arches missing or not an object")
+                  return []
+
+              refs = []
+              for arch, assets in arches.items():
+                  if not isinstance(arch, str) or not isinstance(assets, dict):
+                      failures.append("manifest current asset arch entry malformed")
+                      continue
+                  for logical_name, entry in assets.items():
+                      if not isinstance(logical_name, str) or not isinstance(entry, dict):
+                          failures.append("manifest current asset file entry malformed")
+                          continue
+                      url = f"/assets/releases/{asset_version}/{arch}-{logical_name}"
+                      hash_value = entry.get("hash")
+                      size = entry.get("size")
+                      if not isinstance(hash_value, str):
+                          failures.append(f"manifest asset file {url} hash missing")
+                          continue
+                      if not isinstance(size, int):
+                          failures.append(f"manifest asset file {url} size missing")
+                          continue
+                      refs.append({
+                          "arch": arch,
+                          "logical_name": logical_name,
+                          "url": url,
+                          "hash": hash_value,
+                          "size": size,
+                      })
+              return refs
+
+          def check_health_asset_files(asset_files, expected_asset_files):
+              if not isinstance(asset_files, list):
+                  failures.append("health asset files missing or not a list")
+                  return
+
+              files_by_url = {}
+              for item in asset_files:
+                  if not isinstance(item, dict):
+                      failures.append("health asset file entry is not an object")
+                      continue
+                  url = item.get("url")
+                  if not isinstance(url, str):
+                      failures.append("health asset file entry missing url")
+                      continue
+                  files_by_url[url] = item
+
+              expected_urls = {item["url"] for item in expected_asset_files}
+              for expected in expected_asset_files:
+                  url = expected["url"]
+                  public_file = files_by_url.get(url)
+                  if public_file is None:
+                      failures.append(f"health missing asset file {url}")
+                      continue
+                  for field in ("arch", "logical_name", "hash", "size"):
+                      if public_file.get(field) != expected[field]:
+                          failures.append(f"health asset {field} mismatch for {url}")
+
+              for url in sorted(set(files_by_url) - expected_urls):
+                  failures.append(f"health unexpected asset file {url}")
+
           expected_manifest = f"/assets/{channel}/manifest.json"
           failures = []
+          current = health.get("current", {})
+          current_binary = current.get("binary")
+          current_assets = current.get("assets")
           if health.get("schema") != "capsem.assets_channel.health.v1":
               failures.append("health schema mismatch")
           if health.get("ok") is not True:
@@ -416,13 +487,12 @@ jobs:
               failures.append(f"health evidence host SBOM attestation subjects missing {subject}")
           if manifest.get("format") != 2:
               failures.append("manifest format mismatch")
-          current = health.get("current", {})
-          current_binary = current.get("binary")
-          current_assets = current.get("assets")
           if manifest.get("assets", {}).get("current") != current_assets:
               failures.append("health current assets mismatch manifest")
           if manifest.get("binaries", {}).get("current") != current_binary:
               failures.append("health current binary mismatch manifest")
+          expected_asset_files = current_asset_file_refs(current_assets, current_manifest_asset_release)
+          check_health_asset_files(health.get("assets", {}).get("files"), expected_asset_files)
           manifest_asset_releases = manifest.get("assets", {}).get("releases", {})
           health_asset_releases = health.get("asset_releases", [])
           if not isinstance(health_asset_releases, list):

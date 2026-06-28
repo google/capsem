@@ -442,6 +442,17 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
         failures.append("current asset mismatch between health and manifest")
     if manifest_binaries.get("current") != current_binary:
         failures.append("current binary mismatch between health and manifest")
+    expected_asset_files = current_asset_file_refs(
+        current_assets,
+        current_manifest_asset_release,
+        failures,
+    )
+    failures.extend(
+        check_health_asset_files(
+            health_assets.get("files"),
+            expected_asset_files,
+        )
+    )
     for label, value in (
         ("current binary", current_binary),
         ("current assets", current_assets),
@@ -661,6 +672,87 @@ def require_list(root: Any, key: str, failures: list[str]) -> list[Any]:
         failures.append(f"health evidence {key} missing or not a list")
         return []
     return value
+
+
+def current_asset_file_refs(
+    asset_version: Any,
+    release: Any,
+    failures: list[str],
+) -> list[dict[str, Any]]:
+    if not isinstance(asset_version, str):
+        return []
+    if not isinstance(release, dict):
+        failures.append("manifest current asset release missing or not an object")
+        return []
+    arches = release.get("arches")
+    if not isinstance(arches, dict):
+        failures.append("manifest current asset release arches missing or not an object")
+        return []
+
+    refs: list[dict[str, Any]] = []
+    for arch, assets in arches.items():
+        if not isinstance(arch, str) or not isinstance(assets, dict):
+            failures.append("manifest current asset arch entry malformed")
+            continue
+        for logical_name, entry in assets.items():
+            if not isinstance(logical_name, str) or not isinstance(entry, dict):
+                failures.append("manifest current asset file entry malformed")
+                continue
+            url = f"/assets/releases/{asset_version}/{arch}-{logical_name}"
+            hash_value = entry.get("hash")
+            size = entry.get("size")
+            if not isinstance(hash_value, str):
+                failures.append(f"manifest asset file {url} hash missing")
+                continue
+            if not isinstance(size, int):
+                failures.append(f"manifest asset file {url} size missing")
+                continue
+            refs.append(
+                {
+                    "arch": arch,
+                    "logical_name": logical_name,
+                    "url": url,
+                    "hash": hash_value,
+                    "size": size,
+                }
+            )
+    return refs
+
+
+def check_health_asset_files(
+    asset_files: Any,
+    expected_asset_files: list[dict[str, Any]],
+) -> list[str]:
+    if not isinstance(asset_files, list):
+        return ["health asset files missing or not a list"]
+
+    failures: list[str] = []
+    files_by_url: dict[str, dict[str, Any]] = {}
+    for item in asset_files:
+        if not isinstance(item, dict):
+            failures.append("health asset file entry is not an object")
+            continue
+        url = item.get("url")
+        if not isinstance(url, str):
+            failures.append("health asset file entry missing url")
+            continue
+        files_by_url[url] = item
+
+    expected_urls = {item["url"] for item in expected_asset_files}
+    for expected in expected_asset_files:
+        url = expected["url"]
+        public_file = files_by_url.get(url)
+        if public_file is None:
+            failures.append(f"health missing asset file {url}")
+            continue
+        for field in ("arch", "logical_name", "hash", "size"):
+            if public_file.get(field) != expected[field]:
+                failures.append(f"health asset {field} mismatch for {url}")
+
+    for url in sorted(set(files_by_url) - expected_urls):
+        failures.append(f"health unexpected asset file {url}")
+
+    return failures
 
 
 def entries_by_url(entries: list[Any], failures: list[str], label: str) -> dict[str, dict[str, Any]]:

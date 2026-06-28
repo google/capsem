@@ -82,10 +82,12 @@ profile revision, profile catalog URL, profile update source, and channel
 manifest path. It verifies that the binary update target, state, source, and
 package file metadata match the canonical binary metadata; that the VM asset
 update target, manifest, base URL, compatibility, and newer-version
-requirements match the canonical asset metadata; and that the profile update
-hash, compatibility, and newer-version requirements match the canonical profile
-catalog metadata. Image freshness must remain explicitly unpublished until an
-image release rail is added to the asset channel.
+requirements match the canonical asset metadata; that current VM asset file
+URLs, BLAKE3 hashes, and sizes match the fetched channel manifest's current
+asset release; and that the profile update hash, compatibility, and
+newer-version requirements match the canonical profile catalog metadata. Image
+freshness must remain explicitly unpublished until an image release rail is
+added to the asset channel.
 It also resolves published host SBOM and VM OBOM evidence artifacts, verifies
 their advertised hashes and sizes, and validates attestation subjects and
 predicate URLs against the published evidence lists. It verifies live

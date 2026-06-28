@@ -157,6 +157,10 @@ The deploy smoke also verifies every manifest asset release row in
 `health.json`, including date, deprecated state, deprecation date, and minimum
 binary compatibility, so metadata-only deprecation changes cannot leave the
 public release history stale.
+The deploy smoke also verifies that current VM asset file URLs, BLAKE3 hashes,
+and sizes in `health.assets.files` match the fetched channel manifest's current
+asset release, so the public health index cannot stay self-consistent while
+pointing at stale VM blobs.
 The deploy smoke also verifies that the binary update target, state, source, and
 package file metadata match the canonical binary metadata.
 The deploy smoke also verifies that the VM asset update target, manifest, base
