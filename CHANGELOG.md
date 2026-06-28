@@ -137,6 +137,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   releases can move independently of installed binaries.
 
 ### Fixed
+- Fixed the release-channel deploy preflight to require generated Cloudflare
+  cache headers before publishing `release.capsem.org`.
 - Fixed the release-channel deploy preflight to require both the human index
   page and machine health JSON before publishing `release.capsem.org`.
 - Fixed the remote release-readiness checker to report missing Python
