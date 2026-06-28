@@ -334,6 +334,8 @@ pub struct UpdateTrackStatus {
     pub current: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub latest: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blocked_reason: Option<String>,
     pub update_available: bool,
     pub state: UpdateTrackState,
     pub compatibility: UpdateCompatibilityState,

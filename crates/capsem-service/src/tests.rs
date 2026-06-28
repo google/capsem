@@ -98,6 +98,7 @@ fn update_status_reports_profile_and_image_tracks_from_release_cache() {
             "latest_version": "1.3.1782582155",
             "update_available": false,
             "latest_profiles": "profiles-2030.0101.1",
+            "current_profiles": "profiles-2030.0101.0",
             "profiles_update_available": true,
             "profiles_state": "update_available",
             "latest_images": "images-2030.0101.1",
@@ -113,6 +114,10 @@ fn update_status_reports_profile_and_image_tracks_from_release_cache() {
         update_status_response_from_paths("1.3.1782582155", &assets_dir, &cache_path, 1200);
 
     assert_eq!(
+        status.profiles.current.as_deref(),
+        Some("profiles-2030.0101.0")
+    );
+    assert_eq!(
         status.profiles.latest.as_deref(),
         Some("profiles-2030.0101.1")
     );
@@ -125,9 +130,56 @@ fn update_status_reports_profile_and_image_tracks_from_release_cache() {
         status.profiles.compatibility,
         api::UpdateCompatibilityState::Compatible
     );
+    assert_eq!(status.profiles.blocked_reason, None);
     assert_eq!(status.images.latest.as_deref(), Some("images-2030.0101.1"));
     assert!(!status.images.update_available);
     assert_eq!(status.images.state, api::UpdateTrackState::Current);
+}
+
+#[test]
+fn update_status_reports_blocked_profile_track_from_release_cache() {
+    let dir = tempfile::tempdir().unwrap();
+    let assets_dir = dir.path().join("assets");
+    std::fs::create_dir_all(&assets_dir).unwrap();
+    let cache_path = dir.path().join("update-check.json");
+    std::fs::write(
+        &cache_path,
+        serde_json::json!({
+            "checked_at": 1000,
+            "latest_version": "1.3.1782582155",
+            "update_available": false,
+            "latest_profiles": "profiles-2030.0101.1",
+            "current_profiles": "profiles-2030.0101.0",
+            "profiles_update_available": false,
+            "profiles_state": "published",
+            "profiles_blocked_reason": "requires binary 1.4.0 or newer",
+            "source": "https://release.capsem.org/health.json"
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let status =
+        update_status_response_from_paths("1.3.1782582155", &assets_dir, &cache_path, 1200);
+
+    assert_eq!(
+        status.profiles.current.as_deref(),
+        Some("profiles-2030.0101.0")
+    );
+    assert_eq!(
+        status.profiles.latest.as_deref(),
+        Some("profiles-2030.0101.1")
+    );
+    assert!(!status.profiles.update_available);
+    assert_eq!(status.profiles.state, api::UpdateTrackState::Unknown);
+    assert_eq!(
+        status.profiles.compatibility,
+        api::UpdateCompatibilityState::Unknown
+    );
+    assert_eq!(
+        status.profiles.blocked_reason.as_deref(),
+        Some("requires binary 1.4.0 or newer")
+    );
 }
 
 #[test]

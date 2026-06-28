@@ -314,6 +314,8 @@ pub struct UpdateTrackStatus {
     pub current: Option<String>,
     #[serde(default)]
     pub latest: Option<String>,
+    #[serde(default)]
+    pub blocked_reason: Option<String>,
     pub update_available: bool,
     pub state: UpdateTrackState,
     pub compatibility: UpdateCompatibilityState,

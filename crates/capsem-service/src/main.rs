@@ -4898,9 +4898,13 @@ struct UpdateCheckCache {
     #[serde(default)]
     latest_profiles: Option<String>,
     #[serde(default)]
+    current_profiles: Option<String>,
+    #[serde(default)]
     profiles_update_available: bool,
     #[serde(default)]
     profiles_state: Option<String>,
+    #[serde(default)]
+    profiles_blocked_reason: Option<String>,
     #[serde(default)]
     latest_images: Option<String>,
     #[serde(default)]
@@ -4990,9 +4994,11 @@ fn update_status_response_from_paths(
             .as_ref()
             .map(|cache| {
                 channel_update_track(
+                    cache.current_profiles.clone(),
                     cache.latest_profiles.clone(),
                     cache.profiles_update_available,
                     cache.profiles_state.as_deref(),
+                    cache.profiles_blocked_reason.clone(),
                 )
             })
             .unwrap_or_else(not_published_update_track),
@@ -5000,9 +5006,11 @@ fn update_status_response_from_paths(
             .as_ref()
             .map(|cache| {
                 channel_update_track(
+                    None,
                     cache.latest_images.clone(),
                     cache.images_update_available,
                     cache.images_state.as_deref(),
+                    None,
                 )
             })
             .unwrap_or_else(not_published_update_track),
@@ -5058,6 +5066,7 @@ fn update_track(
     api::UpdateTrackStatus {
         current,
         latest,
+        blocked_reason: None,
         update_available,
         state,
         compatibility,
@@ -5068,6 +5077,7 @@ fn not_published_update_track() -> api::UpdateTrackStatus {
     api::UpdateTrackStatus {
         current: None,
         latest: None,
+        blocked_reason: None,
         update_available: false,
         state: api::UpdateTrackState::NotPublished,
         compatibility: api::UpdateCompatibilityState::NotApplicable,
@@ -5075,22 +5085,37 @@ fn not_published_update_track() -> api::UpdateTrackStatus {
 }
 
 fn channel_update_track(
+    current: Option<String>,
     latest: Option<String>,
     update_available: bool,
     channel_state: Option<&str>,
+    blocked_reason: Option<String>,
 ) -> api::UpdateTrackStatus {
+    if blocked_reason.is_some() {
+        return api::UpdateTrackStatus {
+            current,
+            latest,
+            blocked_reason,
+            update_available: false,
+            state: api::UpdateTrackState::Unknown,
+            compatibility: api::UpdateCompatibilityState::Unknown,
+        };
+    }
     match channel_state {
         Some("not_published") => not_published_update_track(),
         Some("unknown") => api::UpdateTrackStatus {
-            current: None,
+            current,
             latest,
+            blocked_reason: None,
             update_available: false,
             state: api::UpdateTrackState::Unknown,
             compatibility: api::UpdateCompatibilityState::Unknown,
         },
-        Some("update_available") => update_track(None, latest, true),
-        Some("current") | Some("published") => update_track(None, latest, update_available),
-        _ if latest.is_some() || update_available => update_track(None, latest, update_available),
+        Some("update_available") => update_track(current, latest, true),
+        Some("current") | Some("published") => update_track(current, latest, update_available),
+        _ if latest.is_some() || update_available => {
+            update_track(current, latest, update_available)
+        }
         _ => not_published_update_track(),
     }
 }

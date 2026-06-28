@@ -204,9 +204,12 @@ fn update_status_response_parses_service_contract() {
             "compatibility": "compatible"
         },
         "profiles": {
+            "current": "profiles-2030.0101.0",
+            "latest": "profiles-2030.0101.1",
+            "blocked_reason": "requires binary 1.4.0 or newer",
             "update_available": false,
-            "state": "not_published",
-            "compatibility": "not_applicable"
+            "state": "unknown",
+            "compatibility": "unknown"
         },
         "images": {
             "update_available": false,
@@ -235,7 +238,19 @@ fn update_status_response_parses_service_contract() {
         UpdateCompatibilityState::Compatible
     );
     assert_eq!(status.assets.current.as_deref(), Some("2026.0627.1"));
-    assert_eq!(status.profiles.state, UpdateTrackState::NotPublished);
+    assert_eq!(
+        status.profiles.current.as_deref(),
+        Some("profiles-2030.0101.0")
+    );
+    assert_eq!(
+        status.profiles.latest.as_deref(),
+        Some("profiles-2030.0101.1")
+    );
+    assert_eq!(
+        status.profiles.blocked_reason.as_deref(),
+        Some("requires binary 1.4.0 or newer")
+    );
+    assert_eq!(status.profiles.state, UpdateTrackState::Unknown);
     assert_eq!(
         status.images.compatibility,
         UpdateCompatibilityState::NotApplicable

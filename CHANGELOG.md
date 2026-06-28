@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Documented the PR `pr-gate` contract against `just test`, including the
   hosted-runner substitutions that must not be mistaken for full local release
   validation.
+- Exposed installed, latest, and blocked profile catalog freshness through the
+  update status API so CLI, tray, UI, and TUI consumers can report profile
+  updates without inspecting raw profile files.
 - Changed `capsem update --assets` to refresh remote channel manifests from
   manifest provenance before downloading VM assets, so compatible asset
   releases can move independently of installed binaries.

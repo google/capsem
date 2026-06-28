@@ -1127,6 +1127,11 @@ fn print_update_status(status: &UpdateStatusResponse) {
         let latest = status.assets.latest.as_deref().unwrap_or("unknown");
         updates.push(format!("assets {current} -> {latest}"));
     }
+    if status.profiles.update_available {
+        let current = status.profiles.current.as_deref().unwrap_or("unknown");
+        let latest = status.profiles.latest.as_deref().unwrap_or("unknown");
+        updates.push(format!("profiles {current} -> {latest}"));
+    }
 
     if updates.is_empty() {
         let asset_state = match status.assets.state {
@@ -1144,6 +1149,9 @@ fn print_update_status(status: &UpdateStatusResponse) {
     }
     if let Some(error) = &status.last_error {
         println!("Update err:{error}");
+    }
+    if let Some(reason) = &status.profiles.blocked_reason {
+        println!("Profiles:  blocked ({reason})");
     }
 }
 

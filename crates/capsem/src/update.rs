@@ -5,7 +5,10 @@
 //! privileged installer apply step is intentionally separate from VM asset
 //! hydration.
 
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeSet,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -38,12 +41,18 @@ pub struct UpdateCheck {
     /// Latest profile catalog advertised by the release channel, when published.
     #[serde(default)]
     pub latest_profiles: Option<String>,
+    /// Installed profile catalog revision derived from the local catalog.
+    #[serde(default)]
+    pub current_profiles: Option<String>,
     /// Whether the advertised profile catalog differs from the installed one.
     #[serde(default)]
     pub profiles_update_available: bool,
     /// Release-channel state for profile updates.
     #[serde(default)]
     pub profiles_state: Option<String>,
+    /// Why the advertised profile catalog cannot be applied by this install.
+    #[serde(default)]
+    pub profiles_blocked_reason: Option<String>,
     /// Latest VM image catalog advertised by the release channel, when published.
     #[serde(default)]
     pub latest_images: Option<String>,
@@ -135,7 +144,27 @@ struct ReleaseChannelUpdateTarget {
     #[serde(default)]
     state: Option<String>,
     #[serde(default)]
+    compatibility: Option<ReleaseChannelCompatibility>,
+    #[serde(default)]
+    requires_newer: Option<ReleaseChannelRequiresNewer>,
+    #[serde(default)]
     files: Vec<ReleaseChannelBinaryFile>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ReleaseChannelCompatibility {
+    #[serde(default)]
+    min_binary: Option<String>,
+    #[serde(default)]
+    min_assets: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ReleaseChannelRequiresNewer {
+    #[serde(default)]
+    binary: bool,
+    #[serde(default)]
+    assets: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -285,8 +314,10 @@ fn failed_update_check_from_previous(
         latest_assets: None,
         assets_update_available: false,
         latest_profiles: None,
+        current_profiles: None,
         profiles_update_available: false,
         profiles_state: None,
+        profiles_blocked_reason: None,
         latest_images: None,
         images_update_available: false,
         images_state: None,
@@ -393,6 +424,7 @@ pub async fn refresh_update_cache_if_stale() {
         now_secs(),
         env!("CARGO_PKG_VERSION"),
         local_current_asset_version().as_deref(),
+        local_current_profile_catalog_revision().as_deref(),
         &platform::detect_install_layout(),
         &health_url,
         Some(channel_hash),
@@ -487,11 +519,58 @@ fn local_current_asset_version() -> Option<String> {
     Some(manifest.assets.current)
 }
 
+fn local_current_profile_catalog_revision() -> Option<String> {
+    let catalog = capsem_core::net::policy_config::ProfileCatalog::load_default().ok()?;
+    profile_catalog_revision(catalog.profiles().collect::<Vec<_>>().as_slice()).ok()
+}
+
+fn profile_catalog_revision(
+    profiles: &[&capsem_core::net::policy_config::ProfileConfigFile],
+) -> Result<String> {
+    let mut revisions = profiles
+        .iter()
+        .map(|profile| profile.revision.as_str())
+        .collect::<BTreeSet<_>>();
+    if revisions.len() == 1 {
+        let revision = revisions
+            .pop_first()
+            .ok_or_else(|| anyhow::anyhow!("profile catalog revision set is empty"))?;
+        return Ok(revision.to_string());
+    }
+    let bytes = serde_json::to_vec(profiles).context("serialize profile catalog for hashing")?;
+    let hash = blake3::hash(&bytes).to_hex().to_string();
+    Ok(format!("catalog-{}", &hash[..16]))
+}
+
+fn profile_blocked_reason(target: &ReleaseChannelUpdateTarget) -> Option<String> {
+    let requires = target.requires_newer.as_ref()?;
+    let compatibility = target.compatibility.as_ref();
+    let mut reasons = Vec::new();
+    if requires.binary {
+        let version = compatibility
+            .and_then(|compatibility| compatibility.min_binary.as_deref())
+            .unwrap_or("a newer version");
+        reasons.push(format!("requires binary {version} or newer"));
+    }
+    if requires.assets {
+        let version = compatibility
+            .and_then(|compatibility| compatibility.min_assets.as_deref())
+            .unwrap_or("a newer version");
+        reasons.push(format!("requires assets {version} or newer"));
+    }
+    if reasons.is_empty() {
+        None
+    } else {
+        Some(reasons.join(" and "))
+    }
+}
+
 fn update_check_from_release_health(
     health: &ReleaseChannelHealth,
     checked_at: u64,
     current_binary: &str,
     current_assets: Option<&str>,
+    current_profiles: Option<&str>,
     install_layout: &InstallLayout,
     source: &str,
     channel_hash: Option<String>,
@@ -511,6 +590,11 @@ fn update_check_from_release_health(
         .profiles
         .as_ref()
         .and_then(|target| target.state.clone());
+    let profiles_blocked_reason = health
+        .updates
+        .profiles
+        .as_ref()
+        .and_then(profile_blocked_reason);
     let latest_images = health
         .updates
         .images
@@ -533,6 +617,11 @@ fn update_check_from_release_health(
         (Some(latest), Some(current)) => latest != current,
         _ => false,
     };
+    let profiles_update_available = profiles_blocked_reason.is_none()
+        && match (latest_profiles.as_deref(), current_profiles) {
+            (Some(latest), Some(current)) => latest != current,
+            _ => false,
+        };
     Ok(UpdateCheck {
         checked_at,
         latest_version,
@@ -541,8 +630,10 @@ fn update_check_from_release_health(
         latest_assets,
         assets_update_available,
         latest_profiles,
-        profiles_update_available: false,
+        current_profiles: current_profiles.map(ToOwned::to_owned),
+        profiles_update_available,
         profiles_state,
+        profiles_blocked_reason,
         latest_images,
         images_update_available: false,
         images_state,
@@ -621,6 +712,7 @@ async fn fetch_release_update_check(layout: &InstallLayout) -> Result<UpdateChec
         now_secs(),
         env!("CARGO_PKG_VERSION"),
         local_current_asset_version().as_deref(),
+        local_current_profile_catalog_revision().as_deref(),
         layout,
         &health_url,
         Some(channel_hash),
@@ -1143,8 +1235,10 @@ mod tests {
             latest_assets: Some("2030.0101.1".into()),
             assets_update_available: true,
             latest_profiles: Some("profiles-2030.0101.1".into()),
+            current_profiles: Some("profiles-2030.0101.0".into()),
             profiles_update_available: false,
             profiles_state: Some("published".into()),
+            profiles_blocked_reason: Some("requires binary 1.4.0 or newer".into()),
             latest_images: None,
             images_update_available: false,
             images_state: Some("not_published".into()),
@@ -1166,8 +1260,13 @@ mod tests {
         assert_eq!(rt.latest_assets, Some("2030.0101.1".into()));
         assert!(rt.assets_update_available);
         assert_eq!(rt.latest_profiles, Some("profiles-2030.0101.1".into()));
+        assert_eq!(rt.current_profiles, Some("profiles-2030.0101.0".into()));
         assert!(!rt.profiles_update_available);
         assert_eq!(rt.profiles_state, Some("published".into()));
+        assert_eq!(
+            rt.profiles_blocked_reason,
+            Some("requires binary 1.4.0 or newer".into())
+        );
         assert_eq!(rt.latest_images, None);
         assert!(!rt.images_update_available);
         assert_eq!(rt.images_state, Some("not_published".into()));
@@ -1193,8 +1292,10 @@ mod tests {
         assert_eq!(rt.latest_assets, None);
         assert!(!rt.assets_update_available);
         assert_eq!(rt.latest_profiles, None);
+        assert_eq!(rt.current_profiles, None);
         assert!(!rt.profiles_update_available);
         assert_eq!(rt.profiles_state, None);
+        assert_eq!(rt.profiles_blocked_reason, None);
         assert_eq!(rt.latest_images, None);
         assert!(!rt.images_update_available);
         assert_eq!(rt.images_state, None);
@@ -1214,8 +1315,10 @@ mod tests {
             latest_assets: Some("2030.0101.1".into()),
             assets_update_available: true,
             latest_profiles: None,
+            current_profiles: None,
             profiles_update_available: false,
             profiles_state: None,
+            profiles_blocked_reason: None,
             latest_images: None,
             images_update_available: false,
             images_state: None,
@@ -1301,7 +1404,14 @@ mod tests {
                     ]
                 },
                 "assets": {"latest": "2030.0101.1", "current": "2030.0101.0"},
-                "profiles": {"latest": "profiles-2030.0101.1", "state": "published"},
+                "profiles": {
+                    "latest": "profiles-2030.0101.1",
+                    "state": "published",
+                    "requires_newer": {
+                        "binary": false,
+                        "assets": false
+                    }
+                },
                 "images": {"latest": null, "state": "not_published"}
             }
         }))
@@ -1312,6 +1422,7 @@ mod tests {
             1718444400,
             "1.3.1782582155",
             Some("2026.0627.1"),
+            Some("profiles-2030.0101.0"),
             &InstallLayout::MacosPkg,
             "https://release.capsem.org/health.json",
             Some("f".repeat(64)),
@@ -1328,11 +1439,16 @@ mod tests {
         assert_eq!(check.latest_assets, Some("2030.0101.1".to_string()));
         assert!(check.assets_update_available);
         assert_eq!(
+            check.current_profiles,
+            Some("profiles-2030.0101.0".to_string())
+        );
+        assert_eq!(
             check.latest_profiles,
             Some("profiles-2030.0101.1".to_string())
         );
-        assert!(!check.profiles_update_available);
+        assert!(check.profiles_update_available);
         assert_eq!(check.profiles_state, Some("published".to_string()));
+        assert_eq!(check.profiles_blocked_reason, None);
         assert_eq!(check.latest_images, None);
         assert!(!check.images_update_available);
         assert_eq!(check.images_state, Some("not_published".to_string()));
@@ -1361,6 +1477,7 @@ mod tests {
             1718444400,
             "1.3.1782582155",
             Some("2026.0627.1"),
+            None,
             &InstallLayout::MacosPkg,
             "https://release.capsem.org/health.json",
             None,
@@ -1369,6 +1486,56 @@ mod tests {
 
         assert_eq!(check.latest_version, Some("99.99.99".to_string()));
         assert_eq!(check.latest_assets, Some("2030.0101.1".to_string()));
+    }
+
+    #[test]
+    fn release_health_profile_update_reports_blocked_compatibility() {
+        let health: ReleaseChannelHealth = serde_json::from_value(serde_json::json!({
+            "schema": "capsem.assets_channel.health.v1",
+            "updates": {
+                "binary": {"current": "1.3.1782582155"},
+                "assets": {"current": "2026.0627.1"},
+                "profiles": {
+                    "latest": "profiles-2030.0101.1",
+                    "state": "published",
+                    "requires_newer": {
+                        "binary": true,
+                        "assets": false
+                    },
+                    "compatibility": {
+                        "min_binary": "1.4.0",
+                        "min_assets": "2026.0627.1"
+                    }
+                }
+            }
+        }))
+        .unwrap();
+
+        let check = update_check_from_release_health(
+            &health,
+            1718444400,
+            "1.3.1782582155",
+            Some("2026.0627.1"),
+            Some("profiles-2030.0101.0"),
+            &InstallLayout::MacosPkg,
+            "https://release.capsem.org/health.json",
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(
+            check.current_profiles,
+            Some("profiles-2030.0101.0".to_string())
+        );
+        assert_eq!(
+            check.latest_profiles,
+            Some("profiles-2030.0101.1".to_string())
+        );
+        assert!(!check.profiles_update_available);
+        assert_eq!(
+            check.profiles_blocked_reason.as_deref(),
+            Some("requires binary 1.4.0 or newer")
+        );
     }
 
     #[test]
@@ -1673,6 +1840,7 @@ mod tests {
             1718444400,
             "1.3.1782582155",
             Some("2026.0627.1"),
+            None,
             &InstallLayout::MacosPkg,
             "https://release.capsem.org/health.json",
             None,
