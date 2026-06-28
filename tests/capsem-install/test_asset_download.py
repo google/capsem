@@ -545,6 +545,51 @@ def test_update_assets_interrupted_remote_blob_keeps_previous_manifest_and_clean
     assert list(arch_assets.glob("*.tmp")) == []
 
 
+def test_update_assets_missing_remote_channel_manifest_keeps_previous_assets(
+    tmp_path: Path,
+    http_fixture,
+    installed_layout,
+):
+    base_url, _serve_dir, requested_paths = http_fixture
+    arch = _arch()
+    old_files = {
+        "vmlinuz": b"old-offline-kernel",
+        "initrd.img": b"old-offline-initrd",
+        "rootfs.erofs": b"old-offline-rootfs",
+    }
+
+    channel_manifest_url = f"{base_url}/assets/stable/manifest.json"
+    capsem_home = tmp_path / ".capsem"
+    assets = capsem_home / "assets"
+    old_origin = {
+        "schema": "capsem.manifest_origin.v1",
+        "origin": "package",
+        "source": channel_manifest_url,
+        "packaged_at": "2026-06-16T00:00:00Z",
+    }
+    old_manifest = _write_installed_manifest_and_assets(
+        assets,
+        arch,
+        old_files,
+        asset_version=ASSET_VERSION,
+        origin=old_origin,
+    )
+
+    result = _run({"CAPSEM_HOME": str(capsem_home)}, "update", "--assets")
+
+    assert result.returncode != 0, "missing channel manifest must fail the refresh"
+    err = (result.stdout + result.stderr).lower()
+    assert "manifest.json" in err, err
+    assert "404" in err or "not found" in err, err
+    assert "/assets/stable/manifest.json" in requested_paths
+    assert json.loads((assets / "manifest.json").read_text()) == old_manifest
+    assert json.loads((assets / "manifest-origin.json").read_text()) == old_origin
+    for name, blob in old_files.items():
+        target = assets / arch / _hashed_asset_name(name, blob)
+        assert target.exists(), f"previous working asset was removed: {target}"
+        assert target.read_bytes() == blob
+
+
 def test_update_assets_rejects_bare_asset_base_path(tmp_path: Path, installed_layout):
     arch = _arch()
     files = {
