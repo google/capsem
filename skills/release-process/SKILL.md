@@ -115,8 +115,11 @@ absence of `file://` URLs. It must also
 verify that image freshness remains explicitly unpublished until image release
 metadata is added to the asset channel. It must also
 resolve published host SBOM and VM OBOM evidence artifacts from `health.json`, verify their advertised
-hashes and sizes, and validate attestation scope/workflow metadata plus
-attestation subjects and predicate URLs against the published evidence lists.
+hashes and sizes, validate their SPDX 2.3 or CycloneDX document shape, and
+validate attestation scope/workflow metadata plus attestation subjects and
+predicate URLs against the published evidence lists. The smoke must validate
+attestation subjects and predicate URLs after the evidence document shape
+passes.
 Host SBOM evidence is incomplete unless
 `github_attestations_host_sbom` is present and points at the published
 `capsem-sbom.spdx.json` evidence and covers every published host package

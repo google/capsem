@@ -179,8 +179,10 @@ hash, schema, revision, state, current binary/assets targets, compatibility
 fields, and absence of `file://` URLs.
 The deploy smoke also verifies that image freshness remains explicitly
 unpublished until image release metadata is added to the asset channel.
-It validates attestation scope, workflow, subjects, and predicate URLs against
-the published host SBOM and VM OBOM evidence lists.
+It validates host SBOM and VM OBOM evidence document shape (SPDX 2.3 for the
+host SBOM and CycloneDX for VM OBOMs), plus attestation scope, workflow,
+subjects, and predicate URLs against the published host SBOM and VM OBOM
+evidence lists.
 The deploy smoke must also verify public `Cache-Control` headers: mutable
 release-channel pointers (`/`, `/health.json`, and
 `/assets/<channel>/manifest.json`) stay `no-cache, must-revalidate`, while

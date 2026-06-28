@@ -93,8 +93,9 @@ added to the asset channel. The immutable profile catalog artifact is fetched
 and checked against its advertised BLAKE3 hash, schema, revision, and URL
 policy.
 It also resolves published host SBOM and VM OBOM evidence artifacts, verifies
-their advertised hashes and sizes, and validates attestation subjects and
-predicate URLs against the published evidence lists. It verifies live
+their advertised hashes and sizes, validates their SPDX 2.3 or CycloneDX
+document shape, and validates attestation subjects and predicate URLs against
+the published evidence lists. It verifies live
 `Cache-Control` headers too: mutable release-channel
 pointers must stay fresh, while immutable asset and profile artifacts must keep
 long-lived immutable caching. If the local checkout has unpublished commits,
@@ -344,8 +345,10 @@ newer-version requirements match the canonical asset metadata; and that profile
 update hash, compatibility, and newer-version requirements match the canonical
 profile catalog metadata. Image freshness must remain explicitly unpublished
 until an image release rail is added to the asset channel. It resolves published
-host SBOM and VM OBOM evidence artifacts from `health.json`, verifies their advertised hashes and sizes, and validates
-attestation subjects and predicate URLs against the published evidence lists.
+host SBOM and VM OBOM evidence artifacts from `health.json`, verifies their
+advertised hashes and sizes, validates their SPDX 2.3 or CycloneDX document
+shape, and validates attestation subjects and predicate URLs against the
+published evidence lists.
 It also verifies public `Cache-Control` headers: mutable release-channel
 pointers (`/`, `/health.json`, and `/assets/<channel>/manifest.json`) must stay
 `no-cache, must-revalidate`, while immutable asset and profile release

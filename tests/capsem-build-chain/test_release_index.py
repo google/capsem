@@ -759,6 +759,46 @@ def test_release_index_check_rejects_missing_vm_obom_evidence(tmp_path: Path) ->
     assert "health.json missing VM OBOM evidence" in result.stderr
 
 
+def test_release_index_check_rejects_vm_obom_content_drift(tmp_path: Path) -> None:
+    manifest_path = _write_release_manifest(tmp_path)
+    bad_obom = b'{"bomFormat":"not-cyclonedx"}'
+    obom_path = manifest_path.parent / "arm64" / "obom.cdx.json"
+    obom_path.write_bytes(bad_obom)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["assets"]["releases"]["2030.0101.1"]["arches"]["arm64"][
+        "obom.cdx.json"
+    ] = {"hash": blake3(bad_obom).hexdigest(), "size": len(bad_obom)}
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    dist = tmp_path / "target" / "release-channel"
+    _run_admin(
+        "assets",
+        "channel",
+        "build",
+        "--manifest",
+        f"file://{manifest_path}",
+        "--assets-dir",
+        str(manifest_path.parent),
+        "--channel",
+        "stable",
+        "--out-dir",
+        str(dist),
+    )
+
+    result = _run_admin(
+        "assets",
+        "channel",
+        "check",
+        "--channel",
+        "stable",
+        "--dist",
+        str(dist),
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "VM OBOM evidence bomFormat mismatch" in result.stderr
+
+
 def test_release_index_check_rejects_missing_vm_asset_attestation_evidence(
     tmp_path: Path,
 ) -> None:
@@ -1016,6 +1056,37 @@ def test_binary_release_index_records_host_artifacts_without_changing_assets(
     assert files[pkg.name]["sha256"] == hashlib.sha256(b"pkg bytes v2").hexdigest()
     assert files[deb.name]["sha256"] == hashlib.sha256(b"deb bytes v2").hexdigest()
     assert files[sbom.name]["sha256"] == hashlib.sha256(sbom.read_bytes()).hexdigest()
+
+
+def test_binary_release_index_rejects_bad_spdx_sbom(tmp_path: Path) -> None:
+    manifest_path = _write_release_manifest(tmp_path)
+    artifacts = tmp_path / "release-artifacts"
+    artifacts.mkdir()
+    pkg = artifacts / "Capsem-1.4.2234567890.pkg"
+    sbom = artifacts / "capsem-sbom.spdx.json"
+    pkg.write_bytes(b"pkg bytes v2")
+    sbom.write_bytes(b'{"spdxVersion":"SPDX-2.2","name":"capsem"}')
+
+    result = _run_admin(
+        "assets",
+        "channel",
+        "record-binary",
+        "--manifest-path",
+        str(manifest_path),
+        "--version",
+        "1.4.2234567890",
+        "--date",
+        "2030-02-03",
+        "--artifact",
+        str(pkg),
+        "--artifact",
+        str(sbom),
+        "--json",
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "capsem-sbom.spdx.json spdxVersion mismatch" in result.stderr
 
 
 def test_binary_release_index_rejects_sbom_without_host_package(tmp_path: Path) -> None:

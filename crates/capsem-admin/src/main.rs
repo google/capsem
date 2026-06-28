@@ -1201,6 +1201,10 @@ fn binary_files_from_artifacts(artifacts: &[PathBuf]) -> Result<Vec<BinaryFile>>
         }
         let bytes = fs::read(path)
             .with_context(|| format!("read binary release artifact {}", path.display()))?;
+        if is_host_sbom_file(&name) {
+            validate_host_spdx_sbom_bytes(&bytes, path)
+                .with_context(|| format!("validate host SBOM artifact {}", path.display()))?;
+        }
         let sha256 = format!("{:x}", Sha256::digest(&bytes));
         files.push(BinaryFile {
             name,
@@ -1942,6 +1946,7 @@ fn validate_assets_channel_health(
                 ));
             }
             if logical_name == "obom.cdx.json" {
+                validate_vm_cyclonedx_obom_bytes(&bytes, &local_path)?;
                 saw_obom = true;
                 if !vm_oboms.iter().any(|item| {
                     item.get("url").and_then(|value| value.as_str()) == Some(url.as_str())
@@ -3177,6 +3182,37 @@ fn current_utc_date() -> Result<String> {
 
 fn is_host_sbom_file(name: &str) -> bool {
     name == "capsem-sbom.spdx.json"
+}
+
+fn validate_host_spdx_sbom_bytes(bytes: &[u8], path: &Path) -> Result<()> {
+    let document: serde_json::Value = serde_json::from_slice(bytes)
+        .with_context(|| format!("parse host SPDX SBOM {}", path.display()))?;
+    let spdx_version = document
+        .get("spdxVersion")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| anyhow!("{} spdxVersion missing", path.display()))?;
+    if spdx_version != "SPDX-2.3" {
+        return Err(anyhow!(
+            "{} spdxVersion mismatch: expected SPDX-2.3, got {spdx_version}",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+fn validate_vm_cyclonedx_obom_bytes(bytes: &[u8], path: &Path) -> Result<()> {
+    let document: serde_json::Value = serde_json::from_slice(bytes)
+        .with_context(|| format!("parse VM CycloneDX OBOM {}", path.display()))?;
+    let bom_format = document
+        .get("bomFormat")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| anyhow!("VM OBOM evidence bomFormat missing: {}", path.display()))?;
+    if bom_format != "CycloneDX" {
+        return Err(anyhow!(
+            "VM OBOM evidence bomFormat mismatch: expected CycloneDX, got {bom_format}"
+        ));
+    }
+    Ok(())
 }
 
 fn is_host_package_file(name: &str) -> bool {

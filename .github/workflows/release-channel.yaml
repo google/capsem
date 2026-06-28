@@ -134,7 +134,7 @@ jobs:
                   if directive not in cache_control:
                       failures.append(f"{label} {url} Cache-Control must contain {directive}")
 
-          def check_evidence_artifact(item, hash_key, algorithm, label):
+          def check_evidence_artifact(item, hash_key, algorithm, label, expected_document=None):
               url = item.get("url")
               expected_hash = item.get(hash_key)
               expected_size = item.get("size")
@@ -163,6 +163,26 @@ jobs:
                   return
               if actual_hash != expected_hash:
                   failures.append(f"{label} {url} {algorithm} mismatch")
+              if expected_document is not None:
+                  try:
+                      document = json.loads(data)
+                  except Exception as error:
+                      failures.append(f"{label} {url} invalid JSON: {error}")
+                      return
+                  if not isinstance(document, dict):
+                      failures.append(f"{label} {url} document is not an object")
+                      return
+                  if expected_document == "spdx":
+                      if document.get("spdxVersion") != "SPDX-2.3":
+                          failures.append(f"{label} {url} spdxVersion mismatch")
+                      return
+                  if expected_document == "cyclonedx":
+                      if document.get("bomFormat") != "CycloneDX":
+                          failures.append(f"{label} {url} bomFormat mismatch")
+                      return
+                  failures.append(
+                      f"{label} {url} unsupported evidence document {expected_document}"
+                  )
 
           def attestation_predicate_evidence_urls(attestation, subjects, host_binary_by_url, asset_by_url, host_sbom_urls, vm_obom_urls):
               scope = attestation.get("scope")
@@ -580,7 +600,7 @@ jobs:
               if url not in host_binary_by_url:
                   failures.append(f"host SBOM evidence {url} missing from host binary files")
                   continue
-              check_evidence_artifact(sbom, "sha256", "sha256", "host SBOM evidence")
+              check_evidence_artifact(sbom, "sha256", "sha256", "host SBOM evidence", "spdx")
           for obom in vm_oboms:
               if not isinstance(obom, dict):
                   failures.append("health evidence vm_oboms entry is not an object")
@@ -589,7 +609,7 @@ jobs:
               if url not in asset_by_url:
                   failures.append(f"VM OBOM evidence {url} missing from asset files")
                   continue
-              check_evidence_artifact(obom, "hash", "blake3", "VM OBOM evidence")
+              check_evidence_artifact(obom, "hash", "blake3", "VM OBOM evidence", "cyclonedx")
           saw_host_sbom_attestation = False
           host_sbom_attestation_subjects = set()
           for attestation in attestations:

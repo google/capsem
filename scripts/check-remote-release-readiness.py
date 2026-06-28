@@ -600,7 +600,9 @@ def check_release_evidence(site: str, health: dict[str, Any]) -> list[str]:
             failures.append(f"host SBOM evidence {url} missing from host binary files")
             continue
         failures.extend(
-            fetch_and_verify_evidence_artifact(site, sbom, "sha256", "host SBOM evidence")
+            fetch_and_verify_evidence_artifact(
+                site, sbom, "sha256", "host SBOM evidence", "spdx"
+            )
         )
 
     for obom in vm_oboms:
@@ -614,7 +616,11 @@ def check_release_evidence(site: str, health: dict[str, Any]) -> list[str]:
         if url not in asset_by_url:
             failures.append(f"VM OBOM evidence {url} missing from asset files")
             continue
-        failures.extend(fetch_and_verify_evidence_artifact(site, obom, "blake3", "VM OBOM evidence"))
+        failures.extend(
+            fetch_and_verify_evidence_artifact(
+                site, obom, "blake3", "VM OBOM evidence", "cyclonedx"
+            )
+        )
 
     saw_host_sbom_attestation = False
     host_sbom_attestation_subjects: set[str] = set()
@@ -988,7 +994,11 @@ def entries_by_url(entries: list[Any], failures: list[str], label: str) -> dict[
 
 
 def fetch_and_verify_evidence_artifact(
-    site: str, item: dict[str, Any], algorithm: str, label: str
+    site: str,
+    item: dict[str, Any],
+    algorithm: str,
+    label: str,
+    expected_document: str | None = None,
 ) -> list[str]:
     url = item.get("url")
     if not isinstance(url, str):
@@ -1019,7 +1029,31 @@ def fetch_and_verify_evidence_artifact(
         return [f"{label} {url} unsupported hash algorithm {algorithm}"]
     if actual_hash != expected_hash:
         return [f"{label} {url} {algorithm} mismatch"]
+    if expected_document is not None:
+        content_failure = validate_evidence_document(artifact.data, expected_document, label, url)
+        if content_failure is not None:
+            return [content_failure]
     return []
+
+
+def validate_evidence_document(
+    artifact: bytes, expected_document: str, label: str, url: str
+) -> str | None:
+    try:
+        document = json.loads(artifact)
+    except json.JSONDecodeError as error:
+        return f"{label} {url} invalid JSON: {error}"
+    if not isinstance(document, dict):
+        return f"{label} {url} document is not an object"
+    if expected_document == "spdx":
+        if document.get("spdxVersion") != "SPDX-2.3":
+            return f"{label} {url} spdxVersion mismatch"
+        return None
+    if expected_document == "cyclonedx":
+        if document.get("bomFormat") != "CycloneDX":
+            return f"{label} {url} bomFormat mismatch"
+        return None
+    return f"{label} {url} unsupported evidence document {expected_document}"
 
 
 def check_release_cache_headers(site: str, channel: str, health: dict[str, Any]) -> list[str]:

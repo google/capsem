@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Fixed release-channel validation, live smoke, and remote readiness so host
+  SBOM and VM OBOM evidence must be valid SPDX 2.3 or CycloneDX documents, not
+  just hash-matching files.
 - Fixed release-channel validation, live smoke, and remote readiness so
   attestation evidence scope and workflow metadata cannot drift from the
   canonical host binary, host SBOM, or VM asset release rails.
