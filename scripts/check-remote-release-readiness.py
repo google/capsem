@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import socket
 import subprocess
@@ -453,6 +454,29 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
             expected_asset_files,
         )
     )
+    expected_binary_files = current_binary_file_refs(
+        current_binary,
+        current_manifest_binary_release,
+        failures,
+    )
+    failures.extend(
+        check_host_binary_files(
+            health_binary.get("files"),
+            expected_binary_files,
+            "health",
+        )
+    )
+    evidence_data = health_data.get("evidence")
+    evidence_host_binary_files = (
+        evidence_data.get("host_binary_files") if isinstance(evidence_data, dict) else None
+    )
+    failures.extend(
+        check_host_binary_files(
+            evidence_host_binary_files,
+            expected_binary_files,
+            "evidence",
+        )
+    )
     for label, value in (
         ("current binary", current_binary),
         ("current assets", current_assets),
@@ -751,6 +775,84 @@ def check_health_asset_files(
 
     for url in sorted(set(files_by_url) - expected_urls):
         failures.append(f"health unexpected asset file {url}")
+
+    return failures
+
+
+def current_binary_file_refs(
+    binary_version: Any,
+    release: Any,
+    failures: list[str],
+) -> list[dict[str, Any]]:
+    if not isinstance(binary_version, str):
+        return []
+    if not isinstance(release, dict):
+        failures.append("manifest current binary release missing or not an object")
+        return []
+    files = release.get("files", [])
+    if not isinstance(files, list):
+        failures.append("manifest current binary release files missing or not a list")
+        return []
+
+    base = os.environ.get("CAPSEM_RELEASE_URL") or (
+        "https://github.com/google/capsem/releases/download"
+    )
+    release_base = f"{base.rstrip('/')}/v{binary_version}"
+    refs: list[dict[str, Any]] = []
+    for item in files:
+        if not isinstance(item, dict):
+            failures.append("manifest binary file entry is not an object")
+            continue
+        name = item.get("name")
+        sha256 = item.get("sha256")
+        size = item.get("size")
+        if not isinstance(name, str):
+            failures.append("manifest binary file name missing")
+            continue
+        url = f"{release_base}/{name}"
+        if not isinstance(sha256, str):
+            failures.append(f"manifest binary file {url} sha256 missing")
+            continue
+        if not isinstance(size, int):
+            failures.append(f"manifest binary file {url} size missing")
+            continue
+        refs.append({"name": name, "url": url, "sha256": sha256, "size": size})
+    return refs
+
+
+def check_host_binary_files(
+    binary_files: Any,
+    expected_binary_files: list[dict[str, Any]],
+    label: str,
+) -> list[str]:
+    if not isinstance(binary_files, list):
+        return [f"{label} host binary files missing or not a list"]
+
+    failures: list[str] = []
+    files_by_url: dict[str, dict[str, Any]] = {}
+    for item in binary_files:
+        if not isinstance(item, dict):
+            failures.append(f"{label} host binary file entry is not an object")
+            continue
+        url = item.get("url")
+        if not isinstance(url, str):
+            failures.append(f"{label} host binary file entry missing url")
+            continue
+        files_by_url[url] = item
+
+    expected_urls = {item["url"] for item in expected_binary_files}
+    for expected in expected_binary_files:
+        url = expected["url"]
+        public_file = files_by_url.get(url)
+        if public_file is None:
+            failures.append(f"{label} missing host binary file {url}")
+            continue
+        for field in ("name", "sha256", "size"):
+            if public_file.get(field) != expected[field]:
+                failures.append(f"{label} host binary {field} mismatch for {url}")
+
+    for url in sorted(set(files_by_url) - expected_urls):
+        failures.append(f"{label} unexpected host binary file {url}")
 
     return failures
 

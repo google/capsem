@@ -248,6 +248,70 @@ jobs:
               for url in sorted(set(files_by_url) - expected_urls):
                   failures.append(f"health unexpected asset file {url}")
 
+          def current_binary_file_refs(binary_version, release):
+              if not isinstance(binary_version, str):
+                  return []
+              if not isinstance(release, dict):
+                  failures.append("manifest current binary release missing or not an object")
+                  return []
+              files = release.get("files", [])
+              if not isinstance(files, list):
+                  failures.append("manifest current binary release files missing or not a list")
+                  return []
+
+              base = os.environ.get("CAPSEM_RELEASE_URL") or "https://github.com/google/capsem/releases/download"
+              release_base = f"{base.rstrip('/')}/v{binary_version}"
+              refs = []
+              for item in files:
+                  if not isinstance(item, dict):
+                      failures.append("manifest binary file entry is not an object")
+                      continue
+                  name = item.get("name")
+                  sha256 = item.get("sha256")
+                  size = item.get("size")
+                  if not isinstance(name, str):
+                      failures.append("manifest binary file name missing")
+                      continue
+                  url = f"{release_base}/{name}"
+                  if not isinstance(sha256, str):
+                      failures.append(f"manifest binary file {url} sha256 missing")
+                      continue
+                  if not isinstance(size, int):
+                      failures.append(f"manifest binary file {url} size missing")
+                      continue
+                  refs.append({"name": name, "url": url, "sha256": sha256, "size": size})
+              return refs
+
+          def check_host_binary_files(binary_files, expected_binary_files, label):
+              if not isinstance(binary_files, list):
+                  failures.append(f"{label} host binary files missing or not a list")
+                  return
+
+              files_by_url = {}
+              for item in binary_files:
+                  if not isinstance(item, dict):
+                      failures.append(f"{label} host binary file entry is not an object")
+                      continue
+                  url = item.get("url")
+                  if not isinstance(url, str):
+                      failures.append(f"{label} host binary file entry missing url")
+                      continue
+                  files_by_url[url] = item
+
+              expected_urls = {item["url"] for item in expected_binary_files}
+              for expected in expected_binary_files:
+                  url = expected["url"]
+                  public_file = files_by_url.get(url)
+                  if public_file is None:
+                      failures.append(f"{label} missing host binary file {url}")
+                      continue
+                  for field in ("name", "sha256", "size"):
+                      if public_file.get(field) != expected[field]:
+                          failures.append(f"{label} host binary {field} mismatch for {url}")
+
+              for url in sorted(set(files_by_url) - expected_urls):
+                  failures.append(f"{label} unexpected host binary file {url}")
+
           expected_manifest = f"/assets/{channel}/manifest.json"
           failures = []
           current = health.get("current", {})
@@ -493,6 +557,13 @@ jobs:
               failures.append("health current binary mismatch manifest")
           expected_asset_files = current_asset_file_refs(current_assets, current_manifest_asset_release)
           check_health_asset_files(health.get("assets", {}).get("files"), expected_asset_files)
+          expected_binary_files = current_binary_file_refs(current_binary, current_manifest_binary_release)
+          check_host_binary_files(health.get("binary", {}).get("files"), expected_binary_files, "health")
+          check_host_binary_files(
+              health.get("evidence", {}).get("host_binary_files"),
+              expected_binary_files,
+              "evidence",
+          )
           manifest_asset_releases = manifest.get("assets", {}).get("releases", {})
           health_asset_releases = health.get("asset_releases", [])
           if not isinstance(health_asset_releases, list):

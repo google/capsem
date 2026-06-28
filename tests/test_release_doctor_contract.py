@@ -349,6 +349,11 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
     assert "health binary update state mismatch" in workflow
     assert "health binary update source mismatch" in workflow
     assert "health binary update files mismatch" in workflow
+    assert "def current_binary_file_refs" in workflow
+    assert "manifest current binary release files missing or not a list" in workflow
+    assert "def check_host_binary_files" in workflow
+    assert "{label} host binary {field} mismatch for {url}" in workflow
+    assert "{label} unexpected host binary file {url}" in workflow
     assert "health image update latest must be null while unpublished" in workflow
     assert "health image update current must be null while unpublished" in workflow
     assert "health image update state mismatch" in workflow
@@ -1707,6 +1712,232 @@ def test_remote_readiness_rejects_asset_file_metadata_drift() -> None:
     assert f"health asset hash mismatch for {kernel_path}" in result.detail
     assert f"health asset size mismatch for {kernel_path}" in result.detail
     assert f"health asset hash mismatch for {obom_path}" in result.detail
+
+
+def test_remote_readiness_rejects_host_binary_file_metadata_drift() -> None:
+    checker = _readiness_checker_module()
+    catalog_url = "/profiles/releases/profiles-2030.0101.1/catalog.json"
+    package_bytes = b"stale pkg"
+    sbom_bytes = b'{"spdxVersion":"SPDX-2.3"}'
+    package_url = "https://github.com/google/capsem/releases/download/v1.4.0/Capsem-1.4.0.pkg"
+    sbom_url = "https://github.com/google/capsem/releases/download/v1.4.0/capsem-sbom.spdx.json"
+    stale_package_sha = hashlib.sha256(package_bytes).hexdigest()
+    stale_sbom_sha = hashlib.sha256(sbom_bytes).hexdigest()
+    current_package_sha = "1" * 64
+    current_sbom_sha = "2" * 64
+
+    checker.fetch_text = lambda _url: checker.FetchText(
+        text=(
+            "1.4.0 2030.0101.1 2030-01-01 "
+            f"2030-01-01T00:00:00Z profiles-2030.0101.1 {catalog_url} "
+            "/assets/stable/manifest.json"
+        )
+    )
+    checker.fetch_json = lambda url: checker.FetchJson(
+        data={
+            "schema": "capsem.assets_channel.health.v1",
+            "ok": True,
+            "channel": "stable",
+            "state": "published",
+            "generated_at": "2030-01-01T00:00:00Z",
+            "urls": {
+                "index": "/index.html",
+                "health": "/health.json",
+                "manifest": "/assets/stable/manifest.json",
+                "asset_base": "/assets/releases",
+                "profile_catalog": catalog_url,
+            },
+            "current": {"binary": "1.4.0", "assets": "2030.0101.1"},
+            "asset_releases": [
+                {
+                    "version": "2030.0101.1",
+                    "date": "2030-01-01",
+                    "state": "current",
+                    "deprecated": False,
+                    "min_binary": "1.4.0",
+                }
+            ],
+            "binary": {
+                "version": "1.4.0",
+                "state": "current",
+                "files": [
+                    {
+                        "name": "Capsem-1.4.0.pkg",
+                        "url": package_url,
+                        "sha256": stale_package_sha,
+                        "size": len(package_bytes),
+                    },
+                    {
+                        "name": "capsem-sbom.spdx.json",
+                        "url": sbom_url,
+                        "sha256": stale_sbom_sha,
+                        "size": len(sbom_bytes),
+                    },
+                ],
+            },
+            "assets": {
+                "version": "2030.0101.1",
+                "state": "current",
+                "compatibility": {"binary": "1.4.0", "min_binary": "1.4.0"},
+                "requires_newer": {"binary": False},
+                "files": [],
+            },
+            "profiles": {
+                "revision": "profiles-2030.0101.1",
+                "source": catalog_url,
+                "hash": "1" * 64,
+                "state": "current",
+                "compatibility": {
+                    "binary": "1.4.0",
+                    "assets": "2030.0101.1",
+                    "min_binary": "1.4.0",
+                    "min_assets": "2030.0101.1",
+                },
+                "requires_newer": {"binary": False, "assets": False},
+            },
+            "updates": {
+                "binary": {
+                    "latest": "1.4.0",
+                    "current": "1.4.0",
+                    "state": "current",
+                    "source": "manifest.binaries.current",
+                    "files": [
+                        {
+                            "name": "Capsem-1.4.0.pkg",
+                            "url": package_url,
+                            "sha256": stale_package_sha,
+                            "size": len(package_bytes),
+                        },
+                        {
+                            "name": "capsem-sbom.spdx.json",
+                            "url": sbom_url,
+                            "sha256": stale_sbom_sha,
+                            "size": len(sbom_bytes),
+                        },
+                    ],
+                },
+                "assets": {
+                    "latest": "2030.0101.1",
+                    "current": "2030.0101.1",
+                    "state": "current",
+                    "source": "manifest.assets.current",
+                    "manifest": "/assets/stable/manifest.json",
+                    "asset_base": "/assets/releases",
+                    "compatibility": {"binary": "1.4.0", "min_binary": "1.4.0"},
+                    "requires_newer": {"binary": False},
+                },
+                "profiles": {
+                    "latest": "profiles-2030.0101.1",
+                    "current": "profiles-2030.0101.1",
+                    "state": "current",
+                    "source": catalog_url,
+                    "hash": "1" * 64,
+                    "compatibility": {
+                        "binary": "1.4.0",
+                        "assets": "2030.0101.1",
+                        "min_binary": "1.4.0",
+                        "min_assets": "2030.0101.1",
+                    },
+                    "requires_newer": {"binary": False, "assets": False},
+                },
+                "images": {
+                    "latest": None,
+                    "current": None,
+                    "state": "not_published",
+                    "source": "not_in_asset_channel",
+                },
+            },
+            "evidence": {
+                "vm_oboms": [],
+                "host_sboms": [
+                    {
+                        "name": "capsem-sbom.spdx.json",
+                        "url": sbom_url,
+                        "sha256": stale_sbom_sha,
+                        "size": len(sbom_bytes),
+                    }
+                ],
+                "host_binary_files": [
+                    {
+                        "name": "Capsem-1.4.0.pkg",
+                        "url": package_url,
+                        "sha256": stale_package_sha,
+                        "size": len(package_bytes),
+                    },
+                    {
+                        "name": "capsem-sbom.spdx.json",
+                        "url": sbom_url,
+                        "sha256": stale_sbom_sha,
+                        "size": len(sbom_bytes),
+                    },
+                ],
+                "attestations": [
+                    {
+                        "name": "github_attestations_host_sbom",
+                        "scope": "host_binaries",
+                        "predicate_type": "https://spdx.dev/Document/v2.3",
+                        "predicate_url": sbom_url,
+                        "verify_command": "gh attestation verify <subject-url> --owner google",
+                        "subjects": [package_url],
+                    }
+                ],
+            },
+        }
+        if url.endswith("/health.json")
+        else {
+            "format": 2,
+            "assets": {
+                "current": "2030.0101.1",
+                "releases": {
+                    "2030.0101.1": {
+                        "date": "2030-01-01",
+                        "deprecated": False,
+                        "min_binary": "1.4.0",
+                        "arches": {},
+                    }
+                },
+            },
+            "binaries": {
+                "current": "1.4.0",
+                "releases": {
+                    "1.4.0": {
+                        "date": "2030-01-01",
+                        "deprecated": False,
+                        "min_assets": "2030.0101.1",
+                        "files": [
+                            {
+                                "name": "Capsem-1.4.0.pkg",
+                                "sha256": current_package_sha,
+                                "size": 42,
+                            },
+                            {
+                                "name": "capsem-sbom.spdx.json",
+                                "sha256": current_sbom_sha,
+                                "size": 99,
+                            },
+                        ],
+                    }
+                },
+            },
+        }
+    )
+    payloads = {package_url: package_bytes, sbom_url: sbom_bytes}
+    checker.fetch_bytes = lambda url: checker.FetchBytes(payloads.get(url, b""), None)
+    checker.fetch_headers = lambda url: checker.FetchHeaders(
+        headers={
+            "cache-control": "public, max-age=31536000, immutable"
+            if "/profiles/releases/" in url
+            else "no-cache, must-revalidate"
+        }
+    )
+
+    result = checker.check_release_site_contract("https://release.capsem.org", "stable")
+
+    assert not result.ok
+    assert f"health host binary sha256 mismatch for {package_url}" in result.detail
+    assert f"health host binary size mismatch for {package_url}" in result.detail
+    assert f"health host binary sha256 mismatch for {sbom_url}" in result.detail
+    assert f"evidence host binary sha256 mismatch for {package_url}" in result.detail
 
 
 def test_remote_readiness_rejects_profile_update_metadata_drift() -> None:

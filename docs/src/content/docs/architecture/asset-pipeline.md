@@ -113,6 +113,9 @@ immutable asset and profile release artifacts stay
 It also verifies that `health.assets.files` matches the fetched channel
 manifest's current asset release for each VM asset URL, BLAKE3 hash, and size,
 so the release health index cannot drift away from the canonical manifest.
+For host packages, the smoke verifies that `health.binary.files` and
+`evidence.host_binary_files` match the fetched manifest's current binary
+release for each package/SBOM URL, SHA-256 hash, and size.
 
 Key points:
 - **Single file, not per-arch.** Arches are nested under `assets.releases.<ver>.arches.<arch>`.

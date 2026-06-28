@@ -97,7 +97,10 @@ verify that current VM asset file URLs, BLAKE3 hashes, and sizes in
 so the public health index cannot stay self-consistent while pointing at stale
 VM blobs. It must also
 verify that the binary update target, state, source, and package file metadata
-match the canonical binary metadata. It must also
+match the canonical binary metadata. Current host binary package URLs,
+SHA-256 hashes, and sizes in `health.binary.files` and
+`evidence.host_binary_files` must match the fetched channel manifest's current
+binary release. It must also
 verify that the VM asset update target, manifest, base URL, compatibility, and
 newer-version requirements match the canonical asset metadata, and that the
 VM asset compatibility and requires-newer flags match the fetched channel

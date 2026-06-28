@@ -162,7 +162,10 @@ and sizes in `health.assets.files` match the fetched channel manifest's current
 asset release, so the public health index cannot stay self-consistent while
 pointing at stale VM blobs.
 The deploy smoke also verifies that the binary update target, state, source, and
-package file metadata match the canonical binary metadata.
+package file metadata match the canonical binary metadata. Current host binary
+package URLs, SHA-256 hashes, and sizes in `health.binary.files` and
+`evidence.host_binary_files` must match the fetched channel manifest's current
+binary release.
 The deploy smoke also verifies that the VM asset update target, manifest, base
 URL, compatibility, and newer-version requirements match the canonical asset
 metadata, and that the VM asset compatibility and requires-newer flags match

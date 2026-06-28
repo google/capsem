@@ -80,8 +80,10 @@ serves the asset channel; and the public index, `health.json`, and manifest
 agree on current binary, VM asset, asset release date, generated timestamp,
 profile revision, profile catalog URL, profile update source, and channel
 manifest path. It verifies that the binary update target, state, source, and
-package file metadata match the canonical binary metadata; that the VM asset
-update target, manifest, base URL, compatibility, and newer-version
+package file metadata match the canonical binary metadata; that current host
+binary package URLs, SHA-256 hashes, and sizes in `health.json` and release
+evidence match the fetched channel manifest's current binary release; that the
+VM asset update target, manifest, base URL, compatibility, and newer-version
 requirements match the canonical asset metadata; that current VM asset file
 URLs, BLAKE3 hashes, and sizes match the fetched channel manifest's current
 asset release; and that the profile update hash, compatibility, and
