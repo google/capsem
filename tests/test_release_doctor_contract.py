@@ -899,6 +899,8 @@ def test_remote_release_readiness_checker_verifies_public_evidence_artifacts() -
 def test_remote_release_readiness_checker_verifies_live_cache_headers() -> None:
     module = _readiness_checker_module()
     script = (PROJECT_ROOT / "scripts/check-remote-release-readiness.py").read_text()
+    docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
+    docs_text = " ".join(docs.split())
     calls: list[str] = []
     headers = {
         "https://release.capsem.test/": "no-cache, must-revalidate",
@@ -955,6 +957,9 @@ def test_remote_release_readiness_checker_verifies_live_cache_headers() -> None:
     assert "urllib.request.Request(url, method=\"HEAD\")" in script
     assert "Cache-Control must contain {directive}" in script
     assert "max-age=31536000" in script
+    assert "Cache-Control" in docs
+    assert "mutable release-channel pointers" in docs_text
+    assert "immutable asset and profile artifacts" in docs_text
 
 
 def test_ci_installs_b3sum_before_bootstrap_asset_hash_checks() -> None:

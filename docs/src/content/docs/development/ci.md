@@ -76,9 +76,11 @@ current binary, VM asset, and asset release date state. It also resolves
 published host SBOM and VM OBOM evidence artifacts, verifies their advertised
 hashes and sizes, and
 validates attestation subjects and predicate URLs against the published evidence
-lists. If the local checkout has unpublished commits, publish or merge those
-commits before changing remote protection. It does not push, deploy, create
-tags, edit rulesets, or mutate Cloudflare.
+lists. It verifies live `Cache-Control` headers too: mutable release-channel
+pointers must stay fresh, while immutable asset and profile artifacts must keep
+long-lived immutable caching. If the local checkout has unpublished commits,
+publish or merge those commits before changing remote protection. It does not
+push, deploy, create tags, edit rulesets, or mutate Cloudflare.
 
 ## PR gate compared with `just test`
 

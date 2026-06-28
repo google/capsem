@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added release-channel deploy smoke coverage that rejects a public
   `release.capsem.org` index whose binary, VM asset, or asset date state is
   stale relative to the live health JSON and manifest.
+- Added CI docs coverage noting that remote release readiness verifies live
+  cache headers for mutable release-channel pointers and immutable artifacts.
 - Added a dry-run `asset-release-plan` artifact for manual VM asset releases so
   reviewers can inspect the generated immutable GitHub Release upload commands.
 - Added an `asset-release-delta` artifact for manual VM asset releases so
