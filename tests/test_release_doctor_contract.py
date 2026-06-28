@@ -1045,6 +1045,7 @@ def test_remote_release_readiness_checker_is_read_only_and_covers_live_gates() -
     assert "aggregates `test-linux`, `test`, `test-install`, `docs-build`, and `site-build`" in (
         docs_text
     )
+    assert "runs with `if: ${{ always() }}` and asserts every dependency result" in docs_text
     assert "branch protection or active branch rulesets require `pr-gate`" in docs_text
     assert "`release.capsem.org` resolves and serves the asset channel" in docs_text
 
@@ -1061,6 +1062,7 @@ def test_live_release_activation_order_is_documented() -> None:
         assert "publish or merge the release-rail commits to `main`" in normalized_lower
         assert "wait for the expanded `pr-gate` to pass on `main`" in normalized_lower
         assert "require only `pr-gate` in branch protection or active rulesets" in normalized_lower
+        assert "fail-closed `pr-gate` shape" in normalized_lower
         assert (
             "provision the `release.capsem.org` cloudflare pages project and dns"
             in normalized_lower

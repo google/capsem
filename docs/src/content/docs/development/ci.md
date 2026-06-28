@@ -72,8 +72,9 @@ uv run python scripts/check-remote-release-readiness.py
 ```
 
 It verifies that the local checkout has no unpublished commits relative to
-`origin/main`; remote `ci.yaml` exposes `pr-gate` and aggregates `test-linux`,
-`test`, `test-install`, `docs-build`, and `site-build`; branch protection or
+`origin/main`; remote `ci.yaml` exposes `pr-gate`, aggregates `test-linux`,
+`test`, `test-install`, `docs-build`, and `site-build`, runs with
+`if: ${{ always() }}` and asserts every dependency result; branch protection or
 active branch rulesets require `pr-gate`; `release.capsem.org` resolves and
 serves the asset channel; and the public index, `health.json`, and manifest
 agree on current binary, VM asset, and asset release date state. It also resolves
@@ -97,9 +98,9 @@ later steps depend on earlier public state being true.
 4. Provision the `release.capsem.org` Cloudflare Pages project and DNS for the
    generated `target/release-channel/` artifact.
 5. Run `uv run python scripts/check-remote-release-readiness.py`; continue only
-   after unpublished commits, remote workflow shape, branch protection,
-   `release.capsem.org` DNS, public cache headers, and release-channel content
-   all pass.
+   after unpublished commits, remote fail-closed `pr-gate` shape, branch
+   protection, `release.capsem.org` DNS, public cache headers, and
+   release-channel content all pass.
 6. Run the manual VM asset workflow as a dry run and review the
    `asset-release-plan`, `asset-release-delta`, and `asset-channel-preview`
    artifacts. For metadata-only asset release changes, review

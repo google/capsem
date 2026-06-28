@@ -173,9 +173,9 @@ later steps depend on earlier public state being true.
 4. Provision the `release.capsem.org` Cloudflare Pages project and DNS for the
    generated `target/release-channel/` artifact.
 5. Run `uv run python scripts/check-remote-release-readiness.py`; continue only
-   after unpublished commits, remote workflow shape, branch protection,
-   `release.capsem.org` DNS, public cache headers, and release-channel content
-   all pass.
+   after unpublished commits, remote fail-closed `pr-gate` shape, branch
+   protection, `release.capsem.org` DNS, public cache headers, and
+   release-channel content all pass.
 6. Run the manual VM asset workflow as a dry run and review the
    `asset-release-plan`, `asset-release-delta`, and `asset-channel-preview`
    artifacts. For metadata-only asset release changes, review

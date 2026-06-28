@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Fixed the release-readiness docs and skills so the live activation order names
+  the fail-closed remote `pr-gate` shape required before branch protection.
 - Fixed the remote release readiness checker so it rejects `pr-gate` workflows
   that aggregate jobs but do not run fail-closed and assert every dependency
   result.
