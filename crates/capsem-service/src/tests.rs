@@ -643,6 +643,31 @@ async fn update_route_check_dry_run_plans_cli_check() {
 }
 
 #[tokio::test]
+async fn update_route_check_rejects_ambiguous_request_body() {
+    let app = build_service_router(make_test_state());
+    let (status, body) = route_request(
+        app,
+        axum::http::Method::POST,
+        "/update/check",
+        Some(json!({
+            "dry_run": true,
+            "action": "assets",
+        })),
+    )
+    .await;
+
+    assert!(
+        status.is_client_error(),
+        "ambiguous update check body must be rejected, got {status}"
+    );
+    assert_ne!(status, StatusCode::OK);
+    assert!(
+        body.to_string().contains("unknown field") || body.to_string().contains("unknown variant"),
+        "unexpected rejection body: {body}"
+    );
+}
+
+#[tokio::test]
 async fn update_route_check_live_executes_non_mutating_cli_check() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();

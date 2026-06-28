@@ -330,6 +330,7 @@ pub struct UpdateStatusResponse {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+#[serde(deny_unknown_fields)]
 pub struct UpdateCheckRequest {
     #[serde(default)]
     pub dry_run: bool,
