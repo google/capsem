@@ -375,10 +375,22 @@ paused until `notarytool history` succeeds locally.
 | `TAURI_SIGNING_PRIVATE_KEY` | Tauri updater minisign key |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Password for Tauri key |
 | `CODECOV_TOKEN` | Codecov upload token |
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account that owns the `capsem-release` Pages project |
+| `CLOUDFLARE_API_TOKEN` | API token allowed to deploy the `capsem-release` Pages project |
 
 CI secrets are the source of truth for release signing. Local backups in
 `private/apple-certificate/` and `private/tauri/` are useful for local preflight
 and packaging checks, but they are gitignored and must never be staged.
+
+### Release-channel Cloudflare prerequisites
+
+Before running a live binary or VM asset channel deploy, create or verify the
+Cloudflare Pages project `capsem-release`, attach the `release.capsem.org`
+custom domain, and configure `CLOUDFLARE_ACCOUNT_ID` plus
+`CLOUDFLARE_API_TOKEN` in GitHub Actions secrets. `release-channel.yaml` fails
+before deploy if either secret is missing, then smokes
+`https://release.capsem.org/`, `/health.json`, and the channel manifest through
+the public custom domain after Cloudflare publishes the generated site.
 
 ## Post-release verification
 

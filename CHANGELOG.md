@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   enabling `pr-gate`, provisioning `release.capsem.org`, and sequencing binary,
   VM asset, and installed update smokes across release and asset-pipeline
   guidance.
+- Added release-channel Cloudflare prerequisites for the `capsem-release` Pages
+  project, `release.capsem.org` custom domain, and required deploy secrets.
 - Added service-route regression coverage proving confirmed binary/profile
   updates and VM asset refreshes dispatch separate CLI commands.
 - Added service and gateway update action routes that expose dry-run command

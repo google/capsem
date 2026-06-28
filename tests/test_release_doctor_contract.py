@@ -306,6 +306,33 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
     assert "release.capsem.org smoke failed after deploy." in workflow
 
 
+def test_release_channel_cloudflare_prerequisites_are_documented() -> None:
+    workflow = _workflow_text("release-channel.yaml")
+    docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
+    release_skill = (PROJECT_ROOT / "skills/release-process/SKILL.md").read_text()
+
+    for required in (
+        "CLOUDFLARE_ACCOUNT_ID",
+        "CLOUDFLARE_API_TOKEN",
+        "capsem-release",
+        "release.capsem.org",
+    ):
+        assert required in workflow
+        assert required in docs
+        assert required in release_skill
+
+    docs_text = " ".join(docs.split())
+    release_skill_text = " ".join(release_skill.split())
+    for text in (docs_text, release_skill_text):
+        text_lower = text.lower()
+        assert "Release-channel Cloudflare prerequisites" in text
+        assert "Cloudflare Pages project `capsem-release`" in text
+        assert "`release.capsem.org` custom domain" in text
+        assert "`CLOUDFLARE_ACCOUNT_ID`" in text
+        assert "`CLOUDFLARE_API_TOKEN`" in text
+        assert "before running a live binary or vm asset channel deploy" in text_lower
+
+
 def test_asset_channel_deploy_smoke_verifies_public_evidence_artifacts() -> None:
     workflow = _workflow_text("release-channel.yaml")
     docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()

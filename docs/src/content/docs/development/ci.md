@@ -259,6 +259,21 @@ After deployment, clients read it as:
 https://release.capsem.org/assets/stable/manifest.json
 ```
 
+### Release-channel Cloudflare prerequisites
+
+Before running a live binary or VM asset channel deploy, create or verify the
+Cloudflare Pages project `capsem-release`, attach the `release.capsem.org`
+custom domain, and configure these GitHub Actions secrets:
+
+| Secret | Purpose |
+|--------|---------|
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account that owns the `capsem-release` Pages project |
+| `CLOUDFLARE_API_TOKEN` | API token allowed to deploy the `capsem-release` Pages project |
+
+`release-channel.yaml` fails before deploy if either secret is missing, then
+smokes `https://release.capsem.org/`, `/health.json`, and the channel manifest
+through the public custom domain after Cloudflare publishes the generated site.
+
 The release discipline is that binary releases and VM asset releases both call
 the channel workflow after updating their own part of the release-channel
 manifest. A tag-triggered binary release records package hashes, host SBOM, and
