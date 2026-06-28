@@ -7,7 +7,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Context, Result};
-use capsem_core::asset_manager::ManifestV2;
+use capsem_core::asset_manager::{BinaryFile, BinaryRelease, ManifestV2};
 use capsem_core::net::policy_config::{
     resolve_profile_rule_file_path, validate_corp_toml_contract, CompiledSecurityRule,
     ProfileCatalog, ProfileConfigFile, ProfileObomConfig, ProfileObomDescriptor,
@@ -15,6 +15,7 @@ use capsem_core::net::policy_config::{
 };
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 #[derive(Debug, Parser)]
@@ -104,6 +105,7 @@ struct AssetsChannelCommand {
 enum AssetsChannelSubcommand {
     Build(AssetsChannelBuildArgs),
     Check(AssetsChannelCheckArgs),
+    RecordBinary(AssetsChannelRecordBinaryArgs),
 }
 
 #[derive(Debug, Parser)]
@@ -223,6 +225,10 @@ struct AssetsChannelBuildArgs {
     /// Built asset root containing per-arch logical asset files.
     #[arg(long, default_value = "assets")]
     assets_dir: PathBuf,
+    /// Optional published asset base used to hydrate existing VM blobs instead
+    /// of reading local build outputs. Use for binary-only channel updates.
+    #[arg(long)]
+    asset_source_base: Option<String>,
     /// Source profile catalog directory to publish in the channel index.
     #[arg(long, default_value = "config/profiles")]
     profiles_dir: PathBuf,
@@ -249,6 +255,28 @@ struct AssetsChannelCheckArgs {
     #[arg(long, default_value = "stable")]
     channel: String,
     /// Emit a machine-readable validation report.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Parser)]
+struct AssetsChannelRecordBinaryArgs {
+    /// Local channel manifest to update in place.
+    #[arg(long)]
+    manifest_path: PathBuf,
+    /// Binary version being published, without the leading v.
+    #[arg(long)]
+    version: String,
+    /// Oldest asset version compatible with this binary. Defaults to assets.current.
+    #[arg(long)]
+    min_assets: Option<String>,
+    /// Release artifact to record. Repeat for .pkg, .deb, and SBOM files.
+    #[arg(long = "artifact", required = true)]
+    artifacts: Vec<PathBuf>,
+    /// Release date (YYYY-MM-DD). Defaults to current UTC date.
+    #[arg(long)]
+    date: Option<String>,
+    /// Emit a machine-readable update report.
     #[arg(long)]
     json: bool,
 }
@@ -601,6 +629,7 @@ struct AssetsChannelIndex {
     current_asset_files: Vec<AssetsChannelAssetFile>,
     current_binary_files: Vec<AssetsChannelBinaryFile>,
     host_sboms: Vec<AssetsChannelBinaryFile>,
+    attestations: Vec<AssetsChannelAttestation>,
     vm_oboms: Vec<AssetsChannelAssetFile>,
     profile_catalog: AssetsChannelProfileCatalog,
     image_update_state: String,
@@ -667,6 +696,14 @@ struct AssetsChannelBinaryFile {
     size: u64,
 }
 
+#[derive(Debug, Serialize, Clone)]
+struct AssetsChannelAttestation {
+    name: String,
+    scope: String,
+    workflow: String,
+    subjects: Vec<String>,
+}
+
 #[derive(Debug, Serialize)]
 struct AssetsChannelBuildReport {
     schema: &'static str,
@@ -677,6 +714,15 @@ struct AssetsChannelBuildReport {
     manifest: String,
     health_json: String,
     copied_assets: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct AssetsChannelRecordBinaryReport {
+    schema: &'static str,
+    manifest: String,
+    version: String,
+    min_assets: String,
+    files: Vec<BinaryFile>,
 }
 
 #[derive(Debug, Serialize)]
@@ -714,6 +760,9 @@ fn main() -> Result<()> {
             AssetsSubcommand::Channel(command) => match command.command {
                 AssetsChannelSubcommand::Build(args) => assets_channel_build_command(args),
                 AssetsChannelSubcommand::Check(args) => assets_channel_check_command(args),
+                AssetsChannelSubcommand::RecordBinary(args) => {
+                    assets_channel_record_binary_command(args)
+                }
             },
         },
         Commands::Image(command) => match command.command {
@@ -904,6 +953,7 @@ fn assets_channel_build_command(args: AssetsChannelBuildArgs) -> Result<()> {
         &args.channel,
         &args.out_dir,
         &generated_at,
+        args.asset_source_base.as_deref(),
     )?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&report)?);
@@ -930,6 +980,23 @@ fn assets_channel_check_command(args: AssetsChannelCheckArgs) -> Result<()> {
     Ok(())
 }
 
+fn assets_channel_record_binary_command(args: AssetsChannelRecordBinaryArgs) -> Result<()> {
+    let date = args.date.unwrap_or(current_utc_date()?);
+    let report = record_binary_release_metadata(
+        &args.manifest_path,
+        &args.version,
+        args.min_assets.as_deref(),
+        &args.artifacts,
+        &date,
+    )?;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!("recorded binary {} in {}", report.version, report.manifest);
+    }
+    Ok(())
+}
+
 fn build_assets_channel(
     manifest_url: &str,
     assets_dir: &Path,
@@ -937,6 +1004,7 @@ fn build_assets_channel(
     channel: &str,
     out_dir: &Path,
     generated_at: &str,
+    asset_source_base: Option<&str>,
 ) -> Result<AssetsChannelBuildReport> {
     validate_channel_name(channel)?;
     let manifest_bytes = read_manifest_url(manifest_url)?;
@@ -973,8 +1041,13 @@ fn build_assets_channel(
     let channel_manifest = channel_dir.join("manifest.json");
     fs::write(&channel_manifest, &manifest_bytes)
         .with_context(|| format!("write {}", channel_manifest.display()))?;
-    let copied_assets =
-        copy_assets_channel_release_assets(assets_dir, &release_dir, current_release)?;
+    let copied_assets = copy_assets_channel_release_assets(
+        assets_dir,
+        &release_dir,
+        &manifest.assets.current,
+        current_release,
+        asset_source_base,
+    )?;
     let profile_catalog_path = out_dir.join(profile_catalog.path.trim_start_matches('/'));
     fs::create_dir_all(
         profile_catalog_path
@@ -1010,20 +1083,146 @@ fn build_assets_channel(
     })
 }
 
+fn record_binary_release_metadata(
+    manifest_path: &Path,
+    version: &str,
+    min_assets: Option<&str>,
+    artifacts: &[PathBuf],
+    date: &str,
+) -> Result<AssetsChannelRecordBinaryReport> {
+    if artifacts.is_empty() {
+        return Err(anyhow!("at least one binary release artifact is required"));
+    }
+    validate_binary_version(version)?;
+    validate_release_date(date)?;
+    let mut manifest = load_manifest(manifest_path)?;
+    let min_assets = min_assets
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| manifest.assets.current.clone());
+    if !manifest.assets.releases.contains_key(&min_assets) {
+        return Err(anyhow!(
+            "binary min_assets {min_assets} is not present in manifest asset releases"
+        ));
+    }
+    let files = binary_files_from_artifacts(artifacts)?;
+    if !files.iter().any(|file| is_host_sbom_file(&file.name)) {
+        return Err(anyhow!(
+            "binary release metadata must include a host SBOM artifact"
+        ));
+    }
+    manifest.binaries.current = version.to_string();
+    manifest.binaries.releases.insert(
+        version.to_string(),
+        BinaryRelease {
+            date: date.to_string(),
+            deprecated: false,
+            deprecated_date: None,
+            min_assets: min_assets.clone(),
+            version: version.to_string(),
+            files: files.clone(),
+        },
+    );
+    let mut bytes = serde_json::to_vec_pretty(&manifest).context("serialize updated manifest")?;
+    bytes.push(b'\n');
+    fs::write(manifest_path, &bytes)
+        .with_context(|| format!("write {}", manifest_path.display()))?;
+    Ok(AssetsChannelRecordBinaryReport {
+        schema: "capsem.admin.assets_channel_record_binary.v1",
+        manifest: manifest_path.display().to_string(),
+        version: version.to_string(),
+        min_assets,
+        files,
+    })
+}
+
+fn binary_files_from_artifacts(artifacts: &[PathBuf]) -> Result<Vec<BinaryFile>> {
+    let mut files = Vec::new();
+    let mut names = BTreeSet::new();
+    for path in artifacts {
+        let metadata = fs::metadata(path)
+            .with_context(|| format!("stat binary release artifact {}", path.display()))?;
+        if !metadata.is_file() {
+            return Err(anyhow!(
+                "binary release artifact is not a file: {}",
+                path.display()
+            ));
+        }
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| anyhow!("artifact path has no UTF-8 file name: {}", path.display()))?
+            .to_string();
+        if !names.insert(name.clone()) {
+            return Err(anyhow!("duplicate binary release artifact name: {name}"));
+        }
+        let bytes = fs::read(path)
+            .with_context(|| format!("read binary release artifact {}", path.display()))?;
+        let sha256 = format!("{:x}", Sha256::digest(&bytes));
+        files.push(BinaryFile {
+            name,
+            size: bytes.len() as u64,
+            sha256,
+        });
+    }
+    files.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(files)
+}
+
+fn validate_binary_version(version: &str) -> Result<()> {
+    if version.is_empty()
+        || version.starts_with('v')
+        || !version
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'))
+    {
+        return Err(anyhow!(
+            "binary version must be a URL-safe version without a leading v: {version}"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_release_date(date: &str) -> Result<()> {
+    let valid = date.len() == 10
+        && date.as_bytes()[4] == b'-'
+        && date.as_bytes()[7] == b'-'
+        && date
+            .bytes()
+            .enumerate()
+            .all(|(idx, byte)| idx == 4 || idx == 7 || byte.is_ascii_digit());
+    if !valid {
+        return Err(anyhow!("release date must be YYYY-MM-DD: {date}"));
+    }
+    Ok(())
+}
+
 fn copy_assets_channel_release_assets(
     assets_dir: &Path,
     release_dir: &Path,
+    asset_version: &str,
     release: &capsem_core::asset_manager::AssetRelease,
+    asset_source_base: Option<&str>,
 ) -> Result<usize> {
     let mut copied = 0;
     for (arch, assets) in &release.arches {
         for (logical_name, entry) in assets {
-            let check = check_local_asset(assets_dir, arch, logical_name, &entry.hash, entry.size)?;
-            fail_if_local_asset_checks_failed("asset channel release asset check", &[check])?;
-            let src = assets_dir.join(arch).join(logical_name);
             let dst = release_dir.join(format!("{arch}-{logical_name}"));
-            fs::copy(&src, &dst)
-                .with_context(|| format!("copy {} -> {}", src.display(), dst.display()))?;
+            if let Some(asset_source_base) = asset_source_base {
+                let source = format!(
+                    "{}/{asset_version}/{arch}-{logical_name}",
+                    asset_source_base.trim_end_matches('/')
+                );
+                let bytes = read_url_bytes(&source, "asset channel blob")?;
+                verify_asset_bytes(&source, &bytes, &entry.hash, entry.size)?;
+                fs::write(&dst, bytes).with_context(|| format!("write {}", dst.display()))?;
+            } else {
+                let check =
+                    check_local_asset(assets_dir, arch, logical_name, &entry.hash, entry.size)?;
+                fail_if_local_asset_checks_failed("asset channel release asset check", &[check])?;
+                let src = assets_dir.join(arch).join(logical_name);
+                fs::copy(&src, &dst)
+                    .with_context(|| format!("copy {} -> {}", src.display(), dst.display()))?;
+            }
             copied += 1;
         }
     }
@@ -1376,6 +1575,7 @@ fn validate_assets_channel_health(
     let vm_oboms = require_json_array(health, &["evidence", "vm_oboms"])?;
     let host_sboms = require_json_array(health, &["evidence", "host_sboms"])?;
     let host_binary_files = require_json_array(health, &["evidence", "host_binary_files"])?;
+    let attestations = require_json_array(health, &["evidence", "attestations"])?;
     let current_binary_files = manifest
         .binaries
         .releases
@@ -1388,6 +1588,9 @@ fn validate_assets_channel_health(
         }
         if host_sboms.is_empty() {
             return Err(anyhow!("health.json host SBOM evidence missing"));
+        }
+        if attestations.is_empty() {
+            return Err(anyhow!("health.json binary attestation evidence missing"));
         }
     }
     for expected in &current_binary_files {
@@ -1441,6 +1644,28 @@ fn validate_assets_channel_health(
             return Err(anyhow!(
                 "health.json host SBOM evidence {sbom_url} missing from host binary files"
             ));
+        }
+    }
+    for attestation in attestations {
+        let subjects = attestation
+            .get("subjects")
+            .and_then(|value| value.as_array())
+            .ok_or_else(|| anyhow!("health.json binary attestation subjects missing"))?;
+        if subjects.is_empty() {
+            return Err(anyhow!("health.json binary attestation subjects empty"));
+        }
+        for subject in subjects {
+            let subject_url = subject
+                .as_str()
+                .ok_or_else(|| anyhow!("health.json binary attestation subject is not a string"))?;
+            if !host_binary_files
+                .iter()
+                .any(|item| item.get("url").and_then(|value| value.as_str()) == Some(subject_url))
+            {
+                return Err(anyhow!(
+                    "health.json binary attestation subject {subject_url} missing from host binary files"
+                ));
+            }
         }
     }
     let mut saw_obom = false;
@@ -1625,9 +1850,10 @@ fn assets_channel_index(
         .unwrap_or_default();
     let host_sboms = current_binary_files
         .iter()
-        .filter(|file| file.name.ends_with(".spdx.json") || file.name.contains("sbom"))
+        .filter(|file| is_host_sbom_file(&file.name))
         .cloned()
         .collect();
+    let attestations = current_binary_attestations(&current_binary_files);
     AssetsChannelIndex {
         schema_version: 1,
         channel: channel.to_string(),
@@ -1654,6 +1880,7 @@ fn assets_channel_index(
         current_asset_files,
         current_binary_files,
         host_sboms,
+        attestations,
         vm_oboms,
         profile_catalog,
         image_update_state: "not_published".to_string(),
@@ -1955,6 +2182,40 @@ fn current_binary_file_refs(
     files
 }
 
+fn current_binary_attestations(files: &[AssetsChannelBinaryFile]) -> Vec<AssetsChannelAttestation> {
+    if files.is_empty() {
+        return Vec::new();
+    }
+    let host_subjects = files
+        .iter()
+        .filter(|file| !is_host_sbom_file(&file.name))
+        .map(|file| file.url.clone())
+        .collect::<Vec<_>>();
+    let sbom_subjects = files
+        .iter()
+        .filter(|file| is_host_sbom_file(&file.name))
+        .map(|file| file.url.clone())
+        .collect::<Vec<_>>();
+    let mut attestations = Vec::new();
+    if !host_subjects.is_empty() {
+        attestations.push(AssetsChannelAttestation {
+            name: "github_attestations_host".to_string(),
+            scope: "host_binaries".to_string(),
+            workflow: ".github/workflows/release.yaml".to_string(),
+            subjects: host_subjects,
+        });
+    }
+    if !sbom_subjects.is_empty() {
+        attestations.push(AssetsChannelAttestation {
+            name: "github_attestations_host_sbom".to_string(),
+            scope: "host_sbom".to_string(),
+            workflow: ".github/workflows/release.yaml".to_string(),
+            subjects: sbom_subjects,
+        });
+    }
+    attestations
+}
+
 fn render_assets_channel_health(index: &AssetsChannelIndex) -> Result<String> {
     Ok(format!(
         "{}\n",
@@ -2050,7 +2311,7 @@ fn render_assets_channel_health(index: &AssetsChannelIndex) -> Result<String> {
                 "vm_oboms": index.vm_oboms,
                 "host_sboms": index.host_sboms,
                 "host_binary_files": index.current_binary_files,
-                "attestations": [],
+                "attestations": index.attestations,
             },
             "manifest": index.manifest,
         }))?
@@ -2088,6 +2349,7 @@ fn render_assets_channel_index(index: &AssetsChannelIndex) -> Result<String> {
         &index.host_sboms,
         "No host SBOM metadata is published in this asset manifest.",
     );
+    let attestation_rows = render_attestation_rows(&index.attestations);
     let profile_catalog = render_profile_catalog(index);
     let binary_file_rows = render_binary_file_rows(
         &index.current_binary_files,
@@ -2253,6 +2515,11 @@ fn render_assets_channel_index(index: &AssetsChannelIndex) -> Result<String> {
     </section>
 
     <section>
+      <h2>Attestation Evidence</h2>
+{attestation_rows}
+    </section>
+
+    <section>
       <h2>Profile Catalog</h2>
 {profile_catalog}
     </section>
@@ -2294,6 +2561,7 @@ fn render_assets_channel_index(index: &AssetsChannelIndex) -> Result<String> {
         current_asset_rows = current_asset_rows,
         vm_obom_rows = vm_obom_rows,
         host_sbom_rows = host_sbom_rows,
+        attestation_rows = attestation_rows,
         profile_catalog = profile_catalog,
         binary_file_rows = binary_file_rows,
         update_contract_rows = update_contract_rows,
@@ -2424,6 +2692,30 @@ fn render_binary_file_rows(files: &[AssetsChannelBinaryFile], empty_message: &st
     )
 }
 
+fn render_attestation_rows(attestations: &[AssetsChannelAttestation]) -> String {
+    if attestations.is_empty() {
+        return "      <p>No binary attestation metadata is published in this asset manifest.</p>"
+            .to_string();
+    }
+    let rows = attestations
+        .iter()
+        .map(|attestation| {
+            let subjects = attestation.subjects.join(", ");
+            format!(
+                "        <tr><td>{name}</td><td>{scope}</td><td>{workflow}</td><td>{subjects}</td></tr>",
+                name = escape_html(&attestation.name),
+                scope = escape_html(&attestation.scope),
+                workflow = escape_html(&attestation.workflow),
+                subjects = escape_html(&subjects),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "      <table><thead><tr><th>Name</th><th>Scope</th><th>Workflow</th><th>Subjects</th></tr></thead><tbody>\n{rows}\n      </tbody></table>"
+    )
+}
+
 fn validate_channel_name(channel: &str) -> Result<()> {
     let valid = !channel.is_empty()
         && channel
@@ -2441,6 +2733,18 @@ fn current_utc_rfc3339() -> Result<String> {
         .context("truncate current timestamp")?
         .format(&Rfc3339)
         .context("format current timestamp")
+}
+
+fn current_utc_date() -> Result<String> {
+    let timestamp = current_utc_rfc3339()?;
+    timestamp
+        .get(..10)
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| anyhow!("current UTC timestamp was shorter than a date"))
+}
+
+fn is_host_sbom_file(name: &str) -> bool {
+    name.ends_with(".spdx.json") || name.contains("sbom")
 }
 
 fn escape_html(value: &str) -> String {
@@ -4227,9 +4531,13 @@ fn load_manifest(path: &Path) -> Result<ManifestV2> {
 }
 
 fn read_manifest_url(source: &str) -> Result<Vec<u8>> {
+    read_url_bytes(source, "manifest")
+}
+
+fn read_url_bytes(source: &str, label: &str) -> Result<Vec<u8>> {
     let url = reqwest::Url::parse(source).with_context(|| {
         format!(
-            "manifest must be a URL: use https://..., http://..., or file:///absolute/path, got {source}"
+            "{label} must be a URL: use https://..., http://..., or file:///absolute/path, got {source}"
         )
     })?;
     match url.scheme() {
@@ -4237,29 +4545,50 @@ fn read_manifest_url(source: &str) -> Result<Vec<u8>> {
             let response = reqwest::blocking::Client::builder()
                 .user_agent("capsem-admin")
                 .build()
-                .context("build manifest HTTP client")?
+                .with_context(|| format!("build {label} HTTP client"))?
                 .get(url)
                 .send()
-                .with_context(|| format!("fetch manifest {source}"))?;
+                .with_context(|| format!("fetch {label} {source}"))?;
             let status = response.status();
             if !status.is_success() {
-                return Err(anyhow!("manifest fetch failed: HTTP {status} for {source}"));
+                return Err(anyhow!("{label} fetch failed: HTTP {status} for {source}"));
             }
             Ok(response
                 .bytes()
-                .context("read manifest response body")?
+                .with_context(|| format!("read {label} response body"))?
                 .to_vec())
         }
         "file" => {
             let path = url
                 .to_file_path()
-                .map_err(|_| anyhow!("manifest file URL must be absolute: {source}"))?;
-            fs::read(&path).with_context(|| format!("read manifest {}", path.display()))
+                .map_err(|_| anyhow!("{label} file URL must be absolute: {source}"))?;
+            fs::read(&path).with_context(|| format!("read {label} {}", path.display()))
         }
         scheme => Err(anyhow!(
-            "unsupported manifest URL scheme {scheme}: use https://, http://, or file://"
+            "unsupported {label} URL scheme {scheme}: use https://, http://, or file://"
         )),
     }
+}
+
+fn verify_asset_bytes(
+    source: &str,
+    bytes: &[u8],
+    expected_hash: &str,
+    expected_size: u64,
+) -> Result<()> {
+    if bytes.len() as u64 != expected_size {
+        return Err(anyhow!(
+            "asset channel blob {source} size mismatch: expected {expected_size}, got {}",
+            bytes.len()
+        ));
+    }
+    let actual_hash = blake3::hash(bytes).to_hex().to_string();
+    if actual_hash != expected_hash {
+        return Err(anyhow!(
+            "asset channel blob {source} hash mismatch: expected {expected_hash}, got {actual_hash}"
+        ));
+    }
+    Ok(())
 }
 
 fn manifest_report(
@@ -5855,6 +6184,7 @@ decision = "block"
             "stable",
             &out_dir,
             "2030-01-01T00:00:00Z",
+            None,
         )
         .expect("asset channel builds");
 
@@ -5879,6 +6209,7 @@ decision = "block"
         let index_html = fs::read_to_string(out_dir.join("index.html")).expect("index page");
         assert!(index_html.contains("Current Asset Files"));
         assert!(index_html.contains("Host SBOM Evidence"));
+        assert!(index_html.contains("Attestation Evidence"));
         assert!(index_html.contains("Update Contract"));
         assert!(index_html.contains("Profile Catalog"));
         assert!(index_html.contains("/health.json"));
@@ -5917,6 +6248,14 @@ decision = "block"
         assert_eq!(
             health["evidence"]["host_binary_files"][1]["name"].as_str(),
             Some("capsem-sbom.spdx.json")
+        );
+        assert_eq!(
+            health["evidence"]["attestations"][0]["name"].as_str(),
+            Some("github_attestations_host")
+        );
+        assert_eq!(
+            health["evidence"]["attestations"][1]["name"].as_str(),
+            Some("github_attestations_host_sbom")
         );
         assert_eq!(
             health["updates"]["binary"]["latest"].as_str(),
@@ -6000,6 +6339,106 @@ decision = "block"
     }
 
     #[test]
+    fn assets_channel_record_binary_updates_manifest_without_changing_assets() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
+        let original: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&manifest_path).expect("manifest"))
+                .expect("json");
+        let artifacts_dir = temp.path().join("release-artifacts");
+        fs::create_dir_all(&artifacts_dir).expect("artifacts dir");
+        let pkg_path = artifacts_dir.join("Capsem-1.4.1234567890.pkg");
+        let deb_path = artifacts_dir.join("Capsem_1.4.1234567890_arm64.deb");
+        let sbom_path = artifacts_dir.join("capsem-sbom.spdx.json");
+        fs::write(&pkg_path, b"pkg bytes").expect("pkg");
+        fs::write(&deb_path, b"deb bytes").expect("deb");
+        fs::write(&sbom_path, br#"{"spdxVersion":"SPDX-2.3"}"#).expect("sbom");
+
+        let report = record_binary_release_metadata(
+            &manifest_path,
+            "1.4.1234567890",
+            None,
+            &[pkg_path.clone(), deb_path.clone(), sbom_path.clone()],
+            "2030-02-03",
+        )
+        .expect("record binary release");
+
+        assert_eq!(
+            report.schema,
+            "capsem.admin.assets_channel_record_binary.v1"
+        );
+        assert_eq!(report.version, "1.4.1234567890");
+        assert_eq!(report.min_assets, "2030.0101.1");
+        assert_eq!(report.files.len(), 3);
+        let updated: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&manifest_path).expect("manifest"))
+                .expect("json");
+        assert_eq!(updated["assets"], original["assets"]);
+        assert_eq!(updated["binaries"]["current"], "1.4.1234567890");
+        let release = &updated["binaries"]["releases"]["1.4.1234567890"];
+        assert_eq!(release["date"], "2030-02-03");
+        assert_eq!(release["deprecated"], false);
+        assert_eq!(release["min_assets"], "2030.0101.1");
+        assert_eq!(release["version"], "1.4.1234567890");
+        assert_eq!(release["files"].as_array().expect("files").len(), 3);
+        assert_eq!(release["files"][0]["name"], "Capsem-1.4.1234567890.pkg");
+        assert_eq!(
+            release["files"][0]["sha256"],
+            format!("{:x}", Sha256::digest(b"pkg bytes"))
+        );
+        assert_eq!(release["files"][2]["name"], "capsem-sbom.spdx.json");
+    }
+
+    #[test]
+    fn assets_channel_build_can_hydrate_existing_remote_assets_for_binary_only_index_update() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
+        let source_assets = temp.path().join("published-assets/releases/2030.0101.1");
+        fs::create_dir_all(&source_assets).expect("source assets dir");
+        fs::copy(
+            temp.path().join("assets/arm64/vmlinuz"),
+            source_assets.join("arm64-vmlinuz"),
+        )
+        .expect("copy kernel");
+        fs::copy(
+            temp.path().join("assets/arm64/initrd.img"),
+            source_assets.join("arm64-initrd.img"),
+        )
+        .expect("copy initrd");
+        fs::copy(
+            temp.path().join("assets/arm64/rootfs.erofs"),
+            source_assets.join("arm64-rootfs.erofs"),
+        )
+        .expect("copy rootfs");
+        fs::copy(
+            temp.path().join("assets/arm64/obom.cdx.json"),
+            source_assets.join("arm64-obom.cdx.json"),
+        )
+        .expect("copy obom");
+        fs::remove_dir_all(temp.path().join("assets/arm64")).expect("remove local assets");
+        let out_dir = temp.path().join("target/release-channel");
+
+        let report = build_assets_channel(
+            &file_url(&manifest_path),
+            &temp.path().join("assets"),
+            &repo_config_profiles_dir(),
+            "stable",
+            &out_dir,
+            "2030-02-03T00:00:00Z",
+            Some(&file_url(&temp.path().join("published-assets/releases"))),
+        )
+        .expect("binary-only channel build hydrates existing assets");
+
+        assert_eq!(report.copied_assets, 4);
+        assert_eq!(
+            fs::read(out_dir.join("assets/releases/2030.0101.1/arm64-rootfs.erofs"))
+                .expect("hydrated rootfs"),
+            b"rootfs-arm64"
+        );
+        check_assets_channel(&out_dir, "stable").expect("hydrated channel checks");
+    }
+
+    #[test]
     fn assets_channel_check_rejects_bad_health_schema() {
         let temp = tempfile::tempdir().expect("tempdir");
         let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
@@ -6013,6 +6452,7 @@ decision = "block"
             "stable",
             &out_dir,
             "2030-01-01T00:00:00Z",
+            None,
         )
         .expect("asset channel builds");
 
@@ -6047,6 +6487,7 @@ decision = "block"
             "stable",
             &out_dir,
             "2030-01-01T00:00:00Z",
+            None,
         )
         .expect("asset channel builds");
         fs::remove_file(out_dir.join("assets/releases/2030.0101.1/arm64-rootfs.erofs"))
@@ -6076,6 +6517,7 @@ decision = "block"
                 channel,
                 &temp.path().join("target/release-channel"),
                 "2030-01-01T00:00:00Z",
+                None,
             )
             .expect_err("unsafe channel rejected");
 
@@ -6094,6 +6536,7 @@ decision = "block"
             "stable",
             &temp.path().join("target/release-channel"),
             "2030-01-01T00:00:00Z",
+            None,
         )
         .expect_err("bare manifest path rejected");
 

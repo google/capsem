@@ -636,12 +636,86 @@ jobs:
             [ -f "$deb" ] && gh release upload ${{ github.ref_name }} "$deb"
           done
 
+  assemble-release-channel:
+    needs: [create-release]
+    runs-on: ubuntu-latest
+    outputs:
+      dist_artifact: binary-channel-preview
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-channel-binary
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-macos
+          path: release-artifacts/
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-linux-arm64
+          path: release-artifacts/
+        continue-on-error: true
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-linux-x86_64
+          path: release-artifacts/
+        continue-on-error: true
+
+      - name: Fetch current asset channel manifest
+        run: |
+          mkdir -p target/binary-channel
+          curl -fsSL "$ASSET_MANIFEST_URL" -o target/binary-channel/manifest.json
+
+      - name: Record binary release metadata in channel manifest
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          ARTIFACT_ARGS=()
+          for file in release-artifacts/*.pkg release-artifacts/*.deb release-artifacts/capsem-sbom.spdx.json; do
+            [ -f "$file" ] && ARTIFACT_ARGS+=(--artifact "$file")
+          done
+          cargo run -p capsem-admin -- assets channel record-binary \
+            --manifest-path target/binary-channel/manifest.json \
+            --version "$VERSION" \
+            "${ARTIFACT_ARGS[@]}"
+
+      - name: Build release channel with existing VM assets
+        run: |
+          cargo run -p capsem-admin -- assets channel build \
+            --manifest "file://$PWD/target/binary-channel/manifest.json" \
+            --asset-source-base "https://release.capsem.org/assets/releases" \
+            --channel stable \
+            --out-dir target/release-channel
+
+      - name: Check binary-updated release channel
+        run: |
+          cargo run -p capsem-admin -- assets channel check \
+            --channel stable \
+            --dist target/release-channel
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: binary-channel-preview
+          path: target/release-channel/
+
+  deploy-release-channel:
+    needs: [assemble-release-channel]
+    uses: ./.github/workflows/release-channel.yaml
+    with:
+      channel: stable
+      dist_artifact: binary-channel-preview
+    secrets: inherit
+
   # ---------------------------------------------------------------------------
   # Post-release: verify the public asset channel remains reachable, then prove
   # the just-released .deb can hydrate VM assets from release.capsem.org.
   # ---------------------------------------------------------------------------
   verify-release-downloads:
-    needs: [create-release]
+    needs: [deploy-release-channel]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5

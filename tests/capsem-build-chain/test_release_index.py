@@ -416,3 +416,101 @@ def test_release_index_check_rejects_host_binary_hash_drift(tmp_path: Path) -> N
 
     assert result.returncode != 0
     assert "health.json host binary sha256 mismatch" in result.stderr
+
+
+def test_binary_release_index_records_host_artifacts_without_changing_assets(
+    tmp_path: Path,
+) -> None:
+    manifest_path = _write_release_manifest(tmp_path)
+    before = json.loads(manifest_path.read_text(encoding="utf-8"))
+    artifacts = tmp_path / "release-artifacts"
+    artifacts.mkdir()
+    pkg = artifacts / "Capsem-1.4.2234567890.pkg"
+    deb = artifacts / "Capsem_1.4.2234567890_arm64.deb"
+    sbom = artifacts / "capsem-sbom.spdx.json"
+    pkg.write_bytes(b"pkg bytes v2")
+    deb.write_bytes(b"deb bytes v2")
+    sbom.write_bytes(b'{"spdxVersion":"SPDX-2.3","name":"capsem"}')
+
+    result = _run_admin(
+        "assets",
+        "channel",
+        "record-binary",
+        "--manifest-path",
+        str(manifest_path),
+        "--version",
+        "1.4.2234567890",
+        "--date",
+        "2030-02-03",
+        "--artifact",
+        str(pkg),
+        "--artifact",
+        str(deb),
+        "--artifact",
+        str(sbom),
+        "--json",
+    )
+
+    report = json.loads(result.stdout)
+    after = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert report["schema"] == "capsem.admin.assets_channel_record_binary.v1"
+    assert report["version"] == "1.4.2234567890"
+    assert report["min_assets"] == before["assets"]["current"]
+    assert after["assets"] == before["assets"]
+    assert after["binaries"]["current"] == "1.4.2234567890"
+    release = after["binaries"]["releases"]["1.4.2234567890"]
+    assert release["min_assets"] == "2030.0101.1"
+    assert release["version"] == "1.4.2234567890"
+    assert release["date"] == "2030-02-03"
+    files = {entry["name"]: entry for entry in release["files"]}
+    assert files[pkg.name]["sha256"] == hashlib.sha256(b"pkg bytes v2").hexdigest()
+    assert files[deb.name]["sha256"] == hashlib.sha256(b"deb bytes v2").hexdigest()
+    assert files[sbom.name]["sha256"] == hashlib.sha256(sbom.read_bytes()).hexdigest()
+
+
+def test_binary_release_index_builds_release_site_without_rebuilding_vm_assets(
+    tmp_path: Path,
+) -> None:
+    manifest_path = _write_release_manifest(tmp_path)
+    profiles_dir = _write_profile_catalog(tmp_path)
+    source_base = tmp_path / "published-assets" / "releases" / "2030.0101.1"
+    source_base.mkdir(parents=True)
+    for logical in ("vmlinuz", "initrd.img", "rootfs.erofs", "obom.cdx.json"):
+        (source_base / f"arm64-{logical}").write_bytes(
+            (tmp_path / "assets" / "arm64" / logical).read_bytes()
+        )
+    # A tag release runner must not need local VM build outputs.
+    for local_asset in (tmp_path / "assets" / "arm64").iterdir():
+        local_asset.unlink()
+
+    dist = tmp_path / "target" / "release-channel"
+    _run_admin(
+        "assets",
+        "channel",
+        "build",
+        "--manifest",
+        f"file://{manifest_path}",
+        "--assets-dir",
+        str(tmp_path / "assets"),
+        "--asset-source-base",
+        f"file://{tmp_path / 'published-assets' / 'releases'}",
+        "--profiles-dir",
+        str(profiles_dir),
+        "--channel",
+        "stable",
+        "--out-dir",
+        str(dist),
+    )
+
+    health = json.loads((dist / "health.json").read_text(encoding="utf-8"))
+    assert health["current"] == {
+        "binary": "1.4.1234567890",
+        "assets": "2030.0101.1",
+    }
+    assert health["evidence"]["host_binary_files"]
+    assert health["evidence"]["host_sboms"]
+    assert health["evidence"]["attestations"]
+    assert (
+        dist / "assets" / "releases" / "2030.0101.1" / "arm64-rootfs.erofs"
+    ).read_bytes() == b"rootfs-arm64"
+    _run_admin("assets", "channel", "check", "--channel", "stable", "--dist", str(dist))

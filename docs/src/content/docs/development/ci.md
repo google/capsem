@@ -12,11 +12,11 @@ Capsem uses GitHub Actions for continuous integration and release automation.
 | Workflow | Trigger | What it does |
 |----------|---------|-------------|
 | `ci.yaml` | Pull requests and push to main | PR quality gate: Rust unit/integration, frontend, Python contracts, install checks, and explicit runner substitutions |
-| `release.yaml` | Tag push (`v*`) | Build apps (macOS + Linux), package with the current public asset manifest, create GitHub release |
+| `release.yaml` | Tag push (`v*`) | Build apps (macOS + Linux), package with the current public asset manifest, create GitHub release, then update release.capsem.org binary metadata |
 | `release-assets.yaml` | Manual | Build VM assets, generate `assets/manifest.json`, and optionally deploy the asset channel |
 | `docs.yaml` | Pull requests and push to main (docs changes) | Build docs on PRs; deploy docs.capsem.org on main, then smoke the live docs site |
 | `site.yaml` | Pull requests and push to main (site changes) | Build marketing site on PRs; deploy capsem.org on main, then smoke the live marketing site |
-| `release-channel.yaml` | Called by asset release | Deploy release.capsem.org from the generated asset channel site artifact |
+| `release-channel.yaml` | Called by binary or asset release | Deploy release.capsem.org from the generated release-channel site artifact |
 
 ## CI workflow (`ci.yaml`)
 
@@ -200,15 +200,16 @@ After deployment, clients read it as:
 https://release.capsem.org/assets/stable/manifest.json
 ```
 
-The release discipline is that VM asset releases call the channel workflow after
-producing the manifest, immutable blob paths under
-`assets/releases/<asset-version>/`, and OBOM/provenance evidence. A VM asset
-release is not complete until `release.capsem.org` reflects the new channel
-manifest and blobs. After Cloudflare deploys, `release-channel.yaml` smoke
-checks the public `https://release.capsem.org/` index,
-`/health.json`, and `/assets/<channel>/manifest.json` before the workflow can
-pass. Binary releases remain tag-triggered and must not rebuild VM assets by
-default.
+The release discipline is that binary releases and VM asset releases both call
+the channel workflow after updating their own part of the release-channel
+manifest. A tag-triggered binary release records package hashes, host SBOM, and
+attestation references, then mirrors the already-published VM blobs from
+`assets/releases/<asset-version>/` without rebuilding them. A manual VM asset
+release produces the manifest, immutable blob paths, and OBOM/provenance
+evidence. Neither rail is complete until `release.capsem.org` reflects the new
+channel state. After Cloudflare deploys, `release-channel.yaml` smoke checks the
+public `https://release.capsem.org/` index, `/health.json`, and
+`/assets/<channel>/manifest.json` before the workflow can pass.
 
 The generated `health.json` is the compact machine-readable release-site index.
 It carries schema `capsem.assets_channel.health.v1`, the active manifest URL,

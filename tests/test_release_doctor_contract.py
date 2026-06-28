@@ -278,7 +278,11 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     assert "release-artifacts/manifest.json" not in workflow
     assert '--manifest "$ASSET_MANIFEST_URL"' in workflow
     assert "release.capsem.org" in workflow
-    assert "uses: ./.github/workflows/release-channel.yaml" not in workflow
+    assert "assets channel record-binary" in workflow
+    assert '--asset-source-base "https://release.capsem.org/assets/releases"' in workflow
+    assert "uses: ./.github/workflows/release-channel.yaml" in workflow
+    assert "dist_artifact: binary-channel-preview" in workflow
+    assert "needs: [deploy-release-channel]" in workflow
     assert "cloudflare/wrangler-action" not in workflow
     assert "pages deploy" not in workflow
     assert "capsem-release" not in workflow
@@ -316,7 +320,7 @@ def test_manifest_source_inputs_are_url_only() -> None:
             assert '--manifest "$MANIFEST_PATH"' not in line
 
     assert "manifest must be a URL" in admin
-    assert "unsupported manifest URL scheme" in admin
+    assert "unsupported {label} URL scheme" in admin
 
 
 def test_asset_channel_documented_as_assets_manifest_url_not_release_index_json() -> None:
@@ -381,7 +385,7 @@ def test_ci_docs_describes_three_independent_publication_rails() -> None:
     docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
 
     assert (
-        "| `release.yaml` | Tag push (`v*`) | Build apps (macOS + Linux), package with the current public asset manifest, create GitHub release |"
+        "| `release.yaml` | Tag push (`v*`) | Build apps (macOS + Linux), package with the current public asset manifest, create GitHub release, then update release.capsem.org binary metadata |"
         in docs
     )
     assert (
@@ -397,7 +401,7 @@ def test_ci_docs_describes_three_independent_publication_rails() -> None:
         in docs
     )
     assert (
-        "| `release-channel.yaml` | Called by asset release | Deploy release.capsem.org from the generated asset channel site artifact |"
+        "| `release-channel.yaml` | Called by binary or asset release | Deploy release.capsem.org from the generated release-channel site artifact |"
         in docs
     )
     assert "release.yaml` | Tag push (`v*`) | Build assets" not in docs
@@ -407,7 +411,8 @@ def test_ci_docs_describes_three_independent_publication_rails() -> None:
     assert "fails unless all three dependency jobs report `success`" in docs
     assert "After Cloudflare deploys, `release-channel.yaml` smoke" in docs
     assert "`https://release.capsem.org/` index" in docs
-    assert "`/health.json`, and `/assets/<channel>/manifest.json`" in docs
+    assert "`/health.json`, and" in docs
+    assert "`/assets/<channel>/manifest.json` before the workflow can pass" in docs
     assert "`docs.yaml` and `site.yaml` are independent from binary and VM asset release" in docs
     assert "`https://docs.capsem.org/`, content type `text/html`" in docs
     assert "`https://capsem.org/`, content type `text/html`" in docs

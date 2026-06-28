@@ -31,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   paths.
 
 ### Changed
+- Updated binary tag releases to record package, SBOM, and attestation metadata
+  in the release channel without rebuilding VM assets.
 - Documented the PR `pr-gate` contract against `just test`, including the
   hosted-runner substitutions that must not be mistaken for full local release
   validation.
