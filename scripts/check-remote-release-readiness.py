@@ -296,6 +296,11 @@ def check_release_evidence(site: str, health: dict[str, Any]) -> list[str]:
         for item in host_sboms
         if isinstance(item, dict) and isinstance(item.get("url"), str)
     }
+    vm_obom_urls = {
+        item["url"]
+        for item in vm_oboms
+        if isinstance(item, dict) and isinstance(item.get("url"), str)
+    }
 
     if host_binary_files and not host_sboms:
         failures.append("health evidence host_sboms missing for published binary files")
@@ -343,12 +348,20 @@ def check_release_evidence(site: str, health: dict[str, Any]) -> list[str]:
         if not isinstance(verify_command, str) or "gh attestation verify" not in verify_command:
             failures.append("health evidence attestation verify_command must use gh attestation verify")
         predicate_url = attestation.get("predicate_url")
-        if predicate_url is not None and predicate_url not in host_sbom_urls:
-            failures.append(f"attestation predicate_url {predicate_url} missing from host SBOM evidence")
         subjects = attestation.get("subjects")
         if not isinstance(subjects, list) or not subjects:
             failures.append("health evidence attestation subjects missing")
             continue
+        predicate_urls, predicate_label = attestation_predicate_evidence_urls(
+            attestation,
+            subjects,
+            host_binary_by_url,
+            asset_by_url,
+            host_sbom_urls,
+            vm_obom_urls,
+        )
+        if predicate_url is not None and predicate_url not in predicate_urls:
+            failures.append(f"attestation predicate_url {predicate_url} missing from {predicate_label}")
         for subject in subjects:
             if not isinstance(subject, str):
                 failures.append("health evidence attestation subject is not a string")
@@ -357,6 +370,30 @@ def check_release_evidence(site: str, health: dict[str, Any]) -> list[str]:
                 failures.append(f"attestation subject {subject} missing from published file lists")
 
     return failures
+
+
+def attestation_predicate_evidence_urls(
+    attestation: dict[str, Any],
+    subjects: list[Any],
+    host_binary_by_url: dict[str, dict[str, Any]],
+    asset_by_url: dict[str, dict[str, Any]],
+    host_sbom_urls: set[str],
+    vm_obom_urls: set[str],
+) -> tuple[set[str], str]:
+    scope = attestation.get("scope")
+    if scope == "vm_assets":
+        return vm_obom_urls, "VM OBOM evidence"
+    if scope == "host_binaries":
+        return host_sbom_urls, "host SBOM evidence"
+
+    string_subjects = {subject for subject in subjects if isinstance(subject, str)}
+    has_vm_asset_subject = any(subject in asset_by_url for subject in string_subjects)
+    has_host_binary_subject = any(subject in host_binary_by_url for subject in string_subjects)
+    if has_vm_asset_subject and not has_host_binary_subject:
+        return vm_obom_urls, "VM OBOM evidence"
+    if has_host_binary_subject and not has_vm_asset_subject:
+        return host_sbom_urls, "host SBOM evidence"
+    return host_sbom_urls | vm_obom_urls, "host SBOM or VM OBOM evidence"
 
 
 def require_list(root: Any, key: str, failures: list[str]) -> list[Any]:

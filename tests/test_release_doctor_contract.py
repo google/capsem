@@ -322,7 +322,8 @@ def test_asset_channel_deploy_smoke_verifies_public_evidence_artifacts() -> None
     assert "health evidence host_sboms missing for published binary files" in workflow
     assert "health evidence vm_oboms missing for published VM assets" in workflow
     assert "health evidence attestations missing for published artifacts" in workflow
-    assert "attestation predicate_url {predicate_url} missing from host SBOM evidence" in workflow
+    assert "attestation_predicate_evidence_urls" in workflow
+    assert "attestation predicate_url {predicate_url} missing from {predicate_label}" in workflow
     assert "attestation subject {subject} missing from published file lists" in workflow
     assert "resolves published host SBOM and VM OBOM evidence artifacts from `health.json`" in docs_text
     assert "verifies their advertised hashes and sizes" in docs_text
@@ -1072,10 +1073,112 @@ def test_remote_release_readiness_checker_verifies_public_evidence_artifacts() -
     assert "hashlib.sha256" in script
     assert "blake3.blake3" in script
     assert "attestation subject {subject} missing from published file lists" in script
-    assert "attestation predicate_url {predicate_url} missing from host SBOM evidence" in script
+    assert "attestation_predicate_evidence_urls" in script
+    assert "attestation predicate_url {predicate_url} missing from {predicate_label}" in script
     assert "resolves published host SBOM and VM OBOM evidence artifacts" in docs_text
     assert "verifies their advertised hashes and sizes" in docs_text
     assert "validates attestation subjects and predicate URLs" in docs_text
+
+
+def test_release_channel_smoke_and_remote_readiness_validate_matching_attestation_predicate_evidence() -> None:
+    module = _readiness_checker_module()
+    script = (PROJECT_ROOT / "scripts/check-remote-release-readiness.py").read_text()
+    workflow = _workflow_text("release-channel.yaml")
+    sbom_bytes = b'{"spdxVersion":"SPDX-2.3"}'
+    obom_bytes = b'{"bomFormat":"CycloneDX"}'
+    sbom_url = "https://github.com/google/capsem/releases/download/v1.0.0/capsem-sbom.spdx.json"
+    obom_path = "/assets/releases/2030.0101.1/arm64-obom.cdx.json"
+    obom_url = f"https://release.capsem.test{obom_path}"
+    payloads = {
+        sbom_url: sbom_bytes,
+        obom_url: obom_bytes,
+    }
+
+    def fake_fetch_bytes(url: str):
+        data = payloads.get(url)
+        if data is None:
+            return module.FetchBytes(b"", f"unexpected fetch {url}")
+        return module.FetchBytes(data)
+
+    module.fetch_bytes = fake_fetch_bytes
+    health = {
+        "assets": {
+            "files": [
+                {
+                    "arch": "arm64",
+                    "logical_name": "obom.cdx.json",
+                    "url": obom_path,
+                    "hash": module.blake3.blake3(obom_bytes).hexdigest(),
+                    "size": len(obom_bytes),
+                }
+            ]
+        },
+        "evidence": {
+            "vm_oboms": [
+                {
+                    "arch": "arm64",
+                    "logical_name": "obom.cdx.json",
+                    "url": obom_path,
+                    "hash": module.blake3.blake3(obom_bytes).hexdigest(),
+                    "size": len(obom_bytes),
+                }
+            ],
+            "host_sboms": [
+                {
+                    "name": "capsem-sbom.spdx.json",
+                    "url": sbom_url,
+                    "sha256": hashlib.sha256(sbom_bytes).hexdigest(),
+                    "size": len(sbom_bytes),
+                }
+            ],
+            "host_binary_files": [
+                {
+                    "name": "capsem-sbom.spdx.json",
+                    "url": sbom_url,
+                    "sha256": hashlib.sha256(sbom_bytes).hexdigest(),
+                    "size": len(sbom_bytes),
+                }
+            ],
+            "attestations": [
+                {
+                    "name": "github_attestations_vm_assets",
+                    "scope": "vm_assets",
+                    "predicate_type": "https://slsa.dev/provenance/v1",
+                    "predicate_url": obom_path,
+                    "verify_command": "gh attestation verify <subject-url> --owner google",
+                    "subjects": [obom_path],
+                },
+                {
+                    "name": "github_attestations_host_sbom",
+                    "scope": "host_binaries",
+                    "predicate_type": "https://spdx.dev/Document/v2.3",
+                    "predicate_url": sbom_url,
+                    "verify_command": "gh attestation verify <subject-url> --owner google",
+                    "subjects": [sbom_url],
+                },
+            ],
+        },
+    }
+
+    assert module.check_release_evidence("https://release.capsem.test", health) == []
+
+    corrupted = json.loads(json.dumps(health))
+    corrupted["evidence"]["attestations"][0]["predicate_url"] = (
+        "/assets/releases/2030.0101.1/missing-obom.cdx.json"
+    )
+    assert (
+        "attestation predicate_url /assets/releases/2030.0101.1/missing-obom.cdx.json "
+        "missing from VM OBOM evidence"
+    ) in module.check_release_evidence("https://release.capsem.test", corrupted)
+
+    assert "attestation_predicate_evidence_urls" in script
+    assert '"VM OBOM evidence"' in script
+    assert '"host SBOM evidence"' in script
+    assert "missing from {predicate_label}" in script
+    assert "attestation_predicate_evidence_urls" in workflow
+    assert '"VM OBOM evidence"' in workflow
+    assert '"host SBOM evidence"' in workflow
+    assert "missing from {predicate_label}" in workflow
 
 
 def test_remote_release_readiness_checker_verifies_live_cache_headers() -> None:
