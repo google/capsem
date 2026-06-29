@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tomllib
 from pathlib import Path
+from types import SimpleNamespace
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -20,6 +21,17 @@ OLD_DEBUG_CRATE = "capsem-debug" + "-upstream"
 def _readiness_checker_module():
     module_path = PROJECT_ROOT / "scripts/check-remote-release-readiness.py"
     spec = importlib.util.spec_from_file_location("check_remote_release_readiness", module_path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _release_site_contract_module():
+    module_path = PROJECT_ROOT / "scripts/check-release-site-contract.py"
+    spec = importlib.util.spec_from_file_location("check_release_site_contract", module_path)
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -413,6 +425,61 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
     assert "release.capsem.org smoke failed after deploy." in workflow
 
 
+def test_release_channel_deploy_runs_python_contract_validator_after_cloudflare_deploy() -> None:
+    workflow = _workflow_text("release-channel.yaml")
+
+    assert "Validate deployed asset channel content" in workflow
+    assert "uv run python scripts/check-release-site-contract.py" in workflow
+    assert "--release-site \"$RELEASE_SITE_URL\"" in workflow
+    assert "--channel \"$CHANNEL\"" in workflow
+    assert "--attempts 6" in workflow
+    assert "--delay-seconds 10" in workflow
+    assert workflow.index("cloudflare/wrangler-action@v3") < workflow.index(
+        "Validate deployed asset channel content"
+    )
+    assert workflow.index("Validate deployed asset channel content") < workflow.index(
+        "Smoke public asset channel"
+    )
+
+
+def test_release_site_contract_script_fails_on_content_drift(capsys) -> None:
+    validator = _release_site_contract_module()
+
+    class FakeChecker:
+        BLAKE3_IMPORT_ERROR = None
+
+        @staticmethod
+        def check_release_site_dns(release_site: str):
+            assert release_site == "https://release.capsem.org"
+            return SimpleNamespace(ok=True, name="release.capsem.org DNS", detail="ok")
+
+        @staticmethod
+        def check_release_site_contract(release_site: str, channel: str):
+            assert release_site == "https://release.capsem.org"
+            assert channel == "stable"
+            return SimpleNamespace(
+                ok=False,
+                name="release.capsem.org contract",
+                detail=(
+                    "health asset hash mismatch for "
+                    "/assets/releases/2030.0101.1/arm64-vmlinuz"
+                ),
+            )
+
+    exit_code = validator.validate_release_site(
+        release_site="https://release.capsem.org",
+        channel="stable",
+        attempts=1,
+        delay_seconds=0,
+        checker=FakeChecker,
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "health asset hash mismatch" in captured.err
+    assert "arm64-vmlinuz" in captured.err
+
+
 def test_release_channel_cloudflare_prerequisites_are_documented() -> None:
     workflow = _workflow_text("release-channel.yaml")
     docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
@@ -440,6 +507,10 @@ def test_release_channel_cloudflare_prerequisites_are_documented() -> None:
         assert "`release.capsem.org` custom domain" in text
         assert "`CLOUDFLARE_ACCOUNT_ID`" in text
         assert "`CLOUDFLARE_API_TOKEN`" in text
+        assert "`scripts/check-release-site-contract.py`" in text
+        assert "BLAKE3/SHA-256 content" in text
+        assert "cache headers" in text_lower
+        assert "rather than only checking that files exist" in text_lower
         assert "before running a live binary or vm asset channel deploy" in text_lower
 
 
@@ -3034,6 +3105,8 @@ def test_remote_release_readiness_checker_is_read_only_and_covers_live_gates() -
     assert "REQUIRED_PR_GATE_JOBS" in script
     assert '"docs-build", "site-build"' in script
     assert "current asset release date" in script
+    assert 'RELEASE_VALIDATOR_USER_AGENT = "CapsemReleaseValidator/1.0"' in script
+    assert "release_site_request(url)" in script
     for forbidden in [
         "git push",
         "gh release create",
@@ -3055,6 +3128,43 @@ def test_remote_release_readiness_checker_is_read_only_and_covers_live_gates() -
     assert "runs with `if: ${{ always() }}` and asserts every dependency result" in docs_text
     assert "branch protection or active branch rulesets require `pr-gate`" in docs_text
     assert "`release.capsem.org` resolves and serves the asset channel" in docs_text
+
+
+def test_remote_release_readiness_fetches_with_validator_user_agent(monkeypatch) -> None:
+    checker = _readiness_checker_module()
+    requests = []
+
+    class FakeResponse:
+        headers = {"Cache-Control": "no-cache, must-revalidate"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            return b"ok"
+
+    def fake_urlopen(request, *, timeout: int):
+        requests.append(request)
+        assert timeout == 20
+        return FakeResponse()
+
+    monkeypatch.setattr(checker.urllib.request, "urlopen", fake_urlopen)
+
+    body = checker.fetch_bytes("https://release.capsem.org/")
+    headers = checker.fetch_headers("https://release.capsem.org/health.json")
+
+    assert body == checker.FetchBytes(b"ok")
+    assert headers == checker.FetchHeaders({"cache-control": "no-cache, must-revalidate"})
+    assert [request.full_url for request in requests] == [
+        "https://release.capsem.org/",
+        "https://release.capsem.org/health.json",
+    ]
+    assert requests[0].get_header("User-agent") == "CapsemReleaseValidator/1.0"
+    assert requests[1].get_header("User-agent") == "CapsemReleaseValidator/1.0"
+    assert requests[1].get_method() == "HEAD"
 
 
 def test_live_release_activation_order_is_documented() -> None:

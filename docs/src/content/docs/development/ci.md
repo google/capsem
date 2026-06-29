@@ -293,8 +293,13 @@ custom domain, and configure these GitHub Actions secrets:
 | `CLOUDFLARE_API_TOKEN` | API token allowed to deploy the `release-eq7` Pages project |
 
 `release-channel.yaml` fails before deploy if either secret is missing, then
-smokes `https://release.capsem.org/`, `/health.json`, and the channel manifest
-through the public custom domain after Cloudflare publishes the generated site.
+runs `scripts/check-release-site-contract.py` against `https://release.capsem.org`
+after Cloudflare publishes the generated site. That Python validator reuses the
+remote release readiness contract, so it checks the index, `health.json`, channel
+manifest, evidence documents, BLAKE3/SHA-256 content, attestation references,
+and cache headers rather than only checking that files exist. The workflow also
+keeps the inline public-domain smoke for `https://release.capsem.org/`,
+`/health.json`, and the channel manifest.
 
 The release discipline is that binary releases and VM asset releases both call
 the channel workflow after updating their own part of the release-channel
@@ -334,10 +339,11 @@ gate records `previous_manifest_unavailable` as a changed asset release so the
 initial site can bootstrap. Later publications still compare against the live
 previous manifest and skip deployment only when current VM blob hashes, asset release metadata, and manifest policy are all unchanged. Manifest policy includes channel-visible fields such as `refresh_policy`.
 Neither rail is complete until `release.capsem.org` reflects the new channel
-state. After Cloudflare deploys, `release-channel.yaml` smoke checks the public
+state. After Cloudflare deploys, `release-channel.yaml` runs
+`scripts/check-release-site-contract.py` and smoke checks the public
 `https://release.capsem.org/` index, `/health.json`, and
-`/assets/<channel>/manifest.json` before the workflow can pass. The smoke also
-rejects stale public HTML: the human index must show the same current binary,
+`/assets/<channel>/manifest.json` before the workflow can pass. The checks also
+reject stale public HTML: the human index must show the same current binary,
 current VM asset version, asset release date, generated timestamp, profile
 revision, profile catalog URL, profile update source, and channel manifest path
 as the fetched health JSON and manifest. It verifies that binary update target,

@@ -146,10 +146,15 @@ Later publications still compare
 against the live previous manifest and skip deployment only when current VM blob hashes, asset release metadata, and manifest policy are all unchanged. Manifest policy includes channel-visible fields such as `refresh_policy`.
 `build-ledger.log` and `B3SUMS` are debug evidence unless deliberately promoted
 to separate published evidence.
-The deploy smoke rejects stale public HTML: the fetched index page must show the
-same current binary, current VM asset version, asset release date, generated
-timestamp, profile revision, profile catalog URL, profile update source, and
-channel manifest path as the fetched health JSON and manifest.
+The deploy workflow runs `scripts/check-release-site-contract.py` against
+`https://release.capsem.org` after Cloudflare publishes the generated site. That
+Python validator reuses the remote release readiness contract and must validate
+the index, `health.json`, channel manifest, evidence documents, BLAKE3/SHA-256
+content, attestation references, and cache headers rather than only checking
+that files exist. The deploy smoke rejects stale public HTML: the fetched index
+page must show the same current binary, current VM asset version, asset release
+date, generated timestamp, profile revision, profile catalog URL, profile update
+source, and channel manifest path as the fetched health JSON and manifest.
 The deploy smoke also rejects stale `health.json` summary state: `ok`, channel,
 published state, index/health URLs, and top-level binary/assets versions must
 match the active channel manifest and release-site layout.
@@ -197,9 +202,10 @@ Before running a live binary or VM asset channel deploy, create or verify the
 Cloudflare Pages project `release-eq7`, attach the `release.capsem.org`
 custom domain, and configure `CLOUDFLARE_ACCOUNT_ID` plus
 `CLOUDFLARE_API_TOKEN` in GitHub Actions secrets. `release-channel.yaml` fails
-before deploy if either secret is missing, then smokes
-`https://release.capsem.org/`, `/health.json`, and the channel manifest through
-the public custom domain after Cloudflare publishes the generated site.
+before deploy if either secret is missing, then runs
+`scripts/check-release-site-contract.py` and smokes `https://release.capsem.org/`,
+`/health.json`, and the channel manifest through the public custom domain after
+Cloudflare publishes the generated site.
 
 ## Live release activation order
 

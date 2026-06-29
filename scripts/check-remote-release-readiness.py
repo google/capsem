@@ -34,6 +34,7 @@ REQUIRED_PR_GATE_RESULT_CHECKS = (
     ("docs-build", "DOCS_BUILD_RESULT"),
     ("site-build", "SITE_BUILD_RESULT"),
 )
+RELEASE_VALIDATOR_USER_AGENT = "CapsemReleaseValidator/1.0"
 
 
 @dataclass
@@ -1248,7 +1249,7 @@ def fetch_text(url: str) -> FetchText:
 
 def fetch_bytes(url: str) -> FetchBytes:
     try:
-        with urllib.request.urlopen(url, timeout=20) as response:
+        with urllib.request.urlopen(release_site_request(url), timeout=20) as response:
             return FetchBytes(response.read())
     except (OSError, urllib.error.URLError) as error:
         return FetchBytes(b"", f"fetch {url}: {error}")
@@ -1256,11 +1257,19 @@ def fetch_bytes(url: str) -> FetchBytes:
 
 def fetch_headers(url: str) -> FetchHeaders:
     try:
-        request = urllib.request.Request(url, method="HEAD")
+        request = release_site_request(url, method="HEAD")
         with urllib.request.urlopen(request, timeout=20) as response:
             return FetchHeaders({key.lower(): value for key, value in response.headers.items()})
     except (OSError, urllib.error.URLError) as error:
         return FetchHeaders({}, f"fetch headers {url}: {error}")
+
+
+def release_site_request(url: str, *, method: str | None = None) -> urllib.request.Request:
+    return urllib.request.Request(
+        url,
+        headers={"User-Agent": RELEASE_VALIDATOR_USER_AGENT},
+        method=method,
+    )
 
 
 def fetch_json(url: str) -> FetchJson:
