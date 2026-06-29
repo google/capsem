@@ -12,6 +12,7 @@ import functools
 import http.server
 import importlib.util
 import json
+import os
 import shutil
 import socketserver
 import subprocess
@@ -31,7 +32,12 @@ CHANNEL = "stable"
 pytestmark = pytest.mark.build_chain
 
 
-def _run(command: list[str], *, timeout: int = 180) -> subprocess.CompletedProcess[str]:
+def _run(
+    command: list[str],
+    *,
+    timeout: int = 180,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(
         command,
         cwd=PROJECT_ROOT,
@@ -39,6 +45,7 @@ def _run(command: list[str], *, timeout: int = 180) -> subprocess.CompletedProce
         capture_output=True,
         timeout=timeout,
         check=False,
+        env={**os.environ, **env} if env else None,
     )
     assert result.returncode == 0, (
         f"command failed: {' '.join(command)}\n"
@@ -48,10 +55,15 @@ def _run(command: list[str], *, timeout: int = 180) -> subprocess.CompletedProce
     return result
 
 
-def _run_admin(*args: str, timeout: int = 180) -> subprocess.CompletedProcess[str]:
+def _run_admin(
+    *args: str,
+    timeout: int = 180,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     return _run(
         ["cargo", "run", "-p", "capsem-admin", "--quiet", "--", *args],
         timeout=timeout,
+        env=env,
     )
 
 
@@ -66,14 +78,22 @@ def _load_release_validator() -> Any:
     return module
 
 
-def _build_release_channel(dist: Path) -> None:
-    manifest_url = (PROJECT_ROOT / "assets" / "manifest.json").resolve().as_uri()
+def _build_release_channel(
+    dist: Path,
+    *,
+    manifest_path: Path | None = None,
+    assets_dir: Path | None = None,
+) -> None:
+    manifest_url = (manifest_path or PROJECT_ROOT / "assets" / "manifest.json").resolve().as_uri()
+    assets_dir = assets_dir or PROJECT_ROOT / "assets"
     _run_admin(
         "assets",
         "channel",
         "build",
         "--manifest",
         manifest_url,
+        "--assets-dir",
+        str(assets_dir),
         "--channel",
         CHANNEL,
         "--out-dir",
@@ -210,6 +230,37 @@ def test_generated_release_channel_passes_public_contract(
     assert (release_channel_dist / "profiles" / "releases").is_dir()
 
     with _serve_release_channel(release_channel_dist) as url:
+        assert _validate_release_site(url, capsys=capsys) == 0
+
+
+def test_fresh_install_assets_generate_release_channel_evidence(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assets_dir = tmp_path / "assets"
+    dist = tmp_path / "dist"
+    _run(
+        ["bash", "scripts/prepare-install-test-assets.sh"],
+        env={"CAPSEM_ASSETS_DIR": str(assets_dir)},
+    )
+
+    _build_release_channel(
+        dist,
+        manifest_path=assets_dir / "manifest.json",
+        assets_dir=assets_dir,
+    )
+
+    health = json.loads((dist / "health.json").read_text())
+    vm_oboms = health["evidence"]["vm_oboms"]
+    attestations = health["evidence"]["attestations"]
+    assert vm_oboms
+    assert vm_oboms[0]["url"].endswith("-obom.cdx.json")
+    vm_attestation = next(
+        item for item in attestations if item["name"] == "github_attestations_vm_assets"
+    )
+    assert vm_attestation["predicate_url"] == vm_oboms[0]["url"]
+
+    with _serve_release_channel(dist) as url:
         assert _validate_release_site(url, capsys=capsys) == 0
 
 

@@ -80,9 +80,48 @@ with gzip.open(out, "wb", compresslevel=9) as fh:
 PY
 }
 
+create_minimal_obom_if_missing() {
+    local path="${1:?create_minimal_obom_if_missing <path>}"
+    if [ -f "$path" ]; then
+        return
+    fi
+
+    install -d "$(dirname "$path")"
+    python3 - "$path" "$arch" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+out = Path(sys.argv[1])
+arch = sys.argv[2]
+document = {
+    "bomFormat": "CycloneDX",
+    "specVersion": "1.6",
+    "metadata": {
+        "component": {
+            "name": f"capsem-install-test-rootfs-{arch}",
+            "type": "operating-system",
+        },
+        "tools": {
+            "components": [
+                {
+                    "name": "capsem-install-test-assets",
+                    "type": "application",
+                    "version": "1",
+                }
+            ]
+        },
+    },
+    "components": [],
+}
+out.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+PY
+}
+
 write_if_missing "$ASSETS_DIR/$arch/vmlinuz" "capsem install-test kernel $arch"
 create_minimal_initrd_if_missing "$ASSETS_DIR/$arch/initrd.img"
 write_if_missing "$ASSETS_DIR/$arch/rootfs.erofs" "capsem install-test rootfs $arch"
+create_minimal_obom_if_missing "$ASSETS_DIR/$arch/obom.cdx.json"
 
 rm -rf "$ASSETS_DIR/current"
 install -d "$ASSETS_DIR/current"
