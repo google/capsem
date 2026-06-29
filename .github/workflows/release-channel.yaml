@@ -10,6 +10,11 @@ on:
       dist_artifact:
         type: string
         required: true
+    secrets:
+      CLOUDFLARE_ACCOUNT_ID:
+        required: true
+      CLOUDFLARE_API_TOKEN:
+        required: true
 
 jobs:
   deploy:

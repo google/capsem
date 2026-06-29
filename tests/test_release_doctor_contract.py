@@ -302,6 +302,10 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
     assert "workflow_call:" in workflow
     assert "workflow_dispatch:" not in workflow
     assert "dist_artifact:" in workflow
+    assert "secrets:" in workflow
+    assert "CLOUDFLARE_ACCOUNT_ID:" in workflow
+    assert "CLOUDFLARE_API_TOKEN:" in workflow
+    assert "required: true" in workflow
     assert "actions/download-artifact@v8" in workflow
     assert "DIST_DIR: target/release-channel" in workflow
     assert 'test -f "$DIST_DIR/index.html"' in workflow

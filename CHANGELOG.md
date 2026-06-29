@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Python release-site contract checker against `release.capsem.org`, validating
   content, evidence, hashes, attestations, and cache headers rather than only
   file presence.
+- Fixed the release-channel reusable workflow contract so Cloudflare secrets are
+  declared on `workflow_call` before the manual VM asset workflow invokes it.
 - Fixed the release-channel deploy workflow and release docs so
   `release.capsem.org` deploys to the actual Cloudflare Pages project
   `release-eq7`.
