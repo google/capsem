@@ -292,20 +292,22 @@ custom domain, and configure these GitHub Actions secrets:
 | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account that owns the `release-eq7` Pages project |
 | `CLOUDFLARE_API_TOKEN` | API token allowed to deploy the `release-eq7` Pages project |
 
-`release-channel.yaml` fails before deploy if either secret is missing, then
-runs `scripts/check-release-site-contract.py` against `https://release.capsem.org`
-after Cloudflare publishes the generated site. That Python validator reuses the
-remote release readiness contract, so it checks the index, `health.json`, channel
-manifest, evidence documents, BLAKE3/SHA-256 content, attestation references,
-and cache headers rather than only checking that files exist. The workflow also
-keeps the inline public-domain smoke for `https://release.capsem.org/`,
-`/health.json`, and the channel manifest.
+`release-channel.yaml` fails before deploy if either secret is missing or
+`scripts/check-cloudflare-pages-project.py` cannot see the `release-eq7` Pages
+project through the configured account/token. After Cloudflare publishes the
+generated site, it runs `scripts/check-release-site-contract.py` against
+`https://release.capsem.org`. That Python validator reuses the remote release
+readiness contract, so it checks the index, `health.json`, channel manifest,
+evidence documents, BLAKE3/SHA-256 content, attestation references, and cache
+headers rather than only checking that files exist. The workflow also keeps the
+inline public-domain smoke for `https://release.capsem.org/`, `/health.json`,
+and the channel manifest.
 
-Live VM asset releases also run a Cloudflare Pages project preflight before the
-matrix builds start. Dry runs skip that API check, but `dry_run=false` must prove
-that the configured `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` can see
-the `release-eq7` Pages project before building VM images, publishing immutable
-GitHub asset blobs, or writing provenance attestations.
+Live VM asset releases run the same Cloudflare Pages project preflight before
+the matrix builds start. Dry runs skip that API check, but `dry_run=false` must
+prove that the configured `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`
+can see the `release-eq7` Pages project before building VM images, publishing
+immutable GitHub asset blobs, or writing provenance attestations.
 
 The release discipline is that binary releases and VM asset releases both call
 the channel workflow after updating their own part of the release-channel

@@ -40,6 +40,17 @@ def _release_site_contract_module():
     return module
 
 
+def _cloudflare_pages_project_module():
+    module_path = PROJECT_ROOT / "scripts/check-cloudflare-pages-project.py"
+    spec = importlib.util.spec_from_file_location("check_cloudflare_pages_project", module_path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 def _recipe_block(name: str) -> str:
     lines = (PROJECT_ROOT / "justfile").read_text().splitlines()
     start = next(i for i, line in enumerate(lines) if line == name or line.startswith(f"{name} "))
@@ -263,14 +274,9 @@ def test_vm_asset_release_is_manual_and_deploys_asset_channel() -> None:
     assert "cloudflare-release-site-preflight:" in workflow
     assert "name: Cloudflare release site preflight" in workflow
     assert "Dry run: skipping Cloudflare Pages project preflight." in workflow
-    assert "CLOUDFLARE_ACCOUNT_ID secret is required before live VM asset publish" in workflow
-    assert "CLOUDFLARE_API_TOKEN secret is required before live VM asset publish" in workflow
     assert "RELEASE_CHANNEL_PROJECT: release-eq7" in workflow
-    assert (
-        "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/"
-        "pages/projects/$RELEASE_CHANNEL_PROJECT"
-    ) in workflow
-    assert "Cloudflare Pages project {expected_project} is not visible" in workflow
+    assert "python scripts/check-cloudflare-pages-project.py" in workflow
+    assert "--project \"$RELEASE_CHANNEL_PROJECT\"" in workflow
     assert "needs: cloudflare-release-site-preflight" in workflow
     assert workflow.index("cloudflare-release-site-preflight:") < workflow.index("build-assets:")
     assert workflow.index("Cloudflare release site preflight") < workflow.index(
@@ -359,7 +365,14 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
     assert "Require Cloudflare credentials" in workflow
     assert "CLOUDFLARE_ACCOUNT_ID secret is required to deploy release.capsem.org" in workflow
     assert "CLOUDFLARE_API_TOKEN secret is required to deploy release.capsem.org" in workflow
+    assert "Verify Cloudflare Pages project" in workflow
+    assert "RELEASE_CHANNEL_PROJECT: release-eq7" in workflow
+    assert "python scripts/check-cloudflare-pages-project.py" in workflow
+    assert "--project \"$RELEASE_CHANNEL_PROJECT\"" in workflow
     assert workflow.index("Require Cloudflare credentials") < workflow.index(
+        "Verify Cloudflare Pages project"
+    )
+    assert workflow.index("Verify Cloudflare Pages project") < workflow.index(
         "cloudflare/wrangler-action@v3"
     )
     assert (
@@ -528,6 +541,8 @@ def test_release_site_contract_script_fails_on_content_drift(capsys) -> None:
 
 def test_release_channel_cloudflare_prerequisites_are_documented() -> None:
     workflow = _workflow_text("release-channel.yaml")
+    release_assets = _workflow_text("release-assets.yaml")
+    checker = _source_text("scripts/check-cloudflare-pages-project.py")
     docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
     release_skill = (PROJECT_ROOT / "skills/release-process/SKILL.md").read_text()
     asset_skill = (PROJECT_ROOT / "skills/asset-pipeline/SKILL.md").read_text()
@@ -539,6 +554,8 @@ def test_release_channel_cloudflare_prerequisites_are_documented() -> None:
         "release.capsem.org",
     ):
         assert required in workflow
+        assert required in release_assets
+        assert required in checker
         assert required in docs
         assert required in release_skill
         assert required in asset_skill
@@ -558,6 +575,43 @@ def test_release_channel_cloudflare_prerequisites_are_documented() -> None:
         assert "cache headers" in text_lower
         assert "rather than only checking that files exist" in text_lower
         assert "before running a live binary or vm asset channel deploy" in text_lower
+
+
+def test_cloudflare_pages_project_checker_reports_visibility_failures() -> None:
+    checker = _cloudflare_pages_project_module()
+
+    ok, detail = checker.validate_project_response(
+        checker.CloudflareResponse(
+            200,
+            {"success": True, "result": {"name": "release-eq7"}},
+        ),
+        "release-eq7",
+    )
+    assert ok is True
+    assert "release-eq7 is visible" in detail
+
+    ok, detail = checker.validate_project_response(
+        checker.CloudflareResponse(
+            404,
+            {
+                "success": False,
+                "errors": [
+                    {
+                        "code": 8000007,
+                        "message": (
+                            "Project not found. The specified project name does not "
+                            "match any of your existing projects."
+                        ),
+                    }
+                ],
+            },
+        ),
+        "release-eq7",
+    )
+    assert ok is False
+    assert "Cloudflare Pages project release-eq7 is not visible" in detail
+    assert "8000007: Project not found" in detail
+    assert "CLOUDFLARE_ACCOUNT_ID/API_TOKEN" in detail
 
 
 def test_asset_channel_deploy_smoke_verifies_public_evidence_artifacts() -> None:

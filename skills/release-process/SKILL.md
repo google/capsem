@@ -463,12 +463,13 @@ Before running a live binary or VM asset channel deploy, create or verify the
 Cloudflare Pages project `release-eq7`, attach the `release.capsem.org`
 custom domain, and configure `CLOUDFLARE_ACCOUNT_ID` plus
 `CLOUDFLARE_API_TOKEN` in GitHub Actions secrets. `release-channel.yaml` fails
-before deploy if either secret is missing, then runs
-`scripts/check-release-site-contract.py` and smokes `https://release.capsem.org/`,
-`/health.json`, and the channel manifest through the public custom domain after
-Cloudflare publishes the generated site. Live VM asset releases also preflight
-that the configured account/token can see `release-eq7` before the expensive
-asset build matrix starts.
+before deploy if either secret is missing or
+`scripts/check-cloudflare-pages-project.py` cannot see `release-eq7` through
+the configured account/token, then runs `scripts/check-release-site-contract.py`
+and smokes `https://release.capsem.org/`, `/health.json`, and the channel
+manifest through the public custom domain after Cloudflare publishes the
+generated site. Live VM asset releases use the same project preflight before
+the expensive asset build matrix starts.
 
 ## Post-release verification
 

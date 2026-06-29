@@ -33,6 +33,8 @@ jobs:
       DRY_RUN: ${{ inputs.dry_run }}
       RELEASE_CHANNEL_PROJECT: release-eq7
     steps:
+      - uses: actions/checkout@v5
+
       - name: Verify Cloudflare Pages project for live publish
         run: |
           set -euo pipefail
@@ -40,57 +42,8 @@ jobs:
             echo "Dry run: skipping Cloudflare Pages project preflight."
             exit 0
           fi
-          if [[ -z "$CLOUDFLARE_ACCOUNT_ID" ]]; then
-            echo "::error::CLOUDFLARE_ACCOUNT_ID secret is required before live VM asset publish"
-            exit 1
-          fi
-          if [[ -z "$CLOUDFLARE_API_TOKEN" ]]; then
-            echo "::error::CLOUDFLARE_API_TOKEN secret is required before live VM asset publish"
-            exit 1
-          fi
-
-          response="target/cloudflare-release-site-project.json"
-          mkdir -p "$(dirname "$response")"
-          status="$(
-            curl -sS -o "$response" -w "%{http_code}" \
-              -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-              -H "Content-Type: application/json" \
-              "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$RELEASE_CHANNEL_PROJECT"
-          )"
-
-          python - "$status" "$response" "$RELEASE_CHANNEL_PROJECT" <<'PY'
-          import json
-          import sys
-          from pathlib import Path
-
-          status = sys.argv[1]
-          path = Path(sys.argv[2])
-          expected_project = sys.argv[3]
-          try:
-              payload = json.loads(path.read_text(encoding="utf-8"))
-          except json.JSONDecodeError as error:
-              print(f"::error::Cloudflare project preflight returned invalid JSON: {error}")
-              raise SystemExit(1)
-
-          result = payload.get("result") or {}
-          project_name = result.get("name")
-          if status == "200" and payload.get("success") is True and project_name == expected_project:
-              print(f"Cloudflare Pages project {expected_project} is visible to the configured account.")
-              raise SystemExit(0)
-
-          errors = payload.get("errors") or []
-          details = "; ".join(
-              f"{error.get('code', 'unknown')}: {error.get('message', 'unknown error')}"
-              for error in errors
-          )
-          if not details:
-              details = f"HTTP {status}, success={payload.get('success')}, result.name={project_name!r}"
-          print(
-              f"::error::Cloudflare Pages project {expected_project} is not visible to "
-              f"the configured CLOUDFLARE_ACCOUNT_ID/API_TOKEN: {details}"
-          )
-          raise SystemExit(1)
-          PY
+          python scripts/check-cloudflare-pages-project.py \
+            --project "$RELEASE_CHANNEL_PROJECT"
 
   build-assets:
     needs: cloudflare-release-site-preflight

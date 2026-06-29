@@ -70,6 +70,13 @@ jobs:
             exit 1
           fi
 
+      - name: Verify Cloudflare Pages project
+        env:
+          RELEASE_CHANNEL_PROJECT: release-eq7
+        run: |
+          python scripts/check-cloudflare-pages-project.py \
+            --project "$RELEASE_CHANNEL_PROJECT"
+
       - name: Deploy
         uses: cloudflare/wrangler-action@v3
         env:
