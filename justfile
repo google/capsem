@@ -492,6 +492,7 @@ test: _bootstrap _install-tools _clean-stale _pnpm-install _generate-settings _c
         --ignore=tests/capsem-recipes \
         --ignore=tests/capsem-install \
         --ignore=tests/capsem-build-chain \
+        --ignore=tests/capsem-release \
         --cov=src/capsem --cov-report=xml:codecov-python.xml --cov-fail-under=90
 
     echo "=== Python: serial timing and benchmark tests ==="
@@ -500,8 +501,8 @@ test: _bootstrap _install-tools _clean-stale _pnpm-install _generate-settings _c
         tests/ironbank/test_route_health.py \
         -v --tb=short -m serial
 
-    echo "=== Python: Build chain tests (serial) ==="
-    CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest tests/capsem-build-chain/ -v --tb=short
+    echo "=== Python: Build chain and release tests (serial) ==="
+    CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest tests/capsem-build-chain/ tests/capsem-release/ -v --tb=short
 
     # ---- Stage 6: legacy VM scripts + bench ---------------------------------
     echo "=== Injection test ==="

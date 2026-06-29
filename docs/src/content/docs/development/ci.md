@@ -145,10 +145,10 @@ of pretending the hosted lane is identical.
 | Cross-compile agent (both arches) | `test` job: musl target check for `capsem-agent`; `test-linux` covers Linux host crates | Hosted PR substitution for Docker release cross-compile |
 | Rust workspace coverage | `test` and `test-linux` jobs run `cargo llvm-cov nextest` on macOS and Linux crate sets | Same coverage rail with runner-specific package sets |
 | Host binary signing prerequisites | `test` job builds and ad-hoc signs host binaries before non-VM integration suites | Same PR prerequisite for artifact-dependent Python suites |
-| Python schema and no-VM integration suites | `test` job runs schema coverage plus bootstrap, codesign, and rootfs artifact suites | Same no-VM suites, scoped to generated artifacts available in CI |
+| Python schema and no-VM integration suites | `test` job runs schema coverage plus bootstrap, codesign, rootfs artifact, and release-channel suites | Same no-VM suites, scoped to generated artifacts available in CI |
 | Docs and marketing builds | `docs-build` and `site-build` jobs install and build `docs/` and `site/` before `pr-gate` can pass | Merge-blocking build proof; deploy happens only after merge |
 | VM-heavy Python suites (`pytest tests/ -n 4`) | Import collection only on hosted PR runners | Runner substitution: full execution remains a local/release gate until PR runners can host Apple VZ reliably |
-| Serial timing, build-chain, and route-health suites | Import collection only on hosted PR runners | Runner substitution: local `just test` and release gates remain authoritative |
+| Serial timing, build-chain, release-channel, and route-health suites | Import collection only on hosted PR runners | Runner substitution: local `just test` and release gates remain authoritative |
 | Legacy injection/integration scripts and benchmark recording | Not run in hosted PR CI | Runner substitution: still required by local `just test` before release work is claimed |
 | Docker cross-compile and install e2e | `test-install` runs install e2e in Docker; release workflow owns full package matrix | Split by runner capability |
 
@@ -348,10 +348,10 @@ gate records `previous_manifest_unavailable` as a changed asset release so the
 initial site can bootstrap. Later publications still compare against the live
 previous manifest and skip deployment only when current VM blob hashes, asset release metadata, and manifest policy are all unchanged. Manifest policy includes channel-visible fields such as `refresh_policy`.
 Neither rail is complete until `release.capsem.org` reflects the new channel
-state. After Cloudflare deploys, `release-channel.yaml` runs
-`scripts/check-release-site-contract.py` and smoke checks the public
+state. After Cloudflare deploys, `release-channel.yaml` smoke-checks the public
 `https://release.capsem.org/` index, `/health.json`, and
-`/assets/<channel>/manifest.json` before the workflow can pass. The checks also
+`/assets/<channel>/manifest.json` before the workflow can pass, using
+`scripts/check-release-site-contract.py`. The checks also
 reject stale public HTML: the human index must show the same current binary,
 current VM asset version, asset release date, generated timestamp, profile
 revision, profile catalog URL, profile update source, and channel manifest path

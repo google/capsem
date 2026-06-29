@@ -221,6 +221,23 @@ def test_ci_test_steps_do_not_mask_failures_with_true() -> None:
         assert "continue-on-error: true" not in step, step_name
 
 
+def test_release_channel_contract_suite_is_in_pr_and_local_gates() -> None:
+    workflow = _workflow_job_block("test")
+    just_test = _recipe_block("test:")
+    local_suite = _source_text("tests/capsem-release/test_release_channel_contract.py")
+
+    assert "tests/capsem-release/" in workflow
+    assert "Python integration tests (non-VM suites)" in workflow
+    assert "tests/capsem-release/" in just_test
+    assert "--ignore=tests/capsem-release" in just_test
+    assert "Build chain and release tests (serial)" in just_test
+    assert "validator.validate_release_site(" in local_suite
+    assert "test_release_channel_contract_rejects_swapped_manifest" in local_suite
+    assert "test_release_channel_contract_rejects_stale_health_summary" in local_suite
+    assert "test_release_channel_contract_rejects_cache_header_drift" in local_suite
+    assert "test_two_generated_release_channels_have_same_machine_contract" in local_suite
+
+
 def test_install_e2e_generates_manifest_through_admin_rail() -> None:
     script = (PROJECT_ROOT / "scripts" / "prepare-install-test-assets.sh").read_text()
 
@@ -2944,13 +2961,14 @@ def test_asset_channel_documented_as_assets_manifest_url_not_release_index_json(
 
 def test_release_skill_keeps_binary_and_asset_verification_decoupled() -> None:
     release_skill = (PROJECT_ROOT / "skills/release-process/SKILL.md").read_text()
+    release_skill_text = " ".join(release_skill.split())
 
     assert "asset-channel-preview" in release_skill
     assert "generated dist artifact" in release_skill
     assert "smoke-check `https://release.capsem.org/`, `/health.json`, and" in release_skill
     assert "`/assets/<channel>/manifest.json`" in release_skill
     assert "reject stale public HTML" in release_skill
-    assert "current binary, current VM asset version, asset release date" in release_skill
+    assert "current binary, current VM asset version, asset release date" in release_skill_text
     assert "generated timestamp, profile revision, profile catalog URL" in release_skill
     assert "profile update source" in release_skill
     assert "channel manifest path" in release_skill
@@ -3085,7 +3103,7 @@ def test_ci_docs_compare_pr_gate_to_just_test_with_named_substitutions() -> None
         "Rust: test suite with coverage",
         "Python: non-serial tests (n=4 parallel)",
         "Python: serial timing and benchmark tests",
-        "Python: Build chain tests (serial)",
+        "Python: Build chain and release tests (serial)",
         "Injection test",
         "Integration test",
         "Benchmarks",
@@ -4027,7 +4045,8 @@ def test_remote_release_readiness_checker_verifies_live_cache_headers() -> None:
     ) in failures
 
     assert "def check_release_cache_headers" in script
-    assert "urllib.request.Request(url, method=\"HEAD\")" in script
+    assert "release_site_request(url, method=\"HEAD\")" in script
+    assert "RELEASE_VALIDATOR_USER_AGENT" in script
     assert "Cache-Control must contain {directive}" in script
     assert "max-age=31536000" in script
     assert "Cache-Control" in docs

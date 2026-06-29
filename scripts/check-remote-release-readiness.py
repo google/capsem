@@ -1251,6 +1251,9 @@ def fetch_bytes(url: str) -> FetchBytes:
     try:
         with urllib.request.urlopen(release_site_request(url), timeout=20) as response:
             return FetchBytes(response.read())
+    except urllib.error.HTTPError as error:
+        error.close()
+        return FetchBytes(b"", f"fetch {url}: {error}")
     except (OSError, urllib.error.URLError) as error:
         return FetchBytes(b"", f"fetch {url}: {error}")
 
@@ -1260,6 +1263,9 @@ def fetch_headers(url: str) -> FetchHeaders:
         request = release_site_request(url, method="HEAD")
         with urllib.request.urlopen(request, timeout=20) as response:
             return FetchHeaders({key.lower(): value for key, value in response.headers.items()})
+    except urllib.error.HTTPError as error:
+        error.close()
+        return FetchHeaders({}, f"fetch headers {url}: {error}")
     except (OSError, urllib.error.URLError) as error:
         return FetchHeaders({}, f"fetch headers {url}: {error}")
 
