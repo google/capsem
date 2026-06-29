@@ -305,7 +305,7 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
         "cloudflare/wrangler-action@v3"
     )
     assert (
-        "pages deploy target/release-channel/ --project-name=capsem-release --branch=main"
+        "pages deploy target/release-channel/ --project-name=release-eq7 --branch=main"
         in workflow
     )
     assert "assets/stable/manifest.json" not in workflow
@@ -422,7 +422,7 @@ def test_release_channel_cloudflare_prerequisites_are_documented() -> None:
     for required in (
         "CLOUDFLARE_ACCOUNT_ID",
         "CLOUDFLARE_API_TOKEN",
-        "capsem-release",
+        "release-eq7",
         "release.capsem.org",
     ):
         assert required in workflow
@@ -436,7 +436,7 @@ def test_release_channel_cloudflare_prerequisites_are_documented() -> None:
     for text in (docs_text, release_skill_text, asset_skill_text):
         text_lower = text.lower()
         assert "Release-channel Cloudflare prerequisites" in text
-        assert "Cloudflare Pages project `capsem-release`" in text
+        assert "Cloudflare Pages project `release-eq7`" in text
         assert "`release.capsem.org` custom domain" in text
         assert "`CLOUDFLARE_ACCOUNT_ID`" in text
         assert "`CLOUDFLARE_API_TOKEN`" in text

@@ -194,7 +194,7 @@ immutable asset and profile release artifacts stay
 ### Release-channel Cloudflare prerequisites
 
 Before running a live binary or VM asset channel deploy, create or verify the
-Cloudflare Pages project `capsem-release`, attach the `release.capsem.org`
+Cloudflare Pages project `release-eq7`, attach the `release.capsem.org`
 custom domain, and configure `CLOUDFLARE_ACCOUNT_ID` plus
 `CLOUDFLARE_API_TOKEN` in GitHub Actions secrets. `release-channel.yaml` fails
 before deploy if either secret is missing, then smokes

@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Fixed the release-channel deploy workflow and release docs so
+  `release.capsem.org` deploys to the actual Cloudflare Pages project
+  `release-eq7`.
 - Fixed the PR CI macOS non-VM integration lane so it codesigns the
   `capsem-bench-rs` binary produced by the `capsem-bench` package instead of a
   nonexistent `capsem-bench` executable.

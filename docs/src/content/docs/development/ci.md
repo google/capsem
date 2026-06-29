@@ -284,13 +284,13 @@ https://release.capsem.org/assets/stable/manifest.json
 ### Release-channel Cloudflare prerequisites
 
 Before running a live binary or VM asset channel deploy, create or verify the
-Cloudflare Pages project `capsem-release`, attach the `release.capsem.org`
+Cloudflare Pages project `release-eq7`, attach the `release.capsem.org`
 custom domain, and configure these GitHub Actions secrets:
 
 | Secret | Purpose |
 |--------|---------|
-| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account that owns the `capsem-release` Pages project |
-| `CLOUDFLARE_API_TOKEN` | API token allowed to deploy the `capsem-release` Pages project |
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account that owns the `release-eq7` Pages project |
+| `CLOUDFLARE_API_TOKEN` | API token allowed to deploy the `release-eq7` Pages project |
 
 `release-channel.yaml` fails before deploy if either secret is missing, then
 smokes `https://release.capsem.org/`, `/health.json`, and the channel manifest
