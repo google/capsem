@@ -242,6 +242,7 @@ def test_vm_asset_release_is_manual_and_deploys_asset_channel() -> None:
     assert "workflow_dispatch:" in workflow
     assert "push:" not in workflow
     assert "tags:" not in workflow
+    assert "deployments: write" in workflow
     assert "just build-kernel" in workflow
     assert "just build-rootfs" in workflow
     assert "cargo run -p capsem-admin -- manifest generate assets" in workflow
@@ -731,6 +732,7 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
 
     assert "push:" in trigger
     assert "tags: ['v*']" in trigger
+    assert "deployments: write" in workflow
     assert "workflow_dispatch:" not in trigger
     assert "pull_request:" not in trigger
     assert "branches:" not in trigger

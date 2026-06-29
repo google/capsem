@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   file presence.
 - Fixed the release-channel reusable workflow contract so Cloudflare secrets are
   declared on `workflow_call` before the manual VM asset workflow invokes it.
+- Fixed binary and VM asset release workflow permissions so callers grant
+  `deployments: write` before invoking the reusable release-channel deploy.
 - Fixed the release-channel deploy workflow and release docs so
   `release.capsem.org` deploys to the actual Cloudflare Pages project
   `release-eq7`.
