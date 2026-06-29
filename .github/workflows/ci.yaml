@@ -209,7 +209,7 @@ jobs:
         run: |
           bash scripts/prepare-install-test-assets.sh
           cargo build -p capsem-process -p capsem-service -p capsem -p capsem-mcp -p capsem-mock-server -p capsem-bench
-          for bin in target/debug/capsem-process target/debug/capsem-service target/debug/capsem target/debug/capsem-mcp target/debug/capsem-mock-server target/debug/capsem-bench; do
+          for bin in target/debug/capsem-process target/debug/capsem-service target/debug/capsem target/debug/capsem-mcp target/debug/capsem-mock-server target/debug/capsem-bench-rs; do
             codesign --sign - --entitlements entitlements.plist --force "$bin"
           done
           uv run python -m pytest tests/capsem-bootstrap/ tests/capsem-codesign/ tests/capsem-rootfs-artifacts/ -v --tb=short

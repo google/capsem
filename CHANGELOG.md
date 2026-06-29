@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Fixed the PR CI macOS non-VM integration lane so it codesigns the
+  `capsem-bench-rs` binary produced by the `capsem-bench` package instead of a
+  nonexistent `capsem-bench` executable.
 - Fixed release-channel generation, validation, live smoke, and remote readiness
   so VM asset attestations must point at the published VM OBOM predicate
   evidence instead of passing with an omitted predicate URL.

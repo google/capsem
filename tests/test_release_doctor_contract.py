@@ -4540,15 +4540,21 @@ def test_pr_ci_non_vm_python_tests_prepare_assets_and_signed_binaries() -> None:
     build_pos = block.find(
         "cargo build -p capsem-process -p capsem-service -p capsem -p capsem-mcp"
     )
+    bench_package_pos = block.find("-p capsem-bench")
+    bench_binary_pos = block.find("target/debug/capsem-bench-rs")
     sign_pos = block.find("codesign --sign - --entitlements entitlements.plist --force")
     pytest_pos = block.find("uv run python -m pytest tests/capsem-bootstrap/")
 
     assert asset_pos != -1
     assert build_pos != -1
+    assert bench_package_pos != -1
+    assert bench_binary_pos != -1
+    assert "target/debug/capsem-bench;" not in block
     assert sign_pos != -1
     assert pytest_pos != -1
     assert asset_pos < pytest_pos
     assert build_pos < pytest_pos
+    assert bench_package_pos < bench_binary_pos
     assert sign_pos < pytest_pos
 
 
