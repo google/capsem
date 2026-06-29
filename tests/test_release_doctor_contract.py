@@ -264,6 +264,14 @@ def test_vm_asset_release_is_manual_and_deploys_asset_channel() -> None:
     )
     assert "name: asset-release-plan" in workflow
     assert "path: target/asset-release/" in workflow
+    assert "for arch in arm64 x86_64; do" in workflow
+    assert "for arch_dir in assets/*; do" not in workflow
+    assert 'arch_dir="assets/$arch"' in workflow
+    assert 'cp "$src" "$RELEASE_DIR/$arch-$logical_name"' in workflow
+    assert "current-vmlinuz" not in workflow
+    assert "current-initrd.img" not in workflow
+    assert "current-rootfs.erofs" not in workflow
+    assert "current-obom.cdx.json" not in workflow
     assert "asset_changed: ${{ steps.asset-delta.outputs.changed }}" in workflow
     assert "asset_blobs_changed: ${{ steps.asset-delta.outputs.asset_blobs_changed }}" in workflow
     assert "if: ${{ steps.asset-delta.outputs.asset_blobs_changed == 'true' }}" in workflow

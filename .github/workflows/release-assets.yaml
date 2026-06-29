@@ -164,9 +164,9 @@ jobs:
           UPLOAD_SCRIPT="target/asset-release/upload-assets.sh"
           mkdir -p "$RELEASE_DIR"
 
-          for arch_dir in assets/*; do
-            [ -d "$arch_dir" ] || continue
-            arch="$(basename "$arch_dir")"
+          for arch in arm64 x86_64; do
+            arch_dir="assets/$arch"
+            test -d "$arch_dir"
             for logical_name in vmlinuz initrd.img rootfs.erofs obom.cdx.json; do
               src="$arch_dir/$logical_name"
               test -f "$src"
