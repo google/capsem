@@ -121,7 +121,11 @@ deprecated releases remain auditable but are not candidates for new
 session/download selection.
 
 The manual asset workflow is `.github/workflows/release-assets.yaml`. It should
-remain explicit/manual, build VM assets, publish changed blobs to an immutable
+remain explicit/manual. For `dry_run=false`, it first verifies that the
+configured `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` can see the
+`release-eq7` Pages project, so a bad release-site binding fails before VM image
+builds, immutable GitHub asset publication, or provenance attestation. It should
+build VM assets, publish changed blobs to an immutable
 `assets-v<asset-version>` GitHub Release, attest the arch-prefixed `vmlinuz`,
 `initrd.img`, `rootfs.erofs`, and `obom.cdx.json` subjects, upload
 `target/release-channel/` as the `asset-channel-preview` artifact, and call
@@ -205,7 +209,9 @@ custom domain, and configure `CLOUDFLARE_ACCOUNT_ID` plus
 before deploy if either secret is missing, then runs
 `scripts/check-release-site-contract.py` and smokes `https://release.capsem.org/`,
 `/health.json`, and the channel manifest through the public custom domain after
-Cloudflare publishes the generated site.
+Cloudflare publishes the generated site. Live VM asset releases also preflight
+that the configured account/token can see `release-eq7` before the expensive
+asset build matrix starts.
 
 ## Live release activation order
 

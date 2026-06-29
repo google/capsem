@@ -43,7 +43,11 @@ profile catalog artifact under `profiles/releases/<revision>/catalog.json`, and
 deploy the channel without rebuilding VM assets.
 
 The manual VM asset release entrypoint is `.github/workflows/release-assets.yaml`.
-It builds assets, generates `assets/manifest.json`, builds
+For `dry_run=false`, it first verifies that the configured
+`CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` can see the `release-eq7`
+Pages project, so a bad release-site binding fails before VM image builds,
+immutable GitHub asset publication, or provenance attestation. It builds assets,
+generates `assets/manifest.json`, builds
 `target/release-channel/`, publishes changed VM blobs to an immutable GitHub
 Release tagged `assets-v<asset-version>` with arch-prefixed `vmlinuz`,
 `initrd.img`, `rootfs.erofs`, and `obom.cdx.json` artifacts, uploads the full
@@ -462,7 +466,9 @@ custom domain, and configure `CLOUDFLARE_ACCOUNT_ID` plus
 before deploy if either secret is missing, then runs
 `scripts/check-release-site-contract.py` and smokes `https://release.capsem.org/`,
 `/health.json`, and the channel manifest through the public custom domain after
-Cloudflare publishes the generated site.
+Cloudflare publishes the generated site. Live VM asset releases also preflight
+that the configured account/token can see `release-eq7` before the expensive
+asset build matrix starts.
 
 ## Post-release verification
 

@@ -301,6 +301,12 @@ and cache headers rather than only checking that files exist. The workflow also
 keeps the inline public-domain smoke for `https://release.capsem.org/`,
 `/health.json`, and the channel manifest.
 
+Live VM asset releases also run a Cloudflare Pages project preflight before the
+matrix builds start. Dry runs skip that API check, but `dry_run=false` must prove
+that the configured `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` can see
+the `release-eq7` Pages project before building VM images, publishing immutable
+GitHub asset blobs, or writing provenance attestations.
+
 The release discipline is that binary releases and VM asset releases both call
 the channel workflow after updating their own part of the release-channel
 manifest. A tag-triggered binary release records package hashes, host SBOM, and
@@ -324,6 +330,9 @@ attestations; once binary files are published, missing host SBOM evidence is
 release-blocking.
 Manual VM asset releases do not accept or publish a binary-version override;
 binary release metadata is owned by the tag-triggered binary rail.
+For `dry_run=false`, the workflow first verifies that the configured Cloudflare
+account/token can see the `release-eq7` Pages project, so a bad release-site
+binding fails before VM image builds or immutable GitHub asset publication.
 Dry runs upload `asset-release-plan` with the generated upload script so the
 planned `gh release` commands can be reviewed without scraping workflow logs.
 Every asset release run also uploads `asset-release-delta` with the manifest

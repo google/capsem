@@ -243,6 +243,22 @@ def test_vm_asset_release_is_manual_and_deploys_asset_channel() -> None:
     assert "push:" not in workflow
     assert "tags:" not in workflow
     assert "deployments: write" in workflow
+    assert "cloudflare-release-site-preflight:" in workflow
+    assert "name: Cloudflare release site preflight" in workflow
+    assert "Dry run: skipping Cloudflare Pages project preflight." in workflow
+    assert "CLOUDFLARE_ACCOUNT_ID secret is required before live VM asset publish" in workflow
+    assert "CLOUDFLARE_API_TOKEN secret is required before live VM asset publish" in workflow
+    assert "RELEASE_CHANNEL_PROJECT: release-eq7" in workflow
+    assert (
+        "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/"
+        "pages/projects/$RELEASE_CHANNEL_PROJECT"
+    ) in workflow
+    assert "Cloudflare Pages project {expected_project} is not visible" in workflow
+    assert "needs: cloudflare-release-site-preflight" in workflow
+    assert workflow.index("cloudflare-release-site-preflight:") < workflow.index("build-assets:")
+    assert workflow.index("Cloudflare release site preflight") < workflow.index(
+        "Build VM assets"
+    )
     assert "just build-kernel" in workflow
     assert "just build-rootfs" in workflow
     assert "cargo run -p capsem-admin -- manifest generate assets" in workflow

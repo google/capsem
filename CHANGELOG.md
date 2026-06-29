@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Fixed live VM asset release discipline so `dry_run=false` preflights that the
+  configured Cloudflare account/token can see the `release-eq7` Pages project
+  before building VM images, publishing immutable asset blobs, or attesting them.
 - Fixed release-channel deploy validation so Cloudflare publishes must run the
   Python release-site contract checker against `release.capsem.org`, validating
   content, evidence, hashes, attestations, and cache headers rather than only
