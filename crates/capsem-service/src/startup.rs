@@ -112,6 +112,10 @@ impl VzHostLock {
     /// on success, `Ok(None)` on timeout (caller decides whether to fail).
     pub fn acquire(mode: VzHostLockMode, timeout: Duration) -> Result<Option<Self>> {
         let path = Self::lock_path();
+        Self::acquire_path(&path, mode, timeout)
+    }
+
+    fn acquire_path(path: &Path, mode: VzHostLockMode, timeout: Duration) -> Result<Option<Self>> {
         let deadline = Instant::now() + timeout;
         let arg = match mode {
             VzHostLockMode::Shared => FlockArg::LockSharedNonblock,
@@ -138,6 +142,15 @@ impl VzHostLock {
                 }
             }
         }
+    }
+
+    #[cfg(test)]
+    fn acquire_test_path(
+        path: &Path,
+        mode: VzHostLockMode,
+        timeout: Duration,
+    ) -> Result<Option<Self>> {
+        Self::acquire_path(path, mode, timeout)
     }
 }
 
@@ -196,8 +209,6 @@ impl StartupLock {
 mod tests {
     use super::*;
 
-    static VZ_HOST_LOCK_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     #[test]
     fn parse_version_body_extracts_version() {
         let resp =
@@ -241,11 +252,20 @@ mod tests {
 
     #[test]
     fn vz_host_lock_is_mutually_exclusive() {
-        let _test_guard = VZ_HOST_LOCK_TEST_MUTEX.lock().unwrap();
-        let a = VzHostLock::acquire(VzHostLockMode::Exclusive, Duration::from_millis(50))
-            .unwrap()
-            .expect("first acquisition");
-        let b = VzHostLock::acquire(VzHostLockMode::Exclusive, Duration::from_millis(50)).unwrap();
+        let (dir, lock_path) = isolated_vz_host_lock_path();
+        let a = VzHostLock::acquire_test_path(
+            &lock_path,
+            VzHostLockMode::Exclusive,
+            Duration::from_millis(50),
+        )
+        .unwrap()
+        .expect("first acquisition");
+        let b = VzHostLock::acquire_test_path(
+            &lock_path,
+            VzHostLockMode::Exclusive,
+            Duration::from_millis(50),
+        )
+        .unwrap();
         assert!(
             b.is_none(),
             "second VZ host lock acquisition must wait while first is held"
@@ -253,50 +273,90 @@ mod tests {
 
         drop(a);
 
-        let c = VzHostLock::acquire(VzHostLockMode::Exclusive, Duration::from_millis(500))
-            .unwrap()
-            .expect("reacquire after drop");
+        let c = VzHostLock::acquire_test_path(
+            &lock_path,
+            VzHostLockMode::Exclusive,
+            Duration::from_millis(500),
+        )
+        .unwrap()
+        .expect("reacquire after drop");
         drop(c);
+        drop(dir);
     }
 
     #[test]
     fn vz_host_lock_allows_shared_lifecycle_starts() {
-        let _test_guard = VZ_HOST_LOCK_TEST_MUTEX.lock().unwrap();
-        let a = VzHostLock::acquire(VzHostLockMode::Shared, Duration::from_millis(50))
-            .unwrap()
-            .expect("first shared acquisition");
-        let b = VzHostLock::acquire(VzHostLockMode::Shared, Duration::from_millis(50))
-            .unwrap()
-            .expect("second shared acquisition");
+        let (dir, lock_path) = isolated_vz_host_lock_path();
+        let a = VzHostLock::acquire_test_path(
+            &lock_path,
+            VzHostLockMode::Shared,
+            Duration::from_millis(50),
+        )
+        .unwrap()
+        .expect("first shared acquisition");
+        let b = VzHostLock::acquire_test_path(
+            &lock_path,
+            VzHostLockMode::Shared,
+            Duration::from_millis(50),
+        )
+        .unwrap()
+        .expect("second shared acquisition");
         drop(b);
         drop(a);
+        drop(dir);
     }
 
     #[test]
     fn vz_host_lock_exclusive_blocks_shared() {
-        let _test_guard = VZ_HOST_LOCK_TEST_MUTEX.lock().unwrap();
-        let a = VzHostLock::acquire(VzHostLockMode::Exclusive, Duration::from_millis(50))
-            .unwrap()
-            .expect("exclusive acquisition");
-        let b = VzHostLock::acquire(VzHostLockMode::Shared, Duration::from_millis(50)).unwrap();
+        let (dir, lock_path) = isolated_vz_host_lock_path();
+        let a = VzHostLock::acquire_test_path(
+            &lock_path,
+            VzHostLockMode::Exclusive,
+            Duration::from_millis(50),
+        )
+        .unwrap()
+        .expect("exclusive acquisition");
+        let b = VzHostLock::acquire_test_path(
+            &lock_path,
+            VzHostLockMode::Shared,
+            Duration::from_millis(50),
+        )
+        .unwrap();
         assert!(
             b.is_none(),
             "shared VZ host lock acquisition must wait while exclusive is held"
         );
         drop(a);
+        drop(dir);
     }
 
     #[test]
     fn vz_host_lock_shared_blocks_exclusive() {
-        let _test_guard = VZ_HOST_LOCK_TEST_MUTEX.lock().unwrap();
-        let a = VzHostLock::acquire(VzHostLockMode::Shared, Duration::from_millis(50))
-            .unwrap()
-            .expect("shared acquisition");
-        let b = VzHostLock::acquire(VzHostLockMode::Exclusive, Duration::from_millis(50)).unwrap();
+        let (dir, lock_path) = isolated_vz_host_lock_path();
+        let a = VzHostLock::acquire_test_path(
+            &lock_path,
+            VzHostLockMode::Shared,
+            Duration::from_millis(50),
+        )
+        .unwrap()
+        .expect("shared acquisition");
+        let b = VzHostLock::acquire_test_path(
+            &lock_path,
+            VzHostLockMode::Exclusive,
+            Duration::from_millis(50),
+        )
+        .unwrap();
         assert!(
             b.is_none(),
             "exclusive VZ host lock acquisition must wait while shared is held"
         );
         drop(a);
+        drop(dir);
+    }
+
+    fn isolated_vz_host_lock_path() -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let lock_path = dir.path().join("vz-host.lock");
+        (dir, lock_path)
     }
 }
