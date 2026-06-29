@@ -293,7 +293,11 @@ pub fn read_cached_update_notice() -> Option<String> {
     let content = std::fs::read_to_string(&path).ok()?;
     let check: UpdateCheck = serde_json::from_str(&content).ok()?;
 
-    if !check.update_available {
+    if !check.update_available
+        && !check.assets_update_available
+        && !check.profiles_update_available
+        && check.profiles_blocked_reason.is_none()
+    {
         return None;
     }
 
@@ -319,6 +323,20 @@ pub fn read_cached_update_notice() -> Option<String> {
                 "VM asset update available: {latest_assets}. Run `capsem update --assets` to refresh."
             ));
         }
+    }
+
+    if check.profiles_update_available {
+        if let Some(latest_profiles) = check.latest_profiles {
+            return Some(format!(
+                "Profile catalog update available: {latest_profiles}. Run `capsem update` to refresh."
+            ));
+        }
+    }
+
+    if let Some(reason) = check.profiles_blocked_reason {
+        return Some(format!(
+            "Profile catalog update blocked: {reason}. Run `capsem update --check` for details."
+        ));
     }
 
     None
@@ -1854,6 +1872,94 @@ mod tests {
         assert_eq!(rt.channel_hash, None);
         assert_eq!(rt.validation_status, None);
         assert_eq!(rt.validation_error, None);
+    }
+
+    #[test]
+    fn cached_update_notice_reports_asset_only_updates() {
+        let _lock = crate::lock_test_env();
+        let home = tempfile::tempdir().unwrap();
+        let _home = EnvGuard::set("CAPSEM_HOME", home.path().to_str().unwrap());
+        let mut check = cached_notice_check();
+        check.latest_assets = Some("2030.0101.1".into());
+        check.current_assets = Some("2026.0627.1".into());
+        check.assets_update_available = true;
+        write_cache(&check).unwrap();
+
+        assert_eq!(
+            read_cached_update_notice().as_deref(),
+            Some(
+                "VM asset update available: 2030.0101.1. Run `capsem update --assets` to refresh."
+            )
+        );
+    }
+
+    #[test]
+    fn cached_update_notice_reports_profile_catalog_updates() {
+        let _lock = crate::lock_test_env();
+        let home = tempfile::tempdir().unwrap();
+        let _home = EnvGuard::set("CAPSEM_HOME", home.path().to_str().unwrap());
+        let mut check = cached_notice_check();
+        check.latest_profiles = Some("profiles-2030.0101.1".into());
+        check.current_profiles = Some("profiles-2030.0101.0".into());
+        check.profiles_update_available = true;
+        write_cache(&check).unwrap();
+
+        assert_eq!(
+            read_cached_update_notice().as_deref(),
+            Some(
+                "Profile catalog update available: profiles-2030.0101.1. Run `capsem update` to refresh."
+            )
+        );
+    }
+
+    #[test]
+    fn cached_update_notice_reports_blocked_profile_catalog_updates() {
+        let _lock = crate::lock_test_env();
+        let home = tempfile::tempdir().unwrap();
+        let _home = EnvGuard::set("CAPSEM_HOME", home.path().to_str().unwrap());
+        let mut check = cached_notice_check();
+        check.latest_profiles = Some("profiles-2030.0101.1".into());
+        check.current_profiles = Some("profiles-2030.0101.0".into());
+        check.profiles_blocked_reason = Some("requires binary 1.4.1 or newer".into());
+        write_cache(&check).unwrap();
+
+        assert_eq!(
+            read_cached_update_notice().as_deref(),
+            Some(
+                "Profile catalog update blocked: requires binary 1.4.1 or newer. Run `capsem update --check` for details."
+            )
+        );
+    }
+
+    fn cached_notice_check() -> UpdateCheck {
+        UpdateCheck {
+            checked_at: now_secs(),
+            latest_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+            update_available: false,
+            binary_installer: None,
+            latest_assets: Some("2026.0627.1".into()),
+            current_assets: Some("2026.0627.1".into()),
+            assets_update_available: false,
+            assets_state: Some("published".into()),
+            assets_blocked_reason: None,
+            latest_profiles: Some("profiles-2030.0101.1".into()),
+            current_profiles: Some("profiles-2030.0101.0".into()),
+            profiles_update_available: false,
+            profiles_state: Some("published".into()),
+            profiles_blocked_reason: Some("requires binary 1.4.1 or newer".into()),
+            profile_catalog_source: Some(
+                "/profiles/releases/profiles-2030.0101.1/catalog.json".into(),
+            ),
+            profile_catalog_hash: Some("b".repeat(64)),
+            latest_images: None,
+            images_update_available: false,
+            images_state: Some("not_published".into()),
+            images_blocked_reason: None,
+            source: Some("https://release.capsem.org/health.json".into()),
+            channel_hash: Some("a".repeat(64)),
+            validation_status: Some("valid".into()),
+            validation_error: None,
+        }
     }
 
     #[test]
