@@ -2587,7 +2587,7 @@ fn current_asset_attestations(files: &[AssetsChannelAssetFile]) -> Vec<AssetsCha
         .collect::<Vec<_>>();
     let predicate_url = files
         .iter()
-        .find(|file| file.logical_name == "obom.cdx.json")
+        .find(|file| is_vm_obom_asset_file(file))
         .map(|file| file.url.clone());
     vec![AssetsChannelAttestation {
         name: "github_attestations_vm_assets".to_string(),
@@ -2598,6 +2598,10 @@ fn current_asset_attestations(files: &[AssetsChannelAssetFile]) -> Vec<AssetsCha
         verify_command: "gh attestation verify <subject-url> --owner google".to_string(),
         subjects,
     }]
+}
+
+fn is_vm_obom_asset_file(file: &AssetsChannelAssetFile) -> bool {
+    file.logical_name == "obom.cdx.json" || file.url.ends_with("-obom.cdx.json")
 }
 
 fn render_assets_channel_health(index: &AssetsChannelIndex) -> Result<String> {
@@ -6884,6 +6888,34 @@ decision = "block"
         let check = check_assets_channel(&out_dir, "stable").expect("asset channel checks");
         assert_eq!(check.channel, "stable");
         assert_eq!(check.manifest, channel_manifest.display().to_string());
+    }
+
+    #[test]
+    fn asset_attestation_predicate_uses_published_obom_url_shape() {
+        let files = vec![
+            AssetsChannelAssetFile {
+                arch: "arm64".to_string(),
+                logical_name: "initrd.img".to_string(),
+                url: "/assets/releases/2030.0101.1/arm64-initrd.img".to_string(),
+                hash: "1".repeat(64),
+                size: 1,
+            },
+            AssetsChannelAssetFile {
+                arch: "arm64".to_string(),
+                logical_name: "arm64-obom.cdx.json".to_string(),
+                url: "/assets/releases/2030.0101.1/arm64-obom.cdx.json".to_string(),
+                hash: "2".repeat(64),
+                size: 1,
+            },
+        ];
+
+        let attestations = current_asset_attestations(&files);
+
+        assert_eq!(attestations.len(), 1);
+        assert_eq!(
+            attestations[0].predicate_url.as_deref(),
+            Some("/assets/releases/2030.0101.1/arm64-obom.cdx.json")
+        );
     }
 
     #[test]
