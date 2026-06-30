@@ -2831,7 +2831,7 @@ fn render_assets_channel_index(index: &AssetsChannelIndex) -> Result<String> {
     } else {
         index.arches.join(", ")
     };
-    let current_asset_rows = render_asset_file_rows(&index.current_asset_files);
+    let current_asset_rows = render_asset_file_groups(&index.current_asset_files);
     let asset_release_rows = render_asset_release_rows(&index.asset_release_history);
     let vm_obom_rows = render_asset_file_rows(&index.vm_oboms);
     let host_sbom_rows = render_binary_file_rows(
@@ -2910,6 +2910,12 @@ fn render_assets_channel_index(index: &AssetsChannelIndex) -> Result<String> {
       margin: 0 0 12px;
       font-size: 1.05rem;
       letter-spacing: 0;
+    }}
+    h3 {{
+      margin: 18px 0 8px;
+      font-size: 0.95rem;
+      letter-spacing: 0;
+      color: var(--muted);
     }}
     p {{ margin: 0; color: var(--muted); }}
     a {{ color: var(--accent); overflow-wrap: anywhere; }}
@@ -3107,9 +3113,10 @@ fn render_profile_catalog(index: &AssetsChannelIndex) -> String {
     format!(
         r#"      <dl>
         <dt>Revision</dt><dd><code>{revision}</code></dd>
-        <dt>Source</dt><dd>{source}</dd>
+        <dt>Published catalog</dt><dd><a href="{source}">{source}</a></dd>
         <dt>BLAKE3</dt><dd><code>{hash}</code></dd>
-        <dt>Profiles</dt><dd>{profile_count} ({profile_ids})</dd>
+        <dt>Profile count</dt><dd>{profile_count}</dd>
+        <dt>Profile IDs</dt><dd>{profile_ids}</dd>
         <dt>Refresh policy</dt><dd>{refresh_policy}</dd>
         <dt>Binary compatibility</dt><dd>{binary} (min {min_binary})</dd>
         <dt>Asset compatibility</dt><dd>{assets} (min {min_assets})</dd>
@@ -3129,6 +3136,39 @@ fn render_profile_catalog(index: &AssetsChannelIndex) -> String {
         requires_binary = index.profile_catalog.requires_newer_binary,
         requires_assets = index.profile_catalog.requires_newer_assets,
     )
+}
+
+fn render_asset_file_groups(files: &[AssetsChannelAssetFile]) -> String {
+    if files.is_empty() {
+        return "      <p>None published for the current asset release.</p>".to_string();
+    }
+    let mut by_arch: BTreeMap<&str, Vec<&AssetsChannelAssetFile>> = BTreeMap::new();
+    for file in files {
+        by_arch.entry(file.arch.as_str()).or_default().push(file);
+    }
+    by_arch
+        .into_iter()
+        .map(|(arch, files)| {
+            let rows = files
+                .iter()
+                .map(|file| {
+                    format!(
+                        "          <tr><td>{name}</td><td><a href=\"{url}\">{url}</a></td><td>{size}</td><td><code>{hash}</code></td></tr>",
+                        name = escape_html(&file.logical_name),
+                        url = escape_html(&file.url),
+                        size = file.size,
+                        hash = escape_html(&file.hash),
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!(
+                "      <h3>Architecture {arch}</h3>\n      <table><thead><tr><th>Name</th><th>URL</th><th>Bytes</th><th>BLAKE3</th></tr></thead><tbody>\n{rows}\n      </tbody></table>",
+                arch = escape_html(arch),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn render_update_contract_rows(index: &AssetsChannelIndex) -> String {
@@ -6760,6 +6800,8 @@ decision = "block"
         );
         let index_html = fs::read_to_string(out_dir.join("index.html")).expect("index page");
         assert!(index_html.contains("Current Asset Files"));
+        assert!(index_html.contains("<h3>Architecture arm64</h3>"));
+        assert!(index_html.contains("Profile IDs"));
         assert!(index_html.contains("Host SBOM Evidence"));
         assert!(index_html.contains("Attestation Evidence"));
         assert!(index_html.contains("Update Contract"));

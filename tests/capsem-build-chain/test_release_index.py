@@ -44,10 +44,11 @@ def _write_release_manifest(
     binary_version: str = "1.4.1234567890",
     date: str = "2030-01-01",
     include_binary_files: bool = True,
+    include_x86_64: bool = False,
 ) -> Path:
     assets = root / "assets"
     arm64 = assets / "arm64"
-    files = {
+    arm64_files = {
         "vmlinuz": _write_asset(arm64 / "vmlinuz", b"kernel-arm64"),
         "initrd.img": _write_asset(arm64 / "initrd.img", b"initrd-arm64"),
         "rootfs.erofs": _write_asset(arm64 / "rootfs.erofs", b"rootfs-arm64"),
@@ -56,6 +57,18 @@ def _write_release_manifest(
             b'{"bomFormat":"CycloneDX","metadata":{"tools":[{"name":"cdxgen"}]}}',
         ),
     }
+    arches = {"arm64": arm64_files}
+    if include_x86_64:
+        x86_64 = assets / "x86_64"
+        arches["x86_64"] = {
+            "vmlinuz": _write_asset(x86_64 / "vmlinuz", b"kernel-x86_64"),
+            "initrd.img": _write_asset(x86_64 / "initrd.img", b"initrd-x86_64"),
+            "rootfs.erofs": _write_asset(x86_64 / "rootfs.erofs", b"rootfs-x86_64"),
+            "obom.cdx.json": _write_asset(
+                x86_64 / "obom.cdx.json",
+                b'{"bomFormat":"CycloneDX","metadata":{"tools":[{"name":"cdxgen"}]}}',
+            ),
+        }
     pkg = b"pkg bytes"
     sbom = b'{"spdxVersion":"SPDX-2.3"}'
     binary_release = {
@@ -87,7 +100,7 @@ def _write_release_manifest(
                     "date": date,
                     "deprecated": False,
                     "min_binary": "1.4.0",
-                    "arches": {"arm64": files},
+                    "arches": arches,
                 }
             },
         },
@@ -99,6 +112,15 @@ def _write_release_manifest(
     manifest_path = assets / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     return manifest_path
+
+
+def _html_section(html: str, heading: str) -> str:
+    marker = f"<h2>{heading}</h2>"
+    start = html.index(marker)
+    next_section = html.find("    <section>", start + len(marker))
+    if next_section == -1:
+        return html[start:]
+    return html[start:next_section]
 
 
 def _write_profile_catalog(root: Path, revision: str = "profiles-2030.0101.1") -> Path:
@@ -172,7 +194,7 @@ def test_release_index_generator_writes_split_cache_headers(tmp_path: Path) -> N
 
 
 def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path) -> None:
-    manifest_path = _write_release_manifest(tmp_path)
+    manifest_path = _write_release_manifest(tmp_path, include_x86_64=True)
     profiles_dir = _write_profile_catalog(tmp_path)
     dist = tmp_path / "target" / "release-channel"
 
@@ -199,7 +221,7 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
     assert report["schema"] == "capsem.admin.assets_channel_build.v1"
     assert report["channel"] == "stable"
     assert report["manifest"] == str(dist / "assets" / "stable" / "manifest.json")
-    assert report["copied_assets"] == 4
+    assert report["copied_assets"] == 8
 
     index_html = (dist / "index.html").read_text(encoding="utf-8")
     assert "Capsem Asset Channel" in index_html
@@ -209,12 +231,18 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
     assert "Update Contract" in index_html
     assert "Profile Catalog" in index_html
     assert "profiles-2030.0101.1" in index_html
+    assert "Profile IDs" in index_html
     assert "Realm Discipline" in index_html
     assert '<a href="/index.html">/index.html</a>' in index_html
     assert '<a href="/health.json">/health.json</a>' in index_html
     assert '<a href="/profiles/releases/profiles-2030.0101.1/catalog.json">' in index_html
     assert "/assets/releases/2030.0101.1/arm64-rootfs.erofs" in index_html
     assert "/assets/releases/2030.0101.1/arm64-obom.cdx.json" in index_html
+    assert "/assets/releases/2030.0101.1/x86_64-rootfs.erofs" in index_html
+    current_assets_section = _html_section(index_html, "Current Asset Files")
+    assert "<h3>Architecture arm64</h3>" in current_assets_section
+    assert "<h3>Architecture x86_64</h3>" in current_assets_section
+    assert "<th>Arch</th>" not in current_assets_section
     assert "capsem-sbom.spdx.json" in index_html
     assert "The fastest way to ship with AI securely." not in index_html
 
