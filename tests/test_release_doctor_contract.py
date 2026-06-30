@@ -969,6 +969,54 @@ def test_binary_release_channel_assembly_preflights_canonical_artifacts() -> Non
     )
 
 
+def test_binary_release_staging_dry_run_is_separate_from_tag_release() -> None:
+    workflow = _workflow_text("release-binary-staging.yaml")
+    real_release = _workflow_text("release.yaml")
+    assemble_channel = _workflow_job_block(
+        "assemble-binary-channel",
+        "release-binary-staging.yaml",
+    )
+
+    real_trigger = real_release.split("\npermissions:", maxsplit=1)[0]
+    assert "workflow_dispatch:" not in real_trigger
+    assert "tags: ['v*']" in real_trigger
+
+    assert "workflow_dispatch:" in workflow
+    assert "push:" not in workflow
+    assert "tags:" not in workflow
+    assert "contents: read" in workflow
+    assert "deployments: write" not in workflow
+    assert "secrets: inherit" not in workflow
+    assert "uses: ./.github/workflows/release-channel.yaml" not in workflow
+    assert "pages deploy" not in workflow
+    assert "gh release create" not in workflow
+    assert "gh release upload" not in workflow
+    assert "just build-kernel" not in workflow
+    assert "just build-rootfs" not in workflow
+    assert "cargo run -p capsem-admin -- manifest generate assets" not in workflow
+    assert "build-assets:" not in workflow
+    for logical_name in ("vmlinuz", "initrd.img", "rootfs.erofs", "obom.cdx.json"):
+        assert f"release-artifacts/{logical_name}" not in workflow
+        assert f"release-artifacts/*{logical_name}" not in workflow
+
+    assert "ASSET_MANIFEST_URL: https://release.capsem.org/assets/stable/manifest.json" in workflow
+    assert "release-artifacts/Capsem-${VERSION}.pkg" in assemble_channel
+    assert "release-artifacts/Capsem_${VERSION}_arm64.deb" in assemble_channel
+    assert "release-artifacts/capsem-sbom.spdx.json" in assemble_channel
+    assert "Record binary release metadata in channel manifest" in assemble_channel
+    assert "assets channel record-binary" in assemble_channel
+    assert "manifest.before.json" in assemble_channel
+    assert "binary dry-run changed VM asset metadata" in assemble_channel
+    assert '"vm_asset_jobs": "not_run"' in assemble_channel
+    assert '"vm_assets_unchanged": True' in assemble_channel
+    assert "Build binary channel preview with existing VM assets" in assemble_channel
+    assert "assets channel build" in assemble_channel
+    assert "assets channel check" in assemble_channel
+    assert "name: binary-channel-dry-run-bundle" in assemble_channel
+    assert "target/binary-channel-dry-run/" in assemble_channel
+    assert "target/release-channel/" in assemble_channel
+
+
 def test_binary_release_summary_names_pkg_and_deb_sbom_coverage() -> None:
     create_release = _workflow_job_block("create-release", "release.yaml")
 
@@ -3000,8 +3048,16 @@ def test_binary_release_verifies_packages_hydrate_vm_assets_from_public_channel(
 
     assert "needs: [deploy-release-channel]" in verify_downloads
     assert 'curl -fsSL "$ASSET_MANIFEST_URL" -o /tmp/verify/manifest.json' in verify_downloads
-    assert 'BASE="${ASSET_MANIFEST_URL%/stable/manifest.json}/releases"' in verify_downloads
-    assert 'url="$BASE/$asset_version/$arch-$name"' in verify_downloads
+    assert "asset_base = m.get('asset_base') or '/assets/releases'" in verify_downloads
+    assert "manifest_origin = f'{manifest.scheme}://{manifest.netloc}'" in verify_downloads
+    assert "if '{asset_version}' in base:" in verify_downloads
+    assert "version_base = base.replace('{asset_version}', asset_version)" in verify_downloads
+    assert "version_base = f'{base}/{asset_version}'" in verify_downloads
+    assert "if version_base.startswith('/'):" in verify_downloads
+    assert "version_base = f'{manifest_origin}{version_base}'" in verify_downloads
+    assert "asset_url(cur, arch, name)" in verify_downloads
+    assert 'BASE="${ASSET_MANIFEST_URL%/stable/manifest.json}/releases"' not in verify_downloads
+    assert 'url="$BASE/$asset_version/$arch-$name"' not in verify_downloads
     assert 'expected_hash="${hash#blake3:}"' in verify_downloads
     assert 'curl -fsSL "$url" -o "$blob"' in verify_downloads
     assert "import blake3" in verify_downloads
@@ -3201,6 +3257,10 @@ def test_ci_docs_describes_three_independent_publication_rails() -> None:
         in docs
     )
     assert (
+        "| `release-binary-staging.yaml` | Manual | Build a deterministic binary-channel dry-run bundle from fake host packages and the live asset manifest, then prove VM asset metadata is unchanged without creating a GitHub release or deploying release.capsem.org |"
+        in docs
+    )
+    assert (
         "| `docs.yaml` | Push to main | Deploy docs.capsem.org on each main merge, then smoke the live docs site |"
         in docs
     )
@@ -3376,6 +3436,14 @@ def test_live_release_activation_order_is_documented() -> None:
             in normalized_lower
         )
         assert "manual VM asset workflow as a dry run" in normalized
+        assert "release-binary-staging.yaml" in normalized
+        assert "binary-channel-dry-run-bundle" in normalized
+        assert "proof.json" in normalized
+        assert (
+            "vm asset metadata was not changed" in normalized_lower
+            or "vm asset metadata did not change" in normalized_lower
+        )
+        assert "do not add `workflow_dispatch` to the real tag-triggered `release.yaml`" in normalized_lower
         assert (
             "run the tag-triggered binary release rail only from an immutable `vx.y.z` tag"
             in normalized_lower
@@ -3394,6 +3462,9 @@ def test_live_release_activation_order_is_documented() -> None:
             "provision the `release.capsem.org` cloudflare pages project and dns"
         ) < normalized.index(
             "manual VM asset workflow as a dry run"
+        )
+        assert normalized.index("release-binary-staging.yaml") < normalized_lower.index(
+            "run the tag-triggered binary release rail only from an immutable `vx.y.z` tag"
         )
 
 

@@ -15,6 +15,7 @@ Capsem uses GitHub Actions for continuous integration and release automation.
 | `release.yaml` | Tag push (`v*`) | Build apps (macOS + Linux), package with the current public asset manifest, create GitHub release, then update release.capsem.org binary metadata |
 | `release-assets.yaml` | Manual | Build VM assets, generate `assets/manifest.json`, and optionally deploy the asset channel |
 | `release-channel-staging.yaml` | Manual | Build a deterministic staging asset channel fixture, deploy it to a Cloudflare Pages preview branch, and validate the same release-channel contract without invoking `build-assets`, `build-app-macos`, or `build-app-linux` |
+| `release-binary-staging.yaml` | Manual | Build a deterministic binary-channel dry-run bundle from fake host packages and the live asset manifest, then prove VM asset metadata is unchanged without creating a GitHub release or deploying release.capsem.org |
 | `docs.yaml` | Push to main | Deploy docs.capsem.org on each main merge, then smoke the live docs site |
 | `site.yaml` | Push to main | Deploy capsem.org on each main merge, then smoke the live marketing site |
 | `release-channel.yaml` | Called by binary or asset release | Deploy release.capsem.org from the generated release-channel site artifact |
@@ -127,14 +128,21 @@ later steps depend on earlier public state being true.
    artifacts. For metadata-only asset release changes, review
    `asset-release-delta` and `asset-channel-preview`; no `asset-release-plan`
    is expected because there are no immutable VM blobs to republish.
-8. Run the tag-triggered binary release rail only from an immutable `vX.Y.Z`
+8. Run `release-binary-staging.yaml` and review the
+   `binary-channel-dry-run-bundle` artifact. It must contain package metadata,
+   `capsem-sbom.spdx.json`, `manifest.before.json`, the updated manifest,
+   `record-binary.json`, `proof.json`, and the release-site preview, while
+   proving VM asset metadata did not change. This is the safe binary dry-run
+   path; do not add `workflow_dispatch` to the real tag-triggered
+   `release.yaml`.
+9. Run the tag-triggered binary release rail only from an immutable `vX.Y.Z`
    tag after confirming the tag does not already exist remotely.
-9. Run the manual VM asset workflow live only after reviewing
+10. Run the manual VM asset workflow live only after reviewing
    `asset-release-plan` when `asset_blobs_changed` is true, or reviewing the
    metadata-only delta and channel preview when only release-channel metadata
    changed; it must publish changed VM blobs, attest them, and deploy
    `release.capsem.org`.
-10. Run installed update smokes for the signed macOS `.pkg`, Linux `.deb`, VM
+11. Run installed update smokes for the signed macOS `.pkg`, Linux `.deb`, VM
    asset refresh, profile update path, and staged cross-surface update state.
 
 ## PR gate compared with `just test`

@@ -773,11 +773,9 @@ jobs:
           set -euo pipefail
           mkdir -p /tmp/verify
           curl -fsSL "$ASSET_MANIFEST_URL" -o /tmp/verify/manifest.json
-          BASE="${ASSET_MANIFEST_URL%/stable/manifest.json}/releases"
           fail=0
           # Iterate every (arch, logical_name, hash) the current asset release declares.
-          while IFS=$'\t' read -r asset_version arch name hash; do
-            url="$BASE/$asset_version/$arch-$name"
+          while IFS=$'\t' read -r asset_version arch name hash url; do
             code=$(curl -sIL -o /dev/null -w "%{http_code}" "$url")
             if [ "$code" != "200" ]; then
               echo "::error::$url -> HTTP $code"
@@ -810,11 +808,28 @@ jobs:
             fi
           done < <(python3 -c "
           import json
+          import os
+          from urllib.parse import urlparse
+
           m = json.load(open('/tmp/verify/manifest.json'))
+          manifest = urlparse(os.environ['ASSET_MANIFEST_URL'])
+          manifest_origin = f'{manifest.scheme}://{manifest.netloc}'
+          asset_base = m.get('asset_base') or '/assets/releases'
+
+          def asset_url(asset_version, arch, name):
+              base = asset_base.rstrip('/')
+              if '{asset_version}' in base:
+                  version_base = base.replace('{asset_version}', asset_version)
+              else:
+                  version_base = f'{base}/{asset_version}'
+              if version_base.startswith('/'):
+                  version_base = f'{manifest_origin}{version_base}'
+              return f'{version_base.rstrip(\"/\")}/{arch}-{name}'
+
           cur = m['assets']['current']
           for arch, files in m['assets']['releases'][cur]['arches'].items():
               for name, meta in files.items():
-                  print(f'{cur}\t{arch}\t{name}\t{meta[\"hash\"]}')
+                  print(f'{cur}\t{arch}\t{name}\t{meta[\"hash\"]}\t{asset_url(cur, arch, name)}')
           ")
           [ "$fail" = 0 ] || { echo '::error::one or more asset URLs are unreachable or hash-mismatched'; exit 1; }
 

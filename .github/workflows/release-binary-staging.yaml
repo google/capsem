@@ -1,0 +1,126 @@
+name: Stage Binary Channel
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Dry-run binary version to record in the staged channel.
+        required: true
+        default: 1.4.9999999999
+      channel:
+        description: Staged binary channel name.
+        required: true
+        default: binary-staging
+
+permissions:
+  contents: read
+
+env:
+  ASSET_MANIFEST_URL: https://release.capsem.org/assets/stable/manifest.json
+
+jobs:
+  assemble-binary-channel:
+    runs-on: ubuntu-latest
+    name: Assemble binary channel dry run
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: release-site/pnpm-lock.yaml
+      - name: Install release site dependencies
+        run: cd release-site && pnpm install --frozen-lockfile
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-channel-binary-staging
+
+      - name: Write deterministic host release artifacts
+        run: |
+          set -euo pipefail
+          VERSION="${{ inputs.version }}"
+          mkdir -p release-artifacts
+          printf 'dry-run pkg for %s\n' "$VERSION" > "release-artifacts/Capsem-${VERSION}.pkg"
+          printf 'dry-run deb for %s\n' "$VERSION" > "release-artifacts/Capsem_${VERSION}_arm64.deb"
+          cat > release-artifacts/capsem-sbom.spdx.json <<'JSON'
+          {"spdxVersion":"SPDX-2.3","name":"capsem-binary-dry-run"}
+          JSON
+          ls -lh release-artifacts/
+
+      - name: Fetch current asset channel manifest
+        run: |
+          mkdir -p target/binary-channel-dry-run
+          curl -fsSL "$ASSET_MANIFEST_URL" -o target/binary-channel-dry-run/manifest.json
+          cp target/binary-channel-dry-run/manifest.json \
+            target/binary-channel-dry-run/manifest.before.json
+
+      - name: Record binary release metadata in channel manifest
+        run: |
+          set -euo pipefail
+          ARTIFACT_ARGS=()
+          for file in release-artifacts/*.pkg release-artifacts/*.deb release-artifacts/capsem-sbom.spdx.json; do
+            [ -f "$file" ] && ARTIFACT_ARGS+=(--artifact "$file")
+          done
+          cargo run -p capsem-admin -- assets channel record-binary \
+            --manifest-path target/binary-channel-dry-run/manifest.json \
+            --version "${{ inputs.version }}" \
+            "${ARTIFACT_ARGS[@]}" \
+            --json | tee target/binary-channel-dry-run/record-binary.json
+
+      - name: Prove VM asset metadata did not change
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path("target/binary-channel-dry-run")
+          before = json.loads((root / "manifest.before.json").read_text())
+          after = json.loads((root / "manifest.json").read_text())
+          if after["assets"] != before["assets"]:
+              raise SystemExit("binary dry-run changed VM asset metadata")
+          proof = {
+              "schema": "capsem.binary_channel_dry_run.v1",
+              "vm_asset_jobs": "not_run",
+              "vm_assets_unchanged": True,
+              "binary_version": after["binaries"]["current"],
+              "asset_version": after["assets"]["current"],
+              "manifest_before": "manifest.before.json",
+              "manifest_after": "manifest.json",
+              "record_binary_report": "record-binary.json",
+          }
+          (root / "proof.json").write_text(json.dumps(proof, indent=2) + "\n")
+          PY
+
+      - name: Build binary channel preview with existing VM assets
+        run: |
+          cargo run -p capsem-admin -- assets channel build \
+            --manifest "file://$PWD/target/binary-channel-dry-run/manifest.json" \
+            --asset-source-base "https://github.com/google/capsem/releases/download/assets-v{asset_version}" \
+            --channel "${{ inputs.channel }}" \
+            --out-dir target/release-channel
+
+      - name: Build release site pages
+        env:
+          CAPSEM_RELEASE_CHANNEL_DIST: ${{ github.workspace }}/target/release-channel
+        run: cd release-site && pnpm run build:channel
+
+      - name: Check binary channel preview
+        run: |
+          cargo run -p capsem-admin -- assets channel check \
+            --channel "${{ inputs.channel }}" \
+            --dist target/release-channel
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: binary-channel-dry-run-bundle
+          path: |
+            release-artifacts/
+            target/binary-channel-dry-run/
+            target/release-channel/

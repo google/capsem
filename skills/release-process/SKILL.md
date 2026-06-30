@@ -187,14 +187,20 @@ later steps depend on earlier public state being true.
    artifacts. For metadata-only asset release changes, review
    `asset-release-delta` and `asset-channel-preview`; no `asset-release-plan`
    is expected because there are no immutable VM blobs to republish.
-8. Run the tag-triggered binary release rail only from an immutable `vX.Y.Z`
+8. Run `.github/workflows/release-binary-staging.yaml` and review the
+   `binary-channel-dry-run-bundle` artifact. It records deterministic fake host
+   package and `capsem-sbom.spdx.json` metadata into a copy of the live asset
+   manifest, builds the release-site preview, and writes `proof.json` showing
+   VM asset metadata was not changed. This is the safe binary dry-run path; do
+   not add `workflow_dispatch` to the real tag-triggered `release.yaml`.
+9. Run the tag-triggered binary release rail only from an immutable `vX.Y.Z`
    tag after confirming the tag does not already exist remotely.
-9. Run the manual VM asset workflow live only after reviewing
+10. Run the manual VM asset workflow live only after reviewing
    `asset-release-plan` when `asset_blobs_changed` is true, or reviewing the
    metadata-only delta and channel preview when only release-channel metadata
    changed; it must publish changed VM blobs, attest them, and deploy
    `release.capsem.org`.
-10. Run installed update smokes for the signed macOS `.pkg`, Linux `.deb`, VM
+11. Run installed update smokes for the signed macOS `.pkg`, Linux `.deb`, VM
    asset refresh, profile update path, and staged cross-surface update state.
 
 ## Cutting a release
