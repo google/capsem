@@ -369,6 +369,10 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
     assert "workflow_call:" in workflow
     assert "workflow_dispatch:" not in workflow
     assert "dist_artifact:" in workflow
+    assert "deploy_branch:" in workflow
+    assert "release_site_url:" in workflow
+    assert "default: main" in workflow
+    assert "default: https://release.capsem.org" in workflow
     assert "secrets:" in workflow
     assert "CLOUDFLARE_ACCOUNT_ID:" in workflow
     assert "CLOUDFLARE_API_TOKEN:" in workflow
@@ -396,12 +400,12 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
         "cloudflare/wrangler-action@v3"
     )
     assert (
-        "pages deploy target/release-channel/ --project-name=release --branch=main"
+        "pages deploy target/release-channel/ --project-name=release --branch=${{ inputs.deploy_branch || 'main' }}"
         in workflow
     )
     assert "assets/stable/manifest.json" not in workflow
     assert "Smoke public asset channel" in workflow
-    assert "RELEASE_SITE_URL: https://release.capsem.org" in workflow
+    assert "RELEASE_SITE_URL: ${{ inputs.release_site_url || 'https://release.capsem.org' }}" in workflow
     assert 'curl -fsSL "$RELEASE_SITE_URL/" -o /tmp/release-index.html' in workflow
     assert 'curl -fsSL "$RELEASE_SITE_URL/health.json" -o /tmp/release-health.json' in workflow
     assert (
@@ -519,6 +523,41 @@ def test_release_channel_deploy_runs_python_contract_validator_after_cloudflare_
     assert workflow.index("Validate deployed asset channel content") < workflow.index(
         "Smoke public asset channel"
     )
+
+
+def test_release_channel_staging_workflow_exercises_reusable_deploy_without_release_builds() -> None:
+    workflow = _workflow_text("release-channel-staging.yaml")
+    reusable = _workflow_text("release-channel.yaml")
+    docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
+    release_skill = (PROJECT_ROOT / "skills/release-process/SKILL.md").read_text()
+    asset_skill = (PROJECT_ROOT / "skills/asset-pipeline/SKILL.md").read_text()
+
+    assert "workflow_dispatch:" in workflow
+    assert "default: staging" in workflow
+    assert "default: https://staging.release-eq7.pages.dev" in workflow
+    assert "build-assets:" not in workflow
+    assert "build-app-macos:" not in workflow
+    assert "build-app-linux:" not in workflow
+    assert "just build-kernel" not in workflow
+    assert "just build-rootfs" not in workflow
+    assert "scripts/write-release-site-ci-fixture.py" in workflow
+    assert "--assets-dir target/release-channel-staging-fixture/assets" in workflow
+    assert "--asset-source-base" not in workflow
+    assert "pnpm run build:channel" in workflow
+    assert "cargo run -p capsem-admin -- assets channel check" in workflow
+    assert "name: asset-channel-staging-preview" in workflow
+    assert "uses: ./.github/workflows/release-channel.yaml" in workflow
+    assert "dist_artifact: asset-channel-staging-preview" in workflow
+    assert "deploy_branch: ${{ inputs.deploy_branch }}" in workflow
+    assert "release_site_url: ${{ inputs.release_site_url }}" in workflow
+    assert (
+        "pages deploy target/release-channel/ --project-name=release "
+        "--branch=${{ inputs.deploy_branch || 'main' }}"
+    ) in reusable
+
+    for text in (docs, release_skill, asset_skill):
+        assert "release-channel-staging.yaml" in text
+        assert "without invoking `build-assets`" in text or "without invoking VM asset builds" in text
 
 
 def test_release_site_contract_script_fails_on_content_drift(capsys) -> None:
@@ -3143,6 +3182,10 @@ def test_ci_docs_describes_three_independent_publication_rails() -> None:
     )
     assert (
         "| `release-assets.yaml` | Manual | Build VM assets, generate `assets/manifest.json`, and optionally deploy the asset channel |"
+        in docs
+    )
+    assert (
+        "| `release-channel-staging.yaml` | Manual | Build a deterministic staging asset channel fixture, deploy it to a Cloudflare Pages preview branch, and validate the same release-channel contract without invoking `build-assets`, `build-app-macos`, or `build-app-linux` |"
         in docs
     )
     assert (

@@ -177,19 +177,24 @@ later steps depend on earlier public state being true.
    after unpublished commits, remote fail-closed `pr-gate` shape, branch
    protection, `release.capsem.org` DNS, public cache headers, and
    release-channel content all pass.
-6. Run the manual VM asset workflow as a dry run and review the
+6. Run `.github/workflows/release-channel-staging.yaml` against the Cloudflare
+   Pages staging branch. It builds the deterministic release-channel fixture,
+   deploys the generated dist through `.github/workflows/release-channel.yaml`
+   with a non-main branch and preview URL, and proves the release-channel deploy
+   path without invoking VM asset builds or binary package builds.
+7. Run the manual VM asset workflow as a dry run and review the
    `asset-release-plan`, `asset-release-delta`, and `asset-channel-preview`
    artifacts. For metadata-only asset release changes, review
    `asset-release-delta` and `asset-channel-preview`; no `asset-release-plan`
    is expected because there are no immutable VM blobs to republish.
-7. Run the tag-triggered binary release rail only from an immutable `vX.Y.Z`
+8. Run the tag-triggered binary release rail only from an immutable `vX.Y.Z`
    tag after confirming the tag does not already exist remotely.
-8. Run the manual VM asset workflow live only after reviewing
+9. Run the manual VM asset workflow live only after reviewing
    `asset-release-plan` when `asset_blobs_changed` is true, or reviewing the
    metadata-only delta and channel preview when only release-channel metadata
    changed; it must publish changed VM blobs, attest them, and deploy
    `release.capsem.org`.
-9. Run installed update smokes for the signed macOS `.pkg`, Linux `.deb`, VM
+10. Run installed update smokes for the signed macOS `.pkg`, Linux `.deb`, VM
    asset refresh, profile update path, and staged cross-surface update state.
 
 ## Cutting a release

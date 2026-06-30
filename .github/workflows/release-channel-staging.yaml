@@ -1,0 +1,82 @@
+name: Stage Asset Channel
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Staging asset channel name.
+        required: true
+        default: staging
+      deploy_branch:
+        description: Cloudflare Pages preview branch to publish.
+        required: true
+        default: staging
+      release_site_url:
+        description: Cloudflare Pages preview URL for the deploy branch.
+        required: true
+        default: https://staging.release-eq7.pages.dev
+
+permissions:
+  contents: read
+  deployments: write
+
+jobs:
+  assemble-staging-channel:
+    runs-on: ubuntu-latest
+    name: Assemble staging asset channel
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: release-site/pnpm-lock.yaml
+      - name: Install release site dependencies
+        run: cd release-site && pnpm install --frozen-lockfile
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-channel-staging
+
+      - name: Write staging release channel fixture
+        run: python3 scripts/write-release-site-ci-fixture.py target/release-channel-staging-fixture
+
+      - name: Generate staging release channel data
+        run: |
+          cargo run -p capsem-admin -- assets channel build \
+            --manifest "file://$PWD/target/release-channel-staging-fixture/assets/manifest.json" \
+            --assets-dir target/release-channel-staging-fixture/assets \
+            --channel "${{ inputs.channel }}" \
+            --out-dir target/release-channel
+
+      - name: Build release site pages
+        env:
+          CAPSEM_RELEASE_CHANNEL_DIST: ${{ github.workspace }}/target/release-channel
+        run: cd release-site && pnpm run build:channel
+
+      - name: Check staging release channel
+        run: |
+          cargo run -p capsem-admin -- assets channel check \
+            --channel "${{ inputs.channel }}" \
+            --dist target/release-channel
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: asset-channel-staging-preview
+          path: target/release-channel/
+
+  deploy-staging-channel:
+    needs: assemble-staging-channel
+    uses: ./.github/workflows/release-channel.yaml
+    with:
+      channel: ${{ inputs.channel }}
+      dist_artifact: asset-channel-staging-preview
+      deploy_branch: ${{ inputs.deploy_branch }}
+      release_site_url: ${{ inputs.release_site_url }}
+    secrets: inherit

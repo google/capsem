@@ -10,6 +10,14 @@ on:
       dist_artifact:
         type: string
         required: true
+      deploy_branch:
+        type: string
+        required: false
+        default: main
+      release_site_url:
+        type: string
+        required: false
+        default: https://release.capsem.org
     secrets:
       CLOUDFLARE_ACCOUNT_ID:
         required: true
@@ -89,11 +97,11 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy target/release-channel/ --project-name=release --branch=main
+          command: pages deploy target/release-channel/ --project-name=release --branch=${{ inputs.deploy_branch || 'main' }}
 
       - name: Validate deployed asset channel content
         env:
-          RELEASE_SITE_URL: https://release.capsem.org
+          RELEASE_SITE_URL: ${{ inputs.release_site_url || 'https://release.capsem.org' }}
         run: |
           uv run python scripts/check-release-site-contract.py \
             --release-site "$RELEASE_SITE_URL" \
@@ -103,7 +111,7 @@ jobs:
 
       - name: Smoke public asset channel
         env:
-          RELEASE_SITE_URL: https://release.capsem.org
+          RELEASE_SITE_URL: ${{ inputs.release_site_url || 'https://release.capsem.org' }}
         run: |
           for attempt in 1 2 3 4 5 6; do
             echo "Checking $RELEASE_SITE_URL (attempt $attempt)..."
