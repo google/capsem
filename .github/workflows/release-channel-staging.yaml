@@ -45,7 +45,10 @@ jobs:
           key: release-channel-staging
 
       - name: Write staging release channel fixture
-        run: python3 scripts/write-release-site-ci-fixture.py target/release-channel-staging-fixture
+        run: |
+          python3 scripts/write-release-site-ci-fixture.py \
+            --without-binary-files \
+            target/release-channel-staging-fixture
 
       - name: Generate staging release channel data
         run: |

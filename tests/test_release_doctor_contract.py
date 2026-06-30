@@ -541,6 +541,7 @@ def test_release_channel_staging_workflow_exercises_reusable_deploy_without_rele
     assert "just build-kernel" not in workflow
     assert "just build-rootfs" not in workflow
     assert "scripts/write-release-site-ci-fixture.py" in workflow
+    assert "--without-binary-files" in workflow
     assert "--assets-dir target/release-channel-staging-fixture/assets" in workflow
     assert "--asset-source-base" not in workflow
     assert "pnpm run build:channel" in workflow

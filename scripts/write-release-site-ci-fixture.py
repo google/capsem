@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import sys
+import argparse
 from pathlib import Path
 
 
@@ -59,7 +60,7 @@ FILES: dict[str, dict[str, tuple[bytes, str]]] = {
 }
 
 
-def write_fixture(root: Path) -> None:
+def write_fixture(root: Path, *, include_binary_files: bool = True) -> None:
     assets_dir = root / "assets"
     arches: dict[str, dict[str, dict[str, object]]] = {}
     for arch, files in FILES.items():
@@ -69,6 +70,25 @@ def write_fixture(root: Path) -> None:
         for name, (contents, digest) in files.items():
             (arch_dir / name).write_bytes(contents)
             arches[arch][name] = {"hash": digest, "size": len(contents)}
+
+    binary_release = {
+        "date": DATE,
+        "deprecated": False,
+        "min_assets": ASSET_VERSION,
+    }
+    if include_binary_files:
+        binary_release["files"] = [
+            {
+                "name": f"Capsem-{BINARY_VERSION}-macos-arm64.pkg",
+                "size": 123,
+                "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            },
+            {
+                "name": "capsem-sbom.spdx.json",
+                "size": 456,
+                "sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+            },
+        ]
 
     manifest = {
         "format": 2,
@@ -87,23 +107,7 @@ def write_fixture(root: Path) -> None:
         "binaries": {
             "current": BINARY_VERSION,
             "releases": {
-                BINARY_VERSION: {
-                    "date": DATE,
-                    "deprecated": False,
-                    "min_assets": ASSET_VERSION,
-                    "files": [
-                        {
-                            "name": f"Capsem-{BINARY_VERSION}-macos-arm64.pkg",
-                            "size": 123,
-                            "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-                        },
-                        {
-                            "name": "capsem-sbom.spdx.json",
-                            "size": 456,
-                            "sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
-                        },
-                    ],
-                }
+                BINARY_VERSION: binary_release
             },
         },
     }
@@ -111,10 +115,15 @@ def write_fixture(root: Path) -> None:
 
 
 def main() -> int:
-    if len(sys.argv) != 2:
-        print("usage: write-release-site-ci-fixture.py <output-root>", file=sys.stderr)
-        return 2
-    write_fixture(Path(sys.argv[1]))
+    parser = argparse.ArgumentParser()
+    parser.add_argument("output_root")
+    parser.add_argument(
+        "--without-binary-files",
+        action="store_true",
+        help="Omit host binary package/SBOM file metadata for bootstrap channel validation.",
+    )
+    args = parser.parse_args()
+    write_fixture(Path(args.output_root), include_binary_files=not args.without_binary_files)
     return 0
 
 
