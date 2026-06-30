@@ -500,7 +500,11 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
     assert "health current asset release date missing" in workflow
     assert "index page missing current asset release date" in workflow
     assert "def fetch_headers" in workflow
-    assert 'urllib.request.Request(url, method="HEAD")' in workflow
+    assert 'RELEASE_VALIDATOR_USER_AGENT = "CapsemReleaseValidator/1.0"' in workflow
+    assert "def release_site_request" in workflow
+    assert "headers={\"User-Agent\": RELEASE_VALIDATOR_USER_AGENT}" in workflow
+    assert "urllib.request.urlopen(release_site_request(url), timeout=20)" in workflow
+    assert 'release_site_request(url, method="HEAD")' in workflow
     assert "def check_cache_header" in workflow
     assert 'check_cache_header("release index", f"{release_site_url}/", ("no-cache", "must-revalidate"))' in workflow
     assert "Cache-Control must contain {directive}" in workflow

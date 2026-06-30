@@ -133,13 +133,21 @@ jobs:
           health = json.load(open("/tmp/release-health.json", encoding="utf-8"))
           manifest = json.load(open("/tmp/release-manifest.json", encoding="utf-8"))
           index = open("/tmp/release-index.html", encoding="utf-8").read()
+          RELEASE_VALIDATOR_USER_AGENT = "CapsemReleaseValidator/1.0"
+
+          def release_site_request(url, *, method=None):
+              return urllib.request.Request(
+                  url,
+                  method=method,
+                  headers={"User-Agent": RELEASE_VALIDATOR_USER_AGENT},
+              )
 
           def fetch_bytes(url):
-              with urllib.request.urlopen(url, timeout=20) as response:
+              with urllib.request.urlopen(release_site_request(url), timeout=20) as response:
                   return response.read()
 
           def fetch_headers(url):
-              request = urllib.request.Request(url, method="HEAD")
+              request = release_site_request(url, method="HEAD")
               with urllib.request.urlopen(request, timeout=20) as response:
                   return {key.lower(): value for key, value in response.headers.items()}
 
