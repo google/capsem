@@ -51,7 +51,11 @@ jobs:
           test -f "$DIST_DIR/health.json"
           test -f "$DIST_DIR/_headers"
           test -f "$DIST_DIR/assets/$CHANNEL/manifest.json"
-          test -d "$DIST_DIR/assets/releases"
+          oversized="$(find "$DIST_DIR" -type f -size +25M -print -quit)"
+          if [ -n "$oversized" ]; then
+            echo "::error::release.capsem.org Pages dist contains oversized file: $oversized"
+            exit 1
+          fi
 
       - name: Check asset channel
         run: |
@@ -144,6 +148,20 @@ jobs:
               if parsed.scheme in ("http", "https"):
                   return parsed.path
               return url
+
+          def valid_asset_base(asset_base):
+              if not isinstance(asset_base, str) or not asset_base:
+                  return False
+              parsed = urllib.parse.urlparse(asset_base)
+              return asset_base.startswith("/") or parsed.scheme in ("http", "https")
+
+          def asset_url_from_base(asset_base, asset_version, arch, logical_name):
+              asset_base = asset_base.rstrip("/")
+              if "{asset_version}" in asset_base:
+                  version_base = asset_base.replace("{asset_version}", asset_version)
+              else:
+                  version_base = f"{asset_base}/{asset_version}"
+              return f"{version_base.rstrip('/')}/{arch}-{logical_name}"
 
           def check_cache_header(label, url, directives):
               try:
@@ -238,7 +256,9 @@ jobs:
                   },
               }
 
-          def current_asset_file_refs(asset_version, release):
+          def current_asset_file_refs(asset_base, asset_version, release):
+              if not valid_asset_base(asset_base):
+                  return []
               if not isinstance(asset_version, str):
                   return []
               if not isinstance(release, dict):
@@ -258,7 +278,7 @@ jobs:
                       if not isinstance(logical_name, str) or not isinstance(entry, dict):
                           failures.append("manifest current asset file entry malformed")
                           continue
-                      url = f"/assets/releases/{asset_version}/{arch}-{logical_name}"
+                      url = asset_url_from_base(asset_base, asset_version, arch, logical_name)
                       hash_value = entry.get("hash")
                       size = entry.get("size")
                       if not isinstance(hash_value, str):
@@ -456,7 +476,8 @@ jobs:
               failures.append("health health URL mismatch")
           if health.get("urls", {}).get("manifest") != expected_manifest:
               failures.append("health manifest URL mismatch")
-          if health.get("urls", {}).get("asset_base") != "/assets/releases":
+          asset_base = health.get("urls", {}).get("asset_base")
+          if not valid_asset_base(asset_base):
               failures.append("health asset base mismatch")
           if health.get("urls", {}).get("profile_catalog") != health.get("profiles", {}).get("source"):
               failures.append("health profile catalog URL mismatch")
@@ -524,7 +545,7 @@ jobs:
                   failures.append("health asset update source mismatch")
               if updates.get("assets", {}).get("manifest") != expected_manifest:
                   failures.append("health asset update manifest mismatch")
-              if updates.get("assets", {}).get("asset_base") != "/assets/releases":
+              if updates.get("assets", {}).get("asset_base") != asset_base:
                   failures.append("health asset update base mismatch")
               if updates.get("assets", {}).get("compatibility") != health.get("assets", {}).get("compatibility"):
                   failures.append("health asset update compatibility mismatch")
@@ -714,8 +735,11 @@ jobs:
               failures.append("health current assets mismatch manifest")
           if manifest.get("binaries", {}).get("current") != current_binary:
               failures.append("health current binary mismatch manifest")
-          expected_asset_files = current_asset_file_refs(current_assets, current_manifest_asset_release)
+          expected_asset_files = current_asset_file_refs(asset_base, current_assets, current_manifest_asset_release)
           check_health_asset_files(health.get("assets", {}).get("files"), expected_asset_files)
+          for item in health.get("assets", {}).get("files", []):
+              if isinstance(item, dict):
+                  check_evidence_artifact(item, "hash", "blake3", "VM asset file")
           expected_binary_files = current_binary_file_refs(current_binary, current_manifest_binary_release)
           check_host_binary_files(health.get("binary", {}).get("files"), expected_binary_files, "health")
           check_host_binary_files(
@@ -782,7 +806,11 @@ jobs:
               if not isinstance(item, dict):
                   continue
               url = item.get("url")
-              if isinstance(url, str) and release_url_path(url).startswith("/assets/releases/"):
+              if (
+                  isinstance(url, str)
+                  and not urllib.parse.urlparse(url).scheme
+                  and release_url_path(url).startswith("/assets/releases/")
+              ):
                   check_cache_header(
                       "immutable asset",
                       resolve_release_url(url),

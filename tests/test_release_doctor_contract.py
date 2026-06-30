@@ -360,7 +360,8 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
     assert 'test -f "$DIST_DIR/health.json"' in workflow
     assert 'test -f "$DIST_DIR/_headers"' in workflow
     assert 'test -f "$DIST_DIR/assets/$CHANNEL/manifest.json"' in workflow
-    assert 'test -d "$DIST_DIR/assets/releases"' in workflow
+    assert 'find "$DIST_DIR" -type f -size +25M' in workflow
+    assert "Pages dist contains oversized file" in workflow
     assert "cargo run -p capsem-admin -- assets channel build" not in workflow
     assert "Require Cloudflare credentials" in workflow
     assert "CLOUDFLARE_ACCOUNT_ID secret is required to deploy release.capsem.org" in workflow
@@ -395,7 +396,7 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
     assert "health index URL mismatch" in workflow
     assert "health health URL mismatch" in workflow
     assert 'health.get("urls", {}).get("manifest") != expected_manifest' in workflow
-    assert 'health.get("urls", {}).get("asset_base") != "/assets/releases"' in workflow
+    assert "valid_asset_base(asset_base)" in workflow
     assert "health binary version mismatch" in workflow
     assert "health asset version mismatch" in workflow
     assert "expected_asset_compatibility" in workflow
@@ -843,11 +844,14 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     assert "generate_checksums(Path('unified-assets')" not in workflow
     assert 'gh release upload ${{ github.ref_name }} "release-artifacts/$arch' not in workflow
     assert "release-artifacts/manifest.json" not in workflow
-    assert "assets-v" not in workflow
+    assert "assets-v{asset_version}" in workflow
     assert '--manifest "$ASSET_MANIFEST_URL"' in workflow
     assert "release.capsem.org" in workflow
     assert "assets channel record-binary" in workflow
-    assert '--asset-source-base "https://release.capsem.org/assets/releases"' in workflow
+    assert (
+        '--asset-source-base "https://github.com/google/capsem/releases/download/assets-v{asset_version}"'
+        in workflow
+    )
     assert "uses: ./.github/workflows/release-channel.yaml" in workflow
     assert "dist_artifact: binary-channel-preview" in workflow
     assert "needs: [deploy-release-channel]" in workflow
@@ -3580,6 +3584,46 @@ def test_remote_release_readiness_checker_verifies_public_evidence_artifacts() -
     assert "verifies their advertised hashes and sizes" in docs_text
     assert "validates their SPDX 2.3 or CycloneDX document shape" in docs_text
     assert "validates attestation subjects and predicate URLs" in docs_text
+
+
+def test_remote_release_readiness_checker_verifies_vm_asset_file_content() -> None:
+    module = _readiness_checker_module()
+    script = (PROJECT_ROOT / "scripts/check-remote-release-readiness.py").read_text()
+    workflow = _workflow_text("release-channel.yaml")
+    rootfs_url = (
+        "https://github.com/google/capsem/releases/download/"
+        "assets-v2030.0101.1/arm64-rootfs.erofs"
+    )
+    rootfs_bytes = b"rootfs-content"
+
+    module.fetch_bytes = lambda url: module.FetchBytes(
+        rootfs_bytes if url == rootfs_url else b"", None
+    )
+    item = {
+        "arch": "arm64",
+        "logical_name": "rootfs.erofs",
+        "url": rootfs_url,
+        "hash": module.blake3.blake3(rootfs_bytes).hexdigest(),
+        "size": len(rootfs_bytes),
+    }
+
+    assert (
+        module.fetch_and_verify_evidence_artifact(
+            "https://release.capsem.org", item, "blake3", "VM asset file"
+        )
+        == []
+    )
+
+    item["hash"] = "0" * 64
+    assert (
+        f"VM asset file {rootfs_url} blake3 mismatch"
+        in module.fetch_and_verify_evidence_artifact(
+            "https://release.capsem.org", item, "blake3", "VM asset file"
+        )
+    )
+    assert 'fetch_and_verify_evidence_artifact(' in script
+    assert '"VM asset file"' in script
+    assert 'check_evidence_artifact(item, "hash", "blake3", "VM asset file")' in workflow
 
 
 def test_remote_release_readiness_rejects_evidence_content_drift() -> None:

@@ -708,7 +708,7 @@ jobs:
         run: |
           cargo run -p capsem-admin -- assets channel build \
             --manifest "file://$PWD/target/binary-channel/manifest.json" \
-            --asset-source-base "https://release.capsem.org/assets/releases" \
+            --asset-source-base "https://github.com/google/capsem/releases/download/assets-v{asset_version}" \
             --channel stable \
             --out-dir target/release-channel
 

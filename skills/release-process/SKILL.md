@@ -36,11 +36,15 @@ Deprecated asset releases stay auditable in the channel but runtime resolution
 and `capsem update --assets` skip them for new sessions/downloads.
 Do not add a separate release-channel source directory or hand-authored channel
 manifest. VM asset releases must deploy `release.capsem.org` after producing the
-asset manifest/evidence. Binary releases remain tag-triggered, update only the
-binary release metadata/SBOM/attestation entries in the channel manifest, mirror
-already-published VM blobs into the generated dist, include the immutable
-profile catalog artifact under `profiles/releases/<revision>/catalog.json`, and
-deploy the channel without rebuilding VM assets.
+asset manifest/evidence. The public contract is `release.capsem.org`; the large
+immutable VM blobs may live in GitHub Releases or another blob store, but the
+channel manifest must carry the `asset_base` URL template and every public
+index/health/profile reference must resolve through that base. Binary releases
+remain tag-triggered, update only the binary release metadata/SBOM/attestation
+entries in the channel manifest, preserve already-published VM blob URLs instead
+of copying VM blobs into the Pages dist, include the immutable profile catalog
+artifact under `profiles/releases/<revision>/catalog.json`, and deploy the
+channel without rebuilding VM assets.
 
 The manual VM asset release entrypoint is `.github/workflows/release-assets.yaml`.
 For `dry_run=false`, it first verifies that the configured
@@ -50,8 +54,11 @@ immutable GitHub asset publication, or provenance attestation. It builds assets,
 generates `assets/manifest.json`, builds
 `target/release-channel/`, publishes changed VM blobs to an immutable GitHub
 Release tagged `assets-v<asset-version>` with arch-prefixed `vmlinuz`,
-`initrd.img`, `rootfs.erofs`, and `obom.cdx.json` artifacts, uploads the full
-generated site as the `asset-channel-preview` artifact, and calls
+`initrd.img`, `rootfs.erofs`, and `obom.cdx.json` artifacts, writes the channel
+manifest with `asset_base:
+https://github.com/google/capsem/releases/download/assets-v{asset_version}`,
+uploads the generated release site without VM blobs as the
+`asset-channel-preview` artifact, and calls
 `.github/workflows/release-channel.yaml` to deploy that generated site when not
 running in dry-run mode. Before the asset delta check and channel build, it
 preserves the live channel's `binaries` metadata in the generated asset

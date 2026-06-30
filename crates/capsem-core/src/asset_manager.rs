@@ -138,6 +138,8 @@ pub struct BinariesSection {
 pub struct ManifestV2 {
     pub format: u32,
     pub refresh_policy: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asset_base: Option<String>,
     pub assets: AssetsSection,
     pub binaries: BinariesSection,
 }
@@ -469,8 +471,11 @@ pub fn asset_release_base_url_from_manifest_origin(assets_dir: &Path) -> Result<
     Ok(asset_release_base_url_from_manifest_url(source))
 }
 
-fn remote_asset_release_base_url(assets_dir: &Path) -> Result<String> {
-    let asset_base_url = asset_release_base_url_from_manifest_origin(assets_dir)?
+fn remote_asset_release_base_url(manifest: &ManifestV2, assets_dir: &Path) -> Result<String> {
+    let asset_base_url = manifest
+        .asset_base
+        .clone()
+        .or(asset_release_base_url_from_manifest_origin(assets_dir)?)
         .unwrap_or_else(asset_release_base_url);
     let parsed = reqwest::Url::parse(&asset_base_url).map_err(|_| {
         anyhow::anyhow!(
@@ -502,10 +507,15 @@ pub fn asset_download_url_with_base(
     arch: &str,
     logical_name: &str,
 ) -> String {
+    let asset_base_url = asset_base_url.trim_end_matches('/');
+    let version_base = if asset_base_url.contains("{asset_version}") {
+        asset_base_url.replace("{asset_version}", asset_version)
+    } else {
+        format!("{asset_base_url}/{asset_version}")
+    };
     format!(
-        "{}/{}/{}-{}",
-        asset_base_url.trim_end_matches('/'),
-        asset_version,
+        "{}/{}-{}",
+        version_base.trim_end_matches('/'),
         arch,
         logical_name
     )
@@ -649,7 +659,7 @@ where
         .get(arch)
         .with_context(|| format!("arch {arch} not found in asset release {asset_version}"))?;
 
-    let asset_base_url = remote_asset_release_base_url(base_dir)?;
+    let asset_base_url = remote_asset_release_base_url(manifest, base_dir)?;
     let arch_dir = asset_storage_dir(base_dir, arch);
     std::fs::create_dir_all(&arch_dir)
         .with_context(|| format!("cannot create {}", arch_dir.display()))?;
@@ -1565,6 +1575,15 @@ mod tests {
             !url.contains("1.0."),
             "binary version leaked into asset URL: {url}"
         );
+        assert_eq!(
+            asset_download_url_with_base(
+                "https://github.com/google/capsem/releases/download/assets-v{asset_version}",
+                "2026.0627.1",
+                "arm64",
+                "rootfs.erofs",
+            ),
+            "https://github.com/google/capsem/releases/download/assets-v2026.0627.1/arm64-rootfs.erofs",
+        );
     }
 
     #[test]
@@ -1613,6 +1632,7 @@ mod tests {
         let manifest = ManifestV2 {
             format: 2,
             refresh_policy: "24h".to_string(),
+            asset_base: None,
             assets: AssetsSection {
                 current: "2030.0101.1".to_string(),
                 releases: [(

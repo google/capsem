@@ -155,8 +155,10 @@ jobs:
       - name: Build asset channel preview
         if: ${{ steps.asset-delta.outputs.changed == 'true' }}
         run: |
+          ASSET_BASE='https://github.com/google/capsem/releases/download/assets-v{asset_version}'
           cargo run -p capsem-admin -- assets channel build \
             --manifest "file://$PWD/assets/manifest.json" \
+            --asset-source-base "$ASSET_BASE" \
             --channel "$CHANNEL" \
             --out-dir target/release-channel
 

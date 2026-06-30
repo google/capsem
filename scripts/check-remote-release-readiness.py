@@ -289,7 +289,8 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
         failures.append("health health URL mismatch")
     if health_urls.get("manifest") != manifest_path:
         failures.append("health manifest URL mismatch")
-    if health_urls.get("asset_base") != "/assets/releases":
+    asset_base = health_urls.get("asset_base")
+    if not valid_asset_base(asset_base):
         failures.append("health asset base mismatch")
     if manifest_data.get("format") != 2:
         failures.append("manifest format mismatch")
@@ -431,7 +432,7 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
             failures.append("health asset update source mismatch")
         if health_update_assets.get("manifest") != manifest_path:
             failures.append("health asset update manifest mismatch")
-        if health_update_assets.get("asset_base") != "/assets/releases":
+        if health_update_assets.get("asset_base") != asset_base:
             failures.append("health asset update base mismatch")
         if health_update_assets.get("compatibility") != health_assets.get("compatibility"):
             failures.append("health asset update compatibility mismatch")
@@ -457,6 +458,7 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
     if manifest_binaries.get("current") != current_binary:
         failures.append("current binary mismatch between health and manifest")
     expected_asset_files = current_asset_file_refs(
+        asset_base,
         current_assets,
         current_manifest_asset_release,
         failures,
@@ -467,6 +469,15 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
             expected_asset_files,
         )
     )
+    asset_files = health_assets.get("files")
+    if isinstance(asset_files, list):
+        for item in asset_files:
+            if isinstance(item, dict):
+                failures.extend(
+                    fetch_and_verify_evidence_artifact(
+                        site, item, "blake3", "VM asset file"
+                    )
+                )
     expected_binary_files = current_binary_file_refs(
         current_binary,
         current_manifest_binary_release,
@@ -756,10 +767,13 @@ def require_list(root: Any, key: str, failures: list[str]) -> list[Any]:
 
 
 def current_asset_file_refs(
+    asset_base: Any,
     asset_version: Any,
     release: Any,
     failures: list[str],
 ) -> list[dict[str, Any]]:
+    if not valid_asset_base(asset_base):
+        return []
     if not isinstance(asset_version, str):
         return []
     if not isinstance(release, dict):
@@ -779,7 +793,7 @@ def current_asset_file_refs(
             if not isinstance(logical_name, str) or not isinstance(entry, dict):
                 failures.append("manifest current asset file entry malformed")
                 continue
-            url = f"/assets/releases/{asset_version}/{arch}-{logical_name}"
+            url = asset_url_from_base(asset_base, asset_version, arch, logical_name)
             hash_value = entry.get("hash")
             size = entry.get("size")
             if not isinstance(hash_value, str):
@@ -1088,7 +1102,11 @@ def check_release_cache_headers(site: str, channel: str, health: dict[str, Any])
             if not isinstance(item, dict):
                 continue
             url = item.get("url")
-            if isinstance(url, str) and release_url_path(url).startswith("/assets/releases/"):
+            if (
+                isinstance(url, str)
+                and not urlparse(url).scheme
+                and release_url_path(url).startswith("/assets/releases/")
+            ):
                 checks.append(
                     (
                         "immutable asset",
@@ -1139,6 +1157,22 @@ def resolve_release_url(site: str, url: str) -> str:
     if url.startswith("/"):
         return f"{site.rstrip('/')}{url}"
     raise ValueError("evidence URL must be absolute or release-site relative")
+
+
+def valid_asset_base(asset_base: Any) -> bool:
+    if not isinstance(asset_base, str) or not asset_base:
+        return False
+    parsed = urlparse(asset_base)
+    return asset_base.startswith("/") or parsed.scheme in {"http", "https"}
+
+
+def asset_url_from_base(asset_base: str, asset_version: str, arch: str, logical_name: str) -> str:
+    asset_base = asset_base.rstrip("/")
+    if "{asset_version}" in asset_base:
+        version_base = asset_base.replace("{asset_version}", asset_version)
+    else:
+        version_base = f"{asset_base}/{asset_version}"
+    return f"{version_base.rstrip('/')}/{arch}-{logical_name}"
 
 
 def classic_protection_requires_pr_gate(data: Any) -> bool:

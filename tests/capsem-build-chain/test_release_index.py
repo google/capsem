@@ -478,6 +478,10 @@ def test_asset_release_index_workflow_deploys_generated_preview_only_after_asset
     assert "scripts/check-asset-release-delta.py" in assemble_channel
     assert "cargo run -p capsem-admin -- assets channel build" in assemble_channel
     assert '--manifest "file://$PWD/assets/manifest.json"' in assemble_channel
+    assert (
+        "--asset-source-base \"$ASSET_BASE\"" in assemble_channel
+        and "assets-v{asset_version}" in assemble_channel
+    )
     assert '--out-dir target/release-channel' in assemble_channel
     assert "cargo run -p capsem-admin -- assets channel check" in assemble_channel
     assert "name: asset-channel-preview" in assemble_channel
@@ -1331,17 +1335,12 @@ def test_binary_release_profile_catalog_index_builds_release_site_without_rebuil
 ) -> None:
     manifest_path = _write_release_manifest(tmp_path)
     profiles_dir = _write_profile_catalog(tmp_path)
-    source_base = tmp_path / "published-assets" / "releases" / "2030.0101.1"
-    source_base.mkdir(parents=True)
-    for logical in ("vmlinuz", "initrd.img", "rootfs.erofs", "obom.cdx.json"):
-        (source_base / f"arm64-{logical}").write_bytes(
-            (tmp_path / "assets" / "arm64" / logical).read_bytes()
-        )
     # A tag release runner must not need local VM build outputs.
     for local_asset in (tmp_path / "assets" / "arm64").iterdir():
         local_asset.unlink()
 
     dist = tmp_path / "target" / "release-channel"
+    asset_base = "https://github.com/google/capsem/releases/download/assets-v{asset_version}"
     _run_admin(
         "assets",
         "channel",
@@ -1351,7 +1350,7 @@ def test_binary_release_profile_catalog_index_builds_release_site_without_rebuil
         "--assets-dir",
         str(tmp_path / "assets"),
         "--asset-source-base",
-        f"file://{tmp_path / 'published-assets' / 'releases'}",
+        asset_base,
         "--profiles-dir",
         str(profiles_dir),
         "--channel",
@@ -1365,6 +1364,16 @@ def test_binary_release_profile_catalog_index_builds_release_site_without_rebuil
         "binary": "1.4.1234567890",
         "assets": "2030.0101.1",
     }
+    assert health["urls"]["asset_base"] == asset_base
+    rootfs_url = (
+        "https://github.com/google/capsem/releases/download/"
+        "assets-v2030.0101.1/arm64-rootfs.erofs"
+    )
+    assert any(file["url"] == rootfs_url for file in health["assets"]["files"])
+    channel_manifest = json.loads(
+        (dist / "assets" / "stable" / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert channel_manifest["asset_base"] == asset_base
     assert health["evidence"]["host_binary_files"]
     assert health["evidence"]["host_sboms"]
     assert health["evidence"]["attestations"]
@@ -1386,7 +1395,6 @@ def test_binary_release_profile_catalog_index_builds_release_site_without_rebuil
     }
     assert "file://" not in catalog_path.read_text(encoding="utf-8")
     assert str(tmp_path) not in catalog_path.read_text(encoding="utf-8")
-    assert (
-        dist / "assets" / "releases" / "2030.0101.1" / "arm64-rootfs.erofs"
-    ).read_bytes() == b"rootfs-arm64"
+    assert rootfs_url in catalog_path.read_text(encoding="utf-8")
+    assert not (dist / "assets" / "releases").exists()
     _run_admin("assets", "channel", "check", "--channel", "stable", "--dist", str(dist))

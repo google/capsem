@@ -115,7 +115,7 @@ objc2-foundation = "0.3"
 block2 = "0.6"
 dispatch2 = "0.2"
 rcgen = { version = "0.13", features = ["pem", "x509-parser"] }
-time = "0.3"
+time = "=0.3.47"
 rustls = "0.23"
 rustls-pemfile = "2"
 tokio-rustls = "0.26"

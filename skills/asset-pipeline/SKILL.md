@@ -99,11 +99,14 @@ source tree or alternate manifest format. The generated deploy root is
 `target/release-channel/`; the machine artifact is
 `assets/<channel>/manifest.json` under that root, so the stable public URL is
 `https://release.capsem.org/assets/stable/manifest.json`.
-Immutable VM blobs for that manifest live under
-`assets/releases/<asset-version>/<arch>-<logical_name>` in the same deploy root.
-For example, a stable manifest whose current asset release is `2026.0627.1`
-hydrates `arm64-vmlinuz` from
-`https://release.capsem.org/assets/releases/2026.0627.1/arm64-vmlinuz`.
+Immutable VM blobs for that manifest are referenced by the manifest's optional
+`asset_base` URL template. Public releases currently use GitHub Releases with
+`https://github.com/google/capsem/releases/download/assets-v{asset_version}`,
+so a stable manifest whose current asset release is `2026.0627.1` hydrates
+`arm64-vmlinuz` from
+`https://github.com/google/capsem/releases/download/assets-v2026.0627.1/arm64-vmlinuz`.
+When `asset_base` is absent, Capsem preserves the older colocated layout and
+derives blobs from `<manifest-prefix>/assets/releases/<asset-version>/...`.
 The generated `health.json` is the compact machine-readable release-site index:
 schema `capsem.assets_channel.health.v1`, active manifest URL, immutable asset
 base URL, current binary/assets versions, current asset file URLs, VM OBOM
@@ -127,8 +130,9 @@ Pages project serving `release.capsem.org`, so a bad release-site binding fails 
 builds, immutable GitHub asset publication, or provenance attestation. It should
 build VM assets, publish changed blobs to an immutable
 `assets-v<asset-version>` GitHub Release, attest the arch-prefixed `vmlinuz`,
-`initrd.img`, `rootfs.erofs`, and `obom.cdx.json` subjects, upload
-`target/release-channel/` as the `asset-channel-preview` artifact, and call
+`initrd.img`, `rootfs.erofs`, and `obom.cdx.json` subjects, write `asset_base`
+into the channel manifest, upload `target/release-channel/` without VM blobs as
+the `asset-channel-preview` artifact, and call
 `.github/workflows/release-channel.yaml` to deploy `release.capsem.org` only
 after the asset manifest, blobs, and channel checks have been generated.
 Before the asset delta check and channel build, the workflow preserves the live
