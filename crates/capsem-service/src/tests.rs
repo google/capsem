@@ -6051,6 +6051,7 @@ fn asset_cleanup_preserves_profile_catalog_and_persistent_vm_pins() {
     let manifest = capsem_core::asset_manager::ManifestV2 {
         format: 2,
         refresh_policy: "24h".into(),
+        asset_base: None,
         assets: capsem_core::asset_manager::AssetsSection {
             current: "empty".into(),
             releases: HashMap::new(),
@@ -6115,6 +6116,7 @@ fn deprecated_asset_cleanup_preserves_persistent_vm_pins() {
     let manifest = capsem_core::asset_manager::ManifestV2 {
         format: 2,
         refresh_policy: "24h".into(),
+        asset_base: None,
         assets: capsem_core::asset_manager::AssetsSection {
             current: "2030.0101.1".into(),
             releases: [(
