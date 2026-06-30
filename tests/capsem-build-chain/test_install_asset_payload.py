@@ -118,7 +118,9 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert 'MANIFEST_PATH="${2:?--manifest requires a URL}"' in build_pkg
     assert "materialize_manifest_input" in build_pkg
     assert 'parsed.scheme in ("http", "https")' in build_pkg
-    assert "urllib.request.urlopen(source, timeout=60)" in build_pkg
+    assert "urllib.request.Request(" in build_pkg
+    assert 'headers={"User-Agent": "CapsemReleaseValidator/1.0"}' in build_pkg
+    assert "urllib.request.urlopen(request, timeout=60)" in build_pkg
     assert "unsupported manifest URL scheme" in build_pkg
     assert "manifest must be a URL" in build_pkg
     assert "pathlib.Path(source).read_bytes()" not in build_pkg
@@ -172,7 +174,9 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert "--manifest" in repack_deb
     assert "materialize_manifest_input" in repack_deb
     assert 'parsed.scheme in ("http", "https")' in repack_deb
-    assert "urllib.request.urlopen(source, timeout=60)" in repack_deb
+    assert "urllib.request.Request(" in repack_deb
+    assert 'headers={"User-Agent": "CapsemReleaseValidator/1.0"}' in repack_deb
+    assert "urllib.request.urlopen(request, timeout=60)" in repack_deb
     assert "unsupported manifest URL scheme" in repack_deb
     assert "manifest must be a URL" in repack_deb
     assert "pathlib.Path(source).read_bytes()" not in repack_deb

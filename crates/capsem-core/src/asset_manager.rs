@@ -477,7 +477,9 @@ fn remote_asset_release_base_url(manifest: &ManifestV2, assets_dir: &Path) -> Re
         .clone()
         .or(asset_release_base_url_from_manifest_origin(assets_dir)?)
         .unwrap_or_else(asset_release_base_url);
-    let parsed = reqwest::Url::parse(&asset_base_url).map_err(|_| {
+    let asset_base_url = asset_base_url.trim_end_matches('/').to_string();
+    let validation_url = asset_base_url.replace("{asset_version}", "0");
+    let parsed = reqwest::Url::parse(&validation_url).map_err(|_| {
         anyhow::anyhow!(
             "asset base URL must be a URL: use https://... or http://..., got {asset_base_url}"
         )
@@ -488,7 +490,7 @@ fn remote_asset_release_base_url(manifest: &ManifestV2, assets_dir: &Path) -> Re
             parsed.scheme()
         );
     }
-    Ok(parsed.as_str().trim_end_matches('/').to_string())
+    Ok(asset_base_url)
 }
 
 /// Full per-asset download URL:
@@ -1583,6 +1585,23 @@ mod tests {
                 "rootfs.erofs",
             ),
             "https://github.com/google/capsem/releases/download/assets-v2026.0627.1/arm64-rootfs.erofs",
+        );
+    }
+
+    #[test]
+    fn remote_asset_release_base_preserves_asset_version_template() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut manifest = ManifestV2::from_json(SAMPLE_V2_MANIFEST).unwrap();
+        let asset_base =
+            "https://github.com/google/capsem/releases/download/assets-v{asset_version}";
+        manifest.asset_base = Some(asset_base.to_string());
+
+        let resolved_base = remote_asset_release_base_url(&manifest, dir.path()).unwrap();
+
+        assert_eq!(resolved_base, asset_base);
+        assert_eq!(
+            asset_download_url_with_base(&resolved_base, "2026.0415.1", "arm64", "vmlinuz"),
+            "https://github.com/google/capsem/releases/download/assets-v2026.0415.1/arm64-vmlinuz",
         );
     }
 

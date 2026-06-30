@@ -113,6 +113,18 @@ class _QuietHandler(http.server.SimpleHTTPRequestHandler):
         return
 
 
+class _ReleaseUserAgentRequiredHandler(_QuietHandler):
+    def do_GET(self) -> None:
+        user_agent = self.headers.get("User-Agent", "")
+        self.server.seen_user_agents.append(user_agent)  # type: ignore[attr-defined]
+        if user_agent != "CapsemReleaseValidator/1.0":
+            self.send_response(403)
+            self.end_headers()
+            self.wfile.write(b"release validator user-agent required")
+            return
+        super().do_GET()
+
+
 @contextlib.contextmanager
 def _serve_directory(root: Path):
     handler = functools.partial(_QuietHandler, directory=str(root))
@@ -121,6 +133,24 @@ def _serve_directory(root: Path):
     thread.start()
     try:
         yield f"http://127.0.0.1:{server.server_address[1]}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+@contextlib.contextmanager
+def _serve_directory_requiring_release_user_agent(root: Path):
+    handler = functools.partial(_ReleaseUserAgentRequiredHandler, directory=str(root))
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    server.seen_user_agents = []  # type: ignore[attr-defined]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield (
+            f"http://127.0.0.1:{server.server_address[1]}",
+            server.seen_user_agents,  # type: ignore[attr-defined]
+        )
     finally:
         server.shutdown()
         server.server_close()
@@ -362,7 +392,10 @@ def test_macos_pkg_remote_manifest_override_records_source_and_payload(tmp_path:
     output_pkg = REPO_ROOT / "packages" / f"Capsem-{version}.pkg"
     output_pkg.unlink(missing_ok=True)
     try:
-        with _serve_directory(manifest_root) as base_url:
+        with _serve_directory_requiring_release_user_agent(manifest_root) as (
+            base_url,
+            seen_user_agents,
+        ):
             manifest_url = f"{base_url}/corp-manifest.json"
             res = subprocess.run(
                 [
@@ -383,6 +416,7 @@ def test_macos_pkg_remote_manifest_override_records_source_and_payload(tmp_path:
         assert res.returncode == 0, (
             f"build-pkg.sh failed: stdout={res.stdout!r} stderr={res.stderr!r}"
         )
+        assert seen_user_agents == ["CapsemReleaseValidator/1.0"]
         assert output_pkg.is_file()
 
         expanded = tmp_path / "expanded-remote"

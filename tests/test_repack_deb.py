@@ -164,6 +164,18 @@ class _QuietHandler(http.server.SimpleHTTPRequestHandler):
         return
 
 
+class _ReleaseUserAgentRequiredHandler(_QuietHandler):
+    def do_GET(self) -> None:
+        user_agent = self.headers.get("User-Agent", "")
+        self.server.seen_user_agents.append(user_agent)  # type: ignore[attr-defined]
+        if user_agent != "CapsemReleaseValidator/1.0":
+            self.send_response(403)
+            self.end_headers()
+            self.wfile.write(b"release validator user-agent required")
+            return
+        super().do_GET()
+
+
 @contextlib.contextmanager
 def _serve_directory(root: Path):
     handler = functools.partial(_QuietHandler, directory=str(root))
@@ -172,6 +184,24 @@ def _serve_directory(root: Path):
     thread.start()
     try:
         yield f"http://127.0.0.1:{server.server_address[1]}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+@contextlib.contextmanager
+def _serve_directory_requiring_release_user_agent(root: Path):
+    handler = functools.partial(_ReleaseUserAgentRequiredHandler, directory=str(root))
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    server.seen_user_agents = []  # type: ignore[attr-defined]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield (
+            f"http://127.0.0.1:{server.server_address[1]}",
+            server.seen_user_agents,  # type: ignore[attr-defined]
+        )
     finally:
         server.shutdown()
         server.server_close()
@@ -405,7 +435,10 @@ def test_explicit_remote_manifest_is_packaged_with_origin_provenance(tmp_path):
     )
     output = tmp_path / "out.deb"
 
-    with _serve_directory(manifest_root) as base_url:
+    with _serve_directory_requiring_release_user_agent(manifest_root) as (
+        base_url,
+        seen_user_agents,
+    ):
         manifest_url = f"{base_url}/corp-manifest.json"
         res = subprocess.run(
             [
@@ -423,6 +456,7 @@ def test_explicit_remote_manifest_is_packaged_with_origin_provenance(tmp_path):
             timeout=30,
         )
     assert res.returncode == 0, f"repack-deb.sh failed: stdout={res.stdout!r} stderr={res.stderr!r}"
+    assert seen_user_agents == ["CapsemReleaseValidator/1.0"]
 
     extracted = _deb_contents(output, tmp_path / "extracted-remote")
     assets_dir = extracted / "usr" / "share" / "capsem" / "assets"

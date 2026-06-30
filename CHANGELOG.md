@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Fixed URL-backed release packages so remote asset manifests are fetched with
+  the release validator user-agent and templated `{asset_version}` asset bases
+  survive URL validation before VM asset hydration.
 - Fixed macOS package assembly so the `Capsem.app` bundle version must match
   the package version before a `.pkg` can be built.
 - Fixed live VM asset release discipline so `dry_run=false` preflights that the

@@ -135,7 +135,11 @@ dst = pathlib.Path(sys.argv[2])
 parsed = urllib.parse.urlparse(source)
 
 if parsed.scheme in ("http", "https"):
-    with urllib.request.urlopen(source, timeout=60) as response:
+    request = urllib.request.Request(
+        source,
+        headers={"User-Agent": "CapsemReleaseValidator/1.0"},
+    )
+    with urllib.request.urlopen(request, timeout=60) as response:
         dst.write_bytes(response.read())
 elif parsed.scheme == "file":
     dst.write_bytes(pathlib.Path(urllib.request.url2pathname(parsed.path)).read_bytes())
