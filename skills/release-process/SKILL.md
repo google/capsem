@@ -44,8 +44,8 @@ deploy the channel without rebuilding VM assets.
 
 The manual VM asset release entrypoint is `.github/workflows/release-assets.yaml`.
 For `dry_run=false`, it first verifies that the configured
-`CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` can see the `release-eq7`
-Pages project, so a bad release-site binding fails before VM image builds,
+`CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` can see the Pages project
+serving `release.capsem.org`, so a bad release-site binding fails before VM image builds,
 immutable GitHub asset publication, or provenance attestation. It builds assets,
 generates `assets/manifest.json`, builds
 `target/release-channel/`, publishes changed VM blobs to an immutable GitHub
@@ -450,8 +450,8 @@ paused until `notarytool history` succeeds locally.
 | `TAURI_SIGNING_PRIVATE_KEY` | Tauri updater minisign key |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Password for Tauri key |
 | `CODECOV_TOKEN` | Codecov upload token |
-| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account that owns the `release-eq7` Pages project |
-| `CLOUDFLARE_API_TOKEN` | API token allowed to deploy the `release-eq7` Pages project |
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account that owns the Pages project serving `release.capsem.org` |
+| `CLOUDFLARE_API_TOKEN` | API token allowed to deploy the Pages project serving `release.capsem.org` |
 
 CI secrets are the source of truth for release signing. Local backups in
 `private/apple-certificate/` and `private/tauri/` are useful for local preflight
@@ -460,11 +460,11 @@ and packaging checks, but they are gitignored and must never be staged.
 ### Release-channel Cloudflare prerequisites
 
 Before running a live binary or VM asset channel deploy, create or verify the
-Cloudflare Pages project `release-eq7`, attach the `release.capsem.org`
+Cloudflare Pages project serving `release.capsem.org`, attach the `release.capsem.org`
 custom domain, and configure `CLOUDFLARE_ACCOUNT_ID` plus
 `CLOUDFLARE_API_TOKEN` in GitHub Actions secrets. `release-channel.yaml` fails
 before deploy if either secret is missing or
-`scripts/check-cloudflare-pages-project.py` cannot see `release-eq7` through
+`scripts/check-cloudflare-pages-project.py` cannot see the Pages project through
 the configured account/token, then runs `scripts/check-release-site-contract.py`
 and smokes `https://release.capsem.org/`, `/health.json`, and the channel
 manifest through the public custom domain after Cloudflare publishes the

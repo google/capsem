@@ -284,18 +284,18 @@ https://release.capsem.org/assets/stable/manifest.json
 ### Release-channel Cloudflare prerequisites
 
 Before running a live binary or VM asset channel deploy, create or verify the
-Cloudflare Pages project `release-eq7`, attach the `release.capsem.org`
-custom domain, and configure these GitHub Actions secrets:
+Cloudflare Pages project serving `release.capsem.org`, attach the
+`release.capsem.org` custom domain, and configure these GitHub Actions secrets:
 
 | Secret | Purpose |
 |--------|---------|
-| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account that owns the `release-eq7` Pages project |
-| `CLOUDFLARE_API_TOKEN` | API token allowed to deploy the `release-eq7` Pages project |
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account that owns the Pages project serving `release.capsem.org` |
+| `CLOUDFLARE_API_TOKEN` | API token allowed to deploy the Pages project serving `release.capsem.org` |
 
 `release-channel.yaml` fails before deploy if either secret is missing or
-`scripts/check-cloudflare-pages-project.py` cannot see the `release-eq7` Pages
-project through the configured account/token. After Cloudflare publishes the
-generated site, it runs `scripts/check-release-site-contract.py` against
+`scripts/check-cloudflare-pages-project.py` cannot see the Pages project serving
+`release.capsem.org` through the configured account/token. After Cloudflare
+publishes the generated site, it runs `scripts/check-release-site-contract.py` against
 `https://release.capsem.org`. That Python validator reuses the remote release
 readiness contract, so it checks the index, `health.json`, channel manifest,
 evidence documents, BLAKE3/SHA-256 content, attestation references, and cache
@@ -306,7 +306,7 @@ and the channel manifest.
 Live VM asset releases run the same Cloudflare Pages project preflight before
 the matrix builds start. Dry runs skip that API check, but `dry_run=false` must
 prove that the configured `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`
-can see the `release-eq7` Pages project before building VM images, publishing
+can see the Pages project serving `release.capsem.org` before building VM images, publishing
 immutable GitHub asset blobs, or writing provenance attestations.
 
 The release discipline is that binary releases and VM asset releases both call
@@ -333,7 +333,7 @@ release-blocking.
 Manual VM asset releases do not accept or publish a binary-version override;
 binary release metadata is owned by the tag-triggered binary rail.
 For `dry_run=false`, the workflow first verifies that the configured Cloudflare
-account/token can see the `release-eq7` Pages project, so a bad release-site
+account/token can see the Pages project serving `release.capsem.org`, so a bad release-site
 binding fails before VM image builds or immutable GitHub asset publication.
 Dry runs upload `asset-release-plan` with the generated upload script so the
 planned `gh release` commands can be reviewed without scraping workflow logs.

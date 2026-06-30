@@ -123,7 +123,7 @@ session/download selection.
 The manual asset workflow is `.github/workflows/release-assets.yaml`. It should
 remain explicit/manual. For `dry_run=false`, it first verifies that the
 configured `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` can see the
-`release-eq7` Pages project, so a bad release-site binding fails before VM image
+Pages project serving `release.capsem.org`, so a bad release-site binding fails before VM image
 builds, immutable GitHub asset publication, or provenance attestation. It should
 build VM assets, publish changed blobs to an immutable
 `assets-v<asset-version>` GitHub Release, attest the arch-prefixed `vmlinuz`,
@@ -203,11 +203,11 @@ immutable asset and profile release artifacts stay
 ### Release-channel Cloudflare prerequisites
 
 Before running a live binary or VM asset channel deploy, create or verify the
-Cloudflare Pages project `release-eq7`, attach the `release.capsem.org`
+Cloudflare Pages project serving `release.capsem.org`, attach the `release.capsem.org`
 custom domain, and configure `CLOUDFLARE_ACCOUNT_ID` plus
 `CLOUDFLARE_API_TOKEN` in GitHub Actions secrets. `release-channel.yaml` fails
 before deploy if either secret is missing or
-`scripts/check-cloudflare-pages-project.py` cannot see `release-eq7` through
+`scripts/check-cloudflare-pages-project.py` cannot see the Pages project through
 the configured account/token, then runs `scripts/check-release-site-contract.py`
 and smokes `https://release.capsem.org/`, `/health.json`, and the channel
 manifest through the public custom domain after Cloudflare publishes the

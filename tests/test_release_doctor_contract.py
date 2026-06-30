@@ -274,7 +274,7 @@ def test_vm_asset_release_is_manual_and_deploys_asset_channel() -> None:
     assert "cloudflare-release-site-preflight:" in workflow
     assert "name: Cloudflare release site preflight" in workflow
     assert "Dry run: skipping Cloudflare Pages project preflight." in workflow
-    assert "RELEASE_CHANNEL_PROJECT: release-eq7" in workflow
+    assert "RELEASE_CHANNEL_PROJECT: release" in workflow
     assert "python scripts/check-cloudflare-pages-project.py" in workflow
     assert "--project \"$RELEASE_CHANNEL_PROJECT\"" in workflow
     assert "needs: cloudflare-release-site-preflight" in workflow
@@ -366,7 +366,7 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
     assert "CLOUDFLARE_ACCOUNT_ID secret is required to deploy release.capsem.org" in workflow
     assert "CLOUDFLARE_API_TOKEN secret is required to deploy release.capsem.org" in workflow
     assert "Verify Cloudflare Pages project" in workflow
-    assert "RELEASE_CHANNEL_PROJECT: release-eq7" in workflow
+    assert "RELEASE_CHANNEL_PROJECT: release" in workflow
     assert "python scripts/check-cloudflare-pages-project.py" in workflow
     assert "--project \"$RELEASE_CHANNEL_PROJECT\"" in workflow
     assert workflow.index("Require Cloudflare credentials") < workflow.index(
@@ -376,7 +376,7 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
         "cloudflare/wrangler-action@v3"
     )
     assert (
-        "pages deploy target/release-channel/ --project-name=release-eq7 --branch=main"
+        "pages deploy target/release-channel/ --project-name=release --branch=main"
         in workflow
     )
     assert "assets/stable/manifest.json" not in workflow
@@ -550,7 +550,7 @@ def test_release_channel_cloudflare_prerequisites_are_documented() -> None:
     for required in (
         "CLOUDFLARE_ACCOUNT_ID",
         "CLOUDFLARE_API_TOKEN",
-        "release-eq7",
+        "release",
         "release.capsem.org",
     ):
         assert required in workflow
@@ -566,7 +566,7 @@ def test_release_channel_cloudflare_prerequisites_are_documented() -> None:
     for text in (docs_text, release_skill_text, asset_skill_text):
         text_lower = text.lower()
         assert "Release-channel Cloudflare prerequisites" in text
-        assert "Cloudflare Pages project `release-eq7`" in text
+        assert "Pages project serving `release.capsem.org`" in text
         assert "`release.capsem.org` custom domain" in text
         assert "`CLOUDFLARE_ACCOUNT_ID`" in text
         assert "`CLOUDFLARE_API_TOKEN`" in text
@@ -583,12 +583,12 @@ def test_cloudflare_pages_project_checker_reports_visibility_failures() -> None:
     ok, detail = checker.validate_project_response(
         checker.CloudflareResponse(
             200,
-            {"success": True, "result": {"name": "release-eq7"}},
+            {"success": True, "result": {"name": "release"}},
         ),
-        "release-eq7",
+        "release",
     )
     assert ok is True
-    assert "release-eq7 is visible" in detail
+    assert "release is visible" in detail
 
     ok, detail = checker.validate_project_response(
         checker.CloudflareResponse(
@@ -606,10 +606,10 @@ def test_cloudflare_pages_project_checker_reports_visibility_failures() -> None:
                 ],
             },
         ),
-        "release-eq7",
+        "release",
     )
     assert ok is False
-    assert "Cloudflare Pages project release-eq7 is not visible" in detail
+    assert "Cloudflare Pages project release is not visible" in detail
     assert "8000007: Project not found" in detail
     assert "CLOUDFLARE_ACCOUNT_ID/API_TOKEN" in detail
 

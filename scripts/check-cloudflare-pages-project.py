@@ -38,7 +38,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--project",
-        default=os.environ.get("RELEASE_CHANNEL_PROJECT", "release-eq7"),
+        default=os.environ.get("RELEASE_CHANNEL_PROJECT", "release"),
         help="Cloudflare Pages project name.",
     )
     args = parser.parse_args()

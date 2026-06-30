@@ -72,7 +72,7 @@ jobs:
 
       - name: Verify Cloudflare Pages project
         env:
-          RELEASE_CHANNEL_PROJECT: release-eq7
+          RELEASE_CHANNEL_PROJECT: release
         run: |
           python scripts/check-cloudflare-pages-project.py \
             --project "$RELEASE_CHANNEL_PROJECT"
@@ -85,7 +85,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy target/release-channel/ --project-name=release-eq7 --branch=main
+          command: pages deploy target/release-channel/ --project-name=release --branch=main
 
       - name: Validate deployed asset channel content
         env:
