@@ -395,6 +395,9 @@ jobs:
       - name: Install release site dependencies
         run: cd release-site && pnpm install --frozen-lockfile
 
+      - name: Prepare release channel fixture assets
+        run: bash scripts/prepare-install-test-assets.sh
+
       - name: Generate release channel data
         run: |
           cargo run -p capsem-admin -- assets channel build \

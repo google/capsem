@@ -150,6 +150,7 @@ def test_ci_python_schema_pytest_paths_exist() -> None:
 def test_ci_has_stable_pr_gate_over_all_required_jobs() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
     gate = _workflow_job_block("pr-gate")
+    release_site_job = _workflow_job_block("release-site-build")
 
     assert "pull_request:" in workflow
     assert "push:" in workflow
@@ -170,6 +171,12 @@ def test_ci_has_stable_pr_gate_over_all_required_jobs() -> None:
     assert 'test "$DOCS_BUILD_RESULT" = success' in gate
     assert 'test "$SITE_BUILD_RESULT" = success' in gate
     assert 'test "$RELEASE_SITE_BUILD_RESULT" = success' in gate
+    assert "bash scripts/prepare-install-test-assets.sh" in release_site_job
+    assert release_site_job.index(
+        "bash scripts/prepare-install-test-assets.sh"
+    ) < release_site_job.index(
+        "cargo run -p capsem-admin -- assets channel build"
+    )
 
 
 def test_pr_gate_blocks_broken_docs_and_marketing_builds() -> None:
