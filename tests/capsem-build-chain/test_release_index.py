@@ -294,8 +294,15 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
     assert "Capsem Binaries" in index_html
     assert "Profile catalog JSON" in index_html
     assert "profiles-2030.0101.1" in index_html
-    assert "Current Asset Files" not in index_html
-    assert "VM OBOM Evidence" not in index_html
+    assert "Current VM Assets" in index_html
+    assert "Architecture arm64" in index_html
+    assert "Architecture x86_64" in index_html
+    assert "/assets/releases/2030.0101.1/arm64-vmlinuz" in index_html
+    assert "/assets/releases/2030.0101.1/arm64-obom.cdx.json" in index_html
+    assert "/assets/releases/2030.0101.1/x86_64-obom.cdx.json" in index_html
+    assert "Evidence" in index_html
+    assert "VM OBOM" in index_html
+    assert "Host SBOM" in index_html
     assert "Realm Discipline" not in index_html
     assert 'href="/health.json"' in index_html
     assert "/health.json" in index_html

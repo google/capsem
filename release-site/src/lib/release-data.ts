@@ -105,6 +105,23 @@ export function vmObomRows(data: ReleaseData): JsonObject[] {
   return data.health.evidence?.vm_oboms ?? [];
 }
 
+export function currentAssetFilesByArch(data: ReleaseData): [string, JsonObject[]][] {
+  const files = Array.isArray(data.health.assets?.files) ? data.health.assets.files : [];
+  const grouped = new Map<string, JsonObject[]>();
+  for (const file of files) {
+    const arch = String(file.arch ?? 'unknown');
+    const rows = grouped.get(arch) ?? [];
+    rows.push(file);
+    grouped.set(arch, rows);
+  }
+  return Array.from(grouped.entries())
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([arch, rows]) => [
+      arch,
+      rows.sort((left, right) => String(left.logical_name ?? '').localeCompare(String(right.logical_name ?? ''))),
+    ]);
+}
+
 export function assetReleaseRows(data: ReleaseData): JsonObject[] {
   return data.health.asset_releases ?? [];
 }

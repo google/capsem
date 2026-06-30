@@ -5,12 +5,15 @@ import {
   binaryDescription,
   binaryRows,
   byteLabel,
+  currentAssetFilesByArch,
   currentAssetBaseUrl,
   currentArchitectures,
+  hashLabel,
   hostSbomRows,
   loadReleaseData,
   profileList,
   profilePagePath,
+  vmObomRows,
 } from '../lib/release-data';
 
 const data = loadReleaseData();
@@ -18,10 +21,12 @@ const health = data.health;
 const profiles = profileList(data);
 const binaries = binaryRows(data);
 const hostSboms = hostSbomRows(data);
+const vmOboms = vmObomRows(data);
 const assetReleases = assetReleaseRows(data);
 const architectures = currentArchitectures(data);
 const hostSbom = hostSboms[0];
 const assetBase = currentAssetBaseUrl(data);
+const assetFilesByArch = currentAssetFilesByArch(data);
 ---
 <ReleaseLayout title="Capsem Asset Channel">
   <header class="border-b border-zinc-200 pb-6">
@@ -90,6 +95,42 @@ const assetBase = currentAssetBaseUrl(data);
   </section>
 
   <section class="mt-6 border border-zinc-200 p-5">
+    <h2 class="text-xl font-semibold text-black">Current VM Assets</h2>
+    <p class="mt-1 text-sm text-zinc-600">
+      Files published by the current VM asset revision, grouped by architecture.
+    </p>
+    <div class="mt-4 grid gap-5">
+      {assetFilesByArch.map(([arch, files]) => (
+        <section>
+          <h3 class="text-base font-semibold text-black">Architecture {arch}</h3>
+          <div class="mt-3 overflow-x-auto">
+            <table class="w-full min-w-[760px] border-collapse text-sm">
+              <thead>
+                <tr class="border-b border-zinc-200 text-left text-zinc-500">
+                  <th class="py-2 pr-4 font-medium">File</th>
+                  <th class="py-2 pr-4 font-medium">Download</th>
+                  <th class="py-2 pr-4 font-medium">Bytes</th>
+                  <th class="py-2 pr-4 font-medium">BLAKE3</th>
+                </tr>
+              </thead>
+              <tbody>
+                {files.map((file) => (
+                  <tr class="border-b border-zinc-100 align-top">
+                    <td class="py-3 pr-4"><code>{file.logical_name}</code></td>
+                    <td class="py-3 pr-4"><a class="break-all text-blue-600 underline" href={file.url}>{file.url}</a></td>
+                    <td class="py-3 pr-4">{byteLabel(file.size)}</td>
+                    <td class="py-3 pr-4"><code class="break-all">{hashLabel(file.hash)}</code></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ))}
+    </div>
+  </section>
+
+  <section class="mt-6 border border-zinc-200 p-5">
     <div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
       <div>
         <h2 class="text-xl font-semibold text-black">Profiles</h2>
@@ -112,6 +153,40 @@ const assetBase = currentAssetBaseUrl(data);
           </dl>
         </article>
       ))}
+    </div>
+  </section>
+
+  <section class="mt-6 border border-zinc-200 p-5">
+    <h2 class="text-xl font-semibold text-black">Evidence</h2>
+    <div class="mt-4 grid gap-5 lg:grid-cols-2">
+      <section>
+        <h3 class="text-base font-semibold text-black">Host SBOM</h3>
+        <ul class="mt-3 space-y-2 text-sm">
+          {hostSboms.length > 0 ? hostSboms.map((sbom) => (
+            <li>
+              <a class="break-all text-blue-600 underline" href={sbom.url}>{sbom.name ?? sbom.url}</a>
+              <div class="mt-1 text-zinc-600">
+                {byteLabel(sbom.size)} bytes · SHA-256 <code class="break-all">{hashLabel(sbom.sha256 ?? sbom.hash)}</code>
+              </div>
+            </li>
+          )) : <li class="text-zinc-600">No host SBOM evidence is published for this channel.</li>}
+        </ul>
+      </section>
+      <section>
+        <h3 class="text-base font-semibold text-black">VM OBOM</h3>
+        <ul class="mt-3 space-y-2 text-sm">
+          {vmOboms.length > 0 ? vmOboms.map((obom) => (
+            <li>
+              <span class="font-medium text-black">{obom.arch}</span>:
+              {' '}
+              <a class="break-all text-blue-600 underline" href={obom.url}>{obom.logical_name ?? obom.url}</a>
+              <div class="mt-1 text-zinc-600">
+                {byteLabel(obom.size)} bytes · BLAKE3 <code class="break-all">{hashLabel(obom.hash)}</code>
+              </div>
+            </li>
+          )) : <li class="text-zinc-600">No VM OBOM evidence is published for this channel.</li>}
+        </ul>
+      </section>
     </div>
   </section>
 
