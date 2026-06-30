@@ -395,13 +395,14 @@ jobs:
       - name: Install release site dependencies
         run: cd release-site && pnpm install --frozen-lockfile
 
-      - name: Prepare release channel fixture assets
-        run: bash scripts/prepare-install-test-assets.sh
+      - name: Write release channel fixture
+        run: python3 scripts/write-release-site-ci-fixture.py target/release-site-fixture
 
       - name: Generate release channel data
         run: |
           cargo run -p capsem-admin -- assets channel build \
-            --manifest "file://$PWD/assets/manifest.json" \
+            --manifest "file://$PWD/target/release-site-fixture/assets/manifest.json" \
+            --assets-dir target/release-site-fixture/assets \
             --asset-source-base "https://github.com/google/capsem/releases/download/assets-v{asset_version}" \
             --channel stable \
             --out-dir target/release-channel

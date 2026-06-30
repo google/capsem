@@ -171,12 +171,14 @@ def test_ci_has_stable_pr_gate_over_all_required_jobs() -> None:
     assert 'test "$DOCS_BUILD_RESULT" = success' in gate
     assert 'test "$SITE_BUILD_RESULT" = success' in gate
     assert 'test "$RELEASE_SITE_BUILD_RESULT" = success' in gate
-    assert "bash scripts/prepare-install-test-assets.sh" in release_site_job
+    assert "python3 scripts/write-release-site-ci-fixture.py target/release-site-fixture" in release_site_job
     assert release_site_job.index(
-        "bash scripts/prepare-install-test-assets.sh"
+        "python3 scripts/write-release-site-ci-fixture.py target/release-site-fixture"
     ) < release_site_job.index(
         "cargo run -p capsem-admin -- assets channel build"
     )
+    assert '--manifest "file://$PWD/target/release-site-fixture/assets/manifest.json"' in release_site_job
+    assert "--assets-dir target/release-site-fixture/assets" in release_site_job
 
 
 def test_pr_gate_blocks_broken_docs_and_marketing_builds() -> None:
