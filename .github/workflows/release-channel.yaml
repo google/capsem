@@ -842,8 +842,17 @@ jobs:
                   resolve_release_url(profile_source),
                   ("public", "max-age=31536000", "immutable"),
               )
-          if "Current Asset Files" not in index or "/health.json" not in index:
-              failures.append("index page missing release status content")
+          expected_index_markers = (
+              "Channel Manifest",
+              "Manifest URL",
+              "Capsem Binaries",
+              "Profiles",
+              "Asset Release History",
+              "/health.json",
+          )
+          for marker in expected_index_markers:
+              if marker not in index:
+                  failures.append(f"index page missing {marker}")
           if failures:
               print("; ".join(failures), file=sys.stderr)
               sys.exit(1)

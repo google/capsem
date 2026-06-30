@@ -509,6 +509,13 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
     assert 'check_cache_header("release index", f"{release_site_url}/", ("no-cache", "must-revalidate"))' in workflow
     assert "Cache-Control must contain {directive}" in workflow
     assert '("public", "max-age=31536000", "immutable")' in workflow
+    assert '"Channel Manifest"' in workflow
+    assert '"Manifest URL"' in workflow
+    assert '"Capsem Binaries"' in workflow
+    assert '"Profiles"' in workflow
+    assert '"Asset Release History"' in workflow
+    assert "index page missing {marker}" in workflow
+    assert "Current Asset Files" not in workflow
     assert "release.capsem.org smoke failed after deploy." in workflow
 
 
