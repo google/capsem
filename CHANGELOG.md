@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Fixed macOS package assembly so the `Capsem.app` bundle version must match
+  the package version before a `.pkg` can be built.
 - Fixed live VM asset release discipline so `dry_run=false` preflights that the
   configured Cloudflare account/token can see the `release-eq7` Pages project
   before building VM images, publishing immutable asset blobs, or attesting them.

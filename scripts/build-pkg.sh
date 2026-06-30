@@ -130,6 +130,30 @@ dst.write_text(json.dumps({
 PY
 }
 
+validate_app_bundle_version() {
+    local app_path="${1:?validate_app_bundle_version <app_path> <version>}"
+    local expected_version="${2:?validate_app_bundle_version <app_path> <version>}"
+    python3 - "$app_path" "$expected_version" <<'PY'
+import pathlib
+import plistlib
+import sys
+
+app = pathlib.Path(sys.argv[1])
+expected = sys.argv[2]
+plist_path = app / "Contents" / "Info.plist"
+if not plist_path.is_file():
+    raise SystemExit(f"Capsem.app Info.plist missing: {plist_path}")
+with plist_path.open("rb") as fh:
+    info = plistlib.load(fh)
+actual = info.get("CFBundleShortVersionString")
+if actual != expected:
+    raise SystemExit(
+        "Capsem.app CFBundleShortVersionString mismatch: "
+        f"expected {expected}, got {actual or '<missing>'}"
+    )
+PY
+}
+
 file_url() {
     local path="${1:?file_url <path>}"
     python3 - "$path" <<'PY'
@@ -185,6 +209,7 @@ PY
 echo "=== Assembling .pkg payload ==="
 
 # Application bundle
+validate_app_bundle_version "$APP_PATH" "$VERSION"
 mkdir -p "$WORK_DIR/payload/Applications"
 cp -R "$APP_PATH" "$WORK_DIR/payload/Applications/Capsem.app"
 

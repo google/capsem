@@ -37,7 +37,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _seed_app(app: Path) -> None:
+def _seed_app(app: Path, version: str = "0.0.0") -> None:
     contents = app / "Contents"
     macos = contents / "MacOS"
     macos.mkdir(parents=True)
@@ -50,7 +50,7 @@ def _seed_app(app: Path) -> None:
                 "CFBundleIdentifier": "org.capsem.test",
                 "CFBundleName": "Capsem",
                 "CFBundlePackageType": "APPL",
-                "CFBundleShortVersionString": "0.0.0",
+                "CFBundleShortVersionString": version,
                 "CFBundleVersion": "0",
             }
         )
@@ -134,12 +134,12 @@ def test_macos_pkg_payload_is_closed_and_manifest_only_for_assets(tmp_path: Path
     config_dir = tmp_path / "target-config"
     manifest = tmp_path / "manifest.json"
 
-    _seed_app(app)
+    version = "9.9.9-test"
+    _seed_app(app, version)
     _seed_binaries(bin_dir)
     _seed_config(config_dir)
     _seed_manifest_and_local_assets(manifest, assets_dir)
 
-    version = "9.9.9-test"
     output_pkg = REPO_ROOT / "packages" / f"Capsem-{version}.pkg"
     output_pkg.unlink(missing_ok=True)
     try:
@@ -172,9 +172,12 @@ def test_macos_pkg_payload_is_closed_and_manifest_only_for_assets(tmp_path: Path
             text=True,
         )
         share = _find_capsem_share(expanded)
-        assert list(expanded.rglob("Applications/Capsem.app")), (
-            "Capsem.app missing from package payload"
+        app_payloads = list(expanded.rglob("Applications/Capsem.app"))
+        assert app_payloads, "Capsem.app missing from package payload"
+        app_info = plistlib.loads(
+            (app_payloads[0] / "Contents" / "Info.plist").read_bytes()
         )
+        assert app_info["CFBundleShortVersionString"] == version
 
         assets = share / "assets"
         assert sorted(path.name for path in assets.iterdir()) == [
@@ -221,7 +224,7 @@ def test_macos_pkg_rejects_retired_keychain_payload_binaries(tmp_path: Path) -> 
     config_dir = tmp_path / "target-config"
     manifest = tmp_path / "manifest.json"
 
-    _seed_app(app)
+    _seed_app(app, "9.9.11-keychain-test")
     _seed_binaries(bin_dir)
     _seed_config(config_dir)
     _seed_manifest_and_local_assets(manifest, assets_dir)
@@ -268,7 +271,8 @@ def test_macos_pkg_rejects_bare_manifest_path(tmp_path: Path) -> None:
     config_dir = tmp_path / "target-config"
     manifest = tmp_path / "manifest.json"
 
-    _seed_app(app)
+    version = "9.9.12-bare-path-test"
+    _seed_app(app, version)
     _seed_binaries(bin_dir)
     _seed_config(config_dir)
     _seed_manifest_and_local_assets(manifest, assets_dir)
@@ -294,6 +298,40 @@ def test_macos_pkg_rejects_bare_manifest_path(tmp_path: Path) -> None:
     assert "manifest must be a URL" in (res.stdout + res.stderr)
 
 
+def test_macos_pkg_rejects_app_version_mismatch(tmp_path: Path) -> None:
+    app = tmp_path / "Capsem.app"
+    bin_dir = tmp_path / "bin"
+    assets_dir = tmp_path / "assets"
+    config_dir = tmp_path / "target-config"
+    manifest = tmp_path / "manifest.json"
+
+    _seed_app(app, "9.9.13-version-mismatch-actual")
+    _seed_binaries(bin_dir)
+    _seed_config(config_dir)
+    _seed_manifest_and_local_assets(manifest, assets_dir)
+
+    version = "9.9.13-version-mismatch-expected"
+    result = subprocess.run(
+        [
+            str(SCRIPT),
+            "--manifest",
+            manifest.resolve().as_uri(),
+            str(app),
+            str(bin_dir),
+            str(assets_dir),
+            str(config_dir),
+            version,
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert result.returncode != 0
+    assert "Capsem.app CFBundleShortVersionString mismatch" in result.stderr
+
+
 def test_macos_pkg_remote_manifest_override_records_source_and_payload(tmp_path: Path) -> None:
     app = tmp_path / "Capsem.app"
     bin_dir = tmp_path / "bin"
@@ -302,7 +340,8 @@ def test_macos_pkg_remote_manifest_override_records_source_and_payload(tmp_path:
     manifest_root = tmp_path / "remote"
     manifest = manifest_root / "corp-manifest.json"
 
-    _seed_app(app)
+    version = "9.9.10-remote-test"
+    _seed_app(app, version)
     _seed_binaries(bin_dir)
     _seed_config(config_dir)
     manifest_root.mkdir()
@@ -320,7 +359,6 @@ def test_macos_pkg_remote_manifest_override_records_source_and_payload(tmp_path:
     )
     assets_dir.mkdir()
 
-    version = "9.9.10-remote-test"
     output_pkg = REPO_ROOT / "packages" / f"Capsem-{version}.pkg"
     output_pkg.unlink(missing_ok=True)
     try:
