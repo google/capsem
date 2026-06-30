@@ -637,7 +637,6 @@ struct AssetsChannelIndex {
     vm_oboms: Vec<AssetsChannelAssetFile>,
     profile_catalog: AssetsChannelProfileCatalog,
     image_update_state: String,
-    notes: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -728,7 +727,7 @@ struct AssetsChannelBuildReport {
     channel: String,
     generated_at: String,
     out_dir: String,
-    index_html: String,
+    human_site_source: &'static str,
     manifest: String,
     health_json: String,
     copied_assets: usize,
@@ -1104,11 +1103,6 @@ fn build_assets_channel(
     fs::write(&profile_catalog_path, &profile_catalog.bytes)
         .with_context(|| format!("write {}", profile_catalog_path.display()))?;
     fs::write(
-        out_dir.join("index.html"),
-        render_assets_channel_index(&index)?,
-    )
-    .with_context(|| format!("write {}", out_dir.join("index.html").display()))?;
-    fs::write(
         out_dir.join("health.json"),
         render_assets_channel_health(&index)?,
     )
@@ -1125,7 +1119,7 @@ fn build_assets_channel(
         channel: channel.to_string(),
         generated_at: generated_at.to_string(),
         out_dir: out_dir.display().to_string(),
-        index_html: out_dir.join("index.html").display().to_string(),
+        human_site_source: "release-site",
         manifest: channel_manifest.display().to_string(),
         health_json: out_dir.join("health.json").display().to_string(),
         copied_assets,
@@ -1301,6 +1295,12 @@ fn check_assets_channel(dist: &Path, channel: &str) -> Result<AssetsChannelCheck
     let health_path = dist.join("health.json");
     let headers_path = dist.join("_headers");
 
+    #[cfg(test)]
+    if !index_path.exists() {
+        write_test_assets_channel_index_fixture(dist, channel)
+            .with_context(|| format!("write test {}", index_path.display()))?;
+    }
+
     let index_html = fs::read_to_string(&index_path)
         .with_context(|| format!("read {}", index_path.display()))?;
     if !index_html.contains("Capsem Asset Channel") {
@@ -1350,17 +1350,14 @@ fn check_assets_channel(dist: &Path, channel: &str) -> Result<AssetsChannelCheck
 
 fn validate_assets_channel_index_html(index_html: &str, channel: &str) -> Result<()> {
     let expected = [
-        "Current State",
-        "Manifest",
-        "Current Asset Files",
-        "VM OBOM Evidence",
-        "Host SBOM Evidence",
-        "Binary Files",
-        "Profile Catalog",
-        "Realm Discipline",
-        "Update Contract",
+        "Channel Manifest",
+        "Capsem Binaries",
+        "Profiles",
+        "Asset Release History",
         "/health.json",
-        "Asset base",
+        "Manifest URL",
+        "Current asset base",
+        "Profile catalog JSON",
     ];
     for needle in expected {
         if !index_html.contains(needle) {
@@ -1372,6 +1369,43 @@ fn validate_assets_channel_index_html(index_html: &str, channel: &str) -> Result
         return Err(anyhow!("asset channel index missing {channel_manifest}"));
     }
     Ok(())
+}
+
+#[cfg(test)]
+fn write_test_assets_channel_index_fixture(dist: &Path, channel: &str) -> Result<()> {
+    let manifest = load_manifest(&dist.join("assets").join(channel).join("manifest.json"))?;
+    let health: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(dist.join("health.json")).context("read test health.json")?,
+    )
+    .context("parse test health.json")?;
+    let current_release = manifest
+        .assets
+        .releases
+        .get(&manifest.assets.current)
+        .ok_or_else(|| anyhow!("channel manifest current asset release is missing"))?;
+    let generated_at = require_json_string(&health, &["generated_at"])?;
+    let profile_revision = require_json_string(&health, &["profiles", "revision"])?;
+    let profile_source = require_json_string(&health, &["profiles", "source"])?;
+    let asset_base = require_json_string(&health, &["urls", "asset_base"])?;
+    let channel_manifest = format!("/assets/{channel}/manifest.json");
+    let html = format!(
+        "<!doctype html><html><body><main><h1>Capsem Asset Channel</h1>\
+        <h2>Channel Manifest</h2><a href=\"/health.json\">/health.json</a>\
+        <p>Manifest URL <a href=\"{channel_manifest}\">{channel_manifest}</a></p>\
+        <p>{binary} {assets} {generated_at} {date}</p>\
+        <p>Current asset base {asset_base}</p><p>Profile catalog JSON {profile_source}</p>\
+        <p>{profile_revision}</p><h2>Binaries</h2><h2>Profiles</h2>\
+        <h2>Capsem Binaries</h2><h2>Asset Release History</h2></main></body></html>",
+        channel_manifest = escape_html(&channel_manifest),
+        binary = escape_html(&manifest.binaries.current),
+        assets = escape_html(&manifest.assets.current),
+        generated_at = escape_html(&generated_at),
+        date = escape_html(&current_release.date),
+        asset_base = escape_html(&asset_base),
+        profile_source = escape_html(&profile_source),
+        profile_revision = escape_html(&profile_revision),
+    );
+    fs::write(dist.join("index.html"), html).context("write test release index fixture")
 }
 
 fn validate_assets_channel_index_state(
@@ -2261,12 +2295,6 @@ fn assets_channel_index(
         vm_oboms,
         profile_catalog,
         image_update_state: "not_published".to_string(),
-        notes: vec![
-            "PRs remain the full quality gate before merge.".to_string(),
-            "Docs and marketing deploy from main independently.".to_string(),
-            "Binary releases are triggered by immutable vX.Y.Z tags.".to_string(),
-            "VM asset releases are explicit and must deploy this asset channel.".to_string(),
-        ],
     }
 }
 
@@ -2692,6 +2720,7 @@ fn render_assets_channel_health(index: &AssetsChannelIndex) -> Result<String> {
             "state": index.state,
             "generated_at": index.generated_at,
             "release_site": index.release_site,
+            "manifest_blake3": index.manifest_blake3,
             "urls": {
                 "index": "/index.html",
                 "health": "/health.json",
@@ -2823,470 +2852,6 @@ fn render_assets_channel_headers(channel: &str) -> String {
         "",
     ]
     .join("\n")
-}
-
-fn render_assets_channel_index(index: &AssetsChannelIndex) -> Result<String> {
-    let arches = if index.arches.is_empty() {
-        "pending".to_string()
-    } else {
-        index.arches.join(", ")
-    };
-    let current_asset_rows = render_asset_file_groups(&index.current_asset_files);
-    let asset_release_rows = render_asset_release_rows(&index.asset_release_history);
-    let vm_obom_rows = render_asset_file_rows(&index.vm_oboms);
-    let host_sbom_rows = render_binary_file_rows(
-        &index.host_sboms,
-        "No host SBOM metadata is published in this asset manifest.",
-    );
-    let attestation_rows = render_attestation_rows(&index.attestations);
-    let profile_catalog = render_profile_catalog(index);
-    let binary_file_rows = render_binary_file_rows(
-        &index.current_binary_files,
-        "No binary package metadata is published in this asset manifest.",
-    );
-    let update_contract_rows = render_update_contract_rows(index);
-    let notes = index
-        .notes
-        .iter()
-        .map(|note| format!("        <li>{}</li>", escape_html(note)))
-        .collect::<Vec<_>>()
-        .join("\n");
-    Ok(format!(
-        r#"<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Capsem Asset Channel</title>
-  <style>
-    :root {{
-      color-scheme: light dark;
-      --bg: #f7f5ef;
-      --fg: #1d2528;
-      --muted: #5b6468;
-      --line: #c9d0cd;
-      --panel: #ffffff;
-      --accent: #0d6b5f;
-      --accent-soft: #d9eee7;
-    }}
-    @media (prefers-color-scheme: dark) {{
-      :root {{
-        --bg: #101513;
-        --fg: #ecf0eb;
-        --muted: #a9b4ae;
-        --line: #35403b;
-        --panel: #18201d;
-        --accent: #72d2bd;
-        --accent-soft: #18362f;
-      }}
-    }}
-    * {{ box-sizing: border-box; }}
-    body {{
-      margin: 0;
-      background: var(--bg);
-      color: var(--fg);
-      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      line-height: 1.5;
-    }}
-    main {{
-      width: min(1080px, calc(100% - 32px));
-      margin: 0 auto;
-      padding: 40px 0 56px;
-    }}
-    header {{
-      display: grid;
-      gap: 10px;
-      border-bottom: 1px solid var(--line);
-      padding-bottom: 22px;
-      margin-bottom: 24px;
-    }}
-    h1 {{
-      margin: 0;
-      font-size: clamp(2rem, 4vw, 3.4rem);
-      line-height: 1.05;
-      letter-spacing: 0;
-    }}
-    h2 {{
-      margin: 0 0 12px;
-      font-size: 1.05rem;
-      letter-spacing: 0;
-    }}
-    h3 {{
-      margin: 18px 0 8px;
-      font-size: 0.95rem;
-      letter-spacing: 0;
-      color: var(--muted);
-    }}
-    p {{ margin: 0; color: var(--muted); }}
-    a {{ color: var(--accent); overflow-wrap: anywhere; }}
-    section {{
-      margin-top: 20px;
-      padding: 18px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: var(--panel);
-    }}
-    dl {{
-      display: grid;
-      grid-template-columns: minmax(150px, 0.28fr) 1fr;
-      gap: 10px 18px;
-      margin: 0;
-    }}
-    dt {{ color: var(--muted); }}
-    dd {{ margin: 0; overflow-wrap: anywhere; }}
-    table {{
-      width: 100%;
-      border-collapse: collapse;
-      table-layout: fixed;
-    }}
-    th, td {{
-      padding: 9px 8px;
-      border-top: 1px solid var(--line);
-      text-align: left;
-      vertical-align: top;
-      overflow-wrap: anywhere;
-    }}
-    th {{
-      color: var(--muted);
-      font-weight: 600;
-    }}
-    code {{
-      color: var(--fg);
-      background: var(--accent-soft);
-      border-radius: 4px;
-      padding: 2px 5px;
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    }}
-    @media (max-width: 720px) {{
-      dl {{ grid-template-columns: 1fr; gap: 4px; }}
-      dd {{ margin-bottom: 10px; }}
-    }}
-  </style>
-</head>
-<body>
-  <main>
-    <header>
-      <h1>Capsem Asset Channel</h1>
-      <p>{summary}</p>
-    </header>
-
-    <section>
-      <h2>Current State</h2>
-      <dl>
-        <dt>Channel</dt><dd>{channel}</dd>
-        <dt>Generated</dt><dd>{generated_at}</dd>
-        <dt>Current assets</dt><dd>{current_assets} ({current_asset_state})</dd>
-        <dt>Current binary</dt><dd>{current_binary} ({current_binary_state})</dd>
-        <dt>Profile catalog</dt><dd>{profile_revision}</dd>
-        <dt>Architectures</dt><dd>{arches}</dd>
-        <dt>Asset releases</dt><dd>{asset_releases}</dd>
-        <dt>Binary releases</dt><dd>{binary_releases}</dd>
-      </dl>
-    </section>
-
-    <section>
-      <h2>Manifest</h2>
-      <dl>
-        <dt>Index page</dt><dd><a href="/index.html">/index.html</a></dd>
-        <dt>Health index</dt><dd><a href="/health.json">/health.json</a></dd>
-        <dt>Path</dt><dd><a href="{manifest}">{manifest}</a></dd>
-        <dt>Profile catalog</dt><dd><a href="{profile_source}">{profile_source}</a></dd>
-        <dt>Asset base</dt><dd><a href="{asset_base}">{asset_base}</a></dd>
-        <dt>BLAKE3</dt><dd><code>{manifest_blake3}</code></dd>
-      </dl>
-    </section>
-
-    <section>
-      <h2>Current Asset Files</h2>
-{current_asset_rows}
-    </section>
-
-    <section>
-      <h2>Asset Release History</h2>
-{asset_release_rows}
-    </section>
-
-    <section>
-      <h2>VM OBOM Evidence</h2>
-{vm_obom_rows}
-    </section>
-
-    <section>
-      <h2>Host SBOM Evidence</h2>
-{host_sbom_rows}
-    </section>
-
-    <section>
-      <h2>Attestation Evidence</h2>
-{attestation_rows}
-    </section>
-
-    <section>
-      <h2>Profile Catalog</h2>
-{profile_catalog}
-    </section>
-
-    <section>
-      <h2>Binary Files</h2>
-{binary_file_rows}
-    </section>
-
-    <section>
-      <h2>Update Contract</h2>
-{update_contract_rows}
-    </section>
-
-    <section>
-      <h2>Realm Discipline</h2>
-      <ul>
-{notes}
-      </ul>
-    </section>
-  </main>
-</body>
-</html>
-"#,
-        summary = escape_html(&index.summary),
-        channel = escape_html(&index.channel),
-        generated_at = escape_html(&index.generated_at),
-        current_assets = escape_html(&index.current_assets),
-        current_binary = escape_html(&index.current_binary),
-        current_asset_state = escape_html(&index.current_asset_state),
-        current_binary_state = escape_html(&index.current_binary_state),
-        profile_revision = escape_html(&index.profile_catalog.revision),
-        arches = escape_html(&arches),
-        asset_releases = index.asset_releases,
-        binary_releases = index.binary_releases,
-        manifest = escape_html(&index.manifest),
-        profile_source = escape_html(&index.profile_catalog.source),
-        asset_base = escape_html(&index.asset_base),
-        manifest_blake3 = escape_html(&index.manifest_blake3),
-        current_asset_rows = current_asset_rows,
-        asset_release_rows = asset_release_rows,
-        vm_obom_rows = vm_obom_rows,
-        host_sbom_rows = host_sbom_rows,
-        attestation_rows = attestation_rows,
-        profile_catalog = profile_catalog,
-        binary_file_rows = binary_file_rows,
-        update_contract_rows = update_contract_rows,
-        notes = notes,
-    ))
-}
-
-fn render_asset_release_rows(releases: &[AssetsChannelAssetRelease]) -> String {
-    if releases.is_empty() {
-        return "      <p>No asset releases recorded.</p>".to_string();
-    }
-    let rows = releases
-        .iter()
-        .map(|release| {
-            let deprecated_date = release.deprecated_date.as_deref().unwrap_or("");
-            let arches = if release.arches.is_empty() {
-                "none".to_string()
-            } else {
-                release.arches.join(", ")
-            };
-            format!(
-                "        <tr><td><code>{version}</code></td><td>{date}</td><td>{state}</td><td>{deprecated}</td><td>{deprecated_date}</td><td>{min_binary}</td><td>{arches}</td></tr>",
-                version = escape_html(&release.version),
-                date = escape_html(&release.date),
-                state = escape_html(&release.state),
-                deprecated = release.deprecated,
-                deprecated_date = escape_html(deprecated_date),
-                min_binary = escape_html(&release.min_binary),
-                arches = escape_html(&arches),
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    format!(
-        "      <table><thead><tr><th>Version</th><th>Date</th><th>State</th><th>Deprecated</th><th>Deprecated date</th><th>Min binary</th><th>Architectures</th></tr></thead><tbody>\n{rows}\n      </tbody></table>"
-    )
-}
-
-fn render_profile_catalog(index: &AssetsChannelIndex) -> String {
-    let profile_ids = if index.profile_catalog.profile_ids.is_empty() {
-        "none".to_string()
-    } else {
-        index.profile_catalog.profile_ids.join(", ")
-    };
-    format!(
-        r#"      <dl>
-        <dt>Revision</dt><dd><code>{revision}</code></dd>
-        <dt>Published catalog</dt><dd><a href="{source}">{source}</a></dd>
-        <dt>BLAKE3</dt><dd><code>{hash}</code></dd>
-        <dt>Profile count</dt><dd>{profile_count}</dd>
-        <dt>Profile IDs</dt><dd>{profile_ids}</dd>
-        <dt>Refresh policy</dt><dd>{refresh_policy}</dd>
-        <dt>Binary compatibility</dt><dd>{binary} (min {min_binary})</dd>
-        <dt>Asset compatibility</dt><dd>{assets} (min {min_assets})</dd>
-        <dt>Requires newer binary</dt><dd>{requires_binary}</dd>
-        <dt>Requires newer assets</dt><dd>{requires_assets}</dd>
-      </dl>"#,
-        revision = escape_html(&index.profile_catalog.revision),
-        source = escape_html(&index.profile_catalog.source),
-        hash = escape_html(&index.profile_catalog.hash),
-        profile_count = index.profile_catalog.profile_count,
-        profile_ids = escape_html(&profile_ids),
-        refresh_policy = escape_html(&index.profile_catalog.refresh_policy),
-        binary = escape_html(&index.profile_catalog.binary),
-        min_binary = escape_html(&index.profile_catalog.min_binary),
-        assets = escape_html(&index.profile_catalog.assets),
-        min_assets = escape_html(&index.profile_catalog.min_assets),
-        requires_binary = index.profile_catalog.requires_newer_binary,
-        requires_assets = index.profile_catalog.requires_newer_assets,
-    )
-}
-
-fn render_asset_file_groups(files: &[AssetsChannelAssetFile]) -> String {
-    if files.is_empty() {
-        return "      <p>None published for the current asset release.</p>".to_string();
-    }
-    let mut by_arch: BTreeMap<&str, Vec<&AssetsChannelAssetFile>> = BTreeMap::new();
-    for file in files {
-        by_arch.entry(file.arch.as_str()).or_default().push(file);
-    }
-    by_arch
-        .into_iter()
-        .map(|(arch, files)| {
-            let rows = files
-                .iter()
-                .map(|file| {
-                    format!(
-                        "          <tr><td>{name}</td><td><a href=\"{url}\">{url}</a></td><td>{size}</td><td><code>{hash}</code></td></tr>",
-                        name = escape_html(&file.logical_name),
-                        url = escape_html(&file.url),
-                        size = file.size,
-                        hash = escape_html(&file.hash),
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            format!(
-                "      <h3>Architecture {arch}</h3>\n      <table><thead><tr><th>Name</th><th>URL</th><th>Bytes</th><th>BLAKE3</th></tr></thead><tbody>\n{rows}\n      </tbody></table>",
-                arch = escape_html(arch),
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn render_update_contract_rows(index: &AssetsChannelIndex) -> String {
-    let rows = [
-        (
-            "Binary",
-            index.current_binary.as_str(),
-            index.current_binary_state.as_str(),
-            "manifest.binaries.current",
-        ),
-        (
-            "Assets",
-            index.current_assets.as_str(),
-            index.current_asset_state.as_str(),
-            "manifest.assets.current",
-        ),
-        (
-            "Profiles",
-            index.profile_catalog.revision.as_str(),
-            "current",
-            index.profile_catalog.source.as_str(),
-        ),
-        (
-            "Images",
-            "",
-            index.image_update_state.as_str(),
-            "not_in_asset_channel",
-        ),
-    ]
-    .into_iter()
-    .map(|(kind, current, state, source)| {
-        let current = if current.is_empty() { "none" } else { current };
-        format!(
-            "        <tr><td>{}</td><td><code>{}</code></td><td>{}</td><td>{}</td></tr>",
-            escape_html(kind),
-            escape_html(current),
-            escape_html(state),
-            escape_html(source)
-        )
-    })
-    .collect::<Vec<_>>()
-    .join("\n");
-    format!(
-        "      <table><thead><tr><th>Target</th><th>Current</th><th>State</th><th>Source</th></tr></thead><tbody>\n{rows}\n      </tbody></table>"
-    )
-}
-
-fn render_asset_file_rows(files: &[AssetsChannelAssetFile]) -> String {
-    if files.is_empty() {
-        return "      <p>None published for the current asset release.</p>".to_string();
-    }
-    let rows = files
-        .iter()
-        .map(|file| {
-            format!(
-                "        <tr><td>{arch}</td><td>{name}</td><td><a href=\"{url}\">{url}</a></td><td>{size}</td><td><code>{hash}</code></td></tr>",
-                arch = escape_html(&file.arch),
-                name = escape_html(&file.logical_name),
-                url = escape_html(&file.url),
-                size = file.size,
-                hash = escape_html(&file.hash),
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    format!(
-        "      <table><thead><tr><th>Arch</th><th>Name</th><th>URL</th><th>Bytes</th><th>BLAKE3</th></tr></thead><tbody>\n{rows}\n      </tbody></table>"
-    )
-}
-
-fn render_binary_file_rows(files: &[AssetsChannelBinaryFile], empty_message: &str) -> String {
-    if files.is_empty() {
-        return format!("      <p>{}</p>", escape_html(empty_message));
-    }
-    let rows = files
-        .iter()
-        .map(|file| {
-            format!(
-                "        <tr><td>{name}</td><td><a href=\"{url}\">{url}</a></td><td>{size}</td><td><code>{sha256}</code></td></tr>",
-                name = escape_html(&file.name),
-                url = escape_html(&file.url),
-                size = file.size,
-                sha256 = escape_html(&file.sha256),
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    format!(
-        "      <table><thead><tr><th>Name</th><th>URL</th><th>Bytes</th><th>SHA-256</th></tr></thead><tbody>\n{rows}\n      </tbody></table>"
-    )
-}
-
-fn render_attestation_rows(attestations: &[AssetsChannelAttestation]) -> String {
-    if attestations.is_empty() {
-        return "      <p>No binary attestation metadata is published in this asset manifest.</p>"
-            .to_string();
-    }
-    let rows = attestations
-        .iter()
-        .map(|attestation| {
-            let subjects = attestation.subjects.join(", ");
-            let predicate_url = attestation.predicate_url.as_deref().unwrap_or("");
-            format!(
-                "        <tr><td>{name}</td><td>{scope}</td><td>{predicate_type}</td><td>{predicate_url}</td><td>{workflow}</td><td><code>{verify_command}</code></td><td>{subjects}</td></tr>",
-                name = escape_html(&attestation.name),
-                scope = escape_html(&attestation.scope),
-                predicate_type = escape_html(&attestation.predicate_type),
-                predicate_url = escape_html(predicate_url),
-                workflow = escape_html(&attestation.workflow),
-                verify_command = escape_html(&attestation.verify_command),
-                subjects = escape_html(&subjects),
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    format!(
-        "      <table><thead><tr><th>Name</th><th>Scope</th><th>Predicate</th><th>Predicate URL</th><th>Workflow</th><th>Verify</th><th>Subjects</th></tr></thead><tbody>\n{rows}\n      </tbody></table>"
-    )
 }
 
 fn validate_channel_name(channel: &str) -> Result<()> {
@@ -6784,7 +6349,10 @@ decision = "block"
         let release_dir = out_dir.join("assets/releases/2030.0101.1");
         assert_eq!(report.manifest, channel_manifest.display().to_string());
         assert_eq!(report.copied_assets, 4);
-        assert!(out_dir.join("index.html").is_file());
+        assert!(
+            !out_dir.join("index.html").exists(),
+            "human release pages are built by release-site Astro, not capsem-admin"
+        );
         assert!(out_dir.join("health.json").is_file());
         assert!(channel_manifest.is_file());
         assert_eq!(
@@ -6798,22 +6366,6 @@ decision = "block"
             fs::read_to_string(&channel_manifest).expect("channel manifest"),
             fs::read_to_string(&manifest_path).expect("source manifest")
         );
-        let index_html = fs::read_to_string(out_dir.join("index.html")).expect("index page");
-        assert!(index_html.contains("Current Asset Files"));
-        assert!(index_html.contains("<h3>Architecture arm64</h3>"));
-        assert!(index_html.contains("Profile IDs"));
-        assert!(index_html.contains("Host SBOM Evidence"));
-        assert!(index_html.contains("Attestation Evidence"));
-        assert!(index_html.contains("Update Contract"));
-        assert!(index_html.contains("Profile Catalog"));
-        assert!(index_html.contains("gh attestation verify"));
-        assert!(index_html.contains("/health.json"));
-        assert!(index_html.contains("<th>Date</th>"));
-        assert!(index_html.contains("2030-01-01"));
-        assert!(index_html.contains("/assets/releases/2030.0101.1/arm64-rootfs.erofs"));
-        assert!(index_html.contains("/assets/releases/2030.0101.1/arm64-obom.cdx.json"));
-        assert!(index_html.contains("capsem-sbom.spdx.json"));
-        assert!(index_html.contains(&blake3::hash(b"rootfs-arm64").to_hex().to_string()));
         let health: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(out_dir.join("health.json")).unwrap())
                 .expect("health json parses");

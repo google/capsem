@@ -153,18 +153,23 @@ def test_ci_has_stable_pr_gate_over_all_required_jobs() -> None:
 
     assert "pull_request:" in workflow
     assert "push:" in workflow
-    assert "needs: [test-linux, test, test-install, docs-build, site-build]" in gate
+    assert (
+        "needs: [test-linux, test, test-install, docs-build, site-build, release-site-build]"
+        in gate
+    )
     assert "if: ${{ always() }}" in gate
     assert "TEST_LINUX_RESULT: ${{ needs.test-linux.result }}" in gate
     assert "TEST_MACOS_RESULT: ${{ needs.test.result }}" in gate
     assert "TEST_INSTALL_RESULT: ${{ needs.test-install.result }}" in gate
     assert "DOCS_BUILD_RESULT: ${{ needs.docs-build.result }}" in gate
     assert "SITE_BUILD_RESULT: ${{ needs.site-build.result }}" in gate
+    assert "RELEASE_SITE_BUILD_RESULT: ${{ needs.release-site-build.result }}" in gate
     assert 'test "$TEST_LINUX_RESULT" = success' in gate
     assert 'test "$TEST_MACOS_RESULT" = success' in gate
     assert 'test "$TEST_INSTALL_RESULT" = success' in gate
     assert 'test "$DOCS_BUILD_RESULT" = success' in gate
     assert 'test "$SITE_BUILD_RESULT" = success' in gate
+    assert 'test "$RELEASE_SITE_BUILD_RESULT" = success' in gate
 
 
 def test_pr_gate_blocks_broken_docs_and_marketing_builds() -> None:
@@ -180,11 +185,16 @@ def test_pr_gate_blocks_broken_docs_and_marketing_builds() -> None:
     assert "pr-gate:" in workflow
     assert "docs-build:" in workflow
     assert "site-build:" in workflow
-    assert "needs: [test-linux, test, test-install, docs-build, site-build]" in gate
+    assert (
+        "needs: [test-linux, test, test-install, docs-build, site-build, release-site-build]"
+        in gate
+    )
     assert "DOCS_BUILD_RESULT: ${{ needs.docs-build.result }}" in gate
     assert "SITE_BUILD_RESULT: ${{ needs.site-build.result }}" in gate
+    assert "RELEASE_SITE_BUILD_RESULT: ${{ needs.release-site-build.result }}" in gate
     assert 'test "$DOCS_BUILD_RESULT" = success' in gate
     assert 'test "$SITE_BUILD_RESULT" = success' in gate
+    assert 'test "$RELEASE_SITE_BUILD_RESULT" = success' in gate
 
     assert "cache-dependency-path: docs/pnpm-lock.yaml" in docs_job
     assert "cd docs && pnpm install --frozen-lockfile" in docs_job
@@ -205,7 +215,7 @@ def test_pr_gate_blocks_broken_docs_and_marketing_builds() -> None:
 
     assert "docs-build" in docs_ci
     assert "site-build" in docs_ci
-    assert "`pr-gate` depends on `docs-build` and `site-build`" in docs_ci_text
+    assert "`pr-gate` depends on `docs-build`, `site-build`, and `release-site-build`" in docs_ci_text
 
 
 def test_ci_test_steps_do_not_mask_failures_with_true() -> None:
@@ -802,7 +812,10 @@ def test_docs_and_marketing_sites_build_on_pr_and_deploy_on_main_only() -> None:
         assert f"cache-dependency-path: {directory}/pnpm-lock.yaml" in ci_block
         assert f"cd {directory} && pnpm install --frozen-lockfile" in ci_block
         assert f"cd {directory} && pnpm run build" in ci_block
-        assert "needs: [test-linux, test, test-install, docs-build, site-build]" in ci_workflow
+        assert (
+            "needs: [test-linux, test, test-install, docs-build, site-build, release-site-build]"
+            in ci_workflow
+        )
         assert f"cd {directory} && pnpm install --frozen-lockfile" in workflow
         assert f"cd {directory} && pnpm run build" in workflow
         assert (
@@ -3039,7 +3052,7 @@ def test_release_skill_keeps_binary_and_asset_verification_decoupled() -> None:
     assert "gh release download vX.Y.Z --pattern manifest.json" not in release_skill
     assert "VM asset manifests" in release_skill
     assert "channel health live on `release.capsem.org`" in release_skill
-    assert "`ci.yaml` runs `docs-build` and `site-build` under `pr-gate`" in release_skill
+    assert "`ci.yaml` runs `docs-build`, `site-build`, and `release-site-build` under `pr-gate`" in release_skill_text
     assert "`docs.yaml` and `site.yaml` deploy and smoke only on" in release_skill
     assert "`https://docs.capsem.org/` plus `/getting-started/`" in release_skill
     assert "`https://capsem.org/` for marketing" in release_skill
@@ -3138,7 +3151,8 @@ def test_ci_docs_describes_three_independent_publication_rails() -> None:
     assert "release.yaml` | Tag push (`v*`) | Build assets" not in docs
     assert "generated asset manifest artifact" not in docs
     assert "### pr-gate (ubuntu-latest)" in docs
-    assert "`test-linux`, `test`, `test-install`, `docs-build`, and `site-build`" in docs
+    assert "`test-linux`, `test`, `test-install`, `docs-build`, `site-build`, and" in docs
+    assert "`release-site-build`, runs even" in docs
     assert "fails unless every dependency job reports" in docs
     assert "After Cloudflare deploys, `release-channel.yaml` smoke" in docs
     assert "`https://release.capsem.org/` index" in docs
@@ -3184,12 +3198,15 @@ def test_ci_docs_compare_pr_gate_to_just_test_with_named_substitutions() -> None
         in docs
     )
     assert (
-        "| Docs and marketing builds | `docs-build` and `site-build` jobs install and build `docs/` and `site/` before `pr-gate` can pass | Merge-blocking build proof; deploy happens only after merge |"
+        "| Docs, marketing, and release-channel site builds | `docs-build`, `site-build`, and `release-site-build` install and build `docs/`, `site/`, and `release-site/` before `pr-gate` can pass | Merge-blocking build proof; deploy happens only after merge or explicit release-channel publication |"
         in docs
     )
     assert "`pr-gate` is the only status that should be required by branch protection" in docs
-    assert "`pr-gate` depends on `docs-build` and `site-build`" in docs_text
-    assert "needs: [test-linux, test, test-install, docs-build, site-build]" in workflow
+    assert "`pr-gate` depends on `docs-build`, `site-build`, and `release-site-build`" in docs_text
+    assert (
+        "needs: [test-linux, test, test-install, docs-build, site-build, release-site-build]"
+        in workflow
+    )
 
 
 def test_remote_release_readiness_checker_is_read_only_and_covers_live_gates() -> None:
@@ -3209,7 +3226,7 @@ def test_remote_release_readiness_checker_is_read_only_and_covers_live_gates() -
     assert "capsem.assets_channel.health.v1" in script
     assert "pr-gate" in script
     assert "REQUIRED_PR_GATE_JOBS" in script
-    assert '"docs-build", "site-build"' in script
+    assert '"release-site-build"' in script
     assert "current asset release date" in script
     assert 'RELEASE_VALIDATOR_USER_AGENT = "CapsemReleaseValidator/1.0"' in script
     assert "release_site_request(url)" in script
@@ -3228,7 +3245,7 @@ def test_remote_release_readiness_checker_is_read_only_and_covers_live_gates() -
     assert "scripts/check-remote-release-readiness.py" in docs
     assert "read-only" in docs
     assert "remote `ci.yaml` exposes `pr-gate`" in docs_text
-    assert "aggregates `test-linux`, `test`, `test-install`, `docs-build`, and `site-build`" in (
+    assert "aggregates `test-linux`, `test`, `test-install`, `docs-build`, `site-build`, and `release-site-build`" in (
         docs_text
     )
     assert "runs with `if: ${{ always() }}` and asserts every dependency result" in docs_text
@@ -3331,8 +3348,10 @@ jobs:
     runs-on: ubuntu-latest
   site-build:
     runs-on: ubuntu-latest
+  release-site-build:
+    runs-on: ubuntu-latest
   pr-gate:
-    needs: [test-linux, test, test-install, docs-build, site-build]
+    needs: [test-linux, test, test-install, docs-build, site-build, release-site-build]
 """.strip()
     multiline = """
 jobs:
@@ -3343,9 +3362,10 @@ jobs:
       - test-install
       - docs-build
       - site-build
+      - release-site-build
     if: ${{ always() }}
 """.strip()
-    stale = inline.replace(", docs-build, site-build", "")
+    stale = inline.replace(", docs-build, site-build, release-site-build", "")
     non_failing = inline + "\n    steps:\n      - run: echo ok\n"
     fail_closed = inline + """
     if: ${{ always() }}
@@ -3357,12 +3377,14 @@ jobs:
           TEST_INSTALL_RESULT: ${{ needs.test-install.result }}
           DOCS_BUILD_RESULT: ${{ needs.docs-build.result }}
           SITE_BUILD_RESULT: ${{ needs.site-build.result }}
+          RELEASE_SITE_BUILD_RESULT: ${{ needs.release-site-build.result }}
         run: |
           test "$TEST_LINUX_RESULT" = success
           test "$TEST_MACOS_RESULT" = success
           test "$TEST_INSTALL_RESULT" = success
           test "$DOCS_BUILD_RESULT" = success
           test "$SITE_BUILD_RESULT" = success
+          test "$RELEASE_SITE_BUILD_RESULT" = success
 """
 
     assert module.workflow_job_needs(module.workflow_job_block(inline, "pr-gate")) == {
@@ -3371,6 +3393,7 @@ jobs:
         "test-install",
         "docs-build",
         "site-build",
+        "release-site-build",
     }
     assert module.workflow_job_needs(module.workflow_job_block(multiline, "pr-gate")) == {
         "test-linux",
@@ -3378,10 +3401,12 @@ jobs:
         "test-install",
         "docs-build",
         "site-build",
+        "release-site-build",
     }
     assert not {
         "docs-build",
         "site-build",
+        "release-site-build",
     }.issubset(module.workflow_job_needs(module.workflow_job_block(stale, "pr-gate")))
     assert module.pr_gate_contract_failures(
         module.workflow_job_block(fail_closed, "pr-gate")
@@ -3395,6 +3420,7 @@ jobs:
         "pr-gate does not assert test-install result",
         "pr-gate does not assert docs-build result",
         "pr-gate does not assert site-build result",
+        "pr-gate does not assert release-site-build result",
     ]
 
 

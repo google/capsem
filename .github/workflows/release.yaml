@@ -646,6 +646,17 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: release-site/pnpm-lock.yaml
+      - name: Install release site dependencies
+        run: cd release-site && pnpm install --frozen-lockfile
+
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
@@ -711,6 +722,11 @@ jobs:
             --asset-source-base "https://github.com/google/capsem/releases/download/assets-v{asset_version}" \
             --channel stable \
             --out-dir target/release-channel
+
+      - name: Build release site pages
+        env:
+          CAPSEM_RELEASE_CHANNEL_DIST: ${{ github.workspace }}/target/release-channel
+        run: cd release-site && pnpm run build:channel
 
       - name: Check binary-updated release channel
         run: |

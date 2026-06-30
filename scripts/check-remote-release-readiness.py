@@ -26,13 +26,21 @@ else:
     BLAKE3_IMPORT_ERROR = None
 
 
-REQUIRED_PR_GATE_JOBS = ("test-linux", "test", "test-install", "docs-build", "site-build")
+REQUIRED_PR_GATE_JOBS = (
+    "test-linux",
+    "test",
+    "test-install",
+    "docs-build",
+    "site-build",
+    "release-site-build",
+)
 REQUIRED_PR_GATE_RESULT_CHECKS = (
     ("test-linux", "TEST_LINUX_RESULT"),
     ("test", "TEST_MACOS_RESULT"),
     ("test-install", "TEST_INSTALL_RESULT"),
     ("docs-build", "DOCS_BUILD_RESULT"),
     ("site-build", "SITE_BUILD_RESULT"),
+    ("release-site-build", "RELEASE_SITE_BUILD_RESULT"),
 )
 RELEASE_VALIDATOR_USER_AGENT = "CapsemReleaseValidator/1.0"
 

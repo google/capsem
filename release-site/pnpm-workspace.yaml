@@ -1,0 +1,14 @@
+onlyBuiltDependencies:
+  - esbuild
+  - sharp
+allowBuilds:
+  esbuild: true
+  sharp: true
+packages:
+  - .
+
+overrides:
+  esbuild: 0.28.1
+  fast-uri: ">=3.1.2"
+  postcss: ">=8.5.10"
+  yaml: ">=2.8.3"

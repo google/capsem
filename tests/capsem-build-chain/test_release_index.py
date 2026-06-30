@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -28,7 +29,45 @@ def _run_admin(*args: str, check: bool = True) -> subprocess.CompletedProcess[st
             f"stdout:\n{result.stdout}\n"
             f"stderr:\n{result.stderr}"
         )
+    if (
+        result.returncode == 0
+        and len(args) >= 3
+        and args[:3] == ("assets", "channel", "build")
+        and "--out-dir" in args
+    ):
+        out_dir = Path(args[args.index("--out-dir") + 1])
+        _build_release_site(out_dir)
     return result
+
+
+def _build_release_site(dist: Path) -> None:
+    install = subprocess.run(
+        ["pnpm", "install", "--frozen-lockfile"],
+        cwd=PROJECT_ROOT / "release-site",
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    assert install.returncode == 0, (
+        "release-site pnpm install failed\n"
+        f"stdout:\n{install.stdout}\n"
+        f"stderr:\n{install.stderr}"
+    )
+    build = subprocess.run(
+        ["pnpm", "run", "build:channel"],
+        cwd=PROJECT_ROOT / "release-site",
+        env={**os.environ, "CAPSEM_RELEASE_CHANNEL_DIST": str(dist)},
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    assert build.returncode == 0, (
+        "release-site Astro build failed\n"
+        f"stdout:\n{build.stdout}\n"
+        f"stderr:\n{build.stderr}"
+    )
 
 
 def _write_asset(path: Path, data: bytes) -> dict[str, object]:
@@ -114,19 +153,17 @@ def _write_release_manifest(
     return manifest_path
 
 
-def _html_section(html: str, heading: str) -> str:
-    marker = f"<h2>{heading}</h2>"
-    start = html.index(marker)
-    next_section = html.find("    <section>", start + len(marker))
-    if next_section == -1:
-        return html[start:]
-    return html[start:next_section]
-
-
 def _write_profile_catalog(root: Path, revision: str = "profiles-2030.0101.1") -> Path:
     profiles_dir = root / "config" / "profiles"
     profile_dir = profiles_dir / "code"
     profile_dir.mkdir(parents=True, exist_ok=True)
+    (profile_dir / "apt-packages.txt").write_text("zstd\n", encoding="utf-8")
+    (profile_dir / "python-requirements.txt").write_text("pytest==8.0.0\n", encoding="utf-8")
+    (profile_dir / "npm-packages.txt").write_text("@openai/codex\n", encoding="utf-8")
+    (profile_dir / "root.manifest.json").write_text(
+        '{"format":"capsem.profile-root.v1","files":[]}\n',
+        encoding="utf-8",
+    )
     (profile_dir / "profile.toml").write_text(
         f"""
 id = "code"
@@ -150,6 +187,30 @@ url = "https://release.capsem.org/assets/releases/2030.0101.1/arm64-initrd.img"
 [assets.arch.arm64.rootfs]
 name = "rootfs.erofs"
 url = "https://release.capsem.org/assets/releases/2030.0101.1/arm64-rootfs.erofs"
+
+[assets.arch.x86_64.kernel]
+name = "vmlinuz"
+url = "https://release.capsem.org/assets/releases/2030.0101.1/x86_64-vmlinuz"
+
+[assets.arch.x86_64.initrd]
+name = "initrd.img"
+url = "https://release.capsem.org/assets/releases/2030.0101.1/x86_64-initrd.img"
+
+[assets.arch.x86_64.rootfs]
+name = "rootfs.erofs"
+url = "https://release.capsem.org/assets/releases/2030.0101.1/x86_64-rootfs.erofs"
+
+[files.apt_packages]
+path = "profiles/code/apt-packages.txt"
+
+[files.python_requirements]
+path = "profiles/code/python-requirements.txt"
+
+[files.npm_packages]
+path = "profiles/code/npm-packages.txt"
+
+[files.root_manifest]
+path = "profiles/code/root.manifest.json"
 """.strip()
         + "\n",
         encoding="utf-8",
@@ -220,31 +281,41 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
     report = json.loads(result.stdout)
     assert report["schema"] == "capsem.admin.assets_channel_build.v1"
     assert report["channel"] == "stable"
+    assert report["human_site_source"] == "release-site"
+    assert "index_html" not in report
     assert report["manifest"] == str(dist / "assets" / "stable" / "manifest.json")
     assert report["copied_assets"] == 8
 
     index_html = (dist / "index.html").read_text(encoding="utf-8")
     assert "Capsem Asset Channel" in index_html
-    assert "Current Asset Files" in index_html
-    assert "Host SBOM Evidence" in index_html
-    assert "VM OBOM Evidence" in index_html
-    assert "Update Contract" in index_html
-    assert "Profile Catalog" in index_html
+    assert "Channel Manifest" in index_html
+    assert "Manifest URL" in index_html
+    assert "Current asset base" in index_html
+    assert "Capsem Binaries" in index_html
+    assert "Profile catalog JSON" in index_html
     assert "profiles-2030.0101.1" in index_html
-    assert "Profile IDs" in index_html
-    assert "Realm Discipline" in index_html
-    assert '<a href="/index.html">/index.html</a>' in index_html
-    assert '<a href="/health.json">/health.json</a>' in index_html
-    assert '<a href="/profiles/releases/profiles-2030.0101.1/catalog.json">' in index_html
-    assert "/assets/releases/2030.0101.1/arm64-rootfs.erofs" in index_html
-    assert "/assets/releases/2030.0101.1/arm64-obom.cdx.json" in index_html
-    assert "/assets/releases/2030.0101.1/x86_64-rootfs.erofs" in index_html
-    current_assets_section = _html_section(index_html, "Current Asset Files")
-    assert "<h3>Architecture arm64</h3>" in current_assets_section
-    assert "<h3>Architecture x86_64</h3>" in current_assets_section
-    assert "<th>Arch</th>" not in current_assets_section
+    assert "Current Asset Files" not in index_html
+    assert "VM OBOM Evidence" not in index_html
+    assert "Realm Discipline" not in index_html
+    assert 'href="/health.json"' in index_html
+    assert "/health.json" in index_html
+    assert 'href="/assets/stable/manifest.json"' in index_html
+    assert "/assets/stable/manifest.json" in index_html
+    assert 'href="/profiles/releases/profiles-2030.0101.1/catalog.json"' in index_html
+    assert "Capsem-1.4.1234567890.pkg" in index_html
     assert "capsem-sbom.spdx.json" in index_html
     assert "The fastest way to ship with AI securely." not in index_html
+    profile_html = (dist / "profiles" / "code" / "index.html").read_text(encoding="utf-8")
+    assert "Architecture arm64" in profile_html
+    assert "Architecture x86_64" in profile_html
+    assert "ABOM / OBOM" in profile_html
+    assert "/assets/releases/2030.0101.1/arm64-rootfs.erofs" in profile_html
+    assert "/assets/releases/2030.0101.1/arm64-obom.cdx.json" in profile_html
+    assert "/assets/releases/2030.0101.1/x86_64-rootfs.erofs" in profile_html
+    assert "apt_packages" in profile_html
+    assert "python_requirements" in profile_html
+    assert "npm_packages" in profile_html
+    assert "root_manifest" in profile_html
 
     headers = (dist / "_headers").read_text(encoding="utf-8")
     assert "/\n  Cache-Control: no-cache, must-revalidate" in headers

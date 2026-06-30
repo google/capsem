@@ -54,16 +54,16 @@ path stay valid before a PR can merge.
 ### pr-gate (ubuntu-latest)
 
 This is the stable branch-protection status for code PRs. It depends on
-`test-linux`, `test`, `test-install`, `docs-build`, and `site-build`, runs even
-when one dependency fails, and fails unless every dependency job reports
+`test-linux`, `test`, `test-install`, `docs-build`, `site-build`, and
+`release-site-build`, runs even when one dependency fails, and fails unless every dependency job reports
 `success`.
 
 `pr-gate` is the only status that should be required by branch protection for
 the product CI workflow. Individual dependency job names may change as CI is
 reshaped; `pr-gate` keeps branch protection stable while still failing closed
-when any required lane fails. `pr-gate` depends on `docs-build` and
-`site-build` so broken docs or marketing builds cannot merge even though the
-Cloudflare deploy workflows are separate.
+when any required lane fails. `pr-gate` depends on `docs-build`, `site-build`,
+and `release-site-build` so broken docs, marketing, or release-channel pages
+cannot merge even though the Cloudflare deploy workflows are separate.
 
 Before claiming release readiness, run the read-only live gate checker:
 
@@ -73,7 +73,7 @@ uv run python scripts/check-remote-release-readiness.py
 
 It verifies that the local checkout has no unpublished commits relative to
 `origin/main`; remote `ci.yaml` exposes `pr-gate`, aggregates `test-linux`,
-`test`, `test-install`, `docs-build`, and `site-build`, runs with
+`test`, `test-install`, `docs-build`, `site-build`, and `release-site-build`, runs with
 `if: ${{ always() }}` and asserts every dependency result; branch protection or
 active branch rulesets require `pr-gate`; `release.capsem.org` resolves and
 serves the asset channel; and the public index, `health.json`, and manifest
@@ -146,7 +146,7 @@ of pretending the hosted lane is identical.
 | Rust workspace coverage | `test` and `test-linux` jobs run `cargo llvm-cov nextest` on macOS and Linux crate sets | Same coverage rail with runner-specific package sets |
 | Host binary signing prerequisites | `test` job builds and ad-hoc signs host binaries before non-VM integration suites | Same PR prerequisite for artifact-dependent Python suites |
 | Python schema and no-VM integration suites | `test` job runs schema coverage plus bootstrap, codesign, rootfs artifact, and release-channel suites | Same no-VM suites, scoped to generated artifacts available in CI |
-| Docs and marketing builds | `docs-build` and `site-build` jobs install and build `docs/` and `site/` before `pr-gate` can pass | Merge-blocking build proof; deploy happens only after merge |
+| Docs, marketing, and release-channel site builds | `docs-build`, `site-build`, and `release-site-build` install and build `docs/`, `site/`, and `release-site/` before `pr-gate` can pass | Merge-blocking build proof; deploy happens only after merge or explicit release-channel publication |
 | VM-heavy Python suites (`pytest tests/ -n 4`) | Import collection only on hosted PR runners | Runner substitution: full execution remains a local/release gate until PR runners can host Apple VZ reliably |
 | Serial timing, build-chain, release-channel, and route-health suites | Import collection only on hosted PR runners | Runner substitution: local `just test` and release gates remain authoritative |
 | Legacy injection/integration scripts and benchmark recording | Not run in hosted PR CI | Runner substitution: still required by local `just test` before release work is claimed |
@@ -156,7 +156,7 @@ of pretending the hosted lane is identical.
 
 `docs.yaml` and `site.yaml` are independent from binary and VM asset release
 rails. Pull requests build docs and marketing through the `ci.yaml`
-`docs-build` and `site-build` jobs, which feed the required `pr-gate`. Pushes to
+`docs-build`, `site-build`, and `release-site-build` jobs, which feed the required `pr-gate`. Pushes to
 `main` deploy through Cloudflare Pages and then smoke the public custom domain:
 
 | Workflow | Public smoke |

@@ -99,6 +99,16 @@ def _build_release_channel(
         "--out-dir",
         str(dist),
     )
+    _run(
+        ["pnpm", "--dir", "release-site", "install", "--frozen-lockfile"],
+        timeout=180,
+        env={},
+    )
+    _run(
+        ["pnpm", "--dir", "release-site", "run", "build:channel"],
+        timeout=180,
+        env={"CAPSEM_RELEASE_CHANNEL_DIST": str(dist)},
+    )
     _run_admin("assets", "channel", "check", "--channel", CHANNEL, "--dist", str(dist))
 
 

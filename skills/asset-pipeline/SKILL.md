@@ -44,6 +44,7 @@ rerun the failing recipe.
 | Manifest | `assets/manifest.json` |
 | Asset channel deploy root | `target/release-channel/` |
 | Asset channel manifest | `target/release-channel/assets/<channel>/manifest.json` |
+| Asset channel human site | `release-site/` Astro app, built from `target/release-channel/` JSON |
 | Checksums | `assets/B3SUMS` |
 | Manifest generator | `capsem-admin manifest generate <assets_dir>` |
 | Asset types + cleanup | `crates/capsem-core/src/asset_manager.rs` |
@@ -99,6 +100,12 @@ source tree or alternate manifest format. The generated deploy root is
 `target/release-channel/`; the machine artifact is
 `assets/<channel>/manifest.json` under that root, so the stable public URL is
 `https://release.capsem.org/assets/stable/manifest.json`.
+`capsem-admin` writes the machine channel artifacts only: channel manifest,
+immutable profile catalog, `health.json`, `_headers`, and `robots.txt`. The
+human release pages are built by the `release-site/` Astro app from those JSON
+files with `CAPSEM_RELEASE_CHANNEL_DIST=/path/to/target/release-channel pnpm run
+build:channel`, which overlays `index.html` and per-profile pages into the same
+deploy root before channel validation or deployment.
 Immutable VM blobs for that manifest are referenced by the manifest's optional
 `asset_base` URL template. Public releases currently use GitHub Releases with
 `https://github.com/google/capsem/releases/download/assets-v{asset_version}`,
@@ -131,7 +138,8 @@ builds, immutable GitHub asset publication, or provenance attestation. It should
 build VM assets, publish changed blobs to an immutable
 `assets-v<asset-version>` GitHub Release, attest the arch-prefixed `vmlinuz`,
 `initrd.img`, `rootfs.erofs`, and `obom.cdx.json` subjects, write `asset_base`
-into the channel manifest, upload `target/release-channel/` without VM blobs as
+into the channel manifest, run the Astro release-site build against the
+generated channel data, upload `target/release-channel/` without VM blobs as
 the `asset-channel-preview` artifact, and call
 `.github/workflows/release-channel.yaml` to deploy `release.capsem.org` only
 after the asset manifest, blobs, and channel checks have been generated.
