@@ -96,6 +96,11 @@ wizard and it does not create a user policy file.
 - `capsem update --assets` -> hydrate the locally installed manifest or an explicit `--manifest` URL
 - Corporate VM asset channels use `capsem update --assets --manifest <URL>`; `--corp <URL>` provisions policy config and must not be combined with `--assets`
 - Layout detection: MacosPkg, LinuxDeb, UserDir, Development (development bails with "build from source")
+- Pre-updater installed binaries cannot be retrofitted through the release
+  channel. If a shipped binary prints "Binary self-update is not yet wired up",
+  that install needs one manual `.pkg` or `.deb` bootstrap into a version that
+  contains the package apply path; only then can later binary releases move
+  through `capsem update --yes`.
 - Installed update smokes require that all packaged host binaries expose a version surface and report the same installed Capsem package version after replacement.
 
 ## Corp config provisioning (capsem-core: corp_provision.rs)

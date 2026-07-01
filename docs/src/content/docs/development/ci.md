@@ -328,7 +328,10 @@ attestation references, then mirrors the already-published VM blobs from
 `assets/releases/<asset-version>/` without rebuilding them. That generated
 channel output still includes the immutable profile catalog artifact under
 `profiles/releases/<revision>/catalog.json`, so profile metadata can move with
-the release channel independently from VM image rebuilds. A manual VM asset
+the release channel independently from VM image rebuilds. The binary updater is
+forward-compatible from package builds that include the updater; older installed
+binaries that only print manual rebuild/install advice require one manual
+installer bootstrap before they can follow the decoupled binary rail. A manual VM asset
 release produces the manifest, immutable blob paths, and OBOM/provenance
 evidence, then publishes an immutable GitHub Release tagged
 `assets-v<asset-version>` with arch-prefixed `vmlinuz`, `initrd.img`,

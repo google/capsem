@@ -527,6 +527,12 @@ the release channel, the tag workflow preflights that the downloaded release
 artifacts contain `capsem-sbom.spdx.json` and at least one installable host
 package (`.pkg` or `.deb`).
 
+Do not claim pre-updater installed clients can self-update just because the
+release channel now advertises binary packages. Binaries that shipped before
+the packaged binary updater must be manually bootstrapped once with the `.pkg`
+or `.deb`; forward binary-update proof starts from an installed version that
+already contains the updater and package apply path.
+
 For a demo-facing macOS release, also prove the installer path users see:
 
 ```bash

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Clarified the binary self-update bootstrap boundary: installs that predate the
+  packaged binary updater require one manual installer upgrade before they can
+  follow the decoupled daily binary update rail.
+
 ## [1.4.1782934218] - 2026-07-01
 
 ## [1.4.1782928920] - 2026-07-01

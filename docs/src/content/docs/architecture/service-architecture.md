@@ -295,6 +295,12 @@ package-manager apply command for audit, and executes that command through
 kernel/initrd/rootfs bytes from the installed or overridden manifest, verifies
 BLAKE3 hashes, and keeps hash-named files deduplicated.
 
+Installs that shipped before this packaged binary updater cannot be made
+self-updating by changing `release.capsem.org`; those binaries do not contain
+the package apply path. They need one manual `.pkg` or `.deb` upgrade into a
+version with the updater before later binary releases can move independently
+from VM asset releases.
+
 ## Rust crate architecture
 
 | Crate | Type | What |
