@@ -127,7 +127,7 @@ impl VzHostLock {
                 .read(true)
                 .write(true)
                 .truncate(false)
-                .open(&path)
+                .open(path)
                 .with_context(|| format!("failed to open vz host lock {}", path.display()))?;
             match Flock::lock(file, arg) {
                 Ok(flock) => return Ok(Some(Self { _flock: flock })),

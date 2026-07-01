@@ -1600,14 +1600,16 @@ fn validate_assets_channel_health(
     validate_profile_catalog_artifact(
         dist,
         &expected_profile_source,
-        &expected_profile_hash,
-        &expected_profile_revision,
-        &manifest.binaries.current,
-        &manifest.assets.current,
-        &current_release.min_binary,
-        current_binary_release
-            .map(|release| release.min_assets.as_str())
-            .unwrap_or(""),
+        ProfileCatalogExpectations {
+            hash: &expected_profile_hash,
+            revision: &expected_profile_revision,
+            current_binary: &manifest.binaries.current,
+            current_assets: &manifest.assets.current,
+            min_binary: &current_release.min_binary,
+            min_assets: current_binary_release
+                .map(|release| release.min_assets.as_str())
+                .unwrap_or(""),
+        },
     )?;
     require_json_str(
         health,
@@ -2102,15 +2104,19 @@ fn require_json_string(root: &serde_json::Value, path: &[&str]) -> Result<String
         .ok_or_else(|| anyhow!("health.json missing {}", path.join(".")))
 }
 
+struct ProfileCatalogExpectations<'a> {
+    hash: &'a str,
+    revision: &'a str,
+    current_binary: &'a str,
+    current_assets: &'a str,
+    min_binary: &'a str,
+    min_assets: &'a str,
+}
+
 fn validate_profile_catalog_artifact(
     dist: &Path,
     source: &str,
-    expected_hash: &str,
-    expected_revision: &str,
-    expected_current_binary: &str,
-    expected_current_assets: &str,
-    expected_min_binary: &str,
-    expected_min_assets: &str,
+    expected: ProfileCatalogExpectations<'_>,
 ) -> Result<()> {
     if !source.starts_with("/profiles/releases/") || !source.ends_with("/catalog.json") {
         return Err(anyhow!(
@@ -2123,7 +2129,7 @@ fn validate_profile_catalog_artifact(
     let bytes =
         fs::read(&path).with_context(|| format!("read profile catalog {}", path.display()))?;
     let actual_hash = blake3::hash(&bytes).to_hex().to_string();
-    if actual_hash != expected_hash {
+    if actual_hash != expected.hash {
         return Err(anyhow!("health.json profile catalog hash mismatch"));
     }
     let text = std::str::from_utf8(&bytes)
@@ -2144,7 +2150,7 @@ fn validate_profile_catalog_artifact(
     require_json_str(
         &catalog,
         &["revision"],
-        expected_revision,
+        expected.revision,
         "profile catalog revision mismatch",
     )?;
     require_json_str(
@@ -2156,37 +2162,37 @@ fn validate_profile_catalog_artifact(
     require_json_str(
         &catalog,
         &["current_binary"],
-        expected_current_binary,
+        expected.current_binary,
         "profile catalog current binary mismatch",
     )?;
     require_json_str(
         &catalog,
         &["current_assets"],
-        expected_current_assets,
+        expected.current_assets,
         "profile catalog current assets mismatch",
     )?;
     require_json_str(
         &catalog,
         &["compatibility", "binary"],
-        expected_current_binary,
+        expected.current_binary,
         "profile catalog binary compatibility mismatch",
     )?;
     require_json_str(
         &catalog,
         &["compatibility", "assets"],
-        expected_current_assets,
+        expected.current_assets,
         "profile catalog asset compatibility mismatch",
     )?;
     require_json_str(
         &catalog,
         &["compatibility", "min_binary"],
-        expected_min_binary,
+        expected.min_binary,
         "profile catalog min binary mismatch",
     )?;
     require_json_str(
         &catalog,
         &["compatibility", "min_assets"],
-        expected_min_assets,
+        expected.min_assets,
         "profile catalog min assets mismatch",
     )?;
     require_json_bool(
@@ -3437,11 +3443,13 @@ fn materialize_profile_config(args: &ProfileMaterializeArgs) -> Result<ProfileMa
                 .ok_or_else(|| anyhow!("materialized {arch} rootfs hash is unresolved"))?
         };
         materialize_profile_obom_descriptor(
-            &args.assets_dir,
-            &args.manifest,
-            &manifest.assets.current,
-            &arch,
-            manifest_assets,
+            ProfileObomMaterializeInputs {
+                assets_dir: &args.assets_dir,
+                manifest_url: &args.manifest,
+                asset_version: &manifest.assets.current,
+                arch: &arch,
+                manifest_assets,
+            },
             rootfs_hash,
             &mut profile,
             &mut materialized_obom,
@@ -3581,30 +3589,34 @@ fn materialize_profile_file_descriptors(
     Ok(())
 }
 
+struct ProfileObomMaterializeInputs<'a> {
+    assets_dir: &'a Path,
+    manifest_url: &'a str,
+    asset_version: &'a str,
+    arch: &'a str,
+    manifest_assets: &'a std::collections::HashMap<String, capsem_core::asset_manager::AssetEntry>,
+}
+
 fn materialize_profile_obom_descriptor(
-    assets_dir: &Path,
-    manifest_url: &str,
-    asset_version: &str,
-    arch: &str,
-    manifest_assets: &std::collections::HashMap<String, capsem_core::asset_manager::AssetEntry>,
+    inputs: ProfileObomMaterializeInputs<'_>,
     rootfs_hash: String,
     profile: &mut ProfileConfigFile,
     reports: &mut Vec<ProfileMaterializedObomReport>,
 ) -> Result<()> {
-    let Some(entry) = manifest_assets.get("obom.cdx.json") else {
+    let Some(entry) = inputs.manifest_assets.get("obom.cdx.json") else {
         return Ok(());
     };
     let obom_url = materialized_asset_url(
-        assets_dir,
-        manifest_url,
-        asset_version,
-        arch,
+        inputs.assets_dir,
+        inputs.manifest_url,
+        inputs.asset_version,
+        inputs.arch,
         "obom.cdx.json",
         &entry.hash,
         entry.size,
     )?;
     let (generator, generator_version) = if obom_url.starts_with("file://") {
-        let obom_path = assets_dir.join(arch).join("obom.cdx.json");
+        let obom_path = inputs.assets_dir.join(inputs.arch).join("obom.cdx.json");
         let obom_path = obom_path
             .canonicalize()
             .with_context(|| format!("canonicalize {}", obom_path.display()))?;
@@ -3627,9 +3639,9 @@ fn materialize_profile_obom_descriptor(
             arch: BTreeMap::new(),
         })
         .arch
-        .insert(arch.to_string(), descriptor.clone());
+        .insert(inputs.arch.to_string(), descriptor.clone());
     reports.push(ProfileMaterializedObomReport {
-        arch: arch.to_string(),
+        arch: inputs.arch.to_string(),
         url: descriptor.url,
         hash: descriptor.hash,
         size: descriptor.size,

@@ -39,7 +39,7 @@ struct Args {
 
 /// Message from the async poller to the main thread.
 enum PollResult {
-    Status(gateway::StatusResponse),
+    Status(Box<gateway::StatusResponse>),
     Unavailable(String),
 }
 
@@ -170,6 +170,7 @@ fn main() -> Result<()> {
         while let Ok(result) = poll_rx.try_recv() {
             match result {
                 PollResult::Status(status) => {
+                    let status = *status;
                     let service_available = menu::service_available(&status);
                     let desired_state = if service_available {
                         TrayState::Idle
@@ -289,7 +290,7 @@ async fn async_worker(
                 // Poll status
                 match client.status().await {
                     Ok(status) => {
-                        let _ = poll_tx.send(PollResult::Status(status));
+                        let _ = poll_tx.send(PollResult::Status(Box::new(status)));
                     }
                     Err(e) => {
                         warn!("status poll failed: {e}");
@@ -312,7 +313,7 @@ async fn async_worker(
                 poll_interval.reset(); // Optional: reset interval if we want to delay next poll
                 // OR just poll immediately:
                 if let Ok(status) = client.status().await {
-                     let _ = poll_tx.send(PollResult::Status(status));
+                     let _ = poll_tx.send(PollResult::Status(Box::new(status)));
                 }
             }
         }
