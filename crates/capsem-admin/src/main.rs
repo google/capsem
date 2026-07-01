@@ -2797,7 +2797,6 @@ fn render_assets_channel_health(index: &AssetsChannelIndex) -> Result<String> {
                     "requires_newer": {
                         "binary": false,
                     },
-                    "files": index.current_asset_files,
                 },
                 "profiles": {
                     "latest": index.profile_catalog.revision,
@@ -6397,6 +6396,10 @@ decision = "block"
         assert_eq!(
             health["assets"]["files"][0]["url"].as_str(),
             Some("/assets/releases/2030.0101.1/arm64-initrd.img")
+        );
+        assert!(
+            health["updates"]["assets"]["files"].is_null(),
+            "VM asset file inventory belongs under assets.files, not updates.assets.files"
         );
         assert_eq!(
             health["assets"]["compatibility"]["min_binary"].as_str(),
