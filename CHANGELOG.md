@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.1782928920] - 2026-07-01
+
 ### Fixed
 - Fixed URL-backed release packages so remote asset manifests are fetched with
   the release validator user-agent and templated `{asset_version}` asset bases
