@@ -18,6 +18,20 @@ def _just_recipe_block(name: str) -> str:
     return "\n".join(lines[start:end])
 
 
+def _workflow_job_blocks(workflow: str) -> dict[str, str]:
+    lines = workflow.splitlines()
+    starts: list[tuple[str, int]] = []
+    for index, line in enumerate(lines):
+        if line.startswith("  ") and not line.startswith("    ") and line.rstrip().endswith(":"):
+            starts.append((line.strip()[:-1], index))
+
+    blocks: dict[str, str] = {}
+    for offset, (name, start) in enumerate(starts):
+        end = starts[offset + 1][1] if offset + 1 < len(starts) else len(lines)
+        blocks[name] = "\n".join(lines[start:end])
+    return blocks
+
+
 def test_just_install_does_not_sync_assets_after_installer() -> None:
     install_body = _just_recipe_block("install:")
 
@@ -326,6 +340,20 @@ def test_release_workflow_retries_app_cargo_tool_installs() -> None:
     assert "capsem-tui" in workflow
     assert "capsem-mcp-aggregator" in workflow
     assert "capsem-mcp-builtin" in workflow
+
+
+def test_release_workflow_sets_up_uv_before_uv_run_steps() -> None:
+    workflow = (PROJECT_ROOT / ".github" / "workflows" / "release.yaml").read_text()
+    jobs_with_uv = {
+        name: block for name, block in _workflow_job_blocks(workflow).items() if "uv run" in block
+    }
+
+    assert jobs_with_uv
+    for name, block in jobs_with_uv.items():
+        setup_pos = block.find("astral-sh/setup-uv@v5")
+        uv_run_pos = block.find("uv run")
+        assert setup_pos != -1, f"{name} uses uv run without setup-uv"
+        assert setup_pos < uv_run_pos, f"{name} sets up uv after first uv run"
 
 
 def test_asset_build_recipes_skip_kvm_only_for_build_prereq_doctor() -> None:
