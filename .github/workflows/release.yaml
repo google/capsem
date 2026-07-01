@@ -248,6 +248,7 @@ jobs:
           node-version: 24
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
+      - uses: astral-sh/setup-uv@v5
       - run: cd frontend && pnpm install --frozen-lockfile
 
       - name: Build frontend
@@ -756,6 +757,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v5
 
       - name: Wait for release assets to be queryable
         env:
