@@ -1,6 +1,6 @@
-version: 1.4.1782940516
+version: 1.4.1782944059
 ---
 ### Fixed
-- Clarified the binary self-update bootstrap boundary: installs that predate the
-  packaged binary updater require one manual installer upgrade before they can
-  follow the decoupled daily binary update rail.
+- Kept VM asset file inventory out of the compact update target in
+  `release.capsem.org/health.json` so existing 1.4 clients can parse the
+  channel and discover binary updates.

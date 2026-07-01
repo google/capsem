@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.1782944059] - 2026-07-01
+
 ### Fixed
 - Kept VM asset file inventory out of the compact update target in
   `release.capsem.org/health.json` so existing 1.4 clients can parse the
