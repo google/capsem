@@ -60,13 +60,20 @@ host_binaries := "target/debug/capsem target/debug/capsem-service target/debug/c
 assets_dir := "assets"
 entitlements := "entitlements.plist"
 host_crates := "-p capsem-service -p capsem-process -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray -p capsem-admin -p capsem-mock-server -p capsem-bench"
+release_minor := "4"
 
-# Stamp version as 1.3.{unix_timestamp} in Cargo.toml, tauri.conf.json, and pyproject.toml.
+# Stamp version as 1.{release_minor}.{unix_timestamp} in Cargo.toml,
+# tauri.conf.json, and pyproject.toml.
 _stamp-version:
     #!/bin/bash
     set -euo pipefail
     CURRENT=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
-    NEW="1.3.$(date +%s)"
+    RELEASE_MINOR="{{release_minor}}"
+    if [[ ! "$RELEASE_MINOR" =~ ^[0-9]+$ ]]; then
+        echo "Invalid release_minor: $RELEASE_MINOR" >&2
+        exit 1
+    fi
+    NEW="1.${RELEASE_MINOR}.$(date +%s)"
     echo "Stamping version: ${CURRENT} -> ${NEW}"
     sed -i '' "s/^version = \"${CURRENT}\"/version = \"${NEW}\"/" Cargo.toml
     sed -i '' "s/\"version\": \"${CURRENT}\"/\"version\": \"${NEW}\"/" crates/capsem-app/tauri.conf.json
