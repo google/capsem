@@ -654,6 +654,7 @@ fn update_target_blocked_reason(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn update_check_from_release_health(
     health: &ReleaseChannelHealth,
     checked_at: u64,
@@ -782,25 +783,46 @@ fn binary_installer_for_layout(
     files: &[ReleaseChannelBinaryFile],
     install_layout: &InstallLayout,
 ) -> Option<BinaryInstaller> {
-    let (layout_name, matches_layout): (&str, Box<dyn Fn(&str) -> bool>) = match install_layout {
-        InstallLayout::MacosPkg => ("macos_pkg", Box::new(|name| name.ends_with(".pkg"))),
+    enum LayoutMatcher {
+        MacosPkg,
+        LinuxDeb { suffix: String },
+    }
+
+    impl LayoutMatcher {
+        fn name(&self) -> &'static str {
+            match self {
+                Self::MacosPkg => "macos_pkg",
+                Self::LinuxDeb { .. } => "linux_deb",
+            }
+        }
+
+        fn matches(&self, name: &str) -> bool {
+            match self {
+                Self::MacosPkg => name.ends_with(".pkg"),
+                Self::LinuxDeb { suffix } => name.ends_with(suffix),
+            }
+        }
+    }
+
+    let matcher = match install_layout {
+        InstallLayout::MacosPkg => LayoutMatcher::MacosPkg,
         InstallLayout::LinuxDeb => {
             let suffix = format!("_{}.deb", deb_arch());
-            ("linux_deb", Box::new(move |name| name.ends_with(&suffix)))
+            LayoutMatcher::LinuxDeb { suffix }
         }
         InstallLayout::UserDir | InstallLayout::Development => return None,
     };
 
     files
         .iter()
-        .filter(|file| matches_layout(&file.name))
+        .filter(|file| matcher.matches(&file.name))
         .filter(|file| {
             let installer = BinaryInstaller {
                 name: file.name.clone(),
                 url: file.url.clone(),
                 sha256: file.sha256.clone(),
                 size: file.size,
-                install_layout: layout_name.to_string(),
+                install_layout: matcher.name().to_string(),
             };
             validate_binary_installer_metadata(&installer).is_ok()
         })
@@ -810,7 +832,7 @@ fn binary_installer_for_layout(
             url: file.url.clone(),
             sha256: file.sha256.clone(),
             size: file.size,
-            install_layout: layout_name.to_string(),
+            install_layout: matcher.name().to_string(),
         })
 }
 
@@ -1493,14 +1515,14 @@ async fn hydrate_installed_assets(assets_dir: &Path) -> Result<()> {
     let binary_version = env!("CARGO_PKG_VERSION");
 
     println!("Refreshing VM assets into {}...", assets_dir.display());
-    if let Some(local_source) = local_manifest_asset_source(&assets_dir)? {
+    if let Some(local_source) = local_manifest_asset_source(assets_dir)? {
         println!("Using local asset source {}...", local_source.display());
         let copied = capsem_core::asset_manager::copy_missing_local_assets(
             &manifest,
             binary_version,
             arch,
             &local_source,
-            &assets_dir,
+            assets_dir,
             |p| {
                 if p.done {
                     let mb = p.bytes_done as f64 / 1_048_576.0;
@@ -1522,7 +1544,7 @@ async fn hydrate_installed_assets(assets_dir: &Path) -> Result<()> {
         &manifest,
         binary_version,
         arch,
-        &assets_dir,
+        assets_dir,
         |p| {
             if p.done {
                 let mb = p.bytes_done as f64 / 1_048_576.0;
@@ -2547,6 +2569,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    #[allow(clippy::await_holding_lock)]
     async fn download_binary_installer_fetches_verifies_and_caches() {
         let _lock = crate::lock_test_env();
         let home = tempfile::tempdir().unwrap();
