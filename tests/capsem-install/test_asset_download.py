@@ -354,6 +354,66 @@ def test_update_assets_refreshes_remote_channel_manifest_before_download(
         assert target.read_bytes() == blob
 
 
+def test_manifest_url_controls_asset_source(
+    tmp_path: Path,
+    http_fixture,
+    installed_layout,
+):
+    base_url, serve_dir, requested_paths = http_fixture
+    arch = _arch()
+
+    files = {
+        "vmlinuz": b"manifest-url-kernel-" + os.urandom(64),
+        "initrd.img": b"manifest-url-initrd-" + os.urandom(64),
+        "rootfs.erofs": b"manifest-url-rootfs-" + os.urandom(64),
+    }
+
+    channel_manifest_url = f"{base_url}/channels/nightly/manifest.json"
+    channel_manifest = _make_manifest(arch, files, NEW_ASSET_VERSION)
+    channel_manifest["asset_base"] = f"{base_url}/manifest-owned-assets/{{asset_version}}"
+    channel_manifest_path = serve_dir / "channels" / "nightly" / "manifest.json"
+    channel_manifest_path.parent.mkdir(parents=True)
+    channel_manifest_path.write_text(json.dumps(channel_manifest), encoding="utf-8")
+
+    release_dir = serve_dir / "manifest-owned-assets" / NEW_ASSET_VERSION
+    release_dir.mkdir(parents=True)
+    for name, blob in files.items():
+        (release_dir / f"{arch}-{name}").write_bytes(blob)
+
+    capsem_home = tmp_path / ".capsem"
+    result = _run(
+        {"CAPSEM_HOME": str(capsem_home)},
+        "update",
+        "--assets",
+        "--manifest",
+        channel_manifest_url,
+    )
+
+    assert result.returncode == 0, f"stdout={result.stdout}\nstderr={result.stderr}"
+    assert f"Installed asset manifest from {channel_manifest_url}" in result.stdout
+    assert "/channels/nightly/manifest.json" in requested_paths
+    expected_blob_paths = {
+        f"/manifest-owned-assets/{NEW_ASSET_VERSION}/{arch}-{name}" for name in files
+    }
+    assert expected_blob_paths.issubset(set(requested_paths))
+    assert "/health.json" not in requested_paths
+    assert set(requested_paths).isdisjoint(
+        {f"/assets/releases/{NEW_ASSET_VERSION}/{arch}-{name}" for name in files}
+    )
+
+    assets = capsem_home / "assets"
+    installed_manifest = json.loads((assets / "manifest.json").read_text())
+    assert installed_manifest["asset_base"] == channel_manifest["asset_base"]
+    assert installed_manifest["assets"]["current"] == NEW_ASSET_VERSION
+    origin = json.loads((assets / "manifest-origin.json").read_text())
+    assert origin["source"] == channel_manifest_url
+
+    for name, blob in files.items():
+        target = assets / arch / _hashed_asset_name(name, blob)
+        assert target.exists(), f"{target} not downloaded. stdout={result.stdout}"
+        assert target.read_bytes() == blob
+
+
 def test_update_assets_failed_remote_refresh_keeps_previous_manifest_and_assets(
     tmp_path: Path,
     http_fixture,
