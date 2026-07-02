@@ -298,10 +298,11 @@ def test_release_channel_contract_rejects_swapped_manifest(
         exit_code, _stdout, stderr = _validator_exit_code(url, capsys=capsys)
 
     assert exit_code == 1
-    assert "current asset mismatch between health and manifest" in stderr
+    assert "channel manifest BLAKE3 mismatch" in stderr
+    assert "channel asset version mismatch with manifest" in stderr
 
 
-def test_release_channel_contract_rejects_stale_health_summary(
+def test_release_channel_contract_ignores_stale_health_summary(
     tmp_path: Path,
     release_channel_dist: Path,
     capsys: pytest.CaptureFixture[str],
@@ -317,8 +318,8 @@ def test_release_channel_contract_rejects_stale_health_summary(
     with _serve_release_channel(dist) as url:
         exit_code, _stdout, stderr = _validator_exit_code(url, capsys=capsys)
 
-    assert exit_code == 1
-    assert "current asset mismatch between health and manifest" in stderr
+    assert exit_code == 0
+    assert "health" not in stderr.lower()
 
 
 def test_release_channel_contract_rejects_cache_header_drift(

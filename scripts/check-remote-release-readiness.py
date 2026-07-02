@@ -252,28 +252,45 @@ def check_release_site_dns(release_site: str) -> CheckResult:
 def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
     site = release_site.rstrip("/")
     index_url = f"{site}/"
-    health_url = f"{site}/health.json"
-    manifest_path = f"/assets/{channel}/manifest.json"
-    manifest_url = f"{site}{manifest_path}"
+    channels_url = f"{site}/channels.json"
 
     index = fetch_text(index_url)
     if index.error:
         return CheckResult("release.capsem.org contract", False, index.error)
-    health = fetch_json(health_url)
-    if health.error:
-        return CheckResult("release.capsem.org contract", False, health.error)
-    manifest = fetch_json(manifest_url)
-    if manifest.error:
-        return CheckResult("release.capsem.org contract", False, manifest.error)
+    channels = fetch_json(channels_url)
+    if channels.error:
+        return CheckResult("release.capsem.org contract", False, channels.error)
 
     failures: list[str] = []
-    health_data = health.data if isinstance(health.data, dict) else {}
-    manifest_data = manifest.data if isinstance(manifest.data, dict) else {}
-    health_urls = require_object(health_data, "urls", "health urls", failures)
-    health_current = require_object(health_data, "current", "health current", failures)
-    health_binary = require_object(health_data, "binary", "health binary", failures)
-    health_assets = require_object(health_data, "assets", "health assets", failures)
-    health_profiles = require_object(health_data, "profiles", "health profiles", failures)
+    channels_data = channels.data if isinstance(channels.data, dict) else {}
+    channel_entries = require_object(channels_data, "channels", "channels catalog", failures)
+    channel_data = require_object(channel_entries, channel, f"channels.{channel}", failures)
+    manifest_record = select_channel_manifest_record(channel_data, failures)
+    manifest_path = manifest_record.get("url")
+    if not isinstance(manifest_path, str):
+        failures.append("channel manifest URL missing")
+        manifest_path = f"/assets/{channel}/manifest.json"
+    if release_url_path(manifest_path) != f"/assets/{channel}/manifest.json":
+        failures.append("channel manifest URL mismatch")
+    manifest_url = resolve_release_url(site, manifest_path)
+    manifest_payload = fetch_bytes(manifest_url)
+    if manifest_payload.error:
+        return CheckResult("release.capsem.org contract", False, manifest_payload.error)
+    try:
+        manifest_data = json.loads(manifest_payload.data.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        return CheckResult(
+            "release.capsem.org contract",
+            False,
+            f"manifest JSON parse failed for {manifest_url}: {error}",
+        )
+    if not isinstance(manifest_data, dict):
+        return CheckResult(
+            "release.capsem.org contract",
+            False,
+            f"manifest {manifest_url} document is not an object",
+        )
+
     manifest_assets = require_object(manifest_data, "assets", "manifest assets", failures)
     manifest_binaries = require_object(manifest_data, "binaries", "manifest binaries", failures)
     manifest_asset_releases = require_object(
@@ -283,29 +300,27 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
         manifest_binaries, "releases", "manifest binary releases", failures
     )
 
-    if health_data.get("schema") != "capsem.assets_channel.health.v1":
-        failures.append("health schema mismatch")
-    if health_data.get("ok") is not True:
-        failures.append("health ok mismatch")
-    if health_data.get("channel") != channel:
-        failures.append("health channel mismatch")
-    if health_data.get("state") != "published":
-        failures.append("health state mismatch")
-    if health_urls.get("index") != "/index.html":
-        failures.append("health index URL mismatch")
-    if health_urls.get("health") != "/health.json":
-        failures.append("health health URL mismatch")
-    if health_urls.get("manifest") != manifest_path:
-        failures.append("health manifest URL mismatch")
-    asset_base = health_urls.get("asset_base")
+    if channels_data.get("version") != 1:
+        failures.append("channels catalog version mismatch")
+    if manifest_record.get("status") not in {"current", "supported", "deprecated"}:
+        failures.append("channel selected manifest status is not selectable")
+    digest = require_object(manifest_record, "digest", "channel manifest digest", failures)
+    if blake3 is not None and isinstance(digest.get("blake3"), str):
+        actual_manifest_hash = blake3.blake3(manifest_payload.data).hexdigest()
+        if digest.get("blake3") != actual_manifest_hash:
+            failures.append("channel manifest BLAKE3 mismatch")
+    elif blake3 is None:
+        failures.append("channel manifest cannot verify blake3 without Python dependency blake3")
+    else:
+        failures.append("channel manifest BLAKE3 missing")
+    asset_base = manifest_record.get("asset_base") or manifest_data.get("asset_base")
     if not valid_asset_base(asset_base):
-        failures.append("health asset base mismatch")
+        failures.append("channel asset base mismatch")
     if manifest_data.get("format") != 2:
         failures.append("manifest format mismatch")
 
-    current_binary = health_current.get("binary")
-    current_assets = health_current.get("assets")
-    profile_source = health_profiles.get("source")
+    current_binary = manifest_binaries.get("current")
+    current_assets = manifest_assets.get("current")
     current_manifest_asset_release = (
         manifest_asset_releases.get(current_assets)
         if isinstance(manifest_asset_releases, dict)
@@ -316,259 +331,154 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
         if isinstance(manifest_binary_releases, dict)
         else None
     )
-    health_updates = health_data.get("updates")
-    health_update_binary = (
-        health_updates.get("binary") if isinstance(health_updates, dict) else None
+    if manifest_record.get("binary_version") != current_binary:
+        failures.append("channel binary version mismatch with manifest")
+    if manifest_record.get("asset_version") != current_assets:
+        failures.append("channel asset version mismatch with manifest")
+    profile_catalog = require_object(
+        channel_data, "profile_catalog", f"channels.{channel}.profile_catalog", failures
     )
-    health_update_assets = (
-        health_updates.get("assets") if isinstance(health_updates, dict) else None
-    )
-    health_update_profiles = (
-        health_updates.get("profiles") if isinstance(health_updates, dict) else None
-    )
-    health_update_images = (
-        health_updates.get("images") if isinstance(health_updates, dict) else None
-    )
-    profile_update_source = (
-        health_update_profiles.get("source") if isinstance(health_update_profiles, dict) else None
-    )
-    if health_urls.get("profile_catalog") != profile_source:
-        failures.append("health profile catalog URL mismatch")
-    if profile_update_source != profile_source:
-        failures.append("health profile update source mismatch")
-    if health_binary.get("version") != current_binary:
-        failures.append("health binary version mismatch")
-    if health_assets.get("version") != current_assets:
-        failures.append("health asset version mismatch")
-    expected_asset_compatibility = {
-        "binary": current_binary,
-        "min_binary": current_manifest_asset_release.get("min_binary")
-        if isinstance(current_manifest_asset_release, dict)
-        else None,
-    }
-    actual_asset_compatibility = health_assets.get("compatibility")
-    for field, expected in expected_asset_compatibility.items():
-        actual = (
-            actual_asset_compatibility.get(field)
-            if isinstance(actual_asset_compatibility, dict)
-            else None
-        )
-        if actual != expected:
-            failures.append(f"health asset compatibility {field} mismatch")
-    actual_asset_requires_newer = health_assets.get("requires_newer")
-    actual_asset_requires_newer_binary = (
-        actual_asset_requires_newer.get("binary")
-        if isinstance(actual_asset_requires_newer, dict)
-        else None
-    )
-    if actual_asset_requires_newer_binary is not False:
-        failures.append("health asset requirement binary mismatch")
-    if health_profiles.get("state") != "current":
-        failures.append("health profile state mismatch")
-    expected_profile_compatibility = {
-        "binary": current_binary,
-        "assets": current_assets,
-        "min_binary": current_manifest_asset_release.get("min_binary")
-        if isinstance(current_manifest_asset_release, dict)
-        else None,
-        "min_assets": current_manifest_binary_release.get("min_assets")
-        if isinstance(current_manifest_binary_release, dict)
-        else None,
-    }
-    actual_profile_compatibility = health_profiles.get("compatibility")
-    for field, expected in expected_profile_compatibility.items():
-        actual = (
-            actual_profile_compatibility.get(field)
-            if isinstance(actual_profile_compatibility, dict)
-            else None
-        )
-        if actual != expected:
-            failures.append(f"health profile compatibility {field} mismatch")
-    actual_profile_requires_newer = health_profiles.get("requires_newer")
-    for field, expected in (("binary", False), ("assets", False)):
-        actual = (
-            actual_profile_requires_newer.get(field)
-            if isinstance(actual_profile_requires_newer, dict)
-            else None
-        )
-        if actual != expected:
-            failures.append(f"health profile requirement {field} mismatch")
-    if not isinstance(health_update_binary, dict):
-        failures.append("health binary update metadata missing")
-    else:
-        if health_update_binary.get("latest") != current_binary:
-            failures.append("health binary update latest mismatch")
-        if health_update_binary.get("current") != current_binary:
-            failures.append("health binary update current mismatch")
-        if health_update_binary.get("state") != health_binary.get("state"):
-            failures.append("health binary update state mismatch")
-        if health_update_binary.get("source") != "manifest.binaries.current":
-            failures.append("health binary update source mismatch")
-        if health_update_binary.get("files") != health_binary.get("files"):
-            failures.append("health binary update files mismatch")
-    if not isinstance(health_update_profiles, dict):
-        failures.append("health profile update metadata missing")
-    else:
-        if health_update_profiles.get("hash") != health_profiles.get("hash"):
-            failures.append("health profile update hash mismatch")
-        if health_update_profiles.get("compatibility") != health_profiles.get("compatibility"):
-            failures.append("health profile update compatibility mismatch")
-        if health_update_profiles.get("requires_newer") != health_profiles.get("requires_newer"):
-            failures.append("health profile update requirement mismatch")
+    profile_source = profile_catalog.get("source")
     failures.extend(
-        check_profile_catalog_artifact(
+        check_profile_catalog_summary(
             site,
             profile_source,
-            health_profiles.get("hash"),
-            health_profiles.get("revision"),
-            current_binary,
-            current_assets,
-            expected_profile_compatibility,
-            {"binary": False, "assets": False},
+            profile_catalog.get("hash"),
+            profile_catalog.get("revision"),
         )
     )
-    if not isinstance(health_update_assets, dict):
-        failures.append("health asset update metadata missing")
-    else:
-        if health_update_assets.get("latest") != current_assets:
-            failures.append("health asset update latest mismatch")
-        if health_update_assets.get("current") != current_assets:
-            failures.append("health asset update current mismatch")
-        if health_update_assets.get("state") != health_assets.get("state"):
-            failures.append("health asset update state mismatch")
-        if health_update_assets.get("source") != "manifest.assets.current":
-            failures.append("health asset update source mismatch")
-        if health_update_assets.get("manifest") != manifest_path:
-            failures.append("health asset update manifest mismatch")
-        if health_update_assets.get("asset_base") != asset_base:
-            failures.append("health asset update base mismatch")
-        if health_update_assets.get("compatibility") != health_assets.get("compatibility"):
-            failures.append("health asset update compatibility mismatch")
-        if health_update_assets.get("requires_newer") != health_assets.get("requires_newer"):
-            failures.append("health asset update requirement mismatch")
-        if health_update_assets.get("compatibility") != expected_asset_compatibility:
-            failures.append("health asset update canonical compatibility mismatch")
-        if health_update_assets.get("requires_newer") != {"binary": False}:
-            failures.append("health asset update canonical requirement mismatch")
-    if not isinstance(health_update_images, dict):
-        failures.append("health image update metadata missing")
-    else:
-        if health_update_images.get("latest") is not None:
-            failures.append("health image update latest must be null while unpublished")
-        if health_update_images.get("current") is not None:
-            failures.append("health image update current must be null while unpublished")
-        if health_update_images.get("state") != "not_published":
-            failures.append("health image update state mismatch")
-        if health_update_images.get("source") != "not_in_asset_channel":
-            failures.append("health image update source mismatch")
-    if manifest_assets.get("current") != current_assets:
-        failures.append("current asset mismatch between health and manifest")
-    if manifest_binaries.get("current") != current_binary:
-        failures.append("current binary mismatch between health and manifest")
     expected_asset_files = current_asset_file_refs(
         asset_base,
         current_assets,
         current_manifest_asset_release,
         failures,
     )
-    failures.extend(
-        check_health_asset_files(
-            health_assets.get("files"),
-            expected_asset_files,
-        )
-    )
-    asset_files = health_assets.get("files")
-    if isinstance(asset_files, list):
-        for item in asset_files:
-            if isinstance(item, dict):
-                failures.extend(
-                    fetch_and_verify_evidence_artifact(
-                        site, item, "blake3", "VM asset file"
-                    )
-                )
+    for item in expected_asset_files:
+        failures.extend(fetch_and_verify_evidence_artifact(site, item, "blake3", "VM asset file"))
     expected_binary_files = current_binary_file_refs(
         current_binary,
         current_manifest_binary_release,
         failures,
     )
-    failures.extend(
-        check_host_binary_files(
-            health_binary.get("files"),
-            expected_binary_files,
-            "health",
-        )
-    )
-    evidence_data = health_data.get("evidence")
-    evidence_host_binary_files = (
-        evidence_data.get("host_binary_files") if isinstance(evidence_data, dict) else None
-    )
-    failures.extend(
-        check_host_binary_files(
-            evidence_host_binary_files,
-            expected_binary_files,
-            "evidence",
-        )
-    )
+    if expected_binary_files:
+        failures.append("manifest binary package files must move to package inventory contract")
     for label, value in (
         ("current binary", current_binary),
         ("current assets", current_assets),
-        ("generated timestamp", health_data.get("generated_at")),
-        ("profile revision", health_profiles.get("revision")),
+        ("generated timestamp", channels_data.get("generated_at")),
+        ("profile revision", profile_catalog.get("revision")),
         ("profile catalog", profile_source),
         ("channel manifest", manifest_path),
+        ("channels catalog", "/channels.json"),
     ):
         if not isinstance(value, str):
-            failures.append(f"health {label} missing")
+            failures.append(f"release channel {label} missing")
         elif value not in index.text:
             failures.append(f"index missing {label} {value}")
 
-    health_asset_releases = health_data.get("asset_releases")
-    if not isinstance(health_asset_releases, list):
-        failures.append("health asset releases missing or not a list")
-        health_asset_releases = []
-    asset_release_by_version = {
-        release.get("version"): release
-        for release in health_asset_releases
-        if isinstance(release, dict) and isinstance(release.get("version"), str)
-    }
     for version, manifest_release in manifest_asset_releases.items():
         if not isinstance(version, str) or not isinstance(manifest_release, dict):
             failures.append("manifest asset release entry malformed")
             continue
-        public_release = asset_release_by_version.get(version)
-        if not isinstance(public_release, dict):
-            failures.append(f"health missing asset release {version}")
-            continue
-        expected_deprecated = manifest_release.get("deprecated", False)
-        expected_state = "deprecated" if expected_deprecated is True else "current"
-        expected_fields = (
-            ("date", manifest_release.get("date")),
-            ("state", expected_state),
-            ("deprecated", expected_deprecated),
-            ("deprecated_date", manifest_release.get("deprecated_date")),
-            ("min_binary", manifest_release.get("min_binary")),
-        )
-        for field, expected in expected_fields:
-            if public_release.get(field) != expected:
-                failures.append(f"health asset release {version} {field} mismatch")
 
-    current_asset_release = asset_release_by_version.get(current_assets, {})
-    current_asset_date = current_asset_release.get("date")
+    current_asset_date = (
+        current_manifest_asset_release.get("date")
+        if isinstance(current_manifest_asset_release, dict)
+        else None
+    )
     if not isinstance(current_asset_date, str):
         failures.append("current asset release date missing")
     elif current_asset_date not in index.text:
         failures.append("index missing current asset release date")
 
-    failures.extend(check_release_evidence(site, health_data))
-    failures.extend(check_release_cache_headers(site, channel, health_data))
+    failures.extend(
+        check_release_cache_headers(site, channel, profile_source, expected_asset_files)
+    )
 
     if failures:
         return CheckResult("release.capsem.org contract", False, "; ".join(failures))
     return CheckResult(
         "release.capsem.org contract",
         True,
-        "index, health.json, manifest, evidence artifacts, and cache headers agree",
+        "index, channels.json, manifest, profile catalog, assets, and cache headers agree",
     )
+
+
+def select_channel_manifest_record(
+    channel_data: dict[str, Any], failures: list[str]
+) -> dict[str, Any]:
+    manifests = channel_data.get("manifests")
+    if not isinstance(manifests, list):
+        failures.append("channel manifests missing or not a list")
+        return {}
+    by_status: dict[str, dict[str, Any]] = {}
+    for item in manifests:
+        if not isinstance(item, dict):
+            failures.append("channel manifest entry is not an object")
+            continue
+        status = item.get("status")
+        version = item.get("version")
+        if status not in {"current", "supported", "deprecated", "revoked"}:
+            failures.append(f"channel manifest {version} status mismatch")
+            continue
+        if status != "revoked" and status not in by_status:
+            by_status[status] = item
+    for status in ("current", "supported", "deprecated"):
+        if status in by_status:
+            return by_status[status]
+    failures.append("channel has no selectable manifest")
+    return {}
+
+
+def check_profile_catalog_summary(
+    site: str,
+    source: Any,
+    expected_hash: Any,
+    expected_revision: Any,
+) -> list[str]:
+    if not isinstance(source, str):
+        return ["profile catalog source missing or not a string"]
+    if not source.startswith("/profiles/releases/") or not source.endswith("/catalog.json"):
+        return ["profile catalog source must be a release-channel artifact path"]
+    if not isinstance(expected_hash, str):
+        return [f"profile catalog {source} hash missing or not a string"]
+    if not isinstance(expected_revision, str):
+        return [f"profile catalog {source} revision missing or not a string"]
+
+    catalog = fetch_bytes(resolve_release_url(site, source))
+    if catalog.error:
+        return [catalog.error]
+
+    failures: list[str] = []
+    if blake3 is None:
+        failures.append(
+            f"profile catalog {source} cannot verify blake3 without Python dependency blake3"
+        )
+    else:
+        actual_hash = blake3.blake3(catalog.data).hexdigest()
+        if actual_hash != expected_hash:
+            failures.append(f"profile catalog {source} blake3 mismatch")
+
+    try:
+        text = catalog.data.decode("utf-8")
+    except UnicodeDecodeError:
+        return failures + [f"profile catalog {source} is not UTF-8"]
+    if "file://" in text:
+        failures.append(f"profile catalog {source} must not contain file:// URLs")
+
+    try:
+        document = json.loads(text)
+    except json.JSONDecodeError as error:
+        return failures + [f"profile catalog {source} JSON parse failed: {error}"]
+    if not isinstance(document, dict):
+        return failures + [f"profile catalog {source} document is not an object"]
+    if document.get("schema") != "capsem.profile_catalog.v1":
+        failures.append(f"profile catalog {source} schema mismatch")
+    if document.get("revision") != expected_revision:
+        failures.append(f"profile catalog {source} revision mismatch")
+    if not isinstance(document.get("profiles"), list):
+        failures.append(f"profile catalog {source} profiles missing or not a list")
+    return failures
 
 
 def check_release_evidence(site: str, health: dict[str, Any]) -> list[str]:
@@ -1092,11 +1002,16 @@ def validate_evidence_document(
     return f"{label} {url} unsupported evidence document {expected_document}"
 
 
-def check_release_cache_headers(site: str, channel: str, health: dict[str, Any]) -> list[str]:
+def check_release_cache_headers(
+    site: str,
+    channel: str,
+    profile_source: Any,
+    asset_files: list[dict[str, Any]],
+) -> list[str]:
     site = site.rstrip("/")
     checks: list[tuple[str, str, tuple[str, ...]]] = [
         ("release index", f"{site}/", ("no-cache", "must-revalidate")),
-        ("health JSON", f"{site}/health.json", ("no-cache", "must-revalidate")),
+        ("channels JSON", f"{site}/channels.json", ("no-cache", "must-revalidate")),
         (
             "channel manifest",
             f"{site}/assets/{channel}/manifest.json",
@@ -1104,28 +1019,21 @@ def check_release_cache_headers(site: str, channel: str, health: dict[str, Any])
         ),
     ]
 
-    assets = health.get("assets", {})
-    if isinstance(assets, dict) and isinstance(assets.get("files"), list):
-        for item in assets["files"]:
-            if not isinstance(item, dict):
-                continue
-            url = item.get("url")
-            if (
-                isinstance(url, str)
-                and not urlparse(url).scheme
-                and release_url_path(url).startswith("/assets/releases/")
-            ):
-                checks.append(
-                    (
-                        "immutable asset",
-                        resolve_release_url(site, url),
-                        ("public", "max-age=31536000", "immutable"),
-                    )
+    for item in asset_files:
+        url = item.get("url")
+        if (
+            isinstance(url, str)
+            and not urlparse(url).scheme
+            and release_url_path(url).startswith("/assets/releases/")
+        ):
+            checks.append(
+                (
+                    "immutable asset",
+                    resolve_release_url(site, url),
+                    ("public", "max-age=31536000", "immutable"),
                 )
+            )
 
-    updates = health.get("updates", {})
-    profiles = updates.get("profiles") if isinstance(updates, dict) else None
-    profile_source = profiles.get("source") if isinstance(profiles, dict) else None
     if isinstance(profile_source, str) and release_url_path(profile_source).startswith(
         "/profiles/releases/"
     ):
