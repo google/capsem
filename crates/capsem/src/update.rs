@@ -2365,6 +2365,122 @@ mod tests {
         );
     }
 
+    #[test]
+    fn stable_to_nightly_manifest_switch_resolves_nightly_updates() {
+        let stable_source = "https://release.capsem.org/assets/stable/manifest.json";
+        let nightly_source = "https://release.capsem.org/assets/nightly/manifest.json";
+        let stable = test_manifest("1.4.0", "2026.0627.8", "1.4.0", "2026.0627.8");
+        let nightly = test_manifest(
+            "1.5.0-nightly.20260702",
+            "2026.0702.1-nightly",
+            "1.4.0",
+            "2026.0627.8",
+        );
+
+        let stable_check = update_check_from_release_manifest(
+            &stable,
+            100,
+            "1.4.0",
+            Some("2026.0627.8"),
+            None,
+            &InstallLayout::MacosPkg,
+            stable_source,
+            Some("stable-channel-hash".into()),
+        )
+        .expect("stable check");
+        let nightly_check = update_check_from_release_manifest(
+            &nightly,
+            200,
+            "1.4.0",
+            Some("2026.0627.8"),
+            None,
+            &InstallLayout::MacosPkg,
+            nightly_source,
+            Some("nightly-channel-hash".into()),
+        )
+        .expect("nightly check");
+
+        assert_eq!(stable_check.source.as_deref(), Some(stable_source));
+        assert_eq!(stable_check.latest_version.as_deref(), Some("1.4.0"));
+        assert!(!stable_check.update_available);
+        assert!(!stable_check.assets_update_available);
+        assert_eq!(
+            stable_check.channel_hash.as_deref(),
+            Some("stable-channel-hash")
+        );
+
+        assert_eq!(nightly_check.source.as_deref(), Some(nightly_source));
+        assert_eq!(
+            nightly_check.latest_version.as_deref(),
+            Some("1.5.0-nightly.20260702")
+        );
+        assert!(nightly_check.update_available);
+        assert_eq!(
+            nightly_check.latest_assets.as_deref(),
+            Some("2026.0702.1-nightly")
+        );
+        assert!(nightly_check.assets_update_available);
+        assert_eq!(
+            nightly_check.channel_hash.as_deref(),
+            Some("nightly-channel-hash")
+        );
+        assert_eq!(
+            nightly_check
+                .binary_installer
+                .as_ref()
+                .map(|installer| installer.name.as_str()),
+            Some("Capsem-1.5.0-nightly.20260702.pkg")
+        );
+    }
+
+    fn test_manifest(
+        binary_version: &str,
+        asset_version: &str,
+        min_binary: &str,
+        min_assets: &str,
+    ) -> capsem_core::asset_manager::ManifestV2 {
+        capsem_core::asset_manager::ManifestV2::from_json(&format!(
+            r#"{{
+                "format": 2,
+                "refresh_policy": "24h",
+                "asset_base": "https://github.com/google/capsem/releases/download/v{binary_version}/",
+                "assets": {{
+                    "current": "{asset_version}",
+                    "releases": {{
+                        "{asset_version}": {{
+                            "date": "2026-07-02",
+                            "deprecated": false,
+                            "min_binary": "{min_binary}",
+                            "arches": {{}}
+                        }}
+                    }}
+                }},
+                "binaries": {{
+                    "current": "{binary_version}",
+                    "releases": {{
+                        "{binary_version}": {{
+                            "date": "2026-07-02",
+                            "deprecated": false,
+                            "min_assets": "{min_assets}",
+                            "version": "{binary_version}",
+                            "files": [
+                                {{
+                                    "name": "Capsem-{binary_version}.pkg",
+                                    "size": 42,
+                                    "sha256": "{}",
+                                    "blake3": "{}"
+                                }}
+                            ]
+                        }}
+                    }}
+                }}
+            }}"#,
+            "a".repeat(64),
+            "b".repeat(64)
+        ))
+        .expect("test manifest")
+    }
+
     fn cached_notice_check() -> UpdateCheck {
         UpdateCheck {
             checked_at: now_secs(),
