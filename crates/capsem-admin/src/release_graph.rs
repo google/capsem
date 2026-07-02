@@ -34,6 +34,69 @@ pub struct ManifestRecord {
     pub max_capsem_version: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PackageKind {
+    MacosPkg,
+    DebianPackage,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Architecture {
+    Arm64,
+    X86_64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EvidenceRef {
+    pub kind: String,
+    pub url: String,
+    pub digest: DigestSet,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PackageInventoryRow {
+    pub name: String,
+    pub version: String,
+    pub kind: PackageKind,
+    pub platform: String,
+    pub architecture: Architecture,
+    pub url: String,
+    pub bytes: u64,
+    pub digest: DigestSet,
+    pub status: Status,
+    #[serde(default)]
+    pub evidence: Vec<EvidenceRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BinaryInventoryRow {
+    pub name: String,
+    pub version: String,
+    pub package: String,
+    pub install_path: String,
+    pub platform: String,
+    pub architecture: Architecture,
+    pub bytes: u64,
+    pub digest: DigestSet,
+    pub status: Status,
+    pub sbom_component_ref: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseManifest {
+    pub version: String,
+    #[serde(default)]
+    pub packages: Vec<PackageInventoryRow>,
+    #[serde(default)]
+    pub binaries: Vec<BinaryInventoryRow>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ChannelRecord {
@@ -104,6 +167,107 @@ impl ManifestRecord {
         }
         self.digest
             .validate(&format!("channel {channel} manifest {}", self.version))?;
+        Ok(())
+    }
+}
+
+impl EvidenceRef {
+    fn validate(&self, context: &str) -> Result<()> {
+        if self.kind.trim().is_empty() {
+            bail!("{context} evidence kind must not be empty");
+        }
+        validate_url_like(&self.url)
+            .with_context(|| format!("{context} evidence url is invalid"))?;
+        self.digest
+            .validate(&format!("{context} evidence {}", self.kind))?;
+        Ok(())
+    }
+}
+
+impl PackageInventoryRow {
+    fn validate(&self) -> Result<()> {
+        if self.name.trim().is_empty() {
+            bail!("package inventory row name must not be empty");
+        }
+        if self.version.trim().is_empty() {
+            bail!("package {} version must not be empty", self.name);
+        }
+        if self.platform.trim().is_empty() {
+            bail!("package {} platform must not be empty", self.name);
+        }
+        validate_url_like(&self.url).with_context(|| {
+            format!(
+                "package {} {} download url is invalid",
+                self.name, self.version
+            )
+        })?;
+        if self.bytes == 0 {
+            bail!("package {} bytes must be non-zero", self.name);
+        }
+        self.digest
+            .validate(&format!("package {} {}", self.name, self.version))?;
+        for evidence in &self.evidence {
+            evidence.validate(&format!("package {} {}", self.name, self.version))?;
+        }
+        Ok(())
+    }
+}
+
+impl BinaryInventoryRow {
+    fn validate(&self) -> Result<()> {
+        if self.name.trim().is_empty() {
+            bail!("binary inventory row name must not be empty");
+        }
+        if self.version.trim().is_empty() {
+            bail!("binary {} version must not be empty", self.name);
+        }
+        if self.package.trim().is_empty() {
+            bail!("binary {} package must not be empty", self.name);
+        }
+        if self.install_path.trim().is_empty() {
+            bail!("binary {} install_path must not be empty", self.name);
+        }
+        if self.platform.trim().is_empty() {
+            bail!("binary {} platform must not be empty", self.name);
+        }
+        if self.bytes == 0 {
+            bail!("binary {} bytes must be non-zero", self.name);
+        }
+        if self.sbom_component_ref.trim().is_empty() {
+            bail!("binary {} sbom_component_ref must not be empty", self.name);
+        }
+        self.digest
+            .validate(&format!("binary {} {}", self.name, self.version))?;
+        Ok(())
+    }
+}
+
+impl ReleaseManifest {
+    pub fn validate_inventory_shape(&self) -> Result<()> {
+        if self.version.trim().is_empty() {
+            bail!("release manifest version must not be empty");
+        }
+        if self.packages.is_empty() {
+            bail!("release manifest {} must list packages", self.version);
+        }
+        let packages: std::collections::BTreeSet<&str> = self
+            .packages
+            .iter()
+            .map(|package| package.name.as_str())
+            .collect();
+        for package in &self.packages {
+            package.validate()?;
+        }
+        for binary in &self.binaries {
+            binary.validate()?;
+            if !packages.contains(binary.package.as_str()) {
+                bail!(
+                    "binary {} references unknown package {}",
+                    binary.name,
+                    binary.package
+                );
+            }
+        }
         Ok(())
     }
 }
@@ -188,6 +352,17 @@ fn validate_hex_digest(value: &str, expected_len: usize) -> Result<()> {
     Ok(())
 }
 
+fn validate_url_like(value: &str) -> Result<()> {
+    if !(value.starts_with('/')
+        || value.starts_with("https://")
+        || value.starts_with("http://")
+        || value.starts_with("file://"))
+    {
+        bail!("expected release-site relative, file, or http(s) URL, got {value}");
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -198,6 +373,14 @@ mod tests {
             "blake3": "b".repeat(64),
             "hmac": "release-test-hmac"
         })
+    }
+
+    fn digest_set() -> DigestSet {
+        DigestSet {
+            sha256: "a".repeat(64),
+            blake3: "b".repeat(64),
+            hmac: "release-test-hmac".to_string(),
+        }
     }
 
     #[test]
@@ -456,5 +639,75 @@ mod tests {
             .select_manifest("nightly")
             .expect("manifest selected");
         assert_eq!(selected.version, "1.5.0-nightly.current");
+    }
+
+    #[test]
+    fn package_inventory_rows_are_separate_from_binary_rows() {
+        let manifest = ReleaseManifest {
+            version: "1.4.0".to_string(),
+            packages: vec![PackageInventoryRow {
+                name: "Capsem-1.4.0.pkg".to_string(),
+                version: "1.4.0".to_string(),
+                kind: PackageKind::MacosPkg,
+                platform: "macos".to_string(),
+                architecture: Architecture::Arm64,
+                url: "/packages/stable/1.4.0/Capsem-1.4.0.pkg".to_string(),
+                bytes: 42,
+                digest: digest_set(),
+                status: Status::Current,
+                evidence: vec![EvidenceRef {
+                    kind: "notarization".to_string(),
+                    url: "/packages/stable/1.4.0/Capsem-1.4.0.pkg.notary.json".to_string(),
+                    digest: digest_set(),
+                }],
+            }],
+            binaries: vec![BinaryInventoryRow {
+                name: "capsem".to_string(),
+                version: "1.4.0".to_string(),
+                package: "Capsem-1.4.0.pkg".to_string(),
+                install_path: "/usr/local/bin/capsem".to_string(),
+                platform: "macos".to_string(),
+                architecture: Architecture::Arm64,
+                bytes: 7,
+                digest: digest_set(),
+                status: Status::Current,
+                sbom_component_ref: "SPDXRef-File-capsem".to_string(),
+            }],
+        };
+
+        manifest
+            .validate_inventory_shape()
+            .expect("package and binary inventory is valid");
+        assert_ne!(manifest.packages[0].name, manifest.binaries[0].name);
+        assert_eq!(manifest.binaries[0].package, manifest.packages[0].name);
+    }
+
+    #[test]
+    fn package_inventory_requires_sha256_blake3_and_hmac() {
+        let manifest = ReleaseManifest {
+            version: "1.4.0".to_string(),
+            packages: vec![PackageInventoryRow {
+                name: "capsem_1.4.0_arm64.deb".to_string(),
+                version: "1.4.0".to_string(),
+                kind: PackageKind::DebianPackage,
+                platform: "linux".to_string(),
+                architecture: Architecture::Arm64,
+                url: "/packages/stable/1.4.0/capsem_1.4.0_arm64.deb".to_string(),
+                bytes: 42,
+                digest: DigestSet {
+                    sha256: "a".repeat(64),
+                    blake3: "not-a-blake3-digest".to_string(),
+                    hmac: "release-test-hmac".to_string(),
+                },
+                status: Status::Current,
+                evidence: Vec::new(),
+            }],
+            binaries: Vec::new(),
+        };
+
+        let error = manifest
+            .validate_inventory_shape()
+            .expect_err("bad package digest is rejected");
+        assert!(format!("{error:#}").contains("blake3"), "{error:#}");
     }
 }
