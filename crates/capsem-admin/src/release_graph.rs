@@ -410,6 +410,105 @@ pub fn executable_inventory_from_package_files(
     Ok(rows)
 }
 
+pub fn verify_package_contents_match_binary_inventory(
+    package: &PackageInventoryRow,
+    files: &[PackagedExecutableFile],
+    binaries: &[BinaryInventoryRow],
+) -> Result<()> {
+    let mut rows_by_path = BTreeMap::new();
+    for row in binaries.iter().filter(|row| row.package == package.name) {
+        if rows_by_path
+            .insert(row.install_path.as_str(), row)
+            .is_some()
+        {
+            bail!(
+                "binary inventory has duplicate install_path {} for package {}",
+                row.install_path,
+                package.name
+            );
+        }
+    }
+
+    let mut seen_paths = std::collections::BTreeSet::new();
+    for file in files {
+        let row = rows_by_path
+            .get(file.install_path.as_str())
+            .ok_or_else(|| {
+                anyhow!(
+                    "package {} executable {} missing from binary inventory",
+                    package.name,
+                    file.install_path
+                )
+            })?;
+        if row.name != file.name {
+            bail!(
+                "binary inventory name mismatch for {}: expected {}, got {}",
+                file.install_path,
+                file.name,
+                row.name
+            );
+        }
+        if row.version != package.version {
+            bail!(
+                "binary inventory version mismatch for {}: expected {}, got {}",
+                file.install_path,
+                package.version,
+                row.version
+            );
+        }
+        if row.platform != package.platform {
+            bail!(
+                "binary inventory platform mismatch for {}: expected {}, got {}",
+                file.install_path,
+                package.platform,
+                row.platform
+            );
+        }
+        if row.architecture != package.architecture {
+            bail!(
+                "binary inventory architecture mismatch for {}",
+                file.install_path
+            );
+        }
+        if row.bytes != file.bytes.len() as u64 {
+            bail!(
+                "binary inventory byte count mismatch for {}",
+                file.install_path
+            );
+        }
+        let sha256 = format!("{:x}", Sha256::digest(&file.bytes));
+        if row.digest.sha256 != sha256 {
+            bail!("binary inventory sha256 mismatch for {}", file.install_path);
+        }
+        let blake3 = blake3::hash(&file.bytes).to_hex().to_string();
+        if row.digest.blake3 != blake3 {
+            bail!("binary inventory blake3 mismatch for {}", file.install_path);
+        }
+        if row.digest.hmac != file.hmac {
+            bail!("binary inventory hmac mismatch for {}", file.install_path);
+        }
+        if row.sbom_component_ref.trim().is_empty() {
+            bail!(
+                "binary inventory missing SBOM component reference for {}",
+                file.install_path
+            );
+        }
+        seen_paths.insert(file.install_path.as_str());
+    }
+
+    for install_path in rows_by_path.keys() {
+        if !seen_paths.contains(install_path) {
+            bail!(
+                "binary inventory lists {} for package {} but package contents do not contain it",
+                install_path,
+                package.name
+            );
+        }
+    }
+
+    Ok(())
+}
+
 impl ReleaseManifest {
     pub fn validate_inventory_shape(&self) -> Result<()> {
         if self.version.trim().is_empty() {
@@ -1163,6 +1262,130 @@ mod tests {
 
         assert!(
             format!("{error:#}").contains("missing SBOM component reference"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn executable_inventory_matches_macos_and_deb_package_contents() {
+        let macos_package = PackageInventoryRow {
+            name: "Capsem-1.4.0.pkg".to_string(),
+            version: "1.4.0".to_string(),
+            kind: PackageKind::MacosPkg,
+            platform: "macos".to_string(),
+            architecture: Architecture::Arm64,
+            url: "/packages/stable/1.4.0/Capsem-1.4.0.pkg".to_string(),
+            bytes: 99,
+            digest: digest_set(),
+            status: Status::Current,
+            evidence: Vec::new(),
+        };
+        let macos_files = vec![
+            PackagedExecutableFile {
+                name: "capsem".to_string(),
+                install_path: "/usr/local/share/capsem/bin/capsem".to_string(),
+                bytes: b"macos-capsem".to_vec(),
+                hmac: "macos-capsem-hmac".to_string(),
+            },
+            PackagedExecutableFile {
+                name: "capsem-service".to_string(),
+                install_path: "/usr/local/share/capsem/bin/capsem-service".to_string(),
+                bytes: b"macos-service".to_vec(),
+                hmac: "macos-service-hmac".to_string(),
+            },
+        ];
+        let macos_sbom_refs = BTreeMap::from([
+            (
+                "/usr/local/share/capsem/bin/capsem".to_string(),
+                "SPDXRef-File-macos-capsem".to_string(),
+            ),
+            (
+                "/usr/local/share/capsem/bin/capsem-service".to_string(),
+                "SPDXRef-File-macos-capsem-service".to_string(),
+            ),
+        ]);
+        let macos_rows =
+            executable_inventory_from_package_files(&macos_package, &macos_files, &macos_sbom_refs)
+                .expect("macOS package rows");
+        verify_package_contents_match_binary_inventory(&macos_package, &macos_files, &macos_rows)
+            .expect("macOS package contents match manifest inventory");
+
+        let deb_package = PackageInventoryRow {
+            name: "Capsem_1.4.0_arm64.deb".to_string(),
+            version: "1.4.0".to_string(),
+            kind: PackageKind::DebianPackage,
+            platform: "linux".to_string(),
+            architecture: Architecture::Arm64,
+            url: "/packages/stable/1.4.0/Capsem_1.4.0_arm64.deb".to_string(),
+            bytes: 101,
+            digest: digest_set(),
+            status: Status::Current,
+            evidence: Vec::new(),
+        };
+        let deb_files = vec![
+            PackagedExecutableFile {
+                name: "capsem".to_string(),
+                install_path: "/usr/bin/capsem".to_string(),
+                bytes: b"deb-capsem".to_vec(),
+                hmac: "deb-capsem-hmac".to_string(),
+            },
+            PackagedExecutableFile {
+                name: "capsem-service".to_string(),
+                install_path: "/usr/bin/capsem-service".to_string(),
+                bytes: b"deb-service".to_vec(),
+                hmac: "deb-service-hmac".to_string(),
+            },
+        ];
+        let deb_sbom_refs = BTreeMap::from([
+            (
+                "/usr/bin/capsem".to_string(),
+                "SPDXRef-File-deb-capsem".to_string(),
+            ),
+            (
+                "/usr/bin/capsem-service".to_string(),
+                "SPDXRef-File-deb-capsem-service".to_string(),
+            ),
+        ]);
+        let deb_rows =
+            executable_inventory_from_package_files(&deb_package, &deb_files, &deb_sbom_refs)
+                .expect("deb package rows");
+        verify_package_contents_match_binary_inventory(&deb_package, &deb_files, &deb_rows)
+            .expect("deb package contents match manifest inventory");
+    }
+
+    #[test]
+    fn executable_inventory_rejects_package_content_hash_drift() {
+        let package = PackageInventoryRow {
+            name: "Capsem_1.4.0_arm64.deb".to_string(),
+            version: "1.4.0".to_string(),
+            kind: PackageKind::DebianPackage,
+            platform: "linux".to_string(),
+            architecture: Architecture::Arm64,
+            url: "/packages/stable/1.4.0/Capsem_1.4.0_arm64.deb".to_string(),
+            bytes: 101,
+            digest: digest_set(),
+            status: Status::Current,
+            evidence: Vec::new(),
+        };
+        let files = vec![PackagedExecutableFile {
+            name: "capsem".to_string(),
+            install_path: "/usr/bin/capsem".to_string(),
+            bytes: b"deb-capsem".to_vec(),
+            hmac: "deb-capsem-hmac".to_string(),
+        }];
+        let sbom_refs = BTreeMap::from([(
+            "/usr/bin/capsem".to_string(),
+            "SPDXRef-File-deb-capsem".to_string(),
+        )]);
+        let mut rows =
+            executable_inventory_from_package_files(&package, &files, &sbom_refs).expect("rows");
+        rows[0].digest.sha256 = "0".repeat(64);
+
+        let error = verify_package_contents_match_binary_inventory(&package, &files, &rows)
+            .expect_err("tampered package content hash must be rejected");
+
+        assert!(
+            format!("{error:#}").contains("sha256 mismatch"),
             "{error:#}"
         );
     }

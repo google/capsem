@@ -27,6 +27,7 @@ def test_every_packaged_executable_has_hashes_and_sbom_ref() -> None:
 
     assert "pub struct PackagedExecutableFile" in source
     assert "pub fn executable_inventory_from_package_files" in source
+    assert "pub fn verify_package_contents_match_binary_inventory" in source
     assert "format!(\"{:x}\", Sha256::digest(&file.bytes))" in source
     assert "blake3::hash(&file.bytes)" in source
     assert "sbom_component_refs" in source
@@ -36,3 +37,5 @@ def test_every_packaged_executable_has_hashes_and_sbom_ref() -> None:
         in source
     )
     assert "executable_inventory_rejects_missing_sbom_component_ref" in source
+    assert "executable_inventory_matches_macos_and_deb_package_contents" in source
+    assert "executable_inventory_rejects_package_content_hash_drift" in source
