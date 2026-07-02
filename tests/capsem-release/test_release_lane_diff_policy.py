@@ -11,6 +11,13 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = PROJECT_ROOT / "scripts" / "check-release-graph-diff.py"
+FIXTURE_GRAPH = (
+    PROJECT_ROOT
+    / "tests"
+    / "capsem-release"
+    / "fixtures"
+    / "release-graph-stable-nightly.json"
+)
 
 
 def test_binary_allowed_diff(tmp_path: Path) -> None:
@@ -84,6 +91,31 @@ def test_binary_lane_rejects_profile_changes(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "manifests.stable.1.4.0.profiles.co-work.revision" in result.stderr
+
+
+def test_fixture_can_mutate_nightly_co_work_only(tmp_path: Path) -> None:
+    old = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+    new = deepcopy(old)
+    new["channels"]["nightly"]["manifests"][0]["digest"]["sha256"] = "f" * 64
+    new["manifests"]["nightly"]["1.5.0-nightly.20260702"]["profiles"]["co-work"][
+        "images"
+    ][0]["artifacts"][0]["digest"]["sha256"] = "e" * 64
+
+    result = _run_policy(
+        tmp_path,
+        old,
+        new,
+        "--lane",
+        "profile",
+        "--channel",
+        "nightly",
+        "--profile",
+        "co-work",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert new["channels"]["stable"] == old["channels"]["stable"]
+    assert new["manifests"]["stable"] == old["manifests"]["stable"]
 
 
 def _run_policy(

@@ -8,10 +8,18 @@ keep the source contract visible to the release CI lane.
 from __future__ import annotations
 
 from pathlib import Path
+import json
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RELEASE_GRAPH = PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "release_graph.rs"
+FIXTURE_GRAPH = (
+    PROJECT_ROOT
+    / "tests"
+    / "capsem-release"
+    / "fixtures"
+    / "release-graph-stable-nightly.json"
+)
 
 
 def _source() -> str:
@@ -65,3 +73,29 @@ def test_revoked_manifest_is_listed_but_not_selectable() -> None:
     assert "pub fn select_manifest" in source
     assert "Status::Revoked => 255" in source
     assert "release_graph_revoked_manifest_is_listed_but_not_selectable" in source
+
+
+def test_fixture_has_stable_and_nightly() -> None:
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+
+    assert sorted(graph["channels"]) == ["nightly", "stable"]
+    assert {
+        manifest["status"]
+        for channel in graph["channels"].values()
+        for manifest in channel["manifests"]
+    } == {"current", "supported", "deprecated", "revoked"}
+    assert graph["channels"]["stable"]["manifests"][0]["version"] == "1.4.0"
+    assert (
+        graph["channels"]["nightly"]["manifests"][0]["version"]
+        == "1.5.0-nightly.20260702"
+    )
+
+    stable = graph["manifests"]["stable"]["1.4.0"]
+    nightly = graph["manifests"]["nightly"]["1.5.0-nightly.20260702"]
+    assert stable["packages"][0]["name"] == "Capsem-1.4.0.pkg"
+    assert nightly["packages"][0]["name"] == "Capsem-1.5.0-nightly.20260702.pkg"
+    assert stable["binaries"][0]["sbom_component_ref"] == "SPDXRef-File-capsem"
+    assert nightly["profiles"]["co-work"]["revision"].endswith("-nightly")
+    assert stable["profiles"]["co-work"]["revision"].endswith("-stable")
+    assert nightly["profiles"]["co-work"]["min_capsem_version"] == "1.4.0"
+    assert nightly["profiles"]["co-work"]["images"][0]["evidence"][0]["kind"] == "abom"
