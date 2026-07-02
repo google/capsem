@@ -155,6 +155,7 @@ impl BinaryInstallerApplyCommand {
 const CACHE_TTL_SECS: u64 = 24 * 3600; // 24 hours
 const DEFAULT_RELEASE_MANIFEST_URL: &str = "https://release.capsem.org/assets/stable/manifest.json";
 const RELEASE_MANIFEST_URL_ENV: &str = "CAPSEM_RELEASE_MANIFEST_URL";
+const LEGACY_RELEASE_HEALTH_URL_ENV: &str = "CAPSEM_RELEASE_HEALTH_URL";
 
 #[derive(Debug, Clone, Deserialize)]
 #[allow(dead_code)]
@@ -526,6 +527,12 @@ pub async fn refresh_update_cache_if_stale() {
 
 fn release_manifest_url() -> Result<String> {
     if let Ok(value) = std::env::var(RELEASE_MANIFEST_URL_ENV) {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return validate_release_manifest_url(trimmed);
+        }
+    }
+    if let Ok(value) = std::env::var(LEGACY_RELEASE_HEALTH_URL_ENV) {
         let trimmed = value.trim();
         if !trimmed.is_empty() {
             return validate_release_manifest_url(trimmed);
@@ -1263,7 +1270,7 @@ pub async fn run_update(
                 }
             } else {
                 println!(
-                    "No installer package in release health matches this install layout ({layout:?})."
+                    "No installer package in release manifest matches this install layout ({layout:?})."
                 );
             }
         }
@@ -1331,7 +1338,7 @@ fn print_update_check_summary(check: &UpdateCheck, current: &str, layout: &Insta
                 println!("SHA-256:   {}", installer.sha256);
             } else {
                 println!(
-                    "No installer package in release health matches this install layout ({layout:?})."
+                    "No installer package in release manifest matches this install layout ({layout:?})."
                 );
             }
         }

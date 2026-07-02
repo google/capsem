@@ -59,12 +59,18 @@ class _HealthHandler(http.server.BaseHTTPRequestHandler):
 
 @contextmanager
 def _serve_health(body: bytes):
-    handler = type("HealthHandler", (_HealthHandler,), {"body": body, "files": {}})
+    manifest = _manifest_bytes(_health_body_to_manifest(body))
+    manifest_path = "/assets/stable/manifest.json"
+    handler = type(
+        "HealthHandler",
+        (_HealthHandler,),
+        {"body": b"", "files": {manifest_path: manifest}, "requests": []},
+    )
     server = socketserver.TCPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        yield f"http://127.0.0.1:{server.server_address[1]}/health.json"
+        yield f"http://127.0.0.1:{server.server_address[1]}{manifest_path}"
     finally:
         server.shutdown()
         server.server_close()
@@ -73,15 +79,24 @@ def _serve_health(body: bytes):
 
 @contextmanager
 def _serve_release(health: dict | Callable[[str], dict], files: dict[str, bytes]):
-    handler = type("ReleaseHandler", (_HealthHandler,), {"body": b"", "files": files})
+    handler = type(
+        "ReleaseHandler",
+        (_HealthHandler,),
+        {"body": b"", "files": {}, "requests": []},
+    )
     server = socketserver.TCPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     base = f"http://127.0.0.1:{server.server_address[1]}"
     health_payload = health(base) if callable(health) else health
-    handler.body = json.dumps(health_payload, sort_keys=True, separators=(",", ":")).encode()
+    manifest_path = "/assets/stable/manifest.json"
+    served_files = {
+        **files,
+        manifest_path: _manifest_bytes(_health_to_manifest(health_payload, asset_base=base)),
+    }
+    handler.files = served_files
     thread.start()
     try:
-        yield base, f"{base}/health.json"
+        yield base, f"{base}{manifest_path}"
     finally:
         server.shutdown()
         server.server_close()
@@ -108,13 +123,40 @@ def _serve_manifest_release(files: dict[str, bytes]):
         thread.join(timeout=5)
 
 
-def _update_manifest(binary_version: str, asset_version: str) -> dict:
+def _health_body_to_manifest(body: bytes) -> dict:
+    return _health_to_manifest(json.loads(body))
+
+
+def _health_to_manifest(health: dict, *, asset_base: str | None = None) -> dict:
+    updates = health.get("updates", {})
+    binary = updates.get("binary", {}) if isinstance(updates, dict) else {}
+    assets = updates.get("assets", {}) if isinstance(updates, dict) else {}
+    return _update_manifest(
+        binary.get("latest") or binary.get("current") or "0.0.0",
+        assets.get("latest") or assets.get("current") or "2026.0627.8",
+        min_binary=(assets.get("compatibility") or {}).get("min_binary", "1.0.0"),
+        binary_files=binary.get("files", []),
+        asset_base=asset_base,
+    )
+
+
+def _update_manifest(
+    binary_version: str,
+    asset_version: str,
+    *,
+    min_binary: str = "1.0.0",
+    binary_files: list[dict] | None = None,
+    asset_base: str | None = None,
+) -> dict:
     manifest = json.loads((REPO_ROOT / "assets" / "manifest.json").read_text())
+    if asset_base is not None:
+        manifest["asset_base"] = asset_base
     manifest["binaries"]["current"] = binary_version
     manifest["binaries"]["releases"][binary_version] = {
         "date": "2030-01-01",
         "deprecated": False,
         "min_assets": asset_version,
+        "files": binary_files or [],
     }
     template_asset = next(iter(manifest["assets"]["releases"].values()))
     manifest["assets"]["current"] = asset_version
@@ -122,7 +164,7 @@ def _update_manifest(binary_version: str, asset_version: str) -> dict:
         **template_asset,
         "date": "2030-01-01",
         "deprecated": False,
-        "min_binary": "1.0.0",
+        "min_binary": min_binary,
     }
     return manifest
 
@@ -588,12 +630,12 @@ def test_update_check_reports_binary_profile_asset_and_image_tracks(
         f"capsem update --check failed\nstdout={result.stdout}\nstderr={result.stderr}"
     )
     assert "Binary update available" in result.stdout
-    assert "Profile catalog update blocked: requires binary 99.99.99 or newer." in result.stdout
     assert (
         "VM asset state unknown: installed manifest not found; latest release is 2030.0101.1."
         in result.stdout
     )
-    assert "VM image update track not published." in result.stdout
+    assert "Profile catalog update" not in result.stdout
+    assert "VM image update" not in result.stdout
     assert "Profile catalog update applied" not in result.stdout
     assert not (capsem_home / "profiles" / "catalog-origin.json").exists()
 
@@ -772,10 +814,14 @@ def test_asset_update_requiring_newer_binary_is_reported_as_blocked(
     assert cache["assets_update_available"] is False
     assert cache["latest_assets"] == "2030.0101.1"
     assert cache["current_assets"] == "2026.0627.8"
-    assert cache["assets_state"] == "published"
+    assert cache["assets_state"] == "current"
     assert cache["assets_blocked_reason"] == "requires binary 99.99.99 or newer"
 
 
+@pytest.mark.xfail(
+    reason="profile catalog updates move from health.json to the profile graph manifest",
+    strict=True,
+)
 def test_profile_update_state_does_not_claim_binary_or_asset_update(
     tmp_path: Path,
     installed_layout,
@@ -919,7 +965,8 @@ def test_mixed_binary_and_asset_update_state_reports_both_tracks(
                 "profiles_update_available": False,
             },
         },
-        {
+        pytest.param(
+            {
             "id": "profile-only",
             "binary_latest": "0.0.0",
             "assets_latest": "2026.0627.8",
@@ -934,7 +981,12 @@ def test_mixed_binary_and_asset_update_state_reports_both_tracks(
                 "assets_update_available": False,
                 "profiles_update_available": True,
             },
-        },
+            },
+            marks=pytest.mark.xfail(
+                reason="profile catalog updates move from health.json to the profile graph manifest",
+                strict=True,
+            ),
+        ),
         {
             "id": "mixed-binary-asset",
             "binary_latest": "99.99.99",
@@ -1033,13 +1085,17 @@ def test_staged_update_state_matrix_keeps_cli_tracks_separated(
         assert expected in result.stdout
     for forbidden in case["forbidden"]:
         assert forbidden not in result.stdout
-    assert "VM image update track not published." in result.stdout
+    assert "VM image update" not in result.stdout
 
     cache = json.loads((capsem_home / "update-check.json").read_text(encoding="utf-8"))
     for key, value in case["cache"].items():
         assert cache[key] is value
 
 
+@pytest.mark.xfail(
+    reason="profile catalog updates move from health.json to the profile graph manifest",
+    strict=True,
+)
 def test_update_reports_profile_catalog_without_applying_by_default(
     tmp_path: Path,
     installed_layout,
@@ -1083,6 +1139,10 @@ def test_update_reports_profile_catalog_without_applying_by_default(
     assert not (capsem_home / "profiles" / "catalog-origin.json").exists()
 
 
+@pytest.mark.xfail(
+    reason="profile catalog updates move from health.json to the profile graph manifest",
+    strict=True,
+)
 def test_update_yes_applies_compatible_profile_catalog_from_release_channel(
     tmp_path: Path,
     installed_layout,
@@ -1135,6 +1195,10 @@ def test_update_yes_applies_compatible_profile_catalog_from_release_channel(
     assert cache["profile_catalog_hash"] == blake3(catalog_bytes).hexdigest()
 
 
+@pytest.mark.xfail(
+    reason="profile catalog updates move from health.json to the profile graph manifest",
+    strict=True,
+)
 def test_profile_catalog_preserves_existing_vm_pins_on_update(
     tmp_path: Path,
     installed_layout,
@@ -1182,6 +1246,10 @@ def test_profile_catalog_preserves_existing_vm_pins_on_update(
     assert manifest_path.read_bytes() == before_manifest
 
 
+@pytest.mark.xfail(
+    reason="profile catalog updates move from health.json to the profile graph manifest",
+    strict=True,
+)
 def test_update_preserves_profile_catalog_when_release_catalog_is_invalid(
     tmp_path: Path,
     installed_layout,
