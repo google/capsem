@@ -23,6 +23,16 @@ export interface TableRow {
   status?: string;
 }
 
+export interface ChannelRow {
+  id: string;
+  label: string;
+  manifestCount: number;
+  currentVersion: string;
+  currentStatus: string;
+  statuses: string[];
+  manifestUrl: string;
+}
+
 export function loadReleaseData(): ReleaseData {
   const distEnv = process.env.CAPSEM_RELEASE_CHANNEL_DIST;
   if (!distEnv) {
@@ -84,6 +94,25 @@ function loadGraphData(graphPath: string): ReleaseData {
 
 export function profilePagePath(profileId: string): string {
   return `/profiles/${encodeURIComponent(profileId)}/`;
+}
+
+export function channelRows(data: ReleaseData): ChannelRow[] {
+  return Object.entries(data.channels.channels ?? {})
+    .map(([id, record]) => {
+      const channel = record as JsonObject;
+      const manifests = Array.isArray(channel.manifests) ? channel.manifests : [];
+      const selected = selectManifestRecord(channel);
+      return {
+        id,
+        label: String(channel.label ?? id),
+        manifestCount: manifests.length,
+        currentVersion: String(selected.version ?? 'not published'),
+        currentStatus: String(selected.status ?? 'not published'),
+        statuses: Array.from(new Set(manifests.map((manifest: JsonObject) => String(manifest.status ?? 'unknown')))),
+        manifestUrl: String(selected.url ?? ''),
+      };
+    })
+    .sort((left, right) => left.id.localeCompare(right.id));
 }
 
 export function profileList(data: ReleaseData): JsonObject[] {

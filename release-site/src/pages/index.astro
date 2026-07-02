@@ -5,6 +5,7 @@ import {
   binaryDescription,
   binaryRows,
   byteLabel,
+  channelRows,
   currentAssetFilesByArch,
   currentAssetBaseUrl,
   currentArchitectures,
@@ -24,6 +25,7 @@ import {
 } from '../lib/release-data';
 
 const data = loadReleaseData();
+const channels = channelRows(data);
 const profiles = profileList(data);
 const binaries = binaryRows(data);
 const hostSboms = hostSbomRows(data);
@@ -47,6 +49,43 @@ const assetState = data.manifest.assets?.releases?.[currentAssets]?.deprecated ?
       Current binary, VM asset, profile, and evidence inventory for the public Capsem release channel.
     </p>
   </header>
+
+  <section class="mt-8 border border-zinc-200 p-5">
+    <h2 class="text-xl font-semibold text-black">Channels</h2>
+    <p class="mt-1 text-sm text-zinc-600">Release channels are listed from the published channel catalog.</p>
+    <div class="mt-4 overflow-x-auto">
+      <table class="w-full min-w-[760px] border-collapse text-sm">
+        <thead>
+          <tr class="border-b border-zinc-200 text-left text-zinc-500">
+            <th class="py-2 pr-4 font-medium">Channel</th>
+            <th class="py-2 pr-4 font-medium">Selected manifest</th>
+            <th class="py-2 pr-4 font-medium">Status</th>
+            <th class="py-2 pr-4 font-medium">Manifests</th>
+            <th class="py-2 pr-4 font-medium">Manifest URL</th>
+          </tr>
+        </thead>
+        <tbody>
+          {channels.map((channel) => (
+            <tr class="border-b border-zinc-100 align-top" id={`channel-${channel.id}`}>
+              <td class="py-3 pr-4">
+                <div class="font-medium text-black">{channel.label}</div>
+                <code>{channel.id}</code>
+              </td>
+              <td class="py-3 pr-4"><code>{channel.currentVersion}</code></td>
+              <td class="py-3 pr-4">{channel.currentStatus}</td>
+              <td class="py-3 pr-4">
+                {channel.manifestCount}
+                <span class="ml-2 text-zinc-500">{channel.statuses.join(', ')}</span>
+              </td>
+              <td class="py-3 pr-4">
+                {channel.manifestUrl ? <a class="break-all text-blue-600 underline" href={channel.manifestUrl}>{channel.manifestUrl}</a> : 'not published'}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  </section>
 
   <section class="mt-8 border border-zinc-200 p-5">
     <h2 class="text-xl font-semibold text-black">Channel Manifest</h2>

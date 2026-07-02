@@ -42,6 +42,9 @@ def test_release_site_builds_from_release_graph_fixture() -> None:
     ).read_text(encoding="utf-8")
 
     assert "/manifests/stable/1.4.0/manifest.json" in index
+    assert "Stable" in index
+    assert "Nightly" in index
+    assert "1.5.0-nightly.20260702" in index
     assert "Capsem-1.4.0.pkg" in index
     assert "SPDXRef-File-capsem" in index
     assert "rootfs.erofs" in index
