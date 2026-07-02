@@ -716,6 +716,12 @@ jobs:
             --version "$VERSION" \
             "${ARTIFACT_ARGS[@]}"
 
+      - name: Verify binary release lane policy
+        run: |
+          uv run pytest \
+            tests/capsem-release/test_binary_lane_gate.py \
+            tests/capsem-release/test_release_lane_diff_policy.py -q
+
       - name: Build release channel with existing VM assets
         run: |
           cargo run -p capsem-admin -- assets channel build \

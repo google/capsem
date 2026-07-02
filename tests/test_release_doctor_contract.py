@@ -263,9 +263,38 @@ def test_release_channel_contract_suite_is_in_pr_and_local_gates() -> None:
     assert "Build chain and release tests (serial)" in just_test
     assert "validator.validate_release_site(" in local_suite
     assert "test_release_channel_contract_rejects_swapped_manifest" in local_suite
-    assert "test_release_channel_contract_rejects_stale_health_summary" in local_suite
+    assert "test_release_channel_contract_ignores_stale_health_summary" in local_suite
     assert "test_release_channel_contract_rejects_cache_header_drift" in local_suite
     assert "test_two_generated_release_channels_have_same_machine_contract" in local_suite
+
+
+def test_release_workflows_run_disjoint_lane_policy_gates() -> None:
+    binary_workflow = _workflow_text("release.yaml")
+    asset_workflow = _workflow_text("release-assets.yaml")
+    deploy_workflow = _workflow_text("release-channel.yaml")
+    ci_workflow = _workflow_job_block("test")
+
+    assert "push:" in binary_workflow
+    assert "tags: ['v*']" in binary_workflow
+    assert "Verify binary release lane policy" in binary_workflow
+    assert "tests/capsem-release/test_binary_lane_gate.py" in binary_workflow
+    assert "tests/capsem-release/test_release_lane_diff_policy.py" in binary_workflow
+    assert "just build-kernel" not in binary_workflow
+    assert "just build-rootfs" not in binary_workflow
+
+    assert "workflow_dispatch:" in asset_workflow
+    assert "profile:" in asset_workflow
+    assert "Verify profile release lane policy" in asset_workflow
+    assert "tests/capsem-release/test_profile_lane_gate.py" in asset_workflow
+    assert "tests/capsem-release/test_release_lane_diff_policy.py" in asset_workflow
+    assert "BINARY_VERSION" not in asset_workflow
+    assert "Record binary release metadata" not in asset_workflow
+
+    assert "workflow_call:" in deploy_workflow
+    assert "cargo run -p capsem-admin -- assets channel build" not in deploy_workflow
+    assert "cloudflare/wrangler-action@v3" in deploy_workflow
+
+    assert "tests/capsem-release/" in ci_workflow
 
 
 def test_install_e2e_generates_manifest_through_admin_rail() -> None:
@@ -930,7 +959,8 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     assert "needs: [deploy-release-channel]" in workflow
     assert "cloudflare/wrangler-action" not in workflow
     assert "pages deploy" not in workflow
-    assert "capsem-release" not in workflow
+    assert "tests/capsem-release/test_binary_lane_gate.py" in workflow
+    assert "tests/capsem-release/test_release_lane_diff_policy.py" in workflow
     assert "CLOUDFLARE_" not in workflow
     for logical_name in ("vmlinuz", "initrd.img", "rootfs.erofs", "obom.cdx.json"):
         assert f"release-artifacts/{logical_name}" not in create_release
@@ -1111,93 +1141,211 @@ def test_release_skill_documents_deb_preinstall_restart_rail() -> None:
     assert "stale helper cohort before package replacement" in release_skill
 
 
+def _install_release_graph_contract_fixture(
+    checker,
+    *,
+    index_text: str | None = None,
+    channels_mutator=None,
+    manifest_mutator=None,
+    catalog_mutator=None,
+    payload_mutator=None,
+    headers_mutator=None,
+) -> dict[str, object]:
+    site = "https://release.capsem.org"
+    channel = "stable"
+    generated_at = "2030-01-01T00:00:00Z"
+    current_binary = "1.4.0"
+    current_assets = "2030.0101.1"
+    profile_revision = "profiles-2030.0101.1"
+    manifest_path = "/assets/stable/manifest.json"
+    profile_source = f"/profiles/releases/{profile_revision}/catalog.json"
+    asset_base = "/assets/releases"
+
+    catalog = {
+        "schema": "capsem.profile_catalog.v1",
+        "revision": profile_revision,
+        "state": "current",
+        "current_binary": current_binary,
+        "current_assets": current_assets,
+        "compatibility": {
+            "binary": current_binary,
+            "assets": current_assets,
+            "min_binary": current_binary,
+            "min_assets": current_assets,
+            "requires_newer_binary": False,
+            "requires_newer_assets": False,
+        },
+        "profiles": [],
+    }
+    if catalog_mutator is not None:
+        catalog_mutator(catalog)
+    catalog_bytes = (json.dumps(catalog, sort_keys=True) + "\n").encode()
+    catalog_hash = checker.blake3.blake3(catalog_bytes).hexdigest()
+
+    manifest = {
+        "format": 2,
+        "asset_base": asset_base,
+        "assets": {
+            "current": current_assets,
+            "releases": {
+                current_assets: {
+                    "date": "2030-01-01",
+                    "deprecated": False,
+                    "min_binary": current_binary,
+                    "arches": {},
+                }
+            },
+        },
+        "binaries": {
+            "current": current_binary,
+            "releases": {
+                current_binary: {
+                    "date": "2030-01-01",
+                    "deprecated": False,
+                    "min_assets": current_assets,
+                    "files": [],
+                }
+            },
+        },
+    }
+    if manifest_mutator is not None:
+        manifest_mutator(manifest)
+    manifest_bytes = (json.dumps(manifest, sort_keys=True) + "\n").encode()
+    manifest_hash = checker.blake3.blake3(manifest_bytes).hexdigest()
+
+    channels = {
+        "version": 1,
+        "generated_at": generated_at,
+        "channels": {
+            channel: {
+                "label": "Stable",
+                "profile_catalog": {
+                    "source": profile_source,
+                    "hash": catalog_hash,
+                    "revision": profile_revision,
+                },
+                "manifests": [
+                    {
+                        "version": current_binary,
+                        "status": "current",
+                        "url": manifest_path,
+                        "asset_base": asset_base,
+                        "binary_version": current_binary,
+                        "asset_version": current_assets,
+                        "digest": {
+                            "blake3": manifest_hash,
+                            "sha256": "a" * 64,
+                            "hmac": "stable-manifest-hmac",
+                        },
+                    }
+                ],
+            }
+        },
+    }
+    if channels_mutator is not None:
+        channels_mutator(channels)
+
+    payloads = {
+        f"{site}{manifest_path}": manifest_bytes,
+        f"{site}{profile_source}": catalog_bytes,
+    }
+    if payload_mutator is not None:
+        payload_mutator(payloads, checker)
+
+    if index_text is None:
+        index_text = " ".join(
+            [
+                current_binary,
+                current_assets,
+                "2030-01-01",
+                generated_at,
+                profile_revision,
+                profile_source,
+                manifest_path,
+                "/channels.json",
+            ]
+        )
+
+    headers = {
+        f"{site}/": "no-cache, must-revalidate",
+        f"{site}/channels.json": "no-cache, must-revalidate",
+        f"{site}{manifest_path}": "no-cache, must-revalidate",
+        f"{site}{profile_source}": "public, max-age=31536000, immutable",
+    }
+    if headers_mutator is not None:
+        headers_mutator(headers)
+
+    def fake_fetch_text(url: str):
+        if url == f"{site}/":
+            return checker.FetchText(text=index_text)
+        return checker.FetchText(text="", error=f"unexpected text fetch {url}")
+
+    def fake_fetch_json(url: str):
+        if url == f"{site}/channels.json":
+            return checker.FetchJson(data=channels)
+        return checker.FetchJson(data=None, error=f"unexpected json fetch {url}")
+
+    def fake_fetch_bytes(url: str):
+        data = payloads.get(url)
+        if data is None:
+            return checker.FetchBytes(b"", f"unexpected fetch {url}")
+        return checker.FetchBytes(data)
+
+    def fake_fetch_headers(url: str):
+        cache_control = headers.get(url)
+        if cache_control is None:
+            return checker.FetchHeaders({}, f"unexpected header fetch {url}")
+        return checker.FetchHeaders({"cache-control": cache_control})
+
+    checker.fetch_text = fake_fetch_text
+    checker.fetch_json = fake_fetch_json
+    checker.fetch_bytes = fake_fetch_bytes
+    checker.fetch_headers = fake_fetch_headers
+    return {
+        "site": site,
+        "channel": channel,
+        "manifest_path": manifest_path,
+        "profile_source": profile_source,
+        "current_binary": current_binary,
+        "current_assets": current_assets,
+        "profile_revision": profile_revision,
+        "manifest": manifest,
+        "channels": channels,
+        "catalog": catalog,
+    }
+
+
+def test_remote_readiness_accepts_channels_manifest_profile_graph_contract() -> None:
+    checker = _readiness_checker_module()
+    fixture = _install_release_graph_contract_fixture(checker)
+
+    result = checker.check_release_site_contract(fixture["site"], fixture["channel"])
+
+    assert result.ok, result.detail
+    assert "channels.json" in result.detail
+    assert "manifest" in result.detail
+    assert "profile catalog" in result.detail
+
+
 def test_remote_readiness_helper_edge_cases_reject_malformed_release_contract() -> None:
     checker = _readiness_checker_module()
-
-    checker.fetch_text = lambda _url: checker.FetchText(
-        text="1.4.0 2030.0101.1 2030-01-01 /health.json"
+    fixture = _install_release_graph_contract_fixture(
+        checker,
+        channels_mutator=lambda channels: channels.update({"channels": []}),
     )
-    checker.fetch_json = lambda url: checker.FetchJson(
-        data={
-            "schema": "capsem.assets_channel.health.v1",
-            "urls": [],
-            "current": [],
-            "assets": {"files": []},
-            "evidence": {
-                "vm_oboms": [],
-                "host_sboms": [],
-                "host_binary_files": [],
-                "attestations": [],
-            },
-        }
-        if url.endswith("/health.json")
-        else {
-            "format": 2,
-            "assets": {"current": "2030.0101.1"},
-            "binaries": {"current": "1.4.0"},
-        }
-    )
-    checker.fetch_headers = lambda _url: checker.FetchHeaders(headers={"cache-control": ""})
 
-    result = checker.check_release_site_contract("https://release.capsem.org", "stable")
+    result = checker.check_release_site_contract(fixture["site"], fixture["channel"])
 
     assert not result.ok
-    assert "health urls missing or not an object" in result.detail
-    assert "health current missing or not an object" in result.detail
+    assert "channels catalog missing or not an object" in result.detail
+    assert "channels.stable missing or not an object" in result.detail
 
 
 def test_remote_readiness_rejects_stale_index_profile_metadata() -> None:
     checker = _readiness_checker_module()
+    fixture = _install_release_graph_contract_fixture(checker, index_text="1.4.0 2030.0101.1")
 
-    checker.fetch_text = lambda _url: checker.FetchText(
-        text="1.4.0 2030.0101.1 2030-01-01"
-    )
-    checker.fetch_json = lambda url: checker.FetchJson(
-        data={
-            "schema": "capsem.assets_channel.health.v1",
-            "generated_at": "2030-01-01T00:00:00Z",
-            "urls": {
-                "manifest": "/assets/stable/manifest.json",
-                "asset_base": "/assets/releases",
-                "profile_catalog": "/profiles/releases/profiles-2030.0101.1/catalog.json",
-            },
-            "current": {"binary": "1.4.0", "assets": "2030.0101.1"},
-            "asset_releases": [
-                {"version": "2030.0101.1", "date": "2030-01-01"}
-            ],
-            "assets": {"files": []},
-            "profiles": {
-                "revision": "profiles-2030.0101.1",
-                "source": "/profiles/releases/profiles-2030.0101.1/catalog.json",
-            },
-            "updates": {
-                "profiles": {
-                    "source": "/profiles/releases/profiles-2030.0101.1/catalog.json"
-                }
-            },
-            "evidence": {
-                "vm_oboms": [],
-                "host_sboms": [],
-                "host_binary_files": [],
-                "attestations": [],
-            },
-        }
-        if url.endswith("/health.json")
-        else {
-            "format": 2,
-            "assets": {"current": "2030.0101.1"},
-            "binaries": {"current": "1.4.0"},
-        }
-    )
-    checker.fetch_headers = lambda url: checker.FetchHeaders(
-        headers={
-            "cache-control": "public, max-age=31536000, immutable"
-            if "/profiles/releases/" in url
-            else "no-cache, must-revalidate"
-        }
-    )
-
-    result = checker.check_release_site_contract("https://release.capsem.org", "stable")
+    result = checker.check_release_site_contract(fixture["site"], fixture["channel"])
 
     assert not result.ok
     assert "index missing generated timestamp 2030-01-01T00:00:00Z" in result.detail
@@ -1207,1840 +1355,128 @@ def test_remote_readiness_rejects_stale_index_profile_metadata() -> None:
         in result.detail
     )
     assert "index missing channel manifest /assets/stable/manifest.json" in result.detail
+    assert "index missing channels catalog /channels.json" in result.detail
 
 
-def test_remote_readiness_rejects_profile_update_source_drift() -> None:
+def test_remote_readiness_rejects_channel_manifest_digest_drift() -> None:
     checker = _readiness_checker_module()
-    catalog_url = "/profiles/releases/profiles-2030.0101.1/catalog.json"
-
-    checker.fetch_text = lambda _url: checker.FetchText(
-        text=(
-            "1.4.0 2030.0101.1 2030-01-01 "
-            f"2030-01-01T00:00:00Z profiles-2030.0101.1 {catalog_url} "
-            "/assets/stable/manifest.json"
-        )
-    )
-    checker.fetch_json = lambda url: checker.FetchJson(
-        data={
-            "schema": "capsem.assets_channel.health.v1",
-            "generated_at": "2030-01-01T00:00:00Z",
-            "urls": {
-                "manifest": "/assets/stable/manifest.json",
-                "asset_base": "/assets/releases",
-                "profile_catalog": catalog_url,
-            },
-            "current": {"binary": "1.4.0", "assets": "2030.0101.1"},
-            "asset_releases": [
-                {"version": "2030.0101.1", "date": "2030-01-01"}
-            ],
-            "assets": {"files": []},
-            "profiles": {
-                "revision": "profiles-2030.0101.1",
-                "source": catalog_url,
-            },
-            "updates": {
-                "profiles": {
-                    "latest": "profiles-2030.0101.1",
-                    "state": "current",
-                    "source": "/profiles/releases/stale/catalog.json",
-                },
-                "images": {"latest": None, "state": "not_published"},
-            },
-            "evidence": {
-                "vm_oboms": [],
-                "host_sboms": [],
-                "host_binary_files": [],
-                "attestations": [],
-            },
-        }
-        if url.endswith("/health.json")
-        else {
-            "format": 2,
-            "assets": {"current": "2030.0101.1"},
-            "binaries": {"current": "1.4.0"},
-        }
-    )
-    checker.fetch_headers = lambda url: checker.FetchHeaders(
-        headers={
-            "cache-control": "public, max-age=31536000, immutable"
-            if "/profiles/releases/" in url
-            else "no-cache, must-revalidate"
-        }
+    fixture = _install_release_graph_contract_fixture(
+        checker,
+        channels_mutator=lambda channels: channels["channels"]["stable"]["manifests"][0][
+            "digest"
+        ].update({"blake3": "0" * 64}),
     )
 
-    result = checker.check_release_site_contract("https://release.capsem.org", "stable")
+    result = checker.check_release_site_contract(fixture["site"], fixture["channel"])
 
     assert not result.ok
-    assert "health profile update source mismatch" in result.detail
+    assert "channel manifest BLAKE3 mismatch" in result.detail
 
 
-def test_remote_readiness_rejects_health_summary_drift() -> None:
+def test_remote_readiness_rejects_manifest_pointer_drift() -> None:
     checker = _readiness_checker_module()
-    catalog_url = "/profiles/releases/profiles-2030.0101.1/catalog.json"
+    wrong_manifest_url = "https://release.capsem.org/assets/nightly/manifest.json"
 
-    checker.fetch_text = lambda _url: checker.FetchText(
-        text=(
-            "1.4.0 2030.0101.1 2030-01-01 "
-            f"2030-01-01T00:00:00Z profiles-2030.0101.1 {catalog_url} "
-            "/assets/stable/manifest.json"
-        )
-    )
-    checker.fetch_json = lambda url: checker.FetchJson(
-        data={
-            "schema": "capsem.assets_channel.health.v1",
-            "ok": False,
-            "channel": "beta",
-            "state": "draft",
-            "generated_at": "2030-01-01T00:00:00Z",
-            "urls": {
-                "index": "/stale.html",
-                "health": "/stale-health.json",
-                "manifest": "/assets/stable/manifest.json",
-                "asset_base": "/assets/releases",
-                "profile_catalog": catalog_url,
-            },
-            "current": {"binary": "1.4.0", "assets": "2030.0101.1"},
-            "asset_releases": [
-                {"version": "2030.0101.1", "date": "2030-01-01"}
-            ],
-            "binary": {
-                "version": "1.3.0",
-                "state": "current",
-                "files": [],
-            },
-            "assets": {
-                "version": "2030.0101.0",
-                "state": "current",
-                "compatibility": {"binary": "1.4.0", "min_binary": "1.4.0"},
-                "requires_newer": {"binary": False},
-                "files": [],
-            },
-            "profiles": {
-                "revision": "profiles-2030.0101.1",
-                "source": catalog_url,
-                "hash": "1" * 64,
-                "compatibility": {
-                    "binary": "current",
-                    "assets": "current",
-                    "min_binary": "1.4.0",
-                    "min_assets": "2030.0101.1",
-                },
-                "requires_newer": {"binary": False, "assets": False},
-            },
-            "updates": {
-                "binary": {
-                    "latest": "1.4.0",
-                    "current": "1.4.0",
-                    "state": "current",
-                    "source": "manifest.binaries.current",
-                    "files": [],
-                },
-                "assets": {
-                    "latest": "2030.0101.1",
-                    "current": "2030.0101.1",
-                    "state": "current",
-                    "source": "manifest.assets.current",
-                    "manifest": "/assets/stable/manifest.json",
-                    "asset_base": "/assets/releases",
-                    "compatibility": {"binary": "1.4.0", "min_binary": "1.4.0"},
-                    "requires_newer": {"binary": False},
-                },
-                "profiles": {
-                    "latest": "profiles-2030.0101.1",
-                    "current": "profiles-2030.0101.1",
-                    "state": "current",
-                    "source": catalog_url,
-                    "hash": "1" * 64,
-                    "compatibility": {
-                        "binary": "current",
-                        "assets": "current",
-                        "min_binary": "1.4.0",
-                        "min_assets": "2030.0101.1",
-                    },
-                    "requires_newer": {"binary": False, "assets": False},
-                },
-                "images": {
-                    "latest": None,
-                    "current": None,
-                    "state": "not_published",
-                    "source": "not_in_asset_channel",
-                },
-            },
-            "evidence": {
-                "vm_oboms": [],
-                "host_sboms": [],
-                "host_binary_files": [],
-                "attestations": [],
-            },
-        }
-        if url.endswith("/health.json")
-        else {
-            "format": 2,
-            "assets": {"current": "2030.0101.1"},
-            "binaries": {"current": "1.4.0"},
-        }
-    )
-    checker.fetch_headers = lambda url: checker.FetchHeaders(
-        headers={
-            "cache-control": "public, max-age=31536000, immutable"
-            if "/profiles/releases/" in url
-            else "no-cache, must-revalidate"
-        }
+    def copy_manifest_to_wrong_url(payloads: dict[str, bytes], _checker) -> None:
+        payloads[wrong_manifest_url] = payloads[
+            "https://release.capsem.org/assets/stable/manifest.json"
+        ]
+
+    fixture = _install_release_graph_contract_fixture(
+        checker,
+        channels_mutator=lambda channels: channels["channels"]["stable"]["manifests"][0].update(
+            {"url": "/assets/nightly/manifest.json"}
+        ),
+        payload_mutator=copy_manifest_to_wrong_url,
     )
 
-    result = checker.check_release_site_contract("https://release.capsem.org", "stable")
+    result = checker.check_release_site_contract(fixture["site"], fixture["channel"])
 
     assert not result.ok
-    assert "health ok mismatch" in result.detail
-    assert "health channel mismatch" in result.detail
-    assert "health state mismatch" in result.detail
-    assert "health index URL mismatch" in result.detail
-    assert "health health URL mismatch" in result.detail
-    assert "health binary version mismatch" in result.detail
-    assert "health asset version mismatch" in result.detail
-
-
-def test_remote_readiness_rejects_asset_release_history_drift() -> None:
-    checker = _readiness_checker_module()
-    catalog_url = "/profiles/releases/profiles-2030.0102.1/catalog.json"
-
-    checker.fetch_text = lambda _url: checker.FetchText(
-        text=(
-            "1.4.0 2030.0102.1 2030-01-02 "
-            f"2030-01-02T00:00:00Z profiles-2030.0102.1 {catalog_url} "
-            "/assets/stable/manifest.json"
-        )
-    )
-    checker.fetch_json = lambda url: checker.FetchJson(
-        data={
-            "schema": "capsem.assets_channel.health.v1",
-            "ok": True,
-            "channel": "stable",
-            "state": "published",
-            "generated_at": "2030-01-02T00:00:00Z",
-            "urls": {
-                "index": "/index.html",
-                "health": "/health.json",
-                "manifest": "/assets/stable/manifest.json",
-                "asset_base": "/assets/releases",
-                "profile_catalog": catalog_url,
-            },
-            "current": {"binary": "1.4.0", "assets": "2030.0102.1"},
-            "asset_releases": [
-                {
-                    "version": "2030.0102.1",
-                    "date": "2030-01-02",
-                    "state": "current",
-                    "deprecated": False,
-                    "min_binary": "1.4.0",
-                }
-            ],
-            "binary": {
-                "version": "1.4.0",
-                "state": "current",
-                "files": [],
-            },
-            "assets": {
-                "version": "2030.0102.1",
-                "state": "current",
-                "compatibility": {"binary": "1.4.0", "min_binary": "1.4.0"},
-                "requires_newer": {"binary": False},
-                "files": [],
-            },
-            "profiles": {
-                "revision": "profiles-2030.0102.1",
-                "source": catalog_url,
-                "hash": "1" * 64,
-                "compatibility": {
-                    "binary": "current",
-                    "assets": "current",
-                    "min_binary": "1.4.0",
-                    "min_assets": "2030.0102.1",
-                },
-                "requires_newer": {"binary": False, "assets": False},
-            },
-            "updates": {
-                "binary": {
-                    "latest": "1.4.0",
-                    "current": "1.4.0",
-                    "state": "current",
-                    "source": "manifest.binaries.current",
-                    "files": [],
-                },
-                "assets": {
-                    "latest": "2030.0102.1",
-                    "current": "2030.0102.1",
-                    "state": "current",
-                    "source": "manifest.assets.current",
-                    "manifest": "/assets/stable/manifest.json",
-                    "asset_base": "/assets/releases",
-                    "compatibility": {"binary": "1.4.0", "min_binary": "1.4.0"},
-                    "requires_newer": {"binary": False},
-                },
-                "profiles": {
-                    "latest": "profiles-2030.0102.1",
-                    "current": "profiles-2030.0102.1",
-                    "state": "current",
-                    "source": catalog_url,
-                    "hash": "1" * 64,
-                    "compatibility": {
-                        "binary": "current",
-                        "assets": "current",
-                        "min_binary": "1.4.0",
-                        "min_assets": "2030.0102.1",
-                    },
-                    "requires_newer": {"binary": False, "assets": False},
-                },
-                "images": {
-                    "latest": None,
-                    "current": None,
-                    "state": "not_published",
-                    "source": "not_in_asset_channel",
-                },
-            },
-            "evidence": {
-                "vm_oboms": [],
-                "host_sboms": [],
-                "host_binary_files": [],
-                "attestations": [],
-            },
-        }
-        if url.endswith("/health.json")
-        else {
-            "format": 2,
-            "assets": {
-                "current": "2030.0102.1",
-                "releases": {
-                    "2030.0102.1": {
-                        "date": "2030-01-02",
-                        "deprecated": False,
-                        "min_binary": "1.4.0",
-                    },
-                    "2030.0101.1": {
-                        "date": "2030-01-01",
-                        "deprecated": True,
-                        "deprecated_date": "2030-01-03",
-                        "min_binary": "1.3.0",
-                    },
-                },
-            },
-            "binaries": {
-                "current": "1.4.0",
-                "releases": {
-                    "1.4.0": {
-                        "date": "2030-01-02",
-                        "deprecated": False,
-                        "min_assets": "2030.0102.1",
-                    }
-                },
-            },
-        }
-    )
-    checker.fetch_headers = lambda url: checker.FetchHeaders(
-        headers={
-            "cache-control": "public, max-age=31536000, immutable"
-            if "/profiles/releases/" in url
-            else "no-cache, must-revalidate"
-        }
-    )
-
-    result = checker.check_release_site_contract("https://release.capsem.org", "stable")
-
-    assert not result.ok
-    assert "health missing asset release 2030.0101.1" in result.detail
-
-
-def test_remote_readiness_rejects_profile_compatibility_drift() -> None:
-    checker = _readiness_checker_module()
-    catalog_url = "/profiles/releases/profiles-2030.0102.1/catalog.json"
-    stale_profile_compatibility = {
-        "binary": "1.3.0",
-        "assets": "2030.0101.1",
-        "min_binary": "1.5.0",
-        "min_assets": "2030.0101.1",
-    }
-    stale_profile_requires_newer = {"binary": True, "assets": True}
-
-    checker.fetch_text = lambda _url: checker.FetchText(
-        text=(
-            "1.4.0 2030.0102.1 2030-01-02 "
-            f"2030-01-02T00:00:00Z profiles-2030.0102.1 {catalog_url} "
-            "/assets/stable/manifest.json"
-        )
-    )
-    checker.fetch_json = lambda url: checker.FetchJson(
-        data={
-            "schema": "capsem.assets_channel.health.v1",
-            "ok": True,
-            "channel": "stable",
-            "state": "published",
-            "generated_at": "2030-01-02T00:00:00Z",
-            "urls": {
-                "index": "/index.html",
-                "health": "/health.json",
-                "manifest": "/assets/stable/manifest.json",
-                "asset_base": "/assets/releases",
-                "profile_catalog": catalog_url,
-            },
-            "current": {"binary": "1.4.0", "assets": "2030.0102.1"},
-            "asset_releases": [
-                {
-                    "version": "2030.0102.1",
-                    "date": "2030-01-02",
-                    "state": "current",
-                    "deprecated": False,
-                    "deprecated_date": None,
-                    "min_binary": "1.4.0",
-                }
-            ],
-            "binary": {
-                "version": "1.4.0",
-                "state": "current",
-                "files": [],
-            },
-            "assets": {
-                "version": "2030.0102.1",
-                "state": "current",
-                "compatibility": {"binary": "1.4.0", "min_binary": "1.4.0"},
-                "requires_newer": {"binary": False},
-                "files": [],
-            },
-            "profiles": {
-                "revision": "profiles-2030.0102.1",
-                "state": "current",
-                "source": catalog_url,
-                "hash": "1" * 64,
-                "compatibility": stale_profile_compatibility,
-                "requires_newer": stale_profile_requires_newer,
-            },
-            "updates": {
-                "binary": {
-                    "latest": "1.4.0",
-                    "current": "1.4.0",
-                    "state": "current",
-                    "source": "manifest.binaries.current",
-                    "files": [],
-                },
-                "assets": {
-                    "latest": "2030.0102.1",
-                    "current": "2030.0102.1",
-                    "state": "current",
-                    "source": "manifest.assets.current",
-                    "manifest": "/assets/stable/manifest.json",
-                    "asset_base": "/assets/releases",
-                    "compatibility": {"binary": "1.4.0", "min_binary": "1.4.0"},
-                    "requires_newer": {"binary": False},
-                },
-                "profiles": {
-                    "latest": "profiles-2030.0102.1",
-                    "current": "profiles-2030.0102.1",
-                    "state": "current",
-                    "source": catalog_url,
-                    "hash": "1" * 64,
-                    "compatibility": stale_profile_compatibility,
-                    "requires_newer": stale_profile_requires_newer,
-                },
-                "images": {
-                    "latest": None,
-                    "current": None,
-                    "state": "not_published",
-                    "source": "not_in_asset_channel",
-                },
-            },
-            "evidence": {
-                "vm_oboms": [],
-                "host_sboms": [],
-                "host_binary_files": [],
-                "attestations": [],
-            },
-        }
-        if url.endswith("/health.json")
-        else {
-            "format": 2,
-            "assets": {
-                "current": "2030.0102.1",
-                "releases": {
-                    "2030.0102.1": {
-                        "date": "2030-01-02",
-                        "deprecated": False,
-                        "min_binary": "1.4.0",
-                    }
-                },
-            },
-            "binaries": {
-                "current": "1.4.0",
-                "releases": {
-                    "1.4.0": {
-                        "date": "2030-01-02",
-                        "deprecated": False,
-                        "min_assets": "2030.0102.1",
-                    }
-                },
-            },
-        }
-    )
-    checker.fetch_headers = lambda url: checker.FetchHeaders(
-        headers={
-            "cache-control": "public, max-age=31536000, immutable"
-            if "/profiles/releases/" in url
-            else "no-cache, must-revalidate"
-        }
-    )
-
-    result = checker.check_release_site_contract("https://release.capsem.org", "stable")
-
-    assert not result.ok
-    assert "health profile compatibility binary mismatch" in result.detail
-    assert "health profile compatibility assets mismatch" in result.detail
-    assert "health profile compatibility min_binary mismatch" in result.detail
-    assert "health profile compatibility min_assets mismatch" in result.detail
-    assert "health profile requirement binary mismatch" in result.detail
-    assert "health profile requirement assets mismatch" in result.detail
-
-
-def test_remote_readiness_rejects_asset_compatibility_drift() -> None:
-    checker = _readiness_checker_module()
-    catalog_url = "/profiles/releases/profiles-2030.0102.1/catalog.json"
-    stale_asset_compatibility = {"binary": "1.3.0", "min_binary": "1.5.0"}
-    stale_asset_requires_newer = {"binary": True}
-
-    checker.fetch_text = lambda _url: checker.FetchText(
-        text=(
-            "1.4.0 2030.0102.1 2030-01-02 "
-            f"2030-01-02T00:00:00Z profiles-2030.0102.1 {catalog_url} "
-            "/assets/stable/manifest.json"
-        )
-    )
-    checker.fetch_json = lambda url: checker.FetchJson(
-        data={
-            "schema": "capsem.assets_channel.health.v1",
-            "ok": True,
-            "channel": "stable",
-            "state": "published",
-            "generated_at": "2030-01-02T00:00:00Z",
-            "urls": {
-                "index": "/index.html",
-                "health": "/health.json",
-                "manifest": "/assets/stable/manifest.json",
-                "asset_base": "/assets/releases",
-                "profile_catalog": catalog_url,
-            },
-            "current": {"binary": "1.4.0", "assets": "2030.0102.1"},
-            "asset_releases": [
-                {
-                    "version": "2030.0102.1",
-                    "date": "2030-01-02",
-                    "state": "current",
-                    "deprecated": False,
-                    "deprecated_date": None,
-                    "min_binary": "1.4.0",
-                }
-            ],
-            "binary": {
-                "version": "1.4.0",
-                "state": "current",
-                "files": [],
-            },
-            "assets": {
-                "version": "2030.0102.1",
-                "state": "current",
-                "compatibility": stale_asset_compatibility,
-                "requires_newer": stale_asset_requires_newer,
-                "files": [],
-            },
-            "profiles": {
-                "revision": "profiles-2030.0102.1",
-                "state": "current",
-                "source": catalog_url,
-                "hash": "1" * 64,
-                "compatibility": {
-                    "binary": "1.4.0",
-                    "assets": "2030.0102.1",
-                    "min_binary": "1.4.0",
-                    "min_assets": "2030.0102.1",
-                },
-                "requires_newer": {"binary": False, "assets": False},
-            },
-            "updates": {
-                "binary": {
-                    "latest": "1.4.0",
-                    "current": "1.4.0",
-                    "state": "current",
-                    "source": "manifest.binaries.current",
-                    "files": [],
-                },
-                "assets": {
-                    "latest": "2030.0102.1",
-                    "current": "2030.0102.1",
-                    "state": "current",
-                    "source": "manifest.assets.current",
-                    "manifest": "/assets/stable/manifest.json",
-                    "asset_base": "/assets/releases",
-                    "compatibility": stale_asset_compatibility,
-                    "requires_newer": stale_asset_requires_newer,
-                },
-                "profiles": {
-                    "latest": "profiles-2030.0102.1",
-                    "current": "profiles-2030.0102.1",
-                    "state": "current",
-                    "source": catalog_url,
-                    "hash": "1" * 64,
-                    "compatibility": {
-                        "binary": "1.4.0",
-                        "assets": "2030.0102.1",
-                        "min_binary": "1.4.0",
-                        "min_assets": "2030.0102.1",
-                    },
-                    "requires_newer": {"binary": False, "assets": False},
-                },
-                "images": {
-                    "latest": None,
-                    "current": None,
-                    "state": "not_published",
-                    "source": "not_in_asset_channel",
-                },
-            },
-            "evidence": {
-                "vm_oboms": [],
-                "host_sboms": [],
-                "host_binary_files": [],
-                "attestations": [],
-            },
-        }
-        if url.endswith("/health.json")
-        else {
-            "format": 2,
-            "assets": {
-                "current": "2030.0102.1",
-                "releases": {
-                    "2030.0102.1": {
-                        "date": "2030-01-02",
-                        "deprecated": False,
-                        "min_binary": "1.4.0",
-                    }
-                },
-            },
-            "binaries": {
-                "current": "1.4.0",
-                "releases": {
-                    "1.4.0": {
-                        "date": "2030-01-02",
-                        "deprecated": False,
-                        "min_assets": "2030.0102.1",
-                    }
-                },
-            },
-        }
-    )
-    checker.fetch_headers = lambda url: checker.FetchHeaders(
-        headers={
-            "cache-control": "public, max-age=31536000, immutable"
-            if "/profiles/releases/" in url
-            else "no-cache, must-revalidate"
-        }
-    )
-
-    result = checker.check_release_site_contract("https://release.capsem.org", "stable")
-
-    assert not result.ok
-    assert "health asset compatibility binary mismatch" in result.detail
-    assert "health asset compatibility min_binary mismatch" in result.detail
-    assert "health asset requirement binary mismatch" in result.detail
-
-
-def test_remote_readiness_rejects_asset_file_metadata_drift() -> None:
-    checker = _readiness_checker_module()
-    catalog_url = "/profiles/releases/profiles-2030.0101.1/catalog.json"
-    obom_bytes = b'{"bomFormat":"CycloneDX"}'
-    stale_obom_hash = checker.blake3.blake3(obom_bytes).hexdigest()
-    stale_kernel_hash = "0" * 64
-    current_kernel_hash = "1" * 64
-    current_obom_hash = "2" * 64
-    kernel_path = "/assets/releases/2030.0101.1/arm64-vmlinuz"
-    obom_path = "/assets/releases/2030.0101.1/arm64-obom.cdx.json"
-
-    checker.fetch_text = lambda _url: checker.FetchText(
-        text=(
-            "1.4.0 2030.0101.1 2030-01-01 "
-            f"2030-01-01T00:00:00Z profiles-2030.0101.1 {catalog_url} "
-            "/assets/stable/manifest.json"
-        )
-    )
-    checker.fetch_json = lambda url: checker.FetchJson(
-        data={
-            "schema": "capsem.assets_channel.health.v1",
-            "ok": True,
-            "channel": "stable",
-            "state": "published",
-            "generated_at": "2030-01-01T00:00:00Z",
-            "urls": {
-                "index": "/index.html",
-                "health": "/health.json",
-                "manifest": "/assets/stable/manifest.json",
-                "asset_base": "/assets/releases",
-                "profile_catalog": catalog_url,
-            },
-            "current": {"binary": "1.4.0", "assets": "2030.0101.1"},
-            "asset_releases": [
-                {
-                    "version": "2030.0101.1",
-                    "date": "2030-01-01",
-                    "state": "current",
-                    "deprecated": False,
-                    "min_binary": "1.4.0",
-                }
-            ],
-            "binary": {
-                "version": "1.4.0",
-                "state": "current",
-                "files": [],
-            },
-            "assets": {
-                "version": "2030.0101.1",
-                "state": "current",
-                "compatibility": {"binary": "1.4.0", "min_binary": "1.4.0"},
-                "requires_newer": {"binary": False},
-                "files": [
-                    {
-                        "arch": "arm64",
-                        "logical_name": "vmlinuz",
-                        "url": kernel_path,
-                        "hash": stale_kernel_hash,
-                        "size": 11,
-                    },
-                    {
-                        "arch": "arm64",
-                        "logical_name": "obom.cdx.json",
-                        "url": obom_path,
-                        "hash": stale_obom_hash,
-                        "size": len(obom_bytes),
-                    },
-                ],
-            },
-            "profiles": {
-                "revision": "profiles-2030.0101.1",
-                "source": catalog_url,
-                "hash": "1" * 64,
-                "state": "current",
-                "compatibility": {
-                    "binary": "1.4.0",
-                    "assets": "2030.0101.1",
-                    "min_binary": "1.4.0",
-                    "min_assets": "2030.0101.1",
-                },
-                "requires_newer": {"binary": False, "assets": False},
-            },
-            "updates": {
-                "binary": {
-                    "latest": "1.4.0",
-                    "current": "1.4.0",
-                    "state": "current",
-                    "source": "manifest.binaries.current",
-                    "files": [],
-                },
-                "assets": {
-                    "latest": "2030.0101.1",
-                    "current": "2030.0101.1",
-                    "state": "current",
-                    "source": "manifest.assets.current",
-                    "manifest": "/assets/stable/manifest.json",
-                    "asset_base": "/assets/releases",
-                    "compatibility": {"binary": "1.4.0", "min_binary": "1.4.0"},
-                    "requires_newer": {"binary": False},
-                },
-                "profiles": {
-                    "latest": "profiles-2030.0101.1",
-                    "current": "profiles-2030.0101.1",
-                    "state": "current",
-                    "source": catalog_url,
-                    "hash": "1" * 64,
-                    "compatibility": {
-                        "binary": "1.4.0",
-                        "assets": "2030.0101.1",
-                        "min_binary": "1.4.0",
-                        "min_assets": "2030.0101.1",
-                    },
-                    "requires_newer": {"binary": False, "assets": False},
-                },
-                "images": {
-                    "latest": None,
-                    "current": None,
-                    "state": "not_published",
-                    "source": "not_in_asset_channel",
-                },
-            },
-            "evidence": {
-                "vm_oboms": [
-                    {
-                        "arch": "arm64",
-                        "logical_name": "obom.cdx.json",
-                        "url": obom_path,
-                        "hash": stale_obom_hash,
-                        "size": len(obom_bytes),
-                    }
-                ],
-                "host_sboms": [],
-                "host_binary_files": [],
-                "attestations": [
-                    {
-                        "name": "github_attestations_vm_assets",
-                        "scope": "vm_assets",
-                        "workflow": ".github/workflows/release-assets.yaml",
-                        "predicate_type": "https://slsa.dev/provenance/v1",
-                        "predicate_url": obom_path,
-                        "verify_command": "gh attestation verify <subject-url> --owner google",
-                        "subjects": [kernel_path, obom_path],
-                    }
-                ],
-            },
-        }
-        if url.endswith("/health.json")
-        else {
-            "format": 2,
-            "assets": {
-                "current": "2030.0101.1",
-                "releases": {
-                    "2030.0101.1": {
-                        "date": "2030-01-01",
-                        "deprecated": False,
-                        "min_binary": "1.4.0",
-                        "arches": {
-                            "arm64": {
-                                "vmlinuz": {"hash": current_kernel_hash, "size": 42},
-                                "obom.cdx.json": {
-                                    "hash": current_obom_hash,
-                                    "size": 99,
-                                },
-                            }
-                        },
-                    }
-                },
-            },
-            "binaries": {
-                "current": "1.4.0",
-                "releases": {
-                    "1.4.0": {
-                        "date": "2030-01-01",
-                        "deprecated": False,
-                        "min_assets": "2030.0101.1",
-                    }
-                },
-            },
-        }
-    )
-    checker.fetch_bytes = lambda url: checker.FetchBytes(
-        obom_bytes
-        if url == f"https://release.capsem.org{obom_path}"
-        else b"",
-        None if url == f"https://release.capsem.org{obom_path}" else f"unexpected fetch {url}",
-    )
-    checker.fetch_headers = lambda url: checker.FetchHeaders(
-        headers={
-            "cache-control": "public, max-age=31536000, immutable"
-            if "/assets/releases/" in url or "/profiles/releases/" in url
-            else "no-cache, must-revalidate"
-        }
-    )
-
-    result = checker.check_release_site_contract("https://release.capsem.org", "stable")
-
-    assert not result.ok
-    assert f"health asset hash mismatch for {kernel_path}" in result.detail
-    assert f"health asset size mismatch for {kernel_path}" in result.detail
-    assert f"health asset hash mismatch for {obom_path}" in result.detail
-
-
-def test_remote_readiness_rejects_host_binary_file_metadata_drift() -> None:
-    checker = _readiness_checker_module()
-    catalog_url = "/profiles/releases/profiles-2030.0101.1/catalog.json"
-    package_bytes = b"stale pkg"
-    sbom_bytes = b'{"spdxVersion":"SPDX-2.3"}'
-    package_url = "https://github.com/google/capsem/releases/download/v1.4.0/Capsem-1.4.0.pkg"
-    sbom_url = "https://github.com/google/capsem/releases/download/v1.4.0/capsem-sbom.spdx.json"
-    stale_package_sha = hashlib.sha256(package_bytes).hexdigest()
-    stale_sbom_sha = hashlib.sha256(sbom_bytes).hexdigest()
-    current_package_sha = "1" * 64
-    current_sbom_sha = "2" * 64
-
-    checker.fetch_text = lambda _url: checker.FetchText(
-        text=(
-            "1.4.0 2030.0101.1 2030-01-01 "
-            f"2030-01-01T00:00:00Z profiles-2030.0101.1 {catalog_url} "
-            "/assets/stable/manifest.json"
-        )
-    )
-    checker.fetch_json = lambda url: checker.FetchJson(
-        data={
-            "schema": "capsem.assets_channel.health.v1",
-            "ok": True,
-            "channel": "stable",
-            "state": "published",
-            "generated_at": "2030-01-01T00:00:00Z",
-            "urls": {
-                "index": "/index.html",
-                "health": "/health.json",
-                "manifest": "/assets/stable/manifest.json",
-                "asset_base": "/assets/releases",
-                "profile_catalog": catalog_url,
-            },
-            "current": {"binary": "1.4.0", "assets": "2030.0101.1"},
-            "asset_releases": [
-                {
-                    "version": "2030.0101.1",
-                    "date": "2030-01-01",
-                    "state": "current",
-                    "deprecated": False,
-                    "min_binary": "1.4.0",
-                }
-            ],
-            "binary": {
-                "version": "1.4.0",
-                "state": "current",
-                "files": [
-                    {
-                        "name": "Capsem-1.4.0.pkg",
-                        "url": package_url,
-                        "sha256": stale_package_sha,
-                        "size": len(package_bytes),
-                    },
-                    {
-                        "name": "capsem-sbom.spdx.json",
-                        "url": sbom_url,
-                        "sha256": stale_sbom_sha,
-                        "size": len(sbom_bytes),
-                    },
-                ],
-            },
-            "assets": {
-                "version": "2030.0101.1",
-                "state": "current",
-                "compatibility": {"binary": "1.4.0", "min_binary": "1.4.0"},
-                "requires_newer": {"binary": False},
-                "files": [],
-            },
-            "profiles": {
-                "revision": "profiles-2030.0101.1",
-                "source": catalog_url,
-                "hash": "1" * 64,
-                "state": "current",
-                "compatibility": {
-                    "binary": "1.4.0",
-                    "assets": "2030.0101.1",
-                    "min_binary": "1.4.0",
-                    "min_assets": "2030.0101.1",
-                },
-                "requires_newer": {"binary": False, "assets": False},
-            },
-            "updates": {
-                "binary": {
-                    "latest": "1.4.0",
-                    "current": "1.4.0",
-                    "state": "current",
-                    "source": "manifest.binaries.current",
-                    "files": [
-                        {
-                            "name": "Capsem-1.4.0.pkg",
-                            "url": package_url,
-                            "sha256": stale_package_sha,
-                            "size": len(package_bytes),
-                        },
-                        {
-                            "name": "capsem-sbom.spdx.json",
-                            "url": sbom_url,
-                            "sha256": stale_sbom_sha,
-                            "size": len(sbom_bytes),
-                        },
-                    ],
-                },
-                "assets": {
-                    "latest": "2030.0101.1",
-                    "current": "2030.0101.1",
-                    "state": "current",
-                    "source": "manifest.assets.current",
-                    "manifest": "/assets/stable/manifest.json",
-                    "asset_base": "/assets/releases",
-                    "compatibility": {"binary": "1.4.0", "min_binary": "1.4.0"},
-                    "requires_newer": {"binary": False},
-                },
-                "profiles": {
-                    "latest": "profiles-2030.0101.1",
-                    "current": "profiles-2030.0101.1",
-                    "state": "current",
-                    "source": catalog_url,
-                    "hash": "1" * 64,
-                    "compatibility": {
-                        "binary": "1.4.0",
-                        "assets": "2030.0101.1",
-                        "min_binary": "1.4.0",
-                        "min_assets": "2030.0101.1",
-                    },
-                    "requires_newer": {"binary": False, "assets": False},
-                },
-                "images": {
-                    "latest": None,
-                    "current": None,
-                    "state": "not_published",
-                    "source": "not_in_asset_channel",
-                },
-            },
-            "evidence": {
-                "vm_oboms": [],
-                "host_sboms": [
-                    {
-                        "name": "capsem-sbom.spdx.json",
-                        "url": sbom_url,
-                        "sha256": stale_sbom_sha,
-                        "size": len(sbom_bytes),
-                    }
-                ],
-                "host_binary_files": [
-                    {
-                        "name": "Capsem-1.4.0.pkg",
-                        "url": package_url,
-                        "sha256": stale_package_sha,
-                        "size": len(package_bytes),
-                    },
-                    {
-                        "name": "capsem-sbom.spdx.json",
-                        "url": sbom_url,
-                        "sha256": stale_sbom_sha,
-                        "size": len(sbom_bytes),
-                    },
-                ],
-                "attestations": [
-                    {
-                        "name": "github_attestations_host_sbom",
-                        "scope": "host_sbom",
-                        "workflow": ".github/workflows/release.yaml",
-                        "predicate_type": "https://spdx.dev/Document/v2.3",
-                        "predicate_url": sbom_url,
-                        "verify_command": "gh attestation verify <subject-url> --owner google",
-                        "subjects": [package_url],
-                    }
-                ],
-            },
-        }
-        if url.endswith("/health.json")
-        else {
-            "format": 2,
-            "assets": {
-                "current": "2030.0101.1",
-                "releases": {
-                    "2030.0101.1": {
-                        "date": "2030-01-01",
-                        "deprecated": False,
-                        "min_binary": "1.4.0",
-                        "arches": {},
-                    }
-                },
-            },
-            "binaries": {
-                "current": "1.4.0",
-                "releases": {
-                    "1.4.0": {
-                        "date": "2030-01-01",
-                        "deprecated": False,
-                        "min_assets": "2030.0101.1",
-                        "files": [
-                            {
-                                "name": "Capsem-1.4.0.pkg",
-                                "sha256": current_package_sha,
-                                "size": 42,
-                            },
-                            {
-                                "name": "capsem-sbom.spdx.json",
-                                "sha256": current_sbom_sha,
-                                "size": 99,
-                            },
-                        ],
-                    }
-                },
-            },
-        }
-    )
-    payloads = {package_url: package_bytes, sbom_url: sbom_bytes}
-    checker.fetch_bytes = lambda url: checker.FetchBytes(payloads.get(url, b""), None)
-    checker.fetch_headers = lambda url: checker.FetchHeaders(
-        headers={
-            "cache-control": "public, max-age=31536000, immutable"
-            if "/profiles/releases/" in url
-            else "no-cache, must-revalidate"
-        }
-    )
-
-    result = checker.check_release_site_contract("https://release.capsem.org", "stable")
-
-    assert not result.ok
-    assert f"health host binary sha256 mismatch for {package_url}" in result.detail
-    assert f"health host binary size mismatch for {package_url}" in result.detail
-    assert f"health host binary sha256 mismatch for {sbom_url}" in result.detail
-    assert f"evidence host binary sha256 mismatch for {package_url}" in result.detail
+    assert "channel manifest URL mismatch" in result.detail
 
 
 def test_remote_readiness_rejects_profile_catalog_artifact_drift() -> None:
     checker = _readiness_checker_module()
-    catalog_url = "/profiles/releases/profiles-2030.0101.1/catalog.json"
-    stale_catalog_bytes = (
-        b'{"schema":"capsem.profile_catalog.v1","revision":"profiles-stale"}\n'
+    fixture = _install_release_graph_contract_fixture(
+        checker,
+        channels_mutator=lambda channels: channels["channels"]["stable"]["profile_catalog"].update(
+            {"hash": "0" * 64}
+        ),
     )
 
-    checker.fetch_text = lambda _url: checker.FetchText(
-        text=(
-            "1.4.0 2030.0101.1 2030-01-01 "
-            f"2030-01-01T00:00:00Z profiles-2030.0101.1 {catalog_url} "
-            "/assets/stable/manifest.json"
-        )
-    )
-    checker.fetch_json = lambda url: checker.FetchJson(
-        data={
-            "schema": "capsem.assets_channel.health.v1",
-            "ok": True,
-            "channel": "stable",
-            "state": "published",
-            "generated_at": "2030-01-01T00:00:00Z",
-            "urls": {
-                "index": "/index.html",
-                "health": "/health.json",
-                "manifest": "/assets/stable/manifest.json",
-                "asset_base": "/assets/releases",
-                "profile_catalog": catalog_url,
-            },
-            "current": {"binary": "1.4.0", "assets": "2030.0101.1"},
-            "asset_releases": [
-                {
-                    "version": "2030.0101.1",
-                    "date": "2030-01-01",
-                    "state": "current",
-                    "deprecated": False,
-                    "min_binary": "1.4.0",
-                }
-            ],
-            "binary": {"version": "1.4.0", "state": "current", "files": []},
-            "assets": {
-                "version": "2030.0101.1",
-                "state": "current",
-                "compatibility": {"binary": "1.4.0", "min_binary": "1.4.0"},
-                "requires_newer": {"binary": False},
-                "files": [],
-            },
-            "profiles": {
-                "revision": "profiles-2030.0101.1",
-                "source": catalog_url,
-                "hash": "1" * 64,
-                "state": "current",
-                "compatibility": {
-                    "binary": "1.4.0",
-                    "assets": "2030.0101.1",
-                    "min_binary": "1.4.0",
-                    "min_assets": "2030.0101.1",
-                },
-                "requires_newer": {"binary": False, "assets": False},
-            },
-            "updates": {
-                "binary": {
-                    "latest": "1.4.0",
-                    "current": "1.4.0",
-                    "state": "current",
-                    "source": "manifest.binaries.current",
-                    "files": [],
-                },
-                "assets": {
-                    "latest": "2030.0101.1",
-                    "current": "2030.0101.1",
-                    "state": "current",
-                    "source": "manifest.assets.current",
-                    "manifest": "/assets/stable/manifest.json",
-                    "asset_base": "/assets/releases",
-                    "compatibility": {"binary": "1.4.0", "min_binary": "1.4.0"},
-                    "requires_newer": {"binary": False},
-                },
-                "profiles": {
-                    "latest": "profiles-2030.0101.1",
-                    "current": "profiles-2030.0101.1",
-                    "state": "current",
-                    "source": catalog_url,
-                    "hash": "1" * 64,
-                    "compatibility": {
-                        "binary": "1.4.0",
-                        "assets": "2030.0101.1",
-                        "min_binary": "1.4.0",
-                        "min_assets": "2030.0101.1",
-                    },
-                    "requires_newer": {"binary": False, "assets": False},
-                },
-                "images": {
-                    "latest": None,
-                    "current": None,
-                    "state": "not_published",
-                    "source": "not_in_asset_channel",
-                },
-            },
-            "evidence": {
-                "vm_oboms": [],
-                "host_sboms": [],
-                "host_binary_files": [],
-                "attestations": [],
-            },
-        }
-        if url.endswith("/health.json")
-        else {
-            "format": 2,
-            "assets": {
-                "current": "2030.0101.1",
-                "releases": {
-                    "2030.0101.1": {
-                        "date": "2030-01-01",
-                        "deprecated": False,
-                        "min_binary": "1.4.0",
-                        "arches": {},
-                    }
-                },
-            },
-            "binaries": {
-                "current": "1.4.0",
-                "releases": {
-                    "1.4.0": {
-                        "date": "2030-01-01",
-                        "deprecated": False,
-                        "min_assets": "2030.0101.1",
-                        "files": [],
-                    }
-                },
-            },
-        }
-    )
-    checker.fetch_bytes = lambda url: checker.FetchBytes(
-        stale_catalog_bytes
-        if url == f"https://release.capsem.org{catalog_url}"
-        else b"",
-        None
-        if url == f"https://release.capsem.org{catalog_url}"
-        else f"unexpected fetch {url}",
-    )
-    checker.fetch_headers = lambda url: checker.FetchHeaders(
-        headers={
-            "cache-control": "public, max-age=31536000, immutable"
-            if "/profiles/releases/" in url
-            else "no-cache, must-revalidate"
-        }
-    )
-
-    result = checker.check_release_site_contract("https://release.capsem.org", "stable")
+    result = checker.check_release_site_contract(fixture["site"], fixture["channel"])
 
     assert not result.ok
-    assert f"profile catalog {catalog_url} blake3 mismatch" in result.detail
-    assert f"profile catalog {catalog_url} revision mismatch" in result.detail
+    assert (
+        "profile catalog /profiles/releases/profiles-2030.0101.1/catalog.json blake3 mismatch"
+        in result.detail
+    )
 
 
 def test_remote_readiness_rejects_profile_catalog_content_drift() -> None:
     checker = _readiness_checker_module()
-    catalog_url = "/profiles/releases/profiles-2030.0101.1/catalog.json"
-    catalog_document = {
-        "schema": "capsem.profile_catalog.v1",
-        "revision": "profiles-2030.0101.1",
-        "state": "stale",
-        "current_binary": "1.3.0",
-        "current_assets": "2030.0101.0",
-        "compatibility": {
-            "binary": "1.3.0",
-            "assets": "2030.0101.0",
-            "min_binary": "1.3.0",
-            "min_assets": "2030.0101.0",
-            "requires_newer_binary": True,
-            "requires_newer_assets": True,
-        },
-        "profiles": [],
-    }
-    catalog_bytes = (json.dumps(catalog_document, sort_keys=True) + "\n").encode()
-    catalog_hash = checker.blake3.blake3(catalog_bytes).hexdigest()
 
-    checker.fetch_text = lambda _url: checker.FetchText(
-        text=(
-            "1.4.0 2030.0101.1 2030-01-01 "
-            f"2030-01-01T00:00:00Z profiles-2030.0101.1 {catalog_url} "
-            "/assets/stable/manifest.json"
-        )
-    )
-    checker.fetch_json = lambda url: checker.FetchJson(
-        data={
-            "schema": "capsem.assets_channel.health.v1",
-            "ok": True,
-            "channel": "stable",
-            "state": "published",
-            "generated_at": "2030-01-01T00:00:00Z",
-            "urls": {
-                "index": "/index.html",
-                "health": "/health.json",
-                "manifest": "/assets/stable/manifest.json",
-                "asset_base": "/assets/releases",
-                "profile_catalog": catalog_url,
-            },
-            "current": {"binary": "1.4.0", "assets": "2030.0101.1"},
-            "asset_releases": [
-                {
-                    "version": "2030.0101.1",
-                    "date": "2030-01-01",
-                    "state": "current",
-                    "deprecated": False,
-                    "min_binary": "1.4.0",
-                }
-            ],
-            "binary": {"version": "1.4.0", "state": "current", "files": []},
-            "assets": {
-                "version": "2030.0101.1",
-                "state": "current",
-                "compatibility": {"binary": "1.4.0", "min_binary": "1.4.0"},
-                "requires_newer": {"binary": False},
-                "files": [],
-            },
-            "profiles": {
-                "revision": "profiles-2030.0101.1",
-                "source": catalog_url,
-                "hash": catalog_hash,
-                "state": "current",
-                "compatibility": {
-                    "binary": "1.4.0",
-                    "assets": "2030.0101.1",
-                    "min_binary": "1.4.0",
-                    "min_assets": "2030.0101.1",
-                },
-                "requires_newer": {"binary": False, "assets": False},
-            },
-            "updates": {
-                "binary": {
-                    "latest": "1.4.0",
-                    "current": "1.4.0",
-                    "state": "current",
-                    "source": "manifest.binaries.current",
-                    "files": [],
-                },
-                "assets": {
-                    "latest": "2030.0101.1",
-                    "current": "2030.0101.1",
-                    "state": "current",
-                    "source": "manifest.assets.current",
-                    "manifest": "/assets/stable/manifest.json",
-                    "asset_base": "/assets/releases",
-                    "compatibility": {"binary": "1.4.0", "min_binary": "1.4.0"},
-                    "requires_newer": {"binary": False},
-                },
-                "profiles": {
-                    "latest": "profiles-2030.0101.1",
-                    "current": "profiles-2030.0101.1",
-                    "state": "current",
-                    "source": catalog_url,
-                    "hash": catalog_hash,
-                    "compatibility": {
-                        "binary": "1.4.0",
-                        "assets": "2030.0101.1",
-                        "min_binary": "1.4.0",
-                        "min_assets": "2030.0101.1",
-                    },
-                    "requires_newer": {"binary": False, "assets": False},
-                },
-                "images": {
-                    "latest": None,
-                    "current": None,
-                    "state": "not_published",
-                    "source": "not_in_asset_channel",
-                },
-            },
-            "evidence": {
-                "vm_oboms": [],
-                "host_sboms": [],
-                "host_binary_files": [],
-                "attestations": [],
-            },
-        }
-        if url.endswith("/health.json")
-        else {
-            "format": 2,
-            "assets": {
-                "current": "2030.0101.1",
-                "releases": {
-                    "2030.0101.1": {
-                        "date": "2030-01-01",
-                        "deprecated": False,
-                        "min_binary": "1.4.0",
-                        "arches": {},
-                    }
-                },
-            },
-            "binaries": {
-                "current": "1.4.0",
-                "releases": {
-                    "1.4.0": {
-                        "date": "2030-01-01",
-                        "deprecated": False,
-                        "min_assets": "2030.0101.1",
-                        "files": [],
-                    }
-                },
-            },
-        }
-    )
-    checker.fetch_bytes = lambda url: checker.FetchBytes(
-        catalog_bytes
-        if url == f"https://release.capsem.org{catalog_url}"
-        else b"",
-        None
-        if url == f"https://release.capsem.org{catalog_url}"
-        else f"unexpected fetch {url}",
-    )
-    checker.fetch_headers = lambda url: checker.FetchHeaders(
-        headers={
-            "cache-control": "public, max-age=31536000, immutable"
-            if "/profiles/releases/" in url
-            else "no-cache, must-revalidate"
-        }
-    )
+    def stale_catalog(catalog: dict[str, object]) -> None:
+        catalog["schema"] = "capsem.profile_catalog.v0"
+        catalog["revision"] = "profiles-stale"
 
-    result = checker.check_release_site_contract("https://release.capsem.org", "stable")
+    fixture = _install_release_graph_contract_fixture(checker, catalog_mutator=stale_catalog)
+
+    result = checker.check_release_site_contract(fixture["site"], fixture["channel"])
 
     assert not result.ok
-    assert f"profile catalog {catalog_url} state mismatch" in result.detail
-    assert f"profile catalog {catalog_url} current_binary mismatch" in result.detail
-    assert f"profile catalog {catalog_url} current_assets mismatch" in result.detail
-    assert f"profile catalog {catalog_url} compatibility binary mismatch" in result.detail
-    assert f"profile catalog {catalog_url} compatibility assets mismatch" in result.detail
-    assert f"profile catalog {catalog_url} compatibility min_binary mismatch" in result.detail
-    assert f"profile catalog {catalog_url} compatibility min_assets mismatch" in result.detail
+    source = fixture["profile_source"]
+    assert f"profile catalog {source} schema mismatch" in result.detail
+    assert f"profile catalog {source} revision mismatch" in result.detail
+
+
+def test_remote_readiness_rejects_asset_file_metadata_drift() -> None:
+    checker = _readiness_checker_module()
+    asset_path = "/assets/releases/2030.0101.1/arm64-rootfs.erofs"
+    asset_url = f"https://release.capsem.org{asset_path}"
+
+    def add_asset(manifest: dict[str, object]) -> None:
+        release = manifest["assets"]["releases"]["2030.0101.1"]
+        release["arches"] = {
+            "arm64": {"rootfs.erofs": {"hash": "blake3:" + "0" * 64, "size": 4}}
+        }
+
+    def add_payload(payloads: dict[str, bytes], checker) -> None:
+        payloads[asset_url] = b"rootfs"
+
+    def add_headers(headers: dict[str, str]) -> None:
+        headers[asset_url] = "public, max-age=31536000, immutable"
+
+    fixture = _install_release_graph_contract_fixture(
+        checker,
+        manifest_mutator=add_asset,
+        payload_mutator=add_payload,
+        headers_mutator=add_headers,
+    )
+
+    result = checker.check_release_site_contract(fixture["site"], fixture["channel"])
+
+    assert not result.ok
+    assert f"VM asset file {asset_path} size mismatch" in result.detail
+
+
+def test_remote_readiness_rejects_cache_header_drift() -> None:
+    checker = _readiness_checker_module()
+    fixture = _install_release_graph_contract_fixture(
+        checker,
+        headers_mutator=lambda headers: headers.update(
+            {"https://release.capsem.org/channels.json": "public, max-age=31536000"}
+        ),
+    )
+
+    result = checker.check_release_site_contract(fixture["site"], fixture["channel"])
+
+    assert not result.ok
     assert (
-        f"profile catalog {catalog_url} compatibility requires_newer_binary mismatch"
+        "channels JSON https://release.capsem.org/channels.json Cache-Control must contain no-cache"
         in result.detail
     )
-    assert (
-        f"profile catalog {catalog_url} compatibility requires_newer_assets mismatch"
-        in result.detail
-    )
-
-
-def test_remote_readiness_rejects_profile_update_metadata_drift() -> None:
-    checker = _readiness_checker_module()
-    catalog_url = "/profiles/releases/profiles-2030.0101.1/catalog.json"
-
-    checker.fetch_text = lambda _url: checker.FetchText(
-        text=(
-            "1.4.0 2030.0101.1 2030-01-01 "
-            f"2030-01-01T00:00:00Z profiles-2030.0101.1 {catalog_url} "
-            "/assets/stable/manifest.json"
-        )
-    )
-    checker.fetch_json = lambda url: checker.FetchJson(
-        data={
-            "schema": "capsem.assets_channel.health.v1",
-            "generated_at": "2030-01-01T00:00:00Z",
-            "urls": {
-                "manifest": "/assets/stable/manifest.json",
-                "asset_base": "/assets/releases",
-                "profile_catalog": catalog_url,
-            },
-            "current": {"binary": "1.4.0", "assets": "2030.0101.1"},
-            "asset_releases": [
-                {"version": "2030.0101.1", "date": "2030-01-01"}
-            ],
-            "assets": {"files": []},
-            "profiles": {
-                "revision": "profiles-2030.0101.1",
-                "source": catalog_url,
-                "hash": "1" * 64,
-                "compatibility": {
-                    "binary": "current",
-                    "assets": "current",
-                    "min_binary": "1.4.0",
-                    "min_assets": "2030.0101.1",
-                },
-                "requires_newer": {"binary": False, "assets": False},
-            },
-            "updates": {
-                "profiles": {
-                    "latest": "profiles-2030.0101.1",
-                    "current": "profiles-2030.0101.1",
-                    "state": "current",
-                    "source": catalog_url,
-                    "hash": "2" * 64,
-                    "compatibility": {
-                        "binary": "requires_newer",
-                        "assets": "current",
-                        "min_binary": "1.5.0",
-                        "min_assets": "2030.0101.1",
-                    },
-                    "requires_newer": {"binary": True, "assets": False},
-                },
-                "images": {"latest": None, "state": "not_published"},
-            },
-            "evidence": {
-                "vm_oboms": [],
-                "host_sboms": [],
-                "host_binary_files": [],
-                "attestations": [],
-            },
-        }
-        if url.endswith("/health.json")
-        else {
-            "format": 2,
-            "assets": {"current": "2030.0101.1"},
-            "binaries": {"current": "1.4.0"},
-        }
-    )
-    checker.fetch_headers = lambda url: checker.FetchHeaders(
-        headers={
-            "cache-control": "public, max-age=31536000, immutable"
-            if "/profiles/releases/" in url
-            else "no-cache, must-revalidate"
-        }
-    )
-
-    result = checker.check_release_site_contract("https://release.capsem.org", "stable")
-
-    assert not result.ok
-    assert "health profile update hash mismatch" in result.detail
-    assert "health profile update compatibility mismatch" in result.detail
-    assert "health profile update requirement mismatch" in result.detail
-
-
-def test_remote_readiness_rejects_asset_update_metadata_drift() -> None:
-    checker = _readiness_checker_module()
-    catalog_url = "/profiles/releases/profiles-2030.0101.1/catalog.json"
-
-    checker.fetch_text = lambda _url: checker.FetchText(
-        text=(
-            "1.4.0 2030.0101.1 2030-01-01 "
-            f"2030-01-01T00:00:00Z profiles-2030.0101.1 {catalog_url} "
-            "/assets/stable/manifest.json"
-        )
-    )
-    checker.fetch_json = lambda url: checker.FetchJson(
-        data={
-            "schema": "capsem.assets_channel.health.v1",
-            "generated_at": "2030-01-01T00:00:00Z",
-            "urls": {
-                "manifest": "/assets/stable/manifest.json",
-                "asset_base": "/assets/releases",
-                "profile_catalog": catalog_url,
-            },
-            "current": {"binary": "1.4.0", "assets": "2030.0101.1"},
-            "asset_releases": [
-                {"version": "2030.0101.1", "date": "2030-01-01"}
-            ],
-            "assets": {
-                "version": "2030.0101.1",
-                "state": "current",
-                "compatibility": {"binary": "1.4.0", "min_binary": "1.4.0"},
-                "requires_newer": {"binary": False},
-                "files": [],
-            },
-            "profiles": {
-                "revision": "profiles-2030.0101.1",
-                "source": catalog_url,
-                "hash": "1" * 64,
-                "compatibility": {
-                    "binary": "current",
-                    "assets": "current",
-                    "min_binary": "1.4.0",
-                    "min_assets": "2030.0101.1",
-                },
-                "requires_newer": {"binary": False, "assets": False},
-            },
-            "updates": {
-                "assets": {
-                    "latest": "2030.0102.1",
-                    "current": "2030.0102.1",
-                    "state": "available",
-                    "source": "stale.assets.current",
-                    "manifest": "/assets/nightly/manifest.json",
-                    "asset_base": "/assets/stale",
-                    "compatibility": {
-                        "binary": "requires_newer",
-                        "min_binary": "1.5.0",
-                    },
-                    "requires_newer": {"binary": True},
-                },
-                "profiles": {
-                    "latest": "profiles-2030.0101.1",
-                    "current": "profiles-2030.0101.1",
-                    "state": "current",
-                    "source": catalog_url,
-                    "hash": "1" * 64,
-                    "compatibility": {
-                        "binary": "current",
-                        "assets": "current",
-                        "min_binary": "1.4.0",
-                        "min_assets": "2030.0101.1",
-                    },
-                    "requires_newer": {"binary": False, "assets": False},
-                },
-                "images": {"latest": None, "state": "not_published"},
-            },
-            "evidence": {
-                "vm_oboms": [],
-                "host_sboms": [],
-                "host_binary_files": [],
-                "attestations": [],
-            },
-        }
-        if url.endswith("/health.json")
-        else {
-            "format": 2,
-            "assets": {"current": "2030.0101.1"},
-            "binaries": {"current": "1.4.0"},
-        }
-    )
-    checker.fetch_headers = lambda url: checker.FetchHeaders(
-        headers={
-            "cache-control": "public, max-age=31536000, immutable"
-            if "/profiles/releases/" in url
-            else "no-cache, must-revalidate"
-        }
-    )
-
-    result = checker.check_release_site_contract("https://release.capsem.org", "stable")
-
-    assert not result.ok
-    assert "health asset update latest mismatch" in result.detail
-    assert "health asset update current mismatch" in result.detail
-    assert "health asset update state mismatch" in result.detail
-    assert "health asset update source mismatch" in result.detail
-    assert "health asset update manifest mismatch" in result.detail
-    assert "health asset update base mismatch" in result.detail
-    assert "health asset update compatibility mismatch" in result.detail
-    assert "health asset update requirement mismatch" in result.detail
-
-
-def test_remote_readiness_rejects_binary_update_metadata_drift() -> None:
-    checker = _readiness_checker_module()
-    catalog_url = "/profiles/releases/profiles-2030.0101.1/catalog.json"
-    package_files = [
-        {
-            "name": "Capsem-1.4.0.pkg",
-            "url": "https://github.com/google/capsem/releases/download/v1.4.0/Capsem-1.4.0.pkg",
-            "sha256": "1" * 64,
-            "size": 123,
-        }
-    ]
-
-    checker.fetch_text = lambda _url: checker.FetchText(
-        text=(
-            "1.4.0 2030.0101.1 2030-01-01 "
-            f"2030-01-01T00:00:00Z profiles-2030.0101.1 {catalog_url} "
-            "/assets/stable/manifest.json"
-        )
-    )
-    checker.fetch_json = lambda url: checker.FetchJson(
-        data={
-            "schema": "capsem.assets_channel.health.v1",
-            "generated_at": "2030-01-01T00:00:00Z",
-            "urls": {
-                "manifest": "/assets/stable/manifest.json",
-                "asset_base": "/assets/releases",
-                "profile_catalog": catalog_url,
-            },
-            "current": {"binary": "1.4.0", "assets": "2030.0101.1"},
-            "asset_releases": [
-                {"version": "2030.0101.1", "date": "2030-01-01"}
-            ],
-            "binary": {
-                "version": "1.4.0",
-                "state": "current",
-                "files": package_files,
-            },
-            "assets": {
-                "version": "2030.0101.1",
-                "state": "current",
-                "compatibility": {"binary": "1.4.0", "min_binary": "1.4.0"},
-                "requires_newer": {"binary": False},
-                "files": [],
-            },
-            "profiles": {
-                "revision": "profiles-2030.0101.1",
-                "source": catalog_url,
-                "hash": "1" * 64,
-                "compatibility": {
-                    "binary": "current",
-                    "assets": "current",
-                    "min_binary": "1.4.0",
-                    "min_assets": "2030.0101.1",
-                },
-                "requires_newer": {"binary": False, "assets": False},
-            },
-            "updates": {
-                "binary": {
-                    "latest": "1.4.1",
-                    "current": "1.4.1",
-                    "state": "available",
-                    "source": "stale.binaries.current",
-                    "files": [],
-                },
-                "assets": {
-                    "latest": "2030.0101.1",
-                    "current": "2030.0101.1",
-                    "state": "current",
-                    "source": "manifest.assets.current",
-                    "manifest": "/assets/stable/manifest.json",
-                    "asset_base": "/assets/releases",
-                    "compatibility": {"binary": "1.4.0", "min_binary": "1.4.0"},
-                    "requires_newer": {"binary": False},
-                },
-                "profiles": {
-                    "latest": "profiles-2030.0101.1",
-                    "current": "profiles-2030.0101.1",
-                    "state": "current",
-                    "source": catalog_url,
-                    "hash": "1" * 64,
-                    "compatibility": {
-                        "binary": "current",
-                        "assets": "current",
-                        "min_binary": "1.4.0",
-                        "min_assets": "2030.0101.1",
-                    },
-                    "requires_newer": {"binary": False, "assets": False},
-                },
-                "images": {"latest": None, "state": "not_published"},
-            },
-            "evidence": {
-                "vm_oboms": [],
-                "host_sboms": [],
-                "host_binary_files": [],
-                "attestations": [],
-            },
-        }
-        if url.endswith("/health.json")
-        else {
-            "format": 2,
-            "assets": {"current": "2030.0101.1"},
-            "binaries": {"current": "1.4.0"},
-        }
-    )
-    checker.fetch_headers = lambda url: checker.FetchHeaders(
-        headers={
-            "cache-control": "public, max-age=31536000, immutable"
-            if "/profiles/releases/" in url
-            else "no-cache, must-revalidate"
-        }
-    )
-
-    result = checker.check_release_site_contract("https://release.capsem.org", "stable")
-
-    assert not result.ok
-    assert "health binary update latest mismatch" in result.detail
-    assert "health binary update current mismatch" in result.detail
-    assert "health binary update state mismatch" in result.detail
-    assert "health binary update source mismatch" in result.detail
-    assert "health binary update files mismatch" in result.detail
-
-
-def test_remote_readiness_rejects_image_update_metadata_drift() -> None:
-    checker = _readiness_checker_module()
-    catalog_url = "/profiles/releases/profiles-2030.0101.1/catalog.json"
-
-    checker.fetch_text = lambda _url: checker.FetchText(
-        text=(
-            "1.4.0 2030.0101.1 2030-01-01 "
-            f"2030-01-01T00:00:00Z profiles-2030.0101.1 {catalog_url} "
-            "/assets/stable/manifest.json"
-        )
-    )
-    checker.fetch_json = lambda url: checker.FetchJson(
-        data={
-            "schema": "capsem.assets_channel.health.v1",
-            "generated_at": "2030-01-01T00:00:00Z",
-            "urls": {
-                "manifest": "/assets/stable/manifest.json",
-                "asset_base": "/assets/releases",
-                "profile_catalog": catalog_url,
-            },
-            "current": {"binary": "1.4.0", "assets": "2030.0101.1"},
-            "asset_releases": [
-                {"version": "2030.0101.1", "date": "2030-01-01"}
-            ],
-            "binary": {"version": "1.4.0", "state": "current", "files": []},
-            "assets": {
-                "version": "2030.0101.1",
-                "state": "current",
-                "compatibility": {"binary": "1.4.0", "min_binary": "1.4.0"},
-                "requires_newer": {"binary": False},
-                "files": [],
-            },
-            "profiles": {
-                "revision": "profiles-2030.0101.1",
-                "source": catalog_url,
-                "hash": "1" * 64,
-                "compatibility": {
-                    "binary": "current",
-                    "assets": "current",
-                    "min_binary": "1.4.0",
-                    "min_assets": "2030.0101.1",
-                },
-                "requires_newer": {"binary": False, "assets": False},
-            },
-            "updates": {
-                "binary": {
-                    "latest": "1.4.0",
-                    "current": "1.4.0",
-                    "state": "current",
-                    "source": "manifest.binaries.current",
-                    "files": [],
-                },
-                "assets": {
-                    "latest": "2030.0101.1",
-                    "current": "2030.0101.1",
-                    "state": "current",
-                    "source": "manifest.assets.current",
-                    "manifest": "/assets/stable/manifest.json",
-                    "asset_base": "/assets/releases",
-                    "compatibility": {"binary": "1.4.0", "min_binary": "1.4.0"},
-                    "requires_newer": {"binary": False},
-                },
-                "profiles": {
-                    "latest": "profiles-2030.0101.1",
-                    "current": "profiles-2030.0101.1",
-                    "state": "current",
-                    "source": catalog_url,
-                    "hash": "1" * 64,
-                    "compatibility": {
-                        "binary": "current",
-                        "assets": "current",
-                        "min_binary": "1.4.0",
-                        "min_assets": "2030.0101.1",
-                    },
-                    "requires_newer": {"binary": False, "assets": False},
-                },
-                "images": {
-                    "latest": "image-2030.0101.1",
-                    "current": "image-2030.0101.1",
-                    "state": "available",
-                    "source": "stale.image.channel",
-                },
-            },
-            "evidence": {
-                "vm_oboms": [],
-                "host_sboms": [],
-                "host_binary_files": [],
-                "attestations": [],
-            },
-        }
-        if url.endswith("/health.json")
-        else {
-            "format": 2,
-            "assets": {"current": "2030.0101.1"},
-            "binaries": {"current": "1.4.0"},
-        }
-    )
-    checker.fetch_headers = lambda url: checker.FetchHeaders(
-        headers={
-            "cache-control": "public, max-age=31536000, immutable"
-            if "/profiles/releases/" in url
-            else "no-cache, must-revalidate"
-        }
-    )
-
-    result = checker.check_release_site_contract("https://release.capsem.org", "stable")
-
-    assert not result.ok
-    assert "health image update latest must be null while unpublished" in result.detail
-    assert "health image update current must be null while unpublished" in result.detail
-    assert "health image update state mismatch" in result.detail
-    assert "health image update source mismatch" in result.detail
 
 
 def test_binary_release_verifies_packages_hydrate_vm_assets_from_public_channel() -> None:
@@ -3210,12 +1646,12 @@ def test_site_skills_preserve_every_main_merge_deploy_rail() -> None:
         assert "`release.capsem.org` asset-channel workflow" in skill
 
 
-def test_capsem_update_checks_release_channel_health_not_github_latest() -> None:
+def test_capsem_update_checks_release_channel_manifest_not_github_latest() -> None:
     update_rs = (PROJECT_ROOT / "crates/capsem/src/update.rs").read_text()
 
-    assert "https://release.capsem.org/health.json" in update_rs
-    assert "capsem.assets_channel.health.v1" in update_rs
-    assert "CAPSEM_RELEASE_HEALTH_URL" in update_rs
+    assert "https://release.capsem.org/assets/stable/manifest.json" in update_rs
+    assert "DEFAULT_RELEASE_MANIFEST_URL" in update_rs
+    assert "CAPSEM_RELEASE_MANIFEST_URL" in update_rs
     assert "api.github.com/repos/google/capsem/releases/latest" not in update_rs
 
 
@@ -3347,7 +1783,9 @@ def test_remote_release_readiness_checker_is_read_only_and_covers_live_gates() -
     assert "urllib.request.urlopen" in script
     assert "https://release.capsem.org" in script
     assert "/assets/{channel}/manifest.json" in script
-    assert "capsem.assets_channel.health.v1" in script
+    assert "/channels.json" in script
+    assert "channels catalog" in script
+    assert "channel manifest BLAKE3 mismatch" in script
     assert "pr-gate" in script
     assert "REQUIRED_PR_GATE_JOBS" in script
     assert '"release-site-build"' in script
@@ -4294,7 +2732,7 @@ def test_remote_release_readiness_checker_verifies_live_cache_headers() -> None:
     calls: list[str] = []
     headers = {
         "https://release.capsem.test/": "no-cache, must-revalidate",
-        "https://release.capsem.test/health.json": "no-cache, must-revalidate",
+        "https://release.capsem.test/channels.json": "no-cache, must-revalidate",
         "https://release.capsem.test/assets/stable/manifest.json": "no-cache, must-revalidate",
         "https://release.capsem.test/assets/releases/2030.0101.1/arm64-rootfs.erofs": (
             "public, max-age=31536000, immutable"
@@ -4312,31 +2750,28 @@ def test_remote_release_readiness_checker_verifies_live_cache_headers() -> None:
         return module.FetchHeaders({"cache-control": cache_control})
 
     module.fetch_headers = fake_fetch_headers
-    health = {
-        "assets": {
-            "files": [
-                {
-                    "url": "/assets/releases/2030.0101.1/arm64-rootfs.erofs",
-                    "hash": "a" * 64,
-                    "size": 4,
-                }
-            ]
-        },
-        "updates": {
-            "profiles": {
-                "source": "/profiles/releases/2026.06.08.7/catalog.json",
-            }
-        },
-    }
+    asset_files = [
+        {
+            "url": "/assets/releases/2030.0101.1/arm64-rootfs.erofs",
+            "hash": "a" * 64,
+            "size": 4,
+        }
+    ]
+    profile_source = "/profiles/releases/2026.06.08.7/catalog.json"
 
-    assert module.check_release_cache_headers("https://release.capsem.test", "stable", health) == []
+    assert (
+        module.check_release_cache_headers(
+            "https://release.capsem.test", "stable", profile_source, asset_files
+        )
+        == []
+    )
     assert calls == list(headers)
 
     headers["https://release.capsem.test/assets/stable/manifest.json"] = (
         "public, max-age=31536000, immutable"
     )
     failures = module.check_release_cache_headers(
-        "https://release.capsem.test", "stable", health
+        "https://release.capsem.test", "stable", profile_source, asset_files
     )
     assert (
         "channel manifest https://release.capsem.test/assets/stable/manifest.json "

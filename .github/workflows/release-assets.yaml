@@ -163,6 +163,12 @@ jobs:
             --allow-missing-previous \
             --json-output target/asset-release-delta/delta.json
 
+      - name: Verify profile release lane policy
+        run: |
+          uv run pytest \
+            tests/capsem-release/test_profile_lane_gate.py \
+            tests/capsem-release/test_release_lane_diff_policy.py -q
+
       - name: Build asset channel preview
         if: ${{ steps.asset-delta.outputs.changed == 'true' }}
         run: |
