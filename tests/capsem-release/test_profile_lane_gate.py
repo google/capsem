@@ -42,3 +42,21 @@ def test_removed_profile_image_is_absent_not_status_removed() -> None:
     assert "pub removed: Vec<ProfileImageArtifactKey>" in source
     assert "profile_image_versions_removed_image_is_absent_not_status_removed" in source
     assert "removed is represented by absence, not by a status enum" in source
+
+
+def test_admin_profile_publish_report_is_lane_scoped() -> None:
+    admin_source = (PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "main.rs").read_text(
+        encoding="utf-8"
+    )
+
+    assert "ProfileReleaseSubcommand" in admin_source
+    assert "Publish(ProfileReleaseTargetArgs)" in admin_source
+    assert "Deprecate(ProfileReleaseTargetArgs)" in admin_source
+    assert "Revoke(ProfileReleaseTargetArgs)" in admin_source
+    assert "ProfileReleaseStatusArg" in admin_source
+    assert "changed_channels: Vec<String>" in admin_source
+    assert "changed_manifests: Vec<String>" in admin_source
+    assert "changed_profiles: Vec<String>" in admin_source
+    assert "profile_release_commands_publish_report_is_lane_scoped" in admin_source
+    assert 'vec!["nightly"]' in admin_source
+    assert "publishing nightly co-work must not mutate stable" in admin_source

@@ -13,7 +13,7 @@ use capsem_core::net::policy_config::{
     ProfileCatalog, ProfileConfigFile, ProfileObomConfig, ProfileObomDescriptor,
     SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource, SettingsFile,
 };
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
@@ -52,6 +52,21 @@ enum ProfileSubcommand {
     Validate(ProfileValidateArgs),
     Check(ProfileCheckArgs),
     Materialize(ProfileMaterializeArgs),
+    Release(ProfileReleaseCommand),
+}
+
+#[derive(Debug, Parser)]
+struct ProfileReleaseCommand {
+    #[command(subcommand)]
+    command: ProfileReleaseSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum ProfileReleaseSubcommand {
+    Publish(ProfileReleaseTargetArgs),
+    Deprecate(ProfileReleaseTargetArgs),
+    Revoke(ProfileReleaseTargetArgs),
+    Set(ProfileReleaseSetArgs),
 }
 
 #[derive(Debug, Parser)]
@@ -176,6 +191,37 @@ struct ProfileMaterializeArgs {
     /// Emit a machine-readable materialization report.
     #[arg(long)]
     json: bool,
+}
+
+#[derive(Debug, Args, Clone)]
+struct ProfileReleaseTargetArgs {
+    /// Manifest JSON file to update in place.
+    #[arg(long)]
+    manifest_path: PathBuf,
+    /// Channel that owns this manifest.
+    #[arg(long)]
+    channel: String,
+    /// Manifest version expected in the JSON file.
+    #[arg(long)]
+    manifest_version: String,
+    /// Profile id to update inside this manifest.
+    #[arg(long)]
+    profile: String,
+    /// Profile revision/version expected in the manifest.
+    #[arg(long)]
+    profile_version: String,
+    /// Emit a machine-readable lane-scoped report.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct ProfileReleaseSetArgs {
+    #[command(flatten)]
+    target: ProfileReleaseTargetArgs,
+    /// New status for the targeted profile, config, and image refs.
+    #[arg(long, value_enum)]
+    status: ProfileReleaseStatusArg,
 }
 
 #[derive(Debug, Parser)]
@@ -350,6 +396,25 @@ enum RuleFileSourceArg {
     BuiltinDefault,
 }
 
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+enum ProfileReleaseStatusArg {
+    Current,
+    Supported,
+    Deprecated,
+    Revoked,
+}
+
+impl ProfileReleaseStatusArg {
+    const fn into_status(self) -> release_graph::Status {
+        match self {
+            Self::Current => release_graph::Status::Current,
+            Self::Supported => release_graph::Status::Supported,
+            Self::Deprecated => release_graph::Status::Deprecated,
+            Self::Revoked => release_graph::Status::Revoked,
+        }
+    }
+}
+
 impl RuleFileSourceArg {
     const fn into_security_rule_source(self) -> SecurityRuleSource {
         match self {
@@ -402,6 +467,24 @@ struct ProfileMaterializeReport {
     asset_version: String,
     materialized_assets: Vec<ProfileMaterializedAssetReport>,
     materialized_obom: Vec<ProfileMaterializedObomReport>,
+}
+
+#[derive(Debug, Serialize)]
+struct ProfileReleaseReport {
+    schema: &'static str,
+    ok: bool,
+    action: &'static str,
+    channel: String,
+    manifest: String,
+    manifest_version: String,
+    profile: String,
+    profile_version: String,
+    status: release_graph::Status,
+    changed_channels: Vec<String>,
+    changed_manifests: Vec<String>,
+    changed_profiles: Vec<String>,
+    changed_config_refs: usize,
+    changed_image_artifacts: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -778,6 +861,7 @@ fn main() -> Result<()> {
             ProfileSubcommand::Validate(args) => validate_profile_command(args),
             ProfileSubcommand::Check(args) => profile_check_command(args),
             ProfileSubcommand::Materialize(args) => profile_materialize_command(args),
+            ProfileSubcommand::Release(command) => profile_release_command(command),
         },
         Commands::Settings(command) => match command.command {
             SettingsSubcommand::Validate(args) => validate_settings_command(args),
@@ -850,6 +934,113 @@ fn profile_materialize_command(args: ProfileMaterializeArgs) -> Result<()> {
         );
     }
     Ok(())
+}
+
+fn profile_release_command(command: ProfileReleaseCommand) -> Result<()> {
+    let (args, status, action) = match command.command {
+        ProfileReleaseSubcommand::Publish(args) => {
+            (args, release_graph::Status::Current, "publish")
+        }
+        ProfileReleaseSubcommand::Deprecate(args) => {
+            (args, release_graph::Status::Deprecated, "deprecate")
+        }
+        ProfileReleaseSubcommand::Revoke(args) => (args, release_graph::Status::Revoked, "revoke"),
+        ProfileReleaseSubcommand::Set(args) => {
+            let status = args.status.into_status();
+            (args.target, status, "set")
+        }
+    };
+    let report = apply_profile_release_status(&args, status, action)?;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!(
+            "{}: profile {} {} in channel {} manifest {}",
+            report.action,
+            report.profile,
+            serde_json::to_value(report.status)?
+                .as_str()
+                .unwrap_or("status"),
+            report.channel,
+            report.manifest_version
+        );
+    }
+    Ok(())
+}
+
+fn apply_profile_release_status(
+    args: &ProfileReleaseTargetArgs,
+    status: release_graph::Status,
+    action: &'static str,
+) -> Result<ProfileReleaseReport> {
+    let bytes = fs::read(&args.manifest_path)
+        .with_context(|| format!("read release manifest {}", args.manifest_path.display()))?;
+    let mut manifest: release_graph::ReleaseManifest = serde_json::from_slice(&bytes)
+        .with_context(|| format!("parse release manifest {}", args.manifest_path.display()))?;
+    if manifest.version != args.manifest_version {
+        return Err(anyhow!(
+            "manifest {} has version {}, expected {}",
+            args.manifest_path.display(),
+            manifest.version,
+            args.manifest_version
+        ));
+    }
+    let profile = manifest.profiles.get_mut(&args.profile).ok_or_else(|| {
+        anyhow!(
+            "manifest {} does not list profile {}",
+            args.manifest_path.display(),
+            args.profile
+        )
+    })?;
+    if profile.revision != args.profile_version {
+        return Err(anyhow!(
+            "profile {} has revision {}, expected {}",
+            args.profile,
+            profile.revision,
+            args.profile_version
+        ));
+    }
+
+    profile.validate_profile_ownership()?;
+    profile.status = status;
+    let mut changed_config_refs = 0;
+    for config in &mut profile.config {
+        if config.status != status {
+            changed_config_refs += 1;
+        }
+        config.status = status;
+    }
+    let mut changed_image_artifacts = 0;
+    for images in &mut profile.images {
+        for artifact in &mut images.artifacts {
+            if artifact.status != status {
+                changed_image_artifacts += 1;
+            }
+            artifact.status = status;
+        }
+    }
+    profile.validate_profile_ownership()?;
+
+    let updated = serde_json::to_vec_pretty(&manifest)?;
+    fs::write(&args.manifest_path, [&updated[..], b"\n"].concat())
+        .with_context(|| format!("write release manifest {}", args.manifest_path.display()))?;
+
+    Ok(ProfileReleaseReport {
+        schema: "capsem.admin.profile_release.v1",
+        ok: true,
+        action,
+        channel: args.channel.clone(),
+        manifest: args.manifest_path.display().to_string(),
+        manifest_version: args.manifest_version.clone(),
+        profile: args.profile.clone(),
+        profile_version: args.profile_version.clone(),
+        status,
+        changed_channels: vec![args.channel.clone()],
+        changed_manifests: vec![args.manifest_version.clone()],
+        changed_profiles: vec![args.profile.clone()],
+        changed_config_refs,
+        changed_image_artifacts,
+    })
 }
 
 fn check_config_root(config_root: &Path, arch: Option<&str>) -> Result<ConfigRootCheckReport> {
@@ -7366,6 +7557,169 @@ decision = "block"
             format!("{error:#}").contains("manifest must be a URL"),
             "{error:#}"
         );
+    }
+
+    #[test]
+    fn profile_release_commands_publish_report_is_lane_scoped() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let stable_manifest = temp.path().join("stable-manifest.json");
+        let nightly_manifest = temp.path().join("nightly-manifest.json");
+        write_profile_release_manifest(&stable_manifest, "1.4.0", "2026.07.02.1", "deprecated");
+        write_profile_release_manifest(
+            &nightly_manifest,
+            "1.5.0-nightly.20300101",
+            "2026.07.02.2",
+            "supported",
+        );
+
+        let args = ProfileReleaseTargetArgs {
+            manifest_path: nightly_manifest.clone(),
+            channel: "nightly".to_string(),
+            manifest_version: "1.5.0-nightly.20300101".to_string(),
+            profile: "co-work".to_string(),
+            profile_version: "2026.07.02.2".to_string(),
+            json: true,
+        };
+
+        let report = apply_profile_release_status(&args, release_graph::Status::Current, "publish")
+            .expect("publish profile release");
+
+        assert_eq!(report.schema, "capsem.admin.profile_release.v1");
+        assert_eq!(report.action, "publish");
+        assert_eq!(report.status, release_graph::Status::Current);
+        assert_eq!(report.changed_channels, vec!["nightly"]);
+        assert_eq!(report.changed_manifests, vec!["1.5.0-nightly.20300101"]);
+        assert_eq!(report.changed_profiles, vec!["co-work"]);
+        assert_eq!(report.changed_config_refs, 1);
+        assert_eq!(report.changed_image_artifacts, 1);
+
+        let nightly: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&nightly_manifest).expect("nightly manifest"))
+                .expect("nightly json");
+        assert_eq!(
+            nightly["profiles"]["co-work"]["status"].as_str(),
+            Some("current")
+        );
+        assert_eq!(
+            nightly["profiles"]["co-work"]["config"][0]["status"].as_str(),
+            Some("current")
+        );
+        assert_eq!(
+            nightly["profiles"]["co-work"]["images"][0]["artifacts"][0]["status"].as_str(),
+            Some("current")
+        );
+
+        let stable: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&stable_manifest).expect("stable manifest"))
+                .expect("stable json");
+        assert_eq!(
+            stable["profiles"]["co-work"]["status"].as_str(),
+            Some("deprecated"),
+            "publishing nightly co-work must not mutate stable"
+        );
+    }
+
+    #[test]
+    fn profile_release_commands_require_enum_status_values() {
+        let error = Cli::try_parse_from([
+            "capsem-admin",
+            "profile",
+            "release",
+            "set",
+            "--manifest-path",
+            "manifest.json",
+            "--channel",
+            "nightly",
+            "--manifest-version",
+            "1.5.0-nightly.20300101",
+            "--profile",
+            "co-work",
+            "--profile-version",
+            "2026.07.02.2",
+            "--status",
+            "removed",
+        ])
+        .expect_err("removed is not a release status");
+
+        assert!(error.to_string().contains("invalid value"), "{error}");
+    }
+
+    fn write_profile_release_manifest(
+        path: &Path,
+        manifest_version: &str,
+        profile_revision: &str,
+        status: &str,
+    ) {
+        fs::write(
+            path,
+            format!(
+                r#"{{
+  "version": "{manifest_version}",
+  "status": "current",
+  "packages": [],
+  "binaries": [],
+  "profiles": {{
+    "co-work": {{
+      "version": "{profile_revision}",
+      "id": "co-work",
+      "name": "Co-work",
+      "revision": "{profile_revision}",
+      "status": "{status}",
+      "min_capsem_version": "1.4.0",
+      "software": [
+        {{"name": "python", "version": "3.12.11", "source": "apt"}}
+      ],
+      "config": [
+        {{
+          "kind": "mcp",
+          "path": "profiles/co-work/mcp.json",
+          "url": "/profiles/releases/{profile_revision}/co-work/mcp.json",
+          "bytes": 12,
+          "digest": {digest},
+          "status": "{status}"
+        }}
+      ],
+      "images": [
+        {{
+          "architecture": "arm64",
+          "artifacts": [
+            {{
+              "kind": "rootfs",
+              "name": "rootfs.erofs",
+              "url": "/profiles/releases/{profile_revision}/co-work/arm64/rootfs.erofs",
+              "bytes": 42,
+              "digest": {digest},
+              "status": "{status}"
+            }}
+          ],
+          "evidence": [
+            {{
+              "kind": "abom",
+              "url": "/profiles/releases/{profile_revision}/co-work/arm64/abom.cdx.json",
+              "digest": {digest}
+            }},
+            {{
+              "kind": "sbom",
+              "url": "/profiles/releases/{profile_revision}/co-work/arm64/sbom.cdx.json",
+              "digest": {digest}
+            }}
+          ]
+        }}
+      ]
+    }}
+  }}
+}}"#,
+                manifest_version = manifest_version,
+                profile_revision = profile_revision,
+                status = status,
+                digest = serde_json::json!({
+                    "sha256": "a".repeat(64),
+                    "blake3": "b".repeat(64),
+                    "hmac": "release-test-hmac"
+                }),
+            ),
+        )
+        .expect("profile release manifest");
     }
 
     fn file_url(path: &Path) -> String {
