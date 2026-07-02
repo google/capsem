@@ -48,6 +48,14 @@ pub enum Architecture {
     X86_64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProfileImageArtifactKind {
+    Kernel,
+    Initrd,
+    Rootfs,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EvidenceRef {
@@ -95,6 +103,63 @@ pub struct ReleaseManifest {
     pub packages: Vec<PackageInventoryRow>,
     #[serde(default)]
     pub binaries: Vec<BinaryInventoryRow>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProfileDocument {
+    pub version: String,
+    pub id: String,
+    pub name: String,
+    pub revision: String,
+    pub status: Status,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_capsem_version: Option<String>,
+    #[serde(default)]
+    pub software: Vec<SoftwareInventoryRow>,
+    #[serde(default)]
+    pub config: Vec<ProfileConfigRef>,
+    #[serde(default)]
+    pub images: Vec<ProfileArchitectureImages>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SoftwareInventoryRow {
+    pub name: String,
+    pub version: String,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProfileConfigRef {
+    pub kind: String,
+    pub path: String,
+    pub url: String,
+    pub bytes: u64,
+    pub digest: DigestSet,
+    pub status: Status,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProfileArchitectureImages {
+    pub architecture: Architecture,
+    pub artifacts: Vec<ProfileImageArtifactRef>,
+    #[serde(default)]
+    pub evidence: Vec<EvidenceRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProfileImageArtifactRef {
+    pub kind: ProfileImageArtifactKind,
+    pub name: String,
+    pub url: String,
+    pub bytes: u64,
+    pub digest: DigestSet,
+    pub status: Status,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -268,6 +333,117 @@ impl ReleaseManifest {
                 );
             }
         }
+        Ok(())
+    }
+}
+
+impl ProfileDocument {
+    pub fn validate_profile_ownership(&self) -> Result<()> {
+        if self.version.trim().is_empty() {
+            bail!("profile {} version must not be empty", self.id);
+        }
+        if self.id.trim().is_empty() {
+            bail!("profile id must not be empty");
+        }
+        if self.name.trim().is_empty() {
+            bail!("profile {} name must not be empty", self.id);
+        }
+        if self.revision.trim().is_empty() {
+            bail!("profile {} revision must not be empty", self.id);
+        }
+        for software in &self.software {
+            software.validate(&self.id)?;
+        }
+        for config in &self.config {
+            config.validate(&self.id)?;
+        }
+        for images in &self.images {
+            images.validate(&self.id)?;
+        }
+        Ok(())
+    }
+}
+
+impl SoftwareInventoryRow {
+    fn validate(&self, profile: &str) -> Result<()> {
+        if self.name.trim().is_empty() {
+            bail!("profile {profile} software name must not be empty");
+        }
+        if self.version.trim().is_empty() {
+            bail!(
+                "profile {profile} software {} version must not be empty",
+                self.name
+            );
+        }
+        if self.source.trim().is_empty() {
+            bail!(
+                "profile {profile} software {} source must not be empty",
+                self.name
+            );
+        }
+        Ok(())
+    }
+}
+
+impl ProfileConfigRef {
+    fn validate(&self, profile: &str) -> Result<()> {
+        if self.kind.trim().is_empty() {
+            bail!("profile {profile} config kind must not be empty");
+        }
+        if self.path.trim().is_empty() {
+            bail!(
+                "profile {profile} config {} path must not be empty",
+                self.kind
+            );
+        }
+        validate_url_like(&self.url)
+            .with_context(|| format!("profile {profile} config {} url is invalid", self.kind))?;
+        if self.bytes == 0 {
+            bail!(
+                "profile {profile} config {} bytes must be non-zero",
+                self.kind
+            );
+        }
+        self.digest
+            .validate(&format!("profile {profile} config {}", self.kind))?;
+        Ok(())
+    }
+}
+
+impl ProfileArchitectureImages {
+    fn validate(&self, profile: &str) -> Result<()> {
+        if self.artifacts.is_empty() {
+            bail!("profile {profile} image set must list artifacts");
+        }
+        for artifact in &self.artifacts {
+            artifact.validate(profile)?;
+        }
+        for evidence in &self.evidence {
+            evidence.validate(&format!("profile {profile} image evidence"))?;
+        }
+        Ok(())
+    }
+}
+
+impl ProfileImageArtifactRef {
+    fn validate(&self, profile: &str) -> Result<()> {
+        if self.name.trim().is_empty() {
+            bail!("profile {profile} image artifact name must not be empty");
+        }
+        validate_url_like(&self.url).with_context(|| {
+            format!(
+                "profile {profile} image artifact {} url is invalid",
+                self.name
+            )
+        })?;
+        if self.bytes == 0 {
+            bail!(
+                "profile {profile} image artifact {} bytes must be non-zero",
+                self.name
+            );
+        }
+        self.digest
+            .validate(&format!("profile {profile} image artifact {}", self.name))?;
         Ok(())
     }
 }
@@ -709,5 +885,102 @@ mod tests {
             .validate_inventory_shape()
             .expect_err("bad package digest is rejected");
         assert!(format!("{error:#}").contains("blake3"), "{error:#}");
+    }
+
+    #[test]
+    fn profile_json_ownership_has_min_capsem_not_current_binary() {
+        let profile = ProfileDocument {
+            version: "2026.07.02.1".to_string(),
+            id: "co-work".to_string(),
+            name: "Co-work".to_string(),
+            revision: "2026.07.02.1".to_string(),
+            status: Status::Current,
+            min_capsem_version: Some("1.4.0".to_string()),
+            software: vec![SoftwareInventoryRow {
+                name: "python".to_string(),
+                version: "3.12.11".to_string(),
+                source: "apt".to_string(),
+            }],
+            config: vec![ProfileConfigRef {
+                kind: "mcp".to_string(),
+                path: "profiles/co-work/mcp.json".to_string(),
+                url: "/profiles/releases/2026.07.02.1/co-work/mcp.json".to_string(),
+                bytes: 12,
+                digest: digest_set(),
+                status: Status::Current,
+            }],
+            images: vec![ProfileArchitectureImages {
+                architecture: Architecture::Arm64,
+                artifacts: vec![
+                    ProfileImageArtifactRef {
+                        kind: ProfileImageArtifactKind::Kernel,
+                        name: "vmlinuz".to_string(),
+                        url: "/profiles/releases/2026.07.02.1/co-work/arm64/vmlinuz".to_string(),
+                        bytes: 42,
+                        digest: digest_set(),
+                        status: Status::Current,
+                    },
+                    ProfileImageArtifactRef {
+                        kind: ProfileImageArtifactKind::Initrd,
+                        name: "initrd.img".to_string(),
+                        url: "/profiles/releases/2026.07.02.1/co-work/arm64/initrd.img".to_string(),
+                        bytes: 42,
+                        digest: digest_set(),
+                        status: Status::Current,
+                    },
+                    ProfileImageArtifactRef {
+                        kind: ProfileImageArtifactKind::Rootfs,
+                        name: "rootfs.erofs".to_string(),
+                        url: "/profiles/releases/2026.07.02.1/co-work/arm64/rootfs.erofs"
+                            .to_string(),
+                        bytes: 42,
+                        digest: digest_set(),
+                        status: Status::Current,
+                    },
+                ],
+                evidence: vec![
+                    EvidenceRef {
+                        kind: "abom".to_string(),
+                        url: "/profiles/releases/2026.07.02.1/co-work/arm64/abom.cdx.json"
+                            .to_string(),
+                        digest: digest_set(),
+                    },
+                    EvidenceRef {
+                        kind: "sbom".to_string(),
+                        url: "/profiles/releases/2026.07.02.1/co-work/arm64/sbom.cdx.json"
+                            .to_string(),
+                        digest: digest_set(),
+                    },
+                ],
+            }],
+        };
+
+        profile
+            .validate_profile_ownership()
+            .expect("profile-owned graph validates");
+        assert_eq!(profile.min_capsem_version.as_deref(), Some("1.4.0"));
+        assert_eq!(profile.images[0].evidence.len(), 2);
+    }
+
+    #[test]
+    fn profile_json_ownership_rejects_current_binary_and_assets() {
+        let invalid = serde_json::json!({
+            "version": "2026.07.02.1",
+            "id": "co-work",
+            "name": "Co-work",
+            "revision": "2026.07.02.1",
+            "status": "current",
+            "min_capsem_version": "1.4.0",
+            "current_binary": "1.4.0",
+            "current_assets": "2026.0627.8"
+        });
+
+        let error = serde_json::from_value::<ProfileDocument>(invalid)
+            .expect_err("profile JSON must not contain channel-owned current binary/assets");
+        assert!(
+            error.to_string().contains("current_binary")
+                || error.to_string().contains("current_assets"),
+            "{error}"
+        );
     }
 }
