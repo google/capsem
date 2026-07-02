@@ -68,7 +68,9 @@ const assetState = data.manifest.assets?.releases?.[currentAssets]?.deprecated ?
           {channels.map((channel) => (
             <tr class="border-b border-zinc-100 align-top" id={`channel-${channel.id}`}>
               <td class="py-3 pr-4">
-                <div class="font-medium text-black">{channel.label}</div>
+                <div class="font-medium text-black">
+                  <a class="text-blue-600 underline" href={channel.pageUrl}>{channel.label}</a>
+                </div>
                 <code>{channel.id}</code>
               </td>
               <td class="py-3 pr-4"><code>{channel.currentVersion}</code></td>

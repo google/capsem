@@ -6,6 +6,7 @@ type JsonObject = Record<string, any>;
 export interface ReleaseData {
   dist: string;
   sourceMode: 'dist' | 'graph';
+  graph?: JsonObject;
   channel: string;
   channels: JsonObject;
   channelRecord: JsonObject;
@@ -31,6 +32,7 @@ export interface ChannelRow {
   currentStatus: string;
   statuses: string[];
   manifestUrl: string;
+  pageUrl: string;
 }
 
 export function loadReleaseData(): ReleaseData {
@@ -83,6 +85,7 @@ function loadGraphData(graphPath: string): ReleaseData {
   return {
     dist: graphPath,
     sourceMode: 'graph',
+    graph,
     channel,
     channels,
     channelRecord,
@@ -94,6 +97,10 @@ function loadGraphData(graphPath: string): ReleaseData {
 
 export function profilePagePath(profileId: string): string {
   return `/profiles/${encodeURIComponent(profileId)}/`;
+}
+
+export function channelPagePath(channelId: string): string {
+  return `/channels/${encodeURIComponent(channelId)}/`;
 }
 
 export function channelRows(data: ReleaseData): ChannelRow[] {
@@ -110,9 +117,50 @@ export function channelRows(data: ReleaseData): ChannelRow[] {
         currentStatus: String(selected.status ?? 'not published'),
         statuses: Array.from(new Set(manifests.map((manifest: JsonObject) => String(manifest.status ?? 'unknown')))),
         manifestUrl: String(selected.url ?? ''),
+        pageUrl: channelPagePath(id),
       };
     })
     .sort((left, right) => left.id.localeCompare(right.id));
+}
+
+export function dataForChannel(data: ReleaseData, channel: string): ReleaseData {
+  const channelRecord = data.channels.channels?.[channel];
+  if (!channelRecord) {
+    throw new Error(`Unknown release channel: ${channel}`);
+  }
+  const manifestRecord = selectManifestRecord(channelRecord);
+  if (data.sourceMode === 'graph') {
+    const manifest = data.graph?.manifests?.[channel]?.[manifestRecord.version];
+    if (!manifest) {
+      throw new Error(`Release graph is missing ${channel} manifest ${manifestRecord.version}`);
+    }
+    const catalog = {
+      schema: 'capsem.profile_catalog.v1',
+      revision: profileRevisionFromManifest(manifest),
+      profiles: profileListFromManifest(manifest),
+    };
+    return {
+      ...data,
+      channel,
+      channelRecord,
+      manifestRecord,
+      manifest,
+      catalog,
+    };
+  }
+
+  const manifestPath = trimLeadingSlash(String(manifestRecord.url ?? `/assets/${channel}/manifest.json`));
+  const manifest = readJson(resolve(data.dist, manifestPath));
+  const catalogPath = trimLeadingSlash(String(channelRecord.profile_catalog?.source ?? ''));
+  const catalog = readJson(resolve(data.dist, catalogPath));
+  return {
+    ...data,
+    channel,
+    channelRecord,
+    manifestRecord,
+    manifest,
+    catalog,
+  };
 }
 
 export function profileList(data: ReleaseData): JsonObject[] {
@@ -203,6 +251,14 @@ export function binaryRows(data: ReleaseData): JsonObject[] {
   const current = String(data.manifest.binaries?.current ?? '');
   const files = data.manifest.binaries?.releases?.[current]?.files;
   return Array.isArray(files) ? files.filter((file: JsonObject) => !isHostSbom(file.name)) : [];
+}
+
+export function packageRows(data: ReleaseData): JsonObject[] {
+  return Array.isArray(data.manifest.packages) ? data.manifest.packages : [];
+}
+
+export function manifestRecords(data: ReleaseData): JsonObject[] {
+  return Array.isArray(data.channelRecord.manifests) ? data.channelRecord.manifests : [];
 }
 
 export function hostSbomRows(data: ReleaseData): JsonObject[] {
