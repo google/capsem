@@ -284,10 +284,23 @@ fn now_secs() -> u64 {
         .as_secs()
 }
 
-fn cache_path() -> Option<PathBuf> {
+fn legacy_cache_path() -> Option<PathBuf> {
     crate::paths::capsem_home()
         .ok()
         .map(|d| d.join("update-check.json"))
+}
+
+fn cache_path_for_source(source: &str) -> Option<PathBuf> {
+    crate::paths::capsem_home().ok().map(|d| {
+        d.join("update-checks")
+            .join(format!("{}.json", cache_key_for_source(source)))
+    })
+}
+
+fn cache_key_for_source(source: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(source.as_bytes());
+    format!("{:x}", hasher.finalize())
 }
 
 /// Validate user-provided update source flags.
@@ -335,9 +348,8 @@ fn has_scheme_authority_prefix(value: &str, scheme: &str) -> bool {
 /// Read cached update notice. Sync file read, no latency.
 /// Returns a message to display if an update is available and cache is fresh.
 pub fn read_cached_update_notice() -> Option<String> {
-    let path = cache_path()?;
-    let content = std::fs::read_to_string(&path).ok()?;
-    let check: UpdateCheck = serde_json::from_str(&content).ok()?;
+    let source = release_manifest_url().ok()?;
+    let check = read_cache_for_source(&source).ok()?;
 
     if !check.update_available
         && !check.assets_update_available
@@ -390,7 +402,11 @@ pub fn read_cached_update_notice() -> Option<String> {
 
 /// Write update check cache atomically (write tmp + rename).
 fn write_cache(check: &UpdateCheck) -> Result<()> {
-    let path = cache_path().context("HOME not set")?;
+    let source = check
+        .source
+        .as_deref()
+        .context("update check source missing")?;
+    let path = cache_path_for_source(source).context("HOME not set")?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -399,6 +415,34 @@ fn write_cache(check: &UpdateCheck) -> Result<()> {
     std::fs::write(&tmp, &json)?;
     std::fs::rename(&tmp, &path)?;
     Ok(())
+}
+
+fn read_cache_for_source(source: &str) -> Result<UpdateCheck> {
+    let path = cache_path_for_source(source).context("HOME not set")?;
+    match read_cache_file(&path) {
+        Ok(check) => Ok(check),
+        Err(scoped_error) => {
+            let legacy_path = legacy_cache_path().context("HOME not set")?;
+            let legacy = read_cache_file(&legacy_path).with_context(|| {
+                format!(
+                    "read scoped cache {} or legacy cache {}",
+                    path.display(),
+                    legacy_path.display()
+                )
+            })?;
+            if legacy.source.as_deref() == Some(source) {
+                Ok(legacy)
+            } else {
+                Err(scoped_error).with_context(|| {
+                    format!(
+                        "legacy update cache {} belongs to {:?}, not {source}",
+                        legacy_path.display(),
+                        legacy.source
+                    )
+                })
+            }
+        }
+    }
 }
 
 fn read_cache_file(path: &Path) -> Result<UpdateCheck> {
@@ -456,12 +500,19 @@ fn failed_update_check_from_previous(
 /// Background refresh: check the release channel for updates if cache is stale.
 /// Fire-and-forget via tokio::spawn.
 pub async fn refresh_update_cache_if_stale() {
-    let path = match cache_path() {
+    let manifest_url = match release_manifest_url() {
+        Ok(url) => url,
+        Err(e) => {
+            warn!(error = %e, "update check: invalid release manifest URL");
+            return;
+        }
+    };
+    let path = match cache_path_for_source(&manifest_url) {
         Some(p) => p,
         None => return,
     };
 
-    // Check if cache exists and is fresh.
+    // Check if this source-specific cache exists and is fresh.
     let previous_check = read_cache_file(&path).ok();
     if let Some(check) = previous_check.as_ref() {
         let age = now_secs().saturating_sub(check.checked_at);
@@ -470,15 +521,7 @@ pub async fn refresh_update_cache_if_stale() {
         }
     }
 
-    info!("update cache stale, checking for updates");
-
-    let manifest_url = match release_manifest_url() {
-        Ok(url) => url,
-        Err(e) => {
-            warn!(error = %e, "update check: invalid release manifest URL");
-            return;
-        }
-    };
+    info!(source = %manifest_url, "update cache stale, checking for updates");
 
     let client = reqwest::Client::new();
     let resp = match client
@@ -2247,6 +2290,77 @@ mod tests {
             read_cached_update_notice().as_deref(),
             Some(
                 "Profile catalog update blocked: requires binary 1.4.1 or newer. Run `capsem update --check` for details."
+            )
+        );
+    }
+
+    #[test]
+    fn update_cache_paths_are_scoped_by_manifest_url() {
+        let _lock = crate::lock_test_env();
+        let home = tempfile::tempdir().unwrap();
+        let _home = EnvGuard::set("CAPSEM_HOME", home.path().to_str().unwrap());
+
+        let stable =
+            cache_path_for_source("https://release.capsem.org/assets/stable/manifest.json")
+                .expect("stable cache path");
+        let nightly =
+            cache_path_for_source("https://release.capsem.org/assets/nightly/manifest.json")
+                .expect("nightly cache path");
+
+        assert_ne!(stable, nightly);
+        assert!(stable
+            .parent()
+            .is_some_and(|parent| parent.ends_with("update-checks")));
+        assert_eq!(
+            stable.extension().and_then(|ext| ext.to_str()),
+            Some("json")
+        );
+        assert_eq!(
+            nightly.extension().and_then(|ext| ext.to_str()),
+            Some("json")
+        );
+    }
+
+    #[test]
+    fn stable_and_nightly_update_caches_coexist() {
+        let _lock = crate::lock_test_env();
+        let home = tempfile::tempdir().unwrap();
+        let _home = EnvGuard::set("CAPSEM_HOME", home.path().to_str().unwrap());
+
+        let mut stable = cached_notice_check();
+        stable.source = Some("https://release.capsem.org/assets/stable/manifest.json".into());
+        stable.latest_assets = Some("stable-assets-2030.0101.1".into());
+        stable.current_assets = Some("stable-assets-2029.1231.1".into());
+        stable.assets_update_available = true;
+        write_cache(&stable).expect("stable cache");
+
+        let mut nightly = cached_notice_check();
+        nightly.source = Some("https://release.capsem.org/assets/nightly/manifest.json".into());
+        nightly.latest_assets = Some("nightly-assets-2030.0101.1".into());
+        nightly.current_assets = Some("nightly-assets-2029.1231.1".into());
+        nightly.assets_update_available = true;
+        write_cache(&nightly).expect("nightly cache");
+
+        let stable_env = EnvGuard::set(
+            RELEASE_MANIFEST_URL_ENV,
+            "https://release.capsem.org/assets/stable/manifest.json",
+        );
+        assert_eq!(
+            read_cached_update_notice().as_deref(),
+            Some(
+                "VM asset update available: stable-assets-2030.0101.1. Run `capsem update --assets` to refresh."
+            )
+        );
+        drop(stable_env);
+
+        let _nightly_env = EnvGuard::set(
+            RELEASE_MANIFEST_URL_ENV,
+            "https://release.capsem.org/assets/nightly/manifest.json",
+        );
+        assert_eq!(
+            read_cached_update_notice().as_deref(),
+            Some(
+                "VM asset update available: nightly-assets-2030.0101.1. Run `capsem update --assets` to refresh."
             )
         );
     }

@@ -28,3 +28,13 @@ def test_old_capsem_selects_compatible_supported_manifest() -> None:
         "channel_manifest_resolution_old_capsem_selects_compatible_supported_manifest"
         in source
     )
+
+
+def test_stable_and_nightly_caches_coexist() -> None:
+    source = UPDATE_RS.read_text(encoding="utf-8")
+
+    assert "fn cache_path_for_source" in source
+    assert "fn cache_key_for_source" in source
+    assert 'd.join("update-checks")' in source
+    assert "stable_and_nightly_update_caches_coexist" in source
+    assert "https://release.capsem.org/assets/nightly/manifest.json" in source

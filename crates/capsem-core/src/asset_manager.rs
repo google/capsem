@@ -1776,6 +1776,48 @@ mod tests {
     }
 
     #[test]
+    fn channel_cache_isolation() {
+        let dir = tempfile::tempdir().unwrap();
+        let capsem_home = dir.path();
+        let stable_manifest = capsem_home.join("channels/stable/manifest.json");
+        let nightly_manifest = capsem_home.join("channels/nightly/manifest.json");
+        std::fs::create_dir_all(stable_manifest.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(nightly_manifest.parent().unwrap()).unwrap();
+        std::fs::write(&stable_manifest, br#"{"channel":"stable"}"#).unwrap();
+        std::fs::write(&nightly_manifest, br#"{"channel":"nightly"}"#).unwrap();
+
+        let asset_dir = capsem_home.join("assets/arm64");
+        std::fs::create_dir_all(&asset_dir).unwrap();
+        let stable_rootfs_hash =
+            "1111111111111111111111111111111111111111111111111111111111111111";
+        let nightly_rootfs_hash =
+            "2222222222222222222222222222222222222222222222222222222222222222";
+        let stable_rootfs = asset_dir.join(hash_filename("rootfs.erofs", stable_rootfs_hash));
+        let nightly_rootfs = asset_dir.join(hash_filename("rootfs.erofs", nightly_rootfs_hash));
+        std::fs::write(&stable_rootfs, b"stable profile rootfs").unwrap();
+        std::fs::write(&nightly_rootfs, b"nightly profile rootfs").unwrap();
+
+        assert_ne!(stable_manifest, nightly_manifest);
+        assert_ne!(stable_rootfs, nightly_rootfs);
+        assert!(stable_manifest.is_file());
+        assert!(nightly_manifest.is_file());
+        assert!(stable_rootfs.is_file());
+        assert!(nightly_rootfs.is_file());
+        assert_eq!(
+            asset_release_base_url_from_manifest_url(
+                "https://release.capsem.org/assets/stable/manifest.json"
+            ),
+            Some("https://release.capsem.org/assets/releases".to_string())
+        );
+        assert_eq!(
+            asset_release_base_url_from_manifest_url(
+                "https://release.capsem.org/assets/nightly/manifest.json"
+            ),
+            Some("https://release.capsem.org/assets/releases".to_string())
+        );
+    }
+
+    #[test]
     fn cleanup_empty_dir() {
         let dir = tempfile::tempdir().unwrap();
         let m = ManifestV2::from_json(SAMPLE_V2_MANIFEST).unwrap();
