@@ -246,6 +246,14 @@ def test_generated_release_channel_passes_public_contract(
     assert channels["channels"][CHANNEL]["profile_catalog"]["source"].startswith(
         "/profiles/releases/"
     )
+    catalog_source = channels["channels"][CHANNEL]["profile_catalog"]["source"]
+    catalog = json.loads((release_channel_dist / catalog_source.lstrip("/")).read_text())
+    assert "current_binary" not in catalog
+    assert "current_assets" not in catalog
+    assert "compatibility" not in catalog
+    for profile in catalog["profiles"]:
+        assert "current_binary" not in profile
+        assert "current_assets" not in profile
 
     with _serve_release_channel(release_channel_dist) as url:
         assert _validate_release_site(url, capsys=capsys) == 0

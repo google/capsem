@@ -661,12 +661,8 @@ struct AssetsChannelProfileCatalog {
     profile_count: usize,
     profile_ids: Vec<String>,
     refresh_policy: String,
-    binary: String,
-    assets: String,
     min_binary: String,
-    min_assets: String,
     requires_newer_binary: bool,
-    requires_newer_assets: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -711,20 +707,7 @@ struct PublishableProfileCatalogDocument {
     schema: &'static str,
     revision: String,
     state: String,
-    current_binary: String,
-    current_assets: String,
-    compatibility: PublishableProfileCatalogCompatibility,
     profiles: Vec<ProfileConfigFile>,
-}
-
-#[derive(Debug, Serialize)]
-struct PublishableProfileCatalogCompatibility {
-    binary: String,
-    assets: String,
-    min_binary: String,
-    min_assets: String,
-    requires_newer_binary: bool,
-    requires_newer_assets: bool,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -1631,7 +1614,6 @@ fn validate_assets_channel_health(
         .releases
         .get(&manifest.assets.current)
         .ok_or_else(|| anyhow!("channel manifest current asset release is missing"))?;
-    let current_binary_release = manifest.binaries.releases.get(&manifest.binaries.current);
     let expected_profile_revision = require_json_string(health, &["profiles", "revision"])?;
     let expected_profile_source = require_json_string(health, &["profiles", "source"])?;
     let expected_profile_hash = require_json_string(health, &["profiles", "hash"])?;
@@ -1647,12 +1629,6 @@ fn validate_assets_channel_health(
         ProfileCatalogExpectations {
             hash: &expected_profile_hash,
             revision: &expected_profile_revision,
-            current_binary: &manifest.binaries.current,
-            current_assets: &manifest.assets.current,
-            min_binary: &current_release.min_binary,
-            min_assets: current_binary_release
-                .map(|release| release.min_assets.as_str())
-                .unwrap_or(""),
         },
     )?;
     require_json_str(
@@ -1661,29 +1637,15 @@ fn validate_assets_channel_health(
         "current",
         "health.json profile catalog state mismatch",
     )?;
-    require_json_str(
+    require_json_absent(
         health,
-        &["profiles", "compatibility", "binary"],
-        &manifest.binaries.current,
-        "health.json profile catalog binary compatibility mismatch",
+        &["profiles", "compatibility"],
+        "health.json profiles must not publish channel compatibility",
     )?;
-    require_json_str(
+    require_json_absent(
         health,
-        &["profiles", "compatibility", "assets"],
-        &manifest.assets.current,
-        "health.json profile catalog asset compatibility mismatch",
-    )?;
-    require_json_bool(
-        health,
-        &["profiles", "requires_newer", "binary"],
-        false,
-        "health.json profile catalog binary requirement mismatch",
-    )?;
-    require_json_bool(
-        health,
-        &["profiles", "requires_newer", "assets"],
-        false,
-        "health.json profile catalog asset requirement mismatch",
+        &["profiles", "requires_newer"],
+        "health.json profiles must not publish channel requirements",
     )?;
     require_json_str(
         health,
@@ -1715,29 +1677,15 @@ fn validate_assets_channel_health(
         &expected_profile_hash,
         "health.json profile update hash mismatch",
     )?;
-    require_json_str(
+    require_json_absent(
         health,
-        &["updates", "profiles", "compatibility", "binary"],
-        &manifest.binaries.current,
-        "health.json profile update binary compatibility mismatch",
+        &["updates", "profiles", "compatibility"],
+        "health.json profile update must not publish channel compatibility",
     )?;
-    require_json_str(
+    require_json_absent(
         health,
-        &["updates", "profiles", "compatibility", "assets"],
-        &manifest.assets.current,
-        "health.json profile update asset compatibility mismatch",
-    )?;
-    require_json_bool(
-        health,
-        &["updates", "profiles", "requires_newer", "binary"],
-        false,
-        "health.json profile update binary requirement mismatch",
-    )?;
-    require_json_bool(
-        health,
-        &["updates", "profiles", "requires_newer", "assets"],
-        false,
-        "health.json profile update asset requirement mismatch",
+        &["updates", "profiles", "requires_newer"],
+        "health.json profile update must not publish channel requirements",
     )?;
     require_json_str(
         health,
@@ -1757,34 +1705,6 @@ fn validate_assets_channel_health(
         "health.json image update source mismatch",
     )?;
 
-    require_json_str(
-        health,
-        &["profiles", "compatibility", "min_binary"],
-        &current_release.min_binary,
-        "health.json profile catalog min binary mismatch",
-    )?;
-    require_json_str(
-        health,
-        &["profiles", "compatibility", "min_assets"],
-        current_binary_release
-            .map(|release| release.min_assets.as_str())
-            .unwrap_or(""),
-        "health.json profile catalog min assets mismatch",
-    )?;
-    require_json_str(
-        health,
-        &["updates", "profiles", "compatibility", "min_binary"],
-        &current_release.min_binary,
-        "health.json profile update min binary mismatch",
-    )?;
-    require_json_str(
-        health,
-        &["updates", "profiles", "compatibility", "min_assets"],
-        current_binary_release
-            .map(|release| release.min_assets.as_str())
-            .unwrap_or(""),
-        "health.json profile update min assets mismatch",
-    )?;
     let asset_releases = require_json_array(health, &["asset_releases"])?;
     for (version, release) in &manifest.assets.releases {
         let public_release = asset_releases.iter().find(|item| {
@@ -2151,10 +2071,6 @@ fn require_json_string(root: &serde_json::Value, path: &[&str]) -> Result<String
 struct ProfileCatalogExpectations<'a> {
     hash: &'a str,
     revision: &'a str,
-    current_binary: &'a str,
-    current_assets: &'a str,
-    min_binary: &'a str,
-    min_assets: &'a str,
 }
 
 fn validate_profile_catalog_artifact(
@@ -2203,54 +2119,28 @@ fn validate_profile_catalog_artifact(
         "current",
         "profile catalog state mismatch",
     )?;
-    require_json_str(
+    require_json_absent(
         &catalog,
         &["current_binary"],
-        expected.current_binary,
-        "profile catalog current binary mismatch",
+        "profile catalog must not publish current_binary",
     )?;
-    require_json_str(
+    require_json_absent(
         &catalog,
         &["current_assets"],
-        expected.current_assets,
-        "profile catalog current assets mismatch",
+        "profile catalog must not publish current_assets",
     )?;
-    require_json_str(
+    require_json_absent(
         &catalog,
-        &["compatibility", "binary"],
-        expected.current_binary,
-        "profile catalog binary compatibility mismatch",
+        &["compatibility"],
+        "profile catalog must not publish channel compatibility",
     )?;
-    require_json_str(
-        &catalog,
-        &["compatibility", "assets"],
-        expected.current_assets,
-        "profile catalog asset compatibility mismatch",
-    )?;
-    require_json_str(
-        &catalog,
-        &["compatibility", "min_binary"],
-        expected.min_binary,
-        "profile catalog min binary mismatch",
-    )?;
-    require_json_str(
-        &catalog,
-        &["compatibility", "min_assets"],
-        expected.min_assets,
-        "profile catalog min assets mismatch",
-    )?;
-    require_json_bool(
-        &catalog,
-        &["compatibility", "requires_newer_binary"],
-        false,
-        "profile catalog binary requirement mismatch",
-    )?;
-    require_json_bool(
-        &catalog,
-        &["compatibility", "requires_newer_assets"],
-        false,
-        "profile catalog asset requirement mismatch",
-    )?;
+    Ok(())
+}
+
+fn require_json_absent(root: &serde_json::Value, path: &[&str], message: &str) -> Result<()> {
+    if json_path(root, path).is_some() {
+        return Err(anyhow!("{message}"));
+    }
     Ok(())
 }
 
@@ -2377,7 +2267,6 @@ fn publishable_profile_catalog(
         .releases
         .get(&manifest.assets.current)
         .ok_or_else(|| anyhow!("manifest current asset release is missing"))?;
-    let current_binary_release = manifest.binaries.releases.get(&manifest.binaries.current);
     let catalog = ProfileCatalog::load_from_dir(profiles_dir)
         .map_err(|error| anyhow!("load profile catalog {}: {error}", profiles_dir.display()))?;
     let config_root = profiles_dir.parent().ok_or_else(|| {
@@ -2402,24 +2291,10 @@ fn publishable_profile_catalog(
     validate_profile_catalog_revision_path(&revision)?;
     let refresh_policy = profile_catalog_refresh_policy(&profiles);
     let min_binary = current_release.min_binary.clone();
-    let min_assets = current_binary_release
-        .map(|release| release.min_assets.clone())
-        .unwrap_or_default();
-    let compatibility = PublishableProfileCatalogCompatibility {
-        binary: manifest.binaries.current.clone(),
-        assets: manifest.assets.current.clone(),
-        min_binary: min_binary.clone(),
-        min_assets: min_assets.clone(),
-        requires_newer_binary: false,
-        requires_newer_assets: false,
-    };
     let document = PublishableProfileCatalogDocument {
         schema: "capsem.profile_catalog.v1",
         revision: revision.clone(),
         state: "current".to_string(),
-        current_binary: manifest.binaries.current.clone(),
-        current_assets: manifest.assets.current.clone(),
-        compatibility,
         profiles,
     };
     let mut bytes =
@@ -2435,12 +2310,8 @@ fn publishable_profile_catalog(
             profile_count: document.profiles.len(),
             profile_ids,
             refresh_policy,
-            binary: manifest.binaries.current.clone(),
-            assets: manifest.assets.current.clone(),
             min_binary,
-            min_assets,
             requires_newer_binary: false,
-            requires_newer_assets: false,
         },
         path,
         bytes,
@@ -2831,25 +2702,17 @@ fn render_assets_channel_health(index: &AssetsChannelIndex) -> Result<String> {
                 "files": index.current_asset_files,
             },
             "asset_releases": index.asset_release_history,
-            "profiles": {
-                "revision": index.profile_catalog.revision,
-                "state": "current",
-                "source": index.profile_catalog.source,
-                "hash": index.profile_catalog.hash,
-                "profile_count": index.profile_catalog.profile_count,
-                "profile_ids": index.profile_catalog.profile_ids,
-                "refresh_policy": index.profile_catalog.refresh_policy,
-                "compatibility": {
-                    "binary": index.profile_catalog.binary,
-                    "assets": index.profile_catalog.assets,
+                "profiles": {
+                    "revision": index.profile_catalog.revision,
+                    "state": "current",
+                    "source": index.profile_catalog.source,
+                    "hash": index.profile_catalog.hash,
+                    "profile_count": index.profile_catalog.profile_count,
+                    "profile_ids": index.profile_catalog.profile_ids,
+                    "refresh_policy": index.profile_catalog.refresh_policy,
                     "min_binary": index.profile_catalog.min_binary,
-                    "min_assets": index.profile_catalog.min_assets,
+                    "requires_newer_binary": index.profile_catalog.requires_newer_binary,
                 },
-                "requires_newer": {
-                    "binary": index.profile_catalog.requires_newer_binary,
-                    "assets": index.profile_catalog.requires_newer_assets,
-                },
-            },
             "updates": {
                 "binary": {
                     "latest": index.current_binary,
@@ -2882,16 +2745,8 @@ fn render_assets_channel_health(index: &AssetsChannelIndex) -> Result<String> {
                     "profile_count": index.profile_catalog.profile_count,
                     "profile_ids": index.profile_catalog.profile_ids,
                     "refresh_policy": index.profile_catalog.refresh_policy,
-                    "compatibility": {
-                        "binary": index.profile_catalog.binary,
-                        "assets": index.profile_catalog.assets,
-                        "min_binary": index.profile_catalog.min_binary,
-                        "min_assets": index.profile_catalog.min_assets,
-                    },
-                    "requires_newer": {
-                        "binary": index.profile_catalog.requires_newer_binary,
-                        "assets": index.profile_catalog.requires_newer_assets,
-                    },
+                    "min_binary": index.profile_catalog.min_binary,
+                    "requires_newer_binary": index.profile_catalog.requires_newer_binary,
                 },
                 "images": {
                     "latest": serde_json::Value::Null,
@@ -6594,13 +6449,14 @@ decision = "block"
             health["profiles"]["hash"].as_str(),
             health["updates"]["profiles"]["hash"].as_str()
         );
-        assert_eq!(
-            health["profiles"]["compatibility"]["binary"].as_str(),
-            Some("1.0.0")
+        assert!(
+            health["profiles"]["compatibility"].is_null(),
+            "profile catalog must not publish channel compatibility"
         );
-        assert_eq!(
-            health["profiles"]["compatibility"]["assets"].as_str(),
-            Some("2030.0101.1")
+        assert_eq!(health["profiles"]["min_binary"].as_str(), Some("1.0.0"));
+        assert!(
+            health["updates"]["profiles"]["compatibility"].is_null(),
+            "profile update metadata must not publish channel compatibility"
         );
         assert_eq!(
             health["updates"]["profiles"]["state"].as_str(),
