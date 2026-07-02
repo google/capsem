@@ -802,7 +802,7 @@ fn manifest_binary_file_url(
 #[allow(clippy::too_many_arguments)]
 #[allow(dead_code)]
 fn update_check_from_release_health(
-    health: &ReleaseChannelHealth,
+    legacy: &ReleaseChannelHealth,
     checked_at: u64,
     current_binary: &str,
     current_assets: Option<&str>,
@@ -811,38 +811,38 @@ fn update_check_from_release_health(
     source: &str,
     channel_hash: Option<String>,
 ) -> Result<UpdateCheck> {
-    if health.schema != "capsem.assets_channel.health.v1" {
-        anyhow::bail!("release channel health schema mismatch");
+    if legacy.schema != "capsem.assets_channel.legacy.v1" {
+        anyhow::bail!("release channel legacy schema mismatch");
     }
-    let latest_version = health.updates.binary.latest_version();
-    let latest_assets = health.updates.assets.latest_version();
-    let assets_state = health.updates.assets.state.clone();
-    let latest_profiles = health
+    let latest_version = legacy.updates.binary.latest_version();
+    let latest_assets = legacy.updates.assets.latest_version();
+    let assets_state = legacy.updates.assets.state.clone();
+    let latest_profiles = legacy
         .updates
         .profiles
         .as_ref()
         .and_then(ReleaseChannelUpdateTarget::latest_version);
-    let profiles_state = health
+    let profiles_state = legacy
         .updates
         .profiles
         .as_ref()
         .and_then(|target| target.state.clone());
-    let profile_catalog_source = health
+    let profile_catalog_source = legacy
         .updates
         .profiles
         .as_ref()
         .and_then(|target| target.source.clone());
-    let profile_catalog_hash = health
+    let profile_catalog_hash = legacy
         .updates
         .profiles
         .as_ref()
         .and_then(|target| target.hash.clone());
-    let latest_images = health
+    let latest_images = legacy
         .updates
         .images
         .as_ref()
         .and_then(ReleaseChannelUpdateTarget::latest_version);
-    let images_state = health
+    let images_state = legacy
         .updates
         .images
         .as_ref()
@@ -851,7 +851,7 @@ fn update_check_from_release_health(
         .as_deref()
         .is_some_and(|latest| is_newer(latest, current_binary));
     let binary_installer = if update_available {
-        binary_installer_for_layout(&health.updates.binary.files, install_layout)
+        binary_installer_for_layout(&legacy.updates.binary.files, install_layout)
     } else {
         None
     };
@@ -866,7 +866,7 @@ fn update_check_from_release_health(
     {
         Some("latest VM asset release is deprecated".to_string())
     } else if assets_differ {
-        update_target_blocked_reason(&health.updates.assets, current_binary, current_assets)
+        update_target_blocked_reason(&legacy.updates.assets, current_binary, current_assets)
     } else {
         None
     };
@@ -875,7 +875,7 @@ fn update_check_from_release_health(
         (Some(latest), Some(current)) => latest != current,
         _ => false,
     };
-    let profiles_blocked_reason = health
+    let profiles_blocked_reason = legacy
         .updates
         .profiles
         .as_ref()
@@ -890,7 +890,7 @@ fn update_check_from_release_health(
             }
         });
     let images_blocked_reason =
-        health.updates.images.as_ref().and_then(|target| {
+        legacy.updates.images.as_ref().and_then(|target| {
             update_target_blocked_reason(target, current_binary, current_assets)
         });
     let profiles_update_available = profiles_blocked_reason.is_none()
@@ -1964,7 +1964,7 @@ mod tests {
             images_update_available: false,
             images_state: Some("not_published".into()),
             images_blocked_reason: None,
-            source: Some("https://release.capsem.org/health.json".into()),
+            source: Some("https://release.capsem.org/assets/stable/manifest.json".into()),
             channel_hash: Some("a".repeat(64)),
             validation_status: Some("valid".into()),
             validation_error: None,
@@ -2003,7 +2003,7 @@ mod tests {
         assert_eq!(rt.images_blocked_reason, None);
         assert_eq!(
             rt.source,
-            Some("https://release.capsem.org/health.json".into())
+            Some("https://release.capsem.org/assets/stable/manifest.json".into())
         );
         assert_eq!(rt.channel_hash, Some("a".repeat(64)));
         assert_eq!(rt.validation_status, Some("valid".into()));
@@ -2123,7 +2123,7 @@ mod tests {
             images_update_available: false,
             images_state: Some("not_published".into()),
             images_blocked_reason: None,
-            source: Some("https://release.capsem.org/health.json".into()),
+            source: Some("https://release.capsem.org/assets/stable/manifest.json".into()),
             channel_hash: Some("a".repeat(64)),
             validation_status: Some("valid".into()),
             validation_error: None,
@@ -2153,7 +2153,7 @@ mod tests {
             images_update_available: false,
             images_state: None,
             images_blocked_reason: None,
-            source: Some("https://release.capsem.org/health.json".into()),
+            source: Some("https://release.capsem.org/assets/stable/manifest.json".into()),
             channel_hash: Some("f".repeat(64)),
             validation_status: Some("valid".into()),
             validation_error: None,
@@ -2162,7 +2162,7 @@ mod tests {
         let check = failed_update_check_from_previous(
             Some(previous),
             1200,
-            "https://release.capsem.org/health.json",
+            "https://release.capsem.org/assets/stable/manifest.json",
             "fetch_error",
             "connection refused".to_string(),
         );
@@ -2249,7 +2249,7 @@ mod tests {
         let pkg_sha = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
         let deb_sha = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
         let health: ReleaseChannelHealth = serde_json::from_value(serde_json::json!({
-            "schema": "capsem.assets_channel.health.v1",
+            "schema": "capsem.assets_channel.legacy.v1",
             "updates": {
                 "binary": {
                     "latest": "99.99.99",
@@ -2299,7 +2299,7 @@ mod tests {
             Some("2026.0627.1"),
             Some("profiles-2030.0101.0"),
             &InstallLayout::MacosPkg,
-            "https://release.capsem.org/health.json",
+            "https://release.capsem.org/assets/stable/manifest.json",
             Some("f".repeat(64)),
         )
         .unwrap();
@@ -2337,7 +2337,7 @@ mod tests {
         assert_eq!(check.images_blocked_reason, None);
         assert_eq!(
             check.source,
-            Some("https://release.capsem.org/health.json".to_string())
+            Some("https://release.capsem.org/assets/stable/manifest.json".to_string())
         );
         assert_eq!(check.channel_hash, Some("f".repeat(64)));
         assert_eq!(check.validation_status, Some("valid".to_string()));
@@ -2347,7 +2347,7 @@ mod tests {
     #[test]
     fn release_health_update_check_accepts_legacy_current_targets() {
         let health: ReleaseChannelHealth = serde_json::from_value(serde_json::json!({
-            "schema": "capsem.assets_channel.health.v1",
+            "schema": "capsem.assets_channel.legacy.v1",
             "updates": {
                 "binary": {"current": "99.99.99"},
                 "assets": {"current": "2030.0101.1"}
@@ -2362,7 +2362,7 @@ mod tests {
             Some("2026.0627.1"),
             None,
             &InstallLayout::MacosPkg,
-            "https://release.capsem.org/health.json",
+            "https://release.capsem.org/assets/stable/manifest.json",
             None,
         )
         .unwrap();
@@ -2374,7 +2374,7 @@ mod tests {
     #[test]
     fn release_health_asset_update_reports_blocked_compatibility() {
         let health: ReleaseChannelHealth = serde_json::from_value(serde_json::json!({
-            "schema": "capsem.assets_channel.health.v1",
+            "schema": "capsem.assets_channel.legacy.v1",
             "updates": {
                 "binary": {"current": "1.3.1782582155"},
                 "assets": {
@@ -2396,7 +2396,7 @@ mod tests {
             Some("2026.0627.1"),
             None,
             &InstallLayout::MacosPkg,
-            "https://release.capsem.org/health.json",
+            "https://release.capsem.org/assets/stable/manifest.json",
             None,
         )
         .unwrap();
@@ -2414,7 +2414,7 @@ mod tests {
     #[test]
     fn release_health_deprecated_asset_update_is_blocked() {
         let health: ReleaseChannelHealth = serde_json::from_value(serde_json::json!({
-            "schema": "capsem.assets_channel.health.v1",
+            "schema": "capsem.assets_channel.legacy.v1",
             "updates": {
                 "binary": {"current": "1.3.1782582155"},
                 "assets": {
@@ -2433,7 +2433,7 @@ mod tests {
             Some("2026.0627.1"),
             None,
             &InstallLayout::MacosPkg,
-            "https://release.capsem.org/health.json",
+            "https://release.capsem.org/assets/stable/manifest.json",
             None,
         )
         .unwrap();
@@ -2448,7 +2448,7 @@ mod tests {
     #[test]
     fn release_health_profile_update_reports_blocked_compatibility() {
         let health: ReleaseChannelHealth = serde_json::from_value(serde_json::json!({
-            "schema": "capsem.assets_channel.health.v1",
+            "schema": "capsem.assets_channel.legacy.v1",
             "updates": {
                 "binary": {"current": "1.3.1782582155"},
                 "assets": {"current": "2026.0627.1"},
@@ -2475,7 +2475,7 @@ mod tests {
             Some("2026.0627.1"),
             Some("profiles-2030.0101.0"),
             &InstallLayout::MacosPkg,
-            "https://release.capsem.org/health.json",
+            "https://release.capsem.org/assets/stable/manifest.json",
             None,
         )
         .unwrap();
@@ -2837,7 +2837,7 @@ mod tests {
     #[test]
     fn release_health_update_check_rejects_wrong_schema() {
         let health: ReleaseChannelHealth = serde_json::from_value(serde_json::json!({
-            "schema": "capsem.bad_health.v1",
+            "schema": "capsem.bad_legacy.v1",
             "updates": {
                 "binary": {"current": "99.99.99"},
                 "assets": {"current": "2030.0101.1"}
@@ -2852,13 +2852,13 @@ mod tests {
             Some("2026.0627.1"),
             None,
             &InstallLayout::MacosPkg,
-            "https://release.capsem.org/health.json",
+            "https://release.capsem.org/assets/stable/manifest.json",
             None,
         )
         .unwrap_err();
 
         assert!(
-            format!("{err:#}").contains("release channel health schema mismatch"),
+            format!("{err:#}").contains("release channel legacy schema mismatch"),
             "{err:#}"
         );
     }

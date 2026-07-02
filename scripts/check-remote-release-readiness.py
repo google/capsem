@@ -481,8 +481,8 @@ def check_profile_catalog_summary(
     return failures
 
 
-def check_release_evidence(site: str, health: dict[str, Any]) -> list[str]:
-    evidence = health.get("evidence")
+def check_release_evidence(site: str, release_data: dict[str, Any]) -> list[str]:
+    evidence = release_data.get("evidence")
     if not isinstance(evidence, dict):
         return ["health evidence missing"]
 
@@ -491,7 +491,7 @@ def check_release_evidence(site: str, health: dict[str, Any]) -> list[str]:
     host_sboms = require_list(evidence, "host_sboms", failures)
     host_binary_files = require_list(evidence, "host_binary_files", failures)
     attestations = require_list(evidence, "attestations", failures)
-    asset_files = require_list(health.get("assets", {}), "files", failures)
+    asset_files = require_list(release_data.get("assets", {}), "files", failures)
 
     host_binary_by_url = entries_by_url(host_binary_files, failures, "host binary file")
     asset_by_url = entries_by_url(asset_files, failures, "asset file")
