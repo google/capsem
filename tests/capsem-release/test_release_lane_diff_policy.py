@@ -93,6 +93,21 @@ def test_binary_lane_rejects_profile_changes(tmp_path: Path) -> None:
     assert "manifests.stable.1.4.0.profiles.co-work.revision" in result.stderr
 
 
+def test_binary_lane_rejects_other_channel_binary_changes(tmp_path: Path) -> None:
+    old = _graph()
+    new = deepcopy(old)
+    new["manifests"]["stable"]["1.4.0"]["binaries"][0]["digest"]["sha256"] = "c" * 64
+    new["manifests"]["nightly"]["1.5.0-nightly.1"]["packages"][0]["digest"][
+        "sha256"
+    ] = "d" * 64
+
+    result = _run_policy(tmp_path, old, new, "--lane", "binary", "--channel", "stable")
+
+    assert result.returncode == 1
+    assert "manifests.nightly.1.5.0-nightly.1.packages.0.digest.sha256" in result.stderr
+    assert "manifests.stable.1.4.0.binaries.0.digest.sha256" not in result.stderr
+
+
 def test_fixture_can_mutate_nightly_co_work_only(tmp_path: Path) -> None:
     old = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
     new = deepcopy(old)

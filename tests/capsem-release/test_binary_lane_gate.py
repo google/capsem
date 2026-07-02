@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
+from copy import deepcopy
 from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RELEASE_GRAPH = PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "release_graph.rs"
 ADMIN_MAIN = PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "main.rs"
+DIFF_POLICY = PROJECT_ROOT / "scripts" / "check-release-graph-diff.py"
+DIFF_POLICY_TESTS = PROJECT_ROOT / "tests" / "capsem-release" / "test_release_lane_diff_policy.py"
 
 
 def test_package_rows_are_not_binary_rows() -> None:
@@ -52,3 +58,116 @@ def test_sha1_only_spdx_is_rejected() -> None:
     assert 'algorithm.eq_ignore_ascii_case("SHA256")' in source
     assert "missing SHA256 checksum" in source
     assert "host_spdx_requires_sha256_file_checksums" in source
+
+
+def test_binary_lane_allowed_diff_gate_is_channel_scoped() -> None:
+    policy = DIFF_POLICY.read_text(encoding="utf-8")
+    tests = DIFF_POLICY_TESTS.read_text(encoding="utf-8")
+
+    assert 'choices=["binary", "profile", "channel"]' in policy
+    assert 'manifest_field in {"version", "status", "packages", "binaries"}' in policy
+    assert 'path[:2] != ("manifests", channel)' in policy
+    assert "test_binary_allowed_diff" in tests
+    assert "test_binary_lane_rejects_profile_changes" in tests
+    assert "test_binary_lane_rejects_other_channel_binary_changes" in tests
+
+
+def test_binary_lane_rejects_profile_ref_change(tmp_path: Path) -> None:
+    old = _graph()
+    new = deepcopy(old)
+    new["manifests"]["stable"]["1.4.0"]["profiles"]["co-work"]["revision"] = "bad-profile-drift"
+
+    result = _run_policy(tmp_path, old, new, "--lane", "binary", "--channel", "stable")
+
+    assert result.returncode == 1
+    assert "manifests.stable.1.4.0.profiles.co-work.revision" in result.stderr
+
+
+def test_nightly_binary_update_does_not_change_stable(tmp_path: Path) -> None:
+    old = _graph()
+    new = deepcopy(old)
+    new["channels"]["nightly"]["manifests"][0]["digest"]["sha256"] = "c" * 64
+    new["manifests"]["nightly"]["1.5.0-nightly.1"]["packages"][0]["digest"][
+        "sha256"
+    ] = "d" * 64
+    new["manifests"]["nightly"]["1.5.0-nightly.1"]["binaries"][0]["digest"][
+        "blake3"
+    ] = "e" * 64
+
+    result = _run_policy(tmp_path, old, new, "--lane", "binary", "--channel", "nightly")
+
+    assert result.returncode == 0, result.stderr
+    assert new["channels"]["stable"] == old["channels"]["stable"]
+    assert new["manifests"]["stable"] == old["manifests"]["stable"]
+
+
+def _run_policy(
+    tmp_path: Path, old: dict, new: dict, *args: str
+) -> subprocess.CompletedProcess[str]:
+    old_path = tmp_path / "old.json"
+    new_path = tmp_path / "new.json"
+    old_path.write_text(json.dumps(old), encoding="utf-8")
+    new_path.write_text(json.dumps(new), encoding="utf-8")
+    return subprocess.run(
+        [sys.executable, str(DIFF_POLICY), "--old", str(old_path), "--new", str(new_path), *args],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+
+def _graph() -> dict:
+    return {
+        "channels": {
+            "stable": {
+                "manifests": [
+                    {
+                        "version": "1.4.0",
+                        "status": "current",
+                        "url": "/manifests/stable/1.4.0/manifest.json",
+                        "digest": _digest("a"),
+                    }
+                ]
+            },
+            "nightly": {
+                "manifests": [
+                    {
+                        "version": "1.5.0-nightly.1",
+                        "status": "current",
+                        "url": "/manifests/nightly/1.5.0-nightly.1/manifest.json",
+                        "digest": _digest("b"),
+                    }
+                ]
+            },
+        },
+        "manifests": {
+            "stable": {"1.4.0": _manifest("stable", "1.4.0")},
+            "nightly": {"1.5.0-nightly.1": _manifest("nightly", "1.5.0-nightly.1")},
+        },
+    }
+
+
+def _manifest(channel: str, version: str) -> dict:
+    return {
+        "version": version,
+        "status": "current",
+        "packages": [{"name": f"capsem-{channel}.pkg", "digest": _digest("a")}],
+        "binaries": [{"name": "capsem", "digest": _digest("b")}],
+        "profiles": {
+            "co-work": {
+                "id": "co-work",
+                "revision": f"2026.07.02.1-{channel}",
+                "images": [
+                    {
+                        "architecture": "arm64",
+                        "artifacts": [{"kind": "rootfs", "digest": _digest("a")}],
+                    }
+                ],
+            }
+        },
+    }
+
+
+def _digest(seed: str) -> dict:
+    return {"sha256": seed * 64, "blake3": seed * 64, "hmac": f"hmac-{seed}"}
