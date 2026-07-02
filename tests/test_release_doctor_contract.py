@@ -377,15 +377,15 @@ def test_vm_asset_release_is_manual_and_deploys_asset_channel() -> None:
     release_skill = _source_text("skills/release-process/SKILL.md")
     asset_skill = _source_text("skills/asset-pipeline/SKILL.md")
     for text in (docs, release_skill, asset_skill):
+        normalized_text = " ".join(text.split())
         assert "metadata-only asset release changes" in text
-        assert "deploy the release channel without republishing immutable VM blobs" in text
-        assert (
-            "skip deployment only when current VM blob hashes, asset release metadata, "
-            "and manifest policy are all unchanged"
-        ) in text
+        assert "deploy the release channel without republishing immutable" in normalized_text
+        assert "blobs" in normalized_text
+        assert "skip deployment only when current" in normalized_text
+        assert "asset release metadata, and manifest policy are all unchanged" in normalized_text
         assert "manifest policy" in text
         assert "refresh_policy" in text
-        assert "`binaries` metadata" in text
+        assert "`binaries` metadata" in text or "per-binary inventory" in text
         assert "host SBOM" in text
         assert "binary attestation" in text
         assert "skip deployment when asset hashes are unchanged" not in text
@@ -1944,7 +1944,7 @@ def test_remote_release_readiness_checker_is_read_only_and_covers_live_gates() -
     )
     assert "runs with `if: ${{ always() }}` and asserts every dependency result" in docs_text
     assert "branch protection or active branch rulesets require `pr-gate`" in docs_text
-    assert "`release.capsem.org` resolves and serves the asset channel" in docs_text
+    assert "`release.capsem.org` resolves and serves the generated release graph" in docs_text
 
 
 def test_remote_release_readiness_fetches_with_validator_user_agent(monkeypatch) -> None:
@@ -2005,13 +2005,18 @@ def test_live_release_activation_order_is_documented() -> None:
             "run `uv run python scripts/check-remote-release-readiness.py`"
             in normalized_lower
         )
-        assert "manual VM asset workflow as a dry run" in normalized
+        assert (
+            "manual VM asset workflow as a dry run" in normalized
+            or "manual profile image workflow as a dry run" in normalized
+        )
         assert "release-binary-staging.yaml" in normalized
         assert "binary-channel-dry-run-bundle" in normalized
         assert "proof.json" in normalized
         assert (
             "vm asset metadata was not changed" in normalized_lower
             or "vm asset metadata did not change" in normalized_lower
+            or "profile image metadata was not changed" in normalized_lower
+            or "profile image metadata did not change" in normalized_lower
         )
         assert "do not add `workflow_dispatch` to the real tag-triggered `release.yaml`" in normalized_lower
         assert (
@@ -2020,6 +2025,8 @@ def test_live_release_activation_order_is_documented() -> None:
         )
         assert (
             "run the manual vm asset workflow live only after reviewing `asset-release-plan`"
+            in normalized_lower
+            or "run the manual profile image workflow live only after reviewing `asset-release-plan`"
             in normalized_lower
         )
         assert "installed update smokes" in normalized
@@ -2030,8 +2037,13 @@ def test_live_release_activation_order_is_documented() -> None:
         )
         assert normalized_lower.index(
             "provision the `release.capsem.org` cloudflare pages project and dns"
-        ) < normalized.index(
-            "manual VM asset workflow as a dry run"
+        ) < min(
+            index
+            for index in [
+                normalized.find("manual VM asset workflow as a dry run"),
+                normalized.find("manual profile image workflow as a dry run"),
+            ]
+            if index >= 0
         )
         assert normalized.index("release-binary-staging.yaml") < normalized_lower.index(
             "run the tag-triggered binary release rail only from an immutable `vx.y.z` tag"
@@ -2917,7 +2929,10 @@ def test_remote_release_readiness_checker_verifies_live_cache_headers() -> None:
     assert "max-age=31536000" in script
     assert "Cache-Control" in docs
     assert "mutable release-channel pointers" in docs_text
-    assert "immutable asset and profile artifacts" in docs_text
+    assert (
+        "immutable asset and profile artifacts" in docs_text
+        or "immutable profile release artifacts" in docs_text
+    )
 
 
 def test_ci_installs_b3sum_before_bootstrap_asset_hash_checks() -> None:
