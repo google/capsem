@@ -56,6 +56,16 @@ pub enum ProfileImageArtifactKind {
     Rootfs,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReleaseLedgerKind {
+    Manifest,
+    Package,
+    Binary,
+    Profile,
+    ProfileImage,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EvidenceRef {
@@ -99,10 +109,14 @@ pub struct BinaryInventoryRow {
 #[serde(deny_unknown_fields)]
 pub struct ReleaseManifest {
     pub version: String,
+    #[serde(default = "default_status_current")]
+    pub status: Status,
     #[serde(default)]
     pub packages: Vec<PackageInventoryRow>,
     #[serde(default)]
     pub binaries: Vec<BinaryInventoryRow>,
+    #[serde(default)]
+    pub profiles: BTreeMap<String, ProfileDocument>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -175,6 +189,26 @@ pub struct ChannelsCatalog {
     pub version: u64,
     pub generated_at: String,
     pub channels: BTreeMap<String, ChannelRecord>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseLedger {
+    pub entries: Vec<ReleaseLedgerEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseLedgerEntry {
+    pub channel: String,
+    pub kind: ReleaseLedgerKind,
+    pub name: String,
+    pub version: String,
+    pub status: Status,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub architecture: Option<Architecture>,
 }
 
 impl DigestSet {
@@ -334,6 +368,88 @@ impl ReleaseManifest {
             }
         }
         Ok(())
+    }
+}
+
+impl ReleaseLedger {
+    pub fn derive(
+        catalog: &ChannelsCatalog,
+        manifests: &BTreeMap<String, BTreeMap<String, ReleaseManifest>>,
+    ) -> Self {
+        let mut entries = Vec::new();
+        for (channel, record) in &catalog.channels {
+            for manifest_record in &record.manifests {
+                entries.push(ReleaseLedgerEntry {
+                    channel: channel.clone(),
+                    kind: ReleaseLedgerKind::Manifest,
+                    name: manifest_record.url.clone(),
+                    version: manifest_record.version.clone(),
+                    status: manifest_record.status,
+                    profile: None,
+                    architecture: None,
+                });
+            }
+            let Some(channel_manifests) = manifests.get(channel) else {
+                continue;
+            };
+            for manifest in channel_manifests.values() {
+                entries.extend(manifest.ledger_entries(channel));
+            }
+        }
+        Self { entries }
+    }
+}
+
+impl ReleaseManifest {
+    fn ledger_entries(&self, channel: &str) -> Vec<ReleaseLedgerEntry> {
+        let mut entries = Vec::new();
+        for package in &self.packages {
+            entries.push(ReleaseLedgerEntry {
+                channel: channel.to_string(),
+                kind: ReleaseLedgerKind::Package,
+                name: package.name.clone(),
+                version: package.version.clone(),
+                status: package.status,
+                profile: None,
+                architecture: Some(package.architecture),
+            });
+        }
+        for binary in &self.binaries {
+            entries.push(ReleaseLedgerEntry {
+                channel: channel.to_string(),
+                kind: ReleaseLedgerKind::Binary,
+                name: binary.name.clone(),
+                version: binary.version.clone(),
+                status: binary.status,
+                profile: None,
+                architecture: Some(binary.architecture),
+            });
+        }
+        for (profile_id, profile) in &self.profiles {
+            entries.push(ReleaseLedgerEntry {
+                channel: channel.to_string(),
+                kind: ReleaseLedgerKind::Profile,
+                name: profile_id.clone(),
+                version: profile.revision.clone(),
+                status: profile.status,
+                profile: Some(profile_id.clone()),
+                architecture: None,
+            });
+            for images in &profile.images {
+                for artifact in &images.artifacts {
+                    entries.push(ReleaseLedgerEntry {
+                        channel: channel.to_string(),
+                        kind: ReleaseLedgerKind::ProfileImage,
+                        name: artifact.name.clone(),
+                        version: profile.revision.clone(),
+                        status: artifact.status,
+                        profile: Some(profile_id.clone()),
+                        architecture: Some(images.architecture),
+                    });
+                }
+            }
+        }
+        entries
     }
 }
 
@@ -537,6 +653,10 @@ fn validate_url_like(value: &str) -> Result<()> {
         bail!("expected release-site relative, file, or http(s) URL, got {value}");
     }
     Ok(())
+}
+
+fn default_status_current() -> Status {
+    Status::Current
 }
 
 #[cfg(test)]
@@ -821,6 +941,7 @@ mod tests {
     fn package_inventory_rows_are_separate_from_binary_rows() {
         let manifest = ReleaseManifest {
             version: "1.4.0".to_string(),
+            status: Status::Current,
             packages: vec![PackageInventoryRow {
                 name: "Capsem-1.4.0.pkg".to_string(),
                 version: "1.4.0".to_string(),
@@ -849,6 +970,7 @@ mod tests {
                 status: Status::Current,
                 sbom_component_ref: "SPDXRef-File-capsem".to_string(),
             }],
+            profiles: BTreeMap::new(),
         };
 
         manifest
@@ -862,6 +984,7 @@ mod tests {
     fn package_inventory_requires_sha256_blake3_and_hmac() {
         let manifest = ReleaseManifest {
             version: "1.4.0".to_string(),
+            status: Status::Current,
             packages: vec![PackageInventoryRow {
                 name: "capsem_1.4.0_arm64.deb".to_string(),
                 version: "1.4.0".to_string(),
@@ -879,6 +1002,7 @@ mod tests {
                 evidence: Vec::new(),
             }],
             binaries: Vec::new(),
+            profiles: BTreeMap::new(),
         };
 
         let error = manifest
@@ -982,5 +1106,134 @@ mod tests {
                 || error.to_string().contains("current_assets"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn release_ledger_is_derived_from_channels_and_manifests() {
+        let catalog: ChannelsCatalog = serde_json::from_value(serde_json::json!({
+            "version": 1,
+            "generated_at": "2030-01-01T00:00:00Z",
+            "channels": {
+                "stable": {
+                    "label": "Stable",
+                    "manifests": [
+                        {
+                            "version": "1.4.0",
+                            "status": "current",
+                            "url": "/manifests/stable/1.4.0/manifest.json",
+                            "digest": digest_json()
+                        }
+                    ]
+                },
+                "nightly": {
+                    "label": "Nightly",
+                    "manifests": [
+                        {
+                            "version": "1.5.0-nightly.20300101",
+                            "status": "current",
+                            "url": "/manifests/nightly/1.5.0-nightly.20300101/manifest.json",
+                            "digest": digest_json()
+                        }
+                    ]
+                }
+            }
+        }))
+        .expect("catalog shape");
+
+        let mut profiles = BTreeMap::new();
+        profiles.insert(
+            "co-work".to_string(),
+            ProfileDocument {
+                version: "2026.07.02.1".to_string(),
+                id: "co-work".to_string(),
+                name: "Co-work".to_string(),
+                revision: "2026.07.02.1".to_string(),
+                status: Status::Current,
+                min_capsem_version: Some("1.4.0".to_string()),
+                software: Vec::new(),
+                config: Vec::new(),
+                images: vec![ProfileArchitectureImages {
+                    architecture: Architecture::Arm64,
+                    artifacts: vec![ProfileImageArtifactRef {
+                        kind: ProfileImageArtifactKind::Rootfs,
+                        name: "rootfs.erofs".to_string(),
+                        url: "/profiles/releases/2026.07.02.1/co-work/arm64/rootfs.erofs"
+                            .to_string(),
+                        bytes: 42,
+                        digest: digest_set(),
+                        status: Status::Current,
+                    }],
+                    evidence: vec![EvidenceRef {
+                        kind: "abom".to_string(),
+                        url: "/profiles/releases/2026.07.02.1/co-work/arm64/abom.cdx.json"
+                            .to_string(),
+                        digest: digest_set(),
+                    }],
+                }],
+            },
+        );
+
+        let mut manifests = BTreeMap::new();
+        manifests.insert(
+            "stable".to_string(),
+            BTreeMap::from([(
+                "1.4.0".to_string(),
+                ReleaseManifest {
+                    version: "1.4.0".to_string(),
+                    status: Status::Current,
+                    packages: vec![PackageInventoryRow {
+                        name: "Capsem-1.4.0.pkg".to_string(),
+                        version: "1.4.0".to_string(),
+                        kind: PackageKind::MacosPkg,
+                        platform: "macos".to_string(),
+                        architecture: Architecture::Arm64,
+                        url: "/packages/stable/1.4.0/Capsem-1.4.0.pkg".to_string(),
+                        bytes: 42,
+                        digest: digest_set(),
+                        status: Status::Current,
+                        evidence: Vec::new(),
+                    }],
+                    binaries: vec![BinaryInventoryRow {
+                        name: "capsem".to_string(),
+                        version: "1.4.0".to_string(),
+                        package: "Capsem-1.4.0.pkg".to_string(),
+                        install_path: "/usr/local/bin/capsem".to_string(),
+                        platform: "macos".to_string(),
+                        architecture: Architecture::Arm64,
+                        bytes: 7,
+                        digest: digest_set(),
+                        status: Status::Current,
+                        sbom_component_ref: "SPDXRef-File-capsem".to_string(),
+                    }],
+                    profiles,
+                },
+            )]),
+        );
+
+        let ledger = ReleaseLedger::derive(&catalog, &manifests);
+        assert!(ledger.entries.iter().any(|entry| {
+            entry.channel == "stable"
+                && entry.kind == ReleaseLedgerKind::Package
+                && entry.name == "Capsem-1.4.0.pkg"
+        }));
+        assert!(ledger.entries.iter().any(|entry| {
+            entry.channel == "stable"
+                && entry.kind == ReleaseLedgerKind::Binary
+                && entry.name == "capsem"
+        }));
+        assert!(ledger.entries.iter().any(|entry| {
+            entry.channel == "stable"
+                && entry.kind == ReleaseLedgerKind::Profile
+                && entry.profile.as_deref() == Some("co-work")
+        }));
+        assert!(ledger.entries.iter().any(|entry| {
+            entry.channel == "stable"
+                && entry.kind == ReleaseLedgerKind::ProfileImage
+                && entry.profile.as_deref() == Some("co-work")
+                && entry.architecture == Some(Architecture::Arm64)
+        }));
+        assert!(ledger.entries.iter().any(|entry| {
+            entry.channel == "nightly" && entry.kind == ReleaseLedgerKind::Manifest
+        }));
     }
 }

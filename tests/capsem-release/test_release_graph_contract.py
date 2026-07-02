@@ -99,3 +99,21 @@ def test_fixture_has_stable_and_nightly() -> None:
     assert stable["profiles"]["co-work"]["revision"].endswith("-stable")
     assert nightly["profiles"]["co-work"]["min_capsem_version"] == "1.4.0"
     assert nightly["profiles"]["co-work"]["images"][0]["evidence"][0]["kind"] == "abom"
+
+
+def test_ledger_is_derived_not_authoritative() -> None:
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+    source = _source()
+
+    assert "ledger" not in graph
+    assert "pub struct ReleaseLedger" in source
+    assert "pub fn derive(" in source
+    stable = graph["manifests"]["stable"]["1.4.0"]
+    derived_kinds = {
+        "manifest" if graph["channels"]["stable"]["manifests"] else "",
+        "package" if stable["packages"] else "",
+        "binary" if stable["binaries"] else "",
+        "profile" if stable["profiles"] else "",
+        "profile_image" if stable["profiles"]["co-work"]["images"] else "",
+    }
+    assert derived_kinds == {"manifest", "package", "binary", "profile", "profile_image"}
