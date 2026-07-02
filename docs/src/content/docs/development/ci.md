@@ -13,9 +13,9 @@ Capsem uses GitHub Actions for continuous integration and release automation.
 |----------|---------|-------------|
 | `ci.yaml` | Pull requests and push to main | PR quality gate: Rust unit/integration, frontend, Python contracts, install checks, and explicit runner substitutions |
 | `release.yaml` | Tag push (`v*`) | Build apps (macOS + Linux), package with the current public asset manifest, create GitHub release, then update release.capsem.org binary metadata |
-| `release-assets.yaml` | Manual | Build VM assets, generate `assets/manifest.json`, and optionally deploy the asset channel |
+| `release-assets.yaml` | Manual | Build profile images/config/evidence, generate `assets/manifest.json`, and optionally deploy the asset channel |
 | `release-channel-staging.yaml` | Manual | Build a deterministic staging asset channel fixture, deploy it to a Cloudflare Pages preview branch, and validate the same release-channel contract without invoking `build-assets`, `build-app-macos`, or `build-app-linux` |
-| `release-binary-staging.yaml` | Manual | Build a deterministic binary-channel dry-run bundle from fake host packages and the live asset manifest, then prove VM asset metadata is unchanged without creating a GitHub release or deploying release.capsem.org |
+| `release-binary-staging.yaml` | Manual | Build a deterministic binary-channel dry-run bundle from fake host packages and the live asset manifest, then prove profile image metadata is unchanged without creating a GitHub release or deploying release.capsem.org |
 | `docs.yaml` | Push to main | Deploy docs.capsem.org on each main merge, then smoke the live docs site |
 | `site.yaml` | Push to main | Deploy capsem.org on each main merge, then smoke the live marketing site |
 | `release-channel.yaml` | Called by binary or asset release | Deploy release.capsem.org from the generated release-channel site artifact |
@@ -77,34 +77,26 @@ It verifies that the local checkout has no unpublished commits relative to
 `origin/main`; remote `ci.yaml` exposes `pr-gate`, aggregates `test-linux`,
 `test`, `test-install`, `docs-build`, `site-build`, and `release-site-build`, runs with
 `if: ${{ always() }}` and asserts every dependency result; branch protection or
-active branch rulesets require `pr-gate`; `release.capsem.org` resolves and
-serves the asset channel; and the public index, `health.json`, and manifest
-agree on current binary, VM asset, asset release date, generated timestamp,
-profile revision, profile catalog URL, profile update source, and channel
-manifest path. It verifies that the binary update target, state, source, and
-package file metadata match the canonical binary metadata; that current host
-binary package URLs, SHA-256 hashes, and sizes in `health.json` and release
-evidence match the fetched channel manifest's current binary release; that the
-VM asset update target, manifest, base URL, compatibility, and newer-version
-requirements match the canonical asset metadata; that current VM asset file
-URLs, BLAKE3 hashes, and sizes match the fetched channel manifest's current
-asset release; and that the profile update hash, compatibility, and
-newer-version requirements match the canonical profile catalog metadata. Image
-freshness must remain explicitly unpublished until an image release rail is
-added to the asset channel. The immutable profile catalog artifact is fetched
-and checked against its advertised BLAKE3 hash, schema, revision, and URL
-policy.
-It also resolves published host SBOM and VM OBOM evidence artifacts, verifies
-their advertised hashes and sizes, validates their SPDX 2.3 or CycloneDX
-document shape, and validates attestation subjects and predicate URLs against
-the published evidence lists. VM asset attestations are incomplete unless
-`github_attestations_vm_assets` is present and its `predicate_url` points at the
-published VM OBOM evidence for the current asset release. It verifies live
-`Cache-Control` headers too: mutable release-channel
-pointers must stay fresh, while immutable asset and profile artifacts must keep
-long-lived immutable caching. If the local checkout has unpublished commits,
-publish or merge those commits before changing remote protection. It does not
-push, deploy, create tags, edit rulesets, or mutate Cloudflare.
+active branch rulesets require `pr-gate`; and `release.capsem.org` resolves and
+serves the generated release graph. The public contract is the root
+`channels.json`, the selected stable or nightly manifest record, the profile
+catalog referenced by that manifest, and the profile-owned config, image, ABOM,
+and OBOM files referenced by that profile catalog.
+
+The checker verifies every channel record's `version`, `status`, manifest URL,
+SHA-256, BLAKE3, and HMAC; confirms exactly one selectable record is `current`
+per channel; and rejects revoked records as update targets. It then validates
+the selected manifest's package artifacts, per-binary inventory, host SBOM
+references, and binary attestation references independently from the profile
+catalog. Profile checks validate `min_capsem_version`, config file metadata,
+profile image file URLs, BLAKE3 and SHA-256 hashes, HMAC, byte sizes, software
+inventory, ABOM/OBOM evidence, and profile image attestation predicate URLs from the
+profile-owned records. It also verifies live `Cache-Control` headers: mutable
+pointers (`/`, `/channels.json`, and `/assets/<channel>/manifest.json`) must
+stay fresh, while immutable profile release artifacts keep long-lived immutable
+caching. If the local checkout has unpublished commits, publish or merge those
+commits before changing remote protection. It does not push, deploy, create
+tags, edit rulesets, or mutate Cloudflare.
 
 ### Live release activation order
 
@@ -123,24 +115,24 @@ later steps depend on earlier public state being true.
 6. Run `release-channel-staging.yaml` against the Cloudflare Pages staging
    branch and verify it passes the same release-channel contract without
    invoking `build-assets`, `build-app-macos`, or `build-app-linux`.
-7. Run the manual VM asset workflow as a dry run and review the
+7. Run the manual profile image workflow as a dry run and review the
    `asset-release-plan`, `asset-release-delta`, and `asset-channel-preview`
    artifacts. For metadata-only asset release changes, review
    `asset-release-delta` and `asset-channel-preview`; no `asset-release-plan`
-   is expected because there are no immutable VM blobs to republish.
+   is expected because there are no immutable profile image blobs to republish.
 8. Run `release-binary-staging.yaml` and review the
    `binary-channel-dry-run-bundle` artifact. It must contain package metadata,
    `capsem-sbom.spdx.json`, `manifest.before.json`, the updated manifest,
    `record-binary.json`, `proof.json`, and the release-site preview, while
-   proving VM asset metadata did not change. This is the safe binary dry-run
+   proving profile image metadata did not change. This is the safe binary dry-run
    path; do not add `workflow_dispatch` to the real tag-triggered
    `release.yaml`.
 9. Run the tag-triggered binary release rail only from an immutable `vX.Y.Z`
    tag after confirming the tag does not already exist remotely.
-10. Run the manual VM asset workflow live only after reviewing
+10. Run the manual profile image workflow live only after reviewing
    `asset-release-plan` when `asset_blobs_changed` is true, or reviewing the
    metadata-only delta and channel preview when only release-channel metadata
-   changed; it must publish changed VM blobs, attest them, and deploy
+   changed; it must publish changed profile image blobs, attest them, and deploy
    `release.capsem.org`.
 11. Run installed update smokes for the signed macOS `.pkg`, Linux `.deb`, VM
    asset refresh, profile update path, and staged cross-surface update state.
@@ -166,7 +158,7 @@ of pretending the hosted lane is identical.
 
 ## Site deploy workflows
 
-`docs.yaml` and `site.yaml` are independent from binary and VM asset release
+`docs.yaml` and `site.yaml` are independent from binary and profile image release
 rails. Pull requests build docs and marketing through the `ci.yaml`
 `docs-build`, `site-build`, and `release-site-build` jobs, which feed the required `pr-gate`. Pushes to
 `main` deploy through Cloudflare Pages and then smoke the public custom domain:
@@ -250,12 +242,12 @@ Each release publishes:
 - `Capsem_{version}_amd64.deb` and `Capsem_{version}_arm64.deb` -- Linux packages
 - `capsem-sbom.spdx.json` -- host SBOM
 
-Installers carry host binaries and the selected manifest, plus materialized
-profiles and `manifest-origin.json` provenance. Heavy VM assets are downloaded
-from `release.capsem.org/assets/releases/<asset-version>/` on first use through
-`capsem update --assets` and verified against the manifest before boot. Tag
-releases do not rebuild or upload VM assets, and they do not publish
-`latest.json`; binary freshness comes from the release-channel health index.
+Installers carry host binaries, materialized profiles, the selected manifest
+URL, and `manifest-origin.json` provenance. Heavy profile image files are
+downloaded on first use through `capsem update --assets` and verified against
+the profile-owned file metadata before boot. Tag releases do not rebuild or
+upload profile images, and they do not publish `latest.json`; binary freshness
+comes from the selected manifest in the release graph.
 
 Release packaging materializes runtime profiles through the same profile-derived build rail as
 local development: `capsem-admin profile materialize` copies checked-in config
@@ -266,36 +258,41 @@ profiles or bypass that step.
 
 ## Asset channel workflow (`release-channel.yaml`)
 
-`release-assets.yaml` is the manual VM asset release entrypoint. It builds the
-profile-owned VM assets for both supported architectures, generates the same
-`assets/manifest.json` produced by `capsem-admin manifest generate`, and builds
-a channel preview. By default it runs as a dry run; live publication calls
-`release-channel.yaml`.
+`release-assets.yaml` is the manual profile image release entrypoint. It builds
+the profile-owned image files for both supported architectures, generates the
+same `assets/manifest.json` produced by `capsem-admin manifest generate`, and
+builds a channel preview. By default it runs as a dry run; live publication
+calls `release-channel.yaml`.
 
 Local release preflight has one extra release-only OBOM prerequisite beyond the
 normal developer bootstrap path: `bash scripts/check-release-workflow.sh`
 expects `cdxgen` in `PATH`. Install it with
-`npm install -g @cyclonedx/cdxgen` before local VM asset release dry runs; the
+`npm install -g @cyclonedx/cdxgen` before local profile image release dry runs; the
 manual asset workflow installs `@cyclonedx/cdxgen@latest` in CI before invoking
 the build with `CAPSEM_CDXGEN_CMD=cdxgen`.
 
 `release.capsem.org` is the asset channel publication surface. It is generated
-from the manifest and VM blobs produced by the asset workflow. The generated
-deploy root is `target/release-channel/`; the machine manifest lives at:
+from the release graph JSON and profile image files produced by the asset
+workflow. The generated deploy root is `target/release-channel/`; the machine
+manifests live at:
 
 ```text
 target/release-channel/assets/stable/manifest.json
+target/release-channel/assets/nightly/manifest.json
+target/release-channel/channels.json
 ```
 
-After deployment, clients read it as:
+After deployment, clients read them as:
 
 ```text
 https://release.capsem.org/assets/stable/manifest.json
+https://release.capsem.org/assets/nightly/manifest.json
+https://release.capsem.org/channels.json
 ```
 
 ### Release-channel Cloudflare prerequisites
 
-Before running a live binary or VM asset channel deploy, create or verify the
+Before running a live binary or profile image channel deploy, create or verify the
 Cloudflare Pages project serving `release.capsem.org`, attach the
 `release.capsem.org` custom domain, and configure these GitHub Actions secrets:
 
@@ -309,103 +306,97 @@ Cloudflare Pages project serving `release.capsem.org`, attach the
 `release.capsem.org` through the configured account/token. After Cloudflare
 publishes the generated site, it runs `scripts/check-release-site-contract.py` against
 `https://release.capsem.org`. That Python validator reuses the remote release
-readiness contract, so it checks the index, `health.json`, channel manifest,
-evidence documents, BLAKE3/SHA-256 content, attestation references, and cache
-headers rather than only checking that files exist. The workflow also keeps the
-inline public-domain smoke for `https://release.capsem.org/`, `/health.json`,
-and the channel manifest.
+readiness contract, so it checks the index, `channels.json`, selected channel
+manifest records, profile catalogs, evidence documents, BLAKE3/SHA-256/HMAC
+content, attestation references, and cache headers rather than only checking
+that files exist. The workflow also keeps the inline public-domain smoke for
+`https://release.capsem.org/`, `/channels.json`, and the selected channel
+manifest.
 
-Live VM asset releases run the same Cloudflare Pages project preflight before
+Live profile image releases run the same Cloudflare Pages project preflight before
 the matrix builds start. Dry runs skip that API check, but `dry_run=false` must
 prove that the configured `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`
-can see the Pages project serving `release.capsem.org` before building VM images, publishing
-immutable GitHub asset blobs, or writing provenance attestations.
+can see the Pages project serving `release.capsem.org` before building profile
+images, publishing immutable GitHub asset blobs, or writing provenance
+attestations.
 
-The release discipline is that binary releases and VM asset releases both call
-the channel workflow after updating their own part of the release-channel
-manifest. A tag-triggered binary release records package hashes, host SBOM, and
-attestation references, then mirrors the already-published VM blobs from
-`assets/releases/<asset-version>/` without rebuilding them. That generated
-channel output still includes the immutable profile catalog artifact under
-`profiles/releases/<revision>/catalog.json`, so profile metadata can move with
-the release channel independently from VM image rebuilds. The binary updater is
-forward-compatible from package builds that include the updater; older installed
-binaries that only print manual rebuild/install advice require one manual
-installer bootstrap before they can follow the decoupled binary rail. A manual VM asset
-release produces the manifest, immutable blob paths, and OBOM/provenance
-evidence, then publishes an immutable GitHub Release tagged
-`assets-v<asset-version>` with arch-prefixed `vmlinuz`, `initrd.img`,
-`rootfs.erofs`, and `obom.cdx.json` artifacts before deploying the channel.
-Before comparing the asset delta or building the channel preview, the asset
-workflow overlays the live channel's `binaries` metadata into the generated
-asset manifest so package hashes, host SBOM references, and binary attestation
-state survive VM asset releases. The first channel publication can still
-bootstrap when the previous manifest is unavailable. The first channel
-bootstrap may have no host binary evidence yet because the tag-triggered binary
-rail has not recorded package files, host SBOM references, or host binary
-attestations; once binary files are published, missing host SBOM evidence is
-release-blocking.
-Manual VM asset releases do not accept or publish a binary-version override;
-binary release metadata is owned by the tag-triggered binary rail.
+The release discipline is that binary releases and profile image releases both
+call the channel workflow after updating only their own part of the release
+graph. A tag-triggered binary release records package artifacts, host SBOM,
+host attestations, and the per-binary inventory for one channel without
+touching profiles, profile images, or other channels. Every executable inside
+each package must be listed with SHA-256, BLAKE3, HMAC, package provenance, and
+an SBOM component reference so enterprise allowlists can reason about binaries
+directly. A manual profile image release updates one channel/profile catalog,
+profile config files, profile images, software inventory, ABOM/OBOM evidence,
+and matching manifest digests without mutating package metadata, per-binary
+inventory, other profiles, or other channels. Profiles may declare
+`min_capsem_version` when they need newer client behavior; they do not select a
+Capsem binary.
+
+The generated release graph is append-only for auditability. `channels.json`
+lists all channels and their versioned manifest records. Each manifest record
+has exactly one `status` enum value: `current`, `supported`, `deprecated`, or
+`revoked`. A manifest record is never marked removed; absence from the channel
+list means it is no longer published. Stable and nightly are separate channels,
+so updating the co-work nightly profile can leave stable, packages, other
+profiles, and other channels byte-for-byte unchanged. The stable-to-nightly
+acceptance gate starts on
+`https://release.capsem.org/assets/stable/manifest.json`, switches to
+`https://release.capsem.org/assets/nightly/manifest.json`, verifies the nightly
+binary/profile graph, proves stable cached data is unchanged, and switches back
+to stable.
+
+The first channel publication can still bootstrap when the previous manifest is
+unavailable. The first channel bootstrap may have no host binary evidence yet
+because the tag-triggered binary rail has not recorded package files, host SBOM
+references, or host binary attestations; once binary files are published,
+missing host SBOM evidence is release-blocking. Manual profile image releases
+do not accept or publish a binary-version override; binary release metadata is
+owned by the tag-triggered binary rail.
 For `dry_run=false`, the workflow first verifies that the configured Cloudflare
 account/token can see the Pages project serving `release.capsem.org`, so a bad release-site
-binding fails before VM image builds or immutable GitHub asset publication.
+binding fails before profile image builds or immutable GitHub asset publication.
 Dry runs upload `asset-release-plan` with the generated upload script so the
 planned `gh release` commands can be reviewed without scraping workflow logs.
 Every asset release run also uploads `asset-release-delta` with the manifest
 comparison result that decided whether the channel should publish.
 The delta emits both `asset_changed` and `asset_blobs_changed`: metadata-only
-asset release changes, such as deprecating an older VM asset release, still
-deploy the release channel without republishing immutable VM blobs. The
+asset release changes, such as deprecating an older profile image release, still
+deploy the release channel without republishing immutable profile image blobs. The
 `asset-release-plan`, GitHub Release upload, and provenance attestation steps
 run only when `asset_blobs_changed` is true.
 The first channel publication may continue when the previous
 `release.capsem.org/assets/<channel>/manifest.json` is unavailable; the delta
 gate records `previous_manifest_unavailable` as a changed asset release so the
 initial site can bootstrap. Later publications still compare against the live
-previous manifest and skip deployment only when current VM blob hashes, asset release metadata, and manifest policy are all unchanged. Manifest policy includes channel-visible fields such as `refresh_policy`.
+previous manifest and skip deployment only when current profile image hashes,
+asset release metadata, and manifest policy are all unchanged. Manifest policy
+includes channel-visible fields such as `refresh_policy`.
 Neither rail is complete until `release.capsem.org` reflects the new channel
 state. After Cloudflare deploys, `release-channel.yaml` smoke-checks the public
-`https://release.capsem.org/` index, `/health.json`, and
+`https://release.capsem.org/` index, `/channels.json`, and
 `/assets/<channel>/manifest.json` before the workflow can pass, using
 `scripts/check-release-site-contract.py`. The checks also
-reject stale public HTML: the human index must show the same current binary,
-current VM asset version, asset release date, generated timestamp, profile
-revision, profile catalog URL, profile update source, and channel manifest path
-as the fetched health JSON and manifest. It verifies that binary update target,
-state, source, and package file metadata match the canonical binary metadata;
-that VM asset update target, manifest, base URL, compatibility, and
-newer-version requirements match the canonical asset metadata; and that profile
-update hash, compatibility, and newer-version requirements match the canonical
-profile catalog metadata. Image freshness must remain explicitly unpublished
-until an image release rail is added to the asset channel. It resolves published
-host SBOM and VM OBOM evidence artifacts from `health.json`, verifies their
-advertised hashes and sizes, validates their SPDX 2.3 or CycloneDX document
-shape, and validates attestation subjects and predicate URLs against the
-published evidence lists. VM asset attestations are incomplete unless
+reject stale public HTML: the human index must show the same generated
+timestamp, channel list, manifest URL, manifest version, package inventory,
+per-binary inventory, profile revision, profile catalog URL, image artifact
+URLs, and evidence URLs as the fetched `channels.json`, selected manifest, and
+profile catalog. It verifies that package file metadata and per-binary metadata
+match the canonical binary metadata; that profile image file URLs,
+compatibility, BLAKE3, SHA-256, HMAC, and byte sizes match the profile catalog;
+and that profile config files, software inventory, ABOM/OBOM evidence, and
+`min_capsem_version` are rendered from the profile JSON rather than invented by
+the site. It resolves published host SBOM and VM OBOM evidence artifacts from
+the graph, verifies their advertised hashes and sizes, validates their SPDX 2.3
+or CycloneDX document shape, and validates attestation subjects and predicate
+URLs against the published evidence lists. Profile image attestations are incomplete unless
 `github_attestations_vm_assets` is present and its `predicate_url` points at the
-published VM OBOM evidence for the current asset release.
+published VM OBOM evidence for the current profile image release.
 It also verifies public `Cache-Control` headers: mutable release-channel
-pointers (`/`, `/health.json`, and `/assets/<channel>/manifest.json`) must stay
+pointers (`/`, `/channels.json`, and `/assets/<channel>/manifest.json`) must stay
 `no-cache, must-revalidate`, while immutable asset and profile release
 artifacts must stay `public, max-age=31536000, immutable`.
-
-The generated `health.json` is the compact machine-readable release-site index.
-It carries schema `capsem.assets_channel.health.v1`, the active manifest URL,
-the immutable asset base URL, current binary and asset versions, current asset
-file download URLs, VM OBOM references, host SBOM references, binary file
-metadata when present, dated asset release history in `asset_releases`
-including deprecated VM asset releases, and host plus VM asset attestation
-references. It also carries an explicit `updates` block with
-`latest` targets for binary/assets/profile/image freshness checks so clients do
-not reverse-engineer status from unrelated fields. Use it for status/provenance
-checks; use `assets/<channel>/manifest.json` as the compatibility and hash
-authority.
-
-Deprecated VM asset releases stay visible in `health.json` and the human index
-for auditability, but runtime resolution and `capsem update --assets` skip them
-for new sessions/downloads. Existing VM pins are preserved by the VM asset-pin
-rail rather than by selecting deprecated releases again.
 
 ## Running CI checks locally
 

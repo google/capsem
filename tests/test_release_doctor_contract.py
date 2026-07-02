@@ -671,10 +671,11 @@ def test_release_channel_cloudflare_prerequisites_are_documented() -> None:
         assert "`CLOUDFLARE_ACCOUNT_ID`" in text
         assert "`CLOUDFLARE_API_TOKEN`" in text
         assert "`scripts/check-release-site-contract.py`" in text
-        assert "BLAKE3/SHA-256 content" in text
+        assert "BLAKE3/SHA-256" in text
         assert "cache headers" in text_lower
         assert "rather than only checking that files exist" in text_lower
-        assert "before running a live binary or vm asset channel deploy" in text_lower
+        assert "before running a live binary or" in text_lower
+        assert "channel deploy" in text_lower
 
 
 def test_cloudflare_pages_project_checker_reports_visibility_failures() -> None:
@@ -739,11 +740,11 @@ def test_asset_channel_deploy_smoke_verifies_public_evidence_artifacts() -> None
     assert "attestation_predicate_evidence_urls" in workflow
     assert "attestation predicate_url {predicate_url} missing from {predicate_label}" in workflow
     assert "attestation subject {subject} missing from published file lists" in workflow
-    assert "resolves published host SBOM and VM OBOM evidence artifacts from `health.json`" in docs_text
+    assert "resolves published host SBOM and VM OBOM evidence artifacts from the graph" in docs_text
     assert "verifies their advertised hashes and sizes" in docs_text
     assert "validates their SPDX 2.3 or CycloneDX document shape" in docs_text
     assert "validates attestation subjects and predicate URLs" in docs_text
-    assert "VM asset attestations are incomplete unless" in docs_text
+    assert "Profile image attestations are incomplete unless" in docs_text
     assert "`github_attestations_vm_assets`" in docs_text
     assert "`predicate_url` points at the published VM OBOM evidence" in docs_text
 
@@ -751,7 +752,7 @@ def test_asset_channel_deploy_smoke_verifies_public_evidence_artifacts() -> None
 def test_docs_preserve_vm_obom_attestation_predicate_contract() -> None:
     docs_text = " ".join(_source_text("docs/src/content/docs/development/ci.md").split())
 
-    assert "VM asset attestations are incomplete unless" in docs_text
+    assert "Profile image attestations are incomplete unless" in docs_text
     assert "`github_attestations_vm_assets`" in docs_text
     assert "`predicate_url` points at the published VM OBOM evidence" in docs_text
 
@@ -1061,9 +1062,10 @@ def test_binary_release_does_not_publish_latest_json_updater_metadata() -> None:
 
     assert "latest.json" not in workflow
     assert "api.github.com/repos/google/capsem/releases/latest" not in workflow
-    assert "binary freshness comes from the release-channel health index" in docs
-    assert "releases do not rebuild or upload VM assets, and they do not publish" in docs
-    assert "`latest.json`; binary freshness comes from the release-channel health index" in docs
+    docs_text = " ".join(docs.split())
+    assert "binary freshness comes from the selected manifest in the release graph" in docs_text
+    assert "releases do not rebuild or upload profile images, and they do not publish" in docs_text
+    assert "`latest.json`; binary freshness comes from the selected manifest in the release graph" in docs_text
     assert "`latest.json` is absent in the current release rail" in release_skill
     assert "Do not make release creation depend on `latest.json`" in release_skill
 
@@ -1569,17 +1571,21 @@ def test_asset_channel_documented_as_assets_manifest_url_not_release_index_json(
         assert "target/release-channel/assets/<channel>/manifest.json" in text or (
             "target/release-channel/assets/stable/manifest.json" in text
         )
-        assert "capsem.assets_channel.health.v1" in text
-        assert "host SBOM references" in text
-        assert "explicit `updates` block" in text
-        assert "`latest` targets" in text
-        assert "binary/assets/profile/image freshness checks" in text
-        assert "dated asset release history" in text
+        assert "https://release.capsem.org/assets/nightly/manifest.json" in text
+        assert "https://release.capsem.org/channels.json" in text
+        assert "`channels.json`" in text
+        assert "host SBOM" in text
+        assert "package artifacts" in text
+        assert "per-binary inventory" in text
+        assert "versioned manifest records" in text
+        assert "`current`, `supported`, `deprecated`, or `revoked`" in normalized_text
+        assert "`min_capsem_version`" in text
         assert "first channel bootstrap may have no host binary evidence yet" in normalized_text
         assert (
             "once binary files are published, missing host SBOM evidence is release-blocking"
             in normalized_text
         )
+        assert "stable-to-nightly acceptance gate" in normalized_text
         assert "channels/stable/index.json" not in text
 
     asset_skill_text = " ".join(asset_skill.split())
@@ -1667,6 +1673,43 @@ def test_release_process_skill_documents_multi_channel_graph() -> None:
     assert "current binary" not in release_skill_text
     assert "VM artifact" not in release_skill
     assert "schema_version" not in release_skill
+
+
+def test_docs_describe_multi_channel_release_graph() -> None:
+    docs_paths = [
+        PROJECT_ROOT / "docs/src/content/docs/security/build-verification.md",
+        PROJECT_ROOT / "docs/src/content/docs/development/ci.md",
+        PROJECT_ROOT / "docs/src/content/docs/architecture/build-system.md",
+    ]
+    combined = "\n".join(path.read_text() for path in docs_paths)
+    combined_text = " ".join(combined.split())
+
+    for required in [
+        "`channels.json`",
+        "stable and nightly",
+        "versioned manifest records",
+        "exactly one `status` enum value",
+        "`current`, `supported`, `deprecated`, or `revoked`",
+        "package artifacts",
+        "per-binary inventory",
+        "Every executable inside each package must be listed",
+        "SHA-256, BLAKE3, HMAC",
+        "`min_capsem_version`",
+        "Profiles own profile images, config files, software inventory, and ABOM/OBOM",
+        "profile-owned config, image, ABOM, and OBOM files",
+        "https://release.capsem.org/assets/stable/manifest.json",
+        "https://release.capsem.org/assets/nightly/manifest.json",
+        "stable-to-nightly acceptance gate",
+        "absence from the channel list",
+        "--manifest file:///path/to/assets/manifest.json",
+    ]:
+        assert required in combined_text, required
+
+    assert "health.json" not in combined
+    assert "capsem.assets_channel.health.v1" not in combined
+    assert "current binary" not in combined_text
+    assert "VM artifact" not in combined
+    assert "schema_version" not in combined
 
 
 def test_asset_and_install_skills_document_channel_switching() -> None:
@@ -1774,7 +1817,7 @@ def test_ci_docs_describes_three_independent_publication_rails() -> None:
         in docs
     )
     assert (
-        "| `release-assets.yaml` | Manual | Build VM assets, generate `assets/manifest.json`, and optionally deploy the asset channel |"
+        "| `release-assets.yaml` | Manual | Build profile images/config/evidence, generate `assets/manifest.json`, and optionally deploy the asset channel |"
         in docs
     )
     assert (
@@ -1782,7 +1825,7 @@ def test_ci_docs_describes_three_independent_publication_rails() -> None:
         in docs
     )
     assert (
-        "| `release-binary-staging.yaml` | Manual | Build a deterministic binary-channel dry-run bundle from fake host packages and the live asset manifest, then prove VM asset metadata is unchanged without creating a GitHub release or deploying release.capsem.org |"
+        "| `release-binary-staging.yaml` | Manual | Build a deterministic binary-channel dry-run bundle from fake host packages and the live asset manifest, then prove profile image metadata is unchanged without creating a GitHub release or deploying release.capsem.org |"
         in docs
     )
     assert (
@@ -1805,9 +1848,9 @@ def test_ci_docs_describes_three_independent_publication_rails() -> None:
     assert "fails unless every dependency job reports" in docs
     assert "After Cloudflare deploys, `release-channel.yaml` smoke" in docs
     assert "`https://release.capsem.org/` index" in docs
-    assert "`/health.json`, and" in docs
+    assert "`/channels.json`, and" in docs
     assert "`/assets/<channel>/manifest.json` before the workflow can pass" in docs
-    assert "`docs.yaml` and `site.yaml` are independent from binary and VM asset release" in docs
+    assert "`docs.yaml` and `site.yaml` are independent from binary and profile image release" in docs
     assert "`https://docs.capsem.org/`, content type `text/html`" in docs
     assert "`https://capsem.org/`, content type `text/html`" in docs
 

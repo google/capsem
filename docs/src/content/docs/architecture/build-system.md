@@ -341,6 +341,31 @@ session mutations, workspace writes, or post-boot state.
 | Build ledger | build pipeline | Debug-only rendered Dockerfile/context hashes, profile/package inputs, EROFS settings |
 | OBOM | cdxgen | Published installed base-image package/component names and versions |
 
+## Profile Outputs in the Release Graph
+
+Profile builds feed the release graph through profile-owned records. The root
+`channels.json` file lists stable, nightly, and any future channel, each with
+versioned manifest records and one `status` enum value: `current`, `supported`,
+`deprecated`, or `revoked`. A channel manifest can change package artifacts and
+per-binary inventory without changing profiles. A profile release can change
+one profile's config files, profile images, software inventory, ABOM/OBOM
+evidence, and catalog digest without changing packages, other profiles, or
+other channels.
+
+The graph hierarchy is:
+
+```text
+channels.json
+  -> assets/<channel>/manifest.json
+    -> profiles/releases/<profile-revision>/catalog.json
+      -> profile images, config files, software inventory, ABOM/OBOM evidence
+```
+
+Profiles may declare `min_capsem_version` when their config or image requires a
+newer client. They do not reference the selected Capsem package or binary; the
+manifest owns package metadata and every per-binary SHA-256, BLAKE3, HMAC, and
+SBOM component reference.
+
 The `audit` subcommand parses vulnerability scanner output and fails on CRITICAL or HIGH findings.
 
 ## CLI Commands

@@ -143,54 +143,72 @@ graph TD
     E --> F["Boot<br/>assets loaded from verified dir"]
 ```
 
-### manifest.json schema
+### Release graph schema
+
+The public update graph starts at `https://release.capsem.org/channels.json`.
+It lists channels such as stable and nightly. Each channel contains versioned
+manifest records, and every record has exactly one `status` enum value:
+`current`, `supported`, `deprecated`, or `revoked`. Manifest records carry
+`version`, URL, SHA-256, BLAKE3, and HMAC metadata. They remain present for
+auditability; absence from the channel list is removal.
+
+The selected manifest is the compatibility and hash authority for one channel.
+It lists package artifacts separately from the per-binary inventory and points
+to profile catalogs:
 
 ```json
 {
-  "format": 2,
-  "assets": {
-    "current": "2026.0627.1",
-    "releases": {
-      "2026.0627.1": {
-        "min_binary": "1.0.0",
-        "arches": {
-          "arm64": {
-            "vmlinuz": {"hash": "<64-char blake3>", "size": 8786432},
-            "initrd.img": {"hash": "<64-char blake3>", "size": 996043},
-            "rootfs.erofs": {"hash": "<64-char blake3>", "size": 978903040},
-            "obom.cdx.json": {"hash": "<64-char blake3>", "size": 3499593}
-          }
-        }
-      }
+  "version": "1.4.0",
+  "channel": "stable",
+  "packages": [
+    {
+      "name": "Capsem-1.4.0.pkg",
+      "kind": "macos-pkg",
+      "url": "https://github.com/google/capsem/releases/download/v1.4.0/Capsem-1.4.0.pkg",
+      "sha256": "<sha256>",
+      "blake3": "<blake3>",
+      "hmac": "<hmac>",
+      "bytes": 12345678,
+      "sbom": "https://github.com/google/capsem/releases/download/v1.4.0/capsem-sbom.spdx.json"
     }
-  },
-  "binaries": {
-    "current": "1.3.1782582155",
-    "releases": {
-      "1.3.1782582155": {
-        "min_assets": "2026.0627.1",
-        "files": [
-          {"name": "Capsem-1.3.1782582155.pkg", "sha256": "<sha256>"}
-        ]
-      }
+  ],
+  "binaries": [
+    {
+      "name": "capsem",
+      "version": "1.4.0",
+      "package": "Capsem-1.4.0.pkg",
+      "path": "/usr/local/bin/capsem",
+      "sha256": "<sha256>",
+      "blake3": "<blake3>",
+      "hmac": "<hmac>",
+      "sbom_component": "SPDXRef-File-capsem"
     }
-  }
+  ],
+  "profiles": [
+    {
+      "id": "co-work",
+      "revision": "2026.07.02.1-stable",
+      "catalog_url": "https://release.capsem.org/profiles/releases/2026.07.02.1-stable/catalog.json",
+      "sha256": "<sha256>",
+      "blake3": "<blake3>",
+      "hmac": "<hmac>"
+    }
+  ]
 }
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `format` | integer | Manifest format; current format is `2` |
-| `assets.current` | string | Current VM asset release id |
-| `assets.releases.*.arches` | map | Arch -> logical asset names |
-| `assets.releases.*.deprecated` | boolean | Release-history flag; deprecated VM asset releases remain auditable but are not selected for new sessions or downloads |
-| `vmlinuz`, `initrd.img`, `rootfs.erofs`, `obom.cdx.json` | object | Bare logical filename with BLAKE3 hash and byte size |
-| `binaries.current` | string | Current binary release id |
-| `binaries.releases.*.files` | list | Published package filenames with SHA-256 metadata |
+Profiles own profile images, config files, software inventory, and ABOM/OBOM
+evidence. A profile may declare `min_capsem_version` when its config or image
+requires newer client behavior, but it does not select the Capsem binary. The
+manifest selects package and binary metadata; the profile catalog selects
+profile-owned image/config/evidence metadata.
 
-On GitHub Releases the VM files are arch-prefixed, for example
-`arm64-rootfs.erofs`; inside the manifest they remain bare names under the
-corresponding arch map.
+Stable and nightly are independent channels. A stable-to-nightly switch is just
+choosing a different manifest URL, for example
+`https://release.capsem.org/assets/stable/manifest.json` or
+`https://release.capsem.org/assets/nightly/manifest.json`, and the release gate
+proves package, per-binary, profile image, config, and evidence data do not
+cross between channels.
 
 ### Hash verification
 
@@ -214,18 +232,21 @@ Validation rules:
 - Version strings must not contain `..`, `/`, or `\`
 - Empty releases are rejected
 
-### Multi-version manifest
+### Multi-version channels
 
-The manifest accumulates entries across releases. Each release merges its new
-version entry with the previous manifest from the latest GitHub release. This
-allows the asset service to download assets for any supported version.
+Channels accumulate versioned manifest records across releases. Adding a new
+stable or nightly manifest does not require mutating profiles, packages, or
+other channels. Deprecating or revoking a manifest changes the record status;
+publishing no record at all means that manifest is removed from the public
+channel list. Runtime selection ignores revoked records.
 
 ## Manifest Role
 
-`manifest.json` is release metadata: asset hashes, sizes, and version index.
-It is published with the release alongside SBOM and provenance attestations.
-Runtime trust comes from profile/corp-selected URLs plus BLAKE3 verification of
-the downloaded bytes.
+`manifest.json` is channel metadata: package artifacts, per-binary inventory,
+profile catalog references, hashes, HMACs, and compatibility. It is published
+with SBOM and provenance attestations. Runtime trust comes from the selected
+manifest URL, profile-owned file metadata, SHA-256/BLAKE3 verification of the
+downloaded bytes, and HMAC verification of the release graph records.
 
 For a custom corp package, generate and verify the manifest from the built asset
 directory before packaging:
