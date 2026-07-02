@@ -69,6 +69,34 @@ def violations(
     ]
 
 
+def diff_summary(
+    old: dict[str, Any],
+    new: dict[str, Any],
+    *,
+    lane: str,
+    channel: str,
+    profile: str | None,
+) -> dict[str, Any]:
+    paths = sorted(changed_paths(old, new))
+    allowed: list[str] = []
+    blocked: list[str] = []
+    for path in paths:
+        rendered = ".".join(path)
+        if allowed_path(path, lane=lane, channel=channel, profile=profile):
+            allowed.append(rendered)
+        else:
+            blocked.append(rendered)
+    return {
+        "lane": lane,
+        "channel": channel,
+        "profile": profile,
+        "accepted": not blocked,
+        "changed_paths": [".".join(path) for path in paths],
+        "allowed_paths": allowed,
+        "violations": blocked,
+    }
+
+
 def _is_channel_manifest_pointer(path: JsonPath, channel: str) -> bool:
     return len(path) >= 3 and path[:3] == ("channels", channel, "manifests")
 
@@ -85,6 +113,11 @@ def _write_lines(lines: Iterable[str]) -> None:
         print(line, file=sys.stderr)
 
 
+def _write_summary(path: Path, summary: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--old", required=True, type=Path)
@@ -92,18 +125,24 @@ def main() -> int:
     parser.add_argument("--lane", required=True, choices=["binary", "profile", "channel"])
     parser.add_argument("--channel", required=True)
     parser.add_argument("--profile")
+    parser.add_argument("--summary", type=Path)
     args = parser.parse_args()
 
     if args.lane == "profile" and not args.profile:
         raise SystemExit("--profile is required for profile lane diff checks")
 
-    blocked = violations(
-        _load_json(args.old),
-        _load_json(args.new),
+    old = _load_json(args.old)
+    new = _load_json(args.new)
+    summary = diff_summary(
+        old,
+        new,
         lane=args.lane,
         channel=args.channel,
         profile=args.profile,
     )
+    if args.summary:
+        _write_summary(args.summary, summary)
+    blocked = summary["violations"]
     if blocked:
         _write_lines(["release graph diff rejected:"] + [f"- {path}" for path in blocked])
         return 1
