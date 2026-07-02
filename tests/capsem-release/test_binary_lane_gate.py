@@ -7,6 +7,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RELEASE_GRAPH = PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "release_graph.rs"
+ADMIN_MAIN = PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "main.rs"
 
 
 def test_package_rows_are_not_binary_rows() -> None:
@@ -39,3 +40,15 @@ def test_every_packaged_executable_has_hashes_and_sbom_ref() -> None:
     assert "executable_inventory_rejects_missing_sbom_component_ref" in source
     assert "executable_inventory_matches_macos_and_deb_package_contents" in source
     assert "executable_inventory_rejects_package_content_hash_drift" in source
+
+
+def test_sha1_only_spdx_is_rejected() -> None:
+    source = ADMIN_MAIN.read_text(encoding="utf-8")
+
+    assert "fn validate_host_spdx_sbom_bytes" in source
+    assert "let blake3 = blake3::hash(&bytes).to_hex().to_string();" in source
+    assert "blake3: file.blake3.clone()" in source
+    assert "channel manifest host binary {} has malformed blake3" in source
+    assert 'algorithm.eq_ignore_ascii_case("SHA256")' in source
+    assert "missing SHA256 checksum" in source
+    assert "host_spdx_requires_sha256_file_checksums" in source

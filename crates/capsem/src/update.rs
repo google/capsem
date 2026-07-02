@@ -217,6 +217,8 @@ struct ReleaseChannelBinaryFile {
     name: String,
     url: String,
     sha256: String,
+    #[serde(default)]
+    blake3: String,
     size: u64,
 }
 
@@ -901,6 +903,7 @@ fn binary_release_files_from_manifest(
                 name: file.name.clone(),
                 url,
                 sha256: file.sha256.clone(),
+                blake3: file.blake3.clone(),
                 size: file.size,
             })
         })
@@ -1105,6 +1108,7 @@ fn binary_installer_for_layout(
                 install_layout: matcher.name().to_string(),
             };
             validate_binary_installer_metadata(&installer).is_ok()
+                && validate_release_channel_binary_file_metadata(file).is_ok()
         })
         .min_by(|left, right| left.name.cmp(&right.name))
         .map(|file| BinaryInstaller {
@@ -1114,6 +1118,13 @@ fn binary_installer_for_layout(
             size: file.size,
             install_layout: matcher.name().to_string(),
         })
+}
+
+fn validate_release_channel_binary_file_metadata(file: &ReleaseChannelBinaryFile) -> Result<()> {
+    if file.blake3.len() != 64 || !file.blake3.chars().all(|c| c.is_ascii_hexdigit()) {
+        anyhow::bail!("binary release file blake3 must be 64 hex characters");
+    }
+    Ok(())
 }
 
 fn deb_arch() -> &'static str {
@@ -2742,6 +2753,7 @@ mod tests {
                 name: "Capsem_99.99.99_wrong.deb".to_string(),
                 url: "https://github.com/google/capsem/releases/download/v99.99.99/Capsem_99.99.99_wrong.deb".to_string(),
                 sha256: "1".repeat(64),
+                blake3: "a".repeat(64),
                 size: 10,
             },
             ReleaseChannelBinaryFile {
@@ -2751,12 +2763,14 @@ mod tests {
                     deb_arch()
                 ),
                 sha256: "2".repeat(64),
+                blake3: "b".repeat(64),
                 size: 20,
             },
             ReleaseChannelBinaryFile {
                 name: "Capsem-99.99.99.pkg".to_string(),
                 url: "https://github.com/google/capsem/releases/download/v99.99.99/Capsem-99.99.99.pkg".to_string(),
                 sha256: "3".repeat(64),
+                blake3: "c".repeat(64),
                 size: 30,
             },
         ];
@@ -2778,6 +2792,7 @@ mod tests {
             name: "Capsem-99.99.99.pkg".to_string(),
             url: "file:///tmp/Capsem-99.99.99.pkg".to_string(),
             sha256: "local".to_string(),
+            blake3: "local".to_string(),
             size: 10,
         }];
 

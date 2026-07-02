@@ -3877,6 +3877,46 @@ def test_remote_release_readiness_rejects_evidence_content_drift() -> None:
     assert f"VM OBOM evidence {obom_path} bomFormat mismatch" in failures
 
 
+def test_release_rejects_sha1_only_spdx_file_checksums() -> None:
+    module = _readiness_checker_module()
+    sbom_url = "https://github.com/google/capsem/releases/download/v1.4.0/capsem-sbom.spdx.json"
+    sha1_only_spdx = b"""{
+      "spdxVersion": "SPDX-2.3",
+      "files": [
+        {
+          "SPDXID": "SPDXRef-File-capsem-gateway",
+          "checksums": [
+            {
+              "algorithm": "SHA1",
+              "checksumValue": "2a2bebeee60f894f3599e06c755c91944f1c3cc8"
+            }
+          ]
+        }
+      ]
+    }"""
+    module.fetch_bytes = lambda url: module.FetchBytes(
+        sha1_only_spdx if url == sbom_url else b"", None
+    )
+    item = {
+        "name": "capsem-sbom.spdx.json",
+        "url": sbom_url,
+        "sha256": hashlib.sha256(sha1_only_spdx).hexdigest(),
+        "size": len(sha1_only_spdx),
+    }
+
+    failures = module.fetch_and_verify_evidence_artifact(
+        "https://release.capsem.org", item, "sha256", "host SBOM evidence", "spdx"
+    )
+
+    assert (
+        f"host SBOM evidence {sbom_url} SPDX file SPDXRef-File-capsem-gateway "
+        "missing SHA256 checksum"
+    ) in failures
+    script = _source_text("scripts/check-remote-release-readiness.py")
+    assert "missing SHA256 checksum" in script
+    assert 'algorithm.upper() == "SHA256"' in script
+
+
 def test_remote_readiness_allows_first_channel_bootstrap_without_host_evidence() -> None:
     module = _readiness_checker_module()
     obom_bytes = b'{"bomFormat":"CycloneDX"}'

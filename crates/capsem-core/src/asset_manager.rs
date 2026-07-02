@@ -117,6 +117,8 @@ pub struct BinaryFile {
     pub name: String,
     pub size: u64,
     pub sha256: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub blake3: String,
 }
 
 /// The assets section.

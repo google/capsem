@@ -724,6 +724,7 @@ struct AssetsChannelBinaryFile {
     name: String,
     url: String,
     sha256: String,
+    blake3: String,
     size: u64,
 }
 
@@ -1253,10 +1254,12 @@ fn binary_files_from_artifacts(artifacts: &[PathBuf]) -> Result<Vec<BinaryFile>>
                 .with_context(|| format!("validate host SBOM artifact {}", path.display()))?;
         }
         let sha256 = format!("{:x}", Sha256::digest(&bytes));
+        let blake3 = blake3::hash(&bytes).to_hex().to_string();
         files.push(BinaryFile {
             name,
             size: bytes.len() as u64,
             sha256,
+            blake3,
         });
     }
     files.sort_by(|left, right| left.name.cmp(&right.name));
@@ -1780,6 +1783,14 @@ fn validate_assets_channel_health(
                 expected.url
             ));
         }
+        if public_file.get("blake3").and_then(|value| value.as_str())
+            != Some(expected.blake3.as_str())
+        {
+            return Err(anyhow!(
+                "health.json host binary blake3 mismatch for {}",
+                expected.url
+            ));
+        }
         if public_file.get("size").and_then(|value| value.as_u64()) != Some(expected.size) {
             return Err(anyhow!(
                 "health.json host binary size mismatch for {}",
@@ -1790,6 +1801,13 @@ fn validate_assets_channel_health(
         {
             return Err(anyhow!(
                 "channel manifest host binary {} has malformed sha256",
+                expected.name
+            ));
+        }
+        if expected.blake3.len() != 64 || !expected.blake3.chars().all(|ch| ch.is_ascii_hexdigit())
+        {
+            return Err(anyhow!(
+                "channel manifest host binary {} has malformed blake3",
                 expected.name
             ));
         }
@@ -2557,6 +2575,7 @@ fn binary_package_file_refs(
             name: file.name.clone(),
             url: format!("{}/{}", base.trim_end_matches('/'), file.name),
             sha256: file.sha256.clone(),
+            blake3: file.blake3.clone(),
             size: file.size,
         })
         .collect::<Vec<_>>();
@@ -2842,6 +2861,44 @@ fn validate_host_spdx_sbom_bytes(bytes: &[u8], path: &Path) -> Result<()> {
             "{} spdxVersion mismatch: expected SPDX-2.3, got {spdx_version}",
             path.display()
         ));
+    }
+    if let Some(files) = document.get("files") {
+        let files = files
+            .as_array()
+            .ok_or_else(|| anyhow!("{} SPDX files must be an array", path.display()))?;
+        for file in files {
+            let spdx_id = file
+                .get("SPDXID")
+                .and_then(|value| value.as_str())
+                .unwrap_or("<unknown>");
+            let checksums = file
+                .get("checksums")
+                .and_then(|value| value.as_array())
+                .ok_or_else(|| {
+                    anyhow!(
+                        "{} SPDX file {spdx_id} missing checksums with SHA256",
+                        path.display()
+                    )
+                })?;
+            let has_sha256 = checksums.iter().any(|checksum| {
+                checksum
+                    .get("algorithm")
+                    .and_then(|value| value.as_str())
+                    .is_some_and(|algorithm| algorithm.eq_ignore_ascii_case("SHA256"))
+                    && checksum
+                        .get("checksumValue")
+                        .and_then(|value| value.as_str())
+                        .is_some_and(|value| {
+                            value.len() == 64 && value.chars().all(|ch| ch.is_ascii_hexdigit())
+                        })
+            });
+            if !has_sha256 {
+                return Err(anyhow!(
+                    "{} SPDX file {spdx_id} missing SHA256 checksum",
+                    path.display()
+                ));
+            }
+        }
     }
     Ok(())
 }
@@ -6589,6 +6646,57 @@ decision = "block"
     }
 
     #[test]
+    fn host_spdx_requires_sha256_file_checksums() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let sbom_path = temp.path().join("capsem-sbom.spdx.json");
+        let sha1_only = br#"{
+          "spdxVersion": "SPDX-2.3",
+          "files": [
+            {
+              "SPDXID": "SPDXRef-File-capsem-gateway",
+              "checksums": [
+                {
+                  "algorithm": "SHA1",
+                  "checksumValue": "2a2bebeee60f894f3599e06c755c91944f1c3cc8"
+                }
+              ]
+            }
+          ]
+        }"#;
+
+        let error = validate_host_spdx_sbom_bytes(sha1_only, &sbom_path)
+            .expect_err("SHA1-only SPDX file checksums rejected");
+
+        assert!(
+            format!("{error:#}").contains("missing SHA256 checksum"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn host_spdx_accepts_sha256_file_checksums() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let sbom_path = temp.path().join("capsem-sbom.spdx.json");
+        let with_sha256 = br#"{
+          "spdxVersion": "SPDX-2.3",
+          "files": [
+            {
+              "SPDXID": "SPDXRef-File-capsem-gateway",
+              "checksums": [
+                {
+                  "algorithm": "SHA256",
+                  "checksumValue": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                }
+              ]
+            }
+          ]
+        }"#;
+
+        validate_host_spdx_sbom_bytes(with_sha256, &sbom_path)
+            .expect("SPDX file with SHA256 checksum validates");
+    }
+
+    #[test]
     fn assets_channel_record_binary_updates_manifest_without_changing_assets() {
         let temp = tempfile::tempdir().expect("tempdir");
         let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
@@ -7097,7 +7205,8 @@ decision = "block"
             .push(serde_json::json!({
                 "name": "Capsem_1.0.0_arm64.deb",
                 "size": 789,
-                "sha256": "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+                "sha256": "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+                "blake3": "3333333333333333333333333333333333333333333333333333333333333333"
             }));
         fs::write(
             &manifest_path,
@@ -7344,6 +7453,8 @@ decision = "block"
         let obom = test_obom_json();
         let pkg_sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
         let sbom_sha256 = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+        let pkg_blake3 = "1111111111111111111111111111111111111111111111111111111111111111";
+        let sbom_blake3 = "2222222222222222222222222222222222222222222222222222222222222222";
         fs::write(assets_dir.join("vmlinuz"), kernel.as_bytes()).expect("kernel");
         fs::write(assets_dir.join("initrd.img"), initrd.as_bytes()).expect("initrd");
         fs::write(assets_dir.join("rootfs.erofs"), rootfs.as_bytes()).expect("rootfs");
@@ -7381,8 +7492,8 @@ decision = "block"
         "deprecated": false,
         "min_assets": "2030.0101.1",
         "files": [
-          {{"name": "capsem-1.0.0.pkg", "size": 123, "sha256": "{pkg_sha256}"}},
-          {{"name": "capsem-sbom.spdx.json", "size": 456, "sha256": "{sbom_sha256}"}}
+          {{"name": "capsem-1.0.0.pkg", "size": 123, "sha256": "{pkg_sha256}", "blake3": "{pkg_blake3}"}},
+          {{"name": "capsem-sbom.spdx.json", "size": 456, "sha256": "{sbom_sha256}", "blake3": "{sbom_blake3}"}}
         ]
       }}
     }}
@@ -7399,6 +7510,8 @@ decision = "block"
                 obom_size = obom.len(),
                 pkg_sha256 = pkg_sha256,
                 sbom_sha256 = sbom_sha256,
+                pkg_blake3 = pkg_blake3,
+                sbom_blake3 = sbom_blake3,
             ),
         )
         .expect("manifest");

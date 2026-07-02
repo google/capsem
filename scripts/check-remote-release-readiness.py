@@ -794,6 +794,7 @@ def current_binary_file_refs(
             continue
         name = item.get("name")
         sha256 = item.get("sha256")
+        blake3_hash = item.get("blake3")
         size = item.get("size")
         if not isinstance(name, str):
             failures.append("manifest binary file name missing")
@@ -802,10 +803,15 @@ def current_binary_file_refs(
         if not isinstance(sha256, str):
             failures.append(f"manifest binary file {url} sha256 missing")
             continue
+        if not isinstance(blake3_hash, str):
+            failures.append(f"manifest binary file {url} blake3 missing")
+            continue
         if not isinstance(size, int):
             failures.append(f"manifest binary file {url} size missing")
             continue
-        refs.append({"name": name, "url": url, "sha256": sha256, "size": size})
+        refs.append(
+            {"name": name, "url": url, "sha256": sha256, "blake3": blake3_hash, "size": size}
+        )
     return refs
 
 
@@ -836,7 +842,7 @@ def check_host_binary_files(
         if public_file is None:
             failures.append(f"{label} missing host binary file {url}")
             continue
-        for field in ("name", "sha256", "size"):
+        for field in ("name", "sha256", "blake3", "size"):
             if public_file.get(field) != expected[field]:
                 failures.append(f"{label} host binary {field} mismatch for {url}")
 
@@ -994,6 +1000,34 @@ def validate_evidence_document(
     if expected_document == "spdx":
         if document.get("spdxVersion") != "SPDX-2.3":
             return f"{label} {url} spdxVersion mismatch"
+        files = document.get("files")
+        if files is not None:
+            if not isinstance(files, list):
+                return f"{label} {url} SPDX files must be an array"
+            for file in files:
+                if not isinstance(file, dict):
+                    return f"{label} {url} SPDX files entry is not an object"
+                spdx_id = file.get("SPDXID", "<unknown>")
+                checksums = file.get("checksums")
+                if not isinstance(checksums, list):
+                    return f"{label} {url} SPDX file {spdx_id} missing SHA256 checksum"
+                has_sha256 = False
+                for checksum in checksums:
+                    if not isinstance(checksum, dict):
+                        continue
+                    algorithm = checksum.get("algorithm")
+                    checksum_value = checksum.get("checksumValue")
+                    if (
+                        isinstance(algorithm, str)
+                        and algorithm.upper() == "SHA256"
+                        and isinstance(checksum_value, str)
+                        and len(checksum_value) == 64
+                        and all(ch in "0123456789abcdefABCDEF" for ch in checksum_value)
+                    ):
+                        has_sha256 = True
+                        break
+                if not has_sha256:
+                    return f"{label} {url} SPDX file {spdx_id} missing SHA256 checksum"
         return None
     if expected_document == "cyclonedx":
         if document.get("bomFormat") != "CycloneDX":
