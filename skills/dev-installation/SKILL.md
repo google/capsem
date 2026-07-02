@@ -14,7 +14,7 @@ description: Capsem native package installer -- package install, service registr
       capsem-gateway, capsem-tray, capsem-admin
   assets/manifest.json, {asset-name}-{hash16}.{ext}
   run/service.sock, service.pid, instances/, persistent/
-  update-check.json
+  update-checks/{manifest-url-hash}.json
   corp.toml               (CLI-provisioned corp config)
   corp-source.json         (corp config source metadata)
 ```
@@ -26,7 +26,7 @@ These commands dispatch before UdsClient creation -- they work without the servi
 | Command | Module | What |
 |---------|--------|------|
 | `capsem version` | main.rs | Print version + build hash |
-| `capsem update` | update.rs | Check release-channel health and report the matching binary installer |
+| `capsem update` | update.rs | Check the selected release manifest URL and report the matching binary installer |
 | `capsem service install\|uninstall\|status` | service_install.rs | Service registration |
 | `capsem completions bash\|zsh\|fish` | completions.rs | Shell completions |
 | `capsem uninstall --yes` | uninstall.rs | Full removal |
@@ -90,11 +90,15 @@ wizard and it does not create a user policy file.
 ## Self-update (update.rs)
 
 - `read_cached_update_notice()` -> sync file read on every command
-- `refresh_update_cache_if_stale()` -> background 24h-cached release-channel health check
-- `run_update()` -> check `release.capsem.org/health.json`, choose the matching `.pkg`/`.deb` installer metadata, and keep VM asset refresh on `capsem update --assets`
+- `refresh_update_cache_if_stale()` -> background 24h-cached check scoped by manifest URL
+- `run_update()` -> check the selected manifest URL, choose the matching `.pkg`/`.deb` installer metadata, and keep profile image refresh on `capsem update --assets`
 - `capsem update --yes` -> downloads the selected installer into `~/.capsem/updates/installers/`, verifies size + SHA-256, prints the tested package-manager apply command for audit, and executes it through `sudo` (`/usr/sbin/installer -pkg ... -target /` or `apt-get install --yes ...`)
 - `capsem update --assets` -> hydrate the locally installed manifest or an explicit `--manifest` URL
 - Corporate VM asset channels use `capsem update --assets --manifest <URL>`; `--corp <URL>` provisions policy config and must not be combined with `--assets`
+- `--manifest` and `--corp` are URL-only inputs. Local files must use `file:///absolute/path`, while hosted release and corporate channels use `https://...` or `http://...`; bare paths are rejected so update checks share one URL-based mechanism.
+- Stable/nightly switching is currently a manifest URL switch: stable uses `https://release.capsem.org/assets/stable/manifest.json`; nightly uses `https://release.capsem.org/assets/nightly/manifest.json`. Their cached update checks must coexist under `update-checks/` without overwriting each other.
+- Profile-owned images/configs/evidence belong to the selected channel/profile. Updating the co-work nightly profile can refresh only nightly co-work image/config refs and matching digests; it must not mutate stable, packages, per-binary inventory, or other profiles.
+- Profiles may set `min_capsem_version` when a profile requires newer client behavior. That is the compatibility hook; profiles must not point at the selected Capsem binary.
 - Layout detection: MacosPkg, LinuxDeb, UserDir, Development (development bails with "build from source")
 - Pre-updater installed binaries cannot be retrofitted through the release
   channel. If a shipped binary prints "Binary self-update is not yet wired up",

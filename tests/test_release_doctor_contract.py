@@ -1563,7 +1563,7 @@ def test_asset_channel_documented_as_assets_manifest_url_not_release_index_json(
     release_skill = (PROJECT_ROOT / "skills/release-process/SKILL.md").read_text()
     release_skill_text = " ".join(release_skill.split())
 
-    for text in (docs, asset_skill):
+    for text in (docs,):
         normalized_text = " ".join(text.split())
         assert "https://release.capsem.org/assets/stable/manifest.json" in text
         assert "target/release-channel/assets/<channel>/manifest.json" in text or (
@@ -1581,6 +1581,17 @@ def test_asset_channel_documented_as_assets_manifest_url_not_release_index_json(
             in normalized_text
         )
         assert "channels/stable/index.json" not in text
+
+    asset_skill_text = " ".join(asset_skill.split())
+    assert "https://release.capsem.org/assets/stable/manifest.json" in asset_skill
+    assert "target/release-channel/assets/<channel>/manifest.json" in asset_skill
+    assert "`channels.json`" in asset_skill
+    assert "package artifacts separate from per-binary inventory" in asset_skill_text
+    assert (
+        "Profiles own profile images, config files, software inventory, ABOM/OBOM evidence"
+        in asset_skill_text
+    )
+    assert "channels/stable/index.json" not in asset_skill
 
     assert "https://release.capsem.org/assets/stable/manifest.json" in release_skill
     assert "target/release-channel/assets/<channel>/manifest.json" in release_skill
@@ -1656,6 +1667,37 @@ def test_release_process_skill_documents_multi_channel_graph() -> None:
     assert "current binary" not in release_skill_text
     assert "VM artifact" not in release_skill
     assert "schema_version" not in release_skill
+
+
+def test_asset_and_install_skills_document_channel_switching() -> None:
+    asset_skill = (PROJECT_ROOT / "skills/asset-pipeline/SKILL.md").read_text()
+    install_skill = (PROJECT_ROOT / "skills/dev-installation/SKILL.md").read_text()
+    combined = "\n".join([asset_skill, install_skill])
+    combined_text = " ".join(combined.split())
+
+    for required in [
+        "`channels.json` lists all channels",
+        "all versioned manifest records",
+        "one status enum value",
+        "`current`, `supported`, `deprecated`, or `revoked`",
+        "package artifacts separate from per-binary inventory",
+        "Profiles own profile images, config files, software inventory, ABOM/OBOM evidence",
+        "`min_capsem_version`",
+        "`--manifest` must be a URL",
+        "`--manifest` and `--corp` are URL-only inputs",
+        "`file:///absolute/path/to/manifest.json`",
+        "`https://release.capsem.org/assets/stable/manifest.json`",
+        "`https://release.capsem.org/assets/nightly/manifest.json`",
+        "cached update checks must coexist under `update-checks/`",
+        "Updating the co-work nightly profile",
+        "must not mutate stable, packages, per-binary inventory, or other profiles",
+    ]:
+        assert required in combined_text, required
+
+    assert "health.json" not in combined
+    assert "current binary" not in combined_text
+    assert "VM artifact" not in combined
+    assert "schema_version" not in combined
 
 
 def test_release_skills_preserve_vm_obom_attestation_predicate_contract() -> None:

@@ -100,35 +100,50 @@ source tree or alternate manifest format. The generated deploy root is
 `target/release-channel/`; the machine artifact is
 `assets/<channel>/manifest.json` under that root, so the stable public URL is
 `https://release.capsem.org/assets/stable/manifest.json`.
-`capsem-admin` writes the machine channel artifacts only: channel manifest,
-immutable profile catalog, `health.json`, `_headers`, and `robots.txt`. The
-human release pages are built by the `release-site/` Astro app from those JSON
-files with `CAPSEM_RELEASE_CHANNEL_DIST=/path/to/target/release-channel pnpm run
-build:channel`, which overlays `index.html` and per-profile pages into the same
-deploy root before channel validation or deployment.
-Immutable VM blobs for that manifest are referenced by the manifest's optional
-`asset_base` URL template. Public releases currently use GitHub Releases with
-`https://github.com/google/capsem/releases/download/assets-v{asset_version}`,
-so a stable manifest whose current asset release is `2026.0627.1` hydrates
-`arm64-vmlinuz` from
-`https://github.com/google/capsem/releases/download/assets-v2026.0627.1/arm64-vmlinuz`.
-When `asset_base` is absent, Capsem preserves the older colocated layout and
-derives blobs from `<manifest-prefix>/assets/releases/<asset-version>/...`.
-The generated `health.json` is the compact machine-readable release-site index:
-schema `capsem.assets_channel.health.v1`, active manifest URL, immutable asset
-base URL, current binary/assets versions, current asset file URLs, VM OBOM
-references, host SBOM references, binary file metadata when present, an explicit `updates` block with
-`latest` targets for binary/assets/profile/image freshness checks, and a
-profile catalog block with revision, published catalog artifact path, BLAKE3 digest,
-compatibility minimums, and whether the advertised profile catalog requires a
-newer binary or VM asset set, plus host and VM asset attestation references
-with predicate type and `gh attestation verify` command hints.
-Host SBOM evidence is incomplete unless `github_attestations_host_sbom` is
-present, points at the published `capsem-sbom.spdx.json` evidence, and covers
-every published host package subject.
-It also carries dated asset release history, including deprecated VM asset releases;
-deprecated releases remain auditable but are not candidates for new
-session/download selection.
+`capsem-admin` writes the machine channel artifacts only: root `channels.json`,
+per-channel manifest JSON, immutable profile catalogs, `_headers`, and
+`robots.txt`. The human release pages are built by the `release-site/` Astro
+app from those JSON files with
+`CAPSEM_RELEASE_CHANNEL_DIST=/path/to/target/release-channel pnpm run
+build:channel`, which overlays the root channel list, per-channel pages, and
+per-profile pages into the same deploy root before channel validation or
+deployment.
+
+The graph hierarchy is strict:
+
+1. `channels.json` lists all channels and all versioned manifest records for
+   each channel.
+2. Each manifest record has one status enum value: `current`, `supported`,
+   `deprecated`, or `revoked`. Revoked records remain auditable but runtime
+   selection never chooses them. A record that is no longer served is simply
+   absent.
+3. Each manifest record carries SHA-256, BLAKE3, and HMAC digests for the
+   selected manifest JSON.
+4. Each manifest keeps package artifacts separate from per-binary inventory.
+   Packages are delivery containers; binaries are the executable files inside
+   those packages and must carry SHA-256, BLAKE3, HMAC, version, package
+   provenance, and SBOM component reference.
+5. Profiles own profile images, config files, software inventory, ABOM/OBOM
+   evidence, and `min_capsem_version`. Profiles never advertise the selected
+   Capsem binary; they only declare the minimum Capsem version needed to use
+   that profile.
+
+Immutable profile image blobs are referenced by instantiated URLs in the
+manifest/profile catalog. Public releases may store large blobs in GitHub
+Releases, but the release graph must publish concrete URLs for each profile
+image artifact and evidence file. When a local or corporate manifest is used,
+the same update mechanism applies: `--manifest` must be a URL, with
+`file:///absolute/path/to/manifest.json` for local fixtures and `https://...`
+or `http://...` for hosted corporate channels.
+
+The root channel catalog makes stable/nightly switching a manifest URL choice.
+Stable can point at `https://release.capsem.org/assets/stable/manifest.json`
+while nightly points at `https://release.capsem.org/assets/nightly/manifest.json`.
+Updating the co-work nightly profile image/config must change only the nightly
+channel/profile records and matching digests; stable, packages, per-binary
+inventory, and other profiles must stay byte-for-byte unchanged. Use
+`min_capsem_version` on a profile only when profile behavior requires a newer
+client.
 
 The manual asset workflow is `.github/workflows/release-assets.yaml`. It should
 remain explicit/manual. For `dry_run=false`, it first verifies that the
@@ -165,49 +180,21 @@ to separate published evidence.
 The deploy workflow runs `scripts/check-release-site-contract.py` against
 `https://release.capsem.org` after Cloudflare publishes the generated site. That
 Python validator reuses the remote release readiness contract and must validate
-the index, `health.json`, channel manifest, evidence documents, BLAKE3/SHA-256
-content, attestation references, and cache headers rather than only checking
-that files exist. The deploy smoke rejects stale public HTML: the fetched index
-page must show the same current binary, current VM asset version, asset release
-date, generated timestamp, profile revision, profile catalog URL, profile update
-source, and channel manifest path as the fetched health JSON and manifest.
-The deploy smoke also rejects stale `health.json` summary state: `ok`, channel,
-published state, index/health URLs, and top-level binary/assets versions must
-match the active channel manifest and release-site layout.
-The deploy smoke also verifies every manifest asset release row in
-`health.json`, including date, deprecated state, deprecation date, and minimum
-binary compatibility, so metadata-only deprecation changes cannot leave the
-public release history stale.
-The deploy smoke also verifies that current VM asset file URLs, BLAKE3 hashes,
-and sizes in `health.assets.files` match the fetched channel manifest's current
-asset release, so the public health index cannot stay self-consistent while
-pointing at stale VM blobs.
-The deploy smoke also verifies that the binary update target, state, source, and
-package file metadata match the canonical binary metadata. Current host binary
-package URLs, SHA-256 hashes, and sizes in `health.binary.files` and
-`evidence.host_binary_files` must match the fetched channel manifest's current
-binary release.
-The deploy smoke also verifies that the VM asset update target, manifest, base
-URL, compatibility, and newer-version requirements match the canonical asset
-metadata, and that the VM asset compatibility and requires-newer flags match
-the fetched channel manifest's current asset release.
-The deploy smoke also verifies that the profile update hash, compatibility, and
-newer-version requirements match the canonical profile catalog metadata, and
-that the profile catalog's current binary/assets compatibility, minimum
-binary/assets, and requires-newer flags match the fetched channel manifest.
-It also fetches the immutable profile catalog artifact and verifies its BLAKE3
-hash, schema, revision, state, current binary/assets targets, compatibility
-fields, and absence of `file://` URLs.
-The deploy smoke also verifies that image freshness remains explicitly
-unpublished until image release metadata is added to the asset channel.
-It validates host SBOM and VM OBOM evidence document shape (SPDX 2.3 for the
-host SBOM and CycloneDX for VM OBOMs), plus attestation scope, workflow,
+the root channel catalog, selected manifest, profile catalog, profile-owned
+image/config/evidence files, package metadata, per-binary metadata,
+BLAKE3/SHA-256 content, attestation references, and cache headers rather than
+only checking that files exist. The deploy smoke rejects stale public HTML: the
+root and channel pages must show the same generated timestamp, manifest URL,
+manifest version, package inventory, per-binary inventory, profile revision,
+profile catalog URL, image artifact URLs, and evidence URLs as the fetched JSON
+graph. It validates host SBOM and VM OBOM evidence document shape (SPDX 2.3 for
+the host SBOM and CycloneDX for VM OBOMs), plus attestation scope, workflow,
 subjects, and predicate URLs against the published host SBOM and VM OBOM
 evidence lists. VM asset attestations are incomplete unless
 `github_attestations_vm_assets` is present and its `predicate_url` points at the
 published VM OBOM evidence for the current asset release.
 The deploy smoke must also verify public `Cache-Control` headers: mutable
-release-channel pointers (`/`, `/health.json`, and
+release-channel pointers (`/`, `/channels.json`, and
 `/assets/<channel>/manifest.json`) stay `no-cache, must-revalidate`, while
 immutable asset and profile release artifacts stay
 `public, max-age=31536000, immutable`.
@@ -221,7 +208,7 @@ custom domain, and configure `CLOUDFLARE_ACCOUNT_ID` plus
 before deploy if either secret is missing or
 `scripts/check-cloudflare-pages-project.py` cannot see the Pages project through
 the configured account/token, then runs `scripts/check-release-site-contract.py`
-and smokes `https://release.capsem.org/`, `/health.json`, and the channel
+and smokes `https://release.capsem.org/`, `/channels.json`, and the channel
 manifest through the public custom domain after Cloudflare publishes the
 generated site. Live VM asset releases use the same project preflight before
 the expensive asset build matrix starts.
