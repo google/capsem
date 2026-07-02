@@ -14,6 +14,8 @@ import {
   loadReleaseData,
   manifestBlake3,
   manifestUrl,
+  profileArchNames,
+  profileFileRows,
   profileList,
   profilePagePath,
   profileCatalogUrl,
@@ -31,10 +33,11 @@ const architectures = currentArchitectures(data);
 const hostSbom = hostSboms[0];
 const assetBase = currentAssetBaseUrl(data);
 const assetFilesByArch = currentAssetFilesByArch(data);
-const currentBinary = data.manifest.binaries?.current ?? 'not published';
-const currentAssets = data.manifest.assets?.current ?? 'not published';
-const binaryState = data.manifest.binaries?.releases?.[currentBinary]?.deprecated ? 'deprecated' : 'current';
-const assetState = data.manifest.assets?.releases?.[currentAssets]?.deprecated ? 'deprecated' : 'current';
+const binaryVersions = Array.from(new Set(binaries.map((binary) => binary.version).filter(Boolean)));
+const currentBinary = data.manifest.binaries?.current ?? (binaryVersions.join(', ') || 'not published');
+const currentAssets = data.manifest.assets?.current ?? data.manifest.version ?? data.manifestRecord.version ?? 'not published';
+const binaryState = data.manifest.binaries?.releases?.[currentBinary]?.deprecated ? 'deprecated' : data.manifest.status ?? 'current';
+const assetState = data.manifest.assets?.releases?.[currentAssets]?.deprecated ? 'deprecated' : data.manifest.status ?? data.manifestRecord.status ?? 'current';
 ---
 <ReleaseLayout title="Capsem Asset Channel">
   <header class="border-b border-zinc-200 pb-6">
@@ -83,17 +86,17 @@ const assetState = data.manifest.assets?.releases?.[currentAssets]?.deprecated ?
               <td class="py-3 pr-4"><code>{currentBinary}</code></td>
               <td class="py-3 pr-4">{file.name}</td>
               <td class="py-3 pr-4 text-zinc-600">{binaryDescription(file.name)}</td>
-              <td class="py-3 pr-4"><a class="break-all text-blue-600 underline" href={file.url}>{file.url}</a></td>
-              <td class="py-3 pr-4">{byteLabel(file.size)}</td>
-              <td class="py-3 pr-4"><code class="break-all">{file.sha256}</code></td>
+              <td class="py-3 pr-4">{file.url ? <a class="break-all text-blue-600 underline" href={file.url}>{file.url}</a> : <span class="break-all">{file.package ?? 'not published'}</span>}</td>
+              <td class="py-3 pr-4">{byteLabel(file.bytes ?? file.size)}</td>
+              <td class="py-3 pr-4"><code class="break-all">{hashLabel(file.digest?.sha256 ?? file.sha256)}</code></td>
               <td class="py-3 pr-4">
-                {hostSbom ? <a class="break-all text-blue-600 underline" href={hostSbom.url}>{hostSbom.name}</a> : 'Not published'}
+                {hostSbom?.url ? <a class="break-all text-blue-600 underline" href={hostSbom.url}>{hostSbom.name ?? hostSbom.kind}</a> : (file.sbom_component_ref ?? 'Not published')}
               </td>
             </tr>
           )) : (
             <tr>
               <td class="py-4 pr-4 text-zinc-600" colspan="7">
-                No Capsem binary package metadata is published in this channel manifest.
+                No Capsem binary metadata is published in this channel manifest.
               </td>
             </tr>
           )}
@@ -125,9 +128,9 @@ const assetState = data.manifest.assets?.releases?.[currentAssets]?.deprecated ?
                 {files.map((file) => (
                   <tr class="border-b border-zinc-100 align-top">
                     <td class="py-3 pr-4"><code>{file.logical_name}</code></td>
-                    <td class="py-3 pr-4"><a class="break-all text-blue-600 underline" href={file.url}>{file.url}</a></td>
-                    <td class="py-3 pr-4">{byteLabel(file.size)}</td>
-                    <td class="py-3 pr-4"><code class="break-all">{hashLabel(file.hash)}</code></td>
+                    <td class="py-3 pr-4">{file.url ? <a class="break-all text-blue-600 underline" href={file.url}>{file.url}</a> : <span class="text-zinc-500">not published</span>}</td>
+                    <td class="py-3 pr-4">{byteLabel(file.bytes ?? file.size)}</td>
+                    <td class="py-3 pr-4"><code class="break-all">{hashLabel(file.digest?.blake3 ?? file.hash)}</code></td>
                   </tr>
                 ))}
               </tbody>
@@ -156,8 +159,8 @@ const assetState = data.manifest.assets?.releases?.[currentAssets]?.deprecated ?
           <dl class="mt-4 grid gap-2 text-sm sm:grid-cols-[9rem_1fr]">
             <dt class="text-zinc-500">ID</dt><dd><code>{profile.id}</code></dd>
             <dt class="text-zinc-500">Revision</dt><dd><code>{profile.revision}</code></dd>
-            <dt class="text-zinc-500">Architectures</dt><dd>{Object.keys(profile.assets?.arch ?? {}).sort().join(', ')}</dd>
-            <dt class="text-zinc-500">Files</dt><dd>{Object.keys(profile.files ?? {}).length}</dd>
+            <dt class="text-zinc-500">Architectures</dt><dd>{profileArchNames(profile).join(', ')}</dd>
+            <dt class="text-zinc-500">Files</dt><dd>{profileFileRows(profile).length}</dd>
           </dl>
         </article>
       ))}
@@ -172,9 +175,9 @@ const assetState = data.manifest.assets?.releases?.[currentAssets]?.deprecated ?
         <ul class="mt-3 space-y-2 text-sm">
           {hostSboms.length > 0 ? hostSboms.map((sbom) => (
             <li>
-              <a class="break-all text-blue-600 underline" href={sbom.url}>{sbom.name ?? sbom.url}</a>
+              {sbom.url ? <a class="break-all text-blue-600 underline" href={sbom.url}>{sbom.name ?? sbom.kind ?? sbom.url}</a> : <span>{sbom.name ?? sbom.kind ?? 'SBOM'}</span>}
               <div class="mt-1 text-zinc-600">
-                {byteLabel(sbom.size)} bytes · SHA-256 <code class="break-all">{hashLabel(sbom.sha256 ?? sbom.hash)}</code>
+                {byteLabel(sbom.bytes ?? sbom.size)} bytes · SHA-256 <code class="break-all">{hashLabel(sbom.digest?.sha256 ?? sbom.sha256 ?? sbom.hash)}</code>
               </div>
             </li>
           )) : <li class="text-zinc-600">No host SBOM evidence is published for this channel.</li>}
@@ -187,9 +190,9 @@ const assetState = data.manifest.assets?.releases?.[currentAssets]?.deprecated ?
             <li>
               <span class="font-medium text-black">{obom.arch}</span>:
               {' '}
-              <a class="break-all text-blue-600 underline" href={obom.url}>{obom.logical_name ?? obom.url}</a>
+              {obom.url ? <a class="break-all text-blue-600 underline" href={obom.url}>{obom.logical_name ?? obom.url}</a> : <span>{obom.logical_name ?? obom.kind ?? 'evidence'}</span>}
               <div class="mt-1 text-zinc-600">
-                {byteLabel(obom.size)} bytes · BLAKE3 <code class="break-all">{hashLabel(obom.hash)}</code>
+                {byteLabel(obom.bytes ?? obom.size)} bytes · BLAKE3 <code class="break-all">{hashLabel(obom.digest?.blake3 ?? obom.hash)}</code>
               </div>
             </li>
           )) : <li class="text-zinc-600">No VM OBOM evidence is published for this channel.</li>}

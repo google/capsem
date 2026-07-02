@@ -1,10 +1,11 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 
 type JsonObject = Record<string, any>;
 
 export interface ReleaseData {
   dist: string;
+  sourceMode: 'dist' | 'graph';
   channel: string;
   channels: JsonObject;
   channelRecord: JsonObject;
@@ -25,9 +26,20 @@ export interface TableRow {
 export function loadReleaseData(): ReleaseData {
   const distEnv = process.env.CAPSEM_RELEASE_CHANNEL_DIST;
   if (!distEnv) {
-    throw new Error('CAPSEM_RELEASE_CHANNEL_DIST must point at target/release-channel');
+    throw new Error('CAPSEM_RELEASE_CHANNEL_DIST must point at target/release-channel or a release graph JSON file');
   }
-  const dist = resolveReleaseDist(distEnv);
+  const dist = resolveReleaseInput(distEnv);
+  if (isJsonFile(dist)) {
+    return loadGraphData(dist);
+  }
+  const graphPath = resolve(dist, 'release-graph.json');
+  if (!existsSync(resolve(dist, 'channels.json')) && existsSync(graphPath)) {
+    return loadGraphData(graphPath);
+  }
+  return loadDistData(dist);
+}
+
+function loadDistData(dist: string): ReleaseData {
   const channels = readJson(resolve(dist, 'channels.json'));
   const channel = selectChannel(channels);
   const channelRecord = channels.channels?.[channel] ?? {};
@@ -36,7 +48,38 @@ export function loadReleaseData(): ReleaseData {
   const manifest = readJson(resolve(dist, manifestPath));
   const catalogPath = trimLeadingSlash(String(channelRecord.profile_catalog?.source ?? ''));
   const catalog = readJson(resolve(dist, catalogPath));
-  return { dist, channel, channels, channelRecord, manifestRecord, manifest, catalog };
+  return { dist, sourceMode: 'dist', channel, channels, channelRecord, manifestRecord, manifest, catalog };
+}
+
+function loadGraphData(graphPath: string): ReleaseData {
+  const graph = readJson(graphPath);
+  const channels = {
+    version: graph.version ?? 1,
+    generated_at: graph.generated_at ?? '',
+    channels: graph.channels ?? {},
+  };
+  const channel = selectChannel(channels);
+  const channelRecord = channels.channels?.[channel] ?? {};
+  const manifestRecord = selectManifestRecord(channelRecord);
+  const manifest = graph.manifests?.[channel]?.[manifestRecord.version];
+  if (!manifest) {
+    throw new Error(`Release graph is missing ${channel} manifest ${manifestRecord.version}`);
+  }
+  const catalog = {
+    schema: 'capsem.profile_catalog.v1',
+    revision: profileRevisionFromManifest(manifest),
+    profiles: profileListFromManifest(manifest),
+  };
+  return {
+    dist: graphPath,
+    sourceMode: 'graph',
+    channel,
+    channels,
+    channelRecord,
+    manifestRecord,
+    manifest,
+    catalog,
+  };
 }
 
 export function profilePagePath(profileId: string): string {
@@ -44,7 +87,10 @@ export function profilePagePath(profileId: string): string {
 }
 
 export function profileList(data: ReleaseData): JsonObject[] {
-  return Array.isArray(data.catalog.profiles) ? data.catalog.profiles : [];
+  const profiles = Array.isArray(data.catalog.profiles)
+    ? data.catalog.profiles
+    : profileListFromManifest(data.manifest);
+  return profiles.map((profile) => normalizeProfile(profile));
 }
 
 export function profileById(data: ReleaseData, id: string): JsonObject | undefined {
@@ -52,10 +98,24 @@ export function profileById(data: ReleaseData, id: string): JsonObject | undefin
 }
 
 export function profileArchNames(profile: JsonObject): string[] {
-  return Object.keys(profile.assets?.arch ?? {}).sort();
+  const legacy = Object.keys(profile.assets?.arch ?? {});
+  const graph = Array.isArray(profile.images)
+    ? profile.images.map((image: JsonObject) => String(image.architecture ?? '')).filter(Boolean)
+    : [];
+  return Array.from(new Set([...legacy, ...graph])).sort();
 }
 
 export function profileArtifactRows(profile: JsonObject, arch: string): TableRow[] {
+  if (Array.isArray(profile.images)) {
+    const imageSet = profile.images.find((image: JsonObject) => image.architecture === arch) ?? {};
+    const artifacts = Array.isArray(imageSet.artifacts) ? imageSet.artifacts : [];
+    const evidence = Array.isArray(imageSet.evidence) ? imageSet.evidence : [];
+    return [
+      ...artifacts.map((artifact: JsonObject) => descriptorRow(artifactLabel(artifact.kind), artifact)),
+      ...evidence.map((item: JsonObject) => descriptorRow(evidenceLabel(item.kind), item)),
+    ];
+  }
+
   const assets = profile.assets?.arch?.[arch] ?? {};
   const rows: TableRow[] = [];
   for (const [key, label] of [
@@ -86,6 +146,16 @@ export function profileArtifactRows(profile: JsonObject, arch: string): TableRow
 }
 
 export function profileFileRows(profile: JsonObject): TableRow[] {
+  if (Array.isArray(profile.config)) {
+    return profile.config.map((item: JsonObject) => ({
+      label: String(item.kind ?? 'config'),
+      name: String(item.path ?? item.url ?? ''),
+      url: item.url,
+      size: item.bytes ?? item.size,
+      hash: item.digest?.blake3 ?? item.hash,
+      status: item.status,
+    }));
+  }
   return Object.entries(profile.files ?? {}).map(([kind, descriptor]) => {
     const item = descriptor as JsonObject;
     return {
@@ -98,12 +168,21 @@ export function profileFileRows(profile: JsonObject): TableRow[] {
 }
 
 export function binaryRows(data: ReleaseData): JsonObject[] {
+  if (Array.isArray(data.manifest.binaries)) {
+    return data.manifest.binaries;
+  }
   const current = String(data.manifest.binaries?.current ?? '');
   const files = data.manifest.binaries?.releases?.[current]?.files;
   return Array.isArray(files) ? files.filter((file: JsonObject) => !isHostSbom(file.name)) : [];
 }
 
 export function hostSbomRows(data: ReleaseData): JsonObject[] {
+  if (Array.isArray(data.manifest.packages)) {
+    return data.manifest.packages.flatMap((pkg: JsonObject) => {
+      const evidence = Array.isArray(pkg.evidence) ? pkg.evidence : [];
+      return evidence.filter((item: JsonObject) => String(item.kind ?? '').toLowerCase().includes('sbom'));
+    });
+  }
   const current = String(data.manifest.binaries?.current ?? '');
   const files = data.manifest.binaries?.releases?.[current]?.files;
   return Array.isArray(files) ? files.filter((file: JsonObject) => isHostSbom(file.name)) : [];
@@ -111,7 +190,20 @@ export function hostSbomRows(data: ReleaseData): JsonObject[] {
 
 export function vmObomRows(data: ReleaseData): JsonObject[] {
   return profileList(data)
-    .flatMap((profile) => {
+    .flatMap((profile): JsonObject[] => {
+      if (Array.isArray(profile.images)) {
+        return (profile.images as JsonObject[]).flatMap((image: JsonObject): JsonObject[] => {
+          const evidence: JsonObject[] = Array.isArray(image.evidence) ? image.evidence : [];
+          return evidence
+            .filter((item: JsonObject) => ['abom', 'obom', 'sbom'].includes(String(item.kind ?? '').toLowerCase()))
+            .map((item: JsonObject) => ({
+              profile: profile.id,
+              arch: image.architecture,
+              logical_name: item.kind,
+              ...item,
+            }));
+        });
+      }
       const obomByArch = profile.obom?.arch ?? {};
       return Object.entries(obomByArch).map(([arch, descriptor]) => ({
         arch,
@@ -122,6 +214,21 @@ export function vmObomRows(data: ReleaseData): JsonObject[] {
 }
 
 export function currentAssetFilesByArch(data: ReleaseData): [string, JsonObject[]][] {
+  const graphFiles = profileList(data).flatMap((profile) => {
+    if (!Array.isArray(profile.images)) return [];
+    return profile.images.flatMap((image: JsonObject) => {
+      const artifacts = Array.isArray(image.artifacts) ? image.artifacts : [];
+      return artifacts.map((artifact: JsonObject) => ({
+        arch: image.architecture,
+        logical_name: `${profile.id}/${artifact.name ?? artifact.kind}`,
+        ...artifact,
+      }));
+    });
+  });
+  if (graphFiles.length > 0) {
+    return groupFilesByArch(graphFiles);
+  }
+
   const current = String(data.manifest.assets?.current ?? '');
   const release = data.manifest.assets?.releases?.[current] ?? {};
   const arches = release.arches ?? {};
@@ -134,22 +241,21 @@ export function currentAssetFilesByArch(data: ReleaseData): [string, JsonObject[
       ...(entry as JsonObject),
     }));
   });
-  const grouped = new Map<string, JsonObject[]>();
-  for (const file of files) {
-    const arch = String(file.arch ?? 'unknown');
-    const rows = grouped.get(arch) ?? [];
-    rows.push(file);
-    grouped.set(arch, rows);
-  }
-  return Array.from(grouped.entries())
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([arch, rows]) => [
-      arch,
-      rows.sort((left, right) => String(left.logical_name ?? '').localeCompare(String(right.logical_name ?? ''))),
-    ]);
+  return groupFilesByArch(files);
 }
 
 export function assetReleaseRows(data: ReleaseData): JsonObject[] {
+  if (Array.isArray(data.channelRecord.manifests) && !data.manifest.assets?.releases) {
+    return data.channelRecord.manifests.map((manifest: JsonObject) => ({
+      version: manifest.version,
+      date: manifest.date ?? '',
+      state: manifest.status,
+      deprecated: manifest.status === 'deprecated',
+      deprecated_date: manifest.deprecated_date,
+      min_binary: manifest.min_capsem_version,
+      arches: currentArchitectures(data),
+    }));
+  }
   const releases = data.manifest.assets?.releases ?? {};
   return Object.entries(releases)
     .map(([version, release]) => {
@@ -168,6 +274,10 @@ export function assetReleaseRows(data: ReleaseData): JsonObject[] {
 }
 
 export function currentArchitectures(data: ReleaseData): string[] {
+  const graphArches = profileList(data).flatMap((profile) => profileArchNames(profile));
+  if (graphArches.length > 0) {
+    return Array.from(new Set(graphArches)).sort();
+  }
   return Object.keys(
     data.manifest.assets?.releases?.[data.manifest.assets?.current]?.arches ?? {},
   ).sort();
@@ -222,11 +332,65 @@ export function binaryDescription(name: string): string {
 function descriptorRow(label: string, descriptor: JsonObject): TableRow {
   return {
     label,
-    name: String(descriptor.name ?? ''),
+    name: String(descriptor.name ?? descriptor.kind ?? ''),
     url: descriptor.url,
-    size: descriptor.size,
-    hash: descriptor.hash,
+    size: descriptor.bytes ?? descriptor.size,
+    hash: descriptor.digest?.blake3 ?? descriptor.hash,
+    status: descriptor.status,
   };
+}
+
+function groupFilesByArch(files: JsonObject[]): [string, JsonObject[]][] {
+  const grouped = new Map<string, JsonObject[]>();
+  for (const file of files) {
+    const arch = String(file.arch ?? file.architecture ?? 'unknown');
+    const rows = grouped.get(arch) ?? [];
+    rows.push(file);
+    grouped.set(arch, rows);
+  }
+  return Array.from(grouped.entries())
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([arch, rows]) => [
+      arch,
+      rows.sort((left, right) => String(left.logical_name ?? left.name ?? '').localeCompare(String(right.logical_name ?? right.name ?? ''))),
+    ]);
+}
+
+function profileListFromManifest(manifest: JsonObject): JsonObject[] {
+  return Object.entries(manifest.profiles ?? {}).map(([id, profile]) => normalizeProfile({ id, ...(profile as JsonObject) }));
+}
+
+function profileRevisionFromManifest(manifest: JsonObject): string {
+  return profileListFromManifest(manifest).map((profile) => profile.revision).filter(Boolean).join(', ');
+}
+
+function normalizeProfile(profile: JsonObject): JsonObject {
+  const id = String(profile.id ?? 'unknown');
+  const name = profile.name ?? id.split('-').map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
+  return {
+    ...profile,
+    id,
+    name,
+    description: profile.description ?? `Release profile ${id}`,
+  };
+}
+
+function artifactLabel(kind: unknown): string {
+  switch (String(kind ?? '').toLowerCase()) {
+    case 'kernel':
+      return 'Kernel';
+    case 'initrd':
+      return 'Initrd';
+    case 'rootfs':
+      return 'Root filesystem';
+    default:
+      return 'Profile artifact';
+  }
+}
+
+function evidenceLabel(kind: unknown): string {
+  const raw = String(kind ?? 'evidence').toUpperCase();
+  return raw === 'OBOM' ? 'OBOM' : raw;
 }
 
 function selectChannel(channels: JsonObject): string {
@@ -264,7 +428,7 @@ function readJson(path: string): JsonObject {
   return JSON.parse(readFileSync(path, 'utf8')) as JsonObject;
 }
 
-function resolveReleaseDist(path: string): string {
+function resolveReleaseInput(path: string): string {
   if (isAbsolute(path)) {
     return path;
   }
@@ -273,6 +437,10 @@ function resolveReleaseDist(path: string): string {
     return fromCwd;
   }
   return resolve(process.cwd(), '..', path);
+}
+
+function isJsonFile(path: string): boolean {
+  return existsSync(path) && statSync(path).isFile() && path.endsWith('.json');
 }
 
 function trimLeadingSlash(path: string): string {

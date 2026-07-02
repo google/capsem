@@ -5,6 +5,7 @@
   "scripts": {
     "build": "astro build",
     "build:channel": "astro build && node scripts/overlay-dist.mjs",
+    "check": "tsc --noEmit",
     "dev": "astro dev",
     "preview": "astro preview"
   },
@@ -14,6 +15,7 @@
     "tailwindcss": "^4.0.0"
   },
   "devDependencies": {
+    "@types/node": "^26.1.0",
     "typescript": "^5.9.3"
   }
 }

@@ -26,12 +26,17 @@ const availability = Object.entries(profile.availability ?? {})
   .filter(([, enabled]) => enabled)
   .map(([name]) => name)
   .join(', ');
+const profileName = profile.name ?? profile.id;
+const profileDescription = profile.description ?? `Release profile ${profile.id}`;
+const vmDefaults = profile.vm
+  ? `${profile.vm.cpu_count ?? 'unknown'} CPU, ${profile.vm.ram_gb ?? 'unknown'} GB RAM, ${profile.vm.scratch_disk_size_gb ?? 'unknown'} GB scratch`
+  : 'not specified';
 ---
-<ReleaseLayout title={`${profile.name} - Capsem Profile`}>
+<ReleaseLayout title={`${profileName} - Capsem Profile`}>
   <header class="border-b border-zinc-200 pb-6">
     <a class="text-sm font-medium text-blue-600 underline" href="/">Asset channel</a>
-    <h1 class="mt-3 text-4xl font-semibold tracking-normal text-black">{profile.name}</h1>
-    <p class="mt-3 max-w-3xl text-base text-zinc-600">{profile.description}</p>
+    <h1 class="mt-3 text-4xl font-semibold tracking-normal text-black">{profileName}</h1>
+    <p class="mt-3 max-w-3xl text-base text-zinc-600">{profileDescription}</p>
   </header>
 
   <section class="mt-8 border border-zinc-200 p-5">
@@ -39,10 +44,11 @@ const availability = Object.entries(profile.availability ?? {})
     <dl class="mt-4 grid gap-3 text-sm sm:grid-cols-[14rem_1fr]">
       <dt class="text-zinc-500">ID</dt><dd><code>{profile.id}</code></dd>
       <dt class="text-zinc-500">Revision</dt><dd><code>{profile.revision}</code></dd>
-      <dt class="text-zinc-500">Refresh policy</dt><dd>{profile.refresh_policy}</dd>
+      <dt class="text-zinc-500">Status</dt><dd>{profile.status ?? data.manifest.status ?? 'current'}</dd>
+      <dt class="text-zinc-500">Refresh policy</dt><dd>{profile.refresh_policy ?? 'not specified'}</dd>
       <dt class="text-zinc-500">Availability</dt><dd>{availability || 'none'}</dd>
       <dt class="text-zinc-500">Minimum Capsem</dt><dd><code>{profile.min_capsem_version ?? profile.compatibility?.min_binary ?? 'not specified'}</code></dd>
-      <dt class="text-zinc-500">VM defaults</dt><dd>{profile.vm?.cpu_count ?? 'unknown'} CPU, {profile.vm?.ram_gb ?? 'unknown'} GB RAM, {profile.vm?.scratch_disk_size_gb ?? 'unknown'} GB scratch</dd>
+      <dt class="text-zinc-500">VM defaults</dt><dd>{vmDefaults}</dd>
     </dl>
   </section>
 
