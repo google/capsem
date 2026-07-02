@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
+#[allow(dead_code)]
 mod release_graph;
 
 #[derive(Debug, Parser)]
@@ -668,6 +669,37 @@ struct AssetsChannelProfileCatalog {
     requires_newer_assets: bool,
 }
 
+#[derive(Debug, Serialize)]
+struct AssetsChannelsCatalog {
+    version: u64,
+    generated_at: String,
+    release_site: String,
+    channels: BTreeMap<String, AssetsChannelsCatalogChannel>,
+}
+
+#[derive(Debug, Serialize)]
+struct AssetsChannelsCatalogChannel {
+    label: String,
+    manifests: Vec<AssetsChannelsCatalogManifest>,
+    profile_catalog: AssetsChannelProfileCatalog,
+}
+
+#[derive(Debug, Serialize)]
+struct AssetsChannelsCatalogManifest {
+    version: String,
+    status: &'static str,
+    url: String,
+    digest: AssetsChannelsCatalogDigest,
+    asset_base: String,
+    binary_version: String,
+    asset_version: String,
+}
+
+#[derive(Debug, Serialize)]
+struct AssetsChannelsCatalogDigest {
+    blake3: String,
+}
+
 struct PublishableProfileCatalog {
     metadata: AssetsChannelProfileCatalog,
     path: String,
@@ -730,6 +762,7 @@ struct AssetsChannelBuildReport {
     generated_at: String,
     out_dir: String,
     human_site_source: &'static str,
+    channels_json: String,
     manifest: String,
     health_json: String,
     copied_assets: usize,
@@ -1105,6 +1138,11 @@ fn build_assets_channel(
     fs::write(&profile_catalog_path, &profile_catalog.bytes)
         .with_context(|| format!("write {}", profile_catalog_path.display()))?;
     fs::write(
+        out_dir.join("channels.json"),
+        render_assets_channels_catalog(&index)?,
+    )
+    .with_context(|| format!("write {}", out_dir.join("channels.json").display()))?;
+    fs::write(
         out_dir.join("health.json"),
         render_assets_channel_health(&index)?,
     )
@@ -1122,6 +1160,7 @@ fn build_assets_channel(
         generated_at: generated_at.to_string(),
         out_dir: out_dir.display().to_string(),
         human_site_source: "release-site",
+        channels_json: out_dir.join("channels.json").display().to_string(),
         manifest: channel_manifest.display().to_string(),
         health_json: out_dir.join("health.json").display().to_string(),
         copied_assets,
@@ -1331,6 +1370,9 @@ fn check_assets_channel(dist: &Path, channel: &str) -> Result<AssetsChannelCheck
     if !headers.contains(&profile_channel_header) {
         return Err(anyhow!("_headers must keep profile channel pointers fresh"));
     }
+    if !headers.contains("/channels.json\n  Cache-Control: no-cache, must-revalidate") {
+        return Err(anyhow!("_headers must keep channels.json fresh"));
+    }
     if !headers.contains("/assets/releases/*\n  Cache-Control: public, max-age=31536000, immutable")
     {
         return Err(anyhow!("_headers must cache immutable asset releases"));
@@ -1356,7 +1398,7 @@ fn validate_assets_channel_index_html(index_html: &str, channel: &str) -> Result
         "Capsem Binaries",
         "Profiles",
         "Asset Release History",
-        "/health.json",
+        "/channels.json",
         "Manifest URL",
         "Current asset base",
         "Profile catalog JSON",
@@ -1392,7 +1434,7 @@ fn write_test_assets_channel_index_fixture(dist: &Path, channel: &str) -> Result
     let channel_manifest = format!("/assets/{channel}/manifest.json");
     let html = format!(
         "<!doctype html><html><body><main><h1>Capsem Asset Channel</h1>\
-        <h2>Channel Manifest</h2><a href=\"/health.json\">/health.json</a>\
+        <h2>Channel Manifest</h2><a href=\"/channels.json\">/channels.json</a>\
         <p>Manifest URL <a href=\"{channel_manifest}\">{channel_manifest}</a></p>\
         <p>{binary} {assets} {generated_at} {date}</p>\
         <p>Current asset base {asset_base}</p><p>Profile catalog JSON {profile_source}</p>\
@@ -2718,6 +2760,37 @@ fn is_vm_obom_asset_file(file: &AssetsChannelAssetFile) -> bool {
     file.logical_name == "obom.cdx.json" || file.url.ends_with("-obom.cdx.json")
 }
 
+fn render_assets_channels_catalog(index: &AssetsChannelIndex) -> Result<String> {
+    let manifest_version = format!("{}+assets.{}", index.current_binary, index.current_assets);
+    let catalog = AssetsChannelsCatalog {
+        version: 1,
+        generated_at: index.generated_at.clone(),
+        release_site: index.release_site.clone(),
+        channels: BTreeMap::from([(
+            index.channel.clone(),
+            AssetsChannelsCatalogChannel {
+                label: title_case_channel(&index.channel),
+                manifests: vec![AssetsChannelsCatalogManifest {
+                    version: manifest_version,
+                    status: "current",
+                    url: index.manifest.clone(),
+                    digest: AssetsChannelsCatalogDigest {
+                        blake3: index.manifest_blake3.clone(),
+                    },
+                    asset_base: index.asset_base.clone(),
+                    binary_version: index.current_binary.clone(),
+                    asset_version: index.current_assets.clone(),
+                }],
+                profile_catalog: index.profile_catalog.clone(),
+            },
+        )]),
+    };
+    Ok(format!(
+        "{}\n",
+        serde_json::to_string_pretty(&catalog).context("serialize channels catalog")?
+    ))
+}
+
 fn render_assets_channel_health(index: &AssetsChannelIndex) -> Result<String> {
     Ok(format!(
         "{}\n",
@@ -2844,6 +2917,8 @@ fn render_assets_channel_headers(channel: &str) -> String {
         "  Cache-Control: no-cache, must-revalidate",
         "/index.html",
         "  Cache-Control: no-cache, must-revalidate",
+        "/channels.json",
+        "  Cache-Control: no-cache, must-revalidate",
         "/health.json",
         "  Cache-Control: no-cache, must-revalidate",
         &format!("/assets/{channel}/*"),
@@ -2859,6 +2934,14 @@ fn render_assets_channel_headers(channel: &str) -> String {
         "",
     ]
     .join("\n")
+}
+
+fn title_case_channel(channel: &str) -> String {
+    let mut chars = channel.chars();
+    match chars.next() {
+        Some(first) => first.to_ascii_uppercase().to_string() + chars.as_str(),
+        None => String::new(),
+    }
 }
 
 fn validate_channel_name(channel: &str) -> Result<()> {

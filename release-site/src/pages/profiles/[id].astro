@@ -41,8 +41,7 @@ const availability = Object.entries(profile.availability ?? {})
       <dt class="text-zinc-500">Revision</dt><dd><code>{profile.revision}</code></dd>
       <dt class="text-zinc-500">Refresh policy</dt><dd>{profile.refresh_policy}</dd>
       <dt class="text-zinc-500">Availability</dt><dd>{availability || 'none'}</dd>
-      <dt class="text-zinc-500">Current binary</dt><dd><code>{data.health.current.binary}</code></dd>
-      <dt class="text-zinc-500">Current VM assets</dt><dd><code>{data.health.current.assets}</code></dd>
+      <dt class="text-zinc-500">Minimum Capsem</dt><dd><code>{profile.min_capsem_version ?? profile.compatibility?.min_binary ?? 'not specified'}</code></dd>
       <dt class="text-zinc-500">VM defaults</dt><dd>{profile.vm?.cpu_count ?? 'unknown'} CPU, {profile.vm?.ram_gb ?? 'unknown'} GB RAM, {profile.vm?.scratch_disk_size_gb ?? 'unknown'} GB scratch</dd>
     </dl>
   </section>

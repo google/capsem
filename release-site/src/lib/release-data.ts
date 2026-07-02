@@ -1,12 +1,14 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
 
 type JsonObject = Record<string, any>;
 
 export interface ReleaseData {
   dist: string;
   channel: string;
-  health: JsonObject;
+  channels: JsonObject;
+  channelRecord: JsonObject;
+  manifestRecord: JsonObject;
   manifest: JsonObject;
   catalog: JsonObject;
 }
@@ -25,14 +27,16 @@ export function loadReleaseData(): ReleaseData {
   if (!distEnv) {
     throw new Error('CAPSEM_RELEASE_CHANNEL_DIST must point at target/release-channel');
   }
-  const dist = resolve(process.cwd(), distEnv);
-  const health = readJson(resolve(dist, 'health.json'));
-  const channel = String(health.channel ?? 'stable');
-  const manifestPath = trimLeadingSlash(String(health.urls?.manifest ?? `/assets/${channel}/manifest.json`));
+  const dist = resolveReleaseDist(distEnv);
+  const channels = readJson(resolve(dist, 'channels.json'));
+  const channel = selectChannel(channels);
+  const channelRecord = channels.channels?.[channel] ?? {};
+  const manifestRecord = selectManifestRecord(channelRecord);
+  const manifestPath = trimLeadingSlash(String(manifestRecord.url ?? `/assets/${channel}/manifest.json`));
   const manifest = readJson(resolve(dist, manifestPath));
-  const catalogPath = trimLeadingSlash(String(health.profiles?.source ?? health.urls?.profile_catalog ?? ''));
+  const catalogPath = trimLeadingSlash(String(channelRecord.profile_catalog?.source ?? ''));
   const catalog = readJson(resolve(dist, catalogPath));
-  return { dist, channel, health, manifest, catalog };
+  return { dist, channel, channels, channelRecord, manifestRecord, manifest, catalog };
 }
 
 export function profilePagePath(profileId: string): string {
@@ -94,19 +98,42 @@ export function profileFileRows(profile: JsonObject): TableRow[] {
 }
 
 export function binaryRows(data: ReleaseData): JsonObject[] {
-  return (data.health.binary?.files ?? []).filter((file: JsonObject) => !isHostSbom(file.name));
+  const current = String(data.manifest.binaries?.current ?? '');
+  const files = data.manifest.binaries?.releases?.[current]?.files;
+  return Array.isArray(files) ? files.filter((file: JsonObject) => !isHostSbom(file.name)) : [];
 }
 
 export function hostSbomRows(data: ReleaseData): JsonObject[] {
-  return data.health.evidence?.host_sboms ?? [];
+  const current = String(data.manifest.binaries?.current ?? '');
+  const files = data.manifest.binaries?.releases?.[current]?.files;
+  return Array.isArray(files) ? files.filter((file: JsonObject) => isHostSbom(file.name)) : [];
 }
 
 export function vmObomRows(data: ReleaseData): JsonObject[] {
-  return data.health.evidence?.vm_oboms ?? [];
+  return profileList(data)
+    .flatMap((profile) => {
+      const obomByArch = profile.obom?.arch ?? {};
+      return Object.entries(obomByArch).map(([arch, descriptor]) => ({
+        arch,
+        ...(descriptor as JsonObject),
+      }));
+    })
+    .sort((left, right) => String(left.arch).localeCompare(String(right.arch)));
 }
 
 export function currentAssetFilesByArch(data: ReleaseData): [string, JsonObject[]][] {
-  const files = Array.isArray(data.health.assets?.files) ? data.health.assets.files : [];
+  const current = String(data.manifest.assets?.current ?? '');
+  const release = data.manifest.assets?.releases?.[current] ?? {};
+  const arches = release.arches ?? {};
+  const assetBase = currentAssetBaseUrl(data);
+  const files = Object.entries(arches).flatMap(([arch, entries]) => {
+    return Object.entries(entries as JsonObject).map(([logicalName, entry]) => ({
+      arch,
+      logical_name: logicalName,
+      url: assetFileUrl(assetBase, arch, logicalName),
+      ...(entry as JsonObject),
+    }));
+  });
   const grouped = new Map<string, JsonObject[]>();
   for (const file of files) {
     const arch = String(file.arch ?? 'unknown');
@@ -123,7 +150,21 @@ export function currentAssetFilesByArch(data: ReleaseData): [string, JsonObject[
 }
 
 export function assetReleaseRows(data: ReleaseData): JsonObject[] {
-  return data.health.asset_releases ?? [];
+  const releases = data.manifest.assets?.releases ?? {};
+  return Object.entries(releases)
+    .map(([version, release]) => {
+      const item = release as JsonObject;
+      return {
+        version,
+        date: item.date,
+        state: item.deprecated ? 'deprecated' : 'current',
+        deprecated: Boolean(item.deprecated),
+        deprecated_date: item.deprecated_date,
+        min_binary: item.min_binary,
+        arches: Object.keys(item.arches ?? {}).sort(),
+      };
+    })
+    .sort((left, right) => String(right.version).localeCompare(String(left.version)));
 }
 
 export function currentArchitectures(data: ReleaseData): string[] {
@@ -133,9 +174,35 @@ export function currentArchitectures(data: ReleaseData): string[] {
 }
 
 export function currentAssetBaseUrl(data: ReleaseData): string {
-  const template = String(data.health.urls?.asset_base ?? '');
-  const assetVersion = String(data.health.current?.assets ?? data.manifest.assets?.current ?? '');
-  return template.replace('{asset_version}', assetVersion);
+  const template = String(data.manifestRecord.asset_base ?? data.manifest.asset_base ?? '/assets/releases');
+  const assetVersion = String(data.manifest.assets?.current ?? '');
+  if (template.includes('{asset_version}')) {
+    return template.replace('{asset_version}', assetVersion);
+  }
+  if (template.replace(/\/+$/, '').endsWith('/assets/releases')) {
+    return `${template.replace(/\/+$/, '')}/${assetVersion}`;
+  }
+  return template;
+}
+
+export function generatedAt(data: ReleaseData): string {
+  return String(data.channels.generated_at ?? '');
+}
+
+export function profileCatalogUrl(data: ReleaseData): string {
+  return String(data.channelRecord.profile_catalog?.source ?? '');
+}
+
+export function profileRevision(data: ReleaseData): string {
+  return String(data.catalog.revision ?? data.channelRecord.profile_catalog?.revision ?? '');
+}
+
+export function manifestUrl(data: ReleaseData): string {
+  return String(data.manifestRecord.url ?? `/assets/${data.channel}/manifest.json`);
+}
+
+export function manifestBlake3(data: ReleaseData): string {
+  return String(data.manifestRecord.digest?.blake3 ?? '');
 }
 
 export function byteLabel(value: unknown): string {
@@ -162,11 +229,50 @@ function descriptorRow(label: string, descriptor: JsonObject): TableRow {
   };
 }
 
+function selectChannel(channels: JsonObject): string {
+  const entries = channels.channels ?? {};
+  if (entries.stable) {
+    return 'stable';
+  }
+  const first = Object.keys(entries).sort()[0];
+  if (!first) {
+    throw new Error('channels.json must list at least one channel');
+  }
+  return first;
+}
+
+function selectManifestRecord(channelRecord: JsonObject): JsonObject {
+  const manifests = Array.isArray(channelRecord.manifests) ? channelRecord.manifests : [];
+  const selected = manifests.find((manifest: JsonObject) => manifest.status === 'current')
+    ?? manifests.find((manifest: JsonObject) => manifest.status === 'supported')
+    ?? manifests.find((manifest: JsonObject) => manifest.status === 'deprecated');
+  if (!selected) {
+    throw new Error('channels.json channel must list a selectable manifest');
+  }
+  return selected;
+}
+
+function assetFileUrl(assetBase: string, arch: string, logicalName: string): string {
+  const normalizedBase = assetBase.replace(/\/+$/, '');
+  return `${normalizedBase}/${arch}-${logicalName}`;
+}
+
 function readJson(path: string): JsonObject {
   if (!existsSync(path)) {
     throw new Error(`Release-site input is missing: ${path}`);
   }
   return JSON.parse(readFileSync(path, 'utf8')) as JsonObject;
+}
+
+function resolveReleaseDist(path: string): string {
+  if (isAbsolute(path)) {
+    return path;
+  }
+  const fromCwd = resolve(process.cwd(), path);
+  if (existsSync(fromCwd)) {
+    return fromCwd;
+  }
+  return resolve(process.cwd(), '..', path);
 }
 
 function trimLeadingSlash(path: string): string {

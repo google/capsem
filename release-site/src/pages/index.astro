@@ -8,16 +8,20 @@ import {
   currentAssetFilesByArch,
   currentAssetBaseUrl,
   currentArchitectures,
+  generatedAt,
   hashLabel,
   hostSbomRows,
   loadReleaseData,
+  manifestBlake3,
+  manifestUrl,
   profileList,
   profilePagePath,
+  profileCatalogUrl,
+  profileRevision,
   vmObomRows,
 } from '../lib/release-data';
 
 const data = loadReleaseData();
-const health = data.health;
 const profiles = profileList(data);
 const binaries = binaryRows(data);
 const hostSboms = hostSbomRows(data);
@@ -27,6 +31,10 @@ const architectures = currentArchitectures(data);
 const hostSbom = hostSboms[0];
 const assetBase = currentAssetBaseUrl(data);
 const assetFilesByArch = currentAssetFilesByArch(data);
+const currentBinary = data.manifest.binaries?.current ?? 'not published';
+const currentAssets = data.manifest.assets?.current ?? 'not published';
+const binaryState = data.manifest.binaries?.releases?.[currentBinary]?.deprecated ? 'deprecated' : 'current';
+const assetState = data.manifest.assets?.releases?.[currentAssets]?.deprecated ? 'deprecated' : 'current';
 ---
 <ReleaseLayout title="Capsem Asset Channel">
   <header class="border-b border-zinc-200 pb-6">
@@ -40,17 +48,17 @@ const assetFilesByArch = currentAssetFilesByArch(data);
   <section class="mt-8 border border-zinc-200 p-5">
     <h2 class="text-xl font-semibold text-black">Channel Manifest</h2>
     <dl class="mt-4 grid gap-3 text-sm sm:grid-cols-[14rem_1fr]">
-      <dt class="text-zinc-500">Channel</dt><dd>{health.channel}</dd>
-      <dt class="text-zinc-500">Generated</dt><dd>{health.generated_at}</dd>
-      <dt class="text-zinc-500">Manifest URL</dt><dd><a class="break-all text-blue-600 underline" href={health.urls.manifest}>{health.urls.manifest}</a></dd>
-      <dt class="text-zinc-500">Binary revision</dt><dd><code>{health.current.binary}</code> ({health.binary.state})</dd>
-      <dt class="text-zinc-500">VM asset revision</dt><dd><code>{health.current.assets}</code> ({health.assets.state})</dd>
-      <dt class="text-zinc-500">Profile revision</dt><dd><code>{health.profiles.revision}</code></dd>
+      <dt class="text-zinc-500">Channel</dt><dd>{data.channel}</dd>
+      <dt class="text-zinc-500">Generated</dt><dd>{generatedAt(data)}</dd>
+      <dt class="text-zinc-500">Manifest URL</dt><dd><a class="break-all text-blue-600 underline" href={manifestUrl(data)}>{manifestUrl(data)}</a></dd>
+      <dt class="text-zinc-500">Binary revision</dt><dd><code>{currentBinary}</code> ({binaryState})</dd>
+      <dt class="text-zinc-500">VM asset revision</dt><dd><code>{currentAssets}</code> ({assetState})</dd>
+      <dt class="text-zinc-500">Profile revision</dt><dd><code>{profileRevision(data)}</code></dd>
       <dt class="text-zinc-500">Architectures</dt><dd>{architectures.join(', ')}</dd>
       <dt class="text-zinc-500">Current asset base</dt><dd><a class="break-all text-blue-600 underline" href={assetBase}>{assetBase}</a></dd>
-      <dt class="text-zinc-500">Health JSON</dt><dd><a class="text-blue-600 underline" href="/health.json">/health.json</a></dd>
-      <dt class="text-zinc-500">Profile catalog JSON</dt><dd><a class="break-all text-blue-600 underline" href={health.profiles.source}>{health.profiles.source}</a></dd>
-      <dt class="text-zinc-500">Manifest BLAKE3</dt><dd><code class="break-all">{health.manifest_blake3}</code></dd>
+      <dt class="text-zinc-500">Channels JSON</dt><dd><a class="text-blue-600 underline" href="/channels.json">/channels.json</a></dd>
+      <dt class="text-zinc-500">Profile catalog JSON</dt><dd><a class="break-all text-blue-600 underline" href={profileCatalogUrl(data)}>{profileCatalogUrl(data)}</a></dd>
+      <dt class="text-zinc-500">Manifest BLAKE3</dt><dd><code class="break-all">{manifestBlake3(data)}</code></dd>
     </dl>
   </section>
 
@@ -72,7 +80,7 @@ const assetFilesByArch = currentAssetFilesByArch(data);
         <tbody>
           {binaries.length > 0 ? binaries.map((file) => (
             <tr class="border-b border-zinc-100 align-top">
-              <td class="py-3 pr-4"><code>{health.current.binary}</code></td>
+              <td class="py-3 pr-4"><code>{currentBinary}</code></td>
               <td class="py-3 pr-4">{file.name}</td>
               <td class="py-3 pr-4 text-zinc-600">{binaryDescription(file.name)}</td>
               <td class="py-3 pr-4"><a class="break-all text-blue-600 underline" href={file.url}>{file.url}</a></td>
@@ -136,7 +144,7 @@ const assetFilesByArch = currentAssetFilesByArch(data);
         <h2 class="text-xl font-semibold text-black">Profiles</h2>
         <p class="mt-1 text-sm text-zinc-600">Profile pages are generated from the published profile catalog JSON.</p>
       </div>
-      <a class="text-sm font-medium text-blue-600 underline" href={health.profiles.source}>Catalog JSON</a>
+      <a class="text-sm font-medium text-blue-600 underline" href={profileCatalogUrl(data)}>Catalog JSON</a>
     </div>
     <div class="mt-4 grid gap-4 md:grid-cols-2">
       {profiles.map((profile) => (

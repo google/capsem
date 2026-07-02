@@ -1,5 +1,5 @@
 import { cpSync, existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
 
 const channelDist = process.env.CAPSEM_RELEASE_CHANNEL_DIST;
 if (!channelDist) {
@@ -7,7 +7,7 @@ if (!channelDist) {
 }
 
 const source = resolve('dist');
-const target = resolve(channelDist);
+const target = resolveReleaseDist(channelDist);
 
 if (!existsSync(source)) {
   throw new Error(`Astro output does not exist: ${source}`);
@@ -17,3 +17,14 @@ if (!existsSync(target)) {
 }
 
 cpSync(source, target, { recursive: true });
+
+function resolveReleaseDist(path) {
+  if (isAbsolute(path)) {
+    return path;
+  }
+  const fromCwd = resolve(process.cwd(), path);
+  if (existsSync(fromCwd)) {
+    return fromCwd;
+  }
+  return resolve(process.cwd(), '..', path);
+}

@@ -233,11 +233,19 @@ def test_generated_release_channel_passes_public_contract(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     assert (release_channel_dist / "index.html").is_file()
+    assert (release_channel_dist / "channels.json").is_file()
     assert (release_channel_dist / "health.json").is_file()
     assert (release_channel_dist / "_headers").is_file()
     assert (release_channel_dist / "assets" / CHANNEL / "manifest.json").is_file()
     assert (release_channel_dist / "assets" / "releases").is_dir()
     assert (release_channel_dist / "profiles" / "releases").is_dir()
+    channels = json.loads((release_channel_dist / "channels.json").read_text())
+    assert channels["channels"][CHANNEL]["manifests"][0]["url"] == (
+        f"/assets/{CHANNEL}/manifest.json"
+    )
+    assert channels["channels"][CHANNEL]["profile_catalog"]["source"].startswith(
+        "/profiles/releases/"
+    )
 
     with _serve_release_channel(release_channel_dist) as url:
         assert _validate_release_site(url, capsys=capsys) == 0

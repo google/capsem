@@ -117,3 +117,20 @@ def test_ledger_is_derived_not_authoritative() -> None:
         "profile_image" if stable["profiles"]["co-work"]["images"] else "",
     }
     assert derived_kinds == {"manifest", "package", "binary", "profile", "profile_image"}
+
+
+def test_health_json_not_release_truth() -> None:
+    release_site_loader = (
+        PROJECT_ROOT / "release-site" / "src" / "lib" / "release-data.ts"
+    ).read_text(encoding="utf-8")
+    release_site_index = (
+        PROJECT_ROOT / "release-site" / "src" / "pages" / "index.astro"
+    ).read_text(encoding="utf-8")
+    release_site_profile = (
+        PROJECT_ROOT / "release-site" / "src" / "pages" / "profiles" / "[id].astro"
+    ).read_text(encoding="utf-8")
+
+    assert "channels.json" in release_site_loader
+    assert "health.json" not in release_site_loader
+    assert "data.health" not in release_site_index
+    assert "data.health" not in release_site_profile
