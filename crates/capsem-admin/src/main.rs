@@ -18,6 +18,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
+mod release_graph;
+
 #[derive(Debug, Parser)]
 #[command(name = "capsem-admin")]
 #[command(version)]
