@@ -105,6 +105,14 @@ pub struct BinaryInventoryRow {
     pub sbom_component_ref: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackagedExecutableFile {
+    pub name: String,
+    pub install_path: String,
+    pub bytes: Vec<u8>,
+    pub hmac: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReleaseManifest {
@@ -339,6 +347,67 @@ impl BinaryInventoryRow {
             .validate(&format!("binary {} {}", self.name, self.version))?;
         Ok(())
     }
+}
+
+pub fn executable_inventory_from_package_files(
+    package: &PackageInventoryRow,
+    files: &[PackagedExecutableFile],
+    sbom_component_refs: &BTreeMap<String, String>,
+) -> Result<Vec<BinaryInventoryRow>> {
+    let mut rows = Vec::new();
+    let mut install_paths = std::collections::BTreeSet::new();
+    for file in files {
+        if file.name.trim().is_empty() {
+            bail!("packaged executable name must not be empty");
+        }
+        if file.install_path.trim().is_empty() {
+            bail!(
+                "packaged executable {} install_path must not be empty",
+                file.name
+            );
+        }
+        if !install_paths.insert(file.install_path.as_str()) {
+            bail!(
+                "duplicate packaged executable install_path {}",
+                file.install_path
+            );
+        }
+        if file.bytes.is_empty() {
+            bail!(
+                "packaged executable {} must not be empty",
+                file.install_path
+            );
+        }
+        let sbom_component_ref = sbom_component_refs
+            .get(&file.install_path)
+            .ok_or_else(|| {
+                anyhow!(
+                    "packaged executable {} missing SBOM component reference",
+                    file.install_path
+                )
+            })?
+            .clone();
+        let row = BinaryInventoryRow {
+            name: file.name.clone(),
+            version: package.version.clone(),
+            package: package.name.clone(),
+            install_path: file.install_path.clone(),
+            platform: package.platform.clone(),
+            architecture: package.architecture,
+            bytes: file.bytes.len() as u64,
+            digest: DigestSet {
+                sha256: format!("{:x}", Sha256::digest(&file.bytes)),
+                blake3: blake3::hash(&file.bytes).to_hex().to_string(),
+                hmac: file.hmac.clone(),
+            },
+            status: package.status,
+            sbom_component_ref,
+        };
+        row.validate()?;
+        rows.push(row);
+    }
+    rows.sort_by(|left, right| left.install_path.cmp(&right.install_path));
+    Ok(rows)
 }
 
 impl ReleaseManifest {
@@ -1009,6 +1078,93 @@ mod tests {
             .validate_inventory_shape()
             .expect_err("bad package digest is rejected");
         assert!(format!("{error:#}").contains("blake3"), "{error:#}");
+    }
+
+    #[test]
+    fn executable_inventory_records_every_packaged_binary_with_hashes_and_sbom_refs() {
+        let package = PackageInventoryRow {
+            name: "Capsem-1.4.0.pkg".to_string(),
+            version: "1.4.0".to_string(),
+            kind: PackageKind::MacosPkg,
+            platform: "macos".to_string(),
+            architecture: Architecture::Arm64,
+            url: "/packages/stable/1.4.0/Capsem-1.4.0.pkg".to_string(),
+            bytes: 42,
+            digest: digest_set(),
+            status: Status::Current,
+            evidence: Vec::new(),
+        };
+        let files = vec![
+            PackagedExecutableFile {
+                name: "capsem-service".to_string(),
+                install_path: "/usr/local/share/capsem/bin/capsem-service".to_string(),
+                bytes: b"service-bin".to_vec(),
+                hmac: "service-hmac".to_string(),
+            },
+            PackagedExecutableFile {
+                name: "capsem".to_string(),
+                install_path: "/usr/local/bin/capsem".to_string(),
+                bytes: b"capsem-bin".to_vec(),
+                hmac: "capsem-hmac".to_string(),
+            },
+        ];
+        let sbom_refs = BTreeMap::from([
+            (
+                "/usr/local/bin/capsem".to_string(),
+                "SPDXRef-File-capsem".to_string(),
+            ),
+            (
+                "/usr/local/share/capsem/bin/capsem-service".to_string(),
+                "SPDXRef-File-capsem-service".to_string(),
+            ),
+        ]);
+
+        let rows =
+            executable_inventory_from_package_files(&package, &files, &sbom_refs).expect("rows");
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].name, "capsem");
+        assert_eq!(rows[0].package, "Capsem-1.4.0.pkg");
+        assert_eq!(
+            rows[0].digest.sha256,
+            format!("{:x}", Sha256::digest(b"capsem-bin"))
+        );
+        assert_eq!(
+            rows[0].digest.blake3,
+            blake3::hash(b"capsem-bin").to_hex().to_string()
+        );
+        assert_eq!(rows[0].sbom_component_ref, "SPDXRef-File-capsem");
+        assert_eq!(rows[1].sbom_component_ref, "SPDXRef-File-capsem-service");
+    }
+
+    #[test]
+    fn executable_inventory_rejects_missing_sbom_component_ref() {
+        let package = PackageInventoryRow {
+            name: "capsem_1.4.0_arm64.deb".to_string(),
+            version: "1.4.0".to_string(),
+            kind: PackageKind::DebianPackage,
+            platform: "linux".to_string(),
+            architecture: Architecture::Arm64,
+            url: "/packages/stable/1.4.0/capsem_1.4.0_arm64.deb".to_string(),
+            bytes: 42,
+            digest: digest_set(),
+            status: Status::Current,
+            evidence: Vec::new(),
+        };
+        let files = vec![PackagedExecutableFile {
+            name: "capsem".to_string(),
+            install_path: "/usr/bin/capsem".to_string(),
+            bytes: b"capsem-bin".to_vec(),
+            hmac: "capsem-hmac".to_string(),
+        }];
+
+        let error = executable_inventory_from_package_files(&package, &files, &BTreeMap::new())
+            .expect_err("missing SBOM component ref rejected");
+
+        assert!(
+            format!("{error:#}").contains("missing SBOM component reference"),
+            "{error:#}"
+        );
     }
 
     #[test]
