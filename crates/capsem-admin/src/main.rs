@@ -399,7 +399,7 @@ struct ProfileMaterializeReport {
     output_config_root: String,
     profile_path: String,
     manifest: String,
-    current_assets: String,
+    asset_version: String,
     materialized_assets: Vec<ProfileMaterializedAssetReport>,
     materialized_obom: Vec<ProfileMaterializedObomReport>,
 }
@@ -505,8 +505,8 @@ struct ManifestReport {
     path: String,
     blake3: String,
     refresh_policy: String,
-    current_assets: String,
-    current_binary: String,
+    asset_version: String,
+    binary_version: String,
     releases: usize,
     arches: Vec<ManifestArchReport>,
 }
@@ -624,17 +624,17 @@ struct AssetsChannelIndex {
     manifest: String,
     asset_base: String,
     manifest_blake3: String,
-    current_binary: String,
-    current_assets: String,
-    current_asset_state: String,
-    current_asset_min_binary: Option<String>,
-    current_binary_state: String,
+    binary_version: String,
+    asset_version: String,
+    asset_state: String,
+    asset_min_binary: Option<String>,
+    binary_state: String,
     asset_releases: usize,
     asset_release_history: Vec<AssetsChannelAssetRelease>,
     binary_releases: usize,
     arches: Vec<String>,
     current_asset_files: Vec<AssetsChannelAssetFile>,
-    current_binary_files: Vec<AssetsChannelBinaryFile>,
+    binary_files: Vec<AssetsChannelBinaryFile>,
     host_sboms: Vec<AssetsChannelBinaryFile>,
     attestations: Vec<AssetsChannelAttestation>,
     vm_oboms: Vec<AssetsChannelAssetFile>,
@@ -1701,7 +1701,7 @@ fn validate_assets_channel_health(
     require_json_str(
         health,
         &["updates", "images", "source"],
-        "not_in_asset_channel",
+        "profile_catalog",
         "health.json image update source mismatch",
     )?;
 
@@ -1733,18 +1733,18 @@ fn validate_assets_channel_health(
     let host_sboms = require_json_array(health, &["evidence", "host_sboms"])?;
     let host_binary_files = require_json_array(health, &["evidence", "host_binary_files"])?;
     let attestations = require_json_array(health, &["evidence", "attestations"])?;
-    let current_binary_files = manifest
+    let binary_files = manifest
         .binaries
         .releases
         .get(&manifest.binaries.current)
-        .map(|release| current_binary_file_refs(&manifest.binaries.current, release))
+        .map(|release| binary_package_file_refs(&manifest.binaries.current, release))
         .unwrap_or_default();
-    let current_host_package_subjects = current_binary_files
+    let host_package_subjects = binary_files
         .iter()
         .filter(|file| !is_host_sbom_file(&file.name))
         .map(|file| file.url.clone())
         .collect::<BTreeSet<_>>();
-    if !current_binary_files.is_empty() {
+    if !binary_files.is_empty() {
         if host_binary_files.is_empty() {
             return Err(anyhow!("health.json host binary files missing"));
         }
@@ -1755,7 +1755,7 @@ fn validate_assets_channel_health(
             return Err(anyhow!("health.json binary attestation evidence missing"));
         }
     }
-    for expected in &current_binary_files {
+    for expected in &binary_files {
         let public_file = host_binary_files.iter().find(|item| {
             item.get("url").and_then(|value| value.as_str()) == Some(expected.url.as_str())
         });
@@ -1932,7 +1932,7 @@ fn validate_assets_channel_health(
             "health.json host SBOM attestation evidence missing"
         ));
     }
-    for subject in &current_host_package_subjects {
+    for subject in &host_package_subjects {
         if !host_sbom_attestation_subjects.contains(subject) {
             return Err(anyhow!(
                 "health.json host SBOM attestation subjects missing {subject}"
@@ -2184,7 +2184,7 @@ fn assets_channel_index(
         arches.extend(release.arches.keys().cloned());
     }
     let current_release = manifest.assets.releases.get(&manifest.assets.current);
-    let current_binary_release = manifest.binaries.releases.get(&manifest.binaries.current);
+    let binary_release = manifest.binaries.releases.get(&manifest.binaries.current);
     let current_asset_files = current_release
         .map(|release| current_asset_file_refs(asset_base, &manifest.assets.current, release))
         .unwrap_or_default();
@@ -2193,15 +2193,15 @@ fn assets_channel_index(
         .filter(|file| file.logical_name == "obom.cdx.json")
         .cloned()
         .collect();
-    let current_binary_files = current_binary_release
-        .map(|release| current_binary_file_refs(&manifest.binaries.current, release))
+    let binary_files = binary_release
+        .map(|release| binary_package_file_refs(&manifest.binaries.current, release))
         .unwrap_or_default();
-    let host_sboms = current_binary_files
+    let host_sboms = binary_files
         .iter()
         .filter(|file| is_host_sbom_file(&file.name))
         .cloned()
         .collect();
-    let mut attestations = current_binary_attestations(&current_binary_files);
+    let mut attestations = binary_package_attestations(&binary_files);
     attestations.extend(current_asset_attestations(&current_asset_files));
     AssetsChannelIndex {
         schema_version: 1,
@@ -2213,14 +2213,14 @@ fn assets_channel_index(
         manifest: format!("/assets/{channel}/manifest.json"),
         asset_base: asset_base.to_string(),
         manifest_blake3: manifest_blake3.to_string(),
-        current_binary: manifest.binaries.current.clone(),
-        current_assets: manifest.assets.current.clone(),
-        current_asset_state: current_release
+        binary_version: manifest.binaries.current.clone(),
+        asset_version: manifest.assets.current.clone(),
+        asset_state: current_release
             .map(release_state)
             .unwrap_or("missing")
             .to_string(),
-        current_asset_min_binary: current_release.map(|release| release.min_binary.clone()),
-        current_binary_state: current_binary_release
+        asset_min_binary: current_release.map(|release| release.min_binary.clone()),
+        binary_state: binary_release
             .map(release_state)
             .unwrap_or("missing")
             .to_string(),
@@ -2229,7 +2229,7 @@ fn assets_channel_index(
         binary_releases: manifest.binaries.releases.len(),
         arches: arches.into_iter().collect(),
         current_asset_files,
-        current_binary_files,
+        binary_files,
         host_sboms,
         attestations,
         vm_oboms,
@@ -2545,7 +2545,7 @@ fn current_asset_file_refs(
     files
 }
 
-fn current_binary_file_refs(
+fn binary_package_file_refs(
     binary_version: &str,
     release: &capsem_core::asset_manager::BinaryRelease,
 ) -> Vec<AssetsChannelBinaryFile> {
@@ -2564,7 +2564,7 @@ fn current_binary_file_refs(
     files
 }
 
-fn current_binary_attestations(files: &[AssetsChannelBinaryFile]) -> Vec<AssetsChannelAttestation> {
+fn binary_package_attestations(files: &[AssetsChannelBinaryFile]) -> Vec<AssetsChannelAttestation> {
     if files.is_empty() {
         return Vec::new();
     }
@@ -2632,7 +2632,7 @@ fn is_vm_obom_asset_file(file: &AssetsChannelAssetFile) -> bool {
 }
 
 fn render_assets_channels_catalog(index: &AssetsChannelIndex) -> Result<String> {
-    let manifest_version = format!("{}+assets.{}", index.current_binary, index.current_assets);
+    let manifest_version = format!("{}+assets.{}", index.binary_version, index.asset_version);
     let catalog = AssetsChannelsCatalog {
         version: 1,
         generated_at: index.generated_at.clone(),
@@ -2649,8 +2649,8 @@ fn render_assets_channels_catalog(index: &AssetsChannelIndex) -> Result<String> 
                         blake3: index.manifest_blake3.clone(),
                     },
                     asset_base: index.asset_base.clone(),
-                    binary_version: index.current_binary.clone(),
-                    asset_version: index.current_assets.clone(),
+                    binary_version: index.binary_version.clone(),
+                    asset_version: index.asset_version.clone(),
                 }],
                 profile_catalog: index.profile_catalog.clone(),
             },
@@ -2681,20 +2681,20 @@ fn render_assets_channel_health(index: &AssetsChannelIndex) -> Result<String> {
                 "asset_base": index.asset_base,
             },
             "current": {
-                "binary": index.current_binary,
-                "assets": index.current_assets,
+                "binary": index.binary_version,
+                "assets": index.asset_version,
             },
             "binary": {
-                "version": index.current_binary,
-                "state": index.current_binary_state,
-                "files": index.current_binary_files,
+                "version": index.binary_version,
+                "state": index.binary_state,
+                "files": index.binary_files,
             },
             "assets": {
-                "version": index.current_assets,
-                "state": index.current_asset_state,
+                "version": index.asset_version,
+                "state": index.asset_state,
                 "compatibility": {
-                    "binary": index.current_binary,
-                    "min_binary": index.current_asset_min_binary,
+                    "binary": index.binary_version,
+                    "min_binary": index.asset_min_binary,
                 },
                 "requires_newer": {
                     "binary": false,
@@ -2715,22 +2715,22 @@ fn render_assets_channel_health(index: &AssetsChannelIndex) -> Result<String> {
                 },
             "updates": {
                 "binary": {
-                    "latest": index.current_binary,
-                    "current": index.current_binary,
-                    "state": index.current_binary_state,
+                    "latest": index.binary_version,
+                    "current": index.binary_version,
+                    "state": index.binary_state,
                     "source": "manifest.binaries.current",
-                    "files": index.current_binary_files,
+                    "files": index.binary_files,
                 },
                 "assets": {
-                    "latest": index.current_assets,
-                    "current": index.current_assets,
-                    "state": index.current_asset_state,
+                    "latest": index.asset_version,
+                    "current": index.asset_version,
+                    "state": index.asset_state,
                     "source": "manifest.assets.current",
                     "manifest": index.manifest,
                     "asset_base": index.asset_base,
                     "compatibility": {
-                        "binary": index.current_binary,
-                        "min_binary": index.current_asset_min_binary,
+                        "binary": index.binary_version,
+                        "min_binary": index.asset_min_binary,
                     },
                     "requires_newer": {
                         "binary": false,
@@ -2752,13 +2752,13 @@ fn render_assets_channel_health(index: &AssetsChannelIndex) -> Result<String> {
                     "latest": serde_json::Value::Null,
                     "current": serde_json::Value::Null,
                     "state": index.image_update_state,
-                    "source": "not_in_asset_channel",
+                    "source": "profile_catalog",
                 },
             },
             "evidence": {
                 "vm_oboms": index.vm_oboms,
                 "host_sboms": index.host_sboms,
-                "host_binary_files": index.current_binary_files,
+                "host_binary_files": index.binary_files,
                 "attestations": index.attestations,
             },
             "manifest": index.manifest,
@@ -3441,7 +3441,7 @@ fn materialize_profile_config(args: &ProfileMaterializeArgs) -> Result<ProfileMa
         output_config_root: args.output_root.display().to_string(),
         profile_path: output_profile_path.display().to_string(),
         manifest: manifest_output.display().to_string(),
-        current_assets: manifest.assets.current,
+        asset_version: manifest.assets.current,
         materialized_assets,
         materialized_obom,
     })
@@ -4772,8 +4772,8 @@ fn manifest_report(
         path: path.display().to_string(),
         blake3: hash_file(path)?,
         refresh_policy: manifest.refresh_policy.clone(),
-        current_assets: manifest.assets.current.clone(),
-        current_binary: manifest.binaries.current.clone(),
+        asset_version: manifest.assets.current.clone(),
+        binary_version: manifest.binaries.current.clone(),
         releases: manifest.assets.releases.len(),
         arches,
     })
@@ -5196,7 +5196,7 @@ decision = "block"
                 .to_string()
         );
         assert_eq!(report.refresh_policy, "24h");
-        assert_eq!(report.current_assets, "2026.0607.1");
+        assert_eq!(report.asset_version, "2026.0607.1");
         assert!(report.arches.iter().any(|arch| arch.arch == "arm64"));
     }
 
@@ -6487,7 +6487,7 @@ decision = "block"
         );
         assert_eq!(
             health["updates"]["images"]["source"].as_str(),
-            Some("not_in_asset_channel")
+            Some("profile_catalog")
         );
 
         let check = check_assets_channel(&out_dir, "stable").expect("asset channel checks");
