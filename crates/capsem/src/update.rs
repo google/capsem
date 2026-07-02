@@ -6,7 +6,7 @@
 //! from VM asset hydration.
 
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
 };
 
@@ -227,6 +227,45 @@ struct PublishedProfileCatalogDocument {
     #[allow(dead_code)]
     state: Option<String>,
     profiles: Vec<ProfileConfigFile>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ReleaseChannelsCatalog {
+    version: u64,
+    channels: BTreeMap<String, ReleaseChannelRecord>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ReleaseChannelRecord {
+    manifests: Vec<ReleaseManifestRecord>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ReleaseManifestRecord {
+    version: String,
+    status: ReleaseManifestStatus,
+    url: String,
+    digest: ReleaseManifestDigest,
+    #[serde(default)]
+    min_capsem_version: Option<String>,
+    #[serde(default)]
+    max_capsem_version: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ReleaseManifestStatus {
+    Current,
+    Supported,
+    Deprecated,
+    Revoked,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ReleaseManifestDigest {
+    sha256: String,
+    blake3: String,
+    hmac: String,
 }
 
 impl ReleaseChannelUpdateTarget {
@@ -544,6 +583,101 @@ fn release_manifest_url() -> Result<String> {
     }
 
     Ok(DEFAULT_RELEASE_MANIFEST_URL.to_string())
+}
+
+fn select_channel_manifest_url(
+    catalog: &ReleaseChannelsCatalog,
+    channel: &str,
+    capsem_version: &str,
+) -> Result<String> {
+    if catalog.version == 0 {
+        anyhow::bail!("channels catalog version must be non-zero");
+    }
+    let capsem_version = semver::Version::parse(capsem_version)
+        .with_context(|| format!("parse Capsem version {capsem_version}"))?;
+    let record = catalog
+        .channels
+        .get(channel)
+        .ok_or_else(|| anyhow::anyhow!("channel {channel} is not listed"))?;
+    record
+        .manifests
+        .iter()
+        .filter(|manifest| manifest.status != ReleaseManifestStatus::Revoked)
+        .filter(|manifest| manifest_is_compatible_with_capsem(manifest, &capsem_version))
+        .map(|manifest| {
+            validate_channel_manifest_record(channel, manifest)?;
+            Ok(manifest)
+        })
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .min_by_key(|manifest| manifest.status.selection_rank())
+        .map(|manifest| manifest.url.clone())
+        .ok_or_else(|| anyhow::anyhow!("channel {channel} has no compatible selectable manifest"))
+}
+
+fn manifest_is_compatible_with_capsem(
+    manifest: &ReleaseManifestRecord,
+    capsem_version: &semver::Version,
+) -> bool {
+    if let Some(min) = &manifest.min_capsem_version {
+        let Ok(min) = semver::Version::parse(min) else {
+            return false;
+        };
+        if capsem_version < &min {
+            return false;
+        }
+    }
+    if let Some(max) = &manifest.max_capsem_version {
+        let Ok(max) = semver::Version::parse(max) else {
+            return false;
+        };
+        if capsem_version > &max {
+            return false;
+        }
+    }
+    true
+}
+
+fn validate_channel_manifest_record(channel: &str, manifest: &ReleaseManifestRecord) -> Result<()> {
+    if manifest.version.trim().is_empty() {
+        anyhow::bail!("channel {channel} manifest version must not be empty");
+    }
+    if manifest.url.trim().is_empty() {
+        anyhow::bail!(
+            "channel {channel} manifest {} url must not be empty",
+            manifest.version
+        );
+    }
+    if !(manifest.url.starts_with('/')
+        || manifest.url.starts_with("https://")
+        || manifest.url.starts_with("http://"))
+    {
+        anyhow::bail!(
+            "channel {channel} manifest {} url must be release-site relative or http(s): {}",
+            manifest.version,
+            manifest.url
+        );
+    }
+    validate_hex_digest(&manifest.digest.sha256, 64, "manifest digest sha256")?;
+    validate_hex_digest(&manifest.digest.blake3, 64, "manifest digest blake3")?;
+    if manifest.digest.hmac.trim().is_empty() {
+        anyhow::bail!(
+            "channel {channel} manifest {} hmac must not be empty",
+            manifest.version
+        );
+    }
+    Ok(())
+}
+
+impl ReleaseManifestStatus {
+    fn selection_rank(self) -> u8 {
+        match self {
+            ReleaseManifestStatus::Current => 0,
+            ReleaseManifestStatus::Supported => 1,
+            ReleaseManifestStatus::Deprecated => 2,
+            ReleaseManifestStatus::Revoked => 255,
+        }
+    }
 }
 
 fn validate_release_manifest_url(url: &str) -> Result<String> {
@@ -1623,6 +1757,13 @@ fn validate_blake3_hex(field: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
+fn validate_hex_digest(value: &str, expected_len: usize, field: &str) -> Result<()> {
+    if value.len() != expected_len || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        anyhow::bail!("{field} must be a {expected_len}-character hex digest");
+    }
+    Ok(())
+}
+
 /// Pull any missing / hash-mismatched VM assets from the release URL.
 async fn refresh_assets(manifest_source: Option<&str>) -> Result<()> {
     let assets_dir = capsem_core::asset_manager::default_assets_dir()
@@ -2198,6 +2339,105 @@ mod tests {
         assert_eq!(
             release_manifest_url_from_manifest_url("file:///tmp/assets/stable/manifest.json"),
             None
+        );
+    }
+
+    fn channel_catalog_fixture() -> ReleaseChannelsCatalog {
+        serde_json::from_value(serde_json::json!({
+            "version": 1,
+            "channels": {
+                "nightly": {
+                    "manifests": [
+                        {
+                            "version": "1.5.0-nightly.20260702",
+                            "status": "current",
+                            "url": "/assets/nightly/manifest.json",
+                            "digest": {
+                                "sha256": "a".repeat(64),
+                                "blake3": "b".repeat(64),
+                                "hmac": "nightly-current-hmac"
+                            },
+                            "min_capsem_version": "1.5.0"
+                        },
+                        {
+                            "version": "1.4.9-nightly.20260701",
+                            "status": "supported",
+                            "url": "/assets/nightly/1.4/manifest.json",
+                            "digest": {
+                                "sha256": "c".repeat(64),
+                                "blake3": "d".repeat(64),
+                                "hmac": "nightly-supported-hmac"
+                            },
+                            "min_capsem_version": "1.4.0",
+                            "max_capsem_version": "1.4.99"
+                        },
+                        {
+                            "version": "1.3.0-nightly.revoked",
+                            "status": "revoked",
+                            "url": "/assets/nightly/revoked/manifest.json",
+                            "digest": {
+                                "sha256": "e".repeat(64),
+                                "blake3": "f".repeat(64),
+                                "hmac": "nightly-revoked-hmac"
+                            }
+                        }
+                    ]
+                }
+            }
+        }))
+        .expect("channel catalog fixture")
+    }
+
+    #[test]
+    fn channel_manifest_resolution_never_selects_revoked_manifest() {
+        let catalog = channel_catalog_fixture();
+
+        let selected =
+            select_channel_manifest_url(&catalog, "nightly", "1.4.12").expect("selection");
+
+        assert_ne!(selected, "/assets/nightly/revoked/manifest.json");
+        assert_eq!(selected, "/assets/nightly/1.4/manifest.json");
+    }
+
+    #[test]
+    fn channel_manifest_resolution_old_capsem_selects_compatible_supported_manifest() {
+        let catalog = channel_catalog_fixture();
+
+        let selected =
+            select_channel_manifest_url(&catalog, "nightly", "1.4.12").expect("selection");
+
+        assert_eq!(selected, "/assets/nightly/1.4/manifest.json");
+    }
+
+    #[test]
+    fn channel_manifest_resolution_requires_digest_and_hmac_shape() {
+        let catalog: ReleaseChannelsCatalog = serde_json::from_value(serde_json::json!({
+            "version": 1,
+            "channels": {
+                "stable": {
+                    "manifests": [
+                        {
+                            "version": "1.4.0",
+                            "status": "current",
+                            "url": "/assets/stable/manifest.json",
+                            "digest": {
+                                "sha256": "abc123",
+                                "blake3": "b".repeat(64),
+                                "hmac": ""
+                            }
+                        }
+                    ]
+                }
+            }
+        }))
+        .expect("bad catalog parses before validation");
+
+        let error = select_channel_manifest_url(&catalog, "stable", "1.4.0")
+            .expect_err("bad digest/HMAC shape rejected");
+
+        assert!(
+            format!("{error:#}").contains("sha256") || format!("{error:#}").contains("hmac"),
+            "{error:#}"
         );
     }
 
