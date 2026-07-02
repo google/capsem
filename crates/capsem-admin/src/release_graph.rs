@@ -41,14 +41,14 @@ pub enum PackageKind {
     DebianPackage,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Architecture {
     Arm64,
     X86_64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProfileImageArtifactKind {
     Kernel,
@@ -171,6 +171,27 @@ pub struct ProfileArchitectureImages {
     pub artifacts: Vec<ProfileImageArtifactRef>,
     #[serde(default)]
     pub evidence: Vec<EvidenceRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProfileVersionHistory {
+    pub channel: String,
+    pub profile_id: String,
+    pub versions: Vec<ProfileDocument>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ProfileImageArtifactKey {
+    pub architecture: Architecture,
+    pub kind: ProfileImageArtifactKind,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProfileImageDiff {
+    pub added: Vec<ProfileImageArtifactKey>,
+    pub retained: Vec<ProfileImageArtifactKey>,
+    pub removed: Vec<ProfileImageArtifactKey>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -646,6 +667,81 @@ impl ProfileDocument {
         }
         Ok(())
     }
+}
+
+impl ProfileVersionHistory {
+    pub fn new(channel: impl Into<String>, first: ProfileDocument) -> Result<Self> {
+        first.validate_profile_ownership()?;
+        let channel = channel.into();
+        validate_channel_id(&channel)?;
+        Ok(Self {
+            channel,
+            profile_id: first.id.clone(),
+            versions: vec![first],
+        })
+    }
+
+    pub fn append_version(&mut self, next: ProfileDocument) -> Result<()> {
+        next.validate_profile_ownership()?;
+        if next.id != self.profile_id {
+            bail!(
+                "profile history {} cannot append profile {}",
+                self.profile_id,
+                next.id
+            );
+        }
+        if self
+            .versions
+            .iter()
+            .any(|profile| profile.revision == next.revision)
+        {
+            bail!(
+                "profile history {} already contains revision {}",
+                self.profile_id,
+                next.revision
+            );
+        }
+        self.versions.push(next);
+        Ok(())
+    }
+}
+
+pub fn diff_profile_image_artifacts(
+    previous: &ProfileDocument,
+    next: &ProfileDocument,
+) -> Result<ProfileImageDiff> {
+    if previous.id != next.id {
+        bail!(
+            "cannot diff profile images for different profiles: {} vs {}",
+            previous.id,
+            next.id
+        );
+    }
+    previous.validate_profile_ownership()?;
+    next.validate_profile_ownership()?;
+    let previous_keys = profile_image_artifact_keys(previous);
+    let next_keys = profile_image_artifact_keys(next);
+    Ok(ProfileImageDiff {
+        added: next_keys.difference(&previous_keys).cloned().collect(),
+        retained: next_keys.intersection(&previous_keys).cloned().collect(),
+        removed: previous_keys.difference(&next_keys).cloned().collect(),
+    })
+}
+
+fn profile_image_artifact_keys(
+    profile: &ProfileDocument,
+) -> std::collections::BTreeSet<ProfileImageArtifactKey> {
+    let mut keys = std::collections::BTreeSet::new();
+    for images in &profile.images {
+        for artifact in &images.artifacts {
+            keys.insert(ProfileImageArtifactKey {
+                architecture: images.architecture,
+                kind: artifact.kind,
+                name: artifact.name.clone(),
+            });
+        }
+    }
+    keys
 }
 
 impl SoftwareInventoryRow {
@@ -1388,6 +1484,146 @@ mod tests {
             format!("{error:#}").contains("sha256 mismatch"),
             "{error:#}"
         );
+    }
+
+    fn profile_with_image_artifacts(
+        revision: &str,
+        artifacts: Vec<ProfileImageArtifactRef>,
+    ) -> ProfileDocument {
+        ProfileDocument {
+            version: revision.to_string(),
+            id: "co-work".to_string(),
+            name: "Co-work".to_string(),
+            revision: revision.to_string(),
+            status: Status::Current,
+            min_capsem_version: Some("1.4.0".to_string()),
+            software: vec![SoftwareInventoryRow {
+                name: "python".to_string(),
+                version: "3.12.11".to_string(),
+                source: "apt".to_string(),
+            }],
+            config: vec![ProfileConfigRef {
+                kind: "mcp".to_string(),
+                path: "profiles/co-work/mcp.json".to_string(),
+                url: format!("/profiles/releases/{revision}/co-work/mcp.json"),
+                bytes: 12,
+                digest: digest_set(),
+                status: Status::Current,
+            }],
+            images: vec![ProfileArchitectureImages {
+                architecture: Architecture::Arm64,
+                artifacts,
+                evidence: vec![EvidenceRef {
+                    kind: "abom".to_string(),
+                    url: format!("/profiles/releases/{revision}/co-work/arm64/abom.cdx.json"),
+                    digest: digest_set(),
+                }],
+            }],
+        }
+    }
+
+    fn profile_image_artifact(
+        kind: ProfileImageArtifactKind,
+        name: &str,
+        revision: &str,
+    ) -> ProfileImageArtifactRef {
+        ProfileImageArtifactRef {
+            kind,
+            name: name.to_string(),
+            url: format!("/profiles/releases/{revision}/co-work/arm64/{name}"),
+            bytes: 42,
+            digest: digest_set(),
+            status: Status::Current,
+        }
+    }
+
+    #[test]
+    fn profile_image_versions_append_without_deprecating_previous() {
+        let first = profile_with_image_artifacts(
+            "2026.07.02.1",
+            vec![profile_image_artifact(
+                ProfileImageArtifactKind::Rootfs,
+                "rootfs.erofs",
+                "2026.07.02.1",
+            )],
+        );
+        let second = profile_with_image_artifacts(
+            "2026.07.02.2",
+            vec![profile_image_artifact(
+                ProfileImageArtifactKind::Rootfs,
+                "rootfs.erofs",
+                "2026.07.02.2",
+            )],
+        );
+        let mut history =
+            ProfileVersionHistory::new("nightly", first).expect("first profile version");
+
+        history
+            .append_version(second)
+            .expect("new profile image version appends");
+
+        assert_eq!(history.versions.len(), 2);
+        assert_eq!(history.versions[0].revision, "2026.07.02.1");
+        assert_eq!(
+            history.versions[0].images[0].artifacts[0].status,
+            Status::Current
+        );
+        assert_eq!(history.versions[1].revision, "2026.07.02.2");
+    }
+
+    #[test]
+    fn profile_image_versions_removed_image_is_absent_not_status_removed() {
+        let previous = profile_with_image_artifacts(
+            "2026.07.02.1",
+            vec![
+                profile_image_artifact(
+                    ProfileImageArtifactKind::Initrd,
+                    "initrd.img",
+                    "2026.07.02.1",
+                ),
+                profile_image_artifact(
+                    ProfileImageArtifactKind::Rootfs,
+                    "rootfs.erofs",
+                    "2026.07.02.1",
+                ),
+            ],
+        );
+        let next = profile_with_image_artifacts(
+            "2026.07.02.2",
+            vec![profile_image_artifact(
+                ProfileImageArtifactKind::Rootfs,
+                "rootfs.erofs",
+                "2026.07.02.2",
+            )],
+        );
+
+        let diff = diff_profile_image_artifacts(&previous, &next).expect("profile diff");
+
+        assert_eq!(
+            diff.removed,
+            vec![ProfileImageArtifactKey {
+                architecture: Architecture::Arm64,
+                kind: ProfileImageArtifactKind::Initrd,
+                name: "initrd.img".to_string(),
+            }]
+        );
+        assert_eq!(next.images[0].artifacts.len(), 1);
+        assert!(next
+            .images
+            .iter()
+            .flat_map(|images| images.artifacts.iter())
+            .all(|artifact| artifact.status != Status::Deprecated));
+
+        let invalid_removed_status = serde_json::json!({
+            "kind": "initrd",
+            "name": "initrd.img",
+            "url": "/profiles/releases/2026.07.02.2/co-work/arm64/initrd.img",
+            "bytes": 42,
+            "digest": digest_json(),
+            "status": "removed"
+        });
+        serde_json::from_value::<ProfileImageArtifactRef>(invalid_removed_status)
+            .expect_err("removed is represented by absence, not by a status enum");
     }
 
     #[test]
