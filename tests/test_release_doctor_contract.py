@@ -1561,8 +1561,9 @@ def test_asset_channel_documented_as_assets_manifest_url_not_release_index_json(
     docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
     asset_skill = (PROJECT_ROOT / "skills/asset-pipeline/SKILL.md").read_text()
     release_skill = (PROJECT_ROOT / "skills/release-process/SKILL.md").read_text()
+    release_skill_text = " ".join(release_skill.split())
 
-    for text in (docs, asset_skill, release_skill):
+    for text in (docs, asset_skill):
         normalized_text = " ".join(text.split())
         assert "https://release.capsem.org/assets/stable/manifest.json" in text
         assert "target/release-channel/assets/<channel>/manifest.json" in text or (
@@ -1581,6 +1582,17 @@ def test_asset_channel_documented_as_assets_manifest_url_not_release_index_json(
         )
         assert "channels/stable/index.json" not in text
 
+    assert "https://release.capsem.org/assets/stable/manifest.json" in release_skill
+    assert "target/release-channel/assets/<channel>/manifest.json" in release_skill
+    assert "`channels.json`" in release_skill
+    assert "per-channel manifest JSON" in release_skill
+    assert "package artifacts separately from the per-binary inventory" in release_skill_text
+    assert (
+        "Profiles own their config files, profile images, ABOM/OBOM evidence"
+        in release_skill_text
+    )
+    assert "channels/stable/index.json" not in release_skill
+
 
 def test_release_skill_keeps_binary_and_asset_verification_decoupled() -> None:
     release_skill = (PROJECT_ROOT / "skills/release-process/SKILL.md").read_text()
@@ -1588,27 +1600,62 @@ def test_release_skill_keeps_binary_and_asset_verification_decoupled() -> None:
 
     assert "asset-channel-preview" in release_skill
     assert "generated dist artifact" in release_skill
-    assert "smoke-check `https://release.capsem.org/`, `/health.json`, and" in release_skill
+    assert "smoke-check `https://release.capsem.org/`, `/channels.json`, and" in release_skill
     assert "`/assets/<channel>/manifest.json`" in release_skill
-    assert "reject stale public HTML" in release_skill
-    assert "current binary, current VM asset version, asset release date" in release_skill_text
-    assert "generated timestamp, profile revision, profile catalog URL" in release_skill
-    assert "profile update source" in release_skill
-    assert "channel manifest path" in release_skill
-    assert "resolve published host" in release_skill
-    assert "SBOM and VM OBOM evidence artifacts from `health.json`" in release_skill
-    assert "verify their advertised" in release_skill
+    assert "reject stale public HTML" in release_skill_text
+    assert "generated timestamp, manifest URL, manifest version" in release_skill_text
+    assert "profile revision, profile catalog URL" in release_skill
+    assert "image artifact URLs" in release_skill
+    assert "evidence URLs" in release_skill
+    assert "Host SBOM evidence is incomplete unless" in release_skill
+    assert "per-binary metadata" in release_skill
+    assert "fetch immutable profile catalogs and profile-owned artifacts" in release_skill
     assert "attestation subjects and predicate URLs" in release_skill
-    assert "curl -fsSL https://release.capsem.org/health.json" in release_skill
+    assert "curl -fsSL https://release.capsem.org/channels.json" in release_skill
     assert "curl -fsSL https://release.capsem.org/assets/stable/manifest.json" in release_skill
     assert "gh release download vX.Y.Z --pattern manifest.json" not in release_skill
     assert "VM asset manifests" in release_skill
-    assert "channel health live on `release.capsem.org`" in release_skill
+    assert "root channel catalog live on" in release_skill
     assert "`ci.yaml` runs `docs-build`, `site-build`, and `release-site-build` under `pr-gate`" in release_skill_text
     assert "`docs.yaml` and `site.yaml` deploy and smoke only on" in release_skill
     assert "`https://docs.capsem.org/` plus `/getting-started/`" in release_skill
     assert "`https://capsem.org/` for marketing" in release_skill
     assert "must not depend on release tags or VM asset publication" in release_skill
+
+
+def test_release_process_skill_documents_multi_channel_graph() -> None:
+    release_skill = (PROJECT_ROOT / "skills/release-process/SKILL.md").read_text()
+    release_skill_text = " ".join(release_skill.split())
+
+    for required in [
+        "`channels.json` lists every channel",
+        "versioned manifest records",
+        "exactly one `status` enum value",
+        "`current`, `supported`, `deprecated`, or `revoked`",
+        "Manifest records are retained for auditability",
+        "package artifacts separately from the per-binary inventory",
+        "Binaries are executable files inside those packages",
+        "SHA-256, BLAKE3, HMAC",
+        "Profiles own their config files, profile images, ABOM/OBOM evidence",
+        "`min_capsem_version`",
+        "Binary releases remain tag-triggered",
+        "Manual VM asset releases",
+        "`release-assets.yaml`",
+        "`release-channel.yaml`",
+        "`CAPSEM_RELEASE_MANIFEST_URL=https://release.capsem.org/assets/stable/manifest.json`",
+        "`https://release.capsem.org/assets/nightly/manifest.json`",
+        "stable-to-nightly acceptance",
+    ]:
+        assert required in release_skill_text, required
+
+    assert "binary lane" in release_skill
+    assert "profile lane" in release_skill
+    assert "channel discovery lane" in release_skill
+    assert "final stable-to-nightly switch" in release_skill
+    assert "health.json" not in release_skill
+    assert "current binary" not in release_skill_text
+    assert "VM artifact" not in release_skill
+    assert "schema_version" not in release_skill
 
 
 def test_release_skills_preserve_vm_obom_attestation_predicate_contract() -> None:
