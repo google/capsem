@@ -1,9 +1,9 @@
-//! Self-update: check the release channel for binary and VM asset versions.
+//! Self-update: check the release manifest for binary and VM asset versions.
 //!
-//! `release.capsem.org/health.json` is the source of truth for freshness. The
-//! binary path selects a platform installer from that health index; the
-//! privileged installer apply step is intentionally separate from VM asset
-//! hydration.
+//! The release manifest URL is the source of truth for freshness. The binary
+//! path selects a platform installer from manifest metadata when the release
+//! publishes one; the privileged installer apply step is intentionally separate
+//! from VM asset hydration.
 
 use std::{
     collections::BTreeSet,
@@ -84,7 +84,7 @@ pub struct UpdateCheck {
     /// Machine-readable release channel index used for this check.
     #[serde(default)]
     pub source: Option<String>,
-    /// SHA-256 of the last valid release-channel health payload.
+    /// SHA-256 of the last valid release-channel payload.
     #[serde(default)]
     pub channel_hash: Option<String>,
     /// Validation state for the last release-channel refresh attempt.
@@ -153,16 +153,18 @@ impl BinaryInstallerApplyCommand {
 }
 
 const CACHE_TTL_SECS: u64 = 24 * 3600; // 24 hours
-const DEFAULT_RELEASE_HEALTH_URL: &str = "https://release.capsem.org/health.json";
-const RELEASE_HEALTH_URL_ENV: &str = "CAPSEM_RELEASE_HEALTH_URL";
+const DEFAULT_RELEASE_MANIFEST_URL: &str = "https://release.capsem.org/assets/stable/manifest.json";
+const RELEASE_MANIFEST_URL_ENV: &str = "CAPSEM_RELEASE_MANIFEST_URL";
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 struct ReleaseChannelHealth {
     schema: String,
     updates: ReleaseChannelUpdates,
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 struct ReleaseChannelUpdates {
     binary: ReleaseChannelUpdateTarget,
     assets: ReleaseChannelUpdateTarget,
@@ -173,6 +175,7 @@ struct ReleaseChannelUpdates {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 struct ReleaseChannelUpdateTarget {
     #[serde(default)]
     latest: Option<String>,
@@ -226,6 +229,7 @@ struct PublishedProfileCatalogDocument {
 }
 
 impl ReleaseChannelUpdateTarget {
+    #[allow(dead_code)]
     fn latest_version(&self) -> Option<String> {
         self.latest.clone().or_else(|| self.current.clone())
     }
@@ -426,17 +430,17 @@ pub async fn refresh_update_cache_if_stale() {
 
     info!("update cache stale, checking for updates");
 
-    let health_url = match release_health_url() {
+    let manifest_url = match release_manifest_url() {
         Ok(url) => url,
         Err(e) => {
-            warn!(error = %e, "update check: invalid release channel URL");
+            warn!(error = %e, "update check: invalid release manifest URL");
             return;
         }
     };
 
     let client = reqwest::Client::new();
     let resp = match client
-        .get(&health_url)
+        .get(&manifest_url)
         .header("Accept", "application/json")
         .header("User-Agent", "capsem")
         .send()
@@ -444,7 +448,7 @@ pub async fn refresh_update_cache_if_stale() {
     {
         Ok(r) if r.status().is_success() => r,
         Ok(r) => {
-            warn!(status = %r.status(), url = %health_url, "update check: release channel error");
+            warn!(status = %r.status(), url = %manifest_url, "update check: release manifest error");
             return;
         }
         Err(e) => {
@@ -452,7 +456,7 @@ pub async fn refresh_update_cache_if_stale() {
             let check = failed_update_check_from_previous(
                 previous_check,
                 now_secs(),
-                &health_url,
+                &manifest_url,
                 "fetch_error",
                 e.to_string(),
             );
@@ -464,11 +468,11 @@ pub async fn refresh_update_cache_if_stale() {
     let bytes = match resp.bytes().await {
         Ok(bytes) => bytes,
         Err(e) => {
-            warn!(error = %e, url = %health_url, "update check: failed to read release channel body");
+            warn!(error = %e, url = %manifest_url, "update check: failed to read release manifest body");
             let check = failed_update_check_from_previous(
                 previous_check,
                 now_secs(),
-                &health_url,
+                &manifest_url,
                 "fetch_error",
                 e.to_string(),
             );
@@ -477,14 +481,14 @@ pub async fn refresh_update_cache_if_stale() {
         }
     };
     let channel_hash = channel_payload_hash(&bytes);
-    let body: ReleaseChannelHealth = match serde_json::from_slice(&bytes) {
+    let body: capsem_core::asset_manager::ManifestV2 = match serde_json::from_slice(&bytes) {
         Ok(v) => v,
         Err(e) => {
-            warn!(error = %e, url = %health_url, "update check: invalid release channel JSON");
+            warn!(error = %e, url = %manifest_url, "update check: invalid release manifest JSON");
             let check = failed_update_check_from_previous(
                 previous_check,
                 now_secs(),
-                &health_url,
+                &manifest_url,
                 "invalid_json",
                 e.to_string(),
             );
@@ -493,23 +497,23 @@ pub async fn refresh_update_cache_if_stale() {
         }
     };
 
-    let check = match update_check_from_release_health(
+    let check = match update_check_from_release_manifest(
         &body,
         now_secs(),
         env!("CARGO_PKG_VERSION"),
         local_current_asset_version().as_deref(),
         local_current_profile_catalog_revision().as_deref(),
         &platform::detect_install_layout(),
-        &health_url,
+        &manifest_url,
         Some(channel_hash),
     ) {
         Ok(check) => check,
         Err(e) => {
-            warn!(error = %e, url = %health_url, "update check: invalid release channel contract");
+            warn!(error = %e, url = %manifest_url, "update check: invalid release manifest contract");
             let check = failed_update_check_from_previous(
                 previous_check,
                 now_secs(),
-                &health_url,
+                &manifest_url,
                 "invalid_contract",
                 e.to_string(),
             );
@@ -520,45 +524,47 @@ pub async fn refresh_update_cache_if_stale() {
     let _ = write_cache(&check);
 }
 
-fn release_health_url() -> Result<String> {
-    if let Ok(value) = std::env::var(RELEASE_HEALTH_URL_ENV) {
+fn release_manifest_url() -> Result<String> {
+    if let Ok(value) = std::env::var(RELEASE_MANIFEST_URL_ENV) {
         let trimmed = value.trim();
         if !trimmed.is_empty() {
-            return validate_release_health_url(trimmed);
+            return validate_release_manifest_url(trimmed);
         }
     }
 
-    if let Some(url) = release_health_url_from_manifest_origin() {
+    if let Some(url) = release_manifest_url_from_manifest_origin() {
         return Ok(url);
     }
 
-    Ok(DEFAULT_RELEASE_HEALTH_URL.to_string())
+    Ok(DEFAULT_RELEASE_MANIFEST_URL.to_string())
 }
 
-fn validate_release_health_url(url: &str) -> Result<String> {
+fn validate_release_manifest_url(url: &str) -> Result<String> {
     let parsed = reqwest::Url::parse(url).with_context(|| {
-        format!("{RELEASE_HEALTH_URL_ENV} must be a URL: use https://... or http://..., got {url}")
+        format!(
+            "{RELEASE_MANIFEST_URL_ENV} must be a URL: use https://... or http://..., got {url}"
+        )
     })?;
     if !matches!(parsed.scheme(), "https" | "http") {
         anyhow::bail!(
-            "unsupported {RELEASE_HEALTH_URL_ENV} scheme {}: use https:// or http://",
+            "unsupported {RELEASE_MANIFEST_URL_ENV} scheme {}: use https:// or http://",
             parsed.scheme()
         );
     }
     Ok(parsed.as_str().trim_end_matches('/').to_string())
 }
 
-fn release_health_url_from_manifest_origin() -> Option<String> {
+fn release_manifest_url_from_manifest_origin() -> Option<String> {
     let assets_dir = capsem_core::asset_manager::default_assets_dir()?;
     let origin_path = assets_dir.join("manifest-origin.json");
     let content = std::fs::read_to_string(origin_path).ok()?;
     let value: serde_json::Value = serde_json::from_str(&content).ok()?;
     let source = value.get("source").and_then(|v| v.as_str())?;
-    release_health_url_from_manifest_url(source)
+    release_manifest_url_from_manifest_url(source)
 }
 
-fn release_health_url_from_manifest_url(manifest_url: &str) -> Option<String> {
-    let mut url = reqwest::Url::parse(manifest_url).ok()?;
+fn release_manifest_url_from_manifest_url(manifest_url: &str) -> Option<String> {
+    let url = reqwest::Url::parse(manifest_url).ok()?;
     if !matches!(url.scheme(), "https" | "http") {
         return None;
     }
@@ -572,15 +578,6 @@ fn release_health_url_from_manifest_url(manifest_url: &str) -> Option<String> {
         || segments.len() < assets_pos + 3
     {
         return None;
-    }
-    let root_segments = segments[..assets_pos].to_vec();
-    {
-        let mut out = url.path_segments_mut().ok()?;
-        out.clear();
-        for segment in root_segments {
-            out.push(&segment);
-        }
-        out.push("health.json");
     }
     Some(url.to_string())
 }
@@ -655,6 +652,148 @@ fn update_target_blocked_reason(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn update_check_from_release_manifest(
+    manifest: &capsem_core::asset_manager::ManifestV2,
+    checked_at: u64,
+    current_binary: &str,
+    current_assets: Option<&str>,
+    current_profiles: Option<&str>,
+    install_layout: &InstallLayout,
+    source: &str,
+    channel_hash: Option<String>,
+) -> Result<UpdateCheck> {
+    let latest_version = Some(manifest.binaries.current.clone());
+    let latest_assets = Some(manifest.assets.current.clone());
+    let asset_release = manifest.assets.releases.get(&manifest.assets.current);
+    let assets_state = asset_release.map(|release| {
+        if release.deprecated {
+            "deprecated".to_string()
+        } else {
+            "current".to_string()
+        }
+    });
+    let binary_release = manifest.binaries.releases.get(&manifest.binaries.current);
+    let binary_files =
+        binary_release_files_from_manifest(manifest, binary_release, source).unwrap_or_default();
+    let update_available = latest_version
+        .as_deref()
+        .is_some_and(|latest| is_newer(latest, current_binary));
+    let binary_installer = if update_available {
+        binary_installer_for_layout(&binary_files, install_layout)
+    } else {
+        None
+    };
+    let assets_differ = match (latest_assets.as_deref(), current_assets) {
+        (Some(latest), Some(current)) => latest != current,
+        _ => false,
+    };
+    let asset_target = ReleaseChannelUpdateTarget {
+        latest: latest_assets.clone(),
+        current: latest_assets.clone(),
+        state: assets_state.clone(),
+        source: Some(source.to_string()),
+        hash: channel_hash.clone(),
+        compatibility: asset_release.map(|release| ReleaseChannelCompatibility {
+            min_binary: if release.min_binary.is_empty() {
+                None
+            } else {
+                Some(release.min_binary.clone())
+            },
+            min_assets: None,
+        }),
+        requires_newer: None,
+        files: Vec::new(),
+    };
+    let assets_blocked_reason = if assets_differ
+        && assets_state
+            .as_deref()
+            .is_some_and(|state| state.eq_ignore_ascii_case("deprecated"))
+    {
+        Some("latest VM asset release is deprecated".to_string())
+    } else if assets_differ {
+        update_target_blocked_reason(&asset_target, current_binary, current_assets)
+    } else {
+        None
+    };
+    Ok(UpdateCheck {
+        checked_at,
+        latest_version,
+        update_available,
+        binary_installer,
+        latest_assets,
+        current_assets: current_assets.map(ToOwned::to_owned),
+        assets_update_available: assets_differ && assets_blocked_reason.is_none(),
+        assets_state,
+        assets_blocked_reason,
+        latest_profiles: None,
+        current_profiles: current_profiles.map(ToOwned::to_owned),
+        profiles_update_available: false,
+        profiles_state: None,
+        profiles_blocked_reason: None,
+        profile_catalog_source: None,
+        profile_catalog_hash: None,
+        latest_images: None,
+        images_update_available: false,
+        images_state: None,
+        images_blocked_reason: None,
+        source: Some(source.to_string()),
+        channel_hash,
+        validation_status: Some("valid".to_string()),
+        validation_error: None,
+    })
+}
+
+fn binary_release_files_from_manifest(
+    manifest: &capsem_core::asset_manager::ManifestV2,
+    release: Option<&capsem_core::asset_manager::BinaryRelease>,
+    source: &str,
+) -> Result<Vec<ReleaseChannelBinaryFile>> {
+    let Some(release) = release else {
+        return Ok(Vec::new());
+    };
+    release
+        .files
+        .iter()
+        .map(|file| {
+            let url = manifest_binary_file_url(manifest, source, &file.name)?;
+            Ok(ReleaseChannelBinaryFile {
+                name: file.name.clone(),
+                url,
+                sha256: file.sha256.clone(),
+                size: file.size,
+            })
+        })
+        .collect()
+}
+
+fn manifest_binary_file_url(
+    manifest: &capsem_core::asset_manager::ManifestV2,
+    source: &str,
+    name: &str,
+) -> Result<String> {
+    if let Some(asset_base) = manifest
+        .asset_base
+        .as_deref()
+        .filter(|base| !base.is_empty())
+    {
+        let base = reqwest::Url::parse(asset_base)
+            .or_else(|_| reqwest::Url::parse(source)?.join(asset_base))
+            .with_context(|| format!("resolve binary file asset_base {asset_base}"))?;
+        return base
+            .join(name)
+            .map(|url| url.to_string())
+            .with_context(|| format!("resolve binary file {name} against {base}"));
+    }
+    let source_url = reqwest::Url::parse(source)
+        .with_context(|| format!("parse release manifest URL {source}"))?;
+    source_url
+        .join(name)
+        .map(|url| url.to_string())
+        .with_context(|| format!("resolve binary file {name} against manifest URL {source}"))
+}
+
+#[allow(clippy::too_many_arguments)]
+#[allow(dead_code)]
 fn update_check_from_release_health(
     health: &ReleaseChannelHealth,
     checked_at: u64,
@@ -845,32 +984,32 @@ fn deb_arch() -> &'static str {
 }
 
 async fn fetch_release_update_check(layout: &InstallLayout) -> Result<UpdateCheck> {
-    let health_url = release_health_url()?;
+    let manifest_url = release_manifest_url()?;
     let resp = reqwest::Client::new()
-        .get(&health_url)
+        .get(&manifest_url)
         .header("Accept", "application/json")
         .header("User-Agent", "capsem")
         .send()
         .await
-        .with_context(|| format!("GET {health_url}"))?;
+        .with_context(|| format!("GET {manifest_url}"))?;
     if !resp.status().is_success() {
-        anyhow::bail!("GET {} returned {}", health_url, resp.status());
+        anyhow::bail!("GET {} returned {}", manifest_url, resp.status());
     }
     let body = resp
         .bytes()
         .await
-        .with_context(|| format!("read release channel health from {health_url}"))?;
+        .with_context(|| format!("read release manifest from {manifest_url}"))?;
     let channel_hash = channel_payload_hash(&body);
-    let body: ReleaseChannelHealth = serde_json::from_slice(&body)
-        .with_context(|| format!("parse release channel health from {health_url}"))?;
-    update_check_from_release_health(
+    let body: capsem_core::asset_manager::ManifestV2 = serde_json::from_slice(&body)
+        .with_context(|| format!("parse release manifest from {manifest_url}"))?;
+    update_check_from_release_manifest(
         &body,
         now_secs(),
         env!("CARGO_PKG_VERSION"),
         local_current_asset_version().as_deref(),
         local_current_profile_catalog_revision().as_deref(),
         layout,
-        &health_url,
+        &manifest_url,
         Some(channel_hash),
     )
 }
@@ -1266,7 +1405,7 @@ async fn apply_profile_catalog_update(check: &UpdateCheck) -> Result<()> {
     let channel_source = check
         .source
         .as_deref()
-        .unwrap_or(DEFAULT_RELEASE_HEALTH_URL);
+        .unwrap_or(DEFAULT_RELEASE_MANIFEST_URL);
     let catalog_url = resolve_release_channel_artifact_url(channel_source, source)?;
     let bytes = read_profile_catalog_source(&catalog_url).await?;
     let actual_hash = blake3::hash(&bytes).to_hex().to_string();
@@ -2036,30 +2175,31 @@ mod tests {
     }
 
     #[test]
-    fn release_health_url_derives_from_remote_manifest_url() {
+    fn update_does_not_fetch_health_for_manifest_url() {
         assert_eq!(
-            release_health_url_from_manifest_url(
+            release_manifest_url_from_manifest_url(
                 "https://release.capsem.org/assets/stable/manifest.json"
             ),
-            Some("https://release.capsem.org/health.json".to_string())
+            Some("https://release.capsem.org/assets/stable/manifest.json".to_string())
         );
         assert_eq!(
-            release_health_url_from_manifest_url(
+            release_manifest_url_from_manifest_url(
                 "https://corp.example/capsem/assets/internal/manifest.json"
             ),
-            Some("https://corp.example/capsem/health.json".to_string())
+            Some("https://corp.example/capsem/assets/internal/manifest.json".to_string())
         );
         assert_eq!(
-            release_health_url_from_manifest_url("file:///tmp/assets/stable/manifest.json"),
+            release_manifest_url_from_manifest_url("file:///tmp/assets/stable/manifest.json"),
             None
         );
     }
 
     #[test]
-    fn release_health_url_env_rejects_bare_paths() {
-        let err = validate_release_health_url("/tmp/release/health.json").unwrap_err();
+    fn release_manifest_url_env_rejects_bare_paths() {
+        let err =
+            validate_release_manifest_url("/tmp/release/assets/stable/manifest.json").unwrap_err();
         assert!(
-            format!("{err:#}").contains("CAPSEM_RELEASE_HEALTH_URL must be a URL"),
+            format!("{err:#}").contains("CAPSEM_RELEASE_MANIFEST_URL must be a URL"),
             "{err:#}"
         );
     }
