@@ -270,8 +270,6 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
     if not isinstance(manifest_path, str):
         failures.append("channel manifest URL missing")
         manifest_path = f"/assets/{channel}/manifest.json"
-    if release_url_path(manifest_path) != f"/assets/{channel}/manifest.json":
-        failures.append("channel manifest URL mismatch")
     manifest_url = resolve_release_url(site, manifest_path)
     manifest_payload = fetch_bytes(manifest_url)
     if manifest_payload.error:
@@ -290,6 +288,30 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
             False,
             f"manifest {manifest_url} document is not an object",
         )
+    if is_release_graph_manifest(manifest_data):
+        failures.extend(
+            check_release_graph_manifest_contract(
+                site=site,
+                channel=channel,
+                index_text=index.text,
+                channels_data=channels_data,
+                channel_data=channel_data,
+                manifest_record=manifest_record,
+                manifest_path=manifest_path,
+                manifest_payload=manifest_payload.data,
+                manifest_data=manifest_data,
+            )
+        )
+        if failures:
+            return CheckResult("release.capsem.org contract", False, "; ".join(failures))
+        return CheckResult(
+            "release.capsem.org contract",
+            True,
+            "index, channels.json, graph manifest, profile catalog, profile artifacts, and cache headers agree",
+        )
+
+    if release_url_path(manifest_path) != f"/assets/{channel}/manifest.json":
+        failures.append("channel manifest URL mismatch")
 
     manifest_assets = require_object(manifest_data, "assets", "manifest assets", failures)
     manifest_binaries = require_object(manifest_data, "binaries", "manifest binaries", failures)
@@ -402,6 +424,347 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
         True,
         "index, channels.json, manifest, profile catalog, assets, and cache headers agree",
     )
+
+
+def is_release_graph_manifest(manifest_data: dict[str, Any]) -> bool:
+    return (
+        isinstance(manifest_data.get("packages"), list)
+        and isinstance(manifest_data.get("binaries"), list)
+        and isinstance(manifest_data.get("profiles"), dict)
+    )
+
+
+def check_release_graph_manifest_contract(
+    *,
+    site: str,
+    channel: str,
+    index_text: str,
+    channels_data: dict[str, Any],
+    channel_data: dict[str, Any],
+    manifest_record: dict[str, Any],
+    manifest_path: str,
+    manifest_payload: bytes,
+    manifest_data: dict[str, Any],
+) -> list[str]:
+    failures: list[str] = []
+    if channels_data.get("version") != 1:
+        failures.append("channels catalog version mismatch")
+    if manifest_record.get("status") not in {"current", "supported", "deprecated"}:
+        failures.append("channel selected manifest status is not selectable")
+
+    digest = require_object(manifest_record, "digest", "channel manifest digest", failures)
+    expected_sha256 = digest.get("sha256")
+    if not isinstance(expected_sha256, str):
+        failures.append("channel manifest SHA-256 missing")
+    elif hashlib.sha256(manifest_payload).hexdigest() != expected_sha256:
+        failures.append("channel manifest SHA-256 mismatch")
+    if blake3 is None:
+        failures.append("channel manifest cannot verify blake3 without Python dependency blake3")
+    else:
+        expected_blake3 = digest.get("blake3")
+        if not isinstance(expected_blake3, str):
+            failures.append("channel manifest BLAKE3 missing")
+        elif blake3.blake3(manifest_payload).hexdigest() != expected_blake3:
+            failures.append("channel manifest BLAKE3 mismatch")
+
+    if manifest_data.get("version") != manifest_record.get("version"):
+        failures.append("manifest version mismatch with channel record")
+
+    packages = require_list(manifest_data, "packages", failures)
+    binaries = require_list(manifest_data, "binaries", failures)
+    profiles = require_object(manifest_data, "profiles", "manifest profiles", failures)
+    if not packages:
+        failures.append("manifest packages empty")
+    if not binaries:
+        failures.append("manifest binaries empty")
+    if not profiles:
+        failures.append("manifest profiles empty")
+
+    for package in packages:
+        failures.extend(check_release_graph_file_descriptor(package, "package"))
+    for binary in binaries:
+        failures.extend(check_release_graph_file_descriptor(binary, "binary"))
+        if not isinstance(binary.get("sbom_component_ref"), str):
+            failures.append(f"binary {binary.get('name', '<unknown>')} SBOM component missing")
+
+    profile_catalog = require_object(
+        channel_data, "profile_catalog", f"channels.{channel}.profile_catalog", failures
+    )
+    catalog_document = fetch_profile_catalog_document(
+        site,
+        profile_catalog.get("source"),
+        profile_catalog.get("hash"),
+        profile_catalog.get("revision"),
+        failures,
+    )
+    if isinstance(catalog_document, dict):
+        catalog_profiles = catalog_document.get("profiles")
+        if isinstance(catalog_profiles, list):
+            catalog_ids = sorted(
+                profile.get("id")
+                for profile in catalog_profiles
+                if isinstance(profile, dict) and isinstance(profile.get("id"), str)
+            )
+            if catalog_ids != sorted(profiles):
+                failures.append("profile catalog ids mismatch with manifest profiles")
+
+    channel_page = fetch_text(f"{site}/channels/{channel}/")
+    if channel_page.error:
+        failures.append(channel_page.error)
+    for label, value in (
+        ("manifest version", manifest_record.get("version")),
+        ("channel manifest", manifest_path),
+    ):
+        if not isinstance(value, str):
+            failures.append(f"release channel {label} missing")
+        elif value not in index_text and (channel_page.error or value not in channel_page.text):
+            failures.append(f"release pages missing {label} {value}")
+
+    for profile_id, profile in profiles.items():
+        if not isinstance(profile_id, str) or not isinstance(profile, dict):
+            failures.append("manifest profile entry malformed")
+            continue
+        failures.extend(
+            check_release_graph_profile(site, channel, profile_id, profile)
+        )
+
+    failures.extend(
+        check_release_graph_cache_headers(
+            site=site,
+            manifest_path=manifest_path,
+            profile_source=profile_catalog.get("source"),
+            profiles=profiles,
+        )
+    )
+    return failures
+
+
+def check_release_graph_file_descriptor(item: Any, label: str) -> list[str]:
+    if not isinstance(item, dict):
+        return [f"{label} entry is not an object"]
+    failures: list[str] = []
+    name = item.get("name")
+    version = item.get("version")
+    digest = item.get("digest")
+    if not isinstance(name, str):
+        failures.append(f"{label} name missing")
+    if not isinstance(version, str):
+        failures.append(f"{label} version missing")
+    if not isinstance(digest, dict):
+        failures.append(f"{label} digest missing")
+        return failures
+    for key in ("sha256", "blake3", "hmac"):
+        if not isinstance(digest.get(key), str):
+            failures.append(f"{label} {name or '<unknown>'} digest {key} missing")
+    return failures
+
+
+def fetch_profile_catalog_document(
+    site: str,
+    source: Any,
+    expected_hash: Any,
+    expected_revision: Any,
+    failures: list[str],
+) -> dict[str, Any] | None:
+    summary_failures = check_profile_catalog_summary(
+        site, source, expected_hash, expected_revision
+    )
+    failures.extend(summary_failures)
+    if summary_failures or not isinstance(source, str):
+        return None
+    catalog = fetch_json(resolve_release_url(site, source))
+    if catalog.error:
+        failures.append(catalog.error)
+        return None
+    if not isinstance(catalog.data, dict):
+        failures.append(f"profile catalog {source} document is not an object")
+        return None
+    return catalog.data
+
+
+def check_release_graph_profile(
+    site: str,
+    channel: str,
+    profile_id: str,
+    profile: dict[str, Any],
+) -> list[str]:
+    failures: list[str] = []
+    profile_page = fetch_text(f"{site}/channels/{channel}/profiles/{profile_id}/")
+    if profile_page.error:
+        failures.append(profile_page.error)
+        page_text = ""
+    else:
+        page_text = profile_page.text
+
+    for field in ("id", "revision", "min_capsem_version"):
+        if not isinstance(profile.get(field), str):
+            failures.append(f"profile {profile_id} {field} missing")
+    if profile.get("id") != profile_id:
+        failures.append(f"profile {profile_id} id mismatch")
+
+    config_entries = require_list(profile, "config", failures)
+    images = require_list(profile, "images", failures)
+    if not config_entries:
+        failures.append(f"profile {profile_id} config empty")
+    if not images:
+        failures.append(f"profile {profile_id} images empty")
+
+    for value in (profile.get("revision"), profile.get("name"), profile.get("id")):
+        if isinstance(value, str) and page_text and value not in page_text:
+            failures.append(f"profile page {profile_id} missing {value}")
+
+    for item in config_entries:
+        failures.extend(
+            check_release_graph_artifact(site, item, f"profile {profile_id} config", page_text)
+        )
+    for image in images:
+        if not isinstance(image, dict):
+            failures.append(f"profile {profile_id} image entry is not an object")
+            continue
+        if not isinstance(image.get("architecture"), str):
+            failures.append(f"profile {profile_id} image architecture missing")
+        for artifact in require_list(image, "artifacts", failures):
+            failures.extend(
+                check_release_graph_artifact(
+                    site, artifact, f"profile {profile_id} image artifact", page_text
+                )
+            )
+        for evidence in require_list(image, "evidence", failures):
+            failures.extend(
+                check_release_graph_artifact(
+                    site,
+                    evidence,
+                    f"profile {profile_id} evidence",
+                    page_text,
+                    expected_document="cyclonedx",
+                )
+            )
+    return failures
+
+
+def check_release_graph_artifact(
+    site: str,
+    item: Any,
+    label: str,
+    page_text: str,
+    *,
+    expected_document: str | None = None,
+) -> list[str]:
+    if not isinstance(item, dict):
+        return [f"{label} entry is not an object"]
+    failures: list[str] = []
+    url = item.get("url")
+    if not isinstance(url, str):
+        return [f"{label} URL missing"]
+    if "file://" in url:
+        failures.append(f"{label} {url} must not use file://")
+    if url.startswith("/profiles/releases/") is False:
+        failures.append(f"{label} {url} must be a profile release artifact")
+    digest = item.get("digest")
+    if not isinstance(digest, dict):
+        return failures + [f"{label} {url} digest missing"]
+    for key in ("sha256", "blake3", "hmac"):
+        value = digest.get(key)
+        if not isinstance(value, str):
+            failures.append(f"{label} {url} {key} missing")
+        elif page_text and value not in page_text:
+            failures.append(f"profile page missing {label} {key} for {url}")
+    expected_bytes = item.get("bytes")
+    if not isinstance(expected_bytes, int):
+        failures.append(f"{label} {url} bytes missing")
+
+    try:
+        resolved_url = resolve_release_url(site, url)
+    except ValueError as error:
+        return failures + [f"{label} {url}: {error}"]
+    artifact = fetch_bytes(resolved_url)
+    if artifact.error:
+        return failures + [artifact.error]
+    if isinstance(expected_bytes, int) and len(artifact.data) != expected_bytes:
+        failures.append(f"{label} {url} size mismatch")
+    expected_sha256 = digest.get("sha256")
+    if isinstance(expected_sha256, str) and hashlib.sha256(artifact.data).hexdigest() != expected_sha256:
+        failures.append(f"{label} {url} sha256 mismatch")
+    expected_blake3 = digest.get("blake3")
+    if blake3 is None:
+        failures.append(f"{label} {url} cannot verify blake3 without Python dependency blake3")
+    elif isinstance(expected_blake3, str) and blake3.blake3(artifact.data).hexdigest() != expected_blake3:
+        failures.append(f"{label} {url} blake3 mismatch")
+    if expected_document is not None:
+        content_failure = validate_evidence_document(
+            artifact.data, expected_document, label, url
+        )
+        if content_failure is not None:
+            failures.append(content_failure)
+    return failures
+
+
+def check_release_graph_cache_headers(
+    *,
+    site: str,
+    manifest_path: str,
+    profile_source: Any,
+    profiles: dict[str, Any],
+) -> list[str]:
+    checks: list[tuple[str, str, tuple[str, ...]]] = [
+        ("release index", f"{site}/", ("no-cache", "must-revalidate")),
+        ("channels JSON", f"{site}/channels.json", ("no-cache", "must-revalidate")),
+        (
+            "channel manifest",
+            resolve_release_url(site, manifest_path),
+            ("no-cache", "must-revalidate"),
+        ),
+    ]
+    if isinstance(profile_source, str):
+        checks.append(
+            (
+                "immutable profile catalog",
+                resolve_release_url(site, profile_source),
+                ("public", "max-age=31536000", "immutable"),
+            )
+        )
+    for profile in profiles.values():
+        if not isinstance(profile, dict):
+            continue
+        for item in profile.get("config", []):
+            add_release_artifact_cache_check(site, checks, item)
+        for image in profile.get("images", []):
+            if not isinstance(image, dict):
+                continue
+            for artifact in image.get("artifacts", []):
+                add_release_artifact_cache_check(site, checks, artifact)
+            for evidence in image.get("evidence", []):
+                add_release_artifact_cache_check(site, checks, evidence)
+
+    failures: list[str] = []
+    for label, url, required_directives in checks:
+        headers = fetch_headers(url)
+        if headers.error:
+            failures.append(headers.error)
+            continue
+        lower_cache_control = headers.headers.get("cache-control", "").lower()
+        for directive in required_directives:
+            if directive not in lower_cache_control:
+                failures.append(f"{label} {url} Cache-Control must contain {directive}")
+    return failures
+
+
+def add_release_artifact_cache_check(
+    site: str,
+    checks: list[tuple[str, str, tuple[str, ...]]],
+    item: Any,
+) -> None:
+    if not isinstance(item, dict):
+        return
+    url = item.get("url")
+    if isinstance(url, str) and url.startswith("/profiles/releases/"):
+        checks.append(
+            (
+                "immutable profile artifact",
+                resolve_release_url(site, url),
+                ("public", "max-age=31536000", "immutable"),
+            )
+        )
 
 
 def select_channel_manifest_record(

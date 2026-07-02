@@ -85,10 +85,14 @@ def test_channel_page_lists_packages_and_binaries() -> None:
     assert "SPDXRef-File-capsem" in stable
     assert "6666666666666666666666666666666666666666666666666666666666666666" in stable
     assert "stable-capsem-bin-hmac" in stable
+    assert "co-work" in stable
+    assert "code" in stable
 
     assert "1.5.0-nightly.20260702" in nightly
     assert "Capsem-1.5.0-nightly.20260702.pkg" in nightly
     assert "nightly-capsem-bin-hmac" in nightly
+    assert "co-work" in nightly
+    assert "code" in nightly
 
 
 def test_channel_page_has_no_detached_profile_image_evidence() -> None:
@@ -108,7 +112,7 @@ def test_channel_page_has_no_detached_profile_image_evidence() -> None:
 def test_profile_page_renders_profile_owned_images_and_configs() -> None:
     build_release_site_from_fixture()
 
-    stable = (
+    stable_co_work = (
         PROJECT_ROOT
         / "release-site"
         / "dist"
@@ -118,7 +122,17 @@ def test_profile_page_renders_profile_owned_images_and_configs() -> None:
         / "co-work"
         / "index.html"
     ).read_text(encoding="utf-8")
-    nightly = (
+    stable_code = (
+        PROJECT_ROOT
+        / "release-site"
+        / "dist"
+        / "channels"
+        / "stable"
+        / "profiles"
+        / "code"
+        / "index.html"
+    ).read_text(encoding="utf-8")
+    nightly_co_work = (
         PROJECT_ROOT
         / "release-site"
         / "dist"
@@ -128,24 +142,43 @@ def test_profile_page_renders_profile_owned_images_and_configs() -> None:
         / "co-work"
         / "index.html"
     ).read_text(encoding="utf-8")
+    nightly_code = (
+        PROJECT_ROOT
+        / "release-site"
+        / "dist"
+        / "channels"
+        / "nightly"
+        / "profiles"
+        / "code"
+        / "index.html"
+    ).read_text(encoding="utf-8")
 
-    assert "Software Inventory" in stable
-    assert "python" in stable
-    assert "3.12.11" in stable
-    assert "Config Files" in stable
-    assert "profiles/co-work/mcp.json" in stable
-    assert "stable-co-work-config-hmac" in stable
-    assert "Profile Images" in stable
-    assert "rootfs.erofs" in stable
-    assert "stable-co-work-rootfs-hmac" in stable
-    assert "Profile Evidence" in stable
-    assert "ABOM" in stable
-    assert "stable-co-work-abom-hmac" in stable
+    assert "Software Inventory" in stable_co_work
+    assert "python" in stable_co_work
+    assert "3.12.11" in stable_co_work
+    assert "Config Files" in stable_co_work
+    assert "profiles/co-work/mcp.json" in stable_co_work
+    assert "stable-co-work-config-hmac" in stable_co_work
+    assert "Profile Images" in stable_co_work
+    assert "rootfs.erofs" in stable_co_work
+    assert "stable-co-work-rootfs-hmac" in stable_co_work
+    assert "Profile Evidence" in stable_co_work
+    assert "ABOM" in stable_co_work
+    assert "stable-co-work-abom-hmac" in stable_co_work
 
-    assert "2026.07.02.1-nightly" in nightly
-    assert "nightly-co-work-config-hmac" in nightly
-    assert "nightly-co-work-rootfs-hmac" in nightly
-    assert "nightly-co-work-abom-hmac" in nightly
+    assert "Optimized for coding and long-running agents." in stable_code
+    assert "profiles/code/mcp.json" in stable_code
+    assert "stable-code-config-hmac" in stable_code
+    assert "stable-code-rootfs-hmac" in stable_code
+    assert "stable-code-abom-hmac" in stable_code
+
+    assert "2026.07.02.1-nightly" in nightly_co_work
+    assert "nightly-co-work-config-hmac" in nightly_co_work
+    assert "nightly-co-work-rootfs-hmac" in nightly_co_work
+    assert "nightly-co-work-abom-hmac" in nightly_co_work
+    assert "nightly-code-config-hmac" in nightly_code
+    assert "nightly-code-rootfs-hmac" in nightly_code
+    assert "nightly-code-abom-hmac" in nightly_code
 
 
 def test_profile_page_forbids_current_binary_and_current_assets() -> None:

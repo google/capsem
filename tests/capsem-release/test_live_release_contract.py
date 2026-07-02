@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any
 from urllib.request import Request, urlopen
 
+import blake3
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_GRAPH = (
@@ -19,6 +21,7 @@ FIXTURE_GRAPH = (
     / "fixtures"
     / "release-graph-stable-nightly.json"
 )
+PROFILE_IDS = ("co-work", "code")
 
 
 def test_local_multichannel_dist_contract(tmp_path: Path) -> None:
@@ -56,30 +59,51 @@ def test_local_multichannel_dist_contract(tmp_path: Path) -> None:
         catalog_source = channels["channels"][channel]["profile_catalog"]["source"]
         assert (dist / catalog_source.lstrip("/")).is_file()
         assert (dist / "channels" / channel / "index.html").is_file()
-        assert (dist / "channels" / channel / "profiles" / "co-work" / "index.html").is_file()
+        catalog = json.loads((dist / catalog_source.lstrip("/")).read_text(encoding="utf-8"))
+        assert sorted(profile["id"] for profile in catalog["profiles"]) == sorted(PROFILE_IDS)
+        for profile_id in PROFILE_IDS:
+            assert (
+                dist / "channels" / channel / "profiles" / profile_id / "index.html"
+            ).is_file()
 
     index = (dist / "index.html").read_text(encoding="utf-8")
     stable = (dist / "channels" / "stable" / "index.html").read_text(encoding="utf-8")
     nightly = (dist / "channels" / "nightly" / "index.html").read_text(encoding="utf-8")
-    stable_profile = (
+    stable_co_work = (
         dist / "channels" / "stable" / "profiles" / "co-work" / "index.html"
     ).read_text(encoding="utf-8")
-    nightly_profile = (
+    nightly_co_work = (
         dist / "channels" / "nightly" / "profiles" / "co-work" / "index.html"
+    ).read_text(encoding="utf-8")
+    stable_code = (
+        dist / "channels" / "stable" / "profiles" / "code" / "index.html"
+    ).read_text(encoding="utf-8")
+    nightly_code = (
+        dist / "channels" / "nightly" / "profiles" / "code" / "index.html"
     ).read_text(encoding="utf-8")
 
     assert "Stable" in index
     assert "Nightly" in index
+    assert "Co-work" in index
+    assert "Code" in index
     assert "Capsem-1.4.0.pkg" in stable
     assert "stable-capsem-bin-hmac" in stable
+    assert "code" in stable
     assert "Capsem-1.5.0-nightly.20260702.pkg" in nightly
     assert "nightly-capsem-bin-hmac" in nightly
-    assert "stable-co-work-config-hmac" in stable_profile
-    assert "stable-co-work-rootfs-hmac" in stable_profile
-    assert "stable-co-work-abom-hmac" in stable_profile
-    assert "nightly-co-work-config-hmac" in nightly_profile
-    assert "nightly-co-work-rootfs-hmac" in nightly_profile
-    assert "nightly-co-work-abom-hmac" in nightly_profile
+    assert "code" in nightly
+    assert "stable-co-work-config-hmac" in stable_co_work
+    assert "stable-co-work-rootfs-hmac" in stable_co_work
+    assert "stable-co-work-abom-hmac" in stable_co_work
+    assert "nightly-co-work-config-hmac" in nightly_co_work
+    assert "nightly-co-work-rootfs-hmac" in nightly_co_work
+    assert "nightly-co-work-abom-hmac" in nightly_co_work
+    assert "stable-code-config-hmac" in stable_code
+    assert "stable-code-rootfs-hmac" in stable_code
+    assert "stable-code-abom-hmac" in stable_code
+    assert "nightly-code-config-hmac" in nightly_code
+    assert "nightly-code-rootfs-hmac" in nightly_code
+    assert "nightly-code-abom-hmac" in nightly_code
 
 
 def test_live_channels_json_and_manifests_verify() -> None:
@@ -103,21 +127,23 @@ def test_live_channels_json_and_manifests_verify() -> None:
         assert manifest["version"] == current["version"]
         assert manifest["packages"]
         assert manifest["binaries"]
-        assert "co-work" in manifest["profiles"]
+        assert sorted(manifest["profiles"]) == sorted(PROFILE_IDS)
 
-        profile_url = f"{base}/channels/{channel}/profiles/co-work/"
-        profile_page = _fetch_bytes(profile_url).decode("utf-8")
-        assert manifest["profiles"]["co-work"]["revision"] in profile_page
-        assert manifest["profiles"]["co-work"]["config"][0]["digest"]["hmac"] in profile_page
-        assert manifest["profiles"]["co-work"]["images"][0]["artifacts"][0]["digest"][
-            "hmac"
-        ] in profile_page
+        for profile_id in PROFILE_IDS:
+            profile_url = f"{base}/channels/{channel}/profiles/{profile_id}/"
+            profile_page = _fetch_bytes(profile_url).decode("utf-8")
+            profile = manifest["profiles"][profile_id]
+            assert profile["revision"] in profile_page
+            assert profile["config"][0]["digest"]["hmac"] in profile_page
+            assert profile["images"][0]["artifacts"][0]["digest"]["hmac"] in profile_page
 
     root = _fetch_bytes(f"{base}/").decode("utf-8")
     stable = _fetch_bytes(f"{base}/channels/stable/").decode("utf-8")
     nightly = _fetch_bytes(f"{base}/channels/nightly/").decode("utf-8")
     assert "Stable" in root
     assert "Nightly" in root
+    assert "Co-work" in root
+    assert "Code" in root
     assert "Capsem-1.4.0.pkg" in stable
     assert "Capsem-1.5.0-nightly.20260702.pkg" in nightly
 
@@ -131,7 +157,9 @@ def _materialize_graph_dist(graph: dict[str, Any], dist: Path) -> None:
             record for record in channel_record["manifests"] if record["status"] == "current"
         )
         manifest = graph["manifests"][channel][current["version"]]
+        _normalize_profile_file_digests(manifest)
         current["digest"]["sha256"] = _json_sha256(manifest)
+        current["digest"]["blake3"] = _json_blake3(manifest)
         _write_json(dist / current["url"].lstrip("/"), manifest)
 
         catalog = {
@@ -142,7 +170,7 @@ def _materialize_graph_dist(graph: dict[str, Any], dist: Path) -> None:
         catalog_source = (
             f"/profiles/releases/{catalog['revision']}/catalog.json"
         )
-        catalog_hash = _json_sha256(catalog)
+        catalog_hash = _json_blake3(catalog)
         channel_record["profile_catalog"] = {
             "source": catalog_source,
             "revision": catalog["revision"],
@@ -173,26 +201,57 @@ def _materialize_graph_dist(graph: dict[str, Any], dist: Path) -> None:
 def _materialize_profile_files(dist: Path, profiles: list[dict[str, Any]]) -> None:
     for profile in profiles:
         for item in profile.get("config", []):
-            _write_json(dist / item["url"].lstrip("/"), {"kind": item["kind"]})
+            _write_bytes(dist / item["url"].lstrip("/"), _profile_config_bytes(item))
         for image in profile.get("images", []):
             for artifact in image.get("artifacts", []):
-                path = dist / artifact["url"].lstrip("/")
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_bytes(b"profile-image-artifact")
+                _write_bytes(dist / artifact["url"].lstrip("/"), _profile_artifact_bytes(artifact))
             for evidence in image.get("evidence", []):
-                _write_json(
-                    dist / evidence["url"].lstrip("/"),
-                    {
-                        "bomFormat": "CycloneDX",
-                        "specVersion": "1.6",
-                        "components": [],
-                    },
-                )
+                _write_bytes(dist / evidence["url"].lstrip("/"), _profile_evidence_bytes(evidence))
+
+
+def _normalize_profile_file_digests(manifest: dict[str, Any]) -> None:
+    for profile in manifest["profiles"].values():
+        for item in profile.get("config", []):
+            _set_file_digest(item, _profile_config_bytes(item))
+        for image in profile.get("images", []):
+            for artifact in image.get("artifacts", []):
+                _set_file_digest(artifact, _profile_artifact_bytes(artifact))
+            for evidence in image.get("evidence", []):
+                _set_file_digest(evidence, _profile_evidence_bytes(evidence))
+
+
+def _set_file_digest(item: dict[str, Any], payload: bytes) -> None:
+    digest = item.setdefault("digest", {})
+    digest["sha256"] = hashlib.sha256(payload).hexdigest()
+    digest["blake3"] = blake3.blake3(payload).hexdigest()
+    item["bytes"] = len(payload)
+
+
+def _profile_config_bytes(item: dict[str, Any]) -> bytes:
+    return _json_bytes({"kind": item["kind"]})
+
+
+def _profile_artifact_bytes(_item: dict[str, Any]) -> bytes:
+    return b"profile-image-artifact"
+
+
+def _profile_evidence_bytes(_item: dict[str, Any]) -> bytes:
+    return _json_bytes(
+        {
+            "bomFormat": "CycloneDX",
+            "specVersion": "1.6",
+            "components": [],
+        }
+    )
 
 
 def _write_json(path: Path, payload: Any) -> None:
+    _write_bytes(path, _json_bytes(payload))
+
+
+def _write_bytes(path: Path, payload: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(_json_bytes(payload))
+    path.write_bytes(payload)
 
 
 def _json_bytes(payload: Any) -> bytes:
@@ -201,6 +260,10 @@ def _json_bytes(payload: Any) -> bytes:
 
 def _json_sha256(payload: Any) -> str:
     return hashlib.sha256(_json_bytes(payload)).hexdigest()
+
+
+def _json_blake3(payload: Any) -> str:
+    return blake3.blake3(_json_bytes(payload)).hexdigest()
 
 
 def _fetch_bytes(url: str) -> bytes:

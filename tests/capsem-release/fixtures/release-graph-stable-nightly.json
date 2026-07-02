@@ -185,6 +185,73 @@
             ],
             "min_capsem_version": "1.4.0",
             "revision": "2026.07.02.1-nightly"
+          },
+          "code": {
+            "id": "code",
+            "version": "2026.07.02.1-nightly",
+            "name": "Code",
+            "description": "Optimized for coding and long-running agents.",
+            "status": "current",
+            "software": [
+              {
+                "name": "python",
+                "version": "3.12.11",
+                "source": "apt"
+              },
+              {
+                "name": "node",
+                "version": "24.2.0",
+                "source": "npm"
+              }
+            ],
+            "config": [
+              {
+                "kind": "mcp",
+                "path": "profiles/code/mcp.json",
+                "url": "/profiles/releases/2026.07.02.1-nightly/code/mcp.json",
+                "bytes": 12,
+                "digest": {
+                  "blake3": "1212121212121212121212121212121212121212121212121212121212121212",
+                  "hmac": "nightly-code-config-hmac",
+                  "sha256": "1212121212121212121212121212121212121212121212121212121212121212"
+                },
+                "status": "current"
+              }
+            ],
+            "images": [
+              {
+                "architecture": "arm64",
+                "artifacts": [
+                  {
+                    "digest": {
+                      "blake3": "1313131313131313131313131313131313131313131313131313131313131313",
+                      "hmac": "nightly-code-rootfs-hmac",
+                      "sha256": "1313131313131313131313131313131313131313131313131313131313131313"
+                    },
+                    "kind": "rootfs",
+                    "name": "rootfs.erofs",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/code/arm64/rootfs.erofs",
+                    "bytes": 42,
+                    "status": "current"
+                  }
+                ],
+                "evidence": [
+                  {
+                    "digest": {
+                      "blake3": "1414141414141414141414141414141414141414141414141414141414141414",
+                      "hmac": "nightly-code-abom-hmac",
+                      "sha256": "1414141414141414141414141414141414141414141414141414141414141414"
+                    },
+                    "kind": "abom",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/code/arm64/abom.cdx.json",
+                    "bytes": 24,
+                    "status": "current"
+                  }
+                ]
+              }
+            ],
+            "min_capsem_version": "1.4.0",
+            "revision": "2026.07.02.1-nightly"
           }
         },
         "status": "current",
@@ -276,6 +343,73 @@
                     },
                     "kind": "abom",
                     "url": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/abom.cdx.json",
+                    "bytes": 24,
+                    "status": "current"
+                  }
+                ]
+              }
+            ],
+            "min_capsem_version": "1.4.0",
+            "revision": "2026.07.02.1-stable"
+          },
+          "code": {
+            "id": "code",
+            "version": "2026.07.02.1-stable",
+            "name": "Code",
+            "description": "Optimized for coding and long-running agents.",
+            "status": "current",
+            "software": [
+              {
+                "name": "python",
+                "version": "3.12.11",
+                "source": "apt"
+              },
+              {
+                "name": "node",
+                "version": "24.2.0",
+                "source": "npm"
+              }
+            ],
+            "config": [
+              {
+                "kind": "mcp",
+                "path": "profiles/code/mcp.json",
+                "url": "/profiles/releases/2026.07.02.1-stable/code/mcp.json",
+                "bytes": 12,
+                "digest": {
+                  "blake3": "1515151515151515151515151515151515151515151515151515151515151515",
+                  "hmac": "stable-code-config-hmac",
+                  "sha256": "1515151515151515151515151515151515151515151515151515151515151515"
+                },
+                "status": "current"
+              }
+            ],
+            "images": [
+              {
+                "architecture": "arm64",
+                "artifacts": [
+                  {
+                    "digest": {
+                      "blake3": "1616161616161616161616161616161616161616161616161616161616161616",
+                      "hmac": "stable-code-rootfs-hmac",
+                      "sha256": "1616161616161616161616161616161616161616161616161616161616161616"
+                    },
+                    "kind": "rootfs",
+                    "name": "rootfs.erofs",
+                    "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/rootfs.erofs",
+                    "bytes": 42,
+                    "status": "current"
+                  }
+                ],
+                "evidence": [
+                  {
+                    "digest": {
+                      "blake3": "1717171717171717171717171717171717171717171717171717171717171717",
+                      "hmac": "stable-code-abom-hmac",
+                      "sha256": "1717171717171717171717171717171717171717171717171717171717171717"
+                    },
+                    "kind": "abom",
+                    "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/abom.cdx.json",
                     "bytes": 24,
                     "status": "current"
                   }
