@@ -1,0 +1,206 @@
+---
+import ReleaseLayout from '../../../../layouts/ReleaseLayout.astro';
+import {
+  byteLabel,
+  channelPagePath,
+  channelProfilePagePath,
+  channelRows,
+  dataForChannel,
+  hashLabel,
+  loadReleaseData,
+  profileFileRows,
+  profileList,
+} from '../../../../lib/release-data';
+
+export function getStaticPaths() {
+  const rootData = loadReleaseData();
+  return channelRows(rootData).flatMap((channel) => {
+    const channelData = dataForChannel(rootData, channel.id);
+    return profileList(channelData).map((profile) => ({
+      params: { channel: channel.id, id: profile.id },
+      props: {
+        channel,
+        data: channelData,
+        profile,
+      },
+    }));
+  });
+}
+
+const { channel, data, profile } = Astro.props;
+const profileName = profile.name ?? profile.id;
+const profileDescription = profile.description ?? `Release profile ${profile.id}`;
+const software = Array.isArray(profile.software) ? profile.software : [];
+const configFiles = Array.isArray(profile.config) ? profile.config : profileFileRows(profile);
+const images = Array.isArray(profile.images) ? profile.images : [];
+const availability = Object.entries(profile.availability ?? {})
+  .filter(([, enabled]) => enabled)
+  .map(([name]) => name)
+  .join(', ');
+---
+<ReleaseLayout title={`${profileName} - ${channel.label} Profile`}>
+  <header class="border-b border-zinc-200 pb-6">
+    <div class="flex flex-wrap gap-4 text-sm font-medium">
+      <a class="text-blue-600 underline" href="/">All channels</a>
+      <a class="text-blue-600 underline" href={channelPagePath(channel.id)}>{channel.label}</a>
+    </div>
+    <h1 class="mt-3 text-4xl font-semibold tracking-normal text-black">{profileName}</h1>
+    <p class="mt-3 max-w-3xl text-base text-zinc-600">{profileDescription}</p>
+  </header>
+
+  <section class="mt-8 border border-zinc-200 p-5">
+    <h2 class="text-xl font-semibold text-black">Profile</h2>
+    <dl class="mt-4 grid gap-3 text-sm sm:grid-cols-[14rem_1fr]">
+      <dt class="text-zinc-500">Channel</dt><dd><code>{data.channel}</code></dd>
+      <dt class="text-zinc-500">ID</dt><dd><code>{profile.id}</code></dd>
+      <dt class="text-zinc-500">Version</dt><dd><code>{profile.version ?? profile.revision}</code></dd>
+      <dt class="text-zinc-500">Revision</dt><dd><code>{profile.revision}</code></dd>
+      <dt class="text-zinc-500">Status</dt><dd>{profile.status ?? data.manifest.status ?? 'current'}</dd>
+      <dt class="text-zinc-500">Minimum Capsem</dt><dd><code>{profile.min_capsem_version ?? profile.compatibility?.min_binary ?? 'not specified'}</code></dd>
+      <dt class="text-zinc-500">Refresh policy</dt><dd>{profile.refresh_policy ?? 'not specified'}</dd>
+      <dt class="text-zinc-500">Availability</dt><dd>{availability || 'none'}</dd>
+    </dl>
+  </section>
+
+  <section class="mt-6 border border-zinc-200 p-5">
+    <h2 class="text-xl font-semibold text-black">Software Inventory</h2>
+    <div class="mt-4 overflow-x-auto">
+      <table class="w-full min-w-[640px] border-collapse text-sm">
+        <thead>
+          <tr class="border-b border-zinc-200 text-left text-zinc-500">
+            <th class="py-2 pr-4 font-medium">Name</th>
+            <th class="py-2 pr-4 font-medium">Version</th>
+            <th class="py-2 pr-4 font-medium">Source</th>
+          </tr>
+        </thead>
+        <tbody>
+          {software.length > 0 ? software.map((item) => (
+            <tr class="border-b border-zinc-100 align-top">
+              <td class="py-3 pr-4">{item.name}</td>
+              <td class="py-3 pr-4"><code>{item.version}</code></td>
+              <td class="py-3 pr-4">{item.source}</td>
+            </tr>
+          )) : (
+            <tr>
+              <td class="py-4 pr-4 text-zinc-600" colspan="3">No software inventory is published for this profile.</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="mt-6 border border-zinc-200 p-5">
+    <h2 class="text-xl font-semibold text-black">Config Files</h2>
+    <div class="mt-4 overflow-x-auto">
+      <table class="w-full min-w-[900px] border-collapse text-sm">
+        <thead>
+          <tr class="border-b border-zinc-200 text-left text-zinc-500">
+            <th class="py-2 pr-4 font-medium">Kind</th>
+            <th class="py-2 pr-4 font-medium">Path</th>
+            <th class="py-2 pr-4 font-medium">Download</th>
+            <th class="py-2 pr-4 font-medium">Bytes</th>
+            <th class="py-2 pr-4 font-medium">SHA-256</th>
+            <th class="py-2 pr-4 font-medium">BLAKE3</th>
+            <th class="py-2 pr-4 font-medium">HMAC</th>
+            <th class="py-2 pr-4 font-medium">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {configFiles.length > 0 ? configFiles.map((file) => (
+            <tr class="border-b border-zinc-100 align-top">
+              <td class="py-3 pr-4">{file.kind ?? file.label}</td>
+              <td class="py-3 pr-4"><code>{file.path ?? file.name}</code></td>
+              <td class="py-3 pr-4">{file.url ? <a class="break-all text-blue-600 underline" href={file.url}>{file.url}</a> : <span class="text-zinc-500">not published</span>}</td>
+              <td class="py-3 pr-4">{byteLabel(file.bytes ?? file.size)}</td>
+              <td class="py-3 pr-4"><code class="break-all">{hashLabel(file.digest?.sha256)}</code></td>
+              <td class="py-3 pr-4"><code class="break-all">{hashLabel(file.digest?.blake3 ?? file.hash)}</code></td>
+              <td class="py-3 pr-4"><code class="break-all">{hashLabel(file.digest?.hmac)}</code></td>
+              <td class="py-3 pr-4">{file.status ?? 'current'}</td>
+            </tr>
+          )) : (
+            <tr>
+              <td class="py-4 pr-4 text-zinc-600" colspan="8">No config files are published for this profile.</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="mt-6 border border-zinc-200 p-5">
+    <h2 class="text-xl font-semibold text-black">Profile Images</h2>
+    <div class="mt-4 grid gap-6">
+      {images.length > 0 ? images.map((image) => (
+        <section class="border-t border-zinc-200 pt-5">
+          <h3 class="text-lg font-semibold text-black">Architecture {image.architecture}</h3>
+          <div class="mt-3 overflow-x-auto">
+            <table class="w-full min-w-[960px] border-collapse text-sm">
+              <thead>
+                <tr class="border-b border-zinc-200 text-left text-zinc-500">
+                  <th class="py-2 pr-4 font-medium">Kind</th>
+                  <th class="py-2 pr-4 font-medium">Name</th>
+                  <th class="py-2 pr-4 font-medium">Download</th>
+                  <th class="py-2 pr-4 font-medium">Bytes</th>
+                  <th class="py-2 pr-4 font-medium">SHA-256</th>
+                  <th class="py-2 pr-4 font-medium">BLAKE3</th>
+                  <th class="py-2 pr-4 font-medium">HMAC</th>
+                  <th class="py-2 pr-4 font-medium">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(image.artifacts ?? []).map((artifact) => (
+                  <tr class="border-b border-zinc-100 align-top">
+                    <td class="py-3 pr-4">{artifact.kind}</td>
+                    <td class="py-3 pr-4">{artifact.name}</td>
+                    <td class="py-3 pr-4">{artifact.url ? <a class="break-all text-blue-600 underline" href={artifact.url}>{artifact.url}</a> : <span class="text-zinc-500">not published</span>}</td>
+                    <td class="py-3 pr-4">{byteLabel(artifact.bytes)}</td>
+                    <td class="py-3 pr-4"><code class="break-all">{hashLabel(artifact.digest?.sha256)}</code></td>
+                    <td class="py-3 pr-4"><code class="break-all">{hashLabel(artifact.digest?.blake3)}</code></td>
+                    <td class="py-3 pr-4"><code class="break-all">{hashLabel(artifact.digest?.hmac)}</code></td>
+                    <td class="py-3 pr-4">{artifact.status ?? 'current'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <h4 class="mt-5 text-base font-semibold text-black">Profile Evidence</h4>
+          <div class="mt-3 overflow-x-auto">
+            <table class="w-full min-w-[860px] border-collapse text-sm">
+              <thead>
+                <tr class="border-b border-zinc-200 text-left text-zinc-500">
+                  <th class="py-2 pr-4 font-medium">Kind</th>
+                  <th class="py-2 pr-4 font-medium">Download</th>
+                  <th class="py-2 pr-4 font-medium">Bytes</th>
+                  <th class="py-2 pr-4 font-medium">SHA-256</th>
+                  <th class="py-2 pr-4 font-medium">BLAKE3</th>
+                  <th class="py-2 pr-4 font-medium">HMAC</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(image.evidence ?? []).map((evidence) => (
+                  <tr class="border-b border-zinc-100 align-top">
+                    <td class="py-3 pr-4">{String(evidence.kind ?? '').toUpperCase()}</td>
+                    <td class="py-3 pr-4">{evidence.url ? <a class="break-all text-blue-600 underline" href={evidence.url}>{evidence.url}</a> : <span class="text-zinc-500">not published</span>}</td>
+                    <td class="py-3 pr-4">{byteLabel(evidence.bytes)}</td>
+                    <td class="py-3 pr-4"><code class="break-all">{hashLabel(evidence.digest?.sha256)}</code></td>
+                    <td class="py-3 pr-4"><code class="break-all">{hashLabel(evidence.digest?.blake3)}</code></td>
+                    <td class="py-3 pr-4"><code class="break-all">{hashLabel(evidence.digest?.hmac)}</code></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )) : <p class="text-sm text-zinc-600">No profile images are published for this profile.</p>}
+    </div>
+  </section>
+
+  <nav class="mt-8 flex flex-wrap gap-4 text-sm">
+    <a class="font-medium text-blue-600 underline" href={channelPagePath(channel.id)}>{channel.label}</a>
+    {profileList(data).map((item) => (
+      item.id !== profile.id ? <a class="font-medium text-blue-600 underline" href={channelProfilePagePath(channel.id, item.id)}>{item.name}</a> : null
+    ))}
+  </nav>
+</ReleaseLayout>

@@ -105,6 +105,72 @@ def test_channel_page_has_no_detached_profile_image_evidence() -> None:
     assert "stable-co-work-abom-hmac" not in stable
 
 
+def test_profile_page_renders_profile_owned_images_and_configs() -> None:
+    build_release_site_from_fixture()
+
+    stable = (
+        PROJECT_ROOT
+        / "release-site"
+        / "dist"
+        / "channels"
+        / "stable"
+        / "profiles"
+        / "co-work"
+        / "index.html"
+    ).read_text(encoding="utf-8")
+    nightly = (
+        PROJECT_ROOT
+        / "release-site"
+        / "dist"
+        / "channels"
+        / "nightly"
+        / "profiles"
+        / "co-work"
+        / "index.html"
+    ).read_text(encoding="utf-8")
+
+    assert "Software Inventory" in stable
+    assert "python" in stable
+    assert "3.12.11" in stable
+    assert "Config Files" in stable
+    assert "profiles/co-work/mcp.json" in stable
+    assert "stable-co-work-config-hmac" in stable
+    assert "Profile Images" in stable
+    assert "rootfs.erofs" in stable
+    assert "stable-co-work-rootfs-hmac" in stable
+    assert "Profile Evidence" in stable
+    assert "ABOM" in stable
+    assert "stable-co-work-abom-hmac" in stable
+
+    assert "2026.07.02.1-nightly" in nightly
+    assert "nightly-co-work-config-hmac" in nightly
+    assert "nightly-co-work-rootfs-hmac" in nightly
+    assert "nightly-co-work-abom-hmac" in nightly
+
+
+def test_profile_page_forbids_current_binary_and_current_assets() -> None:
+    build_release_site_from_fixture()
+
+    stable = (
+        PROJECT_ROOT
+        / "release-site"
+        / "dist"
+        / "channels"
+        / "stable"
+        / "profiles"
+        / "co-work"
+        / "index.html"
+    ).read_text(encoding="utf-8")
+
+    assert "Current binary" not in stable
+    assert "current_binary" not in stable
+    assert "Current assets" not in stable
+    assert "current_assets" not in stable
+    assert "VM asset revision" not in stable
+    assert "Capsem Binaries" not in stable
+    assert "Capsem-1.4.0.pkg" not in stable
+
+
 def build_release_site_from_fixture() -> None:
     env = {
         **os.environ,

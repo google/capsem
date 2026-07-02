@@ -4,6 +4,7 @@ import {
   binaryDescription,
   binaryRows,
   byteLabel,
+  channelProfilePagePath,
   channelRows,
   dataForChannel,
   hashLabel,
@@ -14,7 +15,6 @@ import {
   packageRows,
   profileArchNames,
   profileList,
-  profilePagePath,
 } from '../../lib/release-data';
 
 export function getStaticPaths() {
@@ -182,7 +182,7 @@ const profileCount = profiles.length;
           {profiles.map((profile) => (
             <tr class="border-b border-zinc-100 align-top">
               <td class="py-3 pr-4">
-                <a class="text-blue-600 underline" href={profilePagePath(profile.id)}>{profile.name}</a>
+                <a class="text-blue-600 underline" href={channelProfilePagePath(data.channel, profile.id)}>{profile.name}</a>
                 <div><code>{profile.id}</code></div>
               </td>
               <td class="py-3 pr-4"><code>{profile.revision}</code></td>

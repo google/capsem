@@ -99,6 +99,10 @@ export function profilePagePath(profileId: string): string {
   return `/profiles/${encodeURIComponent(profileId)}/`;
 }
 
+export function channelProfilePagePath(channelId: string, profileId: string): string {
+  return `/channels/${encodeURIComponent(channelId)}/profiles/${encodeURIComponent(profileId)}/`;
+}
+
 export function channelPagePath(channelId: string): string {
   return `/channels/${encodeURIComponent(channelId)}/`;
 }

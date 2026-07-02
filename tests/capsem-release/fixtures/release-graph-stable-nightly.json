@@ -122,6 +122,35 @@
         "profiles": {
           "co-work": {
             "id": "co-work",
+            "version": "2026.07.02.1-nightly",
+            "name": "Co-work",
+            "status": "current",
+            "software": [
+              {
+                "name": "python",
+                "version": "3.12.11",
+                "source": "apt"
+              },
+              {
+                "name": "node",
+                "version": "24.2.0",
+                "source": "npm"
+              }
+            ],
+            "config": [
+              {
+                "kind": "mcp",
+                "path": "profiles/co-work/mcp.json",
+                "url": "/profiles/releases/2026.07.02.1-nightly/co-work/mcp.json",
+                "bytes": 12,
+                "digest": {
+                  "blake3": "5555555555555555555555555555555555555555555555555555555555555555",
+                  "hmac": "nightly-co-work-config-hmac",
+                  "sha256": "5555555555555555555555555555555555555555555555555555555555555555"
+                },
+                "status": "current"
+              }
+            ],
             "images": [
               {
                 "architecture": "arm64",
@@ -133,7 +162,10 @@
                       "sha256": "7777777777777777777777777777777777777777777777777777777777777777"
                     },
                     "kind": "rootfs",
-                    "name": "rootfs.erofs"
+                    "name": "rootfs.erofs",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/rootfs.erofs",
+                    "bytes": 42,
+                    "status": "current"
                   }
                 ],
                 "evidence": [
@@ -143,7 +175,10 @@
                       "hmac": "nightly-co-work-abom-hmac",
                       "sha256": "8888888888888888888888888888888888888888888888888888888888888888"
                     },
-                    "kind": "abom"
+                    "kind": "abom",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/abom.cdx.json",
+                    "bytes": 24,
+                    "status": "current"
                   }
                 ]
               }
@@ -186,6 +221,35 @@
         "profiles": {
           "co-work": {
             "id": "co-work",
+            "version": "2026.07.02.1-stable",
+            "name": "Co-work",
+            "status": "current",
+            "software": [
+              {
+                "name": "python",
+                "version": "3.12.11",
+                "source": "apt"
+              },
+              {
+                "name": "node",
+                "version": "24.2.0",
+                "source": "npm"
+              }
+            ],
+            "config": [
+              {
+                "kind": "mcp",
+                "path": "profiles/co-work/mcp.json",
+                "url": "/profiles/releases/2026.07.02.1-stable/co-work/mcp.json",
+                "bytes": 12,
+                "digest": {
+                  "blake3": "4444444444444444444444444444444444444444444444444444444444444444",
+                  "hmac": "stable-co-work-config-hmac",
+                  "sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+                },
+                "status": "current"
+              }
+            ],
             "images": [
               {
                 "architecture": "arm64",
@@ -197,7 +261,10 @@
                       "sha256": "9999999999999999999999999999999999999999999999999999999999999999"
                     },
                     "kind": "rootfs",
-                    "name": "rootfs.erofs"
+                    "name": "rootfs.erofs",
+                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/rootfs.erofs",
+                    "bytes": 42,
+                    "status": "current"
                   }
                 ],
                 "evidence": [
@@ -207,7 +274,10 @@
                       "hmac": "stable-co-work-abom-hmac",
                       "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
                     },
-                    "kind": "abom"
+                    "kind": "abom",
+                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/abom.cdx.json",
+                    "bytes": 24,
+                    "status": "current"
                   }
                 ]
               }

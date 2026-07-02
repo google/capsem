@@ -5,6 +5,7 @@ import {
   binaryDescription,
   binaryRows,
   byteLabel,
+  channelProfilePagePath,
   channelRows,
   currentAssetFilesByArch,
   currentAssetBaseUrl,
@@ -18,7 +19,6 @@ import {
   profileArchNames,
   profileFileRows,
   profileList,
-  profilePagePath,
   profileCatalogUrl,
   profileRevision,
   vmObomRows,
@@ -194,7 +194,7 @@ const assetState = data.manifest.assets?.releases?.[currentAssets]?.deprecated ?
       {profiles.map((profile) => (
         <article class="border border-zinc-200 p-4">
           <h3 class="text-lg font-semibold text-black">
-            <a class="text-blue-600 underline" href={profilePagePath(profile.id)}>{profile.name}</a>
+            <a class="text-blue-600 underline" href={channelProfilePagePath(data.channel, profile.id)}>{profile.name}</a>
           </h3>
           <p class="mt-1 text-sm text-zinc-600">{profile.description}</p>
           <dl class="mt-4 grid gap-2 text-sm sm:grid-cols-[9rem_1fr]">
