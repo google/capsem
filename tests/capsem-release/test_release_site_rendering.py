@@ -212,7 +212,8 @@ def test_package_pages_show_package_owned_binaries() -> None:
     assert package_page_path.is_file()
     page = package_page_path.read_text(encoding="utf-8")
 
-    assert "Capsem Package" in page
+    assert package["name"] in page
+    assert "Capsem Package" not in page
     assert package["name"] in page
     assert package["kind"] in page
     assert _hash_label(package["digest"]["sha256"]) in page
@@ -227,6 +228,15 @@ def test_package_pages_show_package_owned_binaries() -> None:
         assert _hash_label(binary["digest"]["sha256"]) in page
         assert _hash_label(binary["digest"]["blake3"]) in page
         assert binary["sbom_component_ref"] in page
+    sibling = graph["manifests"]["stable"]["1.4.0"]["packages"][1]
+    assert sibling["name"] not in page
+    assert sibling["url"] not in page
+    for binary in sibling["binaries"]:
+        assert binary["installed_path"] not in page
+
+
+def test_package_detail_page() -> None:
+    test_package_pages_show_package_owned_binaries()
 
 
 def test_channel_page_has_no_detached_profile_image_evidence() -> None:

@@ -1,0 +1,128 @@
+---
+import ReleaseLayout from '../../../../layouts/ReleaseLayout.astro';
+import {
+  byteLabel,
+  channelPagePath,
+  channelRows,
+  dataForChannel,
+  hashLabel,
+  loadReleaseData,
+  packageById,
+  packageRows,
+} from '../../../../lib/release-data';
+
+export function getStaticPaths() {
+  const rootData = loadReleaseData();
+  return channelRows(rootData).flatMap((channel) => {
+    const channelData = dataForChannel(rootData, channel.id);
+    return packageRows(channelData).map((pkg) => ({
+      params: { channel: channel.id, id: pkg.id },
+      props: {
+        channel,
+        data: channelData,
+        pkg,
+      },
+    }));
+  });
+}
+
+const { channel, data, pkg } = Astro.props;
+const selectedPackage = packageById(data, pkg.id) ?? pkg;
+const binaries = Array.isArray(selectedPackage.binaries) ? selectedPackage.binaries : [];
+const evidence = Array.isArray(selectedPackage.evidence) ? selectedPackage.evidence : [];
+---
+<ReleaseLayout title={`${selectedPackage.name} - ${channel.label} Package`}>
+  <header class="border-b border-zinc-200 pb-6">
+    <div class="flex flex-wrap gap-4 text-sm font-medium">
+      <a class="text-blue-600 underline" href="/">All channels</a>
+      <a class="text-blue-600 underline" href={channelPagePath(channel.id)}>{channel.label}</a>
+    </div>
+    <h1 class="mt-3 text-4xl font-semibold tracking-normal text-black">{selectedPackage.name}</h1>
+    <p class="mt-3 max-w-3xl text-base text-zinc-600">
+      Delivery container <code>{selectedPackage.name}</code> and the executable inventory it owns.
+    </p>
+  </header>
+
+  <section class="mt-8 border border-zinc-200 p-5">
+    <h2 class="text-xl font-semibold text-black">Package</h2>
+    <dl class="mt-4 grid gap-3 text-sm sm:grid-cols-[12rem_1fr]">
+      <dt class="text-zinc-500">Channel</dt><dd><code>{data.channel}</code></dd>
+      <dt class="text-zinc-500">ID</dt><dd><code>{selectedPackage.id}</code></dd>
+      <dt class="text-zinc-500">Kind</dt><dd>{selectedPackage.kind}</dd>
+      <dt class="text-zinc-500">Name</dt><dd>{selectedPackage.name}</dd>
+      <dt class="text-zinc-500">Version</dt><dd><code>{selectedPackage.version}</code></dd>
+      <dt class="text-zinc-500">Download</dt><dd>{selectedPackage.url ? <a class="break-all text-blue-600 underline" href={selectedPackage.url}>{selectedPackage.url}</a> : <span class="text-zinc-500">not published</span>}</dd>
+      <dt class="text-zinc-500">Bytes</dt><dd>{byteLabel(selectedPackage.bytes)}</dd>
+      <dt class="text-zinc-500">SHA-256</dt><dd><code class="break-all">{hashLabel(selectedPackage.digest?.sha256)}</code></dd>
+      <dt class="text-zinc-500">BLAKE3</dt><dd><code class="break-all">{hashLabel(selectedPackage.digest?.blake3)}</code></dd>
+    </dl>
+  </section>
+
+  <section class="mt-6 border border-zinc-200 p-5">
+    <h2 class="text-xl font-semibold text-black">Contained Binaries</h2>
+    <div class="mt-4 overflow-x-auto">
+      <table class="w-full min-w-[980px] border-collapse text-sm">
+        <thead>
+          <tr class="border-b border-zinc-200 text-left text-zinc-500">
+            <th class="py-2 pr-4 font-medium">Binary</th>
+            <th class="py-2 pr-4 font-medium">Version</th>
+            <th class="py-2 pr-4 font-medium">Installed path</th>
+            <th class="py-2 pr-4 font-medium">Bytes</th>
+            <th class="py-2 pr-4 font-medium">SHA-256</th>
+            <th class="py-2 pr-4 font-medium">BLAKE3</th>
+            <th class="py-2 pr-4 font-medium">SBOM component</th>
+          </tr>
+        </thead>
+        <tbody>
+          {binaries.length > 0 ? binaries.map((binary) => (
+            <tr class="border-b border-zinc-100 align-top">
+              <td class="py-3 pr-4">{binary.name}</td>
+              <td class="py-3 pr-4"><code>{binary.version}</code></td>
+              <td class="py-3 pr-4"><code>{binary.installed_path}</code></td>
+              <td class="py-3 pr-4">{byteLabel(binary.bytes)}</td>
+              <td class="py-3 pr-4"><code class="break-all">{hashLabel(binary.digest?.sha256)}</code></td>
+              <td class="py-3 pr-4"><code class="break-all">{hashLabel(binary.digest?.blake3)}</code></td>
+              <td class="py-3 pr-4"><code>{binary.sbom_component_ref}</code></td>
+            </tr>
+          )) : (
+            <tr>
+              <td class="py-4 pr-4 text-zinc-600" colspan="7">No binary inventory is published for this package.</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="mt-6 border border-zinc-200 p-5">
+    <h2 class="text-xl font-semibold text-black">Package Evidence</h2>
+    <div class="mt-4 overflow-x-auto">
+      <table class="w-full min-w-[760px] border-collapse text-sm">
+        <thead>
+          <tr class="border-b border-zinc-200 text-left text-zinc-500">
+            <th class="py-2 pr-4 font-medium">Kind</th>
+            <th class="py-2 pr-4 font-medium">Download</th>
+            <th class="py-2 pr-4 font-medium">Bytes</th>
+            <th class="py-2 pr-4 font-medium">SHA-256</th>
+            <th class="py-2 pr-4 font-medium">BLAKE3</th>
+          </tr>
+        </thead>
+        <tbody>
+          {evidence.length > 0 ? evidence.map((item) => (
+            <tr class="border-b border-zinc-100 align-top">
+              <td class="py-3 pr-4">{String(item.kind ?? 'evidence').toUpperCase()}</td>
+              <td class="py-3 pr-4">{item.url ? <a class="break-all text-blue-600 underline" href={item.url}>{item.url}</a> : <span class="text-zinc-500">not published</span>}</td>
+              <td class="py-3 pr-4">{byteLabel(item.bytes)}</td>
+              <td class="py-3 pr-4"><code class="break-all">{hashLabel(item.digest?.sha256)}</code></td>
+              <td class="py-3 pr-4"><code class="break-all">{hashLabel(item.digest?.blake3)}</code></td>
+            </tr>
+          )) : (
+            <tr>
+              <td class="py-4 pr-4 text-zinc-600" colspan="5">No package evidence is published for this package.</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</ReleaseLayout>

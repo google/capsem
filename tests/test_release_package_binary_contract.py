@@ -127,6 +127,40 @@ def test_every_package_has_sbom() -> None:
         assert len(sbom_urls) == len(set(sbom_urls)), f"{channel} repeats package SBOM URLs"
 
 
+def test_package_detail_lists_owned_binaries_only() -> None:
+    build_release_site_from_fixture()
+
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+    packages = graph["manifests"]["stable"]["1.4.0"]["packages"]
+    selected = packages[0]
+    sibling = packages[1]
+    package_page = (
+        RELEASE_SITE_DIST
+        / "channels"
+        / "stable"
+        / "packages"
+        / selected["id"]
+        / "index.html"
+    ).read_text(encoding="utf-8")
+
+    assert f"<h1 class=\"mt-3 text-4xl font-semibold tracking-normal text-black\">{selected['name']}</h1>" in package_page
+    assert "Capsem Package" not in package_page
+    assert selected["name"] in package_page
+    assert selected["url"] in package_page
+    assert sibling["name"] not in package_page
+    assert sibling["url"] not in package_page
+    for binary in selected["binaries"]:
+        assert binary["name"] in package_page
+        assert binary["installed_path"] in package_page
+        assert binary["sbom_component_ref"] in package_page
+    for binary in sibling["binaries"]:
+        assert binary["installed_path"] not in package_page
+    for evidence in selected["evidence"]:
+        assert evidence["url"] in package_page
+    for evidence in sibling["evidence"]:
+        assert evidence["url"] not in package_page
+
+
 def test_macos_package_present() -> None:
     build_release_site_from_fixture()
 

@@ -47,6 +47,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   buckets.
 - Required package-scoped SBOM evidence for each generated release package
   instead of cloning the global host SBOM into every package row.
+- Made generated package detail pages identify the selected package and guard
+  against leaking sibling package binaries or evidence.
 
 ## [1.4.1782944059] - 2026-07-01
 
