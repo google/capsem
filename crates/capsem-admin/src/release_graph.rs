@@ -357,7 +357,11 @@ impl PackageInventoryRow {
                 );
             }
             if binary.architecture != self.architecture {
-                bail!("package {} binary {} architecture mismatch", self.name, binary.name);
+                bail!(
+                    "package {} binary {} architecture mismatch",
+                    self.name,
+                    binary.name
+                );
             }
         }
         for evidence in &self.evidence {
@@ -527,11 +531,17 @@ pub fn verify_package_contents_match_binary_inventory(
         }
         let sha256 = format!("{:x}", Sha256::digest(&file.bytes));
         if row.digest.sha256 != sha256 {
-            bail!("binary inventory sha256 mismatch for {}", file.installed_path);
+            bail!(
+                "binary inventory sha256 mismatch for {}",
+                file.installed_path
+            );
         }
         let blake3 = blake3::hash(&file.bytes).to_hex().to_string();
         if row.digest.blake3 != blake3 {
-            bail!("binary inventory blake3 mismatch for {}", file.installed_path);
+            bail!(
+                "binary inventory blake3 mismatch for {}",
+                file.installed_path
+            );
         }
         if row.sbom_component_ref.trim().is_empty() {
             bail!(
@@ -764,6 +774,17 @@ impl SoftwareInventoryRow {
                 self.name
             );
         }
+        let version = self.version.trim();
+        if matches!(
+            version.to_ascii_lowercase().as_str(),
+            "unversioned" | "unknown" | "latest"
+        ) {
+            bail!(
+                "profile {profile} software {} version is {}",
+                self.name,
+                self.version
+            );
+        }
         if self.source.trim().is_empty() {
             bail!(
                 "profile {profile} software {} source must not be empty",
@@ -776,8 +797,12 @@ impl SoftwareInventoryRow {
                 self.name
             );
         }
-        validate_url_like(&self.evidence)
-            .with_context(|| format!("profile {profile} software {} evidence is invalid", self.name))?;
+        validate_url_like(&self.evidence).with_context(|| {
+            format!(
+                "profile {profile} software {} evidence is invalid",
+                self.name
+            )
+        })?;
         self.digest
             .validate(&format!("profile {profile} software {}", self.name))?;
         Ok(())
@@ -812,10 +837,16 @@ impl ProfileConfigRef {
 impl ProfileArchitectureImages {
     fn validate(&self, profile: &str) -> Result<()> {
         if self.software.is_empty() {
-            bail!("profile {profile} architecture {:?} must list software", self.architecture);
+            bail!(
+                "profile {profile} architecture {:?} must list software",
+                self.architecture
+            );
         }
         if self.config.is_empty() {
-            bail!("profile {profile} architecture {:?} must list config", self.architecture);
+            bail!(
+                "profile {profile} architecture {:?} must list config",
+                self.architecture
+            );
         }
         for software in &self.software {
             software.validate(profile)?;
@@ -1279,7 +1310,10 @@ mod tests {
         manifest
             .validate_inventory_shape()
             .expect("package and binary inventory is valid");
-        assert_ne!(manifest.packages[0].name, manifest.packages[0].binaries[0].name);
+        assert_ne!(
+            manifest.packages[0].name,
+            manifest.packages[0].binaries[0].name
+        );
         assert_eq!(
             manifest.packages[0].binaries[0].installed_path,
             "/usr/local/bin/capsem"
@@ -1803,8 +1837,9 @@ mod tests {
                     },
                     EvidenceRef {
                         kind: "software_inventory".to_string(),
-                        url: "/profiles/releases/2026.07.02.1/co-work/arm64/software-inventory.json"
-                            .to_string(),
+                        url:
+                            "/profiles/releases/2026.07.02.1/co-work/arm64/software-inventory.json"
+                                .to_string(),
                         digest: digest_set(),
                     },
                 ],
@@ -1816,6 +1851,25 @@ mod tests {
             .expect("profile-owned graph validates");
         assert_eq!(profile.min_capsem_version.as_deref(), Some("1.4.0"));
         assert_eq!(profile.architectures[0].evidence.len(), 3);
+    }
+
+    #[test]
+    fn profile_json_ownership_rejects_unversioned_software_rows() {
+        let mut profile = profile_with_image_artifacts(
+            "2026.07.02.1",
+            vec![profile_image_artifact(
+                ProfileImageArtifactKind::Rootfs,
+                "rootfs.erofs",
+                "2026.07.02.1",
+            )],
+        );
+        profile.architectures[0].software[0].version = "unversioned".to_string();
+
+        let error = profile
+            .validate_profile_ownership()
+            .expect_err("profile software rows must use real versions");
+
+        assert!(error.to_string().contains("unversioned"), "{error}");
     }
 
     #[test]

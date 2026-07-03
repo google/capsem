@@ -604,13 +604,24 @@ def check_release_graph_profile(
             failures.append(f"profile {profile_id} architecture missing")
             arch = "<unknown>"
         config_entries = require_list(architecture, "config", failures)
+        software_entries = require_list(architecture, "software", failures)
         images = require_list(architecture, "images", failures)
         evidence_entries = require_list(architecture, "evidence", failures)
+        if not software_entries:
+            failures.append(f"profile {profile_id} architecture {arch} software empty")
         if not config_entries:
             failures.append(f"profile {profile_id} architecture {arch} config empty")
         if not images:
             failures.append(f"profile {profile_id} architecture {arch} images empty")
 
+        for software in software_entries:
+            failures.extend(
+                check_release_graph_software_row(
+                    software,
+                    f"profile {profile_id} architecture {arch} software",
+                    arch,
+                )
+            )
         for item in config_entries:
             failures.extend(
                 check_release_graph_artifact(
@@ -650,6 +661,40 @@ def check_release_graph_profile(
                     expected_document=expected_document,
                 )
             )
+    return failures
+
+
+def check_release_graph_software_row(item: Any, label: str, architecture: str) -> list[str]:
+    if not isinstance(item, dict):
+        return [f"{label} entry is not an object"]
+    failures: list[str] = []
+    name = item.get("name")
+    if not isinstance(name, str) or not name.strip():
+        failures.append(f"{label} name missing")
+        name = "<unknown>"
+    version = item.get("version")
+    if not isinstance(version, str) or not version.strip():
+        failures.append(f"{label} {name} version missing")
+    elif version.strip().lower() in {"unversioned", "unknown", "latest"}:
+        failures.append(f"{label} {name} version is {version}")
+    row_architecture = item.get("architecture")
+    if row_architecture != architecture:
+        failures.append(
+            f"{label} {name} architecture mismatch: expected {architecture}, got {row_architecture}"
+        )
+    evidence = item.get("evidence")
+    if not isinstance(evidence, str) or not evidence:
+        failures.append(f"{label} {name} evidence missing")
+    digest = item.get("digest")
+    if not isinstance(digest, dict):
+        failures.append(f"{label} {name} digest missing")
+        return failures
+    for key in ("sha256", "blake3"):
+        value = digest.get(key)
+        if not isinstance(value, str):
+            failures.append(f"{label} {name} digest {key} missing")
+    if "hmac" in digest:
+        failures.append(f"{label} {name} digest must not contain hmac")
     return failures
 
 

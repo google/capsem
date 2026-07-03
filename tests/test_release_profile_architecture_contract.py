@@ -9,12 +9,25 @@ from test_release_site_html_contract import (
     build_release_site_from_fixture,
 )
 
+import importlib.util
 import json
+import sys
 
 
 PROFILE_PAGE = (
     PROJECT_ROOT / "release-site" / "src" / "pages" / "channels" / "[channel]" / "profiles" / "[id].astro"
 )
+
+
+def _readiness_checker_module():
+    module_path = PROJECT_ROOT / "scripts" / "check-remote-release-readiness.py"
+    spec = importlib.util.spec_from_file_location("check_remote_release_readiness", module_path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_profile_no_current_binary() -> None:
@@ -243,3 +256,32 @@ def test_software_inventory_not_all_arch() -> None:
                 for software in architecture["software"]:
                     assert software["architecture"] == arch
                     assert software["architecture"] != "all"
+
+
+def test_real_software_versions(monkeypatch) -> None:
+    checker = _readiness_checker_module()
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+    profile = json.loads(json.dumps(graph["manifests"]["stable"]["1.4.0"]["profiles"]["co-work"]))
+    profile["architectures"][0]["software"][0]["version"] = "unversioned"
+
+    monkeypatch.setattr(
+        checker,
+        "fetch_text",
+        lambda _url: checker.FetchText(
+            text="co-work Co-work 2026.07.02.1-stable arm64"
+        ),
+    )
+    monkeypatch.setattr(
+        checker,
+        "check_release_graph_artifact",
+        lambda *_args, **_kwargs: [],
+    )
+
+    failures = checker.check_release_graph_profile(
+        "https://release.capsem.test",
+        "stable",
+        "co-work",
+        profile,
+    )
+
+    assert "profile co-work architecture arm64 software python version is unversioned" in failures

@@ -83,6 +83,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rendered only on the owning package detail pages.
 - Corrected profile architecture evidence so ABOM, OBOM, and software
   inventory are scoped to the profile architecture that owns them.
+- Required profile software inventory rows to carry real package versions,
+  rejecting placeholder values in generated graph validation and remote
+  release-site readiness checks.
 
 ## [1.4.1782944059] - 2026-07-01
 
