@@ -96,6 +96,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   architecture instead of profile-owned package theater.
 - Added a named software-evidence scope gate proving profile software rows do
   not repeat architecture-level evidence URLs.
+- Required profile software row digests to be derived from the row's
+  name/version/source/architecture/evidence tuple instead of copied inventory
+  or placeholder hashes.
 
 ## [1.4.1782944059] - 2026-07-01
 

@@ -697,8 +697,8 @@
                   {
                     "architecture": "arm64",
                     "digest": {
-                      "blake3": "174b62300ad519f9600a3244a3db7fc4ea0746024c0783089cf69766e86afc8c",
-                      "sha256": "bb9f466883e337c4770f85a7353f6e9949515a79577a9858135133db2452f2e1"
+                      "sha256": "802d68a74d8bd5cb9de178797ebbd593aebc24dc3de09a9dfb0af111f7fb62ce",
+                      "blake3": "85584d29793f318d89b24ba01db7449a1da8fc100760bca2464ba691773f3564"
                     },
                     "evidence": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/software-inventory.json",
                     "name": "python",
@@ -708,8 +708,8 @@
                   {
                     "architecture": "arm64",
                     "digest": {
-                      "blake3": "f6ed57221b072499cfac2bd9a23ddf8c9242a567bab5ec0b9fe83db179779d96",
-                      "sha256": "17f07d2944ec63dedd8f81d8b4fff52407ee7c5f23756c1464dcb88b1258279c"
+                      "sha256": "4ddf5e259dbd11355d275df7b87dbf4c850fc6724e2682578f01daeecbe95f32",
+                      "blake3": "d765702c0c1265a25800469b029f46894eb55e9e0206d7ebc0f2afac652a7c70"
                     },
                     "evidence": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/software-inventory.json",
                     "name": "node",
@@ -902,8 +902,8 @@
                   {
                     "architecture": "x86_64",
                     "digest": {
-                      "blake3": "174b62300ad519f9600a3244a3db7fc4ea0746024c0783089cf69766e86afc8c",
-                      "sha256": "bb9f466883e337c4770f85a7353f6e9949515a79577a9858135133db2452f2e1"
+                      "sha256": "9203e9e5884f6abf02ac8903940aa37603ae5a3c5bc3824e3455c059c6ece8fe",
+                      "blake3": "cc01bfe170628238d695e079a30b89cd10fb4f9d628b005cfd537f81c21b1390"
                     },
                     "evidence": "/profiles/releases/2026.07.02.1-nightly/co-work/x86_64/software-inventory.json",
                     "name": "python",
@@ -913,8 +913,8 @@
                   {
                     "architecture": "x86_64",
                     "digest": {
-                      "blake3": "f6ed57221b072499cfac2bd9a23ddf8c9242a567bab5ec0b9fe83db179779d96",
-                      "sha256": "17f07d2944ec63dedd8f81d8b4fff52407ee7c5f23756c1464dcb88b1258279c"
+                      "sha256": "9658afb8d221c904ca508d523de3b1f6a39c4860cb4260a87d23c61c2d82e544",
+                      "blake3": "f13116c35ba5d2cf2f38f5a1a19ec6a6c7d0411ad6bd8bccc7d4ce70debebefa"
                     },
                     "evidence": "/profiles/releases/2026.07.02.1-nightly/co-work/x86_64/software-inventory.json",
                     "name": "node",
@@ -1118,8 +1118,8 @@
                   {
                     "architecture": "arm64",
                     "digest": {
-                      "blake3": "d52a0678153df1602276d498999229dd1ac655f7c8c38a260ee4bc2a9503bbba",
-                      "sha256": "d19d6fe1e208360a51dfb0670db5c85f9d0f179f47ab6f02c8fdc7970d5e124f"
+                      "sha256": "9e01712311430dac2b484f427124dd67f37e2d4e607d677647d5bfef66940fb0",
+                      "blake3": "40d5fdd7ee03def315129d6b9ad66599a769bd768b2ed02c278d6e24ab9e87ca"
                     },
                     "evidence": "/profiles/releases/2026.07.02.1-nightly/code/arm64/software-inventory.json",
                     "name": "python",
@@ -1129,8 +1129,8 @@
                   {
                     "architecture": "arm64",
                     "digest": {
-                      "blake3": "d89a63b0defa4fde466ba64a46b006c13ede1f9cf1698564c59e8be0ee7c2baa",
-                      "sha256": "ea0b0ba271e13d7c979c73b2d8243d1434450b75012c4c7b7f243bed84f6d608"
+                      "sha256": "568eeaaf9ac7617c2c8b14fbeac1ed910ef20307a151ea663d5cbab71b143242",
+                      "blake3": "3f38c024de950f7a7930bf2a3f9095395fb27b9b272039a4ae211f8cdcd8f071"
                     },
                     "evidence": "/profiles/releases/2026.07.02.1-nightly/code/arm64/software-inventory.json",
                     "name": "node",
@@ -1323,8 +1323,8 @@
                   {
                     "architecture": "x86_64",
                     "digest": {
-                      "blake3": "d52a0678153df1602276d498999229dd1ac655f7c8c38a260ee4bc2a9503bbba",
-                      "sha256": "d19d6fe1e208360a51dfb0670db5c85f9d0f179f47ab6f02c8fdc7970d5e124f"
+                      "sha256": "61efaaac12571edf27704d54caa12814da39524a20b2aa48e30de45098e57782",
+                      "blake3": "9201444e879e934965da2dcab8605cb2c60c2ff9a690643a085cc811db5999a6"
                     },
                     "evidence": "/profiles/releases/2026.07.02.1-nightly/code/x86_64/software-inventory.json",
                     "name": "python",
@@ -1334,8 +1334,8 @@
                   {
                     "architecture": "x86_64",
                     "digest": {
-                      "blake3": "d89a63b0defa4fde466ba64a46b006c13ede1f9cf1698564c59e8be0ee7c2baa",
-                      "sha256": "ea0b0ba271e13d7c979c73b2d8243d1434450b75012c4c7b7f243bed84f6d608"
+                      "sha256": "41bf2d46177c923d19bb2ff0a0eb6f50028119d439f2bbb47e3b388084e58f80",
+                      "blake3": "6097398ee8dd5e3d5240828463523294fd54a91f03151d023441c1054c04bf6c"
                     },
                     "evidence": "/profiles/releases/2026.07.02.1-nightly/code/x86_64/software-inventory.json",
                     "name": "node",
@@ -2135,8 +2135,8 @@
                   {
                     "architecture": "arm64",
                     "digest": {
-                      "blake3": "eb2600045d9b53bc4b5c02732c542661f07532a778cd3094d9305deb3e883971",
-                      "sha256": "42346cb6e9f1147e63c42d8ecebe33eee21b12d4d2c883ac66cb1943a76b39fa"
+                      "sha256": "92a8dda7709148d6a72c015d6ab28b33e00a6510b38b2a67fc01e0cab82438a9",
+                      "blake3": "02c65b8692a8c702e9c4bfa0c9fb0c6488f607a52b860ffe51c0a06d492e5f92"
                     },
                     "evidence": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/software-inventory.json",
                     "name": "python",
@@ -2146,8 +2146,8 @@
                   {
                     "architecture": "arm64",
                     "digest": {
-                      "blake3": "d54c4c5889bab1bda3bb7e0d57cb05b091e7f565121ee401f3640f2ce815f68c",
-                      "sha256": "76f4214fe07e62f5e043fb3501ab0a6f74757af1d0558f4aafcb55f1782fcd59"
+                      "sha256": "f57b7d1724c21d5a3a566364b1f957d7debff6fb9c009ff15a53b4a5c535e058",
+                      "blake3": "947bd64a022c0078337ebd6301d73665cb8e4c1f8c6887d21a7706e0004f2834"
                     },
                     "evidence": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/software-inventory.json",
                     "name": "node",
@@ -2340,8 +2340,8 @@
                   {
                     "architecture": "x86_64",
                     "digest": {
-                      "blake3": "eb2600045d9b53bc4b5c02732c542661f07532a778cd3094d9305deb3e883971",
-                      "sha256": "42346cb6e9f1147e63c42d8ecebe33eee21b12d4d2c883ac66cb1943a76b39fa"
+                      "sha256": "61ada70d7496e28b91c1c0cd4142b72ef228c9daaf77ff384d04db6931084e79",
+                      "blake3": "44e96937d23d6b0f68134ea32a61f2348a3a7e1bf43afc0e18235b7e82017290"
                     },
                     "evidence": "/profiles/releases/2026.07.02.1-stable/co-work/x86_64/software-inventory.json",
                     "name": "python",
@@ -2351,8 +2351,8 @@
                   {
                     "architecture": "x86_64",
                     "digest": {
-                      "blake3": "d54c4c5889bab1bda3bb7e0d57cb05b091e7f565121ee401f3640f2ce815f68c",
-                      "sha256": "76f4214fe07e62f5e043fb3501ab0a6f74757af1d0558f4aafcb55f1782fcd59"
+                      "sha256": "9c882cdb1f1fd94f5276b783013cf8f307ebfd338bb0409e49348953a2758b82",
+                      "blake3": "b9819115ee5a65b9114a305e8228a268095af7185b482c2d42ce482662bdcae3"
                     },
                     "evidence": "/profiles/releases/2026.07.02.1-stable/co-work/x86_64/software-inventory.json",
                     "name": "node",
@@ -2556,8 +2556,8 @@
                   {
                     "architecture": "arm64",
                     "digest": {
-                      "blake3": "a044118b12ab7ef207e99804bb7b396a7cda8e3019e4f3ae83ffa67c9cdf4d18",
-                      "sha256": "53d3952f98e6bc230e4436e19cf67566aa52be78c7c1f266374722dba835963c"
+                      "sha256": "cca104437ec0b81ee16597b89f2f87939bd1539c35e08c7548c857b6d7cdbdb1",
+                      "blake3": "19f61e36972b3517f593f668f162d8bc4077f4db249ea92284cee6c6c42b116a"
                     },
                     "evidence": "/profiles/releases/2026.07.02.1-stable/code/arm64/software-inventory.json",
                     "name": "python",
@@ -2567,8 +2567,8 @@
                   {
                     "architecture": "arm64",
                     "digest": {
-                      "blake3": "9a727b024f52d79ec84af9121da4aca7c255790b0cb24a02f806f4bc568c536a",
-                      "sha256": "10df2d2939111bbf50dd6d84fef84e9494bfc75fa45283717a740898834fdeb6"
+                      "sha256": "e9979edd8309fb815d725ce37d31c395357eabaa516091fa11e89b182b5b5f5e",
+                      "blake3": "3d8af869e59b8304cdacca21bf38a7d7f493b7bc42126cb6489d946a983119f5"
                     },
                     "evidence": "/profiles/releases/2026.07.02.1-stable/code/arm64/software-inventory.json",
                     "name": "node",
@@ -2761,8 +2761,8 @@
                   {
                     "architecture": "x86_64",
                     "digest": {
-                      "blake3": "a044118b12ab7ef207e99804bb7b396a7cda8e3019e4f3ae83ffa67c9cdf4d18",
-                      "sha256": "53d3952f98e6bc230e4436e19cf67566aa52be78c7c1f266374722dba835963c"
+                      "sha256": "441b81aad4fcf76869f6252c4067225f6efd52cd6f6fbd1af77571d0ce1675e8",
+                      "blake3": "5bff93b82d1c83f72491b0ad0875b5b8edde667db0511d09167b98e8809cd8d5"
                     },
                     "evidence": "/profiles/releases/2026.07.02.1-stable/code/x86_64/software-inventory.json",
                     "name": "python",
@@ -2772,8 +2772,8 @@
                   {
                     "architecture": "x86_64",
                     "digest": {
-                      "blake3": "9a727b024f52d79ec84af9121da4aca7c255790b0cb24a02f806f4bc568c536a",
-                      "sha256": "10df2d2939111bbf50dd6d84fef84e9494bfc75fa45283717a740898834fdeb6"
+                      "sha256": "670d679107026bcd6077cdc9ff688de35cf5123ff827c922c6810c8dd0e11121",
+                      "blake3": "98d0bfd121fb04975017f65c97e0541838b76a24f9e651b2fb1bc15ef6d2675b"
                     },
                     "evidence": "/profiles/releases/2026.07.02.1-stable/code/x86_64/software-inventory.json",
                     "name": "node",
