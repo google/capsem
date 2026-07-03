@@ -42,6 +42,18 @@ REQUIRED_PR_GATE_RESULT_CHECKS = (
     ("site-build", "SITE_BUILD_RESULT"),
     ("release-site-build", "RELEASE_SITE_BUILD_RESULT"),
 )
+ALLOWED_PROFILE_CONFIG_KINDS = {
+    "profile",
+    "mcp",
+    "enforcement",
+    "detection",
+    "apt",
+    "python",
+    "npm",
+    "build",
+    "tips",
+    "root_manifest",
+}
 RELEASE_VALIDATOR_USER_AGENT = "CapsemReleaseValidator/1.0"
 _FETCH_BYTES_CACHE: dict[str, "FetchBytes"] = {}
 
@@ -623,6 +635,11 @@ def check_release_graph_profile(
                 )
             )
         for item in config_entries:
+            kind = item.get("kind") if isinstance(item, dict) else None
+            if kind not in ALLOWED_PROFILE_CONFIG_KINDS:
+                failures.append(
+                    f"profile {profile_id} architecture {arch} config kind {kind} is not allowed"
+                )
             failures.extend(
                 check_release_graph_artifact(
                     site,

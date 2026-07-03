@@ -111,6 +111,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated asset-channel validation to require OS/architecture package target
   sections and package detail links instead of the removed flattened channel
   binary table, unblocking generated release-output contract checks.
+- Replaced profile config kind strings with a release graph enum and updated
+  remote readiness validation to reject unknown config categories.
 
 ## [1.4.1782944059] - 2026-07-01
 

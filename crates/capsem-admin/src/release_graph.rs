@@ -55,6 +55,21 @@ pub enum ProfileImageArtifactKind {
     Rootfs,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProfileConfigKind {
+    Profile,
+    Mcp,
+    Enforcement,
+    Detection,
+    Apt,
+    Python,
+    Npm,
+    Build,
+    Tips,
+    RootManifest,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReleaseLedgerKind {
@@ -153,7 +168,7 @@ pub struct SoftwareInventoryRow {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProfileConfigRef {
-    pub kind: String,
+    pub kind: ProfileConfigKind,
     pub path: String,
     pub url: String,
     pub bytes: u64,
@@ -811,26 +826,44 @@ impl SoftwareInventoryRow {
 
 impl ProfileConfigRef {
     fn validate(&self, profile: &str) -> Result<()> {
-        if self.kind.trim().is_empty() {
-            bail!("profile {profile} config kind must not be empty");
-        }
         if self.path.trim().is_empty() {
             bail!(
                 "profile {profile} config {} path must not be empty",
-                self.kind
+                self.kind.as_str()
             );
         }
-        validate_url_like(&self.url)
-            .with_context(|| format!("profile {profile} config {} url is invalid", self.kind))?;
+        validate_url_like(&self.url).with_context(|| {
+            format!(
+                "profile {profile} config {} url is invalid",
+                self.kind.as_str()
+            )
+        })?;
         if self.bytes == 0 {
             bail!(
                 "profile {profile} config {} bytes must be non-zero",
-                self.kind
+                self.kind.as_str()
             );
         }
         self.digest
-            .validate(&format!("profile {profile} config {}", self.kind))?;
+            .validate(&format!("profile {profile} config {}", self.kind.as_str()))?;
         Ok(())
+    }
+}
+
+impl ProfileConfigKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Profile => "profile",
+            Self::Mcp => "mcp",
+            Self::Enforcement => "enforcement",
+            Self::Detection => "detection",
+            Self::Apt => "apt",
+            Self::Python => "python",
+            Self::Npm => "npm",
+            Self::Build => "build",
+            Self::Tips => "tips",
+            Self::RootManifest => "root_manifest",
+        }
     }
 }
 
@@ -1641,7 +1674,7 @@ mod tests {
             architecture: Architecture::Arm64,
             software: vec![software_row()],
             config: vec![ProfileConfigRef {
-                kind: "mcp".to_string(),
+                kind: ProfileConfigKind::Mcp,
                 path: "profiles/co-work/mcp.json".to_string(),
                 url: format!("/profiles/releases/{revision}/co-work/arm64/mcp.json"),
                 bytes: 12,
@@ -1776,6 +1809,21 @@ mod tests {
     }
 
     #[test]
+    fn profile_config_kind_rejects_unknown_values() {
+        let invalid_kind = serde_json::json!({
+            "kind": "misc",
+            "path": "profiles/co-work/misc.json",
+            "url": "/profiles/releases/2026.07.02.1/co-work/arm64/misc.json",
+            "bytes": 42,
+            "digest": digest_json(),
+            "status": "current"
+        });
+
+        serde_json::from_value::<ProfileConfigRef>(invalid_kind)
+            .expect_err("profile config kind must be a release graph enum");
+    }
+
+    #[test]
     fn profile_json_ownership_has_min_capsem_not_current_binary() {
         let profile = ProfileDocument {
             version: "2026.07.02.1".to_string(),
@@ -1788,7 +1836,7 @@ mod tests {
                 architecture: Architecture::Arm64,
                 software: vec![software_row()],
                 config: vec![ProfileConfigRef {
-                    kind: "mcp".to_string(),
+                    kind: ProfileConfigKind::Mcp,
                     path: "profiles/co-work/mcp.json".to_string(),
                     url: "/profiles/releases/2026.07.02.1/co-work/arm64/mcp.json".to_string(),
                     bytes: 12,
@@ -1940,7 +1988,7 @@ mod tests {
                     architecture: Architecture::Arm64,
                     software: vec![software_row()],
                     config: vec![ProfileConfigRef {
-                        kind: "mcp".to_string(),
+                        kind: ProfileConfigKind::Mcp,
                         path: "profiles/co-work/mcp.json".to_string(),
                         url: "/profiles/releases/2026.07.02.1/co-work/arm64/mcp.json".to_string(),
                         bytes: 12,
