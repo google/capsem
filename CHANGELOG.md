@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a top-level CI coverage contract that enumerates Cargo workspace crates
+  and release binary targets from `cargo metadata`, then verifies macOS
+  coverage commands include every owning package.
 - Added named root channel metadata gates for generated and HTML release-site
   output, and moved stable/nightly descriptions into the release graph fixture
   so the root page text is JSON-owned.
