@@ -74,6 +74,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   process, TUI, MCP, gateway, and admin binaries.
 - Kept package SBOM evidence on the package detail evidence block, with binary
   rows limited to SBOM component references instead of repeating evidence URLs.
+- Added package SBOM fixture files and gates that prove every package-owned
+  binary SBOM component reference resolves inside the owning package SBOM with
+  SHA-256 checksums matching the binary inventory.
 
 ## [1.4.1782944059] - 2026-07-01
 

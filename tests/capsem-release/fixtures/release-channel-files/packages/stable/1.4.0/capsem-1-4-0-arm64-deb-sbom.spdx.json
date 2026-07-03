@@ -1,0 +1,125 @@
+{
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "creationInfo": {
+    "created": "2026-07-03T00:00:00Z",
+    "creators": [
+      "Tool: capsem release fixture"
+    ]
+  },
+  "dataLicense": "CC0-1.0",
+  "documentNamespace": "https://release.capsem.org/packages/stable/1.4.0/capsem-1-4-0-arm64-deb-sbom.spdx.json",
+  "files": [
+    {
+      "SPDXID": "SPDXRef-File-capsem",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "45cf282c4da029def67f4314038427ab84cdbf7979710585782eaca3f7678e82"
+        }
+      ],
+      "fileName": "/usr/bin/capsem"
+    },
+    {
+      "SPDXID": "SPDXRef-File-capsem-admin",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "e0315a4854838d90af7660b920e64260fde99e47d1a83040ccffe4ae9f947f16"
+        }
+      ],
+      "fileName": "/usr/bin/capsem-admin"
+    },
+    {
+      "SPDXID": "SPDXRef-File-capsem-app",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "5c459945ee4213532071465c282a88ff5a2ff6a5c27f2a2e8373448da05ad6fb"
+        }
+      ],
+      "fileName": "/usr/bin/capsem-app"
+    },
+    {
+      "SPDXID": "SPDXRef-File-capsem-gateway",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "5535ef081a45c3a30f523abe90a85c1926939bcb9332753f6ae0725246e6e286"
+        }
+      ],
+      "fileName": "/usr/bin/capsem-gateway"
+    },
+    {
+      "SPDXID": "SPDXRef-File-capsem-mcp",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "e022ceba26b7bad5741610ca7df0ddbeb1b30a7455b6e299780c3084aa675002"
+        }
+      ],
+      "fileName": "/usr/bin/capsem-mcp"
+    },
+    {
+      "SPDXID": "SPDXRef-File-capsem-mcp-aggregator",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "36e3881dda63ffd75e811a65a66e633c53ff521d44703e7333647bfc13e4128e"
+        }
+      ],
+      "fileName": "/usr/bin/capsem-mcp-aggregator"
+    },
+    {
+      "SPDXID": "SPDXRef-File-capsem-mcp-builtin",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "acdbdb64c8e9b1ecff8b1a8bd324acf374aca9e6c72ae4d80c84b8623f9300ea"
+        }
+      ],
+      "fileName": "/usr/bin/capsem-mcp-builtin"
+    },
+    {
+      "SPDXID": "SPDXRef-File-capsem-process",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "eb2b41c71354fb32b7d889a6a93c33fc58c8d452d3f3441e2b14f84fd47c8cd2"
+        }
+      ],
+      "fileName": "/usr/bin/capsem-process"
+    },
+    {
+      "SPDXID": "SPDXRef-File-capsem-service",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "f41fa90aa2e1318b4ef8357153d689592795cd3b8c474e475b17305a40eaf9f2"
+        }
+      ],
+      "fileName": "/usr/bin/capsem-service"
+    },
+    {
+      "SPDXID": "SPDXRef-File-capsem-tray",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "0b2b094a9c206264570388fad9062b15a039e41019cedccd243ec65908293b6d"
+        }
+      ],
+      "fileName": "/usr/bin/capsem-tray"
+    },
+    {
+      "SPDXID": "SPDXRef-File-capsem-tui",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "3c83e38c5525a17f3cfef650e617092a8e6fb4c9603930c83a7df1be88fa256e"
+        }
+      ],
+      "fileName": "/usr/bin/capsem-tui"
+    }
+  ],
+  "name": "capsem-1-4-0-arm64-deb-sbom.spdx.json",
+  "spdxVersion": "SPDX-2.3"
+}

@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 from pathlib import Path
+
+import blake3
 
 from test_release_site_html_contract import RELEASE_SITE_DIST, build_release_site_from_fixture
 
@@ -17,6 +20,7 @@ FIXTURE_GRAPH = (
     / "fixtures"
     / "release-graph-stable-nightly.json"
 )
+FIXTURE_FILE_ROOT = PROJECT_ROOT / "tests" / "capsem-release" / "fixtures" / "release-channel-files"
 EXPECTED_BINARY_COHORT = {
     "capsem",
     "capsem-admin",
@@ -110,6 +114,46 @@ def test_package_sbom_not_repeated_per_binary() -> None:
             for binary in package["binaries"]:
                 assert "evidence" not in binary
                 assert "sbom" not in binary
+
+
+def test_binary_sbom_component_refs_resolve() -> None:
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+
+    for channel, record in graph["channels"].items():
+        current = next(item for item in record["manifests"] if item["status"] == "current")
+        manifest = graph["manifests"][channel][current["version"]]
+        for package in manifest["packages"]:
+            sboms = [item for item in package["evidence"] if item["kind"] == "sbom"]
+            assert len(sboms) == 1, f"{channel}:{package['name']}"
+            sbom = sboms[0]
+            sbom_path = FIXTURE_FILE_ROOT / sbom["url"].lstrip("/")
+            assert sbom_path.exists(), f"{channel}:{package['name']}:{sbom['url']}"
+
+            sbom_bytes = sbom_path.read_bytes()
+            assert len(sbom_bytes) == sbom["bytes"], f"{channel}:{package['name']}"
+            assert hashlib.sha256(sbom_bytes).hexdigest() == sbom["digest"]["sha256"]
+            assert blake3.blake3(sbom_bytes).hexdigest() == sbom["digest"]["blake3"]
+
+            document = json.loads(sbom_bytes)
+            assert document["spdxVersion"] == "SPDX-2.3"
+            files_by_id = {
+                file["SPDXID"]: file
+                for file in document.get("files", [])
+                if isinstance(file, dict) and "SPDXID" in file
+            }
+            for binary in package["binaries"]:
+                component = files_by_id.get(binary["sbom_component_ref"])
+                assert component is not None, (
+                    f"{channel}:{package['name']}:{binary['sbom_component_ref']}"
+                )
+                sha256_checksums = [
+                    checksum["checksumValue"]
+                    for checksum in component.get("checksums", [])
+                    if checksum.get("algorithm") == "SHA256"
+                ]
+                assert sha256_checksums == [binary["digest"]["sha256"]], (
+                    f"{channel}:{package['name']}:{binary['name']}"
+                )
 
 
 def test_packages_group_by_os_architecture() -> None:

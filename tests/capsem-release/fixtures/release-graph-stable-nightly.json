@@ -274,10 +274,10 @@
                 "kind": "sbom",
                 "name": "capsem-1-5-0-nightly-20260702-pkg-sbom.spdx.json",
                 "url": "/packages/nightly/1.5.0-nightly.20260702/capsem-1-5-0-nightly-20260702-pkg-sbom.spdx.json",
-                "bytes": 120,
+                "bytes": 3722,
                 "digest": {
-                  "sha256": "a1b6f161d4f46487cf3ef220446dca4b14cdc7b03ede43778514a85dcca978ce",
-                  "blake3": "59b32e2b059d7f02fbbaa7b4dfa969413b696b2b96bb0ddd3c247c3aba921613"
+                  "sha256": "cd0b1bdb1d3b624e7754c850bff85cbe9666fff6133ac3631ba1380af10c370e",
+                  "blake3": "1188350496821dc5dd6612ac67185154f7c11dd99293fd894be67f13fb218391"
                 },
                 "status": "current"
               }
@@ -469,10 +469,10 @@
                 "kind": "sbom",
                 "name": "capsem-1-5-0-nightly-20260702-arm64-deb-sbom.spdx.json",
                 "url": "/packages/nightly/1.5.0-nightly.20260702/capsem-1-5-0-nightly-20260702-arm64-deb-sbom.spdx.json",
-                "bytes": 132,
+                "bytes": 3513,
                 "digest": {
-                  "sha256": "82e64566222ea4a3d5574c5020deb779d8f30230fd5154aa8c5d4f85067d1a74",
-                  "blake3": "0b44d2443810b8fb14043c2abd667d396441cb9158433363f74795a08886f3bd"
+                  "sha256": "b2c1caeb605837a08398eeac72cef28eec894b1b59e059e4312b3561cfb87175",
+                  "blake3": "4e07cf43a45ef501f2bfd4507952eeb3e8ec48d1ad795fc963a2dc782597feab"
                 },
                 "status": "current"
               }
@@ -664,10 +664,10 @@
                 "kind": "sbom",
                 "name": "capsem-1-5-0-nightly-20260702-amd64-deb-sbom.spdx.json",
                 "url": "/packages/nightly/1.5.0-nightly.20260702/capsem-1-5-0-nightly-20260702-amd64-deb-sbom.spdx.json",
-                "bytes": 134,
+                "bytes": 3513,
                 "digest": {
-                  "sha256": "c0bb6cd5a4f300014fd0f07c0b121923a21a62112c198b5b9d868eba888f598f",
-                  "blake3": "ce47368edfa2073af91701497ba603a45d7e4b65db4260f683e3bf5d932017f1"
+                  "sha256": "014bb750d71f3886df1409eca7a4a26029018fb2711038719957e89737169068",
+                  "blake3": "5960be0e0f590f87d1c43020798d4926205bdefe930caf2fec9d1557e0e4899c"
                 },
                 "status": "current"
               }
@@ -1712,10 +1712,10 @@
                 "kind": "sbom",
                 "name": "capsem-1-4-0-pkg-sbom.spdx.json",
                 "url": "/packages/stable/1.4.0/capsem-1-4-0-pkg-sbom.spdx.json",
-                "bytes": 86,
+                "bytes": 3670,
                 "digest": {
-                  "sha256": "77179a0e1f1d5cf3d48f4b75f4d26003922c7902ab5f78a83f68d0c31c9e05d0",
-                  "blake3": "f4ad2d8bfbe8b5cd3d0a721ccd208a1359416e01d9061aa732aa9784e4037df5"
+                  "sha256": "d73f9b219b511f84214b5c3d80c710446cb67d0a64212a893890c06b874eb067",
+                  "blake3": "f9187b4292c12486c2bfa0804720857ca4808b60b2ba723061b70c5ad18d36c0"
                 },
                 "status": "current"
               }
@@ -1907,10 +1907,10 @@
                 "kind": "sbom",
                 "name": "capsem-1-4-0-arm64-deb-sbom.spdx.json",
                 "url": "/packages/stable/1.4.0/capsem-1-4-0-arm64-deb-sbom.spdx.json",
-                "bytes": 98,
+                "bytes": 3461,
                 "digest": {
-                  "sha256": "3db03b40ad3ebfc9f266ee668d71b3f6c4a0127a87048231d3102db0379a9432",
-                  "blake3": "ed0bae66864d30773e903f03dcabac3a6f7fbfe6d9cdd1f18f2774e794f44d3f"
+                  "sha256": "d6ab3bf20b5ff79c8edcb4d8c4b008729188d93d1b379808b736e1c29d98a850",
+                  "blake3": "cb7a9db4e70b21521003e0f0b27fc78ce8e3a376548d4c3cc7b7d05dd14466d3"
                 },
                 "status": "current"
               }
@@ -2102,10 +2102,10 @@
                 "kind": "sbom",
                 "name": "capsem-1-4-0-amd64-deb-sbom.spdx.json",
                 "url": "/packages/stable/1.4.0/capsem-1-4-0-amd64-deb-sbom.spdx.json",
-                "bytes": 100,
+                "bytes": 3461,
                 "digest": {
-                  "sha256": "ac6fa6fb78f9419db388158d9d3fb7736c49fa0235b531f4c26852dd3b3b580e",
-                  "blake3": "bbe92afd7e2174c0ed2eab5f46be9ba8d9849d5ea93ec4cb90e6c4623040920d"
+                  "sha256": "e9ee8abab093bb5dba8cf2530155105567e115cd160ab17d966b3024aed7f65b",
+                  "blake3": "bdcbf418fe760e78e889754b076c20c8a3bb790ac8e4b235fffb3c8895632b46"
                 },
                 "status": "current"
               }
