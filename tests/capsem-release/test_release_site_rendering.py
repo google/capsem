@@ -122,7 +122,7 @@ def test_channel_page_lists_packages_and_binaries() -> None:
     assert "Current Manifest" in stable
     assert "Manifest History" in stable
     assert "Packages" in stable
-    assert "Capsem Binaries" in stable
+    assert "Capsem Binaries" not in stable
     assert "Profile References" in stable
     assert "Profile Catalog" not in stable
     assert "/profiles/releases/" not in stable
@@ -132,14 +132,7 @@ def test_channel_page_lists_packages_and_binaries() -> None:
     assert "Capsem_1.4.0_arm64.deb" in stable
     assert "macos_pkg" in stable
     assert "debian_package" in stable
-    assert "capsem-app" in stable
-    assert "capsem-tray" in stable
-    assert "SPDXRef-File-capsem" in stable
     stable_package_section = stable.split("Capsem Packages", maxsplit=1)[1].split(
-        "Capsem Binaries",
-        maxsplit=1,
-    )[0]
-    stable_binary_section = stable.split("Capsem Binaries", maxsplit=1)[1].split(
         "Profile References",
         maxsplit=1,
     )[0]
@@ -149,14 +142,10 @@ def test_channel_page_lists_packages_and_binaries() -> None:
     assert stable_sbom["url"] in stable_package_section
     assert _hash_label(stable_sbom["digest"]["sha256"]) in stable_package_section
     assert stable_sbom["digest"]["sha256"] not in stable_package_section
-    assert stable_sbom["url"] not in stable_binary_section
-    assert stable_sbom["digest"]["sha256"] not in stable_binary_section
-    assert stable_sbom["digest"]["blake3"] not in stable_binary_section
-    assert _hash_label(
-        _fixture()["manifests"]["stable"]["1.4.0"]["packages"][0]["binaries"][0][
-            "digest"
-        ]["sha256"]
-    ) in stable
+    for package in _fixture()["manifests"]["stable"]["1.4.0"]["packages"]:
+        for binary in package["binaries"]:
+            assert binary["installed_path"] not in stable
+            assert binary["sbom_component_ref"] not in stable
     assert "HMAC" not in stable
     assert "hmac" not in stable
     assert "co-work" in stable
@@ -167,11 +156,12 @@ def test_channel_page_lists_packages_and_binaries() -> None:
     assert "Capsem_1.5.0-nightly.20260702_arm64.deb" in nightly
     assert "/assets/nightly/manifest.json" in nightly
     assert "/manifests/nightly/" not in nightly
-    assert _hash_label(
-        _fixture()["manifests"]["nightly"]["1.5.0-nightly.20260702"]["packages"][0][
-            "binaries"
-        ][0]["digest"]["sha256"]
-    ) in nightly
+    for package in _fixture()["manifests"]["nightly"]["1.5.0-nightly.20260702"][
+        "packages"
+    ]:
+        for binary in package["binaries"]:
+            assert binary["installed_path"] not in nightly
+            assert binary["sbom_component_ref"] not in nightly
     assert "HMAC" not in nightly
     assert "hmac" not in nightly
     assert "co-work" in nightly
@@ -372,6 +362,39 @@ def test_profile_page_renders_profile_owned_images_and_configs() -> None:
 
 def test_profile_architecture_blocks() -> None:
     test_profile_page_renders_profile_owned_images_and_configs()
+
+
+def test_profile_evidence_not_repeated_per_row() -> None:
+    build_release_site_from_fixture()
+    graph = _fixture()
+    page = (
+        PROJECT_ROOT
+        / "release-site"
+        / "dist"
+        / "channels"
+        / "stable"
+        / "profiles"
+        / "co-work"
+        / "index.html"
+    ).read_text(encoding="utf-8")
+    profile = graph["manifests"]["stable"]["1.4.0"]["profiles"]["co-work"]
+
+    for architecture in profile["architectures"]:
+        section = page.split(f"Architecture {architecture['architecture']}", maxsplit=1)[
+            1
+        ].split("</section>", maxsplit=1)[0]
+        evidence_block = section.split("Profile Evidence", maxsplit=1)[1].split(
+            "Software Inventory",
+            maxsplit=1,
+        )[0]
+        software_block = section.split("Software Inventory", maxsplit=1)[1].split(
+            "Config Files",
+            maxsplit=1,
+        )[0]
+
+        for evidence in architecture["evidence"]:
+            assert evidence["url"] in evidence_block
+            assert evidence["url"] not in software_block
 
 
 def test_profile_page_forbids_current_binary_and_current_assets() -> None:

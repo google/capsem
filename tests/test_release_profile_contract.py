@@ -66,6 +66,38 @@ def test_profile_architecture_blocks() -> None:
                 assert "Profile Evidence" in section
 
 
+def test_profile_evidence_at_architecture_top() -> None:
+    build_release_site_from_fixture()
+    graph = _graph()
+
+    for channel in graph["channels"]:
+        manifest = _current_manifest(graph, channel)
+        for profile_id, profile in manifest["profiles"].items():
+            page = (
+                RELEASE_SITE_DIST
+                / "channels"
+                / channel
+                / "profiles"
+                / profile_id
+                / "index.html"
+            ).read_text(encoding="utf-8")
+            for architecture in profile["architectures"]:
+                section = page.split(
+                    f"Architecture {architecture['architecture']}",
+                    maxsplit=1,
+                )[1].split("</section>", maxsplit=1)[0]
+
+                assert section.index("Profile Evidence") < section.index(
+                    "Software Inventory"
+                )
+                evidence_block = section.split("Profile Evidence", maxsplit=1)[1].split(
+                    "Software Inventory",
+                    maxsplit=1,
+                )[0]
+                for evidence in architecture["evidence"]:
+                    assert evidence["url"] in evidence_block
+
+
 def test_all_profile_config_artifacts_listed() -> None:
     build_release_site_from_fixture()
     graph = _graph()

@@ -88,6 +88,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   release-site readiness checks.
 - Added named release-contract gates proving profile lists come from channel
   manifests without a detached profile catalog side channel.
+- Moved profile ABOM, OBOM, and software-inventory evidence links to the top of
+  each profile architecture block and stopped repeating evidence URLs on
+  software rows.
 
 ## [1.4.1782944059] - 2026-07-01
 
