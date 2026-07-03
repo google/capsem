@@ -86,15 +86,11 @@ component_management:
         - crates/capsem-core/src/host_config.rs
 
     # MCP endpoint, builtin HTTP tools, file/snapshot tools,
-    # MCP policy, auto-snapshots, FS monitor. Also includes the
-    # aggregator and builtin MCP subprocess crates which are thin
-    # binaries over capsem-core::mcp.
+    # MCP policy, auto-snapshots, FS monitor.
     - component_id: tooling
       name: Tooling
       paths:
         - crates/capsem-core/src/mcp/**
-        - crates/capsem-mcp-aggregator/src/**
-        - crates/capsem-mcp-builtin/src/**
         - crates/capsem-core/src/auto_snapshot.rs
         - crates/capsem-core/src/fs_monitor.rs
 
@@ -131,11 +127,19 @@ component_management:
         - crates/capsem-app/src/**
 
     # Service daemon: HTTP-over-UDS API, instance lifecycle,
-    # per-VM process management.
+    # service-owned API surface.
     - component_id: service
       name: Service
       paths:
         - crates/capsem-service/src/**
+      statuses:
+        - type: project
+          target: 80%
+
+    # Per-VM process manager and lifecycle isolation.
+    - component_id: process
+      name: Process
+      paths:
         - crates/capsem-process/src/**
       statuses:
         - type: project
@@ -162,6 +166,24 @@ component_management:
       name: MCP Server
       paths:
         - crates/capsem-mcp/src/**
+      statuses:
+        - type: project
+          target: 80%
+
+    # MCP aggregator binary.
+    - component_id: mcp-aggregator
+      name: MCP Aggregator
+      paths:
+        - crates/capsem-mcp-aggregator/src/**
+      statuses:
+        - type: project
+          target: 80%
+
+    # Built-in MCP subprocess binary.
+    - component_id: mcp-builtin
+      name: MCP Builtin
+      paths:
+        - crates/capsem-mcp-builtin/src/**
       statuses:
         - type: project
           target: 80%
@@ -216,6 +238,9 @@ component_management:
       name: Mock Server
       paths:
         - crates/capsem-mock-server/src/**
+      statuses:
+        - type: project
+          target: 80%
 
     # Guest/host benchmark binary and protocol load generator.
     - component_id: bench

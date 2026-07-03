@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Split low-coverage MCP aggregator, MCP builtin, process, and mock-server
+  crates into dedicated Codecov components with explicit project targets.
 - Added a named Codecov component contract that fails when any Cargo workspace
   crate path is missing from `codecov.yml`.
 - Added a top-level CI coverage contract that enumerates Cargo workspace crates

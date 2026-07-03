@@ -19,6 +19,13 @@ class WorkspacePackage:
     binary_targets: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class CodecovComponent:
+    component_id: str
+    paths: tuple[str, ...]
+    targets: tuple[str, ...]
+
+
 def test_workspace_crates_and_bins_enumerated() -> None:
     packages = workspace_packages()
     ci = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
@@ -87,6 +94,60 @@ def test_every_crate_in_codecov() -> None:
     )
 
 
+def test_low_coverage_components_visible() -> None:
+    components = codecov_components((PROJECT_ROOT / "codecov.yml").read_text())
+
+    required = {
+        "mcp-aggregator": "crates/capsem-mcp-aggregator/src/**",
+        "mcp-builtin": "crates/capsem-mcp-builtin/src/**",
+        "mcp-server": "crates/capsem-mcp/src/**",
+        "mock-server": "crates/capsem-mock-server/src/**",
+        "process": "crates/capsem-process/src/**",
+    }
+
+    missing = sorted(set(required) - set(components))
+    assert not missing, (
+        "low-coverage MCP/process crates need dedicated Codecov components; "
+        f"missing {missing}"
+    )
+
+    wrong_paths = {
+        component_id: components[component_id].paths
+        for component_id, path in required.items()
+        if components[component_id].paths != (path,)
+    }
+    assert not wrong_paths, (
+        "low-coverage components must own exactly one crate path so weak "
+        f"coverage cannot be hidden inside broad buckets; got {wrong_paths}"
+    )
+
+    weak_targets = {
+        component_id: components[component_id].targets
+        for component_id in required
+        if "80%" not in components[component_id].targets
+    }
+    assert not weak_targets, (
+        "low-coverage release-critical crates need explicit 80% project "
+        f"targets; missing on {weak_targets}"
+    )
+
+    duplicated_paths = {
+        path: sorted(
+            component.component_id
+            for component in components.values()
+            if path in component.paths
+        )
+        for path in required.values()
+    }
+    duplicated_paths = {
+        path: owners for path, owners in duplicated_paths.items() if len(owners) != 1
+    }
+    assert not duplicated_paths, (
+        "low-coverage crate paths must not also appear in broad components; "
+        f"duplicates {duplicated_paths}"
+    )
+
+
 def workspace_packages() -> dict[str, WorkspacePackage]:
     metadata = json.loads(
         subprocess.check_output(
@@ -114,6 +175,47 @@ def workspace_packages() -> dict[str, WorkspacePackage]:
             binary_targets=binary_targets,
         )
     return packages
+
+
+def codecov_components(codecov: str) -> dict[str, CodecovComponent]:
+    components: dict[str, CodecovComponent] = {}
+    current_id: str | None = None
+    paths: list[str] = []
+    targets: list[str] = []
+    in_paths = False
+
+    def flush() -> None:
+        if current_id is not None:
+            components[current_id] = CodecovComponent(
+                component_id=current_id,
+                paths=tuple(paths),
+                targets=tuple(targets),
+            )
+
+    for raw_line in codecov.splitlines():
+        stripped = raw_line.strip()
+        if raw_line.startswith("    - component_id: "):
+            flush()
+            current_id = stripped.split(": ", 1)[1]
+            paths = []
+            targets = []
+            in_paths = False
+            continue
+        if current_id is None:
+            continue
+        if stripped == "paths:":
+            in_paths = True
+            continue
+        if stripped.endswith(":") and stripped != "paths:":
+            in_paths = False
+        if in_paths and raw_line.startswith("        - "):
+            paths.append(stripped[2:])
+            continue
+        if raw_line.startswith("          target: "):
+            targets.append(stripped.split(": ", 1)[1])
+
+    flush()
+    return components
 
 
 def ci_coverage_packages(ci: str, *, job_name: str) -> set[str]:
