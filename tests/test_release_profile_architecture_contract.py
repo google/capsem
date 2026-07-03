@@ -140,7 +140,12 @@ def test_abom_obom_architecture_scoped() -> None:
                     f"{channel}:{profile_id}:{arch}"
                 )
                 for kind, item in evidence.items():
-                    assert f"/{arch}/" in item["url"], f"{channel}:{profile_id}:{arch}:{kind}"
+                    if kind == "software_inventory":
+                        assert item["url"].endswith(
+                            f"/{arch}-software-inventory.json"
+                        ), f"{channel}:{profile_id}:{arch}:{kind}"
+                    else:
+                        assert f"/{arch}/" in item["url"], f"{channel}:{profile_id}:{arch}:{kind}"
                     assert item["url"] in section, f"{channel}:{profile_id}:{arch}:{kind}"
 
             for other_profile_id, other_profile in manifest["profiles"].items():

@@ -158,6 +158,25 @@ def test_repeated_row_digest_theater(monkeypatch) -> None:
     ) in failures
 
 
+def test_no_repeated_digest_for_distinct_files() -> None:
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+    seen: dict[tuple[str, str], tuple[str, str]] = {}
+    collisions: list[str] = []
+
+    for category, subject, digest in _digest_subjects(graph):
+        key = (digest["sha256"], digest["blake3"])
+        existing = seen.get(key)
+        if existing is not None and existing != (category, subject):
+            collisions.append(
+                f"{digest['sha256']} reused by {existing[0]} {existing[1]} "
+                f"and {category} {subject}"
+            )
+        else:
+            seen[key] = (category, subject)
+
+    assert collisions == []
+
+
 def test_software_inventory_row_digests_are_row_owned() -> None:
     _assert_software_rows_do_not_reuse_inventory_digest()
 
@@ -198,6 +217,36 @@ def _software_row_digest(software: dict) -> dict[str, str]:
         "sha256": hashlib.sha256(payload).hexdigest(),
         "blake3": blake3(payload).hexdigest(),
     }
+
+
+def _digest_subjects(graph: dict):
+    for channel, manifests in graph["manifests"].items():
+        for version, manifest in manifests.items():
+            prefix = f"{channel}/{version}"
+            for package in manifest["packages"]:
+                yield "package", package["url"], package["digest"]
+                for binary in package["binaries"]:
+                    subject = f"{package['url']}::{binary['installed_path']}"
+                    yield "binary", subject, binary["digest"]
+                for evidence in package.get("evidence", []):
+                    yield "package_evidence", evidence["url"], evidence["digest"]
+
+            for profile_id, profile in manifest["profiles"].items():
+                for architecture in profile["architectures"]:
+                    arch = architecture["architecture"]
+                    profile_prefix = f"{prefix}/{profile_id}/{arch}"
+                    for config in architecture["config"]:
+                        yield "profile_config", config["path"], config["digest"]
+                    for image in architecture["images"]:
+                        yield "profile_image", image["url"], image["digest"]
+                    for software in architecture["software"]:
+                        subject = (
+                            f"{software['source']}/{software['architecture']}/"
+                            f"{software['name']}@{software['version']}:{software['evidence']}"
+                        )
+                        yield "software", subject, software["digest"]
+                    for evidence in architecture["evidence"]:
+                        yield "profile_evidence", evidence["url"], evidence["digest"]
 
 
 def _assert_full_digest(digest: dict, label: str) -> None:

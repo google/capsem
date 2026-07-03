@@ -40,6 +40,16 @@ def test_release_site_builds_from_release_graph_fixture() -> None:
     stable = (
         PROJECT_ROOT / "release-site" / "dist" / "channels" / "stable" / "index.html"
     ).read_text(encoding="utf-8")
+    package_detail = (
+        PROJECT_ROOT
+        / "release-site"
+        / "dist"
+        / "channels"
+        / "stable"
+        / "packages"
+        / "capsem-1-4-0-pkg"
+        / "index.html"
+    ).read_text(encoding="utf-8")
     profile = (
         PROJECT_ROOT
         / "release-site"
@@ -55,11 +65,14 @@ def test_release_site_builds_from_release_graph_fixture() -> None:
     assert "/manifests/stable/" not in index
     assert "Stable" in index
     assert "Nightly" in index
-    assert "1.5.0-nightly.20260702" in index
+    assert "Manifest revision" in index
+    assert "1.0.2" in index
+    assert "1.5.0-nightly.20260702" not in index
     assert "Capsem-1.4.0.pkg" not in index
     assert "rootfs.erofs" not in index
     assert "Capsem-1.4.0.pkg" in stable
-    assert "SPDXRef-File-capsem" in stable
+    assert "SPDXRef-File-capsem" not in stable
+    assert "SPDXRef-File-capsem" in package_detail
     assert "rootfs.erofs" not in stable
     assert "2026.07.02.1-stable" in profile
     assert "Minimum Capsem" in profile

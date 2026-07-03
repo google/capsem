@@ -5,8 +5,8 @@
       "manifests": [
         {
           "digest": {
-            "blake3": "768d994d541f83a708f071bb18676799af0fda32299e07d281e9bd4501fb5cf8",
-            "sha256": "989d8dca04cdefeaef28c1e50d505a4b688517472e18f6ea2feb0e485444d3e8"
+            "sha256": "d685f5c5b6d533c5271ff4562509cb8ae1b09f06cc591ffea917196e2e222c5e",
+            "blake3": "e3f398ec4350bcb88f53a8c290d96c5ca19b37a69546c452b42d119ced5af8f0"
           },
           "status": "current",
           "url": "/assets/nightly/manifest.json",
@@ -50,8 +50,8 @@
       "manifests": [
         {
           "digest": {
-            "blake3": "928efcf327e4eeae9320bc07cf5cfc4b0415b98d17b4a321346cf3bb454fe2a3",
-            "sha256": "847650f3a905645c4e2be84eb2a9da3b9d51778597f44e4f1bc42a1f609f3b4b"
+            "sha256": "e9988d6f3d90e495194e224e7185846c06124a5ef8c58bddcc3df988c7e8a001",
+            "blake3": "b9de5ab141be0a996e02fdf6300e1aa4df66be4b648ebfa97c9fbcb5f2f2d5da"
           },
           "status": "current",
           "url": "/assets/stable/manifest.json",
@@ -697,10 +697,10 @@
                   {
                     "architecture": "arm64",
                     "digest": {
-                      "sha256": "802d68a74d8bd5cb9de178797ebbd593aebc24dc3de09a9dfb0af111f7fb62ce",
-                      "blake3": "85584d29793f318d89b24ba01db7449a1da8fc100760bca2464ba691773f3564"
+                      "sha256": "97d9a86ed192b0eeb90e2e9a76737cc676d89c26ed7a9fe58a58c914b721e803",
+                      "blake3": "00638b2b8e8baf67d7f02be3cfca974078e7a85e50b5109c109f98376d783b28"
                     },
-                    "evidence": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/software-inventory.json",
+                    "evidence": "/assets/releases/2026.07.02.1/arm64-software-inventory.json",
                     "name": "python",
                     "source": "apt",
                     "version": "3.12.11"
@@ -708,10 +708,10 @@
                   {
                     "architecture": "arm64",
                     "digest": {
-                      "sha256": "4ddf5e259dbd11355d275df7b87dbf4c850fc6724e2682578f01daeecbe95f32",
-                      "blake3": "d765702c0c1265a25800469b029f46894eb55e9e0206d7ebc0f2afac652a7c70"
+                      "sha256": "77b67479b2601f1561987bda92f4d0fddf8f28fc5dcb47afd7a41c201aebc44e",
+                      "blake3": "667bf6979f3a7221766611644274facba16e09c1104700e76c59686a0751d0d9"
                     },
-                    "evidence": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/software-inventory.json",
+                    "evidence": "/assets/releases/2026.07.02.1/arm64-software-inventory.json",
                     "name": "node",
                     "source": "npm",
                     "version": "24.2.0"
@@ -892,7 +892,7 @@
                       "sha256": "ee5848f99252b9a1f73c66d30d559630ea9b0170cd1658b8fd1f66a88e613b27"
                     },
                     "kind": "software_inventory",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/software-inventory.json"
+                    "url": "/assets/releases/2026.07.02.1/arm64-software-inventory.json"
                   }
                 ]
               },
@@ -902,10 +902,10 @@
                   {
                     "architecture": "x86_64",
                     "digest": {
-                      "sha256": "9203e9e5884f6abf02ac8903940aa37603ae5a3c5bc3824e3455c059c6ece8fe",
-                      "blake3": "cc01bfe170628238d695e079a30b89cd10fb4f9d628b005cfd537f81c21b1390"
+                      "sha256": "e7b967afe107697866fb47d9bcb40e713f6276e4349bc528942bc7c504ddbb24",
+                      "blake3": "888931daeadcfac8cfc1e6c0e0b895faecf19945c5d75a7aab50fedacbf672c7"
                     },
-                    "evidence": "/profiles/releases/2026.07.02.1-nightly/co-work/x86_64/software-inventory.json",
+                    "evidence": "/assets/releases/2026.07.02.1/x86_64-software-inventory.json",
                     "name": "python",
                     "source": "apt",
                     "version": "3.12.11"
@@ -913,10 +913,10 @@
                   {
                     "architecture": "x86_64",
                     "digest": {
-                      "sha256": "9658afb8d221c904ca508d523de3b1f6a39c4860cb4260a87d23c61c2d82e544",
-                      "blake3": "f13116c35ba5d2cf2f38f5a1a19ec6a6c7d0411ad6bd8bccc7d4ce70debebefa"
+                      "sha256": "3a31e3bde0e600099c91a6a019d3bb0512a7394e173510d6a0c5f073385d7b3a",
+                      "blake3": "0836e22dbf49375ed61fbb79c15b8a05ce4d52fb3cc1391d79ecb4253a047f8c"
                     },
-                    "evidence": "/profiles/releases/2026.07.02.1-nightly/co-work/x86_64/software-inventory.json",
+                    "evidence": "/assets/releases/2026.07.02.1/x86_64-software-inventory.json",
                     "name": "node",
                     "source": "npm",
                     "version": "24.2.0"
@@ -1097,7 +1097,7 @@
                       "sha256": "4f43d25985eafe19a36a19ea501535634baba2d340e20d4b3fd8972049acebff"
                     },
                     "kind": "software_inventory",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/x86_64/software-inventory.json"
+                    "url": "/assets/releases/2026.07.02.1/x86_64-software-inventory.json"
                   }
                 ]
               }
@@ -1118,10 +1118,10 @@
                   {
                     "architecture": "arm64",
                     "digest": {
-                      "sha256": "9e01712311430dac2b484f427124dd67f37e2d4e607d677647d5bfef66940fb0",
-                      "blake3": "40d5fdd7ee03def315129d6b9ad66599a769bd768b2ed02c278d6e24ab9e87ca"
+                      "sha256": "97d9a86ed192b0eeb90e2e9a76737cc676d89c26ed7a9fe58a58c914b721e803",
+                      "blake3": "00638b2b8e8baf67d7f02be3cfca974078e7a85e50b5109c109f98376d783b28"
                     },
-                    "evidence": "/profiles/releases/2026.07.02.1-nightly/code/arm64/software-inventory.json",
+                    "evidence": "/assets/releases/2026.07.02.1/arm64-software-inventory.json",
                     "name": "python",
                     "source": "apt",
                     "version": "3.12.11"
@@ -1129,10 +1129,10 @@
                   {
                     "architecture": "arm64",
                     "digest": {
-                      "sha256": "568eeaaf9ac7617c2c8b14fbeac1ed910ef20307a151ea663d5cbab71b143242",
-                      "blake3": "3f38c024de950f7a7930bf2a3f9095395fb27b9b272039a4ae211f8cdcd8f071"
+                      "sha256": "77b67479b2601f1561987bda92f4d0fddf8f28fc5dcb47afd7a41c201aebc44e",
+                      "blake3": "667bf6979f3a7221766611644274facba16e09c1104700e76c59686a0751d0d9"
                     },
-                    "evidence": "/profiles/releases/2026.07.02.1-nightly/code/arm64/software-inventory.json",
+                    "evidence": "/assets/releases/2026.07.02.1/arm64-software-inventory.json",
                     "name": "node",
                     "source": "npm",
                     "version": "24.2.0"
@@ -1313,7 +1313,7 @@
                       "sha256": "ee5848f99252b9a1f73c66d30d559630ea9b0170cd1658b8fd1f66a88e613b27"
                     },
                     "kind": "software_inventory",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/code/arm64/software-inventory.json"
+                    "url": "/assets/releases/2026.07.02.1/arm64-software-inventory.json"
                   }
                 ]
               },
@@ -1323,10 +1323,10 @@
                   {
                     "architecture": "x86_64",
                     "digest": {
-                      "sha256": "61efaaac12571edf27704d54caa12814da39524a20b2aa48e30de45098e57782",
-                      "blake3": "9201444e879e934965da2dcab8605cb2c60c2ff9a690643a085cc811db5999a6"
+                      "sha256": "e7b967afe107697866fb47d9bcb40e713f6276e4349bc528942bc7c504ddbb24",
+                      "blake3": "888931daeadcfac8cfc1e6c0e0b895faecf19945c5d75a7aab50fedacbf672c7"
                     },
-                    "evidence": "/profiles/releases/2026.07.02.1-nightly/code/x86_64/software-inventory.json",
+                    "evidence": "/assets/releases/2026.07.02.1/x86_64-software-inventory.json",
                     "name": "python",
                     "source": "apt",
                     "version": "3.12.11"
@@ -1334,10 +1334,10 @@
                   {
                     "architecture": "x86_64",
                     "digest": {
-                      "sha256": "41bf2d46177c923d19bb2ff0a0eb6f50028119d439f2bbb47e3b388084e58f80",
-                      "blake3": "6097398ee8dd5e3d5240828463523294fd54a91f03151d023441c1054c04bf6c"
+                      "sha256": "3a31e3bde0e600099c91a6a019d3bb0512a7394e173510d6a0c5f073385d7b3a",
+                      "blake3": "0836e22dbf49375ed61fbb79c15b8a05ce4d52fb3cc1391d79ecb4253a047f8c"
                     },
-                    "evidence": "/profiles/releases/2026.07.02.1-nightly/code/x86_64/software-inventory.json",
+                    "evidence": "/assets/releases/2026.07.02.1/x86_64-software-inventory.json",
                     "name": "node",
                     "source": "npm",
                     "version": "24.2.0"
@@ -1518,7 +1518,7 @@
                       "sha256": "4f43d25985eafe19a36a19ea501535634baba2d340e20d4b3fd8972049acebff"
                     },
                     "kind": "software_inventory",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/code/x86_64/software-inventory.json"
+                    "url": "/assets/releases/2026.07.02.1/x86_64-software-inventory.json"
                   }
                 ]
               }
@@ -2135,10 +2135,10 @@
                   {
                     "architecture": "arm64",
                     "digest": {
-                      "sha256": "92a8dda7709148d6a72c015d6ab28b33e00a6510b38b2a67fc01e0cab82438a9",
-                      "blake3": "02c65b8692a8c702e9c4bfa0c9fb0c6488f607a52b860ffe51c0a06d492e5f92"
+                      "sha256": "97d9a86ed192b0eeb90e2e9a76737cc676d89c26ed7a9fe58a58c914b721e803",
+                      "blake3": "00638b2b8e8baf67d7f02be3cfca974078e7a85e50b5109c109f98376d783b28"
                     },
-                    "evidence": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/software-inventory.json",
+                    "evidence": "/assets/releases/2026.07.02.1/arm64-software-inventory.json",
                     "name": "python",
                     "source": "apt",
                     "version": "3.12.11"
@@ -2146,10 +2146,10 @@
                   {
                     "architecture": "arm64",
                     "digest": {
-                      "sha256": "f57b7d1724c21d5a3a566364b1f957d7debff6fb9c009ff15a53b4a5c535e058",
-                      "blake3": "947bd64a022c0078337ebd6301d73665cb8e4c1f8c6887d21a7706e0004f2834"
+                      "sha256": "77b67479b2601f1561987bda92f4d0fddf8f28fc5dcb47afd7a41c201aebc44e",
+                      "blake3": "667bf6979f3a7221766611644274facba16e09c1104700e76c59686a0751d0d9"
                     },
-                    "evidence": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/software-inventory.json",
+                    "evidence": "/assets/releases/2026.07.02.1/arm64-software-inventory.json",
                     "name": "node",
                     "source": "npm",
                     "version": "24.2.0"
@@ -2330,7 +2330,7 @@
                       "sha256": "ee5848f99252b9a1f73c66d30d559630ea9b0170cd1658b8fd1f66a88e613b27"
                     },
                     "kind": "software_inventory",
-                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/software-inventory.json"
+                    "url": "/assets/releases/2026.07.02.1/arm64-software-inventory.json"
                   }
                 ]
               },
@@ -2340,10 +2340,10 @@
                   {
                     "architecture": "x86_64",
                     "digest": {
-                      "sha256": "61ada70d7496e28b91c1c0cd4142b72ef228c9daaf77ff384d04db6931084e79",
-                      "blake3": "44e96937d23d6b0f68134ea32a61f2348a3a7e1bf43afc0e18235b7e82017290"
+                      "sha256": "e7b967afe107697866fb47d9bcb40e713f6276e4349bc528942bc7c504ddbb24",
+                      "blake3": "888931daeadcfac8cfc1e6c0e0b895faecf19945c5d75a7aab50fedacbf672c7"
                     },
-                    "evidence": "/profiles/releases/2026.07.02.1-stable/co-work/x86_64/software-inventory.json",
+                    "evidence": "/assets/releases/2026.07.02.1/x86_64-software-inventory.json",
                     "name": "python",
                     "source": "apt",
                     "version": "3.12.11"
@@ -2351,10 +2351,10 @@
                   {
                     "architecture": "x86_64",
                     "digest": {
-                      "sha256": "9c882cdb1f1fd94f5276b783013cf8f307ebfd338bb0409e49348953a2758b82",
-                      "blake3": "b9819115ee5a65b9114a305e8228a268095af7185b482c2d42ce482662bdcae3"
+                      "sha256": "3a31e3bde0e600099c91a6a019d3bb0512a7394e173510d6a0c5f073385d7b3a",
+                      "blake3": "0836e22dbf49375ed61fbb79c15b8a05ce4d52fb3cc1391d79ecb4253a047f8c"
                     },
-                    "evidence": "/profiles/releases/2026.07.02.1-stable/co-work/x86_64/software-inventory.json",
+                    "evidence": "/assets/releases/2026.07.02.1/x86_64-software-inventory.json",
                     "name": "node",
                     "source": "npm",
                     "version": "24.2.0"
@@ -2535,7 +2535,7 @@
                       "sha256": "4f43d25985eafe19a36a19ea501535634baba2d340e20d4b3fd8972049acebff"
                     },
                     "kind": "software_inventory",
-                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/x86_64/software-inventory.json"
+                    "url": "/assets/releases/2026.07.02.1/x86_64-software-inventory.json"
                   }
                 ]
               }
@@ -2556,10 +2556,10 @@
                   {
                     "architecture": "arm64",
                     "digest": {
-                      "sha256": "cca104437ec0b81ee16597b89f2f87939bd1539c35e08c7548c857b6d7cdbdb1",
-                      "blake3": "19f61e36972b3517f593f668f162d8bc4077f4db249ea92284cee6c6c42b116a"
+                      "sha256": "97d9a86ed192b0eeb90e2e9a76737cc676d89c26ed7a9fe58a58c914b721e803",
+                      "blake3": "00638b2b8e8baf67d7f02be3cfca974078e7a85e50b5109c109f98376d783b28"
                     },
-                    "evidence": "/profiles/releases/2026.07.02.1-stable/code/arm64/software-inventory.json",
+                    "evidence": "/assets/releases/2026.07.02.1/arm64-software-inventory.json",
                     "name": "python",
                     "source": "apt",
                     "version": "3.12.11"
@@ -2567,10 +2567,10 @@
                   {
                     "architecture": "arm64",
                     "digest": {
-                      "sha256": "e9979edd8309fb815d725ce37d31c395357eabaa516091fa11e89b182b5b5f5e",
-                      "blake3": "3d8af869e59b8304cdacca21bf38a7d7f493b7bc42126cb6489d946a983119f5"
+                      "sha256": "77b67479b2601f1561987bda92f4d0fddf8f28fc5dcb47afd7a41c201aebc44e",
+                      "blake3": "667bf6979f3a7221766611644274facba16e09c1104700e76c59686a0751d0d9"
                     },
-                    "evidence": "/profiles/releases/2026.07.02.1-stable/code/arm64/software-inventory.json",
+                    "evidence": "/assets/releases/2026.07.02.1/arm64-software-inventory.json",
                     "name": "node",
                     "source": "npm",
                     "version": "24.2.0"
@@ -2751,7 +2751,7 @@
                       "sha256": "ee5848f99252b9a1f73c66d30d559630ea9b0170cd1658b8fd1f66a88e613b27"
                     },
                     "kind": "software_inventory",
-                    "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/software-inventory.json"
+                    "url": "/assets/releases/2026.07.02.1/arm64-software-inventory.json"
                   }
                 ]
               },
@@ -2761,10 +2761,10 @@
                   {
                     "architecture": "x86_64",
                     "digest": {
-                      "sha256": "441b81aad4fcf76869f6252c4067225f6efd52cd6f6fbd1af77571d0ce1675e8",
-                      "blake3": "5bff93b82d1c83f72491b0ad0875b5b8edde667db0511d09167b98e8809cd8d5"
+                      "sha256": "e7b967afe107697866fb47d9bcb40e713f6276e4349bc528942bc7c504ddbb24",
+                      "blake3": "888931daeadcfac8cfc1e6c0e0b895faecf19945c5d75a7aab50fedacbf672c7"
                     },
-                    "evidence": "/profiles/releases/2026.07.02.1-stable/code/x86_64/software-inventory.json",
+                    "evidence": "/assets/releases/2026.07.02.1/x86_64-software-inventory.json",
                     "name": "python",
                     "source": "apt",
                     "version": "3.12.11"
@@ -2772,10 +2772,10 @@
                   {
                     "architecture": "x86_64",
                     "digest": {
-                      "sha256": "670d679107026bcd6077cdc9ff688de35cf5123ff827c922c6810c8dd0e11121",
-                      "blake3": "98d0bfd121fb04975017f65c97e0541838b76a24f9e651b2fb1bc15ef6d2675b"
+                      "sha256": "3a31e3bde0e600099c91a6a019d3bb0512a7394e173510d6a0c5f073385d7b3a",
+                      "blake3": "0836e22dbf49375ed61fbb79c15b8a05ce4d52fb3cc1391d79ecb4253a047f8c"
                     },
-                    "evidence": "/profiles/releases/2026.07.02.1-stable/code/x86_64/software-inventory.json",
+                    "evidence": "/assets/releases/2026.07.02.1/x86_64-software-inventory.json",
                     "name": "node",
                     "source": "npm",
                     "version": "24.2.0"
@@ -2956,7 +2956,7 @@
                       "sha256": "4f43d25985eafe19a36a19ea501535634baba2d340e20d4b3fd8972049acebff"
                     },
                     "kind": "software_inventory",
-                    "url": "/profiles/releases/2026.07.02.1-stable/code/x86_64/software-inventory.json"
+                    "url": "/assets/releases/2026.07.02.1/x86_64-software-inventory.json"
                   }
                 ]
               }
