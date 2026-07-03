@@ -30,6 +30,7 @@ ZSTD_EROFS_UTILS_IMAGE = "debian:trixie-slim"
 BOOT_ASSETS = ("vmlinuz", "initrd.img")
 ROOTFS_ASSET_PREFERENCE = ("rootfs.erofs",)
 OBOM_ASSET = "obom.cdx.json"
+SOFTWARE_INVENTORY_ASSET = "software-inventory.json"
 BUILD_LEDGER_NAME = "build-ledger.log"
 
 # Guest binaries COPY'd into the rootfs (cross-compiled Rust binaries).
@@ -719,6 +720,73 @@ def extract_tool_versions(
         _validate_tool_versions(result.stdout, config)
 
 
+def _container_output(
+    runtime: str,
+    image_tag: str,
+    platform: str,
+    command: str,
+) -> str:
+    result = run_cmd(
+        [runtime, "run", "--rm", "--platform", platform, image_tag, "bash", "-lc", command],
+        capture=True,
+    )
+    return result.stdout
+
+
+def extract_software_inventory(
+    runtime: str,
+    image_tag: str,
+    platform: str,
+    arch_name: str,
+    output_dir: Path,
+) -> Path:
+    """Write installed package inventory captured from the built rootfs image."""
+    from capsem.builder.manifest import collect_bom
+
+    dpkg_output = _container_output(
+        runtime,
+        image_tag,
+        platform,
+        "dpkg-query -W -f='${Package}\\t${Version}\\t${Architecture}\\n'",
+    )
+    pip_output = _container_output(
+        runtime,
+        image_tag,
+        platform,
+        "python3 -m pip list --format json",
+    )
+    npm_output = _container_output(
+        runtime,
+        image_tag,
+        platform,
+        "npm ls --json --global --depth=0 --prefix /opt/ai-clis 2>/dev/null || npm ls --json --global --depth=0",
+    )
+    manifest = collect_bom(
+        arch=arch_name,
+        dpkg_output=dpkg_output,
+        pip_output=pip_output,
+        npm_output=npm_output,
+    )
+    rows = [
+        {
+            "name": package.name,
+            "version": package.version,
+            "source": package.source,
+            "architecture": package.arch or "all",
+        }
+        for package in manifest.packages
+    ]
+    rows.sort(key=lambda row: (row["source"], row["name"], row["architecture"], row["version"]))
+    inventory = {
+        "schema": "capsem.profile_software_inventory.v1",
+        "architecture": arch_name,
+        "packages": rows,
+    }
+    path = output_dir / SOFTWARE_INVENTORY_ASSET
+    path.write_text(json.dumps(inventory, indent=2, sort_keys=True) + "\n")
+    return path
+
+
 def _cdxgen_command() -> list[str]:
     """Return the configured cdxgen command.
 
@@ -1044,6 +1112,8 @@ def generate_checksums(output_dir: Path, version: str) -> Path:
             all_files.append(f"{arch_name}/{rootfs_name}")
         if (arch_dir / OBOM_ASSET).is_file():
             all_files.append(f"{arch_name}/{OBOM_ASSET}")
+        if (arch_dir / SOFTWARE_INVENTORY_ASSET).is_file():
+            all_files.append(f"{arch_name}/{SOFTWARE_INVENTORY_ASSET}")
 
     if not all_files:
         # Flat layout fallback
@@ -1065,6 +1135,8 @@ def generate_checksums(output_dir: Path, version: str) -> Path:
             all_files.append(rootfs_name)
         if (output_dir / OBOM_ASSET).is_file():
             all_files.append(OBOM_ASSET)
+        if (output_dir / SOFTWARE_INVENTORY_ASSET).is_file():
+            all_files.append(SOFTWARE_INVENTORY_ASSET)
 
     # Compute BLAKE3 hashes using Python blake3 library.
     b3sums_lines = []
@@ -1359,6 +1431,20 @@ def build_image(
                 runtime, tag, context_dir / "Dockerfile", context_dir,
                 arch.docker_platform, ci_cache=ci,
             )
+
+            print("Extracting installed software inventory...")
+            software_inventory_path = extract_software_inventory(
+                runtime,
+                tag,
+                arch.docker_platform,
+                arch_name,
+                arch_output,
+            )
+            _append_build_ledger(arch_output, {
+                "stage": "rootfs.software_inventory",
+                "inputs": build_inputs,
+                "outputs": [_file_ledger_entry(software_inventory_path, base=arch_output)],
+            })
 
             # Export and compress
             tar_path = arch_output / "rootfs.tar"

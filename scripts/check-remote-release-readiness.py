@@ -308,7 +308,7 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
         return CheckResult(
             "release.capsem.org contract",
             True,
-            "index, channels.json, graph manifest, profile catalog, profile artifacts, and cache headers agree",
+            "index, channels.json, graph manifest, profile artifacts, and cache headers agree",
         )
 
     if release_url_path(manifest_path) != f"/assets/{channel}/manifest.json":
@@ -358,18 +358,6 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
         failures.append("channel binary version mismatch with manifest")
     if manifest_record.get("asset_version") != current_assets:
         failures.append("channel asset version mismatch with manifest")
-    profile_catalog = require_object(
-        channel_data, "profile_catalog", f"channels.{channel}.profile_catalog", failures
-    )
-    profile_source = profile_catalog.get("source")
-    failures.extend(
-        check_profile_catalog_summary(
-            site,
-            profile_source,
-            profile_catalog.get("hash"),
-            profile_catalog.get("revision"),
-        )
-    )
     expected_asset_files = current_asset_file_refs(
         asset_base,
         current_assets,
@@ -389,10 +377,8 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
         ("current binary", current_binary),
         ("current assets", current_assets),
         ("generated timestamp", channels_data.get("generated_at")),
-        ("profile revision", profile_catalog.get("revision")),
-        ("profile catalog", profile_source),
         ("channel manifest", manifest_path),
-        ("channels catalog", "/channels.json"),
+        ("channels JSON", "/channels.json"),
     ):
         if not isinstance(value, str):
             failures.append(f"release channel {label} missing")
@@ -414,17 +400,15 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
     elif current_asset_date not in index.text:
         failures.append("index missing current asset release date")
 
-    failures.extend(
-        check_release_cache_headers(site, channel, profile_source, expected_asset_files)
-    )
+    failures.extend(check_release_cache_headers(site, channel, expected_asset_files))
 
     if failures:
         return CheckResult("release.capsem.org contract", False, "; ".join(failures))
-    return CheckResult(
-        "release.capsem.org contract",
-        True,
-        "index, channels.json, manifest, profile catalog, assets, and cache headers agree",
-    )
+        return CheckResult(
+            "release.capsem.org contract",
+            True,
+            "index, channels.json, manifest, assets, and cache headers agree",
+        )
 
 
 def is_release_graph_manifest(manifest_data: dict[str, Any]) -> bool:
@@ -480,8 +464,7 @@ def check_release_graph_manifest_contract(
         failures.append("manifest profiles empty")
     failures.extend(
         check_release_graph_runtime_asset_pointer(
-            site=site,
-            channel=channel,
+            manifest=manifest_data,
             profiles=profiles,
         )
     )
@@ -503,27 +486,6 @@ def check_release_graph_manifest_contract(
                 failures.append(f"binary {binary.get('name', '<unknown>')} installed_path missing")
             if not isinstance(binary.get("sbom_component_ref"), str):
                 failures.append(f"binary {binary.get('name', '<unknown>')} SBOM component missing")
-
-    profile_catalog = require_object(
-        channel_data, "profile_catalog", f"channels.{channel}.profile_catalog", failures
-    )
-    catalog_document = fetch_profile_catalog_document(
-        site,
-        profile_catalog.get("source"),
-        profile_catalog.get("hash"),
-        profile_catalog.get("revision"),
-        failures,
-    )
-    if isinstance(catalog_document, dict):
-        catalog_profiles = catalog_document.get("profiles")
-        if isinstance(catalog_profiles, list):
-            catalog_ids = sorted(
-                profile.get("id")
-                for profile in catalog_profiles
-                if isinstance(profile, dict) and isinstance(profile.get("id"), str)
-            )
-            if catalog_ids != sorted(profiles):
-                failures.append("profile catalog ids mismatch with manifest profiles")
 
     channel_page = fetch_text(f"{site}/channels/{channel}/")
     if channel_page.error:
@@ -549,7 +511,6 @@ def check_release_graph_manifest_contract(
         check_release_graph_cache_headers(
             site=site,
             manifest_path=manifest_path,
-            profile_source=profile_catalog.get("source"),
             profiles=profiles,
         )
     )
@@ -558,22 +519,13 @@ def check_release_graph_manifest_contract(
 
 def check_release_graph_runtime_asset_pointer(
     *,
-    site: str,
-    channel: str,
+    manifest: dict[str, Any],
     profiles: dict[str, Any],
 ) -> list[str]:
-    pointer_path = f"/assets/{channel}/manifest.json"
-    pointer = fetch_json(resolve_release_url(site, pointer_path))
-    if pointer.error:
-        return [pointer.error]
-    if not isinstance(pointer.data, dict):
-        return [f"{pointer_path} document is not an object"]
-    assets = pointer.data.get("assets")
-    if not isinstance(assets, dict):
-        return [f"{pointer_path} assets missing or not an object"]
-    current_asset_version = assets.get("current")
-    if not isinstance(current_asset_version, str):
-        return [f"{pointer_path} assets.current missing"]
+    manifest_version = manifest.get("version")
+    if not isinstance(manifest_version, str) or "+assets." not in manifest_version:
+        return ["manifest version must include +assets.<asset-version>"]
+    current_asset_version = manifest_version.split("+assets.", 1)[1]
     expected_prefix = f"/assets/releases/{current_asset_version}/"
     failures: list[str] = []
     for profile_id, profile in profiles.items():
@@ -589,7 +541,7 @@ def check_release_graph_runtime_asset_pointer(
                 if isinstance(url, str) and url.startswith("/assets/releases/"):
                     if not url.startswith(expected_prefix):
                         failures.append(
-                            f"{pointer_path} assets.current {current_asset_version} "
+                            f"manifest asset version {current_asset_version} "
                             f"does not match profile {profile_id} artifact {url}"
                         )
     return failures
@@ -615,29 +567,6 @@ def check_release_graph_file_descriptor(item: Any, label: str) -> list[str]:
     if "hmac" in digest:
         failures.append(f"{label} {name or '<unknown>'} digest must not contain hmac")
     return failures
-
-
-def fetch_profile_catalog_document(
-    site: str,
-    source: Any,
-    expected_hash: Any,
-    expected_revision: Any,
-    failures: list[str],
-) -> dict[str, Any] | None:
-    summary_failures = check_profile_catalog_summary(
-        site, source, expected_hash, expected_revision
-    )
-    failures.extend(summary_failures)
-    if summary_failures or not isinstance(source, str):
-        return None
-    catalog = fetch_json(resolve_release_url(site, source))
-    if catalog.error:
-        failures.append(catalog.error)
-        return None
-    if not isinstance(catalog.data, dict):
-        failures.append(f"profile catalog {source} document is not an object")
-        return None
-    return catalog.data
 
 
 def check_release_graph_profile(
@@ -698,6 +627,14 @@ def check_release_graph_profile(
                 )
             )
         for evidence in require_list(image, "evidence", failures):
+            evidence_kind = str(evidence.get("kind", "")).lower() if isinstance(evidence, dict) else ""
+            expected_document = (
+                "software_inventory"
+                if evidence_kind == "software_inventory"
+                else "cyclonedx"
+                if evidence_kind in {"abom", "obom"}
+                else None
+            )
             failures.extend(
                 check_release_graph_artifact(
                     site,
@@ -705,7 +642,7 @@ def check_release_graph_profile(
                     f"profile {profile_id} evidence",
                     page_text,
                         allowed_prefixes=("/assets/releases/", "/profiles/releases/"),
-                        expected_document="cyclonedx",
+                        expected_document=expected_document,
                     )
                 )
     return failures
@@ -779,7 +716,6 @@ def check_release_graph_cache_headers(
     *,
     site: str,
     manifest_path: str,
-    profile_source: Any,
     profiles: dict[str, Any],
 ) -> list[str]:
     checks: list[tuple[str, str, tuple[str, ...]]] = [
@@ -791,14 +727,6 @@ def check_release_graph_cache_headers(
             ("no-cache", "must-revalidate"),
         ),
     ]
-    if isinstance(profile_source, str):
-        checks.append(
-            (
-                "immutable profile catalog",
-                resolve_release_url(site, profile_source),
-                ("public", "max-age=31536000", "immutable"),
-            )
-        )
     for profile in profiles.values():
         if not isinstance(profile, dict):
             continue
@@ -869,57 +797,6 @@ def select_channel_manifest_record(
             return by_status[status]
     failures.append("channel has no selectable manifest")
     return {}
-
-
-def check_profile_catalog_summary(
-    site: str,
-    source: Any,
-    expected_hash: Any,
-    expected_revision: Any,
-) -> list[str]:
-    if not isinstance(source, str):
-        return ["profile catalog source missing or not a string"]
-    if not source.startswith("/profiles/releases/") or not source.endswith("/catalog.json"):
-        return ["profile catalog source must be a release-channel artifact path"]
-    if not isinstance(expected_hash, str):
-        return [f"profile catalog {source} hash missing or not a string"]
-    if not isinstance(expected_revision, str):
-        return [f"profile catalog {source} revision missing or not a string"]
-
-    catalog = fetch_bytes(resolve_release_url(site, source))
-    if catalog.error:
-        return [catalog.error]
-
-    failures: list[str] = []
-    if blake3 is None:
-        failures.append(
-            f"profile catalog {source} cannot verify blake3 without Python dependency blake3"
-        )
-    else:
-        actual_hash = blake3.blake3(catalog.data).hexdigest()
-        if actual_hash != expected_hash:
-            failures.append(f"profile catalog {source} blake3 mismatch")
-
-    try:
-        text = catalog.data.decode("utf-8")
-    except UnicodeDecodeError:
-        return failures + [f"profile catalog {source} is not UTF-8"]
-    if "file://" in text:
-        failures.append(f"profile catalog {source} must not contain file:// URLs")
-
-    try:
-        document = json.loads(text)
-    except json.JSONDecodeError as error:
-        return failures + [f"profile catalog {source} JSON parse failed: {error}"]
-    if not isinstance(document, dict):
-        return failures + [f"profile catalog {source} document is not an object"]
-    if document.get("schema") != "capsem.profile_catalog.v1":
-        failures.append(f"profile catalog {source} schema mismatch")
-    if document.get("revision") != expected_revision:
-        failures.append(f"profile catalog {source} revision mismatch")
-    if not isinstance(document.get("profiles"), list):
-        failures.append(f"profile catalog {source} profiles missing or not a list")
-    return failures
 
 
 def check_release_evidence(site: str, release_data: dict[str, Any]) -> list[str]:
@@ -1293,85 +1170,6 @@ def check_host_binary_files(
     return failures
 
 
-def check_profile_catalog_artifact(
-    site: str,
-    source: Any,
-    expected_hash: Any,
-    expected_revision: Any,
-    expected_current_binary: Any,
-    expected_current_assets: Any,
-    expected_compatibility: dict[str, Any],
-    expected_requires_newer: dict[str, bool],
-) -> list[str]:
-    if not isinstance(source, str):
-        return ["profile catalog source missing or not a string"]
-    if not source.startswith("/profiles/releases/") or not source.endswith("/catalog.json"):
-        return ["profile catalog source must be a release-channel artifact path"]
-    if not isinstance(expected_hash, str):
-        return [f"profile catalog {source} hash missing or not a string"]
-    if not isinstance(expected_revision, str):
-        return [f"profile catalog {source} revision missing or not a string"]
-
-    try:
-        resolved_url = resolve_release_url(site, source)
-    except ValueError as error:
-        return [f"profile catalog {source}: {error}"]
-
-    catalog = fetch_bytes(resolved_url)
-    if catalog.error:
-        return [catalog.error]
-
-    failures: list[str] = []
-    if blake3 is None:
-        failures.append(
-            f"profile catalog {source} cannot verify blake3 without Python dependency blake3"
-        )
-    else:
-        actual_hash = blake3.blake3(catalog.data).hexdigest()
-        if actual_hash != expected_hash:
-            failures.append(f"profile catalog {source} blake3 mismatch")
-
-    try:
-        text = catalog.data.decode("utf-8")
-    except UnicodeDecodeError:
-        return failures + [f"profile catalog {source} is not UTF-8"]
-    if "file://" in text:
-        failures.append(f"profile catalog {source} must not contain file:// URLs")
-
-    try:
-        document = json.loads(text)
-    except json.JSONDecodeError as error:
-        return failures + [f"profile catalog {source} JSON parse failed: {error}"]
-    if not isinstance(document, dict):
-        failures.append(f"profile catalog {source} document is not an object")
-        return failures
-    if document.get("schema") != "capsem.profile_catalog.v1":
-        failures.append(f"profile catalog {source} schema mismatch")
-    if document.get("revision") != expected_revision:
-        failures.append(f"profile catalog {source} revision mismatch")
-    if document.get("state") != "current":
-        failures.append(f"profile catalog {source} state mismatch")
-    if document.get("current_binary") != expected_current_binary:
-        failures.append(f"profile catalog {source} current_binary mismatch")
-    if document.get("current_assets") != expected_current_assets:
-        failures.append(f"profile catalog {source} current_assets mismatch")
-    actual_compatibility = document.get("compatibility")
-    catalog_expected_compatibility = {
-        **expected_compatibility,
-        "requires_newer_binary": expected_requires_newer["binary"],
-        "requires_newer_assets": expected_requires_newer["assets"],
-    }
-    for field, expected in catalog_expected_compatibility.items():
-        actual = (
-            actual_compatibility.get(field)
-            if isinstance(actual_compatibility, dict)
-            else None
-        )
-        if actual != expected:
-            failures.append(f"profile catalog {source} compatibility {field} mismatch")
-    return failures
-
-
 def entries_by_url(entries: list[Any], failures: list[str], label: str) -> dict[str, dict[str, Any]]:
     by_url: dict[str, dict[str, Any]] = {}
     for entry in entries:
@@ -1474,13 +1272,18 @@ def validate_evidence_document(
         if document.get("bomFormat") != "CycloneDX":
             return f"{label} {url} bomFormat mismatch"
         return None
+    if expected_document == "software_inventory":
+        if document.get("schema") != "capsem.profile_software_inventory.v1":
+            return f"{label} {url} software inventory schema mismatch"
+        if not isinstance(document.get("packages"), list):
+            return f"{label} {url} software inventory packages missing"
+        return None
     return f"{label} {url} unsupported evidence document {expected_document}"
 
 
 def check_release_cache_headers(
     site: str,
     channel: str,
-    profile_source: Any,
     asset_files: list[dict[str, Any]],
 ) -> list[str]:
     site = site.rstrip("/")
@@ -1508,17 +1311,6 @@ def check_release_cache_headers(
                     ("public", "max-age=31536000", "immutable"),
                 )
             )
-
-    if isinstance(profile_source, str) and release_url_path(profile_source).startswith(
-        "/profiles/releases/"
-    ):
-        checks.append(
-            (
-                "immutable profile catalog",
-                resolve_release_url(site, profile_source),
-                ("public", "max-age=31536000", "immutable"),
-            )
-        )
 
     failures: list[str] = []
     for label, url, required_directives in checks:

@@ -127,7 +127,7 @@ def _graph() -> dict:
                     {
                         "version": "1.4.0",
                         "status": "current",
-                        "url": "/manifests/stable/1.4.0/manifest.json",
+                        "url": "/assets/stable/manifest.json",
                         "digest": _digest("a"),
                     }
                 ]
@@ -137,7 +137,7 @@ def _graph() -> dict:
                     {
                         "version": "1.5.0-nightly.1",
                         "status": "current",
-                        "url": "/manifests/nightly/1.5.0-nightly.1/manifest.json",
+                        "url": "/assets/nightly/manifest.json",
                         "digest": _digest("b"),
                     }
                 ]

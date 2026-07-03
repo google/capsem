@@ -280,7 +280,7 @@ struct AssetsChannelBuildArgs {
     /// records external blob URLs instead of copying blobs into the Pages dist.
     #[arg(long)]
     asset_source_base: Option<String>,
-    /// Source profile catalog directory to publish in the channel index.
+    /// Source profile directory to publish in the channel manifest.
     #[arg(long, default_value = "config/profiles")]
     profiles_dir: PathBuf,
     /// Channel name to publish under assets/<channel>/manifest.json.
@@ -721,7 +721,7 @@ struct AssetsChannelIndex {
     host_sboms: Vec<AssetsChannelBinaryFile>,
     attestations: Vec<AssetsChannelAttestation>,
     vm_oboms: Vec<AssetsChannelAssetFile>,
-    profile_catalog: AssetsChannelProfileCatalog,
+    profiles: AssetsChannelProfilesSummary,
     image_update_state: String,
 }
 
@@ -737,10 +737,8 @@ struct AssetsChannelAssetRelease {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-struct AssetsChannelProfileCatalog {
+struct AssetsChannelProfilesSummary {
     revision: String,
-    source: String,
-    hash: String,
     profile_count: usize,
     profile_ids: Vec<String>,
     refresh_policy: String,
@@ -760,7 +758,6 @@ struct AssetsChannelsCatalog {
 struct AssetsChannelsCatalogChannel {
     label: String,
     manifests: Vec<AssetsChannelsCatalogManifest>,
-    profile_catalog: AssetsChannelProfileCatalog,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -777,10 +774,8 @@ struct AssetsChannelsCatalogDigest {
     blake3: String,
 }
 
-struct PublishableProfileCatalog {
-    metadata: AssetsChannelProfileCatalog,
-    path: String,
-    bytes: Vec<u8>,
+struct PublishableProfiles {
+    summary: AssetsChannelProfilesSummary,
     profiles: Vec<serde_json::Value>,
     file_copies: Vec<ProfileReleaseFileCopy>,
 }
@@ -788,14 +783,6 @@ struct PublishableProfileCatalog {
 struct ProfileReleaseFileCopy {
     source: PathBuf,
     url: String,
-}
-
-#[derive(Debug, Serialize)]
-struct PublishableProfileCatalogDocument {
-    schema: &'static str,
-    revision: String,
-    state: String,
-    profiles: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -1055,7 +1042,7 @@ fn check_config_root(config_root: &Path, arch: Option<&str>) -> Result<ConfigRoo
     let catalog =
         ProfileCatalog::load_from_dir(&config_root.join("profiles")).map_err(|error| {
             anyhow!(
-                "load profile catalog {}: {error}",
+                "load profile directory {}: {error}",
                 config_root.join("profiles").display()
             )
         })?;
@@ -1256,13 +1243,6 @@ fn build_assets_channel(
         Some(asset_base.to_string())
     };
     hydrate_asset_entry_sha256(&mut channel_manifest_doc, assets_dir)?;
-    let channel_manifest_bytes = if asset_base_override.is_none() && channel_manifest_doc == manifest {
-        manifest_bytes.clone()
-    } else {
-        to_canonical_pretty_json_bytes(&channel_manifest_doc)
-            .context("serialize channel manifest")?
-    };
-    let legacy_manifest_blake3 = blake3::hash(&channel_manifest_bytes).to_hex().to_string();
     let current_release = channel_manifest_doc
         .assets
         .releases
@@ -1294,9 +1274,6 @@ fn build_assets_channel(
         fs::create_dir_all(&release_dir)
             .with_context(|| format!("create {}", release_dir.display()))?;
     }
-    let channel_manifest = channel_dir.join("manifest.json");
-    fs::write(&channel_manifest, &channel_manifest_bytes)
-        .with_context(|| format!("write {}", channel_manifest.display()))?;
     let copied_assets = if copy_vm_blobs {
         copy_assets_channel_release_assets(
             assets_dir,
@@ -1307,47 +1284,32 @@ fn build_assets_channel(
     } else {
         0
     };
-    let profile_catalog = publishable_profile_catalog(
+    let publishable_profiles = publishable_profiles(
         &channel_manifest_doc,
         profiles_dir,
         asset_base,
         assets_dir,
     )?;
-    copy_profile_release_files(out_dir, &profile_catalog.file_copies)?;
-    let profile_catalog_path = out_dir.join(profile_catalog.path.trim_start_matches('/'));
-    fs::create_dir_all(
-        profile_catalog_path
-            .parent()
-            .ok_or_else(|| anyhow!("profile catalog artifact path has no parent"))?,
-    )
-    .with_context(|| format!("create parent for {}", profile_catalog_path.display()))?;
-    fs::write(&profile_catalog_path, &profile_catalog.bytes)
-        .with_context(|| format!("write {}", profile_catalog_path.display()))?;
+    copy_profile_release_files(out_dir, &publishable_profiles.file_copies)?;
     let graph_manifest_version = graph_manifest_version(&channel_manifest_doc);
-    let graph_manifest_url = format!("/manifests/{channel}/{graph_manifest_version}/manifest.json");
+    let graph_manifest_url = format!("/assets/{channel}/manifest.json");
     let graph_manifest = render_graph_release_manifest(
         &channel_manifest_doc,
-        &profile_catalog.profiles,
+        &publishable_profiles.profiles,
         asset_base,
         &graph_manifest_version,
     )?;
-    let graph_manifest_path = out_dir.join(graph_manifest_url.trim_start_matches('/'));
-    fs::create_dir_all(
-        graph_manifest_path
-            .parent()
-            .ok_or_else(|| anyhow!("graph manifest path has no parent"))?,
-    )
-    .with_context(|| format!("create parent for {}", graph_manifest_path.display()))?;
-    fs::write(&graph_manifest_path, &graph_manifest)
-        .with_context(|| format!("write {}", graph_manifest_path.display()))?;
+    let channel_manifest = channel_dir.join("manifest.json");
+    fs::write(&channel_manifest, &graph_manifest)
+        .with_context(|| format!("write {}", channel_manifest.display()))?;
     let graph_manifest_sha256 = format!("{:x}", Sha256::digest(graph_manifest.as_bytes()));
     let graph_manifest_blake3 = blake3::hash(graph_manifest.as_bytes()).to_hex().to_string();
     let index = assets_channel_index(
         &channel_manifest_doc,
         channel,
         generated_at,
-        &legacy_manifest_blake3,
-        profile_catalog.metadata.clone(),
+        &graph_manifest_blake3,
+        publishable_profiles.summary.clone(),
         asset_base,
     );
     fs::write(
@@ -1512,13 +1474,104 @@ fn packaged_executable_inventory(path: &Path, bytes: &[u8]) -> Result<Vec<Binary
         return deb_executable_inventory(bytes)
             .with_context(|| format!("extract executable inventory from {}", path.display()));
     }
+    if name.ends_with(".pkg") {
+        return pkg_executable_inventory(path)
+            .with_context(|| format!("extract executable inventory from {}", path.display()));
+    }
     Ok(Vec::new())
 }
 
+fn pkg_executable_inventory(path: &Path) -> Result<Vec<BinaryExecutable>> {
+    let temp = std::env::temp_dir().join(format!(
+        "capsem-admin-pkg-expand-{}-{}",
+        std::process::id(),
+        blake3::hash(path.to_string_lossy().as_bytes()).to_hex()
+    ));
+    if temp.exists() {
+        fs::remove_dir_all(&temp).with_context(|| format!("remove {}", temp.display()))?;
+    }
+    let output = Command::new("pkgutil")
+        .arg("--expand-full")
+        .arg(path)
+        .arg(&temp)
+        .output()
+        .context("run pkgutil --expand-full")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let _ = fs::remove_dir_all(&temp);
+        return Err(anyhow!("pkgutil --expand-full failed: {stderr}"));
+    }
+    let result = collect_pkg_payload_executables(&temp);
+    let _ = fs::remove_dir_all(&temp);
+    result
+}
+
+fn collect_pkg_payload_executables(root: &Path) -> Result<Vec<BinaryExecutable>> {
+    let mut binaries = Vec::new();
+    collect_pkg_payload_executables_from(root, &mut binaries)?;
+    binaries.sort_by(|left, right| left.installed_path.cmp(&right.installed_path));
+    Ok(binaries)
+}
+
+fn collect_pkg_payload_executables_from(
+    path: &Path,
+    binaries: &mut Vec<BinaryExecutable>,
+) -> Result<()> {
+    for entry in fs::read_dir(path).with_context(|| format!("read {}", path.display()))? {
+        let entry = entry.with_context(|| format!("read entry in {}", path.display()))?;
+        let path = entry.path();
+        let metadata = entry
+            .metadata()
+            .with_context(|| format!("stat {}", path.display()))?;
+        if metadata.is_dir() {
+            collect_pkg_payload_executables_from(&path, binaries)?;
+            continue;
+        }
+        if !metadata.is_file() {
+            continue;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if metadata.permissions().mode() & 0o111 == 0 {
+                continue;
+            }
+        }
+        let normalized = path.to_string_lossy();
+        let Some((_, installed_path)) = normalized.split_once("/Payload/") else {
+            continue;
+        };
+        if !installed_path.starts_with("usr/local/share/capsem/bin/")
+            && !installed_path.starts_with("Applications/Capsem.app/Contents/MacOS/")
+        {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| anyhow!("pkg executable has no file name: {}", path.display()))?
+            .to_string();
+        let contents = fs::read(&path).with_context(|| format!("read {}", path.display()))?;
+        binaries.push(BinaryExecutable {
+            sbom_component_ref: format!("SPDXRef-File-{}", spdx_ref_fragment(&name)),
+            installed_path: format!("/{installed_path}"),
+            name,
+            size: contents.len() as u64,
+            sha256: format!("{:x}", Sha256::digest(&contents)),
+            blake3: blake3::hash(&contents).to_hex().to_string(),
+        });
+    }
+    Ok(())
+}
+
 fn deb_executable_inventory(bytes: &[u8]) -> Result<Vec<BinaryExecutable>> {
-    let data_tar = deb_member(bytes, "data.tar.gz")?;
-    let decoder = flate2::read::GzDecoder::new(data_tar);
-    let mut archive = tar::Archive::new(decoder);
+    let mut reader: Box<dyn Read> = if let Ok(data_tar) = deb_member(bytes, "data.tar.gz") {
+        Box::new(flate2::read::GzDecoder::new(data_tar))
+    } else {
+        let data_tar = deb_member(bytes, "data.tar.zst")?;
+        Box::new(zstd::stream::read::Decoder::new(data_tar).context("decode data.tar.zst")?)
+    };
+    let mut archive = tar::Archive::new(&mut reader);
     let mut binaries = Vec::new();
     for entry in archive.entries().context("read data.tar.gz entries")? {
         let mut entry = entry.context("read data.tar.gz entry")?;
@@ -1678,13 +1731,6 @@ fn hydrate_asset_entry_sha256(manifest: &mut ManifestV2, assets_dir: &Path) -> R
     Ok(())
 }
 
-fn to_canonical_pretty_json_bytes<T: Serialize>(value: &T) -> Result<Vec<u8>> {
-    let json = serde_json::to_value(value).context("convert to canonical JSON value")?;
-    let mut bytes = serde_json::to_vec_pretty(&json).context("serialize canonical JSON value")?;
-    bytes.push(b'\n');
-    Ok(bytes)
-}
-
 fn check_assets_channel(dist: &Path, channel: &str) -> Result<AssetsChannelCheckReport> {
     validate_channel_name(channel)?;
     let index_path = dist.join("index.html");
@@ -1720,7 +1766,31 @@ fn check_assets_channel(dist: &Path, channel: &str) -> Result<AssetsChannelCheck
     }
     validate_assets_channel_index_html(&index_html, channel)?;
     validate_assets_channel_page_html(&channel_index_html, channel)?;
-    let manifest = load_manifest(&manifest_path)?;
+    let manifest_content = fs::read_to_string(&manifest_path)
+        .with_context(|| format!("read {}", manifest_path.display()))?;
+    let manifest_json: serde_json::Value =
+        serde_json::from_str(&manifest_content).context("parse channel manifest JSON")?;
+    let headers = fs::read_to_string(&headers_path)
+        .with_context(|| format!("read {}", headers_path.display()))?;
+    validate_assets_channel_headers(&headers, channel)?;
+    if is_release_graph_manifest_value(&manifest_json) {
+        validate_assets_channel_graph_manifest(&manifest_json, channel)?;
+        let health_content = fs::read_to_string(&health_path)
+            .with_context(|| format!("read {}", health_path.display()))?;
+        let health: serde_json::Value =
+            serde_json::from_str(&health_content).context("parse asset channel health.json")?;
+        validate_assets_channel_graph_health(dist, channel, &manifest_json, &health)?;
+        return Ok(AssetsChannelCheckReport {
+            schema: "capsem.admin.assets_channel_check.v1",
+            ok: true,
+            channel: channel.to_string(),
+            state: "published".to_string(),
+            dist: dist.display().to_string(),
+            manifest: manifest_path.display().to_string(),
+        });
+    }
+    let manifest: ManifestV2 =
+        serde_json::from_value(manifest_json).context("parse legacy asset manifest")?;
     let health_content = fs::read_to_string(&health_path)
         .with_context(|| format!("read {}", health_path.display()))?;
     let health: serde_json::Value =
@@ -1728,17 +1798,22 @@ fn check_assets_channel(dist: &Path, channel: &str) -> Result<AssetsChannelCheck
     validate_assets_channel_health(dist, channel, &manifest, &health)?;
     validate_assets_channel_index_state(&index_html, channel, &manifest, &health)?;
     validate_assets_channel_page_state(&channel_index_html, channel, &manifest, &health)?;
-    let headers = fs::read_to_string(&headers_path)
-        .with_context(|| format!("read {}", headers_path.display()))?;
+    validate_assets_channel_headers(&headers, channel)?;
+    Ok(AssetsChannelCheckReport {
+        schema: "capsem.admin.assets_channel_check.v1",
+        ok: true,
+        channel: channel.to_string(),
+        state: "published".to_string(),
+        dist: dist.display().to_string(),
+        manifest: manifest_path.display().to_string(),
+    })
+}
+
+fn validate_assets_channel_headers(headers: &str, channel: &str) -> Result<()> {
     let channel_manifest_header =
         format!("/assets/{channel}/*\n  Cache-Control: no-cache, must-revalidate");
     if !headers.contains(&channel_manifest_header) {
         return Err(anyhow!("_headers must keep asset channel manifests fresh"));
-    }
-    let profile_channel_header =
-        format!("/profiles/{channel}/*\n  Cache-Control: no-cache, must-revalidate");
-    if !headers.contains(&profile_channel_header) {
-        return Err(anyhow!("_headers must keep profile channel pointers fresh"));
     }
     if !headers.contains("/channels.json\n  Cache-Control: no-cache, must-revalidate") {
         return Err(anyhow!("_headers must keep channels.json fresh"));
@@ -1752,14 +1827,266 @@ fn check_assets_channel(dist: &Path, channel: &str) -> Result<AssetsChannelCheck
     {
         return Err(anyhow!("_headers must cache immutable profile releases"));
     }
-    Ok(AssetsChannelCheckReport {
-        schema: "capsem.admin.assets_channel_check.v1",
-        ok: true,
-        channel: channel.to_string(),
-        state: "published".to_string(),
-        dist: dist.display().to_string(),
-        manifest: manifest_path.display().to_string(),
-    })
+    Ok(())
+}
+
+fn is_release_graph_manifest_value(manifest: &serde_json::Value) -> bool {
+    manifest.get("packages").is_some() && manifest.get("profiles").is_some()
+}
+
+fn validate_assets_channel_graph_manifest(
+    manifest: &serde_json::Value,
+    channel: &str,
+) -> Result<()> {
+    require_json_string(manifest, &["version"])?;
+    require_json_str(
+        manifest,
+        &["status"],
+        "current",
+        "graph manifest status mismatch",
+    )?;
+    let packages = manifest
+        .get("packages")
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| anyhow!("graph manifest packages must be an array"))?;
+    for package in packages {
+        require_json_string(package, &["name"])?;
+        require_json_string(package, &["url"])?;
+        require_json_string(package, &["digest", "sha256"])?;
+        require_json_string(package, &["digest", "blake3"])?;
+        let binaries = package
+            .get("binaries")
+            .and_then(|value| value.as_array())
+            .ok_or_else(|| anyhow!("graph package must list binaries"))?;
+        if binaries.is_empty() {
+            return Err(anyhow!("graph package must list at least one binary"));
+        }
+        for binary in binaries {
+            require_json_string(binary, &["name"])?;
+            require_json_string(binary, &["version"])?;
+            require_json_string(binary, &["installed_path"])?;
+            require_json_string(binary, &["digest", "sha256"])?;
+            require_json_string(binary, &["digest", "blake3"])?;
+            require_json_string(binary, &["sbom_component_ref"])?;
+        }
+    }
+    let profiles = manifest
+        .get("profiles")
+        .and_then(|value| value.as_object())
+        .ok_or_else(|| anyhow!("graph manifest profiles must be an object"))?;
+    if profiles.is_empty() {
+        return Err(anyhow!("graph manifest must list profiles for {channel}"));
+    }
+    Ok(())
+}
+
+fn validate_assets_channel_graph_health(
+    dist: &Path,
+    channel: &str,
+    manifest: &serde_json::Value,
+    health: &serde_json::Value,
+) -> Result<()> {
+    require_json_str(
+        health,
+        &["schema"],
+        "capsem.assets_channel.health.v1",
+        "health.json schema mismatch",
+    )?;
+    require_json_str(
+        health,
+        &["channel"],
+        channel,
+        "health.json channel mismatch",
+    )?;
+    let asset_files = require_json_array(health, &["assets", "files"])?;
+    let asset_releases = require_json_array(health, &["asset_releases"])?;
+    for release in asset_releases {
+        require_json_string(release, &["date"])
+            .map_err(|_| anyhow!("health.json asset release date mismatch"))?;
+    }
+    let vm_oboms = require_json_array(health, &["evidence", "vm_oboms"])?;
+    let host_sboms = require_json_array(health, &["evidence", "host_sboms"])?;
+    let host_binary_files = require_json_array(health, &["evidence", "host_binary_files"])?;
+    let attestations = require_json_array(health, &["evidence", "attestations"])?;
+    let packages = manifest
+        .get("packages")
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| anyhow!("graph manifest packages must be an array"))?;
+
+    let mut package_urls = BTreeSet::new();
+    for package in packages {
+        let package_url = package
+            .get("url")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| anyhow!("graph package url missing"))?;
+        package_urls.insert(package_url.to_string());
+        let binaries = package
+            .get("binaries")
+            .and_then(|value| value.as_array())
+            .ok_or_else(|| anyhow!("graph package must list binaries"))?;
+        if binaries.is_empty() {
+            return Err(anyhow!("graph package must list at least one binary"));
+        }
+    }
+    if !packages.is_empty() {
+        if host_binary_files.is_empty() {
+            return Err(anyhow!("health.json host binary files missing"));
+        }
+        if host_sboms.is_empty() {
+            return Err(anyhow!("health.json host SBOM evidence missing"));
+        }
+    }
+
+    let mut current_asset_subjects = BTreeSet::new();
+    for file in asset_files {
+        let url = file
+            .get("url")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| anyhow!("health.json asset file url missing"))?;
+        current_asset_subjects.insert(url.to_string());
+        let size = file
+            .get("size")
+            .and_then(|value| value.as_u64())
+            .ok_or_else(|| anyhow!("health.json asset file size missing for {url}"))?;
+        let hash = file
+            .get("hash")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| anyhow!("health.json asset file hash missing for {url}"))?;
+        if url.starts_with('/') {
+            let local_path = dist.join(url.trim_start_matches('/'));
+            let bytes = fs::read(&local_path)
+                .with_context(|| format!("read asset channel blob {}", local_path.display()))?;
+            if bytes.len() as u64 != size {
+                return Err(anyhow!(
+                    "asset channel blob {} size mismatch",
+                    local_path.display()
+                ));
+            }
+            if blake3::hash(&bytes).to_hex().as_str() != hash {
+                return Err(anyhow!(
+                    "asset channel blob {} hash mismatch",
+                    local_path.display()
+                ));
+            }
+        }
+    }
+    if asset_files.iter().any(|item| {
+        item.get("logical_name")
+            .and_then(|value| value.as_str())
+            == Some("obom.cdx.json")
+    }) && vm_oboms.is_empty()
+    {
+        return Err(anyhow!("health.json missing VM OBOM evidence"));
+    }
+
+    let mut saw_host_sbom_attestation = false;
+    let mut saw_vm_asset_attestation = false;
+    let mut host_sbom_attestation_subjects = BTreeSet::new();
+    for attestation in attestations {
+        let attestation_name = attestation
+            .get("name")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| anyhow!("health.json attestation name missing"))?;
+        if let Some((expected_scope, expected_workflow)) =
+            expected_attestation_rail(attestation_name)
+        {
+            let scope = attestation
+                .get("scope")
+                .and_then(|value| value.as_str())
+                .ok_or_else(|| anyhow!("health.json attestation scope missing"))?;
+            if scope != expected_scope {
+                return Err(anyhow!(
+                    "health.json {} scope mismatch",
+                    attestation_rail_label(attestation_name)
+                ));
+            }
+            let workflow = attestation
+                .get("workflow")
+                .and_then(|value| value.as_str())
+                .ok_or_else(|| anyhow!("health.json attestation workflow missing"))?;
+            if workflow != expected_workflow {
+                return Err(anyhow!(
+                    "health.json {} workflow mismatch",
+                    attestation_rail_label(attestation_name)
+                ));
+            }
+        }
+        attestation
+            .get("predicate_type")
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| anyhow!("health.json attestation predicate_type missing"))?;
+        let verify_command = attestation
+            .get("verify_command")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| anyhow!("health.json attestation verify_command missing"))?;
+        if !verify_command.contains("gh attestation verify") {
+            return Err(anyhow!(
+                "health.json attestation verify_command must use gh attestation verify"
+            ));
+        }
+        if attestation_name == "github_attestations_host_sbom" {
+            saw_host_sbom_attestation = true;
+            let predicate_url = attestation
+                .get("predicate_url")
+                .and_then(|value| value.as_str())
+                .ok_or_else(|| anyhow!("health.json host SBOM attestation predicate_url missing"))?;
+            if !host_sboms.iter().any(|item| {
+                item.get("url").and_then(|value| value.as_str()) == Some(predicate_url)
+            }) {
+                return Err(anyhow!(
+                    "health.json host SBOM attestation predicate {predicate_url} missing from host SBOM evidence"
+                ));
+            }
+        }
+        if attestation_name == "github_attestations_vm_assets" {
+            let predicate_url = attestation
+                .get("predicate_url")
+                .and_then(|value| value.as_str())
+                .ok_or_else(|| anyhow!("health.json VM asset attestation predicate_url missing"))?;
+            if !vm_oboms.iter().any(|item| {
+                item.get("url").and_then(|value| value.as_str()) == Some(predicate_url)
+            }) {
+                return Err(anyhow!(
+                    "health.json VM asset attestation predicate {predicate_url} missing from VM OBOM evidence"
+                ));
+            }
+        }
+        let subjects = attestation
+            .get("subjects")
+            .and_then(|value| value.as_array())
+            .ok_or_else(|| anyhow!("health.json attestation subjects missing"))?;
+        if subjects.is_empty() {
+            return Err(anyhow!("health.json attestation subjects empty"));
+        }
+        for subject in subjects {
+            let subject_url = subject
+                .as_str()
+                .ok_or_else(|| anyhow!("health.json attestation subject is not a string"))?;
+            if attestation_name == "github_attestations_host_sbom" {
+                host_sbom_attestation_subjects.insert(subject_url.to_string());
+            }
+            if current_asset_subjects.contains(subject_url) {
+                saw_vm_asset_attestation = true;
+            }
+        }
+    }
+    if !host_sboms.is_empty() && !saw_host_sbom_attestation {
+        return Err(anyhow!(
+            "health.json host SBOM attestation evidence missing"
+        ));
+    }
+    for subject in &package_urls {
+        if !host_sbom_attestation_subjects.contains(subject) {
+            return Err(anyhow!(
+                "health.json host SBOM attestation subjects missing {subject}"
+            ));
+        }
+    }
+    if !current_asset_subjects.is_empty() && !saw_vm_asset_attestation {
+        return Err(anyhow!("health.json VM asset attestation evidence missing"));
+    }
+    Ok(())
 }
 
 fn root_health_belongs_to_other_channel(root_health_path: &Path, channel: &str) -> bool {
@@ -1788,9 +2115,12 @@ fn validate_assets_channel_index_html(index_html: &str, channel: &str) -> Result
             return Err(anyhow!("asset channel index missing {needle}"));
         }
     }
-    let graph_manifest_prefix = format!("/manifests/{channel}/");
-    if !index_html.contains(&graph_manifest_prefix) {
-        return Err(anyhow!("asset channel index missing {graph_manifest_prefix}"));
+    let channel_manifest = format!("/assets/{channel}/manifest.json");
+    if !index_html.contains(&channel_manifest) {
+        return Err(anyhow!("asset channel index missing {channel_manifest}"));
+    }
+    if index_html.contains(&format!("/manifests/{channel}/")) {
+        return Err(anyhow!("asset channel index must not publish legacy graph manifest URLs"));
     }
     Ok(())
 }
@@ -1818,40 +2148,38 @@ fn validate_assets_channel_page_html(channel_html: &str, channel: &str) -> Resul
 
 #[cfg(test)]
 fn write_test_assets_channel_index_fixture(dist: &Path, channel: &str) -> Result<()> {
-    let manifest = load_manifest(&dist.join("assets").join(channel).join("manifest.json"))?;
     let health: serde_json::Value = serde_json::from_str(
         &fs::read_to_string(dist.join("health.json")).context("read test health.json")?,
     )
     .context("parse test health.json")?;
-    let current_release = manifest
-        .assets
-        .releases
-        .get(&manifest.assets.current)
-        .ok_or_else(|| anyhow!("channel manifest current asset release is missing"))?;
     let generated_at = require_json_string(&health, &["generated_at"])?;
     let profile_revision = require_json_string(&health, &["profiles", "revision"])?;
-    let profile_source = require_json_string(&health, &["profiles", "source"])?;
     let asset_base = require_json_string(&health, &["urls", "asset_base"])?;
+    let binary = require_json_string(&health, &["current", "binary"])?;
+    let assets = require_json_string(&health, &["current", "assets"])?;
+    let date = health
+        .get("asset_releases")
+        .and_then(|value| value.as_array())
+        .and_then(|releases| releases.first())
+        .and_then(|release| release.get("date"))
+        .and_then(|value| value.as_str())
+        .unwrap_or("unknown");
     let channel_manifest = format!("/assets/{channel}/manifest.json");
-    let graph_manifest_prefix = format!("/manifests/{channel}/");
     let html = format!(
         "<!doctype html><html><body><main><h1>Capsem Release Channels</h1>\
         <h2>Channels</h2><h2>Selected manifest</h2><h2>Records</h2>\
         <a href=\"/channels.json\">/channels.json</a>\
         <p>Manifest URL <a href=\"{channel_manifest}\">{channel_manifest}</a></p>\
-        <p>Graph manifest {graph_manifest_prefix}</p>\
         <p>{binary} {assets} {generated_at} {date}</p>\
-        <p>Current asset base {asset_base}</p><p>Profile catalog JSON {profile_source}</p>\
+        <p>Current asset base {asset_base}</p>\
         <p>{profile_revision}</p><h2>Binaries</h2><h2>Profiles</h2>\
         <h2>Capsem Binaries</h2><h2>Asset Release History</h2></main></body></html>",
         channel_manifest = escape_html(&channel_manifest),
-        graph_manifest_prefix = escape_html(&graph_manifest_prefix),
-        binary = escape_html(&manifest.binaries.current),
-        assets = escape_html(&manifest.assets.current),
+        binary = escape_html(&binary),
+        assets = escape_html(&assets),
         generated_at = escape_html(&generated_at),
-        date = escape_html(&current_release.date),
+        date = escape_html(date),
         asset_base = escape_html(&asset_base),
-        profile_source = escape_html(&profile_source),
         profile_revision = escape_html(&profile_revision),
     );
     fs::write(dist.join("index.html"), html).context("write test release index fixture")?;
@@ -1864,15 +2192,14 @@ fn write_test_assets_channel_index_fixture(dist: &Path, channel: &str) -> Result
         <h2>Capsem Binaries</h2><h2>Profile References</h2><p>SBOM</p>\
         <p>{generated_at}</p><p>{binary}</p><p>{assets}</p>\
         <a href=\"{channel_manifest}\">{channel_manifest}</a>\
-        <p>{profile_revision}</p><a href=\"{profile_source}\">{profile_source}</a>\
+        <p>{profile_revision}</p>\
         </main></body></html>",
         channel = escape_html(channel),
         generated_at = escape_html(&generated_at),
-        binary = escape_html(&manifest.binaries.current),
-        assets = escape_html(&manifest.assets.current),
+        binary = escape_html(&binary),
+        assets = escape_html(&assets),
         channel_manifest = escape_html(&channel_manifest),
         profile_revision = escape_html(&profile_revision),
-        profile_source = escape_html(&profile_source),
     );
     fs::write(channel_dir.join("index.html"), channel_html)
         .context("write test release channel page fixture")
@@ -1885,12 +2212,12 @@ fn validate_assets_channel_index_state(
     health: &serde_json::Value,
 ) -> Result<()> {
     let generated_at = require_json_string(health, &["generated_at"])?;
-    let graph_manifest_prefix = format!("/manifests/{channel}/");
+    let channel_manifest = format!("/assets/{channel}/manifest.json");
     let expected = [
         ("generated timestamp", generated_at.as_str()),
         ("current binary", manifest.binaries.current.as_str()),
         ("current assets", manifest.assets.current.as_str()),
-        ("graph manifest", graph_manifest_prefix.as_str()),
+        ("channel manifest", channel_manifest.as_str()),
     ];
     for (label, value) in expected {
         if !index_html.contains(&escape_html(value)) {
@@ -1908,7 +2235,6 @@ fn validate_assets_channel_page_state(
 ) -> Result<()> {
     let generated_at = require_json_string(health, &["generated_at"])?;
     let profile_revision = require_json_string(health, &["profiles", "revision"])?;
-    let profile_source = require_json_string(health, &["profiles", "source"])?;
     let channel_manifest = format!("/assets/{channel}/manifest.json");
     let expected = [
         ("generated timestamp", generated_at.as_str()),
@@ -1916,7 +2242,6 @@ fn validate_assets_channel_page_state(
         ("current assets", manifest.assets.current.as_str()),
         ("channel manifest", channel_manifest.as_str()),
         ("profile revision", profile_revision.as_str()),
-        ("profile catalog", profile_source.as_str()),
     ];
     for (label, value) in expected {
         if !channel_html.contains(&escape_html(value)) {
@@ -2074,27 +2399,22 @@ fn validate_assets_channel_health(
         .get(&manifest.assets.current)
         .ok_or_else(|| anyhow!("channel manifest current asset release is missing"))?;
     let expected_profile_revision = require_json_string(health, &["profiles", "revision"])?;
-    let expected_profile_source = require_json_string(health, &["profiles", "source"])?;
-    let expected_profile_hash = require_json_string(health, &["profiles", "hash"])?;
-    require_json_str(
-        health,
-        &["urls", "profile_catalog"],
-        &expected_profile_source,
-        "health.json profile catalog URL mismatch",
-    )?;
-    validate_profile_catalog_artifact(
-        dist,
-        &expected_profile_source,
-        ProfileCatalogExpectations {
-            hash: &expected_profile_hash,
-            revision: &expected_profile_revision,
-        },
-    )?;
     require_json_str(
         health,
         &["profiles", "state"],
         "current",
-        "health.json profile catalog state mismatch",
+        "health.json profile state mismatch",
+    )?;
+    require_json_str(
+        health,
+        &["profiles", "source"],
+        "manifest.profiles",
+        "health.json profile source mismatch",
+    )?;
+    require_json_absent(
+        health,
+        &["profiles", "hash"],
+        "health.json profiles must not publish detached catalog hash",
     )?;
     require_json_absent(
         health,
@@ -2110,13 +2430,13 @@ fn validate_assets_channel_health(
         health,
         &["updates", "profiles", "latest"],
         &expected_profile_revision,
-        "health.json profile update latest target does not match catalog",
+        "health.json profile update latest target does not match manifest profiles",
     )?;
     require_json_str(
         health,
         &["updates", "profiles", "current"],
         &expected_profile_revision,
-        "health.json profile update current target does not match catalog",
+        "health.json profile update current target does not match manifest profiles",
     )?;
     require_json_str(
         health,
@@ -2127,14 +2447,13 @@ fn validate_assets_channel_health(
     require_json_str(
         health,
         &["updates", "profiles", "source"],
-        &expected_profile_source,
+        "manifest.profiles",
         "health.json profile update source mismatch",
     )?;
-    require_json_str(
+    require_json_absent(
         health,
         &["updates", "profiles", "hash"],
-        &expected_profile_hash,
-        "health.json profile update hash mismatch",
+        "health.json profile updates must not publish detached catalog hash",
     )?;
     require_json_absent(
         health,
@@ -2160,7 +2479,7 @@ fn validate_assets_channel_health(
     require_json_str(
         health,
         &["updates", "images", "source"],
-        "profile_catalog",
+        "manifest.profiles.images",
         "health.json image update source mismatch",
     )?;
 
@@ -2542,75 +2861,6 @@ fn require_json_string(root: &serde_json::Value, path: &[&str]) -> Result<String
         .ok_or_else(|| anyhow!("health.json missing {}", path.join(".")))
 }
 
-struct ProfileCatalogExpectations<'a> {
-    hash: &'a str,
-    revision: &'a str,
-}
-
-fn validate_profile_catalog_artifact(
-    dist: &Path,
-    source: &str,
-    expected: ProfileCatalogExpectations<'_>,
-) -> Result<()> {
-    if !source.starts_with("/profiles/releases/") || !source.ends_with("/catalog.json") {
-        return Err(anyhow!(
-            "health.json profile catalog source must be a release-channel artifact path"
-        ));
-    }
-    let relative = source.trim_start_matches('/');
-    validate_relative_manifest_path("profile catalog source", relative)?;
-    let path = dist.join(relative);
-    let bytes =
-        fs::read(&path).with_context(|| format!("read profile catalog {}", path.display()))?;
-    let actual_hash = blake3::hash(&bytes).to_hex().to_string();
-    if actual_hash != expected.hash {
-        return Err(anyhow!("health.json profile catalog hash mismatch"));
-    }
-    let text = std::str::from_utf8(&bytes)
-        .with_context(|| format!("profile catalog {} is not UTF-8", path.display()))?;
-    if text.contains("file://") {
-        return Err(anyhow!(
-            "profile catalog artifact must not contain file:// URLs"
-        ));
-    }
-    let catalog: serde_json::Value = serde_json::from_str(text)
-        .with_context(|| format!("parse profile catalog {}", path.display()))?;
-    require_json_str(
-        &catalog,
-        &["schema"],
-        "capsem.profile_catalog.v1",
-        "profile catalog schema mismatch",
-    )?;
-    require_json_str(
-        &catalog,
-        &["revision"],
-        expected.revision,
-        "profile catalog revision mismatch",
-    )?;
-    require_json_str(
-        &catalog,
-        &["state"],
-        "current",
-        "profile catalog state mismatch",
-    )?;
-    require_json_absent(
-        &catalog,
-        &["current_binary"],
-        "profile catalog must not publish current_binary",
-    )?;
-    require_json_absent(
-        &catalog,
-        &["current_assets"],
-        "profile catalog must not publish current_assets",
-    )?;
-    require_json_absent(
-        &catalog,
-        &["compatibility"],
-        "profile catalog must not publish channel compatibility",
-    )?;
-    Ok(())
-}
-
 fn require_json_absent(root: &serde_json::Value, path: &[&str], message: &str) -> Result<()> {
     if json_path(root, path).is_some() {
         return Err(anyhow!("{message}"));
@@ -2650,7 +2900,7 @@ fn assets_channel_index(
     channel: &str,
     generated_at: &str,
     manifest_blake3: &str,
-    profile_catalog: AssetsChannelProfileCatalog,
+    profiles: AssetsChannelProfilesSummary,
     asset_base: &str,
 ) -> AssetsChannelIndex {
     let mut arches = BTreeSet::new();
@@ -2707,7 +2957,7 @@ fn assets_channel_index(
         host_sboms,
         attestations,
         vm_oboms,
-        profile_catalog,
+        profiles,
         image_update_state: "not_published".to_string(),
     }
 }
@@ -2731,22 +2981,22 @@ fn summarize_asset_releases(manifest: &ManifestV2) -> Vec<AssetsChannelAssetRele
     releases
 }
 
-fn publishable_profile_catalog(
+fn publishable_profiles(
     manifest: &ManifestV2,
     profiles_dir: &Path,
     asset_base: &str,
     assets_dir: &Path,
-) -> Result<PublishableProfileCatalog> {
+) -> Result<PublishableProfiles> {
     let current_release = manifest
         .assets
         .releases
         .get(&manifest.assets.current)
         .ok_or_else(|| anyhow!("manifest current asset release is missing"))?;
     let catalog = ProfileCatalog::load_from_dir(profiles_dir)
-        .map_err(|error| anyhow!("load profile catalog {}: {error}", profiles_dir.display()))?;
+        .map_err(|error| anyhow!("load profile directory {}: {error}", profiles_dir.display()))?;
     let config_root = profiles_dir.parent().ok_or_else(|| {
         anyhow!(
-            "profile catalog {} has no config root",
+            "profile directory {} has no config root",
             profiles_dir.display()
         )
     })?;
@@ -2762,9 +3012,9 @@ fn publishable_profile_catalog(
         .iter()
         .map(|profile| profile.id.clone())
         .collect::<Vec<_>>();
-    let revision = profile_catalog_revision(&profiles)?;
-    validate_profile_catalog_revision_path(&revision)?;
-    let refresh_policy = profile_catalog_refresh_policy(&profiles);
+    let revision = profile_release_revision(&profiles)?;
+    validate_profile_revision_path(&revision)?;
+    let refresh_policy = profile_refresh_policy(&profiles);
     let min_binary = current_release.min_binary.clone();
     let mut file_copies = Vec::new();
     let mut asset_digest_cache = AssetDigestCache::new();
@@ -2781,30 +3031,15 @@ fn publishable_profile_catalog(
             &mut asset_digest_cache,
         )?);
     }
-    let document = PublishableProfileCatalogDocument {
-        schema: "capsem.profile_catalog.v1",
-        revision: revision.clone(),
-        state: "current".to_string(),
-        profiles: graph_profiles.clone(),
-    };
-    let mut bytes =
-        serde_json::to_vec_pretty(&document).context("serialize publishable profile catalog")?;
-    bytes.push(b'\n');
-    let hash = blake3::hash(&bytes).to_hex().to_string();
-    let path = format!("/profiles/releases/{revision}/catalog.json");
-    Ok(PublishableProfileCatalog {
-        metadata: AssetsChannelProfileCatalog {
+    Ok(PublishableProfiles {
+        summary: AssetsChannelProfilesSummary {
             revision,
-            source: path.clone(),
-            hash,
-            profile_count: document.profiles.len(),
+            profile_count: graph_profiles.len(),
             profile_ids,
             refresh_policy,
             min_binary,
             requires_newer_binary: false,
         },
-        path,
-        bytes,
         profiles: graph_profiles,
         file_copies,
     })
@@ -2933,7 +3168,14 @@ fn graph_profile_document(
         assets_dir,
         asset_digest_cache,
     )?;
-    let software = graph_profile_software(profile, config_root, &config)?;
+    let software = graph_profile_software(
+        profile,
+        manifest,
+        current_release,
+        asset_base,
+        assets_dir,
+        asset_digest_cache,
+    )?;
     Ok(serde_json::json!({
         "id": profile.id,
         "name": profile.name,
@@ -3035,27 +3277,28 @@ fn graph_profile_images(
         })
         .collect::<Result<Vec<_>>>()?;
 
-        let evidence = if manifest_assets.contains_key("obom.cdx.json") {
-            let entry = manifest_assets
-                .get("obom.cdx.json")
-                .ok_or_else(|| anyhow!("manifest current release arch {arch} missing obom.cdx.json"))?;
-            let (bytes, digest) =
-                asset_entry_digest(assets_dir, arch, "obom.cdx.json", entry, asset_digest_cache)?;
-            vec![serde_json::json!({
-                "kind": "abom",
-                "url": channel_asset_url(
-                    asset_base,
-                    &manifest.assets.current,
-                    arch,
-                    "obom.cdx.json",
-                ),
-                "bytes": bytes,
-                "digest": digest,
-                "status": "current",
-            })]
-        } else {
-            Vec::new()
-        };
+        let mut evidence = Vec::new();
+        for (kind, logical_name) in [
+            ("abom", "obom.cdx.json"),
+            ("software_inventory", "software-inventory.json"),
+        ] {
+            if let Some(entry) = manifest_assets.get(logical_name) {
+                let (bytes, digest) =
+                    asset_entry_digest(assets_dir, arch, logical_name, entry, asset_digest_cache)?;
+                evidence.push(serde_json::json!({
+                    "kind": kind,
+                    "url": channel_asset_url(
+                        asset_base,
+                        &manifest.assets.current,
+                        arch,
+                        logical_name,
+                    ),
+                    "bytes": bytes,
+                    "digest": digest,
+                    "status": "current",
+                }));
+            }
+        }
         images.push(serde_json::json!({
             "architecture": arch,
             "artifacts": artifacts,
@@ -3126,38 +3369,74 @@ fn asset_entry_digest(
 
 fn graph_profile_software(
     profile: &ProfileConfigFile,
-    config_root: &Path,
-    config: &[serde_json::Value],
+    manifest: &ManifestV2,
+    current_release: &capsem_core::asset_manager::AssetRelease,
+    asset_base: &str,
+    assets_dir: &Path,
+    asset_digest_cache: &mut AssetDigestCache,
 ) -> Result<Vec<serde_json::Value>> {
     let mut rows = Vec::new();
-    for (source, descriptor) in [
-        ("apt", profile.files.apt_packages.as_ref()),
-        ("pip", profile.files.python_requirements.as_ref()),
-        ("npm", profile.files.npm_packages.as_ref()),
-    ] {
-        let Some(descriptor) = descriptor else {
-            continue;
-        };
-        let path = config_root.join(&descriptor.path);
-        let content =
-            fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
-        let evidence = config
-            .iter()
-            .find(|item| item.get("path").and_then(|value| value.as_str()) == Some(descriptor.path.as_str()))
-            .and_then(|item| item.get("url"))
-            .and_then(|value| value.as_str())
-            .ok_or_else(|| anyhow!("profile {} software evidence missing {}", profile.id, descriptor.path))?;
-        let (_bytes, digest) = file_digest(&path)?;
-        for line in content.lines().map(str::trim) {
-            if line.is_empty() || line.starts_with('#') {
-                continue;
+    for arch in profile.assets.arch.keys() {
+        let manifest_assets = current_release.arches.get(arch).ok_or_else(|| {
+            anyhow!(
+                "manifest current release {} does not contain profile arch {arch}",
+                manifest.assets.current
+            )
+        })?;
+        let logical_name = "software-inventory.json";
+        let entry = manifest_assets.get(logical_name).ok_or_else(|| {
+            anyhow!(
+                "manifest current release {} arch {arch} missing software-inventory.json",
+                manifest.assets.current
+            )
+        })?;
+        asset_entry_digest(assets_dir, arch, logical_name, entry, asset_digest_cache)?;
+        let inventory_path = assets_dir.join(arch).join(logical_name);
+        let inventory_bytes = fs::read(&inventory_path)
+            .with_context(|| format!("read {}", inventory_path.display()))?;
+        let inventory: serde_json::Value = serde_json::from_slice(&inventory_bytes)
+            .with_context(|| format!("parse {}", inventory_path.display()))?;
+        if inventory.get("schema").and_then(|value| value.as_str())
+            != Some("capsem.profile_software_inventory.v1")
+        {
+            return Err(anyhow!(
+                "{} schema must be capsem.profile_software_inventory.v1",
+                inventory_path.display()
+            ));
+        }
+        let packages = inventory
+            .get("packages")
+            .and_then(|value| value.as_array())
+            .ok_or_else(|| anyhow!("{} missing packages array", inventory_path.display()))?;
+        let evidence = channel_asset_url(asset_base, &manifest.assets.current, arch, logical_name);
+        for package in packages {
+            let name = require_json_string_value(package, "name")
+                .with_context(|| format!("{} package missing name", inventory_path.display()))?;
+            let version = require_json_string_value(package, "version")
+                .with_context(|| format!("{name} missing version in {}", inventory_path.display()))?;
+            if version == "unversioned" {
+                return Err(anyhow!("{name} in {} has unversioned version", inventory_path.display()));
             }
-            let (name, version) = software_name_version(line);
+            let source = require_json_string_value(package, "source")
+                .with_context(|| format!("{name} missing source in {}", inventory_path.display()))?;
+            let architecture = package
+                .get("architecture")
+                .and_then(|value| value.as_str())
+                .filter(|value| !value.is_empty())
+                .unwrap_or(arch);
+            let row_core = serde_json::json!({
+                "name": name,
+                "version": version,
+                "source": source,
+                "architecture": architecture,
+                "evidence": evidence,
+            });
+            let digest = json_digest(&row_core)?;
             rows.push(serde_json::json!({
                 "name": name,
                 "version": version,
                 "source": source,
-                "architecture": "all",
+                "architecture": architecture,
                 "digest": digest,
                 "evidence": evidence,
             }));
@@ -3171,13 +3450,20 @@ fn graph_profile_software(
     Ok(rows)
 }
 
-fn software_name_version(line: &str) -> (&str, &str) {
-    for separator in ["==", "="] {
-        if let Some((name, version)) = line.split_once(separator) {
-            return (name.trim(), version.trim());
-        }
-    }
-    (line, "unversioned")
+fn require_json_string_value<'a>(value: &'a serde_json::Value, key: &str) -> Result<&'a str> {
+    value
+        .get(key)
+        .and_then(|child| child.as_str())
+        .filter(|child| !child.is_empty())
+        .ok_or_else(|| anyhow!("missing string field {key}"))
+}
+
+fn json_digest(value: &serde_json::Value) -> Result<serde_json::Value> {
+    let bytes = serde_json::to_vec(value).context("serialize json digest payload")?;
+    Ok(serde_json::json!({
+        "sha256": format!("{:x}", Sha256::digest(&bytes)),
+        "blake3": blake3::hash(&bytes).to_hex().to_string(),
+    }))
 }
 
 fn profile_file_descriptors(
@@ -3341,7 +3627,7 @@ fn publishable_profile_config(
                     arch.clone(),
                     ProfileObomDescriptor {
                         name: "obom.cdx.json".to_string(),
-                        url: profile_catalog_asset_url(
+                        url: profile_release_asset_url(
                             asset_base,
                             &manifest.assets.current,
                             arch,
@@ -3374,7 +3660,7 @@ fn rewrite_publishable_asset_descriptor(
             descriptor.name
         )
     })?;
-    descriptor.url = profile_catalog_asset_url(asset_base, asset_version, arch, &descriptor.name);
+    descriptor.url = profile_release_asset_url(asset_base, asset_version, arch, &descriptor.name);
     descriptor.hash = Some(format!("blake3:{}", entry.hash));
     descriptor.size = Some(entry.size);
     Ok(())
@@ -3400,7 +3686,7 @@ fn channel_asset_url(
     )
 }
 
-fn profile_catalog_asset_url(
+fn profile_release_asset_url(
     asset_base: &str,
     asset_version: &str,
     arch: &str,
@@ -3415,20 +3701,20 @@ fn profile_catalog_asset_url(
     channel_asset_url(asset_base, asset_version, arch, logical_name)
 }
 
-fn validate_profile_catalog_revision_path(revision: &str) -> Result<()> {
+fn validate_profile_revision_path(revision: &str) -> Result<()> {
     if revision.is_empty()
         || !revision
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'))
     {
         return Err(anyhow!(
-            "profile catalog revision must be URL-path safe: {revision}"
+            "profile revision must be URL-path safe: {revision}"
         ));
     }
     Ok(())
 }
 
-fn profile_catalog_revision(profiles: &[ProfileConfigFile]) -> Result<String> {
+fn profile_release_revision(profiles: &[ProfileConfigFile]) -> Result<String> {
     let mut revisions = profiles
         .iter()
         .map(|profile| profile.revision.as_str())
@@ -3436,14 +3722,14 @@ fn profile_catalog_revision(profiles: &[ProfileConfigFile]) -> Result<String> {
     if revisions.len() == 1 {
         let revision = revisions
             .pop_first()
-            .ok_or_else(|| anyhow!("profile catalog revision set is empty"))?;
+            .ok_or_else(|| anyhow!("profile revision set is empty"))?;
         return Ok(revision.to_string());
     }
-    let hash = profile_catalog_hash(profiles)?;
-    Ok(format!("catalog-{}", &hash[..16]))
+    let hash = profile_config_set_hash(profiles)?;
+    Ok(format!("profiles-{}", &hash[..16]))
 }
 
-fn profile_catalog_refresh_policy(profiles: &[ProfileConfigFile]) -> String {
+fn profile_refresh_policy(profiles: &[ProfileConfigFile]) -> String {
     let policies = profiles
         .iter()
         .map(|profile| profile.refresh_policy.as_str())
@@ -3455,8 +3741,8 @@ fn profile_catalog_refresh_policy(profiles: &[ProfileConfigFile]) -> String {
     }
 }
 
-fn profile_catalog_hash(profiles: &[ProfileConfigFile]) -> Result<String> {
-    let bytes = serde_json::to_vec(profiles).context("serialize profile catalog for hashing")?;
+fn profile_config_set_hash(profiles: &[ProfileConfigFile]) -> Result<String> {
+    let bytes = serde_json::to_vec(profiles).context("serialize profile set for hashing")?;
     Ok(blake3::hash(&bytes).to_hex().to_string())
 }
 
@@ -3635,7 +3921,6 @@ fn render_assets_channels_catalog(
                     blake3: manifest_blake3.to_string(),
                 },
             }],
-            profile_catalog: index.profile_catalog.clone(),
         },
     );
     Ok(format!(
@@ -3659,7 +3944,6 @@ fn render_assets_channel_health(index: &AssetsChannelIndex) -> Result<String> {
                 "index": "/index.html",
                 "health": "/health.json",
                 "manifest": index.manifest,
-                "profile_catalog": index.profile_catalog.source,
                 "asset_base": index.asset_base,
             },
             "current": {
@@ -3685,15 +3969,14 @@ fn render_assets_channel_health(index: &AssetsChannelIndex) -> Result<String> {
             },
             "asset_releases": index.asset_release_history,
                 "profiles": {
-                    "revision": index.profile_catalog.revision,
+                    "revision": index.profiles.revision,
                     "state": "current",
-                    "source": index.profile_catalog.source,
-                    "hash": index.profile_catalog.hash,
-                    "profile_count": index.profile_catalog.profile_count,
-                    "profile_ids": index.profile_catalog.profile_ids,
-                    "refresh_policy": index.profile_catalog.refresh_policy,
-                    "min_binary": index.profile_catalog.min_binary,
-                    "requires_newer_binary": index.profile_catalog.requires_newer_binary,
+                    "source": "manifest.profiles",
+                    "profile_count": index.profiles.profile_count,
+                    "profile_ids": index.profiles.profile_ids,
+                    "refresh_policy": index.profiles.refresh_policy,
+                    "min_binary": index.profiles.min_binary,
+                    "requires_newer_binary": index.profiles.requires_newer_binary,
                 },
             "updates": {
                 "binary": {
@@ -3719,22 +4002,21 @@ fn render_assets_channel_health(index: &AssetsChannelIndex) -> Result<String> {
                     },
                 },
                 "profiles": {
-                    "latest": index.profile_catalog.revision,
-                    "current": index.profile_catalog.revision,
+                    "latest": index.profiles.revision,
+                    "current": index.profiles.revision,
                     "state": "current",
-                    "source": index.profile_catalog.source,
-                    "hash": index.profile_catalog.hash,
-                    "profile_count": index.profile_catalog.profile_count,
-                    "profile_ids": index.profile_catalog.profile_ids,
-                    "refresh_policy": index.profile_catalog.refresh_policy,
-                    "min_binary": index.profile_catalog.min_binary,
-                    "requires_newer_binary": index.profile_catalog.requires_newer_binary,
+                    "source": "manifest.profiles",
+                    "profile_count": index.profiles.profile_count,
+                    "profile_ids": index.profiles.profile_ids,
+                    "refresh_policy": index.profiles.refresh_policy,
+                    "min_binary": index.profiles.min_binary,
+                    "requires_newer_binary": index.profiles.requires_newer_binary,
                 },
                 "images": {
                     "latest": serde_json::Value::Null,
                     "current": serde_json::Value::Null,
                     "state": index.image_update_state,
-                    "source": "profile_catalog",
+                    "source": "manifest.profiles.images",
                 },
             },
             "evidence": {
@@ -3780,11 +4062,7 @@ fn render_assets_channel_headers_for_channels(channels: &[String]) -> String {
         "  Cache-Control: no-cache, must-revalidate".to_string(),
     ];
     for channel in channels {
-        lines.push(format!("/manifests/{channel}/*"));
-        lines.push("  Cache-Control: no-cache, must-revalidate".to_string());
         lines.push(format!("/assets/{channel}/*"));
-        lines.push("  Cache-Control: no-cache, must-revalidate".to_string());
-        lines.push(format!("/profiles/{channel}/*"));
         lines.push("  Cache-Control: no-cache, must-revalidate".to_string());
     }
     lines.extend([
@@ -5601,6 +5879,7 @@ fn clean_image_outputs(plan: &ImageBuildPlan) -> Result<()> {
                     arch.rootfs.as_str(),
                     "rootfs.squashfs",
                     "obom.cdx.json",
+                    "software-inventory.json",
                     "build-ledger.log",
                     "tool-versions.txt",
                 ] {
@@ -5999,7 +6278,7 @@ code = true
     }
 
     #[test]
-    fn config_root_lint_rejects_profile_catalog_id_mismatch() {
+    fn config_root_lint_rejects_profile_id_mismatch() {
         let temp = tempfile::tempdir().expect("tempdir");
         let config_root = temp.path().join("config");
         fs::create_dir_all(config_root.join("profiles/wrong")).expect("profile dir");
@@ -7345,7 +7624,7 @@ decision = "block"
         let channel_manifest = out_dir.join("assets/stable/manifest.json");
         let release_dir = out_dir.join("assets/releases/2030.0101.1");
         assert_eq!(report.manifest, channel_manifest.display().to_string());
-        assert_eq!(report.copied_assets, 4);
+        assert_eq!(report.copied_assets, 5);
         assert!(
             !out_dir.join("index.html").exists(),
             "human release pages are built by release-site Astro, not capsem-admin"
@@ -7359,21 +7638,36 @@ decision = "block"
         assert!(release_dir.join("arm64-initrd.img").is_file());
         assert!(release_dir.join("arm64-rootfs.erofs").is_file());
         assert!(release_dir.join("arm64-obom.cdx.json").is_file());
+        assert!(release_dir.join("arm64-software-inventory.json").is_file());
         let channel_manifest_json: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&channel_manifest).expect("channel manifest"))
                 .expect("channel manifest json");
         let source_manifest_json: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&manifest_path).expect("source manifest"))
                 .expect("source manifest json");
+        let kernel_artifact = channel_manifest_json["profiles"]
+            .as_object()
+            .expect("profiles object")
+            .values()
+            .flat_map(|profile| {
+                profile["images"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|image| image["architecture"].as_str() == Some("arm64"))
+                    .flat_map(|image| image["artifacts"].as_array().into_iter().flatten())
+            })
+            .find(|artifact| {
+                artifact["kind"].as_str() == Some("kernel")
+            })
+            .expect("arm64 kernel artifact");
         assert_eq!(
-            channel_manifest_json["assets"]["releases"]["2030.0101.1"]["arches"]["arm64"]
-                ["vmlinuz"]["hash"],
+            kernel_artifact["digest"]["blake3"],
             source_manifest_json["assets"]["releases"]["2030.0101.1"]["arches"]["arm64"]
                 ["vmlinuz"]["hash"]
         );
         assert!(
-            channel_manifest_json["assets"]["releases"]["2030.0101.1"]["arches"]["arm64"]
-                ["vmlinuz"]["sha256"]
+            kernel_artifact["digest"]["sha256"]
                 .as_str()
                 .is_some_and(|hash| hash.len() == 64),
             "channel manifest must hydrate VM asset SHA-256"
@@ -7506,13 +7800,9 @@ decision = "block"
             health["profiles"]["revision"].as_str(),
             health["updates"]["profiles"]["latest"].as_str()
         );
-        assert_eq!(
-            health["profiles"]["hash"].as_str(),
-            health["updates"]["profiles"]["hash"].as_str()
-        );
         assert!(
             health["profiles"]["compatibility"].is_null(),
-            "profile catalog must not publish channel compatibility"
+            "profiles must not publish channel compatibility"
         );
         assert_eq!(health["profiles"]["min_binary"].as_str(), Some("1.0.0"));
         assert!(
@@ -7523,20 +7813,16 @@ decision = "block"
             health["updates"]["profiles"]["state"].as_str(),
             Some("current")
         );
-        let profile_source = "/profiles/releases/2026.06.08.7/catalog.json";
+        assert_eq!(
+            health["profiles"]["source"].as_str(),
+            Some("manifest.profiles")
+        );
+        assert!(health["profiles"]["hash"].is_null());
         assert_eq!(
             health["updates"]["profiles"]["source"].as_str(),
-            Some(profile_source)
+            Some("manifest.profiles")
         );
-        let profile_catalog_path = out_dir.join(profile_source.trim_start_matches('/'));
-        assert!(profile_catalog_path.is_file());
-        let profile_catalog_bytes =
-            fs::read(&profile_catalog_path).expect("published profile catalog");
-        let profile_catalog_hash = blake3::hash(&profile_catalog_bytes).to_hex().to_string();
-        assert_eq!(
-            health["profiles"]["hash"].as_str(),
-            Some(profile_catalog_hash.as_str())
-        );
+        assert!(health["updates"]["profiles"]["hash"].is_null());
         assert_eq!(health["updates"]["images"]["latest"].as_str(), None);
         assert!(
             health["updates"]["images"]["latest"].is_null(),
@@ -7548,7 +7834,7 @@ decision = "block"
         );
         assert_eq!(
             health["updates"]["images"]["source"].as_str(),
-            Some("profile_catalog")
+            Some("manifest.profiles.images")
         );
 
         let check = check_assets_channel(&out_dir, "stable").expect("asset channel checks");
@@ -7704,7 +7990,7 @@ decision = "block"
         assert!(headers.contains("/index.html\n  Cache-Control: no-cache, must-revalidate"));
         assert!(headers.contains("/health.json\n  Cache-Control: no-cache, must-revalidate"));
         assert!(headers.contains("/assets/stable/*\n  Cache-Control: no-cache, must-revalidate"));
-        assert!(headers.contains("/profiles/stable/*\n  Cache-Control: no-cache, must-revalidate"));
+        assert!(!headers.contains("/profiles/stable/*\n  Cache-Control: no-cache"));
         assert!(headers
             .contains("/assets/releases/*\n  Cache-Control: public, max-age=31536000, immutable"));
         assert!(headers.contains(
@@ -7799,7 +8085,11 @@ decision = "block"
         let pkg_path = artifacts_dir.join("Capsem-1.4.1234567890.pkg");
         let deb_path = artifacts_dir.join("Capsem_1.4.1234567890_arm64.deb");
         let sbom_path = artifacts_dir.join("capsem-sbom.spdx.json");
-        fs::write(&pkg_path, b"pkg bytes").expect("pkg");
+        write_minimal_pkg_with_file(
+            &pkg_path,
+            "Applications/Capsem.app/Contents/MacOS/capsem-app",
+            b"pkg executable bytes",
+        );
         write_minimal_deb_with_file(&deb_path, "usr/bin/capsem-app", b"deb executable bytes");
         fs::write(&sbom_path, br#"{"spdxVersion":"SPDX-2.3"}"#).expect("sbom");
 
@@ -7833,7 +8123,7 @@ decision = "block"
         assert_eq!(release["files"][0]["name"], "Capsem-1.4.1234567890.pkg");
         assert_eq!(
             release["files"][0]["sha256"],
-            format!("{:x}", Sha256::digest(b"pkg bytes"))
+            format!("{:x}", Sha256::digest(fs::read(&pkg_path).expect("pkg bytes")))
         );
         assert_eq!(
             release["files"][1]["binaries"][0]["installed_path"].as_str(),
@@ -7928,7 +8218,11 @@ decision = "block"
         fs::create_dir_all(&artifacts_dir).expect("artifacts dir");
         let pkg_path = artifacts_dir.join("Capsem-1.4.0000000000.pkg");
         let sbom_path = artifacts_dir.join("capsem-sbom.spdx.json");
-        fs::write(&pkg_path, b"pkg bytes").expect("pkg");
+        write_minimal_pkg_with_file(
+            &pkg_path,
+            "Applications/Capsem.app/Contents/MacOS/capsem-app",
+            b"pkg executable bytes",
+        );
         fs::write(&sbom_path, br#"{"spdxVersion":"SPDX-2.3"}"#).expect("sbom");
 
         let error = record_binary_release_metadata(
@@ -7955,7 +8249,11 @@ decision = "block"
         fs::create_dir_all(&artifacts_dir).expect("artifacts dir");
         let pkg_path = artifacts_dir.join("Capsem-1.4.1234567890.pkg");
         let sbom_path = artifacts_dir.join("host-sbom.spdx.json");
-        fs::write(&pkg_path, b"pkg bytes").expect("pkg");
+        write_minimal_pkg_with_file(
+            &pkg_path,
+            "Applications/Capsem.app/Contents/MacOS/capsem-app",
+            b"pkg executable bytes",
+        );
         fs::write(&sbom_path, br#"{"spdxVersion":"SPDX-2.3"}"#).expect("sbom");
 
         let error = record_binary_release_metadata(
@@ -7970,6 +8268,34 @@ decision = "block"
         assert!(
             format!("{error:#}").contains("capsem-sbom.spdx.json"),
             "{error:#}"
+        );
+    }
+
+    fn write_minimal_pkg_with_file(path: &Path, file_path: &str, contents: &[u8]) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().expect("pkg root");
+        let payload_path = root.path().join(file_path);
+        fs::create_dir_all(payload_path.parent().expect("payload parent"))
+            .expect("payload parent dir");
+        fs::write(&payload_path, contents).expect("payload file");
+        fs::set_permissions(&payload_path, fs::Permissions::from_mode(0o755))
+            .expect("payload executable");
+
+        let output = Command::new("pkgbuild")
+            .arg("--root")
+            .arg(root.path())
+            .arg("--identifier")
+            .arg("org.capsem.test")
+            .arg("--version")
+            .arg("1.4.1234567890")
+            .arg(path)
+            .output()
+            .expect("run pkgbuild");
+        assert!(
+            output.status.success(),
+            "pkgbuild failed: {}",
+            String::from_utf8_lossy(&output.stderr)
         );
     }
 
@@ -8045,7 +8371,6 @@ decision = "block"
             &fs::read_to_string(out_dir.join("assets/stable/manifest.json")).unwrap(),
         )
         .expect("channel manifest parses");
-        assert_eq!(channel_manifest["asset_base"].as_str(), Some(asset_base));
         let health: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(out_dir.join("health.json")).unwrap())
                 .expect("health parses");
@@ -8055,13 +8380,12 @@ decision = "block"
         assert!(health_files
             .iter()
             .any(|file| file["url"].as_str() == Some(rootfs_url)));
-        let profile_source = health["profiles"]["source"]
-            .as_str()
-            .expect("profile source")
-            .trim_start_matches('/');
-        assert!(fs::read_to_string(out_dir.join(profile_source))
-            .expect("profile catalog")
-            .contains(rootfs_url));
+        assert!(
+            serde_json::to_string(&channel_manifest)
+                .expect("serialize channel manifest")
+                .contains(rootfs_url),
+            "selected channel manifest should carry external rootfs URL"
+        );
         check_assets_channel(&out_dir, "stable").expect("externalized channel checks");
     }
 
@@ -8347,7 +8671,17 @@ decision = "block"
                 "name": "Capsem_1.0.0_arm64.deb",
                 "size": 789,
                 "sha256": "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
-                "blake3": "3333333333333333333333333333333333333333333333333333333333333333"
+                "blake3": "3333333333333333333333333333333333333333333333333333333333333333",
+                "binaries": [
+                    {
+                        "name": "capsem-tray",
+                        "installed_path": "/usr/bin/capsem-tray",
+                        "size": 19,
+                        "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+                        "blake3": "5555555555555555555555555555555555555555555555555555555555555555",
+                        "sbom_component_ref": "SPDXRef-File-capsem-tray"
+                    }
+                ]
             }));
         fs::write(
             &manifest_path,
@@ -8760,6 +9094,7 @@ decision = "block"
         let initrd = format!("initrd-{arch}");
         let rootfs = format!("rootfs-{arch}");
         let obom = test_obom_json();
+        let software_inventory = test_software_inventory_json(arch);
         let pkg_sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
         let sbom_sha256 = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
         let pkg_blake3 = "1111111111111111111111111111111111111111111111111111111111111111";
@@ -8768,6 +9103,11 @@ decision = "block"
         fs::write(assets_dir.join("initrd.img"), initrd.as_bytes()).expect("initrd");
         fs::write(assets_dir.join("rootfs.erofs"), rootfs.as_bytes()).expect("rootfs");
         fs::write(assets_dir.join("obom.cdx.json"), obom.as_bytes()).expect("obom");
+        fs::write(
+            assets_dir.join("software-inventory.json"),
+            software_inventory.as_bytes(),
+        )
+        .expect("software inventory");
         let manifest_path = root.join("assets/manifest.json");
         fs::write(
             &manifest_path,
@@ -8787,7 +9127,8 @@ decision = "block"
             "vmlinuz": {{"hash": "{kernel_hash}", "size": {kernel_size}}},
             "initrd.img": {{"hash": "{initrd_hash}", "size": {initrd_size}}},
             "rootfs.erofs": {{"hash": "{rootfs_hash}", "size": {rootfs_size}}},
-            "obom.cdx.json": {{"hash": "{obom_hash}", "size": {obom_size}}}
+            "obom.cdx.json": {{"hash": "{obom_hash}", "size": {obom_size}}},
+            "software-inventory.json": {{"hash": "{software_inventory_hash}", "size": {software_inventory_size}}}
           }}
         }}
       }}
@@ -8801,7 +9142,16 @@ decision = "block"
         "deprecated": false,
         "min_assets": "2030.0101.1",
         "files": [
-          {{"name": "capsem-1.0.0.pkg", "size": 123, "sha256": "{pkg_sha256}", "blake3": "{pkg_blake3}"}},
+          {{"name": "capsem-1.0.0.pkg", "size": 123, "sha256": "{pkg_sha256}", "blake3": "{pkg_blake3}", "binaries": [
+            {{
+              "name": "capsem-app",
+              "installed_path": "/Applications/Capsem.app/Contents/MacOS/capsem-app",
+              "size": 17,
+              "sha256": "{binary_sha256}",
+              "blake3": "{binary_blake3}",
+              "sbom_component_ref": "SPDXRef-File-capsem-app"
+            }}
+          ]}},
           {{"name": "capsem-sbom.spdx.json", "size": 456, "sha256": "{sbom_sha256}", "blake3": "{sbom_blake3}"}}
         ]
       }}
@@ -8817,14 +9167,44 @@ decision = "block"
                 rootfs_size = rootfs.len(),
                 obom_hash = blake3::hash(obom.as_bytes()).to_hex(),
                 obom_size = obom.len(),
+                software_inventory_hash = blake3::hash(software_inventory.as_bytes()).to_hex(),
+                software_inventory_size = software_inventory.len(),
                 pkg_sha256 = pkg_sha256,
                 sbom_sha256 = sbom_sha256,
                 pkg_blake3 = pkg_blake3,
                 sbom_blake3 = sbom_blake3,
+                binary_sha256 =
+                    "3333333333333333333333333333333333333333333333333333333333333333",
+                binary_blake3 =
+                    "4444444444444444444444444444444444444444444444444444444444444444",
             ),
         )
         .expect("manifest");
         manifest_path
+    }
+
+    fn test_software_inventory_json(arch: &str) -> String {
+        format!(
+            "{}\n",
+            serde_json::json!({
+                "schema": "capsem.profile_software_inventory.v1",
+                "architecture": arch,
+                "packages": [
+                    {
+                        "name": "python3",
+                        "version": "3.12.1-1",
+                        "source": "apt",
+                        "architecture": arch
+                    },
+                    {
+                        "name": "@openai/codex",
+                        "version": "1.2.3",
+                        "source": "npm",
+                        "architecture": "all"
+                    }
+                ]
+            })
+        )
     }
 
     fn test_obom_json() -> String {

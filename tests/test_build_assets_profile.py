@@ -125,7 +125,13 @@ def test_asset_workflow_publishes_obom_not_debug_build_ledger() -> None:
     attest_step = workflow.split("- name: Attest VM asset provenance", maxsplit=1)[1].split(
         "\n      - uses: actions/upload-artifact@v7", maxsplit=1
     )[0]
-    for logical_name in ("vmlinuz", "initrd.img", "rootfs.erofs", "obom.cdx.json"):
+    for logical_name in (
+        "vmlinuz",
+        "initrd.img",
+        "rootfs.erofs",
+        "obom.cdx.json",
+        "software-inventory.json",
+    ):
         assert logical_name in upload_step
         assert logical_name in attest_step
     assert "vm-build-ledger-" not in workflow

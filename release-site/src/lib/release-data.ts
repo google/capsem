@@ -12,7 +12,7 @@ export interface ReleaseData {
   channelRecord: JsonObject;
   manifestRecord: JsonObject;
   manifest: JsonObject;
-  catalog: JsonObject;
+  profileContract: JsonObject;
 }
 
 export interface TableRow {
@@ -58,9 +58,8 @@ function loadDistData(dist: string): ReleaseData {
   const manifestRecord = selectManifestRecord(channelRecord);
   const manifestPath = trimLeadingSlash(String(manifestRecord.url ?? `/assets/${channel}/manifest.json`));
   const manifest = readJson(resolve(dist, manifestPath));
-  const catalogPath = trimLeadingSlash(String(channelRecord.profile_catalog?.source ?? ''));
-  const catalog = readJson(resolve(dist, catalogPath));
-  return { dist, sourceMode: 'dist', channel, channels, channelRecord, manifestRecord, manifest, catalog };
+  const profileContract = profileContractFromManifest(manifest);
+  return { dist, sourceMode: 'dist', channel, channels, channelRecord, manifestRecord, manifest, profileContract };
 }
 
 function loadGraphData(graphPath: string): ReleaseData {
@@ -77,11 +76,7 @@ function loadGraphData(graphPath: string): ReleaseData {
   if (!manifest) {
     throw new Error(`Release graph is missing ${channel} manifest ${manifestRecord.version}`);
   }
-  const catalog = {
-    schema: 'capsem.profile_catalog.v1',
-    revision: profileRevisionFromManifest(manifest),
-    profiles: profileListFromManifest(manifest),
-  };
+  const profileContract = profileContractFromManifest(manifest);
   return {
     dist: graphPath,
     sourceMode: 'graph',
@@ -91,7 +86,7 @@ function loadGraphData(graphPath: string): ReleaseData {
     channelRecord,
     manifestRecord,
     manifest,
-    catalog,
+    profileContract,
   };
 }
 
@@ -101,6 +96,10 @@ export function profilePagePath(profileId: string): string {
 
 export function channelProfilePagePath(channelId: string, profileId: string): string {
   return `/channels/${encodeURIComponent(channelId)}/profiles/${encodeURIComponent(profileId)}/`;
+}
+
+export function channelPackagePagePath(channelId: string, packageId: string): string {
+  return `/channels/${encodeURIComponent(channelId)}/packages/${encodeURIComponent(packageId)}/`;
 }
 
 export function channelPagePath(channelId: string): string {
@@ -138,8 +137,8 @@ export function dataForChannel(data: ReleaseData, channel: string): ReleaseData 
     if (!manifest) {
       throw new Error(`Release graph is missing ${channel} manifest ${manifestRecord.version}`);
     }
-    const catalog = {
-      schema: 'capsem.profile_catalog.v1',
+    const profileContract = {
+      schema: 'capsem.manifest_profiles.v1',
       revision: profileRevisionFromManifest(manifest),
       profiles: profileListFromManifest(manifest),
     };
@@ -149,27 +148,26 @@ export function dataForChannel(data: ReleaseData, channel: string): ReleaseData 
       channelRecord,
       manifestRecord,
       manifest,
-      catalog,
+      profileContract,
     };
   }
 
   const manifestPath = trimLeadingSlash(String(manifestRecord.url ?? `/assets/${channel}/manifest.json`));
   const manifest = readJson(resolve(data.dist, manifestPath));
-  const catalogPath = trimLeadingSlash(String(channelRecord.profile_catalog?.source ?? ''));
-  const catalog = readJson(resolve(data.dist, catalogPath));
+  const profileContract = profileContractFromManifest(manifest);
   return {
     ...data,
     channel,
     channelRecord,
     manifestRecord,
     manifest,
-    catalog,
+    profileContract,
   };
 }
 
 export function profileList(data: ReleaseData): JsonObject[] {
-  const profiles = Array.isArray(data.catalog.profiles)
-    ? data.catalog.profiles
+  const profiles = Array.isArray(data.profileContract.profiles)
+    ? data.profileContract.profiles
     : profileListFromManifest(data.manifest);
   return profiles.map((profile) => normalizeProfile(profile));
 }
@@ -225,14 +223,14 @@ export function profileArtifactRows(profile: JsonObject, arch: string): TableRow
   if (abom) {
     rows.push(descriptorRow('ABOM / OBOM', abom));
   } else {
-    rows.push({ label: 'ABOM / OBOM', name: 'Not published in profile catalog', status: 'missing' });
+    rows.push({ label: 'ABOM / OBOM', name: 'Not published in profile evidence', status: 'missing' });
   }
 
   const sbom = profile.sbom?.arch?.[arch];
   if (sbom) {
     rows.push(descriptorRow('SBOM', sbom));
   } else {
-    rows.push({ label: 'SBOM', name: 'Not published in profile catalog', status: 'missing' });
+    rows.push({ label: 'SBOM', name: 'Not published in profile evidence', status: 'missing' });
   }
   return rows;
 }
@@ -261,15 +259,27 @@ export function profileFileRows(profile: JsonObject): TableRow[] {
 
 export function binaryRows(data: ReleaseData): JsonObject[] {
   if (Array.isArray(data.manifest.packages)) {
-    return data.manifest.packages.flatMap((pkg: JsonObject) => (
-      Array.isArray(pkg.binaries) ? pkg.binaries : []
-    ));
+    return data.manifest.packages.flatMap((pkg: JsonObject) => {
+      const evidence = Array.isArray(pkg.evidence) ? pkg.evidence : [];
+      return Array.isArray(pkg.binaries)
+        ? pkg.binaries.map((binary: JsonObject) => ({
+            ...binary,
+            package_name: pkg.name,
+            package_id: pkg.id,
+            package_evidence: evidence,
+          }))
+        : [];
+    });
   }
   return [];
 }
 
 export function packageRows(data: ReleaseData): JsonObject[] {
   return Array.isArray(data.manifest.packages) ? data.manifest.packages : [];
+}
+
+export function packageById(data: ReleaseData, id: string): JsonObject | undefined {
+  return packageRows(data).find((pkg) => String(pkg.id) === id);
 }
 
 export function manifestRecords(data: ReleaseData): JsonObject[] {
@@ -420,12 +430,8 @@ export function generatedAt(data: ReleaseData): string {
   return String(data.channels.generated_at ?? '');
 }
 
-export function profileCatalogUrl(data: ReleaseData): string {
-  return String(data.channelRecord.profile_catalog?.source ?? '');
-}
-
 export function profileRevision(data: ReleaseData): string {
-  return String(data.catalog.revision ?? data.channelRecord.profile_catalog?.revision ?? '');
+  return String(data.profileContract.revision ?? '');
 }
 
 export function manifestUrl(data: ReleaseData): string {
@@ -479,6 +485,14 @@ function groupFilesByArch(files: JsonObject[]): [string, JsonObject[]][] {
 
 function profileListFromManifest(manifest: JsonObject): JsonObject[] {
   return Object.entries(manifest.profiles ?? {}).map(([id, profile]) => normalizeProfile({ id, ...(profile as JsonObject) }));
+}
+
+function profileContractFromManifest(manifest: JsonObject): JsonObject {
+  return {
+    schema: 'capsem.manifest_profiles.v1',
+    revision: profileRevisionFromManifest(manifest),
+    profiles: profileListFromManifest(manifest),
+  };
 }
 
 function profileRevisionFromManifest(manifest: JsonObject): string {

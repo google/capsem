@@ -26,11 +26,11 @@ The graph is hierarchical:
 channels.json
   channels.<channel>
     manifests[]
-      url -> /manifests/<channel>/<manifest-version>/manifest.json
+      url -> /assets/<channel>/manifest.json
       digest.sha256
       digest.blake3
 
-manifest.json
+assets/<channel>/manifest.json
   packages[]
     binaries[]
   profiles.<profile>
@@ -38,9 +38,6 @@ manifest.json
     images.<architecture>
       artifacts[]
       evidence[]
-
-profiles/releases/<catalog-version>/catalog.json
-  profiles[]
 ```
 
 The path tells readers who owns a fact. Package facts do not repeat in binary
@@ -68,7 +65,7 @@ Each manifest record must include:
 {
   "version": "1.4.0",
   "status": "current",
-  "url": "/manifests/stable/1.4.0/manifest.json",
+  "url": "/assets/stable/manifest.json",
   "digest": {
     "sha256": "...",
     "blake3": "..."
@@ -76,10 +73,15 @@ Each manifest record must include:
 }
 ```
 
-The digest is over the referenced manifest bytes. Do not publish HMAC fields in
-the graph. SHA-256 is the compliance digest. BLAKE3 is the fast content digest.
-Digests must be computed over bytes. Repeated-character placeholders such as
-`1111...`, `aaaa...`, or `0000...` are invalid release facts.
+The digest is over the current `/assets/<channel>/manifest.json` bytes. There
+is only one public manifest URL per channel. Historical manifest records remain
+in `channels.json` for auditability, but they must not create alternate public
+manifest URLs that compete with `/assets/<channel>/manifest.json`.
+
+Do not publish HMAC fields in the graph. SHA-256 is the compliance digest.
+BLAKE3 is the fast content digest. Digests must be computed over bytes.
+Repeated-character placeholders such as `1111...`, `aaaa...`, or `0000...` are
+invalid release facts.
 
 ## Manifests
 
@@ -196,14 +198,15 @@ Every software entry must include:
     "sha256": "...",
     "blake3": "..."
   },
-  "evidence": "/profiles/releases/2026.07.02.1-stable/code/arm64/abom.cdx.json"
+  "evidence": "/assets/releases/2026.07.02.1-stable/arm64-software-inventory.json"
 }
 ```
 
 The profile page may render software inventory only from the profile JSON. It
 must not display sample rows, inferred package names, or a partial hand-written
-summary. If the profile JSON does not contain a complete hashed inventory, the
-page must say the inventory is not published rather than inventing it.
+summary. Release profiles with image artifacts must publish
+`software-inventory.json`; missing inventory is a release-blocking generator
+failure, not a page-level fallback.
 
 ## Config Files
 
@@ -295,26 +298,14 @@ unless the profile schema grows an explicit enum for a different boot mode. A
 rootfs-only image set is incomplete and must fail the release gate. ABOM and
 OBOM entries are not global evidence. They are profile image evidence.
 
-## Profile Catalog
-
-The profile catalog is an immutable snapshot:
-
-```text
-/profiles/releases/<catalog-version>/catalog.json
-```
-
-The catalog profile ids and revisions must match the selected manifest. Its
-BLAKE3 hash in `channels.json` must equal the catalog bytes. The catalog must
-not add fields that are forbidden on profiles.
-
 ## Page Contract
 
 Pages render only their owning JSON:
 
 | Page | Owning JSON |
 | --- | --- |
-| `/` | `channels.json` plus the selected manifest/catalog |
-| `/channels/<channel>/` | `channels.<channel>` plus selected manifest/catalog |
+| `/` | `channels.json` plus selected manifest links |
+| `/channels/<channel>/` | `channels.<channel>` plus selected manifest |
 | `/channels/<channel>/profiles/<profile>/` | selected manifest profile entry |
 
 If a string is not present in the owning JSON, the page must not display it as
@@ -337,18 +328,20 @@ Release output tests must verify:
 
 1. Every channel manifest URL resolves and its SHA-256/BLAKE3 match
    `channels.json`.
-2. Every profile catalog URL resolves and its BLAKE3 matches `channels.json`.
-3. Catalog profiles match manifest profiles by id and revision.
+2. `channels.json` exposes exactly one public manifest URL per channel:
+   `/assets/<channel>/manifest.json`.
+3. No public graph or page exposes a profile catalog release primitive.
 4. Every package has bytes, SHA-256, BLAKE3, and package-owned binaries.
-5. Every binary has installed path, bytes, SHA-256, BLAKE3, and SBOM component.
+5. Every binary has installed path, version, bytes, SHA-256, BLAKE3, and SBOM
+   component.
 6. No digest object contains HMAC.
 7. No digest is a repeated-character placeholder.
 8. Every profile config file required by the profile source is published.
 9. Every profile image architecture includes kernel, initrd, and rootfs.
 10. Every profile config/image/evidence URL resolves and its bytes, SHA-256,
    and BLAKE3 match.
-11. Every profile software inventory entry is complete and hashed, or the
-   profile page explicitly reports that no software inventory is published.
+11. Every profile software inventory entry is complete, hashed, and points at
+   the generated `software-inventory.json` evidence artifact.
 12. Profile pages contain only profile-owned facts.
 13. Channel pages contain only channel and manifest facts.
 14. Stable and nightly may select different manifests and profile revisions

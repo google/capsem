@@ -48,6 +48,8 @@ REQUIRED_PROFILE_CONFIG_FILES = {
     "tips.txt",
 }
 REQUIRED_IMAGE_ARTIFACT_KINDS = {"kernel", "initrd", "rootfs"}
+REQUIRED_PACKAGE_KINDS = {"macos_pkg", "debian_package"}
+REQUIRED_BINARY_NAMES = {"capsem-app", "capsem-tray"}
 ALLOWED_RELEASE_STATUSES = {"current", "supported", "deprecated", "revoked"}
 
 pytestmark = pytest.mark.build_chain
@@ -80,9 +82,8 @@ def test_channel_manifest_records_are_versioned_graph_files(
     current = _current_manifest_record(channel)
     manifest_url = current["url"]
 
-    assert manifest_url.startswith(f"/manifests/{CHANNEL}/")
-    assert manifest_url.endswith("/manifest.json")
-    assert manifest_url != f"/assets/{CHANNEL}/manifest.json"
+    assert manifest_url == f"/assets/{CHANNEL}/manifest.json"
+    assert "profile_catalog" not in channel
     _assert_no_hmac(current, f"channels.{CHANNEL}.manifests.current")
 
     manifest_bytes = _read_bytes(generated_release_dist, manifest_url)
@@ -103,6 +104,14 @@ def test_manifest_uses_package_owned_binary_graph(
     packages = manifest["packages"]
     assert isinstance(packages, list)
     assert packages
+    assert REQUIRED_PACKAGE_KINDS <= {package.get("kind") for package in packages}
+
+    binary_names = {
+        binary.get("name")
+        for package in packages
+        for binary in package.get("binaries", [])
+    }
+    assert REQUIRED_BINARY_NAMES <= binary_names
 
     for index, package in enumerate(packages):
         context = f"packages[{index}]"
@@ -121,6 +130,8 @@ def test_manifest_uses_package_owned_binary_graph(
             binary_context = f"{context}.binaries[{binary_index}]"
             assert "package" not in binary
             assert isinstance(binary["name"], str)
+            assert isinstance(binary["version"], str)
+            assert binary["version"] != "unversioned"
             assert isinstance(binary["installed_path"], str)
             assert isinstance(binary["bytes"], int)
             assert set(binary["digest"]) == {"sha256", "blake3"}
@@ -128,31 +139,64 @@ def test_manifest_uses_package_owned_binary_graph(
             _assert_no_hmac(binary, binary_context)
 
 
-def test_profile_catalog_matches_manifest_profiles_and_hashes(
+def test_manifest_profiles_are_the_profile_contract(
     generated_release_dist: Path,
 ) -> None:
-    channels = _read_json(generated_release_dist / "channels.json")
-    channel = channels["channels"][CHANNEL]
-    profile_catalog = channel["profile_catalog"]
-    catalog_url = profile_catalog["source"]
-    catalog_bytes = _read_bytes(generated_release_dist, catalog_url)
-    catalog = json.loads(catalog_bytes)
     manifest = _selected_manifest(generated_release_dist)
-
-    assert profile_catalog["hash"] == blake3.blake3(catalog_bytes).hexdigest()
-    assert catalog["schema"] == "capsem.profile_catalog.v1"
 
     manifest_profiles = manifest["profiles"]
     assert isinstance(manifest_profiles, dict)
     assert manifest_profiles
-    catalog_profiles = {profile["id"]: profile for profile in catalog["profiles"]}
-    assert set(catalog_profiles) == set(manifest_profiles)
+    assert "profile_catalog" not in manifest
+    assert "catalog" not in manifest
 
     for profile_id, manifest_profile in manifest_profiles.items():
-        catalog_profile = catalog_profiles[profile_id]
-        assert catalog_profile["revision"] == manifest_profile["revision"]
         _assert_profile_shape(profile_id, manifest_profile, f"manifest.profiles.{profile_id}")
-        _assert_profile_shape(profile_id, catalog_profile, f"catalog.profiles.{profile_id}")
+
+
+def test_generated_release_has_no_public_profile_catalog_primitive(
+    generated_release_dist: Path,
+) -> None:
+    forbidden_tokens = ("profile_catalog", "catalog.json", "capsem.profile_catalog")
+    files_to_check = [
+        generated_release_dist / "channels.json",
+        generated_release_dist / "health.json",
+        generated_release_dist / "assets" / CHANNEL / "manifest.json",
+        generated_release_dist / "index.html",
+        generated_release_dist / "channels" / CHANNEL / "index.html",
+    ]
+    files_to_check.extend(
+        generated_release_dist
+        / "channels"
+        / CHANNEL
+        / "profiles"
+        / profile_id
+        / "index.html"
+        for profile_id in _selected_manifest(generated_release_dist)["profiles"]
+    )
+
+    catalog_files = [
+        path.relative_to(generated_release_dist).as_posix()
+        for path in generated_release_dist.rglob("catalog.json")
+    ]
+    assert catalog_files == []
+
+    hits: list[str] = []
+    for path in files_to_check:
+        text = path.read_text(encoding="utf-8")
+        for token in forbidden_tokens:
+            if token in text:
+                hits.append(f"{path.relative_to(generated_release_dist)} contains {token}")
+    assert hits == []
+
+
+def test_release_readiness_checker_uses_profile_contract_not_catalog() -> None:
+    checker = (PROJECT_ROOT / "scripts" / "check-remote-release-readiness.py").read_text(
+        encoding="utf-8"
+    )
+    forbidden_tokens = ("profile_catalog", "catalog.json", "capsem.profile_catalog")
+    hits = [token for token in forbidden_tokens if token in checker]
+    assert hits == []
 
 
 def test_profile_owned_artifact_digests_match_files(
@@ -231,15 +275,24 @@ def test_profile_software_inventory_is_complete_and_hashed(
         software = profile["software"]
         assert isinstance(software, list), profile_id
         assert software, profile_id
+        seen_digests: dict[tuple[str, str], str] = {}
         for index, package in enumerate(software):
             context = f"profiles.{profile_id}.software[{index}]"
             assert isinstance(package["name"], str), context
             assert isinstance(package["version"], str), context
+            assert package["version"] != "unversioned", context
             assert isinstance(package["source"], str), context
             assert isinstance(package["architecture"], str), context
             assert isinstance(package["evidence"], str), context
+            assert package["evidence"].startswith("/assets/releases/"), context
+            assert package["evidence"].endswith("-software-inventory.json"), context
             assert set(package["digest"]) == {"sha256", "blake3"}, context
             _assert_no_hmac(package, context)
+            for digest_name, digest_value in package["digest"].items():
+                previous = seen_digests.setdefault((digest_name, digest_value), package["name"])
+                assert previous == package["name"], (
+                    f"{context} shares {digest_name} digest with {previous}"
+                )
 
 
 def test_deterministic_graph_fixture_matches_release_contract() -> None:
@@ -258,6 +311,8 @@ def test_deterministic_graph_fixture_matches_release_contract() -> None:
                 assert package["binaries"], context
                 for binary in package["binaries"]:
                     assert "package" not in binary, context
+                    assert isinstance(binary.get("version"), str), context
+                    assert binary["version"] != "unversioned", context
                     assert isinstance(binary.get("installed_path"), str), context
                     assert set(binary["digest"]) == {"sha256", "blake3"}, context
 
@@ -486,7 +541,15 @@ def _check_package_digests_real(dist: Path) -> None:
 
 
 def _check_packages_own_binaries(dist: Path) -> None:
-    for package in _selected_manifest(dist)["packages"]:
+    packages = _selected_manifest(dist)["packages"]
+    assert REQUIRED_PACKAGE_KINDS <= {package.get("kind") for package in packages}
+    binary_names = {
+        binary.get("name")
+        for package in packages
+        for binary in package.get("binaries", [])
+    }
+    assert REQUIRED_BINARY_NAMES <= binary_names
+    for package in packages:
         binaries = package.get("binaries")
         assert isinstance(binaries, list), package
         assert binaries, package
@@ -566,10 +629,18 @@ def _check_software_inventory_hashed(dist: Path) -> None:
     for profile_id, profile in _selected_manifest(dist)["profiles"].items():
         software = profile["software"]
         assert software, profile_id
+        seen_digests: dict[tuple[str, str], str] = {}
         for item in software:
             assert isinstance(item.get("architecture"), str), item
             assert isinstance(item.get("evidence"), str), item
+            assert isinstance(item.get("version"), str), item
+            assert item["version"] != "unversioned", item
             _assert_digest_real(item["digest"], f"{profile_id}:{item['name']}")
+            for digest_name, digest_value in item["digest"].items():
+                previous = seen_digests.setdefault((digest_name, digest_value), item["name"])
+                assert previous == item["name"], (
+                    f"{profile_id}:{item['name']} shares {digest_name} digest with {previous}"
+                )
 
 
 def _check_root_page_ownership(dist: Path) -> None:

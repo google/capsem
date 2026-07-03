@@ -87,7 +87,12 @@ def _build_release_channel(
     manifest_path: Path | None = None,
     assets_dir: Path | None = None,
 ) -> None:
-    manifest_url = (manifest_path or PROJECT_ROOT / "assets" / "manifest.json").resolve().as_uri()
+    source_manifest = manifest_path or PROJECT_ROOT / "assets" / "manifest.json"
+    working_manifest = dist.parent / "manifest-with-binary-metadata.json"
+    working_manifest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source_manifest, working_manifest)
+    _record_test_binary_metadata(working_manifest, dist.parent / "binary-artifacts")
+    manifest_url = working_manifest.resolve().as_uri()
     assets_dir = assets_dir or PROJECT_ROOT / "assets"
     _run_admin(
         "assets",
@@ -118,11 +123,27 @@ def _build_release_channel(
 def _record_test_binary_metadata(manifest_path: Path, artifacts_dir: Path) -> None:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     version = manifest["binaries"]["current"]
-    executable = b"capsem install-test executable\n"
+    app_executable = b"capsem app install-test executable\n"
+    tray_executable = b"capsem tray install-test executable\n"
     artifacts_dir.mkdir(parents=True, exist_ok=True)
+    pkg_path = artifacts_dir / f"Capsem-{version}.pkg"
     deb_path = artifacts_dir / f"Capsem_{version}_arm64.deb"
     sbom_path = artifacts_dir / "capsem-sbom.spdx.json"
-    _write_minimal_deb(deb_path, "usr/bin/capsem-app", executable)
+    _write_minimal_pkg(
+        pkg_path,
+        version,
+        {
+            "Applications/Capsem.app/Contents/MacOS/capsem-app": app_executable,
+            "Applications/Capsem.app/Contents/MacOS/capsem-tray": tray_executable,
+        },
+    )
+    _write_minimal_deb(
+        deb_path,
+        {
+            "usr/bin/capsem-app": app_executable,
+            "usr/bin/capsem-tray": tray_executable,
+        },
+    )
     sbom_path.write_text(
         json.dumps(
             {
@@ -134,7 +155,17 @@ def _record_test_binary_metadata(manifest_path: Path, artifacts_dir: Path) -> No
                         "checksums": [
                             {
                                 "algorithm": "SHA256",
-                                "checksumValue": hashlib.sha256(executable).hexdigest(),
+                                "checksumValue": hashlib.sha256(app_executable).hexdigest(),
+                            }
+                        ],
+                    },
+                    {
+                        "SPDXID": "SPDXRef-File-capsem-tray",
+                        "fileName": "/usr/bin/capsem-tray",
+                        "checksums": [
+                            {
+                                "algorithm": "SHA256",
+                                "checksumValue": hashlib.sha256(tray_executable).hexdigest(),
                             }
                         ],
                     }
@@ -154,6 +185,8 @@ def _record_test_binary_metadata(manifest_path: Path, artifacts_dir: Path) -> No
         "--version",
         version,
         "--artifact",
+        str(pkg_path),
+        "--artifact",
         str(deb_path),
         "--artifact",
         str(sbom_path),
@@ -162,13 +195,38 @@ def _record_test_binary_metadata(manifest_path: Path, artifacts_dir: Path) -> No
     )
 
 
-def _write_minimal_deb(path: Path, member_path: str, contents: bytes) -> None:
+def _write_minimal_pkg(path: Path, version: str, members: dict[str, bytes]) -> None:
+    root = path.parent / "pkg-root"
+    if root.exists():
+        shutil.rmtree(root)
+    for member_path, contents in members.items():
+        destination = root / member_path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(contents)
+        destination.chmod(0o755)
+    _run(
+        [
+            "pkgbuild",
+            "--root",
+            str(root),
+            "--identifier",
+            "org.capsem.Capsem",
+            "--version",
+            version,
+            str(path),
+        ],
+        timeout=180,
+    )
+
+
+def _write_minimal_deb(path: Path, members: dict[str, bytes]) -> None:
     data_tar_gz = io.BytesIO()
     with tarfile.open(fileobj=data_tar_gz, mode="w:gz") as tar:
-        info = tarfile.TarInfo(member_path)
-        info.mode = 0o755
-        info.size = len(contents)
-        tar.addfile(info, io.BytesIO(contents))
+        for member_path, contents in members.items():
+            info = tarfile.TarInfo(member_path)
+            info.mode = 0o755
+            info.size = len(contents)
+            tar.addfile(info, io.BytesIO(contents))
     deb = bytearray(b"!<arch>\n")
     _append_ar_member(deb, "debian-binary", b"2.0\n")
     _append_ar_member(deb, "control.tar.gz", b"")
@@ -322,20 +380,15 @@ def test_generated_release_channel_passes_public_contract(
     assert (release_channel_dist / "profiles" / "releases").is_dir()
     channels = json.loads((release_channel_dist / "channels.json").read_text())
     selected_manifest_url = channels["channels"][CHANNEL]["manifests"][0]["url"]
-    assert selected_manifest_url.startswith(f"/manifests/{CHANNEL}/")
-    assert selected_manifest_url.endswith("/manifest.json")
-    assert selected_manifest_url != f"/assets/{CHANNEL}/manifest.json"
+    assert selected_manifest_url == f"/assets/{CHANNEL}/manifest.json"
     assert (release_channel_dist / selected_manifest_url.lstrip("/")).is_file()
-    assert (release_channel_dist / "assets" / CHANNEL / "manifest.json").is_file()
-    assert channels["channels"][CHANNEL]["profile_catalog"]["source"].startswith(
-        "/profiles/releases/"
-    )
-    catalog_source = channels["channels"][CHANNEL]["profile_catalog"]["source"]
-    catalog = json.loads((release_channel_dist / catalog_source.lstrip("/")).read_text())
-    assert "current_binary" not in catalog
-    assert "current_assets" not in catalog
-    assert "compatibility" not in catalog
-    for profile in catalog["profiles"]:
+    assert "profile_catalog" not in channels["channels"][CHANNEL]
+    manifest = json.loads((release_channel_dist / selected_manifest_url.lstrip("/")).read_text())
+    assert "assets" not in manifest
+    assert "binaries" not in manifest
+    assert manifest["packages"]
+    assert manifest["profiles"]
+    for profile in manifest["profiles"].values():
         assert "current_binary" not in profile
         assert "current_assets" not in profile
 
@@ -387,14 +440,20 @@ def test_release_channel_contract_rejects_swapped_manifest(
     shutil.copytree(release_channel_dist, dist)
     manifest_path = dist / "assets" / CHANNEL / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
-    manifest["assets"]["current"] = "2030.0101.1"
+    profile = next(iter(manifest["profiles"].values()))
+    image = profile["images"][0]
+    asset_version = manifest["version"].split("+assets.", 1)[1]
+    image["artifacts"][0]["url"] = image["artifacts"][0]["url"].replace(
+        f"/assets/releases/{asset_version}/",
+        "/assets/releases/2030.0101.1/",
+    )
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
 
     with _serve_release_channel(dist) as url:
         exit_code, _stdout, stderr = _validator_exit_code(url, capsys=capsys)
 
     assert exit_code == 1
-    assert "/assets/stable/manifest.json assets.current 2030.0101.1" in stderr
+    assert "manifest asset version" in stderr
     assert "does not match profile" in stderr
 
 
@@ -440,13 +499,23 @@ def test_two_generated_release_channels_have_same_machine_contract(
     second_dist = tmp_path / "second-dist"
     _build_release_channel(second_dist)
 
-    first_manifest = (
+    first_manifest = _semantic_manifest_contract(
         release_channel_dist / "assets" / CHANNEL / "manifest.json"
-    ).read_text()
-    second_manifest = (second_dist / "assets" / CHANNEL / "manifest.json").read_text()
+    )
+    second_manifest = _semantic_manifest_contract(
+        second_dist / "assets" / CHANNEL / "manifest.json"
+    )
     assert second_manifest == first_manifest
     assert (second_dist / "_headers").read_text() == (release_channel_dist / "_headers").read_text()
 
     for dist in (release_channel_dist, second_dist):
         with _serve_release_channel(dist) as url:
             assert _validate_release_site(url, capsys=capsys) == 0
+
+
+def _semantic_manifest_contract(path: Path) -> dict[str, Any]:
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    for package in manifest["packages"]:
+        package.pop("bytes", None)
+        package.pop("digest", None)
+    return manifest

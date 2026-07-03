@@ -79,19 +79,20 @@ It verifies that the local checkout has no unpublished commits relative to
 `if: ${{ always() }}` and asserts every dependency result; branch protection or
 active branch rulesets require `pr-gate`; and `release.capsem.org` resolves and
 serves the generated release graph. The public contract is the root
-`channels.json`, the selected stable or nightly manifest record, the profile
-catalog referenced by that manifest, and the profile-owned config, image, ABOM,
-and OBOM files referenced by that profile catalog.
+`channels.json`, one selectable channel manifest URL
+`/assets/<channel>/manifest.json`, package-owned binary inventory, and
+profile-owned config, image, software inventory, ABOM, and OBOM records inside
+that manifest.
 
 The checker verifies every channel record's `version`, `status`, manifest URL,
-SHA-256, BLAKE3, and HMAC; confirms exactly one selectable record is `current`
+SHA-256, and BLAKE3; confirms exactly one selectable record is `current`
 per channel; and rejects revoked records as update targets. It then validates
-the selected manifest's package artifacts, per-binary inventory, host SBOM
-references, and binary attestation references independently from the profile
-catalog. Profile checks validate `min_capsem_version`, config file metadata,
-profile image file URLs, BLAKE3 and SHA-256 hashes, HMAC, byte sizes, software
-inventory, ABOM/OBOM evidence, and profile image attestation predicate URLs from the
-profile-owned records. It also verifies live `Cache-Control` headers: mutable
+the selected manifest's package artifacts, package-owned per-binary inventory,
+host SBOM references, and binary attestation references independently from
+profile records. Profile checks validate `min_capsem_version`, config file
+metadata, profile image file URLs, BLAKE3 and SHA-256 hashes, byte sizes,
+software inventory, ABOM/OBOM evidence, and profile image attestation predicate
+URLs from the profile-owned records. It also verifies live `Cache-Control` headers: mutable
 pointers (`/`, `/channels.json`, and `/assets/<channel>/manifest.json`) must
 stay fresh, while immutable profile release artifacts keep long-lived immutable
 caching. If the local checkout has unpublished commits, publish or merge those
@@ -307,11 +308,9 @@ Cloudflare Pages project serving `release.capsem.org`, attach the
 publishes the generated site, it runs `scripts/check-release-site-contract.py` against
 `https://release.capsem.org`. That Python validator reuses the remote release
 readiness contract, so it checks the index, `channels.json`, selected channel
-manifest records, profile catalogs, evidence documents, BLAKE3/SHA-256/HMAC
-content, attestation references, and cache headers rather than only checking
-that files exist. The workflow also keeps the inline public-domain smoke for
-`https://release.capsem.org/`, `/channels.json`, and the selected channel
-manifest.
+manifest records, package-owned binaries, profile-owned evidence documents,
+BLAKE3/SHA-256 content, attestation references, and cache headers rather than
+only checking that files exist.
 
 Live profile image releases run the same Cloudflare Pages project preflight before
 the matrix builds start. Dry runs skip that API check, but `dry_run=false` must
@@ -325,9 +324,9 @@ call the channel workflow after updating only their own part of the release
 graph. A tag-triggered binary release records package artifacts, host SBOM,
 host attestations, and the per-binary inventory for one channel without
 touching profiles, profile images, or other channels. Every executable inside
-each package must be listed with SHA-256, BLAKE3, HMAC, package provenance, and
+each package must be listed with SHA-256, BLAKE3, package provenance, and
 an SBOM component reference so enterprise allowlists can reason about binaries
-directly. A manual profile image release updates one channel/profile catalog,
+directly. A manual profile image release updates one channel/profile entry,
 profile config files, profile images, software inventory, ABOM/OBOM evidence,
 and matching manifest digests without mutating package metadata, per-binary
 inventory, other profiles, or other channels. Profiles may declare
@@ -380,11 +379,11 @@ state. After Cloudflare deploys, `release-channel.yaml` smoke-checks the public
 `scripts/check-release-site-contract.py`. The checks also
 reject stale public HTML: the human index must show the same generated
 timestamp, channel list, manifest URL, manifest version, package inventory,
-per-binary inventory, profile revision, profile catalog URL, image artifact
-URLs, and evidence URLs as the fetched `channels.json`, selected manifest, and
-profile catalog. It verifies that package file metadata and per-binary metadata
+per-binary inventory, profile revision, image artifact URLs, and evidence URLs
+as the fetched `channels.json` and selected manifest. It verifies that package
+file metadata and per-binary metadata
 match the canonical binary metadata; that profile image file URLs,
-compatibility, BLAKE3, SHA-256, HMAC, and byte sizes match the profile catalog;
+compatibility, BLAKE3, SHA-256, and byte sizes match the profile-owned records;
 and that profile config files, software inventory, ABOM/OBOM evidence, and
 `min_capsem_version` are rendered from the profile JSON rather than invented by
 the site. It resolves published host SBOM and VM OBOM evidence artifacts from

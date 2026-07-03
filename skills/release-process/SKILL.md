@@ -23,7 +23,7 @@ from `assets/manifest.json` into `target/release-channel/`, with the machine
 manifest at `target/release-channel/assets/<channel>/manifest.json`. The stable
 public manifest URL is `https://release.capsem.org/assets/stable/manifest.json`.
 `capsem-admin` owns the machine artifacts only: root `channels.json`,
-per-channel manifest JSON, immutable profile catalogs, `_headers`, and
+per-channel manifest JSON, profile-owned artifacts/evidence, `_headers`, and
 `robots.txt`. Human HTML is built by the `release-site/` Astro app from those
 generated JSON files, using
 `CAPSEM_RELEASE_CHANNEL_DIST=/path/to/target/release-channel pnpm run
@@ -37,8 +37,10 @@ The public graph is hierarchical and signed by reference:
 2. Each channel lists versioned manifest records with exactly one `status`
    enum value: `current`, `supported`, `deprecated`, or `revoked`.
 3. Each manifest record carries `version`, `url`, SHA-256, and BLAKE3
-   digests. Manifest records are retained for auditability; removal means the
-   record is absent from the channel list, not marked with a second status.
+   digests. The only public manifest URL for a channel is
+   `/assets/<channel>/manifest.json`; retained manifest records are audit rows,
+   not alternate fetch URLs. Removal means the record is absent from the channel
+   list, not marked with a second status.
 4. Each manifest lists package artifacts separately from the per-binary
    inventory. Packages are delivery containers such as `.pkg` and `.deb`.
    Binaries are executable files inside those packages, and every binary entry
@@ -52,8 +54,8 @@ The public graph is hierarchical and signed by reference:
    minimum Capsem version when profile behavior requires newer client support.
 
 Do not add a parallel release truth file. The root `channels.json`, selected
-manifest, profile catalog, and profile-owned image/config/evidence files are
-the update contract. Runtime checks consume manifest URLs only:
+manifest, and profile-owned image/config/evidence files are the update
+contract. Runtime checks consume manifest URLs only:
 `CAPSEM_RELEASE_MANIFEST_URL=https://release.capsem.org/assets/stable/manifest.json`
 for stable, and the same variable pointing at
 `https://release.capsem.org/assets/nightly/manifest.json` for nightly until a
@@ -66,9 +68,8 @@ manifest must carry instantiated URLs and every public index/profile reference
 must resolve through the graph. Binary releases remain tag-triggered, update
 only package metadata, per-binary metadata, host SBOM, and host attestations in
 the selected channel manifest, preserve already-published profile images
-instead of copying image blobs into the Pages dist, include the immutable
-profile catalog artifact under `profiles/releases/<revision>/catalog.json`, and
-deploy the channel without rebuilding profile images.
+instead of copying image blobs into the Pages dist, and deploy the channel
+without rebuilding profile images.
 
 The manual VM asset release entrypoint is `.github/workflows/release-assets.yaml`.
 For `dry_run=false`, it first verifies that the configured
@@ -79,7 +80,8 @@ generates `assets/manifest.json`, builds
 `target/release-channel/`, renders the Astro release site from that generated
 channel data, publishes changed profile image blobs to an immutable GitHub
 Release tagged `assets-v<asset-version>` with arch-prefixed `vmlinuz`,
-`initrd.img`, `rootfs.erofs`, and `obom.cdx.json` artifacts, writes instantiated
+`initrd.img`, `rootfs.erofs`, `obom.cdx.json`, and
+`software-inventory.json` artifacts, writes instantiated
 artifact URLs into the manifest,
 uploads the generated release site without VM blobs as the
 `asset-channel-preview` artifact, and calls
@@ -90,7 +92,7 @@ manifest so VM asset releases do not erase package hashes, host SBOM evidence,
 or binary attestation state from `release.capsem.org`. Manual VM asset releases
 do not accept or publish a binary-version override; binary release metadata is
 owned by the tag-triggered binary rail. Live asset releases must publish GitHub build
-provenance attestations for those four arch-prefixed VM asset subjects. In
+provenance attestations for those five arch-prefixed VM asset subjects. In
 dry-run mode the workflow must print the exact `gh release` commands it would
 execute without publishing or attesting, and upload `asset-release-plan` with
 the generated upload script for review when current VM blobs changed. Every run
@@ -119,19 +121,19 @@ Cloudflare deploys, the channel workflow must run
 and smoke-check `https://release.capsem.org/`, `/channels.json`, and
 `/assets/<channel>/manifest.json` through the public custom domain before it
 passes. The Python validator reuses the remote release readiness contract and
-must validate the root channel catalog, selected manifest, profile catalog,
+must validate the root channel catalog, selected manifest,
 profile-owned image/config/evidence documents, package metadata, per-binary
 metadata, BLAKE3/SHA-256 content, attestation references, and cache headers
 rather than only checking that files exist. The smoke must reject stale public
 HTML: the root and channel pages must show the same generated timestamp,
 manifest URL, manifest version, package inventory, per-binary inventory,
-profile revision, profile catalog URL, image artifact URLs, and evidence URLs
+profile revision, image artifact URLs, and evidence URLs
 as the fetched JSON graph. It must also verify every manifest record status and
 digest in `channels.json`, including deprecated and revoked records, so
 metadata-only changes cannot leave the public release history stale. It must
-fetch immutable profile catalogs and profile-owned artifacts and verify BLAKE3,
-SHA-256, byte size, software inventory, config entries, image artifacts,
-ABOM/OBOM evidence, and absence of accidental bare paths. The smoke must
+fetch profile-owned artifacts and verify BLAKE3, SHA-256, byte size, software
+inventory, config entries, image artifacts, ABOM/OBOM evidence, and absence of
+accidental bare paths. The smoke must
 validate attestation subjects and predicate URLs after the evidence document
 shape passes.
 Host SBOM evidence is incomplete unless
@@ -537,7 +539,7 @@ Binary GitHub releases publish host packages and the canonical host SBOM
 artifact, `capsem-sbom.spdx.json`; the SBOM attestation subject list must cover
 both `.pkg` and `.deb` package artifacts, and the release summary must say
 `SBOM attested (SPDX 2.3, pkg + deb)`. VM asset manifests, blobs, OBOM evidence,
-profile catalogs, channel manifests, and the root channel catalog live on
+profile-owned records, channel manifests, and the root channel list live on
 `release.capsem.org`; do not verify or publish VM `manifest.json` through the
 tag release. Before recording binary metadata in the release channel, the tag
 workflow preflights that the downloaded release artifacts contain

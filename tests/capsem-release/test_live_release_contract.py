@@ -55,12 +55,12 @@ def test_local_multichannel_dist_contract(tmp_path: Path) -> None:
             "revoked",
         ]
         current = records[0]
+        assert current["url"] == f"/assets/{channel}/manifest.json"
         assert (dist / current["url"].lstrip("/")).is_file()
-        catalog_source = channels["channels"][channel]["profile_catalog"]["source"]
-        assert (dist / catalog_source.lstrip("/")).is_file()
+        assert "profile_catalog" not in channels["channels"][channel]
         assert (dist / "channels" / channel / "index.html").is_file()
-        catalog = json.loads((dist / catalog_source.lstrip("/")).read_text(encoding="utf-8"))
-        assert sorted(profile["id"] for profile in catalog["profiles"]) == sorted(PROFILE_IDS)
+        manifest = json.loads((dist / current["url"].lstrip("/")).read_text(encoding="utf-8"))
+        assert sorted(manifest["profiles"]) == sorted(PROFILE_IDS)
         for profile_id in PROFILE_IDS:
             assert (
                 dist / "channels" / channel / "profiles" / profile_id / "index.html"
@@ -136,6 +136,8 @@ def test_live_channels_json_and_manifests_verify() -> None:
         assert hashlib.sha256(manifest_body).hexdigest() == current["digest"]["sha256"]
         manifest = json.loads(manifest_body)
         assert manifest["version"] == current["version"]
+        assert current["url"] == f"/assets/{channel}/manifest.json"
+        assert "profile_catalog" not in channels["channels"][channel]
         assert manifest["packages"]
         assert "binaries" not in manifest
         assert manifest["packages"][0]["binaries"]
@@ -177,22 +179,8 @@ def _materialize_graph_dist(graph: dict[str, Any], dist: Path) -> None:
         current["digest"]["blake3"] = _json_blake3(manifest)
         _write_json(dist / current["url"].lstrip("/"), manifest)
 
-        catalog = {
-            "schema": "capsem.profile_catalog.v1",
-            "revision": f"profiles-{channel}-{current['version']}",
-            "profiles": list(manifest["profiles"].values()),
-        }
-        catalog_source = (
-            f"/profiles/releases/{catalog['revision']}/catalog.json"
-        )
-        catalog_hash = _json_blake3(catalog)
-        channel_record["profile_catalog"] = {
-            "source": catalog_source,
-            "revision": catalog["revision"],
-            "hash": catalog_hash,
-        }
-        _write_json(dist / catalog_source.lstrip("/"), catalog)
-        _materialize_profile_files(dist, catalog["profiles"])
+        channel_record.pop("profile_catalog", None)
+        _materialize_profile_files(dist, list(manifest["profiles"].values()))
 
     _write_json(dist / "channels.json", channels)
     (dist / "_headers").write_text(
@@ -202,7 +190,7 @@ def _materialize_graph_dist(graph: dict[str, Any], dist: Path) -> None:
                 "  Cache-Control: no-cache, must-revalidate",
                 "/channels.json",
                 "  Cache-Control: no-cache, must-revalidate",
-                "/manifests/*",
+                "/assets/*/manifest.json",
                 "  Cache-Control: no-cache, must-revalidate",
                 "/profiles/releases/*",
                 "  Cache-Control: public, max-age=31536000, immutable",

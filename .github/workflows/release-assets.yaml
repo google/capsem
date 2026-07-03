@@ -214,7 +214,7 @@ jobs:
           for arch in arm64 x86_64; do
             arch_dir="assets/$arch"
             test -d "$arch_dir"
-            for logical_name in vmlinuz initrd.img rootfs.erofs obom.cdx.json; do
+            for logical_name in vmlinuz initrd.img rootfs.erofs obom.cdx.json software-inventory.json; do
               src="$arch_dir/$logical_name"
               test -f "$src"
               cp "$src" "$RELEASE_DIR/$arch-$logical_name"
@@ -272,6 +272,7 @@ jobs:
             target/asset-release/assets-v*/*-initrd.img
             target/asset-release/assets-v*/*-rootfs.erofs
             target/asset-release/assets-v*/*-obom.cdx.json
+            target/asset-release/assets-v*/*-software-inventory.json
 
       - uses: actions/upload-artifact@v7
         with:

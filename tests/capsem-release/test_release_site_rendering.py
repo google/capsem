@@ -81,9 +81,33 @@ def test_channel_page_lists_packages_and_binaries() -> None:
     assert "Packages" in stable
     assert "Capsem Binaries" in stable
     assert "Profile References" in stable
+    assert "Profile Catalog" not in stable
+    assert "/profiles/releases/" not in stable
+    assert "/assets/stable/manifest.json" in stable
+    assert "/manifests/stable/" not in stable
     assert "Capsem-1.4.0.pkg" in stable
+    assert "Capsem_1.4.0_arm64.deb" in stable
     assert "macos_pkg" in stable
+    assert "debian_package" in stable
+    assert "capsem-app" in stable
+    assert "capsem-tray" in stable
     assert "SPDXRef-File-capsem" in stable
+    stable_package_section = stable.split("Capsem Packages", maxsplit=1)[1].split(
+        "Capsem Binaries",
+        maxsplit=1,
+    )[0]
+    stable_binary_section = stable.split("Capsem Binaries", maxsplit=1)[1].split(
+        "Profile References",
+        maxsplit=1,
+    )[0]
+    stable_sbom = _fixture()["manifests"]["stable"]["1.4.0"]["packages"][0][
+        "evidence"
+    ][0]
+    assert stable_sbom["url"] not in stable_package_section
+    assert stable_sbom["digest"]["sha256"] not in stable_package_section
+    assert stable_sbom["url"] in stable_binary_section
+    assert stable_sbom["digest"]["sha256"] in stable_binary_section
+    assert stable_sbom["digest"]["blake3"] in stable_binary_section
     assert _fixture()["manifests"]["stable"]["1.4.0"]["packages"][0]["binaries"][0][
         "digest"
     ]["sha256"] in stable
@@ -94,6 +118,9 @@ def test_channel_page_lists_packages_and_binaries() -> None:
 
     assert "1.5.0-nightly.20260702" in nightly
     assert "Capsem-1.5.0-nightly.20260702.pkg" in nightly
+    assert "Capsem_1.5.0-nightly.20260702_arm64.deb" in nightly
+    assert "/assets/nightly/manifest.json" in nightly
+    assert "/manifests/nightly/" not in nightly
     assert _fixture()["manifests"]["nightly"]["1.5.0-nightly.20260702"]["packages"][0][
         "binaries"
     ][0]["digest"]["sha256"] in nightly
@@ -101,6 +128,57 @@ def test_channel_page_lists_packages_and_binaries() -> None:
     assert "hmac" not in nightly
     assert "co-work" in nightly
     assert "code" in nightly
+
+
+def test_channel_page_has_one_manifest_url() -> None:
+    build_release_site_from_fixture()
+
+    for channel in ("stable", "nightly"):
+        page = (
+            PROJECT_ROOT / "release-site" / "dist" / "channels" / channel / "index.html"
+        ).read_text(encoding="utf-8")
+        canonical_url = f"/assets/{channel}/manifest.json"
+
+        assert canonical_url in page
+        assert f"/manifests/{channel}/" not in page
+        assert "/profiles/releases/" not in page
+        assert "catalog.json" not in page
+        assert "profile_catalog" not in page
+
+
+def test_package_pages_show_package_owned_binaries() -> None:
+    build_release_site_from_fixture()
+
+    graph = _fixture()
+    package = graph["manifests"]["stable"]["1.4.0"]["packages"][0]
+    package_page_path = (
+        PROJECT_ROOT
+        / "release-site"
+        / "dist"
+        / "channels"
+        / "stable"
+        / "packages"
+        / package["id"]
+        / "index.html"
+    )
+    assert package_page_path.is_file()
+    page = package_page_path.read_text(encoding="utf-8")
+
+    assert "Capsem Package" in page
+    assert package["name"] in page
+    assert package["kind"] in page
+    assert package["digest"]["sha256"] in page
+    assert package["digest"]["blake3"] in page
+    assert "Contained Binaries" in page
+    assert "HMAC" not in page
+    assert "hmac" not in page
+    for binary in package["binaries"]:
+        assert binary["name"] in page
+        assert binary["version"] in page
+        assert binary["installed_path"] in page
+        assert binary["digest"]["sha256"] in page
+        assert binary["digest"]["blake3"] in page
+        assert binary["sbom_component_ref"] in page
 
 
 def test_channel_page_has_no_detached_profile_image_evidence() -> None:

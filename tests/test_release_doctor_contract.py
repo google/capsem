@@ -963,7 +963,13 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     assert "tests/capsem-release/test_binary_lane_gate.py" in workflow
     assert "tests/capsem-release/test_release_lane_diff_policy.py" in workflow
     assert "CLOUDFLARE_" not in workflow
-    for logical_name in ("vmlinuz", "initrd.img", "rootfs.erofs", "obom.cdx.json"):
+    for logical_name in (
+        "vmlinuz",
+        "initrd.img",
+        "rootfs.erofs",
+        "obom.cdx.json",
+        "software-inventory.json",
+    ):
         assert f"release-artifacts/{logical_name}" not in create_release
         assert f"release-artifacts/*{logical_name}" not in create_release
     assert "release-artifacts/*.pkg" in create_release
@@ -1026,7 +1032,13 @@ def test_binary_release_staging_dry_run_is_separate_from_tag_release() -> None:
     assert "just build-rootfs" not in workflow
     assert "cargo run -p capsem-admin -- manifest generate assets" not in workflow
     assert "build-assets:" not in workflow
-    for logical_name in ("vmlinuz", "initrd.img", "rootfs.erofs", "obom.cdx.json"):
+    for logical_name in (
+        "vmlinuz",
+        "initrd.img",
+        "rootfs.erofs",
+        "obom.cdx.json",
+        "software-inventory.json",
+    ):
         assert f"release-artifacts/{logical_name}" not in workflow
         assert f"release-artifacts/*{logical_name}" not in workflow
 

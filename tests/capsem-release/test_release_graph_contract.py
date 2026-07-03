@@ -95,7 +95,14 @@ def test_fixture_has_stable_and_nightly() -> None:
     assert stable["packages"][0]["name"] == "Capsem-1.4.0.pkg"
     assert nightly["packages"][0]["name"] == "Capsem-1.5.0-nightly.20260702.pkg"
     assert "binaries" not in stable
-    assert stable["packages"][0]["binaries"][0]["sbom_component_ref"] == "SPDXRef-File-capsem"
+    stable_binary_refs = {
+        binary["name"]: binary["sbom_component_ref"]
+        for binary in stable["packages"][0]["binaries"]
+    }
+    assert stable_binary_refs == {
+        "capsem-app": "SPDXRef-File-capsem-app",
+        "capsem-tray": "SPDXRef-File-capsem-tray",
+    }
     assert nightly["profiles"]["co-work"]["revision"].endswith("-nightly")
     assert stable["profiles"]["co-work"]["revision"].endswith("-stable")
     assert nightly["profiles"]["co-work"]["min_capsem_version"] == "1.4.0"

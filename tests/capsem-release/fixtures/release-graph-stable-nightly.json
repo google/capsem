@@ -9,7 +9,7 @@
             "sha256": "989d8dca04cdefeaef28c1e50d505a4b688517472e18f6ea2feb0e485444d3e8"
           },
           "status": "current",
-          "url": "/manifests/nightly/1.5.0-nightly.20260702/manifest.json",
+          "url": "/assets/nightly/manifest.json",
           "version": "1.5.0-nightly.20260702"
         },
         {
@@ -18,7 +18,7 @@
             "sha256": "01b9ed9d19c4163cd59a448ed0e609517c4c29a2a63e14e906498372266338fd"
           },
           "status": "supported",
-          "url": "/manifests/nightly/1.5.0-nightly.20260701/manifest.json",
+          "url": "/assets/nightly/manifest.json",
           "version": "1.5.0-nightly.20260701"
         },
         {
@@ -27,7 +27,7 @@
             "sha256": "2815008c40f54f017e853f8b059b59eca1acdb668b3ff0b1dd925589373d6e56"
           },
           "status": "deprecated",
-          "url": "/manifests/nightly/1.5.0-nightly.20260630/manifest.json",
+          "url": "/assets/nightly/manifest.json",
           "version": "1.5.0-nightly.20260630"
         },
         {
@@ -36,7 +36,7 @@
             "sha256": "85eed34b27888c89466883fbf752402bf6390928f1067484b5550c58907d3ccb"
           },
           "status": "revoked",
-          "url": "/manifests/nightly/1.5.0-nightly.bad/manifest.json",
+          "url": "/assets/nightly/manifest.json",
           "version": "1.5.0-nightly.bad"
         }
       ]
@@ -50,7 +50,7 @@
             "sha256": "847650f3a905645c4e2be84eb2a9da3b9d51778597f44e4f1bc42a1f609f3b4b"
           },
           "status": "current",
-          "url": "/manifests/stable/1.4.0/manifest.json",
+          "url": "/assets/stable/manifest.json",
           "version": "1.4.0"
         },
         {
@@ -59,7 +59,7 @@
             "sha256": "69601963eb31b37fa9b046eb8c398401b2cc215b566dfd6bfd1b45fe5d90dc71"
           },
           "status": "supported",
-          "url": "/manifests/stable/1.3.0/manifest.json",
+          "url": "/assets/stable/manifest.json",
           "version": "1.3.0"
         },
         {
@@ -68,7 +68,7 @@
             "sha256": "b112201b459365aa949db0bc4dd397642ea9e9304f7cc31397c9395be4f7b354"
           },
           "status": "deprecated",
-          "url": "/manifests/stable/1.2.0/manifest.json",
+          "url": "/assets/stable/manifest.json",
           "version": "1.2.0"
         },
         {
@@ -77,7 +77,7 @@
             "sha256": "2f4066251078c0d6f1770013d87b66bc8f2579c3407de6ee5d507352dc185289"
           },
           "status": "revoked",
-          "url": "/manifests/stable/1.1.0-bad/manifest.json",
+          "url": "/assets/stable/manifest.json",
           "version": "1.1.0-bad"
         }
       ]
@@ -92,42 +92,113 @@
             "binaries": [
               {
                 "architecture": "arm64",
-                "bytes": 59,
+                "bytes": 76,
                 "digest": {
-                  "blake3": "5b0e82ede33c0ee6f272446c2fc197282a2d7dde0bd627e1337fbdb03ca0da59",
-                  "sha256": "353c1a39dadbbabd400472b81cb44dec17bd1a999eabdddf370fab54874f045e"
+                  "blake3": "fa001cb4f021da5517871c1b807ef8f2ca074235133cfa9d14e9db49753f1731",
+                  "sha256": "bfa1cebfd15edfd44daaa4171dca9db235431ed3d4ecefca0b235fd963b94ea5"
                 },
-                "installed_path": "/usr/local/bin/capsem",
-                "name": "capsem",
+                "installed_path": "/usr/local/bin/capsem-app",
+                "name": "capsem-app",
                 "platform": "macos",
-                "sbom_component_ref": "SPDXRef-File-capsem",
+                "sbom_component_ref": "SPDXRef-File-capsem-app",
+                "status": "current",
+                "version": "1.5.0-nightly.20260702"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 77,
+                "digest": {
+                  "blake3": "3338948cda07301c6601756a5f1ebadf9cbf8e36befa413af32db2071745d0f8",
+                  "sha256": "6763c1ddc563b1ac28fddeb816f7e3c621ff8f97b37953d64a013ff9c7791c60"
+                },
+                "installed_path": "/usr/local/bin/capsem-tray",
+                "name": "capsem-tray",
+                "platform": "macos",
+                "sbom_component_ref": "SPDXRef-File-capsem-tray",
                 "status": "current",
                 "version": "1.5.0-nightly.20260702"
               }
             ],
-            "bytes": 72,
+            "bytes": 73,
             "digest": {
-              "blake3": "c18400c20bc84c6a99d83fb2fe685f86edfd27add53e72be96138c72625e4fc4",
-              "sha256": "61cafa169c617c72cab3c93365ab9c3cc732e8bb8d8597690f0309dd16472df2"
+              "blake3": "4e1dbac103f87515339b40568f831e8128bf522620519b578548e6461c357963",
+              "sha256": "55f6a3010dc3dde2dca4c1f7419a2c84bca1421139738487f4d54ce77b27ee13"
             },
             "evidence": [
               {
-                "bytes": 86,
+                "bytes": 70,
                 "digest": {
-                  "blake3": "2d2020f21b2851f3960e8c91a8a8da6bc71bf888a340ac5f53ec7c3cae0dab7d",
-                  "sha256": "409ed630bc80d8de7aaed6b1ca019bb8914a03cc2180315964ed987b664b7823"
+                  "blake3": "ac0480b6e893ffad8ae3536702f469f445bdee7fc6076bec61f6d89af8ff6a74",
+                  "sha256": "7a4ba4b567815afb2f8472b089c581fa28e34140a26dce7ad1ba273076477d10"
                 },
                 "kind": "sbom",
                 "status": "current",
                 "url": "/packages/nightly/1.5.0-nightly.20260702/capsem-sbom.spdx.json"
               }
             ],
-            "id": "nightly-1.5.0-nightly.20260702-0",
+            "id": "capsem-1-5-0-nightly-20260702-pkg",
             "kind": "macos_pkg",
             "name": "Capsem-1.5.0-nightly.20260702.pkg",
             "platform": "macos",
             "status": "current",
             "url": "/packages/nightly/1.5.0-nightly.20260702/Capsem-1.5.0-nightly.20260702.pkg",
+            "version": "1.5.0-nightly.20260702"
+          },
+          {
+            "architecture": "arm64",
+            "binaries": [
+              {
+                "architecture": "arm64",
+                "bytes": 82,
+                "digest": {
+                  "blake3": "4b7a1b2558cc0392b08eaa9af9c090c5a30e4bf0ee68c140e1b22f3ea3652914",
+                  "sha256": "b83aeef68e948209eb9106987ad6c01b426e30655a160ac5ac17cfac25be7ea4"
+                },
+                "installed_path": "/usr/bin/capsem-app",
+                "name": "capsem-app",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-app",
+                "status": "current",
+                "version": "1.5.0-nightly.20260702"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 83,
+                "digest": {
+                  "blake3": "1b82e88bb95359658b10ce8189fa5ddcdcf6ba5b9cd904172ddf7dd83c3830c9",
+                  "sha256": "b9e6b6c64f45479633f63f6719d111856580cd9f993f5b66e59a285c33c100e4"
+                },
+                "installed_path": "/usr/bin/capsem-tray",
+                "name": "capsem-tray",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-tray",
+                "status": "current",
+                "version": "1.5.0-nightly.20260702"
+              }
+            ],
+            "bytes": 79,
+            "digest": {
+              "blake3": "02bf3ec0269ce25d8d8b93b5a942a2339172f0d9f7b17e38340d4230225aea63",
+              "sha256": "a1c94f8518958d8e4d47481b089923b7e42a3a1f14c6821526324be4b673a3aa"
+            },
+            "evidence": [
+              {
+                "bytes": 76,
+                "digest": {
+                  "blake3": "a7b4fa77e599c08314f53ab104ca411bdbae9eb826f25b33280bfd2d0a997e77",
+                  "sha256": "38ea3f4360d8e9aabf49dd3e1c5970da68656cb52d94aa5c0b98d52eef2c0101"
+                },
+                "kind": "sbom",
+                "status": "current",
+                "url": "/packages/nightly/1.5.0-nightly.20260702/capsem-sbom.spdx.json"
+              }
+            ],
+            "id": "capsem-1-5-0-nightly-20260702-arm64-deb",
+            "kind": "debian_package",
+            "name": "Capsem_1.5.0-nightly.20260702_arm64.deb",
+            "platform": "linux",
+            "status": "current",
+            "url": "/packages/nightly/1.5.0-nightly.20260702/Capsem_1.5.0-nightly.20260702_arm64.deb",
             "version": "1.5.0-nightly.20260702"
           }
         ],
@@ -305,6 +376,15 @@
                     "kind": "sbom",
                     "status": "current",
                     "url": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/sbom.cdx.json"
+                  },
+                  {
+                    "bytes": 331,
+                    "digest": {
+                      "blake3": "cabc93055dce11fd4bcd0de5718e8f17cf01f5937bf26412ab7ae3a96489b951",
+                      "sha256": "ee5848f99252b9a1f73c66d30d559630ea9b0170cd1658b8fd1f66a88e613b27"
+                    },
+                    "kind": "software_inventory",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/software-inventory.json"
                   }
                 ]
               },
@@ -365,6 +445,15 @@
                     "kind": "sbom",
                     "status": "current",
                     "url": "/profiles/releases/2026.07.02.1-nightly/co-work/x86_64/sbom.cdx.json"
+                  },
+                  {
+                    "bytes": 332,
+                    "digest": {
+                      "blake3": "514e46bebac4525de9d8fe254a9de14e058d3fa47fc06511cc8f2c00fedf8280",
+                      "sha256": "4f43d25985eafe19a36a19ea501535634baba2d340e20d4b3fd8972049acebff"
+                    },
+                    "kind": "software_inventory",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/x86_64/software-inventory.json"
                   }
                 ]
               }
@@ -376,10 +465,10 @@
               {
                 "architecture": "all",
                 "digest": {
-                  "blake3": "8f6cbd9470f0fbbf098c0ac98ef06a8402ddc273f0b8734a26e24764c979ddd4",
-                  "sha256": "391c5e8b7e70629454e38ea592bd5915cc14a58a96e9996122e95e2adc40311d"
+                  "blake3": "174b62300ad519f9600a3244a3db7fc4ea0746024c0783089cf69766e86afc8c",
+                  "sha256": "bb9f466883e337c4770f85a7353f6e9949515a79577a9858135133db2452f2e1"
                 },
-                "evidence": "/profiles/releases/2026.07.02.1-nightly/co-work/apt-packages.txt",
+                "evidence": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/software-inventory.json",
                 "name": "python",
                 "source": "apt",
                 "version": "3.12.11"
@@ -387,10 +476,10 @@
               {
                 "architecture": "all",
                 "digest": {
-                  "blake3": "88fafc7e38dbcf7a8ae7ed63be5f9a7f4db8376b9be4d89cabcae8d46a76004e",
-                  "sha256": "486391537942d775bf956d83ede1294c7a0bfabd34772850faa2ba9169702e12"
+                  "blake3": "f6ed57221b072499cfac2bd9a23ddf8c9242a567bab5ec0b9fe83db179779d96",
+                  "sha256": "17f07d2944ec63dedd8f81d8b4fff52407ee7c5f23756c1464dcb88b1258279c"
                 },
-                "evidence": "/profiles/releases/2026.07.02.1-nightly/co-work/npm-packages.txt",
+                "evidence": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/software-inventory.json",
                 "name": "node",
                 "source": "npm",
                 "version": "24.2.0"
@@ -572,6 +661,15 @@
                     "kind": "sbom",
                     "status": "current",
                     "url": "/profiles/releases/2026.07.02.1-nightly/code/arm64/sbom.cdx.json"
+                  },
+                  {
+                    "bytes": 331,
+                    "digest": {
+                      "blake3": "cabc93055dce11fd4bcd0de5718e8f17cf01f5937bf26412ab7ae3a96489b951",
+                      "sha256": "ee5848f99252b9a1f73c66d30d559630ea9b0170cd1658b8fd1f66a88e613b27"
+                    },
+                    "kind": "software_inventory",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/code/arm64/software-inventory.json"
                   }
                 ]
               },
@@ -632,6 +730,15 @@
                     "kind": "sbom",
                     "status": "current",
                     "url": "/profiles/releases/2026.07.02.1-nightly/code/x86_64/sbom.cdx.json"
+                  },
+                  {
+                    "bytes": 332,
+                    "digest": {
+                      "blake3": "514e46bebac4525de9d8fe254a9de14e058d3fa47fc06511cc8f2c00fedf8280",
+                      "sha256": "4f43d25985eafe19a36a19ea501535634baba2d340e20d4b3fd8972049acebff"
+                    },
+                    "kind": "software_inventory",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/code/x86_64/software-inventory.json"
                   }
                 ]
               }
@@ -643,10 +750,10 @@
               {
                 "architecture": "all",
                 "digest": {
-                  "blake3": "754682eb1ce6590e682a9c6979545df69f1e32a8a2287dafb90035603f1acdc5",
-                  "sha256": "3b433b68f09ce1f95a0d6084c42c096a11f4eec5730fe645b12f74dbc4e9f948"
+                  "blake3": "d52a0678153df1602276d498999229dd1ac655f7c8c38a260ee4bc2a9503bbba",
+                  "sha256": "d19d6fe1e208360a51dfb0670db5c85f9d0f179f47ab6f02c8fdc7970d5e124f"
                 },
-                "evidence": "/profiles/releases/2026.07.02.1-nightly/code/apt-packages.txt",
+                "evidence": "/profiles/releases/2026.07.02.1-nightly/code/arm64/software-inventory.json",
                 "name": "python",
                 "source": "apt",
                 "version": "3.12.11"
@@ -654,10 +761,10 @@
               {
                 "architecture": "all",
                 "digest": {
-                  "blake3": "2b30ecb87e42b0860db580864818e0aa963fb1bc850820f8e779d62c40d41393",
-                  "sha256": "4f51d2ccbef9576fa88adbe94f6183690671e841bf530a02510ea21e360c6466"
+                  "blake3": "d89a63b0defa4fde466ba64a46b006c13ede1f9cf1698564c59e8be0ee7c2baa",
+                  "sha256": "ea0b0ba271e13d7c979c73b2d8243d1434450b75012c4c7b7f243bed84f6d608"
                 },
-                "evidence": "/profiles/releases/2026.07.02.1-nightly/code/npm-packages.txt",
+                "evidence": "/profiles/releases/2026.07.02.1-nightly/code/arm64/software-inventory.json",
                 "name": "node",
                 "source": "npm",
                 "version": "24.2.0"
@@ -681,40 +788,111 @@
                 "architecture": "arm64",
                 "bytes": 41,
                 "digest": {
-                  "blake3": "cd4c92fcbc18010962a9e10a6a2712d34111f5cc78c09bc809258d8f00b302e9",
-                  "sha256": "b94d39f9c2f59d02ec0c82583170346a7d7f5e5c8d4186036047b83438974d72"
+                  "blake3": "9a4df96ae5151f7f32e3fb1fe96dc4edb7ac42330033ad2abcab4214655b69fc",
+                  "sha256": "ac6c2173d15408410bd308b4c086913477426a7c08611e23f90312fccbe389be"
                 },
-                "installed_path": "/usr/local/bin/capsem",
-                "name": "capsem",
+                "installed_path": "/usr/local/bin/capsem-app",
+                "name": "capsem-app",
                 "platform": "macos",
-                "sbom_component_ref": "SPDXRef-File-capsem",
+                "sbom_component_ref": "SPDXRef-File-capsem-app",
+                "status": "current",
+                "version": "1.4.0"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 42,
+                "digest": {
+                  "blake3": "c6e27f7caa17d3e97fd78eb2803c6ff347af29426ea8f68442522e671f5fbeca",
+                  "sha256": "333f1ddcb5176a7356bab0e4806dd33edf231aa27d57a803fef85d2847b49a03"
+                },
+                "installed_path": "/usr/local/bin/capsem-tray",
+                "name": "capsem-tray",
+                "platform": "macos",
+                "sbom_component_ref": "SPDXRef-File-capsem-tray",
                 "status": "current",
                 "version": "1.4.0"
               }
             ],
-            "bytes": 37,
+            "bytes": 38,
             "digest": {
-              "blake3": "cd5845a646e9cee690731bb657b2f75b4436607632779b1443464954c3798efa",
-              "sha256": "762db9baa59f9af137a67d8c309375ab3e33a7accd5e3db39f6670f1abdd97c3"
+              "blake3": "d83e04895e9856c6f41ebb8000f7c91235d572e3984f7646ba5431956d7ee36d",
+              "sha256": "ac7d2695120ef47b2d7d1e1f37c7480962579bfa695142d728928c64fdd7bbf9"
             },
             "evidence": [
               {
-                "bytes": 51,
+                "bytes": 35,
                 "digest": {
-                  "blake3": "fe14c522ea34eb18ed8b5a6da531e13f8165cfae89e1578816e27fa5282ad36f",
-                  "sha256": "e19eff9dd9d7d631d6f18034078a5ddf39c555933d5fe2eb05e4543099cc11e3"
+                  "blake3": "848c077e26b51d54fd37551cd0b87c0a37c81d4c9c051dfbe1a9363a55bdf89c",
+                  "sha256": "8964ed16432e77c680f98c8ead18b0986efd625cb58a75111ae1870a7513fd53"
                 },
                 "kind": "sbom",
                 "status": "current",
                 "url": "/packages/stable/1.4.0/capsem-sbom.spdx.json"
               }
             ],
-            "id": "stable-1.4.0-0",
+            "id": "capsem-1-4-0-pkg",
             "kind": "macos_pkg",
             "name": "Capsem-1.4.0.pkg",
             "platform": "macos",
             "status": "current",
             "url": "/packages/stable/1.4.0/Capsem-1.4.0.pkg",
+            "version": "1.4.0"
+          },
+          {
+            "architecture": "arm64",
+            "binaries": [
+              {
+                "architecture": "arm64",
+                "bytes": 47,
+                "digest": {
+                  "blake3": "01257ba39816235d180921fddca3ff17e750e9ffa7ddc5cdffcce1c5b2b5d070",
+                  "sha256": "46b940d212757ef98878e0f2f64c823dcebb366c879d07d53b0155f06b2e1d49"
+                },
+                "installed_path": "/usr/bin/capsem-app",
+                "name": "capsem-app",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-app",
+                "status": "current",
+                "version": "1.4.0"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 48,
+                "digest": {
+                  "blake3": "146541b6c2ace3fccf705d205c79806ae9c573b521f05c5187ae3caaa7329479",
+                  "sha256": "1e5b7939995096244c102530e52ae32acb60f64eedb5db21843676a12abcff30"
+                },
+                "installed_path": "/usr/bin/capsem-tray",
+                "name": "capsem-tray",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-tray",
+                "status": "current",
+                "version": "1.4.0"
+              }
+            ],
+            "bytes": 44,
+            "digest": {
+              "blake3": "27b2147fa7527123e4500a9c778362f46e0ecce9d388249cfb049cd85d8b4a63",
+              "sha256": "d66880ed91650f7b5328c07f7db70b1820ee65c4ea002a2ccf0b9b517e0262af"
+            },
+            "evidence": [
+              {
+                "bytes": 41,
+                "digest": {
+                  "blake3": "4c1604ea0b02d1bb295e636fa536dc09b21c54ba32b058a03d2484d4898e3078",
+                  "sha256": "b96c3d9a280880c8a064d168e2f3e373bb63367fbf9f9f1abb4c12d717bb7d4c"
+                },
+                "kind": "sbom",
+                "status": "current",
+                "url": "/packages/stable/1.4.0/capsem-sbom.spdx.json"
+              }
+            ],
+            "id": "capsem-1-4-0-arm64-deb",
+            "kind": "debian_package",
+            "name": "Capsem_1.4.0_arm64.deb",
+            "platform": "linux",
+            "status": "current",
+            "url": "/packages/stable/1.4.0/Capsem_1.4.0_arm64.deb",
             "version": "1.4.0"
           }
         ],
@@ -892,6 +1070,15 @@
                     "kind": "sbom",
                     "status": "current",
                     "url": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/sbom.cdx.json"
+                  },
+                  {
+                    "bytes": 331,
+                    "digest": {
+                      "blake3": "cabc93055dce11fd4bcd0de5718e8f17cf01f5937bf26412ab7ae3a96489b951",
+                      "sha256": "ee5848f99252b9a1f73c66d30d559630ea9b0170cd1658b8fd1f66a88e613b27"
+                    },
+                    "kind": "software_inventory",
+                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/software-inventory.json"
                   }
                 ]
               },
@@ -952,6 +1139,15 @@
                     "kind": "sbom",
                     "status": "current",
                     "url": "/profiles/releases/2026.07.02.1-stable/co-work/x86_64/sbom.cdx.json"
+                  },
+                  {
+                    "bytes": 332,
+                    "digest": {
+                      "blake3": "514e46bebac4525de9d8fe254a9de14e058d3fa47fc06511cc8f2c00fedf8280",
+                      "sha256": "4f43d25985eafe19a36a19ea501535634baba2d340e20d4b3fd8972049acebff"
+                    },
+                    "kind": "software_inventory",
+                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/x86_64/software-inventory.json"
                   }
                 ]
               }
@@ -963,10 +1159,10 @@
               {
                 "architecture": "all",
                 "digest": {
-                  "blake3": "8dc1da925d440aad0c44cf85f58b6ed263566b48096df61dc37f4cb20585f2f5",
-                  "sha256": "e3115c6b7623078995a68dbedf947f1ccaa05cd7f3e7c8cc0d21abb07c1b6b6e"
+                  "blake3": "eb2600045d9b53bc4b5c02732c542661f07532a778cd3094d9305deb3e883971",
+                  "sha256": "42346cb6e9f1147e63c42d8ecebe33eee21b12d4d2c883ac66cb1943a76b39fa"
                 },
-                "evidence": "/profiles/releases/2026.07.02.1-stable/co-work/apt-packages.txt",
+                "evidence": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/software-inventory.json",
                 "name": "python",
                 "source": "apt",
                 "version": "3.12.11"
@@ -974,10 +1170,10 @@
               {
                 "architecture": "all",
                 "digest": {
-                  "blake3": "a563f187f9df148ab0920a5f1afc8e55301371fe230620f52cee07924cf04358",
-                  "sha256": "0682f4af000ddf18eeada4aa54a6fb99bb14feae0ceb03ec10e60ac03bd123e8"
+                  "blake3": "d54c4c5889bab1bda3bb7e0d57cb05b091e7f565121ee401f3640f2ce815f68c",
+                  "sha256": "76f4214fe07e62f5e043fb3501ab0a6f74757af1d0558f4aafcb55f1782fcd59"
                 },
-                "evidence": "/profiles/releases/2026.07.02.1-stable/co-work/npm-packages.txt",
+                "evidence": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/software-inventory.json",
                 "name": "node",
                 "source": "npm",
                 "version": "24.2.0"
@@ -1159,6 +1355,15 @@
                     "kind": "sbom",
                     "status": "current",
                     "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/sbom.cdx.json"
+                  },
+                  {
+                    "bytes": 331,
+                    "digest": {
+                      "blake3": "cabc93055dce11fd4bcd0de5718e8f17cf01f5937bf26412ab7ae3a96489b951",
+                      "sha256": "ee5848f99252b9a1f73c66d30d559630ea9b0170cd1658b8fd1f66a88e613b27"
+                    },
+                    "kind": "software_inventory",
+                    "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/software-inventory.json"
                   }
                 ]
               },
@@ -1219,6 +1424,15 @@
                     "kind": "sbom",
                     "status": "current",
                     "url": "/profiles/releases/2026.07.02.1-stable/code/x86_64/sbom.cdx.json"
+                  },
+                  {
+                    "bytes": 332,
+                    "digest": {
+                      "blake3": "514e46bebac4525de9d8fe254a9de14e058d3fa47fc06511cc8f2c00fedf8280",
+                      "sha256": "4f43d25985eafe19a36a19ea501535634baba2d340e20d4b3fd8972049acebff"
+                    },
+                    "kind": "software_inventory",
+                    "url": "/profiles/releases/2026.07.02.1-stable/code/x86_64/software-inventory.json"
                   }
                 ]
               }
@@ -1230,10 +1444,10 @@
               {
                 "architecture": "all",
                 "digest": {
-                  "blake3": "c2693e3f2ae301385bfa57589ade44a274986f33d36160b732d3234e90e62c6f",
-                  "sha256": "af9302acefe73decf15b438a27256f2fc0868f0b12d93603e98be51cb8faddec"
+                  "blake3": "a044118b12ab7ef207e99804bb7b396a7cda8e3019e4f3ae83ffa67c9cdf4d18",
+                  "sha256": "53d3952f98e6bc230e4436e19cf67566aa52be78c7c1f266374722dba835963c"
                 },
-                "evidence": "/profiles/releases/2026.07.02.1-stable/code/apt-packages.txt",
+                "evidence": "/profiles/releases/2026.07.02.1-stable/code/arm64/software-inventory.json",
                 "name": "python",
                 "source": "apt",
                 "version": "3.12.11"
@@ -1241,10 +1455,10 @@
               {
                 "architecture": "all",
                 "digest": {
-                  "blake3": "af85c8e8a18b46051f32a209111fb889621813fc204e0d420399f6d304a9beeb",
-                  "sha256": "6fa70729072cee18dabff56c2de46c5602a2e9dce17c16675376e039fcf88ebd"
+                  "blake3": "9a727b024f52d79ec84af9121da4aca7c255790b0cb24a02f806f4bc568c536a",
+                  "sha256": "10df2d2939111bbf50dd6d84fef84e9494bfc75fa45283717a740898834fdeb6"
                 },
-                "evidence": "/profiles/releases/2026.07.02.1-stable/code/npm-packages.txt",
+                "evidence": "/profiles/releases/2026.07.02.1-stable/code/arm64/software-inventory.json",
                 "name": "node",
                 "source": "npm",
                 "version": "24.2.0"

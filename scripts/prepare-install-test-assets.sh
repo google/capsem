@@ -118,10 +118,41 @@ out.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
 PY
 }
 
+create_minimal_software_inventory_if_missing() {
+    local path="${1:?create_minimal_software_inventory_if_missing <path>}"
+    if [ -f "$path" ]; then
+        return
+    fi
+
+    install -d "$(dirname "$path")"
+    python3 - "$path" "$arch" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+out = Path(sys.argv[1])
+arch = sys.argv[2]
+document = {
+    "schema": "capsem.profile_software_inventory.v1",
+    "architecture": arch,
+    "packages": [
+        {
+            "name": "capsem-install-test-tool",
+            "version": "1.0.0",
+            "source": "fixture",
+            "architecture": arch,
+        }
+    ],
+}
+out.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+}
+
 write_if_missing "$ASSETS_DIR/$arch/vmlinuz" "capsem install-test kernel $arch"
 create_minimal_initrd_if_missing "$ASSETS_DIR/$arch/initrd.img"
 write_if_missing "$ASSETS_DIR/$arch/rootfs.erofs" "capsem install-test rootfs $arch"
 create_minimal_obom_if_missing "$ASSETS_DIR/$arch/obom.cdx.json"
+create_minimal_software_inventory_if_missing "$ASSETS_DIR/$arch/software-inventory.json"
 
 rm -rf "$ASSETS_DIR/current"
 install -d "$ASSETS_DIR/current"

@@ -101,8 +101,9 @@ source tree or alternate manifest format. The generated deploy root is
 `assets/<channel>/manifest.json` under that root, so the stable public URL is
 `https://release.capsem.org/assets/stable/manifest.json`.
 `capsem-admin` writes the machine channel artifacts only: root `channels.json`,
-per-channel manifest JSON, immutable profile catalogs, `_headers`, and
-`robots.txt`. The human release pages are built by the `release-site/` Astro
+per-channel manifest JSON, profile-owned image/config/evidence files,
+`_headers`, and `robots.txt`. The human release pages are built by the
+`release-site/` Astro
 app from those JSON files with
 `CAPSEM_RELEASE_CHANNEL_DIST=/path/to/target/release-channel pnpm run
 build:channel`, which overlays the root channel list, per-channel pages, and
@@ -117,11 +118,11 @@ The graph hierarchy is strict:
    `deprecated`, or `revoked`. Revoked records remain auditable but runtime
    selection never chooses them. A record that is no longer served is simply
    absent.
-3. Each manifest record carries SHA-256, BLAKE3, and HMAC digests for the
-   selected manifest JSON.
+3. Each manifest record carries SHA-256 and BLAKE3 digests for the selected
+   manifest JSON. Do not publish HMAC fields.
 4. Each manifest keeps package artifacts separate from per-binary inventory.
    Packages are delivery containers; binaries are the executable files inside
-   those packages and must carry SHA-256, BLAKE3, HMAC, version, package
+   those packages and must carry SHA-256, BLAKE3, version, package
    provenance, and SBOM component reference.
 5. Profiles own profile images, config files, software inventory, ABOM/OBOM
    evidence, and `min_capsem_version`. Profiles never advertise the selected
@@ -129,7 +130,7 @@ The graph hierarchy is strict:
    that profile.
 
 Immutable profile image blobs are referenced by instantiated URLs in the
-manifest/profile catalog. Public releases may store large blobs in GitHub
+selected channel manifest. Public releases may store large blobs in GitHub
 Releases, but the release graph must publish concrete URLs for each profile
 image artifact and evidence file. When a local or corporate manifest is used,
 the same update mechanism applies: `--manifest` must be a URL, with
@@ -152,7 +153,8 @@ Pages project serving `release.capsem.org`, so a bad release-site binding fails 
 builds, immutable GitHub asset publication, or provenance attestation. It should
 build VM assets, publish changed blobs to an immutable
 `assets-v<asset-version>` GitHub Release, attest the arch-prefixed `vmlinuz`,
-`initrd.img`, `rootfs.erofs`, and `obom.cdx.json` subjects, write `asset_base`
+`initrd.img`, `rootfs.erofs`, `obom.cdx.json`, and
+`software-inventory.json` subjects, write `asset_base`
 into the channel manifest, run the Astro release-site build against the
 generated channel data, upload `target/release-channel/` without VM blobs as
 the `asset-channel-preview` artifact, and call
@@ -180,13 +182,13 @@ to separate published evidence.
 The deploy workflow runs `scripts/check-release-site-contract.py` against
 `https://release.capsem.org` after Cloudflare publishes the generated site. That
 Python validator reuses the remote release readiness contract and must validate
-the root channel catalog, selected manifest, profile catalog, profile-owned
+the root channel catalog, selected manifest, profile-owned
 image/config/evidence files, package metadata, per-binary metadata,
 BLAKE3/SHA-256 content, attestation references, and cache headers rather than
 only checking that files exist. The deploy smoke rejects stale public HTML: the
 root and channel pages must show the same generated timestamp, manifest URL,
 manifest version, package inventory, per-binary inventory, profile revision,
-profile catalog URL, image artifact URLs, and evidence URLs as the fetched JSON
+image artifact URLs, and evidence URLs as the fetched JSON
 graph. It validates host SBOM and VM OBOM evidence document shape (SPDX 2.3 for
 the host SBOM and CycloneDX for VM OBOMs), plus attestation scope, workflow,
 subjects, and predicate URLs against the published host SBOM and VM OBOM
@@ -254,7 +256,8 @@ later steps depend on earlier public state being true.
    asset refresh, profile update path, and staged cross-surface update state.
 
 Asset-channel blobs are arch-prefixed (`arm64-vmlinuz`,
-`arm64-initrd.img`, `arm64-rootfs.erofs`, `arm64-obom.cdx.json`, and x86_64
+`arm64-initrd.img`, `arm64-rootfs.erofs`, `arm64-obom.cdx.json`,
+`arm64-software-inventory.json`, and x86_64
 equivalents). The v2 manifest keeps bare logical filenames inside each arch map.
 
 ## Disk Layouts

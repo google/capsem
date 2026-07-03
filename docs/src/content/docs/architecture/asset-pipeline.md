@@ -122,8 +122,9 @@ attestation subjects and predicate URLs must resolve against the published
 evidence lists. VM asset attestations are incomplete unless
 `github_attestations_vm_assets` is present and its `predicate_url` points at the
 published VM OBOM evidence for the current asset release.
-The immutable profile catalog artifact is fetched too; its BLAKE3 hash, schema,
-revision, and URL policy must match `health.json`.
+Profile-owned config, image, software inventory, ABOM, and OBOM records are
+validated from `/assets/<channel>/manifest.json`; there is no public profile
+catalog artifact in the release-channel contract.
 
 Key points:
 - **Single file, not per-arch.** Arches are nested under `assets.releases.<ver>.arches.<arch>`.

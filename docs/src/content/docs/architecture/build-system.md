@@ -349,7 +349,7 @@ versioned manifest records and one `status` enum value: `current`, `supported`,
 `deprecated`, or `revoked`. A channel manifest can change package artifacts and
 per-binary inventory without changing profiles. A profile release can change
 one profile's config files, profile images, software inventory, ABOM/OBOM
-evidence, and catalog digest without changing packages, other profiles, or
+evidence, and manifest profile digest without changing packages, other profiles, or
 other channels.
 
 The graph hierarchy is:
@@ -357,13 +357,15 @@ The graph hierarchy is:
 ```text
 channels.json
   -> assets/<channel>/manifest.json
-    -> profiles/releases/<profile-revision>/catalog.json
+    -> packages
+      -> binaries
+    -> profiles
       -> profile images, config files, software inventory, ABOM/OBOM evidence
 ```
 
 Profiles may declare `min_capsem_version` when their config or image requires a
 newer client. They do not reference the selected Capsem package or binary; the
-manifest owns package metadata and every per-binary SHA-256, BLAKE3, HMAC, and
+manifest owns package metadata and every per-binary SHA-256, BLAKE3, and
 SBOM component reference.
 
 The `audit` subcommand parses vulnerability scanner output and fails on CRITICAL or HIGH findings.

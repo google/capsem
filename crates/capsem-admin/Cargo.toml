@@ -26,6 +26,7 @@ toml.workspace = true
 blake3 = "1"
 flate2 = "1"
 tar = "0.4"
+zstd = "0.13"
 
 [dev-dependencies]
 tempfile = "3"

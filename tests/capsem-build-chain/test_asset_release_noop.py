@@ -33,6 +33,7 @@ def _manifest(path: Path, *, version: str, rootfs_hash: str = "a" * 64) -> Path:
                             "initrd.img": {"hash": "c" * 64, "size": 12},
                             "rootfs.erofs": {"hash": rootfs_hash, "size": 13},
                             "obom.cdx.json": {"hash": "d" * 64, "size": 14},
+                            "software-inventory.json": {"hash": "e" * 64, "size": 15},
                         }
                     },
                 }
@@ -443,7 +444,13 @@ def test_asset_release_upload_publishes_arch_prefixed_immutable_release_only_whe
     assert "ASSET_VERSION=$(python - <<" in upload_step
     assert 'json.load(handle)["assets"]["current"]' in upload_step
     assert 'TAG="assets-v$ASSET_VERSION"' in upload_step
-    for logical_name in ("vmlinuz", "initrd.img", "rootfs.erofs", "obom.cdx.json"):
+    for logical_name in (
+        "vmlinuz",
+        "initrd.img",
+        "rootfs.erofs",
+        "obom.cdx.json",
+        "software-inventory.json",
+    ):
         assert logical_name in upload_step
     assert 'cp "$src" "$RELEASE_DIR/$arch-$logical_name"' in upload_step
     assert "gh release view %q" in upload_step
@@ -461,5 +468,11 @@ def test_asset_release_upload_publishes_arch_prefixed_immutable_release_only_whe
         assert "arch-prefixed" in text
         assert "asset-release-plan" in text
         assert "asset-release-delta" in text
-        for logical_name in ("`vmlinuz`", "`initrd.img`", "`rootfs.erofs`", "`obom.cdx.json`"):
+        for logical_name in (
+            "`vmlinuz`",
+            "`initrd.img`",
+            "`rootfs.erofs`",
+            "`obom.cdx.json`",
+            "`software-inventory.json`",
+        ):
             assert logical_name in text
