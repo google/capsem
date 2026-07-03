@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a named Codecov component contract that fails when any Cargo workspace
+  crate path is missing from `codecov.yml`.
 - Added a top-level CI coverage contract that enumerates Cargo workspace crates
   and release binary targets from `cargo metadata`, then verifies macOS
   coverage commands include every owning package.

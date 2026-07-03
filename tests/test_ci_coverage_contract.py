@@ -72,6 +72,21 @@ def test_workspace_crates_and_bins_enumerated() -> None:
     )
 
 
+def test_every_crate_in_codecov() -> None:
+    packages = workspace_packages()
+    codecov = (PROJECT_ROOT / "codecov.yml").read_text()
+
+    missing = [
+        package.name
+        for package in sorted(packages.values(), key=lambda item: item.name)
+        if f"{package.path}/" not in codecov
+    ]
+    assert not missing, (
+        "codecov.yml component paths must include every Cargo workspace "
+        f"crate path; missing {missing}"
+    )
+
+
 def workspace_packages() -> dict[str, WorkspacePackage]:
     metadata = json.loads(
         subprocess.check_output(
