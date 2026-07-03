@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added named release architecture and package/binary contract gates for the
   canonical channel manifest URL, package-owned executable inventory, and
   package-level SBOM evidence.
+- Documented and gated the release graph invariant hierarchy from channels to
+  packages/binaries and profiles/architecture-scoped payloads.
 
 ## [1.4.1782944059] - 2026-07-01
 

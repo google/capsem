@@ -5,8 +5,8 @@ sidebar:
   order: 36
 ---
 
-`release.capsem.org` publishes a release graph. The JSON files are the source
-of truth. The HTML pages are views over those files and must not invent fields,
+`release.capsem.org` publishes a release graph. The JSON files are the source of truth.
+The HTML pages are views over those files and must not invent fields,
 sections, statuses, hashes, or URLs that are absent from the JSON object that
 owns that page.
 
@@ -38,6 +38,14 @@ assets/<channel>/manifest.json
     images.<architecture>
       artifacts[]
       evidence[]
+```
+
+The canonical ownership paths are:
+
+```text
+channels.json -> /assets/<channel>/manifest.json
+channel -> packages -> binaries
+channel -> profiles -> architecture -> config/software/images
 ```
 
 The path tells readers who owns a fact. Package facts do not repeat in binary

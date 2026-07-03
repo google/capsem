@@ -14,6 +14,15 @@ FIXTURE_GRAPH = (
     / "fixtures"
     / "release-graph-stable-nightly.json"
 )
+RELEASE_OUTPUT_DOC = (
+    PROJECT_ROOT
+    / "docs"
+    / "src"
+    / "content"
+    / "docs"
+    / "architecture"
+    / "release-output.md"
+)
 
 
 def test_canonical_manifest_url() -> None:
@@ -31,3 +40,18 @@ def test_canonical_manifest_url() -> None:
         assert "profiles" in manifest
         assert "profile_catalog" not in manifest
         assert "catalog" not in manifest
+
+
+def test_graph_invariants() -> None:
+    doc = RELEASE_OUTPUT_DOC.read_text(encoding="utf-8")
+
+    required = [
+        "channels.json -> /assets/<channel>/manifest.json",
+        "channel -> packages -> binaries",
+        "channel -> profiles -> architecture -> config/software/images",
+        "There is no `removed` status.",
+        "Do not publish HMAC fields in the graph.",
+        "The JSON files are the source of truth.",
+    ]
+    for phrase in required:
+        assert phrase in doc
