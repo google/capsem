@@ -309,6 +309,47 @@ def test_software_evidence_scope() -> None:
                     assert evidence_url not in software_block
 
 
+def test_software_inventory_evidence_once_per_architecture() -> None:
+    build_release_site_from_fixture()
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+
+    for channel, record in graph["channels"].items():
+        current = next(item for item in record["manifests"] if item["status"] == "current")
+        manifest = graph["manifests"][channel][current["version"]]
+        for profile_id, profile in manifest["profiles"].items():
+            page = (
+                RELEASE_SITE_DIST
+                / "channels"
+                / channel
+                / "profiles"
+                / profile_id
+                / "index.html"
+            ).read_text(encoding="utf-8")
+            for architecture in profile["architectures"]:
+                label = f"{channel}:{profile_id}:{architecture['architecture']}"
+                section = page.split(f"Architecture {architecture['architecture']}", maxsplit=1)[
+                    1
+                ].split("</section>", maxsplit=1)[0]
+                evidence_block = section.split("Profile Evidence", maxsplit=1)[1].split(
+                    "Installed Software",
+                    maxsplit=1,
+                )[0]
+                software_block = section.split("Installed Software", maxsplit=1)[1].split(
+                    "Config Files",
+                    maxsplit=1,
+                )[0]
+                software_inventory = [
+                    item
+                    for item in architecture["evidence"]
+                    if item["kind"] == "software_inventory"
+                ]
+
+                assert len(software_inventory) == 1, label
+                evidence_url = software_inventory[0]["url"]
+                assert evidence_block.count(f'href="{evidence_url}"') == 1, label
+                assert evidence_url not in software_block, label
+
+
 def test_profile_architecture_sections() -> None:
     build_release_site_from_fixture()
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))

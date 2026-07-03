@@ -37,6 +37,14 @@ def test_no_hmac() -> None:
 
 
 def test_software_inventory_row_digests_are_row_owned() -> None:
+    _assert_software_rows_do_not_reuse_inventory_digest()
+
+
+def test_software_rows_do_not_reuse_inventory_digest() -> None:
+    _assert_software_rows_do_not_reuse_inventory_digest()
+
+
+def _assert_software_rows_do_not_reuse_inventory_digest() -> None:
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
 
     for channel, record in graph["channels"].items():
